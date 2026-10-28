@@ -23,7 +23,7 @@ void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 int main(int argc,char** argv) {
-    if (argc!=3) return 1; auto cert=read_file(argv[1]), priv=read_file(argv[2]);
+    if (argc!=3 && argc!=4) return 1; auto cert=read_file(argv[1]), priv=read_file(argv[2]);
     auto credential=[&] { return t::ServerCredential::create(cert,priv); };
     auto creds=credential(); if (!creds) return 2;
     auto scheme=*creds->scheme(); auto server=t::ServerHandshakeIo::create(std::move(*creds),100,1000,"h2"); if (!server) return 3;
@@ -64,7 +64,7 @@ int main(int argc,char** argv) {
         }
         records.push_back(std::move(record));
     }
-    if (records.size()<2 || records[0].size()<6 || !hello_released || !flight_released || watched_flight) return 13;
+    if (records.size()<(argc==4 ? 3u : 2u) || records[0].size()<6 || !hello_released || !flight_released || watched_flight) return 13;
     auto client=t::client_handshake_keys(*wire,std::span{records[0]}.subspan(5),std::move(*key)); if (!client) return 14;
     auto decoder=t::HandshakeDecoder::create(1048584); if (!decoder) return 15; bool server_finished=false, alpn_seen=false;
     for (std::size_t i=1;i<records.size();++i) {

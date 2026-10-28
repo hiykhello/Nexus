@@ -50,6 +50,7 @@ namespace nexus::tls {
         auto append_cert=[&](std::span<std::uint8_t const> value) { put24(body,value.size()); body.insert(body.end(),value.begin(),value.end()); body.insert(body.end(),{0,0}); };
         append_cert(cert); for (auto const& intermediate:credential.chain()) append_cert(intermediate);
         auto certificate=HandshakeDecoder::encode(11,body,1048580); if (!certificate) return std::unexpected(ServerFlightError::crypto_error);
+        crypto::Bytes{}.swap(body);
         if (!keys.transcript.append(extensions) || !keys.transcript.append(*certificate)) return std::unexpected(ServerFlightError::crypto_error);
         auto hash=keys.transcript.snapshot(); if (!hash) return std::unexpected(ServerFlightError::crypto_error);
         auto signature=credential.sign(keys.hash,*hash); if (!signature || !keys.transcript.append(*signature)) return std::unexpected(ServerFlightError::crypto_error);
@@ -67,11 +68,25 @@ namespace nexus::tls {
         auto write=RecordLayer::create(RecordDirection::send,algorithm,sk->view(),si->view());
         if (!read || !write) return std::unexpected(ServerFlightError::crypto_error);
         ApplicationRecords application(std::move(*write),std::move(*read),16385,16385,keys.hash,algorithm,key_size,std::move(*st),std::move(*ct),ApplicationRole::server);
-        crypto::Bytes payload; for (auto const* m:{&extensions,&*certificate,&*signature,&*finished}) payload.insert(payload.end(),m->begin(),m->end());
         std::vector<crypto::Bytes> records;
-        for (std::size_t pos=0;pos<payload.size();) {
-            auto n=std::min(std::size_t{16384},payload.size()-pos); auto record=keys.write.seal(ContentType::handshake,std::span{payload}.subspan(pos,n));
-            if (!record) return std::unexpected(ServerFlightError::crypto_error); records.push_back(std::move(*record)); pos+=n;
+        std::array<std::uint8_t,16384> fragment{}; std::size_t used=0;
+        for (auto const* message:{&extensions,&*certificate,&*signature,&*finished}) {
+            auto bytes=std::span<std::uint8_t const>{*message};
+            while (!bytes.empty()) {
+                auto count=std::min(fragment.size()-used,bytes.size());
+                std::copy_n(bytes.begin(),count,fragment.begin()+static_cast<std::ptrdiff_t>(used));
+                used+=count; bytes=bytes.subspan(count);
+                if (used==fragment.size()) {
+                    auto record=keys.write.seal(ContentType::handshake,fragment);
+                    if (!record) return std::unexpected(ServerFlightError::crypto_error);
+                    records.push_back(std::move(*record)); used=0;
+                }
+            }
+        }
+        if (used) {
+            auto record=keys.write.seal(ContentType::handshake,std::span{fragment}.first(used));
+            if (!record) return std::unexpected(ServerFlightError::crypto_error);
+            records.push_back(std::move(*record));
         }
         auto decoder=HandshakeDecoder::create(48); if (!decoder) return std::unexpected(ServerFlightError::crypto_error);
         ServerFlight flight(std::move(keys),std::move(application),std::move(records));
