@@ -53,6 +53,15 @@ if has_config("http2") then
             add_packages("nexus-corosio", "nexus-capy")
     end
 
+    if is_plat("linux") then
+        target("nexus-http2-allocator-boundary-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/http2_allocator_boundary.cpp", "$(projectdir)/tests/http2_allocator_probe.cpp")
+            add_deps("nexus-http2-server")
+            add_ldflags("-Wl,--wrap=realloc", {force = true})
+    end
+
     target("nexus-nghttp2-memory-test")
         set_kind("binary")
         set_default(false)

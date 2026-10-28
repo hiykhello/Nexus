@@ -45,7 +45,10 @@ export namespace nexus::http2 {
     };
     enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed, budget_exceeded };
     struct ServerError { ServerErrorKind kind; int library_code = 0; };
+    // Defined only in the allocator boundary test's module implementation unit.
+    namespace detail { struct ServerAllocatorTest; }
     class ServerSession {
+        friend struct detail::ServerAllocatorTest;
         h2::nghttp2_session* session_ = nullptr;
         struct alignas(std::max_align_t) Allocation { std::size_t size; };
         std::size_t library_limit_, shared_limit_, library_used_=0, library_peak_=0;
