@@ -93,7 +93,7 @@ routing {{ default-outbound "edge"; }}
                             assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
                             assert 4<=time.monotonic()-started<8, 'second candidate did not use the remaining time'
                             client.settimeout(12); upstream.settimeout(12); response=client.recv(10)
-                            if response: assert (response+exact(client,10-len(response)))[:2]!=b'\x05\x00'
+                            if response: assert (response+exact(client,10-len(response)))[:2]==b'\x05\x06'
                             assert 9<=time.monotonic()-started<12.5, 'retry restarted the handshake deadline'
                             assert upstream.recv(1)==b'', 'timed-out retry retained the upstream'
                         else:
@@ -114,7 +114,7 @@ routing {{ default-outbound "edge"; }}
                         time.sleep(.01)
                     if timeout:
                         client.settimeout(14); response=client.recv(10)
-                        if response: assert (response+exact(client,10-len(response)))[:2]!=b'\x05\x00'
+                        if response: assert (response+exact(client,10-len(response)))[:2]==b'\x05\x06'
                         assert 9<=time.monotonic()-started<14, 'SS candidate deadline was not respected'
                     else:
                         client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close()
@@ -134,7 +134,7 @@ routing {{ default-outbound "edge"; }}
                         assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
                         if timeout:
                             client.settimeout(14); response=client.recv(10)
-                            if response: assert (response+exact(client,10-len(response)))[:2]!=b'\x05\x00'
+                            if response: assert (response+exact(client,10-len(response)))[:2]==b'\x05\x06'
                             assert 9<=time.monotonic()-started<14, 'TLS handshake deadline was not respected'
                         else:
                             client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close()

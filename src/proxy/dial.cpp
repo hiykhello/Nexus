@@ -156,7 +156,7 @@ namespace nexus::proxy {
                     else if (strategy==DnsStrategy::ipv6_only) family=dns::detail::AddressStrategy::ipv6_only;
                     auto resolved=co_await resolve_dns(*session,context,dns_index,std::string(domain),request.port,family);
                     if (session->closed) co_return 1;
-                    if (!resolved) co_return 4;
+                    if (!resolved) co_return resolved.error()==dns::detail::ResolveError::timeout ? 6 : 4;
                     destinations=std::move(*resolved);
                 } else {
                     session->resolver = std::make_unique<io::resolver>(context);
@@ -240,6 +240,7 @@ namespace nexus::proxy {
                     auto connected_tunnel=co_await session->tunnel->connect(tunnel_destination);
                     if (session->closed) co_return 1;
                     if (connected_tunnel==TunnelConnectResult::connected) co_return 0;
+                    if (connected_tunnel==TunnelConnectResult::timeout || Clock::now()>=connect_deadline) co_return 6;
                     if (connected_tunnel==TunnelConnectResult::failed) co_return 1;
                     session->tunnel={};
                     error=std::make_error_code(std::errc::host_unreachable);

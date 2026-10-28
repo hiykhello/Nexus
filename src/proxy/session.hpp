@@ -9,7 +9,7 @@ namespace nexus::proxy {
     using Clock = std::chrono::steady_clock;
 
     struct Session;
-    enum class TunnelConnectResult { connected, retryable, failed };
+    enum class TunnelConnectResult { connected, retryable, failed, timeout };
     PRO_DEF_MEM_DISPATCH(TunnelConnect, connect);
     PRO_DEF_MEM_DISPATCH(TunnelSend, send);
     PRO_DEF_MEM_DISPATCH(TunnelRead, read);

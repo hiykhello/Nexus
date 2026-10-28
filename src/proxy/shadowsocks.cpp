@@ -61,12 +61,15 @@ namespace nexus::proxy {
                 auto deadline=session_.started+std::chrono::seconds(10);
                 for (auto endpoint:endpoints) {
                     if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
-                    if (Clock::now()>=deadline) co_return TunnelConnectResult::retryable;
+                    if (Clock::now()>=deadline) co_return TunnelConnectResult::timeout;
                     remote_=std::make_unique<io::tcp_socket>(context_);
                     auto operation=remote_->connect(endpoint);
                     auto [connect_error]=co_await io::timeout(std::move(operation),deadline);
                     if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
-                    if (connect_error || Clock::now()>=deadline) { remote_->close(); remote_.reset(); continue; }
+                    if (connect_error || Clock::now()>=deadline) {
+                        auto timed_out=connect_error==capy::cond::timeout || Clock::now()>=deadline;
+                        remote_->close(); remote_.reset(); if (timed_out) co_return TunnelConnectResult::timeout; continue;
+                    }
                     std::vector<std::uint8_t> address;
                     if (destination.address().is_v4()) {
                         auto bytes=destination.address().to_v4().to_bytes(); address.push_back(1); address.insert(address.end(),bytes.begin(),bytes.end());
@@ -75,7 +78,8 @@ namespace nexus::proxy {
                     }
                     address.push_back(static_cast<std::uint8_t>(destination.port()>>8)); address.push_back(static_cast<std::uint8_t>(destination.port()));
                     auto started=co_await shadowsocks::detail::start_request(*remote_,profile_->key,address,deadline);
-                    if (!started || stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
+                    if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
+                    if (!started) co_return started.error()==shadowsocks::detail::StartError::timeout ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
                     relay_=std::make_unique<Relay>(session_.client,*remote_,profile_->key,std::move(*started),[this] { session_.touched=Clock::now(); });
                     co_return TunnelConnectResult::connected;
                 }

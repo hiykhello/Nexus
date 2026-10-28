@@ -12,6 +12,7 @@
 - SS-2022 首请求已发出但对端响应尚未到达时，三个并发会话中重置一个不会关闭其余会话，停止进程会排空其余入站及上游；单、双 worker 通过。
 - 实际 VLESS 首候选 TLS 握手挂起和 SS-2022 首候选连接挂起均在总截止时间后结束，释放首候选且不拨打第二候选；单、双 worker 通过。
 - 实际 VLESS 首候选握手延迟四秒失败后，第二候选使用原截止时间的剩余期限，超时后上游释放；单、双 worker 通过。
+- 代理保留 VLESS/SS-2022 隧道超时并映射为 SOCKS 超时码；目标域名 DNS 超时也映射为超时。真实候选与隧道回归通过，但会话回收定时器可能先关闭客户端，测试允许这种交错。
 - TLS 应用记录、无 I/O 和异步连接异常时失效并清理；HTTP/2 TLS 逻辑预算覆盖主要输入、输出和暂存缓冲，但并非完整内存上限。
 
 ## 当前
@@ -21,13 +22,14 @@
 - HTTP/2 的 nghttp2、响应体、活动流、请求头及响应字段数组逻辑计费已有共享预算，尚无完整连接级预算；下一步核对应用数据及 TLS/传输缓冲的所有权和限额，再确定可执行的预算边界。
 
 - 当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
+- 本机 xmake 增量构建未因 `src/proxy/session.hpp` 改动重建 `nexus.proxy` 模块；本次通过 `xmake clean nexus-proxy` 后重建，后续需核查头文件依赖跟踪。
 - 固定 nghttp2 的 DATA chunk 回调只支持正常返回、暂停或连接级失败，流级取消需由应用在暂停后明确恢复并调用 `reset_stream`。回归已覆盖部分 DATA 帧暂停、取消后连接窗口回收与其他流进展；HTTP/2 的 TLS/Corosio 实验驱动已接通，已验证基本网络多流和 TLS 双向关闭，仍需验证更广泛场景。
 - 地址工厂、socket quitter owner unwind 以及新的候选连接回归已通过。`connect_candidates` 只接受 `tcp_socket` 和 endpoint vector，公开结果为 error plus connected endpoint；上游组合模板和 Capy condition 现已导出并通过独立消费者测试。失败/取消关闭 socket；代理真实 resolver 候选上限、挂起连接超时和停止已覆盖，多挂起 accept/connect 及更复杂交错仍未覆盖。实际代理现按候选判策略并使用 Corosio 组合直连；隧道边界避免预分类后续候选，取消与超时的更广泛交错仍需验证。
 - HTTP/2 无 I/O 服务端已修复跨流关闭时的响应 provider 生命周期；TLS/Corosio 握手和应用记录适配器仍保持既有验证范围。HTTP/2 实验驱动已与 Python/OpenSSL 简单对端互通；完整连接级预算、正式应用接入及更广泛的网络关闭验证仍未完成。
 
 ## 下一步
 
-- 继续核查组合拨号及隧道握手的错误监视、超时和 owner 回收交错，包括 DNS 尚未完成时停止和错误传播。
+- 继续核查组合拨号及隧道握手的错误监视、超时和 owner 回收交错，包括 DNS 尚未完成时停止及超时回复与会话回收定时器的竞态。
 
 1. 补实际组合拨号的 resolver/连接 owner 回收、错误监视与隧道握手的更复杂交错；继续验证 VLESS/SS 停止异常、完成回调及共享会话生命周期的其他竞态。
 2. 继续核对 Corosio/Capy 的 `io_context` stop/drain 在挂起 connect、跨线程和其他多操作下的 owner 语义。固定 Capy 的 `execution_context::shutdown()` 为 protected、非线程安全，由 `io_context` 析构调用；不能作为 worker 协调器公开屏障或代替完成任务的排空。
