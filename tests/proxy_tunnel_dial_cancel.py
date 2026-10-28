@@ -134,10 +134,11 @@ routing {{ default-outbound "edge"; }}
             assert not thread.is_alive()
 
 
-def overlapping_handshakes(root, workers, shadowsocks):
+def overlapping_handshakes(root, workers, shadowsocks, established=False):
     with socket.socket() as first, socket.socket() as second, socket.socket() as reservation, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
-        first.bind(('127.0.0.2', 0)); first.listen(1 if shadowsocks else 4); first.settimeout(4)
-        fillers=[socket.create_connection(first.getsockname(),timeout=2) for _ in range(2)] if shadowsocks else []
+        pending_ss=shadowsocks and not established
+        first.bind(('127.0.0.2', 0)); first.listen(1 if pending_ss else 4); first.settimeout(4)
+        fillers=[socket.create_connection(first.getsockname(),timeout=2) for _ in range(2)] if pending_ss else []
         second.bind(('127.0.0.1', first.getsockname()[1])); second.listen(4); second.settimeout(.5)
         reservation.bind(('127.0.0.1', 0)); port=reservation.getsockname()[1]; reservation.close()
         dns.bind(('127.0.0.1', 0)); dns.settimeout(.1)
@@ -176,35 +177,44 @@ routing {{ default-outbound "edge"; }}
                 clients.append(client); client.settimeout(3)
                 client.sendall(b'\x05\x01\x00'); assert exact(client,2)==b'\x05\x00'
                 client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x04\xd2')
-                if not shadowsocks:
+                if not pending_ss:
                     upstream=first.accept()[0]; upstream.settimeout(3); upstreams.append(upstream)
-                    header=exact(upstream,5)
-                    assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
-            if shadowsocks:
+                    if shadowsocks:
+                        assert upstream.recv(1024), 'SS request was not sent'
+                        assert exact(client,10)[:2]==b'\x05\x00'
+                    else:
+                        header=exact(upstream,5)
+                        assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
+            if pending_ss:
                 deadline=time.monotonic()+3
                 while pending(process.pid,first.getsockname()[1])!=3:
                     if process.poll() is not None or time.monotonic()>=deadline: raise AssertionError('SS connections did not all become pending')
                     time.sleep(.01)
             assert len(queries)==3
             clients[0].setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); clients[0].close()
-            if shadowsocks:
+            if pending_ss:
                 deadline=time.monotonic()+3
                 while pending(process.pid,first.getsockname()[1])!=2:
                     if process.poll() is not None or time.monotonic()>=deadline: raise AssertionError('reset did not cancel only its SS connection')
                     time.sleep(.01)
             else:
-                assert upstreams[0].recv(1)==b'', 'reset did not cancel its handshake'
+                if shadowsocks:
+                    while upstreams[0].recv(1024): pass
+                else:
+                    assert upstreams[0].recv(1)==b'', 'reset did not cancel its handshake'
             for upstream in upstreams[1:]:
                 upstream.settimeout(.1)
-                try: data=upstream.recv(1)
+                try:
+                    while upstream.recv(1024): pass
                 except TimeoutError: pass
-                else: raise AssertionError(f'another handshake stopped early: {data!r}')
+                else: raise AssertionError('another tunnel stopped early')
             process.terminate(); process.wait(timeout=5)
             for upstream in upstreams[1:]:
-                upstream.settimeout(2); assert upstream.recv(1)==b'', 'stop did not close handshake'
+                upstream.settimeout(2)
+                while upstream.recv(1024): pass
             for client in clients[1:]:
                 client.settimeout(2); assert client.recv(1)==b'', 'stop did not close inbound client'
-            if shadowsocks:
+            if pending_ss:
                 with first.accept()[0], first.accept()[0]:
                     first.settimeout(.5)
                     try: first.accept()[0].close()
@@ -231,4 +241,5 @@ with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory
     for workers in (1,2):
         for retry in (False,True): scenario(root,workers,shadowsocks,retry)
         overlapping_handshakes(root,workers,shadowsocks)
+        if shadowsocks: overlapping_handshakes(root,workers,True,established=True)
 print('tunnel candidates: reset, retry and overlapping stop passed')
