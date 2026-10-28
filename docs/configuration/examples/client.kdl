@@ -1,0 +1,19 @@
+/- kdl-version 2
+// 结构草案，尚不可作为运行配置。
+schema-version 1
+role "client"
+
+inbounds {
+    tcp-forward "local" {
+        listen host="127.0.0.1" port=18080
+        target host="example.com" port=80
+    }
+}
+
+outbounds {
+    direct "direct"
+}
+
+routing {
+    default-outbound "direct"
+}

@@ -1,0 +1,27 @@
+--- a/AK/Vector.h
++++ b/AK/Vector.h
+@@ -625,11 +625,20 @@
+ #endif
+     ErrorOr<void> try_append(T&& value)
+     {
+-        TRY(try_grow_for_append(1));
+-        if constexpr (contains_reference)
++        if constexpr (contains_reference) {
++            TRY(try_grow_for_append(1));
+             new (slot(m_size)) StorageType(&value);
+-        else
+-            new (slot(m_size)) StorageType(move(value));
++        } else {
++            auto base = reinterpret_cast<FlatPtr>(data());
++            auto address = reinterpret_cast<FlatPtr>(&value);
++            bool aliases = m_size && address >= base && address - base < m_size * sizeof(StorageType);
++            size_t offset = aliases ? (address - base) / sizeof(StorageType) : 0;
++            TRY(try_grow_for_append(1));
++            if (aliases)
++                new (slot(m_size)) StorageType(move(data()[offset]));
++            else
++                new (slot(m_size)) StorageType(move(value));
++        }
+         ++m_size;
+         return {};
+     }

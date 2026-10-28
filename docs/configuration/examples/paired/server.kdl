@@ -1,0 +1,57 @@
+/- kdl-version 2
+// 部署形态草案，不可运行；证书、身份和地址必须由操作者提供。
+schema-version 1
+role "server"
+
+logging {
+    level "info"
+}
+
+dns {
+    resolver "normal" type="udp" {
+        server host="192.0.2.54" port=53
+        outbound "direct"
+    }
+    default-resolver "normal"
+}
+
+inbounds {
+    vless "edge-service" {
+        listen host="0.0.0.0" port=443
+        authentication {
+            user "client-1" uuid-file="/etc/nexus/secrets/client-1.uuid"
+        }
+        tls {
+            certificate-file "/etc/nexus/tls/edge-fullchain.pem"
+            private-key-file "/etc/nexus/tls/edge-private.pem"
+        }
+    }
+}
+
+outbounds {
+    direct "direct" {
+        destination-policy {
+            deny-cidr "0.0.0.0/8"
+            deny-cidr "10.0.0.0/8"
+            deny-cidr "127.0.0.0/8"
+            deny-cidr "169.254.0.0/16"
+            deny-cidr "172.16.0.0/12"
+            deny-cidr "192.168.0.0/16"
+            deny-cidr "224.0.0.0/4"
+            deny-cidr "::/128"
+            deny-cidr "::1/128"
+            deny-cidr "fc00::/7"
+            deny-cidr "fe80::/10"
+            deny-cidr "ff00::/8"
+        }
+    }
+    block "reject"
+}
+
+routing {
+    rule-set "blocked" path="rules/blocked.kdl" format="kdl"
+    rules {
+        - kind="rule-set" value="blocked" outbound="reject"
+    }
+    default-outbound "direct"
+}

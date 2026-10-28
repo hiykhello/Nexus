@@ -1,0 +1,42 @@
+--- a/include/boost/corosio/detail/thread_local_ptr.hpp
++++ b/include/boost/corosio/detail/thread_local_ptr.hpp
+@@ -79,7 +79,7 @@
+ template<class T>
+ class thread_local_ptr
+ {
+-    static BOOST_COROSIO_TLS_KEYWORD T* ptr_;
++    inline static BOOST_COROSIO_TLS_KEYWORD T* ptr_ = nullptr;
+ 
+ public:
+     thread_local_ptr()  = default;
+@@ -138,9 +138,7 @@
+     }
+ };
+ 
+-template<class T>
+-BOOST_COROSIO_SYMBOL_VISIBLE BOOST_COROSIO_TLS_KEYWORD T*
+-    thread_local_ptr<T>::ptr_ = nullptr;
++
+ 
+ #else
+ 
+@@ -149,7 +147,7 @@
+ template<class T>
+ class thread_local_ptr
+ {
+-    static thread_local T* ptr_;
++    inline static thread_local T* ptr_ = nullptr;
+ 
+ public:
+     thread_local_ptr()  = default;
+@@ -187,9 +185,7 @@
+     }
+ };
+ 
+-template<class T>
+-BOOST_COROSIO_SYMBOL_VISIBLE thread_local T* thread_local_ptr<T>::ptr_ =
+-    nullptr;
++
+ 
+ #endif
+ 

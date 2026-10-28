@@ -1,0 +1,104 @@
+/- kdl-version 2
+// 部署形态草案，不可运行；占位地址和文件须按实际环境替换。
+schema-version 1
+role "client"
+
+logging {
+    level "info"
+}
+
+dns {
+    resolver "bootstrap" type="udp" {
+        server host="192.0.2.53" port=53
+        outbound "direct"
+    }
+    resolver "normal" type="udp" {
+        server host="192.0.2.54" port=53
+        outbound "direct"
+    }
+    default-resolver "normal"
+    fake-ip {
+        ipv4-pool "198.18.0.0/16"
+        ipv6-pool "fd72:1234:5678::/112"
+        ttl-seconds 60
+        recovery "quarantine"
+        pool-full "servfail"
+    }
+    listener "local-dns" {
+        listen host="127.0.0.1" port=1053
+        mode "fake-ip"
+        resolver "normal"
+    }
+}
+
+inbounds {
+    mixed "local" {
+        listen host="127.0.0.1" port=7890
+        authentication "none"
+        udp-associate #true
+    }
+
+    tun "system" {
+        device name="nexus0" mtu=1500
+        address "172.30.0.1/30"
+        address "fd71:1234:5678::1/126"
+        auto-route #true
+        route-include "0.0.0.0/0"
+        route-include "::/0"
+        strict-bypass #true
+        sniff {
+            enabled #true
+            max-bytes 8192
+            timeout-ms 500
+            target-mode "metadata-only"
+        }
+    }
+}
+
+outbounds {
+    direct "direct"
+    block "reject"
+    vless "edge" {
+        server host="edge.example.net" port=443
+        bootstrap-resolver "bootstrap"
+        authentication {
+            uuid-file "/etc/nexus/secrets/edge.uuid"
+        }
+        tls {
+            server-name "edge.example.net"
+            ca-file "/etc/nexus/ca/edge-ca.pem"
+            verify #true
+        }
+    }
+    selector "preferred" {
+        member "edge"
+        member "direct"
+        selected "edge"
+    }
+}
+
+routing {
+    rule-set "blocked" path="rules/blocked.kdl" format="kdl"
+    rule-set "private" path="rules/private.kdl" format="kdl"
+    rules {
+        - kind="rule-set" value="blocked" outbound="reject"
+        - kind="rule-set" value="private" outbound="direct"
+    }
+    default-outbound "preferred"
+}
+
+control {
+    http {
+        listen host="127.0.0.1" port=9090
+        read-token-file "/etc/nexus/secrets/control-read.token"
+        manage-token-file "/etc/nexus/secrets/control-manage.token"
+        allow-origin "https://panel.example.net"
+        allow-no-origin #true
+    }
+    ipc {
+        path "/run/nexus/control.sock"
+        max-frame-bytes 1048576
+        read-uid 1000
+        manage-uid 0
+    }
+}

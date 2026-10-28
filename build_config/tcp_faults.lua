@@ -1,0 +1,52 @@
+if is_plat("linux") then
+    target("nexus-tcp-reset-allocation-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_reset_allocation.cpp")
+        add_deps("nexus-tcp-engine")
+
+    target("nexus-tcp-stack-input-allocation-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_stack_input_allocation.cpp")
+        add_deps("nexus-tcp-stack")
+
+    target("nexus-tcp-input-allocation-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_input_allocation.cpp")
+        add_deps("nexus-tcp-engine")
+
+    target("nexus-tcp-read-allocation-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_read_allocation.cpp")
+        add_deps("nexus-tcp-engine")
+
+    target("nexus-tcp-open-allocation-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_open_allocation.cpp")
+        add_deps("nexus-tcp-stack")
+
+    target("nexus-tcp-stack-allocation-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_stack_allocation.cpp")
+        add_ldflags("-Wl,--wrap=socket")
+        add_deps("nexus-tcp-stack")
+
+    target("nexus-tcp-direct-allocation-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_direct_allocation.cpp")
+        add_ldflags("-Wl,--wrap=recv")
+        add_deps("nexus-tcp-direct")
+
+    target("nexus-tcp-direct-timeout-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/tcp_direct_timeout.cpp")
+        add_ldflags("-Wl,--wrap=poll", "-Wl,--wrap=socket", "-Wl,--wrap=close")
+        add_deps("nexus-tcp-direct")
+end

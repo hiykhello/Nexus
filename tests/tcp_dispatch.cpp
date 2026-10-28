@@ -1,0 +1,58 @@
+import std;
+import nexus.tcp.dispatch;
+namespace p = nexus::packet;
+namespace t = nexus::tcp;
+int main() {
+    auto table = t::ConnectionTable::create(1, 8);
+    if (!table) return 1;
+    p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
+                    .destination_port=80, .sequence=99, .flags=2};
+    auto raw = p::make_tcp4(syn);
+    if (!raw) return 1;
+    auto corrupt = *raw; corrupt.back() ^= 1;
+    if (t::dispatch(*table, corrupt, 50, 0).error().error != t::DispatchError::invalid_packet || table->size() ||
+        t::dispatch(*table, *raw, 50, 0, 39).error().error != t::DispatchError::output_error || table->size()) return 1;
+    auto first = t::dispatch(*table, *raw, 50, 0);
+    if (!first || !first->opened || !first->reply || table->size() != 1) return 1;
+    auto synack = p::parse_tcp4(*first->reply);
+    if (!synack || synack->flags != 0x12 || synack->sequence != 50 || synack->acknowledgement != 100) return 1;
+    auto duplicate = t::dispatch(*table, *raw, 999, 1);
+    if (!duplicate || duplicate->id != first->id || duplicate->opened || duplicate->reply != first->reply) return 1;
+    auto other = syn; other.source_port++;
+    auto other_raw = p::make_tcp4(other);
+    auto full = t::dispatch(*table, *other_raw, 60, 2);
+    if (full || full.error().error != t::DispatchError::table_error || full.error().table_error != t::TableError::full) return 1;
+    p::Tcp4View ack{.source=syn.source, .destination=syn.destination, .source_port=syn.source_port,
+                    .destination_port=syn.destination_port, .sequence=100, .acknowledgement=51, .flags=0x10, .window=8};
+    raw = p::make_tcp4(ack);
+    auto established = t::dispatch(*table, *raw, 0, 3);
+    if (!established || established->input_error || established->reply ||
+        table->get(first->id)->state() != t::ConnectionState::established) return 1;
+    p::Bytes data{'h','i'};
+    ack.flags=0x18; ack.payload=data;
+    raw = p::make_tcp4(ack);
+    auto accepted = t::dispatch(*table, *raw, 0, 4);
+    if (!accepted || !accepted->reply || accepted->input_error) return 1;
+    auto response = p::parse_tcp4(*accepted->reply);
+    if (!response || response->flags != 0x10 || response->sequence != 51 || response->acknowledgement != 102) return 1;
+    auto retransmit = t::dispatch(*table, *raw, 0, 5);
+    if (!retransmit || retransmit->input_error != t::ConnectionError::unacceptable || !retransmit->reply) return 1;
+    response = p::parse_tcp4(*retransmit->reply);
+    std::array<std::uint8_t, 2> output{};
+    if (!response || response->acknowledgement != 102 || table->get(first->id)->read(output) != 2 ||
+        output != std::array<std::uint8_t, 2>{'h','i'}) return 1;
+    ack.flags=4; ack.payload={}; ack.sequence=103;
+    raw = p::make_tcp4(ack);
+    auto challenge = t::dispatch(*table, *raw, 0, 6);
+    if (!challenge || challenge->input_error != t::ConnectionError::challenge_ack || !challenge->reply) return 1;
+    ack.sequence=1000; raw = p::make_tcp4(ack);
+    auto ignored = t::dispatch(*table, *raw, 0, 7);
+    if (!ignored || ignored->input_error != t::ConnectionError::unacceptable || ignored->reply) return 1;
+    ack.sequence=102; raw = p::make_tcp4(ack);
+    auto reset = t::dispatch(*table, *raw, 0, 8);
+    if (!reset || reset->input_error != t::ConnectionError::reset || reset->reply ||
+        table->reclaim(first->id, 8) != true) return 1;
+    auto unknown = t::dispatch(*table, *raw, 0, 9);
+    if (unknown || unknown.error().error != t::DispatchError::unknown_flow) return 1;
+    std::cout << "TCP packet dispatch, ACK and reset handling passed\n";
+}

@@ -1,0 +1,112 @@
+if is_plat("linux") then
+    target("nexus-allocation-probe")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/allocation_probe.cpp")
+        add_packages("nexus-corosio", "nexus-capy")
+
+    target("nexus-proxy-injected")
+        set_kind("static")
+        set_default(false)
+        add_defines("NEXUS_TEST_START_THROW")
+        add_defines("NEXUS_TEST_SESSION_THROW")
+        add_defines("NEXUS_TEST_VLESS_RELAY_THROW")
+        add_files("$(projectdir)/src/proxy/proxy.cppm", {public = true})
+        add_files("$(projectdir)/src/proxy/proxy.cpp", "$(projectdir)/src/proxy/session.cpp", "$(projectdir)/src/proxy/dial.cpp", "$(projectdir)/src/proxy/http_forward.cpp")
+        add_packages("nexus-corosio", "nexus-capy", "nexus-ngcpp-proxy", {public = true})
+        add_deps("nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-dns-cache")
+        if has_config("crypto") then
+            add_defines("NEXUS_ENABLE_VLESS", {public = true})
+            add_defines("NEXUS_TEST_VLESS_PARTIAL_REQUEST")
+            add_files("$(projectdir)/src/proxy/vless.cpp", "$(projectdir)/src/proxy/vless_inbound.cpp")
+            add_deps("nexus-vless-corosio-client", "nexus-vless-tls-server", "nexus-vless-server-profile", "nexus-tls-corosio-server-handshake", "nexus-config", "nexus-rulefile")
+        end
+
+    if has_config("crypto") then
+        target("nexus-vless-relay-throw-fixture")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/src/tools/main.cpp", "$(projectdir)/src/tools/proxy_server.cpp", "$(projectdir)/src/tools/rule_convert.cpp", "$(projectdir)/tests/vless_relay_throw.cpp")
+            add_cxxflags("-freflection", {force = true})
+            add_deps("nexus-proxy-injected", "nexus-rulefile", "nexus-config", "nexus-rules")
+    end
+
+    target("nexus-proxy-launch-throw-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_launch_throw.cpp")
+        add_deps("nexus-proxy-injected")
+
+    target("nexus-proxy-session-throw-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_session_throw.cpp")
+        add_deps("nexus-proxy-injected")
+
+    target("nexus-io-threads-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/io_threads.cpp")
+        add_packages("nexus-corosio", "nexus-capy")
+
+    target("nexus-resolver-threads-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/resolver_threads.cpp")
+        add_packages("nexus-corosio", "nexus-capy")
+
+    target("nexus-reuseport-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/reuseport.cpp")
+        add_packages("nexus-corosio", "nexus-capy")
+
+    target("nexus-proxy-start-fault")
+        set_kind("shared")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_start_fault.c")
+        add_syslinks("dl")
+
+    target("nexus-proxy-start-fault-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_start_fault.cpp")
+        add_deps("nexus-proxy")
+
+    target("nexus-proxy-init-failure-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_init_failure.cpp")
+        add_deps("nexus-proxy")
+
+    target("nexus-proxy-worker-failure-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_worker_failure.cpp")
+        add_deps("nexus-proxy")
+
+    target("nexus-proxy-accept-aborted-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_accept_aborted.cpp")
+        add_deps("nexus-proxy")
+
+    target("nexus-proxy-retry-stop-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_retry_stop.cpp")
+        add_syslinks("dl")
+        add_deps("nexus-proxy")
+
+    target("nexus-proxy-single-worker-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_single_worker.cpp")
+        add_deps("nexus-proxy")
+
+    target("nexus-session-quota-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/session_quota.cpp")
+
+end

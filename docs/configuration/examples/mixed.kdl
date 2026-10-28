@@ -1,0 +1,19 @@
+schema-version 1
+role "client"
+inbounds {
+    mixed "local" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
+}
+outbounds {
+    direct "direct"
+    block "reject"
+}
+routing {
+    rule-set "blocked" path="paired/rules/blocked.kdl" format="kdl"
+    rules {
+        - kind="rule-set" value="blocked" outbound="reject"
+    }
+    default-outbound "direct"
+}

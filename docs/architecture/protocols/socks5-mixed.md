@@ -1,0 +1,37 @@
+# SOCKS5 与 Mixed 入站设计
+
+状态：Linux 上有实验性的 SOCKS5 和 HTTP/1.1 CONNECT 到直连 TCP 链路，其余为设计草案。协议依据：[RFC 1928](https://www.rfc-editor.org/rfc/rfc1928) 和用户名/密码认证 [RFC 1929](https://www.rfc-editor.org/rfc/rfc1929)。Mixed 共用 TCP 监听：首字节 `0x05` 进入 SOCKS5；符合启用的 HTTP 方法前缀则交给 [HTTP/1.1 入站](../http-proxy-spec.md)。识别需要有界前缀、超时和歧义处理，无法识别时关闭；不因猜测重写已接收数据。
+
+`type="mixed"` 的配置在同一回环监听器按首字节识别 SOCKS5 或 HTTP/1.1 CONNECT；支持无认证 CONNECT 和有限的单次 HTTP/1.1 正向代理，包括 Content-Length 和 chunked 请求体；不支持 HTTP/1.0 请求、连接复用、UDP 或 CONNECT-UDP。HTTP 请求头上限 16 KiB、字段上限 100、单行上限 8192 字节；CONNECT 的 Host 必须匹配目标并拒绝消息体定界，普通请求以绝对 URI 为目标。两条路径均拒绝升级和代理认证。预读的隧道数据在返回成功后转发，域名和每个解析后 IP 使用同一阻断策略。实验范围及测试见[HTTP 代理线规](../http-proxy-spec.md)。
+
+当前 `nexus run <port> [kdl|beve <block-rules>]`（或 `--config <config.kdl>`，见[配置示例](../../configuration/examples/README.md)） 固定监听 IPv4 回环，默认选择无认证方法；配置为 SOCKS5 用户名密码时只选择 RFC 1929 方法，不降级为无认证。CONNECT 直接连接 IPv4/IPv6 字面地址和 ASCII 域名。域名经系统解析器解析，不进行 IDNA 转换；规则先匹配域名，再对解析得到的每个 IP 匹配，阻断的 IP 不拨号。IPv4 映射 IPv6 地址会分别按原 IPv6 地址及嵌入的 IPv4 地址检查，任一命中即阻断；此规则同样适用于解析结果。按解析器结果顺序依次尝试允许的地址，超过 64 个结果则拒绝请求。解析使用系统设置，可能产生本地 DNS 查询；无效域名失败。规则命中且没有可拨号地址返回 `REP=2`，解析失败返回 `REP=4`。BIND 和 UDP ASSOCIATE 返回命令不支持。握手总时限 10 秒、转发空闲时限 300 秒、并发会话上限 64；两方向转发有界缓冲并传递半关闭。系统 `getaddrinfo` 执行中不能中断：超时会关闭客户端并请求取消，解析任务仍占会话额度直至返回；停止也会等待所有解析任务，可能超过握手时限。GCC/Linux 端到端测试覆盖 IPv4、IPv6 回环、本机域名、规则、分包、附带数据、拒绝和关闭；另验证并发上限、槽位回收、分段握手的总时限，以及慢解析时其他会话可继续、超时和停止等待。服务器使用默认 epoll，即使构建选用 io_uring，代理本身也没有切换到该后端。
+
+密码认证只支持一组 1–255 字节可打印 ASCII 凭据，使用[受保护的密码文件](../../configuration/examples/README.md)；认证失败、方法不匹配或不完整时不执行目标拨号。凭据仅在启动时加载，重新配置须先停止；Mixed 明确拒绝密码认证。用户名密码以明文传输，本实现仍只监听 IPv4 回环；它不提供传输加密或多用户管理。GCC 16/Linux 端到端测试覆盖分片、错误凭据、失败后附带请求不拨号、管线化、文件权限、符号链接以及 curl 互通。
+
+## 流握手与地址
+
+```text
+Detect → Greeting → Method selected → [User/password auth] → Request
+       → CONNECT: Dial/route → Reply → Relay → Half-close/close
+       → UDP ASSOCIATE: Bind UDP → Reply → Active → TCP close/timeout → Close
+```
+
+Greeting 为 `VER=5, NMETHODS, METHODS[]`。按配置从客户端提议集合中选择 `0x00` 无认证或 `0x02` 用户名/密码；没有交集回复 `05 ff` 并关闭。无认证默认只允许显式配置的可信监听范围；远程监听必须有访问控制与认证。RFC 1929 的子协商为 `VER=1, ULEN, UNAME, PLEN, PASSWD`，长度均为 1..255 字节，验证结果为两字节版本和状态；认证失败关闭。该认证并不加密凭据，不应在不受信网络把明文 SOCKS5 当成安全传输。
+
+Request 为 `VER=5, CMD, RSV=0, ATYP, DST.ADDR, DST.PORT`，端口大端。IPv4/IPv6 分别 4/16 字节，域名类型有 1 字节长度和对应字节；严格检查长度、版本、保留字段、地址和端口。支持的 `CMD` 为 CONNECT 和 UDP ASSOCIATE；BIND 若未实现，回 `REP=0x07`，不静默当作 CONNECT。地址类型不支持回 `0x08`；其他失败映射到相应 REP，均构造完整回复 `VER, REP, RSV, ATYP, BND.ADDR, BND.PORT`。CONNECT 成功后 BND 表示面向目标连接的本地绑定端点，不伪造为目标地址。
+
+解析器使用连接拥有的有限接收缓冲及 `std::span`/offset，支持任意拆包与单个 read 携带握手后的首段业务数据。地址字符串借用期只到缓冲复用前；跨协程或移交路由时复制到会话拥有的有界存储，不能保存悬空 span。只在解析范围内避免无必要复制，不承诺系统调用或整个链路零拷贝；握手状态由连接的单一执行器拥有，不需要在每个字段上加锁，但不同连接、共享认证表和 UDP 映射仍需同步。
+
+域名地址作为域名交给路由，是否本地解析由出口能力/策略决定，防止 DNS 泄漏；IPv4/IPv6 保留原目标。路由选择成功、实际连接完成才回复成功；上游拒绝、超时和无能力对应明确失败，不提前转发握手尾部。转发保持半关闭、背压、取消与资源限额。
+
+## UDP ASSOCIATE
+
+控制 TCP 连接拥有一个 association：授权用户、对端源 IP、可选客户端 UDP 地址/端口、relay socket、活动计时器和目标映射。请求的目的地址可为未知地址/端口；不将它当作被代理的目标。绑定可达的 UDP 地址及端口后，将实际 `BND.ADDR/BND.PORT` 回告客户端；多网卡与 NAT 下不能给远程客户端返回不可达的 wildcard 地址。控制 TCP 关闭时，association 必须结束并清理所有 UDP 映射；空闲超时可以提前释放，新的关联需重新握手。
+
+每个 UDP 数据报头为 `RSV=00 00, FRAG, ATYP, DST.ADDR, DST.PORT, DATA`；回包使用相同头格式，地址表示实际源端点。首版可不实现 SOCKS UDP 分片，但必须丢弃 `FRAG != 0`；若将来支持重组，需要实现序号、最后片标志、计时器和 RFC 要求，且对来源/关联/重组字节设上限，不能把多个片当独立数据报发送。UDP 数据要经独立路由/出站能力检查；不能把它当作 TCP 流或要求单个固定目标。
+
+按 TCP 对端 IP 绑定 UDP 发送者，端口未知时在授权策略下学习首个有效源端口；之后仅接受允许的源地址/端口。端口变化或 NAT 重绑定不能不经规则自动抢占现有 association；多客户端同 IP 时明确关联冲突处理。限制单客户端关联数、目标数、字节、空闲时间和总 FD；向真实目标发包与收包需检查映射归属/允许的回复端点，防止开放反射与跨会话注入。超时用单调时钟；发送失败、取消、端口耗尽、监听器关闭与并发超时均应只释放一次。
+
+## 验收
+
+覆盖每个字节拆包、连接合并首段 payload、未知方法、错误密码、IPv4/IPv6/域名、CONNECT 成功及各种失败、BIND 不支持；验证半关闭、背压和取消。UDP 覆盖目标变化、非零 FRAG、错误 RSV/ATYP、伪造源、NAT 重绑定、TCP 提前关闭、空闲回收、FD 耗尽及多 association 并发。与常用 SOCKS5 客户端互测，记录不支持的能力；当前 Mixed 的 SOCKS5 仅实现 CONNECT 子集，普通 HTTP 正向代理的范围见 HTTP 线规；不代表已实现本节的所有能力。

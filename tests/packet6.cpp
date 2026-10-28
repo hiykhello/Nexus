@@ -1,0 +1,39 @@
+import std;
+import nexus.packet;
+namespace p = nexus::packet;
+
+int main() {
+    constexpr p::Address6 src{0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    constexpr p::Address6 dst{0x20, 1, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2};
+    p::Bytes expected{0x60,0,0,0,0,13,17,64, 0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1,
+                      0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,2, 0x30,0x39,0,53,0,13,0x30,0x1f,'h','e','l','l','o'};
+    p::Bytes payload{'h','e','l','l','o'};
+    auto packet = p::make_udp6(src, dst, 12345, 53, payload);
+    if (!packet || *packet != expected) return 1;
+    auto parsed = p::parse_udp6(*packet);
+    if (!parsed || parsed->source != src || parsed->destination != dst || parsed->source_port != 12345 ||
+        parsed->destination_port != 53 || !std::ranges::equal(parsed->payload, payload)) return 1;
+    for (std::size_t i = 0; i < packet->size(); ++i) if (p::parse_udp6(std::span(*packet).first(i))) return 1;
+    for (auto i : {8, 24, 48}) { auto bad = *packet; bad[i] ^= 1; if (p::parse_udp6(bad)) return 1; }
+    auto bad = *packet; bad[46] = bad[47] = 0;
+    if (p::parse_udp6(bad)) return 1;
+    for (auto next : {0, 43, 44, 50, 51, 60, 6}) {
+        bad = *packet; bad[6] = next;
+        if (p::parse_udp6(bad)) return 1;
+    }
+    bad = *packet; ++bad[5]; if (p::parse_udp6(bad)) return 1;
+    bad = *packet; --bad[45]; if (p::parse_udp6(bad)) return 1;
+    bad = *packet; bad.push_back(0); if (p::parse_udp6(bad)) return 1;
+    if (p::make_udp6(src, dst, 1, 2, payload, 52) || p::make_udp6(src, dst, 1, 2, p::Bytes(65528), 70000)) return 1;
+    auto max = p::make_udp6(src, dst, 1, 2, p::Bytes(65527, 7), 65575);
+    if (!max || !p::parse_udp6(*max)) return 1;
+    p::MemoryLink link;
+    if (!link.send(p::Side::first, *packet)) return 1;
+    auto received = link.receive(p::Side::second);
+    if (!received || !*received || !p::parse_udp6(**received)) return 1;
+    auto reply = p::make_udp6(dst, src, 53, 12345, payload);
+    if (!reply || !link.send(p::Side::second, *reply)) return 1;
+    auto returned = link.receive(p::Side::first);
+    if (!returned || !*returned || !p::parse_udp6(**returned)) return 1;
+    std::cout << "IPv6 UDP packet validation and memory roundtrip passed\n";
+}

@@ -1,0 +1,20 @@
+--- a/include/boost/capy/detail/run_callbacks.hpp
++++ b/include/boost/capy/detail/run_callbacks.hpp
+@@ -37,6 +37,7 @@
+     {
+         if(!ep)
+             return;
++#if defined(__cpp_exceptions)
+         try
+         {
+             std::rethrow_exception(ep);
+@@ -45,6 +46,9 @@
+         {
+             // Cancellation is a normal completion, not an error.
+         }
++#else
++        std::terminate();
++#endif
+         // A real unhandled exception propagates to the trampoline's
+         // unhandled_exception, which terminates.
+     }

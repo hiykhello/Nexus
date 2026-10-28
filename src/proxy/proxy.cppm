@@ -1,0 +1,156 @@
+module;
+#include <proxy/proxy_macros.h>
+#include <boost/capy/buffers.hpp>
+#include <boost/capy/task.hpp>
+#include <boost/capy/cond.hpp>
+#include <boost/corosio/backend.hpp>
+#include <boost/corosio/io_context.hpp>
+#include <boost/corosio/tcp_acceptor.hpp>
+#include <boost/corosio/tcp_socket.hpp>
+#include <boost/corosio/endpoint.hpp>
+#include <boost/corosio/resolver.hpp>
+export module nexus.proxy;
+import std;
+import proxy.v4;
+import nexus.socks5;
+import nexus.rules;
+import nexus.http.connect;
+#ifdef NEXUS_TEST_FAKEIP
+import nexus.dns.fakeip_shared;
+#endif
+export namespace nexus::proxy { enum class TlsKeyExchange { x25519, x25519_mlkem768, x25519_mlkem768_only }; }
+#include "session.hpp"
+
+export namespace nexus::proxy {
+    enum class Inbound { socks5, mixed, vless, shadowsocks };
+    enum class RuleFormat { kdl, beve };
+    enum class RouteAction { direct, block, vless };
+    struct RouteRule { std::string_view data; RuleFormat format; RouteAction action; };
+    struct IndexedRouteRule { std::string_view data; RuleFormat format; std::size_t outbound; };
+    enum class FailureKind { accept, accept_task, worker };
+    struct RuntimeFailure {
+        FailureKind kind;
+        std::error_code system_error;
+    };
+    struct DnsServer {
+        std::array<std::uint8_t,16> address{};
+        bool ipv6=false;
+        std::uint16_t port=0;
+        bool tcp=false;
+        std::string host;
+        std::optional<std::size_t> resolver;
+    };
+    struct DnsRule { std::string domain; bool suffix=false; std::size_t server=0; };
+    enum class DnsStrategy { automatic, prefer_ipv4, prefer_ipv6, ipv4_only, ipv6_only };
+    struct DnsRouting {
+        std::vector<DnsServer> servers;
+        std::vector<DnsRule> rules;
+        std::size_t final=0;
+        DnsStrategy strategy=DnsStrategy::automatic;
+        bool disable_cache=false;
+        bool edns=false;
+    };
+    [[nodiscard]] auto describe(FailureKind kind) noexcept -> std::string_view;
+
+    // Loopback server; one worker runs in the caller, multiple workers use threads.
+    // Public methods must be called from one controlling thread.
+    class Server {
+#if BOOST_COROSIO_HAVE_LIBURING
+        io::io_context context{io::uring};
+#else
+        io::io_context context;
+#endif
+#ifdef NEXUS_ENABLE_SS2022
+        InboundFactory shadowsocks_inbound;
+#endif
+        io::tcp_acceptor listener{context};
+        SessionQuota quota{64};
+        std::vector<std::shared_ptr<Session>> sessions;
+        rules::RouteMatcher policy;
+        std::optional<Credentials> credentials;
+        std::optional<DnsRouting> dns_routing;
+        std::shared_ptr<DnsState> dns;
+#ifdef NEXUS_TEST_FAKEIP
+        std::shared_ptr<dns::FakeIpShared> fakeip;
+        std::uint64_t fakeip_view=0;
+#endif
+        std::optional<std::size_t> max_bootstrap_index;
+#ifdef NEXUS_ENABLE_VLESS
+        std::shared_ptr<std::vector<TunnelFactory> const> vless;
+        InboundFactory vless_inbound;
+#endif
+        bool running = false;
+        bool mixed = false;
+        Inbound inbound_type = Inbound::socks5;
+        std::vector<std::unique_ptr<Server>> workers;
+        std::vector<std::thread> threads;
+        std::atomic_bool stopping{false}, failed{false};
+        mutable std::mutex failure_mutex;
+        std::optional<RuntimeFailure> failure_state;
+        auto record_failure(RuntimeFailure value) -> void;
+        auto get_failure() const -> std::optional<RuntimeFailure>;
+        auto accept_loop() -> capy::task<>;
+        auto start_one(std::uint16_t port, Inbound inbound, bool reuse) -> std::expected<std::uint16_t, std::error_code>;
+    public:
+        Server();
+        // Converts context initialization system failures into an error result.
+        [[nodiscard]] static auto create() -> std::expected<std::unique_ptr<Server>, std::error_code>;
+        ~Server();
+        Server(Server const&) = delete;
+        auto operator=(Server const&) -> Server& = delete;
+
+        // Matching predicates block; nonmatching IP requests use direct TCP.
+        // The policy can be replaced only while the server is stopped.
+        [[nodiscard]] auto set_block_rules(std::string_view data, RuleFormat format)
+            -> std::expected<void, std::string>;
+        // Install one ordered predicate set and its action; absent data means default only.
+        [[nodiscard]] auto set_route(std::optional<std::string_view> data, RuleFormat format,
+                                     RouteAction action, RouteAction fallback) -> std::expected<void, std::string>;
+        [[nodiscard]] auto set_routes(std::span<RouteRule const> rules, RouteAction fallback)
+            -> std::expected<void, std::string>;
+        // Outbound 0 is direct, 1 is block, and prepared tunnel instances start at 2.
+        [[nodiscard]] auto set_indexed_routes(std::span<IndexedRouteRule const> rules, std::size_t fallback)
+            -> std::expected<void, std::string>;
+        // Authentication can be changed only while stopped. Mixed authentication
+        // is rejected until both protocols can enforce the same credentials.
+        [[nodiscard]] auto set_socks5_credentials(std::string_view username, std::string_view password)
+            -> std::expected<void, std::string>;
+        [[nodiscard]] auto clear_socks5_credentials() -> std::expected<void, std::string>;
+        // Configure an explicit unscoped IP DNS server while stopped; absent by default.
+        [[nodiscard]] auto set_dns_upstream(std::array<std::uint8_t,4> address, std::uint16_t port)
+            -> std::expected<void, std::error_code>;
+        [[nodiscard]] auto set_dns_upstream(std::array<std::uint8_t,16> address, std::uint16_t port)
+            -> std::expected<void, std::error_code>;
+        // A zero port selects the system resolver. Rules are ordered, first match wins.
+        [[nodiscard]] auto set_dns_routing(DnsRouting routing) -> std::expected<void, std::error_code>;
+#ifdef NEXUS_TEST_FAKEIP
+        [[nodiscard]] auto set_fakeip(std::shared_ptr<dns::FakeIpShared> owner,std::uint64_t view)
+            -> std::expected<void,std::error_code>;
+#endif
+        // Bootstrap indexes refer to the current DNS server list. Replacements must retain referenced indexes.
+        // Prepare an authenticated VLESS outbound before starting the server.
+        [[nodiscard]] auto prepare_vless(std::string_view host, std::uint16_t port,
+            std::string_view uuid_file, std::string_view server_name, std::string_view ca_file,
+            TlsKeyExchange key_exchange = TlsKeyExchange::x25519, std::optional<std::size_t> bootstrap = {})
+            -> std::expected<void, std::string>;
+        [[nodiscard]] auto add_vless(std::string_view host, std::uint16_t port,
+            std::string_view uuid_file, std::string_view server_name, std::string_view ca_file,
+            TlsKeyExchange key_exchange = TlsKeyExchange::x25519, std::optional<std::size_t> bootstrap = {})
+            -> std::expected<std::size_t, std::string>;
+        // The caller retains responsibility for securely handling the input PSK.
+        [[nodiscard]] auto add_shadowsocks(std::string_view host,std::uint16_t port,std::span<std::uint8_t const> key,
+            std::optional<std::size_t> bootstrap = {})
+            -> std::expected<std::size_t,std::string>;
+        [[nodiscard]] auto prepare_vless_inbound(std::string_view certificate,std::string_view key,
+            std::span<std::string const> users) -> std::expected<void,std::string>;
+        // Configure once; matching keys share a process-lifetime replay table.
+        [[nodiscard]] auto prepare_shadowsocks_inbound(std::span<std::uint8_t const> key) -> std::expected<void,std::string>;
+        // Workers: 1..16.
+        [[nodiscard]] auto start(std::uint16_t port, Inbound inbound = Inbound::socks5, unsigned workers = 1) -> std::expected<std::uint16_t, std::error_code>;
+        [[nodiscard]] auto healthy() const noexcept -> bool;
+        // First unexpected runtime failure, retained through stop and cleared on the next start.
+        [[nodiscard]] auto failure() const -> std::optional<RuntimeFailure>;
+        auto poll(std::chrono::milliseconds maximum_wait) -> void;
+        auto stop() noexcept -> void;
+    };
+}

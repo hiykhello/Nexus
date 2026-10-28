@@ -1,0 +1,76 @@
+--- a/AK/Vector.h
++++ b/AK/Vector.h
+@@ -550,9 +550,19 @@
+     ErrorOr<void> try_insert(size_t index, U&& value)
+     requires(CanBePlacedInsideVector<U>)
+     {
+-        VERIFY(index <= size());
++        if (index > size())
++            return Error::from_errno(EINVAL);
+         if (index == size())
+             return try_append(forward<U>(value));
++        bool aliases = false;
++        size_t source_offset = 0;
++        if constexpr (!contains_reference && SameAs<RemoveCVReference<U>, StorageType>) {
++            auto base = reinterpret_cast<FlatPtr>(data());
++            auto address = reinterpret_cast<FlatPtr>(&value);
++            aliases = m_size && address >= base && address - base < m_size * sizeof(StorageType);
++            if (aliases)
++                source_offset = (address - base) / sizeof(StorageType);
++        }
+         TRY(try_grow_for_append(1));
+         ++m_size;
+         if constexpr (Traits<StorageType>::is_trivial()) {
+@@ -563,10 +573,16 @@
+                 at(i - 1).~StorageType();
+             }
+         }
+-        if constexpr (contains_reference)
++        if constexpr (contains_reference) {
+             new (slot(index)) StorageType(&value);
+-        else
++        } else if constexpr (SameAs<RemoveCVReference<U>, StorageType>) {
++            if (aliases)
++                new (slot(index)) StorageType(forward<U>(data()[source_offset + (source_offset >= index)]));
++            else
++                new (slot(index)) StorageType(forward<U>(value));
++        } else {
+             new (slot(index)) StorageType(forward<U>(value));
++        }
+         return {};
+     }
+ 
+@@ -725,8 +741,32 @@
+     {
+         if (count == 0)
+             return {};
++        constexpr size_t max_capacity = NumericLimits<size_t>::max() / sizeof(StorageType);
++        if (m_size > max_capacity || count > max_capacity - m_size)
++            return Error::from_errno(EOVERFLOW);
++        auto base = reinterpret_cast<FlatPtr>(data());
++        auto address = reinterpret_cast<FlatPtr>(values);
++        bool aliases = m_size && address >= base && address - base < m_size * sizeof(StorageType);
++        size_t offset = 0;
++        if (aliases) {
++            auto bytes = address - base;
++            if (bytes % sizeof(StorageType) != 0)
++                return Error::from_errno(EINVAL);
++            offset = bytes / sizeof(StorageType);
++            if (count > m_size - offset)
++                return Error::from_errno(EINVAL);
++        }
+         TRY(try_grow_for_append(count));
+-        TypedTransfer<StorageType>::move(slot(count), slot(0), m_size);
++        if constexpr (Traits<StorageType>::is_trivial()) {
++            TypedTransfer<StorageType>::move(slot(count), slot(0), m_size);
++        } else {
++            for (size_t i = m_size; i > 0; --i) {
++                new (slot(i + count - 1)) StorageType(move(data()[i - 1]));
++                data()[i - 1].~StorageType();
++            }
++        }
++        if (aliases)
++            values = data() + offset + count;
+         TypedTransfer<StorageType>::copy(slot(0), values, count);
+         m_size += count;
+         return {};

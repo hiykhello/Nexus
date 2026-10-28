@@ -1,0 +1,21 @@
+package("nexus-capy")
+    set_homepage("https://github.com/cppalliance/capy")
+    set_description("Pinned Boost.Capy coroutine library")
+    set_license("BSL-1.0")
+    add_urls(os.getenv("NEXUS_CAPY_SOURCE") or "https://github.com/cppalliance/capy.git")
+    add_versions("0.2.2", "a8e93ccfec2ace5b3e35029a4b2f1b7e087c7aa2")
+    add_patches("0.2.2", path.join(os.scriptdir(), "cpo_modules.patch"), "c63c658d4208eea605f282ebe1fdde6a463cd657dd3120d54c57107160c09f56")
+    add_links("boost_capy")
+    add_defines("BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK")
+    if is_plat("linux") then add_syslinks("pthread") end
+    on_install(function (package)
+        import("package.tools.cmake")
+        local configs = {"-DBUILD_SHARED_LIBS=OFF", "-DBUILD_TESTING=OFF", "-DCMAKE_CXX_STANDARD=26",
+            "-DBOOST_CAPY_BUILD_TESTS=OFF", "-DBOOST_CAPY_BUILD_EXAMPLES=OFF", "-DBOOST_CAPY_BUILD_BENCH=OFF"}
+        cmake.install(package, configs)
+        os.cp("LICENSE_1_0.txt", package:installdir("share/licenses/nexus-capy"))
+    end)
+    on_test(function (package)
+        assert(package:has_cxxincludes("boost/capy/task.hpp", {configs = {languages = "c++26"}}))
+    end)
+package_end()

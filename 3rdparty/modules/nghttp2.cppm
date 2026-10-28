@@ -1,0 +1,59 @@
+module;
+#include <nghttp2/nghttp2.h>
+
+export module nexus.thirdparty.nghttp2;
+
+export namespace nex::nghttp2 {
+    using ::nghttp2_data_provider;
+    using ::nghttp2_data_provider2;
+    using ::nghttp2_ssize;
+    using ::NGHTTP2_DATA_FLAG_EOF;
+    using ::nghttp2_frame;
+    using ::nghttp2_headers_category;
+    using ::nghttp2_nv;
+    using ::nghttp2_option;
+    using ::nghttp2_session;
+    using ::nghttp2_session_callbacks;
+    using ::nghttp2_stream;
+    using ::nghttp2_data_source;
+    using ::nghttp2_settings_entry;
+    using ::nghttp2_error;
+    using ::nghttp2_session_client_new;
+    using ::nghttp2_session_server_new;
+    using ::nghttp2_session_server_new2;
+    using ::nghttp2_option_new;
+    using ::nghttp2_option_del;
+    using ::nghttp2_option_set_no_auto_window_update;
+    using ::nghttp2_session_callbacks_new;
+    using ::nghttp2_session_callbacks_del;
+    using ::nghttp2_session_del;
+    using ::nghttp2_session_mem_recv2;
+    using ::nghttp2_session_mem_send2;
+    using ::nghttp2_session_consume;
+    using ::nghttp2_session_set_local_window_size;
+    using ::nghttp2_session_send;
+    using ::nghttp2_submit_request2;
+    using ::nghttp2_submit_response2;
+    using ::nghttp2_session_callbacks_set_on_header_callback;
+    using ::nghttp2_session_callbacks_set_on_begin_headers_callback;
+    using ::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
+    using ::NGHTTP2_ERR_CALLBACK_FAILURE;
+    using ::NGHTTP2_ERR_PAUSE;
+    using ::NGHTTP2_HEADERS;
+    using ::NGHTTP2_INTERNAL_ERROR;
+    using ::NGHTTP2_REFUSED_STREAM;
+    using ::nghttp2_session_callbacks_set_on_stream_close_callback;
+    using ::nghttp2_session_callbacks_set_on_data_chunk_recv_callback;
+    using ::NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS;
+    using ::NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+    using ::NGHTTP2_FLAG_END_STREAM;
+    using ::NGHTTP2_DATA;
+    using ::NGHTTP2_HCAT_REQUEST;
+    using ::nghttp2_session_callbacks_set_on_frame_recv_callback;
+    using ::NGHTTP2_WINDOW_UPDATE;
+    using ::nghttp2_submit_settings;
+    using ::nghttp2_submit_rst_stream;
+    using ::nghttp2_submit_goaway;
+    using ::nghttp2_session_want_read;
+    using ::nghttp2_session_want_write;
+}
