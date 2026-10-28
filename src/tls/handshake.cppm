@@ -11,6 +11,7 @@ export namespace nexus::tls {
 
     // Reassembles TLS Handshake messages from arbitrary record payload fragments.
     // It owns at most max_message_size + four bytes of incomplete input.
+    // Moving transfers partial input and permanently invalidates the source.
     class HandshakeDecoder {
         std::vector<std::uint8_t> pending_;
         std::size_t expected_ = 0;
@@ -21,8 +22,8 @@ export namespace nexus::tls {
     public:
         [[nodiscard]] static auto create(std::size_t max_message_size = 1u << 20)
             -> std::expected<HandshakeDecoder, HandshakeError>;
-        HandshakeDecoder(HandshakeDecoder&&) noexcept = default;
-        auto operator=(HandshakeDecoder&&) noexcept -> HandshakeDecoder& = default;
+        HandshakeDecoder(HandshakeDecoder&&) noexcept;
+        auto operator=(HandshakeDecoder&&) noexcept -> HandshakeDecoder&;
         HandshakeDecoder(HandshakeDecoder const&) = delete;
         auto operator=(HandshakeDecoder const&) -> HandshakeDecoder& = delete;
         // Each input is at most 2^14 bytes: a TLS plaintext record payload.

@@ -33,6 +33,22 @@ int main() {
         auto a=d->feed(std::span{hello}.first(split)); auto b=d->feed(std::span{hello}.subspan(split));
         if (!a || !b || a->size()+b->size()!=1 || !d->finish()) return 16;
     }
+    // Moving after a complete header must transfer its expected body length,
+    // and the source must never be usable with a moved-out buffer.
+    for (std::size_t split=1;split<hello.size();++split) {
+        auto source=t::HandshakeDecoder::create(16); if (!source || !source->feed(std::span{hello}.first(split))) return 20;
+        auto target=std::move(*source);
+        if (!source->failed() || source->feed({}).error()!=t::HandshakeError::invalid_state || source->finish().error()!=t::HandshakeError::invalid_state) return 21;
+        auto result=target.feed(std::span{hello}.subspan(split));
+        if (!result || result->size()!=1 || (*result)[0].body!=std::vector<std::uint8_t>{'a','b','c'} || !target.finish()) return 22;
+    }
+    auto source=t::HandshakeDecoder::create(16), target=t::HandshakeDecoder::create(16);
+    if (!source || !target || !source->feed(std::span{hello}.first(5)) || !target->feed(std::span{done}.first(2))) return 23;
+    *target=std::move(*source);
+    if (!source->failed() || source->feed({}).error()!=t::HandshakeError::invalid_state) return 24;
+    auto completed=target->feed(std::span{hello}.subspan(5));
+    if (!completed || completed->size()!=1 || (*completed)[0].body!=std::vector<std::uint8_t>{'a','b','c'}) return 25;
+    *target=std::move(*target); if (!target->finish()) return 26;
     std::vector<std::uint8_t> multiple{1,0,0,1,42,11,0,0x20,0}; multiple.resize(8201,7);
     int failures=0;
     for (int index=0;index<12;++index) {

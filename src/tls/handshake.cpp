@@ -5,6 +5,18 @@ namespace nexus::tls {
     HandshakeDecoder::HandshakeDecoder(std::size_t max_message_size) : max_message_size_(max_message_size) {
         pending_.reserve(std::min<std::size_t>(max_message_size_ + 4, 4096));
     }
+    HandshakeDecoder::HandshakeDecoder(HandshakeDecoder&& other) noexcept
+        : pending_(std::move(other.pending_)), expected_(other.expected_), max_message_size_(other.max_message_size_), failed_(other.failed_) {
+        other.failed_=true; other.expected_=0;
+    }
+    auto HandshakeDecoder::operator=(HandshakeDecoder&& other) noexcept -> HandshakeDecoder& {
+        if (this!=&other) {
+            pending_=std::move(other.pending_); expected_=other.expected_;
+            max_message_size_=other.max_message_size_; failed_=other.failed_;
+            other.failed_=true; other.expected_=0;
+        }
+        return *this;
+    }
     auto HandshakeDecoder::create(std::size_t max_message_size) -> std::expected<HandshakeDecoder, HandshakeError> {
         if (max_message_size == 0 || max_message_size > 0x00ffffffu)
             return std::unexpected(HandshakeError::message_too_large);
