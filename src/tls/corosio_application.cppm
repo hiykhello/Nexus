@@ -95,19 +95,26 @@ export namespace nexus::tls::detail {
         auto cancel() noexcept -> void { if (!canceled_) { canceled_=true; app_.cancel(); socket_.cancel(); } }
         auto read(ApplicationDeadline deadline = {}) -> nex::capy::task<std::expected<AsyncReadResult,AsyncApplicationError>> {
             if (reading_ || canceled_) co_return std::unexpected(AsyncApplicationError::state);
-            reading_=true; auto result=co_await input_.read(socket_,app_,deadline); reading_=false;
-            if (!result || (result->event && result->event->kind==ApplicationEventKind::fatal_alert)) { canceled_=true; socket_.cancel(); }
-            co_return result;
+            reading_=true;
+            try {
+                auto result=co_await input_.read(socket_,app_,deadline); reading_=false;
+                if (!result || (result->event && result->event->kind==ApplicationEventKind::fatal_alert)) { canceled_=true; socket_.cancel(); }
+                co_return result;
+            } catch (...) { reading_=false; cancel(); throw; }
         }
         auto flush(ApplicationDeadline deadline = {}) -> nex::capy::task<std::expected<void,AsyncApplicationError>> {
             if (writing_ || stream_writing_ || canceled_) co_return std::unexpected(AsyncApplicationError::state);
-            writing_=true; auto result=co_await flush_application(socket_,app_,deadline); writing_=false;
-            if (!result) { canceled_=true; socket_.cancel(); }
-            co_return result;
+            writing_=true;
+            try {
+                auto result=co_await flush_application(socket_,app_,deadline); writing_=false;
+                if (!result) { canceled_=true; socket_.cancel(); }
+                co_return result;
+            } catch (...) { writing_=false; cancel(); throw; }
         }
     private:
         auto send_record(std::span<std::uint8_t const> data, ApplicationDeadline deadline, bool stream) -> nex::capy::task<std::expected<void,AsyncApplicationError>> {
             if (writing_ || (stream_writing_ && !stream) || canceled_) co_return std::unexpected(AsyncApplicationError::state);
+            try {
             auto result=app_.send(data);
             if (!result && result.error()!=ApplicationIoError::key_update_required) {
                 if (result.error()==ApplicationIoError::record_error) { cancel(); co_return std::unexpected(AsyncApplicationError::protocol); }
@@ -133,6 +140,7 @@ export namespace nexus::tls::detail {
             auto written=co_await flush_application(socket_,app_,deadline); writing_=false;
             if (!written) { canceled_=true; socket_.cancel(); }
             co_return written;
+            } catch (...) { writing_=false; cancel(); throw; }
         }
     public:
         auto send(std::span<std::uint8_t const> data, ApplicationDeadline deadline = {}) -> nex::capy::task<std::expected<void,AsyncApplicationError>> {
@@ -146,6 +154,7 @@ export namespace nexus::tls::detail {
             auto limit=app_.max_write_size();
             if (!limit) co_return std::unexpected(AsyncApplicationError::state);
             stream_writing_=true;
+            try {
             while (!data.empty()) {
                 auto count=std::min(limit,data.size());
                 auto result=co_await send_record(data.first(count),deadline,true);
@@ -154,14 +163,19 @@ export namespace nexus::tls::detail {
             }
             stream_writing_=false;
             co_return std::expected<void,AsyncApplicationError>{};
+            } catch (...) { stream_writing_=false; cancel(); throw; }
         }
         auto key_update(bool request, ApplicationDeadline deadline = {}) -> nex::capy::task<std::expected<void,AsyncApplicationError>> {
-            if (writing_ || stream_writing_ || canceled_ || !app_.request_key_update(request)) co_return std::unexpected(AsyncApplicationError::state);
-            co_return co_await flush(deadline);
+            if (writing_ || stream_writing_ || canceled_) co_return std::unexpected(AsyncApplicationError::state);
+            try { if (!app_.request_key_update(request)) co_return std::unexpected(AsyncApplicationError::state);
+                co_return co_await flush(deadline); }
+            catch (...) { cancel(); throw; }
         }
         auto close_notify(ApplicationDeadline deadline = {}) -> nex::capy::task<std::expected<void,AsyncApplicationError>> {
-            if (writing_ || stream_writing_ || canceled_ || !app_.close_notify()) co_return std::unexpected(AsyncApplicationError::state);
-            co_return co_await flush(deadline);
+            if (writing_ || stream_writing_ || canceled_) co_return std::unexpected(AsyncApplicationError::state);
+            try { if (!app_.close_notify()) co_return std::unexpected(AsyncApplicationError::state);
+                co_return co_await flush(deadline); }
+            catch (...) { cancel(); throw; }
         }
     };
 
@@ -185,6 +199,7 @@ export namespace nexus::tls::detail {
             if (reading_ || output.empty() || !connection_.active()) co_return std::unexpected(AsyncApplicationError::state);
             if (expired(deadline)) { connection_.cancel(); co_return std::unexpected(AsyncApplicationError::timeout); }
             reading_=true;
+            try {
             while (true) {
                 if (offset_<buffered_.size()) {
                     auto count=std::min(output.size(),buffered_.size()-offset_);
@@ -203,6 +218,7 @@ export namespace nexus::tls::detail {
                 if (event.kind==ApplicationEventKind::close_notify) closed_=true;
                 reading_=false; co_return AsyncStreamReadResult{AsyncStreamReadKind::event,0,std::move(event)};
             }
+            } catch (...) { reading_=false; connection_.cancel(); throw; }
         }
     };
 }
