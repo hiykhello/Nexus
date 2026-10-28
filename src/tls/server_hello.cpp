@@ -33,14 +33,17 @@ namespace nexus::tls {
     }
     auto ServerHello::encode() const -> std::expected<std::vector<std::uint8_t>,ServerHelloError> {
         if (session_id_echo.size()>32) return std::unexpected(ServerHelloError::invalid_session_id);
-        std::vector<std::uint8_t> ext; std::bitset<65536> seen;
+        std::size_t ext_size=0; std::bitset<65536> seen;
         for (auto const& e:extensions) {
             if (seen.test(e.type)) return std::unexpected(ServerHelloError::duplicate_extension); seen.set(e.type);
-            if (e.data.size()>65531 || ext.size()>65531-e.data.size()) return std::unexpected(ServerHelloError::invalid_length);
-            put16(ext,e.type); put16(ext,e.data.size()); ext.insert(ext.end(),e.data.begin(),e.data.end());
+            if (e.data.size()>65531 || ext_size>65531-e.data.size()) return std::unexpected(ServerHelloError::invalid_length);
+            ext_size+=4+e.data.size();
         }
-        std::vector<std::uint8_t> out; put16(out,legacy_version); out.insert(out.end(),random.begin(),random.end()); out.push_back(static_cast<std::uint8_t>(session_id_echo.size()));
-        out.insert(out.end(),session_id_echo.begin(),session_id_echo.end()); put16(out,cipher_suite); out.push_back(compression_method); put16(out,ext.size()); out.insert(out.end(),ext.begin(),ext.end()); return out;
+        std::vector<std::uint8_t> out; out.reserve(40+session_id_echo.size()+ext_size);
+        put16(out,legacy_version); out.insert(out.end(),random.begin(),random.end()); out.push_back(static_cast<std::uint8_t>(session_id_echo.size()));
+        out.insert(out.end(),session_id_echo.begin(),session_id_echo.end()); put16(out,cipher_suite); out.push_back(compression_method); put16(out,ext_size);
+        for (auto const& e:extensions) { put16(out,e.type); put16(out,e.data.size()); out.insert(out.end(),e.data.begin(),e.data.end()); }
+        return out;
     }
     auto ServerHello::is_retry() const noexcept -> bool { return random==retry_random; }
     auto ServerHello::validate_x25519(ClientHello const& client) const -> std::expected<KeyShareEntry,ServerHelloError> {

@@ -31,6 +31,9 @@ export namespace nexus::tls {
         static constexpr std::size_t hello_encoded_charge=65539;
         static constexpr std::size_t hello_input_charge=hello_reassembly_charge+hello_encoded_charge;
         static constexpr std::size_t generated_hello_charge=16384;
+        // Generated hello fields, body and retry comparison message; logical
+        // lengths only, excluding container capacities and other temporaries.
+        static constexpr std::size_t generated_hello_scratch_charge=3*16384;
         static constexpr std::size_t finished_input_charge=16645;
         ServerHandshakeIo(ServerHandshakeIo const&)=delete;
         auto operator=(ServerHandshakeIo const&) -> ServerHandshakeIo& = delete;

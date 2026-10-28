@@ -3,8 +3,11 @@ import nexus.tls.server_hello;
 import nexus.tls.transcript;
 import nexus.tls.schedule;
 static bool deny_allocations=false;
+static bool count_allocations=false;
+static std::size_t allocation_count=0;
 void* operator new(std::size_t size) {
     if (deny_allocations) throw std::bad_alloc{};
+    if (count_allocations) ++allocation_count;
     if (auto p=std::malloc(size ? size : 1)) return p;
     throw std::bad_alloc{};
 }
@@ -18,6 +21,8 @@ int main() {
     auto client=t::ClientHello::parse(std::span{client_wire}.subspan(4)); auto server=t::ServerHello::parse(std::span{server_wire}.subspan(4));
     if (!client || !server || server->is_retry()) return 1;
     auto encoded=server->encode(); if (!encoded || !std::ranges::equal(*encoded,std::span{server_wire}.subspan(4))) return 2;
+    count_allocations=true; auto counted=server->encode(); count_allocations=false;
+    if (!counted || *counted!=*encoded || allocation_count!=1) return 47;
     auto share=server->validate_x25519(*client); if (!share || share->key_exchange!=hex("c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f")) return 3;
     auto priv=c::X25519Private::from_bytes(hex("49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005"));
     if (!priv) return 4; auto shared=priv->agree(share->key_exchange); if (!shared || !std::ranges::equal(shared->view(),hex("8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d"))) return 5;
@@ -87,5 +92,9 @@ int main() {
     bad_retry=retry; bad_retry.extensions[2].data={0,0}; if (bad_retry.validate_retry_request(first)) return 38;
     bad_retry=retry; bad_retry.extensions.push_back({43,{3,4}}); if (bad_retry.validate_retry_request(first)) return 39;
     bad_retry=retry; bad_retry.extensions[1].data={0,0x17}; if (bad_retry.validate_retry_request(first).error()!=t::ServerHelloError::unsupported) return 40;
+    auto large=*server; large.extensions={{43,{3,4}},{16,c::Bytes(65525,0)}};
+    auto large_wire=large.encode(); if (!large_wire || !t::ServerHello::parse(*large_wire) || *t::ServerHello::parse(*large_wire)!=large) return 48;
+    large.extensions.back().data.push_back(0);
+    if (large.encode().error()!=t::ServerHelloError::invalid_length) return 49;
     std::cout << "TLS ServerHello RFC 8448 negotiation and key agreement passed\n";
 }
