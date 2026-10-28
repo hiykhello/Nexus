@@ -169,17 +169,21 @@ template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
     std::array<std::byte,4096> sink{};
     for (;;) { auto n=(**reference).output(sink); if (!n) return false; if (!*n) break; }
     auto baseline=(**reference).shared_memory_used(); reference->reset();
-    limits.shared_memory_bytes=baseline+(enough ? 16438 : 16437);
+    limits.shared_memory_bytes=baseline+(enough ? 33083 : 33082);
     auto session=h::ServerSession::create(limits,events); if (!session) return false;
     for (;;) { auto n=(**session).output(sink); if (!n) return false; if (!*n) break; }
     io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
     Connection connection(a,**session,records(),c::Bytes{}); bool done=false; std::optional<h::TlsServerError> error;
+    if (enough) {
+        constexpr std::array<std::uint8_t,8> partial{23,3,3,0,30,1,2,3};
+        if (::send(b.native_handle(),partial.data(),partial.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(partial.size())) return false;
+    }
     capy::run_async(context.get_executor())(read_step(connection,done,error)); context.restart(); (void)context.run_for(20ms);
     if (enough) {
-        if (done || (**session).shared_memory_used()!=baseline+16438) return false;
+        if (done || (**session).shared_memory_used()!=baseline+33083 || (**session).ciphertext_memory_charge()!=16645) return false;
         connection.cancel(); context.restart(); (void)context.run_for(1s);
         auto output=(**session).output(sink);
-        return done && error==h::TlsServerError::tls && context.stopped() && (**session).shared_memory_used()==baseline &&
+        return done && error==h::TlsServerError::tls && context.stopped() && (**session).shared_memory_used()==baseline && !(**session).ciphertext_memory_charge() &&
             !output && output.error().kind==h::ServerErrorKind::failed;
     }
     auto output=(**session).output(sink);
