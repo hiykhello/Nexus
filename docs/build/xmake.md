@@ -193,7 +193,7 @@ xmake build nexus-nghttp2-memory-test
 xmake run nexus-nghttp2-memory-test
 xmake build nexus-http2-server-test
 xmake run nexus-http2-server-test
-# TLS 组合测试另需 --crypto=y，使用对应配置的 builddir
+# TLS 组合测试另需 --crypto=y、支持 HTTP/2 的 curl，使用对应配置的 builddir
 xmake build nexus-http2-tls-server-test
 python3 tests/http2_tls_server.py /tmp/nexus-http2-build/linux/x86_64/debug/nexus-http2-tls-server-test
 ```

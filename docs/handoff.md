@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- HTTP/2 TLS 驱动区分网络操作超时与一般 TLS 错误；非阻塞 socket 的真实连接测试在 epoll/io_uring 下覆盖挂起读超时、主动取消及失败后拒绝复用，并用 curl HTTPS/HTTP/2 验证证书、ALPN 和响应。
+
 - HTTP/2 TLS 驱动在报告排空或对端关闭时记录会话版本；若应用随后改变会话，关闭通知会被拒绝，必须重新驱动。真实 TLS 测试覆盖对端关闭后排队 GOAWAY 的过期状态，以及正常双向关闭、截断和多流。
 - 按用户建议导出 Capy 条件和 `std::is_error_condition_enum` using，直接导出 Corosio 泛型 `connect`；无上游头文件的独立消费者在 GCC 16 epoll/io_uring 下通过重试、条件回调与取消。`connect_candidates` 仍提供失败时关闭 socket 的额外契约。
 - HTTP/2 实验驱动已组合 Corosio、TLS `h2` ALPN 和 nghttp2 会话；Python/OpenSSL 测试覆盖分片请求、上传暂停恢复、两个并发流、两阶段 GOAWAY 与关闭通知。测试未模拟 GOAWAY 间 RTT 等待。

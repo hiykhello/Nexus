@@ -86,4 +86,35 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                 if server.poll() is None:
                     server.kill()
                     server.wait()
-print("HTTP/2 requests, multiplexing and TLS close in both directions truncation and stale-close rejection passed")
+    for mode in ("timeout", "cancel"):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            server = subprocess.Popen([fixture, cert_der, key_der, str(listener.fileno()), mode], pass_fds=(listener.fileno(),))
+            try:
+                context = ssl.create_default_context(cafile=str(cert))
+                context.set_alpn_protocols(["h2"])
+                with context.wrap_socket(socket.create_connection(listener.getsockname(), timeout=5), server_hostname="localhost") as client:
+                    if client.selected_alpn_protocol() != "h2" or server.wait(timeout=8):
+                        raise RuntimeError("idle TLS connection did not complete after timeout or cancellation")
+            finally:
+                if server.poll() is None:
+                    server.kill()
+                    server.wait()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        server = subprocess.Popen([fixture, cert_der, key_der, str(listener.fileno()), "curl"], pass_fds=(listener.fileno(),))
+        try:
+            result = subprocess.run(["curl", "--silent", "--show-error", "--http2", "--noproxy", "*", "--cacert", str(cert),
+                                     "--resolve", f"localhost:{port}:127.0.0.1", "--write-out", "\n%{http_version}",
+                                     f"https://localhost:{port}/"], capture_output=True, timeout=8)
+            code = server.wait(timeout=5)
+            if code or result.returncode or result.stdout != b"hello h2\n2":
+                raise RuntimeError(f"curl={result.returncode} server={code} out={result.stdout!r} err={result.stderr!r}")
+        finally:
+            if server.poll() is None:
+                server.kill()
+                server.wait()
+print("HTTP/2 requests, multiplexing and TLS close in both directions truncation and stale-close rejection cancellation and curl interoperability passed")

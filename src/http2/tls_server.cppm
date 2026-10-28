@@ -7,7 +7,7 @@ import std;
 
 export namespace nexus::http2 {
     enum class TlsServerStep { progress, paused, drained, peer_closed };
-    enum class TlsServerError { invalid_state, http2, tls };
+    enum class TlsServerError { invalid_state, http2, tls, timeout };
 
     // A single owner drives this object and its session on one executor. Socket,
     // session and this object must outlive an outstanding step. The caller must
@@ -20,6 +20,9 @@ export namespace nexus::http2 {
         std::size_t offset_=0;
         std::uint64_t ready_revision_=0;
         bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false;
+        static auto tls_error(tls::detail::AsyncApplicationError error) noexcept -> TlsServerError {
+            return error==tls::detail::AsyncApplicationError::timeout ? TlsServerError::timeout : TlsServerError::tls;
+        }
     public:
         TlsServerConnection(Socket& socket, ServerSession& session, tls::ApplicationRecords&& records,
                             crypto::Bytes&& unread)
@@ -38,7 +41,7 @@ export namespace nexus::http2 {
             active_=true;
             auto result=co_await tls_.close_notify(deadline);
             active_=false;
-            if (!result) { failed_=true; co_return std::unexpected(TlsServerError::tls); }
+            if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
             closed_=true;
             co_return std::expected<void,TlsServerError>{};
         }
@@ -62,7 +65,7 @@ export namespace nexus::http2 {
             }
             if (tls_.pending_output()) {
                 auto result=co_await tls_.flush(deadline); active_=false;
-                if (!result) { failed_=true; co_return std::unexpected(TlsServerError::tls); }
+                if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
                 co_return TlsServerStep::progress;
             }
             std::array<std::byte,16384> output{};
@@ -71,7 +74,7 @@ export namespace nexus::http2 {
             if (*count) {
                 auto bytes=std::span{reinterpret_cast<std::uint8_t const*>(output.data()),*count};
                 auto result=co_await tls_.send_all(bytes,deadline); active_=false;
-                if (!result) { failed_=true; co_return std::unexpected(TlsServerError::tls); }
+                if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
                 co_return TlsServerStep::progress;
             }
             if (offset_<input_.size()) {
@@ -89,7 +92,7 @@ export namespace nexus::http2 {
             if (peer_closed_) { active_=false; ready_to_close_=true; ready_revision_=session_.revision(); co_return TlsServerStep::peer_closed; }
             if (session_.shutdown_complete()) { active_=false; ready_to_close_=true; ready_revision_=session_.revision(); co_return TlsServerStep::drained; }
             auto received=co_await tls_.read(deadline); active_=false;
-            if (!received) { failed_=true; co_return std::unexpected(TlsServerError::tls); }
+            if (!received) { failed_=true; co_return std::unexpected(tls_error(received.error())); }
             if (received->kind==tls::detail::AsyncReadKind::eof) { peer_closed_=true; co_return TlsServerStep::progress; }
             if (received->kind==tls::detail::AsyncReadKind::backpressure) co_return TlsServerStep::progress;
             auto event=std::move(*received->event);
