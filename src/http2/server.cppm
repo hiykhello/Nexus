@@ -102,8 +102,8 @@ export namespace nexus::http2 {
         std::size_t input_window_;
         std::size_t response_reserved_ = 0, stream_reserved_ = 0, fields_reserved_ = 0, input_reserved_ = 0;
     public:
-        // A single transport owner serializes this allowance with session operations
-        // and releases it only after processing all borrowed input.
+        auto claim_transport() noexcept -> bool { if (active_ || failed_ || transport_claimed_) return false; return transport_claimed_=true; }
+        // One transport owner serializes and releases the allowance after processing borrowed input.
         auto reserve_input(std::size_t size) noexcept -> bool {
             if (active_ || failed_ || !size || input_reserved_ || size>shared_limit_-shared_memory_used()) return false;
             input_reserved_=size; return true; }
@@ -121,7 +121,7 @@ export namespace nexus::http2 {
         std::size_t output_left_ = 0;
         std::uint64_t revision_ = 0;
         bool active_ = false;
-        bool failed_ = false;
+        bool failed_ = false, transport_claimed_ = false;
         enum class Shutdown { running, notice, draining };
         Shutdown shutdown_ = Shutdown::running;
         std::int32_t paused_stream_ = 0;

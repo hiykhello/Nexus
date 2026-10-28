@@ -19,7 +19,7 @@ export namespace nexus::http2 {
         crypto::Bytes input_;
         std::size_t offset_=0;
         std::uint64_t ready_revision_=0;
-        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, session_abandoned_=false;
+        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, session_abandoned_=false, claimed_=false;
         void release_input() noexcept { crypto::Bytes{}.swap(input_); offset_=0; if (input_reserved_) { session_.release_input(); input_reserved_=false; } }
         static auto tls_error(tls::detail::AsyncApplicationError error) noexcept -> TlsServerError {
             return error==tls::detail::AsyncApplicationError::timeout ? TlsServerError::timeout : TlsServerError::tls;
@@ -27,14 +27,15 @@ export namespace nexus::http2 {
     public:
         TlsServerConnection(Socket& socket, ServerSession& session, tls::ApplicationRecords&& records,
                             crypto::Bytes&& unread)
-            : session_(session), tls_(socket,std::move(records),std::move(unread)) {}
+            : session_(session), tls_(socket,std::move(records),std::move(unread)), claimed_(session.claim_transport()) { failed_=!claimed_; }
         TlsServerConnection(TlsServerConnection const&)=delete;
         auto operator=(TlsServerConnection const&) -> TlsServerConnection& = delete;
         ~TlsServerConnection() {
-            if (!session_abandoned_) session_.fail_transport(input_reserved_);
+            if (claimed_ && !session_abandoned_) session_.fail_transport(input_reserved_);
         }
         auto cancel() noexcept -> void {
             failed_=true;
+            if (!claimed_) return;
             if (!active_ && !session_abandoned_) {
                 session_.fail_transport(input_reserved_); release_input(); session_abandoned_=true;
             }
