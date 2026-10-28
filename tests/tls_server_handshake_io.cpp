@@ -53,6 +53,31 @@ int main(int argc,char** argv) {
     auto body=hello.encode(); auto wire=t::HandshakeDecoder::encode(1,*body); if (!body || !wire) return 8;
     auto parsed_charge=body->size()+(body->size()/4)*sizeof(t::Extension);
     c::Bytes input{22,3,1,static_cast<std::uint8_t>(wire->size()>>8),static_cast<std::uint8_t>(wire->size())}; input.insert(input.end(),wire->begin(),wire->end());
+    if (t::ServerHandshakeIo::hello_reassembly_charge!=16389+65539+65535) return 100;
+    auto old_limit_credential=credential();
+    auto old_limit_budget=std::make_shared<nexus::memory::Budget>(16389+65539+t::ServerHandshakeIo::hello_encoded_charge);
+    if (!old_limit_credential) return 101;
+    auto old_limit=t::ServerHandshakeIo::create(std::move(*old_limit_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,old_limit_budget);
+    if (old_limit || old_limit.error()!=t::ServerHandshakeIoError::budget_exceeded || old_limit_budget->reserved() || !old_limit_credential->scheme()) return 102;
+    {
+        auto large=hello; large.extensions.push_back({21,c::Bytes(60000,0)});
+        auto large_body=large.encode(); if (!large_body) return 103;
+        auto large_wire=t::HandshakeDecoder::encode(1,*large_body); if (!large_wire) return 104;
+        auto c=credential(); auto budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
+        if (!c) return 105;
+        auto candidate=t::ServerHandshakeIo::create(std::move(*c),1,100,"h2",t::ServerCredential::max_certificate_list_size,budget);
+        if (!candidate || budget->reserved()!=t::ServerHandshakeIo::hello_input_charge) return 106;
+        for (std::size_t pos=0;pos<large_wire->size();) {
+            auto count=std::min<std::size_t>(16384,large_wire->size()-pos);
+            c::Bytes record{22,3,3,static_cast<std::uint8_t>(count>>8),static_cast<std::uint8_t>(count)};
+            record.insert(record.end(),large_wire->begin()+static_cast<std::ptrdiff_t>(pos),large_wire->begin()+static_cast<std::ptrdiff_t>(pos+count));
+            auto part=candidate->feed(record,2);
+            if (!part || part->consumed!=record.size()) return 107;
+            pos+=count;
+            if (pos<large_wire->size() && budget->reserved()!=t::ServerHandshakeIo::hello_input_charge) return 108;
+        }
+        if (candidate->pending_output().empty() || !candidate->cancel() || budget->reserved()) return 109;
+    }
     auto small_credential=credential(); auto small_budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge-1);
     if (!small_credential) return 71;
     auto small=t::ServerHandshakeIo::create(std::move(*small_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,small_budget);
