@@ -189,6 +189,48 @@ static auto local_test(bool use_uring) -> bool {
                  "peer close did not report EOF");
 }
 
+// Distinct owners may each have a pending operation. stop() only pauses the
+// executor: close the owners and restart before their coroutine frames die.
+static auto multi_owner_stop_test(bool use_uring) -> bool {
+    LocalFixture f(use_uring);
+    corosio::tcp_acceptor first{f.ctx}, second{f.ctx};
+    corosio::tcp_socket peer1{f.ctx}, peer2{f.ctx};
+    Result accept1, accept2, read;
+    auto cleanup = [&] {
+        first.close(); second.close(); f.b.close();
+        drain(f.ctx);
+        f.a.close();
+    };
+    if (first.open() || first.bind(corosio::endpoint(corosio::ipv4_address::loopback(), 0)) || first.listen() ||
+        second.open() || second.bind(corosio::endpoint(corosio::ipv4_address::loopback(), 0)) || second.listen() ||
+        corosio::connect_pair(f.a, f.b)) {
+        cleanup();
+        return check(false, "multi-owner setup failed");
+    }
+    auto ex = f.ctx.get_executor();
+    capy::run_async(ex)(accept(first, peer1, accept1));
+    capy::run_async(ex)(accept(second, peer2, accept2));
+    capy::run_async(ex)(receive_all(f.b, f.buffer, read));
+    run(f.ctx, 20ms);
+    bool ok = check(accept1.started && accept2.started && read.started &&
+                    !accept1.done && !accept2.done && !read.done && !f.ctx.stopped(),
+                    "multi-owner operations did not park");
+    f.ctx.stop();
+    (void)f.ctx.run_for(20ms);
+    ok = check(f.ctx.stopped() && !accept1.done && !accept2.done && !read.done,
+               "context stop completed pending multi-owner operations") && ok;
+    cleanup();
+    if (!(accept1.done && accept2.done && read.done &&
+          accept1.error == capy::cond::canceled && accept2.error == capy::cond::canceled &&
+          read.error == capy::cond::canceled && read.bytes == 0)) {
+        std::cerr << "multi-owner drain: accept=" << accept1.done << ":" << accept1.error.message()
+                  << ", " << accept2.done << ":" << accept2.error.message()
+                  << "; read=" << read.done << ":" << read.error.message() << ":" << read.bytes << '\n';
+        return false;
+    }
+    return ok;
+}
+
 static auto tcp_test(bool use_uring) -> bool {
     TcpFixture f(use_uring);
     if (!check(!f.listener.open(), "TCP listener open failed") ||
@@ -225,10 +267,10 @@ int main() {
 #if defined(__cpp_exceptions)
     try {
 #endif
-        if (!local_test(false) || !tcp_test(false) || !tcp_failure_test(false)) return 1;
+        if (!local_test(false) || !multi_owner_stop_test(false) || !tcp_test(false) || !tcp_failure_test(false)) return 1;
         std::cout << "epoll: local and TCP I/O, cancellation, stop and close passed\n";
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!local_test(true) || !tcp_test(true) || !tcp_failure_test(true)) return 1;
+        if (!local_test(true) || !multi_owner_stop_test(true) || !tcp_test(true) || !tcp_failure_test(true)) return 1;
         std::cout << "io_uring: local and TCP I/O, cancellation, stop and close passed\n";
 #endif
 #if defined(__cpp_exceptions)

@@ -44,7 +44,7 @@ Capy 的任务与缓冲区、Corosio 的网络对象及两者的关系可参考[
 
 直接导出完整 `tcp_socket` 的实验触发 GCC 16 对 TU-local 类型的诊断，因此撤掉了相应模块。实验代理的 `nexus.proxy` 接口只导出 Nexus 自有服务类型，上游头文件位于实现单元；已在 GCC 上通过本地端到端测试。它不是通用网络 facade，支持范围见 [SOCKS5 说明](../architecture/protocols/socks5-mixed.md)。
 
-[`tests/io.cpp`](../../tests/io.cpp) 直接在测试实现中包含上游头文件，验证数据传输、预取消、读取挂起后取消、停止/恢复、关闭及连接失败，并对每次事件循环设置时间上限。对象关闭后需继续驱动 context，让完成项清理完毕；单纯 `stop()` 不等于取消挂起的工作。无补丁版本的测试覆盖 GCC/Linux epoll 和可选系统 liburing 的一小部分路径，尚未覆盖跨线程竞争、UDP、半关闭或其他平台。链接限制见[依赖封装](third-party-xmake.md)。
+[`tests/io.cpp`](../../tests/io.cpp) 直接在测试实现中包含上游头文件，验证数据传输、预取消、读取挂起后取消、停止/恢复、关闭及连接失败，并对每次事件循环设置时间上限。对象关闭后需继续驱动 context，让完成项清理完毕；单纯 `stop()` 不等于取消挂起的工作。两个独立监听器的 accept 和一条本地读取同时挂起时，epoll 与 io_uring 均验证停止不完成操作、关闭各操作 owner 后重启并排空取消；不在同一监听器上并发 accept。若同时关闭读取对端，读取结果也可能是 EOF，不能依赖取消与 EOF 的先后。无补丁版本的测试覆盖 GCC/Linux epoll 和可选系统 liburing 的一小部分路径，尚未覆盖跨线程竞争、UDP、半关闭或其他平台。链接限制见[依赖封装](third-party-xmake.md)。
 
 ## 已验证的 Glaze 最小示例
 

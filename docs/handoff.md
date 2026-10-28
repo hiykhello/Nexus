@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- Corosio 多 owner 停止回归验证两个独立 accept 与本地读取同时挂起时，`stop()` 不完成操作；关闭操作 owner 并重启后排空取消，epoll/io_uring 均通过。对端同时关闭时读取可先得到 EOF。尚未覆盖挂起 connect 和跨线程竞态。
+
 - HTTP/2 响应体改为精确大小的独占数组，新增 `response_memory_used()`；普通关闭、RST 和 nghttp2 响应提交 OOM 均验证回收。服务端、内存预算及 TLS/curl 双后端测试和行数检查通过。该计数不涵盖分配器开销、头部、TLS 和传输缓冲。
 
 - HTTP/2 响应支持校验过的 `content-length`：普通响应必须匹配实际体积，HEAD/304 的表示长度由应用负责，204 禁止该字段。HEAD 不能发送响应体；初始请求头未完成前拒绝响应。内存分片测试及 curl HTTPS/HTTP/2 HEAD/GET 通过。
@@ -28,6 +30,6 @@
 ## 下一步
 
 1. 为实际拨号设计逐候选策略回调或其他保持原有路由及错误顺序的组合连接接口，再补超时、候选上限、异步取消和 resolver/连接的 owner 回收。
-2. 核对 Corosio/Capy 的 `io_context` stop/drain 在 accept、connect 和多挂起操作下的 owner 语义，补最小回归。
+2. 继续核对 Corosio/Capy 的 `io_context` stop/drain 在挂起 connect、跨线程和其他多操作下的 owner 语义。
 3. 回到 HTTP/2 流生命周期、连接级预算、输入/输出背压，再接 TLS ALPN、Corosio 应用记录和独立网络对端。
 4. 每完成一个切片，先运行与范围匹配的验证，再以清楚描述改动的主题提交，并更新本窗口，只保留新的上一步/当前/下一步；`where` 不是必需前缀。
