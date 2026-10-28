@@ -55,7 +55,7 @@ def socket_fds(directory):
     return sockets
 
 
-def scenario(root, workers, stop_pending):
+def scenario(root, workers, stop_pending, early_payload=False):
     with socket.socket() as target, socket.socket() as reserved:
         target.bind(('127.0.0.1', 0))
         target.listen(1)
@@ -80,6 +80,9 @@ routing {{ default-outbound "direct"; }}
                 destination = target.getsockname()[1]
                 started = time.monotonic()
                 client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01' + destination.to_bytes(2, 'big'))
+                if early_payload:
+                    client.sendall(b'early payload')
+                    client.shutdown(socket.SHUT_WR)
                 client.settimeout(.3)
                 try:
                     early = client.recv(10)
@@ -87,7 +90,18 @@ routing {{ default-outbound "direct"; }}
                     pass
                 else:
                     raise AssertionError(f'connect was not pending: {early!r}')
-                if stop_pending:
+                if early_payload:
+                    target.settimeout(5)
+                    with target.accept()[0], target.accept()[0]:
+                        with target.accept()[0] as upstream:
+                            upstream.settimeout(3)
+                            client.settimeout(3)
+                            assert exact(client, 10)[:2] == b'\x05\x00'
+                            assert exact(upstream, 13) == b'early payload'
+                            assert upstream.recv(1) == b''
+                            upstream.sendall(b'response')
+                            assert exact(client, 8) == b'response'
+                elif stop_pending:
                     process.terminate()
                     process.wait(timeout=5)
                     client.settimeout(2)
@@ -119,7 +133,7 @@ routing {{ default-outbound "direct"; }}
                             pass
                         else:
                             raise AssertionError('timed-out connect remained queued')
-            if stop_pending:
+            if stop_pending and not early_payload:
                 assert process.returncode == 0, process.stderr.read().decode()
                 process.stderr.close()
                 with socket.socket() as next_port:
@@ -145,4 +159,5 @@ with tempfile.TemporaryDirectory(prefix='nexus-pending-connect-') as tmp:
     for workers in (1, 2):
         for stop_pending in (True, False):
             scenario(pathlib.Path(tmp), workers, stop_pending)
-print('pending direct connect: stop, restart and timeout passed')
+        scenario(pathlib.Path(tmp), workers, False, early_payload=True)
+print('pending direct connect: stop, restart, timeout, early data and half-close passed')

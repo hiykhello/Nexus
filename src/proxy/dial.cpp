@@ -3,6 +3,7 @@ module;
 #include <boost/capy/buffers.hpp>
 #include <boost/capy/cond.hpp>
 #include <boost/capy/ex/run_async.hpp>
+#include <boost/capy/ex/async_event.hpp>
 #include <boost/capy/task.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/tcp_acceptor.hpp>
@@ -125,7 +126,7 @@ namespace nexus::proxy {
     }
 
         // Shared routing and dialing ensures both protocols enforce the same policy.
-        auto dial(std::shared_ptr<Session> session, io::io_context& context,
+        auto dial_impl(std::shared_ptr<Session> session, io::io_context& context,
                   rules::RouteMatcher const& policy, socks5::Request const& original) -> capy::task<std::uint8_t> {
 #ifdef NEXUS_TEST_FAKEIP
             auto request=original;
@@ -246,5 +247,38 @@ namespace nexus::proxy {
             }
             co_return error ? failure_code(error) : blocked ? 2 : 4;
         }
+
+    namespace {
+        struct DialWatch {
+            std::stop_source stop;
+            capy::async_event done;
+            ~DialWatch() { stop.request_stop(); }
+        };
+        // Error readiness does not consume pipelined bytes or confuse a normal
+        // write-side EOF with a reset. It is best effort: an error occurring
+        // before registration may be missed by the underlying backend.
+        auto watch_client_error(std::shared_ptr<Session> session) -> capy::task<> {
+            auto [error]=co_await session->client.wait(io::wait_type::error);
+            // Corosio consumes SO_ERROR and returns it; EIO can also mean a
+            // harmless hangup with no socket error, including half-close.
+            if (!session->closed && error && error!=std::errc::io_error && error!=capy::cond::canceled)
+                session->close();
+        }
+    }
+
+    auto dial(std::shared_ptr<Session> session, io::io_context& context,
+              rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<std::uint8_t> {
+        auto watch=std::make_shared<DialWatch>();
+        capy::run_async(context.get_executor(),watch->stop.get_token(),
+            [watch] { watch->done.set(); },
+            [watch,session](std::exception_ptr) { session->close(); watch->done.set(); })(watch_client_error(session));
+        // Stop the watcher even if dialing throws. Its completion retains both
+        // the watch and session until the pending socket operation has drained.
+        struct StopWatch { std::shared_ptr<DialWatch> state; ~StopWatch() { state->stop.request_stop(); } } guard{watch};
+        auto result=co_await dial_impl(session,context,policy,request);
+        watch->stop.request_stop();
+        (void)co_await watch->done.wait();
+        co_return session->closed ? 1 : result;
+    }
 
 }
