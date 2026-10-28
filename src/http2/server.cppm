@@ -108,7 +108,7 @@ export namespace nexus::http2 {
             if (active_ || failed_ || !size || input_reserved_ || size>shared_limit_-shared_memory_used()) return false;
             input_reserved_=size; return true; }
         void release_input() noexcept { input_reserved_=0; }
-        void abandon_input() noexcept { input_reserved_=0; failed_=true; ++revision_; }
+        void fail_transport(bool release=true) noexcept { if (release) input_reserved_=0; failed_=true; ++revision_; }
     private:
         struct FieldsReservation { ServerSession& owner;
             ~FieldsReservation() { owner.fields_reserved_=0; }
