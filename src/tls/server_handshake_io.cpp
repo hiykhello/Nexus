@@ -98,6 +98,7 @@ namespace nexus::tls {
             }
             if (!keys) return fail(ServerHandshakeIoError::protocol_error);
             auto& hello=keys->server_hello; if (hello.size()>16384) return fail(ServerHandshakeIoError::protocol_error);
+            std::optional<memory::Budget::Reservation> flight_scratch;
             if (budget_) {
                 hello_reservation_=memory::Budget::reserve(budget_,hello.size()+5);
                 if (!hello_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
@@ -111,10 +112,17 @@ namespace nexus::tls {
                 auto count=(plaintext+16383)/16384;
                 flight_reservation_=memory::Budget::reserve(budget_,plaintext+22*count);
                 if (!flight_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
+                // Logical lengths of the simultaneously possible certificate body
+                // and encoded message, fragment array and small encoded messages.
+                // Vector capacities and crypto-library temporaries remain outside it.
+                auto scratch=2*(certificate+8)+16384+(8+*signature)+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+52;
+                flight_scratch=memory::Budget::reserve(budget_,scratch);
+                if (!flight_scratch) return fail(ServerHandshakeIoError::budget_exceeded);
             }
             server_hello_={22,3,3,static_cast<std::uint8_t>(hello.size()>>8),static_cast<std::uint8_t>(hello.size())};
             server_hello_.insert(server_hello_.end(),hello.begin(),hello.end());
             auto flight=ServerFlight::create(std::move(*keys),*credential_,required_alpn_); if (!flight) return fail(ServerHandshakeIoError::protocol_error);
+            flight_scratch.reset();
             if (flight_reservation_) {
                 std::size_t actual=0;
                 for (auto const& record:flight->records()) {

@@ -84,6 +84,25 @@ int main(int argc,char** argv) {
     if (!output_limited) return 77;
     auto output_denied=output_limited->feed(input,2);
     if (output_denied || output_denied.error()!=t::ServerHandshakeIoError::budget_exceeded || output_budget->reserved()) return 78;
+    for (bool enough:{false,true}) {
+        auto bounded_credential=credential(); if (!bounded_credential) return 90;
+        auto signature=bounded_credential->max_signature_size(); if (!signature) return 91;
+        auto list=bounded_credential->certificate().size()+5;
+        auto extensions=std::size_t{15}; // h2 EncryptedExtensions handshake message
+        auto plaintext=list+8+extensions+8+*signature+52;
+        auto output=plaintext+22*((plaintext+16383)/16384);
+        auto scratch=2*(list+8)+16384+(8+*signature)+extensions+52;
+        auto limit=t::ServerHandshakeIo::hello_input_charge+server->pending_output().size()+output+scratch-(enough ? 0 : 1);
+        auto bounded_budget=std::make_shared<nexus::memory::Budget>(limit);
+        auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
+        if (!candidate) return 92;
+        auto result=candidate->feed(input,2);
+        if (!enough) {
+            if (result || result.error()!=t::ServerHandshakeIoError::budget_exceeded || bounded_budget->reserved()) return 93;
+        } else {
+            if (!result || candidate->pending_output().empty() || bounded_budget->reserved()>=limit || !candidate->cancel() || bounded_budget->reserved()) return 94;
+        }
+    }
     for (bool deny_input:{false,true}) {
         auto input_credential=credential(); auto input_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
         if (!input_credential) return 83;
