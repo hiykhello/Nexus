@@ -134,6 +134,73 @@ routing {{ default-outbound "edge"; }}
             assert not thread.is_alive()
 
 
+def overlapping_handshakes(root, workers):
+    with socket.socket() as first, socket.socket() as second, socket.socket() as reservation, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
+        first.bind(('127.0.0.2', 0)); first.listen(4); first.settimeout(4)
+        second.bind(('127.0.0.1', first.getsockname()[1])); second.listen(4); second.settimeout(.5)
+        reservation.bind(('127.0.0.1', 0)); port=reservation.getsockname()[1]; reservation.close()
+        dns.bind(('127.0.0.1', 0)); dns.settimeout(.1)
+        done=threading.Event(); queries=[]
+        def answer():
+            while not done.is_set():
+                try: packet, peer=dns.recvfrom(4096)
+                except TimeoutError: continue
+                queries.append(packet)
+                record=b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04\x7f\x00\x00'
+                dns.sendto(packet[:2]+b'\x81\x80\x00\x01\x00\x02\x00\x00\x00\x00'+packet[12:]+record+b'\x02'+record+b'\x01',peer)
+        thread=threading.Thread(target=answer); thread.start()
+        config=root/'overlap.kdl'
+        config.write_text(f'''schema-version 1
+role "client"
+workers {workers}
+inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
+outbound "direct" type="direct"
+dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
+outbound "edge" type="vless" {{ bootstrap-resolver "boot"; server host="edge.test" port={first.getsockname()[1]}; authentication {{ uuid-file "{root / "user.uuid"}"; }}; tls {{ server-name "localhost"; ca-file "{root / "cert.pem"}"; verify #true; }}; }}
+routing {{ default-outbound "edge"; }}
+''')
+        process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        clients=[]; upstreams=[]
+        try:
+            for _ in range(3):
+                deadline=time.monotonic()+5
+                while True:
+                    if process.poll() is not None: raise AssertionError(process.stderr.read().decode())
+                    try: client=socket.create_connection(('127.0.0.1',port),timeout=.2); break
+                    except OSError:
+                        if time.monotonic()>=deadline: raise
+                        time.sleep(.02)
+                clients.append(client); client.settimeout(3)
+                client.sendall(b'\x05\x01\x00'); assert exact(client,2)==b'\x05\x00'
+                client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x04\xd2')
+                upstream=first.accept()[0]; upstream.settimeout(3); upstreams.append(upstream)
+                header=exact(upstream,5)
+                assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
+            assert len(queries)==3
+            clients[0].setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); clients[0].close()
+            assert upstreams[0].recv(1)==b'', 'reset did not cancel its handshake'
+            for upstream in upstreams[1:]:
+                upstream.settimeout(.1)
+                try: data=upstream.recv(1)
+                except TimeoutError: pass
+                else: raise AssertionError(f'another handshake stopped early: {data!r}')
+            process.terminate(); process.wait(timeout=5)
+            for upstream in upstreams[1:]:
+                upstream.settimeout(2); assert upstream.recv(1)==b'', 'stop did not close handshake'
+            for client in clients[1:]:
+                client.settimeout(2); assert client.recv(1)==b'', 'stop did not close inbound client'
+            try: second.accept()[0].close()
+            except TimeoutError: pass
+            else: raise AssertionError('later tunnel candidate was dialed after stop')
+            assert process.returncode==0
+        finally:
+            if process.poll() is None: process.terminate(); process.wait(timeout=5)
+            done.set(); thread.join(timeout=2)
+            for sock in clients+upstreams: sock.close()
+            if process.returncode and sys.exc_info()[0] is None: raise AssertionError(process.stderr.read().decode())
+            process.stderr.close(); assert not thread.is_alive()
+
+
 with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory:
     root=pathlib.Path(directory)
     (root/'user.uuid').write_text('00010203-0405-0607-0809-0a0b0c0d0e0f\n'); (root/'user.uuid').chmod(0o600)
@@ -142,4 +209,5 @@ with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory
     shadowsocks=len(sys.argv)>2 and sys.argv[2]=='ss'
     for workers in (1,2):
         for retry in (False,True): scenario(root,workers,shadowsocks,retry)
-print('tunnel candidates: reset cancels and ordinary failure retries')
+        if not shadowsocks: overlapping_handshakes(root,workers)
+print('tunnel candidates: reset, retry and overlapping handshake stop passed' if not shadowsocks else 'SS tunnel candidates: reset cancels and ordinary failure retries')
