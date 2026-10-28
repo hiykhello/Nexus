@@ -16,6 +16,7 @@ namespace nexus::tls {
     auto RecordStream::feed(std::span<std::uint8_t const> input, RecordFraming mode) -> std::expected<RecordFeed,RecordStreamError> {
         if (failed_ || finished_) return std::unexpected(RecordStreamError::invalid_state);
         if (mode_ && *mode_ != mode) { failed_=true; return std::unexpected(RecordStreamError::invalid_state); }
+        try {
         RecordFeed out;
         if (!input.empty() && !mode_) mode_=mode;
         while (out.consumed<input.size()) {
@@ -38,6 +39,7 @@ namespace nexus::tls {
             break;
         }
         return out;
+        } catch (...) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); throw; }
     }
     auto RecordStream::finish() -> std::expected<void,RecordStreamError> {
         if (failed_ || finished_) return std::unexpected(RecordStreamError::invalid_state);

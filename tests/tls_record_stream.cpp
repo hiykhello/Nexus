@@ -2,6 +2,15 @@ import std;
 import nexus.tls.record_stream;
 import nexus.tls.record;
 import nexus.tls.handshake;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 int main() {
     c::Bytes key(16,7), iv(12,9), msg{1,0,0,3,'a','b','c'};
@@ -40,5 +49,15 @@ int main() {
     auto after_move=std::move(before_move);
     if (before_move.feed({},t::RecordFraming::ciphertext).error()!=t::RecordStreamError::invalid_state) return 19;
     auto rest=after_move.feed(std::span{wire}.subspan(2),t::RecordFraming::ciphertext); if (!rest || !rest->record || rest->record->bytes!=*first) return 20;
+    // Fail both the header allocation and the body allocation after the
+    // header has already been consumed within the same feed call.
+    for (int index=0;index<2;++index) {
+        t::RecordStream failed; bool threw=false; fail_after=index;
+        try { (void)failed.feed(*first,t::RecordFraming::ciphertext); }
+        catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (!threw || failed.pending_bytes()!=0 || failed.feed(*first,t::RecordFraming::ciphertext).error()!=t::RecordStreamError::invalid_state ||
+            failed.finish().error()!=t::RecordStreamError::invalid_state) return 21;
+    }
     std::cout << "TLS record stream fragmentation, epochs and handshake integration passed\n";
 }

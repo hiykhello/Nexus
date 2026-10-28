@@ -25,6 +25,7 @@ export namespace nexus::tls {
         RecordStream(RecordStream&& other) noexcept;
         auto operator=(RecordStream&& other) noexcept -> RecordStream&;
         // mode must remain unchanged until the current record is complete.
+        // An exception fails the decoder and discards partial input; consumption is then unknown.
         [[nodiscard]] auto feed(std::span<std::uint8_t const> input, RecordFraming mode) -> std::expected<RecordFeed,RecordStreamError>;
         [[nodiscard]] auto finish() -> std::expected<void,RecordStreamError>;
         [[nodiscard]] auto pending_bytes() const noexcept -> std::size_t { return pending_.size(); }
