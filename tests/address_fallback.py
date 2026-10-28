@@ -23,34 +23,37 @@ def exact(sock, count):
     return bytes(result)
 
 
-def attempt(port, target_port, protocol, allowed):
+def attempt(port, target_port, protocol, host, socks_code, http_status):
     with socket.create_connection(('127.0.0.1', port), timeout=3) as client:
-        host = b'nexus-fallback.test'
         if protocol == 'socks':
             client.sendall(b'\x05\x01\x00')
             assert exact(client, 2) == b'\x05\x00'
             client.sendall(b'\x05\x01\x00\x03' + bytes([len(host)]) + host + target_port.to_bytes(2, 'big'))
             head = exact(client, 4)
             exact(client, 6 if head[3] == 1 else 18)
+            assert head[1] == socks_code, head
             connected = head[1] == 0
         else:
             client.sendall(b'CONNECT ' + host + b':' + str(target_port).encode() + b' HTTP/1.1\r\nHost: ' + host + b'\r\n\r\n')
             response = bytearray()
             while not response.endswith(b'\r\n\r\n'):
                 response += exact(client, 1)
-            connected = response.split(b' ', 2)[1] == b'200'
-        assert connected == allowed
+            status = response.split(b' ', 2)[1]
+            assert status == http_status, response
+            connected = status == b'200'
         if connected:
             client.sendall(b'fallback')
             assert exact(client, 8) == b'fallback'
 
 
-def run(root, rule, allowed):
-    with socket.socket() as target, socket.socket() as reserved:
+def run(root, rule, host, socks_code, http_status):
+    allowed = socks_code == 0
+    with socket.socket() as target, socket.socket() as refused, socket.socket() as reserved:
         target.bind(('127.0.0.1', 0))
         target.listen(4)
         target.settimeout(1)
         target_port = target.getsockname()[1]
+        refused.bind(('127.0.0.2', target_port))  # reserve a bound, non-listening port
         reserved.bind(('127.0.0.1', 0))
         port = reserved.getsockname()[1]
         reserved.close()
@@ -95,7 +98,7 @@ routing {{
                 accepted.clear()
                 worker = threading.Thread(target=echo)
                 worker.start()
-                attempt(port, target_port, protocol, allowed)
+                attempt(port, target_port, protocol, host, socks_code, http_status)
                 worker.join(timeout=4)
                 assert not worker.is_alive()
                 assert bool(accepted) == allowed, "unexpected target connection"
@@ -108,7 +111,12 @@ routing {{
 
 with tempfile.TemporaryDirectory(prefix='nexus-fallback-') as directory:
     root = pathlib.Path(directory)
-    run(root, '192.0.2.0/24', True)  # first address refuses; second succeeds
-    run(root, '127.0.0.2/32', True)  # blocked first address is skipped
-    run(root, '127.0.0.1/32', False)  # failed first address cannot bypass block
+    forward = b'nexus-fallback.test'
+    reverse = b'nexus-fallback-reversed.test'
+    run(root, '192.0.2.0/24', forward, 0, b'200')  # refusal then success
+    run(root, '127.0.0.2/32', forward, 0, b'200')  # blocked then success
+    run(root, '127.0.0.1/32', forward, 5, b'502')  # refusal takes precedence over later block
+    run(root, '127.0.0.0/8', forward, 2, b'403')   # all candidates blocked
+    run(root, '127.0.0.2/32', reverse, 0, b'200')  # success stops before later block
+    run(root, '127.0.0.1/32', reverse, 5, b'502')  # block then refusal
 print('Resolved address fallback and per-address policy passed')

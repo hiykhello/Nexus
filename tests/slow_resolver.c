@@ -30,15 +30,17 @@ int getaddrinfo(char const* node, char const* service,
     }
     pthread_once(&init_once, init_resolver);
     if (!next_resolver) return EAI_SYSTEM;
-    if (node && strcmp(node, "nexus-fallback.test") == 0) {
+    if (node && (strcmp(node, "nexus-fallback.test") == 0 ||
+                 strcmp(node, "nexus-fallback-reversed.test") == 0)) {
         struct addrinfo numeric_hints = {0};
         numeric_hints.ai_family = AF_INET;
         numeric_hints.ai_socktype = SOCK_STREAM;
         numeric_hints.ai_flags = AI_NUMERICHOST;
         struct addrinfo *first = NULL, *second = NULL;
-        int error = next_resolver("127.0.0.2", service, &numeric_hints, &first);
+        int reversed = strcmp(node, "nexus-fallback-reversed.test") == 0;
+        int error = next_resolver(reversed ? "127.0.0.1" : "127.0.0.2", service, &numeric_hints, &first);
         if (error) return error;
-        error = next_resolver("127.0.0.1", service, &numeric_hints, &second);
+        error = next_resolver(reversed ? "127.0.0.2" : "127.0.0.1", service, &numeric_hints, &second);
         if (error) { freeaddrinfo(first); return error; }
         struct addrinfo *tail = first;
         while (tail->ai_next) tail = tail->ai_next;
