@@ -36,7 +36,11 @@ export namespace nexus::http2 {
                 else session_.release_input();
             }
         }
-        auto cancel() noexcept -> void { failed_=true; tls_.cancel(); }
+        auto cancel() noexcept -> void {
+            failed_=true;
+            if (!active_ && input_reserved_ && (!input_.empty() || resume_pending_)) { session_.abandon_input(); release_input(); }
+            tls_.cancel();
+        }
 
         // After step reports drained or peer_closed, send close_notify without
         // modifying the session afterward. The caller owns the socket and peer-close wait.
@@ -48,7 +52,8 @@ export namespace nexus::http2 {
             active_=true;
             auto result=co_await tls_.close_notify(deadline);
             active_=false;
-            if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
+            if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
+            if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
             closed_=true;
             co_return std::expected<void,TlsServerError>{};
         }
@@ -64,16 +69,19 @@ export namespace nexus::http2 {
             active_=true;
             if (tls_.pending_output()) {
                 auto result=co_await tls_.flush(deadline); active_=false;
-                if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
+                if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
+                if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
                 co_return TlsServerStep::progress;
             }
             std::array<std::byte,16384> output{};
             auto count=session_.output(output);
             if (!count) { active_=false; cancel(); co_return std::unexpected(TlsServerError::http2); }
+            if (failed_) { active_=false; cancel(); co_return std::unexpected(TlsServerError::tls); }
             if (*count) {
                 auto bytes=std::span{reinterpret_cast<std::uint8_t const*>(output.data()),*count};
                 auto result=co_await tls_.send_all(bytes,deadline); active_=false;
-                if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
+                if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
+                if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
                 co_return TlsServerStep::progress;
             }
             if (session_.paused_stream()) { active_=false; co_return TlsServerStep::paused; }
@@ -82,6 +90,7 @@ export namespace nexus::http2 {
                 auto result=session_.receive({});
                 if (!result) { active_=false; cancel(); co_return std::unexpected(TlsServerError::http2); }
                 active_=false;
+                if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
                 if (session_.paused_stream()) { resume_pending_=true; co_return TlsServerStep::paused; }
                 if (offset_==input_.size()) release_input();
                 co_return TlsServerStep::progress;
@@ -94,6 +103,7 @@ export namespace nexus::http2 {
                 }
                 offset_+=*consumed;
                 active_=false;
+                if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
                 if (session_.paused_stream()) { resume_pending_=true; co_return TlsServerStep::paused; }
                 if (offset_==input_.size()) release_input();
                 co_return TlsServerStep::progress;
@@ -105,13 +115,14 @@ export namespace nexus::http2 {
             if (!session_.reserve_input(16384)) { active_=false; cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             input_reserved_=true;
             auto received=co_await tls_.read(deadline); active_=false;
-            if (!received) { release_input(); failed_=true; co_return std::unexpected(tls_error(received.error())); }
+            if (!received) { release_input(); cancel(); co_return std::unexpected(tls_error(received.error())); }
+            if (failed_) { release_input(); cancel(); co_return std::unexpected(TlsServerError::tls); }
             if (received->kind==tls::detail::AsyncReadKind::eof) { release_input(); peer_closed_=true; co_return TlsServerStep::progress; }
             if (received->kind==tls::detail::AsyncReadKind::backpressure) { release_input(); co_return TlsServerStep::progress; }
             auto event=std::move(*received->event);
             if (event.kind==tls::ApplicationEventKind::data) input_=std::move(event.data);
             else { release_input(); if (event.kind==tls::ApplicationEventKind::close_notify) peer_closed_=true;
-                else if (event.kind==tls::ApplicationEventKind::fatal_alert) { failed_=true; co_return std::unexpected(TlsServerError::tls); } }
+                else if (event.kind==tls::ApplicationEventKind::fatal_alert) { cancel(); co_return std::unexpected(TlsServerError::tls); } }
             if (input_.empty()) release_input();
             co_return TlsServerStep::progress;
         }

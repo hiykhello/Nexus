@@ -113,7 +113,7 @@ auto until_released(Connection& connection,h::ServerSession& session,bool& relea
         if (!session.input_memory_charge()) { released=true; co_return; }
     }
 }
-template<class Backend> auto abandon_paused(Backend backend,bool compete) -> bool {
+template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
     io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
     h::ServerLimits limits{8,16,4096,262144,262144}; limits.shared_memory_bytes=262144;
     auto session=h::ServerSession::create(limits,{nullptr,headers,pause_data,end,closed}); if (!session) return false;
@@ -128,7 +128,7 @@ template<class Backend> auto abandon_paused(Backend backend,bool compete) -> boo
     auto connection=std::make_unique<Connection>(a,**session,records(),std::move(*wire)); bool paused=false;
     capy::run_async(context.get_executor())(until_paused(*connection,paused)); context.restart(); (void)context.run_for(1s);
     if (!context.stopped() || !paused || (**session).paused_stream()!=3 || (**session).input_memory_charge()!=16384) return false;
-    if (compete) {
+    if (mode==1) {
         auto available=limits.shared_memory_bytes-(**session).shared_memory_used();
         if (available<sizeof(nex::nghttp2::nghttp2_nv)) return false;
         std::vector<std::byte> body(available);
@@ -141,16 +141,29 @@ template<class Backend> auto abandon_paused(Backend backend,bool compete) -> boo
         if (!context.stopped() || !released || (**session).input_memory_charge() || !(**session).respond_body(1,200,body)) return false;
         return (**session).response_memory_used()==body.size() && (**session).shared_memory_used()<=limits.shared_memory_bytes;
     }
-    connection.reset();
+    if (mode==3) {
+        if (!(**session).respond_empty(1,204)) return false;
+        std::array<char,4096> filler{};
+        for (;;) { auto n=::send(a.native_handle(),filler.data(),filler.size(),MSG_DONTWAIT|MSG_NOSIGNAL);
+            if (n>0 || (n<0 && errno==EINTR)) continue;
+            if (n<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) break; return false; }
+        bool done=false; std::optional<h::TlsServerError> error;
+        capy::run_async(context.get_executor())(read_step(*connection,done,error)); context.restart(); (void)context.run_for(20ms);
+        if (done) return false;
+        connection->cancel();
+        if ((**session).input_memory_charge()!=16384) return false;
+        context.restart(); (void)context.run_for(1s);
+        if (!done || error!=h::TlsServerError::tls || !context.stopped()) return false;
+    } else if (mode==2) connection->cancel(); else connection.reset();
     auto resumed=(**session).resume_input(3); auto output=(**session).output(std::span<std::byte>{});
     return !resumed && resumed.error().kind==h::ServerErrorKind::failed && !output &&
         output.error().kind==h::ServerErrorKind::failed && (**session).input_memory_charge()==0;
 }
 int main() {
     for (int i=0;i<5;++i) {
-        if (!exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,false) || !abandon_paused(io::epoll,true)) return 1;
+        if (!exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,false) || !abandon_paused(io::uring,true)) return 2;
+        if (!exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
 #endif
     }
     std::cout << "HTTP/2 TLS blocked output cancellation and deadline passed\n";
