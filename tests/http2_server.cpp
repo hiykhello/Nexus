@@ -213,7 +213,7 @@ int main() {
     // also observes the deliberately small eight-byte stream window.
     Observed flow_observed;
     nh::ServerEvents flow_events{&flow_observed, on_headers, on_data, on_end, on_closed};
-    auto flow_session = nh::ServerSession::create({8, 4, 128, 64, 16, 8}, flow_events);
+    auto flow_session = nh::ServerSession::create({8, 4, 128, 64, 16, 8, 64, 0, 0}, flow_events);
     if (!flow_session) return 21;
     flow_observed.session = flow_session->get();
     h2::nghttp2_session_callbacks* flow_callbacks = nullptr;
@@ -228,6 +228,7 @@ int main() {
     std::unique_ptr<h2::nghttp2_session, decltype(&h2::nghttp2_session_del)> flow_client_owner(flow_client, h2::nghttp2_session_del);
     if (h2::nghttp2_submit_settings(flow_client, 0, nullptr, 0) || !to_server(flow_client, **flow_session) ||
         !to_client(**flow_session, flow_client)) return 24;
+    if (h2::nghttp2_session_get_remote_settings(flow_client, h2::NGHTTP2_SETTINGS_HEADER_TABLE_SIZE) != 0) return 42;
     BodySource flow_body;
     h2::nghttp2_data_provider2 flow_provider{};
     flow_provider.source.ptr = &flow_body;

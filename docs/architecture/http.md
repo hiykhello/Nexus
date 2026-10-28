@@ -58,7 +58,7 @@ nghttp2 官方说明核心库不执行网络 I/O，接收输入字节、产生�
 
 适配器还需处理连接/流两级窗口、消费后窗口更新、DATA 延迟供应、RESET、GOAWAY 和流生命周期；头列表、HPACK 状态、并发流、待发送 body 与控制帧开销全部计入预算。单流超时不能直接销毁承载其他流的 session。GOAWAY 后重试依据请求是否已执行、幂等性与 body 可重放性，不能自动重发任意请求。
 
-仅引入 libnghttp2 核心库，工具、示例服务器和它们使用的 TLS/事件循环不进入 Nexus 运行依赖。当前通过 `xmake f --http2=y` 启用固定包和实验性内存服务端会话。会话同步交付借用的头部与 DATA，调用方必须在回调返回前处理数据；输出复制到调用方缓冲区，禁止驱动重入。并发流 SETTINGS 和头块限额尚非完整的会话内存预算；响应提交现支持有界空体和会话拥有的有界响应体，数据经 nghttp2 provider 分片读取；重复提交、未知流、单响应超限和并发响应总预算超限均被拒绝。输入 DATA 回调可暂停，调用方必须显式恢复后再提交后续输入。接收侧关闭 nghttp2 自动窗口更新，`accepted` DATA 在回调内确认，`pause` DATA 由 `resume_input` 确认；`ServerLimits::outbound_ack_frames` 还限制输出停滞时自动排队的 PING/SETTINGS 确认帧，超限会使会话失败。异步输出背压和头部/HPACK 等连接级完整总内存预算尚未实现。HTTP/2 网络连接驱动、TLS ALPN、应用适配、h2c、扩展 CONNECT 和服务器推送仍未实现，不能通告 h2。
+仅引入 libnghttp2 核心库，工具、示例服务器和它们使用的 TLS/事件循环不进入 Nexus 运行依赖。当前通过 `xmake f --http2=y` 启用固定包和实验性内存服务端会话。会话同步交付借用的头部与 DATA，调用方必须在回调返回前处理数据；输出复制到调用方缓冲区，禁止驱动重入。并发流 SETTINGS 和头块限额尚非完整的会话内存预算；响应提交现支持有界空体和会话拥有的有界响应体，数据经 nghttp2 provider 分片读取；重复提交、未知流、单响应超限和并发响应总预算超限均被拒绝。输入 DATA 回调可暂停，调用方必须显式恢复后再提交后续输入。接收侧关闭 nghttp2 自动窗口更新，`accepted` DATA 在回调内确认，`pause` DATA 由 `resume_input` 确认；`ServerLimits::outbound_ack_frames` 还限制输出停滞时自动排队的 PING/SETTINGS 确认帧，超限会使会话失败。HPACK 编码动态表上限配置给 nghttp2，解码动态表上限通过 SETTINGS 通告；对端确认之前解码表仍按协议默认值处理。内存对端已验证零表大小的 SETTINGS 和后续请求，尚未测量全部 HPACK 分配或恶意对端的资源使用。异步输出背压和连接级完整总内存预算尚未实现。HTTP/2 网络连接驱动、TLS ALPN、应用适配、h2c、扩展 CONNECT 和服务器推送仍未实现，不能通告 h2。
 
 ## 资源、停止与验收
 

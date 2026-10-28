@@ -28,6 +28,10 @@ export namespace nexus::http2 {
         // Bound automatically generated PING and SETTINGS acknowledgements
         // when the transport cannot drain output.
         std::size_t outbound_ack_frames = 64;
+        // HPACK decoder limit advertised to the peer, and local encoder cap.
+        // The decoder starts at the protocol default until SETTINGS applies.
+        std::uint32_t decoder_table_bytes = 4096;
+        std::size_t encoder_table_bytes = 4096;
     };
     enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed };
     struct ServerError { ServerErrorKind kind; int library_code = 0; };
@@ -173,6 +177,7 @@ export namespace nexus::http2 {
             if (rc == 0) {
                 h2::nghttp2_option_set_no_auto_window_update(option, 1);
                 h2::nghttp2_option_set_max_outbound_ack(option, limits.outbound_ack_frames);
+                h2::nghttp2_option_set_max_deflate_dynamic_table_size(option, limits.encoder_table_bytes);
             }
             if (rc == 0)
                 rc = h2::nghttp2_session_server_new2(&self->session_, callbacks, self.get(), option);
@@ -182,10 +187,11 @@ export namespace nexus::http2 {
             rc = h2::nghttp2_session_set_local_window_size(
                 self->session_, 0, 0, static_cast<std::int32_t>(self->input_window_));
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
-            std::array<h2::nghttp2_settings_entry, 2> settings{
+            std::array<h2::nghttp2_settings_entry, 3> settings{
                 h2::nghttp2_settings_entry{h2::NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, limits.concurrent_streams},
                 h2::nghttp2_settings_entry{h2::NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
-                                            static_cast<std::uint32_t>(limits.input_window)}};
+                                            static_cast<std::uint32_t>(limits.input_window)},
+                h2::nghttp2_settings_entry{h2::NGHTTP2_SETTINGS_HEADER_TABLE_SIZE, limits.decoder_table_bytes}};
             rc = h2::nghttp2_submit_settings(self->session_, 0, settings.data(), settings.size());
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
             return self;

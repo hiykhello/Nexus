@@ -25,6 +25,7 @@ export namespace nex::nghttp2 {
     using ::nghttp2_option_del;
     using ::nghttp2_option_set_no_auto_window_update;
     using ::nghttp2_option_set_max_outbound_ack;
+    using ::nghttp2_option_set_max_deflate_dynamic_table_size;
     using ::nghttp2_session_callbacks_new;
     using ::nghttp2_session_callbacks_del;
     using ::nghttp2_session_del;
@@ -47,6 +48,7 @@ export namespace nex::nghttp2 {
     using ::nghttp2_session_callbacks_set_on_data_chunk_recv_callback;
     using ::NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS;
     using ::NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE;
+    using ::NGHTTP2_SETTINGS_HEADER_TABLE_SIZE;
     using ::NGHTTP2_FLAG_END_STREAM;
     using ::NGHTTP2_DATA;
     using ::NGHTTP2_HCAT_REQUEST;
@@ -59,4 +61,5 @@ export namespace nex::nghttp2 {
     using ::nghttp2_submit_goaway;
     using ::nghttp2_session_want_read;
     using ::nghttp2_session_want_write;
+    using ::nghttp2_session_get_remote_settings;
 }

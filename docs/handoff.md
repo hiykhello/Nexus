@@ -4,6 +4,7 @@
 
 ## 上一步
 
+- HTTP/2 服务端增加 HPACK 编码动态表上限及解码表 SETTINGS 配置，默认均为 4096 字节，可设为零。内存对端确认零表设置并完成请求；设置生效前解码侧仍有协议默认值，尚未测量全部 HPACK 分配。
 - HTTP/2 服务端新增自动 PING/SETTINGS ACK 队列上限，默认 64 帧，零值拒绝；停滞输出时的 PING 洪泛触发 nghttp2 `FLOODED` 并将会话置为失败。此项不是完整连接内存预算。
 - HTTP/2 服务端流存储改为稳定地址：nghttp2 响应 DATA provider 持有流指针，先前 `vector::erase` 在关闭较早流时会移动后续流。新增并发响应回归，先重置前一个流、再读取后一个流；旧存储复现错误，新实现及 nghttp2 内存回归通过。
 - 在当前切片中，Corosio Module 新增窄的 `connect_candidates` 包装：组合连接模板只在 Module 内实例化，失败与取消都会关闭最后一个 socket。独立消费者在 epoll/io_uring 下验证首候选失败后的重试、全失败回收、预取消不重试以及 context drain。
