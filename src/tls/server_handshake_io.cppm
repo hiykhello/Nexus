@@ -4,7 +4,7 @@ import nexus.tls.client_hello_stream;
 import nexus.tls.record_stream;
 import std;
 export namespace nexus::tls {
-    enum class ServerHandshakeIoError { invalid_state, invalid_argument, time_reversed, timeout, canceled, protocol_error };
+    enum class ServerHandshakeIoError { invalid_state, invalid_argument, time_reversed, timeout, canceled, protocol_error, certificate_limit };
     struct ServerHandshakeIoFeed { std::size_t consumed=0; };
     // Single owner; monotonic milliseconds, absolute deadline. No socket operations.
     class ServerHandshakeIo {
@@ -27,8 +27,12 @@ export namespace nexus::tls {
         ServerHandshakeIo(ServerHandshakeIo&&) noexcept;
         auto operator=(ServerHandshakeIo&&) noexcept -> ServerHandshakeIo&;
         // Empty ALPN disables negotiation; otherwise this single protocol is required.
+        // The certificate list limit counts each DER certificate plus its five-byte
+        // TLS entry framing; the credential remains caller-owned on rejection.
         [[nodiscard]] static auto create(ServerCredential&& credential, std::uint64_t now, std::uint64_t deadline,
-                                         std::string_view required_alpn = {}) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError>;
+                                         std::string_view required_alpn = {},
+                                         std::size_t certificate_list_limit = ServerCredential::max_certificate_list_size)
+            -> std::expected<ServerHandshakeIo,ServerHandshakeIoError>;
         [[nodiscard]] auto pending_output() const noexcept -> std::span<std::uint8_t const>;
         // Exceptions while advancing input or output invalidate the adapter.
         [[nodiscard]] auto written(std::size_t count, std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;

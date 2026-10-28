@@ -20,8 +20,15 @@ namespace nexus::tls {
         if (now<now_) return std::unexpected(ServerHandshakeIoError::time_reversed);
         now_=now; if (state_!=State::complete && now>=deadline_) return fail(ServerHandshakeIoError::timeout); return {};
     }
-    auto ServerHandshakeIo::create(ServerCredential&& credential,std::uint64_t now,std::uint64_t deadline,std::string_view required_alpn) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError> {
+    auto ServerHandshakeIo::create(ServerCredential&& credential,std::uint64_t now,std::uint64_t deadline,std::string_view required_alpn,std::size_t certificate_list_limit) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError> {
         if (deadline<=now || !credential.scheme() || required_alpn.size()>255) return std::unexpected(ServerHandshakeIoError::invalid_argument);
+        auto remaining=certificate_list_limit;
+        auto fits=[&](std::span<std::uint8_t const> cert) {
+            if (remaining<5 || cert.size()>remaining-5) return false;
+            remaining-=cert.size()+5; return true;
+        };
+        if (!fits(credential.certificate())) return std::unexpected(ServerHandshakeIoError::certificate_limit);
+        for (auto const& cert:credential.chain()) if (!fits(cert)) return std::unexpected(ServerHandshakeIoError::certificate_limit);
         auto hello=ClientHelloStream::create(); if (!hello) return std::unexpected(ServerHandshakeIoError::invalid_state);
         ServerHandshakeIo result(std::move(credential),std::move(*hello),now,deadline);
         result.required_alpn_.assign(required_alpn.begin(),required_alpn.end()); return result;

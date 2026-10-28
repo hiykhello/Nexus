@@ -23,8 +23,25 @@ void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 int main(int argc,char** argv) {
-    if (argc!=3 && argc!=4) return 1; auto cert=read_file(argv[1]), priv=read_file(argv[2]);
+    if (argc<3 || argc>5) return 1; auto cert=read_file(argv[1]), priv=read_file(argv[2]);
     auto credential=[&] { return t::ServerCredential::create(cert,priv); };
+    auto check_limit=[](t::ServerCredential&& cred) {
+        auto size=cred.certificate().size()+5;
+        for (auto const& item:cred.chain()) size+=item.size()+5;
+        fail_after=0;
+        auto rejected=t::ServerHandshakeIo::create(std::move(cred),1,100,{},size-1);
+        auto no_allocation=fail_after==0; fail_after=-1;
+        if (!no_allocation || rejected || rejected.error()!=t::ServerHandshakeIoError::certificate_limit || !cred.scheme()) return false;
+        auto zero=t::ServerHandshakeIo::create(std::move(cred),1,100,{},0);
+        if (zero || zero.error()!=t::ServerHandshakeIoError::certificate_limit || !cred.scheme()) return false;
+        auto accepted=t::ServerHandshakeIo::create(std::move(cred),1,100,{},size);
+        return accepted.has_value() && !cred.scheme();
+    };
+    auto limited=credential(); if (!limited || !check_limit(std::move(*limited))) return 69;
+    if (argc==5) {
+        auto chain=t::ServerCredential::create_file_contents(read_file(argv[4]),priv);
+        if (!chain || chain->chain().size()!=1 || !check_limit(std::move(*chain))) return 70;
+    }
     auto creds=credential(); if (!creds) return 2;
     auto scheme=*creds->scheme(); auto server=t::ServerHandshakeIo::create(std::move(*creds),100,1000,"h2"); if (!server) return 3;
     if (server->tick(99).error()!=t::ServerHandshakeIoError::time_reversed || server->take_application_records()) return 4;
@@ -64,7 +81,7 @@ int main(int argc,char** argv) {
         }
         records.push_back(std::move(record));
     }
-    if (records.size()<(argc==4 ? 3u : 2u) || records[0].size()<6 || !hello_released || !flight_released || watched_flight) return 13;
+    if (records.size()<(argc>=4 ? 3u : 2u) || records[0].size()<6 || !hello_released || !flight_released || watched_flight) return 13;
     auto client=t::client_handshake_keys(*wire,std::span{records[0]}.subspan(5),std::move(*key)); if (!client) return 14;
     auto decoder=t::HandshakeDecoder::create(1048584); if (!decoder) return 15; bool server_finished=false, alpn_seen=false;
     for (std::size_t i=1;i<records.size();++i) {

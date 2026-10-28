@@ -15,4 +15,8 @@ with tempfile.TemporaryDirectory(prefix="nexus-server-handshake-io-") as directo
     extension="1.2.3.4=DER:"+":".join(["AA"]*20000)
     run("openssl","req","-new","-x509","-key",str(key),"-subj","/CN=localhost","-days","1",
         "-addext",extension,"-outform","DER","-out",str(large_cert))
-    subprocess.run([str(pathlib.Path(sys.argv[1]).resolve()),str(large_cert),str(key_der),"large"],check=True,timeout=30)
+    leaf_pem=root/"large.pem"; other_pem=root/"other.pem"; chain=root/"chain.pem"
+    run("openssl","x509","-inform","DER","-in",str(large_cert),"-out",str(leaf_pem))
+    run("openssl","x509","-inform","DER","-in",str(cert),"-out",str(other_pem))
+    chain.write_bytes(leaf_pem.read_bytes()+other_pem.read_bytes())
+    subprocess.run([str(pathlib.Path(sys.argv[1]).resolve()),str(large_cert),str(key_der),"large",str(chain)],check=True,timeout=30)
