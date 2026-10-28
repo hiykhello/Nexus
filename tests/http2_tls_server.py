@@ -28,10 +28,10 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1")
     run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(key_der))
     run("openssl", "x509", "-in", str(cert), "-outform", "DER", "-out", str(cert_der))
-    for mode in ("get", "pause", "pause_output", "pause_multi", "multi", "peer", "truncated", "stale"):
-        pause = mode in ("pause", "pause_output", "pause_multi")
+    for mode in ("get", "pause", "pause_output", "pause_multi", "reset_paused", "multi", "peer", "truncated", "stale"):
+        pause = mode in ("pause", "pause_output", "pause_multi", "reset_paused")
         multi = mode == "multi"
-        pause_multi = mode == "pause_multi"
+        pause_multi = mode in ("pause_multi", "reset_paused")
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             listener.listen(1)
@@ -48,16 +48,18 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                     if pause_multi:
                         wire += frame(1, 5, 1, b"\x82\x87\x84\x01\x09localhost")
                         wire += frame(1, 4, 3, headers) + frame(0, 1, 3, b"upload")
+                        if mode == "reset_paused": wire += frame(1, 5, 5, b"\x82\x87\x84\x01\x09localhost")
                     else:
                         wire += frame(1, 4 if pause else 5, 1, headers) + (frame(0, 1, 1, b"upload") if pause else b"")
                         wire += frame(1, 5, 3, headers) if multi else b""
                     for start in range(0, len(wire), 7):
                         client.sendall(wire[start:start+7])
-                    bodies = {1: bytearray(), 3: bytearray()} if multi or pause_multi else {1: bytearray()}
+                    bodies = {1: bytearray(), 5: bytearray()} if mode == "reset_paused" else {1: bytearray(), 3: bytearray()} if multi or pause_multi else {1: bytearray()}
                     statuses = set()
                     finished = set()
                     goaway = []
-                    while len(finished) < len(bodies) or (multi and len(goaway) < 2):
+                    reset = False
+                    while len(finished) < len(bodies) or (multi and len(goaway) < 2) or (mode == "reset_paused" and not reset):
                         header = exact(client, 9)
                         length = int.from_bytes(header[:3], "big")
                         kind, flags = header[3:5]
@@ -65,6 +67,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                         payload = exact(client, length)
                         if kind == 7:
                             goaway.append(int.from_bytes(payload[:4], "big") & 0x7fffffff)
+                        if kind == 3 and stream == 3 and payload == b"\x00\x00\x00\x08": reset = True
                         if kind == 1 and stream in bodies and payload == b"\x88":
                             statuses.add(stream)  # HPACK static :status 200
                         if kind == 0 and stream in bodies:
