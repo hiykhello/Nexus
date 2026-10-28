@@ -108,6 +108,8 @@ uv run --no-project python tests/vless_proxy_inbound_failures.py build/linux/x86
 uv run --no-project python tests/vless_proxy_inbound_limits.py build/linux/x86_64/debug/nexus
 uv run --no-project python tests/vless_proxy_concurrent.py build/linux/x86_64/debug/nexus
 uv run --no-project python tests/vless_proxy_slow_dns.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-test-slow-resolver.so
+# 需要 --crypto=y --ss2022=y，验证两类出站的阻塞系统解析停止
+uv run --no-project python tests/tunnel_system_dns_stop.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-test-slow-resolver.so
 xmake build nexus-vless-relay-throw-fixture
 uv run --no-project python tests/vless_relay_throw.py build/linux/x86_64/debug/nexus-vless-relay-throw-fixture
 xmake build nexus-tls-corosio-server-test
