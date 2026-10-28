@@ -46,13 +46,16 @@ namespace nexus::tls {
         if (direction_!=RecordDirection::send) return std::unexpected(RecordError::invalid_state);
         if (sequence_>=send_limit_) return std::unexpected(RecordError::key_usage_limit);
         if (!valid_type(type) || (content.empty() && type!=ContentType::application_data) || content.size()>16384 || padding>16384-content.size()) return std::unexpected(RecordError::invalid_input);
-        crypto::Bytes inner(content.begin(),content.end()); inner.push_back(static_cast<std::uint8_t>(type)); inner.resize(inner.size()+padding,0);
+        crypto::Bytes inner(content.begin(),content.end());
+        struct Cleanse { crypto::Bytes& bytes; ~Cleanse() { crypto::cleanse(bytes); } } cleanse{inner};
+        inner.push_back(static_cast<std::uint8_t>(type)); inner.resize(inner.size()+padding,0);
         auto length=inner.size()+16;
         std::array<std::uint8_t,5> header{23,3,3,static_cast<std::uint8_t>(length>>8),static_cast<std::uint8_t>(length)};
-        auto current_nonce=nonce(); advance();
-        auto encrypted=crypto::seal(algorithm_,key_,current_nonce,inner,header); crypto::cleanse(inner);
+        auto current_nonce=nonce(); advance(); active_=false;
+        auto encrypted=crypto::seal(algorithm_,key_,current_nonce,inner,header);
         if (!encrypted) { active_=false; return std::unexpected(RecordError::crypto_error); }
         crypto::Bytes result(header.begin(),header.end()); result.insert(result.end(),encrypted->begin(),encrypted->end());
+        active_=true;
         return result;
     }
     auto RecordLayer::open(std::span<std::uint8_t const> record) -> std::expected<PlaintextRecord,RecordError> {

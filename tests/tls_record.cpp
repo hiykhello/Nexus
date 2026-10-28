@@ -1,5 +1,14 @@
 import std;
 import nexus.tls.record;
+static thread_local int allocation_countdown=-1;
+void* operator new(std::size_t size) {
+    if (allocation_countdown==0) { allocation_countdown=-1; throw std::bad_alloc{}; }
+    if (allocation_countdown>0) --allocation_countdown;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace c=nexus::crypto; namespace t=nexus::tls;
 auto hex(std::string_view s) -> c::Bytes {
     auto n=[](char ch) { return ch<='9' ? ch-'0' : ch-'a'+10; };
@@ -40,5 +49,23 @@ int main() {
     auto exhausted=limited->seal(t::ContentType::application_data,msg);
     if (exhausted || exhausted.error()!=t::RecordError::key_usage_limit || t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,key,iv,0) ||
         t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,key,iv,(1u<<24)+1)) return 16;
+    bool before_nonce=false, after_nonce=false;
+    for (int index=0; index<16; ++index) {
+        auto candidate=make(t::RecordDirection::send); if (!candidate) return 17;
+        bool failed=false; allocation_countdown=index;
+        try { (void)candidate->seal(t::ContentType::application_data,msg); }
+        catch (std::bad_alloc const&) { failed=true; }
+        allocation_countdown=-1;
+        if (!failed) continue;
+        if (candidate->usable(t::RecordDirection::send)) {
+            before_nonce=true;
+            if (candidate->seal(t::ContentType::application_data,msg)!=expected) return 18;
+        } else {
+            after_nonce=true;
+            auto retry=candidate->seal(t::ContentType::application_data,msg);
+            if (retry || retry.error()!=t::RecordError::invalid_state) return 19;
+        }
+    }
+    if (!before_nonce || !after_nonce) return 20;
     std::cout << "TLS record RFC 8448 and boundaries passed\n";
 }
