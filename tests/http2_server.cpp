@@ -41,7 +41,7 @@ auto on_end(void* p, std::int32_t id) noexcept -> bool { static_cast<Observed*>(
 void on_closed(void* p, std::int32_t id, std::uint32_t code) noexcept {
     auto& o = *static_cast<Observed*>(p); o.closed_id = id; o.closed_code = code;
 }
-struct Client { std::int32_t reset_id = 0; std::uint32_t reset_code = 0; std::int32_t response_id = 0; std::vector<std::int32_t> response_ids; bool status_204 = false; std::string body; std::vector<std::int32_t> window_update_ids; };
+struct Client { std::int32_t reset_id = 0; std::uint32_t reset_code = 0; std::int32_t response_id = 0; std::vector<std::int32_t> response_ids; bool status_204 = false; std::string body; std::vector<std::int32_t> window_update_ids; std::vector<std::int32_t> goaway_ids; };
 auto on_client_close(h2::nghttp2_session*, std::int32_t id, std::uint32_t code, void* p) noexcept -> int {
     auto& c = *static_cast<Client*>(p); c.reset_id = id; c.reset_code = code; return 0;
 }
@@ -53,6 +53,9 @@ auto on_client_data(h2::nghttp2_session*, std::uint8_t, std::int32_t,
 auto on_client_frame(h2::nghttp2_session*, h2::nghttp2_frame const* frame, void* p) noexcept -> int {
     auto& c = *static_cast<Client*>(p);
     if (frame->hd.type == h2::NGHTTP2_WINDOW_UPDATE) c.window_update_ids.push_back(frame->hd.stream_id);
+    if (frame->hd.type == h2::NGHTTP2_GOAWAY) {
+        try { c.goaway_ids.push_back(frame->goaway.last_stream_id); } catch (...) { return -1; }
+    }
     return 0;
 }
 auto on_client_header(h2::nghttp2_session*, h2::nghttp2_frame const* frame,
@@ -249,6 +252,35 @@ int main() {
                      flow_stream, flow_observed.headers.size());
         return 28;
     }
+    Observed shutdown_observed;
+    nh::ServerEvents shutdown_events{&shutdown_observed, on_headers, on_data, on_end, on_closed};
+    auto shutdown_session = nh::ServerSession::create({8, 4, 128, 64, 16}, shutdown_events);
+    if (!shutdown_session) return 43;
+    shutdown_observed.session = shutdown_session->get();
+    h2::nghttp2_session_callbacks* shutdown_callbacks = nullptr;
+    if (h2::nghttp2_session_callbacks_new(&shutdown_callbacks)) return 44;
+    h2::nghttp2_session_callbacks_set_on_frame_recv_callback(shutdown_callbacks, on_client_frame);
+    h2::nghttp2_session_callbacks_set_on_data_chunk_recv_callback(shutdown_callbacks, on_client_data);
+    Client shutdown_client_events;
+    h2::nghttp2_session* shutdown_client = nullptr;
+    auto shutdown_rc = h2::nghttp2_session_client_new(&shutdown_client, shutdown_callbacks, &shutdown_client_events);
+    h2::nghttp2_session_callbacks_del(shutdown_callbacks);
+    if (shutdown_rc) return 45;
+    std::unique_ptr<h2::nghttp2_session, decltype(&h2::nghttp2_session_del)> shutdown_owner(shutdown_client, h2::nghttp2_session_del);
+    if (h2::nghttp2_submit_settings(shutdown_client, 0, nullptr, 0) ||
+        !to_server(shutdown_client, **shutdown_session) || !to_client(**shutdown_session, shutdown_client)) return 46;
+    auto shutdown_stream = h2::nghttp2_submit_request2(shutdown_client, nullptr, good.data(), good.size(), nullptr, nullptr);
+    if (shutdown_stream <= 0 || !to_server(shutdown_client, **shutdown_session)) return 47;
+    if ((**shutdown_session).finish_shutdown() || !(**shutdown_session).start_shutdown() ||
+        (**shutdown_session).start_shutdown() || (**shutdown_session).shutdown_complete()) return 48;
+    if (!to_client(**shutdown_session, shutdown_client) || shutdown_client_events.goaway_ids != std::vector<std::int32_t>{0x7fffffff}) return 49;
+    if (!(**shutdown_session).finish_shutdown() || (**shutdown_session).finish_shutdown() ||
+        (**shutdown_session).shutdown_complete()) return 50;
+    if (!(**shutdown_session).respond_body(shutdown_stream, 200,
+        {reinterpret_cast<std::byte const*>(later_body.data()), later_body.size()})) return 51;
+    if (!to_client(**shutdown_session, shutdown_client) || shutdown_client_events.body != later_body ||
+        shutdown_client_events.goaway_ids != std::vector<std::int32_t>{0x7fffffff, shutdown_stream} ||
+        !(**shutdown_session).shutdown_complete()) return 52;
     // Stop draining server output and verify that peer-generated ACK work is
     // bounded even when no application streams or DATA are involved.
     Observed flood_observed;

@@ -59,6 +59,10 @@ export namespace nex::nghttp2 {
     using ::NGHTTP2_ERR_FLOODED;
     using ::nghttp2_submit_rst_stream;
     using ::nghttp2_submit_goaway;
+    using ::nghttp2_submit_shutdown_notice;
+    using ::nghttp2_session_get_last_proc_stream_id;
+    using ::NGHTTP2_NO_ERROR;
+    using ::NGHTTP2_GOAWAY;
     using ::nghttp2_session_want_read;
     using ::nghttp2_session_want_write;
     using ::nghttp2_session_get_remote_settings;

@@ -58,6 +58,8 @@ export namespace nexus::http2 {
         std::size_t output_left_ = 0;
         bool active_ = false;
         bool failed_ = false;
+        enum class Shutdown { running, notice, draining };
+        Shutdown shutdown_ = Shutdown::running;
         std::int32_t paused_stream_ = 0;
         std::size_t paused_bytes_ = 0;
 
@@ -195,6 +197,33 @@ export namespace nexus::http2 {
             rc = h2::nghttp2_submit_settings(self->session_, 0, settings.data(), settings.size());
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
             return self;
+        }
+        // The caller must deliver this notice and allow time for in-flight
+        // requests (normally at least one RTT) before calling finish_shutdown.
+        auto start_shutdown() noexcept -> std::expected<void, ServerError> {
+            if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
+            if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
+            if (shutdown_ != Shutdown::running) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
+            auto rc = h2::nghttp2_submit_shutdown_notice(session_);
+            if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            shutdown_ = Shutdown::notice;
+            return {};
+        }
+        // Queue the final GOAWAY without aborting accepted streams. Continue
+        // receiving and draining output until shutdown_complete is true.
+        auto finish_shutdown() noexcept -> std::expected<void, ServerError> {
+            if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
+            if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
+            if (shutdown_ != Shutdown::notice) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
+            auto last = h2::nghttp2_session_get_last_proc_stream_id(session_);
+            auto rc = h2::nghttp2_submit_goaway(session_, 0, last, h2::NGHTTP2_NO_ERROR, nullptr, 0);
+            if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            shutdown_ = Shutdown::draining;
+            return {};
+        }
+        auto shutdown_complete() const noexcept -> bool {
+            return !active_ && !failed_ && shutdown_ == Shutdown::draining && output_left_ == 0 &&
+                !h2::nghttp2_session_want_read(session_) && !h2::nghttp2_session_want_write(session_);
         }
         auto respond_body(std::int32_t id, unsigned status, std::span<std::byte const> body) noexcept
             -> std::expected<void, ServerError> {
