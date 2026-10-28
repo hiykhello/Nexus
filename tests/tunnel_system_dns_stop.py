@@ -5,6 +5,7 @@ import os
 import pathlib
 import select
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -23,19 +24,36 @@ def exact(sock, count):
     return bytes(data)
 
 
-def scenario(root, protocol, workers):
+def sockets_owned(pid):
+    result = set()
+    for fd in pathlib.Path(f'/proc/{pid}/fd').iterdir():
+        try:
+            target = str(fd.readlink())
+        except FileNotFoundError:
+            continue
+        if target.startswith('socket:['):
+            result.add(target)
+    return result
+
+
+def scenario(root, protocol, workers, reset=False):
+    target = socket.socket()
+    target.bind(('127.0.0.1', 0))
+    target.listen(2)
+    target.settimeout(.7)
+    target_port = target.getsockname()[1]
     with socket.socket() as reservation:
         reservation.bind(('127.0.0.1', 0))
         port = reservation.getsockname()[1]
     if protocol == 'vless':
         outbound = f'''outbound "edge" type="vless" {{
- server host="nexus-delay.test" port=443
+ server host="nexus-delay.test" port={target_port}
  authentication {{ uuid-file "{root / 'uuid'}"; }}
  tls {{ server-name "localhost"; ca-file "{root / 'cert.pem'}"; verify #true; }}
 }}'''
     else:
         outbound = f'''outbound "edge" type="shadowsocks" {{
- server host="nexus-delay.test" port=443
+ server host="nexus-delay.test" port={target_port}
  method "2022-blake3-aes-128-gcm"; key-file "{root / 'ss.key'}";
 }}'''
     config = root / f'{protocol}-{workers}.kdl'
@@ -51,6 +69,8 @@ routing {{ default-outbound "edge"; }}
     gate_r, gate_w = os.pipe()
     env = dict(os.environ, LD_PRELOAD=str(shim), NEXUS_TEST_RESOLVER_READY_FD=str(ready_w),
                NEXUS_TEST_RESOLVER_GATE_FD=str(gate_r))
+    if reset:
+        env['NEXUS_TEST_RESOLVER_DELAY_SUCCESS'] = '1'
     process = subprocess.Popen([binary, 'run', '--config', config], env=env, pass_fds=(ready_w, gate_r),
                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     os.close(ready_w)
@@ -73,15 +93,36 @@ routing {{ default-outbound "edge"; }}
             client.sendall(b'\x05\x01\x00')
             if exact(client, 2) != b'\x05\x00':
                 raise RuntimeError('SOCKS greeting failed')
+            baseline = sockets_owned(process.pid)
             started = time.monotonic()
             client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x00\x50')
             if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'x':
                 raise RuntimeError('outbound resolver did not enter gate')
-            if client.recv(1):
-                raise RuntimeError('canceled request returned unexpected data')
-            elapsed = time.monotonic()-started
-            if not 8 <= elapsed <= 12:
-                raise RuntimeError(f'unexpected session timeout {elapsed:.2f}s')
+            if reset:
+                client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                client.close()
+                deadline = time.monotonic()+3
+                while len(sockets_owned(process.pid)) >= len(baseline):
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError('reset client socket was not released while resolver was gated')
+                    time.sleep(.01)
+                os.write(gate_w, b'x')
+                released = True
+                if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'y':
+                    raise RuntimeError('gated resolver did not finish successfully')
+                try:
+                    connection, _ = target.accept()
+                except TimeoutError:
+                    pass
+                else:
+                    connection.close()
+                    raise RuntimeError('canceled resolver result triggered an outbound connection')
+            else:
+                if client.recv(1):
+                    raise RuntimeError('canceled request returned unexpected data')
+                elapsed = time.monotonic()-started
+                if not 8 <= elapsed <= 12:
+                    raise RuntimeError(f'unexpected session timeout {elapsed:.2f}s')
         # The worker remains responsive, but shutdown must retain and drain
         # the resolver owner until its blocking getaddrinfo returns.
         with socket.create_connection(('127.0.0.1', port), timeout=2) as concurrent:
@@ -89,14 +130,15 @@ routing {{ default-outbound "edge"; }}
             if exact(concurrent, 2) != b'\x05\x00':
                 raise RuntimeError('other session stalled')
         process.terminate()
-        try:
-            process.wait(timeout=.3)
-        except subprocess.TimeoutExpired:
-            pass
-        else:
-            raise RuntimeError('server exited while outbound resolver was gated')
-        os.write(gate_w, b'x')
-        released = True
+        if not reset:
+            try:
+                process.wait(timeout=.3)
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                raise RuntimeError('server exited while outbound resolver was gated')
+            os.write(gate_w, b'x')
+            released = True
         if process.wait(timeout=5) != 0:
             raise RuntimeError(process.stderr.read().decode())
     finally:
@@ -111,6 +153,7 @@ routing {{ default-outbound "edge"; }}
                 process.wait()
         os.close(ready_r)
         os.close(gate_w)
+        target.close()
 
 
 with tempfile.TemporaryDirectory(prefix='nexus-tunnel-system-dns-') as directory:
@@ -124,5 +167,6 @@ with tempfile.TemporaryDirectory(prefix='nexus-tunnel-system-dns-') as directory
                     '-subj', '/CN=localhost', '-days', '1'], check=True, capture_output=True)
     for protocol in ('vless', 'shadowsocks'):
         for workers in (1, 2):
-            scenario(root, protocol, workers)
-print('VLESS and SS-2022 outbound system DNS timeout and drained stop passed')
+            for reset in (True, False):
+                scenario(root, protocol, workers, reset)
+print('VLESS and SS-2022 outbound system DNS reset, timeout and drained stop passed')

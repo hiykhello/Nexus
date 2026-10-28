@@ -26,7 +26,16 @@ int getaddrinfo(char const* node, char const* service,
             do { result = write(atoi(ready), &byte, 1); } while (result < 0 && errno == EINTR);
             if (result == 1) do { result = read(atoi(gate), &byte, 1); } while (result < 0 && errno == EINTR);
         }
-        return EAI_NONAME;
+        if (!getenv("NEXUS_TEST_RESOLVER_DELAY_SUCCESS")) return EAI_NONAME;
+        pthread_once(&init_once, init_resolver);
+        if (!next_resolver) return EAI_SYSTEM;
+        struct addrinfo numeric_hints = {0};
+        numeric_hints.ai_family = AF_INET;
+        numeric_hints.ai_socktype = SOCK_STREAM;
+        numeric_hints.ai_flags = AI_NUMERICHOST;
+        int error = next_resolver("127.0.0.1", service, &numeric_hints, result);
+        if (ready) { char byte = error ? 'e' : 'y'; ssize_t written; do { written = write(atoi(ready), &byte, 1); } while (written < 0 && errno == EINTR); }
+        return error;
     }
     pthread_once(&init_once, init_resolver);
     if (!next_resolver) return EAI_SYSTEM;
