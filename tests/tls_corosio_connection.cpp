@@ -48,6 +48,29 @@ template<class Backend> auto exception_test(Backend backend,int mode) -> bool {
     capy::run_async(context.get_executor())(exception_operation(connection,mode,caught)); context.restart(); (void)context.run_for(1s);
     return context.stopped() && caught && !connection.active() && connection.idle() && !connection.pending_output();
 }
+auto pending_operation(FailingConnection& connection,bool reading,bool& done,bool& failed) -> capy::task<> {
+    Bytes data(1024,42);
+    if (reading) { auto result=co_await connection.read(); failed=!result; }
+    else { auto result=co_await connection.send(data); failed=!result; }
+    done=true;
+}
+template<class Backend> auto exception_overlap(Backend backend,bool fail_read) -> bool {
+    io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
+    FailingSocket socket{a,fail_read}; FailingConnection connection(socket,records(1u << 24),{});
+    if (fail_read) {
+        std::array<char,4096> filler{};
+        for (;;) { auto n=::send(a.native_handle(),filler.data(),filler.size(),MSG_DONTWAIT|MSG_NOSIGNAL);
+            if (n>0 || (n<0 && errno==EINTR)) continue;
+            if (n<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) break; return false; }
+    }
+    bool done=false,failed=false,caught=false;
+    capy::run_async(context.get_executor())(pending_operation(connection,!fail_read,done,failed));
+    context.restart(); (void)context.run_for(20ms);
+    if (done || connection.idle()) return false;
+    capy::run_async(context.get_executor())(exception_operation(connection,fail_read ? 0 : 1,caught));
+    context.restart(); (void)context.run_for(1s);
+    return context.stopped() && caught && done && failed && !connection.active() && connection.idle() && !connection.pending_output();
+}
 auto reader(Fixture& f) -> capy::task<> { auto result=co_await f.connection.read(); f.read_failed=!result; if (!result) f.read_error=result.error(); f.fatal=result && result->event && result->event->kind==t::ApplicationEventKind::fatal_alert; f.read_done=true; }
 auto boundary_reader(Fixture& f) -> capy::task<> {
     auto result=co_await f.connection.read();
@@ -216,9 +239,11 @@ template<class Backend> auto protocol_failure(Backend backend, bool fatal=false)
     return f.context.stopped() && f.connection.idle() && f.read_done && f.write_done && (fatal ? f.fatal : f.read_failed) && f.write_failed && !f.connection.pending_output();
 }
 int main() {
+    if (!exception_overlap(io::epoll,false) || !exception_overlap(io::epoll,true)) return 7;
     for (int mode=0;mode<5;++mode) if (!exception_test(io::epoll,mode)) return 5;
     if (!unread_boundary_test(io::epoll)) return 3;
 #if BOOST_COROSIO_HAVE_LIBURING
+    if (!exception_overlap(io::uring,false) || !exception_overlap(io::uring,true)) return 8;
     for (int mode=0;mode<5;++mode) if (!exception_test(io::uring,mode)) return 6;
     if (!unread_boundary_test(io::uring)) return 4;
 #endif
