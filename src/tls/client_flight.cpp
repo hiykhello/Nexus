@@ -49,12 +49,15 @@ namespace nexus::tls {
         if (data.size()>=write_limit_) return std::unexpected(RecordError::invalid_input);
         // Keep one record available for KeyUpdate or close_notify.
         if (write_.send_remaining()<=1) return std::unexpected(RecordError::key_usage_limit);
-        auto out=write_.seal(ContentType::application_data,data); if (!out) { active_=false; return std::unexpected(out.error()); }
-        return std::move(*out);
+        try {
+            auto out=write_.seal(ContentType::application_data,data); if (!out) { active_=false; return std::unexpected(out.error()); }
+            return std::move(*out);
+        } catch (...) { active_=false; throw; }
     }
     auto ApplicationRecords::open_event(std::span<std::uint8_t const> record) -> std::expected<ApplicationEvent,RecordError> {
         if (!active_ || read_closed_) return std::unexpected(RecordError::invalid_state);
         if (record.size()<22 || record.size()-21>read_limit_) { active_=false; return std::unexpected(RecordError::invalid_record); }
+        try {
         auto plain=read_.open(record); if (!plain) { active_=false; return std::unexpected(plain.error()); }
         if (!handshake_pending_.empty() && plain->type!=ContentType::handshake) { active_=false; return std::unexpected(RecordError::invalid_record); }
         if (plain->type==ContentType::handshake) {
@@ -101,6 +104,7 @@ namespace nexus::tls {
         if (description==90) return ApplicationEvent{ApplicationEventKind::user_canceled,{},description};
         // TLS 1.3 error alerts are fatal regardless of the legacy level.
         active_=false; return ApplicationEvent{ApplicationEventKind::fatal_alert,{},description};
+        } catch (...) { active_=false; throw; }
     }
     auto ApplicationRecords::open(std::span<std::uint8_t const> record) -> std::expected<crypto::Bytes,RecordError> {
         auto event=open_event(record); if (!event) return std::unexpected(event.error());
@@ -109,17 +113,21 @@ namespace nexus::tls {
     }
     auto ApplicationRecords::key_update(bool request) -> std::expected<crypto::Bytes,RecordError> {
         if (!active_ || write_closed_ || !write_secret_ || (update_response_ && request)) return std::unexpected(RecordError::invalid_state);
+        try {
         std::array<std::uint8_t,5> message{24,0,0,1,static_cast<std::uint8_t>(request)};
         auto record=write_.seal(ContentType::handshake,message);
         if (!record || !rotate(true)) { active_=false; return std::unexpected(RecordError::crypto_error); }
         update_response_=false; return std::move(*record);
+        } catch (...) { active_=false; throw; }
     }
     auto ApplicationRecords::close_notify() -> std::expected<crypto::Bytes,RecordError> {
         if (!active_ || write_closed_) return std::unexpected(RecordError::invalid_state);
-        constexpr std::array<std::uint8_t,2> alert{1,0};
-        auto record=write_.seal(ContentType::alert,alert);
-        if (!record) { active_=false; return std::unexpected(record.error()); }
-        write_closed_=true; return std::move(*record);
+        try {
+            constexpr std::array<std::uint8_t,2> alert{1,0};
+            auto record=write_.seal(ContentType::alert,alert);
+            if (!record) { active_=false; return std::unexpected(record.error()); }
+            write_closed_=true; return std::move(*record);
+        } catch (...) { active_=false; throw; }
     }
     auto ApplicationRecords::finish_input() -> std::expected<void,RecordError> {
         if (!active_) return std::unexpected(RecordError::invalid_state);

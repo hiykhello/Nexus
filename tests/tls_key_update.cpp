@@ -1,5 +1,14 @@
 import std;
 import nexus.tls.client_flight;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto; using Bytes=c::Bytes;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction, int value, std::uint64_t limit=1u << 24) -> t::RecordLayer {
@@ -47,5 +56,18 @@ int main() {
     auto change=limited.key_update(false); if (!change || !other.open_event(*change)) return 16;
     for (int i=0;i<2;++i) { auto wire=limited.seal(data); if (!wire || !other.open_event(*wire)) return 17; }
     rejected=limited.seal(data); if (rejected || rejected.error()!=t::RecordError::key_usage_limit || !limited.close_notify()) return 18;
+    int send_failures=0, receive_failures=0;
+    auto reference=app(2,1); auto update_wire=reference.key_update(false); if (!update_wire) return 22;
+    for (int index=0;index<40;++index) {
+        auto tx=app(1,2); bool threw=false; fail_after=index;
+        try { (void)tx.key_update(false); } catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) { ++send_failures; auto retry=tx.seal(data); if (retry || retry.error()!=t::RecordError::invalid_state) return 23; }
+        auto rx=app(1,2); threw=false; fail_after=index;
+        try { (void)rx.open_event(*update_wire); } catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) { ++receive_failures; auto retry=rx.open_event(*update_wire); if (retry || retry.error()!=t::RecordError::invalid_state) return 24; }
+    }
+    if (send_failures<3 || receive_failures<3) return 25;
     std::cout << "TLS KeyUpdate bidirectional rotation, fragmentation and rejection passed\n";
 }
