@@ -293,5 +293,44 @@ int main() {
     }
     for (;;) { auto n=(**many).output(sink); if (!n) return 125; if (!*n) break; }
     if ((**many).response_memory_used() || (**many).library_memory_peak()>many_limits.library_memory_bytes) return 126;
+    // Reservations may precede session creation and survive its destruction.
+    nh::ServerLimits owned_limits{8,4,128,1024,4096}; owned_limits.shared_memory_bytes=65536;
+    auto owner=std::make_shared<nexus::memory::Budget>(owned_limits.shared_memory_bytes);
+    auto handshake=nexus::memory::Budget::reserve(owner,8192);
+    if (!handshake || owner->used()!=8192) return 127;
+    auto owned=nh::ServerSession::create(owned_limits,budget_events,owner);
+    if (!owned || owner->used()!=(**owned).shared_memory_used() || owner->reserved()!=8192 || !feed_request(**owned)) return 128;
+    auto duplicate=nh::ServerSession::create(owned_limits,budget_events,owner);
+    if (duplicate || duplicate.error().kind!=nh::ServerErrorKind::invalid_state) return 129;
+    auto mismatch=owned_limits; --mismatch.shared_memory_bytes;
+    auto invalid=nh::ServerSession::create(mismatch,budget_events,owner);
+    if (invalid || invalid.error().kind!=nh::ServerErrorKind::invalid_argument) return 130;
+    auto remaining_owner=owner->limit()-owner->used();
+    auto blocker=nexus::memory::Budget::reserve(owner,remaining_owner);
+    if (!blocker || owner->used()!=owner->limit() || nexus::memory::Budget::reserve(owner,1)) return 131;
+    auto response_blocked=(**owned).respond_body(1,200,body);
+    if (response_blocked || response_blocked.error().kind!=nh::ServerErrorKind::budget_exceeded) return 132;
+    blocker.reset();
+    if (!(**owned).respond_body(1,200,body) || owner->used()!=(**owned).shared_memory_used()) return 133;
+    owned->reset();
+    if (owner->used()!=8192) return 134;
+    auto moved=std::move(*handshake); handshake.reset();
+    if (owner->used()!=8192 || moved.size()!=8192) return 135;
+    moved.reset();
+    if (owner->used()!=0 || !nh::ServerSession::create(owned_limits,budget_events,owner)) return 136;
+    auto full=nexus::memory::Budget::reserve(owner,owner->limit());
+    if (!full) return 137;
+    auto no_space=nh::ServerSession::create(owned_limits,budget_events,owner);
+    if (no_space || no_space.error().library_code!=h2::NGHTTP2_ERR_NOMEM) return 138;
+    full.reset();
+    if (!nh::ServerSession::create(owned_limits,budget_events,owner)) return 139;
+    auto isolated=std::make_shared<nexus::memory::Budget>(10);
+    std::weak_ptr<nexus::memory::Budget> weak=isolated;
+    auto survivor=nexus::memory::Budget::reserve(isolated,10);
+    if (!survivor || nexus::memory::Budget::reserve(isolated,0)) return 140;
+    isolated.reset();
+    if (weak.expired()) return 141;
+    survivor.reset();
+    if (!weak.expired()) return 142;
     std::println("HTTP/2 nghttp2 memory budget and recovery passed");
 }

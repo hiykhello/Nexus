@@ -4,6 +4,10 @@ target("nexus-http-response-test")
     add_files("$(projectdir)/tests/http_response.cpp")
     add_deps("nexus-http-connect")
 
+target("nexus-memory-budget")
+    set_kind("static")
+    add_files("$(projectdir)/src/memory/budget.cppm", {public = true})
+
 if has_config("http2") then
     target("nexus-thirdparty-nghttp2")
         set_kind("static")
@@ -18,7 +22,7 @@ if has_config("http2") then
     target("nexus-http2-server")
         set_kind("static")
         add_files("$(projectdir)/src/http2/server.cppm", {public = true})
-        add_deps("nexus-http2-headers", "nexus-thirdparty-nghttp2", {public = true})
+        add_deps("nexus-http2-headers", "nexus-thirdparty-nghttp2", "nexus-memory-budget", {public = true})
 
     target("nexus-http2-server-test")
         set_kind("binary")
