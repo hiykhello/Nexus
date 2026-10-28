@@ -108,10 +108,10 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
         server = subprocess.Popen([fixture, cert_der, key_der, str(listener.fileno()), "curl"], pass_fds=(listener.fileno(),))
         try:
             result = subprocess.run(["curl", "--silent", "--show-error", "--http2", "--noproxy", "*", "--cacert", str(cert),
-                                     "--resolve", f"localhost:{port}:127.0.0.1", "--write-out", "\n%{http_version}",
+                                     "--resolve", f"localhost:{port}:127.0.0.1", "--write-out", "\n%{http_version}\n%{content_type}",
                                      f"https://localhost:{port}/"], capture_output=True, timeout=8)
             code = server.wait(timeout=5)
-            if code or result.returncode or result.stdout != b"hello h2\n2":
+            if code or result.returncode or result.stdout != b"hello h2\n2\ntext/plain":
                 raise RuntimeError(f"curl={result.returncode} server={code} out={result.stdout!r} err={result.stderr!r}")
         finally:
             if server.poll() is None:

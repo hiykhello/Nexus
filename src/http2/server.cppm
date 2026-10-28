@@ -35,6 +35,9 @@ export namespace nexus::http2 {
         // nghttp2 live allocations, including accounting headers; excludes
         // application buffers, TLS, transport, allocator overhead and transient realloc copies.
         std::size_t library_memory_bytes = 4 * 1024 * 1024;
+        // Limits for application response headers, excluding :status.
+        std::size_t response_header_fields = 32;
+        std::size_t response_header_bytes = 8192;
     };
     enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed };
     struct ServerError { ServerErrorKind kind; int library_code = 0; };
@@ -88,6 +91,7 @@ export namespace nexus::http2 {
         std::size_t max_streams_;
         std::size_t response_limit_;
         std::size_t total_response_limit_;
+        std::size_t response_header_fields_, response_header_bytes_;
         std::size_t input_window_;
         std::size_t response_reserved_ = 0;
         // nghttp2 retains Stream pointers in data providers until completion.
@@ -105,11 +109,41 @@ export namespace nexus::http2 {
         std::size_t paused_bytes_ = 0;
 
         ServerSession(ServerLimits limits, ServerEvents events)
-            : library_limit_(limits.library_memory_bytes), headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), input_window_(limits.input_window), events_(events) {
+            : library_limit_(limits.library_memory_bytes), headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), response_header_fields_(limits.response_header_fields), response_header_bytes_(limits.response_header_bytes), input_window_(limits.input_window), events_(events) {
         }
         auto library_error(int rc) noexcept -> std::unexpected<ServerError> {
             if (h2::nghttp2_is_fatal(rc)) { failed_=true; ++revision_; }
             return std::unexpected(ServerError{ServerErrorKind::library, rc});
+        }
+        auto response_fields(unsigned status, std::span<Header const> headers,
+                             std::array<std::uint8_t,3>& value,
+                             std::array<std::uint8_t,7>& name) const noexcept
+            -> std::expected<std::vector<h2::nghttp2_nv>,ServerError> {
+            if (headers.size()>response_header_fields_) return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+            std::size_t bytes=0;
+            for (auto const& header:headers) {
+                if (header.name.empty() || header.name.front()==':' || header.name.size()>response_header_bytes_-bytes ||
+                    header.value.size()>response_header_bytes_-bytes-header.name.size())
+                    return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+                bytes+=header.name.size()+header.value.size();
+                if (header.name=="connection" || header.name=="proxy-connection" || header.name=="keep-alive" ||
+                    header.name=="transfer-encoding" || header.name=="upgrade" || header.name=="te" || header.name=="content-length" ||
+                    !h2::nghttp2_check_header_name(reinterpret_cast<std::uint8_t const*>(header.name.data()),header.name.size()) ||
+                    !h2::nghttp2_check_header_value_rfc9113(reinterpret_cast<std::uint8_t const*>(header.value.data()),header.value.size()))
+                    return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+            }
+            value={static_cast<std::uint8_t>('0'+status/100),static_cast<std::uint8_t>('0'+status/10%10),static_cast<std::uint8_t>('0'+status%10)};
+            name={':','s','t','a','t','u','s'};
+            try {
+                std::vector<h2::nghttp2_nv> result;
+                result.reserve(headers.size()+1);
+                result.push_back({name.data(),value.data(),name.size(),value.size(),0});
+                for (auto const& header:headers)
+                    result.push_back({reinterpret_cast<std::uint8_t*>(const_cast<char*>(header.name.data())),
+                                      reinterpret_cast<std::uint8_t*>(const_cast<char*>(header.value.data())),
+                                      header.name.size(),header.value.size(),0});
+                return result;
+            } catch (...) { return std::unexpected(ServerError{ServerErrorKind::allocation}); }
         }
         static auto begin(h2::nghttp2_session* session, h2::nghttp2_frame const* frame, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
@@ -288,7 +322,11 @@ export namespace nexus::http2 {
             stream->reset_pending = true;
             return {};
         }
-        auto respond_body(std::int32_t id, unsigned status, std::span<std::byte const> body) noexcept
+        // Header names must be lowercase HTTP field names. Pseudo headers,
+        // connection-specific fields and content-length are not accepted.
+        // nghttp2 copies the fields during submission.
+        auto respond_body(std::int32_t id, unsigned status, std::span<std::byte const> body,
+                          std::span<Header const> headers = {}) noexcept
             -> std::expected<void, ServerError> {
             if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
             if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
@@ -300,20 +338,17 @@ export namespace nexus::http2 {
             if (body.size() > response_limit_ || body.size() > total_response_limit_ - response_reserved_ ||
                 (body.size() != 0 && (status == 204 || status == 205 || status == 304)))
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+            std::array<std::uint8_t,3> value{}; std::array<std::uint8_t,7> name{};
+            auto fields=response_fields(status,headers,value,name);
+            if (!fields) return std::unexpected(fields.error());
             try { stream->response.assign(body.begin(), body.end()); }
             catch (std::bad_alloc const&) { return std::unexpected(ServerError{ServerErrorKind::allocation}); }
             response_reserved_ += body.size();
-            std::array<std::uint8_t, 3> value{
-                static_cast<std::uint8_t>('0' + status / 100),
-                static_cast<std::uint8_t>('0' + status / 10 % 10),
-                static_cast<std::uint8_t>('0' + status % 10)};
-            std::array<std::uint8_t, 7> name{':', 's', 't', 'a', 't', 'u', 's'};
-            h2::nghttp2_nv field{name.data(), value.data(), name.size(), value.size(), 0};
             h2::nghttp2_data_provider2 provider{};
             provider.source.ptr = &*stream;
             provider.read_callback = read_response;
             active_ = true;
-            auto rc = h2::nghttp2_submit_response2(session_, id, &field, 1, &provider);
+            auto rc = h2::nghttp2_submit_response2(session_, id, fields->data(), fields->size(), &provider);
             active_ = false;
             if (rc != 0) {
                 response_reserved_ -= body.size();
@@ -328,7 +363,7 @@ export namespace nexus::http2 {
 
         // A final response with no body. Submission is separate from transport
         // delivery; the caller must continue draining output in order.
-        auto respond_empty(std::int32_t id, unsigned status) noexcept -> std::expected<void, ServerError> {
+        auto respond_empty(std::int32_t id, unsigned status, std::span<Header const> headers = {}) noexcept -> std::expected<void, ServerError> {
             if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
             if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
             if (id <= 0 || status < 200 || status > 599)
@@ -336,14 +371,11 @@ export namespace nexus::http2 {
             auto stream = std::ranges::find(streams_, id, &Stream::id);
             if (stream == streams_.end() || stream->responded || stream->reset_pending)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
-            std::array<std::uint8_t, 3> value{
-                static_cast<std::uint8_t>('0' + status / 100),
-                static_cast<std::uint8_t>('0' + status / 10 % 10),
-                static_cast<std::uint8_t>('0' + status % 10)};
-            std::array<std::uint8_t, 7> name{':', 's', 't', 'a', 't', 'u', 's'};
-            h2::nghttp2_nv field{name.data(), value.data(), name.size(), value.size(), 0};
+            std::array<std::uint8_t,3> value{}; std::array<std::uint8_t,7> name{};
+            auto fields=response_fields(status,headers,value,name);
+            if (!fields) return std::unexpected(fields.error());
             active_ = true;
-            auto rc = h2::nghttp2_submit_response2(session_, id, &field, 1, nullptr);
+            auto rc = h2::nghttp2_submit_response2(session_, id, fields->data(), fields->size(), nullptr);
             active_ = false;
             if (rc != 0) return library_error(rc);
             ++revision_;

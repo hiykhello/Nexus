@@ -61,6 +61,8 @@ export namespace nex::nghttp2 {
     using ::NGHTTP2_ERR_FLOODED;
     using ::NGHTTP2_ERR_NOMEM;
     using ::nghttp2_is_fatal;
+    using ::nghttp2_check_header_name;
+    using ::nghttp2_check_header_value_rfc9113;
     using ::nghttp2_submit_rst_stream;
     using ::nghttp2_submit_goaway;
     using ::nghttp2_submit_shutdown_notice;

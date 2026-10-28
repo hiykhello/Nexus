@@ -44,7 +44,7 @@ auto on_end(void* p, std::int32_t id) noexcept -> bool { static_cast<Observed*>(
 void on_closed(void* p, std::int32_t id, std::uint32_t code) noexcept {
     auto& o = *static_cast<Observed*>(p); o.closed_id = id; o.closed_code = code;
 }
-struct Client { std::int32_t reset_id = 0; std::uint32_t reset_code = 0; std::int32_t response_id = 0; std::vector<std::int32_t> response_ids; bool status_204 = false; std::string body; std::vector<std::int32_t> window_update_ids; std::vector<std::int32_t> goaway_ids; };
+struct Client { std::int32_t reset_id = 0; std::uint32_t reset_code = 0; std::int32_t response_id = 0; std::vector<std::int32_t> response_ids; bool status_204 = false; std::string content_type; std::string extra_header; std::string body; std::vector<std::int32_t> window_update_ids; std::vector<std::int32_t> goaway_ids; };
 auto on_client_close(h2::nghttp2_session*, std::int32_t id, std::uint32_t code, void* p) noexcept -> int {
     auto& c = *static_cast<Client*>(p); c.reset_id = id; c.reset_code = code; return 0;
 }
@@ -65,7 +65,12 @@ auto on_client_header(h2::nghttp2_session*, h2::nghttp2_frame const* frame,
                       std::uint8_t const* name, std::size_t n,
                       std::uint8_t const* value, std::size_t v, std::uint8_t, void* p) noexcept -> int {
     auto& c = *static_cast<Client*>(p);
-    if (std::string_view(reinterpret_cast<char const*>(name), n) == ":status") {
+    auto key=std::string_view(reinterpret_cast<char const*>(name),n);
+    if (key=="content-type" || key=="x-test") {
+        try { (key=="content-type" ? c.content_type : c.extra_header).assign(reinterpret_cast<char const*>(value),v); }
+        catch (...) { return -1; }
+    }
+    if (key == ":status") {
         c.response_id = frame->hd.stream_id;
         try { c.response_ids.push_back(frame->hd.stream_id); } catch (...) { return -1; }
         c.status_204 = std::string_view(reinterpret_cast<char const*>(value), v) == "204";
@@ -179,8 +184,21 @@ int main() {
     if (oversized || oversized.error().kind != nh::ServerErrorKind::invalid_argument ||
         forbidden || forbidden.error().kind != nh::ServerErrorKind::invalid_argument) return 17;
     constexpr std::string_view response = "response body";
+    for (auto const& field : std::array<nh::Header,5>{{{"Content-Type","text/plain"},{":status","200"},
+             {"connection","close"},{"content-length","13"},{"x-test","bad\r\nvalue"}}}) {
+        auto invalid=(**session).respond_body(second,200,
+            {reinterpret_cast<std::byte const*>(response.data()),response.size()},std::span{&field,1});
+        if (invalid || invalid.error().kind!=nh::ServerErrorKind::invalid_argument) return 82;
+    }
+    std::vector<nh::Header> excessive(33,nh::Header{"x-test","a"});
+    if ((**session).respond_empty(second,200,excessive)) return 83;
+    std::array<nh::Header,1> oversized_header{{{"x-test",std::string(8192,'x')}}};
+    auto too_many_bytes=(**session).respond_empty(second,200,oversized_header);
+    if (too_many_bytes || too_many_bytes.error().kind!=nh::ServerErrorKind::invalid_argument) return 84;
+    std::array<nh::Header,1> response_headers{{{"content-type","text/plain"}}};
     if (!(**session).respond_body(second, 200,
-        {reinterpret_cast<std::byte const*>(response.data()), response.size()})) return 13;
+        {reinterpret_cast<std::byte const*>(response.data()), response.size()},response_headers)) return 13;
+    response_headers[0].value="changed after submission";
     auto duplicate = (**session).respond_empty(second, 204);
     if (duplicate || duplicate.error().kind != nh::ServerErrorKind::invalid_state) return 14;
     auto third = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
@@ -188,9 +206,10 @@ int main() {
     std::array<std::byte, 8> second_body{};
     auto total_over = (**session).respond_body(third, 200, second_body);
     if (total_over || total_over.error().kind != nh::ServerErrorKind::invalid_argument ||
-        !(**session).respond_empty(third, 204)) return 20;
+        !(**session).respond_empty(third, 204, std::array<nh::Header,1>{{{"x-test","yes"}}})) return 20;
     if (!to_client(**session, client) || client_events.response_ids != std::vector<std::int32_t>{second, third} ||
-        !client_events.status_204 || client_events.body != "response body") return 15;
+        !client_events.status_204 || client_events.body != "response body" ||
+        client_events.content_type!="text/plain" || client_events.extra_header!="yes") return 15;
     auto closed = (**session).respond_empty(second, 204);
     if (closed || closed.error().kind != nh::ServerErrorKind::invalid_state) return 16;
     auto empty = (**session).output({});

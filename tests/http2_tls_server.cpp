@@ -71,7 +71,9 @@ auto serve(Fixture& f) -> capy::task<> {
         }
         if (!f.multi && f.request && f.ended && !f.response) {
             constexpr std::string_view body="hello h2";
-            if (!f.session->respond_body(f.request,200,{reinterpret_cast<std::byte const*>(body.data()),body.size()})) break;
+            std::array<h::Header,1> fields{{{"content-type","text/plain"}}};
+            if (!f.session->respond_body(f.request,200,{reinterpret_cast<std::byte const*>(body.data()),body.size()},
+                                         f.curl ? std::span<h::Header const>{fields} : std::span<h::Header const>{})) break;
             f.response=true;
         }
         auto result=co_await connection.step(deadline);
