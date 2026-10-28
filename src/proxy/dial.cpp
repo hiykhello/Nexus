@@ -227,9 +227,10 @@ namespace nexus::proxy {
                 (void)connected_endpoint;
                 if (session->closed) co_return 1;
                 if (!connect_error) co_return 0;
+                if (connect_error == capy::cond::timeout) co_return 6;
                 // Upstream leaves the last failed socket open; close it before
                 // starting a tunnel or leaving the candidate loop.
-                if (attempted) { error=connect_error; session->target.close(); }
+                if (attempted) error=connect_error;
                 if (policy_error) co_return 1;
                 if (tunnel_action) {
                     auto index=*tunnel_action-static_cast<std::size_t>(RouteAction::vless);

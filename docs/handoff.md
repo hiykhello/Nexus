@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- 修正候选分类前发生 timeout 时可能丢失超时错误；原生回环监听器饱和队列触发真实挂起 connect，epoll/io_uring 验证 timeout、socket 关闭和不尝试下一候选；代理 SOCKS 回归通过。Corosio io_uring acceptor 预设 multishot accept，测试需原生监听器保持队列饱和。
+
 - 代理直连候选循环加入会话启动后的 10 秒绝对 deadline；超时取消挂起 connect 并关闭目标 socket。Corosio epoll/io_uring 回归覆盖已过期 deadline、候选重试、失败回收和取消，代理目标构建通过。
 - HTTP/2 共享额度回归覆盖两流竞争：第二响应先超额拒绝，第一流收到 RST 后归还额度并允许第二流提交；响应体保留时 PING 确认帧可耗尽同一额度，计数未越界。内存预算测试通过。
 
