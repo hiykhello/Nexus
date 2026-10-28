@@ -18,7 +18,7 @@ if is_plat("linux") then
         add_files("$(projectdir)/src/proxy/proxy.cpp", "$(projectdir)/src/proxy/session.cpp",
                   "$(projectdir)/src/proxy/dial.cpp", "$(projectdir)/src/proxy/http_forward.cpp")
         add_packages("nexus-corosio", "nexus-capy", "nexus-ngcpp-proxy", {public = true})
-        add_deps("nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-dns-cache", "nexus-dns-fakeip-request")
+        add_deps("nexus-session-quota", "nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-dns-cache", "nexus-dns-fakeip-request")
         if has_config("crypto") and has_config("ss2022") then
             add_defines("NEXUS_ENABLE_SS2022", {public = true})
             add_files("$(projectdir)/src/proxy/shadowsocks.cpp", "$(projectdir)/src/proxy/shadowsocks_inbound.cpp")

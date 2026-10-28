@@ -95,6 +95,10 @@ target("nexus-config-test")
     add_deps("nexus-config")
 
 if is_plat("linux") then
+    target("nexus-session-quota")
+        set_kind("static")
+        add_files("src/proxy/session_quota.cppm", {public = true})
+
     target("nexus-thirdparty-proxy")
         set_kind("static")
         add_packages("nexus-ngcpp-proxy", {public = true})
@@ -108,7 +112,7 @@ if is_plat("linux") then
         add_files("src/proxy/proxy.cppm", {public = true})
         add_files("src/proxy/proxy.cpp", "src/proxy/session.cpp", "src/proxy/dial.cpp", "src/proxy/http_forward.cpp")
         add_packages("nexus-corosio", "nexus-capy", "nexus-ngcpp-proxy", {public = true})
-        add_deps("nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-thirdparty-corosio", "nexus-dns-cache")
+        add_deps("nexus-session-quota", "nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-thirdparty-corosio", "nexus-dns-cache")
         if has_config("crypto") and has_config("ss2022") then
             add_defines("NEXUS_ENABLE_SS2022", {public = true})
             add_files("src/proxy/shadowsocks.cpp", "src/proxy/shadowsocks_inbound.cpp")

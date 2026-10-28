@@ -14,7 +14,7 @@ if is_plat("linux") then
         add_files("$(projectdir)/src/proxy/proxy.cppm", {public = true})
         add_files("$(projectdir)/src/proxy/proxy.cpp", "$(projectdir)/src/proxy/session.cpp", "$(projectdir)/src/proxy/dial.cpp", "$(projectdir)/src/proxy/http_forward.cpp")
         add_packages("nexus-corosio", "nexus-capy", "nexus-ngcpp-proxy", {public = true})
-        add_deps("nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-dns-cache")
+        add_deps("nexus-session-quota", "nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-dns-cache")
         if has_config("crypto") then
             add_defines("NEXUS_ENABLE_VLESS", {public = true})
             add_defines("NEXUS_TEST_VLESS_PARTIAL_REQUEST")
@@ -108,5 +108,6 @@ if is_plat("linux") then
         set_kind("binary")
         set_default(false)
         add_files("$(projectdir)/tests/session_quota.cpp")
+        add_deps("nexus-session-quota")
 
 end

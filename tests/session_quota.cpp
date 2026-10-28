@@ -1,5 +1,5 @@
 import std;
-#include "../src/proxy/session_quota.hpp"
+import nexus.proxy.session_quota;
 using nexus::proxy::SessionQuota;
 
 auto main() -> int {

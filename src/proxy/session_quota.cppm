@@ -1,7 +1,6 @@
-#ifndef NEXUS_PROXY_SESSION_QUOTA_HPP
-#define NEXUS_PROXY_SESSION_QUOTA_HPP
-// Import std before this private header.
-namespace nexus::proxy {
+export module nexus.proxy.session_quota;
+import std;
+export namespace nexus::proxy {
     class SessionQuota {
         struct State {
             inline explicit State(std::size_t maximum) : limit(maximum) {}
@@ -44,4 +43,3 @@ namespace nexus::proxy {
         }
     };
 }
-#endif
