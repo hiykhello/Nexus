@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- HTTP/2 TLS 驱动拒绝发送密钥已耗尽、只剩更新额度但缺少更新密钥或单记录密钥预算的记录状态，避免先消费 HTTP/2 输出；epoll/io_uring 和独立对端回归通过。
+
 - HTTP/2 TLS 控制记录写入注入 `bad_alloc`：KeyUpdate 响应与 close_notify 均使会话失败、归还操作额度且无输出；epoll/io_uring 通过。
 
 - HTTP/2 TLS 步骤和 close_notify 执行中遇到分配异常时取消传输、使会话失败并归还操作额度；socket 注入读写 `bad_alloc` 在 epoll/io_uring 验证，独立 TLS 对端回归通过。协程创建时的分配失败仍由调用方处理。

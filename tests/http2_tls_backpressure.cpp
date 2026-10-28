@@ -11,9 +11,9 @@ namespace h=nexus::http2; namespace t=nexus::tls; namespace c=nexus::crypto;
 namespace io=nex::corosio; namespace capy=nex::capy;
 using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(c::Bytes(32,static_cast<std::uint8_t>(n))); }
-auto layer(t::RecordDirection direction,int n) -> t::RecordLayer {
+auto layer(t::RecordDirection direction,int n,std::uint64_t limit=1u << 24) -> t::RecordLayer {
     auto s=secret(n); auto key=t::expand_label(c::Hash::sha256,s.view(),"key",{},16), iv=t::expand_label(c::Hash::sha256,s.view(),"iv",{},12);
-    if (!key || !iv) std::abort(); auto result=t::RecordLayer::create(direction,c::Aead::aes_128_gcm,key->view(),iv->view());
+    if (!key || !iv) std::abort(); auto result=t::RecordLayer::create(direction,c::Aead::aes_128_gcm,key->view(),iv->view(),limit);
     if (!result) std::abort(); return std::move(*result);
 }
 auto records(t::ApplicationRole role=t::ApplicationRole::server) -> t::ApplicationRecords {
@@ -220,7 +220,13 @@ template<class Backend> auto unready_records(Backend backend,int mode) -> bool {
     io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
     auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed}); if (!session) return false;
     auto state=records(); std::optional<t::ApplicationRecords> moved;
-    if (mode==5) state=t::ApplicationRecords(layer(t::RecordDirection::receive,1),layer(t::RecordDirection::send,2),16385,16385,t::ApplicationRole::server);
+    if (mode>=6) {
+        auto send=layer(t::RecordDirection::send,1,2);
+        if (!send.seal(t::ContentType::application_data,c::Bytes{1})) return false;
+        if (mode==7 && !send.seal(t::ContentType::application_data,c::Bytes{2})) return false;
+        state=t::ApplicationRecords(std::move(send),layer(t::RecordDirection::receive,2),16385,16385,t::ApplicationRole::server);
+    }
+    else if (mode==5) state=t::ApplicationRecords(layer(t::RecordDirection::receive,1),layer(t::RecordDirection::send,2),16385,16385,t::ApplicationRole::server);
     else if (mode==0) moved.emplace(std::move(state));
     else if (mode==1) { if (!state.close_notify()) return false; }
     else {
@@ -418,7 +424,7 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
 int main() {
     for (int i=0;i<5;++i) {
         if (!transport_budget(io::epoll,true) || !transport_budget(io::epoll,false)) return 1;
-        for (int mode=0;mode<6;++mode) if (!unready_records(io::epoll,mode)) return 1;
+        for (int mode=0;mode<8;++mode) if (!unready_records(io::epoll,mode)) return 1;
         if (!allocation_failure(io::epoll,false) || !allocation_failure(io::epoll,true)) return 1;
         if (!control_allocation_failure(io::epoll,false) || !control_allocation_failure(io::epoll,true)) return 1;
         if (!wrong_role(io::epoll)) return 1;
@@ -443,7 +449,7 @@ int main() {
         if (!abandon_paused(io::epoll,3)) { std::cerr << "abandon_paused(io::epoll,3) failed\n"; return 1; }
 #if BOOST_COROSIO_HAVE_LIBURING
         if (!transport_budget(io::uring,true) || !transport_budget(io::uring,false)) return 2;
-        for (int mode=0;mode<6;++mode) if (!unready_records(io::uring,mode)) return 2;
+        for (int mode=0;mode<8;++mode) if (!unready_records(io::uring,mode)) return 2;
         if (!allocation_failure(io::uring,false) || !allocation_failure(io::uring,true)) return 2;
         if (!control_allocation_failure(io::uring,false) || !control_allocation_failure(io::uring,true)) return 2;
         if (!wrong_role(io::uring)) return 2;

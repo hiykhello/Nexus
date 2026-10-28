@@ -27,6 +27,8 @@ export namespace nexus::tls {
         // a closed direction without also inheriting its external I/O state.
         [[nodiscard]] auto ready_for_transport() const noexcept -> bool {
             return active_ && write_.usable(RecordDirection::send) && read_.usable(RecordDirection::receive) &&
+                write_.send_limit()>1 && write_.send_remaining()>0 &&
+                (write_.send_remaining()>1 || write_secret_.has_value()) &&
                 !read_closed_ && !write_closed_ && !update_response_ && handshake_pending_.empty() &&
                 write_limit_ >= 64 && write_limit_ <= 16385 && read_limit_ >= 64 && read_limit_ <= 16385;
         }
