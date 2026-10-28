@@ -28,9 +28,10 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1")
     run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(key_der))
     run("openssl", "x509", "-in", str(cert), "-outform", "DER", "-out", str(cert_der))
-    for mode in ("get", "pause", "pause_output", "multi", "peer", "truncated", "stale"):
-        pause = mode in ("pause", "pause_output")
+    for mode in ("get", "pause", "pause_output", "pause_multi", "multi", "peer", "truncated", "stale"):
+        pause = mode in ("pause", "pause_output", "pause_multi")
         multi = mode == "multi"
+        pause_multi = mode == "pause_multi"
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             listener.listen(1)
@@ -43,10 +44,16 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                         raise RuntimeError("h2 ALPN not negotiated")
                     # Indexed :method GET, :scheme https and :path /; literal :authority.
                     headers = (b"\x83" if pause else b"\x82") + b"\x87\x84\x01\x09localhost"
-                    wire = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + frame(4, 0, 0) + frame(1, 4 if pause else 5, 1, headers) + (frame(0, 1, 1, b"upload") if pause else b"") + (frame(1, 5, 3, headers) if multi else b"")
+                    wire = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + frame(4, 0, 0)
+                    if pause_multi:
+                        wire += frame(1, 5, 1, b"\x82\x87\x84\x01\x09localhost")
+                        wire += frame(1, 4, 3, headers) + frame(0, 1, 3, b"upload")
+                    else:
+                        wire += frame(1, 4 if pause else 5, 1, headers) + (frame(0, 1, 1, b"upload") if pause else b"")
+                        wire += frame(1, 5, 3, headers) if multi else b""
                     for start in range(0, len(wire), 7):
                         client.sendall(wire[start:start+7])
-                    bodies = {1: bytearray(), 3: bytearray()} if multi else {1: bytearray()}
+                    bodies = {1: bytearray(), 3: bytearray()} if multi or pause_multi else {1: bytearray()}
                     statuses = set()
                     finished = set()
                     goaway = []
