@@ -31,6 +31,16 @@ struct Fixture {
     template<class Backend> explicit Fixture(Backend backend) : context(backend) {
         auto created=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed});
         if (!created || io::connect_pair(socket,peer)) std::abort(); session=std::move(*created);
+        constexpr std::string_view preface="PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+        constexpr std::array<std::byte,9> settings{std::byte{0},std::byte{0},std::byte{0},std::byte{4}};
+        constexpr std::array<std::byte,15> request{
+            std::byte{0},std::byte{0},std::byte{6},std::byte{1},std::byte{5},std::byte{0},std::byte{0},std::byte{0},std::byte{1},
+            std::byte{0x82},std::byte{0x87},std::byte{0x01},std::byte{0x01},std::byte{'x'},std::byte{0x84}};
+        if (!session->receive(std::as_bytes(std::span{preface})) || !session->receive(settings)) std::abort();
+        std::array<std::byte,4096> sink{};
+        for (;;) { auto n=session->output(sink); if (!n) std::abort(); if (!*n) break; }
+        std::array<std::byte,512> body{};
+        if (!session->receive(request) || !session->respond_body(1,200,body) || session->response_memory_used()!=body.size()) std::abort();
         connection.emplace(socket,*session,records(),c::Bytes{});
     }
     ~Fixture() { connection->cancel(); socket.close(); peer.close(); context.restart(); (void)context.run_for(1s); if (!context.stopped()) std::_Exit(90); }
@@ -52,15 +62,19 @@ template<class Backend> auto exercise(Backend backend,bool timeout) -> bool {
     }
     auto ex=f.context.get_executor(); capy::run_async(ex)(step(f,timeout));
     f.context.restart(); (void)f.context.run_for(20ms);
-    if (f.done) return false;
+    if (f.done || f.session->response_memory_used()!=512) return false;
     capy::run_async(ex)(duplicate(f)); f.context.restart(); (void)f.context.run_for(20ms);
     if (f.done || !f.duplicate) return false;
     if (!timeout) f.connection->cancel();
     f.context.restart(); (void)f.context.run_for(1s);
     if (!f.context.stopped() || !f.done || !f.error ||
         *f.error!=(timeout ? h::TlsServerError::timeout : h::TlsServerError::tls)) return false;
+    if (f.session->response_memory_used()!=512) return false;
     f.duplicate=false; capy::run_async(ex)(duplicate(f)); f.context.restart(); (void)f.context.run_for(1s);
-    return f.context.stopped() && f.duplicate;
+    if (!f.context.stopped() || !f.duplicate || !f.session->reset_stream(1,8)) return false;
+    std::array<std::byte,4096> sink{};
+    for (;;) { auto n=f.session->output(sink); if (!n) return false; if (!*n) break; }
+    return f.session->response_memory_used()==0 && f.session->stream_memory_charge()==0;
 }
 int main() {
     for (int i=0;i<5;++i) {
