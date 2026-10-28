@@ -21,11 +21,17 @@ namespace nexus::tls {
         if (keys.server_hello.size()<4 || keys.server_hello[0]!=2 ||
             ((std::size_t{keys.server_hello[1]}<<16)|(std::size_t{keys.server_hello[2]}<<8)|keys.server_hello[3])!=keys.server_hello.size()-4)
             return std::unexpected(ServerFlightError::crypto_error);
-        auto server=ServerHello::parse(std::span{keys.server_hello}.subspan(4));
-        if (!server || (server->cipher_suite!=0x1301 && server->cipher_suite!=0x1302 && server->cipher_suite!=0x1303))
-            return std::unexpected(ServerFlightError::crypto_error);
-        auto algorithm=server->cipher_suite==0x1301 ? crypto::Aead::aes_128_gcm : server->cipher_suite==0x1302 ? crypto::Aead::aes_256_gcm : crypto::Aead::chacha20_poly1305;
-        auto key_size=server->cipher_suite==0x1301 ? 16u : 32u;
+        crypto::Aead algorithm; std::size_t key_size;
+        {
+            auto server=ServerHello::parse(std::span{keys.server_hello}.subspan(4));
+            if (!server || (server->cipher_suite!=0x1301 && server->cipher_suite!=0x1302 && server->cipher_suite!=0x1303))
+                return std::unexpected(ServerFlightError::crypto_error);
+            algorithm=server->cipher_suite==0x1301 ? crypto::Aead::aes_128_gcm : server->cipher_suite==0x1302 ? crypto::Aead::aes_256_gcm : crypto::Aead::chacha20_poly1305;
+            key_size=server->cipher_suite==0x1301 ? 16u : 32u;
+        }
+        // The transcript already owns the hash state; neither encoded nor
+        // parsed ServerHello is needed while retaining the handshake keys.
+        crypto::Bytes{}.swap(keys.server_hello);
         auto put24=[](crypto::Bytes& out,std::size_t n) { out.push_back(static_cast<std::uint8_t>(n>>16)); out.push_back(static_cast<std::uint8_t>(n>>8)); out.push_back(static_cast<std::uint8_t>(n)); };
         if (selected_alpn.size()>255) return std::unexpected(ServerFlightError::invalid_state);
         crypto::Bytes extension_body;

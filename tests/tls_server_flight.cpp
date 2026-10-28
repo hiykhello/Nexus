@@ -7,14 +7,19 @@ import nexus.tls.client_keys;
 import nexus.tls.handshake;
 import nexus.tls.key_share;
 static thread_local int fail_after=-1;
+static void* watched_server_hello=nullptr;
+static bool server_hello_released=false;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
     if (auto p=std::malloc(size ? size : 1)) return p;
     throw std::bad_alloc{};
 }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete(void* p,std::size_t) noexcept { std::free(p); }
+void operator delete(void* p) noexcept {
+    if (p && p==watched_server_hello) { server_hello_released=true; watched_server_hello=nullptr; }
+    std::free(p);
+}
+void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 auto read_exact(int fd,std::span<std::uint8_t> out) -> bool {
@@ -63,7 +68,9 @@ int main(int argc,char** argv) {
         auto wire=t::HandshakeDecoder::encode(1,*body); if (!wire) return 24;
         auto keys=t::server_handshake_keys(*wire,std::span{&scheme,1}); if (!keys) return 25;
         auto peer=t::client_handshake_keys(*wire,keys->server_hello,std::move(*key)); if (!peer) return 26;
+        watched_server_hello=keys->server_hello.data(); server_hello_released=false;
         auto flight=t::ServerFlight::create(std::move(*keys),*cred); if (!flight) return 27;
+        if (!server_hello_released || watched_server_hello) return 41;
         c::Bytes bogus(36,0); bogus[0]=20; bogus[3]=32;
         auto record=peer->write.seal(t::ContentType::handshake,bogus); if (!record) return 28;
         auto result=flight->client_finished(*record);

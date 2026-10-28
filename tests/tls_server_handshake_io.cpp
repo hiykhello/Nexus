@@ -87,8 +87,8 @@ int main(int argc,char** argv) {
     if (!small || small_budget->reserved()!=t::ServerHandshakeIo::hello_input_charge) return 81;
     auto denied=small->feed(input,2);
     if (denied || denied.error()!=t::ServerHandshakeIoError::budget_exceeded || small_budget->reserved() || small->tick(2)) return 73;
-    // Deny respectively the stream parse and the additional key-parser copy.
-    for (auto extra:{parsed_charge-1,2*parsed_charge-1}) {
+    // Deny respectively the stream parse, key-parser copy and generated hello.
+    for (auto extra:{parsed_charge-1,2*parsed_charge-1,2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge-1}) {
         auto c=credential(); if (!c) return 95;
         auto budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge+extra);
         auto candidate=t::ServerHandshakeIo::create(std::move(*c),1,100,"h2",t::ServerCredential::max_certificate_list_size,budget);
@@ -127,7 +127,7 @@ int main(int argc,char** argv) {
         auto plaintext=list+8+extensions+8+*signature+52;
         auto output=plaintext+22*((plaintext+16383)/16384);
         auto scratch=2*(list+8)+16384+(8+*signature)+extensions+52;
-        auto limit=t::ServerHandshakeIo::hello_input_charge+2*parsed_charge+server->pending_output().size()+output+scratch-(enough ? 0 : 1);
+        auto limit=t::ServerHandshakeIo::hello_input_charge+2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+server->pending_output().size()+output+scratch-(enough ? 0 : 1);
         auto bounded_budget=std::make_shared<nexus::memory::Budget>(limit);
         auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
         if (!candidate) return 92;
