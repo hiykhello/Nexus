@@ -11,22 +11,29 @@ export namespace nexus::tls::detail {
     struct AsyncReadResult { AsyncReadKind kind; std::optional<ApplicationEvent> event; };
     // One reader owns the buffered transport suffix, including any bytes read during handshake.
     class ApplicationInput {
-        crypto::Bytes buffered_;
-        std::size_t offset_=0;
+        std::array<std::uint8_t,4096> buffered_{};
+        std::size_t offset_=0, size_=0;
+        bool valid_=true;
     public:
-        explicit ApplicationInput(crypto::Bytes&& unread) : buffered_(std::move(unread)) {}
+        // Handshake drivers read at most one 4096-byte transport block. Reject a
+        // larger externally supplied suffix and do not retain its allocation.
+        explicit ApplicationInput(crypto::Bytes&& unread) : valid_(unread.size()<=buffered_.size()) {
+            if (valid_) { size_=unread.size(); std::copy(unread.begin(),unread.end(),buffered_.begin()); }
+            crypto::Bytes{}.swap(unread);
+        }
+        [[nodiscard]] auto valid() const noexcept -> bool { return valid_; }
         ApplicationInput(ApplicationInput const&)=delete;
         auto operator=(ApplicationInput const&) -> ApplicationInput& = delete;
         // A backpressure result means the single writer must flush pending output first.
         template<class Socket>
         auto read(Socket& socket, ApplicationIo& app, ApplicationDeadline deadline = {}) -> nex::capy::task<std::expected<AsyncReadResult,AsyncApplicationError>> {
-            std::array<std::uint8_t,4096> bytes{};
+            if (!valid_) { app.cancel(); co_return std::unexpected(AsyncApplicationError::state); }
             while (true) {
                 if (expired(deadline)) { app.cancel(); co_return std::unexpected(AsyncApplicationError::timeout); }
                 if (app.input_blocked()) co_return AsyncReadResult{AsyncReadKind::backpressure,{}};
-                if (offset_==buffered_.size()) {
-                    buffered_.clear(); offset_=0;
-                    auto operation=socket.read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size()));
+                if (offset_==size_) {
+                    offset_=size_=0;
+                    auto operation=socket.read_some(nex::capy::mutable_buffer(buffered_.data(),buffered_.size()));
                     auto [error,n]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
                     if (nex::capy::is_timeout(error) || (!error && expired(deadline))) { app.cancel(); co_return std::unexpected(AsyncApplicationError::timeout); }
                     if (nex::capy::is_eof(error) || (!error && !n)) {
@@ -34,10 +41,10 @@ export namespace nexus::tls::detail {
                         co_return AsyncReadResult{AsyncReadKind::eof,{}};
                     }
                     if (error) { app.cancel(); co_return std::unexpected(AsyncApplicationError::transport); }
-                    if (n>bytes.size()) { app.cancel(); co_return std::unexpected(AsyncApplicationError::transport); }
-                    buffered_.assign(bytes.begin(),bytes.begin()+static_cast<std::ptrdiff_t>(n));
+                    if (n>buffered_.size()) { app.cancel(); co_return std::unexpected(AsyncApplicationError::transport); }
+                    size_=n;
                 }
-                auto result=app.feed(std::span{buffered_}.subspan(offset_));
+                auto result=app.feed(std::span{buffered_}.subspan(offset_,size_-offset_));
                 if (!result) { app.cancel(); co_return std::unexpected(AsyncApplicationError::protocol); }
                 offset_+=result->consumed;
                 if (result->event) co_return AsyncReadResult{AsyncReadKind::event,std::move(result->event)};
@@ -66,6 +73,7 @@ export namespace nexus::tls::detail {
     // All methods and completions run on the same executor. One reader and one writer
     // may overlap; a second operation in either direction is rejected. Deadlines use
     // steady_clock and apply to the complete operation; timeout cancels both directions.
+    // An unread suffix larger than 4096 bytes makes the owner inactive.
     // send() automatically writes KeyUpdate before data when the local budget is exhausted.
     // The caller keeps the input span alive until send() completes.
     template<class Socket>
@@ -76,7 +84,9 @@ export namespace nexus::tls::detail {
         bool reading_=false, writing_=false, stream_writing_=false, canceled_=false;
     public:
         ApplicationConnection(Socket& socket, ApplicationRecords&& records, crypto::Bytes&& unread)
-            : socket_(socket), app_(std::move(records)), input_(std::move(unread)) {}
+            : socket_(socket), app_(std::move(records)), input_(std::move(unread)), canceled_(!input_.valid()) {
+            if (canceled_) app_.cancel();
+        }
         ApplicationConnection(ApplicationConnection const&)=delete;
         auto operator=(ApplicationConnection const&) -> ApplicationConnection& = delete;
         [[nodiscard]] auto idle() const noexcept -> bool { return !reading_ && !writing_ && !stream_writing_; }

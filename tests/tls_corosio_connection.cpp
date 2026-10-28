@@ -26,6 +26,27 @@ struct Fixture {
     ~Fixture() { connection.cancel(); a.close(); b.close(); context.restart(); (void)context.run_for(1s); if (!context.stopped() || !connection.idle()) std::_Exit(90); }
 };
 auto reader(Fixture& f) -> capy::task<> { auto result=co_await f.connection.read(); f.read_failed=!result; if (!result) f.read_error=result.error(); f.fatal=result && result->event && result->event->kind==t::ApplicationEventKind::fatal_alert; f.read_done=true; }
+auto boundary_reader(Fixture& f) -> capy::task<> {
+    auto result=co_await f.connection.read();
+    f.fatal=result && result->event && result->event->kind==t::ApplicationEventKind::data && result->event->data==Bytes(4074,42);
+    f.read_done=true;
+}
+template<class Backend> auto unread_boundary_test(Backend backend) -> bool {
+    auto peer=layer(t::RecordDirection::send,2); auto wire=peer.seal(t::ContentType::application_data,Bytes(4074,42));
+    if (!wire || wire->size()!=4096) return false;
+    wire->reserve(1u << 20);
+    io::io_context context(backend); io::local_stream_socket socket(context);
+    Connection connection(socket,records(1u << 24),std::move(*wire));
+    if (!connection.active() || wire->capacity()!=0) return false;
+    auto peer2=layer(t::RecordDirection::send,2); auto data=peer2.seal(t::ContentType::application_data,Bytes(4074,42));
+    if (!data) return false;
+    Fixture full(backend,1u << 24,16385,std::move(*data));
+    capy::run_async(full.context.get_executor())(boundary_reader(full)); full.context.restart(); (void)full.context.run_for(1s);
+    if (!full.context.stopped() || !full.read_done || !full.fatal) return false;
+    Bytes oversized(4097,0); oversized.reserve(1u << 20);
+    Connection rejected(socket,records(1u << 24),std::move(oversized));
+    return !rejected.active() && rejected.idle() && oversized.capacity()==0;
+}
 auto writer(Fixture& f) -> capy::task<> { Bytes data(1024,42); auto result=co_await f.connection.send(data); f.write_failed=!result; if (!result) f.write_error=result.error(); f.write_done=true; }
 auto stream_read(Fixture& f) -> capy::task<> {
     t::detail::ApplicationStreamReader reader(f.connection); std::array<std::uint8_t,2> buffer{}; Bytes received;
@@ -169,6 +190,10 @@ template<class Backend> auto protocol_failure(Backend backend, bool fatal=false)
     return f.context.stopped() && f.connection.idle() && f.read_done && f.write_done && (fatal ? f.fatal : f.read_failed) && f.write_failed && !f.connection.pending_output();
 }
 int main() {
+    if (!unread_boundary_test(io::epoll)) return 3;
+#if BOOST_COROSIO_HAVE_LIBURING
+    if (!unread_boundary_test(io::uring)) return 4;
+#endif
     for (int i=0;i<10;++i) {
         if (!stream_read_test(io::epoll) || !stream_test(io::epoll) || !blocked_update_test(io::epoll) || !budget_test(io::epoll) || !expired_test(io::epoll) || !deadline_test(io::epoll,true) || !deadline_test(io::epoll,false) || !exercise(io::epoll) || !protocol_failure(io::epoll) || !protocol_failure(io::epoll,true)) { std::cerr << "epoll connection cancellation failed at " << i << '\n'; return 1; }
 #if BOOST_COROSIO_HAVE_LIBURING
