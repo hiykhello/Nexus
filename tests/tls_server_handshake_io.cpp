@@ -5,14 +5,21 @@ import nexus.tls.handshake;
 import nexus.tls.key_share;
 import nexus.tls.server_hello;
 static thread_local int fail_after=-1;
+static void* watched_hello=nullptr;
+static void* watched_flight=nullptr;
+static bool hello_released=false, flight_released=false;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
     if (auto p=std::malloc(size ? size : 1)) return p;
     throw std::bad_alloc{};
 }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete(void* p,std::size_t) noexcept { std::free(p); }
+void operator delete(void* p) noexcept {
+    if (p && p==watched_hello) { hello_released=true; watched_hello=nullptr; }
+    if (p && p==watched_flight) { flight_released=true; watched_flight=nullptr; }
+    std::free(p);
+}
+void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 int main(int argc,char** argv) {
@@ -44,8 +51,10 @@ int main(int argc,char** argv) {
     for (auto byte:input) { auto result=server->feed(std::span{&byte,1},101); if (!result || result->consumed!=1) return 9; }
     if (server->pending_output().empty() || server->feed(input,102)->consumed!=0 || server->take_application_records()) return 10;
     if (server->written(server->pending_output().size()+1,102).error()!=t::ServerHandshakeIoError::invalid_argument) return 11;
+    watched_hello=const_cast<std::uint8_t*>(server->pending_output().data());
     std::vector<c::Bytes> records;
     while (!server->pending_output().empty()) {
+        if (records.size()==1) watched_flight=const_cast<std::uint8_t*>(server->pending_output().data());
         c::Bytes record;
         while (!server->pending_output().empty()) {
             auto bytes=server->pending_output(); auto n=std::min(bytes.size(),std::size_t{7}); record.insert(record.end(),bytes.begin(),bytes.begin()+n);
@@ -54,7 +63,7 @@ int main(int argc,char** argv) {
         }
         records.push_back(std::move(record));
     }
-    if (records.size()<2 || records[0].size()<6) return 13;
+    if (records.size()<2 || records[0].size()<6 || !hello_released || flight_released || !watched_flight) return 13;
     auto client=t::client_handshake_keys(*wire,std::span{records[0]}.subspan(5),std::move(*key)); if (!client) return 14;
     auto decoder=t::HandshakeDecoder::create(1048584); if (!decoder) return 15; bool server_finished=false, alpn_seen=false;
     for (std::size_t i=1;i<records.size();++i) {
@@ -82,7 +91,8 @@ int main(int argc,char** argv) {
     }
     if (!server->complete() || server->feed(input,105)->consumed!=0 ||
         !std::ranges::equal(server->negotiated_alpn(),c::Bytes{'h','2'})) return 26;
-    auto app=server->take_application_records(); if (!app || server->take_application_records()) return 27;
+    auto app=server->take_application_records(); if (!app || server->take_application_records() || !flight_released ||
+        !std::ranges::equal(server->negotiated_alpn(),c::Bytes{'h','2'})) return 27;
     auto master=t::master_secret(client->hash,client->handshake_secret.view()); auto traffic=t::derive_secret(client->hash,master->view(),"c ap traffic",*hash);
     auto appkey=t::expand_label(client->hash,traffic->view(),"key",{},16), iv=t::expand_label(client->hash,traffic->view(),"iv",{},12);
     auto send=t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,appkey->view(),iv->view());
@@ -98,7 +108,12 @@ int main(int argc,char** argv) {
     if (!blocked || !blocked->feed(input,2) || blocked->pending_output().empty()) return 32;
     if (blocked->written(1,1).error()!=t::ServerHandshakeIoError::time_reversed || blocked->tick(5).error()!=t::ServerHandshakeIoError::timeout || !blocked->pending_output().empty()) return 33;
     auto c6=credential(); auto cancel_output=t::ServerHandshakeIo::create(std::move(*c6),1,5);
-    if (!cancel_output || !cancel_output->feed(input,2) || !cancel_output->cancel() || !cancel_output->pending_output().empty()) return 34;
+    if (!cancel_output || !cancel_output->feed(input,2) || cancel_output->pending_output().empty()) return 34;
+    hello_released=false; flight_released=false;
+    watched_hello=const_cast<std::uint8_t*>(cancel_output->pending_output().data());
+    if (!cancel_output->written(cancel_output->pending_output().size(),2) || cancel_output->pending_output().empty()) return 66;
+    watched_flight=const_cast<std::uint8_t*>(cancel_output->pending_output().data());
+    if (!cancel_output->cancel() || !cancel_output->pending_output().empty() || !hello_released || !flight_released) return 67;
     for (int scenario=0;scenario<3;++scenario) {
         auto c7=credential(); auto required=t::ServerHandshakeIo::create(std::move(*c7),1,50,"h2");
         if (!required || !required->negotiated_alpn().empty()) return 48;
