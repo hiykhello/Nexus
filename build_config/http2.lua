@@ -44,6 +44,13 @@ if has_config("http2") then
             add_files("$(projectdir)/tests/http2_tls_server.cpp")
             add_deps("nexus-http2-tls-server", "nexus-tls-corosio-server-handshake")
             add_packages("nexus-corosio", "nexus-capy")
+
+        target("nexus-http2-tls-backpressure-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/http2_tls_backpressure.cpp")
+            add_deps("nexus-http2-tls-server")
+            add_packages("nexus-corosio", "nexus-capy")
     end
 
     target("nexus-nghttp2-memory-test")
