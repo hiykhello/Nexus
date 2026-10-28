@@ -192,15 +192,20 @@ int main() {
     limits.shared_memory_bytes=request_peak+1024;
     limits.response_bytes=limits.shared_memory_bytes;
     limits.total_response_bytes=limits.shared_memory_bytes;
+    limits.response_header_fields=1024;
     auto shared=nh::ServerSession::create(limits,budget_events);
     if (!shared || !feed_request(**shared)) return 85;
     auto available=limits.shared_memory_bytes-(**shared).shared_memory_used();
+    std::vector<nh::Header> many_headers(1024,nh::Header{"x","y"});
+    auto fields_rejected=(**shared).respond_empty(1,200,many_headers);
+    if (fields_rejected || fields_rejected.error().kind!=nh::ServerErrorKind::budget_exceeded ||
+        (**shared).shared_memory_used()!=limits.shared_memory_bytes-available) return 116;
     std::vector<std::byte> too_big(available+1);
     if (too_big.size()>limits.shared_memory_bytes-(**shared).library_memory_used() || !(**shared).stream_memory_charge()) return 115;
     auto rejected=(**shared).respond_body(1,200,too_big);
     if (rejected || rejected.error().kind!=nh::ServerErrorKind::budget_exceeded ||
         (**shared).response_memory_used()!=0 || (**shared).shared_memory_used()>limits.shared_memory_bytes) return 86;
-    too_big.pop_back();
+    too_big.resize(available-sizeof(h2::nghttp2_nv));
     auto exhausted_submission=(**shared).respond_body(1,200,too_big);
     if (exhausted_submission || exhausted_submission.error().library_code!=h2::NGHTTP2_ERR_NOMEM ||
         (**shared).response_memory_used()!=0 || (**shared).shared_memory_used()>limits.shared_memory_bytes) return 87;
