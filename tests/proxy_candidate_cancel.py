@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Cancel an actual proxy while its first resolved candidate is pending."""
 import pathlib
+import contextlib
 import socket
 import subprocess
 import sys
@@ -31,14 +32,15 @@ def pending_first(pid, port):
         if name.startswith('socket:['):
             owned.add(name[8:-1])
     destination = f'0200007F:{port:04X}'
+    count = 0
     for line in pathlib.Path('/proc/net/tcp').read_text().splitlines()[1:]:
         fields = line.split()
         if fields[2] == destination and fields[3] == '02' and fields[9] in owned:
-            return True
-    return False
+            count += 1
+    return count
 
 
-def scenario(root, workers, stop_pending):
+def scenario(root, workers, stop_pending, clients_count=1):
     with socket.socket() as first, socket.socket() as second, socket.socket() as reserved, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
         first.bind(('127.0.0.2', 0))
         first.listen(1)
@@ -75,38 +77,47 @@ routing {{ default-outbound "direct"; }}
 ''')
         process = subprocess.Popen([binary, 'run', '--config', config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
-            deadline = time.monotonic() + 5
-            while True:
-                if process.poll() is not None:
-                    raise AssertionError(process.stderr.read().decode())
-                try:
-                    client = socket.create_connection(('127.0.0.1', port), timeout=.2)
-                    break
-                except OSError:
-                    if time.monotonic() >= deadline:
-                        raise
-                    time.sleep(.02)
-            with client:
-                client.settimeout(3)
-                client.sendall(b'\x05\x01\x00')
-                assert exact(client, 2) == b'\x05\x00'
-                name = b'pending-candidates.test'
-                started = time.monotonic()
-                client.sendall(b'\x05\x01\x00\x03' + bytes([len(name)]) + name + first.getsockname()[1].to_bytes(2, 'big'))
-                client.settimeout(.3)
-                try:
-                    early = client.recv(10)
-                except TimeoutError:
-                    pass
-                else:
-                    raise AssertionError(f'first candidate did not remain pending: {early!r}')
-                assert len(requests) == 1
-                assert pending_first(process.pid, first.getsockname()[1]), 'proxy did not start first connect'
+            with contextlib.ExitStack() as clients:
+                sockets = []
+                for _ in range(clients_count):
+                    deadline = time.monotonic() + 5
+                    while True:
+                        if process.poll() is not None:
+                            raise AssertionError(process.stderr.read().decode())
+                        try:
+                            client = clients.enter_context(socket.create_connection(('127.0.0.1', port), timeout=.2))
+                            break
+                        except OSError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(.02)
+                    client.settimeout(3)
+                    client.sendall(b'\x05\x01\x00')
+                    assert exact(client, 2) == b'\x05\x00'
+                    name = b'pending-candidates.test'
+                    started = time.monotonic()
+                    client.sendall(b'\x05\x01\x00\x03' + bytes([len(name)]) + name + first.getsockname()[1].to_bytes(2, 'big'))
+                    sockets.append(client)
+                deadline = time.monotonic() + 3
+                while pending_first(process.pid, first.getsockname()[1]) != clients_count:
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise AssertionError('not all first-candidate connects became pending')
+                    time.sleep(.01)
+                assert len(requests) == clients_count
+                for client in sockets:
+                    client.settimeout(.1)
+                    try:
+                        early = client.recv(10)
+                    except TimeoutError:
+                        pass
+                    else:
+                        raise AssertionError(f'first candidate did not remain pending: {early!r}')
                 if stop_pending:
                     process.terminate()
                     process.wait(timeout=5)
-                    client.settimeout(2)
-                    assert client.recv(1) == b''
+                    for client in sockets:
+                        client.settimeout(2)
+                        assert client.recv(1) == b''
                 else:
                     client.settimeout(13)
                     response = client.recv(10)
@@ -147,4 +158,5 @@ with tempfile.TemporaryDirectory(prefix='nexus-candidate-cancel-') as directory:
     for workers in (1, 2):
         for stop_pending in (True, False):
             scenario(pathlib.Path(directory), workers, stop_pending)
-print('pending first candidate: stop and timeout do not dial later candidates')
+        scenario(pathlib.Path(directory), workers, True, clients_count=4)
+print('pending first candidates: concurrent stop and timeout do not dial later candidates')
