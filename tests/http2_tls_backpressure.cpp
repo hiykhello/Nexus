@@ -53,6 +53,31 @@ auto step(Fixture& f,bool timeout) -> capy::task<> {
 auto duplicate(Fixture& f) -> capy::task<> {
     auto result=co_await f.connection->step(); f.duplicate=!result && result.error()==h::TlsServerError::invalid_state;
 }
+struct PartialSocket {
+    io::local_stream_socket& socket; io::local_stream_socket& peer;
+    unsigned writes=0; std::array<std::uint8_t,5> observed{}; ssize_t observed_size=-1;
+    auto read_some(capy::mutable_buffer buffer) { return socket.read_some(buffer); }
+    auto write_some(capy::const_buffer buffer) {
+        if (++writes==1) return socket.write_some(capy::const_buffer(buffer.data(),std::min(buffer.size(),observed.size())));
+        observed_size=::recv(peer.native_handle(),observed.data(),observed.size(),MSG_PEEK|MSG_DONTWAIT);
+        peer.close(); return socket.write_some(buffer);
+    }
+    void cancel() { socket.cancel(); }
+};
+auto partial_step(h::TlsServerConnection<PartialSocket>& connection,bool& done,std::optional<h::TlsServerError>& error) -> capy::task<> {
+    auto result=co_await connection.step(); if (!result) error=result.error(); done=true;
+}
+template<class Backend> auto partial_failure(Backend backend) -> bool {
+    Fixture f(backend); PartialSocket socket{f.socket,f.peer};
+    h::TlsServerConnection connection(socket,*f.session,records(),c::Bytes{});
+    bool done=false; std::optional<h::TlsServerError> error;
+    capy::run_async(f.context.get_executor())(partial_step(connection,done,error)); f.context.restart(); (void)f.context.run_for(1s);
+    std::array<std::byte,64> sink{}; auto output=f.session->output(sink);
+    return f.context.stopped() && done && error==h::TlsServerError::tls && socket.writes==2 &&
+        socket.observed_size==5 && socket.observed[0]==23 && socket.observed[1]==3 && socket.observed[2]==3 &&
+        (socket.observed[3]!=0 || socket.observed[4]>16) &&
+        !output && output.error().kind==h::ServerErrorKind::failed;
+}
 template<class Backend> auto exercise(Backend backend,bool timeout) -> bool {
     Fixture f(backend); std::array<char,4096> filler{};
     for (;;) {
@@ -163,10 +188,10 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
 }
 int main() {
     for (int i=0;i<5;++i) {
-        if (!exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
+        if (!partial_failure(io::epoll) || !exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
+        if (!partial_failure(io::uring) || !exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
 #endif
     }
-    std::cout << "HTTP/2 TLS blocked output cancellation and deadline passed\n";
+    std::cout << "HTTP/2 TLS partial output, cancellation, deadlines and input budgets passed\n";
 }
