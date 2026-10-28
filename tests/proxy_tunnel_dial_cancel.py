@@ -34,7 +34,7 @@ def pending(pid, port):
                for parts in (line.split() for line in pathlib.Path('/proc/net/tcp').read_text().splitlines()[1:]))
 
 
-def scenario(root, workers, shadowsocks, retry=False, timeout=False):
+def scenario(root, workers, shadowsocks, retry=False, timeout=False, delayed_retry=False):
     with socket.socket() as first, socket.socket() as second, socket.socket() as reservation, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
         first.bind(('127.0.0.2', 0)); first.listen(1 if shadowsocks else 2); first.settimeout(4)
         fillers=[socket.create_connection(first.getsockname(),timeout=2) for _ in range(2)] if shadowsocks and not retry else []
@@ -81,12 +81,21 @@ routing {{ default-outbound "edge"; }}
                             rejected.settimeout(3)
                             header=exact(rejected,5)
                             assert header[0]==22 and exact(rejected,int.from_bytes(header[3:5],'big'))[0]==1
+                            if delayed_retry: time.sleep(4)
                     second.settimeout(4)
                     with second.accept()[0] as upstream:
                         upstream.settimeout(4)
                         if shadowsocks:
                             assert exact(client,10)[:2]==b'\x05\x00'
                             assert upstream.recv(1024), 'SS request was not sent to the second candidate'
+                        elif delayed_retry:
+                            header=exact(upstream,5)
+                            assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
+                            assert 4<=time.monotonic()-started<8, 'second candidate did not use the remaining time'
+                            client.settimeout(12); upstream.settimeout(12); response=client.recv(10)
+                            if response: assert (response+exact(client,10-len(response)))[:2]!=b'\x05\x00'
+                            assert 9<=time.monotonic()-started<12.5, 'retry restarted the handshake deadline'
+                            assert upstream.recv(1)==b'', 'timed-out retry retained the upstream'
                         else:
                             context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                             context.minimum_version=ssl.TLSVersion.TLSv1_3
@@ -251,6 +260,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory
     for workers in (1,2):
         for retry in (False,True): scenario(root,workers,shadowsocks,retry)
         scenario(root,workers,shadowsocks,timeout=True)
+        if not shadowsocks: scenario(root,workers,False,retry=True,delayed_retry=True)
         overlapping_handshakes(root,workers,shadowsocks)
         if shadowsocks: overlapping_handshakes(root,workers,True,established=True)
 print('tunnel candidates: reset, retry, deadline and overlapping stop passed')
