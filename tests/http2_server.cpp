@@ -269,6 +269,59 @@ int main() {
                      flow_stream, flow_observed.headers.size());
         return 28;
     }
+    // Pause a DATA callback, release its borrowed input, then cancel that
+    // stream. A second upload larger than the connection window must still
+    // make progress through WINDOW_UPDATE after the cancellation.
+    Observed cancel_observed;
+    nh::ServerEvents cancel_events{&cancel_observed, on_headers, on_data, on_end, on_closed};
+    auto cancel_session = nh::ServerSession::create({8, 4, 128, 64, 16, 65535}, cancel_events);
+    if (!cancel_session) return 58;
+    cancel_observed.session = cancel_session->get();
+    h2::nghttp2_session_callbacks* cancel_callbacks = nullptr;
+    if (h2::nghttp2_session_callbacks_new(&cancel_callbacks)) return 59;
+    h2::nghttp2_session_callbacks_set_on_frame_recv_callback(cancel_callbacks, on_client_frame);
+    h2::nghttp2_session_callbacks_set_on_stream_close_callback(cancel_callbacks, on_client_close);
+    Client cancel_client_events;
+    h2::nghttp2_session* cancel_client = nullptr;
+    auto cancel_rc = h2::nghttp2_session_client_new(&cancel_client, cancel_callbacks, &cancel_client_events);
+    h2::nghttp2_session_callbacks_del(cancel_callbacks);
+    if (cancel_rc) return 60;
+    std::unique_ptr<h2::nghttp2_session, decltype(&h2::nghttp2_session_del)> cancel_owner(cancel_client, h2::nghttp2_session_del);
+    if (h2::nghttp2_submit_settings(cancel_client, 0, nullptr, 0) ||
+        !to_server(cancel_client, **cancel_session) || !to_client(**cancel_session, cancel_client)) return 61;
+    std::string canceled_body(32768, 'x');
+    BodySource cancel_body{canceled_body};
+    h2::nghttp2_data_provider2 cancel_provider{};
+    cancel_provider.source.ptr = &cancel_body;
+    cancel_provider.read_callback = read_body;
+    auto canceled_upload = h2::nghttp2_submit_request2(cancel_client, nullptr, good.data(), good.size(), &cancel_provider, nullptr);
+    cancel_observed.pause_data = true;
+    bool canceled_paused = false;
+    while (!canceled_paused) {
+        std::uint8_t const* bytes = nullptr;
+        auto size = h2::nghttp2_session_mem_send2(cancel_client, &bytes);
+        if (size <= 0) return 62;
+        auto received = (**cancel_session).receive({reinterpret_cast<std::byte const*>(bytes), static_cast<std::size_t>(size)});
+        if (!received || *received != static_cast<std::size_t>(size)) return 63;
+        canceled_paused = cancel_observed.did_pause;
+    }
+    if ((**cancel_session).receive({}) || (**cancel_session).reset_stream(canceled_upload, h2::NGHTTP2_CANCEL) ||
+        !(**cancel_session).resume_input(canceled_upload) ||
+        !(**cancel_session).reset_stream(canceled_upload, h2::NGHTTP2_CANCEL) ||
+        !to_client(**cancel_session, cancel_client) || cancel_client_events.reset_id != canceled_upload ||
+        cancel_client_events.reset_code != h2::NGHTTP2_CANCEL) return 64;
+    cancel_observed.body.clear();
+    std::string survivor_body(80000, 'y');
+    BodySource survivor_source{survivor_body};
+    h2::nghttp2_data_provider2 survivor_provider{};
+    survivor_provider.source.ptr = &survivor_source;
+    survivor_provider.read_callback = read_body;
+    auto survivor_upload = h2::nghttp2_submit_request2(cancel_client, nullptr, good.data(), good.size(), &survivor_provider, nullptr);
+    if (survivor_upload <= canceled_upload) return 65;
+    for (int i = 0; i < 100 && cancel_observed.ended != survivor_upload; ++i)
+        if (!to_server(cancel_client, **cancel_session) || !to_client(**cancel_session, cancel_client)) return 66;
+    if (cancel_observed.ended != survivor_upload || cancel_observed.body != survivor_body ||
+        std::ranges::find(cancel_client_events.window_update_ids, 0) == cancel_client_events.window_update_ids.end()) return 67;
     Observed shutdown_observed;
     nh::ServerEvents shutdown_events{&shutdown_observed, on_headers, on_data, on_end, on_closed};
     auto shutdown_session = nh::ServerSession::create({8, 4, 128, 64, 16}, shutdown_events);
