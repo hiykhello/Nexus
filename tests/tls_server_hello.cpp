@@ -36,6 +36,12 @@ int main() {
     retry.extensions={{43,{3,4}},{51,{0,0x1d}},{44,{0,2,0xab,0xcd}}};
     auto second=*client; second.extensions.push_back({44,{0,2,0xab,0xcd}});
     if (!retry.validate_retry(first,second,*server)) return 22;
+    auto padded=second; padded.extensions.insert(padded.extensions.begin(),{21,{0,0}});
+    if (!retry.validate_retry(first,padded,*server)) return 41;
+    auto reordered=second; std::swap(reordered.extensions[0],reordered.extensions[1]);
+    if (retry.validate_retry(first,reordered,*server)) return 42;
+    auto missing=second; missing.extensions.erase(missing.extensions.begin());
+    if (retry.validate_retry(first,missing,*server)) return 43;
     auto wrong=second; wrong.random[0]^=1; if (retry.validate_retry(first,wrong,*server)) return 23;
     wrong=second; wrong.extensions.back().data.back()^=1; if (retry.validate_retry(first,wrong,*server)) return 24;
     if (retry.validate_retry(*client,second,*server)) return 25;

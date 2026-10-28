@@ -103,10 +103,9 @@ namespace nexus::tls {
         if (cookie) {
             if (cookie->data.size()<3 || get16(cookie->data,0)!=cookie->data.size()-2 || !second_cookie || second_cookie->data!=cookie->data) return std::unexpected(ServerHelloError::invalid_extension);
         } else if (second_cookie) return std::unexpected(ServerHelloError::invalid_extension);
-        std::vector<Extension> before, after;
-        for (auto const& e:first.extensions) if (e.type!=51 && e.type!=21) before.push_back(e);
-        for (auto const& e:second.extensions) if (e.type!=51 && e.type!=21 && e.type!=44) after.push_back(e);
-        if (before!=after) return std::unexpected(ServerHelloError::invalid_extension);
+        auto before=first.extensions | std::views::filter([](Extension const& e) { return e.type!=51 && e.type!=21; });
+        auto after=second.extensions | std::views::filter([](Extension const& e) { return e.type!=51 && e.type!=21 && e.type!=44; });
+        if (!std::ranges::equal(before,after)) return std::unexpected(ServerHelloError::invalid_extension);
         auto first_share=first.extension(51), second_share=second.extension(51);
         if (!first_share || !second_share) return std::unexpected(ServerHelloError::group_mismatch);
         auto offered=KeyShare::parse_client(first_share->data), replacement=KeyShare::parse_client(second_share->data);
