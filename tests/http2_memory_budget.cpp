@@ -159,6 +159,34 @@ int main() {
     // body consumes the remaining budget, nghttp2 submission fails and the
     // body reservation must be released.
     limits.library_memory_bytes=4*1024*1024;
+    // The response body on one stream competes with a header block that is
+    // still being decoded for another stream. Rejecting it must not consume
+    // the response slot, and completing the header block releases its charge.
+    limits.shared_memory_bytes=request_peak+8192;
+    limits.response_bytes=limits.shared_memory_bytes;
+    limits.total_response_bytes=limits.shared_memory_bytes;
+    auto mixed=nh::ServerSession::create(limits,budget_events);
+    if (!mixed || !feed_request(**mixed)) return 106;
+    auto partial_request=request; partial_request[8]=std::byte{3};
+    auto partial=(**mixed).receive(std::span{partial_request}.first(10));
+    if (!partial || *partial!=10 || !(**mixed).header_memory_charge()) return 107;
+    auto mixed_available=limits.shared_memory_bytes-(**mixed).shared_memory_used();
+    std::vector<std::byte> competing_body(mixed_available+1);
+    if (competing_body.size()>limits.shared_memory_bytes-(**mixed).library_memory_used()) return 112;
+    auto held_header_charge=(**mixed).header_memory_charge();
+    auto blocked_body=(**mixed).respond_body(1,200,competing_body);
+    if (blocked_body || blocked_body.error().kind!=nh::ServerErrorKind::budget_exceeded ||
+        (**mixed).response_memory_used()!=0 || (**mixed).header_memory_charge()!=held_header_charge ||
+        (**mixed).shared_memory_used()>limits.shared_memory_bytes) return 108;
+    auto partial_end=(**mixed).receive(std::span{partial_request}.subspan(10));
+    if (!partial_end || *partial_end!=partial_request.size()-10 || (**mixed).header_memory_charge()!=0 ||
+        !(**mixed).respond_body(1,200,body) || !(**mixed).respond_empty(3,204)) return 109;
+    for (;;) {
+        auto n=(**mixed).output(sink);
+        if (!n) return 110;
+        if (!*n) break;
+    }
+    if ((**mixed).response_memory_used()!=0 || (**mixed).shared_memory_used()>limits.shared_memory_bytes) return 111;
     limits.shared_memory_bytes=request_peak+1024;
     limits.response_bytes=limits.shared_memory_bytes;
     limits.total_response_bytes=limits.shared_memory_bytes;
