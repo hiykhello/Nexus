@@ -33,6 +33,8 @@ flowchart LR
 
 固定 Corosio 版本在 POSIX 下的阻塞线程池按 `io_context` 分配，默认一个线程，首次提交工作时启动；`io_context_options::thread_pool_size` 最小为 1，常规 resolver 和部分文件 I/O 共享该 context 的池。GCC 16/Linux epoll 的受控 `getaddrinfo` 门闩测试使用三个 context、每个三个请求：默认设置下同时有三个调用进入，设置每池两个线程后同时有六个进入，所有请求释放后完成。测试证明此场景下的调用并发，不证明线程创建失败、取消、公平性或跨 context 共享池能力。由此推论：不能直接为每个网络 worker 默认启用系统 resolver 并声称存在独立于 worker 数的全局线程预算；必须设计集中式解析服务，或明确将各 context 池计入总预算并限制 worker 数。
 
+Mixed 会话持有 stop source，关闭时请求停止并关闭各 I/O owner；握手、HTTP 上传/排空和两方向转发共享停止令牌。转发使用 Capy `quitter`，正常完成由回调计数，异常或停止回调关闭会话；每个任务持有共享会话直至完成。单、双 worker 的活跃 SOCKS 转发停止回归验证两端关闭和重启，半关闭、HTTP 上传及经 sing-box VLESS 的 Mixed 转发回归通过。VLESS/SS 入站父协程借用本地连接并等待两个子协程，尚未绑定该停止令牌：必须先确保子任务排空，才能安全展开父栈。VLESS/SS 出站仍有显式取消状态，系统 resolver 的阻塞调用仍可能延迟停止。
+
 固定版本的初步实测：`nexus-io-threads-test` 在 GCC 16、Linux 的 epoll 和 io_uring 下，通过四个生产线程向一个持有 work guard 的 worker 投递 1000 个独立协程，验证全部执行且运行于该 context；还验证空闲机会后的跨线程唤醒、释放 guard 后排空，以及 `stop()` 保留队列、`restart()` 后执行。io_uring 在沙箱外运行。测试使用裸 coroutine handle 的一次性独立任务，不覆盖被其他协程等待的 continuation、生产队列、resolver、投递与销毁竞态或所有调度交错；`stop()` 不是排空完成信号。
 
 当前单 worker 路径在 GCC 16/Linux io_uring 下经过单 CPU 亲和性测试：启动、一次 `poll` 和停止前后，`/proc/self/task` 中的用户态线程数没有增加。该测试没有启动 DNS、连接或其他后台任务，不能推断整个进程在所有工作负载下始终单线程；多 worker 尚未实现。

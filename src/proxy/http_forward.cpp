@@ -57,7 +57,7 @@ namespace nexus::proxy {
             (void)session->client.shutdown(io::shutdown_send);
             if (!session->http_upload_active) {
                 session->http_upload_active = true;
-                capy::run_async(context.get_executor(), [] {}, session_error(session))(drain(session));
+                capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(session))(drain(session));
             }
         }
 
@@ -137,7 +137,7 @@ namespace nexus::proxy {
             auto tail = input.substr(request.consumed);
             if (!request.chunked) tail = tail.substr(0, static_cast<std::size_t>(std::min<std::uint64_t>(request.body_length, tail.size())));
             session->http_upload_active = true;
-            capy::run_async(context.get_executor(), [] {}, session_error(session))(upload(session, std::string(tail), request.body_length, request.chunked));
+            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(session))(upload(session, std::string(tail), request.body_length, request.chunked));
         }
         std::array<std::uint8_t, http::max_connect_header_bytes> buffer{};
         std::size_t size=0, offset=0;

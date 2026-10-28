@@ -4,6 +4,7 @@ module;
 #include <boost/capy/cond.hpp>
 #include <boost/capy/ex/run_async.hpp>
 #include <boost/capy/task.hpp>
+#include <boost/capy/quitter.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/tcp_socket.hpp>
@@ -36,6 +37,7 @@ namespace nexus::proxy {
 #endif
     auto Session::close() noexcept -> void {
         closed = true;
+        stop.request_stop();
         if (resolver) resolver->cancel();
         if (cancel_dns) cancel_dns();
         if (tunnel) tunnel->cancel();
@@ -87,11 +89,10 @@ namespace nexus::proxy {
             co_return co_await write_all(client, std::span(bytes).first(size), session);
         }
 
-        auto relay(std::shared_ptr<Session> session, bool upstream) -> capy::task<> {
+        auto relay(std::shared_ptr<Session> session, bool upstream) -> capy::quitter<> {
             if (session->tunnel) {
                 auto success=upstream ? co_await session->tunnel->upload() : co_await session->tunnel->download();
                 if (!success) session->close();
-                if (++session->relay_finished == 2) { session->close(); session->done = true; }
                 co_return;
             }
             auto& source = upstream ? session->client : session->target;
@@ -109,10 +110,6 @@ namespace nexus::proxy {
                     session->close();
                     break;
                 }
-            }
-            if (++session->relay_finished == 2) {
-                session->close();
-                session->done = true;
             }
         }
 
@@ -179,8 +176,8 @@ namespace nexus::proxy {
             }
             if (!co_await reply(session->client, 0, session->tunnel ? io::endpoint{} : session->target.local_endpoint(), *session)) { fail(); co_return; }
             session->relaying = true;
-            capy::run_async(context.get_executor(), [] {}, session_error(session))(relay(session, true));
-            capy::run_async(context.get_executor(), [] {}, session_error(session))(relay(session, false));
+            capy::run_async(context.get_executor(), session->stop.get_token(), relay_complete(session), session_error(session))(relay(session, true));
+            capy::run_async(context.get_executor(), session->stop.get_token(), relay_complete(session), session_error(session))(relay(session, false));
         }
         auto http_response(Session& session, std::string_view text) -> capy::task<bool> {
             auto bytes = std::span(reinterpret_cast<std::uint8_t const*>(text.data()), text.size());
@@ -248,8 +245,8 @@ namespace nexus::proxy {
             auto sent=session->tunnel ? co_await session->tunnel->send(tail) : co_await write_all(session->target, tail, *session);
             if (!sent) { fail(); co_return; }
             session->relaying = true;
-            capy::run_async(context.get_executor(), [] {}, session_error(session))(relay(session, true));
-            capy::run_async(context.get_executor(), [] {}, session_error(session))(relay(session, false));
+            capy::run_async(context.get_executor(), session->stop.get_token(), relay_complete(session), session_error(session))(relay(session, true));
+            capy::run_async(context.get_executor(), session->stop.get_token(), relay_complete(session), session_error(session))(relay(session, false));
         }
 
     }

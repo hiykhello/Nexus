@@ -262,6 +262,41 @@ static auto credential_lifecycle() -> bool {
     return true;
 }
 
+static auto active_relay_stop(unsigned workers) -> bool {
+    Fd listener(::socket(AF_INET, SOCK_STREAM, 0));
+    sockaddr_in address{}; address.sin_family=AF_INET; address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+    if (listener.fd<0 || ::bind(listener.fd,reinterpret_cast<sockaddr*>(&address),sizeof(address)) ||
+        ::listen(listener.fd,1)) return false;
+    socklen_t size=sizeof(address);
+    if (::getsockname(listener.fd,reinterpret_cast<sockaddr*>(&address),&size)) return false;
+    auto target=ntohs(address.sin_port);
+    nexus::proxy::Server server;
+    auto port=server.start(0,nexus::proxy::Inbound::socks5,workers);
+    if (!port) return false;
+    std::atomic_bool stop{false};
+    std::jthread loop([&] { while (!stop) server.poll(20ms); server.stop(); });
+    Fd client(connect_to(*port));
+    std::array<std::uint8_t,10> destination{5,1,0,1,127,0,0,1,
+        static_cast<std::uint8_t>(target>>8),static_cast<std::uint8_t>(target)};
+    bool ok=client.fd>=0 && greet(client.fd) && request(client.fd,destination,0);
+    pollfd pending{listener.fd,POLLIN,0};
+    Fd peer(ok && ::poll(&pending,1,3000)>0 ? ::accept(listener.fd,nullptr,nullptr) : -1);
+    if (peer.fd>=0) timeout(peer.fd);
+    std::array<std::uint8_t,1> ping{'x'}, received{};
+    ok=ok && peer.fd>=0 && send_all(client.fd,ping) && read_all(peer.fd,received) && received==ping;
+    stop=true; loop.join();
+    std::uint8_t byte{};
+    auto client_end=::recv(client.fd,&byte,1,0);
+    auto peer_end=peer.fd>=0 ? ::recv(peer.fd,&byte,1,0) : -2;
+    if (!ok || client_end!=0 || peer_end!=0)
+        std::cerr << "active relay stop: transfer=" << ok << " client=" << client_end << " peer=" << peer_end << '\n';
+    ok=ok && client_end==0 && peer_end==0;
+    auto restarted=server.start(0,nexus::proxy::Inbound::socks5,workers);
+    if (restarted) server.stop();
+    else std::cerr << "active relay restart failed: " << restarted.error().message() << '\n';
+    return ok && restarted.has_value();
+}
+
 static auto slow_resolver_test(unsigned workers) -> bool {
     if (!std::getenv("NEXUS_TEST_SLOW_RESOLVER")) return true;
     int ready_pipe[2], gate_pipe[2];
@@ -333,7 +368,8 @@ int main(int argc, char** argv) {
         ok = ok && check(n == 0, "stalled close");
     }
     ok = ok && check(policy_test(nexus::proxy::RuleFormat::kdl), "KDL policy") && check(policy_test(nexus::proxy::RuleFormat::beve), "BEVE policy") &&
-         check(slow_resolver_test(workers), "slow resolver") && check(credential_lifecycle(), "credential lifecycle");
+         check(slow_resolver_test(workers), "slow resolver") && check(credential_lifecycle(), "credential lifecycle") &&
+         check(active_relay_stop(workers), "active relay stop");
     if (!ok) { std::cerr << "proxy end-to-end test failed\n"; return 1; }
     std::cout << "SOCKS5 direct TCP, DNS, block rules, pipelining, half-close and stop passed\n";
 }

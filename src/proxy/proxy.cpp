@@ -100,7 +100,7 @@ namespace nexus::proxy {
                 continue;
             }
 #endif
-            capy::run_async(context.get_executor(), [] {}, session_error(session))(handshake(session, context, policy, mixed, credentials));
+            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(session))(handshake(session, context, policy, mixed, credentials));
         }
         running = false;
     }

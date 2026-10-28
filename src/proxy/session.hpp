@@ -46,6 +46,7 @@ namespace nexus::proxy {
         std::shared_ptr<std::vector<TunnelFactory> const> tunnel_factories;
         Clock::time_point started = Clock::now();
         Clock::time_point touched = started;
+        std::stop_source stop;
         bool relaying = false;
         bool closed = false;
         bool done = false;
@@ -65,6 +66,13 @@ namespace nexus::proxy {
     inline auto session_error(std::shared_ptr<Session> session) {
         return [session=std::move(session)](std::exception_ptr) noexcept {
             session->close(); session->done=true;
+        };
+    }
+
+    // Each relay holds the session until its completion handler runs.
+    inline auto relay_complete(std::shared_ptr<Session> session) {
+        return [session=std::move(session)]() noexcept {
+            if (++session->relay_finished == 2) { session->close(); session->done=true; }
         };
     }
 
