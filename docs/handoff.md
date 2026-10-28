@@ -20,6 +20,7 @@
 - HTTP/2 TLS 对端将初始流发送窗口设为零后，响应头仍可发送；逐流 WINDOW_UPDATE 恢复数据发送，其他流不提前发送 DATA，GOAWAY 和 TLS 关闭正常；epoll、io_uring 通过。
 - HTTP/2 TLS 对端在零发送窗口下重置一个流，另一流继续完成响应，响应体计费全部释放并正常关闭；epoll、io_uring 通过。
 - HTTP/2 TLS 两个响应共同耗尽 65535 字节连接发送窗口后，经连接级 WINDOW_UPDATE 完整恢复，GOAWAY 和 TLS 关闭正常；epoll、io_uring 通过。
+- HTTP/2 共享预算新增五类传输预留同时与响应体竞争的回归；预算拒绝不消耗响应机会，释放预留后同一流可继续响应。
 - TLS 应用记录、无 I/O 和异步连接异常时失效并清理；HTTP/2 TLS 逻辑预算覆盖主要输入、输出和暂存缓冲，但并非完整内存上限。
 
 ## 当前
@@ -36,7 +37,7 @@
 
 ## 下一步
 
-- 继续核查组合拨号及隧道握手的错误监视与 owner 回收交错；会话清理器和拨号共用十秒期限，超时回复目前是尽力而为。
+- 当前继续核查 HTTP/2 连接级预算：现有计费是逻辑预留，并未覆盖 TLS 握手重组、分配容量及协程等开销；需先明确完整预算的所有权边界和可验证范围。
 
 1. 补实际组合拨号的 resolver/连接 owner 回收、错误监视与隧道握手的更复杂交错；继续验证 VLESS/SS 停止异常、完成回调及共享会话生命周期的其他竞态。
 2. 继续核对 Corosio/Capy 的 `io_context` stop/drain 在挂起 connect、跨线程和其他多操作下的 owner 语义。固定 Capy 的 `execution_context::shutdown()` 为 protected、非线程安全，由 `io_context` 析构调用；不能作为 worker 协调器公开屏障或代替完成任务的排空。

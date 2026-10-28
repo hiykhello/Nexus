@@ -261,5 +261,27 @@ int main() {
     }
     if (!shared_exhausted || (**competing).response_memory_used()!=larger_body.size() ||
         (**competing).shared_memory_used()>limits.shared_memory_bytes) return 100;
+    // Simultaneous transport allowances compete with application response
+    // storage, and releasing them makes the same stream usable again.
+    limits.shared_memory_bytes=request_peak+stream_charge+32768;
+    limits.response_bytes=limits.shared_memory_bytes;
+    limits.total_response_bytes=limits.shared_memory_bytes;
+    auto transport=nh::ServerSession::create(limits,budget_events);
+    if (!transport || !feed_request(**transport)) return 117;
+    auto before=(**transport).shared_memory_used();
+    if (!(**transport).reserve_input(4096) || !(**transport).reserve_output(4096) ||
+        !(**transport).reserve_ciphertext(4096) || !(**transport).reserve_scratch(4096) ||
+        !(**transport).reserve_transport(4096) || (**transport).reserve_input(1) ||
+        (**transport).shared_memory_used()!=before+5*4096) return 118;
+    auto remaining_transport=limits.shared_memory_bytes-(**transport).shared_memory_used();
+    std::vector<std::byte> blocked_transport(remaining_transport+1);
+    auto transport_rejected=(**transport).respond_body(1,200,blocked_transport);
+    if (transport_rejected || transport_rejected.error().kind!=nh::ServerErrorKind::budget_exceeded ||
+        (**transport).response_memory_used() || (**transport).shared_memory_used()!=before+5*4096) return 119;
+    (**transport).release_input(); (**transport).release_output(); (**transport).release_ciphertext();
+    (**transport).release_scratch(); (**transport).release_transport();
+    if ((**transport).shared_memory_used()!=before || !(**transport).respond_body(1,200,body)) return 120;
+    for (;;) { auto n=(**transport).output(sink); if (!n) return 121; if (!*n) break; }
+    if ((**transport).response_memory_used() || (**transport).shared_memory_used()>limits.shared_memory_bytes) return 122;
     std::println("HTTP/2 nghttp2 memory budget and recovery passed");
 }
