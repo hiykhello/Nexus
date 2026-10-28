@@ -300,6 +300,8 @@ export namespace nexus::http2 {
             stream->responded = true;
             return {};
         }
+        [[nodiscard]] auto paused_stream() const noexcept -> std::int32_t { return paused_stream_; }
+
         // A paused input callback has already consumed the bytes that produced
         // its view. The caller retains any unconsumed input and explicitly
         // releases the guard before feeding subsequent bytes.

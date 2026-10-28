@@ -4,7 +4,9 @@
 
 ## 上一步
 
-- TLS 服务端握手支持要求单个 ALPN：验证完整客户端列表及匹配项，在加密扩展中发送选择，握手完成后开放结果；未配置时保持原行为。增量测试覆盖缺失、不匹配、畸形列表和重试；Corosio 与 OpenSSL `h2` 及无 ALPN 连接通过。尚未把 HTTP/2 会话接入 TLS 网络驱动。
+- 新增实验性 HTTP/2 TLS/Corosio 单所有者逐步驱动，保留未消费明文，暂停后由应用恢复；Python/OpenSSL 实际连接验证证书、`h2`、分片 GET 以及 POST DATA 暂停恢复。驱动尚未接到正式应用，多流网络、完整预算与优雅关闭仍需验证。
+
+- TLS 服务端握手支持要求单个 ALPN：验证完整客户端列表及匹配项，在加密扩展中发送选择，握手完成后开放结果；未配置时保持原行为。增量测试覆盖缺失、不匹配、畸形列表和重试；Corosio 与 OpenSSL `h2` 及无 ALPN 连接通过。HTTP/2 会话现已有实验性 TLS 网络驱动，尚未接入正式应用。
 
 - HTTP/2 内存对端新增暂停 DATA 后恢复并取消流的回归：取消后另一条流上传 80,000 字节，验证连接级 WINDOW_UPDATE 和后续流进展。进一步在 DATA 帧首个负载字节暂停，恢复并排队取消后继续输入该帧余下字节；真实网络驱动仍未覆盖。
 
@@ -22,9 +24,9 @@
 ## 当前
 
 - 当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
-- 固定 nghttp2 的 DATA chunk 回调只支持正常返回、暂停或连接级失败，流级取消需由应用在暂停后明确恢复并调用 `reset_stream`。回归已覆盖部分 DATA 帧暂停、取消后连接窗口回收与其他流进展；HTTP/2 的 TLS/Corosio 网络驱动仍待实现。
+- 固定 nghttp2 的 DATA chunk 回调只支持正常返回、暂停或连接级失败，流级取消需由应用在暂停后明确恢复并调用 `reset_stream`。回归已覆盖部分 DATA 帧暂停、取消后连接窗口回收与其他流进展；HTTP/2 的 TLS/Corosio 实验驱动已接通，仍需验证网络多流和关闭。
 - 地址工厂、socket quitter owner unwind 以及新的候选连接回归已通过。`connect_candidates` 只接受 `tcp_socket` 和 endpoint vector，公开结果为 error plus connected endpoint；上游组合模板和 Capy condition 特化仍不直接导出。失败/取消关闭 socket，但真实 resolver 并发候选、超时和多挂起 accept/connect 仍未覆盖。曾试接代理 direct 路径，路由候选、系统 resolver fallback 和顺序测试通过，但预分类后续地址可能改变逐候选策略判断与错误顺序，故已撤回；现有代理仍逐地址拨号。
-- HTTP/2 无 I/O 服务端已修复跨流关闭时的响应 provider 生命周期；TLS/Corosio 握手和应用记录适配器仍保持既有验证范围。HTTP/2 网络驱动、完整连接级预算及独立对端互操作仍未完成。
+- HTTP/2 无 I/O 服务端已修复跨流关闭时的响应 provider 生命周期；TLS/Corosio 握手和应用记录适配器仍保持既有验证范围。HTTP/2 实验驱动已与 Python/OpenSSL 简单对端互通；完整连接级预算、网络多流和正式应用接入仍未完成。
 
 ## 下一步
 
