@@ -22,6 +22,7 @@ export namespace nexus::tls {
         crypto::Bytes handshake_pending_;
         [[nodiscard]] auto rotate(bool sending) -> bool;
     public:
+        [[nodiscard]] auto role() const noexcept -> ApplicationRole { return role_; }
         // Maximum application bytes in one unpadded record, after peer negotiation.
         [[nodiscard]] auto max_write_size() const noexcept -> std::size_t {
             return active_ && !write_closed_ && write_limit_ > 1 ? std::min(write_limit_ - 1, std::size_t{16384}) : 0;

@@ -11,10 +11,12 @@ export namespace nexus::http2 {
 
     // A single owner drives this object and its session on one executor. Socket,
     // session and this object must outlive an outstanding step. The caller must
-    // have completed a TLS handshake that selected h2 before constructing it.
+    // have completed a server TLS handshake that selected h2 before constructing it.
+    // Client-role application records are rejected and invalidate a claimed session.
     template<class Socket>
     class TlsServerConnection {
         ServerSession& session_;
+        bool server_records_;
         tls::detail::ApplicationConnection<Socket> tls_;
         crypto::Bytes input_;
         std::size_t offset_=0;
@@ -28,9 +30,10 @@ export namespace nexus::http2 {
     public:
         TlsServerConnection(Socket& socket, ServerSession& session, tls::ApplicationRecords&& records,
                             crypto::Bytes&& unread)
-            : session_(session), tls_(socket,std::move(records),std::move(unread)), claimed_(session.claim_transport()) {
-            failed_=!claimed_ || !tls_.active();
-            if (claimed_ && failed_) { session_.fail_transport(false); session_abandoned_=true; }
+            : session_(session), server_records_(records.role()==tls::ApplicationRole::server),
+              tls_(socket,std::move(records),std::move(unread)), claimed_(session.claim_transport()) {
+            failed_=!claimed_ || !server_records_ || !tls_.active();
+            if (claimed_ && failed_) { session_.fail_transport(false); session_abandoned_=true; tls_.cancel(); }
         }
         TlsServerConnection(TlsServerConnection const&)=delete;
         auto operator=(TlsServerConnection const&) -> TlsServerConnection& = delete;

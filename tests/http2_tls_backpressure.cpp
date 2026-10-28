@@ -16,9 +16,9 @@ auto layer(t::RecordDirection direction,int n) -> t::RecordLayer {
     if (!key || !iv) std::abort(); auto result=t::RecordLayer::create(direction,c::Aead::aes_128_gcm,key->view(),iv->view());
     if (!result) std::abort(); return std::move(*result);
 }
-auto records() -> t::ApplicationRecords {
+auto records(t::ApplicationRole role=t::ApplicationRole::server) -> t::ApplicationRecords {
     return {layer(t::RecordDirection::send,1),layer(t::RecordDirection::receive,2),16385,16385,
-            c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(1),secret(2),t::ApplicationRole::server};
+            c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(1),secret(2),role};
 }
 auto headers(void*,std::int32_t,std::span<h::Header const>,bool,bool) noexcept -> bool { return true; }
 auto data(void*,std::int32_t,std::span<std::byte const>) noexcept -> h::DataDisposition { return h::DataDisposition::accepted; }
@@ -135,7 +135,7 @@ template<class Backend> auto duplicate_owner(Backend backend) -> bool {
     auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed}); if (!session) return false;
     Connection owner(a,**session,records(),c::Bytes{});
     {
-        Connection duplicate(a,**session,records(),c::Bytes{}); bool done=false; std::optional<h::TlsServerError> error;
+        Connection duplicate(a,**session,records(t::ApplicationRole::client),c::Bytes{}); bool done=false; std::optional<h::TlsServerError> error;
         capy::run_async(context.get_executor())(read_step(duplicate,done,error)); context.restart(); (void)context.run_for(1s);
         if (!context.stopped() || !done || error!=h::TlsServerError::invalid_state) return false;
         duplicate.cancel();
@@ -162,6 +162,17 @@ template<class Backend> auto oversized_unread(Backend backend) -> bool {
     std::uint8_t byte{}; auto n=::recv(b.native_handle(),&byte,1,MSG_DONTWAIT);
     return unread.capacity()==0 && !output && output.error().kind==h::ServerErrorKind::failed &&
         context.stopped() && done && error==h::TlsServerError::invalid_state && n<0 && (errno==EAGAIN || errno==EWOULDBLOCK);
+}
+template<class Backend> auto wrong_role(Backend backend) -> bool {
+    io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
+    auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed}); if (!session) return false;
+    Connection connection(a,**session,records(t::ApplicationRole::client),c::Bytes{});
+    bool done=false; std::optional<h::TlsServerError> error;
+    capy::run_async(context.get_executor())(read_step(connection,done,error)); context.restart(); (void)context.run_for(1s);
+    std::array<std::byte,64> sink{}; auto output=(**session).output(sink);
+    std::uint8_t byte{}; auto n=::recv(b.native_handle(),&byte,1,MSG_DONTWAIT);
+    return context.stopped() && done && error==h::TlsServerError::invalid_state &&
+        !output && output.error().kind==h::ServerErrorKind::failed && n<0 && (errno==EAGAIN || errno==EWOULDBLOCK);
 }
 template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
     h::ServerEvents events{nullptr,headers,data,end,closed}; h::ServerLimits limits{8,16,4096,1024,4096};
@@ -319,6 +330,7 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
 }
 int main() {
     for (int i=0;i<5;++i) {
+        if (!wrong_role(io::epoll)) return 1;
         if (!oversized_unread(io::epoll)) { std::cerr << "oversized_unread(io::epoll) failed\n"; return 1; }
         if (!duplicate_owner(io::epoll)) { std::cerr << "duplicate_owner(io::epoll) failed\n"; return 1; }
         if (!drop_idle_driver(io::epoll)) { std::cerr << "drop_idle_driver(io::epoll) failed\n"; return 1; }
@@ -339,6 +351,7 @@ int main() {
         if (!abandon_paused(io::epoll,2)) { std::cerr << "abandon_paused(io::epoll,2) failed\n"; return 1; }
         if (!abandon_paused(io::epoll,3)) { std::cerr << "abandon_paused(io::epoll,3) failed\n"; return 1; }
 #if BOOST_COROSIO_HAVE_LIBURING
+        if (!wrong_role(io::uring)) return 2;
         if (!oversized_unread(io::uring)) { std::cerr << "oversized_unread(io::uring) failed\n"; return 2; }
         if (!duplicate_owner(io::uring)) { std::cerr << "duplicate_owner(io::uring) failed\n"; return 2; }
         if (!drop_idle_driver(io::uring)) { std::cerr << "drop_idle_driver(io::uring) failed\n"; return 2; }
