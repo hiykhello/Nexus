@@ -46,9 +46,9 @@ def attempt(port, target_port, protocol, host, socks_code, http_status):
             assert exact(client, 8) == b'fallback'
 
 
-def run(root, rule, host, socks_code, http_status):
+def run(root, rule, host, socks_code, http_status, tunnel=False):
     allowed = socks_code == 0
-    with socket.socket() as target, socket.socket() as refused, socket.socket() as reserved:
+    with socket.socket() as target, socket.socket() as refused, socket.socket() as reserved, socket.socket() as upstream:
         target.bind(('127.0.0.1', 0))
         target.listen(4)
         target.settimeout(1)
@@ -59,14 +59,25 @@ def run(root, rule, host, socks_code, http_status):
         reserved.close()
         (root / 'rules.kdl').write_text(f'schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="{rule}"\n')
         config = root / 'config.kdl'
+        extra = ''
+        action = 'reject'
+        if tunnel:
+            upstream.bind(('127.0.0.1', 0))  # VLESS upstream deliberately refuses
+            extra = f'''outbound "edge" type="vless" {{
+ server host="127.0.0.1" port={upstream.getsockname()[1]}
+ authentication {{ uuid-file "{root / 'user.uuid'}"; }}
+ tls {{ server-name "localhost"; ca-file "{root / 'ca.pem'}"; verify #true; }}
+}}
+'''
+            action = 'edge'
         config.write_text(f'''schema-version 1
 role "client"
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{
+{extra}routing {{
  rule-set "blocked" path="rules.kdl" format="kdl"
- rule kind="rule-set" value="blocked" outbound="reject"
+ rule kind="rule-set" value="blocked" outbound="{action}"
  default-outbound "direct"
 }}
 ''')
@@ -119,4 +130,12 @@ with tempfile.TemporaryDirectory(prefix='nexus-fallback-') as directory:
     run(root, '127.0.0.0/8', forward, 2, b'403')   # all candidates blocked
     run(root, '127.0.0.2/32', reverse, 0, b'200')  # success stops before later block
     run(root, '127.0.0.1/32', reverse, 5, b'502')  # block then refusal
+    if len(sys.argv) > 3 and sys.argv[3] == '--crypto':
+        (root / 'user.uuid').write_text('00010203-0405-0607-0809-0a0b0c0d0e0f\n')
+        (root / 'user.uuid').chmod(0o600)
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                        '-keyout', str(root / 'key.pem'), '-out', str(root / 'ca.pem'),
+                        '-subj', '/CN=localhost', '-days', '1'], check=True, capture_output=True)
+        run(root, '127.0.0.2/32', forward, 0, b'200', tunnel=True)  # tunnel fails, direct succeeds
+        run(root, '127.0.0.1/32', forward, 4, b'502', tunnel=True)  # direct fails, tunnel fails last
 print('Resolved address fallback and per-address policy passed')

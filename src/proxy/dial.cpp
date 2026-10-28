@@ -23,6 +23,7 @@ import nexus.rules;
 import nexus.http.connect;
 import nexus.dns.message;
 import nexus.dns.cache;
+import nexus.thirdparty.corosio;
 #ifdef NEXUS_TEST_FAKEIP
 import nexus.dns.fakeip_request;
 extern "C" void nexus_test_fakeip_blocked();
@@ -185,43 +186,59 @@ namespace nexus::proxy {
                 destinations.emplace_back(io::ipv6_address(raw), request.port);
             }
             std::error_code error;
-            bool connected = false;
             bool blocked = false;
-            for (auto const& destination : destinations) {
+            std::size_t next = 0;
+            while (next < destinations.size()) {
+                // The condition cannot await a tunnel. Stop classifying at the
+                // first tunnel or policy error; handle that candidate after
+                // the direct sequence completes, then resume in order.
+                bool attempted = false, boundary = false, policy_error = false;
+                std::optional<std::size_t> tunnel_action;
+                io::endpoint tunnel_destination;
+                auto condition = [&](std::error_code const&, io::endpoint const& destination) {
+                    if (boundary) return false;
+                    if (session->closed) { boundary=true; return false; }
+                    ++next;
 #ifdef NEXUS_TEST_FAKEIP
-                if (session->fakeip) {
-                    auto address=destination.address();
-                    auto allowed=address.is_v4() ? dns::validate_fakeip_resolution(*session->fakeip,address.to_v4().to_bytes()) :
-                                                   dns::validate_fakeip_resolution(*session->fakeip,address.to_v6().to_bytes());
-                    if (!allowed) { nexus_test_fakeip_blocked(); blocked=true; continue; }
-                }
+                    if (session->fakeip) {
+                        auto address=destination.address();
+                        auto allowed=address.is_v4() ? dns::validate_fakeip_resolution(*session->fakeip,address.to_v4().to_bytes()) :
+                                                       dns::validate_fakeip_resolution(*session->fakeip,address.to_v6().to_bytes());
+                        if (!allowed) { nexus_test_fakeip_blocked(); blocked=true; return false; }
+                    }
 #endif
-                auto ip = destination.address().to_string();
-                auto matched = policy.match({.domain=domain_name,.ip=ip});
-                if (!matched) co_return 1;
-                if (*matched==static_cast<std::size_t>(RouteAction::block)) { blocked = true; continue; }
-                if (*matched>=static_cast<std::size_t>(RouteAction::vless)) {
-                    auto index=*matched-static_cast<std::size_t>(RouteAction::vless);
+                    auto ip=destination.address().to_string();
+                    auto matched=policy.match({.domain=domain_name,.ip=ip});
+                    if (!matched) { boundary=true; policy_error=true; return false; }
+                    if (*matched==static_cast<std::size_t>(RouteAction::block)) { blocked=true; return false; }
+                    if (*matched>=static_cast<std::size_t>(RouteAction::vless)) {
+                        boundary=true; tunnel_action=*matched; tunnel_destination=destination; return false;
+                    }
+                    attempted=true;
+                    return true;
+                };
+                auto candidates=std::span{destinations}.subspan(next);
+                auto [connect_error, connected_endpoint]=co_await nex::corosio::connect(session->target,candidates,condition);
+                (void)connected_endpoint;
+                if (session->closed) co_return 1;
+                if (!connect_error) co_return 0;
+                // Upstream leaves the last failed socket open; close it before
+                // starting a tunnel or leaving the candidate loop.
+                if (attempted) { error=connect_error; session->target.close(); }
+                if (policy_error) co_return 1;
+                if (tunnel_action) {
+                    auto index=*tunnel_action-static_cast<std::size_t>(RouteAction::vless);
                     if (!session->tunnel_factories || index>=session->tunnel_factories->size()) co_return 1;
                     session->tunnel=(*session->tunnel_factories)[index](*session,context);
-                    auto connected_tunnel=co_await session->tunnel->connect(destination);
+                    auto connected_tunnel=co_await session->tunnel->connect(tunnel_destination);
                     if (session->closed) co_return 1;
                     if (connected_tunnel==TunnelConnectResult::connected) co_return 0;
                     if (connected_tunnel==TunnelConnectResult::failed) co_return 1;
                     session->tunnel={};
                     error=std::make_error_code(std::errc::host_unreachable);
-                    continue;
                 }
-                auto [connect_error] = co_await session->target.connect(destination);
-                if (session->closed) co_return 1;
-                if (!connect_error) { connected = true; break; }
-                error = connect_error;
-                session->target.close();
             }
-            if (!connected) {
-                co_return error ? failure_code(error) : blocked ? 2 : 4;
-            }
-            co_return 0;
+            co_return error ? failure_code(error) : blocked ? 2 : 4;
         }
 
 }

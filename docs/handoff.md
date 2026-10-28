@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- 代理直连已使用导出的 Corosio `connect`，逐候选判策略；遇到隧道或策略错误时暂不分类后续项，回到异步隧道后继续。真实代理覆盖拒绝/阻断/成功和失败 VLESS 与直连交错的顺序及错误；失败 socket 显式关闭。
+
 - HTTP/2 真实 TLS 双流回归验证上传流暂停时另一流响应和关闭，暂停状态仍保持，随后上传恢复、两流完成；epoll/io_uring 均通过。
 
 - HTTP/2 TLS 驱动在输入暂停时仍排空已排队输出，避免响应等待上传恢复；输出排空后报告暂停。真实 TLS 对端验证暂停期间提交和发送响应、随后恢复上传，epoll/io_uring 和既有会话/内存回归通过。
@@ -30,12 +32,12 @@
 
 - 当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
 - 固定 nghttp2 的 DATA chunk 回调只支持正常返回、暂停或连接级失败，流级取消需由应用在暂停后明确恢复并调用 `reset_stream`。回归已覆盖部分 DATA 帧暂停、取消后连接窗口回收与其他流进展；HTTP/2 的 TLS/Corosio 实验驱动已接通，已验证基本网络多流和 TLS 双向关闭，仍需验证更广泛场景。
-- 地址工厂、socket quitter owner unwind 以及新的候选连接回归已通过。`connect_candidates` 只接受 `tcp_socket` 和 endpoint vector，公开结果为 error plus connected endpoint；上游组合模板和 Capy condition 现已导出并通过独立消费者测试。失败/取消关闭 socket，但真实 resolver 并发候选、超时和多挂起 accept/connect 仍未覆盖。曾试接代理 direct 路径，路由候选、系统 resolver fallback 和顺序测试通过，但预分类后续地址可能改变逐候选策略判断与错误顺序，故已撤回；现有代理仍逐地址拨号。
+- 地址工厂、socket quitter owner unwind 以及新的候选连接回归已通过。`connect_candidates` 只接受 `tcp_socket` 和 endpoint vector，公开结果为 error plus connected endpoint；上游组合模板和 Capy condition 现已导出并通过独立消费者测试。失败/取消关闭 socket，但真实 resolver 并发候选、超时和多挂起 accept/connect 仍未覆盖。实际代理现按候选判策略并使用 Corosio 组合直连；隧道边界避免预分类后续候选，取消与超时的更广泛交错仍需验证。
 - HTTP/2 无 I/O 服务端已修复跨流关闭时的响应 provider 生命周期；TLS/Corosio 握手和应用记录适配器仍保持既有验证范围。HTTP/2 实验驱动已与 Python/OpenSSL 简单对端互通；完整连接级预算、正式应用接入及更广泛的网络关闭验证仍未完成。
 
 ## 下一步
 
-1. 为实际拨号设计逐候选策略回调或其他保持原有路由及错误顺序的组合连接接口，再补超时、候选上限、异步取消和 resolver/连接的 owner 回收。
-2. 继续核对 Corosio/Capy 的 `io_context` stop/drain 在挂起 connect、跨线程和其他多操作下的 owner 语义。
+1. 补实际组合拨号的超时、候选上限、异步取消及 resolver/连接 owner 回收；用户提出的 VLESS/SS 会话 quitter 改造须处理停止异常、完成回调和共享会话生命周期。
+2. 继续核对 Corosio/Capy 的 `io_context` stop/drain 在挂起 connect、跨线程和其他多操作下的 owner 语义。固定 Capy 的 `execution_context::shutdown()` 为 protected、非线程安全，由 `io_context` 析构调用；不能作为 worker 协调器公开屏障或代替完成任务的排空。
 3. 回到 HTTP/2 流生命周期、连接级预算、输入/输出背压，再接 TLS ALPN、Corosio 应用记录和独立网络对端。
 4. 每完成一个切片，先运行与范围匹配的验证，再以清楚描述改动的主题提交，并更新本窗口，只保留新的上一步/当前/下一步；`where` 不是必需前缀。
