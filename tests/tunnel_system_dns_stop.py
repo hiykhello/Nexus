@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A canceled outbound retains its blocking system resolver until it returns."""
+"""Exercise reset, timeout and stop while outbound system DNS is blocked."""
 import base64
 import os
 import pathlib
@@ -38,7 +38,7 @@ def sockets_owned(pid):
     return result
 
 
-def scenario(root, protocol, workers, reset=False):
+def scenario(root, protocol, workers, mode):
     target = socket.socket()
     target.bind(('127.0.0.1', 0))
     target.listen(2)
@@ -71,7 +71,7 @@ routing {{ default-outbound "edge"; }}
     gate_r, gate_w = os.pipe()
     env = dict(os.environ, LD_PRELOAD=str(shim), NEXUS_TEST_RESOLVER_READY_FD=str(ready_w),
                NEXUS_TEST_RESOLVER_GATE_FD=str(gate_r))
-    if reset:
+    if mode != 'timeout_failure':
         env['NEXUS_TEST_RESOLVER_DELAY_SUCCESS'] = '1'
     process = subprocess.Popen([binary, 'run', '--config', config], env=env, pass_fds=(ready_w, gate_r),
                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -100,7 +100,7 @@ routing {{ default-outbound "edge"; }}
             client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x00\x50')
             if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'x':
                 raise RuntimeError('outbound resolver did not enter gate')
-            if reset:
+            if mode == 'reset':
                 client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
                 client.close()
                 deadline = time.monotonic()+3
@@ -108,6 +108,13 @@ routing {{ default-outbound "edge"; }}
                     if process.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError('reset client socket was not released while resolver was gated')
                     time.sleep(.01)
+            else:
+                if client.recv(1):
+                    raise RuntimeError('timed-out request returned unexpected data')
+                elapsed = time.monotonic()-started
+                if not 8 <= elapsed <= 12:
+                    raise RuntimeError(f'unexpected session timeout {elapsed:.2f}s')
+            if mode != 'timeout_failure':
                 os.write(gate_w, b'x')
                 released = True
                 if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'y':
@@ -120,7 +127,7 @@ routing {{ default-outbound "edge"; }}
                     connection.close()
                     raise RuntimeError('canceled resolver result triggered an outbound connection')
                 # A fresh tunnel must still resolve and use the same upstream
-                # after the canceled resolver owner has completed.
+                # after the canceled or timed-out resolver owner has completed.
                 with socket.create_connection(('127.0.0.1', port), timeout=3) as fresh:
                     fresh.settimeout(4)
                     fresh.sendall(b'\x05\x01\x00')
@@ -170,12 +177,6 @@ routing {{ default-outbound "edge"; }}
                             if peer.poll() is None:
                                 peer.kill()
                                 peer.wait()
-            else:
-                if client.recv(1):
-                    raise RuntimeError('canceled request returned unexpected data')
-                elapsed = time.monotonic()-started
-                if not 8 <= elapsed <= 12:
-                    raise RuntimeError(f'unexpected session timeout {elapsed:.2f}s')
         # The worker remains responsive, but shutdown must retain and drain
         # the resolver owner until its blocking getaddrinfo returns.
         with socket.create_connection(('127.0.0.1', port), timeout=2) as concurrent:
@@ -183,7 +184,7 @@ routing {{ default-outbound "edge"; }}
             if exact(concurrent, 2) != b'\x05\x00':
                 raise RuntimeError('other session stalled')
         process.terminate()
-        if not reset:
+        if mode == 'timeout_failure':
             try:
                 process.wait(timeout=.3)
             except subprocess.TimeoutExpired:
@@ -220,6 +221,6 @@ with tempfile.TemporaryDirectory(prefix='nexus-tunnel-system-dns-') as directory
                     '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost', '-days', '1'], check=True, capture_output=True)
     for protocol in ('vless', 'shadowsocks'):
         for workers in (1, 2):
-            for reset in (True, False):
-                scenario(root, protocol, workers, reset)
-print('VLESS and SS-2022 outbound system DNS reset, timeout and drained stop passed')
+            for mode in ('reset', 'timeout_success', 'timeout_failure'):
+                scenario(root, protocol, workers, mode)
+print('VLESS and SS-2022 outbound system DNS reset, late successful timeout, and drained stop passed')
