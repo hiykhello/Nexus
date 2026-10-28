@@ -38,7 +38,7 @@ namespace nexus::proxy {
             if (error == std::errc::network_unreachable) return 3;
             if (error == std::errc::host_unreachable) return 4;
             if (error == std::errc::connection_refused) return 5;
-            if (error == std::errc::timed_out) return 6;
+            if (error == std::errc::timed_out || error == capy::cond::timeout) return 6;
             return 1;
         }
         using DnsResult=std::expected<std::vector<io::endpoint>,dns::detail::ResolveError>;
@@ -188,6 +188,7 @@ namespace nexus::proxy {
             std::error_code error;
             bool blocked = false;
             std::size_t next = 0;
+            auto const connect_deadline = session->started + std::chrono::seconds(10);
             while (next < destinations.size()) {
                 // The condition cannot await a tunnel. Stop classifying at the
                 // first tunnel or policy error; handle that candidate after
@@ -218,7 +219,11 @@ namespace nexus::proxy {
                     return true;
                 };
                 auto candidates=std::span{destinations}.subspan(next);
-                auto [connect_error, connected_endpoint]=co_await nex::corosio::connect(session->target,candidates,condition);
+                if (Clock::now() >= connect_deadline) co_return failure_code(std::make_error_code(std::errc::timed_out));
+                auto operation = nex::corosio::connect(session->target, candidates, condition);
+                auto [connect_error, connected_endpoint]=co_await nex::corosio::timeout(
+                    std::move(operation), connect_deadline);
+                if (connect_error) session->target.close();
                 (void)connected_endpoint;
                 if (session->closed) co_return 1;
                 if (!connect_error) co_return 0;

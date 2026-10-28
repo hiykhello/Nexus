@@ -118,11 +118,35 @@ static auto failure_cleanup_test(bool use_uring) -> bool {
     return true;
 }
 
+static auto deadline_test(bool use_uring) -> bool {
+    Fixture f(use_uring);
+    if (f.listener.open() || f.listener.bind(io::endpoint(io::ipv4_address::loopback(), 0)) ||
+        f.listener.listen() || f.client.open()) return false;
+    std::error_code connect_error;
+    io::endpoint connected;
+    // A timed candidate connect must cancel the pending operation and close
+    // its socket when the absolute deadline has already expired.
+    f.context.restart();
+    capy::run_async(f.context.get_executor())([&]() -> capy::task<> {
+        auto operation = io::connect(f.client, std::vector<io::endpoint>{f.listener.local_endpoint()},
+            [](std::error_code const&, io::endpoint const&) { return true; });
+        auto [error, result] = co_await io::timeout(std::move(operation),
+            std::chrono::steady_clock::now() - 1ms);
+        connect_error = error;
+        connected = result;
+        if (error) f.client.close();
+        co_return;
+    }());
+    run(f.context);
+    if (connect_error != capy::make_error_condition(capy::cond::timeout) || f.client.is_open()) return false;
+    return true;
+}
+
 int main() {
-    if (!retry_test(false) || !canceled_test(false) || !failure_cleanup_test(false)) return 1;
-    std::cout << "epoll: Corosio candidate retry, failure cleanup and cancellation passed\n";
+    if (!retry_test(false) || !canceled_test(false) || !failure_cleanup_test(false) || !deadline_test(false)) return 1;
+    std::cout << "epoll: Corosio candidate retry, failure cleanup, cancellation and timeout passed\n";
 #if BOOST_COROSIO_HAVE_LIBURING
-    if (!retry_test(true) || !canceled_test(true) || !failure_cleanup_test(true)) return 1;
-    std::cout << "io_uring: Corosio candidate retry, failure cleanup and cancellation passed\n";
+    if (!retry_test(true) || !canceled_test(true) || !failure_cleanup_test(true) || !deadline_test(true)) return 1;
+    std::cout << "io_uring: Corosio candidate retry, failure cleanup, cancellation and timeout passed\n";
 #endif
 }
