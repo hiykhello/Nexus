@@ -6,7 +6,7 @@
 
 实验记录（2026-10-27）：Linux x86_64、xmake `3.1.2+20261016`。GCC 16.2.1 在无补丁、无头文件单元下验证完整构建和私有 I/O 测试。静态 C 库链接传递只通过了模拟库实验。proxy、真实 BoringSSL 和 nghttp2 的模块均未验证，下列相应名称仍是工作方案。
 
-2026-10-28：Capy 和 Corosio 分别由 `nexus-thirdparty-capy`、`nexus-thirdparty-corosio` target 编译，在 `nex::capy`、`nex::corosio` 导出实际使用的任务、缓冲、事件、socket、context 和地址等接口。封装自身不导入 `std`，关闭这两个 target 的 xmake 自动 `std` 模块生成，避免各自产生不同 BMI；其他目标正常使用 `import std`。Corosio 还提供窄的 `connect_candidates`：在 Module 内实例化上游候选重试模板，并在失败或取消后关闭 socket，避免把受 Capy condition 特化影响的模板直接暴露给消费者。GCC 16/io_uring 独立消费者、候选重试和取消回收、TLS 连接及 VLESS/TLS 入站测试通过。消费者仍需配置后端宏；Capy EOF 判断经封装内显式转换，以处理 GCC 模板实例化时的 ADL。导出集合不是完整上游 API，后续按使用需求扩展并验证。
+2026-10-28：Capy 和 Corosio 分别由 `nexus-thirdparty-capy`、`nexus-thirdparty-corosio` target 编译，在 `nex::capy`、`nex::corosio` 导出实际使用的任务、缓冲、事件、socket、context 和地址等接口。封装自身不导入 `std`，关闭这两个 target 的 xmake 自动 `std` 模块生成，避免各自产生不同 BMI；其他目标正常使用 `import std`。Capy 导出 `cond`、`make_error_condition` 和 `std::is_error_condition_enum` 的 using 声明，Corosio 直接导出上游泛型 `connect`。不包含上游头文件的独立消费者在 GCC 16 下通过特化检测、条件比较和连接模板实例化，epoll/io_uring 的重试与取消均通过；其他编译器和未来特化仍须验证可达性。窄接口 `connect_candidates` 暂时保留，因为它还承诺失败或取消时关闭最后一个 socket，上游泛型接口不提供这一保证。GCC 16/io_uring 独立消费者、候选重试和取消回收、TLS 连接及 VLESS/TLS 入站测试通过。消费者仍需配置后端宏；Capy EOF 判断经封装内显式转换，以处理 GCC 模板实例化时的 ADL。导出集合不是完整上游 API，后续按使用需求扩展并验证。
 
 ## 层次与依赖方向
 

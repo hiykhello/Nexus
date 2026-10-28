@@ -25,6 +25,7 @@ export namespace nex::corosio {
     using ::boost::corosio::io_context;
     using ::boost::corosio::local_stream_socket;
     using ::boost::corosio::connect_pair;
+    using ::boost::corosio::connect;
     using ::boost::corosio::tcp_socket;
     using ::boost::corosio::tcp_acceptor;
     using ::boost::corosio::resolver;

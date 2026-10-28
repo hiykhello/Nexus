@@ -7,10 +7,13 @@ module;
 #include <boost/capy/ex/async_mutex.hpp>
 
 export module nexus.thirdparty.capy;
+export using std::is_error_condition_enum;
 export namespace nex::capy {
     using ::boost::capy::const_buffer;
     using ::boost::capy::mutable_buffer;
     using ::boost::capy::task;
+    using ::boost::capy::cond;
+    using ::boost::capy::make_error_condition;
     using ::boost::capy::run_async;
     using ::boost::capy::async_event;
     using ::boost::capy::async_mutex;

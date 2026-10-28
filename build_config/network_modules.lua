@@ -33,6 +33,13 @@ if is_plat("linux") then
         add_files("../tests/corosio_connect.cpp")
         add_deps("nexus-thirdparty-capy", "nexus-thirdparty-corosio")
 
+    target("nexus-corosio-connect-module-probe")
+        set_kind("binary")
+        set_default(false)
+        add_files("../tests/corosio_connect_module_probe.cpp")
+        if has_config("io_uring") then add_defines("NEXUS_TEST_URING") end
+        add_deps("nexus-thirdparty-capy", "nexus-thirdparty-corosio")
+
     target("nexus-capy-quitter-test")
         set_kind("binary")
         set_default(false)
