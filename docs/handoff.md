@@ -4,7 +4,9 @@
 
 ## 上一步
 
-- 实际代理在原生回环目标饱和队列下验证挂起直连：io_uring 单/双 worker 均能停止并在新端口重启；10 秒期限到达后返回 SOCKS 超时或由会话清理关闭，服务仍接受新握手，释放队列后无残留连接。尚未在实际代理 epoll 配置下重复。
+- 实际代理挂起拨号的停止、10 秒期限及服务继续响应回归现已在 epoll 和 io_uring 的单/双 worker 通过；新增 `/proc` socket 描述符检查，确认入站和拨号 socket 回收。epoll 的 timerfd 可延迟创建，因此按 socket 而非总 FD 数比较。
+
+- 实际代理在原生回环目标饱和队列下验证挂起直连：io_uring 单/双 worker 均能停止并在新端口重启；10 秒期限到达后返回 SOCKS 超时或由会话清理关闭，服务仍接受新握手，释放队列后无残留连接。现已在实际代理 epoll 配置下重复。
 
 - 修正候选分类前发生 timeout 时可能丢失超时错误；原生回环监听器饱和队列触发真实挂起 connect，epoll/io_uring 验证 timeout、socket 关闭和不尝试下一候选；代理 SOCKS 回归通过。Corosio io_uring acceptor 预设 multishot accept，测试需原生监听器保持队列饱和。
 

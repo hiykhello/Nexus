@@ -43,6 +43,18 @@ def handshake(client):
     assert exact(client, 2) == b'\x05\x00'
 
 
+def socket_fds(directory):
+    sockets = set()
+    for entry in directory.iterdir():
+        try:
+            target = str(entry.readlink())
+        except FileNotFoundError:
+            continue
+        if target.startswith('socket:['):
+            sockets.add(target)
+    return sockets
+
+
 def scenario(root, workers, stop_pending):
     with socket.socket() as target, socket.socket() as reserved:
         target.bind(('127.0.0.1', 0))
@@ -63,6 +75,8 @@ routing {{ default-outbound "direct"; }}
         try:
             with client:
                 handshake(client)
+                fd_directory = pathlib.Path(f'/proc/{process.pid}/fd')
+                baseline_sockets = socket_fds(fd_directory)
                 destination = target.getsockname()[1]
                 started = time.monotonic()
                 client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01' + destination.to_bytes(2, 'big'))
@@ -90,6 +104,13 @@ routing {{ default-outbound "direct"; }}
                     assert process.poll() is None
                     with socket.create_connection(('127.0.0.1', port), timeout=2) as another:
                         handshake(another)
+                    fd_deadline = time.monotonic() + 2
+                    # The baseline included this client's accepted socket; it
+                    # must be gone along with the in-flight target socket.
+                    while len(socket_fds(fd_directory)) >= len(baseline_sockets):
+                        if time.monotonic() >= fd_deadline:
+                            raise AssertionError(f'proxy did not release connection sockets: {baseline_sockets} -> {socket_fds(fd_directory)}')
+                        time.sleep(.02)
                     target.settimeout(.5)
                     with target.accept()[0], target.accept()[0]:
                         try:
