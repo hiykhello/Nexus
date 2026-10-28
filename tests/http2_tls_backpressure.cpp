@@ -76,11 +76,33 @@ template<class Backend> auto exercise(Backend backend,bool timeout) -> bool {
     for (;;) { auto n=f.session->output(sink); if (!n) return false; if (!*n) break; }
     return f.session->response_memory_used()==0 && f.session->stream_memory_charge()==0;
 }
+auto read_step(Connection& connection,bool& done,std::optional<h::TlsServerError>& error) -> capy::task<> {
+    auto result=co_await connection.step(); if (!result) error=result.error(); done=true;
+}
+template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
+    h::ServerEvents events{nullptr,headers,data,end,closed}; h::ServerLimits limits{8,16,4096,1024,4096};
+    auto reference=h::ServerSession::create(limits,events); if (!reference) return false;
+    std::array<std::byte,4096> sink{};
+    for (;;) { auto n=(**reference).output(sink); if (!n) return false; if (!*n) break; }
+    auto baseline=(**reference).shared_memory_used(); reference->reset();
+    limits.shared_memory_bytes=baseline+(enough ? 16384 : 16383);
+    auto session=h::ServerSession::create(limits,events); if (!session) return false;
+    for (;;) { auto n=(**session).output(sink); if (!n) return false; if (!*n) break; }
+    io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
+    Connection connection(a,**session,records(),c::Bytes{}); bool done=false; std::optional<h::TlsServerError> error;
+    capy::run_async(context.get_executor())(read_step(connection,done,error)); context.restart(); (void)context.run_for(20ms);
+    if (enough) {
+        if (done || (**session).shared_memory_used()!=baseline+16384) return false;
+        connection.cancel(); context.restart(); (void)context.run_for(1s);
+        return done && error==h::TlsServerError::tls && context.stopped() && (**session).shared_memory_used()==baseline;
+    }
+    return done && error==h::TlsServerError::budget_exceeded && context.stopped() && (**session).shared_memory_used()==baseline;
+}
 int main() {
     for (int i=0;i<5;++i) {
-        if (!exercise(io::epoll,false) || !exercise(io::epoll,true)) return 1;
+        if (!exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!exercise(io::uring,false) || !exercise(io::uring,true)) return 2;
+        if (!exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false)) return 2;
 #endif
     }
     std::cout << "HTTP/2 TLS blocked output cancellation and deadline passed\n";

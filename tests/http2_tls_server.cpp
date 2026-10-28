@@ -94,6 +94,7 @@ auto serve(Fixture& f) -> capy::task<> {
             break;
         }
         if (*result==h::TlsServerStep::paused) {
+            if (f.session->input_memory_charge()!=16384) break;
             if ((f.pause_output || f.pause_multi) && !f.response) {
                 constexpr std::string_view body="hello h2";
                 if (f.pause_multi && (f.requests.size()!=2 || f.session->paused_stream()!=f.requests[1])) break;
@@ -132,9 +133,9 @@ auto serve(Fixture& f) -> capy::task<> {
         }
         if (*result!=h::TlsServerStep::progress) break;
         if (f.pause_multi && f.closed_count==2) {
-            f.success=f.output_during_pause && f.second_response && f.body=="upload"; break;
+            f.success=f.output_during_pause && f.second_response && f.body=="upload" && !f.session->input_memory_charge(); break;
         }
-        if (!f.multi && !f.pause_multi && !f.peer_close && !f.truncated && !f.stale && !f.curl && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload" && (!f.pause_output || f.output_during_pause)); break; }
+        if (!f.multi && !f.pause_multi && !f.peer_close && !f.truncated && !f.stale && !f.curl && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload" && !f.session->input_memory_charge() && (!f.pause_output || f.output_during_pause)); break; }
     }
     f.done=true;
 }
