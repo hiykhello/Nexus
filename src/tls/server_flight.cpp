@@ -103,7 +103,7 @@ namespace nexus::tls {
         try {
         auto plain=keys_.read.open(record);
         if (!plain || plain->type!=ContentType::handshake || plain->content.empty()) { state_=State::failed; return std::unexpected(ServerFlightError::invalid_finished); }
-        auto messages=decoder_->feed(plain->content);
+        auto messages=decoder_->feed(plain->content,1);
         if (!messages || messages->size()>1 || (!messages->empty() && decoder_->pending_bytes())) { state_=State::failed; return std::unexpected(ServerFlightError::invalid_finished); }
         if (messages->empty()) return false;
         state_=State::failed; auto const& message=messages->front();

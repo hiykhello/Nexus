@@ -28,7 +28,7 @@ namespace nexus::tls {
         if (bytes[0]!=22 || bytes[1]!=3 || (bytes[2]!=1 && bytes[2]!=3) || bytes.size()==5) {
             state_=State::failed; return std::unexpected(ClientHelloStreamError::invalid_record);
         }
-        auto decoded=messages_.feed(std::span{bytes}.subspan(5));
+        auto decoded=messages_.feed(std::span{bytes}.subspan(5),1);
         if (!decoded || decoded->size()>1 || (!decoded->empty() && messages_.pending_bytes()!=0)) {
             state_=State::failed; return std::unexpected(ClientHelloStreamError::invalid_message);
         }

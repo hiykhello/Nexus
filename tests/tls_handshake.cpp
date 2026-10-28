@@ -18,6 +18,14 @@ int main() {
     auto third=decoder->feed(std::span{hello}.subspan(3)); if (!third || third->size()!=1 || (*third)[0].type!=1 || (*third)[0].body!=std::vector<std::uint8_t>{'a','b','c'}) return 4;
     std::vector<std::uint8_t> combined=cert; combined.insert(combined.end(),done.begin(),done.end());
     auto batch=decoder->feed(combined); if (!batch || batch->size()!=2 || (*batch)[0].type!=11 || (*batch)[1].type!=20 || !(*batch)[0].body.empty() || (*batch)[1].body!=std::vector<std::uint8_t>{7}) return 5;
+    auto limited=t::HandshakeDecoder::create(16);
+    if (!limited || limited->feed(combined,1).error()!=t::HandshakeError::too_many_messages || !limited->failed() || limited->pending_bytes() || limited->feed({})) return 27;
+    auto single=t::HandshakeDecoder::create(16);
+    if (!single || !single->feed(std::span{hello}.first(3),1)) return 28;
+    auto single_result=single->feed(std::span{hello}.subspan(3),1);
+    if (!single_result || single_result->size()!=1 || !single->finish()) return 29;
+    auto suffix=t::HandshakeDecoder::create(16); auto partial=hello; partial.push_back(20);
+    if (!suffix || suffix->feed(partial,1).error()!=t::HandshakeError::too_many_messages) return 30;
     if (!decoder->finish() || decoder->failed()) return 6;
     auto encoded=t::HandshakeDecoder::encode(1,std::vector<std::uint8_t>{'x','y'}); if (!encoded || *encoded!=std::vector<std::uint8_t>({1,0,0,2,'x','y'})) return 7;
     auto empty=t::HandshakeDecoder::encode(8,std::span<std::uint8_t const>{}); if (!empty || *empty!=std::vector<std::uint8_t>({8,0,0,0})) return 8;

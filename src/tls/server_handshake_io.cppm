@@ -34,7 +34,7 @@ export namespace nexus::tls {
         // Generated hello fields, body and retry comparison message; logical
         // lengths only, excluding container capacities and other temporaries.
         static constexpr std::size_t generated_hello_scratch_charge=3*16384;
-        static constexpr std::size_t finished_input_charge=16645;
+        static constexpr std::size_t finished_input_charge=16645+ServerFlight::finished_temporary_charge;
         ServerHandshakeIo(ServerHandshakeIo const&)=delete;
         auto operator=(ServerHandshakeIo const&) -> ServerHandshakeIo& = delete;
         ServerHandshakeIo(ServerHandshakeIo&&) noexcept;

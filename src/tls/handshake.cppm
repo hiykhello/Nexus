@@ -2,7 +2,7 @@ export module nexus.tls.handshake;
 import std;
 
 export namespace nexus::tls {
-    enum class HandshakeError { invalid_type, message_too_large, input_too_large, truncated, invalid_state };
+    enum class HandshakeError { invalid_type, message_too_large, input_too_large, truncated, invalid_state, too_many_messages };
     struct HandshakeMessage {
         std::uint8_t type = 0;
         std::vector<std::uint8_t> body;
@@ -29,7 +29,8 @@ export namespace nexus::tls {
         // Each input is at most 2^14 bytes: a TLS plaintext record payload.
         // A call may contain part of a header, one message, or several messages.
         // On error or exception the decoder fails and any completed messages from that call are discarded.
-        [[nodiscard]] auto feed(std::span<std::uint8_t const> input)
+        // A finite message limit rejects additional messages before allocating them.
+        [[nodiscard]] auto feed(std::span<std::uint8_t const> input, std::size_t max_messages = std::numeric_limits<std::size_t>::max())
             -> std::expected<std::vector<HandshakeMessage>, HandshakeError>;
         // End of the enclosing byte stream. A partial message permanently fails the decoder.
         [[nodiscard]] auto finish() -> std::expected<void, HandshakeError>;

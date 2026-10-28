@@ -28,7 +28,7 @@ namespace nexus::tls {
         expected_ = 0;
         return std::unexpected(error);
     }
-    auto HandshakeDecoder::feed(std::span<std::uint8_t const> input)
+    auto HandshakeDecoder::feed(std::span<std::uint8_t const> input, std::size_t max_messages)
         -> std::expected<std::vector<HandshakeMessage>, HandshakeError> {
         if (failed_) return std::unexpected(HandshakeError::invalid_state);
         if (input.size() > 16384) return fail(HandshakeError::input_too_large);
@@ -36,6 +36,7 @@ namespace nexus::tls {
         std::vector<HandshakeMessage> result;
         std::size_t offset = 0;
         while (offset < input.size()) {
+            if (result.size()>=max_messages) return fail(HandshakeError::too_many_messages);
             if (pending_.size() < 4) {
                 auto need = 4 - pending_.size();
                 auto count = std::min(need, input.size() - offset);

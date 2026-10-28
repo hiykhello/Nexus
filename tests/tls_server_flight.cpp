@@ -74,7 +74,20 @@ int main(int argc,char** argv) {
         c::Bytes bogus(36,0); bogus[0]=20; bogus[3]=32;
         auto record=peer->write.seal(t::ContentType::handshake,bogus); if (!record) return 28;
         auto result=flight->client_finished(*record);
-        return !result && result.error()==t::ServerFlightError::invalid_finished && !flight->take_application_records() ? 0 : 29;
+        if (result || result.error()!=t::ServerFlightError::invalid_finished || flight->take_application_records()) return 29;
+        auto flood_key=c::X25519Private::generate(); if (!flood_key) return 42;
+        auto flood_pub=flood_key->public_key(); if (!flood_pub) return 43;
+        auto flood_share=t::KeyShare::encode_client(std::array{t::KeyShareEntry{29,{flood_pub->begin(),flood_pub->end()}}}); if (!flood_share) return 44;
+        hello.extensions.back().data=std::move(*flood_share); auto flood_body=hello.encode(); if (!flood_body) return 45;
+        auto flood_wire=t::HandshakeDecoder::encode(1,*flood_body); if (!flood_wire) return 46;
+        auto flood_keys=t::server_handshake_keys(*flood_wire,std::span{&scheme,1}); if (!flood_keys) return 47;
+        auto flood_peer=t::client_handshake_keys(*flood_wire,flood_keys->server_hello,std::move(*flood_key)); if (!flood_peer) return 48;
+        auto flood_flight=t::ServerFlight::create(std::move(*flood_keys),*cred); if (!flood_flight) return 49;
+        c::Bytes flood(16384,0); for (std::size_t i=0;i<flood.size();i+=4) flood[i]=20;
+        auto flood_record=flood_peer->write.seal(t::ContentType::handshake,flood); if (!flood_record) return 50;
+        auto flood_result=flood_flight->client_finished(*flood_record);
+        if (flood_result || flood_result.error()!=t::ServerFlightError::invalid_finished || flood_flight->client_finished(*flood_record)) return 51;
+        return 0;
     }
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 3;
     struct Guard { int fd; ~Guard(){ ::close(fd); } } guard{fd};
