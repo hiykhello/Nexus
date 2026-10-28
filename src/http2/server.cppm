@@ -41,6 +41,7 @@ export namespace nexus::http2 {
         struct Stream {
             std::int32_t id;
             bool responded = false;
+            bool reset_pending = false;
             std::vector<std::byte> response;
             std::size_t response_offset = 0;
         };
@@ -225,6 +226,20 @@ export namespace nexus::http2 {
             return !active_ && !failed_ && shutdown_ == Shutdown::draining && output_left_ == 0 &&
                 !h2::nghttp2_session_want_read(session_) && !h2::nghttp2_session_want_write(session_);
         }
+        // Queue a stream reset. A paused DATA callback must be resumed first;
+        // the close event and response-budget release occur during output.
+        auto reset_stream(std::int32_t id, std::uint32_t code) noexcept -> std::expected<void, ServerError> {
+            if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
+            if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
+            if (id <= 0) return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+            auto stream = std::ranges::find(streams_, id, &Stream::id);
+            if (stream == streams_.end() || stream->reset_pending || paused_stream_ == id)
+                return std::unexpected(ServerError{ServerErrorKind::invalid_state});
+            auto rc = h2::nghttp2_submit_rst_stream(session_, 0, id, code);
+            if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            stream->reset_pending = true;
+            return {};
+        }
         auto respond_body(std::int32_t id, unsigned status, std::span<std::byte const> body) noexcept
             -> std::expected<void, ServerError> {
             if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
@@ -232,7 +247,7 @@ export namespace nexus::http2 {
             if (id <= 0 || status < 200 || status > 599)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             auto stream = std::ranges::find(streams_, id, &Stream::id);
-            if (stream == streams_.end() || stream->responded)
+            if (stream == streams_.end() || stream->responded || stream->reset_pending)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             if (body.size() > response_limit_ || body.size() > total_response_limit_ - response_reserved_ ||
                 (body.size() != 0 && (status == 204 || status == 205 || status == 304)))
@@ -270,7 +285,7 @@ export namespace nexus::http2 {
             if (id <= 0 || status < 200 || status > 599)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             auto stream = std::ranges::find(streams_, id, &Stream::id);
-            if (stream == streams_.end() || stream->responded)
+            if (stream == streams_.end() || stream->responded || stream->reset_pending)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             std::array<std::uint8_t, 3> value{
                 static_cast<std::uint8_t>('0' + status / 100),

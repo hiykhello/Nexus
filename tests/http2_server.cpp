@@ -11,6 +11,7 @@ struct Observed {
     std::int32_t ended = 0;
     bool reentrant = false;
     bool response_reentrant = false;
+    bool reset_reentrant = false;
     std::int32_t closed_id = 0;
     std::uint32_t closed_code = 0;
     bool header_ended = false;
@@ -24,6 +25,8 @@ auto on_headers(void* p, std::int32_t id, std::span<nh::Header const> fields, bo
     o.reentrant = !nested && nested.error().kind == nh::ServerErrorKind::reentrant;
     auto nested_response = o.session->respond_empty(id, 204);
     o.response_reentrant = !nested_response && nested_response.error().kind == nh::ServerErrorKind::reentrant;
+    auto nested_reset = o.session->reset_stream(id, h2::NGHTTP2_CANCEL);
+    o.reset_reentrant = !nested_reset && nested_reset.error().kind == nh::ServerErrorKind::reentrant;
     if (trailers || fields.size() != 4 || fields.back().name != ":path") return false;
     try { o.headers.push_back(id); } catch (...) { return false; }
     o.header_ended = end;
@@ -109,6 +112,8 @@ auto to_server_resuming(h2::nghttp2_session* client, nh::ServerSession& server,
             ++offset;
             if (observed.did_pause) {
                 observed.did_pause = false;
+                auto reset = server.reset_stream(stream_id, h2::NGHTTP2_CANCEL);
+                if (reset || reset.error().kind != nh::ServerErrorKind::invalid_state) return false;
                 if (!server.resume_input(stream_id)) return false;
             }
         }
@@ -160,7 +165,7 @@ int main() {
     auto sent = to_server_resuming(client, **session, observed, second);
     auto returned = to_client(**session, client);
     if (!sent || !returned) return 6;
-    if (observed.headers != std::vector<std::int32_t>{second} || !observed.reentrant || !observed.response_reentrant || observed.header_ended ||
+    if (observed.headers != std::vector<std::int32_t>{second} || !observed.reentrant || !observed.response_reentrant || !observed.reset_reentrant || observed.header_ended ||
         observed.body != "body data" || observed.ended != second || client_events.reset_id != first ||
         client_events.reset_code != h2::NGHTTP2_INTERNAL_ERROR) return 7;
     auto bad_status = (**session).respond_empty(second, 199);
@@ -201,6 +206,18 @@ int main() {
     if (h2::nghttp2_submit_rst_stream(client, 0, earlier, h2::NGHTTP2_INTERNAL_ERROR) || !to_server(client, **session)) return 31;
     client_events.body.clear();
     if (!to_client(**session, client) || client_events.body != later_body) return 32;
+    auto canceled = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
+    auto survivor = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
+    if (canceled <= later || survivor <= canceled || !to_server(client, **session)) return 53;
+    if (!(**session).respond_body(canceled, 200, {reinterpret_cast<std::byte const*>(later_body.data()), later_body.size()})) return 54;
+    if ((**session).reset_stream(0, h2::NGHTTP2_CANCEL) || (**session).reset_stream(999, h2::NGHTTP2_CANCEL) ||
+        !(**session).reset_stream(canceled, h2::NGHTTP2_CANCEL) || (**session).reset_stream(canceled, h2::NGHTTP2_CANCEL) ||
+        (**session).respond_empty(canceled, 204) || (**session).respond_body(survivor, 200, second_body)) return 55;
+    client_events.body.clear();
+    if (!to_client(**session, client) || client_events.reset_id != canceled || client_events.reset_code != h2::NGHTTP2_CANCEL ||
+        observed.closed_id != canceled || observed.closed_code != h2::NGHTTP2_CANCEL || !client_events.body.empty()) return 56;
+    if (!(**session).respond_body(survivor, 200, second_body) || !to_client(**session, client) ||
+        client_events.body.size() != second_body.size()) return 57;
     observed.fail_data = true;
     request_body.offset = 0;
     auto failure_stream = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), &provider, nullptr);
