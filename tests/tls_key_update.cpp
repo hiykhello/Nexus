@@ -21,6 +21,19 @@ int main() {
     auto p=sender.seal(t::ContentType::handshake,std::span{msg}.first(2)); auto q=sender.seal(t::ContentType::handshake,std::span{msg}.subspan(2));
     if (!p || !q) return 9; auto part=c.open_event(*p), done=c.open_event(*q);
     if (!part || part->kind!=t::ApplicationEventKind::handshake_fragment || !done || done->kind!=t::ApplicationEventKind::key_update_requested) return 10;
+    // Server-side reassembly permits a KeyUpdate split across every byte.
+    auto server=app(1,2,1u << 24,t::ApplicationRole::server); auto server_peer=layer(t::RecordDirection::send,2);
+    for (std::size_t i=0;i<msg.size();++i) {
+        auto fragment=server_peer.seal(t::ContentType::handshake,std::span{msg}.subspan(i,1));
+        if (!fragment) return 19;
+        auto result=server.open_event(*fragment);
+        if (!result || result->kind!=(i+1==msg.size() ? t::ApplicationEventKind::key_update_requested : t::ApplicationEventKind::handshake_fragment)) return 20;
+    }
+    // A large authenticated client handshake record cannot be a valid KeyUpdate.
+    auto server_invalid=app(1,2,1u << 24,t::ApplicationRole::server); auto invalid_peer=layer(t::RecordDirection::send,2);
+    Bytes oversized(16384,0); oversized[0]=24; oversized[3]=1;
+    auto invalid_wire=invalid_peer.seal(t::ContentType::handshake,oversized);
+    if (!invalid_wire || server_invalid.open_event(*invalid_wire) || server_invalid.seal(data)) return 21;
     auto d=app(1,2); auto attacker=layer(t::RecordDirection::send,2); msg[4]=2; auto bad=attacker.seal(t::ContentType::handshake,msg);
     if (!bad || d.open_event(*bad) || d.seal(data)) return 11;
     auto e=app(1,2); auto wrong=layer(t::RecordDirection::send,2); msg[4]=0; msg.push_back(0); auto extra=wrong.seal(t::ContentType::handshake,msg);

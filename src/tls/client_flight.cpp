@@ -64,6 +64,11 @@ namespace nexus::tls {
             constexpr std::size_t max_ticket=8+1+255+2+65535+2+65534;
             constexpr std::size_t max_pending=4+max_ticket+16384-1;
             if (!read_secret_ || plain->content.empty() || plain->content.size()>max_pending-handshake_pending_.size()) { active_=false; return std::unexpected(RecordError::invalid_record); }
+            // A server accepts only KeyUpdate, which must end its record. No
+            // valid server-side post-handshake message exceeds its five bytes.
+            if (role_==ApplicationRole::server && plain->content.size()>5-handshake_pending_.size()) {
+                active_=false; return std::unexpected(RecordError::invalid_record);
+            }
             handshake_pending_.insert(handshake_pending_.end(),plain->content.begin(),plain->content.end());
             std::size_t offset=0;
             while (handshake_pending_.size()-offset>=4) {
