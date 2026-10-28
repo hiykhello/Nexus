@@ -186,6 +186,7 @@ uv run --no-project python tests/mixed.py build/linux/x86_64/debug/nexus
 uv run --no-project python tests/socks_auth.py build/linux/x86_64/debug/nexus
 uv run --no-project python tests/mapped_policy.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-test-slow-resolver.so
 uv run --no-project python tests/address_fallback.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-test-slow-resolver.so
+uv run --no-project python tests/proxy_candidate_limit.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-test-slow-resolver.so
 # 加密构建加 --crypto，额外验证直连与失败的 VLESS 候选交错
 scripts/check-source-lines.sh
 ```
