@@ -28,9 +28,9 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1")
     run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(key_der))
     run("openssl", "x509", "-in", str(cert), "-outform", "DER", "-out", str(cert_der))
-    for mode in ("get", "pause", "pause_output", "pause_multi", "reset_paused", "multi", "window", "window_reset", "peer", "truncated", "stale"):
+    for mode in ("get", "pause", "pause_output", "pause_multi", "reset_paused", "multi", "window", "window_reset", "connection_window", "peer", "truncated", "stale"):
         pause = mode in ("pause", "pause_output", "pause_multi", "reset_paused")
-        multi = mode in ("multi", "window", "window_reset")
+        multi = mode in ("multi", "window", "window_reset", "connection_window")
         pause_multi = mode in ("pause_multi", "reset_paused")
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -60,6 +60,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                     goaway = []
                     reset = False
                     granted = set()
+                    connection_granted = False
                     while len(finished) < (1 if mode == "window_reset" else len(bodies)) or (multi and len(goaway) < 2) or (mode == "reset_paused" and not reset):
                         header = exact(client, 9)
                         length = int.from_bytes(header[:3], "big")
@@ -80,12 +81,19 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                         if kind == 0 and stream in bodies:
                             if mode in ("window", "window_reset") and stream not in granted: raise RuntimeError("DATA arrived before stream window update")
                             bodies[stream].extend(payload)
+                            if mode == "connection_window" and not connection_granted:
+                                received = sum(len(body) for body in bodies.values())
+                                if received > 65535: raise RuntimeError("connection window exceeded")
+                                if received == 65535:
+                                    client.sendall(frame(8, 0, 0, (14465).to_bytes(4, "big")))
+                                    connection_granted = True
                             if flags & 1:
                                 finished.add(stream)
                                 if mode == "window" and stream == 3:
                                     client.sendall(frame(8, 0, 1, (8).to_bytes(4, "big")))
                                     granted.add(1)
-                    if statuses != set(bodies) or any(body != (b"" if mode == "window_reset" and stream == 3 else b"hello h2") for stream, body in bodies.items()):
+                    if mode == "connection_window" and not connection_granted: raise RuntimeError("connection window was not exhausted")
+                    if statuses != set(bodies) or any(body != (b"x" * 40000 if mode == "connection_window" else b"" if mode == "window_reset" and stream == 3 else b"hello h2") for stream, body in bodies.items()):
                         raise RuntimeError(f"unexpected responses statuses={statuses}, bodies={bodies!r}")
                     if mode == "peer":
                         client.unwrap().close()

@@ -19,6 +19,7 @@
 - HTTP/2 TLS 网络回归新增部分 DATA 暂停后取消流，同时输出其他流响应并处理后续请求；epoll、io_uring 和独立 TLS 对端通过，暂停输入预算已释放。
 - HTTP/2 TLS 对端将初始流发送窗口设为零后，响应头仍可发送；逐流 WINDOW_UPDATE 恢复数据发送，其他流不提前发送 DATA，GOAWAY 和 TLS 关闭正常；epoll、io_uring 通过。
 - HTTP/2 TLS 对端在零发送窗口下重置一个流，另一流继续完成响应，响应体计费全部释放并正常关闭；epoll、io_uring 通过。
+- HTTP/2 TLS 两个响应共同耗尽 65535 字节连接发送窗口后，经连接级 WINDOW_UPDATE 完整恢复，GOAWAY 和 TLS 关闭正常；epoll、io_uring 通过。
 - TLS 应用记录、无 I/O 和异步连接异常时失效并清理；HTTP/2 TLS 逻辑预算覆盖主要输入、输出和暂存缓冲，但并非完整内存上限。
 
 ## 当前
