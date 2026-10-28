@@ -72,6 +72,7 @@ uv run --no-project python tests/proxy_dns_edns.py build/linux/x86_64/debug/nexu
 uv run --no-project python tests/proxy_multi_inbound.py build/linux/x86_64/debug/nexus
 uv run --no-project python tests/proxy_route_order.py build/linux/x86_64/debug/nexus
 uv run --no-project python tests/proxy_route_candidates.py build/linux/x86_64/debug/nexus
+uv run --no-project python tests/proxy_pending_connect.py build/linux/x86_64/debug/nexus
 # 下列 TLS 测试目标需启用 --crypto=y
 xmake build nexus-vless-tls-write-overlap-test
 build/linux/x86_64/debug/nexus-vless-tls-write-overlap-test
