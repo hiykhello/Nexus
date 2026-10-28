@@ -48,6 +48,42 @@ auto exception_test(char const* cert,char const* key,bool reading) -> bool {
     f.context.restart(); (void)f.context.run_for(1s);
     return f.context.stopped() && caught && !handshake->tick(start) && handshake->pending_output().empty();
 }
+struct HandoverResult { bool done=false, valid=false; };
+auto handover(Fixture& f,nexus::crypto::Bytes expected,HandoverResult& state) -> capy::task<> {
+    auto result=co_await t::detail::server_handshake(f.incoming,*f.handshake);
+    if (result && result->unread==expected) {
+        auto data=result->records.open(result->unread);
+        state.valid=data && *data==nexus::crypto::Bytes({'h','e','l','l','o'});
+    }
+    state.done=true;
+}
+auto coalesced_handover(char const* cert,char const* key,bool close_peer) -> bool {
+    Fixture f; auto certificate=file(cert); auto credential=t::ServerCredential::create(certificate,file(key));
+    if (!credential || io::connect_pair(f.incoming,f.peer)) return false;
+    auto start=now(); auto server=t::ServerHandshakeIo::create(std::move(*credential),start,start+1000); if (!server) return false;
+    std::array<std::uint16_t,1> groups{29}; auto hello=t::make_client_hello("localhost",std::span<std::string_view const>{},groups); if (!hello) return false;
+    std::array<std::span<std::uint8_t const>,1> anchors{certificate}; std::string_view host="localhost";
+    auto identity=std::span{reinterpret_cast<std::uint8_t const*>(host.data()),host.size()};
+    auto seconds=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    auto client=t::ClientSessionHandshake::create(std::move(*hello),29,anchors,t::PeerNameKind::dns,identity,seconds); if (!client) return false;
+    auto initial=client->initial_record(); if (!initial || !client->sent() || !server->feed(*initial,start)) return false;
+    std::optional<nexus::crypto::Bytes> finished;
+    while (!server->pending_output().empty()) {
+        auto output=server->pending_output(); auto result=client->feed(output);
+        if (!result || result->consumed!=output.size()) return false;
+        if (result->outbound) finished=std::move(*result->outbound);
+        if (!server->written(output.size(),start)) return false;
+    }
+    if (!finished || !client->sent()) return false;
+    auto app=client->take_application_records(); if (!app) return false;
+    nexus::crypto::Bytes plain{'h','e','l','l','o'}; auto encrypted=app->seal(plain); if (!encrypted) return false;
+    auto input=*finished; input.insert(input.end(),encrypted->begin(),encrypted->end());
+    if (::send(f.peer.native_handle(),input.data(),input.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(input.size())) return false;
+    if (close_peer) f.peer.close();
+    f.handshake.emplace(std::move(*server)); HandoverResult state;
+    capy::run_async(f.context.get_executor())(handover(f,*encrypted,state)); f.context.restart(); (void)f.context.run_for(1s);
+    return f.context.stopped() && state.done && state.valid;
+}
 auto failure(char const* cert,char const* key,bool cancel) -> bool {
     Fixture f; auto credential=t::ServerCredential::create(file(cert),file(key)); if (!credential || io::connect_pair(f.incoming,f.peer)) return false;
     auto start=now(); auto handshake=t::ServerHandshakeIo::create(std::move(*credential),start,start+(cancel ? 1000 : 50)); if (!handshake) return false;
@@ -104,7 +140,7 @@ auto serve(Network& f) -> capy::task<> {
 }
 int main(int argc,char** argv) {
     if (argc!=4 && (argc!=5 || std::string_view(argv[4])!="h2")) return 1;
-    if (std::string_view(argv[3])=="failures") return failure(argv[1],argv[2],false) && failure(argv[1],argv[2],true) && peer_close(argv[1],argv[2]) && exception_test(argv[1],argv[2],false) && exception_test(argv[1],argv[2],true) ? 0 : 2;
+    if (std::string_view(argv[3])=="failures") return failure(argv[1],argv[2],false) && failure(argv[1],argv[2],true) && peer_close(argv[1],argv[2]) && exception_test(argv[1],argv[2],false) && exception_test(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false) && coalesced_handover(argv[1],argv[2],true) ? 0 : 2;
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 3;
     Network f; if (f.socket.assign(fd)) { ::close(fd); return 4; }
     auto cred=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!cred) return 5;
