@@ -58,14 +58,18 @@ namespace nexus::tls {
         auto plain=read_.open(record); if (!plain) { active_=false; return std::unexpected(plain.error()); }
         if (!handshake_pending_.empty() && plain->type!=ContentType::handshake) { active_=false; return std::unexpected(RecordError::invalid_record); }
         if (plain->type==ContentType::handshake) {
-            constexpr std::size_t max_pending=1048580;
+            // NewSessionTicket: two uint32s, uint8 nonce length and nonce,
+            // uint16 ticket and extensions lengths and their contents. Allow
+            // one extra record for bytes following a nearly complete message.
+            constexpr std::size_t max_ticket=8+1+255+2+65535+2+65535;
+            constexpr std::size_t max_pending=4+max_ticket+16384-1;
             if (!read_secret_ || plain->content.empty() || plain->content.size()>max_pending-handshake_pending_.size()) { active_=false; return std::unexpected(RecordError::invalid_record); }
             handshake_pending_.insert(handshake_pending_.end(),plain->content.begin(),plain->content.end());
             std::size_t offset=0;
             while (handshake_pending_.size()-offset>=4) {
                 auto type=handshake_pending_[offset];
                 auto size=(std::size_t{handshake_pending_[offset+1]}<<16)|(std::size_t{handshake_pending_[offset+2]}<<8)|handshake_pending_[offset+3];
-                if ((type!=4 && type!=24) || size>1048576 || (type==24 && size!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                if ((type!=4 && type!=24) || (type==4 && size>max_ticket) || (type==24 && size!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
                 if (size>handshake_pending_.size()-offset-4) break;
                 auto body=std::span{handshake_pending_}.subspan(offset+4,size);
                 offset+=4+size;
@@ -75,11 +79,12 @@ namespace nexus::tls {
                 }
                 auto request=body[0];
                 if (offset!=handshake_pending_.size() || request>1 || !rotate(false)) { active_=false; return std::unexpected(RecordError::invalid_record); }
-                handshake_pending_.clear();
+                crypto::Bytes{}.swap(handshake_pending_);
                 if (request==1) update_response_=true;
                 return ApplicationEvent{request ? ApplicationEventKind::key_update_requested : ApplicationEventKind::key_update,{},0};
             }
             handshake_pending_.erase(handshake_pending_.begin(),handshake_pending_.begin()+static_cast<std::ptrdiff_t>(offset));
+            if (handshake_pending_.empty()) crypto::Bytes{}.swap(handshake_pending_);
             return ApplicationEvent{offset ? ApplicationEventKind::ticket_discarded : ApplicationEventKind::handshake_fragment,{},0};
         }
         if (plain->type==ContentType::application_data) return ApplicationEvent{ApplicationEventKind::data,std::move(plain->content),0};

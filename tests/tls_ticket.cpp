@@ -18,10 +18,26 @@ int main() {
     if (!a || a->kind!=t::ApplicationEventKind::handshake_fragment || !b || b->kind!=t::ApplicationEventKind::ticket_discarded) return 2;
     auto bad=app(); auto p=layer(t::RecordDirection::send,2); auto malformed=ticket; malformed[14]=0;
     auto rec=p.seal(t::ContentType::handshake,malformed); if (!rec || bad.open_event(*rec)) return 3;
-    auto oversized=app(); auto q=layer(t::RecordDirection::send,2); Bytes header{4,0x10,0,1}; auto huge=q.seal(t::ContentType::handshake,header);
+    // One byte above the largest encodable ticket body must fail on its header.
+    auto oversized=app(); auto q=layer(t::RecordDirection::send,2); Bytes header{4,0x02,0x01,0x0b}; auto huge=q.seal(t::ContentType::handshake,header);
     if (!huge || oversized.open_event(*huge)) return 4;
     auto mixed=app(); auto r=layer(t::RecordDirection::send,2); Bytes joined=ticket; joined.insert(joined.end(),{24,0,0,1,1});
     auto packet=r.seal(t::ContentType::handshake,joined); if (!packet) return 5; auto ev=mixed.open_event(*packet);
     if (!ev || ev->kind!=t::ApplicationEventKind::key_update_requested || mixed.seal(Bytes{1})) return 6;
+    // Maximum encodable nonce, ticket and extensions, with a second ticket
+    // following in the same last record.
+    Bytes maximum{4,0x02,0x01,0x0a}; maximum.insert(maximum.end(),8,0);
+    maximum.push_back(255); maximum.insert(maximum.end(),255,0);
+    maximum.insert(maximum.end(),{0xff,0xff}); maximum.insert(maximum.end(),65535,1);
+    maximum.insert(maximum.end(),{0xff,0xff,0,1,0xff,0xfb}); maximum.insert(maximum.end(),65531,0);
+    maximum.insert(maximum.end(),ticket.begin(),ticket.end());
+    auto large=app(); auto sender_large=layer(t::RecordDirection::send,2);
+    for (std::size_t offset=0;offset<maximum.size();) {
+        auto count=std::min(std::size_t{16384},maximum.size()-offset);
+        auto fragment=sender_large.seal(t::ContentType::handshake,std::span{maximum}.subspan(offset,count));
+        if (!fragment) return 7;
+        auto event=large.open_event(*fragment); offset+=count;
+        if (!event || event->kind!=(offset==maximum.size() ? t::ApplicationEventKind::ticket_discarded : t::ApplicationEventKind::handshake_fragment)) return 8;
+    }
     std::cout << "TLS ticket discard, fragmentation and malformed rejection passed\n";
 }
