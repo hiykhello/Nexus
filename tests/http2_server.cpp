@@ -248,5 +248,38 @@ int main() {
                      flow_stream, flow_observed.headers.size());
         return 28;
     }
+    // Stop draining server output and verify that peer-generated ACK work is
+    // bounded even when no application streams or DATA are involved.
+    Observed flood_observed;
+    nh::ServerEvents flood_events{&flood_observed, on_headers, on_data, on_end, on_closed};
+    if (nh::ServerSession::create({8, 4, 128, 64, 16, 8, 0}, flood_events)) return 33;
+    auto flood_session = nh::ServerSession::create({8, 4, 128, 64, 16, 8, 2}, flood_events);
+    if (!flood_session) return 34;
+    flood_observed.session = flood_session->get();
+    h2::nghttp2_session_callbacks* flood_callbacks = nullptr;
+    if (h2::nghttp2_session_callbacks_new(&flood_callbacks)) return 35;
+    h2::nghttp2_session* flood_client = nullptr;
+    auto flood_rc = h2::nghttp2_session_client_new(&flood_client, flood_callbacks, nullptr);
+    h2::nghttp2_session_callbacks_del(flood_callbacks);
+    if (flood_rc) return 36;
+    std::unique_ptr<h2::nghttp2_session, decltype(&h2::nghttp2_session_del)> flood_owner(flood_client, h2::nghttp2_session_del);
+    if (h2::nghttp2_submit_settings(flood_client, 0, nullptr, 0) || !to_server(flood_client, **flood_session)) return 37;
+    std::array<std::uint8_t, 8> opaque{};
+    for (int i = 0; i < 4; ++i) if (h2::nghttp2_submit_ping(flood_client, 0, opaque.data())) return 38;
+    bool flooded = false;
+    for (;;) {
+        std::uint8_t const* bytes = nullptr;
+        auto size = h2::nghttp2_session_mem_send2(flood_client, &bytes);
+        if (size < 0) return 39;
+        if (!size) break;
+        auto received = (**flood_session).receive({reinterpret_cast<std::byte const*>(bytes), static_cast<std::size_t>(size)});
+        if (!received) {
+            flooded = received.error().kind == nh::ServerErrorKind::library && received.error().library_code == h2::NGHTTP2_ERR_FLOODED;
+            break;
+        }
+    }
+    if (!flooded) return 40;
+    auto flood_after = (**flood_session).receive({});
+    if (flood_after || flood_after.error().kind != nh::ServerErrorKind::failed) return 41;
     std::println("HTTP/2 server session response, fragmentation, limits, DATA and reentrancy passed");
 }

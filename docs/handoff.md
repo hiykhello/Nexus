@@ -4,6 +4,7 @@
 
 ## 上一步
 
+- HTTP/2 服务端新增自动 PING/SETTINGS ACK 队列上限，默认 64 帧，零值拒绝；停滞输出时的 PING 洪泛触发 nghttp2 `FLOODED` 并将会话置为失败。此项不是完整连接内存预算。
 - HTTP/2 服务端流存储改为稳定地址：nghttp2 响应 DATA provider 持有流指针，先前 `vector::erase` 在关闭较早流时会移动后续流。新增并发响应回归，先重置前一个流、再读取后一个流；旧存储复现错误，新实现及 nghttp2 内存回归通过。
 - 在当前切片中，Corosio Module 新增窄的 `connect_candidates` 包装：组合连接模板只在 Module 内实例化，失败与取消都会关闭最后一个 socket。独立消费者在 epoll/io_uring 下验证首候选失败后的重试、全失败回收、预取消不重试以及 context drain。
 - 在 `f6762ff where:corosio.endpoint:export address factories and validate module boundary` 及 `5e2fa66 where:corosio.module:keep composed connect private until capy condition export` 中，Corosio Module 导出了 `make_endpoint`、`make_local_endpoint` 和格式识别；独立测试覆盖 IPv4/IPv6、缺省端口、非法输入、本地路径及路径长度。尝试导出组合 `connect` 时发现上游模板依赖未穿透 Module 的 Capy error-condition 特化，已撤回该公共导出并记录边界。隔离 GCC 16/io_uring 构建与运行通过。

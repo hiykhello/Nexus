@@ -25,6 +25,9 @@ export namespace nexus::http2 {
         // Maximum amount of unacknowledged DATA per connection and stream.
         // The value is also the receive window restored by acknowledge/resume.
         std::size_t input_window = 65535;
+        // Bound automatically generated PING and SETTINGS acknowledgements
+        // when the transport cannot drain output.
+        std::size_t outbound_ack_frames = 64;
     };
     enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed };
     struct ServerError { ServerErrorKind kind; int library_code = 0; };
@@ -151,6 +154,7 @@ export namespace nexus::http2 {
             -> std::expected<std::unique_ptr<ServerSession>, ServerError> {
             if (!limits.concurrent_streams || !limits.header_fields || !limits.header_bytes || !limits.response_bytes || !limits.total_response_bytes ||
                 !limits.input_window || limits.input_window > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) ||
+                !limits.outbound_ack_frames ||
                 !events.headers || !events.data || !events.end_stream || !events.closed)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             std::unique_ptr<ServerSession> self;
@@ -166,7 +170,10 @@ export namespace nexus::http2 {
             h2::nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, closed);
             h2::nghttp2_option* option = nullptr;
             rc = h2::nghttp2_option_new(&option);
-            if (rc == 0) h2::nghttp2_option_set_no_auto_window_update(option, 1);
+            if (rc == 0) {
+                h2::nghttp2_option_set_no_auto_window_update(option, 1);
+                h2::nghttp2_option_set_max_outbound_ack(option, limits.outbound_ack_frames);
+            }
             if (rc == 0)
                 rc = h2::nghttp2_session_server_new2(&self->session_, callbacks, self.get(), option);
             h2::nghttp2_option_del(option);

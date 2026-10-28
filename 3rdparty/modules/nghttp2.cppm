@@ -24,6 +24,7 @@ export namespace nex::nghttp2 {
     using ::nghttp2_option_new;
     using ::nghttp2_option_del;
     using ::nghttp2_option_set_no_auto_window_update;
+    using ::nghttp2_option_set_max_outbound_ack;
     using ::nghttp2_session_callbacks_new;
     using ::nghttp2_session_callbacks_del;
     using ::nghttp2_session_del;
@@ -52,6 +53,8 @@ export namespace nex::nghttp2 {
     using ::nghttp2_session_callbacks_set_on_frame_recv_callback;
     using ::NGHTTP2_WINDOW_UPDATE;
     using ::nghttp2_submit_settings;
+    using ::nghttp2_submit_ping;
+    using ::NGHTTP2_ERR_FLOODED;
     using ::nghttp2_submit_rst_stream;
     using ::nghttp2_submit_goaway;
     using ::nghttp2_session_want_read;
