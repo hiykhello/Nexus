@@ -18,6 +18,8 @@ int main() {
     if (t::KeyShare::view_client(empty_entry).error()!=t::KeyShareError::empty) return 19;
     if (t::KeyShare::view_client(*encoded,encoded->size()-1).error()!=t::KeyShareError::message_too_large) return 20;
     auto server=t::KeyShare::encode_server(entries[0]); if (!server) return 3; auto server_parsed=t::KeyShare::parse_server(*server); if (!server_parsed || *server_parsed!=entries[0]) return 4;
+    auto server_view=t::KeyShare::view_server(*server);
+    if (!server_view || server_view->group!=entries[0].group || !std::ranges::equal(server_view->key_exchange,entries[0].key_exchange)) return 21;
     auto retry=t::KeyShare::encode_retry(0x001d); if (t::KeyShare::parse_retry(retry)!=0x001d) return 5;
     auto bad= *encoded; bad[1]--; if (t::KeyShare::parse_client(bad).error()!=t::KeyShareError::invalid_length) return 6;
     if (t::KeyShare::view_client(bad).error()!=t::KeyShareError::invalid_length) return 16;
@@ -26,6 +28,7 @@ int main() {
     auto empty_list=std::vector<std::uint8_t>{0,0}; if (!t::KeyShare::parse_client(empty_list) || !t::KeyShare::parse_client(empty_list)->empty()) return 9;
     auto truncated=*encoded; truncated.pop_back(); if (t::KeyShare::parse_client(truncated).error()!=t::KeyShareError::invalid_length) return 10;
     auto bad_server=*server; bad_server[3]--; if (t::KeyShare::parse_server(bad_server).error()!=t::KeyShareError::invalid_length) return 11;
+    if (t::KeyShare::view_server(bad_server).error()!=t::KeyShareError::invalid_length) return 22;
     if (t::KeyShare::parse_retry(std::vector<std::uint8_t>{1}).error()!=t::KeyShareError::truncated || t::KeyShare::parse_retry(std::vector<std::uint8_t>{1,2,3}).error()!=t::KeyShareError::invalid_length) return 12;
     std::cout << "TLS key_share encoding and boundaries passed\n";
 }

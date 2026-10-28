@@ -6,6 +6,12 @@ namespace nexus::tls {
         constexpr std::array<std::uint8_t,32> retry_random{0xcf,0x21,0xad,0x74,0xe5,0x9a,0x61,0x11,0xbe,0x1d,0x8c,0x02,0x1e,0x65,0xb8,0x91,0xc2,0xa2,0x11,0x16,0x7a,0xbb,0x8c,0x5e,0x07,0x9e,0x09,0xe2,0xc8,0xa8,0x33,0x9c};
         auto get16(std::span<std::uint8_t const> b, std::size_t p) -> std::uint16_t { return static_cast<std::uint16_t>((std::uint16_t{b[p]}<<8)|b[p+1]); }
         auto put16(std::vector<std::uint8_t>& b, std::size_t n) -> void { b.push_back(static_cast<std::uint8_t>(n>>8)); b.push_back(static_cast<std::uint8_t>(n)); }
+        auto contains_group(ClientKeyShares const& shares,std::uint16_t group) noexcept -> bool {
+            std::size_t cursor=0; while (auto entry=shares.next(cursor)) if (entry->group==group) return true; return false;
+        }
+        auto tls13_version(Extension const* versions) noexcept -> bool {
+            return versions && versions->data.size()==2 && versions->data[0]==3 && versions->data[1]==4;
+        }
     }
     auto ServerHello::parse(std::span<std::uint8_t const> body) -> std::expected<ServerHello,ServerHelloError> {
         if (body.size()<35) return std::unexpected(ServerHelloError::truncated);
@@ -54,16 +60,16 @@ namespace nexus::tls {
             if (seen.test(e.type)) return std::unexpected(ServerHelloError::duplicate_extension); seen.set(e.type);
             if (e.type==43) versions=&e; else if (e.type==51) share=&e; else if (e.type==44) cookie=&e; else return std::unexpected(ServerHelloError::unsupported);
         }
-        if (!versions || versions->data!=std::vector<std::uint8_t>{3,4} || !first.extension(43)) return std::unexpected(ServerHelloError::invalid_version);
+        if (!tls13_version(versions) || !first.extension(43)) return std::unexpected(ServerHelloError::invalid_version);
         if ((!share && !cookie) || first.extension(44)) return std::unexpected(ServerHelloError::invalid_extension);
         if (cookie && (cookie->data.size()<3 || get16(cookie->data,0)!=cookie->data.size()-2)) return std::unexpected(ServerHelloError::invalid_extension);
         auto first_share=first.extension(51); if (!first_share) return std::unexpected(ServerHelloError::group_mismatch);
-        auto offered=KeyShare::parse_client(first_share->data); if (!offered) return std::unexpected(ServerHelloError::group_mismatch);
+        auto offered=KeyShare::view_client(first_share->data); if (!offered) return std::unexpected(ServerHelloError::group_mismatch);
         if (!share) return std::optional<std::uint16_t>{};
         auto selected=KeyShare::parse_retry(share->data); auto groups=first.extension(10);
         if (!selected || !groups || groups->data.size()<4 || get16(groups->data,0)!=groups->data.size()-2 || (groups->data.size()-2)%2) return std::unexpected(ServerHelloError::group_mismatch);
         bool found=false; for (std::size_t i=2;i<groups->data.size();i+=2) if (get16(groups->data,i)==*selected) found=true;
-        if (!found || std::ranges::find(*offered,*selected,&KeyShareEntry::group)!=offered->end()) return std::unexpected(ServerHelloError::group_mismatch);
+        if (!found || contains_group(*offered,*selected)) return std::unexpected(ServerHelloError::group_mismatch);
         if (*selected!=0x001d && *selected!=0x11ec) return std::unexpected(ServerHelloError::unsupported);
         return std::optional<std::uint16_t>{*selected};
     }
@@ -96,7 +102,7 @@ namespace nexus::tls {
             if (seen.test(e.type)) return std::unexpected(ServerHelloError::duplicate_extension); seen.set(e.type);
             if (e.type==43) versions=&e; else if (e.type==51) share=&e; else if (e.type==44) cookie=&e; else return std::unexpected(ServerHelloError::unsupported);
         }
-        if (!versions || versions->data!=std::vector<std::uint8_t>{3,4} || !first.extension(43)) return std::unexpected(ServerHelloError::invalid_version);
+        if (!tls13_version(versions) || !first.extension(43)) return std::unexpected(ServerHelloError::invalid_version);
         if (!share && !cookie) return std::unexpected(ServerHelloError::invalid_extension);
         if (first.extension(44)) return std::unexpected(ServerHelloError::invalid_extension);
         auto second_cookie=second.extension(44);
@@ -108,20 +114,21 @@ namespace nexus::tls {
         if (!std::ranges::equal(before,after)) return std::unexpected(ServerHelloError::invalid_extension);
         auto first_share=first.extension(51), second_share=second.extension(51);
         if (!first_share || !second_share) return std::unexpected(ServerHelloError::group_mismatch);
-        auto offered=KeyShare::parse_client(first_share->data), replacement=KeyShare::parse_client(second_share->data);
+        auto offered=KeyShare::view_client(first_share->data), replacement=KeyShare::view_client(second_share->data);
         if (!offered || !replacement) return std::unexpected(ServerHelloError::group_mismatch);
         std::uint16_t group=0;
         if (share) {
             auto selected=KeyShare::parse_retry(share->data); auto groups=first.extension(10);
             if (!selected || !groups || groups->data.size()<4 || get16(groups->data,0)!=groups->data.size()-2 || (groups->data.size()-2)%2) return std::unexpected(ServerHelloError::group_mismatch);
             bool found=false; for (std::size_t i=2;i<groups->data.size();i+=2) if (get16(groups->data,i)==*selected) found=true;
-            if (!found || std::ranges::find(*offered,*selected,&KeyShareEntry::group)!=offered->end() || replacement->size()!=1 || (*replacement)[0].group!=*selected) return std::unexpected(ServerHelloError::group_mismatch);
+            std::size_t cursor=0; auto first_entry=replacement->next(cursor); auto second_entry=replacement->next(cursor);
+            if (!found || contains_group(*offered,*selected) || !first_entry || second_entry || first_entry->group!=*selected) return std::unexpected(ServerHelloError::group_mismatch);
             group=*selected;
         } else {
             if (first_share->data!=second_share->data) return std::unexpected(ServerHelloError::group_mismatch);
             auto final_share=std::ranges::find(final_hello.extensions,std::uint16_t{51},&Extension::type);
             if (final_share==final_hello.extensions.end()) return std::unexpected(ServerHelloError::group_mismatch);
-            auto selected=KeyShare::parse_server(final_share->data); if (!selected) return std::unexpected(ServerHelloError::group_mismatch); group=selected->group;
+            auto selected=KeyShare::view_server(final_share->data); if (!selected) return std::unexpected(ServerHelloError::group_mismatch); group=selected->group;
         }
         if (group==0x001d) return final_hello.validate_x25519(second);
         if (group==0x11ec) return final_hello.validate_x25519_mlkem768(second);
@@ -140,7 +147,7 @@ namespace nexus::tls {
             if (!client.extension(e.type)) return std::unexpected(ServerHelloError::invalid_extension);
             if (e.type==43) versions=&e; else if (e.type==51) share=&e; else return std::unexpected(ServerHelloError::unsupported);
         }
-        if (!versions || versions->data!=std::vector<std::uint8_t>{3,4}) return std::unexpected(ServerHelloError::invalid_version);
+        if (!tls13_version(versions)) return std::unexpected(ServerHelloError::invalid_version);
         if (!share) return std::unexpected(ServerHelloError::invalid_extension);
         auto groups=client.extension(10);
         if (!groups || groups->data.size()<4) return std::unexpected(ServerHelloError::group_mismatch);
@@ -149,10 +156,11 @@ namespace nexus::tls {
         bool supports_group=false;
         for (std::size_t i=2;i<groups->data.size();i+=2) if (((std::uint16_t{groups->data[i]}<<8)|groups->data[i+1])==group) supports_group=true;
         if (!supports_group) return std::unexpected(ServerHelloError::group_mismatch);
-        auto peer=KeyShare::parse_server(share->data); auto offer=KeyShare::parse_client(client.extension(51)->data);
+        auto peer=KeyShare::view_server(share->data); auto offer=KeyShare::view_client(client.extension(51)->data);
         if (!peer || !offer || peer->group!=group || peer->key_exchange.size()!=server_size) return std::unexpected(ServerHelloError::group_mismatch);
-        auto found=std::ranges::find(*offer,peer->group,&KeyShareEntry::group);
-        if (found==offer->end() || found->key_exchange.size()!=client_size) return std::unexpected(ServerHelloError::group_mismatch);
-        return std::move(*peer);
+        std::size_t cursor=0; std::optional<KeyShareView> found;
+        while (auto entry=offer->next(cursor)) if (entry->group==peer->group) { found=*entry; break; }
+        if (!found || found->key_exchange.size()!=client_size) return std::unexpected(ServerHelloError::group_mismatch);
+        return KeyShareEntry{peer->group,{peer->key_exchange.begin(),peer->key_exchange.end()}};
     }
 }

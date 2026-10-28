@@ -2,6 +2,14 @@ import std;
 import nexus.tls.server_hello;
 import nexus.tls.transcript;
 import nexus.tls.schedule;
+static bool deny_allocations=false;
+void* operator new(std::size_t size) {
+    if (deny_allocations) throw std::bad_alloc{};
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto hex(std::string_view s) -> c::Bytes { auto n=[](char x){return x<='9'?x-'0':x-'a'+10;}; c::Bytes b; for (std::size_t i=0;i<s.size();i+=2) b.push_back(static_cast<std::uint8_t>((n(s[i])<<4)|n(s[i+1]))); return b; }
 int main() {
@@ -42,6 +50,19 @@ int main() {
     if (retry.validate_retry(first,reordered,*server)) return 42;
     auto missing=second; missing.extensions.erase(missing.extensions.begin());
     if (retry.validate_retry(first,missing,*server)) return 43;
+    auto duplicate_share=second;
+    for (auto& e:duplicate_share.extensions) if (e.type==51) {
+        auto entry=c::Bytes(e.data.begin()+2,e.data.end());
+        e.data[1]=static_cast<std::uint8_t>(entry.size()*2);
+        e.data.insert(e.data.end(),entry.begin(),entry.end());
+    }
+    if (retry.validate_retry(first,duplicate_share,*server).error()!=t::ServerHelloError::group_mismatch) return 45;
+    auto multiple_shares=second;
+    for (auto& e:multiple_shares.extensions) if (e.type==51) {
+        e.data[1]=static_cast<std::uint8_t>(e.data[1]+5);
+        e.data.insert(e.data.end(),{0,23,0,1,1});
+    }
+    if (retry.validate_retry(first,multiple_shares,*server).error()!=t::ServerHelloError::group_mismatch) return 46;
     auto wrong=second; wrong.random[0]^=1; if (retry.validate_retry(first,wrong,*server)) return 23;
     wrong=second; wrong.extensions.back().data.back()^=1; if (retry.validate_retry(first,wrong,*server)) return 24;
     if (retry.validate_retry(*client,second,*server)) return 25;
@@ -52,6 +73,11 @@ int main() {
     if (!bad_retry.validate_retry(*client,second,*server)) return 29;
     wrong=second; for (auto& e:wrong.extensions) if (e.type==51) e.data={0,0}; if (bad_retry.validate_retry(*client,wrong,*server)) return 30;
     auto requested=retry.validate_retry_request(first); if (!requested || !*requested || **requested!=0x001d) return 31;
+    deny_allocations=true;
+    auto request_without_allocation=retry.validate_retry_request(first);
+    auto invalid_without_allocation=retry.validate_retry(first,reordered,*server);
+    deny_allocations=false;
+    if (!request_without_allocation || !*request_without_allocation || **request_without_allocation!=0x001d || invalid_without_allocation.error()!=t::ServerHelloError::invalid_extension) return 44;
     auto entries=t::KeyShare::parse_client(client->extension(51)->data); if (!entries || entries->size()!=1) return 32;
     auto generated=retry.retry_client_hello(first,(*entries)[0]); if (!generated || *generated!=second) return 33;
     if (retry.retry_client_hello(first,std::nullopt) || retry.retry_client_hello(*client,(*entries)[0])) return 34;

@@ -37,11 +37,15 @@ namespace nexus::tls {
         while (auto entry=view->next(cursor)) result.push_back({entry->group,{entry->key_exchange.begin(),entry->key_exchange.end()}});
         return result;
     }
-    auto KeyShare::parse_server(std::span<std::uint8_t const> data) -> std::expected<KeyShareEntry, KeyShareError> {
+    auto KeyShare::view_server(std::span<std::uint8_t const> data) -> std::expected<KeyShareView, KeyShareError> {
         if (data.size()<4) return std::unexpected(KeyShareError::truncated);
         auto size=static_cast<std::size_t>(u16(data,2)); if (size==0) return std::unexpected(KeyShareError::empty);
         if (size!=data.size()-4) return std::unexpected(KeyShareError::invalid_length);
-        return KeyShareEntry{u16(data,0),std::vector<std::uint8_t>(data.begin()+4,data.end())};
+        return KeyShareView{u16(data,0),data.subspan(4)};
+    }
+    auto KeyShare::parse_server(std::span<std::uint8_t const> data) -> std::expected<KeyShareEntry, KeyShareError> {
+        auto view=view_server(data); if (!view) return std::unexpected(view.error());
+        return KeyShareEntry{view->group,{view->key_exchange.begin(),view->key_exchange.end()}};
     }
     auto KeyShare::parse_retry(std::span<std::uint8_t const> data) -> std::expected<std::uint16_t, KeyShareError> {
         if (data.size()!=2) return std::unexpected(data.size()<2 ? KeyShareError::truncated : KeyShareError::invalid_length); return u16(data,0);

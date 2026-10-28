@@ -28,6 +28,9 @@ export namespace nexus::tls {
             -> std::expected<ClientKeyShares, KeyShareError>;
         [[nodiscard]] static auto parse_client(std::span<std::uint8_t const> data, std::size_t max_size = 0xffff)
             -> std::expected<std::vector<KeyShareEntry>, KeyShareError>;
+        // Borrows the input under the same lifetime and immutability rules as view_client.
+        [[nodiscard]] static auto view_server(std::span<std::uint8_t const> data)
+            -> std::expected<KeyShareView, KeyShareError>;
         [[nodiscard]] static auto parse_server(std::span<std::uint8_t const> data)
             -> std::expected<KeyShareEntry, KeyShareError>;
         [[nodiscard]] static auto parse_retry(std::span<std::uint8_t const> data)
