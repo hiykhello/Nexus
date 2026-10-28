@@ -31,9 +31,11 @@ namespace nexus::tls {
     auto ClientHandshakeIo::feed(std::span<std::uint8_t const> input, std::uint64_t now) -> std::expected<ClientHandshakeIoFeed,ClientHandshakeIoError> {
         auto time=check_time(now); if (!time) return std::unexpected(time.error());
         if (state_==State::complete || !output_.empty()) return ClientHandshakeIoFeed{};
+        try {
         auto result=handshake_->feed(input); if (!result) return fail(result.error()==ClientSessionHandshakeError::authentication_failed ? ClientHandshakeIoError::authentication_failed : ClientHandshakeIoError::protocol_error);
         if (result->outbound) { output_=std::move(*result->outbound); finished_output_=output_[0]==23; }
         return ClientHandshakeIoFeed{result->consumed};
+        } catch (...) { (void)fail(ClientHandshakeIoError::protocol_error); throw; }
     }
     auto ClientHandshakeIo::tick(std::uint64_t now) -> std::expected<void,ClientHandshakeIoError> { return check_time(now); }
     auto ClientHandshakeIo::cancel() -> std::expected<void,ClientHandshakeIoError> {

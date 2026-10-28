@@ -40,6 +40,7 @@ export namespace nexus::tls {
         [[nodiscard]] auto initial_record() const -> std::expected<crypto::Bytes,ClientSessionHandshakeError>;
         [[nodiscard]] auto sent() -> std::expected<void,ClientSessionHandshakeError>;
         // Returns at one record boundary or epoch transition. Resubmit the unconsumed suffix.
+        // An exception while processing input invalidates the handshake.
         [[nodiscard]] auto feed(std::span<std::uint8_t const> input) -> std::expected<ClientSessionHandshakeFeed,ClientSessionHandshakeError>;
         [[nodiscard]] auto finish_input() -> std::expected<void,ClientSessionHandshakeError>;
         [[nodiscard]] auto negotiated() const noexcept -> EncryptedExtensions const*;

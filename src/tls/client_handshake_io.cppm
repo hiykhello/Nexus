@@ -25,6 +25,7 @@ export namespace nexus::tls {
         [[nodiscard]] auto pending_output() const noexcept -> std::span<std::uint8_t const>;
         [[nodiscard]] auto written(std::size_t count, std::uint64_t now) -> std::expected<void,ClientHandshakeIoError>;
         // Returns zero consumption while output is pending or after the handshake completes.
+        // An exception while processing input invalidates the adapter and clears pending output.
         [[nodiscard]] auto feed(std::span<std::uint8_t const> input, std::uint64_t now) -> std::expected<ClientHandshakeIoFeed,ClientHandshakeIoError>;
         [[nodiscard]] auto tick(std::uint64_t now) -> std::expected<void,ClientHandshakeIoError>;
         [[nodiscard]] auto cancel() -> std::expected<void,ClientHandshakeIoError>;
