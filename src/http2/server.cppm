@@ -32,12 +32,51 @@ export namespace nexus::http2 {
         // The decoder starts at the protocol default until SETTINGS applies.
         std::uint32_t decoder_table_bytes = 4096;
         std::size_t encoder_table_bytes = 4096;
+        // nghttp2 live allocations, including accounting headers; excludes
+        // application buffers, TLS, transport, allocator overhead and transient realloc copies.
+        std::size_t library_memory_bytes = 4 * 1024 * 1024;
     };
     enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed };
     struct ServerError { ServerErrorKind kind; int library_code = 0; };
 
     class ServerSession {
         h2::nghttp2_session* session_ = nullptr;
+        struct alignas(std::max_align_t) Allocation { std::size_t size; };
+        std::size_t library_limit_, library_used_=0, library_peak_=0;
+        static auto allocate(std::size_t size, void* context) noexcept -> void* {
+            auto& self=*static_cast<ServerSession*>(context);
+            if (size>std::numeric_limits<std::size_t>::max()-sizeof(Allocation)) return nullptr;
+            auto total=size+sizeof(Allocation);
+            if (total>self.library_limit_-self.library_used_) return nullptr;
+            auto p=static_cast<Allocation*>(std::malloc(total));
+            if (!p) return nullptr;
+            p->size=total; self.library_used_+=total; self.library_peak_=std::max(self.library_peak_,self.library_used_);
+            return p+1;
+        }
+        static void deallocate(void* ptr, void* context) noexcept {
+            if (!ptr) return;
+            auto& self=*static_cast<ServerSession*>(context);
+            auto p=static_cast<Allocation*>(ptr)-1;
+            self.library_used_-=p->size; std::free(p);
+        }
+        static auto allocate_zero(std::size_t count,std::size_t size,void* context) noexcept -> void* {
+            if (size && count>std::numeric_limits<std::size_t>::max()/size) return nullptr;
+            auto total=count*size; auto p=allocate(total,context);
+            if (p) std::memset(p,0,total);
+            return p;
+        }
+        static auto resize(void* ptr,std::size_t size,void* context) noexcept -> void* {
+            if (!ptr) return allocate(size,context);
+            if (!size) { deallocate(ptr,context); return nullptr; }
+            auto& self=*static_cast<ServerSession*>(context);
+            if (size>std::numeric_limits<std::size_t>::max()-sizeof(Allocation)) return nullptr;
+            auto p=static_cast<Allocation*>(ptr)-1; auto old=p->size; auto total=size+sizeof(Allocation);
+            if (total>self.library_limit_-(self.library_used_-old)) return nullptr;
+            auto replacement=static_cast<Allocation*>(std::realloc(p,total));
+            if (!replacement) return nullptr;
+            replacement->size=total; self.library_used_=self.library_used_-old+total;
+            self.library_peak_=std::max(self.library_peak_,self.library_used_); return replacement+1;
+        }
         struct Stream {
             std::int32_t id;
             bool responded = false;
@@ -66,7 +105,11 @@ export namespace nexus::http2 {
         std::size_t paused_bytes_ = 0;
 
         ServerSession(ServerLimits limits, ServerEvents events)
-            : headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), input_window_(limits.input_window), events_(events) {
+            : library_limit_(limits.library_memory_bytes), headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), input_window_(limits.input_window), events_(events) {
+        }
+        auto library_error(int rc) noexcept -> std::unexpected<ServerError> {
+            if (h2::nghttp2_is_fatal(rc)) { failed_=true; ++revision_; }
+            return std::unexpected(ServerError{ServerErrorKind::library, rc});
         }
         static auto begin(h2::nghttp2_session* session, h2::nghttp2_frame const* frame, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
@@ -162,7 +205,7 @@ export namespace nexus::http2 {
             -> std::expected<std::unique_ptr<ServerSession>, ServerError> {
             if (!limits.concurrent_streams || !limits.header_fields || !limits.header_bytes || !limits.response_bytes || !limits.total_response_bytes ||
                 !limits.input_window || limits.input_window > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) ||
-                !limits.outbound_ack_frames ||
+                !limits.outbound_ack_frames || !limits.library_memory_bytes ||
                 !events.headers || !events.data || !events.end_stream || !events.closed)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             std::unique_ptr<ServerSession> self;
@@ -183,8 +226,9 @@ export namespace nexus::http2 {
                 h2::nghttp2_option_set_max_outbound_ack(option, limits.outbound_ack_frames);
                 h2::nghttp2_option_set_max_deflate_dynamic_table_size(option, limits.encoder_table_bytes);
             }
+            h2::nghttp2_mem memory{self.get(),allocate,deallocate,allocate_zero,resize};
             if (rc == 0)
-                rc = h2::nghttp2_session_server_new2(&self->session_, callbacks, self.get(), option);
+                rc = h2::nghttp2_session_server_new3(&self->session_, callbacks, self.get(), option, &memory);
             h2::nghttp2_option_del(option);
             h2::nghttp2_session_callbacks_del(callbacks);
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
@@ -207,7 +251,7 @@ export namespace nexus::http2 {
             if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
             if (shutdown_ != Shutdown::running) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             auto rc = h2::nghttp2_submit_shutdown_notice(session_);
-            if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            if (rc != 0) return library_error(rc);
             ++revision_;
             shutdown_ = Shutdown::notice;
             return {};
@@ -220,7 +264,7 @@ export namespace nexus::http2 {
             if (shutdown_ != Shutdown::notice) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             auto last = h2::nghttp2_session_get_last_proc_stream_id(session_);
             auto rc = h2::nghttp2_submit_goaway(session_, 0, last, h2::NGHTTP2_NO_ERROR, nullptr, 0);
-            if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            if (rc != 0) return library_error(rc);
             ++revision_;
             shutdown_ = Shutdown::draining;
             return {};
@@ -239,7 +283,7 @@ export namespace nexus::http2 {
             if (stream == streams_.end() || stream->reset_pending || paused_stream_ == id)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             auto rc = h2::nghttp2_submit_rst_stream(session_, 0, id, code);
-            if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            if (rc != 0) return library_error(rc);
             ++revision_;
             stream->reset_pending = true;
             return {};
@@ -275,7 +319,7 @@ export namespace nexus::http2 {
                 response_reserved_ -= body.size();
                 stream->response.clear();
                 stream->response_offset = 0;
-                return std::unexpected(ServerError{ServerErrorKind::library, rc});
+                return library_error(rc);
             }
             ++revision_;
             stream->responded = true;
@@ -301,11 +345,13 @@ export namespace nexus::http2 {
             active_ = true;
             auto rc = h2::nghttp2_submit_response2(session_, id, &field, 1, nullptr);
             active_ = false;
-            if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            if (rc != 0) return library_error(rc);
             ++revision_;
             stream->responded = true;
             return {};
         }
+        [[nodiscard]] auto library_memory_used() const noexcept -> std::size_t { return library_used_; }
+        [[nodiscard]] auto library_memory_peak() const noexcept -> std::size_t { return library_peak_; }
         [[nodiscard]] auto revision() const noexcept -> std::uint64_t { return revision_; }
         [[nodiscard]] auto paused_stream() const noexcept -> std::int32_t { return paused_stream_; }
 
@@ -321,7 +367,7 @@ export namespace nexus::http2 {
             auto rc = h2::nghttp2_session_consume(session_, id, paused_bytes_);
             if (rc != 0) {
                 failed_ = true;
-                return std::unexpected(ServerError{ServerErrorKind::library, rc});
+                return library_error(rc);
             }
             paused_stream_ = 0;
             paused_bytes_ = 0;

@@ -12,6 +12,7 @@ export namespace nex::nghttp2 {
     using ::nghttp2_headers_category;
     using ::nghttp2_nv;
     using ::nghttp2_option;
+    using ::nghttp2_mem;
     using ::nghttp2_session;
     using ::nghttp2_session_callbacks;
     using ::nghttp2_stream;
@@ -21,6 +22,7 @@ export namespace nex::nghttp2 {
     using ::nghttp2_session_client_new;
     using ::nghttp2_session_server_new;
     using ::nghttp2_session_server_new2;
+    using ::nghttp2_session_server_new3;
     using ::nghttp2_option_new;
     using ::nghttp2_option_del;
     using ::nghttp2_option_set_no_auto_window_update;
@@ -57,6 +59,8 @@ export namespace nex::nghttp2 {
     using ::nghttp2_submit_settings;
     using ::nghttp2_submit_ping;
     using ::NGHTTP2_ERR_FLOODED;
+    using ::NGHTTP2_ERR_NOMEM;
+    using ::nghttp2_is_fatal;
     using ::nghttp2_submit_rst_stream;
     using ::nghttp2_submit_goaway;
     using ::nghttp2_submit_shutdown_notice;
