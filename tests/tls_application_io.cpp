@@ -1,5 +1,17 @@
 import std;
 import nexus.tls.application_io;
+// Track the actual allocation backing one output record, including sized delete.
+static std::atomic<void*> watched_allocation{nullptr};
+static std::atomic<bool> watched_freed{false};
+void* operator new(std::size_t size) {
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept {
+    if (p && p==watched_allocation.load()) watched_freed.store(true);
+    std::free(p);
+}
+void operator delete(void* p, std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto; using Bytes=c::Bytes;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction, int value) -> t::RecordLayer {
@@ -19,6 +31,15 @@ auto deliver(t::ApplicationIo& sender,t::ApplicationIo& receiver) -> std::option
     return event;
 }
 int main() {
+    {
+        auto sender=app(1,2); Bytes payload(16384,42);
+        if (!sender.send(payload)) return 38;
+        auto pending=sender.pending_output();
+        watched_freed=false; watched_allocation=const_cast<std::uint8_t*>(pending.data());
+        if (!sender.written(pending.size()-1) || watched_freed.load()) return 39;
+        if (!sender.written(1) || !watched_freed.load() || !sender.pending_output().empty()) return 40;
+        watched_allocation=nullptr;
+    }
     auto a=app(1,2), b=app(2,1); Bytes data{1,2,3};
     if (!a.send(data) || a.send(data) || a.written(a.pending_output().size()+1).error()!=t::ApplicationIoError::invalid_input) return 1;
     auto first=deliver(a,b); if (!first || first->kind!=t::ApplicationEventKind::data || first->data!=data) return 3;
