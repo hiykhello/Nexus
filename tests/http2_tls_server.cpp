@@ -27,7 +27,7 @@ struct Fixture {
     std::int32_t request=0;
     std::vector<std::int32_t> requests;
     unsigned closed_count=0;
-    bool response=false, closed=false, done=false, success=false, pause=false, paused=false, ended=false, multi=false, peer_close=false, truncated=false, stale=false, timeout=false, curl=false, head=false, cancel=false, canceled=false;
+    bool response=false, closed=false, done=false, success=false, pause=false, paused=false, ended=false, multi=false, peer_close=false, truncated=false, stale=false, timeout=false, curl=false, head=false, cancel=false, canceled=false, pause_output=false, output_during_pause=false;
     std::string body;
 };
 auto headers(void* p,std::int32_t id,std::span<h::Header const>,bool trailers,bool end) noexcept -> bool {
@@ -88,6 +88,15 @@ auto serve(Fixture& f) -> capy::task<> {
             break;
         }
         if (*result==h::TlsServerStep::paused) {
+            if (f.pause_output && !f.response) {
+                constexpr std::string_view body="hello h2";
+                if (!f.session->respond_body(f.request,200,{reinterpret_cast<std::byte const*>(body.data()),body.size()})) break;
+                f.response=true;
+                auto output=co_await connection.step(deadline);
+                if (!output || *output!=h::TlsServerStep::progress || !f.session->paused_stream()) break;
+                f.output_during_pause=true;
+                continue;
+            }
             if (!f.session->resume_input(f.session->paused_stream())) break;
             continue;
         }
@@ -113,14 +122,14 @@ auto serve(Fixture& f) -> capy::task<> {
             break;
         }
         if (*result!=h::TlsServerStep::progress) break;
-        if (!f.multi && !f.peer_close && !f.truncated && !f.stale && !f.curl && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload"); break; }
+        if (!f.multi && !f.peer_close && !f.truncated && !f.stale && !f.curl && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload" && (!f.pause_output || f.output_during_pause)); break; }
     }
     f.done=true;
 }
 int main(int argc,char** argv) {
-    if (argc!=4 && (argc!=5 || (std::string_view(argv[4])!="pause" && std::string_view(argv[4])!="multi" && std::string_view(argv[4])!="peer" && std::string_view(argv[4])!="truncated" && std::string_view(argv[4])!="stale" && std::string_view(argv[4])!="timeout" && std::string_view(argv[4])!="curl" && std::string_view(argv[4])!="cancel" && std::string_view(argv[4])!="head"))) return 1;
+    if (argc!=4 && (argc!=5 || (std::string_view(argv[4])!="pause" && std::string_view(argv[4])!="pause_output" && std::string_view(argv[4])!="multi" && std::string_view(argv[4])!="peer" && std::string_view(argv[4])!="truncated" && std::string_view(argv[4])!="stale" && std::string_view(argv[4])!="timeout" && std::string_view(argv[4])!="curl" && std::string_view(argv[4])!="cancel" && std::string_view(argv[4])!="head"))) return 1;
     auto fd=::accept4(std::atoi(argv[3]),nullptr,nullptr,SOCK_NONBLOCK | SOCK_CLOEXEC); if (fd<0) return 2;
-    Fixture f; f.pause=argc==5 && std::string_view(argv[4])=="pause"; f.multi=argc==5 && std::string_view(argv[4])=="multi"; f.peer_close=argc==5 && std::string_view(argv[4])=="peer"; f.truncated=argc==5 && std::string_view(argv[4])=="truncated"; f.stale=argc==5 && std::string_view(argv[4])=="stale"; f.timeout=argc==5 && std::string_view(argv[4])=="timeout"; f.head=argc==5 && std::string_view(argv[4])=="head"; f.curl=argc==5 && (std::string_view(argv[4])=="curl" || f.head); f.cancel=argc==5 && std::string_view(argv[4])=="cancel"; if (f.socket.assign(fd)) { ::close(fd); return 3; }
+    Fixture f; f.pause_output=argc==5 && std::string_view(argv[4])=="pause_output"; f.pause=argc==5 && (std::string_view(argv[4])=="pause" || f.pause_output); f.multi=argc==5 && std::string_view(argv[4])=="multi"; f.peer_close=argc==5 && std::string_view(argv[4])=="peer"; f.truncated=argc==5 && std::string_view(argv[4])=="truncated"; f.stale=argc==5 && std::string_view(argv[4])=="stale"; f.timeout=argc==5 && std::string_view(argv[4])=="timeout"; f.head=argc==5 && std::string_view(argv[4])=="head"; f.curl=argc==5 && (std::string_view(argv[4])=="curl" || f.head); f.cancel=argc==5 && std::string_view(argv[4])=="cancel"; if (f.socket.assign(fd)) { ::close(fd); return 3; }
     auto credential=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!credential) return 4;
     auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     auto handshake=t::ServerHandshakeIo::create(std::move(*credential),now,now+5000,"h2"); if (!handshake) return 5;

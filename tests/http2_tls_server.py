@@ -28,8 +28,8 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1")
     run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(key_der))
     run("openssl", "x509", "-in", str(cert), "-outform", "DER", "-out", str(cert_der))
-    for mode in ("get", "pause", "multi", "peer", "truncated", "stale"):
-        pause = mode == "pause"
+    for mode in ("get", "pause", "pause_output", "multi", "peer", "truncated", "stale"):
+        pause = mode in ("pause", "pause_output")
         multi = mode == "multi"
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))

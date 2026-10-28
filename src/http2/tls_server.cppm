@@ -47,22 +47,14 @@ export namespace nexus::http2 {
         }
 
         // Returns after one unit of work so the application can respond outside
-        // session callbacks. On pause it must resume the indicated session stream
-        // before calling step again. A deadline applies to each socket operation.
+        // session callbacks. While input is paused, pending output can still be
+        // drained; once paused is returned, resume the indicated session stream
+        // before expecting more input. A deadline applies to each socket operation.
         auto step(tls::detail::ApplicationDeadline deadline = {})
             -> nex::capy::task<std::expected<TlsServerStep,TlsServerError>> {
             if (active_ || failed_ || closed_) co_return std::unexpected(TlsServerError::invalid_state);
-            if (session_.paused_stream()) co_return TlsServerStep::paused;
             ready_to_close_=false;
             active_=true;
-            if (resume_pending_) {
-                resume_pending_=false;
-                auto result=session_.receive({});
-                if (!result) { active_=false; cancel(); co_return std::unexpected(TlsServerError::http2); }
-                active_=false;
-                if (session_.paused_stream()) { resume_pending_=true; co_return TlsServerStep::paused; }
-                co_return TlsServerStep::progress;
-            }
             if (tls_.pending_output()) {
                 auto result=co_await tls_.flush(deadline); active_=false;
                 if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
@@ -75,6 +67,15 @@ export namespace nexus::http2 {
                 auto bytes=std::span{reinterpret_cast<std::uint8_t const*>(output.data()),*count};
                 auto result=co_await tls_.send_all(bytes,deadline); active_=false;
                 if (!result) { failed_=true; co_return std::unexpected(tls_error(result.error())); }
+                co_return TlsServerStep::progress;
+            }
+            if (session_.paused_stream()) { active_=false; co_return TlsServerStep::paused; }
+            if (resume_pending_) {
+                resume_pending_=false;
+                auto result=session_.receive({});
+                if (!result) { active_=false; cancel(); co_return std::unexpected(TlsServerError::http2); }
+                active_=false;
+                if (session_.paused_stream()) { resume_pending_=true; co_return TlsServerStep::paused; }
                 co_return TlsServerStep::progress;
             }
             if (offset_<input_.size()) {
