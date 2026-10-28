@@ -80,9 +80,9 @@ template<class Backend> auto partial_failure(Backend backend) -> bool {
         !output && output.error().kind==h::ServerErrorKind::failed;
 }
 struct ThrowSocket {
-    io::local_stream_socket& socket; bool throw_read;
-    auto read_some(capy::mutable_buffer buffer) { if (throw_read) throw std::bad_alloc{}; return socket.read_some(buffer); }
-    auto write_some(capy::const_buffer buffer) { if (!throw_read) throw std::bad_alloc{}; return socket.write_some(buffer); }
+    io::local_stream_socket& socket; bool throw_read; bool enabled=true;
+    auto read_some(capy::mutable_buffer buffer) { if (enabled && throw_read) throw std::bad_alloc{}; return socket.read_some(buffer); }
+    auto write_some(capy::const_buffer buffer) { if (enabled && !throw_read) throw std::bad_alloc{}; return socket.write_some(buffer); }
     void cancel() { socket.cancel(); }
 };
 template<class Backend> auto allocation_failure(Backend backend,bool reading) -> bool {
@@ -292,8 +292,32 @@ template<class Backend> auto control_budget(Backend backend,int mode) -> bool {
     std::array<std::uint8_t,27> response{}; auto n=::recv(b.native_handle(),response.data(),response.size(),MSG_DONTWAIT);
     return context.stopped() && done && !error && !(**session).output_memory_charge() && n==27 && response[0]==23;
 }
-auto close_step(Connection& connection,bool& done,std::optional<h::TlsServerError>& error) -> capy::task<> {
+template<class Socket> auto close_step(h::TlsServerConnection<Socket>& connection,bool& done,std::optional<h::TlsServerError>& error) -> capy::task<> {
     auto result=co_await connection.close_notify(); if (!result) error=result.error(); done=true;
+}
+template<class Backend> auto control_allocation_failure(Backend backend,bool closing) -> bool {
+    io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
+    auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed}); if (!session) return false;
+    std::array<std::byte,4096> sink{};
+    for (;;) { auto n=(**session).output(sink); if (!n) return false; if (!*n) break; }
+    auto peer=layer(t::RecordDirection::send,2); auto message=closing ? c::Bytes{1,0} : c::Bytes{24,0,0,1,1};
+    auto wire=peer.seal(closing ? t::ContentType::alert : t::ContentType::handshake,message); if (!wire) return false;
+    ThrowSocket socket{a,false,false}; h::TlsServerConnection connection(socket,**session,records(),std::move(*wire));
+    bool done=false; std::optional<h::TlsServerError> error;
+    capy::run_async(context.get_executor())(partial_step(connection,done,error)); context.restart(); (void)context.run_for(1s);
+    if (!done || error || (**session).output_memory_charge()!=(closing ? 0u : 54u)) return false;
+    if (closing) {
+        done=false; capy::run_async(context.get_executor())(partial_step(connection,done,error)); context.restart(); (void)context.run_for(1s);
+        if (!done || error) return false;
+    }
+    socket.enabled=true; done=false;
+    if (closing) capy::run_async(context.get_executor())(close_step(connection,done,error));
+    else capy::run_async(context.get_executor())(partial_step(connection,done,error));
+    context.restart(); (void)context.run_for(1s);
+    auto output=(**session).output(sink); std::uint8_t byte{}; auto n=::recv(b.native_handle(),&byte,1,MSG_DONTWAIT);
+    return context.stopped() && done && error==h::TlsServerError::allocation && n<0 && (errno==EAGAIN || errno==EWOULDBLOCK) &&
+        !(**session).input_memory_charge() && !(**session).output_memory_charge() && !(**session).ciphertext_memory_charge() &&
+        !(**session).scratch_memory_charge() && (**session).transport_memory_charge()==4096 && !output && output.error().kind==h::ServerErrorKind::failed;
 }
 template<class Backend> auto close_budget(Backend backend,bool blocked) -> bool {
     io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
@@ -396,6 +420,7 @@ int main() {
         if (!transport_budget(io::epoll,true) || !transport_budget(io::epoll,false)) return 1;
         for (int mode=0;mode<6;++mode) if (!unready_records(io::epoll,mode)) return 1;
         if (!allocation_failure(io::epoll,false) || !allocation_failure(io::epoll,true)) return 1;
+        if (!control_allocation_failure(io::epoll,false) || !control_allocation_failure(io::epoll,true)) return 1;
         if (!wrong_role(io::epoll)) return 1;
         if (!oversized_unread(io::epoll)) { std::cerr << "oversized_unread(io::epoll) failed\n"; return 1; }
         if (!duplicate_owner(io::epoll)) { std::cerr << "duplicate_owner(io::epoll) failed\n"; return 1; }
@@ -420,6 +445,7 @@ int main() {
         if (!transport_budget(io::uring,true) || !transport_budget(io::uring,false)) return 2;
         for (int mode=0;mode<6;++mode) if (!unready_records(io::uring,mode)) return 2;
         if (!allocation_failure(io::uring,false) || !allocation_failure(io::uring,true)) return 2;
+        if (!control_allocation_failure(io::uring,false) || !control_allocation_failure(io::uring,true)) return 2;
         if (!wrong_role(io::uring)) return 2;
         if (!oversized_unread(io::uring)) { std::cerr << "oversized_unread(io::uring) failed\n"; return 2; }
         if (!duplicate_owner(io::uring)) { std::cerr << "duplicate_owner(io::uring) failed\n"; return 2; }
