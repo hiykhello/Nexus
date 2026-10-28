@@ -301,14 +301,23 @@ int main() {
         std::uint8_t const* bytes = nullptr;
         auto size = h2::nghttp2_session_mem_send2(cancel_client, &bytes);
         if (size <= 0) return 62;
-        auto received = (**cancel_session).receive({reinterpret_cast<std::byte const*>(bytes), static_cast<std::size_t>(size)});
-        if (!received || *received != static_cast<std::size_t>(size)) return 63;
+        auto total = static_cast<std::size_t>(size);
+        // A DATA frame begins with a nine-byte header. Supplying just the
+        // header and first payload byte makes the pause occur mid-frame.
+        auto first = total > 10 && bytes[3] == h2::NGHTTP2_DATA ? std::size_t{10} : total;
+        auto received = (**cancel_session).receive({reinterpret_cast<std::byte const*>(bytes), first});
+        if (!received || *received != first) return 63;
         canceled_paused = cancel_observed.did_pause;
+        if (canceled_paused) {
+            if (first == total || cancel_observed.body != "x" || (**cancel_session).receive({}) ||
+                (**cancel_session).reset_stream(canceled_upload, h2::NGHTTP2_CANCEL) ||
+                !(**cancel_session).resume_input(canceled_upload) ||
+                !(**cancel_session).reset_stream(canceled_upload, h2::NGHTTP2_CANCEL)) return 64;
+            auto remaining = (**cancel_session).receive({reinterpret_cast<std::byte const*>(bytes + first), total - first});
+            if (!remaining || *remaining != total - first) return 68;
+        } else if (first != total) return 69;
     }
-    if ((**cancel_session).receive({}) || (**cancel_session).reset_stream(canceled_upload, h2::NGHTTP2_CANCEL) ||
-        !(**cancel_session).resume_input(canceled_upload) ||
-        !(**cancel_session).reset_stream(canceled_upload, h2::NGHTTP2_CANCEL) ||
-        !to_client(**cancel_session, cancel_client) || cancel_client_events.reset_id != canceled_upload ||
+    if (!to_client(**cancel_session, cancel_client) || cancel_client_events.reset_id != canceled_upload ||
         cancel_client_events.reset_code != h2::NGHTTP2_CANCEL) return 64;
     cancel_observed.body.clear();
     std::string survivor_body(80000, 'y');
