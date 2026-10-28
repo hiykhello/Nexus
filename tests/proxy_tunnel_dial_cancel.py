@@ -34,7 +34,7 @@ def pending(pid, port):
                for parts in (line.split() for line in pathlib.Path('/proc/net/tcp').read_text().splitlines()[1:]))
 
 
-def scenario(root, workers, shadowsocks, retry=False):
+def scenario(root, workers, shadowsocks, retry=False, timeout=False):
     with socket.socket() as first, socket.socket() as second, socket.socket() as reservation, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
         first.bind(('127.0.0.2', 0)); first.listen(1 if shadowsocks else 2); first.settimeout(4)
         fillers=[socket.create_connection(first.getsockname(),timeout=2) for _ in range(2)] if shadowsocks and not retry else []
@@ -74,7 +74,7 @@ routing {{ default-outbound "edge"; }}
             with client:
                 client.settimeout(4); client.sendall(b'\x05\x01\x00'); assert exact(client,2)==b'\x05\x00'
                 if retry and shadowsocks: first.close()
-                client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x04\xd2')
+                started=time.monotonic(); client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x04\xd2')
                 if retry:
                     if not shadowsocks:
                         with first.accept()[0] as rejected:
@@ -103,7 +103,12 @@ routing {{ default-outbound "edge"; }}
                     while not pending(process.pid,first.getsockname()[1]):
                         if time.monotonic()>=deadline: raise AssertionError('first SS candidate did not become pending')
                         time.sleep(.01)
-                    client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close()
+                    if timeout:
+                        client.settimeout(14); response=client.recv(10)
+                        if response: assert (response+exact(client,10-len(response)))[:2]!=b'\x05\x00'
+                        assert 9<=time.monotonic()-started<14, 'SS candidate deadline was not respected'
+                    else:
+                        client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close()
                     deadline=time.monotonic()+3
                     while pending(process.pid,first.getsockname()[1]):
                         if time.monotonic()>=deadline: raise AssertionError('SS connect was not canceled')
@@ -115,15 +120,20 @@ routing {{ default-outbound "edge"; }}
                         else: raise AssertionError('canceled SS candidate remained queued')
                 else:
                     with first.accept()[0] as upstream:
-                        upstream.settimeout(3)
+                        upstream.settimeout(14 if timeout else 3)
                         header=exact(upstream,5)
                         assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
-                        client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close()
+                        if timeout:
+                            client.settimeout(14); response=client.recv(10)
+                            if response: assert (response+exact(client,10-len(response)))[:2]!=b'\x05\x00'
+                            assert 9<=time.monotonic()-started<14, 'TLS handshake deadline was not respected'
+                        else:
+                            client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close()
                         assert upstream.recv(1)==b'', 'upstream handshake was not canceled'
                 if not retry:
                     try: second.accept()[0].close()
                     except TimeoutError: pass
-                    else: raise AssertionError('later tunnel candidate was dialed after client reset')
+                    else: raise AssertionError('later tunnel candidate was dialed after cancellation or timeout')
                 assert len(queries)==1 and process.poll() is None
         finally:
             if process.poll() is None: process.terminate(); process.wait(timeout=5)
@@ -240,6 +250,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory
     shadowsocks=len(sys.argv)>2 and sys.argv[2]=='ss'
     for workers in (1,2):
         for retry in (False,True): scenario(root,workers,shadowsocks,retry)
+        scenario(root,workers,shadowsocks,timeout=True)
         overlapping_handshakes(root,workers,shadowsocks)
         if shadowsocks: overlapping_handshakes(root,workers,True,established=True)
-print('tunnel candidates: reset, retry and overlapping stop passed')
+print('tunnel candidates: reset, retry, deadline and overlapping stop passed')
