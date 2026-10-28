@@ -30,6 +30,7 @@ export namespace nexus::tls {
         // Retains the key for another independent handshake; concurrent signing uses separate contexts.
         [[nodiscard]] auto clone() const -> std::expected<ServerCredential,ServerCredentialError>;
         [[nodiscard]] auto scheme() const noexcept -> std::optional<std::uint16_t>;
+        [[nodiscard]] auto max_signature_size() const noexcept -> std::optional<std::size_t>;
         // Borrowed DER leaf certificate; valid only while the credential remains alive and unmoved.
         [[nodiscard]] auto certificate() const noexcept -> std::span<std::uint8_t const>;
         // Intermediate certificates in configured order; borrowed until destruction or move.

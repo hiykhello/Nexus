@@ -20,3 +20,9 @@ with tempfile.TemporaryDirectory(prefix="nexus-server-handshake-io-") as directo
     run("openssl","x509","-inform","DER","-in",str(cert),"-out",str(other_pem))
     chain.write_bytes(leaf_pem.read_bytes()+other_pem.read_bytes())
     subprocess.run([str(pathlib.Path(sys.argv[1]).resolve()),str(large_cert),str(key_der),"large",str(chain)],check=True,timeout=30)
+    for algorithm, options in [("RSA",["-pkeyopt","rsa_keygen_bits:2048"]),
+                               ("EC",["-pkeyopt","ec_paramgen_curve:P-256"])]:
+        run("openssl","genpkey","-algorithm",algorithm,*options,"-out",str(key))
+        run("openssl","pkey","-in",str(key),"-outform","DER","-out",str(key_der))
+        run("openssl","req","-new","-x509","-key",str(key),"-subj","/CN=localhost","-days","1","-outform","DER","-out",str(cert))
+        subprocess.run([str(pathlib.Path(sys.argv[1]).resolve()),str(cert),str(key_der)],check=True,timeout=30)

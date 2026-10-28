@@ -40,6 +40,12 @@ export namespace nexus::memory {
             }
             ~Reservation() { reset(); }
             void reset() noexcept { if (budget_) { budget_->reserved_-=size_; budget_.reset(); size_=0; } }
+            // Only reduce an existing reservation; growing requires a new admission.
+            auto shrink(std::size_t size) noexcept -> bool {
+                if (size>size_) return false;
+                if (budget_) budget_->reserved_-=size_-size;
+                size_=size; return true;
+            }
             [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
         };
         [[nodiscard]] static auto reserve(std::shared_ptr<Budget> budget,std::size_t size) noexcept -> std::optional<Reservation> {

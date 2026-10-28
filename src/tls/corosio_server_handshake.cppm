@@ -22,6 +22,13 @@ export namespace nexus::tls::detail {
     template<class Socket>
     auto server_handshake(Socket& socket, ServerHandshakeIo& handshake, std::shared_ptr<memory::Budget> budget = {}) -> nex::capy::task<std::expected<ServerAsyncResult,ServerAsyncError>> {
         try {
+        auto handshake_budget=handshake.budget();
+        if (handshake_budget && budget && handshake_budget!=budget) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::protocol); }
+        if (!budget) budget=std::move(handshake_budget);
+        auto io_error=[](ServerHandshakeIoError error) {
+            return error==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout :
+                   error==ServerHandshakeIoError::budget_exceeded ? ServerAsyncError::budget_exceeded : ServerAsyncError::protocol;
+        };
         auto now=[] { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); };
         auto maximum=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::duration::max()).count();
         if (handshake.deadline()>static_cast<std::uint64_t>(maximum)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::protocol); }
@@ -34,7 +41,7 @@ export namespace nexus::tls::detail {
         std::array<std::uint8_t,4096> buffer{}; std::size_t begin=0,end=0;
         while (!handshake.complete()) {
             auto tick=handshake.tick(now());
-            if (!tick) co_return std::unexpected(tick.error()==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout : ServerAsyncError::protocol);
+            if (!tick) co_return std::unexpected(io_error(tick.error()));
             if (!handshake.pending_output().empty()) {
                 auto pending=handshake.pending_output();
                 std::optional<memory::Budget::Reservation> write_reservation;
@@ -47,11 +54,11 @@ export namespace nexus::tls::detail {
                 if (error || !n || n>owned.size()) {
                     if (nex::capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::timeout); }
                     auto tick=handshake.tick(now());
-                    if (!tick) co_return std::unexpected(tick.error()==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout : ServerAsyncError::protocol);
+                    if (!tick) co_return std::unexpected(io_error(tick.error()));
                     (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::transport);
                 }
                 auto written=handshake.written(n,now());
-                if (!written) co_return std::unexpected(written.error()==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout : ServerAsyncError::protocol);
+                if (!written) co_return std::unexpected(io_error(written.error()));
                 continue;
             }
             if (begin==end) {
@@ -59,13 +66,13 @@ export namespace nexus::tls::detail {
                 if (error || !n || n>buffer.size()) {
                     if (nex::capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::timeout); }
                     auto tick=handshake.tick(now());
-                    if (!tick) co_return std::unexpected(tick.error()==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout : ServerAsyncError::protocol);
+                    if (!tick) co_return std::unexpected(io_error(tick.error()));
                     (void)handshake.finish_input(now()); co_return std::unexpected(ServerAsyncError::transport);
                 }
                 begin=0; end=n;
             }
             auto result=handshake.feed(std::span{buffer}.subspan(begin,end-begin),now());
-            if (!result) co_return std::unexpected(result.error()==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout : ServerAsyncError::protocol);
+            if (!result) co_return std::unexpected(io_error(result.error()));
             if (!result->consumed) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::protocol); }
             begin+=result->consumed;
         }

@@ -119,6 +119,7 @@ if is_plat("linux") and has_config("crypto") then
         set_kind("static")
         add_files("../src/tls/server_handshake_io.cppm", {public = true})
         add_files("../src/tls/server_handshake_io.cpp")
+        add_deps("nexus-memory-budget", {public = true})
         add_deps("nexus-tls-server-flight", "nexus-tls-client-hello-stream", "nexus-tls-record-stream")
 
     target("nexus-tls-server-handshake-io-test")

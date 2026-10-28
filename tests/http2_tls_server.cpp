@@ -152,10 +152,10 @@ int main(int argc,char** argv) {
     Fixture f; f.connection_window=argc==5 && std::string_view(argv[4])=="connection_window"; f.reset_window=argc==5 && std::string_view(argv[4])=="window_reset"; f.reset_paused=argc==5 && std::string_view(argv[4])=="reset_paused"; f.pause_multi=argc==5 && (std::string_view(argv[4])=="pause_multi" || f.reset_paused); f.pause_output=argc==5 && std::string_view(argv[4])=="pause_output"; f.pause=argc==5 && (std::string_view(argv[4])=="pause" || f.pause_output || f.pause_multi); f.multi=argc==5 && (std::string_view(argv[4])=="multi" || std::string_view(argv[4])=="window" || f.reset_window || f.connection_window); f.peer_close=argc==5 && std::string_view(argv[4])=="peer"; f.truncated=argc==5 && std::string_view(argv[4])=="truncated"; f.stale=argc==5 && std::string_view(argv[4])=="stale"; f.timeout=argc==5 && std::string_view(argv[4])=="timeout"; f.head=argc==5 && std::string_view(argv[4])=="head"; f.curl=argc==5 && (std::string_view(argv[4])=="curl" || f.head); f.cancel=argc==5 && std::string_view(argv[4])=="cancel"; if (f.socket.assign(fd)) { ::close(fd); return 3; }
     auto credential=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!credential) return 4;
     auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-    auto handshake=t::ServerHandshakeIo::create(std::move(*credential),now,now+5000,"h2"); if (!handshake) return 5;
-    f.handshake.emplace(std::move(*handshake));
     h::ServerLimits limits{8,16,4096,f.connection_window ? 40000u : 1024u,f.connection_window ? 80000u : 4096u};
     limits.shared_memory_bytes=1024*1024; f.budget=std::make_shared<nexus::memory::Budget>(limits.shared_memory_bytes);
+    auto handshake=t::ServerHandshakeIo::create(std::move(*credential),now,now+5000,"h2",t::ServerCredential::max_certificate_list_size,f.budget); if (!handshake) return 5;
+    f.handshake.emplace(std::move(*handshake));
     auto session=h::ServerSession::create(limits,h::ServerEvents{&f,headers,data,end,closed},f.budget);
     if (!session) return 6; f.session=std::move(*session);
     capy::run_async(f.context.get_executor())(serve(f)); (void)f.context.run_for(6s);

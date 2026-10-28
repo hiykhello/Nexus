@@ -1,14 +1,17 @@
 export module nexus.tls.server_handshake_io;
 export import nexus.tls.server_flight;
+export import nexus.memory.budget;
 import nexus.tls.client_hello_stream;
 import nexus.tls.record_stream;
 import std;
 export namespace nexus::tls {
-    enum class ServerHandshakeIoError { invalid_state, invalid_argument, time_reversed, timeout, canceled, protocol_error, certificate_limit };
+    enum class ServerHandshakeIoError { invalid_state, invalid_argument, time_reversed, timeout, canceled, protocol_error, certificate_limit, budget_exceeded };
     struct ServerHandshakeIoFeed { std::size_t consumed=0; };
     // Single owner; monotonic milliseconds, absolute deadline. No socket operations.
     class ServerHandshakeIo {
         enum class State { hello, retry_output, retry_hello, output, finished, complete, failed } state_=State::hello;
+        std::shared_ptr<memory::Budget> budget_;
+        std::optional<memory::Budget::Reservation> hello_reservation_, flight_reservation_;
         std::optional<ServerCredential> credential_;
         std::optional<ClientHelloStream> hello_;
         std::optional<ServerFlight> flight_;
@@ -31,7 +34,8 @@ export namespace nexus::tls {
         // TLS entry framing; the credential remains caller-owned on rejection.
         [[nodiscard]] static auto create(ServerCredential&& credential, std::uint64_t now, std::uint64_t deadline,
                                          std::string_view required_alpn = {},
-                                         std::size_t certificate_list_limit = ServerCredential::max_certificate_list_size)
+                                         std::size_t certificate_list_limit = ServerCredential::max_certificate_list_size,
+                                         std::shared_ptr<memory::Budget> budget = {})
             -> std::expected<ServerHandshakeIo,ServerHandshakeIoError>;
         [[nodiscard]] auto pending_output() const noexcept -> std::span<std::uint8_t const>;
         // Exceptions while advancing input or output invalidate the adapter.
@@ -47,6 +51,7 @@ export namespace nexus::tls {
             return complete() ? std::span<std::uint8_t const>{required_alpn_} : std::span<std::uint8_t const>{};
         }
         [[nodiscard]] auto deadline() const noexcept -> std::uint64_t { return deadline_; }
+        [[nodiscard]] auto budget() const noexcept -> std::shared_ptr<memory::Budget> { return budget_; }
         [[nodiscard]] auto take_application_records() -> std::expected<ApplicationRecords,ServerHandshakeIoError>;
     };
 }

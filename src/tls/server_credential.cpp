@@ -119,6 +119,12 @@ namespace nexus::tls {
     auto ServerCredential::scheme() const noexcept -> std::optional<std::uint16_t> {
         if (!key_) return {}; return scheme_;
     }
+    auto ServerCredential::max_signature_size() const noexcept -> std::optional<std::size_t> {
+        if (!key_) return {};
+        auto size=EVP_PKEY_size(key_);
+        if (size<=0 || size>65535) return {};
+        return static_cast<std::size_t>(size);
+    }
     auto ServerCredential::certificate() const noexcept -> std::span<std::uint8_t const> {
         return key_ ? std::span<std::uint8_t const>{certificate_} : std::span<std::uint8_t const>{};
     }
