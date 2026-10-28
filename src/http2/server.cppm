@@ -102,13 +102,13 @@ export namespace nexus::http2 {
         std::size_t input_window_;
         std::size_t response_reserved_ = 0, stream_reserved_ = 0, fields_reserved_ = 0, input_reserved_ = 0;
     public:
-        // One transport owner may reserve a logical input allowance. Calls must
-        // be serialized with session operations, and the same owner must release
-        // it after all borrowed input has been processed.
+        // A single transport owner serializes this allowance with session operations
+        // and releases it only after processing all borrowed input.
         auto reserve_input(std::size_t size) noexcept -> bool {
             if (active_ || failed_ || !size || input_reserved_ || size>shared_limit_-shared_memory_used()) return false;
             input_reserved_=size; return true; }
         void release_input() noexcept { input_reserved_=0; }
+        void abandon_input() noexcept { input_reserved_=0; failed_=true; ++revision_; }
     private:
         struct FieldsReservation { ServerSession& owner;
             ~FieldsReservation() { owner.fields_reserved_=0; }

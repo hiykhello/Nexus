@@ -98,11 +98,37 @@ template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
     }
     return done && error==h::TlsServerError::budget_exceeded && context.stopped() && (**session).shared_memory_used()==baseline;
 }
+auto pause_data(void*,std::int32_t,std::span<std::byte const>) noexcept -> h::DataDisposition { return h::DataDisposition::pause; }
+auto until_paused(Connection& connection,bool& paused) -> capy::task<> {
+    for (int i=0;i<20;++i) {
+        auto result=co_await connection.step();
+        if (!result) co_return;
+        if (*result==h::TlsServerStep::paused) { paused=true; co_return; }
+    }
+}
+template<class Backend> auto abandon_paused(Backend backend) -> bool {
+    io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
+    auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,pause_data,end,closed}); if (!session) return false;
+    constexpr std::string_view preface="PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    c::Bytes input(preface.begin(),preface.end());
+    constexpr std::array<std::uint8_t,34> frames{0,0,0,4,0,0,0,0,0,
+        0,0,6,1,4,0,0,0,1,0x82,0x87,0x01,0x01,'x',0x84,
+        0,0,1,0,1,0,0,0,1,'x'};
+    input.insert(input.end(),frames.begin(),frames.end());
+    auto peer=layer(t::RecordDirection::send,2); auto wire=peer.seal(t::ContentType::application_data,input); if (!wire) return false;
+    auto connection=std::make_unique<Connection>(a,**session,records(),std::move(*wire)); bool paused=false;
+    capy::run_async(context.get_executor())(until_paused(*connection,paused)); context.restart(); (void)context.run_for(1s);
+    if (!context.stopped() || !paused || (**session).paused_stream()!=1 || (**session).input_memory_charge()!=16384) return false;
+    connection.reset();
+    auto resumed=(**session).resume_input(1); auto output=(**session).output(std::span<std::byte>{});
+    return !resumed && resumed.error().kind==h::ServerErrorKind::failed && !output &&
+        output.error().kind==h::ServerErrorKind::failed && (**session).input_memory_charge()==0;
+}
 int main() {
     for (int i=0;i<5;++i) {
-        if (!exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false)) return 1;
+        if (!exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false)) return 2;
+        if (!exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring)) return 2;
 #endif
     }
     std::cout << "HTTP/2 TLS blocked output cancellation and deadline passed\n";

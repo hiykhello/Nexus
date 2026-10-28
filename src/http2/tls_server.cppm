@@ -30,7 +30,12 @@ export namespace nexus::http2 {
             : session_(session), tls_(socket,std::move(records),std::move(unread)) {}
         TlsServerConnection(TlsServerConnection const&)=delete;
         auto operator=(TlsServerConnection const&) -> TlsServerConnection& = delete;
-        ~TlsServerConnection() { if (input_reserved_) session_.release_input(); }
+        ~TlsServerConnection() {
+            if (input_reserved_) {
+                if (!input_.empty() || resume_pending_) session_.abandon_input();
+                else session_.release_input();
+            }
+        }
         auto cancel() noexcept -> void { failed_=true; tls_.cancel(); }
 
         // After step reports drained or peer_closed, send close_notify without
