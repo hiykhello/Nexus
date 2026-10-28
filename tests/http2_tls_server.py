@@ -28,9 +28,9 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1")
     run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(key_der))
     run("openssl", "x509", "-in", str(cert), "-outform", "DER", "-out", str(cert_der))
-    for mode in ("get", "pause", "pause_output", "pause_multi", "reset_paused", "multi", "window", "peer", "truncated", "stale"):
+    for mode in ("get", "pause", "pause_output", "pause_multi", "reset_paused", "multi", "window", "window_reset", "peer", "truncated", "stale"):
         pause = mode in ("pause", "pause_output", "pause_multi", "reset_paused")
-        multi = mode in ("multi", "window")
+        multi = mode in ("multi", "window", "window_reset")
         pause_multi = mode in ("pause_multi", "reset_paused")
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                         raise RuntimeError("h2 ALPN not negotiated")
                     # Indexed :method GET, :scheme https and :path /; literal :authority.
                     headers = (b"\x83" if pause else b"\x82") + b"\x87\x84\x01\x09localhost"
-                    wire = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + frame(4, 0, 0, b"\x00\x04\x00\x00\x00\x00" if mode == "window" else b"")
+                    wire = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + frame(4, 0, 0, b"\x00\x04\x00\x00\x00\x00" if mode in ("window", "window_reset") else b"")
                     if pause_multi:
                         wire += frame(1, 5, 1, b"\x82\x87\x84\x01\x09localhost")
                         wire += frame(1, 4, 3, headers) + frame(0, 1, 3, b"upload")
@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                     goaway = []
                     reset = False
                     granted = set()
-                    while len(finished) < len(bodies) or (multi and len(goaway) < 2) or (mode == "reset_paused" and not reset):
+                    while len(finished) < (1 if mode == "window_reset" else len(bodies)) or (multi and len(goaway) < 2) or (mode == "reset_paused" and not reset):
                         header = exact(client, 9)
                         length = int.from_bytes(header[:3], "big")
                         kind, flags = header[3:5]
@@ -71,18 +71,21 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                         if kind == 3 and stream == 3 and payload == b"\x00\x00\x00\x08": reset = True
                         if kind == 1 and stream in bodies and payload == b"\x88":
                             statuses.add(stream)  # HPACK static :status 200
+                            if mode == "window_reset" and statuses == {1, 3} and not granted:
+                                client.sendall(frame(3, 0, 3, (8).to_bytes(4, "big")) + frame(8, 0, 1, (8).to_bytes(4, "big")))
+                                granted.add(1)
                             if mode == "window" and statuses == {1, 3} and not granted:
                                 client.sendall(frame(8, 0, 3, (8).to_bytes(4, "big")))
                                 granted.add(3)
                         if kind == 0 and stream in bodies:
-                            if mode == "window" and stream not in granted: raise RuntimeError("DATA arrived before stream window update")
+                            if mode in ("window", "window_reset") and stream not in granted: raise RuntimeError("DATA arrived before stream window update")
                             bodies[stream].extend(payload)
                             if flags & 1:
                                 finished.add(stream)
                                 if mode == "window" and stream == 3:
                                     client.sendall(frame(8, 0, 1, (8).to_bytes(4, "big")))
                                     granted.add(1)
-                    if statuses != set(bodies) or any(body != b"hello h2" for body in bodies.values()):
+                    if statuses != set(bodies) or any(body != (b"" if mode == "window_reset" and stream == 3 else b"hello h2") for stream, body in bodies.items()):
                         raise RuntimeError(f"unexpected responses statuses={statuses}, bodies={bodies!r}")
                     if mode == "peer":
                         client.unwrap().close()
