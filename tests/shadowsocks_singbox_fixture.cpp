@@ -7,7 +7,7 @@ import nexus.shadowsocks.frame;
 import nexus.shadowsocks.replay;
 namespace s=nexus::shadowsocks;
 auto main(int argc,char** argv) -> int {
-    if (argc!=3 && argc!=5) return 1;
+    if (argc!=3 && argc!=5 && !(argc==4 && std::string_view(argv[3])=="halfclose")) return 1;
     int listener=std::stoi(argv[1]); auto size=static_cast<std::size_t>(std::stoul(argv[2]));
     if (size!=16 && size!=32) return 2;
     int fd=::accept(listener,nullptr,nullptr); if (fd<0) return 3;
@@ -17,6 +17,10 @@ auto main(int argc,char** argv) -> int {
     std::array<std::uint8_t,65536> buf{};
     auto n=::recv(fd,buf.data(),buf.size(),0); if (n<=0) return 4;
     std::vector<std::uint8_t> pending(buf.begin(),buf.begin()+n);
+    while (pending.size()<size+27) {
+        n=::recv(fd,buf.data(),buf.size(),0); if (n<=0) return 4;
+        pending.insert(pending.end(),buf.begin(),buf.begin()+n);
+    }
     s::ReplayTable replay(16);
     auto wall=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     auto prefix=s::decode_request_prefix(psk,pending,static_cast<std::uint64_t>(wall),std::chrono::steady_clock::now(),replay);
@@ -43,6 +47,9 @@ auto main(int argc,char** argv) -> int {
         remainder.erase(remainder.begin(),remainder.begin()+step->consumed);
     }
     if (std::string(payload.begin(),payload.end())!="hello") return 11;
+    if (argc==4) {
+        if (!remainder.empty() || ::recv(fd,buf.data(),1,0)!=0 || !reader.finish()) return 17;
+    }
     std::array<std::uint8_t,5> first{'w','o','r','l','d'},next{'a','g','a','i','n'};
     auto response=s::encode_response(psk,response_salt,request->salt,static_cast<std::uint64_t>(wall),first);
     if (!response) return 12;

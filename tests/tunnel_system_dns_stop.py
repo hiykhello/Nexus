@@ -13,6 +13,7 @@ import tempfile
 import time
 
 binary, shim = (pathlib.Path(p).resolve() for p in sys.argv[1:3])
+fixture = pathlib.Path(sys.argv[3]).resolve()
 
 
 def exact(sock, count):
@@ -126,7 +127,9 @@ routing {{ default-outbound "edge"; }}
                     if exact(fresh, 2) != b'\x05\x00':
                         raise RuntimeError('fresh SOCKS greeting failed')
                     released = False
-                    fresh.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x00\x50ping')
+                    request = (b'\x05\x01\x00\x01\x7f\x00\x00\x01\x00\x50ping' if protocol == 'vless'
+                               else b'\x05\x01\x00\x01\xcb\x00\x71\x05\x01\xbbhello')
+                    fresh.sendall(request)
                     fresh.shutdown(socket.SHUT_WR)
                     if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'x':
                         raise RuntimeError('fresh resolver did not enter gate')
@@ -134,10 +137,10 @@ routing {{ default-outbound "edge"; }}
                     released = True
                     if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'y':
                         raise RuntimeError('fresh resolver did not finish successfully')
-                    target.settimeout(4)
-                    with target.accept()[0] as upstream:
-                        upstream.settimeout(4)
-                        if protocol == 'vless':
+                    if protocol == 'vless':
+                        target.settimeout(4)
+                        with target.accept()[0] as upstream:
+                            upstream.settimeout(4)
                             tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                             tls_context.minimum_version = ssl.TLSVersion.TLSv1_3
                             tls_context.load_cert_chain(root / 'cert.pem', root / 'key.pem')
@@ -155,17 +158,18 @@ routing {{ default-outbound "edge"; }}
                                     raise RuntimeError('fresh VLESS download failed')
                                 if tls.recv(1) != b'':
                                     raise RuntimeError('VLESS half-close did not reach upstream')
-                        else:
-                            if exact(fresh, 10)[:2] != b'\x05\x00':
-                                raise RuntimeError('fresh Shadowsocks request failed')
-                            encrypted = bytearray()
-                            while True:
-                                part = upstream.recv(2048)
-                                if not part:
-                                    break
-                                encrypted.extend(part)
-                            if not encrypted:
-                                raise RuntimeError('Shadowsocks encrypted request missing before half-close')
+                    else:
+                        target.settimeout(None)
+                        peer = subprocess.Popen([fixture, str(target.fileno()), '16', 'halfclose'], pass_fds=(target.fileno(),))
+                        try:
+                            if exact(fresh, 10)[:2] != b'\x05\x00' or exact(fresh, 10) != b'worldagain':
+                                raise RuntimeError('fresh Shadowsocks tunnel failed')
+                            if fresh.recv(1) != b'' or peer.wait(timeout=4) != 0:
+                                raise RuntimeError('Shadowsocks half-close fixture failed')
+                        finally:
+                            if peer.poll() is None:
+                                peer.kill()
+                                peer.wait()
             else:
                 if client.recv(1):
                     raise RuntimeError('canceled request returned unexpected data')
