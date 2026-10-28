@@ -25,6 +25,8 @@ export namespace nexus::tls {
                                          std::span<std::uint8_t const> selected_alpn = {})
             -> std::expected<ServerFlight,ServerFlightError>;
         [[nodiscard]] auto records() const noexcept -> std::span<crypto::Bytes const> { return records_; }
+        // Release only after the complete record has been sent; indices remain stable.
+        auto release_record(std::size_t index) noexcept -> void;
         // One authenticated handshake record; true only after the complete client Finished.
         // An exception while processing input invalidates the flight.
         [[nodiscard]] auto client_finished(std::span<std::uint8_t const> record) -> std::expected<bool,ServerFlightError>;

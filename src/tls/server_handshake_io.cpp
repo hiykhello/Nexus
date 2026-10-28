@@ -43,7 +43,9 @@ namespace nexus::tls {
             auto next=ClientHelloStream::create(65535,true); if (!next) return fail(ServerHandshakeIoError::protocol_error);
             hello_.emplace(std::move(*next)); crypto::Bytes{}.swap(server_hello_); state_=State::retry_hello; return {};
         }
-        ++record_; if (record_>flight_->records().size()) { state_=State::finished; crypto::Bytes{}.swap(server_hello_); } return {};
+        if (record_==0) crypto::Bytes{}.swap(server_hello_);
+        else flight_->release_record(record_-1);
+        ++record_; if (record_>flight_->records().size()) state_=State::finished; return {};
         } catch (...) { (void)fail(ServerHandshakeIoError::protocol_error); throw; }
     }
     auto ServerHandshakeIo::feed(std::span<std::uint8_t const> input,std::uint64_t now) -> std::expected<ServerHandshakeIoFeed,ServerHandshakeIoError> {

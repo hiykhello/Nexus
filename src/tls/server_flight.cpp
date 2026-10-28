@@ -10,6 +10,9 @@ namespace nexus::tls {
     auto ServerFlight::operator=(ServerFlight&& o) noexcept -> ServerFlight& {
         if (this!=&o) { state_=o.state_; keys_=std::move(o.keys_); application_=std::move(o.application_); records_=std::move(o.records_); decoder_=std::move(o.decoder_); o.state_=State::failed; } return *this;
     }
+    auto ServerFlight::release_record(std::size_t index) noexcept -> void {
+        if (index<records_.size()) crypto::Bytes{}.swap(records_[index]);
+    }
     auto ServerFlight::create(ServerHandshakeKeys&& input, ServerCredential const& credential, std::span<std::uint8_t const> selected_alpn) -> std::expected<ServerFlight,ServerFlightError> {
         auto keys=std::move(input); auto cert=credential.certificate();
         constexpr auto list_limit=ServerCredential::max_certificate_list_size;

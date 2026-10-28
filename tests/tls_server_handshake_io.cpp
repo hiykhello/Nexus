@@ -59,11 +59,12 @@ int main(int argc,char** argv) {
         while (!server->pending_output().empty()) {
             auto bytes=server->pending_output(); auto n=std::min(bytes.size(),std::size_t{7}); record.insert(record.end(),bytes.begin(),bytes.begin()+n);
             if (!server->written(n,103)) return 12;
+            if (records.size()==1 && n<bytes.size() && flight_released) return 68;
             if (record.size()>=5 && record.size()==5+((std::size_t{record[3]}<<8)|record[4])) break;
         }
         records.push_back(std::move(record));
     }
-    if (records.size()<2 || records[0].size()<6 || !hello_released || flight_released || !watched_flight) return 13;
+    if (records.size()<2 || records[0].size()<6 || !hello_released || !flight_released || watched_flight) return 13;
     auto client=t::client_handshake_keys(*wire,std::span{records[0]}.subspan(5),std::move(*key)); if (!client) return 14;
     auto decoder=t::HandshakeDecoder::create(1048584); if (!decoder) return 15; bool server_finished=false, alpn_seen=false;
     for (std::size_t i=1;i<records.size();++i) {

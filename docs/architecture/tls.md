@@ -137,7 +137,7 @@ GCC 16 测试使用 [RFC 8448 简单握手](https://www.rfc-editor.org/rfc/rfc84
 
 `nexus.tls.client_handshake` 在 ServerHello 已验证后串接密文记录分帧、握手消息增量重组、扩展和证书认证、Finished 与应用密钥移交。每次报告消费字节，记录完成后调用方继续提交未消费部分；认证成功返回客户端 Finished 密文，后续输入属于应用密钥时期，调用方须先发送 Finished。服务端 Finished 后同一握手记录还有额外消息或不完整尾部时拒绝，防止跨密钥时期拼接。GCC 16 测试逐字节拆分、多条记录、单条合包、错误顺序、名称失败、截断、密钥切换尾部及客户端 Finished 解密。该组件不处理 ClientHello 发送、明文 ServerHello/HRR、警报、关闭、KeyUpdate、生产异步 I/O 或独立对端互操作；返回的扩展结果在 Finished 验证前未认证。
 
-服务端握手适配器在输出用尽后释放 ServerHello 的分配；应用记录成功移交后销毁握手 flight，释放其记录和握手密钥状态，已认证的 ALPN 仍可读取。失败或取消释放部分输入记录、flight 和握手缓冲；释放分配不保证内存立即归还系统，也不构成握手内存预算。GCC 16 测试观察输出缓冲释放、取消、移交后的应用解密和 ALPN；异步 OpenSSL 与 HTTP/2 对端验证正常交接。
+服务端握手适配器在每条记录完整写出后释放对应分配，部分写入期间保持其存活；应用记录成功移交后销毁握手 flight，释放其握手密钥状态，已认证的 ALPN 仍可读取。失败或取消释放部分输入记录、flight 和握手缓冲；释放分配不保证内存立即归还系统，也不构成握手内存预算。GCC 16 测试观察输出缓冲释放、取消、移交后的应用解密和 ALPN；异步 OpenSSL 与 HTTP/2 对端验证正常交接。
 
 独立互操作夹具 `tests/tls_openssl_interop.py` 用临时 CA/服务端证书启动系统 OpenSSL `s_server`。阻塞客户端覆盖 X25519 和 X25519MLKEM768、三种套件的直接握手及强制 HRR，验证 ALPN、KeyUpdate、HTTP 和关闭；异步 Corosio 客户端覆盖两组的强制 HRR、ALPN 和数据交换。异步客户端还验证 SNI 与 DNS 验证名独立、错误名称及不可信根拒绝；IP 身份测试使用 IP SAN、不发送 SNI，并验证错误 IP 拒绝。不同默认证书和 SNI 证书使测试能检测这些选择错误；OpenSSL 切换至第二上下文的 SNI 专项未协商 ALPN，其余正常路径仍检查 ALPN。OpenSSL 仅为测试对端，不链接项目客户端；互操作不代表 TLS 已接入正式代理。
 
