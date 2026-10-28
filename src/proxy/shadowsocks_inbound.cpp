@@ -2,6 +2,7 @@ module;
 #include <proxy/proxy_macros.h>
 #include <boost/capy/buffers.hpp>
 #include <boost/capy/task.hpp>
+#include <boost/capy/quitter.hpp>
 #include <boost/capy/cond.hpp>
 #include <boost/capy/ex/run_async.hpp>
 #include <boost/corosio/io_context.hpp>
@@ -52,46 +53,46 @@ namespace nexus::proxy {
                 if (--pending==0) done.set();
             }
         };
-        auto upload(std::shared_ptr<RelayState> state) -> capy::task<> {
+        auto upload(std::shared_ptr<RelayState> state) -> capy::quitter<bool> {
             std::array<std::uint8_t,16384> bytes{};
             for (;;) {
                 auto n=co_await state->incoming.read(bytes,Clock::now()+std::chrono::seconds(300));
-                if (!n || state->session->closed) { state->finish(false); co_return; }
+                if (!n || state->session->closed) { co_return false; }
                 if (!*n) {
                     bool ok=state->session->tunnel ? co_await state->session->tunnel->close_output() :
                         !state->session->target.shutdown(io::shutdown_send);
-                    state->finish(ok); co_return;
+                    co_return ok;
                 }
                 state->session->touched=Clock::now();
                 if (state->session->tunnel) {
-                    if (!co_await state->session->tunnel->send(std::span{bytes}.first(*n))) { state->finish(false); co_return; }
+                    if (!co_await state->session->tunnel->send(std::span{bytes}.first(*n))) { co_return false; }
                 } else {
                     std::size_t offset=0;
                     while (offset<*n) {
                         auto [error,count]=co_await state->session->target.write_some(capy::const_buffer(bytes.data()+offset,*n-offset));
-                        if (error || !count || count>*n-offset || state->session->closed) { state->finish(false); co_return; }
+                        if (error || !count || count>*n-offset || state->session->closed) { co_return false; }
                         offset+=count;
                     }
                 }
             }
         }
-        auto download(std::shared_ptr<RelayState> state) -> capy::task<> {
+        auto download(std::shared_ptr<RelayState> state) -> capy::quitter<bool> {
             std::array<std::uint8_t,16384> bytes{};
             for (;;) {
                 std::size_t count=0;
                 if (state->session->tunnel) {
                     auto result=co_await state->session->tunnel->read(bytes);
-                    if (!result || state->session->closed) { state->finish(false); co_return; }
+                    if (!result || state->session->closed) { co_return false; }
                     count=*result;
                 } else {
                     auto [error,n]=co_await state->session->target.read_some(capy::mutable_buffer(bytes.data(),bytes.size()));
                     if (error==capy::cond::eof) count=0;
-                    else if (error || !n || n>bytes.size() || state->session->closed) { state->finish(false); co_return; }
+                    else if (error || !n || n>bytes.size() || state->session->closed) { co_return false; }
                     else count=n;
                 }
-                if (!count) { state->finish(co_await state->incoming.close_output()); co_return; }
+                if (!count) { co_return co_await state->incoming.close_output(); }
                 state->session->touched=Clock::now();
-                if (!co_await state->incoming.send(std::span{bytes}.first(count),Clock::now()+std::chrono::seconds(300))) { state->finish(false); co_return; }
+                if (!co_await state->incoming.send(std::span{bytes}.first(count),Clock::now()+std::chrono::seconds(300))) { co_return false; }
             }
         }
         auto serve(std::shared_ptr<Session> session,io::io_context& context,rules::RouteMatcher const& policy,
@@ -115,7 +116,9 @@ namespace nexus::proxy {
             auto relay=std::make_shared<RelayState>(session,incoming);
             relay->pending=2;
             auto launch=[&](auto task) {
-                capy::run_async(context.get_executor(), [] {}, [relay](std::exception_ptr) noexcept { relay->finish(false); })(std::move(task));
+                capy::run_async(context.get_executor(), session->stop.get_token(),
+                    [relay](bool ok) noexcept { relay->finish(ok); },
+                    [relay](std::exception_ptr) noexcept { relay->finish(false); })(std::move(task));
             };
             bool first_started=true;
             try {
