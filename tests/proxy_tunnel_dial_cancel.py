@@ -296,6 +296,16 @@ routing {{ default-outbound "edge"; }}
             listener.settimeout(3)
             with listener.accept()[0] as upstream:
                 upstream.settimeout(3); assert upstream.recv(1024)
+                clients[2].settimeout(14)
+                response=clients[2].recv(10)
+                if response: assert (response+exact(clients[2],10-len(response)))[:2]==b'\x05\x06'
+                assert process.poll() is None
+                packet,peer=queries[2]
+                dns.sendto(packet[:2]+b'\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00'+packet[12:]+b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04\x7f\x00\x00\x01',peer)
+                listener.settimeout(.5)
+                try: listener.accept()[0].close()
+                except TimeoutError: pass
+                else: raise AssertionError('late DNS response started a timed-out tunnel')
                 process.terminate(); process.wait(timeout=5)
                 while upstream.recv(1024): pass
             for client in clients[1:]:
