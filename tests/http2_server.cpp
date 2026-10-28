@@ -187,6 +187,17 @@ int main() {
     if (closed || closed.error().kind != nh::ServerErrorKind::invalid_state) return 16;
     auto empty = (**session).output({});
     if (!empty || *empty != 0) return 8;
+    // Closing an earlier stream must not invalidate the data provider for a
+    // later stream whose response has been queued but not yet serialized.
+    auto earlier = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
+    auto later = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
+    if (earlier <= third || later <= earlier || !to_server(client, **session)) return 29;
+    constexpr std::string_view later_body = "later response";
+    if (!(**session).respond_body(earlier, 200, forbidden_body) ||
+        !(**session).respond_body(later, 200, {reinterpret_cast<std::byte const*>(later_body.data()), later_body.size()})) return 30;
+    if (h2::nghttp2_submit_rst_stream(client, 0, earlier, h2::NGHTTP2_INTERNAL_ERROR) || !to_server(client, **session)) return 31;
+    client_events.body.clear();
+    if (!to_client(**session, client) || client_events.body != later_body) return 32;
     observed.fail_data = true;
     request_body.offset = 0;
     auto failure_stream = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), &provider, nullptr);

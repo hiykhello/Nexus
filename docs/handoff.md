@@ -4,6 +4,7 @@
 
 ## 上一步
 
+- HTTP/2 服务端流存储改为稳定地址：nghttp2 响应 DATA provider 持有流指针，先前 `vector::erase` 在关闭较早流时会移动后续流。新增并发响应回归，先重置前一个流、再读取后一个流；旧存储复现错误，新实现及 nghttp2 内存回归通过。
 - 在当前切片中，Corosio Module 新增窄的 `connect_candidates` 包装：组合连接模板只在 Module 内实例化，失败与取消都会关闭最后一个 socket。独立消费者在 epoll/io_uring 下验证首候选失败后的重试、全失败回收、预取消不重试以及 context drain。
 - 在 `f6762ff where:corosio.endpoint:export address factories and validate module boundary` 及 `5e2fa66 where:corosio.module:keep composed connect private until capy condition export` 中，Corosio Module 导出了 `make_endpoint`、`make_local_endpoint` 和格式识别；独立测试覆盖 IPv4/IPv6、缺省端口、非法输入、本地路径及路径长度。尝试导出组合 `connect` 时发现上游模板依赖未穿透 Module 的 Capy error-condition 特化，已撤回该公共导出并记录边界。隔离 GCC 16/io_uring 构建与运行通过。
 - 在 `ff67327 where:capy.quitter:verify stop-aware owner unwind with async waker` 中，新增 `async_waker` 停止回归：Capy `quitter` 在 epoll/io_uring 下收到 stop 后执行 RAII unwind 并排空 owner。该证据限于无 socket 的等待器。
@@ -14,7 +15,7 @@
 
 - 当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
 - 地址工厂、socket quitter owner unwind 以及新的候选连接回归已通过。`connect_candidates` 只接受 `tcp_socket` 和 endpoint vector，公开结果为 error plus connected endpoint；上游组合模板和 Capy condition 特化仍不直接导出。失败/取消关闭 socket，但真实 resolver 并发候选、超时和多挂起 accept/connect 仍未覆盖。曾试接代理 direct 路径，路由候选、系统 resolver fallback 和顺序测试通过，但预分类后续地址可能改变逐候选策略判断与错误顺序，故已撤回；现有代理仍逐地址拨号。
-- HTTP/2 无 I/O 服务端、TLS/Corosio 握手和应用记录适配器仍保持上一步已验证状态；没有把未完成的 HTTP/2 客户端草稿留在树中。
+- HTTP/2 无 I/O 服务端已修复跨流关闭时的响应 provider 生命周期；TLS/Corosio 握手和应用记录适配器仍保持既有验证范围。HTTP/2 网络驱动、完整连接级预算及独立对端互操作仍未完成。
 
 ## 下一步
 

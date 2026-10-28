@@ -43,7 +43,9 @@ export namespace nexus::http2 {
         std::size_t total_response_limit_;
         std::size_t input_window_;
         std::size_t response_reserved_ = 0;
-        std::vector<Stream> streams_;
+        // nghttp2 retains Stream pointers in data providers until completion.
+        // Erasing a different stream must not relocate those objects.
+        std::list<Stream> streams_;
         ServerEvents events_;
         std::uint8_t const* output_ = nullptr;
         std::size_t output_left_ = 0;
@@ -54,7 +56,6 @@ export namespace nexus::http2 {
 
         ServerSession(ServerLimits limits, ServerEvents events)
             : headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), input_window_(limits.input_window), events_(events) {
-            streams_.reserve(max_streams_);
         }
         static auto begin(h2::nghttp2_session* session, h2::nghttp2_frame const* frame, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
