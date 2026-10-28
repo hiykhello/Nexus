@@ -3,6 +3,8 @@ module;
 #include <boost/capy/buffers.hpp>
 #include <boost/capy/cond.hpp>
 #include <boost/capy/task.hpp>
+#include <boost/capy/quitter.hpp>
+#include <boost/capy/ex/run.hpp>
 #include <boost/capy/ex/async_mutex.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/tcp_socket.hpp>
@@ -43,28 +45,31 @@ namespace nexus::proxy {
             std::unique_ptr<Client> client_;
             std::unique_ptr<Relay> relay_;
             std::optional<std::size_t> bootstrap_;
-            bool canceled_=false;
+            std::stop_source stop_;
         public:
             VlessTunnel(Session& session, io::io_context& context, std::shared_ptr<Profile const> profile, std::optional<std::size_t> bootstrap)
                 : session_(session),context_(context),profile_(std::move(profile)),bootstrap_(bootstrap) {}
             auto cancel() noexcept -> void {
-                canceled_=true;
+                stop_.request_stop();
                 if (resolver_) resolver_->cancel();
                 if (relay_) relay_->cancel();
                 if (owner_) owner_->cancel();
             }
             auto connect(io::endpoint destination) -> capy::task<TunnelConnectResult> {
-                if (canceled_) co_return TunnelConnectResult::retryable;
+                co_return co_await capy::run(stop_.get_token())(connect_impl(destination));
+            }
+        private:
+            auto connect_impl(io::endpoint destination) -> capy::quitter<TunnelConnectResult> {
                 std::vector<io::endpoint> endpoints;
                 if (bootstrap_) {
                     auto result=co_await resolve_bootstrap(session_,context_,*bootstrap_,profile_->host,profile_->port);
-                    if (!result || canceled_) co_return TunnelConnectResult::retryable;
+                    if (!result) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(*result);
                 } else {
                     resolver_=std::make_unique<io::resolver>(context_);
                     auto [error, resolved]=co_await resolver_->resolve(profile_->host,std::to_string(profile_->port));
                     resolver_.reset();
-                    if (canceled_ || error) co_return TunnelConnectResult::retryable;
+                    if (error) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(resolved);
                 }
                 if (endpoints.empty() || endpoints.size()>64) co_return TunnelConnectResult::retryable;
@@ -73,12 +78,11 @@ namespace nexus::proxy {
                 for (auto endpoint : endpoints) {
                     auto now=std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
                     auto seconds=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                    if (now<0 || deadline_ms<=now || canceled_) co_return TunnelConnectResult::retryable;
+                    if (now<0 || deadline_ms<=now) co_return TunnelConnectResult::retryable;
                     auto handshake=profile_->handshake(static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(deadline_ms),seconds);
                     if (!handshake) co_return TunnelConnectResult::retryable;
                     owner_=std::make_unique<tls::detail::OwnedClient>(context_,std::move(*handshake));
                     auto connected=co_await owner_->start(endpoint);
-                    if (canceled_) co_return TunnelConnectResult::retryable;
                     if (!connected) { owner_.reset(); continue; }
                     auto& connection=*owner_->client()->application();
                     client_=std::make_unique<Client>(connection);
@@ -103,19 +107,20 @@ namespace nexus::proxy {
 #else
                     auto sent=co_await client_->start(request,deadline);
 #endif
-                    if (!sent || canceled_) co_return TunnelConnectResult::failed;
+                    if (!sent) co_return TunnelConnectResult::failed;
                     relay_=std::make_unique<Relay>(session_.client,connection,*client_,[this] { session_.touched=Clock::now(); });
                     co_return TunnelConnectResult::connected;
                 }
                 co_return TunnelConnectResult::retryable;
             }
+        public:
             auto send(std::span<std::uint8_t const> bytes) -> capy::task<bool> {
-                if (!relay_ || canceled_) co_return false;
+                if (!relay_ || stop_.stop_requested()) co_return false;
                 if (bytes.empty()) co_return true;
                 co_return co_await relay_->write(bytes);
             }
             auto read(std::span<std::uint8_t> bytes) -> capy::task<std::expected<std::size_t,std::string>> {
-                if (!relay_ || canceled_) co_return std::unexpected("tunnel closed");
+                if (!relay_ || stop_.stop_requested()) co_return std::unexpected("tunnel closed");
                 auto result=co_await relay_->read(bytes);
                 if (!result) co_return std::unexpected("tunnel read failed");
                 co_return *result;

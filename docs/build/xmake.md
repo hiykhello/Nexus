@@ -96,6 +96,7 @@ uv run --no-project python tests/vless_hybrid_outbound.py build/linux/x86_64/deb
 uv run --no-project python tests/vless_candidate_retry.py build/linux/x86_64/debug/nexus
 uv run --no-project python tests/vless_candidate_retry.py build/linux/x86_64/debug/nexus blocked
 uv run --no-project python tests/vless_candidate_retry.py build/linux/x86_64/debug/nexus-vless-relay-throw-fixture partial
+uv run --no-project python tests/vless_candidate_retry.py build/linux/x86_64/debug/nexus stop
 uv run --no-project python tests/vless_bootstrap_failure.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-dns-system-guard.so
 uv run --no-project python tests/vless_bootstrap_deadline.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-dns-system-guard.so
 uv run --no-project python tests/vless_bootstrap_concurrent.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-dns-system-guard.so

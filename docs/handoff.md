@@ -4,9 +4,11 @@
 
 ## 上一步
 
+- VLESS/SS 出站连接改为各自 stop source 加 quitter，删除 `canceled_` 及每次 await 后检查；传输入口仍检查停止状态，取消显式通知底层 owner。VLESS 挂起 TLS 后停止不尝试后续候选、重试/阻断/部分请求边界及链式传输通过；SS DNS 超时和活动连接停止互通通过。
+
 - VLESS/SS 入站双向转发改用共享会话令牌和 quitter，完成/停止回调各减少一次在途计数；父任务继续等待两个子任务后释放借用连接。VLESS 双 worker 真实活动连接停止、四处异常注入及背压半关闭通过；SS 独立构建、单/双 worker 活动连接停止、互通及半关闭通过，VLESS 链式出站回归通过。
 
-- Mixed 会话引入 stop source，握手、HTTP 上传/排空及双向转发使用同一停止令牌；转发切换 quitter，完成回调负责收尾。单/双 worker 活跃连接停止、重启、半关闭、HTTP 上传及 sing-box VLESS 转发回归通过；受控阻塞解析器仍等调用返回。VLESS/SS 出站仍保留显式取消状态。
+- Mixed 会话引入 stop source，握手、HTTP 上传/排空及双向转发使用同一停止令牌；转发切换 quitter，完成回调负责收尾。单/双 worker 活跃连接停止、重启、半关闭、HTTP 上传及 sing-box VLESS 转发回归通过；受控阻塞解析器仍等调用返回。出站停止源和底层 owner 的取消范围见最新记录。
 
 - 代理直连已使用导出的 Corosio `connect`，逐候选判策略；遇到隧道或策略错误时暂不分类后续项，回到异步隧道后继续。真实代理覆盖拒绝/阻断/成功和失败 VLESS 与直连交错的顺序及错误；失败 socket 显式关闭。
 
@@ -41,7 +43,7 @@
 
 ## 下一步
 
-1. 补实际组合拨号的超时、候选上限、异步取消及 resolver/连接 owner 回收；用户提出的 VLESS/SS 会话 quitter 改造须处理停止异常、完成回调和共享会话生命周期。
+1. 补实际组合拨号的超时、候选上限、异步取消及 resolver/连接 owner 回收；继续验证 VLESS/SS 停止异常、完成回调及共享会话生命周期的其他竞态。
 2. 继续核对 Corosio/Capy 的 `io_context` stop/drain 在挂起 connect、跨线程和其他多操作下的 owner 语义。固定 Capy 的 `execution_context::shutdown()` 为 protected、非线程安全，由 `io_context` 析构调用；不能作为 worker 协调器公开屏障或代替完成任务的排空。
 3. 回到 HTTP/2 流生命周期、连接级预算、输入/输出背压，再接 TLS ALPN、Corosio 应用记录和独立网络对端。
 4. 每完成一个切片，先运行与范围匹配的验证，再以清楚描述改动的主题提交，并更新本窗口，只保留新的上一步/当前/下一步；`where` 不是必需前缀。

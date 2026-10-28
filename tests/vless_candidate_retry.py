@@ -12,7 +12,7 @@ import time
 
 binary=pathlib.Path(sys.argv[1]).resolve()
 mode=sys.argv[2] if len(sys.argv)>2 else "retry"
-if mode not in ("retry","blocked","partial"): raise ValueError("invalid mode")
+if mode not in ("retry","blocked","partial","stop"): raise ValueError("invalid mode")
 blocked=mode=="blocked"
 
 def exact(sock,n):
@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-candidate-") as directory:
         dns.bind(("127.0.0.1",0)); dns.settimeout(5)
         origin.bind(("127.0.0.2",0)); origin.listen(1); origin.settimeout(5)
         reserve.bind(("127.0.0.1",0)); closed=reserve.getsockname()[1]; reserve.close()
-        if mode=="partial":
+        if mode in ("partial", "stop"):
             tls_listener.bind(("127.0.0.1",0)); tls_listener.listen(1); tls_listener.settimeout(5)
             closed=tls_listener.getsockname()[1]
         with socket.socket() as reservation:
@@ -63,6 +63,17 @@ routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ 
             except Exception as exc: errors.append(exc)
         thread=threading.Thread(target=dns_peer); thread.start()
         tls_thread=None
+        handshake_started=threading.Event()
+        if mode=="stop":
+            def stalled_tls_peer():
+                try:
+                    with tls_listener.accept()[0] as raw:
+                        raw.settimeout(5)
+                        if not raw.recv(4096): raise RuntimeError("missing TLS ClientHello")
+                        handshake_started.set()
+                        while raw.recv(4096): pass
+                except Exception as exc: errors.append(exc)
+            tls_thread=threading.Thread(target=stalled_tls_peer); tls_thread.start()
         if mode=="partial":
             def tls_peer():
                 try:
@@ -92,7 +103,19 @@ routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ 
                 client.settimeout(5); client.sendall(b"\x05\x01\x00")
                 if exact(client,2)!=b"\x05\x00": raise RuntimeError("SOCKS negotiation failed")
                 client.sendall(b"\x05\x01\x00\x03\x0btarget.test"+origin.getsockname()[1].to_bytes(2,"big"))
-                reply=exact(client,10)
+                if mode=="stop":
+                    if not handshake_started.wait(5): raise RuntimeError("TLS handshake did not start")
+                    process.terminate()
+                    if process.wait(timeout=5)!=0: raise RuntimeError(process.stderr.read().decode())
+                    if client.recv(1)!=b"": raise RuntimeError("client remained open after stop")
+                    origin.settimeout(.3)
+                    try:
+                        unexpected,_=origin.accept(); unexpected.close()
+                        raise RuntimeError("later candidate connected after stop")
+                    except TimeoutError: pass
+                    reply=None
+                else:
+                    reply=exact(client,10)
                 if blocked or mode=="partial":
                     if reply[:2]==b"\x05\x00": raise RuntimeError("blocked second address was connected")
                     origin.settimeout(.3)
@@ -100,8 +123,8 @@ routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ 
                         unexpected,_=origin.accept(); unexpected.close()
                         raise RuntimeError("blocked origin received a connection")
                     except TimeoutError: pass
-                elif reply[:2]!=b"\x05\x00": raise RuntimeError("candidate retry failed")
-                if not blocked and mode!="partial":
+                elif mode!="stop" and reply[:2]!=b"\x05\x00": raise RuntimeError("candidate retry failed")
+                if not blocked and mode not in ("partial", "stop"):
                   with origin.accept()[0] as peer:
                     peer.settimeout(5); client.sendall(b"request")
                     if exact(peer,7)!=b"request": raise RuntimeError("wrong upload")
@@ -111,10 +134,10 @@ routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ 
             if tls_thread: tls_thread.join(timeout=5)
             if thread.is_alive() or (tls_thread and tls_thread.is_alive()) or errors: raise RuntimeError(f"peer failure: {errors}")
         finally:
-            process.terminate()
+            if process.poll() is None: process.terminate()
             try: process.wait(timeout=5)
             except subprocess.TimeoutExpired: process.kill(); process.wait()
             thread.join(timeout=6)
             if tls_thread: tls_thread.join(timeout=6)
         if process.returncode!=0: raise RuntimeError(process.stderr.read().decode())
-print("partial request did not retry" if mode=="partial" else "blocked next address rejected" if blocked else "VLESS pre-request failure retries the next routed DNS address")
+print("stalled VLESS handshake stopped without retry" if mode=="stop" else "partial request did not retry" if mode=="partial" else "blocked next address rejected" if blocked else "VLESS pre-request failure retries the next routed DNS address")
