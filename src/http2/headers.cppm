@@ -23,15 +23,20 @@ export namespace nexus::http2 {
             : max_fields_(max_fields), max_bytes_(max_bytes) {}
 
         void begin(std::int32_t stream) noexcept {
-            fields_.clear(); bytes_ = 0; stream_ = stream;
+            discard(); stream_ = stream;
         }
-        void discard() noexcept { fields_.clear(); bytes_ = 0; stream_ = 0; }
+        void discard() noexcept { std::vector<Header>{}.swap(fields_); bytes_ = 0; stream_ = 0; }
         auto stream() const noexcept -> std::int32_t { return stream_; }
         auto fields() const noexcept -> std::span<Header const> { return fields_; }
+        // Logical charge, not allocator consumption or vector/string capacity.
+        auto memory_charge() const noexcept -> std::size_t { return bytes_ + fields_.size() * sizeof(Header); }
         auto add(std::int32_t stream, std::string_view name, std::string_view value) noexcept -> HeaderResult {
             if (stream <= 0 || stream != stream_) return HeaderResult::invalid_state;
             if (fields_.size() >= max_fields_ || name.size() > max_bytes_ - bytes_ ||
                 value.size() > max_bytes_ - bytes_ - name.size()) return HeaderResult::limit_exceeded;
+            auto remaining=std::numeric_limits<std::size_t>::max()-memory_charge();
+            if (sizeof(Header)>remaining || name.size()>remaining-sizeof(Header) ||
+                value.size()>remaining-sizeof(Header)-name.size()) return HeaderResult::limit_exceeded;
             try {
                 fields_.push_back({std::string(name), std::string(value)});
                 bytes_ += name.size() + value.size();

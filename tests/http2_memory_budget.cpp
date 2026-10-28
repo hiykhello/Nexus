@@ -3,8 +3,10 @@ import nexus.http2.server;
 import nexus.thirdparty.nghttp2;
 namespace h2 = nex::nghttp2;
 namespace nh = nexus::http2;
-struct Observed { nh::ServerSession* session = nullptr; };
-auto on_headers(void*,std::int32_t,std::span<nh::Header const>,bool,bool) noexcept -> bool { return true; }
+struct Observed { nh::ServerSession* session = nullptr; unsigned headers = 0; };
+auto on_headers(void* context,std::int32_t,std::span<nh::Header const>,bool,bool) noexcept -> bool {
+    ++static_cast<Observed*>(context)->headers; return true;
+}
 auto on_data(void*,std::int32_t,std::span<std::byte const>) noexcept -> nh::DataDisposition { return nh::DataDisposition::accepted; }
 auto on_end(void*,std::int32_t) noexcept -> bool { return true; }
 void on_closed(void*,std::int32_t,std::uint32_t) noexcept {}
@@ -79,11 +81,59 @@ int main() {
         auto c=session.receive(request);
         return a && b && c && *a==preface.size() && *b==settings.size() && *c==request.size();
     };
+    // Incomplete header blocks consume a logical share of the same budget;
+    // completing the block releases it before application code can respond.
+    limits.shared_memory_bytes=4*1024*1024;
+    auto fragmented=nh::ServerSession::create(limits,budget_events);
+    if (!fragmented || !(**fragmented).receive(std::as_bytes(std::span{preface})) ||
+        !(**fragmented).receive(settings)) return 102;
+    auto prefix=(**fragmented).receive(std::span{request}.first(10));
+    if (!prefix || *prefix!=10 || !(**fragmented).header_memory_charge() ||
+        (**fragmented).shared_memory_used()!=(**fragmented).library_memory_used()+(**fragmented).header_memory_charge()) return 103;
+    auto suffix=(**fragmented).receive(std::span{request}.subspan(10));
+    if (!suffix || *suffix!=request.size()-10 || (**fragmented).header_memory_charge()!=0 ||
+        (**fragmented).shared_memory_used()!=(**fragmented).library_memory_used()) return 104;
+    fragmented->reset();
+    limits.shared_memory_bytes=std::numeric_limits<std::size_t>::max();
     limits.library_memory_bytes=4*1024*1024;
     auto measurement=nh::ServerSession::create(limits,budget_events);
     if (!measurement || !feed_request(**measurement)) return 82;
     auto request_peak=(**measurement).library_memory_peak();
     measurement->reset();
+    // Find a cap where library allocations fit, but the request-header
+    // charge exhausts the shared budget. The stream is reset and a later
+    // request can still be accepted after the reservation is released.
+    bool header_limit_recovered=false;
+    for (std::size_t extra=0; extra<=1024 && !header_limit_recovered; ++extra) {
+        limits.shared_memory_bytes=request_peak+extra;
+        budget_observed.headers=0;
+        auto candidate=nh::ServerSession::create(limits,budget_events);
+        if (!candidate || !feed_request(**candidate) || budget_observed.headers) continue;
+        std::vector<std::byte> wire;
+        bool output_ok=true;
+        for (;;) {
+            auto n=(**candidate).output(sink);
+            if (!n) { output_ok=false; break; }
+            if (!*n) break;
+            wire.insert(wire.end(),sink.begin(),sink.begin()+static_cast<std::ptrdiff_t>(*n));
+        }
+        if (!output_ok || (**candidate).header_memory_charge()!=0) continue;
+        bool reset_seen=false;
+        for (std::size_t pos=0; pos+9<=wire.size();) {
+            auto length=(std::to_integer<std::size_t>(wire[pos])<<16) |
+                        (std::to_integer<std::size_t>(wire[pos+1])<<8) | std::to_integer<std::size_t>(wire[pos+2]);
+            if (length>wire.size()-pos-9) break;
+            if (wire[pos+3]==std::byte{3} && wire[pos+8]==std::byte{1}) reset_seen=true;
+            pos+=9+length;
+        }
+        if (!reset_seen) continue;
+        auto retry=request; retry[8]=std::byte{3};
+        auto received=(**candidate).receive(retry);
+        if (received && *received==retry.size() && budget_observed.headers==1 &&
+            (**candidate).shared_memory_used()<=limits.shared_memory_bytes) header_limit_recovered=true;
+    }
+    if (!header_limit_recovered) return 105;
+    limits.shared_memory_bytes=std::numeric_limits<std::size_t>::max();
     bool submission_exhausted=false;
     constexpr std::array<std::byte,16> body{};
     for (std::size_t extra=0;extra<=1024 && !submission_exhausted;extra+=16) {
