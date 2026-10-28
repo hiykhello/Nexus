@@ -4,9 +4,11 @@
 
 ## 上一步
 
+- HTTP/2 TLS 驱动处理对端 close_notify：先排空已排队输出，再报告对端关闭并允许回送 close_notify；关闭前调用、重复关闭和关闭后继续驱动均被拒绝。Python/OpenSSL 验证双向关闭、无通知的 TCP 截断及既有多流路径。
+
 - 按用户建议导出 Capy 条件及 `std::is_error_condition_enum` using，并直接导出 Corosio `connect`；无上游头文件的独立消费者在 GCC 16 epoll/io_uring 下通过特化、重试、条件回调和取消测试。保留 `connect_candidates` 的失败关闭 socket 契约；泛型接口要求调用方处理失败清理。
 
-- HTTP/2 TLS 驱动增加排空状态和发送 close_notify 的接口；Python/OpenSSL 实际连接验证两个并发流响应、两阶段 GOAWAY 与 TLS close_notify。测试主动立即进入最终 GOAWAY，未模拟 RTT 等待或等待对端关闭；正式应用接入与连接预算仍待完成。
+- HTTP/2 TLS 驱动增加排空状态和发送 close_notify 的接口；Python/OpenSSL 实际连接验证两个并发流响应、两阶段 GOAWAY 与 TLS close_notify。测试主动立即进入最终 GOAWAY，未模拟 RTT 等待；正式应用接入与连接预算仍待完成。
 
 - 新增实验性 HTTP/2 TLS/Corosio 单所有者逐步驱动，保留未消费明文，暂停后由应用恢复；Python/OpenSSL 实际连接验证证书、`h2`、分片 GET 以及 POST DATA 暂停恢复。驱动尚未接到正式应用，完整预算与更广泛关闭场景仍需验证。
 

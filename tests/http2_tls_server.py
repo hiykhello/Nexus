@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise Nexus HTTP/2 over a verified OpenSSL TLS connection."""
+import os
 import pathlib
 import socket
 import ssl
@@ -27,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1")
     run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(key_der))
     run("openssl", "x509", "-in", str(cert), "-outform", "DER", "-out", str(cert_der))
-    for mode in ("get", "pause", "multi"):
+    for mode in ("get", "pause", "multi", "peer", "truncated"):
         pause = mode == "pause"
         multi = mode == "multi"
         with socket.socket() as listener:
@@ -65,6 +66,10 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                                 finished.add(stream)
                     if statuses != set(bodies) or any(body != b"hello h2" for body in bodies.values()):
                         raise RuntimeError(f"unexpected responses statuses={statuses}, bodies={bodies!r}")
+                    if mode == "peer":
+                        client.unwrap().close()
+                    if mode == "truncated":
+                        os.close(client.detach())
                     if multi and (goaway != [0x7fffffff, 3] or client.recv(1) != b""):
                         raise RuntimeError(f"incorrect GOAWAY or TLS close: {goaway}")
                 code = server.wait(timeout=5)
@@ -74,4 +79,4 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                 if server.poll() is None:
                     server.kill()
                     server.wait()
-print("HTTP/2 requests, multiplexing and graceful TLS close passed")
+print("HTTP/2 requests, multiplexing and TLS close in both directions and truncation rejection passed")

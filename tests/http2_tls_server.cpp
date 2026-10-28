@@ -18,7 +18,7 @@ struct Fixture {
     std::int32_t request=0;
     std::vector<std::int32_t> requests;
     unsigned closed_count=0;
-    bool response=false, closed=false, done=false, success=false, pause=false, paused=false, ended=false, multi=false;
+    bool response=false, closed=false, done=false, success=false, pause=false, paused=false, ended=false, multi=false, peer_close=false, truncated=false;
     std::string body;
 };
 auto headers(void* p,std::int32_t id,std::span<h::Header const>,bool trailers,bool end) noexcept -> bool {
@@ -41,6 +41,8 @@ auto serve(Fixture& f) -> capy::task<> {
     if (!handshake || !std::ranges::equal(f.handshake->negotiated_alpn(),nexus::crypto::Bytes{'h','2'})) { f.done=true; co_return; }
     h::TlsServerConnection connection(f.socket,*f.session,std::move(handshake->records),std::move(handshake->unread));
     auto deadline=std::chrono::steady_clock::now()+5s;
+    auto premature=co_await connection.close_notify(deadline);
+    if (premature || premature.error()!=h::TlsServerError::invalid_state) { f.done=true; co_return; }
     int shutdown_phase=0;
     for (int i=0;i<100;++i) {
         if (f.multi && f.requests.size()==2 && shutdown_phase==0) {
@@ -59,25 +61,34 @@ auto serve(Fixture& f) -> capy::task<> {
             f.response=true;
         }
         auto result=co_await connection.step(deadline);
-        if (!result) break;
+        if (!result) { f.success=f.truncated && result.error()==h::TlsServerError::tls && f.closed_count==1; break; }
         if (*result==h::TlsServerStep::paused) {
             if (!f.session->resume_input(f.session->paused_stream())) break;
             continue;
         }
+        if (*result==h::TlsServerStep::peer_closed && f.peer_close) {
+            auto close=co_await connection.close_notify(deadline);
+            auto duplicate=co_await connection.close_notify(deadline);
+            auto after=co_await connection.step(deadline);
+            f.success=close.has_value() && !duplicate && !after && f.closed_count==1;
+            break;
+        }
         if (*result==h::TlsServerStep::drained && f.multi) {
             auto close=co_await connection.close_notify(deadline);
-            f.success=close.has_value() && f.closed_count==2;
+            auto duplicate=co_await connection.close_notify(deadline);
+            auto after=co_await connection.step(deadline);
+            f.success=close.has_value() && !duplicate && !after && f.closed_count==2;
             break;
         }
         if (*result!=h::TlsServerStep::progress) break;
-        if (!f.multi && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload"); break; }
+        if (!f.multi && !f.peer_close && !f.truncated && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload"); break; }
     }
     f.done=true;
 }
 int main(int argc,char** argv) {
-    if (argc!=4 && (argc!=5 || (std::string_view(argv[4])!="pause" && std::string_view(argv[4])!="multi"))) return 1;
+    if (argc!=4 && (argc!=5 || (std::string_view(argv[4])!="pause" && std::string_view(argv[4])!="multi" && std::string_view(argv[4])!="peer" && std::string_view(argv[4])!="truncated"))) return 1;
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 2;
-    Fixture f; f.pause=argc==5 && std::string_view(argv[4])=="pause"; f.multi=argc==5 && !f.pause; if (f.socket.assign(fd)) { ::close(fd); return 3; }
+    Fixture f; f.pause=argc==5 && std::string_view(argv[4])=="pause"; f.multi=argc==5 && std::string_view(argv[4])=="multi"; f.peer_close=argc==5 && std::string_view(argv[4])=="peer"; f.truncated=argc==5 && std::string_view(argv[4])=="truncated"; if (f.socket.assign(fd)) { ::close(fd); return 3; }
     auto credential=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!credential) return 4;
     auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     auto handshake=t::ServerHandshakeIo::create(std::move(*credential),now,now+5000,"h2"); if (!handshake) return 5;
