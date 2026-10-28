@@ -131,6 +131,18 @@ template<class Backend> auto drop_idle_driver(Backend backend) -> bool {
     std::array<std::byte,64> sink{}; auto output=(**session).output(sink);
     return !output && output.error().kind==h::ServerErrorKind::failed && !(**session).input_memory_charge();
 }
+template<class Backend> auto oversized_unread(Backend backend) -> bool {
+    io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
+    auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed}); if (!session) return false;
+    c::Bytes unread(4097,42); unread.reserve(1u<<20);
+    Connection connection(a,**session,records(),std::move(unread));
+    std::array<std::byte,64> sink{}; auto output=(**session).output(sink);
+    bool done=false; std::optional<h::TlsServerError> error;
+    capy::run_async(context.get_executor())(read_step(connection,done,error)); context.restart(); (void)context.run_for(1s);
+    std::uint8_t byte{}; auto n=::recv(b.native_handle(),&byte,1,MSG_DONTWAIT);
+    return unread.capacity()==0 && !output && output.error().kind==h::ServerErrorKind::failed &&
+        context.stopped() && done && error==h::TlsServerError::invalid_state && n<0 && (errno==EAGAIN || errno==EWOULDBLOCK);
+}
 template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
     h::ServerEvents events{nullptr,headers,data,end,closed}; h::ServerLimits limits{8,16,4096,1024,4096};
     auto reference=h::ServerSession::create(limits,events); if (!reference) return false;
@@ -229,9 +241,9 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
 }
 int main() {
     for (int i=0;i<5;++i) {
-        if (!duplicate_owner(io::epoll) || !drop_idle_driver(io::epoll) || !partial_failure(io::epoll) || !truncated_input(io::epoll) || !exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
+        if (!oversized_unread(io::epoll) || !duplicate_owner(io::epoll) || !drop_idle_driver(io::epoll) || !partial_failure(io::epoll) || !truncated_input(io::epoll) || !exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!duplicate_owner(io::uring) || !drop_idle_driver(io::uring) || !partial_failure(io::uring) || !truncated_input(io::uring) || !exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
+        if (!oversized_unread(io::uring) || !duplicate_owner(io::uring) || !drop_idle_driver(io::uring) || !partial_failure(io::uring) || !truncated_input(io::uring) || !exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
 #endif
     }
     std::cout << "HTTP/2 TLS partial output, cancellation, deadlines and input budgets passed\n";

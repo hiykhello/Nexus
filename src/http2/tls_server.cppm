@@ -27,7 +27,10 @@ export namespace nexus::http2 {
     public:
         TlsServerConnection(Socket& socket, ServerSession& session, tls::ApplicationRecords&& records,
                             crypto::Bytes&& unread)
-            : session_(session), tls_(socket,std::move(records),std::move(unread)), claimed_(session.claim_transport()) { failed_=!claimed_; }
+            : session_(session), tls_(socket,std::move(records),std::move(unread)), claimed_(session.claim_transport()) {
+            failed_=!claimed_ || !tls_.active();
+            if (claimed_ && failed_) { session_.fail_transport(false); session_abandoned_=true; }
+        }
         TlsServerConnection(TlsServerConnection const&)=delete;
         auto operator=(TlsServerConnection const&) -> TlsServerConnection& = delete;
         ~TlsServerConnection() {
