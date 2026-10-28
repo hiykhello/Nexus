@@ -25,6 +25,6 @@ if is_plat("linux") then
         set_kind("binary")
         set_default(false)
         add_files("../tests/corosio_endpoint.cpp")
-        add_deps("nexus-thirdparty-corosio")
+        add_deps("nexus-thirdparty-capy", "nexus-thirdparty-corosio")
 
 end

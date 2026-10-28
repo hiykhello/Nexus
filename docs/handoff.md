@@ -4,13 +4,13 @@
 
 ## 上一步
 
-- 在 `f6762ff where:corosio.endpoint:export address factories and validate module boundary` 中，Corosio Module 导出了 `make_endpoint`、`make_local_endpoint`、格式识别和组合 `connect`；独立测试覆盖 IPv4/IPv6、缺省端口、非法输入、本地路径及路径长度。隔离 GCC 16/io_uring 构建与运行通过。
+- 在 `f6762ff where:corosio.endpoint:export address factories and validate module boundary` 中，Corosio Module 导出了 `make_endpoint`、`make_local_endpoint` 和格式识别；独立测试覆盖 IPv4/IPv6、缺省端口、非法输入、本地路径及路径长度。隔离 GCC 16/io_uring 构建与运行通过。
 - 上一个窗口完成 Capy 0.2.2 / Corosio 0.3.3 升级收口：代理 accept loop 使用值返回 `tcp_acceptor::accept()`，`reuse_port` 使用 Corosio 选项 API，FakeIP TCP 夹具使用 acceptor 便捷构造；I/O、代理、UDP、VLESS、FakeIP chain、reuseport 和故障回归已有通过记录。
 
 ## 当前
 
 - 工作区处于干净提交状态，当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
-- 工作区保持干净，地址工厂切片已提交；尚未覆盖组合 `connect` 的真实候选重试。
+- 地址工厂的正反例已通过；组合 `connect` 尚未从 Module 导出，真实候选重试也尚未覆盖。
 - HTTP/2 无 I/O 服务端、TLS/Corosio 握手和应用记录适配器仍保持上一步已验证状态；没有把未完成的 HTTP/2 客户端草稿留在树中。
 
 ## 下一步
