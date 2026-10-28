@@ -283,5 +283,15 @@ int main() {
     if ((**transport).shared_memory_used()!=before || !(**transport).respond_body(1,200,body)) return 120;
     for (;;) { auto n=(**transport).output(sink); if (!n) return 121; if (!*n) break; }
     if ((**transport).response_memory_used() || (**transport).shared_memory_used()>limits.shared_memory_bytes) return 122;
+    // Queue many responses before draining, exercising nghttp2's output scheduler.
+    nh::ServerLimits many_limits{64, 4, 128, 64, 4096};
+    auto many=nh::ServerSession::create(many_limits,budget_events);
+    if (!many || !feed_request(**many) || !(**many).respond_body(1,200,body)) return 123;
+    for (unsigned id=3; id<128; id+=2) {
+        auto next=request; next[8]=static_cast<std::byte>(id);
+        if (!(**many).receive(next) || !(**many).respond_body(static_cast<std::int32_t>(id),200,body)) return 124;
+    }
+    for (;;) { auto n=(**many).output(sink); if (!n) return 125; if (!*n) break; }
+    if ((**many).response_memory_used() || (**many).library_memory_peak()>many_limits.library_memory_bytes) return 126;
     std::println("HTTP/2 nghttp2 memory budget and recovery passed");
 }

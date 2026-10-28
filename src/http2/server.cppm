@@ -31,7 +31,7 @@ export namespace nexus::http2 {
         std::uint32_t decoder_table_bytes = 4096;
         std::size_t encoder_table_bytes = 4096;
         // nghttp2 live allocations, including accounting headers; excludes
-        // application buffers, TLS, transport, allocator overhead and transient realloc copies.
+        // application buffers, TLS, transport and allocator overhead.
         std::size_t library_memory_bytes = 4 * 1024 * 1024;
         // Limits for application response headers, excluding :status.
         std::size_t response_header_fields = 32;
@@ -40,7 +40,7 @@ export namespace nexus::http2 {
         // and logical charges for stream objects, request headers, temporary response fields
         // and the TLS driver's input, ciphertext, output, scratch and transport reservations.
         // Actual header capacities, other TLS buffers, transport, allocator
-        // overhead and transient copies are excluded; this is not a complete budget.
+        // overhead and other transient copies are excluded; this is not a complete budget.
         std::size_t shared_memory_bytes = std::numeric_limits<std::size_t>::max();
     };
     enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed, budget_exceeded };
@@ -78,10 +78,13 @@ export namespace nexus::http2 {
             auto& self=*static_cast<ServerSession*>(context);
             if (size>std::numeric_limits<std::size_t>::max()-sizeof(Allocation)) return nullptr;
             auto p=static_cast<Allocation*>(ptr)-1; auto old=p->size; auto total=size+sizeof(Allocation);
-            if (total>self.library_limit_-(self.library_used_-old) ||
-                total>self.shared_limit_-self.response_reserved_-(self.library_used_-old)-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_-self.scratch_reserved_-self.transport_reserved_) return nullptr;
+            // realloc may allocate the replacement before releasing the old block.
+            // Reserve both requested sizes even when the allocator can resize in place.
+            if (total>self.library_limit_-self.library_used_ ||
+                total>self.shared_limit_-self.shared_memory_used()) return nullptr;
             auto replacement=static_cast<Allocation*>(std::realloc(p,total));
             if (!replacement) return nullptr;
+            self.library_peak_=std::max(self.library_peak_,self.library_used_+total);
             replacement->size=total; self.library_used_=self.library_used_-old+total;
             self.library_peak_=std::max(self.library_peak_,self.library_used_); return replacement+1;
         }
