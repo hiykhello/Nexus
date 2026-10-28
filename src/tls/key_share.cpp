@@ -7,11 +7,18 @@ namespace nexus::tls {
         auto add_u16(std::vector<std::uint8_t>& out, std::size_t n) -> bool { if (n>0xffff) return false; out.push_back(static_cast<std::uint8_t>(n>>8)); out.push_back(static_cast<std::uint8_t>(n)); return true; }
         auto valid_entry_size(KeyShareEntry const& e) -> bool { return !e.key_exchange.empty() && e.key_exchange.size()<=0xffff; }
     }
-    auto KeyShare::parse_client(std::span<std::uint8_t const> data, std::size_t max_size)
-        -> std::expected<std::vector<KeyShareEntry>, KeyShareError> {
+    auto ClientKeyShares::next(std::size_t& cursor) const noexcept -> std::optional<KeyShareView> {
+        if (cursor>data_.size() || data_.size()-cursor<4) return {};
+        auto size=static_cast<std::size_t>(u16(data_,cursor+2));
+        if (!size || size>data_.size()-cursor-4) return {};
+        auto group=u16(data_,cursor); cursor+=4;
+        auto bytes=data_.subspan(cursor,size); cursor+=size; return KeyShareView{group,bytes};
+    }
+    auto KeyShare::view_client(std::span<std::uint8_t const> data, std::size_t max_size)
+        -> std::expected<ClientKeyShares, KeyShareError> {
         if (data.size()>max_size || data.size()<2) return std::unexpected(data.size()>max_size ? KeyShareError::message_too_large : KeyShareError::truncated);
         auto list_size=static_cast<std::size_t>(u16(data,0)); if (list_size!=data.size()-2) return std::unexpected(KeyShareError::invalid_length);
-        std::vector<KeyShareEntry> result; std::size_t pos=2; std::bitset<65536> groups;
+        std::size_t pos=2; std::bitset<65536> groups;
         while (pos<data.size()) {
             if (data.size()-pos<4) return std::unexpected(KeyShareError::truncated);
             auto group=u16(data,pos); auto size=static_cast<std::size_t>(u16(data,pos+2)); pos+=4;
@@ -19,8 +26,15 @@ namespace nexus::tls {
             if (size>data.size()-pos) return std::unexpected(KeyShareError::truncated);
             if (groups.test(group)) return std::unexpected(KeyShareError::duplicate_group);
             groups.set(group);
-            result.push_back({group,std::vector<std::uint8_t>(data.begin()+static_cast<std::ptrdiff_t>(pos),data.begin()+static_cast<std::ptrdiff_t>(pos+size))}); pos+=size;
+            pos+=size;
         }
+        return ClientKeyShares(data.subspan(2));
+    }
+    auto KeyShare::parse_client(std::span<std::uint8_t const> data, std::size_t max_size)
+        -> std::expected<std::vector<KeyShareEntry>, KeyShareError> {
+        auto view=view_client(data,max_size); if (!view) return std::unexpected(view.error());
+        std::vector<KeyShareEntry> result; std::size_t cursor=0;
+        while (auto entry=view->next(cursor)) result.push_back({entry->group,{entry->key_exchange.begin(),entry->key_exchange.end()}});
         return result;
     }
     auto KeyShare::parse_server(std::span<std::uint8_t const> data) -> std::expected<KeyShareEntry, KeyShareError> {

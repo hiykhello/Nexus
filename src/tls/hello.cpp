@@ -97,7 +97,7 @@ namespace nexus::tls {
     auto ClientHello::validate_tls13() const -> std::expected<void, HelloError> {
         if (legacy_version != 0x0303) return std::unexpected(HelloError::invalid_version);
         if (cipher_suites.empty()) return std::unexpected(HelloError::invalid_cipher_suites);
-        if (compression_methods != std::vector<std::uint8_t>{0}) return std::unexpected(HelloError::invalid_compression);
+        if (compression_methods.size()!=1 || compression_methods[0]!=0) return std::unexpected(HelloError::invalid_compression);
         std::bitset<65536> seen;
         for (auto const& item : extensions) { if (seen.test(item.type)) return std::unexpected(HelloError::duplicate_extension); seen.set(item.type); }
         auto versions=extension(43); if (!versions || versions->data.size()<3 || versions->data[0]+1 != versions->data.size() || versions->data[0]%2 != 0) return std::unexpected(HelloError::unsupported);

@@ -8,8 +8,24 @@ export namespace nexus::tls {
         std::vector<std::uint8_t> key_exchange;
         auto operator==(KeyShareEntry const&) const -> bool = default;
     };
+    struct KeyShareView {
+        std::uint16_t group;
+        std::span<std::uint8_t const> key_exchange;
+    };
+    // Borrows the encoded extension. The input must outlive this view and must
+    // not be modified while it is in use.
+    class ClientKeyShares {
+        std::span<std::uint8_t const> data_;
+        explicit ClientKeyShares(std::span<std::uint8_t const> data) noexcept : data_(data) {}
+        friend class KeyShare;
+    public:
+        // Start with cursor=0; returns each entry once and advances the cursor.
+        [[nodiscard]] auto next(std::size_t& cursor) const noexcept -> std::optional<KeyShareView>;
+    };
     class KeyShare {
     public:
+        [[nodiscard]] static auto view_client(std::span<std::uint8_t const> data, std::size_t max_size = 0xffff)
+            -> std::expected<ClientKeyShares, KeyShareError>;
         [[nodiscard]] static auto parse_client(std::span<std::uint8_t const> data, std::size_t max_size = 0xffff)
             -> std::expected<std::vector<KeyShareEntry>, KeyShareError>;
         [[nodiscard]] static auto parse_server(std::span<std::uint8_t const> data)
