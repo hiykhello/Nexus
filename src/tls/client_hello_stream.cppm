@@ -1,17 +1,32 @@
 export module nexus.tls.client_hello_stream;
 export import nexus.tls.hello;
+export import nexus.memory.budget;
 import nexus.tls.handshake;
 import nexus.tls.record_stream;
 import std;
 
 export namespace nexus::tls {
-    enum class ClientHelloStreamError { invalid_state, invalid_record, invalid_message, truncated };
+    enum class ClientHelloStreamError { invalid_state, invalid_record, invalid_message, truncated, budget_exceeded };
     struct ClientHelloFeed {
         std::size_t consumed = 0;
+        // Declared before the parsed hello so its reservation outlives it.
+        // A caller moving hello out must retain or transfer this reservation
+        // until the moved value is destroyed or separately accounted for.
+        std::optional<memory::Budget::Reservation> parsed_reservation;
         std::optional<ClientHello> hello;
         // Exact handshake encoding, including its four-byte header, for the transcript.
         std::vector<std::uint8_t> message;
         bool compatibility_ccs = false;
+        ClientHelloFeed() = default;
+        ClientHelloFeed(ClientHelloFeed&&) noexcept = default;
+        auto operator=(ClientHelloFeed&& other) noexcept -> ClientHelloFeed& {
+            if (this!=&other) {
+                hello.reset(); parsed_reservation.reset();
+                consumed=other.consumed; parsed_reservation=std::move(other.parsed_reservation);
+                hello=std::move(other.hello); message=std::move(other.message); compatibility_ccs=other.compatibility_ccs;
+            }
+            return *this;
+        }
     };
     // Receives one initial ClientHello; no retry, early data or PSK policy is implied.
     class ClientHelloStream {
@@ -27,7 +42,12 @@ export namespace nexus::tls {
         ClientHelloStream(ClientHelloStream&&) noexcept;
         auto operator=(ClientHelloStream&&) noexcept -> ClientHelloStream&;
         // Consumes at most one record; the caller retains the unconsumed suffix.
-        [[nodiscard]] auto feed(std::span<std::uint8_t const> input) -> std::expected<ClientHelloFeed,ClientHelloStreamError>;
+        // Logical payload plus one Extension object per possible four-byte
+        // extension header. This does not account for container capacity.
+        [[nodiscard]] static constexpr auto parsed_charge(std::size_t body_size) noexcept -> std::size_t {
+            return body_size+(body_size/4)*sizeof(Extension);
+        }
+        [[nodiscard]] auto feed(std::span<std::uint8_t const> input, std::shared_ptr<memory::Budget> budget = {}) -> std::expected<ClientHelloFeed,ClientHelloStreamError>;
         [[nodiscard]] auto finish_input() -> std::expected<void,ClientHelloStreamError>;
     };
 }

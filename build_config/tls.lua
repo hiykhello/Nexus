@@ -181,6 +181,7 @@ if is_plat("linux") and has_config("crypto") then
         set_kind("static")
         add_files("../src/tls/client_hello_stream.cppm", {public = true})
         add_files("../src/tls/client_hello_stream.cpp")
+        add_deps("nexus-memory-budget", {public = true})
         add_deps("nexus-tls-hello", "nexus-tls-handshake", "nexus-tls-record-stream")
 
     target("nexus-tls-client-hello-stream-test")

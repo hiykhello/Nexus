@@ -14,12 +14,12 @@ namespace nexus::tls {
         if (this!=&other) { state_=other.state_; records_=std::move(other.records_); messages_=std::move(other.messages_); allow_ccs_=other.allow_ccs_; ccs_seen_=other.ccs_seen_; other.state_=State::failed; }
         return *this;
     }
-    auto ClientHelloStream::feed(std::span<std::uint8_t const> input) -> std::expected<ClientHelloFeed,ClientHelloStreamError> {
+    auto ClientHelloStream::feed(std::span<std::uint8_t const> input, std::shared_ptr<memory::Budget> budget) -> std::expected<ClientHelloFeed,ClientHelloStreamError> {
         if (state_!=State::reading) return std::unexpected(ClientHelloStreamError::invalid_state);
         try {
         auto record=records_.feed(input,RecordFraming::plaintext);
         if (!record) { state_=State::failed; return std::unexpected(ClientHelloStreamError::invalid_record); }
-        ClientHelloFeed result{record->consumed,{},{}};
+        ClientHelloFeed result; result.consumed=record->consumed;
         if (!record->record) return result;
         auto const& bytes=record->record->bytes;
         if (bytes[0]==20 && allow_ccs_ && !ccs_seen_ && !messages_.pending_bytes() && bytes.size()==6 && bytes[1]==3 && bytes[2]==3 && bytes[5]==1) {
@@ -34,6 +34,10 @@ namespace nexus::tls {
         }
         if (decoded->empty()) return result;
         auto& message=decoded->front();
+        if (budget && !message.body.empty()) {
+            result.parsed_reservation=memory::Budget::reserve(std::move(budget),parsed_charge(message.body.size()));
+            if (!result.parsed_reservation) { state_=State::failed; return std::unexpected(ClientHelloStreamError::budget_exceeded); }
+        }
         auto hello=ClientHello::parse(message.body);
         if (message.type!=1 || !hello || !hello->validate_tls13()) {
             state_=State::failed; return std::unexpected(ClientHelloStreamError::invalid_message);

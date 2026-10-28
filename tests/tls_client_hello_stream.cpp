@@ -39,6 +39,21 @@ int main(int argc, char** argv) {
     t::ClientHello hello; hello.random.fill(0x42); hello.session_id={1,2,3}; hello.cipher_suites={0x1301};
     hello.compression_methods={0}; hello.extensions={{43,{2,3,4}}}; auto message=wire(hello);
     auto packet=record(message); int failures=0;
+    {
+        auto charge=t::ClientHelloStream::parsed_charge(message.size()-4);
+        auto budget=std::make_shared<nexus::memory::Budget>(charge);
+        auto candidate=t::ClientHelloStream::create();
+        auto parsed=candidate->feed(packet,budget);
+        if (!parsed || !parsed->hello || budget->reserved()!=charge) return 33;
+        t::ClientHelloFeed moved; moved=std::move(*parsed);
+        if (!moved.hello || budget->reserved()!=charge) return 34;
+        moved=t::ClientHelloFeed{};
+        if (budget->reserved()) return 35;
+        auto short_budget=std::make_shared<nexus::memory::Budget>(charge-1);
+        candidate=t::ClientHelloStream::create();
+        auto denied=candidate->feed(packet,short_budget);
+        if (denied || denied.error()!=t::ClientHelloStreamError::budget_exceeded || short_budget->reserved() || candidate->feed(packet)) return 36;
+    }
     for (int index=0;index<40;++index) {
         auto candidate=t::ClientHelloStream::create(); if (!candidate) return 30;
         bool threw=false; fail_after=index;

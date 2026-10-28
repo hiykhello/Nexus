@@ -77,8 +77,12 @@ namespace nexus::tls {
         if (state_==State::output || state_==State::retry_output || state_==State::complete) return ServerHandshakeIoFeed{};
         try {
         if (state_==State::hello || state_==State::retry_hello) {
+            // Keep the key-parser reservation alive longer than result and its
+            // parsed ClientHello, including error and exception unwinding.
+            std::optional<memory::Budget::Reservation> key_parse_reservation;
             std::optional<memory::Budget::Reservation> encoded_local;
-            auto result=hello_->feed(input); if (!result) return fail(ServerHandshakeIoError::protocol_error);
+            auto result=hello_->feed(input,budget_);
+            if (!result) return fail(result.error()==ClientHelloStreamError::budget_exceeded ? ServerHandshakeIoError::budget_exceeded : ServerHandshakeIoError::protocol_error);
             if (result->compatibility_ccs) ccs_seen_=true;
             auto consumed=result->consumed; if (!result->hello) return ServerHandshakeIoFeed{consumed};
             encoded_local=std::move(encoded_hello_reservation_);
@@ -96,6 +100,12 @@ namespace nexus::tls {
                 if (!matched) return fail(ServerHandshakeIoError::protocol_error);
             }
             auto scheme=*credential_->scheme();
+            if (budget_) {
+                auto charge=ClientHelloStream::parsed_charge(result->message.size()-4);
+                if (state_==State::retry_hello) charge+=ClientHelloStream::parsed_charge(first_hello_.size()-4);
+                key_parse_reservation=memory::Budget::reserve(budget_,charge);
+                if (!key_parse_reservation) return fail(ServerHandshakeIoError::budget_exceeded);
+            }
             auto keys=state_==State::hello ? server_handshake_keys(result->message,std::span{&scheme,1}) :
                 server_handshake_keys_retry(first_hello_,retry_hello_,result->message,std::span{&scheme,1});
             if (!keys && state_==State::hello && keys.error()==ServerKeyError::retry_required) {
