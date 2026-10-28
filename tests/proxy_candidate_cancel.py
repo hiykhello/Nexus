@@ -3,6 +3,7 @@
 import pathlib
 import contextlib
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -40,13 +41,16 @@ def pending_first(pid, port):
     return count
 
 
-def scenario(root, workers, stop_pending, clients_count=1):
-    with socket.socket() as first, socket.socket() as second, socket.socket() as reserved, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
+def scenario(root, workers, stop_pending, clients_count=1, disconnect_one=False):
+    with socket.socket() as first, socket.socket() as second, socket.socket() as live, socket.socket() as reserved, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
         first.bind(('127.0.0.2', 0))
         first.listen(1)
         second.bind(('127.0.0.1', first.getsockname()[1]))
         second.listen(2)
         second.settimeout(.5)
+        live.bind(('127.0.0.1', 0))
+        live.listen(1)
+        live.settimeout(3)
         fillers = [socket.create_connection(first.getsockname(), timeout=2) for _ in range(2)]
         reserved.bind(('127.0.0.1', 0))
         port = reserved.getsockname()[1]
@@ -112,6 +116,24 @@ routing {{ default-outbound "direct"; }}
                         pass
                     else:
                         raise AssertionError(f'first candidate did not remain pending: {early!r}')
+                if disconnect_one:
+                    sockets[0].setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                    sockets.pop(0).close()
+                    # A separate literal-address session must complete while
+                    # the other sessions remain blocked in candidate connect.
+                    with socket.create_connection(('127.0.0.1', port), timeout=3) as independent:
+                        independent.settimeout(3)
+                        independent.sendall(b'\x05\x01\x00')
+                        assert exact(independent, 2) == b'\x05\x00'
+                        independent.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01' + live.getsockname()[1].to_bytes(2, 'big'))
+                        with live.accept()[0] as upstream:
+                            upstream.settimeout(3)
+                            assert exact(independent, 10)[:2] == b'\x05\x00'
+                            independent.sendall(b'parallel')
+                            assert exact(upstream, 8) == b'parallel'
+                            upstream.sendall(b'progress')
+                            assert exact(independent, 8) == b'progress'
+                    assert pending_first(process.pid, first.getsockname()[1]) >= clients_count-1
                 if stop_pending:
                     process.terminate()
                     process.wait(timeout=5)
@@ -119,13 +141,19 @@ routing {{ default-outbound "direct"; }}
                         client.settimeout(2)
                         assert client.recv(1) == b''
                 else:
-                    client.settimeout(13)
-                    response = client.recv(10)
-                    if response:
-                        response += exact(client, 10-len(response))
-                        assert response[:2] == b'\x05\x06', response
+                    for client in sockets:
+                        client.settimeout(13)
+                        response = client.recv(10)
+                        if response:
+                            response += exact(client, 10-len(response))
+                            assert response[:2] == b'\x05\x06', response
                     assert 9 <= time.monotonic()-started < 13
                     assert process.poll() is None
+                    deadline = time.monotonic() + 2
+                    while pending_first(process.pid, first.getsockname()[1]):
+                        if time.monotonic() >= deadline:
+                            raise AssertionError('timed-out candidate socket remained owned')
+                        time.sleep(.01)
                 try:
                     second.accept()[0].close()
                 except TimeoutError:
@@ -158,5 +186,5 @@ with tempfile.TemporaryDirectory(prefix='nexus-candidate-cancel-') as directory:
     for workers in (1, 2):
         for stop_pending in (True, False):
             scenario(pathlib.Path(directory), workers, stop_pending)
-        scenario(pathlib.Path(directory), workers, True, clients_count=4)
-print('pending first candidates: concurrent stop and timeout do not dial later candidates')
+            scenario(pathlib.Path(directory), workers, stop_pending, clients_count=4, disconnect_one=True)
+print('pending first candidates: independent progress, disconnect, stop and timeout passed')
