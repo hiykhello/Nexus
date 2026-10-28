@@ -3,7 +3,10 @@ import nexus.tls.application_io;
 // Track the actual allocation backing one output record, including sized delete.
 static std::atomic<void*> watched_allocation{nullptr};
 static std::atomic<bool> watched_freed{false};
+static thread_local int fail_after=-1;
 void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
     if (auto p=std::malloc(size ? size : 1)) return p;
     throw std::bad_alloc{};
 }
@@ -39,6 +42,37 @@ int main() {
         if (!sender.written(pending.size()-1) || watched_freed.load()) return 39;
         if (!sender.written(1) || !watched_freed.load() || !sender.pending_output().empty()) return 40;
         watched_allocation=nullptr;
+    }
+    {
+        Bytes data{1,2,3}; auto peer=app(2,1);
+        if (!peer.request_key_update(true)) return 41;
+        Bytes wire(peer.pending_output().begin(),peer.pending_output().end());
+        for (int mode=0;mode<5;++mode) {
+            int failures=0;
+            for (int index=0;index<40;++index) {
+                auto candidate=app(1,2);
+                if (mode==3 || mode==4) { if (!candidate.send(data)) return 42; }
+                if (mode==4) {
+                    auto event=candidate.feed(wire);
+                    if (!event || !event->event || event->event->kind!=t::ApplicationEventKind::key_update_requested) return 43;
+                }
+                auto count=candidate.pending_output().size(); bool threw=false;
+                fail_after=index;
+                try {
+                    if (mode==0) (void)candidate.send(data);
+                    else if (mode==1) (void)candidate.request_key_update(false);
+                    else if (mode==2) (void)candidate.close_notify();
+                    else if (mode==3) (void)candidate.feed(wire);
+                    else (void)candidate.written(count);
+                } catch (std::bad_alloc const&) { threw=true; }
+                fail_after=-1;
+                if (threw) {
+                    ++failures; auto result=candidate.send(data);
+                    if (!candidate.pending_output().empty() || result || result.error()!=t::ApplicationIoError::invalid_state) return 44;
+                }
+            }
+            if (!failures) return 45;
+        }
     }
     auto a=app(1,2), b=app(2,1); Bytes data{1,2,3};
     if (!a.send(data) || a.send(data) || a.written(a.pending_output().size()+1).error()!=t::ApplicationIoError::invalid_input) return 1;

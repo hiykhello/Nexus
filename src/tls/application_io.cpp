@@ -23,6 +23,7 @@ namespace nexus::tls {
     auto ApplicationIo::written(std::size_t count) -> std::expected<void,ApplicationIoError> {
         if (failed_ || output_.empty()) return std::unexpected(ApplicationIoError::invalid_state);
         if (count>output_.size()-offset_) return std::unexpected(ApplicationIoError::invalid_input);
+        try {
         offset_+=count;
         if (offset_==output_.size()) {
             crypto::Bytes{}.swap(output_); offset_=0;
@@ -33,19 +34,24 @@ namespace nexus::tls {
             }
         }
         return {};
+        } catch (...) { cancel(); throw; }
     }
     auto ApplicationIo::send(std::span<std::uint8_t const> data) -> std::expected<void,ApplicationIoError> {
-        if (failed_ || !output_.empty()) return std::unexpected(ApplicationIoError::invalid_state); return enqueue(records_->seal(data));
+        if (failed_ || !output_.empty()) return std::unexpected(ApplicationIoError::invalid_state);
+        try { return enqueue(records_->seal(data)); } catch (...) { cancel(); throw; }
     }
     auto ApplicationIo::request_key_update(bool request) -> std::expected<void,ApplicationIoError> {
-        if (failed_ || !output_.empty()) return std::unexpected(ApplicationIoError::invalid_state); return enqueue(records_->key_update(request));
+        if (failed_ || !output_.empty()) return std::unexpected(ApplicationIoError::invalid_state);
+        try { return enqueue(records_->key_update(request)); } catch (...) { cancel(); throw; }
     }
     auto ApplicationIo::close_notify() -> std::expected<void,ApplicationIoError> {
-        if (failed_ || !output_.empty()) return std::unexpected(ApplicationIoError::invalid_state); return enqueue(records_->close_notify());
+        if (failed_ || !output_.empty()) return std::unexpected(ApplicationIoError::invalid_state);
+        try { return enqueue(records_->close_notify()); } catch (...) { cancel(); throw; }
     }
     auto ApplicationIo::feed(std::span<std::uint8_t const> bytes) -> std::expected<ApplicationIoFeed,ApplicationIoError> {
         if (failed_ || peer_closed_ || input_finished_) return std::unexpected(ApplicationIoError::invalid_state);
         if (response_pending_) return ApplicationIoFeed{};
+        try {
         auto framed=input_.feed(bytes,RecordFraming::ciphertext); if (!framed) return fail(ApplicationIoError::record_error);
         ApplicationIoFeed out{framed->consumed,{}}; if (!framed->record) return out;
         auto event=records_->open_event(framed->record->bytes); if (!event) return fail(ApplicationIoError::record_error);
@@ -56,6 +62,7 @@ namespace nexus::tls {
         if (event->kind==ApplicationEventKind::close_notify) peer_closed_=true;
         if (event->kind==ApplicationEventKind::fatal_alert) cancel();
         out.event=std::move(*event); return out;
+        } catch (...) { cancel(); throw; }
     }
     auto ApplicationIo::finish_input() -> std::expected<void,ApplicationIoError> {
         if (failed_ || input_finished_) return std::unexpected(ApplicationIoError::invalid_state);
