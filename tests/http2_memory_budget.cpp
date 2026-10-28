@@ -135,5 +135,44 @@ int main() {
     }
     if ((**success).response_memory_used()!=0 ||
         (**success).shared_memory_used()!=(**success).library_memory_used()) return 90;
+    // Releasing one stream on a peer reset makes its body reservation
+    // available to another already-open stream.
+    auto reused=nh::ServerSession::create(limits,budget_events);
+    if (!reused || !feed_request(**reused)) return 93;
+    auto second_request=request;
+    second_request[8]=std::byte{3};
+    auto received_second=(**reused).receive(second_request);
+    if (!received_second || *received_second!=second_request.size()) return 94;
+    auto remaining=limits.shared_memory_bytes-(**reused).shared_memory_used();
+    std::vector<std::byte> larger_body(remaining/2+1);
+    if (!(**reused).respond_body(1,200,larger_body) || (**reused).response_memory_used()!=larger_body.size()) return 94;
+    auto blocked=(**reused).respond_body(3,200,larger_body);
+    if (blocked || blocked.error().kind!=nh::ServerErrorKind::budget_exceeded) return 101;
+    constexpr std::array<std::byte,13> reset{std::byte{0},std::byte{0},std::byte{4},std::byte{3},std::byte{0},
+        std::byte{0},std::byte{0},std::byte{0},std::byte{1},std::byte{0},std::byte{0},std::byte{0},std::byte{8}};
+    auto received_reset=(**reused).receive(reset);
+    if (!received_reset || *received_reset!=reset.size() || (**reused).response_memory_used()!=0 ||
+        !(**reused).respond_body(3,200,larger_body) || (**reused).response_memory_used()!=larger_body.size() ||
+        (**reused).shared_memory_used()>limits.shared_memory_bytes) return 95;
+    for (;;) {
+        auto n=(**reused).output(sink);
+        if (!n) return 96;
+        if (!*n) break;
+    }
+    if ((**reused).response_memory_used()!=0 || (**reused).shared_memory_used()>limits.shared_memory_bytes) return 97;
+    // A live response body reduces the space available to peer-generated ACKs.
+    auto competing=nh::ServerSession::create(limits,budget_events);
+    if (!competing || !feed_request(**competing) || !(**competing).respond_body(1,200,larger_body)) return 98;
+    bool shared_exhausted=false;
+    for (int i=0;i<64;++i) {
+        auto r=(**competing).receive(ping);
+        if (!r) {
+            shared_exhausted=r.error().kind==nh::ServerErrorKind::library && r.error().library_code==h2::NGHTTP2_ERR_NOMEM;
+            break;
+        }
+        if ((**competing).shared_memory_used()>limits.shared_memory_bytes) return 99;
+    }
+    if (!shared_exhausted || (**competing).response_memory_used()!=larger_body.size() ||
+        (**competing).shared_memory_used()>limits.shared_memory_bytes) return 100;
     std::println("HTTP/2 nghttp2 memory budget and recovery passed");
 }
