@@ -12,7 +12,7 @@
 
 ## 当前
 
-- 工作区包含待提交的 Corosio 组合连接包装、独立回归和 xmake target；当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
+- 工作区处于干净提交状态（`3daabbf where:corosio.module:wrap candidate connect with cleanup`），当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
 - 地址工厂、socket quitter owner unwind 以及新的候选连接回归已通过。`connect_candidates` 只接受 `tcp_socket` 和 endpoint vector，公开结果为 error plus connected endpoint；上游组合模板和 Capy condition 特化仍不直接导出。失败/取消关闭 socket，但真实 resolver 并发候选、超时和多挂起 accept/connect 仍未覆盖。
 - HTTP/2 无 I/O 服务端、TLS/Corosio 握手和应用记录适配器仍保持上一步已验证状态；没有把未完成的 HTTP/2 客户端草稿留在树中。
 
