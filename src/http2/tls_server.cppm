@@ -7,7 +7,7 @@ import std;
 
 export namespace nexus::http2 {
     enum class TlsServerStep { progress, paused, drained, peer_closed };
-    enum class TlsServerError { invalid_state, http2, tls, timeout, budget_exceeded };
+    enum class TlsServerError { invalid_state, http2, tls, timeout, budget_exceeded, allocation };
 
     // A single owner drives this object and its session on one executor. Socket,
     // session and this object must outlive an outstanding step. The caller must
@@ -24,6 +24,9 @@ export namespace nexus::http2 {
         bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, control_reserved_=false, transport_reserved_=false, session_abandoned_=false, claimed_=false;
         void release_input() noexcept { crypto::Bytes{}.swap(input_); offset_=0; if (input_reserved_) { session_.release_input(); input_reserved_=false; } }
         void release_control() noexcept { if (control_reserved_) { session_.release_output(); control_reserved_=false; } }
+        void abort_exception() noexcept {
+            active_=false; session_.release_ciphertext(); release_control(); session_.release_output(); release_input(); cancel();
+        }
         static auto tls_error(tls::detail::AsyncApplicationError error) noexcept -> TlsServerError {
             return error==tls::detail::AsyncApplicationError::timeout ? TlsServerError::timeout : TlsServerError::tls;
         }
@@ -61,12 +64,15 @@ export namespace nexus::http2 {
                 co_return std::unexpected(TlsServerError::invalid_state);
             if (!session_.reserve_output(48)) { cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             control_reserved_=true; active_=true;
+            try {
             auto result=co_await tls_.close_notify(deadline);
             active_=false; release_control();
             if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
             if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
             closed_=true;
             co_return std::expected<void,TlsServerError>{};
+            } catch (std::bad_alloc const&) { abort_exception(); co_return std::unexpected(TlsServerError::allocation); }
+              catch (...) { abort_exception(); throw; }
         }
 
         // Returns after one unit of work so the application can respond outside
@@ -80,6 +86,7 @@ export namespace nexus::http2 {
             if (!session_.reserve_scratch(16384)) { cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             struct ScratchReservation { ServerSession& session; ~ScratchReservation() { session.release_scratch(); } } scratch{session_};
             active_=true;
+            try {
             if (tls_.pending_output()) {
                 auto result=co_await tls_.flush(deadline); active_=false; release_control();
                 if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
@@ -151,6 +158,8 @@ export namespace nexus::http2 {
                 else if (event.kind==tls::ApplicationEventKind::fatal_alert) { cancel(); co_return std::unexpected(TlsServerError::tls); } }
             if (input_.empty()) release_input();
             co_return TlsServerStep::progress;
+            } catch (std::bad_alloc const&) { abort_exception(); co_return std::unexpected(TlsServerError::allocation); }
+              catch (...) { abort_exception(); throw; }
         }
     };
 }
