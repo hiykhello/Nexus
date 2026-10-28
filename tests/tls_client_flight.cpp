@@ -51,7 +51,7 @@ int main() {
     auto limited_read=t::RecordLayer::create(t::RecordDirection::receive,c::Aead::aes_128_gcm,sak->view(),sai->view());
     auto limited_peer=t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,sak->view(),sai->view());
     if (!limited_write || !limited_read || !limited_peer) return 31;
-    t::ApplicationRecords limits(std::move(*limited_write),std::move(*limited_read),64,64);
+    t::ApplicationRecords limits(std::move(*limited_write),std::move(*limited_read),64,64,t::ApplicationRole::client);
     if (limits.seal(Bytes(64,1)) || !limits.seal(Bytes(63,1))) return 32;
     auto oversized=limited_peer->seal(t::ContentType::application_data,Bytes(64,1));
     if (!oversized || limits.open(*oversized) || limits.seal(payload)) return 33;

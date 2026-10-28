@@ -11,7 +11,7 @@ namespace nexus::tls {
             if (!ticket || ticket>body.size()-p) return false; p+=ticket;
             if (body.size()-p<2) return false;
             auto extensions=(std::size_t{body[p]}<<8)|body[p+1]; p+=2;
-            if (extensions!=body.size()-p) return false;
+            if (extensions>65534 || extensions!=body.size()-p) return false;
             std::bitset<65536> seen;
             while (p<body.size()) {
                 if (body.size()-p<4) return false;
@@ -22,11 +22,11 @@ namespace nexus::tls {
             return true;
         }
     }
-    ApplicationRecords::ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t wl, std::size_t rl) noexcept
-        : write_(std::move(write)), read_(std::move(read)), write_limit_(wl), read_limit_(rl) {}
+    ApplicationRecords::ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t wl, std::size_t rl, ApplicationRole role) noexcept
+        : write_(std::move(write)), read_(std::move(read)), write_limit_(wl), read_limit_(rl), role_(role) {}
     ApplicationRecords::ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t wl, std::size_t rl,
-        crypto::Hash hash, crypto::Aead algorithm, std::size_t size, Secret&& ws, Secret&& rs) noexcept
-        : write_(std::move(write)), read_(std::move(read)), write_limit_(wl), read_limit_(rl),
+        crypto::Hash hash, crypto::Aead algorithm, std::size_t size, Secret&& ws, Secret&& rs, ApplicationRole role) noexcept
+        : write_(std::move(write)), read_(std::move(read)), write_limit_(wl), read_limit_(rl), role_(role),
           write_secret_(std::move(ws)), read_secret_(std::move(rs)), hash_(hash), algorithm_(algorithm), key_size_(size) {}
     auto ApplicationRecords::rotate(bool sending) -> bool {
         auto& secret=sending ? write_secret_ : read_secret_; if (!secret) return false;
@@ -40,9 +40,9 @@ namespace nexus::tls {
         (sending ? write_ : read_)=std::move(*layer); secret=std::move(*next); return true;
     }
     ApplicationRecords::ApplicationRecords(ApplicationRecords&& o) noexcept
-        : write_(std::move(o.write_)), read_(std::move(o.read_)), write_limit_(o.write_limit_), read_limit_(o.read_limit_), active_(o.active_), read_closed_(o.read_closed_), write_closed_(o.write_closed_), update_response_(o.update_response_), write_secret_(std::move(o.write_secret_)), read_secret_(std::move(o.read_secret_)), hash_(o.hash_), algorithm_(o.algorithm_), key_size_(o.key_size_), handshake_pending_(std::move(o.handshake_pending_)) { o.active_=false; }
+        : write_(std::move(o.write_)), read_(std::move(o.read_)), write_limit_(o.write_limit_), read_limit_(o.read_limit_), role_(o.role_), active_(o.active_), read_closed_(o.read_closed_), write_closed_(o.write_closed_), update_response_(o.update_response_), write_secret_(std::move(o.write_secret_)), read_secret_(std::move(o.read_secret_)), hash_(o.hash_), algorithm_(o.algorithm_), key_size_(o.key_size_), handshake_pending_(std::move(o.handshake_pending_)) { o.active_=false; }
     auto ApplicationRecords::operator=(ApplicationRecords&& o) noexcept -> ApplicationRecords& {
-        if (this!=&o) { write_=std::move(o.write_); read_=std::move(o.read_); write_limit_=o.write_limit_; read_limit_=o.read_limit_; active_=o.active_; read_closed_=o.read_closed_; write_closed_=o.write_closed_; update_response_=o.update_response_; write_secret_=std::move(o.write_secret_); read_secret_=std::move(o.read_secret_); hash_=o.hash_; algorithm_=o.algorithm_; key_size_=o.key_size_; handshake_pending_=std::move(o.handshake_pending_); o.active_=false; } return *this;
+        if (this!=&o) { write_=std::move(o.write_); read_=std::move(o.read_); write_limit_=o.write_limit_; read_limit_=o.read_limit_; role_=o.role_; active_=o.active_; read_closed_=o.read_closed_; write_closed_=o.write_closed_; update_response_=o.update_response_; write_secret_=std::move(o.write_secret_); read_secret_=std::move(o.read_secret_); hash_=o.hash_; algorithm_=o.algorithm_; key_size_=o.key_size_; handshake_pending_=std::move(o.handshake_pending_); o.active_=false; } return *this;
     }
     auto ApplicationRecords::seal(std::span<std::uint8_t const> data) -> std::expected<crypto::Bytes,RecordError> {
         if (!active_ || write_closed_ || update_response_) return std::unexpected(RecordError::invalid_state);
@@ -61,7 +61,7 @@ namespace nexus::tls {
             // NewSessionTicket: two uint32s, uint8 nonce length and nonce,
             // uint16 ticket and extensions lengths and their contents. Allow
             // one extra record for bytes following a nearly complete message.
-            constexpr std::size_t max_ticket=8+1+255+2+65535+2+65535;
+            constexpr std::size_t max_ticket=8+1+255+2+65535+2+65534;
             constexpr std::size_t max_pending=4+max_ticket+16384-1;
             if (!read_secret_ || plain->content.empty() || plain->content.size()>max_pending-handshake_pending_.size()) { active_=false; return std::unexpected(RecordError::invalid_record); }
             handshake_pending_.insert(handshake_pending_.end(),plain->content.begin(),plain->content.end());
@@ -69,7 +69,7 @@ namespace nexus::tls {
             while (handshake_pending_.size()-offset>=4) {
                 auto type=handshake_pending_[offset];
                 auto size=(std::size_t{handshake_pending_[offset+1]}<<16)|(std::size_t{handshake_pending_[offset+2]}<<8)|handshake_pending_[offset+3];
-                if ((type!=4 && type!=24) || (type==4 && size>max_ticket) || (type==24 && size!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                if ((type!=4 && type!=24) || (type==4 && (role_!=ApplicationRole::client || size>max_ticket)) || (type==24 && size!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
                 if (size>handshake_pending_.size()-offset-4) break;
                 auto body=std::span{handshake_pending_}.subspan(offset+4,size);
                 offset+=4+size;
@@ -210,7 +210,7 @@ namespace nexus::tls {
         auto write=RecordLayer::create(RecordDirection::send,algorithm_,ck->view(),ci->view());
         auto read=RecordLayer::create(RecordDirection::receive,algorithm_,sk->view(),si->view());
         if (!write || !read) return std::unexpected(ClientFlightError::crypto_error);
-        application_.emplace(std::move(*write),std::move(*read),write_limit_,read_limit_,keys_.hash,algorithm_,key_size_,std::move(*client),std::move(*server));
+        application_.emplace(std::move(*write),std::move(*read),write_limit_,read_limit_,keys_.hash,algorithm_,key_size_,std::move(*client),std::move(*server),ApplicationRole::client);
         state_=State::client_finished; return {};
     }
     auto ClientFlight::client_finished() -> std::expected<crypto::Bytes,ClientFlightError> {

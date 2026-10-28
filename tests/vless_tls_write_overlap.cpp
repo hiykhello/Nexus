@@ -18,7 +18,7 @@ auto layer(t::RecordDirection direction,int n) -> t::RecordLayer {
     if (!value) std::abort(); return std::move(*value);
 }
 auto records(int send,int receive) -> t::ApplicationRecords {
-    return {layer(t::RecordDirection::send,send),layer(t::RecordDirection::receive,receive),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(send),secret(receive)};
+    return {layer(t::RecordDirection::send,send),layer(t::RecordDirection::receive,receive),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(send),secret(receive),t::ApplicationRole::client};
 }
 using Socket=io::local_stream_socket;
 struct Fixture {

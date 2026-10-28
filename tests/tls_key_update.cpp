@@ -6,11 +6,11 @@ auto layer(t::RecordDirection direction, int value, std::uint64_t limit=1u << 24
     auto s=secret(value); auto k=t::expand_label(c::Hash::sha256,s.view(),"key",{},16), iv=t::expand_label(c::Hash::sha256,s.view(),"iv",{},12);
     if (!k || !iv) std::abort(); auto l=t::RecordLayer::create(direction,c::Aead::aes_128_gcm,k->view(),iv->view(),limit); if (!l) std::abort(); return std::move(*l);
 }
-auto app(int send, int recv, std::uint64_t limit=1u << 24) -> t::ApplicationRecords {
-    return {layer(t::RecordDirection::send,send,limit),layer(t::RecordDirection::receive,recv),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(send),secret(recv)};
+auto app(int send, int recv, std::uint64_t limit=1u << 24, t::ApplicationRole role=t::ApplicationRole::client) -> t::ApplicationRecords {
+    return {layer(t::RecordDirection::send,send,limit),layer(t::RecordDirection::receive,recv),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(send),secret(recv),role};
 }
 int main() {
-    auto a=app(1,2), b=app(2,1); Bytes data{1,2,3};
+    auto a=app(1,2), b=app(2,1,1u << 24,t::ApplicationRole::server); Bytes data{1,2,3};
     auto update=a.key_update(true); if (!update) return 1; auto event=b.open_event(*update);
     if (!event || event->kind!=t::ApplicationEventKind::key_update_requested || b.seal(data) || b.key_update(true)) return 2;
     auto outgoing=a.seal(data); if (!outgoing) return 3; auto opened=b.open_event(*outgoing); if (!opened || opened->data!=data) return 4;

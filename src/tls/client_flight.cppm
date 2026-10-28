@@ -8,10 +8,12 @@ export namespace nexus::tls {
     enum class ClientFlightError { invalid_state, invalid_hello, invalid_extensions, invalid_certificate, invalid_signature, invalid_finished, crypto_error };
     enum class ApplicationEventKind { data, close_notify, user_canceled, fatal_alert, handshake_fragment, ticket_discarded, key_update, key_update_requested };
     struct ApplicationEvent { ApplicationEventKind kind; crypto::Bytes data; std::uint8_t alert_description=0; };
+    enum class ApplicationRole { client, server };
     // Owns one set of application traffic keys. Limits include the TLSInnerPlaintext type and padding.
     class ApplicationRecords {
         RecordLayer write_, read_;
         std::size_t write_limit_, read_limit_;
+        ApplicationRole role_;
         bool active_=true, read_closed_=false, write_closed_=false, update_response_=false;
         std::optional<Secret> write_secret_, read_secret_;
         crypto::Hash hash_=crypto::Hash::sha256;
@@ -24,9 +26,9 @@ export namespace nexus::tls {
         [[nodiscard]] auto max_write_size() const noexcept -> std::size_t {
             return active_ && !write_closed_ && write_limit_ > 1 ? std::min(write_limit_ - 1, std::size_t{16384}) : 0;
         }
-        ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t write_limit, std::size_t read_limit) noexcept;
+        ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t write_limit, std::size_t read_limit, ApplicationRole role) noexcept;
         ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t write_limit, std::size_t read_limit,
-            crypto::Hash hash, crypto::Aead algorithm, std::size_t key_size, Secret&& write_secret, Secret&& read_secret) noexcept;
+            crypto::Hash hash, crypto::Aead algorithm, std::size_t key_size, Secret&& write_secret, Secret&& read_secret, ApplicationRole role) noexcept;
         ApplicationRecords(ApplicationRecords const&)=delete;
         auto operator=(ApplicationRecords const&) -> ApplicationRecords& = delete;
         ApplicationRecords(ApplicationRecords&& other) noexcept;

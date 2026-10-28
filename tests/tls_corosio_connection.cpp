@@ -15,7 +15,7 @@ auto layer(t::RecordDirection direction,int n,std::uint64_t limit=1u << 24) -> t
     if (!value) std::abort(); return std::move(*value);
 }
 auto records(std::uint64_t limit,std::size_t write_limit=16385) -> t::ApplicationRecords {
-    return {layer(t::RecordDirection::send,1,limit),layer(t::RecordDirection::receive,2),write_limit,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(1),secret(2)};
+    return {layer(t::RecordDirection::send,1,limit),layer(t::RecordDirection::receive,2),write_limit,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(1),secret(2),t::ApplicationRole::client};
 }
 using Connection=t::detail::ApplicationConnection<io::local_stream_socket>;
 struct Fixture {
@@ -60,7 +60,7 @@ auto stream_read(Fixture& f) -> capy::task<> {
     f.read_done=true;
 }
 template<class Backend> auto stream_read_test(Backend backend) -> bool {
-    t::ApplicationIo peer(t::ApplicationRecords(layer(t::RecordDirection::send,2),layer(t::RecordDirection::receive,1),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(2),secret(1)));
+    t::ApplicationIo peer(t::ApplicationRecords(layer(t::RecordDirection::send,2),layer(t::RecordDirection::receive,1),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(2),secret(1),t::ApplicationRole::client));
     Bytes wire;
     for (auto data:{Bytes{1,2,3},Bytes{4,5,6}}) {
         if (!peer.send(data)) return false; auto pending=peer.pending_output(); wire.insert(wire.end(),pending.begin(),pending.end()); if (!peer.written(pending.size())) return false;
@@ -77,7 +77,7 @@ template<class Backend> auto stream_test(Backend backend) -> bool {
     if (!f.context.stopped() || !f.connection.idle() || !f.write_done || f.write_failed) return false;
     std::array<std::uint8_t,1024> wire{}; auto n=::recv(f.b.native_handle(),wire.data(),wire.size(),MSG_DONTWAIT);
     if (n<=0) return false;
-    t::ApplicationIo peer(t::ApplicationRecords(layer(t::RecordDirection::send,2),layer(t::RecordDirection::receive,1),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(2),secret(1)));
+    t::ApplicationIo peer(t::ApplicationRecords(layer(t::RecordDirection::send,2),layer(t::RecordDirection::receive,1),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(2),secret(1),t::ApplicationRole::client));
     Bytes data; std::vector<std::size_t> sizes; int updates=0; std::size_t offset=0;
     while (offset<static_cast<std::size_t>(n)) {
         auto result=peer.feed(std::span{wire}.subspan(offset,static_cast<std::size_t>(n)-offset));
@@ -104,7 +104,7 @@ template<class Backend> auto budget_test(Backend backend) -> bool {
     if (!f.context.stopped() || !f.connection.idle() || !f.write_done || !f.fatal) return false;
     std::array<std::uint8_t,1024> wire{}; auto n=::recv(f.b.native_handle(),wire.data(),wire.size(),MSG_DONTWAIT);
     if (n<=0) return false;
-    t::ApplicationIo peer(t::ApplicationRecords(layer(t::RecordDirection::send,2),layer(t::RecordDirection::receive,1),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(2),secret(1)));
+    t::ApplicationIo peer(t::ApplicationRecords(layer(t::RecordDirection::send,2),layer(t::RecordDirection::receive,1),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(2),secret(1),t::ApplicationRole::client));
     std::vector<t::ApplicationEventKind> events; std::size_t offset=0;
     while (offset<static_cast<std::size_t>(n)) {
         auto result=peer.feed(std::span{wire}.subspan(offset,static_cast<std::size_t>(n)-offset));

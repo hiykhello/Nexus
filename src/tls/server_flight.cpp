@@ -63,7 +63,7 @@ namespace nexus::tls {
         auto read=RecordLayer::create(RecordDirection::receive,algorithm,ck->view(),ci->view());
         auto write=RecordLayer::create(RecordDirection::send,algorithm,sk->view(),si->view());
         if (!read || !write) return std::unexpected(ServerFlightError::crypto_error);
-        ApplicationRecords application(std::move(*write),std::move(*read),16385,16385,keys.hash,algorithm,key_size,std::move(*st),std::move(*ct));
+        ApplicationRecords application(std::move(*write),std::move(*read),16385,16385,keys.hash,algorithm,key_size,std::move(*st),std::move(*ct),ApplicationRole::server);
         crypto::Bytes payload; for (auto const* m:{&extensions,&*certificate,&*signature,&*finished}) payload.insert(payload.end(),m->begin(),m->end());
         std::vector<crypto::Bytes> records;
         for (std::size_t pos=0;pos<payload.size();) {

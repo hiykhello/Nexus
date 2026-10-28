@@ -65,6 +65,9 @@ int main(int argc,char** argv) {
     auto send=t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,appkey->view(),iv->view());
     c::Bytes data{'o','k'}; auto encrypted=send->seal(t::ContentType::application_data,data); auto opened=app->open(*encrypted);
     if (!opened || *opened!=data) return 28;
+    c::Bytes ticket{4,0,0,14,0,0,0,1,0,0,0,2,0,0,1,7,0,0};
+    auto client_ticket=send->seal(t::ContentType::handshake,ticket);
+    if (!client_ticket || app->open_event(*client_ticket) || app->seal(data)) return 61;
     auto c2=credential(); auto timeout=t::ServerHandshakeIo::create(std::move(*c2),1,5); if (!timeout || timeout->tick(5).error()!=t::ServerHandshakeIoError::timeout || timeout->tick(6)) return 29;
     auto c3=credential(); auto cancel=t::ServerHandshakeIo::create(std::move(*c3),1,5); if (!cancel || !cancel->cancel() || cancel->feed(input,2)) return 30;
     auto c4=credential(); auto eof=t::ServerHandshakeIo::create(std::move(*c4),1,5); if (!eof || eof->finish_input(2).error()!=t::ServerHandshakeIoError::protocol_error) return 31;

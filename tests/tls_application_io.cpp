@@ -7,7 +7,7 @@ auto layer(t::RecordDirection direction, int value) -> t::RecordLayer {
     if (!k || !iv) std::abort(); auto l=t::RecordLayer::create(direction,c::Aead::aes_128_gcm,k->view(),iv->view()); if (!l) std::abort(); return std::move(*l);
 }
 auto app(int send,int recv) -> t::ApplicationIo {
-    return t::ApplicationIo(t::ApplicationRecords(layer(t::RecordDirection::send,send),layer(t::RecordDirection::receive,recv),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(send),secret(recv)));
+    return t::ApplicationIo(t::ApplicationRecords(layer(t::RecordDirection::send,send),layer(t::RecordDirection::receive,recv),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(send),secret(recv),t::ApplicationRole::client));
 }
 auto deliver(t::ApplicationIo& sender,t::ApplicationIo& receiver) -> std::optional<t::ApplicationEvent> {
     std::optional<t::ApplicationEvent> event;
