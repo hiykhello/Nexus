@@ -126,7 +126,8 @@ routing {{ default-outbound "edge"; }}
                     if exact(fresh, 2) != b'\x05\x00':
                         raise RuntimeError('fresh SOCKS greeting failed')
                     released = False
-                    fresh.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x00\x50')
+                    fresh.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x00\x50ping')
+                    fresh.shutdown(socket.SHUT_WR)
                     if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'x':
                         raise RuntimeError('fresh resolver did not enter gate')
                     os.write(gate_w, b'x')
@@ -147,15 +148,24 @@ routing {{ default-outbound "edge"; }}
                                 tls.sendall(b'\x00\x00')
                                 if exact(fresh, 10)[:2] != b'\x05\x00':
                                     raise RuntimeError('fresh VLESS tunnel failed')
-                                fresh.sendall(b'ping')
                                 if exact(tls, 4) != b'ping':
-                                    raise RuntimeError('fresh VLESS upload failed')
+                                    raise RuntimeError('pipelined VLESS upload lost during DNS')
                                 tls.sendall(b'pong')
                                 if exact(fresh, 4) != b'pong':
                                     raise RuntimeError('fresh VLESS download failed')
+                                if tls.recv(1) != b'':
+                                    raise RuntimeError('VLESS half-close did not reach upstream')
                         else:
-                            if exact(fresh, 10)[:2] != b'\x05\x00' or not upstream.recv(1024):
+                            if exact(fresh, 10)[:2] != b'\x05\x00':
                                 raise RuntimeError('fresh Shadowsocks request failed')
+                            encrypted = bytearray()
+                            while True:
+                                part = upstream.recv(2048)
+                                if not part:
+                                    break
+                                encrypted.extend(part)
+                            if not encrypted:
+                                raise RuntimeError('Shadowsocks encrypted request missing before half-close')
             else:
                 if client.recv(1):
                     raise RuntimeError('canceled request returned unexpected data')

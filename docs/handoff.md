@@ -4,6 +4,7 @@
 
 ## 上一步
 
+- 系统 DNS 挂起时客户端预发数据并半关闭：VLESS 隧道收到完整上传、上游观察到 TLS 半关闭且下行成功；SS-2022 上游收到加密字节并观察到 TCP 半关闭，未在此解码验证明文。epoll/io_uring 单、双 worker 通过。
 - VLESS/SS-2022 取消挂起系统 resolver 并等待其成功返回后，同一进程可建立新的隧道：VLESS 验证认证和双向传输，SS-2022 验证加密请求；epoll/io_uring 单、双 worker 通过。
 - VLESS/SS-2022 系统 resolver 挂起时复位客户端，确认会话 socket 回收；解除阻塞并确认解析成功返回后，未拨打返回的地址，独立会话仍可进展。超时后停止仍等待阻塞 resolver 排空；epoll/io_uring 单、双 worker 均通过。
 - HTTP/2 TLS 驱动在握手余量超过 4096 字节时立即失败并使已认领会话失效，避免先消费 HTTP/2 输出；超限缓冲释放及无网络输出在 epoll/io_uring 验证。
