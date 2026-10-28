@@ -31,10 +31,7 @@ export namespace nexus::http2 {
         TlsServerConnection(TlsServerConnection const&)=delete;
         auto operator=(TlsServerConnection const&) -> TlsServerConnection& = delete;
         ~TlsServerConnection() {
-            if (input_reserved_) {
-                if (!input_.empty() || resume_pending_) session_.fail_transport();
-                else session_.release_input();
-            }
+            if (!session_abandoned_) session_.fail_transport(input_reserved_);
         }
         auto cancel() noexcept -> void {
             failed_=true;

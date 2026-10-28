@@ -107,6 +107,13 @@ template<class Backend> auto exercise(Backend backend,bool timeout) -> bool {
 auto read_step(Connection& connection,bool& done,std::optional<h::TlsServerError>& error) -> capy::task<> {
     auto result=co_await connection.step(); if (!result) error=result.error(); done=true;
 }
+template<class Backend> auto drop_idle_driver(Backend backend) -> bool {
+    io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
+    auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed}); if (!session) return false;
+    { Connection connection(a,**session,records(),c::Bytes{}); }
+    std::array<std::byte,64> sink{}; auto output=(**session).output(sink);
+    return !output && output.error().kind==h::ServerErrorKind::failed && !(**session).input_memory_charge();
+}
 template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
     h::ServerEvents events{nullptr,headers,data,end,closed}; h::ServerLimits limits{8,16,4096,1024,4096};
     auto reference=h::ServerSession::create(limits,events); if (!reference) return false;
@@ -205,9 +212,9 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
 }
 int main() {
     for (int i=0;i<5;++i) {
-        if (!partial_failure(io::epoll) || !truncated_input(io::epoll) || !exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
+        if (!drop_idle_driver(io::epoll) || !partial_failure(io::epoll) || !truncated_input(io::epoll) || !exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!partial_failure(io::uring) || !truncated_input(io::uring) || !exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
+        if (!drop_idle_driver(io::uring) || !partial_failure(io::uring) || !truncated_input(io::uring) || !exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
 #endif
     }
     std::cout << "HTTP/2 TLS partial output, cancellation, deadlines and input budgets passed\n";
