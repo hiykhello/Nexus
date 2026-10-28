@@ -72,6 +72,8 @@ export namespace nexus::http2 {
             -> nex::capy::task<std::expected<TlsServerStep,TlsServerError>> {
             if (active_ || failed_ || closed_) co_return std::unexpected(TlsServerError::invalid_state);
             ready_to_close_=false;
+            if (!session_.reserve_scratch(16384)) { cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
+            struct ScratchReservation { ServerSession& session; ~ScratchReservation() { session.release_scratch(); } } scratch{session_};
             active_=true;
             if (tls_.pending_output()) {
                 auto result=co_await tls_.flush(deadline); active_=false; release_control();

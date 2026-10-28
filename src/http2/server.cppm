@@ -38,7 +38,7 @@ export namespace nexus::http2 {
         std::size_t response_header_bytes = 8192;
         // Shared cap for nghttp2 live allocations, retained response bodies,
         // and logical charges for stream objects, request headers, temporary response fields
-        // and the TLS driver's input, ciphertext and output reservations.
+        // and the TLS driver's input, ciphertext, output and step scratch reservations.
         // Actual header capacities, other TLS buffers, transport, allocator
         // overhead and transient copies are excluded; this is not a complete budget.
         std::size_t shared_memory_bytes = std::numeric_limits<std::size_t>::max();
@@ -54,7 +54,7 @@ export namespace nexus::http2 {
             if (size>std::numeric_limits<std::size_t>::max()-sizeof(Allocation)) return nullptr;
             auto total=size+sizeof(Allocation);
             if (total>self.library_limit_-self.library_used_ ||
-                total>self.shared_limit_-self.response_reserved_-self.library_used_-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_) return nullptr;
+                total>self.shared_limit_-self.response_reserved_-self.library_used_-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_-self.scratch_reserved_) return nullptr;
             auto p=static_cast<Allocation*>(std::malloc(total));
             if (!p) return nullptr;
             p->size=total; self.library_used_+=total; self.library_peak_=std::max(self.library_peak_,self.library_used_);
@@ -79,7 +79,7 @@ export namespace nexus::http2 {
             if (size>std::numeric_limits<std::size_t>::max()-sizeof(Allocation)) return nullptr;
             auto p=static_cast<Allocation*>(ptr)-1; auto old=p->size; auto total=size+sizeof(Allocation);
             if (total>self.library_limit_-(self.library_used_-old) ||
-                total>self.shared_limit_-self.response_reserved_-(self.library_used_-old)-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_) return nullptr;
+                total>self.shared_limit_-self.response_reserved_-(self.library_used_-old)-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_-self.scratch_reserved_) return nullptr;
             auto replacement=static_cast<Allocation*>(std::realloc(p,total));
             if (!replacement) return nullptr;
             replacement->size=total; self.library_used_=self.library_used_-old+total;
@@ -101,7 +101,7 @@ export namespace nexus::http2 {
         std::size_t total_response_limit_;
         std::size_t response_header_fields_, response_header_bytes_;
         std::size_t input_window_;
-        std::size_t response_reserved_ = 0, stream_reserved_ = 0, fields_reserved_ = 0, input_reserved_ = 0, output_reserved_ = 0, ciphertext_reserved_ = 0;
+        std::size_t response_reserved_ = 0, stream_reserved_ = 0, fields_reserved_ = 0, input_reserved_ = 0, output_reserved_ = 0, ciphertext_reserved_ = 0, scratch_reserved_ = 0;
     public:
         auto claim_transport() noexcept -> bool { if (active_ || failed_ || transport_claimed_) return false; return transport_claimed_=true; }
         // One transport owner serializes and releases the allowance after processing borrowed input.
@@ -118,6 +118,10 @@ export namespace nexus::http2 {
             if (active_ || failed_ || !size || ciphertext_reserved_ || size>shared_limit_-shared_memory_used()) return false;
             ciphertext_reserved_=size; return true; }
         void release_ciphertext() noexcept { ciphertext_reserved_=0; }
+        auto reserve_scratch(std::size_t size) noexcept -> bool {
+            if (active_ || failed_ || !size || scratch_reserved_ || size>shared_limit_-shared_memory_used()) return false;
+            scratch_reserved_=size; return true; }
+        void release_scratch() noexcept { scratch_reserved_=0; }
         void fail_transport(bool release=true) noexcept { if (release) input_reserved_=0; failed_=true; ++revision_; }
     private:
         struct FieldsReservation { ServerSession& owner;
@@ -172,7 +176,7 @@ export namespace nexus::http2 {
             }
             value={static_cast<std::uint8_t>('0'+status/100),static_cast<std::uint8_t>('0'+status/10%10),static_cast<std::uint8_t>('0'+status%10)};
             name={':','s','t','a','t','u','s'};
-            auto available=shared_limit_-response_reserved_-library_used_-stream_reserved_-headers_.memory_charge()-input_reserved_-output_reserved_-ciphertext_reserved_;
+            auto available=shared_limit_-response_reserved_-library_used_-stream_reserved_-headers_.memory_charge()-input_reserved_-output_reserved_-ciphertext_reserved_-scratch_reserved_;
             if (headers.size()>=std::numeric_limits<std::size_t>::max()/sizeof(h2::nghttp2_nv) ||
                 (headers.size()+1)*sizeof(h2::nghttp2_nv)>available)
                 return std::unexpected(ServerError{ServerErrorKind::budget_exceeded});
@@ -192,7 +196,7 @@ export namespace nexus::http2 {
             auto& self = *static_cast<ServerSession*>(p);
             if (frame->headers.cat == h2::NGHTTP2_HCAT_REQUEST) {
                 if (self.streams_.size() >= self.max_streams_ ||
-                    sizeof(Stream)>self.shared_limit_-self.response_reserved_-self.library_used_-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_) {
+                    sizeof(Stream)>self.shared_limit_-self.response_reserved_-self.library_used_-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_-self.scratch_reserved_) {
                     if (h2::nghttp2_submit_rst_stream(session, 0, frame->hd.stream_id, h2::NGHTTP2_REFUSED_STREAM) != 0)
                         return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
                     return h2::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
@@ -212,7 +216,7 @@ export namespace nexus::http2 {
                            std::uint8_t const* value, std::size_t v,
                            std::uint8_t, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
-            auto available=self.shared_limit_-self.response_reserved_-self.library_used_-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_;
+            auto available=self.shared_limit_-self.response_reserved_-self.library_used_-self.stream_reserved_-self.headers_.memory_charge()-self.fields_reserved_-self.input_reserved_-self.output_reserved_-self.ciphertext_reserved_-self.scratch_reserved_;
             if (sizeof(Header)>available || n>available-sizeof(Header) || v>available-sizeof(Header)-n) {
                 self.headers_.discard();
                 return h2::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
@@ -402,7 +406,7 @@ export namespace nexus::http2 {
             FieldsReservation reservation{*this};
             auto fields=response_fields(status,stream->head_request,body.size(),headers,value,name);
             if (!fields) return std::unexpected(fields.error());
-            if (body.size()>shared_limit_-response_reserved_-library_used_-stream_reserved_-headers_.memory_charge()-fields_reserved_-input_reserved_-output_reserved_-ciphertext_reserved_)
+            if (body.size()>shared_limit_-response_reserved_-library_used_-stream_reserved_-headers_.memory_charge()-fields_reserved_-input_reserved_-output_reserved_-ciphertext_reserved_-scratch_reserved_)
                 return std::unexpected(ServerError{ServerErrorKind::budget_exceeded});
             if (!body.empty()) {
                 try { stream->response=std::make_unique_for_overwrite<std::byte[]>(body.size()); }
@@ -457,7 +461,8 @@ export namespace nexus::http2 {
         [[nodiscard]] auto input_memory_charge() const noexcept -> std::size_t { return input_reserved_; }
         [[nodiscard]] auto output_memory_charge() const noexcept -> std::size_t { return output_reserved_; }
         [[nodiscard]] auto ciphertext_memory_charge() const noexcept -> std::size_t { return ciphertext_reserved_; }
-        [[nodiscard]] auto shared_memory_used() const noexcept -> std::size_t { return library_used_ + response_reserved_ + stream_reserved_ + headers_.memory_charge() + fields_reserved_ + input_reserved_ + output_reserved_ + ciphertext_reserved_; }
+        [[nodiscard]] auto scratch_memory_charge() const noexcept -> std::size_t { return scratch_reserved_; }
+        [[nodiscard]] auto shared_memory_used() const noexcept -> std::size_t { return library_used_ + response_reserved_ + stream_reserved_ + headers_.memory_charge() + fields_reserved_ + input_reserved_ + output_reserved_ + ciphertext_reserved_ + scratch_reserved_; }
         [[nodiscard]] auto library_memory_peak() const noexcept -> std::size_t { return library_peak_; }
         [[nodiscard]] auto revision() const noexcept -> std::uint64_t { return revision_; }
         [[nodiscard]] auto paused_stream() const noexcept -> std::int32_t { return paused_stream_; }
