@@ -20,6 +20,7 @@ namespace nexus::tls {
         -> std::expected<std::vector<HandshakeMessage>, HandshakeError> {
         if (failed_) return std::unexpected(HandshakeError::invalid_state);
         if (input.size() > 16384) return fail(HandshakeError::input_too_large);
+        try {
         std::vector<HandshakeMessage> result;
         std::size_t offset = 0;
         while (offset < input.size()) {
@@ -51,6 +52,7 @@ namespace nexus::tls {
             expected_ = 0;
         }
         return result;
+        } catch (...) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); expected_=0; throw; }
     }
     auto HandshakeDecoder::finish() -> std::expected<void, HandshakeError> {
         if (failed_) return std::unexpected(HandshakeError::invalid_state);

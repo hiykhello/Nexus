@@ -1,5 +1,14 @@
 import std;
 import nexus.tls.handshake;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls;
 int main() {
     std::vector<std::uint8_t> hello{1,0,0,3,'a','b','c'}, cert{11,0,0,0}, done{20,0,0,1,7};
@@ -24,5 +33,19 @@ int main() {
         auto a=d->feed(std::span{hello}.first(split)); auto b=d->feed(std::span{hello}.subspan(split));
         if (!a || !b || a->size()+b->size()!=1 || !d->finish()) return 16;
     }
+    std::vector<std::uint8_t> multiple{1,0,0,1,42,11,0,0x20,0}; multiple.resize(8201,7);
+    int failures=0;
+    for (int index=0;index<12;++index) {
+        auto d=t::HandshakeDecoder::create(8192); if (!d) return 17;
+        bool threw=false; fail_after=index;
+        try { (void)d->feed(multiple); } catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) {
+            ++failures;
+            if (!d->failed() || d->pending_bytes()!=0 || d->feed({}).error()!=t::HandshakeError::invalid_state ||
+                d->finish().error()!=t::HandshakeError::invalid_state) return 18;
+        }
+    }
+    if (failures<3) return 19;
     std::cout << "TLS handshake framing boundaries passed\n";
 }
