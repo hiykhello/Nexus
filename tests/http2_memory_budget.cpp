@@ -89,23 +89,25 @@ int main() {
         !(**fragmented).receive(settings)) return 102;
     auto prefix=(**fragmented).receive(std::span{request}.first(10));
     if (!prefix || *prefix!=10 || !(**fragmented).header_memory_charge() ||
-        (**fragmented).shared_memory_used()!=(**fragmented).library_memory_used()+(**fragmented).header_memory_charge()) return 103;
+        (**fragmented).shared_memory_used()!=(**fragmented).library_memory_used()+(**fragmented).stream_memory_charge()+(**fragmented).header_memory_charge()) return 103;
     auto suffix=(**fragmented).receive(std::span{request}.subspan(10));
     if (!suffix || *suffix!=request.size()-10 || (**fragmented).header_memory_charge()!=0 ||
-        (**fragmented).shared_memory_used()!=(**fragmented).library_memory_used()) return 104;
+        (**fragmented).shared_memory_used()!=(**fragmented).library_memory_used()+(**fragmented).stream_memory_charge() || !(**fragmented).stream_memory_charge()) return 104;
     fragmented->reset();
     limits.shared_memory_bytes=std::numeric_limits<std::size_t>::max();
     limits.library_memory_bytes=4*1024*1024;
     auto measurement=nh::ServerSession::create(limits,budget_events);
     if (!measurement || !feed_request(**measurement)) return 82;
     auto request_peak=(**measurement).library_memory_peak();
+    auto stream_charge=(**measurement).stream_memory_charge();
+    if (!stream_charge) return 113;
     measurement->reset();
     // Find a cap where library allocations fit, but the request-header
     // charge exhausts the shared budget. The stream is reset and a later
     // request can still be accepted after the reservation is released.
     bool header_limit_recovered=false;
     for (std::size_t extra=0; extra<=1024 && !header_limit_recovered; ++extra) {
-        limits.shared_memory_bytes=request_peak+extra;
+        limits.shared_memory_bytes=request_peak+stream_charge+extra;
         budget_observed.headers=0;
         auto candidate=nh::ServerSession::create(limits,budget_events);
         if (!candidate || !feed_request(**candidate) || budget_observed.headers) continue;
@@ -194,6 +196,7 @@ int main() {
     if (!shared || !feed_request(**shared)) return 85;
     auto available=limits.shared_memory_bytes-(**shared).shared_memory_used();
     std::vector<std::byte> too_big(available+1);
+    if (too_big.size()>limits.shared_memory_bytes-(**shared).library_memory_used() || !(**shared).stream_memory_charge()) return 115;
     auto rejected=(**shared).respond_body(1,200,too_big);
     if (rejected || rejected.error().kind!=nh::ServerErrorKind::budget_exceeded ||
         (**shared).response_memory_used()!=0 || (**shared).shared_memory_used()>limits.shared_memory_bytes) return 86;
@@ -204,7 +207,7 @@ int main() {
     limits.shared_memory_bytes=request_peak+4096;
     auto success=nh::ServerSession::create(limits,budget_events);
     if (!success || !feed_request(**success) || !(**success).respond_body(1,200,body) ||
-        (**success).shared_memory_used()!=(**success).library_memory_used()+body.size() ||
+        (**success).shared_memory_used()!=(**success).library_memory_used()+(**success).stream_memory_charge()+body.size() ||
         (**success).shared_memory_used()>limits.shared_memory_bytes) return 88;
     for (;;) {
         auto n=(**success).output(sink);
@@ -221,6 +224,7 @@ int main() {
     second_request[8]=std::byte{3};
     auto received_second=(**reused).receive(second_request);
     if (!received_second || *received_second!=second_request.size()) return 94;
+    if ((**reused).stream_memory_charge()!=2*stream_charge) return 114;
     auto remaining=limits.shared_memory_bytes-(**reused).shared_memory_used();
     std::vector<std::byte> larger_body(remaining/2+1);
     if (!(**reused).respond_body(1,200,larger_body) || (**reused).response_memory_used()!=larger_body.size()) return 94;
@@ -229,7 +233,7 @@ int main() {
     constexpr std::array<std::byte,13> reset{std::byte{0},std::byte{0},std::byte{4},std::byte{3},std::byte{0},
         std::byte{0},std::byte{0},std::byte{0},std::byte{1},std::byte{0},std::byte{0},std::byte{0},std::byte{8}};
     auto received_reset=(**reused).receive(reset);
-    if (!received_reset || *received_reset!=reset.size() || (**reused).response_memory_used()!=0 ||
+    if (!received_reset || *received_reset!=reset.size() || (**reused).response_memory_used()!=0 || (**reused).stream_memory_charge()!=stream_charge ||
         !(**reused).respond_body(3,200,larger_body) || (**reused).response_memory_used()!=larger_body.size() ||
         (**reused).shared_memory_used()>limits.shared_memory_bytes) return 95;
     for (;;) {
