@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- 实际代理 UDP DNS 返回两个候选，首个目标监听队列饱和；通过 `/proc` 确认代理 socket 处于 SYN_SENT，再验证停止或 10 秒超时均不连接第二候选且首个连接未留在队列。epoll/io_uring 单、双 worker 通过。
+
 - 实际代理系统 resolver 和 UDP DNS 的候选数边界已在 epoll/io_uring、单/双 worker 测试：64 项可连接，65 项拒绝且没有拨号，随后新会话可连接；既有系统地址回退测试通过。
 
 - 实际代理挂起拨号的停止、10 秒期限及服务继续响应回归现已在 epoll 和 io_uring 的单/双 worker 通过；新增 `/proc` socket 描述符检查，确认入站和拨号 socket 回收。epoll 的 timerfd 可延迟创建，因此按 socket 而非总 FD 数比较。
