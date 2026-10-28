@@ -27,4 +27,10 @@ if is_plat("linux") then
         add_files("../tests/corosio_endpoint.cpp")
         add_deps("nexus-thirdparty-capy", "nexus-thirdparty-corosio")
 
+    target("nexus-capy-quitter-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("../tests/capy_quitter.cpp")
+        add_deps("nexus-thirdparty-capy", "nexus-thirdparty-corosio")
+
 end
