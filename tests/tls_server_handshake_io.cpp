@@ -207,10 +207,12 @@ int main(int argc,char** argv) {
         auto retry_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
         auto retained=credential(); auto retrying=t::ServerHandshakeIo::create(std::move(*retained),1,50,"h2",t::ServerCredential::max_certificate_list_size,retry_budget); if (!retrying) return 36;
         for (auto byte:first_record) { auto result=retrying->feed(std::span{&byte,1},2); if (!result || result->consumed!=1) return 37; }
-        if (retrying->pending_output().empty() || retry_budget->reserved()!=retrying->pending_output().size() || retrying->feed(first_record,2)->consumed!=0) return 38;
+        if (retrying->pending_output().size()<5) return 38;
+        auto retained_charge=initial_wire->size()+retrying->pending_output().size()-5;
+        if (retry_budget->reserved()!=retrying->pending_output().size()+retained_charge || retrying->feed(first_record,2)->consumed!=0) return 38;
         std::optional<nexus::memory::Budget::Reservation> retry_blocker;
         if (scenario==5) {
-            retry_blocker=nexus::memory::Budget::reserve(retry_budget,retry_budget->limit()-t::ServerHandshakeIo::hello_input_charge+1);
+            retry_blocker=nexus::memory::Budget::reserve(retry_budget,retry_budget->limit()-t::ServerHandshakeIo::hello_input_charge+1-retained_charge);
             if (!retry_blocker) return 88;
         }
         c::Bytes retry_record;
@@ -222,7 +224,7 @@ int main(int argc,char** argv) {
             }
         }
         if (scenario==5) { if (!retrying->pending_output().empty() || retry_budget->reserved()!=retry_blocker->size()) return 89; continue; }
-        if (retry_budget->reserved()!=t::ServerHandshakeIo::hello_input_charge) return 79;
+        if (retry_budget->reserved()!=t::ServerHandshakeIo::hello_input_charge+retained_charge) return 79;
         if (scenario==3) { if (retrying->tick(50).error()!=t::ServerHandshakeIoError::timeout) return 40; continue; }
         if (scenario==4) { if (!retrying->cancel() || retrying->feed(first_record,4)) return 41; continue; }
         auto hrr=t::ServerHello::parse(std::span{retry_record}.subspan(9)); if (!hrr || !hrr->is_retry()) return 42;

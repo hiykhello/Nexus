@@ -12,6 +12,7 @@ export namespace nexus::tls {
         enum class State { hello, retry_output, retry_hello, output, finished, complete, failed } state_=State::hello;
         std::shared_ptr<memory::Budget> budget_;
         std::optional<memory::Budget::Reservation> hello_reservation_, flight_reservation_, hello_input_reservation_, finished_input_reservation_;
+        std::optional<memory::Budget::Reservation> encoded_hello_reservation_, first_hello_reservation_, retry_hello_reservation_;
         std::optional<ServerCredential> credential_;
         std::optional<ClientHelloStream> hello_;
         std::optional<ServerFlight> flight_;
@@ -25,7 +26,9 @@ export namespace nexus::tls {
         auto fail(ServerHandshakeIoError error) -> std::unexpected<ServerHandshakeIoError>;
         auto check_time(std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;
     public:
-        static constexpr std::size_t hello_input_charge=16389+65539;
+        static constexpr std::size_t hello_reassembly_charge=16389+65539;
+        static constexpr std::size_t hello_encoded_charge=65539;
+        static constexpr std::size_t hello_input_charge=hello_reassembly_charge+hello_encoded_charge;
         static constexpr std::size_t finished_input_charge=16645;
         ServerHandshakeIo(ServerHandshakeIo const&)=delete;
         auto operator=(ServerHandshakeIo const&) -> ServerHandshakeIo& = delete;
