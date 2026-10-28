@@ -167,6 +167,9 @@ template<class Backend> auto exercise(Backend backend) -> bool {
     Fixture f(backend); if (io::connect_pair(f.a,f.b)) return false;
     std::array<char,4096> filler{};
     for (;;) { auto n=::send(f.a.native_handle(),filler.data(),filler.size(),MSG_DONTWAIT|MSG_NOSIGNAL); if (n>0 || (n<0 && errno==EINTR)) continue; if (n<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) break; return false; }
+    // Leave an incomplete encrypted record in the reader while the writer is parked.
+    auto peer=layer(t::RecordDirection::send,2); auto wire=peer.seal(t::ContentType::application_data,Bytes(4096,42));
+    if (!wire || ::send(f.b.native_handle(),wire->data(),1024,MSG_NOSIGNAL)!=1024) return false;
     auto ex=f.context.get_executor(); capy::run_async(ex)(reader(f)); capy::run_async(ex)(writer(f));
     f.context.restart(); (void)f.context.run_for(20ms);
     if (f.read_done || f.write_done || f.connection.idle() || !f.connection.pending_output()) return false;

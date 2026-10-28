@@ -6,7 +6,9 @@ namespace nexus::tls {
     auto ApplicationIo::operator=(ApplicationIo&& o) noexcept -> ApplicationIo& {
         if (this!=&o) { records_=std::move(o.records_); input_=std::move(o.input_); output_=std::move(o.output_); offset_=o.offset_; failed_=o.failed_; peer_closed_=o.peer_closed_; input_finished_=o.input_finished_; response_pending_=o.response_pending_; o.cancel(); } return *this;
     }
-    auto ApplicationIo::cancel() noexcept -> void { failed_=true; records_.reset(); output_.clear(); offset_=0; }
+    auto ApplicationIo::cancel() noexcept -> void {
+        failed_=true; records_.reset(); input_=RecordStream{}; crypto::Bytes{}.swap(output_); offset_=0;
+    }
     auto ApplicationIo::fail(ApplicationIoError error) -> std::unexpected<ApplicationIoError> { cancel(); return std::unexpected(error); }
     auto ApplicationIo::enqueue(std::expected<crypto::Bytes,RecordError>&& result) -> std::expected<void,ApplicationIoError> {
         if (!result) {
