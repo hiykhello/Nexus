@@ -251,6 +251,64 @@ routing {{ default-outbound "edge"; }}
             process.stderr.close(); assert not thread.is_alive()
 
 
+def pending_bootstrap(root, workers, shadowsocks):
+    with socket.socket() as listener, socket.socket() as reservation, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
+        listener.bind(('127.0.0.1', 0)); listener.listen(4); listener.settimeout(.5)
+        reservation.bind(('127.0.0.1', 0)); port=reservation.getsockname()[1]; reservation.close()
+        dns.bind(('127.0.0.1', 0)); dns.settimeout(3)
+        outbound=(f'outbound "edge" type="shadowsocks" {{ bootstrap-resolver "boot"; server host="edge.test" port={listener.getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root / "ss.key"}"; }}' if shadowsocks else
+                  f'outbound "edge" type="vless" {{ bootstrap-resolver "boot"; server host="edge.test" port={listener.getsockname()[1]}; authentication {{ uuid-file "{root / "user.uuid"}"; }}; tls {{ server-name "localhost"; ca-file "{root / "cert.pem"}"; verify #true; }}; }}')
+        config=root/'bootstrap-pending.kdl'
+        config.write_text(f'''schema-version 1
+role "client"
+workers {workers}
+inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
+outbound "direct" type="direct"
+dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
+{outbound}
+routing {{ default-outbound "edge"; }}
+''')
+        process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        clients=[]
+        try:
+            queries=[]
+            for _ in range(3):
+                deadline=time.monotonic()+5
+                while True:
+                    if process.poll() is not None: raise AssertionError(process.stderr.read().decode())
+                    try: client=socket.create_connection(('127.0.0.1',port),timeout=.2); break
+                    except OSError:
+                        if time.monotonic()>=deadline: raise
+                        time.sleep(.02)
+                clients.append(client); client.settimeout(3)
+                client.sendall(b'\x05\x01\x00'); assert exact(client,2)==b'\x05\x00'
+                client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x04\xd2')
+                queries.append(dns.recvfrom(4096))
+            clients[0].setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); clients[0].close()
+            time.sleep(.2)
+            packet,peer=queries[0]
+            dns.sendto(packet[:2]+b'\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00'+packet[12:]+b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04\x7f\x00\x00\x01',peer)
+            try: listener.accept()[0].close()
+            except TimeoutError: pass
+            else: raise AssertionError('late DNS response started a canceled tunnel')
+            packet,peer=queries[1]
+            dns.sendto(packet[:2]+b'\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00'+packet[12:]+b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04\x7f\x00\x00\x01',peer)
+            listener.settimeout(3)
+            with listener.accept()[0] as upstream:
+                upstream.settimeout(3); assert upstream.recv(1024)
+                process.terminate(); process.wait(timeout=5)
+                while upstream.recv(1024): pass
+            for client in clients[1:]:
+                client.settimeout(2)
+                while client.recv(1024): pass
+            assert process.returncode==0
+        finally:
+            if process.poll() is None: process.terminate(); process.wait(timeout=5)
+            for client in clients: client.close()
+            if process.returncode and sys.exc_info()[0] is None: raise AssertionError(process.stderr.read().decode())
+            process.stderr.close()
+
+
 with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory:
     root=pathlib.Path(directory)
     (root/'user.uuid').write_text('00010203-0405-0607-0809-0a0b0c0d0e0f\n'); (root/'user.uuid').chmod(0o600)
@@ -262,5 +320,6 @@ with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory
         scenario(root,workers,shadowsocks,timeout=True)
         if not shadowsocks: scenario(root,workers,False,retry=True,delayed_retry=True)
         overlapping_handshakes(root,workers,shadowsocks)
+        pending_bootstrap(root,workers,shadowsocks)
         if shadowsocks: overlapping_handshakes(root,workers,True,established=True)
 print('tunnel candidates: reset, retry, deadline and overlapping stop passed')
