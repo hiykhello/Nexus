@@ -15,6 +15,12 @@ int main() {
     Observed budget_observed;
     nh::ServerEvents budget_events{&budget_observed, on_headers, on_data, on_end, on_closed};
     nh::ServerLimits limits{8, 4, 128, 64, 16};
+    limits.shared_memory_bytes=0;
+    if (nh::ServerSession::create(limits, budget_events)) return 91;
+    limits.shared_memory_bytes=1;
+    auto shared_too_small=nh::ServerSession::create(limits, budget_events);
+    if (shared_too_small || shared_too_small.error().library_code!=h2::NGHTTP2_ERR_NOMEM) return 92;
+    limits.shared_memory_bytes=std::numeric_limits<std::size_t>::max();
     limits.library_memory_bytes=0;
     if (nh::ServerSession::create(limits, budget_events)) return 70;
     limits.library_memory_bytes=1;
@@ -98,5 +104,36 @@ int main() {
         }
     }
     if (!submission_exhausted) return 84;
+    // Response storage and nghttp2 allocations compete for the same cap.
+    // A body rejected before allocation must leave the stream usable; if the
+    // body consumes the remaining budget, nghttp2 submission fails and the
+    // body reservation must be released.
+    limits.library_memory_bytes=4*1024*1024;
+    limits.shared_memory_bytes=request_peak+1024;
+    limits.response_bytes=limits.shared_memory_bytes;
+    limits.total_response_bytes=limits.shared_memory_bytes;
+    auto shared=nh::ServerSession::create(limits,budget_events);
+    if (!shared || !feed_request(**shared)) return 85;
+    auto available=limits.shared_memory_bytes-(**shared).shared_memory_used();
+    std::vector<std::byte> too_big(available+1);
+    auto rejected=(**shared).respond_body(1,200,too_big);
+    if (rejected || rejected.error().kind!=nh::ServerErrorKind::budget_exceeded ||
+        (**shared).response_memory_used()!=0 || (**shared).shared_memory_used()>limits.shared_memory_bytes) return 86;
+    too_big.pop_back();
+    auto exhausted_submission=(**shared).respond_body(1,200,too_big);
+    if (exhausted_submission || exhausted_submission.error().library_code!=h2::NGHTTP2_ERR_NOMEM ||
+        (**shared).response_memory_used()!=0 || (**shared).shared_memory_used()>limits.shared_memory_bytes) return 87;
+    limits.shared_memory_bytes=request_peak+4096;
+    auto success=nh::ServerSession::create(limits,budget_events);
+    if (!success || !feed_request(**success) || !(**success).respond_body(1,200,body) ||
+        (**success).shared_memory_used()!=(**success).library_memory_used()+body.size() ||
+        (**success).shared_memory_used()>limits.shared_memory_bytes) return 88;
+    for (;;) {
+        auto n=(**success).output(sink);
+        if (!n) return 89;
+        if (!*n) break;
+    }
+    if ((**success).response_memory_used()!=0 ||
+        (**success).shared_memory_used()!=(**success).library_memory_used()) return 90;
     std::println("HTTP/2 nghttp2 memory budget and recovery passed");
 }

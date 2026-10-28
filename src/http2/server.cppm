@@ -38,19 +38,24 @@ export namespace nexus::http2 {
         // Limits for application response headers, excluding :status.
         std::size_t response_header_fields = 32;
         std::size_t response_header_bytes = 8192;
+        // Shared cap for nghttp2 live allocations plus retained response bodies.
+        // This is not a complete connection budget: headers, TLS, transport,
+        // allocator overhead and transient realloc copies are excluded.
+        std::size_t shared_memory_bytes = std::numeric_limits<std::size_t>::max();
     };
-    enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed };
+    enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed, budget_exceeded };
     struct ServerError { ServerErrorKind kind; int library_code = 0; };
 
     class ServerSession {
         h2::nghttp2_session* session_ = nullptr;
         struct alignas(std::max_align_t) Allocation { std::size_t size; };
-        std::size_t library_limit_, library_used_=0, library_peak_=0;
+        std::size_t library_limit_, shared_limit_, library_used_=0, library_peak_=0;
         static auto allocate(std::size_t size, void* context) noexcept -> void* {
             auto& self=*static_cast<ServerSession*>(context);
             if (size>std::numeric_limits<std::size_t>::max()-sizeof(Allocation)) return nullptr;
             auto total=size+sizeof(Allocation);
-            if (total>self.library_limit_-self.library_used_) return nullptr;
+            if (total>self.library_limit_-self.library_used_ ||
+                total>self.shared_limit_-self.response_reserved_-self.library_used_) return nullptr;
             auto p=static_cast<Allocation*>(std::malloc(total));
             if (!p) return nullptr;
             p->size=total; self.library_used_+=total; self.library_peak_=std::max(self.library_peak_,self.library_used_);
@@ -74,7 +79,8 @@ export namespace nexus::http2 {
             auto& self=*static_cast<ServerSession*>(context);
             if (size>std::numeric_limits<std::size_t>::max()-sizeof(Allocation)) return nullptr;
             auto p=static_cast<Allocation*>(ptr)-1; auto old=p->size; auto total=size+sizeof(Allocation);
-            if (total>self.library_limit_-(self.library_used_-old)) return nullptr;
+            if (total>self.library_limit_-(self.library_used_-old) ||
+                total>self.shared_limit_-self.response_reserved_-(self.library_used_-old)) return nullptr;
             auto replacement=static_cast<Allocation*>(std::realloc(p,total));
             if (!replacement) return nullptr;
             replacement->size=total; self.library_used_=self.library_used_-old+total;
@@ -112,7 +118,7 @@ export namespace nexus::http2 {
         std::size_t paused_bytes_ = 0;
 
         ServerSession(ServerLimits limits, ServerEvents events)
-            : library_limit_(limits.library_memory_bytes), headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), response_header_fields_(limits.response_header_fields), response_header_bytes_(limits.response_header_bytes), input_window_(limits.input_window), events_(events) {
+            : library_limit_(limits.library_memory_bytes), shared_limit_(limits.shared_memory_bytes), headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), response_header_fields_(limits.response_header_fields), response_header_bytes_(limits.response_header_bytes), input_window_(limits.input_window), events_(events) {
         }
         auto library_error(int rc) noexcept -> std::unexpected<ServerError> {
             if (h2::nghttp2_is_fatal(rc)) { failed_=true; ++revision_; }
@@ -259,7 +265,7 @@ export namespace nexus::http2 {
             -> std::expected<std::unique_ptr<ServerSession>, ServerError> {
             if (!limits.concurrent_streams || !limits.header_fields || !limits.header_bytes || !limits.response_bytes || !limits.total_response_bytes ||
                 !limits.input_window || limits.input_window > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) ||
-                !limits.outbound_ack_frames || !limits.library_memory_bytes ||
+                !limits.outbound_ack_frames || !limits.library_memory_bytes || !limits.shared_memory_bytes ||
                 !events.headers || !events.data || !events.end_stream || !events.closed)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             std::unique_ptr<ServerSession> self;
@@ -361,6 +367,8 @@ export namespace nexus::http2 {
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             if (stream->head_request || status==204 || status==205 || status==304)
                 return respond_empty(id,status,headers);
+            if (body.size()>shared_limit_-response_reserved_-library_used_)
+                return std::unexpected(ServerError{ServerErrorKind::budget_exceeded});
             std::array<std::uint8_t,3> value{}; std::array<std::uint8_t,7> name{};
             auto fields=response_fields(status,stream->head_request,body.size(),headers,value,name);
             if (!fields) return std::unexpected(fields.error());
@@ -412,6 +420,7 @@ export namespace nexus::http2 {
         }
         [[nodiscard]] auto response_memory_used() const noexcept -> std::size_t { return response_reserved_; }
         [[nodiscard]] auto library_memory_used() const noexcept -> std::size_t { return library_used_; }
+        [[nodiscard]] auto shared_memory_used() const noexcept -> std::size_t { return library_used_ + response_reserved_; }
         [[nodiscard]] auto library_memory_peak() const noexcept -> std::size_t { return library_peak_; }
         [[nodiscard]] auto revision() const noexcept -> std::uint64_t { return revision_; }
         [[nodiscard]] auto paused_stream() const noexcept -> std::int32_t { return paused_stream_; }
