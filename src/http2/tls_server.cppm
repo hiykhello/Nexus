@@ -19,8 +19,9 @@ export namespace nexus::http2 {
         crypto::Bytes input_;
         std::size_t offset_=0;
         std::uint64_t ready_revision_=0;
-        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, session_abandoned_=false, claimed_=false;
+        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, control_reserved_=false, session_abandoned_=false, claimed_=false;
         void release_input() noexcept { crypto::Bytes{}.swap(input_); offset_=0; if (input_reserved_) { session_.release_input(); input_reserved_=false; } }
+        void release_control() noexcept { if (control_reserved_) { session_.release_output(); control_reserved_=false; } }
         static auto tls_error(tls::detail::AsyncApplicationError error) noexcept -> TlsServerError {
             return error==tls::detail::AsyncApplicationError::timeout ? TlsServerError::timeout : TlsServerError::tls;
         }
@@ -35,12 +36,13 @@ export namespace nexus::http2 {
         auto operator=(TlsServerConnection const&) -> TlsServerConnection& = delete;
         ~TlsServerConnection() {
             if (claimed_ && !session_abandoned_) session_.fail_transport(input_reserved_);
+            release_control();
         }
         auto cancel() noexcept -> void {
             failed_=true;
             if (!claimed_) return;
             if (!active_ && !session_abandoned_) {
-                session_.fail_transport(input_reserved_); release_input(); session_abandoned_=true;
+                session_.fail_transport(input_reserved_); release_input(); release_control(); session_abandoned_=true;
             }
             tls_.cancel();
         }
@@ -52,9 +54,10 @@ export namespace nexus::http2 {
             if (active_ || failed_ || closed_ || resume_pending_ || offset_!=input_.size() ||
                 tls_.pending_output() || !ready_to_close_ || session_.revision()!=ready_revision_)
                 co_return std::unexpected(TlsServerError::invalid_state);
-            active_=true;
+            if (!session_.reserve_output(48)) { cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
+            control_reserved_=true; active_=true;
             auto result=co_await tls_.close_notify(deadline);
-            active_=false;
+            active_=false; release_control();
             if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
             if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
             closed_=true;
@@ -71,7 +74,7 @@ export namespace nexus::http2 {
             ready_to_close_=false;
             active_=true;
             if (tls_.pending_output()) {
-                auto result=co_await tls_.flush(deadline); active_=false;
+                auto result=co_await tls_.flush(deadline); active_=false; release_control();
                 if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
                 if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
                 co_return TlsServerStep::progress;
@@ -122,7 +125,12 @@ export namespace nexus::http2 {
             // remain borrowed by nghttp2 while a DATA callback is paused.
             if (!session_.reserve_input(16384)) { active_=false; cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             input_reserved_=true;
+            // A peer KeyUpdate may create a 27-byte response while reading.
+            // Reserve it and its write copy before TLS can enqueue it.
+            if (!session_.reserve_output(54)) { active_=false; release_input(); cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
+            control_reserved_=true;
             auto received=co_await tls_.read(deadline); active_=false;
+            if (!received || failed_ || !tls_.pending_output()) release_control();
             if (!received) { release_input(); cancel(); co_return std::unexpected(tls_error(received.error())); }
             if (failed_) { release_input(); cancel(); co_return std::unexpected(TlsServerError::tls); }
             if (received->kind==tls::detail::AsyncReadKind::eof) { release_input(); peer_closed_=true; co_return TlsServerStep::progress; }
