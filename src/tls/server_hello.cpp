@@ -45,7 +45,7 @@ namespace nexus::tls {
     }
     auto ServerHello::validate_retry_request(ClientHello const& first) const -> std::expected<std::optional<std::uint16_t>,ServerHelloError> {
         if (!is_retry()) return std::unexpected(ServerHelloError::retry);
-        if (!first.validate_tls13() || !first.encode() || first.extension(41) || first.extension(42)) return std::unexpected(ServerHelloError::unsupported);
+        if (!first.validate_tls13() || !first.validate_encoding() || first.extension(41) || first.extension(42)) return std::unexpected(ServerHelloError::unsupported);
         if (legacy_version!=0x0303 || compression_method!=0) return std::unexpected(ServerHelloError::invalid_version);
         if (session_id_echo!=first.session_id) return std::unexpected(ServerHelloError::session_mismatch);
         if (!std::ranges::contains(first.cipher_suites,cipher_suite) || (cipher_suite!=0x1301 && cipher_suite!=0x1302 && cipher_suite!=0x1303)) return std::unexpected(ServerHelloError::cipher_mismatch);
@@ -80,7 +80,7 @@ namespace nexus::tls {
         }
         auto cookie=std::ranges::find(extensions,std::uint16_t{44},&Extension::type);
         if (cookie!=extensions.end()) second.extensions.push_back(*cookie);
-        if (!second.encode()) return std::unexpected(ServerHelloError::invalid_length);
+        if (!second.validate_encoding()) return std::unexpected(ServerHelloError::invalid_length);
         return second;
     }
     auto ServerHello::validate_retry(ClientHello const& first, ClientHello const& second, ServerHello const& final_hello) const -> std::expected<KeyShareEntry,ServerHelloError> {

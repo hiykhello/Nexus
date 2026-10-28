@@ -24,6 +24,8 @@ export namespace nexus::tls {
             -> std::expected<ClientHello, HelloError>;
         [[nodiscard]] auto encode(std::size_t max_body_size = 1u << 20) const
             -> std::expected<std::vector<std::uint8_t>, HelloError>;
+        // Applies the same size and structural checks as encode without allocating.
+        [[nodiscard]] auto validate_encoding(std::size_t max_body_size = 1u << 20) const -> std::expected<void, HelloError>;
         // Checks the TLS 1.3 ClientHello invariants this layer owns; it does not negotiate policy.
         [[nodiscard]] auto validate_tls13() const -> std::expected<void, HelloError>;
         [[nodiscard]] auto extension(std::uint16_t type) const noexcept -> Extension const*;

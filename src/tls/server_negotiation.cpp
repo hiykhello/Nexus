@@ -15,7 +15,7 @@ namespace nexus::tls {
     }
     auto negotiate_server(ClientHello const& hello, std::span<std::uint16_t const> certificate_schemes)
         -> std::expected<ServerSelection,ServerNegotiationError> {
-        if (!hello.validate_tls13() || !hello.encode()) return std::unexpected(ServerNegotiationError::invalid_hello);
+        if (!hello.validate_tls13() || !hello.validate_encoding()) return std::unexpected(ServerNegotiationError::invalid_hello);
         if (hello.extension(41) || hello.extension(42)) return std::unexpected(ServerNegotiationError::unsupported_psk);
         constexpr std::array<std::uint16_t,3> ciphers{0x1301,0x1303,0x1302};
         auto cipher=std::ranges::find_if(ciphers,[&](auto x) { return std::ranges::contains(hello.cipher_suites,x); });
