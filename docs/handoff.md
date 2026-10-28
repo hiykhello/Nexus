@@ -12,7 +12,7 @@
 ## 当前
 
 - 工作区处于干净提交状态，当前分支为 `main`，远端 `origin/main` 没有可追踪分支。
-- 工作区保持干净；地址工厂正反例和 socket quitter owner unwind 已通过。组合 `connect` 尚未从 Module 导出，真实候选重试仍未覆盖。
+- 工作区保持干净；地址工厂正反例和 socket quitter owner unwind 已通过。尝试从 Capy Module 导出 `cond`/error-condition 时，GCC 16 暴露模块附着类型的链接符号问题，实验代码已全部撤回；组合 `connect` 仍保持私有，真实候选重试尚未覆盖。
 - HTTP/2 无 I/O 服务端、TLS/Corosio 握手和应用记录适配器仍保持上一步已验证状态；没有把未完成的 HTTP/2 客户端草稿留在树中。
 
 ## 下一步
