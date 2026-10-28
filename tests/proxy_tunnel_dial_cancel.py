@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Reset a SOCKS client while the first VLESS or SS-2022 candidate is pending."""
+"""Verify cancellation and ordinary retry of VLESS and SS-2022 candidates."""
 import pathlib
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -33,10 +34,10 @@ def pending(pid, port):
                for parts in (line.split() for line in pathlib.Path('/proc/net/tcp').read_text().splitlines()[1:]))
 
 
-def scenario(root, workers, shadowsocks):
+def scenario(root, workers, shadowsocks, retry=False):
     with socket.socket() as first, socket.socket() as second, socket.socket() as reservation, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
         first.bind(('127.0.0.2', 0)); first.listen(1 if shadowsocks else 2); first.settimeout(4)
-        fillers=[socket.create_connection(first.getsockname(),timeout=2) for _ in range(2)] if shadowsocks else []
+        fillers=[socket.create_connection(first.getsockname(),timeout=2) for _ in range(2)] if shadowsocks and not retry else []
         second.bind(('127.0.0.1', first.getsockname()[1])); second.listen(2); second.settimeout(.7)
         reservation.bind(('127.0.0.1', 0)); port=reservation.getsockname()[1]; reservation.close()
         dns.bind(('127.0.0.1', 0)); dns.settimeout(.1)
@@ -72,8 +73,32 @@ routing {{ default-outbound "edge"; }}
                     time.sleep(.02)
             with client:
                 client.settimeout(4); client.sendall(b'\x05\x01\x00'); assert exact(client,2)==b'\x05\x00'
+                if retry and shadowsocks: first.close()
                 client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x04\xd2')
-                if shadowsocks:
+                if retry:
+                    if not shadowsocks:
+                        with first.accept()[0] as rejected:
+                            rejected.settimeout(3)
+                            header=exact(rejected,5)
+                            assert header[0]==22 and exact(rejected,int.from_bytes(header[3:5],'big'))[0]==1
+                    second.settimeout(4)
+                    with second.accept()[0] as upstream:
+                        upstream.settimeout(4)
+                        if shadowsocks:
+                            assert exact(client,10)[:2]==b'\x05\x00'
+                            assert upstream.recv(1024), 'SS request was not sent to the second candidate'
+                        else:
+                            context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                            context.minimum_version=ssl.TLSVersion.TLSv1_3
+                            context.load_cert_chain(root/'cert.pem',root/'key.pem')
+                            with context.wrap_socket(upstream,server_side=True) as tls:
+                                header=exact(tls,26)
+                                assert header==b'\x00'+bytes(range(16))+b'\x00\x01\x04\xd2\x01\x7f\x00\x00\x01'
+                                tls.sendall(b'\x00\x00')
+                                assert exact(client,10)[:2]==b'\x05\x00'
+                                client.sendall(b'ping'); assert exact(tls,4)==b'ping'
+                                tls.sendall(b'pong'); assert exact(client,4)==b'pong'
+                elif shadowsocks:
                     deadline=time.monotonic()+3
                     while not pending(process.pid,first.getsockname()[1]):
                         if time.monotonic()>=deadline: raise AssertionError('first SS candidate did not become pending')
@@ -95,9 +120,10 @@ routing {{ default-outbound "edge"; }}
                         assert header[0]==22 and exact(upstream,int.from_bytes(header[3:5],'big'))[0]==1
                         client.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0)); client.close()
                         assert upstream.recv(1)==b'', 'upstream handshake was not canceled'
-                try: second.accept()[0].close()
-                except TimeoutError: pass
-                else: raise AssertionError('later tunnel candidate was dialed after client reset')
+                if not retry:
+                    try: second.accept()[0].close()
+                    except TimeoutError: pass
+                    else: raise AssertionError('later tunnel candidate was dialed after client reset')
                 assert len(queries)==1 and process.poll() is None
         finally:
             if process.poll() is None: process.terminate(); process.wait(timeout=5)
@@ -112,7 +138,8 @@ with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory
     root=pathlib.Path(directory)
     (root/'user.uuid').write_text('00010203-0405-0607-0809-0a0b0c0d0e0f\n'); (root/'user.uuid').chmod(0o600)
     (root/'ss.key').write_text('AAAAAAAAAAAAAAAAAAAAAA==\n'); (root/'ss.key').chmod(0o600)
-    subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(root/'key.pem'),'-out',str(root/'cert.pem'),'-subj','/CN=localhost','-days','1'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(root/'key.pem'),'-out',str(root/'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost','-days','1'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     shadowsocks=len(sys.argv)>2 and sys.argv[2]=='ss'
-    for workers in (1,2): scenario(root,workers,shadowsocks)
-print('tunnel cancellation: reset cancels without dialing the next candidate')
+    for workers in (1,2):
+        for retry in (False,True): scenario(root,workers,shadowsocks,retry)
+print('tunnel candidates: reset cancels and ordinary failure retries')
