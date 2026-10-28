@@ -10,7 +10,7 @@ namespace nexus::tls {
     auto ServerFlight::operator=(ServerFlight&& o) noexcept -> ServerFlight& {
         if (this!=&o) { state_=o.state_; keys_=std::move(o.keys_); application_=std::move(o.application_); records_=std::move(o.records_); decoder_=std::move(o.decoder_); o.state_=State::failed; } return *this;
     }
-    auto ServerFlight::create(ServerHandshakeKeys&& input, ServerCredential const& credential) -> std::expected<ServerFlight,ServerFlightError> {
+    auto ServerFlight::create(ServerHandshakeKeys&& input, ServerCredential const& credential, std::span<std::uint8_t const> selected_alpn) -> std::expected<ServerFlight,ServerFlightError> {
         auto keys=std::move(input); auto cert=credential.certificate();
         constexpr auto list_limit=ServerCredential::max_certificate_list_size;
         if (!credential.scheme() || *credential.scheme()!=keys.signature_scheme || cert.empty() || cert.size()>list_limit-5)
@@ -24,7 +24,19 @@ namespace nexus::tls {
         auto algorithm=server->cipher_suite==0x1301 ? crypto::Aead::aes_128_gcm : server->cipher_suite==0x1302 ? crypto::Aead::aes_256_gcm : crypto::Aead::chacha20_poly1305;
         auto key_size=server->cipher_suite==0x1301 ? 16u : 32u;
         auto put24=[](crypto::Bytes& out,std::size_t n) { out.push_back(static_cast<std::uint8_t>(n>>16)); out.push_back(static_cast<std::uint8_t>(n>>8)); out.push_back(static_cast<std::uint8_t>(n)); };
-        crypto::Bytes extensions{8,0,0,2,0,0};
+        if (selected_alpn.size()>255) return std::unexpected(ServerFlightError::invalid_state);
+        crypto::Bytes extension_body;
+        if (!selected_alpn.empty()) {
+            auto n=selected_alpn.size();
+            extension_body={0,16,static_cast<std::uint8_t>((n+3)>>8),static_cast<std::uint8_t>(n+3),
+                            static_cast<std::uint8_t>((n+1)>>8),static_cast<std::uint8_t>(n+1),static_cast<std::uint8_t>(n)};
+            extension_body.insert(extension_body.end(),selected_alpn.begin(),selected_alpn.end());
+        }
+        crypto::Bytes extension_vector{static_cast<std::uint8_t>(extension_body.size()>>8),static_cast<std::uint8_t>(extension_body.size())};
+        extension_vector.insert(extension_vector.end(),extension_body.begin(),extension_body.end());
+        auto encoded_extensions=HandshakeDecoder::encode(8,extension_vector);
+        if (!encoded_extensions) return std::unexpected(ServerFlightError::crypto_error);
+        auto extensions=std::move(*encoded_extensions);
         std::size_t list_size=cert.size()+5;
         for (auto const& intermediate:credential.chain()) {
             if (intermediate.empty() || intermediate.size()>list_limit-5 || list_size>list_limit-intermediate.size()-5)

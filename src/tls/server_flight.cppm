@@ -6,7 +6,7 @@ import nexus.tls.handshake;
 import std;
 export namespace nexus::tls {
     enum class ServerFlightError { invalid_state, invalid_credential, invalid_finished, crypto_error };
-    // Leaf and configured chain, no client authentication, ALPN or retry. The caller owns transport framing.
+    // Leaf and configured chain, no client authentication or retry. The caller owns transport framing.
     class ServerFlight {
         enum class State { awaiting_finished, complete, failed } state_=State::awaiting_finished;
         ServerHandshakeKeys keys_;
@@ -20,7 +20,9 @@ export namespace nexus::tls {
         ServerFlight(ServerFlight&&) noexcept;
         auto operator=(ServerFlight&&) noexcept -> ServerFlight&;
         // Produces encrypted handshake records after ServerHello; transport must send them in order.
-        [[nodiscard]] static auto create(ServerHandshakeKeys&& keys, ServerCredential const& credential)
+        // A nonempty ALPN must have been validated against the client offer by the caller.
+        [[nodiscard]] static auto create(ServerHandshakeKeys&& keys, ServerCredential const& credential,
+                                         std::span<std::uint8_t const> selected_alpn = {})
             -> std::expected<ServerFlight,ServerFlightError>;
         [[nodiscard]] auto records() const noexcept -> std::span<crypto::Bytes const> { return records_; }
         // One authenticated handshake record; true only after the complete client Finished.

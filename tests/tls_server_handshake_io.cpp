@@ -10,12 +10,12 @@ int main(int argc,char** argv) {
     if (argc!=3) return 1; auto cert=read_file(argv[1]), priv=read_file(argv[2]);
     auto credential=[&] { return t::ServerCredential::create(cert,priv); };
     auto creds=credential(); if (!creds) return 2;
-    auto scheme=*creds->scheme(); auto server=t::ServerHandshakeIo::create(std::move(*creds),100,1000); if (!server) return 3;
+    auto scheme=*creds->scheme(); auto server=t::ServerHandshakeIo::create(std::move(*creds),100,1000,"h2"); if (!server) return 3;
     if (server->tick(99).error()!=t::ServerHandshakeIoError::time_reversed || server->take_application_records()) return 4;
     auto key=c::X25519Private::generate(); if (!key) return 5; auto pub=key->public_key(); if (!pub) return 6;
     auto share=t::KeyShare::encode_client(std::array{t::KeyShareEntry{29,{pub->begin(),pub->end()}}}); if (!share) return 7;
     t::ClientHello hello; hello.cipher_suites={0x1301}; hello.compression_methods={0};
-    hello.extensions={{43,{2,3,4}},{10,{0,2,0,29}},{13,{0,2,static_cast<std::uint8_t>(scheme>>8),static_cast<std::uint8_t>(scheme)}},{51,*share}};
+    hello.extensions={{43,{2,3,4}},{10,{0,2,0,29}},{13,{0,2,static_cast<std::uint8_t>(scheme>>8),static_cast<std::uint8_t>(scheme)}},{51,*share},{16,{0,12,2,'h','2',8,'h','t','t','p','/','1','.','1'}}};
     auto body=hello.encode(); auto wire=t::HandshakeDecoder::encode(1,*body); if (!body || !wire) return 8;
     c::Bytes input{22,3,1,static_cast<std::uint8_t>(wire->size()>>8),static_cast<std::uint8_t>(wire->size())}; input.insert(input.end(),wire->begin(),wire->end());
     for (auto byte:input) { auto result=server->feed(std::span{&byte,1},101); if (!result || result->consumed!=1) return 9; }
@@ -33,12 +33,15 @@ int main(int argc,char** argv) {
     }
     if (records.size()<2 || records[0].size()<6) return 13;
     auto client=t::client_handshake_keys(*wire,std::span{records[0]}.subspan(5),std::move(*key)); if (!client) return 14;
-    auto decoder=t::HandshakeDecoder::create(1048584); if (!decoder) return 15; bool server_finished=false;
+    auto decoder=t::HandshakeDecoder::create(1048584); if (!decoder) return 15; bool server_finished=false, alpn_seen=false;
     for (std::size_t i=1;i<records.size();++i) {
         auto plain=client->read.open(records[i]); if (!plain) return 16;
         auto messages=decoder->feed(plain->content); if (!messages) return 17;
         for (auto const& msg:*messages) {
             auto encoded=t::HandshakeDecoder::encode(msg.type,msg.body,1048584); if (!encoded) return 18;
+            if (msg.type==8) {
+                alpn_seen=msg.body==c::Bytes{0,9,0,16,0,5,0,3,2,'h','2'};
+            }
             if (msg.type==20) {
                 auto hash=client->transcript.snapshot(); auto expected=t::finished_verify_data(client->hash,client->server_traffic.view(),*hash);
                 if (!expected || !c::constant_time_equal(expected->view(),msg.body)) return 19; server_finished=true;
@@ -46,7 +49,7 @@ int main(int argc,char** argv) {
             if (!client->transcript.append(*encoded)) return 20;
         }
     }
-    if (!server_finished) return 21;
+    if (!server_finished || !alpn_seen) return 21;
     auto hash=client->transcript.snapshot(); auto verify=t::finished_verify_data(client->hash,client->client_traffic.view(),*hash);
     if (!verify) return 22; auto finished=t::HandshakeDecoder::encode(20,verify->view()); if (!finished) return 23;
     auto a=client->write.seal(t::ContentType::handshake,std::span{*finished}.first(3));
@@ -54,7 +57,8 @@ int main(int argc,char** argv) {
     c::Bytes ccs{20,3,3,0,1,1}; for (auto const* record:{&ccs,&*a,&*b}) for (auto byte:*record) {
         auto result=server->feed(std::span{&byte,1},104); if (!result || result->consumed!=1) return 25;
     }
-    if (!server->complete() || server->feed(input,105)->consumed!=0) return 26;
+    if (!server->complete() || server->feed(input,105)->consumed!=0 ||
+        !std::ranges::equal(server->negotiated_alpn(),c::Bytes{'h','2'})) return 26;
     auto app=server->take_application_records(); if (!app || server->take_application_records()) return 27;
     auto master=t::master_secret(client->hash,client->handshake_secret.view()); auto traffic=t::derive_secret(client->hash,master->view(),"c ap traffic",*hash);
     auto appkey=t::expand_label(client->hash,traffic->view(),"key",{},16), iv=t::expand_label(client->hash,traffic->view(),"iv",{},12);
@@ -69,12 +73,25 @@ int main(int argc,char** argv) {
     if (blocked->written(1,1).error()!=t::ServerHandshakeIoError::time_reversed || blocked->tick(5).error()!=t::ServerHandshakeIoError::timeout || !blocked->pending_output().empty()) return 33;
     auto c6=credential(); auto cancel_output=t::ServerHandshakeIo::create(std::move(*c6),1,5);
     if (!cancel_output || !cancel_output->feed(input,2) || !cancel_output->cancel() || !cancel_output->pending_output().empty()) return 34;
+    for (int scenario=0;scenario<3;++scenario) {
+        auto c7=credential(); auto required=t::ServerHandshakeIo::create(std::move(*c7),1,50,"h2");
+        if (!required || !required->negotiated_alpn().empty()) return 48;
+        auto offer=hello;
+        if (scenario==0) offer.extensions.pop_back();
+        if (scenario==1) offer.extensions.back().data={0,3,2,'h','3'};
+        if (scenario==2) offer.extensions.back().data={0,4,2,'h','2',0};
+        auto encoded=t::HandshakeDecoder::encode(1,*offer.encode()); if (!encoded) return 49;
+        c::Bytes frame{22,3,3,static_cast<std::uint8_t>(encoded->size()>>8),static_cast<std::uint8_t>(encoded->size())};
+        frame.insert(frame.end(),encoded->begin(),encoded->end());
+        auto rejected=required->feed(frame,2);
+        if (rejected || rejected.error()!=t::ServerHandshakeIoError::protocol_error || !required->pending_output().empty()) return 50;
+    }
     auto initial=hello; initial.extensions[3].data={0,0};
     auto initial_wire=t::HandshakeDecoder::encode(1,*initial.encode()); if (!initial_wire) return 35;
     auto frame=[](c::Bytes const& msg) { c::Bytes out{22,3,3,static_cast<std::uint8_t>(msg.size()>>8),static_cast<std::uint8_t>(msg.size())}; out.insert(out.end(),msg.begin(),msg.end()); return out; };
     auto first_record=frame(*initial_wire);
     for (int scenario=0;scenario<5;++scenario) {
-        auto retained=credential(); auto retrying=t::ServerHandshakeIo::create(std::move(*retained),1,50); if (!retrying) return 36;
+        auto retained=credential(); auto retrying=t::ServerHandshakeIo::create(std::move(*retained),1,50,"h2"); if (!retrying) return 36;
         for (auto byte:first_record) { auto result=retrying->feed(std::span{&byte,1},2); if (!result || result->consumed!=1) return 37; }
         if (retrying->pending_output().empty() || retrying->feed(first_record,2)->consumed!=0) return 38;
         c::Bytes retry_record;

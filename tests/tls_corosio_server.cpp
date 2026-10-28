@@ -44,7 +44,8 @@ struct Network {
 };
 auto serve(Network& f) -> capy::task<> {
     auto result=co_await t::detail::server_handshake(f.socket,*f.handshake);
-    if (!result) { f.done=true; co_return; }
+    if (!result || (f.handshake->negotiated_alpn().size() &&
+        !std::ranges::equal(f.handshake->negotiated_alpn(),nexus::crypto::Bytes{'h','2'}))) { f.done=true; co_return; }
     t::ApplicationIo app(std::move(result->records)); auto bytes=std::move(result->unread);
     for (;;) {
         if (bytes.empty()) {
@@ -70,12 +71,12 @@ auto serve(Network& f) -> capy::task<> {
     }
 }
 int main(int argc,char** argv) {
-    if (argc!=4) return 1;
+    if (argc!=4 && (argc!=5 || std::string_view(argv[4])!="h2")) return 1;
     if (std::string_view(argv[3])=="failures") return failure(argv[1],argv[2],false) && failure(argv[1],argv[2],true) ? 0 : 2;
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 3;
     Network f; if (f.socket.assign(fd)) { ::close(fd); return 4; }
     auto cred=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!cred) return 5;
-    auto start=now(); auto handshake=t::ServerHandshakeIo::create(std::move(*cred),start,start+5000); if (!handshake) return 6;
+    auto start=now(); auto handshake=t::ServerHandshakeIo::create(std::move(*cred),start,start+5000,argc==5 ? "h2" : ""); if (!handshake) return 6;
     f.handshake.emplace(std::move(*handshake)); capy::run_async(f.context.get_executor())(serve(f)); (void)f.context.run_for(6s);
     if (!f.done) { f.socket.cancel(); f.context.restart(); (void)f.context.run_for(1s); if (!f.done) std::_Exit(90); }
     return f.success ? 0 : 7;

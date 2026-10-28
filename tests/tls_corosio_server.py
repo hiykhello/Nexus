@@ -13,13 +13,16 @@ with tempfile.TemporaryDirectory(prefix="nexus-tls-corosio-server-") as director
     run("openssl","pkey","-in",str(key),"-outform","DER","-out",str(key_der))
     run("openssl","x509","-in",str(cert),"-outform","DER","-out",str(cert_der))
     run(str(fixture),str(cert_der),str(key_der),"failures")
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1",0)); listener.listen(1)
-        server=subprocess.Popen([fixture,cert_der,key_der,str(listener.fileno())],pass_fds=(listener.fileno(),))
-        try:
-            result=subprocess.run(["openssl","s_client","-connect",f"127.0.0.1:{listener.getsockname()[1]}","-tls1_3","-groups","X25519","-servername","localhost","-verify_hostname","localhost","-verify_return_error","-CAfile",str(cert),"-quiet"],input=b"hello",capture_output=True,timeout=8)
-            code=server.wait(timeout=5)
-            if code or result.returncode or result.stdout!=b"hello": raise RuntimeError(f"server={code} openssl={result.returncode} output={result.stdout!r} error={result.stderr!r}")
-        finally:
-            if server.poll() is None: server.kill(); server.wait()
-print("Corosio TLS server OpenSSL exchange, timeout and cancellation passed")
+    for alpn in (False, True):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1",0)); listener.listen(1)
+            server=subprocess.Popen([fixture,cert_der,key_der,str(listener.fileno())]+(["h2"] if alpn else []),pass_fds=(listener.fileno(),))
+            try:
+                command=["openssl","s_client","-connect",f"127.0.0.1:{listener.getsockname()[1]}","-tls1_3","-groups","X25519","-servername","localhost","-verify_hostname","localhost","-verify_return_error","-CAfile",str(cert),"-quiet"]
+                if alpn: command += ["-alpn", "h2,http/1.1"]
+                result=subprocess.run(command,input=b"hello",capture_output=True,timeout=8)
+                code=server.wait(timeout=5)
+                if code or result.returncode or result.stdout!=b"hello": raise RuntimeError(f"server={code} openssl={result.returncode} output={result.stdout!r} error={result.stderr!r}")
+            finally:
+                if server.poll() is None: server.kill(); server.wait()
+print("Corosio TLS server OpenSSL exchange, ALPN, timeout and cancellation passed")

@@ -14,7 +14,7 @@ export namespace nexus::tls {
         std::optional<ServerFlight> flight_;
         RecordStream records_;
         crypto::Bytes server_hello_;
-        crypto::Bytes first_hello_, retry_hello_;
+        crypto::Bytes first_hello_, retry_hello_, required_alpn_;
         std::size_t record_=0, offset_=0;
         bool ccs_seen_=false, encrypted_seen_=false;
         std::uint64_t now_, deadline_;
@@ -26,7 +26,9 @@ export namespace nexus::tls {
         auto operator=(ServerHandshakeIo const&) -> ServerHandshakeIo& = delete;
         ServerHandshakeIo(ServerHandshakeIo&&) noexcept;
         auto operator=(ServerHandshakeIo&&) noexcept -> ServerHandshakeIo&;
-        [[nodiscard]] static auto create(ServerCredential&& credential, std::uint64_t now, std::uint64_t deadline) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError>;
+        // Empty ALPN disables negotiation; otherwise this single protocol is required.
+        [[nodiscard]] static auto create(ServerCredential&& credential, std::uint64_t now, std::uint64_t deadline,
+                                         std::string_view required_alpn = {}) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError>;
         [[nodiscard]] auto pending_output() const noexcept -> std::span<std::uint8_t const>;
         [[nodiscard]] auto written(std::size_t count, std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;
         // Stops at one record boundary. Returns zero while output is pending or after completion.
@@ -35,6 +37,10 @@ export namespace nexus::tls {
         [[nodiscard]] auto cancel() -> std::expected<void,ServerHandshakeIoError>;
         [[nodiscard]] auto finish_input(std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;
         [[nodiscard]] auto complete() const noexcept -> bool { return state_==State::complete; }
+        // The selected protocol is available only after authenticated handshake completion.
+        [[nodiscard]] auto negotiated_alpn() const noexcept -> std::span<std::uint8_t const> {
+            return complete() ? std::span<std::uint8_t const>{required_alpn_} : std::span<std::uint8_t const>{};
+        }
         [[nodiscard]] auto deadline() const noexcept -> std::uint64_t { return deadline_; }
         [[nodiscard]] auto take_application_records() -> std::expected<ApplicationRecords,ServerHandshakeIoError>;
     };

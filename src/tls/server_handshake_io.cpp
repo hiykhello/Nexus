@@ -5,10 +5,10 @@ namespace nexus::tls {
         : credential_(std::move(c)), hello_(std::move(h)), now_(now), deadline_(deadline) {}
     ServerHandshakeIo::ServerHandshakeIo(ServerHandshakeIo&& o) noexcept
         : state_(o.state_),credential_(std::move(o.credential_)),hello_(std::move(o.hello_)),flight_(std::move(o.flight_)),records_(std::move(o.records_)),
-          server_hello_(std::move(o.server_hello_)),first_hello_(std::move(o.first_hello_)),retry_hello_(std::move(o.retry_hello_)),record_(o.record_),offset_(o.offset_),ccs_seen_(o.ccs_seen_),encrypted_seen_(o.encrypted_seen_),now_(o.now_),deadline_(o.deadline_) { o.state_=State::failed; }
+          server_hello_(std::move(o.server_hello_)),first_hello_(std::move(o.first_hello_)),retry_hello_(std::move(o.retry_hello_)),required_alpn_(std::move(o.required_alpn_)),record_(o.record_),offset_(o.offset_),ccs_seen_(o.ccs_seen_),encrypted_seen_(o.encrypted_seen_),now_(o.now_),deadline_(o.deadline_) { o.state_=State::failed; }
     auto ServerHandshakeIo::operator=(ServerHandshakeIo&& o) noexcept -> ServerHandshakeIo& {
         if (this!=&o) { state_=o.state_; credential_=std::move(o.credential_); hello_=std::move(o.hello_); flight_=std::move(o.flight_); records_=std::move(o.records_);
-            server_hello_=std::move(o.server_hello_); first_hello_=std::move(o.first_hello_); retry_hello_=std::move(o.retry_hello_); record_=o.record_; offset_=o.offset_; ccs_seen_=o.ccs_seen_; encrypted_seen_=o.encrypted_seen_; now_=o.now_; deadline_=o.deadline_; o.state_=State::failed; } return *this;
+            server_hello_=std::move(o.server_hello_); first_hello_=std::move(o.first_hello_); retry_hello_=std::move(o.retry_hello_); required_alpn_=std::move(o.required_alpn_); record_=o.record_; offset_=o.offset_; ccs_seen_=o.ccs_seen_; encrypted_seen_=o.encrypted_seen_; now_=o.now_; deadline_=o.deadline_; o.state_=State::failed; } return *this;
     }
     auto ServerHandshakeIo::fail(ServerHandshakeIoError error) -> std::unexpected<ServerHandshakeIoError> {
         state_=State::failed; credential_.reset(); hello_.reset(); flight_.reset(); server_hello_.clear(); first_hello_.clear(); retry_hello_.clear(); return std::unexpected(error);
@@ -18,10 +18,11 @@ namespace nexus::tls {
         if (now<now_) return std::unexpected(ServerHandshakeIoError::time_reversed);
         now_=now; if (state_!=State::complete && now>=deadline_) return fail(ServerHandshakeIoError::timeout); return {};
     }
-    auto ServerHandshakeIo::create(ServerCredential&& credential,std::uint64_t now,std::uint64_t deadline) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError> {
-        if (deadline<=now || !credential.scheme()) return std::unexpected(ServerHandshakeIoError::invalid_argument);
+    auto ServerHandshakeIo::create(ServerCredential&& credential,std::uint64_t now,std::uint64_t deadline,std::string_view required_alpn) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError> {
+        if (deadline<=now || !credential.scheme() || required_alpn.size()>255) return std::unexpected(ServerHandshakeIoError::invalid_argument);
         auto hello=ClientHelloStream::create(); if (!hello) return std::unexpected(ServerHandshakeIoError::invalid_state);
-        return ServerHandshakeIo(std::move(credential),std::move(*hello),now,deadline);
+        ServerHandshakeIo result(std::move(credential),std::move(*hello),now,deadline);
+        result.required_alpn_.assign(required_alpn.begin(),required_alpn.end()); return result;
     }
     auto ServerHandshakeIo::pending_output() const noexcept -> std::span<std::uint8_t const> {
         if (state_==State::retry_output) return std::span{server_hello_}.subspan(offset_);
@@ -48,6 +49,19 @@ namespace nexus::tls {
             auto result=hello_->feed(input); if (!result) return fail(ServerHandshakeIoError::protocol_error);
             if (result->compatibility_ccs) ccs_seen_=true;
             auto consumed=result->consumed; if (!result->hello) return ServerHandshakeIoFeed{consumed};
+            if (!required_alpn_.empty()) {
+                auto ext=result->hello->extension(16);
+                if (!ext || ext->data.size()<3 || ((std::size_t{ext->data[0]}<<8)|ext->data[1])!=ext->data.size()-2)
+                    return fail(ServerHandshakeIoError::protocol_error);
+                bool matched=false;
+                for (std::size_t i=2;i<ext->data.size();) {
+                    auto n=ext->data[i++];
+                    if (!n || n>ext->data.size()-i) return fail(ServerHandshakeIoError::protocol_error);
+                    if (std::ranges::equal(std::span{ext->data}.subspan(i,n),required_alpn_)) matched=true;
+                    i+=n;
+                }
+                if (!matched) return fail(ServerHandshakeIoError::protocol_error);
+            }
             auto scheme=*credential_->scheme();
             auto keys=state_==State::hello ? server_handshake_keys(result->message,std::span{&scheme,1}) :
                 server_handshake_keys_retry(first_hello_,retry_hello_,result->message,std::span{&scheme,1});
@@ -63,7 +77,7 @@ namespace nexus::tls {
             auto& hello=keys->server_hello; if (hello.size()>16384) return fail(ServerHandshakeIoError::protocol_error);
             server_hello_={22,3,3,static_cast<std::uint8_t>(hello.size()>>8),static_cast<std::uint8_t>(hello.size())};
             server_hello_.insert(server_hello_.end(),hello.begin(),hello.end());
-            auto flight=ServerFlight::create(std::move(*keys),*credential_); if (!flight) return fail(ServerHandshakeIoError::protocol_error);
+            auto flight=ServerFlight::create(std::move(*keys),*credential_,required_alpn_); if (!flight) return fail(ServerHandshakeIoError::protocol_error);
             flight_.emplace(std::move(*flight)); credential_.reset(); hello_.reset(); first_hello_.clear(); retry_hello_.clear(); state_=State::output; return ServerHandshakeIoFeed{consumed};
         }
         auto record=records_.feed(input,RecordFraming::handshake_ciphertext); if (!record) return fail(ServerHandshakeIoError::protocol_error);
