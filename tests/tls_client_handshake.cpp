@@ -1,5 +1,14 @@
 import std;
 import nexus.tls.client_handshake;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 using Bytes=std::vector<std::uint8_t>; using View=std::span<std::uint8_t const>;
 auto read(std::string const& file) -> Bytes { std::ifstream f("tests/fixtures/tls-trust/"+file,std::ios::binary); return Bytes(std::istreambuf_iterator<char>(f),{}); }
@@ -42,6 +51,19 @@ int main() {
     if (!single_sender) return 22; auto single=single_sender->seal(t::ContentType::handshake,all); auto single_client=make("server.example");
     if (!single || !single_client) return 23; auto single_result=single_client->feed(*single);
     if (!single_result || !single_result->client_finished_record || !single_client->take_application_records()) return 24;
+    int failures=0; bool reached_success=false;
+    for (int index=0;index<256;++index) {
+        auto candidate=make("server.example"); if (!candidate) return 34;
+        bool threw=false; fail_after=index;
+        try { auto result=candidate->feed(*single); if (result && result->client_finished_record) reached_success=true; }
+        catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) {
+            ++failures; auto again=candidate->feed(*single);
+            if (again || again.error()!=t::ClientHandshakeError::invalid_state || candidate->finish_input() || candidate->take_application_records()) return 35;
+        } else if (reached_success) break;
+    }
+    if (failures<5 || !reached_success) return 36;
     auto extra_sender=t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,key->view(),iv->view());
     auto extra=all; extra.push_back(1); if (!extra_sender) return 25; auto extra_record=extra_sender->seal(t::ContentType::handshake,extra); auto extra_client=make("server.example");
     if (!extra_record || !extra_client || extra_client->feed(*extra_record) || extra_client->take_application_records()) return 26;

@@ -14,6 +14,7 @@ export namespace nexus::tls {
     // Retry entry points validate the complete sequence after the final ServerHello arrives.
     // Feed arbitrary ciphertext stream chunks; after client_finished_record is returned, send it
     // before sending application records. Remaining input belongs to the application epoch.
+    // An exception while processing input invalidates the handshake.
     class ClientHandshake {
         enum class State { extensions, certificate, signature, finished, complete, failed } state_=State::extensions;
         ClientFlight flight_;

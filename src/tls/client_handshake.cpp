@@ -49,6 +49,7 @@ namespace nexus::tls {
     }
     auto ClientHandshake::feed(std::span<std::uint8_t const> bytes) -> std::expected<ClientHandshakeFeed,ClientHandshakeError> {
         if (state_==State::failed || state_==State::complete) return std::unexpected(ClientHandshakeError::invalid_state);
+        try {
         auto framed=records_.feed(bytes,RecordFraming::handshake_ciphertext);
         if (!framed) { state_=State::failed; return std::unexpected(ClientHandshakeError::invalid_record); }
         ClientHandshakeFeed result{framed->consumed,{}}; if (!framed->record) return result;
@@ -81,6 +82,7 @@ namespace nexus::tls {
             } else { state_=State::failed; return std::unexpected(ClientHandshakeError::invalid_message); }
         }
         return result;
+        } catch (...) { state_=State::failed; throw; }
     }
     auto ClientHandshake::finish_input() -> std::expected<void,ClientHandshakeError> {
         if (state_==State::failed || state_==State::complete) return std::unexpected(ClientHandshakeError::invalid_state);
