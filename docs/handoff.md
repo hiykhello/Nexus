@@ -61,7 +61,7 @@ xmake build --all -r -j 1
 
 - 已删除仓库内生成的 `build/`、`.xmake/`、`gcm.cache/` 和 `experiments/ak-fallible/build/`；`docs/build/` 是文档源目录，保留。
 - 已清除 `/tmp` 下旧的 Nexus 隔离构建、探针、锁、日志和临时副本；保留固定依赖源码/安装目录，下一次工作重新创建隔离的构建目录。
-- 本工作区原本没有提交；当前所有项目文件仍待建立本地 Git 基线。后续每个完成并验证的切片使用简短、可定位的提交主题，例如 `where:feature`，提交前同步更新本文。
+- 已建立本地 Git 基线提交 `aa2e710`（`where:baseline`），远端 `origin/main` 当前不存在可追踪分支。后续每个完成并验证的切片使用简短、可定位的提交主题，例如 `where:feature`，提交前同步更新本文。
 
 ## 下一步
 
