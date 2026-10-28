@@ -19,7 +19,7 @@ export namespace nexus::http2 {
         crypto::Bytes input_;
         std::size_t offset_=0;
         std::uint64_t ready_revision_=0;
-        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false;
+        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, output_in_flight_=false;
         void release_input() noexcept { crypto::Bytes{}.swap(input_); offset_=0; if (input_reserved_) { session_.release_input(); input_reserved_=false; } }
         static auto tls_error(tls::detail::AsyncApplicationError error) noexcept -> TlsServerError {
             return error==tls::detail::AsyncApplicationError::timeout ? TlsServerError::timeout : TlsServerError::tls;
@@ -38,7 +38,9 @@ export namespace nexus::http2 {
         }
         auto cancel() noexcept -> void {
             failed_=true;
-            if (!active_ && input_reserved_ && (!input_.empty() || resume_pending_)) { session_.abandon_input(); release_input(); }
+            if (!active_ && (output_in_flight_ || (input_reserved_ && (!input_.empty() || resume_pending_)))) {
+                session_.abandon_input(); release_input(); output_in_flight_=false;
+            }
             tls_.cancel();
         }
 
@@ -76,12 +78,14 @@ export namespace nexus::http2 {
             std::array<std::byte,16384> output{};
             auto count=session_.output(output);
             if (!count) { active_=false; cancel(); co_return std::unexpected(TlsServerError::http2); }
+            output_in_flight_=*count!=0;
             if (failed_) { active_=false; cancel(); co_return std::unexpected(TlsServerError::tls); }
             if (*count) {
                 auto bytes=std::span{reinterpret_cast<std::uint8_t const*>(output.data()),*count};
                 auto result=co_await tls_.send_all(bytes,deadline); active_=false;
                 if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
                 if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
+                output_in_flight_=false;
                 co_return TlsServerStep::progress;
             }
             if (session_.paused_stream()) { active_=false; co_return TlsServerStep::paused; }

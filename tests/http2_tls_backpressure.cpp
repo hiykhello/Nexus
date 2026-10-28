@@ -72,10 +72,12 @@ template<class Backend> auto exercise(Backend backend,bool timeout) -> bool {
         *f.error!=(timeout ? h::TlsServerError::timeout : h::TlsServerError::tls)) return false;
     if (f.session->response_memory_used()!=512) return false;
     f.duplicate=false; capy::run_async(ex)(duplicate(f)); f.context.restart(); (void)f.context.run_for(1s);
-    if (!f.context.stopped() || !f.duplicate || !f.session->reset_stream(1,8)) return false;
+    if (!f.context.stopped() || !f.duplicate) return false;
+    auto reset=f.session->reset_stream(1,8);
     std::array<std::byte,4096> sink{};
-    for (;;) { auto n=f.session->output(sink); if (!n) return false; if (!*n) break; }
-    return f.session->response_memory_used()==0 && f.session->stream_memory_charge()==0;
+    auto output=f.session->output(sink);
+    return !reset && reset.error().kind==h::ServerErrorKind::failed &&
+        !output && output.error().kind==h::ServerErrorKind::failed && f.session->response_memory_used()==512;
 }
 auto read_step(Connection& connection,bool& done,std::optional<h::TlsServerError>& error) -> capy::task<> {
     auto result=co_await connection.step(); if (!result) error=result.error(); done=true;
