@@ -83,6 +83,8 @@ export namespace nexus::http2 {
         struct Stream {
             std::int32_t id;
             bool responded = false;
+            bool head_request = false;
+            bool headers_received = false;
             bool reset_pending = false;
             std::vector<std::byte> response;
             std::size_t response_offset = 0;
@@ -115,22 +117,32 @@ export namespace nexus::http2 {
             if (h2::nghttp2_is_fatal(rc)) { failed_=true; ++revision_; }
             return std::unexpected(ServerError{ServerErrorKind::library, rc});
         }
-        auto response_fields(unsigned status, std::span<Header const> headers,
+        auto response_fields(unsigned status, bool head_request, std::size_t body_size, std::span<Header const> headers,
                              std::array<std::uint8_t,3>& value,
                              std::array<std::uint8_t,7>& name) const noexcept
             -> std::expected<std::vector<h2::nghttp2_nv>,ServerError> {
             if (headers.size()>response_header_fields_) return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             std::size_t bytes=0;
+            bool length_seen=false;
             for (auto const& header:headers) {
                 if (header.name.empty() || header.name.front()==':' || header.name.size()>response_header_bytes_-bytes ||
                     header.value.size()>response_header_bytes_-bytes-header.name.size())
                     return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
                 bytes+=header.name.size()+header.value.size();
                 if (header.name=="connection" || header.name=="proxy-connection" || header.name=="keep-alive" ||
-                    header.name=="transfer-encoding" || header.name=="upgrade" || header.name=="te" || header.name=="content-length" ||
+                    header.name=="transfer-encoding" || header.name=="upgrade" || header.name=="te" ||
                     !h2::nghttp2_check_header_name(reinterpret_cast<std::uint8_t const*>(header.name.data()),header.name.size()) ||
                     !h2::nghttp2_check_header_value_rfc9113(reinterpret_cast<std::uint8_t const*>(header.value.data()),header.value.size()))
                     return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+                if (header.name=="content-length") {
+                    std::size_t length=0;
+                    auto begin=header.value.data(), end=begin+header.value.size();
+                    auto [last,error]=std::from_chars(begin,end,length);
+                    if (length_seen || status==204 || begin==end || error!=std::errc{} || last!=end ||
+                        (status==205 && length!=0) || (!head_request && status!=304 && length!=body_size))
+                        return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+                    length_seen=true;
+                }
             }
             value={static_cast<std::uint8_t>('0'+status/100),static_cast<std::uint8_t>('0'+status/10%10),static_cast<std::uint8_t>('0'+status%10)};
             name={':','s','t','a','t','u','s'};
@@ -179,6 +191,13 @@ export namespace nexus::http2 {
             auto end = (f->hd.flags & h2::NGHTTP2_FLAG_END_STREAM) != 0;
             if (f->hd.type == h2::NGHTTP2_HEADERS) {
                 if (self.headers_.stream() != f->hd.stream_id) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
+                if (f->headers.cat==h2::NGHTTP2_HCAT_REQUEST) {
+                    auto stream=std::ranges::find(self.streams_,f->hd.stream_id,&Stream::id);
+                    if (stream==self.streams_.end()) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
+                    auto method=std::ranges::find(self.headers_.fields(),std::string_view{":method"},&Header::name);
+                    stream->head_request=method!=self.headers_.fields().end() && method->value=="HEAD";
+                    stream->headers_received=true;
+                }
                 auto ok = self.events_.headers(self.events_.context, f->hd.stream_id, self.headers_.fields(),
                                                f->headers.cat != h2::NGHTTP2_HCAT_REQUEST, end);
                 self.headers_.discard();
@@ -323,7 +342,8 @@ export namespace nexus::http2 {
             return {};
         }
         // Header names must be lowercase HTTP field names. Pseudo headers,
-        // connection-specific fields and content-length are not accepted.
+        // connection-specific fields are not accepted. Content-Length must
+        // match the body; for HEAD/304 the caller supplies the selected representation length.
         // nghttp2 copies the fields during submission.
         auto respond_body(std::int32_t id, unsigned status, std::span<std::byte const> body,
                           std::span<Header const> headers = {}) noexcept
@@ -333,13 +353,15 @@ export namespace nexus::http2 {
             if (id <= 0 || status < 200 || status > 599)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             auto stream = std::ranges::find(streams_, id, &Stream::id);
-            if (stream == streams_.end() || stream->responded || stream->reset_pending)
+            if (stream == streams_.end() || !stream->headers_received || stream->responded || stream->reset_pending)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             if (body.size() > response_limit_ || body.size() > total_response_limit_ - response_reserved_ ||
-                (body.size() != 0 && (status == 204 || status == 205 || status == 304)))
+                (body.size() != 0 && (stream->head_request || status == 204 || status == 205 || status == 304)))
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
+            if (stream->head_request || status==204 || status==205 || status==304)
+                return respond_empty(id,status,headers);
             std::array<std::uint8_t,3> value{}; std::array<std::uint8_t,7> name{};
-            auto fields=response_fields(status,headers,value,name);
+            auto fields=response_fields(status,stream->head_request,body.size(),headers,value,name);
             if (!fields) return std::unexpected(fields.error());
             try { stream->response.assign(body.begin(), body.end()); }
             catch (std::bad_alloc const&) { return std::unexpected(ServerError{ServerErrorKind::allocation}); }
@@ -369,10 +391,10 @@ export namespace nexus::http2 {
             if (id <= 0 || status < 200 || status > 599)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             auto stream = std::ranges::find(streams_, id, &Stream::id);
-            if (stream == streams_.end() || stream->responded || stream->reset_pending)
+            if (stream == streams_.end() || !stream->headers_received || stream->responded || stream->reset_pending)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             std::array<std::uint8_t,3> value{}; std::array<std::uint8_t,7> name{};
-            auto fields=response_fields(status,headers,value,name);
+            auto fields=response_fields(status,stream->head_request,0,headers,value,name);
             if (!fields) return std::unexpected(fields.error());
             active_ = true;
             auto rc = h2::nghttp2_submit_response2(session_, id, fields->data(), fields->size(), nullptr);

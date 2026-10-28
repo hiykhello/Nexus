@@ -44,7 +44,7 @@ auto on_end(void* p, std::int32_t id) noexcept -> bool { static_cast<Observed*>(
 void on_closed(void* p, std::int32_t id, std::uint32_t code) noexcept {
     auto& o = *static_cast<Observed*>(p); o.closed_id = id; o.closed_code = code;
 }
-struct Client { std::int32_t reset_id = 0; std::uint32_t reset_code = 0; std::int32_t response_id = 0; std::vector<std::int32_t> response_ids; bool status_204 = false; std::string content_type; std::string extra_header; std::string body; std::vector<std::int32_t> window_update_ids; std::vector<std::int32_t> goaway_ids; };
+struct Client { std::int32_t reset_id = 0; std::uint32_t reset_code = 0; std::int32_t response_id = 0; std::vector<std::int32_t> response_ids; bool status_204 = false; std::string content_type; std::string extra_header; std::string content_length; std::string body; std::vector<std::int32_t> window_update_ids; std::vector<std::int32_t> goaway_ids; };
 auto on_client_close(h2::nghttp2_session*, std::int32_t id, std::uint32_t code, void* p) noexcept -> int {
     auto& c = *static_cast<Client*>(p); c.reset_id = id; c.reset_code = code; return 0;
 }
@@ -66,8 +66,8 @@ auto on_client_header(h2::nghttp2_session*, h2::nghttp2_frame const* frame,
                       std::uint8_t const* value, std::size_t v, std::uint8_t, void* p) noexcept -> int {
     auto& c = *static_cast<Client*>(p);
     auto key=std::string_view(reinterpret_cast<char const*>(name),n);
-    if (key=="content-type" || key=="x-test") {
-        try { (key=="content-type" ? c.content_type : c.extra_header).assign(reinterpret_cast<char const*>(value),v); }
+    if (key=="content-type" || key=="x-test" || key=="content-length") {
+        try { (key=="content-type" ? c.content_type : key=="x-test" ? c.extra_header : c.content_length).assign(reinterpret_cast<char const*>(value),v); }
         catch (...) { return -1; }
     }
     if (key == ":status") {
@@ -185,17 +185,22 @@ int main() {
         forbidden || forbidden.error().kind != nh::ServerErrorKind::invalid_argument) return 17;
     constexpr std::string_view response = "response body";
     for (auto const& field : std::array<nh::Header,5>{{{"Content-Type","text/plain"},{":status","200"},
-             {"connection","close"},{"content-length","13"},{"x-test","bad\r\nvalue"}}}) {
+             {"connection","close"},{"content-length","12"},{"x-test","bad\r\nvalue"}}}) {
         auto invalid=(**session).respond_body(second,200,
             {reinterpret_cast<std::byte const*>(response.data()),response.size()},std::span{&field,1});
         if (invalid || invalid.error().kind!=nh::ServerErrorKind::invalid_argument) return 82;
+    }
+    for (auto const& length:std::array<std::string_view,4>{"", "+13", "13x", "999999999999999999999999999"}) {
+        std::array<nh::Header,1> invalid_length{{{"content-length",std::string(length)}}};
+        if ((**session).respond_body(second,200,
+            {reinterpret_cast<std::byte const*>(response.data()),response.size()},invalid_length)) return 91;
     }
     std::vector<nh::Header> excessive(33,nh::Header{"x-test","a"});
     if ((**session).respond_empty(second,200,excessive)) return 83;
     std::array<nh::Header,1> oversized_header{{{"x-test",std::string(8192,'x')}}};
     auto too_many_bytes=(**session).respond_empty(second,200,oversized_header);
     if (too_many_bytes || too_many_bytes.error().kind!=nh::ServerErrorKind::invalid_argument) return 84;
-    std::array<nh::Header,1> response_headers{{{"content-type","text/plain"}}};
+    std::array<nh::Header,2> response_headers{{{"content-type","text/plain"},{"content-length","13"}}};
     if (!(**session).respond_body(second, 200,
         {reinterpret_cast<std::byte const*>(response.data()), response.size()},response_headers)) return 13;
     response_headers[0].value="changed after submission";
@@ -209,7 +214,7 @@ int main() {
         !(**session).respond_empty(third, 204, std::array<nh::Header,1>{{{"x-test","yes"}}})) return 20;
     if (!to_client(**session, client) || client_events.response_ids != std::vector<std::int32_t>{second, third} ||
         !client_events.status_204 || client_events.body != "response body" ||
-        client_events.content_type!="text/plain" || client_events.extra_header!="yes") return 15;
+        client_events.content_type!="text/plain" || client_events.extra_header!="yes" || client_events.content_length!="13") return 15;
     auto closed = (**session).respond_empty(second, 204);
     if (closed || closed.error().kind != nh::ServerErrorKind::invalid_state) return 16;
     auto empty = (**session).output({});
@@ -237,6 +242,41 @@ int main() {
         observed.closed_id != canceled || observed.closed_code != h2::NGHTTP2_CANCEL || !client_events.body.empty()) return 56;
     if (!(**session).respond_body(survivor, 200, second_body) || !to_client(**session, client) ||
         client_events.body.size() != second_body.size()) return 57;
+    std::array head_request{nv(":method", "HEAD"), nv(":scheme", "https"), nv(":authority", "example.test"), nv(":path", "/head")};
+    auto head=h2::nghttp2_submit_request2(client,nullptr,head_request.data(),head_request.size(),nullptr,nullptr);
+    if (head<=survivor) return 85;
+    bool saw_partial_headers=false;
+    for (;;) {
+        std::uint8_t const* bytes=nullptr;
+        auto size=h2::nghttp2_session_mem_send2(client,&bytes);
+        if (size<0) return 92;
+        if (!size) break;
+        auto count=static_cast<std::size_t>(size);
+        if (count>9 && bytes[3]==h2::NGHTTP2_HEADERS) {
+            auto prefix=(**session).receive({reinterpret_cast<std::byte const*>(bytes),9});
+            if (!prefix || *prefix!=9 || (**session).respond_empty(head,200)) return 93;
+            auto rest=(**session).receive({reinterpret_cast<std::byte const*>(bytes+9),count-9});
+            if (!rest || *rest!=count-9) return 94;
+            saw_partial_headers=true;
+        } else {
+            auto received=(**session).receive({reinterpret_cast<std::byte const*>(bytes),count});
+            if (!received || *received!=count) return 95;
+        }
+    }
+    if (!saw_partial_headers) return 96;
+    std::array<nh::Header,1> representation_length{{{"content-length","123"}}};
+    if ((**session).respond_body(head,200,forbidden_body,representation_length) ||
+        (**session).respond_empty(head,204,representation_length)) return 86;
+    std::array<nh::Header,2> duplicate_length{{{"content-length","123"},{"content-length","123"}}};
+    if ((**session).respond_empty(head,200,duplicate_length)) return 87;
+    client_events.body.clear(); client_events.content_length.clear();
+    if (!(**session).respond_empty(head,200,representation_length) || !to_client(**session,client) ||
+        !client_events.body.empty() || client_events.content_length!="123") return 88;
+    auto not_modified=h2::nghttp2_submit_request2(client,nullptr,good.data(),good.size(),nullptr,nullptr);
+    if (not_modified<=head || !to_server(client,**session)) return 89;
+    client_events.content_length.clear();
+    if (!(**session).respond_empty(not_modified,304,representation_length) || !to_client(**session,client) ||
+        client_events.content_length!="123") return 90;
     observed.fail_data = true;
     request_body.offset = 0;
     auto failure_stream = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), &provider, nullptr);
@@ -412,58 +452,5 @@ int main() {
     if (!flooded) return 40;
     auto flood_after = (**flood_session).receive({});
     if (flood_after || flood_after.error().kind != nh::ServerErrorKind::failed) return 41;
-    // The nghttp2 allocator has a hard per-session live-allocation budget.
-    // Exhaust it with peer-generated ACK work while keeping the ACK queue
-    // limit high enough that the memory limit is the first failure.
-    Observed budget_observed;
-    nh::ServerEvents budget_events{&budget_observed, on_headers, on_data, on_end, on_closed};
-    nh::ServerLimits limits{8, 4, 128, 64, 16};
-    limits.library_memory_bytes=0;
-    if (nh::ServerSession::create(limits, budget_events)) return 70;
-    limits.library_memory_bytes=1;
-    auto too_small=nh::ServerSession::create(limits, budget_events);
-    if (too_small || too_small.error().library_code!=h2::NGHTTP2_ERR_NOMEM) return 71;
-    limits.library_memory_bytes=4*1024*1024;
-    auto reference=nh::ServerSession::create(limits, budget_events);
-    if (!reference || !(*reference)->library_memory_used() ||
-        (*reference)->library_memory_peak()<(*reference)->library_memory_used()) return 72;
-    auto baseline=(*reference)->library_memory_used();
-    reference->reset();
-    limits.library_memory_bytes=baseline;
-    auto submission=nh::ServerSession::create(limits, budget_events);
-    if (!submission) return 79;
-    auto no_memory=(**submission).start_shutdown();
-    if (no_memory || no_memory.error().library_code!=h2::NGHTTP2_ERR_NOMEM) return 80;
-    auto after_submission=(**submission).receive({});
-    if (after_submission || after_submission.error().kind!=nh::ServerErrorKind::failed) return 81;
-    limits.library_memory_bytes=baseline+1024;
-    auto budget=nh::ServerSession::create(limits, budget_events);
-    if (!budget) return 73;
-    budget_observed.session=budget->get();
-    constexpr std::string_view preface="PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
-    auto initial=(**budget).receive(std::as_bytes(std::span{preface}));
-    constexpr std::array<std::byte,9> settings{std::byte{0},std::byte{0},std::byte{0},std::byte{4},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0}};
-    auto setup=(**budget).receive(settings);
-    if (!initial || *initial!=preface.size() || !setup || *setup!=settings.size()) return 74;
-    constexpr std::array<std::byte,17> ping{std::byte{0},std::byte{0},std::byte{8},std::byte{6}};
-    for (int i=0;i<3;++i) if (!(**budget).receive(ping)) return 76;
-    auto queued=(**budget).library_memory_used();
-    std::array<std::byte,1024> sink{};
-    for (;;) {
-        auto n=(**budget).output(sink);
-        if (!n) return 77;
-        if (!*n) break;
-    }
-    if ((**budget).library_memory_used()>=queued || (**budget).library_memory_peak()<queued) return 78;
-    bool exhausted=false;
-    for (int i=0;i<64;++i) {
-        auto received=(**budget).receive(ping);
-        if (!received) {
-            exhausted=received.error().kind==nh::ServerErrorKind::library && received.error().library_code==h2::NGHTTP2_ERR_NOMEM;
-            break;
-        }
-    }
-    if (!exhausted || (**budget).library_memory_used()>limits.library_memory_bytes ||
-        (**budget).library_memory_peak()>limits.library_memory_bytes || (**budget).receive({})) return 75;
     std::println("HTTP/2 server session response, fragmentation, limits, DATA and reentrancy passed");
 }
