@@ -246,6 +246,43 @@ int main() {
         (**session).response_memory_used()!=0) return 56;
     if (!(**session).respond_body(survivor, 200, second_body) || !to_client(**session, client) ||
         client_events.body.size() != second_body.size()) return 57;
+    // Keep a serialized DATA frame partly borrowed while receiving a peer
+    // reset and queuing another stream's response.
+    auto partial = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
+    auto concurrent = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
+    if (partial <= survivor || concurrent <= partial || !to_server(client, **session) ||
+        !(**session).respond_body(partial, 200, {reinterpret_cast<std::byte const*>(later_body.data()), later_body.size()})) return 100;
+    std::array<std::byte, 9> frame_header{};
+    std::array<std::byte, 1> byte{};
+    for (;;) {
+        for (auto& item : frame_header) {
+            auto n = (**session).output(byte);
+            if (!n || *n != 1 || h2::nghttp2_session_mem_recv2(client, reinterpret_cast<std::uint8_t const*>(byte.data()), 1) != 1) return 101;
+            item = byte[0];
+        }
+        auto length = (std::to_integer<std::size_t>(frame_header[0]) << 16) |
+                      (std::to_integer<std::size_t>(frame_header[1]) << 8) | std::to_integer<std::size_t>(frame_header[2]);
+        if (std::to_integer<unsigned>(frame_header[3]) == h2::NGHTTP2_DATA) {
+            if (length != later_body.size()) return 102;
+            break;
+        }
+        for (std::size_t i = 0; i < length; ++i) {
+            auto n = (**session).output(byte);
+            if (!n || *n != 1 || h2::nghttp2_session_mem_recv2(client, reinterpret_cast<std::uint8_t const*>(byte.data()), 1) != 1) return 103;
+        }
+    }
+    auto n = (**session).output(byte);
+    if (!n || *n != 1 || byte[0] != static_cast<std::byte>(later_body[0]) ||
+        h2::nghttp2_session_mem_recv2(client, reinterpret_cast<std::uint8_t const*>(byte.data()), 1) != 1 ||
+        h2::nghttp2_submit_rst_stream(client, 0, partial, h2::NGHTTP2_CANCEL) || !to_server(client, **session) ||
+        !(**session).respond_empty(concurrent, 204)) return 104;
+    for (std::size_t i = 1; i < later_body.size(); ++i) {
+        n = (**session).output(byte);
+        if (!n || *n != 1 || byte[0] != static_cast<std::byte>(later_body[i]) ||
+            h2::nghttp2_session_mem_recv2(client, reinterpret_cast<std::uint8_t const*>(byte.data()), 1) != 1) return 105;
+    }
+    if (!to_client(**session, client) || client_events.response_id != concurrent || !client_events.status_204 ||
+        (**session).response_memory_used() != 0) return 106;
     std::array head_request{nv(":method", "HEAD"), nv(":scheme", "https"), nv(":authority", "example.test"), nv(":path", "/head")};
     auto head=h2::nghttp2_submit_request2(client,nullptr,head_request.data(),head_request.size(),nullptr,nullptr);
     if (head<=survivor) return 85;
