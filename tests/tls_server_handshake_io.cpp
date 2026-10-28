@@ -4,6 +4,15 @@ import nexus.tls.client_keys;
 import nexus.tls.handshake;
 import nexus.tls.key_share;
 import nexus.tls.server_hello;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 int main(int argc,char** argv) {
@@ -18,6 +27,20 @@ int main(int argc,char** argv) {
     hello.extensions={{43,{2,3,4}},{10,{0,2,0,29}},{13,{0,2,static_cast<std::uint8_t>(scheme>>8),static_cast<std::uint8_t>(scheme)}},{51,*share},{16,{0,12,2,'h','2',8,'h','t','t','p','/','1','.','1'}}};
     auto body=hello.encode(); auto wire=t::HandshakeDecoder::encode(1,*body); if (!body || !wire) return 8;
     c::Bytes input{22,3,1,static_cast<std::uint8_t>(wire->size()>>8),static_cast<std::uint8_t>(wire->size())}; input.insert(input.end(),wire->begin(),wire->end());
+    int failures=0; bool success=false;
+    for (int index=0;index<256;++index) {
+        auto c=credential(); if (!c) return 62;
+        auto candidate=t::ServerHandshakeIo::create(std::move(*c),1,100,"h2"); if (!candidate) return 63;
+        bool threw=false; fail_after=index;
+        try { auto result=candidate->feed(input,2); if (result && !candidate->pending_output().empty()) success=true; }
+        catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) {
+            ++failures; auto again=candidate->feed(input,2);
+            if (again || again.error()!=t::ServerHandshakeIoError::invalid_state || !candidate->pending_output().empty() || candidate->tick(2) || candidate->take_application_records()) return 64;
+        } else if (success) break;
+    }
+    if (failures<5 || !success) return 65;
     for (auto byte:input) { auto result=server->feed(std::span{&byte,1},101); if (!result || result->consumed!=1) return 9; }
     if (server->pending_output().empty() || server->feed(input,102)->consumed!=0 || server->take_application_records()) return 10;
     if (server->written(server->pending_output().size()+1,102).error()!=t::ServerHandshakeIoError::invalid_argument) return 11;

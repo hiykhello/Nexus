@@ -6,6 +6,15 @@ import nexus.tls.client_hello_stream;
 import nexus.tls.client_keys;
 import nexus.tls.handshake;
 import nexus.tls.key_share;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 auto read_exact(int fd,std::span<std::uint8_t> out) -> bool {
@@ -22,6 +31,29 @@ int main(int argc,char** argv) {
     if (argc!=4 && argc!=5) return 1;
     auto cred=t::ServerCredential::create(read_file(argv[1]),read_file(argv[2])); if (!cred) return 2;
     if (std::string_view(argv[3])=="bad-finished") {
+        int failures=0; bool reached_result=false;
+        for (int index=0;index<128;++index) {
+            auto k=c::X25519Private::generate(); if (!k) return 30;
+            auto p=k->public_key(); if (!p) return 31;
+            auto s=t::KeyShare::encode_client(std::array{t::KeyShareEntry{29,{p->begin(),p->end()}}}); if (!s) return 32;
+            auto scheme=*cred->scheme(); t::ClientHello h; h.cipher_suites={0x1301}; h.compression_methods={0};
+            h.extensions={{43,{2,3,4}},{10,{0,2,0,29}},{13,{0,2,static_cast<std::uint8_t>(scheme>>8),static_cast<std::uint8_t>(scheme)}},{51,*s}};
+            auto b=h.encode(); if (!b) return 33; auto w=t::HandshakeDecoder::encode(1,*b); if (!w) return 34;
+            auto keys=t::server_handshake_keys(*w,std::span{&scheme,1}); if (!keys) return 35;
+            auto peer=t::client_handshake_keys(*w,keys->server_hello,std::move(*k)); if (!peer) return 36;
+            auto candidate=t::ServerFlight::create(std::move(*keys),*cred); if (!candidate) return 37;
+            c::Bytes bogus(36,0); bogus[0]=20; bogus[3]=32;
+            auto record=peer->write.seal(t::ContentType::handshake,bogus); if (!record) return 38;
+            bool threw=false; fail_after=index;
+            try { auto result=candidate->client_finished(*record); if (!result && result.error()==t::ServerFlightError::invalid_finished) reached_result=true; }
+            catch (std::bad_alloc const&) { threw=true; }
+            fail_after=-1;
+            if (threw) {
+                ++failures; auto again=candidate->client_finished(*record);
+                if (again || again.error()!=t::ServerFlightError::invalid_state || candidate->take_application_records()) return 39;
+            } else if (reached_result) break;
+        }
+        if (failures<3 || !reached_result) return 40;
         auto key=c::X25519Private::generate(); if (!key) return 20;
         auto pub=key->public_key(); if (!pub) return 21;
         auto share=t::KeyShare::encode_client(std::array{t::KeyShareEntry{29,{pub->begin(),pub->end()}}}); if (!share) return 22;

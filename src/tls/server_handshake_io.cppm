@@ -30,6 +30,7 @@ export namespace nexus::tls {
         [[nodiscard]] static auto create(ServerCredential&& credential, std::uint64_t now, std::uint64_t deadline,
                                          std::string_view required_alpn = {}) -> std::expected<ServerHandshakeIo,ServerHandshakeIoError>;
         [[nodiscard]] auto pending_output() const noexcept -> std::span<std::uint8_t const>;
+        // Exceptions while advancing input or output invalidate the adapter.
         [[nodiscard]] auto written(std::size_t count, std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;
         // Stops at one record boundary. Returns zero while output is pending or after completion.
         [[nodiscard]] auto feed(std::span<std::uint8_t const> input, std::uint64_t now) -> std::expected<ServerHandshakeIoFeed,ServerHandshakeIoError>;

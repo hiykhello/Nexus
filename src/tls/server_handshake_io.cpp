@@ -34,6 +34,7 @@ namespace nexus::tls {
         auto time=check_time(now); if (!time) return std::unexpected(time.error());
         if (state_!=State::output && state_!=State::retry_output) return std::unexpected(ServerHandshakeIoError::invalid_state);
         auto remaining=pending_output().size(); if (count>remaining) return std::unexpected(ServerHandshakeIoError::invalid_argument);
+        try {
         offset_+=count; if (count!=remaining) return {};
         offset_=0;
         if (state_==State::retry_output) {
@@ -41,10 +42,12 @@ namespace nexus::tls {
             hello_.emplace(std::move(*next)); server_hello_.clear(); state_=State::retry_hello; return {};
         }
         ++record_; if (record_>flight_->records().size()) { state_=State::finished; server_hello_.clear(); } return {};
+        } catch (...) { (void)fail(ServerHandshakeIoError::protocol_error); throw; }
     }
     auto ServerHandshakeIo::feed(std::span<std::uint8_t const> input,std::uint64_t now) -> std::expected<ServerHandshakeIoFeed,ServerHandshakeIoError> {
         auto time=check_time(now); if (!time) return std::unexpected(time.error());
         if (state_==State::output || state_==State::retry_output || state_==State::complete) return ServerHandshakeIoFeed{};
+        try {
         if (state_==State::hello || state_==State::retry_hello) {
             auto result=hello_->feed(input); if (!result) return fail(ServerHandshakeIoError::protocol_error);
             if (result->compatibility_ccs) ccs_seen_=true;
@@ -91,6 +94,7 @@ namespace nexus::tls {
         if (!result) return fail(ServerHandshakeIoError::protocol_error);
         if (*result) state_=State::complete;
         return ServerHandshakeIoFeed{consumed};
+        } catch (...) { (void)fail(ServerHandshakeIoError::protocol_error); throw; }
     }
     auto ServerHandshakeIo::tick(std::uint64_t now) -> std::expected<void,ServerHandshakeIoError> { return check_time(now); }
     auto ServerHandshakeIo::cancel() -> std::expected<void,ServerHandshakeIoError> {

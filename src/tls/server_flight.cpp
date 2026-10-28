@@ -76,6 +76,7 @@ namespace nexus::tls {
     }
     auto ServerFlight::client_finished(std::span<std::uint8_t const> record) -> std::expected<bool,ServerFlightError> {
         if (state_!=State::awaiting_finished) return std::unexpected(ServerFlightError::invalid_state);
+        try {
         auto plain=keys_.read.open(record);
         if (!plain || plain->type!=ContentType::handshake || plain->content.empty()) { state_=State::failed; return std::unexpected(ServerFlightError::invalid_finished); }
         auto messages=decoder_->feed(plain->content);
@@ -91,6 +92,7 @@ namespace nexus::tls {
         auto wire=HandshakeDecoder::encode(20,message.body,48);
         if (!wire || !keys_.transcript.append(*wire)) return std::unexpected(ServerFlightError::crypto_error);
         state_=State::complete; return true;
+        } catch (...) { state_=State::failed; application_.reset(); throw; }
     }
     auto ServerFlight::take_application_records() -> std::expected<ApplicationRecords,ServerFlightError> {
         if (state_!=State::complete || !application_) return std::unexpected(ServerFlightError::invalid_state);
