@@ -1,5 +1,14 @@
 import std;
 import nexus.tls.client_hello_stream;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls;
 using Bytes=std::vector<std::uint8_t>;
 auto record(std::span<std::uint8_t const> p, std::uint8_t type=22, std::uint8_t version=3) -> Bytes {
@@ -29,6 +38,15 @@ int main(int argc, char** argv) {
     }
     t::ClientHello hello; hello.random.fill(0x42); hello.session_id={1,2,3}; hello.cipher_suites={0x1301};
     hello.compression_methods={0}; hello.extensions={{43,{2,3,4}}}; auto message=wire(hello);
+    auto packet=record(message); int failures=0;
+    for (int index=0;index<40;++index) {
+        auto candidate=t::ClientHelloStream::create(); if (!candidate) return 30;
+        bool threw=false; fail_after=index;
+        try { (void)candidate->feed(packet); } catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) { ++failures; auto retry=candidate->feed(packet); if (retry || retry.error()!=t::ClientHelloStreamError::invalid_state) return 31; }
+    }
+    if (failures<3) return 32;
     auto stream=t::ClientHelloStream::create(); if (!stream) return 1;
     for (std::size_t i=0;i<message.size();++i) {
         auto fragment=record(std::span{message}.subspan(i,1),22,i==0 ? 1 : 3);

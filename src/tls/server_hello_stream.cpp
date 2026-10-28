@@ -12,6 +12,7 @@ namespace nexus::tls {
     }
     auto ServerHelloStream::feed(std::span<std::uint8_t const> input) -> std::expected<ServerHelloFeed,ServerHelloStreamError> {
         if (state_!=State::first && state_!=State::final) return std::unexpected(ServerHelloStreamError::invalid_state);
+        try {
         auto record=records_.feed(input,RecordFraming::plaintext);
         if (!record) { state_=State::failed; return std::unexpected(ServerHelloStreamError::invalid_record); }
         ServerHelloFeed result{record->consumed,{},false}; if (!record->record) return result;
@@ -32,6 +33,7 @@ namespace nexus::tls {
         if (retry && state_==State::final) { state_=State::failed; return std::unexpected(ServerHelloStreamError::invalid_retry); }
         auto encoded=HandshakeDecoder::encode(2,message.body,65535); if (!encoded) { state_=State::failed; return std::unexpected(ServerHelloStreamError::invalid_message); }
         state_=retry ? State::retry_pending : State::complete; result.message=std::move(*encoded); result.retry=retry; return result;
+        } catch (...) { state_=State::failed; throw; }
     }
     auto ServerHelloStream::resume_retry() -> std::expected<void,ServerHelloStreamError> {
         if (state_!=State::retry_pending) return std::unexpected(ServerHelloStreamError::invalid_state);

@@ -1,5 +1,14 @@
 import std;
 import nexus.tls.server_hello_stream;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; using Bytes=std::vector<std::uint8_t>;
 auto record(std::span<std::uint8_t const> p, std::uint8_t type=22) -> Bytes {
     Bytes b{type,3,3,static_cast<std::uint8_t>(p.size()>>8),static_cast<std::uint8_t>(p.size())}; b.insert(b.end(),p.begin(),p.end()); return b;
@@ -10,6 +19,15 @@ auto hello(bool retry) -> Bytes {
     auto body=*s.encode(); Bytes wire{2,0,static_cast<std::uint8_t>(body.size()>>8),static_cast<std::uint8_t>(body.size())}; wire.insert(wire.end(),body.begin(),body.end()); return wire;
 }
 int main() {
+    auto packet=record(hello(false)); int failures=0;
+    for (int index=0;index<40;++index) {
+        auto candidate=t::ServerHelloStream::create(); if (!candidate) return 30;
+        bool threw=false; fail_after=index;
+        try { (void)candidate->feed(packet); } catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) { ++failures; auto again=candidate->feed(packet); if (again || again.error()!=t::ServerHelloStreamError::invalid_state) return 31; }
+    }
+    if (failures<3) return 32;
     auto wire=hello(false), retry=hello(true); auto s=t::ServerHelloStream::create(); if (!s) return 1;
     auto ccs=record(Bytes{1},20); auto cc=s->feed(ccs); if (!cc || cc->message) return 2;
     for (std::size_t i=0;i<wire.size();++i) {
