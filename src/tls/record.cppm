@@ -29,6 +29,7 @@ export namespace nexus::tls {
         // Receive keys are not subject to this local send policy.
         [[nodiscard]] static auto create(RecordDirection direction, crypto::Aead algorithm,
             std::span<std::uint8_t const> key, std::span<std::uint8_t const> iv, std::uint64_t send_limit = 1u << 24) -> std::expected<RecordLayer,RecordError>;
+        [[nodiscard]] auto usable(RecordDirection direction) const noexcept -> bool { return active_ && direction_==direction; }
         [[nodiscard]] auto send_limit() const noexcept -> std::uint64_t { return send_limit_; }
         [[nodiscard]] auto send_remaining() const noexcept -> std::uint64_t { return active_ && direction_==RecordDirection::send ? send_limit_-sequence_ : 0; }
         [[nodiscard]] auto seal(ContentType type, std::span<std::uint8_t const> content, std::size_t padding = 0)

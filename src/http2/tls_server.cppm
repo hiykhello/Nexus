@@ -12,7 +12,7 @@ export namespace nexus::http2 {
     // A single owner drives this object and its session on one executor. Socket,
     // session and this object must outlive an outstanding step. The caller must
     // have completed a server TLS handshake that selected h2 before constructing it.
-    // Client-role application records are rejected and invalidate a claimed session.
+    // Client-role or unready application records invalidate a claimed session.
     template<class Socket>
     class TlsServerConnection {
         ServerSession& session_;
@@ -30,7 +30,7 @@ export namespace nexus::http2 {
     public:
         TlsServerConnection(Socket& socket, ServerSession& session, tls::ApplicationRecords&& records,
                             crypto::Bytes&& unread)
-            : session_(session), server_records_(records.role()==tls::ApplicationRole::server),
+            : session_(session), server_records_(records.role()==tls::ApplicationRole::server && records.ready_for_transport()),
               tls_(socket,std::move(records),std::move(unread)), claimed_(session.claim_transport()) {
             failed_=!claimed_ || !server_records_ || !tls_.active();
             if (!failed_) { transport_reserved_=session_.reserve_transport(4096); failed_=!transport_reserved_; }

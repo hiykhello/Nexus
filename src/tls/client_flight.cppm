@@ -23,6 +23,13 @@ export namespace nexus::tls {
         [[nodiscard]] auto rotate(bool sending) -> bool;
     public:
         [[nodiscard]] auto role() const noexcept -> ApplicationRole { return role_; }
+        // A new transport adapter cannot inherit a pending control message or
+        // a closed direction without also inheriting its external I/O state.
+        [[nodiscard]] auto ready_for_transport() const noexcept -> bool {
+            return active_ && write_.usable(RecordDirection::send) && read_.usable(RecordDirection::receive) &&
+                !read_closed_ && !write_closed_ && !update_response_ && handshake_pending_.empty() &&
+                write_limit_ >= 64 && write_limit_ <= 16385 && read_limit_ >= 64 && read_limit_ <= 16385;
+        }
         // Maximum application bytes in one unpadded record, after peer negotiation.
         [[nodiscard]] auto max_write_size() const noexcept -> std::size_t {
             return active_ && !write_closed_ && write_limit_ > 1 ? std::min(write_limit_ - 1, std::size_t{16384}) : 0;
