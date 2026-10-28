@@ -29,8 +29,9 @@ struct Fixture {
     io::io_context context; io::local_stream_socket socket{context},peer{context};
     std::unique_ptr<h::ServerSession> session; std::optional<Connection> connection;
     bool done=false, duplicate=false; std::optional<h::TlsServerError> error;
-    template<class Backend> explicit Fixture(Backend backend,bool bind=true) : context(backend) {
-        auto created=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed});
+    template<class Backend> explicit Fixture(Backend backend,bool bind=true, std::size_t budget=std::numeric_limits<std::size_t>::max()) : context(backend) {
+        h::ServerLimits limits{8,16,4096,1024,4096}; limits.shared_memory_bytes=budget;
+        auto created=h::ServerSession::create(limits,{nullptr,headers,data,end,closed});
         if (!created || io::connect_pair(socket,peer)) std::abort(); session=std::move(*created);
         constexpr std::string_view preface="PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
         constexpr std::array<std::byte,9> settings{std::byte{0},std::byte{0},std::byte{0},std::byte{4}};
@@ -74,9 +75,28 @@ template<class Backend> auto partial_failure(Backend backend) -> bool {
     capy::run_async(f.context.get_executor())(partial_step(connection,done,error)); f.context.restart(); (void)f.context.run_for(1s);
     std::array<std::byte,64> sink{}; auto output=f.session->output(sink);
     return f.context.stopped() && done && error==h::TlsServerError::tls && socket.writes==2 &&
-        socket.observed_size==5 && socket.observed[0]==23 && socket.observed[1]==3 && socket.observed[2]==3 &&
+        f.session->output_memory_charge()==0 && socket.observed_size==5 && socket.observed[0]==23 && socket.observed[1]==3 && socket.observed[2]==3 &&
         (socket.observed[3]!=0 || socket.observed[4]>16) &&
         !output && output.error().kind==h::ServerErrorKind::failed;
+}
+template<class Backend> auto output_budget(Backend backend) -> bool {
+    Fixture reference(backend,false);
+    auto baseline=reference.session->shared_memory_used();
+    // nghttp2 can allocate while producing output; find a cap that permits
+    // serialization but cannot accommodate the transport reservation.
+    for (std::size_t extra=0;extra<4096;extra+=16) {
+        Fixture f(backend,true,baseline+8192);
+        auto available=baseline+8192-f.session->shared_memory_used();
+        if (extra>=available || !f.session->reserve_input(available-extra)) return false;
+        capy::run_async(f.context.get_executor())(step(f,false));
+        f.context.restart(); (void)f.context.run_for(1s);
+        if (!f.done || f.error!=h::TlsServerError::budget_exceeded) continue;
+        std::uint8_t byte{}; auto n=::recv(f.peer.native_handle(),&byte,1,MSG_DONTWAIT); auto read_error=errno;
+        std::array<std::byte,64> sink{}; auto result=f.session->output(sink);
+        return f.context.stopped() && n<0 && (read_error==EAGAIN || read_error==EWOULDBLOCK) &&
+            f.session->output_memory_charge()==0 && !result && result.error().kind==h::ServerErrorKind::failed;
+    }
+    return false;
 }
 template<class Backend> auto exercise(Backend backend,bool timeout) -> bool {
     Fixture f(backend); std::array<char,4096> filler{};
@@ -88,14 +108,14 @@ template<class Backend> auto exercise(Backend backend,bool timeout) -> bool {
     }
     auto ex=f.context.get_executor(); capy::run_async(ex)(step(f,timeout));
     f.context.restart(); (void)f.context.run_for(20ms);
-    if (f.done || f.session->response_memory_used()!=512) return false;
+    if (f.done || f.session->response_memory_used()!=512 || f.session->output_memory_charge()<54) return false;
     capy::run_async(ex)(duplicate(f)); f.context.restart(); (void)f.context.run_for(20ms);
     if (f.done || !f.duplicate) return false;
     if (!timeout) f.connection->cancel();
     f.context.restart(); (void)f.context.run_for(1s);
     if (!f.context.stopped() || !f.done || !f.error ||
         *f.error!=(timeout ? h::TlsServerError::timeout : h::TlsServerError::tls)) return false;
-    if (f.session->response_memory_used()!=512) return false;
+    if (f.session->response_memory_used()!=512 || f.session->output_memory_charge()!=0) return false;
     f.duplicate=false; capy::run_async(ex)(duplicate(f)); f.context.restart(); (void)f.context.run_for(1s);
     if (!f.context.stopped() || !f.duplicate) return false;
     auto reset=f.session->reset_stream(1,8);
@@ -241,10 +261,10 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
 }
 int main() {
     for (int i=0;i<5;++i) {
-        if (!oversized_unread(io::epoll) || !duplicate_owner(io::epoll) || !drop_idle_driver(io::epoll) || !partial_failure(io::epoll) || !truncated_input(io::epoll) || !exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
+        if (!oversized_unread(io::epoll) || !duplicate_owner(io::epoll) || !drop_idle_driver(io::epoll) || !partial_failure(io::epoll) || !output_budget(io::epoll) || !truncated_input(io::epoll) || !exercise(io::epoll,false) || !exercise(io::epoll,true) || !input_budget(io::epoll,true) || !input_budget(io::epoll,false) || !abandon_paused(io::epoll,0) || !abandon_paused(io::epoll,1) || !abandon_paused(io::epoll,2) || !abandon_paused(io::epoll,3)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!oversized_unread(io::uring) || !duplicate_owner(io::uring) || !drop_idle_driver(io::uring) || !partial_failure(io::uring) || !truncated_input(io::uring) || !exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
+        if (!oversized_unread(io::uring) || !duplicate_owner(io::uring) || !drop_idle_driver(io::uring) || !partial_failure(io::uring) || !output_budget(io::uring) || !truncated_input(io::uring) || !exercise(io::uring,false) || !exercise(io::uring,true) || !input_budget(io::uring,true) || !input_budget(io::uring,false) || !abandon_paused(io::uring,0) || !abandon_paused(io::uring,1) || !abandon_paused(io::uring,2) || !abandon_paused(io::uring,3)) return 2;
 #endif
     }
-    std::cout << "HTTP/2 TLS partial output, cancellation, deadlines and input budgets passed\n";
+    std::cout << "HTTP/2 TLS output and input budgets, cancellation and deadlines passed\n";
 }

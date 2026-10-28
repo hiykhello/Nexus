@@ -82,7 +82,12 @@ export namespace nexus::http2 {
             if (failed_) { active_=false; cancel(); co_return std::unexpected(TlsServerError::tls); }
             if (*count) {
                 auto bytes=std::span{reinterpret_cast<std::uint8_t const*>(output.data()),*count};
+                // One TLS record and its asynchronous write copy coexist. A
+                // KeyUpdate record may precede short application output.
+                auto charge=2*std::max(*count+22,std::size_t{27});
+                if (!session_.reserve_output(charge)) { active_=false; cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
                 auto result=co_await tls_.send_all(bytes,deadline); active_=false;
+                session_.release_output();
                 if (!result) { cancel(); co_return std::unexpected(tls_error(result.error())); }
                 if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
                 co_return TlsServerStep::progress;
