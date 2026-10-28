@@ -53,6 +53,7 @@ namespace nexus::tls {
     }
     auto ClientHelloDriver::feed(std::span<std::uint8_t const> input) -> std::expected<ClientHelloDriverFeed,ClientHelloDriverError> {
         if (state_!=State::first && state_!=State::final) return std::unexpected(ClientHelloDriverError::invalid_state);
+        try {
         auto parsed=stream_.feed(input); if (!parsed) { state_=State::failed; return std::unexpected(ClientHelloDriverError::invalid_record); }
         ClientHelloDriverFeed out{parsed->consumed,{},false}; if (!parsed->message) return out;
         if (!parsed->retry) { server_wire_=std::move(*parsed->message); state_=State::ready; out.server_hello=true; return out; }
@@ -64,6 +65,7 @@ namespace nexus::tls {
         auto wire=frame(*second); if (!wire) { state_=State::failed; return std::unexpected(wire.error()); }
         auto outbound=record(*wire,3); if (!outbound) { state_=State::failed; return std::unexpected(outbound.error()); }
         retry_wire_=std::move(*parsed->message); current_=std::move(*second); current_wire_=std::move(*wire); state_=State::sending_retry; out.outbound=std::move(*outbound); return out;
+        } catch (...) { state_=State::failed; x_.reset(); hybrid_.reset(); throw; }
     }
     auto ClientHelloDriver::retry_sent() -> std::expected<void,ClientHelloDriverError> {
         if (state_!=State::sending_retry) return std::unexpected(ClientHelloDriverError::invalid_state);

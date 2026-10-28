@@ -1,5 +1,14 @@
 import std;
 import nexus.tls.client_hello_driver;
+static thread_local int fail_after=-1;
+void* operator new(std::size_t size) {
+    if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
+    if (fail_after>0) --fail_after;
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; using Bytes=std::vector<std::uint8_t>;
 auto retry(std::uint16_t group) -> Bytes {
     t::ServerHello h; h.random={0xcf,0x21,0xad,0x74,0xe5,0x9a,0x61,0x11,0xbe,0x1d,0x8c,0x02,0x1e,0x65,0xb8,0x91,0xc2,0xa2,0x11,0x16,0x7a,0xbb,0x8c,0x5e,0x07,0x9e,0x09,0xe2,0xc8,0xa8,0x33,0x9c}; h.cipher_suite=0x1301; h.extensions={{43,{3,4}},{51,{static_cast<std::uint8_t>(group>>8),static_cast<std::uint8_t>(group)}}};
@@ -7,6 +16,18 @@ auto retry(std::uint16_t group) -> Bytes {
 }
 int main() {
     t::ClientHello h; h.cipher_suites={0x1301}; h.compression_methods={0}; h.extensions={{43,{2,3,4}},{10,{0,4,0,0x1d,0x11,0xec}},{51,{0,0}}};
+    auto retry_wire=retry(0x001d); int failures=0;
+    for (int index=0;index<80;++index) {
+        auto candidate=t::ClientHelloDriver::create(h,0); if (!candidate || !candidate->initial_sent()) return 20;
+        bool threw=false; fail_after=index;
+        try { (void)candidate->feed(retry_wire); } catch (std::bad_alloc const&) { threw=true; }
+        fail_after=-1;
+        if (threw) {
+            ++failures; auto again=candidate->feed(retry_wire);
+            if (again || again.error()!=t::ClientHelloDriverError::invalid_state || candidate->retry_sent()) return 21;
+        }
+    }
+    if (failures<5) return 22;
     auto d=t::ClientHelloDriver::create(h,0); if (!d || !d->initial_record() || d->feed({}) || d->retry_sent()) return 1;
     if (!d->initial_sent() || d->initial_record() || d->initial_sent()) return 2;
     auto r=retry(0x001d); auto event=d->feed(r); if (!event || !event->outbound || event->server_hello || event->consumed!=r.size() || d->feed({})) return 3;
