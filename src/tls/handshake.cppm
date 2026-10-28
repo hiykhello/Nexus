@@ -28,7 +28,8 @@ export namespace nexus::tls {
         auto operator=(HandshakeDecoder const&) -> HandshakeDecoder& = delete;
         // Each input is at most 2^14 bytes: a TLS plaintext record payload.
         // A call may contain part of a header, one message, or several messages.
-        // On error or exception the decoder fails and any completed messages from that call are discarded.
+        // On error or exception the decoder fails, releases pending storage and
+        // discards completed messages from that call.
         // A finite message limit rejects additional messages before allocating them.
         [[nodiscard]] auto feed(std::span<std::uint8_t const> input, std::size_t max_messages = std::numeric_limits<std::size_t>::max())
             -> std::expected<std::vector<HandshakeMessage>, HandshakeError>;

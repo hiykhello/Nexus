@@ -15,7 +15,7 @@ namespace nexus::tls {
     }
     auto RecordStream::feed(std::span<std::uint8_t const> input, RecordFraming mode) -> std::expected<RecordFeed,RecordStreamError> {
         if (failed_ || finished_) return std::unexpected(RecordStreamError::invalid_state);
-        if (mode_ && *mode_ != mode) { failed_=true; return std::unexpected(RecordStreamError::invalid_state); }
+        if (mode_ && *mode_ != mode) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::invalid_state); }
         try {
         RecordFeed out;
         if (!input.empty() && !mode_) mode_=mode;
@@ -29,9 +29,9 @@ namespace nexus::tls {
                 if (((mode==RecordFraming::ciphertext || mode==RecordFraming::handshake_ciphertext) &&
                      (pending_[1]!=3 || pending_[2]!=3 || ((type!=23 || length<17) && !(mode==RecordFraming::handshake_ciphertext && type==20 && length==1)))) ||
                     (mode==RecordFraming::plaintext && ((type!=20 && type!=21 && type!=22 && type!=23) || pending_[1]!=3 || pending_[2]>3))) {
-                    failed_=true; return std::unexpected(RecordStreamError::invalid_header);
+                    failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::invalid_header);
                 }
-                if (length>(mode==RecordFraming::plaintext ? 16384u : 16640u)) { failed_=true; return std::unexpected(RecordStreamError::record_too_large); }
+                if (length>(mode==RecordFraming::plaintext ? 16384u : 16640u)) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::record_too_large); }
                 target_=5+length;
                 if (target_!=5) continue;
             }
@@ -44,7 +44,7 @@ namespace nexus::tls {
     auto RecordStream::finish() -> std::expected<void,RecordStreamError> {
         if (failed_ || finished_) return std::unexpected(RecordStreamError::invalid_state);
         finished_=true;
-        if (!pending_.empty()) { failed_=true; return std::unexpected(RecordStreamError::truncated); }
+        if (!pending_.empty()) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::truncated); }
         return {};
     }
 }

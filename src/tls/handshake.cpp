@@ -24,7 +24,7 @@ namespace nexus::tls {
     }
     auto HandshakeDecoder::fail(HandshakeError error) -> std::expected<std::vector<HandshakeMessage>, HandshakeError> {
         failed_ = true;
-        pending_.clear();
+        std::vector<std::uint8_t>{}.swap(pending_);
         expected_ = 0;
         return std::unexpected(error);
     }
@@ -69,7 +69,7 @@ namespace nexus::tls {
     }
     auto HandshakeDecoder::finish() -> std::expected<void, HandshakeError> {
         if (failed_) return std::unexpected(HandshakeError::invalid_state);
-        if (!pending_.empty()) { failed_ = true; pending_.clear(); expected_ = 0; return std::unexpected(HandshakeError::truncated); }
+        if (!pending_.empty()) { failed_ = true; std::vector<std::uint8_t>{}.swap(pending_); expected_ = 0; return std::unexpected(HandshakeError::truncated); }
         return {};
     }
     auto HandshakeDecoder::encode(std::uint8_t type, std::span<std::uint8_t const> body,

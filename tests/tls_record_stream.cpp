@@ -3,14 +3,16 @@ import nexus.tls.record_stream;
 import nexus.tls.record;
 import nexus.tls.handshake;
 static thread_local int fail_after=-1;
+static bool watch_pending=false, pending_released=false;
+static void* watched_pending=nullptr;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
-    if (auto p=std::malloc(size ? size : 1)) return p;
+    if (auto p=std::malloc(size ? size : 1)) { if (watch_pending && size>=8192) watched_pending=p; return p; }
     throw std::bad_alloc{};
 }
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete(void* p,std::size_t) noexcept { std::free(p); }
+void operator delete(void* p) noexcept { if (p && p==watched_pending) { watched_pending=nullptr; pending_released=true; } std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 int main() {
     c::Bytes key(16,7), iv(12,9), msg{1,0,0,3,'a','b','c'};
@@ -58,6 +60,19 @@ int main() {
         fail_after=-1;
         if (!threw || failed.pending_bytes()!=0 || failed.feed(*first,t::RecordFraming::ciphertext).error()!=t::RecordStreamError::invalid_state ||
             failed.finish().error()!=t::RecordStreamError::invalid_state) return 21;
+    }
+    c::Bytes partial{23,3,3,0x27,0x10}; partial.resize(8197,7);
+    for (bool finish_input:{false,true}) {
+        t::RecordStream candidate; watched_pending=nullptr; pending_released=false; watch_pending=true;
+        auto part=candidate.feed(partial,t::RecordFraming::ciphertext); watch_pending=false;
+        if (!part || part->record || !watched_pending || pending_released) return 22;
+        if (finish_input) {
+            auto result=candidate.finish(); if (result || result.error()!=t::RecordStreamError::truncated) return 23;
+        } else {
+            auto result=candidate.feed({},t::RecordFraming::plaintext);
+            if (result || result.error()!=t::RecordStreamError::invalid_state) return 24;
+        }
+        if (!pending_released || watched_pending || candidate.pending_bytes()) return 25;
     }
     std::cout << "TLS record stream fragmentation, epochs and handshake integration passed\n";
 }
