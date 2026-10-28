@@ -18,6 +18,7 @@ export namespace nexus::http2 {
         tls::detail::ApplicationConnection<Socket> tls_;
         crypto::Bytes input_;
         std::size_t offset_=0;
+        std::uint64_t ready_revision_=0;
         bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false;
     public:
         TlsServerConnection(Socket& socket, ServerSession& session, tls::ApplicationRecords&& records,
@@ -28,11 +29,11 @@ export namespace nexus::http2 {
         auto cancel() noexcept -> void { failed_=true; tls_.cancel(); }
 
         // After step reports drained or peer_closed, send close_notify without
-        // submitting further HTTP/2 output. The caller owns the socket and peer-close wait.
+        // modifying the session afterward. The caller owns the socket and peer-close wait.
         auto close_notify(tls::detail::ApplicationDeadline deadline = {})
             -> nex::capy::task<std::expected<void,TlsServerError>> {
             if (active_ || failed_ || closed_ || resume_pending_ || offset_!=input_.size() ||
-                tls_.pending_output() || !ready_to_close_)
+                tls_.pending_output() || !ready_to_close_ || session_.revision()!=ready_revision_)
                 co_return std::unexpected(TlsServerError::invalid_state);
             active_=true;
             auto result=co_await tls_.close_notify(deadline);
@@ -85,8 +86,8 @@ export namespace nexus::http2 {
                 if (session_.paused_stream()) { resume_pending_=true; co_return TlsServerStep::paused; }
                 co_return TlsServerStep::progress;
             }
-            if (peer_closed_) { active_=false; ready_to_close_=true; co_return TlsServerStep::peer_closed; }
-            if (session_.shutdown_complete()) { active_=false; ready_to_close_=true; co_return TlsServerStep::drained; }
+            if (peer_closed_) { active_=false; ready_to_close_=true; ready_revision_=session_.revision(); co_return TlsServerStep::peer_closed; }
+            if (session_.shutdown_complete()) { active_=false; ready_to_close_=true; ready_revision_=session_.revision(); co_return TlsServerStep::drained; }
             auto received=co_await tls_.read(deadline); active_=false;
             if (!received) { failed_=true; co_return std::unexpected(TlsServerError::tls); }
             if (received->kind==tls::detail::AsyncReadKind::eof) { peer_closed_=true; co_return TlsServerStep::progress; }

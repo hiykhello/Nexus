@@ -57,6 +57,7 @@ export namespace nexus::http2 {
         ServerEvents events_;
         std::uint8_t const* output_ = nullptr;
         std::size_t output_left_ = 0;
+        std::uint64_t revision_ = 0;
         bool active_ = false;
         bool failed_ = false;
         enum class Shutdown { running, notice, draining };
@@ -207,6 +208,7 @@ export namespace nexus::http2 {
             if (shutdown_ != Shutdown::running) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             auto rc = h2::nghttp2_submit_shutdown_notice(session_);
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            ++revision_;
             shutdown_ = Shutdown::notice;
             return {};
         }
@@ -219,6 +221,7 @@ export namespace nexus::http2 {
             auto last = h2::nghttp2_session_get_last_proc_stream_id(session_);
             auto rc = h2::nghttp2_submit_goaway(session_, 0, last, h2::NGHTTP2_NO_ERROR, nullptr, 0);
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            ++revision_;
             shutdown_ = Shutdown::draining;
             return {};
         }
@@ -237,6 +240,7 @@ export namespace nexus::http2 {
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
             auto rc = h2::nghttp2_submit_rst_stream(session_, 0, id, code);
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            ++revision_;
             stream->reset_pending = true;
             return {};
         }
@@ -273,6 +277,7 @@ export namespace nexus::http2 {
                 stream->response_offset = 0;
                 return std::unexpected(ServerError{ServerErrorKind::library, rc});
             }
+            ++revision_;
             stream->responded = true;
             return {};
         }
@@ -297,9 +302,11 @@ export namespace nexus::http2 {
             auto rc = h2::nghttp2_submit_response2(session_, id, &field, 1, nullptr);
             active_ = false;
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
+            ++revision_;
             stream->responded = true;
             return {};
         }
+        [[nodiscard]] auto revision() const noexcept -> std::uint64_t { return revision_; }
         [[nodiscard]] auto paused_stream() const noexcept -> std::int32_t { return paused_stream_; }
 
         // A paused input callback has already consumed the bytes that produced
@@ -310,6 +317,7 @@ export namespace nexus::http2 {
             if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
             if (id <= 0 || paused_stream_ != id)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_state});
+            ++revision_;
             auto rc = h2::nghttp2_session_consume(session_, id, paused_bytes_);
             if (rc != 0) {
                 failed_ = true;
@@ -324,6 +332,7 @@ export namespace nexus::http2 {
             if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
             if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
             if (paused_stream_ != 0) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
+            ++revision_;
             active_ = true;
             auto rc = h2::nghttp2_session_mem_recv2(session_, reinterpret_cast<std::uint8_t const*>(input.data()), input.size());
             active_ = false;
@@ -336,6 +345,7 @@ export namespace nexus::http2 {
             if (active_) return std::unexpected(ServerError{ServerErrorKind::reentrant});
             if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
             if (destination.empty()) return std::size_t{0};
+            ++revision_;
             active_ = true;
             if (output_left_ == 0) {
                 auto rc = h2::nghttp2_session_mem_send2(session_, &output_);

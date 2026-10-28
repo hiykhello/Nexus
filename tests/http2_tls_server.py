@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
     run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert), "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost", "-days", "1")
     run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(key_der))
     run("openssl", "x509", "-in", str(cert), "-outform", "DER", "-out", str(cert_der))
-    for mode in ("get", "pause", "multi", "peer", "truncated"):
+    for mode in ("get", "pause", "multi", "peer", "truncated", "stale"):
         pause = mode == "pause"
         multi = mode == "multi"
         with socket.socket() as listener:
@@ -68,6 +68,13 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                         raise RuntimeError(f"unexpected responses statuses={statuses}, bodies={bodies!r}")
                     if mode == "peer":
                         client.unwrap().close()
+                    if mode == "stale":
+                        try:
+                            client.unwrap()
+                        except (ssl.SSLError, OSError):
+                            pass
+                        else:
+                            raise RuntimeError("expected abort after stale close was rejected")
                     if mode == "truncated":
                         os.close(client.detach())
                     if multi and (goaway != [0x7fffffff, 3] or client.recv(1) != b""):
@@ -79,4 +86,4 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                 if server.poll() is None:
                     server.kill()
                     server.wait()
-print("HTTP/2 requests, multiplexing and TLS close in both directions and truncation rejection passed")
+print("HTTP/2 requests, multiplexing and TLS close in both directions truncation and stale-close rejection passed")

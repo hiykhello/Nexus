@@ -18,7 +18,7 @@ struct Fixture {
     std::int32_t request=0;
     std::vector<std::int32_t> requests;
     unsigned closed_count=0;
-    bool response=false, closed=false, done=false, success=false, pause=false, paused=false, ended=false, multi=false, peer_close=false, truncated=false;
+    bool response=false, closed=false, done=false, success=false, pause=false, paused=false, ended=false, multi=false, peer_close=false, truncated=false, stale=false;
     std::string body;
 };
 auto headers(void* p,std::int32_t id,std::span<h::Header const>,bool trailers,bool end) noexcept -> bool {
@@ -66,6 +66,13 @@ auto serve(Fixture& f) -> capy::task<> {
             if (!f.session->resume_input(f.session->paused_stream())) break;
             continue;
         }
+        if (*result==h::TlsServerStep::peer_closed && f.stale) {
+            if (!f.session->start_shutdown()) break;
+            auto rejected=co_await connection.close_notify(deadline);
+            f.success=!rejected && rejected.error()==h::TlsServerError::invalid_state;
+            connection.cancel();
+            break;
+        }
         if (*result==h::TlsServerStep::peer_closed && f.peer_close) {
             auto close=co_await connection.close_notify(deadline);
             auto duplicate=co_await connection.close_notify(deadline);
@@ -81,14 +88,14 @@ auto serve(Fixture& f) -> capy::task<> {
             break;
         }
         if (*result!=h::TlsServerStep::progress) break;
-        if (!f.multi && !f.peer_close && !f.truncated && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload"); break; }
+        if (!f.multi && !f.peer_close && !f.truncated && !f.stale && f.closed) { f.success=!f.pause || (f.paused && f.body=="upload"); break; }
     }
     f.done=true;
 }
 int main(int argc,char** argv) {
-    if (argc!=4 && (argc!=5 || (std::string_view(argv[4])!="pause" && std::string_view(argv[4])!="multi" && std::string_view(argv[4])!="peer" && std::string_view(argv[4])!="truncated"))) return 1;
+    if (argc!=4 && (argc!=5 || (std::string_view(argv[4])!="pause" && std::string_view(argv[4])!="multi" && std::string_view(argv[4])!="peer" && std::string_view(argv[4])!="truncated" && std::string_view(argv[4])!="stale"))) return 1;
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 2;
-    Fixture f; f.pause=argc==5 && std::string_view(argv[4])=="pause"; f.multi=argc==5 && std::string_view(argv[4])=="multi"; f.peer_close=argc==5 && std::string_view(argv[4])=="peer"; f.truncated=argc==5 && std::string_view(argv[4])=="truncated"; if (f.socket.assign(fd)) { ::close(fd); return 3; }
+    Fixture f; f.pause=argc==5 && std::string_view(argv[4])=="pause"; f.multi=argc==5 && std::string_view(argv[4])=="multi"; f.peer_close=argc==5 && std::string_view(argv[4])=="peer"; f.truncated=argc==5 && std::string_view(argv[4])=="truncated"; f.stale=argc==5 && std::string_view(argv[4])=="stale"; if (f.socket.assign(fd)) { ::close(fd); return 3; }
     auto credential=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!credential) return 4;
     auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     auto handshake=t::ServerHandshakeIo::create(std::move(*credential),now,now+5000,"h2"); if (!handshake) return 5;
