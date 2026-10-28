@@ -5,6 +5,7 @@ import os
 import pathlib
 import select
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -117,6 +118,44 @@ routing {{ default-outbound "edge"; }}
                 else:
                     connection.close()
                     raise RuntimeError('canceled resolver result triggered an outbound connection')
+                # A fresh tunnel must still resolve and use the same upstream
+                # after the canceled resolver owner has completed.
+                with socket.create_connection(('127.0.0.1', port), timeout=3) as fresh:
+                    fresh.settimeout(4)
+                    fresh.sendall(b'\x05\x01\x00')
+                    if exact(fresh, 2) != b'\x05\x00':
+                        raise RuntimeError('fresh SOCKS greeting failed')
+                    released = False
+                    fresh.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x00\x50')
+                    if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'x':
+                        raise RuntimeError('fresh resolver did not enter gate')
+                    os.write(gate_w, b'x')
+                    released = True
+                    if not select.select([ready_r], [], [], 3)[0] or os.read(ready_r, 1) != b'y':
+                        raise RuntimeError('fresh resolver did not finish successfully')
+                    target.settimeout(4)
+                    with target.accept()[0] as upstream:
+                        upstream.settimeout(4)
+                        if protocol == 'vless':
+                            tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                            tls_context.minimum_version = ssl.TLSVersion.TLSv1_3
+                            tls_context.load_cert_chain(root / 'cert.pem', root / 'key.pem')
+                            with tls_context.wrap_socket(upstream, server_side=True) as tls:
+                                header = exact(tls, 26)
+                                if header != b'\x00' + bytes(range(16)) + b'\x00\x01\x00\x50\x01\x7f\x00\x00\x01':
+                                    raise RuntimeError('fresh VLESS request mismatch')
+                                tls.sendall(b'\x00\x00')
+                                if exact(fresh, 10)[:2] != b'\x05\x00':
+                                    raise RuntimeError('fresh VLESS tunnel failed')
+                                fresh.sendall(b'ping')
+                                if exact(tls, 4) != b'ping':
+                                    raise RuntimeError('fresh VLESS upload failed')
+                                tls.sendall(b'pong')
+                                if exact(fresh, 4) != b'pong':
+                                    raise RuntimeError('fresh VLESS download failed')
+                        else:
+                            if exact(fresh, 10)[:2] != b'\x05\x00' or not upstream.recv(1024):
+                                raise RuntimeError('fresh Shadowsocks request failed')
             else:
                 if client.recv(1):
                     raise RuntimeError('canceled request returned unexpected data')
@@ -164,7 +203,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-tunnel-system-dns-') as directory
     (root / 'ss.key').chmod(0o600)
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                     '-keyout', str(root / 'key.pem'), '-out', str(root / 'cert.pem'),
-                    '-subj', '/CN=localhost', '-days', '1'], check=True, capture_output=True)
+                    '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost', '-days', '1'], check=True, capture_output=True)
     for protocol in ('vless', 'shadowsocks'):
         for workers in (1, 2):
             for reset in (True, False):
