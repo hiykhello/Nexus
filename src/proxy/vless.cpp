@@ -72,10 +72,12 @@ namespace nexus::proxy {
                     if (error) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(resolved);
                 }
+                if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                 if (endpoints.empty() || endpoints.size()>64) co_return TunnelConnectResult::retryable;
                 auto deadline=session_.started+std::chrono::seconds(10);
                 auto deadline_ms=std::chrono::duration_cast<std::chrono::milliseconds>(deadline.time_since_epoch()).count();
                 for (auto endpoint : endpoints) {
+                    if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     auto now=std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
                     auto seconds=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                     if (now<0 || deadline_ms<=now) co_return TunnelConnectResult::retryable;
@@ -83,6 +85,7 @@ namespace nexus::proxy {
                     if (!handshake) co_return TunnelConnectResult::retryable;
                     owner_=std::make_unique<tls::detail::OwnedClient>(context_,std::move(*handshake));
                     auto connected=co_await owner_->start(endpoint);
+                    if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     if (!connected) { owner_.reset(); continue; }
                     auto& connection=*owner_->client()->application();
                     client_=std::make_unique<Client>(connection);
@@ -107,7 +110,7 @@ namespace nexus::proxy {
 #else
                     auto sent=co_await client_->start(request,deadline);
 #endif
-                    if (!sent) co_return TunnelConnectResult::failed;
+                    if (!sent || stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     relay_=std::make_unique<Relay>(session_.client,connection,*client_,[this] { session_.touched=Clock::now(); });
                     co_return TunnelConnectResult::connected;
                 }

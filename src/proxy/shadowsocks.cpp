@@ -56,13 +56,16 @@ namespace nexus::proxy {
                     if (error) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(resolved);
                 }
+                if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                 if (endpoints.empty() || endpoints.size()>64) co_return TunnelConnectResult::retryable;
                 auto deadline=session_.started+std::chrono::seconds(10);
                 for (auto endpoint:endpoints) {
+                    if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     if (Clock::now()>=deadline) co_return TunnelConnectResult::retryable;
                     remote_=std::make_unique<io::tcp_socket>(context_);
                     auto operation=remote_->connect(endpoint);
                     auto [connect_error]=co_await io::timeout(std::move(operation),deadline);
+                    if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     if (connect_error || Clock::now()>=deadline) { remote_->close(); remote_.reset(); continue; }
                     std::vector<std::uint8_t> address;
                     if (destination.address().is_v4()) {
@@ -72,7 +75,7 @@ namespace nexus::proxy {
                     }
                     address.push_back(static_cast<std::uint8_t>(destination.port()>>8)); address.push_back(static_cast<std::uint8_t>(destination.port()));
                     auto started=co_await shadowsocks::detail::start_request(*remote_,profile_->key,address,deadline);
-                    if (!started) co_return TunnelConnectResult::failed;
+                    if (!started || stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     relay_=std::make_unique<Relay>(session_.client,*remote_,profile_->key,std::move(*started),[this] { session_.touched=Clock::now(); });
                     co_return TunnelConnectResult::connected;
                 }
