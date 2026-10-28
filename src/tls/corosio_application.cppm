@@ -190,7 +190,7 @@ export namespace nexus::tls::detail {
                     auto count=std::min(output.size(),buffered_.size()-offset_);
                     std::copy_n(buffered_.begin()+static_cast<std::ptrdiff_t>(offset_),count,output.begin());
                     offset_+=count;
-                    if (offset_==buffered_.size()) { buffered_.clear(); offset_=0; }
+                    if (offset_==buffered_.size()) { crypto::Bytes{}.swap(buffered_); offset_=0; }
                     reading_=false; co_return AsyncStreamReadResult{AsyncStreamReadKind::data,count,{}};
                 }
                 if (closed_) { reading_=false; co_return AsyncStreamReadResult{AsyncStreamReadKind::eof,0,{}}; }

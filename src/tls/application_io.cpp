@@ -25,7 +25,7 @@ namespace nexus::tls {
         if (count>output_.size()-offset_) return std::unexpected(ApplicationIoError::invalid_input);
         offset_+=count;
         if (offset_==output_.size()) {
-            output_.clear(); offset_=0;
+            crypto::Bytes{}.swap(output_); offset_=0;
             if (response_pending_) {
                 response_pending_=false; auto response=records_->key_update(false);
                 if (!response) return fail(ApplicationIoError::record_error);
