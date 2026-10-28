@@ -203,6 +203,7 @@ int main() {
     std::array<nh::Header,2> response_headers{{{"content-type","text/plain"},{"content-length","13"}}};
     if (!(**session).respond_body(second, 200,
         {reinterpret_cast<std::byte const*>(response.data()), response.size()},response_headers)) return 13;
+    if ((**session).response_memory_used()!=response.size()) return 97;
     response_headers[0].value="changed after submission";
     auto duplicate = (**session).respond_empty(second, 204);
     if (duplicate || duplicate.error().kind != nh::ServerErrorKind::invalid_state) return 14;
@@ -215,6 +216,7 @@ int main() {
     if (!to_client(**session, client) || client_events.response_ids != std::vector<std::int32_t>{second, third} ||
         !client_events.status_204 || client_events.body != "response body" ||
         client_events.content_type!="text/plain" || client_events.extra_header!="yes" || client_events.content_length!="13") return 15;
+    if ((**session).response_memory_used()!=0) return 98;
     auto closed = (**session).respond_empty(second, 204);
     if (closed || closed.error().kind != nh::ServerErrorKind::invalid_state) return 16;
     auto empty = (**session).output({});
@@ -233,13 +235,15 @@ int main() {
     auto canceled = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
     auto survivor = h2::nghttp2_submit_request2(client, nullptr, good.data(), good.size(), nullptr, nullptr);
     if (canceled <= later || survivor <= canceled || !to_server(client, **session)) return 53;
-    if (!(**session).respond_body(canceled, 200, {reinterpret_cast<std::byte const*>(later_body.data()), later_body.size()})) return 54;
+    if (!(**session).respond_body(canceled, 200, {reinterpret_cast<std::byte const*>(later_body.data()), later_body.size()}) ||
+        (**session).response_memory_used()!=later_body.size()) return 54;
     if ((**session).reset_stream(0, h2::NGHTTP2_CANCEL) || (**session).reset_stream(999, h2::NGHTTP2_CANCEL) ||
         !(**session).reset_stream(canceled, h2::NGHTTP2_CANCEL) || (**session).reset_stream(canceled, h2::NGHTTP2_CANCEL) ||
         (**session).respond_empty(canceled, 204) || (**session).respond_body(survivor, 200, second_body)) return 55;
     client_events.body.clear();
     if (!to_client(**session, client) || client_events.reset_id != canceled || client_events.reset_code != h2::NGHTTP2_CANCEL ||
-        observed.closed_id != canceled || observed.closed_code != h2::NGHTTP2_CANCEL || !client_events.body.empty()) return 56;
+        observed.closed_id != canceled || observed.closed_code != h2::NGHTTP2_CANCEL || !client_events.body.empty() ||
+        (**session).response_memory_used()!=0) return 56;
     if (!(**session).respond_body(survivor, 200, second_body) || !to_client(**session, client) ||
         client_events.body.size() != second_body.size()) return 57;
     std::array head_request{nv(":method", "HEAD"), nv(":scheme", "https"), nv(":authority", "example.test"), nv(":path", "/head")};

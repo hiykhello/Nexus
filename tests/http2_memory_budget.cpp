@@ -62,5 +62,41 @@ int main() {
     }
     if (!exhausted || (**budget).library_memory_used()>limits.library_memory_bytes ||
         (**budget).library_memory_peak()>limits.library_memory_bytes || (**budget).receive({})) return 75;
+    // A failed nghttp2 response submission must release the separately
+    // allocated response body and leave the session unusable after fatal OOM.
+    constexpr std::array<std::byte,15> request{
+        std::byte{0},std::byte{0},std::byte{6},std::byte{1},std::byte{5},std::byte{0},std::byte{0},std::byte{0},std::byte{1},
+        std::byte{0x82},std::byte{0x87},std::byte{0x01},std::byte{0x01},std::byte{'x'},std::byte{0x84}};
+    auto feed_request=[&](nh::ServerSession& session) {
+        auto a=session.receive(std::as_bytes(std::span{preface}));
+        auto b=session.receive(settings);
+        auto c=session.receive(request);
+        return a && b && c && *a==preface.size() && *b==settings.size() && *c==request.size();
+    };
+    limits.library_memory_bytes=4*1024*1024;
+    auto measurement=nh::ServerSession::create(limits,budget_events);
+    if (!measurement || !feed_request(**measurement)) return 82;
+    auto request_peak=(**measurement).library_memory_peak();
+    measurement->reset();
+    bool submission_exhausted=false;
+    constexpr std::array<std::byte,16> body{};
+    for (std::size_t extra=0;extra<=1024 && !submission_exhausted;extra+=16) {
+        for (int queued_pings=0;queued_pings<=6 && !submission_exhausted;++queued_pings) {
+            limits.library_memory_bytes=request_peak+extra;
+            auto candidate=nh::ServerSession::create(limits,budget_events);
+            if (!candidate || !feed_request(**candidate)) continue;
+            bool ready=true;
+            for (int i=0;i<queued_pings;++i) if (!(**candidate).receive(ping)) { ready=false; break; }
+            if (!ready) continue;
+            auto response=(**candidate).respond_body(1,200,body);
+            if (!response && response.error().library_code==h2::NGHTTP2_ERR_NOMEM) {
+                auto after=(**candidate).receive({});
+                submission_exhausted=(**candidate).response_memory_used()==0 &&
+                    !after && after.error().kind==nh::ServerErrorKind::failed;
+                if (!submission_exhausted) return 83;
+            }
+        }
+    }
+    if (!submission_exhausted) return 84;
     std::println("HTTP/2 nghttp2 memory budget and recovery passed");
 }

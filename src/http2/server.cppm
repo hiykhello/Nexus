@@ -86,7 +86,8 @@ export namespace nexus::http2 {
             bool head_request = false;
             bool headers_received = false;
             bool reset_pending = false;
-            std::vector<std::byte> response;
+            std::unique_ptr<std::byte[]> response;
+            std::size_t response_size = 0;
             std::size_t response_offset = 0;
         };
         HeaderBlock headers_;
@@ -231,20 +232,20 @@ export namespace nexus::http2 {
                                   std::size_t length, std::uint32_t* flags,
                                   h2::nghttp2_data_source* source, void*) noexcept -> h2::nghttp2_ssize {
             auto& stream = *static_cast<Stream*>(source->ptr);
-            auto remaining = stream.response.size() - stream.response_offset;
+            auto remaining = stream.response_size - stream.response_offset;
             auto count = std::min(length, remaining);
             if (count) {
-                std::memcpy(out, stream.response.data() + stream.response_offset, count);
+                std::memcpy(out, stream.response.get() + stream.response_offset, count);
                 stream.response_offset += count;
             }
-            if (stream.response_offset == stream.response.size()) *flags |= h2::NGHTTP2_DATA_FLAG_EOF;
+            if (stream.response_offset == stream.response_size) *flags |= h2::NGHTTP2_DATA_FLAG_EOF;
             return static_cast<h2::nghttp2_ssize>(count);
         }
 
         static auto closed(h2::nghttp2_session*, std::int32_t id, std::uint32_t code, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
             if (auto stream = std::ranges::find(self.streams_, id, &Stream::id); stream != self.streams_.end()) {
-                self.response_reserved_ -= stream->response.size();
+                self.response_reserved_ -= stream->response_size;
                 self.streams_.erase(stream);
             }
             self.events_.closed(self.events_.context, id, code);
@@ -363,8 +364,12 @@ export namespace nexus::http2 {
             std::array<std::uint8_t,3> value{}; std::array<std::uint8_t,7> name{};
             auto fields=response_fields(status,stream->head_request,body.size(),headers,value,name);
             if (!fields) return std::unexpected(fields.error());
-            try { stream->response.assign(body.begin(), body.end()); }
-            catch (std::bad_alloc const&) { return std::unexpected(ServerError{ServerErrorKind::allocation}); }
+            if (!body.empty()) {
+                try { stream->response=std::make_unique_for_overwrite<std::byte[]>(body.size()); }
+                catch (std::bad_alloc const&) { return std::unexpected(ServerError{ServerErrorKind::allocation}); }
+                std::memcpy(stream->response.get(),body.data(),body.size());
+            }
+            stream->response_size=body.size();
             response_reserved_ += body.size();
             h2::nghttp2_data_provider2 provider{};
             provider.source.ptr = &*stream;
@@ -374,7 +379,8 @@ export namespace nexus::http2 {
             active_ = false;
             if (rc != 0) {
                 response_reserved_ -= body.size();
-                stream->response.clear();
+                stream->response.reset();
+                stream->response_size = 0;
                 stream->response_offset = 0;
                 return library_error(rc);
             }
@@ -404,6 +410,7 @@ export namespace nexus::http2 {
             stream->responded = true;
             return {};
         }
+        [[nodiscard]] auto response_memory_used() const noexcept -> std::size_t { return response_reserved_; }
         [[nodiscard]] auto library_memory_used() const noexcept -> std::size_t { return library_used_; }
         [[nodiscard]] auto library_memory_peak() const noexcept -> std::size_t { return library_peak_; }
         [[nodiscard]] auto revision() const noexcept -> std::uint64_t { return revision_; }

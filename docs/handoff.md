@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- HTTP/2 响应体改为精确大小的独占数组，新增 `response_memory_used()`；普通关闭、RST 和 nghttp2 响应提交 OOM 均验证回收。服务端、内存预算及 TLS/curl 双后端测试和行数检查通过。该计数不涵盖分配器开销、头部、TLS 和传输缓冲。
+
 - HTTP/2 响应支持校验过的 `content-length`：普通响应必须匹配实际体积，HEAD/304 的表示长度由应用负责，204 禁止该字段。HEAD 不能发送响应体；初始请求头未完成前拒绝响应。内存分片测试及 curl HTTPS/HTTP/2 HEAD/GET 通过。
 
 - HTTP/2 响应可提交有界普通响应头（默认 32 项、8192 字节）；拒绝伪头、大写或非法名称、非法值、连接专用字段；`content-length` 现已按响应语义校验。内存对端验证复制、空体、限额与拒绝；curl 验证 HTTPS 响应 `content-type`。
