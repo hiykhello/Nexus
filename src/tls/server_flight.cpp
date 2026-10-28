@@ -115,7 +115,7 @@ namespace nexus::tls {
         if (!crypto::constant_time_equal(verify->view(),message.body)) return std::unexpected(ServerFlightError::invalid_finished);
         auto wire=HandshakeDecoder::encode(20,message.body,48);
         if (!wire || !keys_.transcript.append(*wire)) return std::unexpected(ServerFlightError::crypto_error);
-        state_=State::complete; return true;
+        decoder_.reset(); state_=State::complete; return true;
         } catch (...) { state_=State::failed; application_.reset(); throw; }
     }
     auto ServerFlight::take_application_records() -> std::expected<ApplicationRecords,ServerFlightError> {

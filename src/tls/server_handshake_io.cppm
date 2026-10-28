@@ -13,6 +13,7 @@ export namespace nexus::tls {
         std::shared_ptr<memory::Budget> budget_;
         std::optional<memory::Budget::Reservation> hello_reservation_, flight_reservation_, hello_input_reservation_, finished_input_reservation_;
         std::optional<memory::Budget::Reservation> encoded_hello_reservation_, first_hello_reservation_, retry_hello_reservation_;
+        std::optional<memory::Budget::Reservation> finished_decoder_reservation_;
         std::optional<ServerCredential> credential_;
         std::optional<ClientHelloStream> hello_;
         std::optional<ServerFlight> flight_;

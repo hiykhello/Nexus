@@ -18,6 +18,7 @@ export namespace nexus::tls {
         // Decryption allocates up to the ciphertext payload length before it
         // knows the plaintext size. Decoder output is limited to one message.
         static constexpr std::size_t finished_temporary_charge=16640+48+52+sizeof(HandshakeMessage);
+        static constexpr std::size_t finished_decoder_charge=52;
         ServerFlight(ServerFlight const&)=delete;
         auto operator=(ServerFlight const&) -> ServerFlight& = delete;
         ServerFlight(ServerFlight&&) noexcept;
