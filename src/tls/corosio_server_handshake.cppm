@@ -10,6 +10,7 @@ export namespace nexus::tls::detail {
     // The deadline uses the steady-clock millisecond epoch. Returned unread bytes belong to the application reader.
     template<class Socket>
     auto server_handshake(Socket& socket, ServerHandshakeIo& handshake) -> nex::capy::task<std::expected<ServerAsyncResult,ServerAsyncError>> {
+        try {
         auto now=[] { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); };
         auto maximum=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::duration::max()).count();
         if (handshake.deadline()>static_cast<std::uint64_t>(maximum)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::protocol); }
@@ -48,5 +49,6 @@ export namespace nexus::tls::detail {
         }
         auto app=handshake.take_application_records(); if (!app) co_return std::unexpected(ServerAsyncError::protocol);
         co_return ServerAsyncResult{std::move(*app),crypto::Bytes(buffer.begin()+static_cast<std::ptrdiff_t>(begin),buffer.begin()+static_cast<std::ptrdiff_t>(end))};
+        } catch (...) { (void)handshake.cancel(); throw; }
     }
 }

@@ -33,6 +33,34 @@ auto make(Fixture& f, std::chrono::milliseconds duration) -> bool {
     auto handshake=t::ClientHandshakeIo::create(std::move(*session),now.count(),(now+duration).count()); if (!handshake) return false; f.handshake=std::move(*handshake);
     return !io::connect_pair(f.client,f.peer);
 }
+struct FailingSocket {
+    io::local_stream_socket& socket; bool fail_read;
+    auto read_some(capy::mutable_buffer b) { if (fail_read) throw std::bad_alloc{}; return socket.read_some(b); }
+    auto write_some(capy::const_buffer b) { if (!fail_read) throw std::bad_alloc{}; return socket.write_some(b); }
+    void cancel() { socket.cancel(); }
+};
+using FailingClient=t::detail::ClientConnection<FailingSocket>;
+auto exception_handshake(FailingSocket& socket,t::ClientHandshakeIo& handshake,bool& caught) -> capy::task<> {
+    try { (void)co_await t::detail::corosio_handshake(socket,handshake); }
+    catch (std::bad_alloc const&) { caught=true; }
+}
+auto exception_owner(FailingClient& client,bool& caught) -> capy::task<> {
+    try { (void)co_await client.start(); }
+    catch (std::bad_alloc const&) { caught=true; }
+}
+auto exception_test(bool reading,bool owner) -> bool {
+    Fixture f; if (!make(f,1s)) return false;
+    FailingSocket socket{f.client,reading}; bool caught=false;
+    if (owner) {
+        FailingClient client(socket,std::move(*f.handshake)); f.handshake.reset();
+        capy::run_async(f.context.get_executor())(exception_owner(client,caught));
+        f.context.restart(); (void)f.context.run_for(1s);
+        return f.context.stopped() && caught && client.idle() && !client.application() && !client.negotiated();
+    }
+    capy::run_async(f.context.get_executor())(exception_handshake(socket,*f.handshake,caught));
+    f.context.restart(); (void)f.context.run_for(1s);
+    return f.context.stopped() && caught && !f.handshake->tick(0) && f.handshake->pending_output().empty();
+}
 using Client=t::detail::ClientConnection<io::local_stream_socket>;
 struct OwnerResult { bool done=false, failed=false, duplicate=false; std::optional<t::detail::AsyncHandshakeError> error; };
 auto owner_start(Client& client,OwnerResult& state) -> capy::task<> {
@@ -94,6 +122,7 @@ auto owned_failure(bool expired) -> bool {
     return state.done && state.failed && state.error==(expired ? t::detail::AsyncHandshakeError::timeout : t::detail::AsyncHandshakeError::transport) && client.idle() && !client.client() && f.context.stopped();
 }
 int main() {
+    for (bool read:{false,true}) for (bool owner:{false,true}) if (!exception_test(read,owner)) return 10;
     if (!owned_test(true) || !owned_test(false) || !owned_failure(true) || !owned_failure(false)) return 9;
     if (!owner_test(true) || !owner_test(false)) return 8;
     for (bool timeout:{false,true}) {
@@ -103,6 +132,13 @@ int main() {
         if (f.done || f.context.stopped() || !f.handshake->pending_output().empty()) return 2;
         if (!timeout) f.client.cancel(); f.context.restart(); (void)f.context.run_for(1s);
         if (!f.done || !f.error || *f.error!=(timeout ? t::detail::AsyncHandshakeError::timeout : t::detail::AsyncHandshakeError::transport) || !f.handshake->pending_output().empty()) return 3;
+    }
+    {
+        Fixture f; if (!make(f,1s)) return 11;
+        capy::run_async(f.context.get_executor())(run(f)); f.context.restart(); (void)f.context.run_for(20ms);
+        if (f.done || !f.handshake->pending_output().empty()) return 12;
+        f.peer.close(); f.context.restart(); (void)f.context.run_for(1s);
+        if (!f.context.stopped() || !f.done || f.error!=t::detail::AsyncHandshakeError::transport || !f.handshake->pending_output().empty()) return 13;
     }
     for (bool timeout:{false,true}) {
         Fixture f; if (!make(f,timeout ? 80ms : 1s)) return 4;

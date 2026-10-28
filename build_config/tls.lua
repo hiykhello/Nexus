@@ -111,7 +111,7 @@ if is_plat("linux") and has_config("crypto") then
         set_kind("binary")
         set_default(false)
         add_files("../tests/tls_corosio_server.cpp")
-        add_deps("nexus-tls-corosio-server-handshake", "nexus-tls-application-io")
+        add_deps("nexus-tls-corosio-server-handshake", "nexus-tls-application-io", "nexus-tls-client-handshake-io")
         add_packages("nexus-corosio", "nexus-capy")
 
     target("nexus-tls-server-handshake-io")

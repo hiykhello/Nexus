@@ -18,6 +18,7 @@ export namespace nexus::tls::detail {
     template<class Socket>
     auto corosio_handshake(Socket& socket, ClientHandshakeIo& handshake)
         -> nex::capy::task<std::expected<AsyncHandshakeResult,AsyncHandshakeError>> {
+        try {
         auto now=[] { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); };
         auto max_ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::duration::max()).count();
         if (handshake.deadline()>static_cast<std::uint64_t>(max_ms)) { (void)handshake.cancel(); co_return std::unexpected(AsyncHandshakeError::protocol); }
@@ -25,14 +26,16 @@ export namespace nexus::tls::detail {
         std::array<std::uint8_t,4096> buffer{};
         std::size_t begin=0, end=0;
         while (!handshake.complete()) {
-            if (!handshake.tick(now())) co_return std::unexpected(AsyncHandshakeError::timeout);
+            auto tick=handshake.tick(now());
+            if (!tick) co_return std::unexpected(tick.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : AsyncHandshakeError::protocol);
             if (!handshake.pending_output().empty()) {
                 // An owned copy keeps an in-flight buffer alive until completion.
                 auto pending=handshake.pending_output(); crypto::Bytes bytes(pending.begin(),pending.end());
                 auto [error,n]=co_await nex::corosio::timeout(socket.write_some(nex::capy::const_buffer(bytes.data(),bytes.size())),deadline);
                 if (error || n==0 || n>bytes.size()) {
                     if (nex::capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(AsyncHandshakeError::timeout); }
-                    if (!handshake.tick(now())) co_return std::unexpected(AsyncHandshakeError::timeout);
+                    auto tick=handshake.tick(now());
+                    if (!tick) co_return std::unexpected(tick.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : AsyncHandshakeError::protocol);
                     (void)handshake.cancel(); co_return std::unexpected(AsyncHandshakeError::transport);
                 }
                 auto written=handshake.written(n,now());
@@ -43,18 +46,20 @@ export namespace nexus::tls::detail {
                 auto [error,n]=co_await nex::corosio::timeout(socket.read_some(nex::capy::mutable_buffer(buffer.data(),buffer.size())),deadline);
                 if (error || n==0 || n>buffer.size()) {
                     if (nex::capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(AsyncHandshakeError::timeout); }
-                    if (!handshake.tick(now())) co_return std::unexpected(AsyncHandshakeError::timeout);
+                    auto tick=handshake.tick(now());
+                    if (!tick) co_return std::unexpected(tick.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : AsyncHandshakeError::protocol);
                     (void)handshake.finish_input(now()); co_return std::unexpected(AsyncHandshakeError::transport);
                 }
                 begin=0; end=n;
             }
             auto result=handshake.feed(std::span{buffer}.subspan(begin,end-begin),now());
             if (!result) co_return std::unexpected(result.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : result.error()==ClientHandshakeIoError::authentication_failed ? AsyncHandshakeError::authentication : AsyncHandshakeError::protocol);
-            if (!result->consumed) co_return std::unexpected(AsyncHandshakeError::protocol);
+            if (!result->consumed) { (void)handshake.cancel(); co_return std::unexpected(AsyncHandshakeError::protocol); }
             begin+=result->consumed;
         }
         auto app=handshake.take_application_records(); if (!app) co_return std::unexpected(AsyncHandshakeError::protocol);
         co_return AsyncHandshakeResult{std::move(*app),crypto::Bytes(buffer.begin()+static_cast<std::ptrdiff_t>(begin),buffer.begin()+static_cast<std::ptrdiff_t>(end))};
+        } catch (...) { (void)handshake.cancel(); throw; }
     }
 }
 
@@ -94,6 +99,7 @@ export namespace nexus::tls::detail {
         auto start() -> nex::capy::task<std::expected<void,AsyncHandshakeError>> {
             if (state_!=State::initial || canceled_) co_return std::unexpected(AsyncHandshakeError::protocol);
             state_=State::handshaking;
+            try {
             auto result=co_await corosio_handshake(socket_,*handshake_);
             if (canceled_ || !result) {
                 if (canceled_) (void)handshake_->cancel();
@@ -106,6 +112,10 @@ export namespace nexus::tls::detail {
             application_.emplace(socket_,std::move(result->records),std::move(result->unread));
             handshake_.reset(); state_=State::ready;
             co_return std::expected<void,AsyncHandshakeError>{};
+            } catch (...) {
+                if (handshake_) (void)handshake_->cancel();
+                handshake_.reset(); application_.reset(); negotiated_.reset(); state_=State::stopped; throw;
+            }
         }
     };
 }
@@ -141,6 +151,7 @@ export namespace nexus::tls::detail {
             auto deadline=std::chrono::steady_clock::time_point(std::chrono::milliseconds(deadline_ms_));
             if (std::chrono::steady_clock::now()>=deadline) { cancel(); co_return std::unexpected(AsyncHandshakeError::timeout); }
             state_=State::connecting;
+            try {
             auto [error]=co_await nex::corosio::timeout(socket_.connect(endpoint),deadline);
             if (error || canceled_ || std::chrono::steady_clock::now()>=deadline) {
                 auto timed_out=!canceled_ && (nex::capy::is_timeout(error) || std::chrono::steady_clock::now()>=deadline);
@@ -156,6 +167,7 @@ export namespace nexus::tls::detail {
             }
             state_=State::ready;
             co_return std::expected<void,AsyncHandshakeError>{};
+            } catch (...) { client_.cancel(); socket_.close(); state_=State::stopped; throw; }
         }
     };
 }
