@@ -23,6 +23,7 @@ struct Fixture {
     io::io_context context{make_context()};
     io::tcp_socket socket{context};
     std::optional<t::ServerHandshakeIo> handshake;
+    std::shared_ptr<nexus::memory::Budget> budget;
     std::unique_ptr<h::ServerSession> session;
     std::int32_t request=0;
     std::vector<std::int32_t> requests;
@@ -51,9 +52,10 @@ auto cancel_later(h::TlsServerConnection<io::tcp_socket>& connection, bool& canc
     if (!error) { canceled=true; connection.cancel(); }
 }
 auto serve(Fixture& f) -> capy::task<> {
-    auto handshake=co_await t::detail::server_handshake(f.socket,*f.handshake);
+    auto handshake=co_await t::detail::server_handshake(f.socket,*f.handshake,f.budget);
     if (!handshake || !std::ranges::equal(f.handshake->negotiated_alpn(),nexus::crypto::Bytes{'h','2'})) { f.done=true; co_return; }
     h::TlsServerConnection connection(f.socket,*f.session,std::move(handshake->records),std::move(handshake->unread));
+    if (!handshake->release_unread_reservation() || f.budget->reserved()) { f.done=true; co_return; }
     auto deadline=std::chrono::steady_clock::now()+(f.timeout ? 150ms : 5000ms);
     if (f.cancel) capy::run_async(f.context.get_executor())(cancel_later(connection,f.canceled));
     auto premature=co_await connection.close_notify(deadline);
@@ -152,7 +154,9 @@ int main(int argc,char** argv) {
     auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     auto handshake=t::ServerHandshakeIo::create(std::move(*credential),now,now+5000,"h2"); if (!handshake) return 5;
     f.handshake.emplace(std::move(*handshake));
-    auto session=h::ServerSession::create({8,16,4096,f.connection_window ? 40000u : 1024u,f.connection_window ? 80000u : 4096u},h::ServerEvents{&f,headers,data,end,closed});
+    h::ServerLimits limits{8,16,4096,f.connection_window ? 40000u : 1024u,f.connection_window ? 80000u : 4096u};
+    limits.shared_memory_bytes=1024*1024; f.budget=std::make_shared<nexus::memory::Budget>(limits.shared_memory_bytes);
+    auto session=h::ServerSession::create(limits,h::ServerEvents{&f,headers,data,end,closed},f.budget);
     if (!session) return 6; f.session=std::move(*session);
     capy::run_async(f.context.get_executor())(serve(f)); (void)f.context.run_for(6s);
     if (!f.done) { f.socket.cancel(); f.context.restart(); (void)f.context.run_for(1s); if (!f.done) std::_Exit(90); }

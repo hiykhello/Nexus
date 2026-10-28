@@ -105,6 +105,7 @@ if is_plat("linux") and has_config("crypto") then
         set_default(false)
         add_files("../src/tls/corosio_server_handshake.cppm", {public = true})
         add_deps("nexus-tls-server-handshake-io", "nexus-thirdparty-capy", "nexus-thirdparty-corosio")
+        add_deps("nexus-memory-budget", {public = true})
         add_packages("nexus-corosio", "nexus-capy")
 
     target("nexus-tls-corosio-server-test")

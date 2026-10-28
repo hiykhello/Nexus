@@ -1,4 +1,5 @@
 #include <boost/corosio/backend.hpp>
+#include <cerrno>
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
@@ -22,18 +23,19 @@ struct Fixture {
 #endif
     io::local_stream_socket incoming{context}, peer{context};
     std::optional<t::ServerHandshakeIo> handshake;
+    std::shared_ptr<nexus::memory::Budget> budget;
     bool done=false, success=false; std::optional<t::detail::ServerAsyncError> error;
 };
 auto pending(Fixture& f) -> capy::task<> {
-    auto result=co_await t::detail::server_handshake(f.incoming,*f.handshake); if (!result) f.error=result.error(); f.done=true;
+    auto result=co_await t::detail::server_handshake(f.incoming,*f.handshake,f.budget); if (!result) f.error=result.error(); f.done=true;
 }
 struct FailingSocket {
     io::local_stream_socket& socket; bool fail_read;
     auto read_some(capy::mutable_buffer b) { if (fail_read) throw std::bad_alloc{}; return socket.read_some(b); }
     auto write_some(capy::const_buffer b) { if (!fail_read) throw std::bad_alloc{}; return socket.write_some(b); }
 };
-auto exception_handshake(FailingSocket& socket,t::ServerHandshakeIo& handshake,bool& caught) -> capy::task<> {
-    try { (void)co_await t::detail::server_handshake(socket,handshake); }
+auto exception_handshake(FailingSocket& socket,t::ServerHandshakeIo& handshake,std::shared_ptr<nexus::memory::Budget> budget,bool& caught) -> capy::task<> {
+    try { (void)co_await t::detail::server_handshake(socket,handshake,std::move(budget)); }
     catch (std::bad_alloc const&) { caught=true; }
 }
 auto exception_test(char const* cert,char const* key,bool reading) -> bool {
@@ -45,21 +47,25 @@ auto exception_test(char const* cert,char const* key,bool reading) -> bool {
         auto session=t::ClientSessionHandshake::create(std::move(*hello),29,anchors,t::PeerNameKind::dns,name,0); if (!session) return false;
         auto record=session->initial_record(); if (!record || !handshake->feed(*record,start) || handshake->pending_output().empty()) return false;
     }
-    FailingSocket socket{f.incoming,reading}; bool caught=false;
-    capy::run_async(f.context.get_executor())(exception_handshake(socket,*handshake,caught));
+    FailingSocket socket{f.incoming,reading}; bool caught=false; auto budget=std::make_shared<nexus::memory::Budget>(8192);
+    capy::run_async(f.context.get_executor())(exception_handshake(socket,*handshake,budget,caught));
     f.context.restart(); (void)f.context.run_for(1s);
-    return f.context.stopped() && caught && !handshake->tick(start) && handshake->pending_output().empty();
+    return f.context.stopped() && caught && !budget->reserved() && !handshake->tick(start) && handshake->pending_output().empty();
 }
 struct HandoverResult { bool done=false, valid=false; };
-auto handover(Fixture& f,nexus::crypto::Bytes expected,HandoverResult& state) -> capy::task<> {
-    auto result=co_await t::detail::server_handshake(f.incoming,*f.handshake);
+auto handover(Fixture& f,nexus::crypto::Bytes expected,HandoverResult& state,bool reject) -> capy::task<> {
+    auto result=co_await t::detail::server_handshake(f.incoming,*f.handshake,f.budget);
+    if (reject) { state.valid=!result && result.error()==t::detail::ServerAsyncError::budget_exceeded && !f.budget->reserved(); state.done=true; co_return; }
     if (result && result->unread==expected) {
+        if (f.budget && (f.budget->reserved()!=expected.size() || result->release_unread_reservation())) { state.done=true; co_return; }
         auto data=result->records.open(result->unread);
         state.valid=data && *data==nexus::crypto::Bytes({'h','e','l','l','o'});
+        nexus::crypto::Bytes{}.swap(result->unread);
+        if (!result->release_unread_reservation() || (f.budget && f.budget->reserved())) state.valid=false;
     }
     state.done=true;
 }
-auto coalesced_handover(char const* cert,char const* key,bool close_peer) -> bool {
+auto coalesced_handover(char const* cert,char const* key,bool close_peer,bool reject=false) -> bool {
     Fixture f; auto certificate=file(cert); auto credential=t::ServerCredential::create(certificate,file(key));
     if (!credential || io::connect_pair(f.incoming,f.peer)) return false;
     auto start=now(); auto server=t::ServerHandshakeIo::create(std::move(*credential),start,start+1000); if (!server) return false;
@@ -82,8 +88,8 @@ auto coalesced_handover(char const* cert,char const* key,bool close_peer) -> boo
     auto input=*finished; input.insert(input.end(),encrypted->begin(),encrypted->end());
     if (::send(f.peer.native_handle(),input.data(),input.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(input.size())) return false;
     if (close_peer) f.peer.close();
-    f.handshake.emplace(std::move(*server)); HandoverResult state;
-    capy::run_async(f.context.get_executor())(handover(f,*encrypted,state)); f.context.restart(); (void)f.context.run_for(1s);
+    f.handshake.emplace(std::move(*server)); f.budget=std::make_shared<nexus::memory::Budget>(reject ? 4096+encrypted->size()-1 : 8192); HandoverResult state;
+    capy::run_async(f.context.get_executor())(handover(f,*encrypted,state,reject)); f.context.restart(); (void)f.context.run_for(1s);
     return f.context.stopped() && state.done && state.valid;
 }
 struct CountingSocket {
@@ -150,6 +156,37 @@ auto failure(char const* cert,char const* key,bool cancel) -> bool {
     if (!f.done) std::_Exit(90);
     return f.error && *f.error==(cancel ? t::detail::ServerAsyncError::transport : t::detail::ServerAsyncError::timeout);
 }
+auto budget_failure(char const* cert,char const* key,int mode) -> bool {
+    Fixture f; auto credential=t::ServerCredential::create(file(cert),file(key));
+    if (!credential || io::connect_pair(f.incoming,f.peer)) return false;
+    auto start=now(); auto handshake=t::ServerHandshakeIo::create(std::move(*credential),start,start+1000); if (!handshake) return false;
+    std::size_t limit=mode==0 ? 4095 : 4096;
+    if (mode>=2) {
+        std::array<std::uint16_t,1> groups{29}; auto hello=t::make_client_hello({},std::span<std::string_view const>{},groups); if (!hello) return false;
+        std::array<std::uint8_t,1> root{1},name{'a'}; std::array<std::span<std::uint8_t const>,1> anchors{root};
+        auto client=t::ClientSessionHandshake::create(std::move(*hello),29,anchors,t::PeerNameKind::dns,name,0); if (!client) return false;
+        auto record=client->initial_record(); if (!record || !handshake->feed(*record,start) || handshake->pending_output().empty()) return false;
+        limit+=handshake->pending_output().size()-(mode==2 ? 1 : 0);
+        if (mode==3) {
+            std::array<std::byte,4096> filler{}; bool full=false;
+            for (int i=0;i<10000;++i) {
+                auto n=::send(f.incoming.native_handle(),filler.data(),filler.size(),MSG_DONTWAIT|MSG_NOSIGNAL);
+                if (n<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) { full=true; break; }
+                if (n<=0) return false;
+            }
+            if (!full) return false;
+        }
+    }
+    f.budget=std::make_shared<nexus::memory::Budget>(limit); f.handshake.emplace(std::move(*handshake));
+    capy::run_async(f.context.get_executor())(pending(f));
+    (void)f.context.run_for(mode==1 || mode==3 ? 20ms : 1s);
+    if (mode==1 || mode==3) {
+        if (f.done || f.budget->reserved()!=limit) return false;
+        f.incoming.cancel(); f.context.restart(); (void)f.context.run_for(1s);
+    }
+    return f.done && f.error==((mode==1 || mode==3) ? t::detail::ServerAsyncError::transport : t::detail::ServerAsyncError::budget_exceeded) &&
+        f.budget->reserved()==0 && !f.handshake->tick(now());
+}
 auto peer_close(char const* cert,char const* key) -> bool {
     Fixture f; auto credential=t::ServerCredential::create(file(cert),file(key)); if (!credential || io::connect_pair(f.incoming,f.peer)) return false;
     auto start=now(); auto handshake=t::ServerHandshakeIo::create(std::move(*credential),start,start+1000); if (!handshake) return false;
@@ -197,7 +234,7 @@ auto serve(Network& f) -> capy::task<> {
 }
 int main(int argc,char** argv) {
     if (argc!=4 && (argc!=5 || std::string_view(argv[4])!="h2")) return 1;
-    if (std::string_view(argv[3])=="failures") return failure(argv[1],argv[2],false) && failure(argv[1],argv[2],true) && peer_close(argv[1],argv[2]) && exception_test(argv[1],argv[2],false) && exception_test(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false) && coalesced_handover(argv[1],argv[2],true) && client_coalesced_handover(argv[1],argv[2]) ? 0 : 2;
+    if (std::string_view(argv[3])=="failures") return failure(argv[1],argv[2],false) && failure(argv[1],argv[2],true) && budget_failure(argv[1],argv[2],0) && budget_failure(argv[1],argv[2],1) && budget_failure(argv[1],argv[2],2) && budget_failure(argv[1],argv[2],3) && peer_close(argv[1],argv[2]) && exception_test(argv[1],argv[2],false) && exception_test(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false) && coalesced_handover(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false,true) && client_coalesced_handover(argv[1],argv[2]) ? 0 : 2;
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 3;
     Network f; if (f.socket.assign(fd)) { ::close(fd); return 4; }
     auto cred=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!cred) return 5;
