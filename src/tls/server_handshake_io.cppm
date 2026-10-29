@@ -36,6 +36,9 @@ export namespace nexus::tls {
         // Generated hello fields, body and retry comparison message; logical
         // lengths only, excluding container capacities and other temporaries.
         static constexpr std::size_t generated_hello_scratch_charge=3*16384;
+        // Sealing a full fragment holds TLSInnerPlaintext and the encrypted
+        // payload simultaneously; the completed record is charged separately.
+        static constexpr std::size_t flight_seal_scratch_charge=16385+16401;
         static constexpr std::size_t finished_input_charge=16645+5+ServerFlight::finished_temporary_charge;
         ServerHandshakeIo(ServerHandshakeIo const&)=delete;
         auto operator=(ServerHandshakeIo const&) -> ServerHandshakeIo& = delete;

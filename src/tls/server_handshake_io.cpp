@@ -152,9 +152,10 @@ namespace nexus::tls {
                 flight_reservation_=memory::Budget::reserve(budget_,plaintext+22*count);
                 if (!flight_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
                 // Logical lengths of the simultaneously possible certificate body
-                // and encoded message, fragment array and small encoded messages.
+                // and encoded message, fragment array, sealing temporaries and
+                // small encoded messages. Output records are charged separately.
                 // Vector capacities and crypto-library temporaries remain outside it.
-                auto scratch=2*(certificate+8)+16384+(8+*signature)+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+52;
+                auto scratch=2*(certificate+8)+16384+flight_seal_scratch_charge+(8+*signature)+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+52;
                 flight_scratch=memory::Budget::reserve(budget_,scratch);
                 if (!flight_scratch) return fail(ServerHandshakeIoError::budget_exceeded);
                 finished_decoder_reservation_=memory::Budget::reserve(budget_,ServerFlight::finished_decoder_charge);

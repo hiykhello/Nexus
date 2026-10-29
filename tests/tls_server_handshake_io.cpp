@@ -8,10 +8,17 @@ static thread_local int fail_after=-1;
 static void* watched_hello=nullptr;
 static void* watched_flight=nullptr;
 static bool hello_released=false, flight_released=false;
+static nexus::memory::Budget* seal_budget=nullptr;
+static std::size_t seal_expected=0;
+static bool inner_charged=false, ciphertext_charged=false;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
-    if (auto p=std::malloc(size ? size : 1)) return p;
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (seal_budget && size==16385) inner_charged=seal_budget->reserved()>=seal_expected;
+        if (seal_budget && size==16401) ciphertext_charged=seal_budget->reserved()>=seal_expected;
+        return p;
+    }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept {
@@ -126,13 +133,16 @@ int main(int argc,char** argv) {
         auto extensions=std::size_t{15}; // h2 EncryptedExtensions handshake message
         auto plaintext=list+8+extensions+8+*signature+52;
         auto output=plaintext+22*((plaintext+16383)/16384);
-        auto scratch=2*(list+8)+16384+(8+*signature)+extensions+52;
+        auto scratch=2*(list+8)+16384+t::ServerHandshakeIo::flight_seal_scratch_charge+(8+*signature)+extensions+52;
         auto peak=std::max(t::ServerHandshakeIo::generated_hello_scratch_charge,server->pending_output().size()+output+scratch+t::ServerFlight::finished_decoder_charge);
         auto limit=t::ServerHandshakeIo::hello_input_charge+2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+peak-(enough ? 0 : 1);
         auto bounded_budget=std::make_shared<nexus::memory::Budget>(limit);
         auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
         if (!candidate) return 92;
+        if (argc==5 && enough) { seal_budget=bounded_budget.get(); seal_expected=limit; inner_charged=ciphertext_charged=false; }
         auto result=candidate->feed(input,2);
+        seal_budget=nullptr;
+        if (argc==5 && enough && (!inner_charged || !ciphertext_charged)) return 110;
         if (!enough) {
             if (result || result.error()!=t::ServerHandshakeIoError::budget_exceeded || bounded_budget->reserved()) return 93;
         } else {
