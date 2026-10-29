@@ -16,6 +16,11 @@ export namespace nexus::http2 {
     template<class Socket>
     class TlsServerConnection {
         ServerSession& session_;
+        struct TransportReservation {
+            ServerSession& session;
+            bool held=false;
+            ~TransportReservation() { if (held) session.release_transport(); }
+        } transport_{session_};
         bool server_records_;
         tls::detail::ApplicationConnection<Socket> tls_;
         crypto::Bytes input_;
@@ -26,7 +31,7 @@ export namespace nexus::http2 {
         // This counts requested bytes, excluding crypto-library internals and
         // already-live traffic keys and secrets.
         static constexpr std::size_t rotation_charge_=128;
-        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, control_reserved_=false, transport_reserved_=false, session_abandoned_=false, claimed_=false;
+        bool active_=false, closed_=false, failed_=false, resume_pending_=false, peer_closed_=false, ready_to_close_=false, input_reserved_=false, control_reserved_=false, session_abandoned_=false, claimed_=false;
         void release_input() noexcept { crypto::Bytes{}.swap(input_); offset_=0; if (input_reserved_) { session_.release_input(); input_reserved_=false; } }
         void release_control() noexcept { if (control_reserved_) { session_.release_output(); control_reserved_=false; } }
         void abort_exception() noexcept {
@@ -41,23 +46,24 @@ export namespace nexus::http2 {
             : session_(session), server_records_(records.role()==tls::ApplicationRole::server && records.ready_for_transport()),
               tls_(socket,std::move(records),std::move(unread)), claimed_(session.claim_transport()) {
             failed_=!claimed_ || !server_records_ || !tls_.active();
-            if (!failed_) { transport_reserved_=session_.reserve_transport(4096); failed_=!transport_reserved_; }
+            if (!failed_) { transport_.held=session_.reserve_transport(4096); failed_=!transport_.held; }
             if (claimed_ && failed_) { session_.fail_transport(false); session_abandoned_=true; tls_.cancel(); }
         }
         TlsServerConnection(TlsServerConnection const&)=delete;
         auto operator=(TlsServerConnection const&) -> TlsServerConnection& = delete;
         ~TlsServerConnection() {
-            if (claimed_ && !session_abandoned_) session_.fail_transport(input_reserved_);
+            if (claimed_ && !session_abandoned_) session_.fail_transport(false);
+            release_input();
+            tls_.discard();
             release_control();
-            if (transport_reserved_) session_.release_transport();
         }
         auto cancel() noexcept -> void {
             failed_=true;
             if (!claimed_) return;
-            if (!active_ && !session_abandoned_) {
-                session_.fail_transport(input_reserved_); release_input(); release_control(); session_abandoned_=true;
-            }
             tls_.cancel();
+            if (!active_ && !session_abandoned_) {
+                session_.fail_transport(false); release_input(); release_control(); session_abandoned_=true;
+            }
         }
 
         // After step reports drained or peer_closed, send close_notify without

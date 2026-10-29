@@ -9,6 +9,27 @@ import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 namespace h=nexus::http2; namespace t=nexus::tls; namespace c=nexus::crypto;
 namespace io=nex::corosio; namespace capy=nex::capy;
+static thread_local std::size_t watched_size=0;
+static thread_local void* watched_allocation=nullptr;
+static thread_local h::ServerSession* watched_session=nullptr;
+static thread_local bool released_with_input_charge=false;
+static thread_local bool watch_output=false, released_with_output_charge=false;
+void* operator new(std::size_t size) {
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (watched_size && size==watched_size) { watched_allocation=p; if (!watch_output) watched_size=0; }
+        return p;
+    }
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept {
+    if (p && p==watched_allocation) {
+        if (watch_output) released_with_output_charge=watched_session && watched_session->output_memory_charge()==183;
+        else released_with_input_charge=watched_session && watched_session->input_memory_charge()==16640;
+        watched_allocation=nullptr;
+    }
+    std::free(p);
+}
+void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(c::Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction,int n,std::uint64_t limit=1u << 24) -> t::RecordLayer {
@@ -311,9 +332,16 @@ template<class Backend> auto control_budget(Backend backend,int mode) -> bool {
     auto wire=peer.seal(t::ContentType::handshake,update); if (!wire) return false;
     auto connection=std::make_unique<Connection>(a,**session,records(),std::move(*wire));
     bool done=false,progress=false;
+    if (mode==1 || mode==3) { watched_session=session->get(); watched_size=27; watch_output=true; released_with_output_charge=false; }
     capy::run_async(context.get_executor())(progress_step(*connection,done,progress)); context.restart(); (void)context.run_for(1s);
+    watched_size=0;
     if (!context.stopped() || !done || !progress || (**session).output_memory_charge()!=183 || (**session).input_memory_charge()) return false;
-    if (mode==1) { connection->cancel(); return (**session).output_memory_charge()==0; }
+    if (mode==1 || mode==3) {
+        if (!watched_allocation) return false;
+        if (mode==1) connection->cancel(); else connection.reset();
+        auto ok=!watched_allocation && released_with_output_charge && (**session).output_memory_charge()==0;
+        watched_session=nullptr; watch_output=false; return ok;
+    }
     if (mode==2) {
         std::array<char,4096> filler{};
         for (;;) { auto n=::send(a.native_handle(),filler.data(),filler.size(),MSG_DONTWAIT|MSG_NOSIGNAL);
@@ -420,7 +448,9 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
     input.insert(input.end(),frames.begin(),frames.end());
     auto peer=layer(t::RecordDirection::send,2); auto wire=peer.seal(t::ContentType::application_data,input); if (!wire) return false;
     auto connection=std::make_unique<Connection>(a,**session,records(),std::move(*wire)); bool paused=false;
+    if (mode==0 || mode==2) { watched_session=session->get(); watched_size=input.size()+17; released_with_input_charge=false; }
     capy::run_async(context.get_executor())(until_paused(*connection,paused)); context.restart(); (void)context.run_for(1s);
+    watched_size=0;
     if (!context.stopped() || !paused || (**session).paused_stream()!=3 || (**session).input_memory_charge()!=16640) return false;
     if (mode==1) {
         auto available=limits.shared_memory_bytes-(**session).shared_memory_used();
@@ -448,7 +478,17 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
         if ((**session).input_memory_charge()!=16640) return false;
         context.restart(); (void)context.run_for(1s);
         if (!done || error!=h::TlsServerError::tls || !context.stopped()) return false;
-    } else if (mode==2) connection->cancel(); else connection.reset();
+    } else if (mode==2) {
+        if (!watched_allocation) return false;
+        connection->cancel();
+        if (watched_allocation || !released_with_input_charge) return false;
+        watched_session=nullptr;
+    } else {
+        if (!watched_allocation) return false;
+        connection.reset();
+        if (watched_allocation || !released_with_input_charge) return false;
+        watched_session=nullptr;
+    }
     auto resumed=(**session).resume_input(3); auto output=(**session).output(std::span<std::byte>{});
     return !resumed && resumed.error().kind==h::ServerErrorKind::failed && !output &&
         output.error().kind==h::ServerErrorKind::failed && (**session).input_memory_charge()==0;
@@ -468,6 +508,7 @@ int main() {
         if (!output_budget(io::epoll)) { std::cerr << "output_budget(io::epoll) failed\n"; return 1; }
         if (!control_budget(io::epoll,0)) { std::cerr << "control_budget(io::epoll,0) failed\n"; return 1; }
         if (!control_budget(io::epoll,1)) { std::cerr << "control_budget(io::epoll,1) failed\n"; return 1; }
+        if (!control_budget(io::epoll,3)) { std::cerr << "control_budget(io::epoll,3) failed\n"; return 1; }
         if (!control_budget(io::epoll,2)) { std::cerr << "control_budget(io::epoll,2) failed\n"; return 1; }
         if (!close_budget(io::epoll,false)) { std::cerr << "close_budget(io::epoll,false) failed\n"; return 1; }
         if (!close_budget(io::epoll,true)) { std::cerr << "close_budget(io::epoll,true) failed\n"; return 1; }
@@ -495,6 +536,7 @@ int main() {
         if (!output_budget(io::uring)) { std::cerr << "output_budget(io::uring) failed\n"; return 2; }
         if (!control_budget(io::uring,0)) { std::cerr << "control_budget(io::uring,0) failed\n"; return 2; }
         if (!control_budget(io::uring,1)) { std::cerr << "control_budget(io::uring,1) failed\n"; return 2; }
+        if (!control_budget(io::uring,3)) { std::cerr << "control_budget(io::uring,3) failed\n"; return 2; }
         if (!control_budget(io::uring,2)) { std::cerr << "control_budget(io::uring,2) failed\n"; return 2; }
         if (!close_budget(io::uring,false)) { std::cerr << "close_budget(io::uring,false) failed\n"; return 2; }
         if (!close_budget(io::uring,true)) { std::cerr << "close_budget(io::uring,true) failed\n"; return 2; }

@@ -92,6 +92,9 @@ export namespace nexus::tls::detail {
         [[nodiscard]] auto idle() const noexcept -> bool { return !reading_ && !writing_ && !stream_writing_; }
         [[nodiscard]] auto active() const noexcept -> bool { return !canceled_; }
         [[nodiscard]] auto pending_output() const noexcept -> bool { return !app_.pending_output().empty(); }
+        // With all operations drained, release owned TLS state without changing
+        // the caller-owned socket. The connection cannot be used afterward.
+        auto discard() noexcept -> void { canceled_=true; app_.cancel(); }
         auto cancel() noexcept -> void { if (!canceled_) { canceled_=true; app_.cancel(); socket_.cancel(); } }
         auto read(ApplicationDeadline deadline = {}) -> nex::capy::task<std::expected<AsyncReadResult,AsyncApplicationError>> {
             if (reading_ || canceled_) co_return std::unexpected(AsyncApplicationError::state);
