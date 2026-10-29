@@ -46,4 +46,12 @@ if is_plat("linux") then
         add_files("../tests/capy_quitter.cpp")
         add_deps("nexus-thirdparty-capy", "nexus-thirdparty-corosio")
 
+    if is_plat("linux") then
+        target("nexus-capy-when-all-startup-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("../tests/capy_when_all_startup.cpp", "../tests/capy_when_all_fault.cpp")
+            add_deps("nexus-thirdparty-capy", "nexus-thirdparty-corosio")
+    end
+
 end

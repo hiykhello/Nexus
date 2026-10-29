@@ -3,17 +3,17 @@
         version = "1.0"
     },
     ["linux|x86_64"] = {
-        ["nexus-capy 0.2.2#f56260b5"] = {
+        ["nexus-capy 0.2.3#f56260b5"] = {
             repo = {
                 url = "3rdparty"
             },
-            version = "0.2.2"
+            version = "0.2.3"
         },
-        ["nexus-corosio 0.3.3#42dbb246"] = {
+        ["nexus-corosio 0.3.4#0461a896"] = {
             repo = {
                 url = "3rdparty"
             },
-            version = "0.3.3"
+            version = "0.3.4"
         },
         ["nexus-glaze-kdl 0.1.0#f56260b5"] = {
             repo = {

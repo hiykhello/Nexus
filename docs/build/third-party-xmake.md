@@ -65,9 +65,9 @@ target("nexus_contracts")
 
 ## 各依赖的封装边界
 
-当前 Linux 配置使用 BSL-1.0 的 Capy `a8e93ccfec2ace5b3e35029a4b2f1b7e087c7aa2`（项目包版本 `0.2.2`）与 Corosio `70adbd5aff90569aac588e78a717fecbd5b7dedc`（项目包版本 `0.3.3`），均来自各自 `develop` 源码快照，以静态库构建。Corosio recipe 在 CMake 配置时显式注入同一份 Capy；测试、示例、基准和 OpenSSL/wolfSSL provider 均关闭。上游核心仍编译通用 TLS context 源文件，但没有启用或链接第三方 TLS provider。两个库安装许可证文件。
+当前 Linux 配置使用 BSL-1.0 的 Capy `a8e93ccfec2ace5b3e35029a4b2f1b7e087c7aa2`（项目包版本 `0.2.3`）与 Corosio `70adbd5aff90569aac588e78a717fecbd5b7dedc`（项目包版本 `0.3.4`），均来自各自 `develop` 源码快照，以静态库构建。Corosio recipe 在 CMake 配置时显式注入同一份 Capy；测试、示例、基准和 OpenSSL/wolfSSL provider 均关闭。上游核心仍编译通用 TLS context 源文件，但没有启用或链接第三方 TLS provider。两个库安装许可证文件。
 
-Capy 固定提交应用项目内 [CPO 模块补丁](../../3rdparty/packages/n/nexus-capy/cpo_modules.patch)，处理 GCC 16 导出 Corosio socket 时报告的 TU-local 匿名类型。隔离实验中模块导出与消费者通过；完整证据、限制及后续跟踪见[上游问题](../development/upstream-issues.md)。现有业务接口仍保持网络实现私有。历史的无补丁构建与 I/O 测试只验证了私有头文件路径。
+Capy 固定提交应用项目内 [CPO 模块补丁](../../3rdparty/packages/n/nexus-capy/cpo_modules.patch)，处理 GCC 16 导出 Corosio socket 时报告的 TU-local 匿名类型；另应用 [`when_all` 启动补丁](../../3rdparty/packages/n/nexus-capy/when_all_startup.patch)，清理 runner 分配失败并向调用方传递异常。隔离实验中模块导出与消费者通过；完整证据、限制及后续跟踪见[上游问题](../development/upstream-issues.md)。现有业务接口仍保持网络实现私有。历史的无补丁构建与 I/O 测试只验证了私有头文件路径。
 
 Corosio 当前提交应用[线程局部模板补丁](../../3rdparty/packages/n/nexus-corosio/thread_local_modules.patch)，解决 GCC 16 在代理模块中遇到的重复定义；生产代理已使用新版值返回 `tcp_acceptor::accept()`，具体范围见[上游问题](../development/upstream-issues.md)。
 

@@ -237,10 +237,11 @@ xmake build -r nexus-io-test
 xmake run nexus-io-test
 
 # Corosio Module 地址/组合连接边界（覆盖 epoll 与 io_uring）
-xmake build nexus-corosio-endpoint-test nexus-corosio-connect-test nexus-capy-quitter-test
+xmake build nexus-corosio-endpoint-test nexus-corosio-connect-test nexus-capy-quitter-test nexus-capy-when-all-startup-test
 xmake run nexus-corosio-endpoint-test
 xmake run nexus-corosio-connect-test
 xmake run nexus-capy-quitter-test
+xmake run nexus-capy-when-all-startup-test
 ```
 
 可用 `xmake f -y -m debug --toolchain=gcc --io_uring=n` 显式选择 epoll；切换配置后应重建相关 target。本机以系统 liburing 2.15 验证；测试不是对所有内核或并发场景的保证。源码依赖仅分别禁用系统包查找，liburing 作为系统依赖解析，不下载替代副本。
