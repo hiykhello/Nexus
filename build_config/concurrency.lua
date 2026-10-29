@@ -14,6 +14,12 @@ if is_plat("linux") then
         add_files("$(projectdir)/tests/proxy_root_fault.cpp")
         add_deps("nexus-proxy-root-fault")
 
+    target("nexus-proxy-reconfigure-fault-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_reconfigure_fault.cpp")
+        add_deps("nexus-proxy-root-fault")
+
     target("nexus-proxy-dns-lifetime")
         set_kind("static")
         set_default(false)

@@ -228,7 +228,7 @@ namespace nexus::proxy {
 
     auto Server::set_socks5_credentials(std::string_view username, std::string_view password)
         -> std::expected<void, std::string> {
-        if (this->running || this->listener.is_open() || !this->sessions.empty())
+        if (this->running || this->listener.is_open() || !this->sessions.empty() || !this->workers.empty())
             return std::unexpected("stop the server before changing authentication");
         auto valid = [](std::string_view value) {
             return !value.empty() && value.size() <= 255 && std::all_of(value.begin(), value.end(),
@@ -245,7 +245,7 @@ namespace nexus::proxy {
     }
 
     auto Server::clear_socks5_credentials() -> std::expected<void, std::string> {
-        if (this->running || this->listener.is_open() || !this->sessions.empty())
+        if (this->running || this->listener.is_open() || !this->sessions.empty() || !this->workers.empty())
             return std::unexpected("stop the server before changing authentication");
         this->credentials.reset();
         return {};
