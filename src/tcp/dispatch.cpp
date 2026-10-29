@@ -37,7 +37,8 @@ namespace nexus::tcp {
         bool answer = result && ((!*result && previous == ConnectionState::handshake) ||
                                  !segment->payload.empty() || (segment->flags & 1));
         if (!result && !(segment->flags & 4) &&
-            (result.error() == ConnectionError::unacceptable || result.error() == ConnectionError::challenge_ack)) answer = true;
+            (result.error() == ConnectionError::unacceptable || result.error() == ConnectionError::challenge_ack ||
+             result.error() == ConnectionError::invalid_ack)) answer = true;
         if (!result && (segment->flags & 4) && result.error() == ConnectionError::challenge_ack) answer = true;
         if (answer) {
             auto view = previous == ConnectionState::handshake && result && !*result ? connection->syn_ack() : connection->ack();

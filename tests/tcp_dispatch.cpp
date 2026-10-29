@@ -41,6 +41,18 @@ int main() {
     std::array<std::uint8_t, 2> output{};
     if (!response || response->acknowledgement != 102 || table->get(first->id)->read(output) != 2 ||
         output != std::array<std::uint8_t, 2>{'h','i'}) return 1;
+    // An ACK beyond SND.NXT must elicit the current ACK and discard both
+    // its payload and window update, leaving outstanding data unacknowledged.
+    auto* flow=table->get(first->id);
+    if (!flow->enqueue(data) || !flow->sent(1,5)) return 1;
+    ack.sequence=102; ack.acknowledgement=53; ack.window=0; ack.flags=0x18; ack.payload=data;
+    raw=p::make_tcp4(ack);
+    auto future=t::dispatch(*table,*raw,0,5);
+    if (!future || future->input_error!=t::ConnectionError::invalid_ack || !future->reply) return 1;
+    response=p::parse_tcp4(*future->reply);
+    if (!response || response->flags!=0x10 || response->sequence!=52 || response->acknowledgement!=102 ||
+        !response->payload.empty() || flow->read(output)!=0 || flow->send_capacity()!=6 ||
+        flow->unsent(8).bytes.size()!=1) return 1;
     ack.flags=4; ack.payload={}; ack.sequence=103;
     raw = p::make_tcp4(ack);
     auto challenge = t::dispatch(*table, *raw, 0, 6);
