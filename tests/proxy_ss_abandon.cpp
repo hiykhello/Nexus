@@ -11,6 +11,8 @@ extern "C" void nexus_test_ss_profile_owner(std::weak_ptr<void> owner) { profile
 extern "C" void nexus_test_ss_profile_frame_enter() { entered=true; owners_on_entry=profile.use_count(); }
 extern "C" void nexus_test_ss_profile_frame_exit() { exited=true; owners_on_exit=profile.use_count(); }
 extern "C" bool nexus_test_skip_server_stop() { return skip_stop; }
+extern "C" void nexus_test_tunnel_profile_owner(std::weak_ptr<void const>) {}
+extern "C" void nexus_test_tunnel_profile_destroy() {}
 int main() {
     int fd=-1;
     {

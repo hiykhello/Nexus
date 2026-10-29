@@ -61,8 +61,9 @@ namespace nexus::proxy {
         // Borrowed from the active DNS query on this session's executor.
         void* dns_operation = nullptr;
         void (*cancel_dns)(void*) noexcept = nullptr;
-        pro::proxy<TunnelFacade> tunnel;
+        // The tunnel borrows its profile from this retained factory snapshot.
         std::shared_ptr<std::vector<TunnelFactory> const> tunnel_factories;
+        pro::proxy<TunnelFacade> tunnel;
         Clock::time_point started = Clock::now();
         Clock::time_point touched = started;
         std::stop_source stop;

@@ -20,6 +20,10 @@ import std;
 import nexus.crypto;
 import nexus.shadowsocks.corosio_client;
 import nexus.shadowsocks.corosio_relay;
+#ifdef NEXUS_TEST_TUNNEL_PROFILE
+extern "C" void nexus_test_tunnel_profile_owner(std::weak_ptr<void const>);
+extern "C" void nexus_test_tunnel_profile_destroy();
+#endif
 namespace nexus::proxy {
     namespace {
         struct Profile {
@@ -30,12 +34,15 @@ namespace nexus::proxy {
         };
         using Relay=shadowsocks::detail::DuplexRelay<io::tcp_socket,io::tcp_socket>;
         class ShadowsocksTunnel {
-            Session& session_; io::io_context& context_; std::shared_ptr<Profile const> profile_;
+            Session& session_; io::io_context& context_; Profile const& profile_;
             std::unique_ptr<io::resolver> resolver_; std::unique_ptr<io::tcp_socket> remote_;
             std::unique_ptr<Relay> relay_; std::optional<std::size_t> bootstrap_; std::stop_source stop_;
         public:
-            ShadowsocksTunnel(Session& session,io::io_context& context,std::shared_ptr<Profile const> profile,std::optional<std::size_t> bootstrap)
-                : session_(session),context_(context),profile_(std::move(profile)),bootstrap_(bootstrap) {}
+            ShadowsocksTunnel(Session& session,io::io_context& context,Profile const& profile,std::optional<std::size_t> bootstrap)
+                : session_(session),context_(context),profile_(profile),bootstrap_(bootstrap) {}
+#ifdef NEXUS_TEST_TUNNEL_PROFILE
+            ~ShadowsocksTunnel() { nexus_test_tunnel_profile_destroy(); }
+#endif
             auto cancel() noexcept -> void {
                 stop_.request_stop(); if (resolver_) resolver_->cancel(); if (relay_) relay_->cancel(); if (remote_) remote_->cancel();
             }
@@ -46,12 +53,12 @@ namespace nexus::proxy {
             auto connect_impl(io::endpoint destination) -> capy::quitter<TunnelConnectResult> {
                 std::vector<io::endpoint> endpoints;
                 if (bootstrap_) {
-                    auto result=co_await resolve_bootstrap(session_,context_,*bootstrap_,profile_->host,profile_->port);
+                    auto result=co_await resolve_bootstrap(session_,context_,*bootstrap_,profile_.host,profile_.port);
                     if (!result) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(*result);
                 } else {
                     resolver_=std::make_unique<io::resolver>(context_);
-                    auto [error,resolved]=co_await resolver_->resolve(profile_->host,std::to_string(profile_->port));
+                    auto [error,resolved]=co_await resolver_->resolve(profile_.host,std::to_string(profile_.port));
                     resolver_.reset();
                     if (error) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(resolved);
@@ -77,10 +84,10 @@ namespace nexus::proxy {
                         auto bytes=destination.address().to_v6().to_bytes(); address.push_back(4); address.insert(address.end(),bytes.begin(),bytes.end());
                     }
                     address.push_back(static_cast<std::uint8_t>(destination.port()>>8)); address.push_back(static_cast<std::uint8_t>(destination.port()));
-                    auto started=co_await shadowsocks::detail::start_request(*remote_,profile_->key,address,deadline);
+                    auto started=co_await shadowsocks::detail::start_request(*remote_,profile_.key,address,deadline);
                     if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     if (!started) co_return started.error()==shadowsocks::detail::StartError::timeout ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
-                    relay_=std::make_unique<Relay>(session_.client,*remote_,profile_->key,std::move(*started),[this] { session_.touched=Clock::now(); });
+                    relay_=std::make_unique<Relay>(session_.client,*remote_,profile_.key,std::move(*started),[this] { session_.touched=Clock::now(); });
                     co_return TunnelConnectResult::connected;
                 }
                 co_return TunnelConnectResult::retryable;
@@ -106,8 +113,11 @@ namespace nexus::proxy {
         if (host.empty() || host.size()>255 || host.find('\0')!=std::string_view::npos || !port || (key.size()!=16 && key.size()!=32))
             return std::unexpected("invalid Shadowsocks 2022 server or key");
         auto profile=std::make_shared<Profile const>(host,port,key);
+#ifdef NEXUS_TEST_TUNNEL_PROFILE
+        nexus_test_tunnel_profile_owner(profile);
+#endif
         return TunnelFactory([profile=std::move(profile),bootstrap](Session& session,io::io_context& context) {
-            return pro::make_proxy<TunnelFacade,ShadowsocksTunnel>(session,context,profile,bootstrap);
+            return pro::make_proxy<TunnelFacade,ShadowsocksTunnel>(session,context,*profile,bootstrap);
         });
     }
 }

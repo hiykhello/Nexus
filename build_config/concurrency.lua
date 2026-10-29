@@ -66,6 +66,7 @@ if is_plat("linux") then
             set_kind("static")
             set_default(false)
             add_defines("NEXUS_TEST_SS_ABANDON")
+            add_defines("NEXUS_TEST_TUNNEL_PROFILE")
             add_defines("NEXUS_ENABLE_SS2022", {public = true})
             add_defines("NEXUS_ENABLE_VLESS", {public = true})
             add_files("$(projectdir)/src/proxy/proxy.cppm", {public = true})
@@ -77,6 +78,12 @@ if is_plat("linux") then
             set_kind("binary")
             set_default(false)
             add_files("$(projectdir)/tests/proxy_ss_abandon.cpp")
+            add_deps("nexus-proxy-ss-abandon")
+
+        target("nexus-proxy-ss-tunnel-profile-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/proxy_ss_tunnel_profile.cpp", "$(projectdir)/tests/proxy_ss_tunnel_profile_impl.cpp")
             add_deps("nexus-proxy-ss-abandon")
     end
 
