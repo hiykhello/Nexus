@@ -13,6 +13,7 @@ namespace nexus::tls {
     auto ServerFlight::release_record(std::size_t index) noexcept -> void {
         if (index<records_.size()) crypto::Bytes{}.swap(records_[index]);
     }
+    auto ServerFlight::release_records() noexcept -> void { std::vector<crypto::Bytes>{}.swap(records_); }
     auto ServerFlight::create(ServerHandshakeKeys&& input, ServerCredential const& credential, std::span<std::uint8_t const> selected_alpn) -> std::expected<ServerFlight,ServerFlightError> {
         auto keys=std::move(input); auto cert=credential.certificate();
         constexpr auto list_limit=ServerCredential::max_certificate_list_size;
@@ -75,6 +76,8 @@ namespace nexus::tls {
         if (!read || !write) return std::unexpected(ServerFlightError::crypto_error);
         ApplicationRecords application(std::move(*write),std::move(*read),16385,16385,keys.hash,algorithm,key_size,std::move(*st),std::move(*ct),ApplicationRole::server);
         std::vector<crypto::Bytes> records;
+        auto total=extensions.size()+certificate->size()+signature->size()+finished->size();
+        records.reserve((total+16383)/16384);
         std::array<std::uint8_t,16384> fragment{}; std::size_t used=0;
         for (auto const* message:{&extensions,&*certificate,&*signature,&*finished}) {
             auto bytes=std::span<std::uint8_t const>{*message};

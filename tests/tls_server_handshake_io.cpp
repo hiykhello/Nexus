@@ -141,7 +141,7 @@ int main(int argc,char** argv) {
         auto list=bounded_credential->certificate().size()+5;
         auto extensions=std::size_t{15}; // h2 EncryptedExtensions handshake message
         auto plaintext=list+8+extensions+8+*signature+52;
-        auto output=plaintext+22*((plaintext+16383)/16384);
+        auto output=plaintext+(22+sizeof(c::Bytes))*((plaintext+16383)/16384);
         auto scratch=2*(list+8)+16384+t::ServerHandshakeIo::flight_seal_scratch_charge+(8+*signature)+extensions+52;
         auto peak=std::max(t::ServerHandshakeIo::generated_hello_scratch_charge,server->pending_output().size()+output+scratch+t::ServerFlight::finished_decoder_charge);
         auto limit=t::ServerHandshakeIo::hello_input_charge+2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+peak-(enough ? 0 : 1);
@@ -187,7 +187,8 @@ int main(int argc,char** argv) {
             if (n<bytes.size() && handshake_budget->reserved()!=held_before) return 74;
             if (record.size()>=5 && record.size()==5+((std::size_t{record[3]}<<8)|record[4])) break;
         }
-        if (held_before<record.size() || handshake_budget->reserved()!=held_before-record.size()) return 75;
+        auto index_charge=server->pending_output().empty() ? records.size()*sizeof(c::Bytes) : 0;
+        if (held_before<record.size()+index_charge || handshake_budget->reserved()!=held_before-record.size()-index_charge) return 75;
         records.push_back(std::move(record));
     }
     if (records.size()<(argc>=4 ? 3u : 2u) || records[0].size()<6 || !hello_released || !flight_released || watched_flight || handshake_budget->reserved()!=t::ServerFlight::finished_decoder_charge) return 13;

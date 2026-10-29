@@ -31,6 +31,8 @@ export namespace nexus::tls {
         [[nodiscard]] auto records() const noexcept -> std::span<crypto::Bytes const> { return records_; }
         // Release only after the complete record has been sent; indices remain stable.
         auto release_record(std::size_t index) noexcept -> void;
+        // After every record has been written, release the index allocation too.
+        auto release_records() noexcept -> void;
         // One authenticated handshake record; true only after the complete client Finished.
         // An exception while processing input invalidates the flight.
         [[nodiscard]] auto client_finished(std::span<std::uint8_t const> record) -> std::expected<bool,ServerFlightError>;

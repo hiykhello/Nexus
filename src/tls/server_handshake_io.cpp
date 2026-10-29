@@ -69,7 +69,11 @@ namespace nexus::tls {
             auto count=flight_->records()[record_-1].size(); flight_->release_record(record_-1);
             if (flight_reservation_) (void)flight_reservation_->shrink(flight_reservation_->size()-count);
         }
-        ++record_; if (record_>flight_->records().size()) state_=State::finished; return {};
+        ++record_;
+        if (record_>flight_->records().size()) {
+            flight_->release_records(); flight_reservation_.reset(); state_=State::finished;
+        }
+        return {};
         } catch (...) { (void)fail(ServerHandshakeIoError::protocol_error); throw; }
     }
     auto ServerHandshakeIo::feed(std::span<std::uint8_t const> input,std::uint64_t now) -> std::expected<ServerHandshakeIoFeed,ServerHandshakeIoError> {
@@ -151,7 +155,7 @@ namespace nexus::tls {
                 // sizes are already limited by the credential implementation.
                 auto plaintext=certificate+8+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+8+*signature+52;
                 auto count=(plaintext+16383)/16384;
-                flight_reservation_=memory::Budget::reserve(budget_,plaintext+22*count);
+                flight_reservation_=memory::Budget::reserve(budget_,plaintext+(22+sizeof(crypto::Bytes))*count);
                 if (!flight_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
                 // Logical lengths of the simultaneously possible certificate body
                 // and encoded message, fragment array, sealing temporaries and
@@ -171,9 +175,16 @@ namespace nexus::tls {
             generated_hello_reservation.reset();
             flight_scratch.reset();
             if (flight_reservation_) {
-                std::size_t actual=0;
+                std::size_t actual=flight->records().size()*sizeof(crypto::Bytes);
+                if (actual>flight_reservation_->size()) {
+                    flight=std::unexpected(ServerFlightError::invalid_state);
+                    return fail(ServerHandshakeIoError::protocol_error);
+                }
                 for (auto const& record:flight->records()) {
-                    if (record.size()>flight_reservation_->size()-actual) return fail(ServerHandshakeIoError::protocol_error);
+                    if (record.size()>flight_reservation_->size()-actual) {
+                        flight=std::unexpected(ServerFlightError::invalid_state);
+                        return fail(ServerHandshakeIoError::protocol_error);
+                    }
                     actual+=record.size();
                 }
                 (void)flight_reservation_->shrink(actual);
