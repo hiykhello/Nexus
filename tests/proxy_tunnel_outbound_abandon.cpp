@@ -29,7 +29,9 @@ auto read_exact(nexus::proxy::Server& server,int fd,std::span<unsigned char> out
     }
     return output.empty();
 }
-int main() {
+int main(int argc,char** argv) {
+    if (argc!=1 && argc!=4) return 12;
+    bool vless=argc==4;
     int listener=socket(AF_INET,SOCK_STREAM | SOCK_NONBLOCK,0); if (listener<0) return 1;
     sockaddr_in address{}; address.sin_family=AF_INET; address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     if (bind(listener,reinterpret_cast<sockaddr*>(&address),sizeof(address)) || listen(listener,4)) return 2;
@@ -38,21 +40,26 @@ int main() {
     {
         nexus::proxy::Server server;
         std::array<std::uint8_t,16> key{};
-        auto index=server.add_shadowsocks("127.0.0.1",ntohs(address.sin_port),key);
+        auto index=vless ? server.add_vless("127.0.0.1",ntohs(address.sin_port),argv[3],"localhost",argv[1]) :
+            server.add_shadowsocks("127.0.0.1",ntohs(address.sin_port),key);
         if (!index || !server.set_indexed_routes({},*index)) return 4;
         auto port=server.start(0,nexus::proxy::Inbound::socks5,1); if (!port) return 5;
         client=connect_to(*port); if (client<0) return 6;
         std::array<unsigned char,3> greeting{5,1,0}; std::array<unsigned char,2> method{};
         if (send(client,greeting.data(),greeting.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(greeting.size()) || !read_exact(server,client,method) || method!=std::array<unsigned char,2>{5,0}) return 7;
         std::array<unsigned char,10> request{5,1,0,1,127,0,0,1,0x04,0xd2}, reply{};
-        if (send(client,request.data(),request.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(request.size()) || !read_exact(server,client,reply) || reply[1]!=0) return 8;
-        upstream=accept4(listener,nullptr,nullptr,SOCK_NONBLOCK); if (upstream<0) return 9;
+        if (send(client,request.data(),request.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(request.size())) return 8;
+        if (!vless && (!read_exact(server,client,reply) || reply[1]!=0)) return 8;
+        for (int i=0;i<300 && upstream<0;++i) { server.poll(10ms); upstream=accept4(listener,nullptr,nullptr,SOCK_NONBLOCK); }
+        if (upstream<0) return 9;
         std::array<unsigned char,512> wire{};
-        if (recv(upstream,wire.data(),wire.size(),0)<=0 || destroyed || profile.expired()) return 10;
+        ssize_t received=-1;
+        for (int i=0;i<300 && received<0;++i) { server.poll(10ms); received=recv(upstream,wire.data(),wire.size(),0); }
+        if (received<=0 || (vless && wire[0]!=0x16) || destroyed || profile.expired()) return 10;
         for (int i=0;i<5;++i) server.poll(10ms);
         skip_stop=true;
     }
     close(client); close(upstream); close(listener);
     if (!destroyed || !alive_on_destroy || !profile.expired()) return 11;
-    std::println("SS-2022 active outbound releases tunnel before its borrowed profile on context abandonment");
+    std::println("{} active outbound releases tunnel before its borrowed profile on context abandonment",vless ? "VLESS" : "SS-2022");
 }

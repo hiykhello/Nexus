@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- VLESS 出站隧道借用会话持有的 factory profile；真实 SOCKS 拨号发出 ClientHello、等待上游响应时直接销毁上下文，隧道先于 profile 析构，连续十轮通过；32 路并发 VLESS/TLS 双向传输、单/双 worker 候选重试、超时和停止通过。测试只覆盖默认后端的 TLS 握手读取挂起，隧道建立后及其他交错待验证。
+
 - 真实 SOCKS 经 SS-2022 出站向本地上游发出首请求并等待响应时，专用构建直接销毁上下文；隧道析构时借用的 profile 仍由会话 factory 持有，之后释放，连续二十轮通过。静态所有权探针、入站 abandon 和 sing-box 出站回归通过；只覆盖默认后端的上游读取挂起。
 
 - SS-2022 出站隧道借用会话持有的 factory 快照内 profile；调整会话成员顺序，保证隧道先销毁，再释放 factory。专用探针确认无额外 profile 所有者且隧道析构时 profile 存活，随后释放；正式构建、入站 abandon、sing-box 出站互通及单/双 worker 候选重置、重试、超时和并发停止通过。

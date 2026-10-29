@@ -28,6 +28,10 @@ import nexus.tls.client_handshake_io;
 import nexus.tls.application_io;
 import nexus.tls.corosio_client;
 import nexus.vless.corosio_client;
+#ifdef NEXUS_TEST_TUNNEL_PROFILE
+extern "C" void nexus_test_tunnel_profile_owner(std::weak_ptr<void const>);
+extern "C" void nexus_test_tunnel_profile_destroy();
+#endif
 
 #include "../vless/client_profile.hpp"
 
@@ -39,7 +43,7 @@ namespace nexus::proxy {
         class VlessTunnel {
             Session& session_;
             io::io_context& context_;
-            std::shared_ptr<Profile const> profile_;
+            Profile const& profile_;
             std::unique_ptr<io::resolver> resolver_;
             std::unique_ptr<tls::detail::OwnedClient> owner_;
             std::unique_ptr<Client> client_;
@@ -47,8 +51,11 @@ namespace nexus::proxy {
             std::optional<std::size_t> bootstrap_;
             std::stop_source stop_;
         public:
-            VlessTunnel(Session& session, io::io_context& context, std::shared_ptr<Profile const> profile, std::optional<std::size_t> bootstrap)
-                : session_(session),context_(context),profile_(std::move(profile)),bootstrap_(bootstrap) {}
+            VlessTunnel(Session& session, io::io_context& context, Profile const& profile, std::optional<std::size_t> bootstrap)
+                : session_(session),context_(context),profile_(profile),bootstrap_(bootstrap) {}
+#ifdef NEXUS_TEST_TUNNEL_PROFILE
+            ~VlessTunnel() { nexus_test_tunnel_profile_destroy(); }
+#endif
             auto cancel() noexcept -> void {
                 stop_.request_stop();
                 if (resolver_) resolver_->cancel();
@@ -62,12 +69,12 @@ namespace nexus::proxy {
             auto connect_impl(io::endpoint destination) -> capy::quitter<TunnelConnectResult> {
                 std::vector<io::endpoint> endpoints;
                 if (bootstrap_) {
-                    auto result=co_await resolve_bootstrap(session_,context_,*bootstrap_,profile_->host,profile_->port);
+                    auto result=co_await resolve_bootstrap(session_,context_,*bootstrap_,profile_.host,profile_.port);
                     if (!result) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(*result);
                 } else {
                     resolver_=std::make_unique<io::resolver>(context_);
-                    auto [error, resolved]=co_await resolver_->resolve(profile_->host,std::to_string(profile_->port));
+                    auto [error, resolved]=co_await resolver_->resolve(profile_.host,std::to_string(profile_.port));
                     resolver_.reset();
                     if (error) co_return TunnelConnectResult::retryable;
                     endpoints=std::move(resolved);
@@ -82,7 +89,7 @@ namespace nexus::proxy {
                     auto seconds=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                     if (now<0) co_return TunnelConnectResult::failed;
                     if (deadline_ms<=now) co_return TunnelConnectResult::timeout;
-                    auto handshake=profile_->handshake(static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(deadline_ms),seconds);
+                    auto handshake=profile_.handshake(static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(deadline_ms),seconds);
                     if (!handshake) co_return TunnelConnectResult::retryable;
                     owner_=std::make_unique<tls::detail::OwnedClient>(context_,std::move(*handshake));
                     auto connected=co_await owner_->start(endpoint);
@@ -94,7 +101,7 @@ namespace nexus::proxy {
                     auto& connection=*owner_->client()->application();
                     client_=std::make_unique<Client>(connection);
                     vless::TcpRequest request;
-                    request.user=profile_->user; request.port=destination.port();
+                    request.user=profile_.user; request.port=destination.port();
                     auto address=destination.address();
                     if (address.is_v4()) {
                         request.kind=vless::AddressKind::ipv4;
@@ -157,8 +164,12 @@ namespace nexus::proxy {
         config::VlessOutbound config{std::string(host),port,std::string(uuid_file),std::string(server_name),std::string(ca_file),group};
         auto profile=Profile::load(config);
         if (!profile) return std::unexpected(profile.error());
-        return TunnelFactory([profile=std::make_shared<Profile const>(std::move(*profile)),bootstrap](Session& session,io::io_context& context) {
-            return pro::make_proxy<TunnelFacade,VlessTunnel>(session,context,profile,bootstrap);
+        auto shared=std::make_shared<Profile const>(std::move(*profile));
+#ifdef NEXUS_TEST_TUNNEL_PROFILE
+        nexus_test_tunnel_profile_owner(shared);
+#endif
+        return TunnelFactory([profile=std::move(shared),bootstrap](Session& session,io::io_context& context) {
+            return pro::make_proxy<TunnelFacade,VlessTunnel>(session,context,*profile,bootstrap);
         });
     }
 }
