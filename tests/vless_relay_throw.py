@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inject relay start and coroutine failures through real TLS connections."""
+"""Inject relay preparation and coroutine failures through real TLS connections."""
 import os
 import pathlib
 import socket
@@ -65,4 +65,4 @@ routing {{ default-outbound "direct"; }}
                     if server.wait(timeout=5)!=0: raise RuntimeError(server.stderr.read().decode())
             finally:
                 if server.poll() is None: server.kill(); server.wait()
-print("VLESS active relay stop and launch/coroutine exceptions close sessions and recover quota")
+print("VLESS active relay stop and preparation/coroutine exceptions close sessions and recover quota")

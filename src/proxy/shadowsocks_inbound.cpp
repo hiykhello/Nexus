@@ -3,6 +3,7 @@ module;
 #include <boost/capy/buffers.hpp>
 #include <boost/capy/task.hpp>
 #include <boost/capy/quitter.hpp>
+#include <boost/capy/when_all.hpp>
 #include <boost/capy/cond.hpp>
 #include <boost/capy/ex/run_async.hpp>
 #include <boost/corosio/io_context.hpp>
@@ -43,56 +44,61 @@ namespace nexus::proxy {
             profiles.push_back(profile); return profile;
         }
         struct RelayState {
-            std::shared_ptr<Session> session;
+            Session& session;
             Incoming& incoming;
-            nex::capy::async_event done;
-            unsigned pending=0;
-            bool failed=false;
-            auto finish(bool ok) -> void {
-                if (!ok) { failed=true; session->close(); }
-                if (--pending==0) done.set();
-            }
         };
-        auto upload(std::shared_ptr<RelayState> state) -> capy::quitter<bool> {
+        auto upload(RelayState& state) -> capy::quitter<bool> {
             std::array<std::uint8_t,16384> bytes{};
             for (;;) {
-                auto n=co_await state->incoming.read(bytes,Clock::now()+std::chrono::seconds(300));
-                if (!n || state->session->closed) { co_return false; }
+                auto n=co_await state.incoming.read(bytes,Clock::now()+std::chrono::seconds(300));
+                if (!n || state.session.closed) { co_return false; }
                 if (!*n) {
-                    bool ok=state->session->tunnel ? co_await state->session->tunnel->close_output() :
-                        !state->session->target.shutdown(io::shutdown_send);
+                    bool ok=state.session.tunnel ? co_await state.session.tunnel->close_output() :
+                        !state.session.target.shutdown(io::shutdown_send);
                     co_return ok;
                 }
-                state->session->touched=Clock::now();
-                if (state->session->tunnel) {
-                    if (!co_await state->session->tunnel->send(std::span{bytes}.first(*n))) { co_return false; }
+                state.session.touched=Clock::now();
+                if (state.session.tunnel) {
+                    if (!co_await state.session.tunnel->send(std::span{bytes}.first(*n))) { co_return false; }
                 } else {
                     std::size_t offset=0;
                     while (offset<*n) {
-                        auto [error,count]=co_await state->session->target.write_some(capy::const_buffer(bytes.data()+offset,*n-offset));
-                        if (error || !count || count>*n-offset || state->session->closed) { co_return false; }
+                        auto [error,count]=co_await state.session.target.write_some(capy::const_buffer(bytes.data()+offset,*n-offset));
+                        if (error || !count || count>*n-offset || state.session.closed) { co_return false; }
                         offset+=count;
                     }
                 }
             }
         }
-        auto download(std::shared_ptr<RelayState> state) -> capy::quitter<bool> {
+        auto download(RelayState& state) -> capy::quitter<bool> {
             std::array<std::uint8_t,16384> bytes{};
             for (;;) {
                 std::size_t count=0;
-                if (state->session->tunnel) {
-                    auto result=co_await state->session->tunnel->read(bytes);
-                    if (!result || state->session->closed) { co_return false; }
+                if (state.session.tunnel) {
+                    auto result=co_await state.session.tunnel->read(bytes);
+                    if (!result || state.session.closed) { co_return false; }
                     count=*result;
                 } else {
-                    auto [error,n]=co_await state->session->target.read_some(capy::mutable_buffer(bytes.data(),bytes.size()));
+                    auto [error,n]=co_await state.session.target.read_some(capy::mutable_buffer(bytes.data(),bytes.size()));
                     if (error==capy::cond::eof) count=0;
-                    else if (error || !n || n>bytes.size() || state->session->closed) { co_return false; }
+                    else if (error || !n || n>bytes.size() || state.session.closed) { co_return false; }
                     else count=n;
                 }
-                if (!count) { co_return co_await state->incoming.close_output(); }
-                state->session->touched=Clock::now();
-                if (!co_await state->incoming.send(std::span{bytes}.first(count),Clock::now()+std::chrono::seconds(300))) { co_return false; }
+                if (!count) { co_return co_await state.incoming.close_output(); }
+                state.session.touched=Clock::now();
+                if (!co_await state.incoming.send(std::span{bytes}.first(count),Clock::now()+std::chrono::seconds(300))) { co_return false; }
+            }
+        }
+        // A failed direction closes the session before the join cancels and
+        // drains its sibling. A successful EOF preserves the other direction.
+        auto relay_direction(Session& session, capy::quitter<bool> direction) -> capy::task<capy::results<>> {
+            try {
+                if (co_await std::move(direction)) co_return capy::results<>{};
+                session.close();
+                co_return capy::results<>{std::make_error_code(std::errc::io_error)};
+            } catch (...) {
+                session.close();
+                throw;
             }
         }
         auto serve(std::shared_ptr<Session> session,io::io_context& context,rules::RouteMatcher const& policy,
@@ -113,20 +119,14 @@ namespace nexus::proxy {
             auto result=co_await dial(session,context,policy,target);
             if (result || session->closed) { fail(); co_return; }
             session->relaying=true; session->touched=Clock::now();
-            auto relay=std::make_shared<RelayState>(session,incoming);
-            relay->pending=2;
-            auto launch=[&](auto task) {
-                capy::run_async(context.get_executor(), session->stop.get_token(),
-                    [relay](bool ok) noexcept { relay->finish(ok); },
-                    [relay](std::exception_ptr) noexcept { relay->finish(false); })(std::move(task));
-            };
-            bool first_started=true;
+            RelayState relay{*session,incoming};
             try {
-                launch(upload(relay)); }
-            catch (...) { first_started=false; relay->finish(false); relay->finish(false); }
-            if (first_started) { try {
-                launch(download(relay)); } catch (...) { relay->finish(false); session->close(); } }
-            if (relay->pending) (void)co_await relay->done.wait();
+                auto first=relay_direction(*session,upload(relay));
+                auto second=relay_direction(*session,download(relay));
+                (void)co_await capy::when_all(std::move(first),std::move(second));
+            } catch (...) {
+                session->close();
+            }
             fail();
         }
     }
