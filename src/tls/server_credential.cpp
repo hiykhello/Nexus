@@ -9,15 +9,15 @@ module;
 module nexus.tls.server_credential;
 import std;
 namespace nexus::tls {
-    ServerCredential::ServerCredential(EVP_PKEY* key, std::uint16_t scheme, crypto::Bytes certificate) noexcept
-        : key_(key), scheme_(scheme), certificate_(std::move(certificate)) {}
+    ServerCredential::ServerCredential(EVP_PKEY* key, std::uint16_t scheme, std::shared_ptr<Certificates> certificates) noexcept
+        : key_(key), scheme_(scheme), certificates_(std::move(certificates)) {}
     ServerCredential::~ServerCredential() { EVP_PKEY_free(key_); }
     ServerCredential::ServerCredential(ServerCredential&& other) noexcept
-        : key_(std::exchange(other.key_,nullptr)), scheme_(other.scheme_), certificate_(std::move(other.certificate_)), chain_(std::move(other.chain_)) {}
+        : key_(std::exchange(other.key_,nullptr)), scheme_(other.scheme_), certificates_(std::move(other.certificates_)) {}
     auto ServerCredential::operator=(ServerCredential&& other) noexcept -> ServerCredential& {
         if (this!=&other) {
             EVP_PKEY_free(key_); key_=std::exchange(other.key_,nullptr);
-            scheme_=other.scheme_; certificate_=std::move(other.certificate_); chain_=std::move(other.chain_);
+            scheme_=other.scheme_; certificates_=std::move(other.certificates_);
         }
         return *this;
     }
@@ -41,7 +41,8 @@ namespace nexus::tls {
         }
         if (!scheme) return std::unexpected(ServerCredentialError::unsupported_key);
         crypto::Bytes encoded(certificate.begin(),certificate.end());
-        return ServerCredential(key.release(),scheme,std::move(encoded));
+        auto certificates=std::make_shared<Certificates>(std::move(encoded),std::vector<crypto::Bytes>{});
+        return ServerCredential(key.release(),scheme,std::move(certificates));
     }
     auto ServerCredential::create_file_contents(std::span<std::uint8_t const> certificate,
             std::span<std::uint8_t const> private_key) -> std::expected<ServerCredential,ServerCredentialError> {
@@ -107,14 +108,13 @@ namespace nexus::tls {
             list_size+=item.size()+5;
         }
         auto result=create(certificate,private_key);
-        if (result) result->chain_=std::move(chain);
+        if (result) result->certificates_->chain=std::move(chain);
         return result;
     }
     auto ServerCredential::clone() const -> std::expected<ServerCredential,ServerCredentialError> {
         if (!key_) return std::unexpected(ServerCredentialError::invalid_state);
-        auto certificate=certificate_; auto chain=chain_;
         if (EVP_PKEY_up_ref(key_)!=1) return std::unexpected(ServerCredentialError::crypto_error);
-        ServerCredential result(key_,scheme_,std::move(certificate)); result.chain_=std::move(chain); return result;
+        return ServerCredential(key_,scheme_,certificates_);
     }
     auto ServerCredential::scheme() const noexcept -> std::optional<std::uint16_t> {
         if (!key_) return {}; return scheme_;
@@ -126,9 +126,9 @@ namespace nexus::tls {
         return static_cast<std::size_t>(size);
     }
     auto ServerCredential::certificate() const noexcept -> std::span<std::uint8_t const> {
-        return key_ ? std::span<std::uint8_t const>{certificate_} : std::span<std::uint8_t const>{};
+        return key_ ? std::span<std::uint8_t const>{certificates_->leaf} : std::span<std::uint8_t const>{};
     }
-    auto ServerCredential::chain() const noexcept -> std::span<crypto::Bytes const> { return key_ ? std::span<crypto::Bytes const>{chain_} : std::span<crypto::Bytes const>{}; }
+    auto ServerCredential::chain() const noexcept -> std::span<crypto::Bytes const> { return key_ ? std::span<crypto::Bytes const>{certificates_->chain} : std::span<crypto::Bytes const>{}; }
     auto ServerCredential::sign(crypto::Hash hash, std::span<std::uint8_t const> transcript_hash) const
         -> std::expected<crypto::Bytes,ServerCredentialError> {
         if (!key_) return std::unexpected(ServerCredentialError::invalid_state);

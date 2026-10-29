@@ -1,6 +1,14 @@
 import std;
 import nexus.tls.server_credential;
 import nexus.tls.certificate_verify;
+static thread_local bool deny_allocation=false;
+void* operator new(std::size_t size) {
+    if (deny_allocation) throw std::bad_alloc{};
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
 auto read(char const* path) -> c::Bytes { std::ifstream f(path,std::ios::binary); return {std::istreambuf_iterator<char>(f),{}}; }
 int main(int argc,char** argv) {
@@ -16,7 +24,8 @@ int main(int argc,char** argv) {
     auto credential=t::ServerCredential::create(cert,key); if (!credential || credential->scheme()!=expected) return 4;
     auto moved=std::move(*credential); if (credential->scheme() || credential->sign(c::Hash::sha256,c::Bytes(32)).error()!=t::ServerCredentialError::invalid_state) return 5;
     if (credential->clone().error()!=t::ServerCredentialError::invalid_state) return 14;
-    auto retained=moved.clone(); if (!retained || retained->scheme()!=expected) return 15;
+    deny_allocation=true; auto retained=moved.clone(); deny_allocation=false;
+    if (!retained || retained->scheme()!=expected || retained->certificate().data()!=moved.certificate().data()) return 15;
     auto replacement=t::ServerCredential::create(cert,key); if (!replacement) return 12;
     *replacement=std::move(moved);
     if (moved.scheme() || replacement->scheme()!=expected || !std::ranges::equal(replacement->certificate(),cert)) return 13;
@@ -45,6 +54,6 @@ int main(int argc,char** argv) {
     std::thread first(sign,std::cref(moved)), second(sign,std::cref(*retained)); first.join(); second.join();
     if (!ok) return 16;
     { auto original=std::move(moved); }
-    if (!retained->sign(c::Hash::sha256,c::Bytes(32))) return 17;
+    if (!std::ranges::equal(retained->certificate(),cert) || !retained->sign(c::Hash::sha256,c::Bytes(32))) return 17;
     std::cout << "server credential signing passed\n";
 }

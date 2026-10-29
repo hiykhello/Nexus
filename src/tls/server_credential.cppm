@@ -11,9 +11,9 @@ export namespace nexus::tls {
     class ServerCredential {
         evp_pkey_st* key_;
         std::uint16_t scheme_;
-        crypto::Bytes certificate_;
-        std::vector<crypto::Bytes> chain_;
-        explicit ServerCredential(evp_pkey_st* key, std::uint16_t scheme, crypto::Bytes certificate) noexcept;
+        struct Certificates { crypto::Bytes leaf; std::vector<crypto::Bytes> chain; };
+        std::shared_ptr<Certificates> certificates_;
+        explicit ServerCredential(evp_pkey_st* key, std::uint16_t scheme, std::shared_ptr<Certificates> certificates) noexcept;
     public:
         static constexpr std::size_t max_certificate_list_size=1048576;
         ~ServerCredential();
@@ -27,7 +27,8 @@ export namespace nexus::tls {
         // Accepts one DER leaf or a PEM leaf-first chain, and a DER or PEM unencrypted key.
         [[nodiscard]] static auto create_file_contents(std::span<std::uint8_t const> certificate, std::span<std::uint8_t const> private_key)
             -> std::expected<ServerCredential,ServerCredentialError>;
-        // Retains the key for another independent handshake; concurrent signing uses separate contexts.
+        // Shares immutable certificate storage and retains the key for another
+        // independent handshake; concurrent signing uses separate contexts.
         [[nodiscard]] auto clone() const -> std::expected<ServerCredential,ServerCredentialError>;
         [[nodiscard]] auto scheme() const noexcept -> std::optional<std::uint16_t>;
         [[nodiscard]] auto max_signature_size() const noexcept -> std::optional<std::size_t>;

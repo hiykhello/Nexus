@@ -56,7 +56,10 @@ int main(int argc,char** argv) {
     auto limited=credential(); if (!limited || !check_limit(std::move(*limited))) return 69;
     if (argc==5) {
         auto chain=t::ServerCredential::create_file_contents(read_file(argv[4]),priv);
-        if (!chain || chain->chain().size()!=1 || !check_limit(std::move(*chain))) return 70;
+        if (!chain || chain->chain().size()!=1) return 70;
+        fail_after=0; auto shared_chain=chain->clone(); auto no_allocation=fail_after==0; fail_after=-1;
+        if (!shared_chain || !no_allocation || shared_chain->certificate().data()!=chain->certificate().data() ||
+            shared_chain->chain()[0].data()!=chain->chain()[0].data() || !check_limit(std::move(*chain))) return 70;
     }
     auto creds=credential(); if (!creds) return 2;
     auto scheme=*creds->scheme(); auto handshake_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
