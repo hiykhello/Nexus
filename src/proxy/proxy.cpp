@@ -35,6 +35,9 @@ extern "C" void nexus_test_start_throw();
 extern "C" void nexus_test_root_launch(unsigned);
 extern "C" std::pmr::memory_resource* nexus_test_root_resource();
 #endif
+#ifdef NEXUS_TEST_VLESS_ABANDON
+extern "C" bool nexus_test_skip_server_stop();
+#endif
 
 namespace nexus::proxy {
     using namespace std::chrono_literals;
@@ -139,7 +142,13 @@ namespace nexus::proxy {
     }
 
     Server::Server() = default;
-    Server::~Server() { stop(); }
+    Server::~Server() {
+#ifdef NEXUS_TEST_VLESS_ABANDON
+        // Exercise member destruction with suspended tasks in the test target.
+        if (nexus_test_skip_server_stop()) return;
+#endif
+        stop();
+    }
 #ifdef NEXUS_TEST_FAKEIP
     auto Server::set_fakeip(std::shared_ptr<dns::FakeIpShared> owner,std::uint64_t view)
         -> std::expected<void,std::error_code> {

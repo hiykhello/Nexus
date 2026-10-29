@@ -28,6 +28,11 @@ extern "C" void nexus_test_vless_relay_throw(unsigned);
 #ifdef NEXUS_TEST_VLESS_PROFILE_LIFETIME
 extern "C" void nexus_test_vless_profile_enter();
 #endif
+#ifdef NEXUS_TEST_VLESS_ABANDON
+extern "C" void nexus_test_vless_profile_owner(std::weak_ptr<void const>);
+extern "C" void nexus_test_vless_profile_frame_enter();
+extern "C" void nexus_test_vless_profile_frame_exit();
+#endif
 namespace nexus::proxy {
     namespace {
         using Connection=tls::detail::ApplicationConnection<io::tcp_socket>;
@@ -98,6 +103,10 @@ namespace nexus::proxy {
         }
         auto serve(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
                    vless::ServerProfile const& profile) -> capy::task<> {
+#ifdef NEXUS_TEST_VLESS_ABANDON
+            struct FrameProbe { ~FrameProbe() { nexus_test_vless_profile_frame_exit(); } } probe;
+            nexus_test_vless_profile_frame_enter();
+#endif
 #ifdef NEXUS_TEST_VLESS_PROFILE_LIFETIME
             nexus_test_vless_profile_enter();
 #endif
@@ -147,6 +156,9 @@ namespace nexus::proxy {
         auto profile=vless::ServerProfile::load(certificate,key,users);
         if (!profile) return std::unexpected(profile.error());
         auto shared=std::make_shared<vless::ServerProfile const>(std::move(*profile));
+#ifdef NEXUS_TEST_VLESS_ABANDON
+        nexus_test_vless_profile_owner(shared);
+#endif
         return InboundFactory([shared](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
             return serve(session,context,policy,*shared);
         });
