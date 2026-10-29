@@ -90,7 +90,7 @@ if is_plat("linux") then
         set_kind("binary")
         set_default(false)
         add_files("tests/socks5_udp_ingress.cpp")
-        add_ldflags("-Wl,--wrap=sendto")
+        add_ldflags("-Wl,--wrap=sendto", "-Wl,--wrap=recvfrom")
         add_deps("nexus-socks5-udp-ingress", "nexus-rules")
 end
 

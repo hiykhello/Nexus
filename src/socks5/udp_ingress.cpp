@@ -53,7 +53,9 @@ namespace nexus::socks5 {
                 if (static_cast<std::size_t>(n)>input_bytes_.size() || length!=sizeof(from) || from.sin_family!=AF_INET)
                 report.input_error=UdpDirectError{Status::too_large};
                 else { input_size_=static_cast<std::size_t>(n); input_source_=peer(from); input_pending_=true; }
-            } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) report.input_error=UdpDirectError{error()};
+            } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) {
+                auto failure=error(); close(); return std::unexpected(UdpDirectError{failure});
+            }
         }
         if (input_pending_) {
             report.input=true;

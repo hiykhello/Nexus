@@ -7,7 +7,13 @@ import nexus.rules;
 import nexus.socks5.udp_ingress;
 namespace s=nexus::socks5; namespace r=nexus::rules;
 static bool fail_reply=false;
+static int receive_error=0;
 extern "C" ssize_t __real_sendto(int,const void*,size_t,int,const sockaddr*,socklen_t);
+extern "C" ssize_t __real_recvfrom(int,void*,size_t,int,sockaddr*,socklen_t*);
+extern "C" ssize_t __wrap_recvfrom(int fd,void* data,size_t size,int flags,sockaddr* source,socklen_t* length) {
+    if (receive_error) { errno=std::exchange(receive_error,0); return -1; }
+    return __real_recvfrom(fd,data,size,flags,source,length);
+}
 extern "C" ssize_t __wrap_sendto(int fd,const void* data,size_t size,int flags,const sockaddr* dest,socklen_t length) {
     if (fail_reply) { fail_reply=false; errno=EAGAIN; return -1; }
     return __real_sendto(fd,data,size,flags,dest,length);
@@ -61,5 +67,22 @@ int main() {
     if (stopped || stopped.error()!=s::UdpDirectError{s::Status::association_closed}) return 14;
     Socket reuse{::socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0)};
     if (reuse.fd<0 || ::bind(reuse.fd,reinterpret_cast<sockaddr*>(&relay),sizeof(relay))) return 15;
+    auto second=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
+    if (!second) return 16;
+    s::UdpIngress faulty(*second,*policy);
+    auto endpoint=faulty.open({1,{127,0,0,1},0}); if (!endpoint) return 17;
+    for (int temporary : {EAGAIN,EINTR}) {
+        receive_error=temporary;
+        auto result=faulty.step();
+        if (!result || result->input_error || receive_error) return 18;
+    }
+    receive_error=EIO;
+    auto failed=faulty.step();
+    if (failed || failed.error()!=s::UdpDirectError{std::error_code(EIO,std::generic_category())} || receive_error) return 19;
+    auto closed=faulty.step();
+    if (closed || closed.error()!=s::UdpDirectError{s::Status::association_closed}) return 20;
+    Socket recovered{::socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0)};
+    relay.sin_port=htons(endpoint->port);
+    if (recovered.fd<0 || ::bind(recovered.fd,reinterpret_cast<sockaddr*>(&relay),sizeof(relay))) return 21;
     std::println("SOCKS UDP ingress forwards and filters real datagrams");
 }

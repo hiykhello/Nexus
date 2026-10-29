@@ -29,6 +29,8 @@ export namespace nexus::socks5 {
         auto operator=(UdpIngress const&) -> UdpIngress& = delete;
         // local must be an explicit non-wildcard IPv4 address; port 0 requests an ephemeral port.
         [[nodiscard]] auto open(UdpPeer local) -> std::expected<UdpPeer,UdpDirectError>;
+        // A permanent ingress socket read failure closes the driver and is returned
+        // as an error; malformed or unauthorized datagrams are reported per step.
         [[nodiscard]] auto step() -> std::expected<UdpIngressStep,UdpDirectError>;
         auto close() noexcept -> void;
     };
