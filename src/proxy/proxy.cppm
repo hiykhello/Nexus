@@ -151,12 +151,11 @@ export namespace nexus::proxy {
     class Server {
         // The registry outlives context shutdown, which can destroy task frames.
         std::vector<Session*> sessions;
+        // Inbound factories outlive context shutdown and suspended sessions.
 #ifdef NEXUS_ENABLE_SS2022
         InboundFactory shadowsocks_inbound;
 #endif
 #ifdef NEXUS_ENABLE_VLESS
-        // Session tasks borrow their profile from this factory, including
-        // during context destruction when suspended tasks are abandoned.
         InboundFactory vless_inbound;
 #endif
 #if BOOST_COROSIO_HAVE_LIBURING

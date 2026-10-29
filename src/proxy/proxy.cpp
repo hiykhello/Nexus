@@ -35,7 +35,7 @@ extern "C" void nexus_test_start_throw();
 extern "C" void nexus_test_root_launch(unsigned);
 extern "C" std::pmr::memory_resource* nexus_test_root_resource();
 #endif
-#ifdef NEXUS_TEST_VLESS_ABANDON
+#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON)
 extern "C" bool nexus_test_skip_server_stop();
 #endif
 
@@ -143,7 +143,7 @@ namespace nexus::proxy {
 
     Server::Server() = default;
     Server::~Server() {
-#ifdef NEXUS_TEST_VLESS_ABANDON
+#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON)
         // Exercise member destruction with suspended tasks in the test target.
         if (nexus_test_skip_server_stop()) return;
 #endif

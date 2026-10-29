@@ -61,6 +61,25 @@ if is_plat("linux") then
             add_deps("nexus-proxy-injected", "nexus-rulefile", "nexus-config", "nexus-rules")
     end
 
+    if has_config("crypto") and has_config("ss2022") then
+        target("nexus-proxy-ss-abandon")
+            set_kind("static")
+            set_default(false)
+            add_defines("NEXUS_TEST_SS_ABANDON")
+            add_defines("NEXUS_ENABLE_SS2022", {public = true})
+            add_defines("NEXUS_ENABLE_VLESS", {public = true})
+            add_files("$(projectdir)/src/proxy/proxy.cppm", {public = true})
+            add_files("$(projectdir)/src/proxy/proxy.cpp", "$(projectdir)/src/proxy/session.cpp", "$(projectdir)/src/proxy/dial.cpp", "$(projectdir)/src/proxy/http_forward.cpp", "$(projectdir)/src/proxy/shadowsocks.cpp", "$(projectdir)/src/proxy/shadowsocks_inbound.cpp", "$(projectdir)/src/proxy/vless.cpp", "$(projectdir)/src/proxy/vless_inbound.cpp")
+            add_packages("nexus-corosio", "nexus-capy", "nexus-ngcpp-proxy", {public = true})
+            add_deps("nexus-session-quota", "nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-thirdparty-corosio", "nexus-dns-cache", "nexus-shadowsocks-corosio-relay", "nexus-shadowsocks-corosio-inbound", "nexus-vless-corosio-client", "nexus-vless-tls-server", "nexus-vless-server-profile", "nexus-tls-corosio-server-handshake", "nexus-config", "nexus-rulefile")
+
+        target("nexus-proxy-ss-abandon-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/proxy_ss_abandon.cpp")
+            add_deps("nexus-proxy-ss-abandon")
+    end
+
     target("nexus-proxy-launch-throw-test")
         set_kind("binary")
         set_default(false)

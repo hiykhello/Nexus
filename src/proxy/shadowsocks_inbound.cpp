@@ -22,6 +22,11 @@ import nexus.shadowsocks.replay;
 import nexus.shadowsocks.corosio_server;
 import nexus.shadowsocks.corosio_inbound;
 import nexus.thirdparty.capy;
+#ifdef NEXUS_TEST_SS_ABANDON
+extern "C" void nexus_test_ss_profile_owner(std::weak_ptr<void>);
+extern "C" void nexus_test_ss_profile_frame_enter();
+extern "C" void nexus_test_ss_profile_frame_exit();
+#endif
 namespace nexus::proxy {
     namespace {
         using Incoming=shadowsocks::detail::InboundStream<io::tcp_socket>;
@@ -102,16 +107,20 @@ namespace nexus::proxy {
             }
         }
         auto serve(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
-                   std::shared_ptr<Profile> profile) -> capy::task<> {
+                   Profile& profile) -> capy::task<> {
+#ifdef NEXUS_TEST_SS_ABANDON
+            struct FrameProbe { ~FrameProbe() { nexus_test_ss_profile_frame_exit(); } } probe;
+            nexus_test_ss_profile_frame_enter();
+#endif
             auto fail=[&] { session.close(); session.done=true; };
-            auto request=co_await shadowsocks::detail::receive_request(session.client,profile->key,profile->replay,
+            auto request=co_await shadowsocks::detail::receive_request(session.client,profile.key,profile.replay,
                                                                         session.started+std::chrono::seconds(10));
             if (!request || session.closed) {
                 if (!session.closed && !request && request.error()==shadowsocks::detail::ServerReadError::invalid_request)
                     (void)shadowsocks::detail::prepare_probe_reset(session.client.native_handle());
                 fail(); co_return;
             }
-            Incoming incoming(session.client,profile->key,std::move(*request));
+            Incoming incoming(session.client,profile.key,std::move(*request));
             std::vector<std::uint8_t> bytes{5,1,0};
             bytes.insert(bytes.end(),incoming.address().begin(),incoming.address().end());
             auto target=socks5::parse_request(bytes);
@@ -134,8 +143,11 @@ namespace nexus::proxy {
         if (key.size()!=16 && key.size()!=32) return std::unexpected("invalid Shadowsocks 2022 key length");
         auto profile=shared_profile(key);
         if (!profile) return std::unexpected(profile.error());
+#ifdef NEXUS_TEST_SS_ABANDON
+        nexus_test_ss_profile_owner(*profile);
+#endif
         return InboundFactory([profile=std::move(*profile)](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
-            return serve(session,context,policy,profile);
+            return serve(session,context,policy,*profile);
         });
     }
 }
