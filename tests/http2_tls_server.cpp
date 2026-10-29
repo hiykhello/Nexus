@@ -56,6 +56,10 @@ auto serve(Fixture& f) -> capy::task<> {
     if (!handshake || !std::ranges::equal(f.handshake->negotiated_alpn(),nexus::crypto::Bytes{'h','2'})) { f.done=true; co_return; }
     h::TlsServerConnection connection(f.socket,*f.session,std::move(handshake->records),std::move(handshake->unread));
     if (!handshake->release_unread_reservation() || f.budget->reserved()!=t::ApplicationRecords::key_charge) { f.done=true; co_return; }
+    // The handed-over key charge competes with this actual session's memory.
+    auto available=f.budget->limit()-f.session->shared_memory_used();
+    if (!available || f.session->reserve_scratch(available+1) || !f.session->reserve_scratch(available)) { f.done=true; co_return; }
+    f.session->release_scratch();
     auto deadline=std::chrono::steady_clock::now()+(f.timeout ? 150ms : 5000ms);
     if (f.cancel) capy::run_async(f.context.get_executor())(cancel_later(connection,f.canceled));
     auto premature=co_await connection.close_notify(deadline);
@@ -160,6 +164,7 @@ int main(int argc,char** argv) {
     if (!session) return 6; f.session=std::move(*session);
     capy::run_async(f.context.get_executor())(serve(f)); (void)f.context.run_for(6s);
     if (!f.done) { f.socket.cancel(); f.context.restart(); (void)f.context.run_for(1s); if (!f.done) std::_Exit(90); }
+    if (f.budget->reserved()) return 8;
     if (!f.success && f.reset_paused) std::cerr << "reset fixture: requests=" << f.requests.size() << " closed=" << f.closed_count << " reset=" << f.reset_closed << " second=" << f.second_response << " paused_output=" << f.output_during_pause << " body=" << f.body << " input=" << f.session->input_memory_charge() << '\n';
     return f.success ? 0 : 7;
 }
