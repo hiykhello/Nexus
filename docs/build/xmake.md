@@ -313,4 +313,4 @@ python3 tests/transport_tun_linux_e2e.py build/linux/x86_64/debug/nexus-transpor
 python3 tests/transport_tun_linux_stop.py build/linux/x86_64/debug/nexus-transport-tun-linux-e2e-test
 ```
 
-测试需要 Linux 用户与网络命名空间、`/dev/net/tun` 和 `ip`。端到端夹具在两个临时网络命名空间中配置 TUN 和回环出口，验证 IPv4 TCP 和 UDP 往返，以及驱动仍存活时停止三个 TCP 和两个 UDP 流并回收出口 socket 与 TUN；它不修改宿主路由，也不验证正式系统接管、出口防环回或生产调度。
+测试需要 Linux 用户与网络命名空间、`/dev/net/tun` 和 `ip`。端到端夹具在两个临时网络命名空间中配置 TUN 和回环出口，验证 IPv4 TCP、IPv4/IPv6 UDP 往返及 IPv6 选项头，并在驱动仍存活时停止三个 TCP 和两个 UDP 流、回收出口 socket 与 TUN；它不修改宿主路由，也不验证正式系统接管、出口防环回或生产调度。

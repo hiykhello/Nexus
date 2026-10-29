@@ -1,6 +1,6 @@
 # 自研网络能力验证路线
 
-状态：验证计划草案；内存设备上的 IPv4 TCP 和 IPv4/IPv6 UDP 已与本机回环出口组合验证，已完成隔离 TUN 上的单流 Linux TCP 基本互操作；组合驱动已在隔离命名空间完成 IPv4 TCP/UDP 直连往返及设备回收；真实系统接管及生产调度尚未完成。细节和限制见 [TUN 架构](../architecture/tun.md)。方向依据见[决策 0002](../decisions/0002-self-developed-network-stack.md)。
+状态：验证计划草案；内存设备上的 IPv4 TCP 和 IPv4/IPv6 UDP 已与本机回环出口组合验证，已完成隔离 TUN 上的单流 Linux TCP 基本互操作；组合驱动已在隔离命名空间完成 IPv4 TCP、IPv4/IPv6 UDP 直连往返及设备回收；真实系统接管及生产调度尚未完成。细节和限制见 [TUN 架构](../architecture/tun.md)。方向依据见[决策 0002](../decisions/0002-self-developed-network-stack.md)。
 
 ## 前置记录
 

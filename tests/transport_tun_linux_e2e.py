@@ -15,10 +15,13 @@ elif sys.argv[2] == 'outer':
         raise RuntimeError('outer namespace was not isolated')
     subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
     subprocess.run(['ip', 'addr', 'add', '10.77.0.2/32', 'dev', 'lo'], check=True)
+    subprocess.run(['ip', '-6', 'addr', 'add', 'fd77::2/128', 'dev', 'lo', 'nodad'], check=True)
     origin = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     origin.bind(('10.77.0.2', 0)); origin.listen(1); origin.settimeout(12)
     udp_origin = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_origin.bind(('10.77.0.2', 0)); udp_origin.settimeout(12)
+    udp6_origin = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    udp6_origin.bind(('fd77::2', 0)); udp6_origin.settimeout(12)
     errors = []
     def upstream():
         try:
@@ -37,18 +40,26 @@ elif sys.argv[2] == 'outer':
             if data != b'udp': raise RuntimeError(f'unexpected UDP request {data!r}')
             udp_origin.sendto(b'UDP', peer)
         except Exception as exc: errors.append(exc)
-    threads = [threading.Thread(target=upstream, daemon=True), threading.Thread(target=udp_upstream, daemon=True)]
+    def udp6_upstream():
+        try:
+            for request in (b'udp6', b'options', b'both', b'unknown'):
+                data, peer = udp6_origin.recvfrom(64)
+                if data != request: raise RuntimeError(f'unexpected IPv6 UDP request {data!r}')
+                udp6_origin.sendto(b'UDP6', peer)
+        except Exception as exc: errors.append(exc)
+    threads = [threading.Thread(target=upstream, daemon=True), threading.Thread(target=udp_upstream, daemon=True),
+               threading.Thread(target=udp6_upstream, daemon=True)]
     ns_fd = os.open('/proc/self/ns/net', os.O_RDONLY)
     try:
         for thread in threads: thread.start()
         subprocess.run(['unshare', '-n', sys.executable, __file__, binary, 'inner',
                         str(os.stat('/proc/self/ns/net').st_ino), str(ns_fd),
-                        str(origin.getsockname()[1]), str(udp_origin.getsockname()[1])],
+                        str(origin.getsockname()[1]), str(udp_origin.getsockname()[1]), str(udp6_origin.getsockname()[1])],
                        pass_fds=(ns_fd,), check=True, timeout=25)
         for thread in threads: thread.join(timeout=12)
         if any(thread.is_alive() for thread in threads) or errors: raise RuntimeError(f'upstream errors: {errors}')
     finally:
-        os.close(ns_fd); origin.close(); udp_origin.close()
+        os.close(ns_fd); origin.close(); udp_origin.close(); udp6_origin.close()
 else:
     if sys.argv[2] != 'inner' or os.stat('/proc/self/ns/net').st_ino == int(sys.argv[3]):
         raise RuntimeError('inner namespace was not isolated')
@@ -60,6 +71,7 @@ else:
             raise RuntimeError(f'driver did not create its TUN: {proc.stderr.read()}')
         for command in (
             ['ip', 'addr', 'add', '10.77.0.1/24', 'dev', 'nx-owned'],
+            ['ip', '-6', 'addr', 'add', 'fd77::1/64', 'dev', 'nx-owned', 'nodad'],
             ['ip', 'link', 'set', 'nx-owned', 'up'],
         ):
             subprocess.run(command, check=True)
@@ -71,6 +83,19 @@ else:
                 udp.settimeout(10)
                 udp.sendto(b'udp', ('10.77.0.2', int(sys.argv[6])))
                 if udp.recvfrom(64)[0] != b'UDP': raise RuntimeError('invalid UDP response')
+            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as udp6:
+                udp6.settimeout(10)
+                for request in (b'udp6', b'options', b'both', b'unknown'):
+                    if request == b'options':
+                        udp6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_DSTOPTS, bytes([0, 0, 1, 4, 0, 0, 0, 0]))
+                    if request == b'both':
+                        udp6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_HOPOPTS, bytes([0, 0, 1, 4, 0, 0, 0, 0]))
+                    if request == b'unknown':
+                        udp6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_DSTOPTS, bytes([0, 0, 0x1e, 2, 0xaa, 0xbb, 1, 0]))
+                    udp6.sendto(request, ('fd77::2', int(sys.argv[7])))
+                    data, peer = udp6.recvfrom(64)
+                    if data != b'UDP6' or peer[:2] != ('fd77::2', int(sys.argv[7])):
+                        raise RuntimeError(f'invalid IPv6 UDP response {data!r} from {peer!r}')
             client.sendall(b'hello'); client.shutdown(socket.SHUT_WR)
             response = bytearray()
             while True:
