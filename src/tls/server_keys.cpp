@@ -33,6 +33,9 @@ namespace nexus::tls {
             hybrid.emplace(std::move(*result)); shared=hybrid->secret.view();
             public_share=hybrid->share;
         } else return std::unexpected(ServerKeyError::invalid_hello);
+        // The private key is no longer needed once the shared secret and
+        // public share have been obtained.
+        key=std::unexpected(crypto::Error::invalid_state);
         auto encoded_share=KeyShare::encode_server_view({selection->group,public_share});
         if (!encoded_share) return std::unexpected(ServerKeyError::crypto_error);
         ServerHello hello; hello.session_id_echo=client->session_id; hello.cipher_suite=selection->cipher_suite;
@@ -56,6 +59,9 @@ namespace nexus::tls {
         auto digest=transcript->snapshot(); auto early=early_secret(hash);
         if (!digest || !early) return std::unexpected(ServerKeyError::crypto_error);
         auto hs=handshake_secret(hash,early->view(),shared); if (!hs) return std::unexpected(ServerKeyError::crypto_error);
+        // No later computation reads the exchange secret or the early secret.
+        shared={}; public_share={}; x_secret.reset(); hybrid.reset();
+        early=std::unexpected(crypto::Error::invalid_state);
         auto ct=derive_secret(hash,hs->view(),"c hs traffic",*digest), st=derive_secret(hash,hs->view(),"s hs traffic",*digest);
         if (!ct || !st) return std::unexpected(ServerKeyError::crypto_error);
         auto ck=expand_label(hash,ct->view(),"key",{},key_size), ci=expand_label(hash,ct->view(),"iv",{},12);
