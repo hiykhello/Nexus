@@ -51,6 +51,7 @@ export namespace nexus::tcp {
         [[nodiscard]] auto step(std::uint64_t now) -> std::expected<DirectStep, DirectError>;
         [[nodiscard]] auto close(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto size() const noexcept -> std::size_t;
+        auto admission_limit(std::size_t value) noexcept -> void { limit = value; }
     };
     // Linux IPv6, single owner. All referenced objects outlive this instance.
     class Direct6 {
@@ -91,5 +92,6 @@ export namespace nexus::tcp {
         [[nodiscard]] auto step(std::uint64_t now) -> std::expected<DirectStep, DirectError>;
         [[nodiscard]] auto close(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto size() const noexcept -> std::size_t;
+        auto admission_limit(std::size_t value) noexcept -> void { limit = value; }
     };
 }

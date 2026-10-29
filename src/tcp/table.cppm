@@ -19,13 +19,13 @@ export namespace nexus::tcp {
             bool reset_pending = false;
         };
         std::list<Entry> entries_;
-        std::size_t limit_, buffer_capacity_;
+        std::size_t limit_, hard_limit_, buffer_capacity_;
         ChallengeAckLimits challenge_limits_;
         std::optional<std::uint64_t> challenge_start_;
         std::size_t challenge_count_ = 0;
         ConnectionId next_id_ = 1;
         ConnectionTable(std::size_t limit, std::size_t capacity, ChallengeAckLimits challenge)
-            : limit_(limit), buffer_capacity_(capacity), challenge_limits_(challenge) {}
+            : limit_(limit), hard_limit_(limit), buffer_capacity_(capacity), challenge_limits_(challenge) {}
     public:
         ConnectionTable(ConnectionTable const&) = delete;
         auto operator=(ConnectionTable const&) -> ConnectionTable& = delete;
@@ -49,6 +49,8 @@ export namespace nexus::tcp {
         // Forced removal is for explicit abort/shutdown and discards buffered data.
         [[nodiscard]] auto abort(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto size() const noexcept -> std::size_t { return entries_.size(); }
+        // Reducing the admission limit retains existing flows.
+        auto admission_limit(std::size_t limit) noexcept -> void { limit_ = std::min(limit, hard_limit_); }
     };
     class ConnectionTable6 {
         struct Entry {
@@ -59,13 +61,13 @@ export namespace nexus::tcp {
             bool eof_observed = false, reset_pending = false;
         };
         std::list<Entry> entries_;
-        std::size_t limit_, buffer_capacity_;
+        std::size_t limit_, hard_limit_, buffer_capacity_;
         ChallengeAckLimits challenge_limits_;
         std::optional<std::uint64_t> challenge_start_;
         std::size_t challenge_count_ = 0;
         ConnectionId next_id_ = 1;
         ConnectionTable6(std::size_t limit, std::size_t capacity, ChallengeAckLimits challenge)
-            : limit_(limit), buffer_capacity_(capacity), challenge_limits_(challenge) {}
+            : limit_(limit), hard_limit_(limit), buffer_capacity_(capacity), challenge_limits_(challenge) {}
     public:
         ConnectionTable6(ConnectionTable6 const&) = delete;
         auto operator=(ConnectionTable6 const&) -> ConnectionTable6& = delete;
@@ -85,5 +87,7 @@ export namespace nexus::tcp {
         [[nodiscard]] auto reclaim(ConnectionId id, std::uint64_t now) -> std::expected<bool, TableError>;
         [[nodiscard]] auto abort(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto size() const noexcept -> std::size_t { return entries_.size(); }
+        // Reducing the admission limit retains existing flows.
+        auto admission_limit(std::size_t limit) noexcept -> void { limit_ = std::min(limit, hard_limit_); }
     };
 }

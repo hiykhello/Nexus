@@ -38,6 +38,8 @@ elif sys.argv[2] == 'outer':
             raise RuntimeError(f'policy routes do not require mark 42 for {destination}')
     origin = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     origin.bind(('10.77.0.2', 0)); origin.listen(1); origin.settimeout(12)
+    origin6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    origin6.bind(('fd77::2', 0)); origin6.listen(1); origin6.settimeout(12)
     udp_origin = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_origin.bind(('10.77.0.2', 0)); udp_origin.settimeout(12)
     udp6_origin = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
@@ -54,6 +56,17 @@ elif sys.argv[2] == 'outer':
                 if data != b'hello': raise RuntimeError(f'unexpected TCP request {data!r}')
                 peer.sendall(b'world'); peer.shutdown(socket.SHUT_WR)
         except Exception as exc: errors.append(exc)
+    def upstream6():
+        try:
+            with origin6.accept()[0] as peer:
+                peer.settimeout(10); data = bytearray()
+                while True:
+                    part = peer.recv(64)
+                    if not part: break
+                    data.extend(part)
+                if data != b'hello6': raise RuntimeError(f'unexpected IPv6 TCP request {data!r}')
+                peer.sendall(b'world6'); peer.shutdown(socket.SHUT_WR)
+        except Exception as exc: errors.append(exc)
     def udp_upstream():
         try:
             data, peer = udp_origin.recvfrom(64)
@@ -67,19 +80,20 @@ elif sys.argv[2] == 'outer':
                 if data != request: raise RuntimeError(f'unexpected IPv6 UDP request {data!r}')
                 udp6_origin.sendto(b'UDP6', peer)
         except Exception as exc: errors.append(exc)
-    threads = [threading.Thread(target=upstream, daemon=True), threading.Thread(target=udp_upstream, daemon=True),
+    threads = [threading.Thread(target=upstream, daemon=True), threading.Thread(target=upstream6, daemon=True), threading.Thread(target=udp_upstream, daemon=True),
                threading.Thread(target=udp6_upstream, daemon=True)]
     ns_fd = os.open('/proc/self/ns/net', os.O_RDONLY)
     try:
         for thread in threads: thread.start()
         subprocess.run(['unshare', '-n', sys.executable, __file__, binary, 'inner',
                         str(os.stat('/proc/self/ns/net').st_ino), str(ns_fd),
-                        str(origin.getsockname()[1]), str(udp_origin.getsockname()[1]), str(udp6_origin.getsockname()[1])],
+                        str(origin.getsockname()[1]), str(udp_origin.getsockname()[1]), str(udp6_origin.getsockname()[1]),
+                        str(origin6.getsockname()[1])],
                        pass_fds=(ns_fd,), check=True, timeout=25)
         for thread in threads: thread.join(timeout=12)
         if any(thread.is_alive() for thread in threads) or errors: raise RuntimeError(f'upstream errors: {errors}')
     finally:
-        os.close(ns_fd); origin.close(); udp_origin.close(); udp6_origin.close()
+        os.close(ns_fd); origin.close(); origin6.close(); udp_origin.close(); udp6_origin.close()
 else:
     if sys.argv[2] != 'inner' or os.stat('/proc/self/ns/net').st_ino == int(sys.argv[3]):
         raise RuntimeError('inner namespace was not isolated')
@@ -141,6 +155,16 @@ else:
                 if not part: break
                 response.extend(part)
             if response != b'world': raise RuntimeError(f'unexpected TCP response {response!r}')
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as client6:
+            client6.settimeout(10)
+            client6.connect(('fd77::2', int(sys.argv[8])))
+            client6.sendall(b'hello6'); client6.shutdown(socket.SHUT_WR)
+            response = bytearray()
+            while True:
+                part = client6.recv(64)
+                if not part: break
+                response.extend(part)
+            if response != b'world6': raise RuntimeError(f'unexpected IPv6 TCP response {response!r}')
         proc.stdin.write('X'); proc.stdin.flush()
         out, err = proc.communicate(timeout=5)
         if proc.returncode: raise RuntimeError(f'driver failed: {proc.returncode} {out} {err}')

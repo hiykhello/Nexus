@@ -15,11 +15,14 @@ export namespace nexus::packet {
         MemoryLink& external_;
         MemoryLink& tcp_;
         MemoryLink& udp_;
+        MemoryLink* tcp6_ = nullptr;
         std::optional<Bytes> input_, output_;
-        bool input_tcp_ = false, next_tcp_ = true;
+        std::size_t input_route_ = 0, next_output_ = 0;
     public:
         MemorySwitch(MemoryLink& external, MemoryLink& tcp, MemoryLink& udp)
             : external_(external), tcp_(tcp), udp_(udp) {}
+        MemorySwitch(MemoryLink& external, MemoryLink& tcp, MemoryLink& udp, MemoryLink& tcp6)
+            : external_(external), tcp_(tcp), udp_(udp), tcp6_(&tcp6) {}
         MemorySwitch(MemorySwitch const&) = delete;
         auto operator=(MemorySwitch const&) -> MemorySwitch& = delete;
         [[nodiscard]] auto step() -> std::expected<SwitchStep, DeviceError>;

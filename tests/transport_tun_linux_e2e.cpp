@@ -35,6 +35,10 @@ int main(int argc, char** argv) {
             result->transport.tcp.start_error || result->transport.tcp.direct.error || result->transport.tcp.direct.output_error ||
             result->transport.tcp.service.output.connection_error || result->transport.tcp.service.output.output_error ||
             result->transport.udp.rejected || result->transport.udp.ipv4_error || result->transport.udp.ipv6_error || result->transport.udp.output_error) return 6;
+        if (auto const& tcp6=result->transport.tcp6; tcp6 &&
+            (tcp6->input.rejected || tcp6->input.input_error || tcp6->input.output_error ||
+             tcp6->start_error || tcp6->direct.error || tcp6->direct.output_error ||
+             tcp6->service.output.connection_error || tcp6->service.output.output_error)) return 6;
         opened |= result->transport.tcp.input.opened; connected |= result->transport.tcp.direct.connected;
         udp_input |= result->transport.udp.input; udp_output |= result->transport.udp.delivered;
         std::this_thread::sleep_for(1ms);

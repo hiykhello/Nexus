@@ -26,11 +26,12 @@ export namespace nexus::transport {
         packet::LinuxTun tun_;
         packet::MemoryLink link_;
         tcp::ConnectionTable table_;
+        tcp::ConnectionTable6 table6_;
         MemoryEngine engine_;
         std::optional<packet::FdPump> pump_;
         std::uint64_t now_=0;
         bool initialized_=false, stopped_=false;
-        LinuxTunDirect(packet::LinuxTun&& tun,tcp::ConnectionTable&& table,rules::Matcher policy,TunLimits limits);
+        LinuxTunDirect(packet::LinuxTun&& tun,tcp::ConnectionTable&& table,tcp::ConnectionTable6&& table6,rules::Matcher policy,TunLimits limits);
     public:
         LinuxTunDirect(LinuxTunDirect const&)=delete;
         auto operator=(LinuxTunDirect const&) -> LinuxTunDirect& = delete;

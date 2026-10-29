@@ -5,9 +5,9 @@ module nexus.transport.tun_linux;
 import std;
 
 namespace nexus::transport {
-    LinuxTunDirect::LinuxTunDirect(packet::LinuxTun&& tun,tcp::ConnectionTable&& table,rules::Matcher policy,TunLimits limits)
-        : tun_(std::move(tun)),link_(limits.external),table_(std::move(table)),
-          engine_(link_,table_,std::move(policy),limits.tcp_direct,limits.mapping,limits.filtering,limits.udp,limits.mtu,limits.internal,limits.socket_mark) {}
+    LinuxTunDirect::LinuxTunDirect(packet::LinuxTun&& tun,tcp::ConnectionTable&& table,tcp::ConnectionTable6&& table6,rules::Matcher policy,TunLimits limits)
+        : tun_(std::move(tun)),link_(limits.external),table_(std::move(table)),table6_(std::move(table6)),
+          engine_(link_,table_,table6_,std::move(policy),limits.tcp_flows,limits.tcp_direct,limits.mapping,limits.filtering,limits.udp,limits.mtu,limits.internal,limits.socket_mark) {}
     LinuxTunDirect::~LinuxTunDirect() = default;
     auto LinuxTunDirect::create(packet::LinuxTun&& tun,rules::Matcher policy,TunLimits limits)
         -> std::expected<std::unique_ptr<LinuxTunDirect>,TunDriverFailure> {
@@ -20,7 +20,9 @@ namespace nexus::transport {
             return std::unexpected(TunDriverFailure{TunDriverError::invalid_limits});
         auto table=tcp::ConnectionTable::create(limits.tcp_flows,limits.tcp_buffer,limits.challenge_ack);
         if (!table) return std::unexpected(TunDriverFailure{table.error()});
-        auto self=std::unique_ptr<LinuxTunDirect>(new LinuxTunDirect(std::move(tun),std::move(*table),std::move(policy),limits));
+        auto table6=tcp::ConnectionTable6::create(limits.tcp_flows,limits.tcp_buffer,limits.challenge_ack);
+        if (!table6) return std::unexpected(TunDriverFailure{table6.error()});
+        auto self=std::unique_ptr<LinuxTunDirect>(new LinuxTunDirect(std::move(tun),std::move(*table),std::move(*table6),std::move(policy),limits));
         auto pump=packet::FdPump::create(self->tun_.native_handle(),self->link_,limits.mtu);
         if (!pump) return std::unexpected(TunDriverFailure{pump.error()});
         self->pump_.emplace(std::move(*pump));

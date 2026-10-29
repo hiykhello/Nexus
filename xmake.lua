@@ -446,6 +446,12 @@ if is_plat("linux") then
         add_files("tests/tcp_stack.cpp")
         add_deps("nexus-tcp-stack")
 
+    target("nexus-tcp-stack6-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/tcp_stack6.cpp")
+        add_deps("nexus-tcp-stack")
+
     target("nexus-tcp-direct-test")
         set_kind("binary")
         set_default(false)
@@ -582,7 +588,13 @@ if is_plat("linux") then
         add_files("tests/transport_fd.cpp")
         add_deps("nexus-transport-memory", "nexus-packet-fd")
 
-    target("nexus-transport-memory-test")
+    target("nexus-transport-dual-tcp-test")
+    set_kind("binary")
+    set_default(false)
+    add_files("tests/transport_dual_tcp.cpp")
+    add_deps("nexus-transport-memory")
+
+target("nexus-transport-memory-test")
         set_kind("binary")
         set_default(false)
         add_files("tests/transport_memory.cpp")
