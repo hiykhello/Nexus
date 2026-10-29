@@ -108,6 +108,10 @@ namespace nexus::proxy {
 
     auto resolve_bootstrap(Session& session, io::io_context& context, std::size_t selected,
                            std::string name, std::uint16_t port) -> capy::task<std::optional<std::vector<io::endpoint>>>;
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+    auto resolve_udp_domain(Session& session, io::io_context& context, std::string name,
+                            std::uint16_t port, Clock::time_point deadline) -> capy::task<std::optional<std::vector<io::endpoint>>>;
+#endif
     auto dial(Session& session, io::io_context& context,
               rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<std::uint8_t>;
     auto forward_http(Session& session, io::io_context& context,

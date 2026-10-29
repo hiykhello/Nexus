@@ -41,6 +41,7 @@ try:
         client.sendto(wire, relay)
         data, source = upstream.recvfrom(100)
         if data != b'hello': raise RuntimeError('bad forwarded payload')
+        upstream_source = source
         attacker.sendto(wire, relay)
         upstream.sendto(b'world', source)
         reply, source = client.recvfrom(100)
@@ -51,6 +52,15 @@ try:
             raise RuntimeError('other client port forwarded')
         except socket.timeout:
             pass
+        upstream.settimeout(3)
+        name = b'127.0.0.1'
+        domain_wire = b'\x00\x00\x00\x03' + bytes([len(name)]) + name + dest[1].to_bytes(2, 'big') + b'domain'
+        client.sendto(domain_wire, relay)
+        data, domain_source = upstream.recvfrom(100)
+        if data != b'domain' or domain_source != upstream_source: raise RuntimeError('system resolution failed')
+        upstream.sendto(b'resolved', domain_source)
+        reply, reply_source = client.recvfrom(100)
+        if reply != wire[:-5] + b'resolved' or reply_source != relay: raise RuntimeError('resolved reply failed')
         control.close()
         deadline = time.monotonic()+3
         while True:

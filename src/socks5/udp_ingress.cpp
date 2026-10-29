@@ -63,7 +63,10 @@ namespace nexus::socks5 {
             if (!packet) report.input_error=UdpDirectError{packet.error()};
             else if (packet->address_type==3) {
                 auto preflight=udp_preflight(policy_,*packet);
-                if (!preflight) report.input_error=UdpDirectError{preflight.error()};
+                if (std::ranges::find(std::span(packet->address).first(packet->address_length),0)!=
+                    std::span(packet->address).first(packet->address_length).end())
+                    report.input_error=UdpDirectError{Status::invalid_address};
+                else if (!preflight) report.input_error=UdpDirectError{preflight.error()};
                 else if (!allow_domains_) report.input_error=UdpDirectError{UdpRouteError::unsupported};
                 else { domain_pending_=true; report.domain_pending=true; }
             }

@@ -55,13 +55,15 @@ namespace nexus::proxy {
         using DnsResult=std::expected<std::vector<io::endpoint>,dns::detail::ResolveError>;
         auto query_server(Session& session, io::io_context& context, std::size_t server_index,
                           std::vector<io::endpoint> const& servers, std::string const& name, std::uint16_t port,
-                          dns::detail::AddressStrategy family) -> capy::task<DnsResult> {
+                          dns::detail::AddressStrategy family, Clock::time_point deadline) -> capy::task<DnsResult> {
+            if (Clock::now()>=deadline) co_return std::unexpected(dns::detail::ResolveError::timeout);
             auto const& server=session.dns->routing.servers[server_index];
             if (!server.port) {
                 session.resolver=std::make_unique<io::resolver>(context);
                 auto [error,endpoints]=co_await session.resolver->resolve(name,std::to_string(port));
                 session.resolver.reset();
                 if (session.closed) co_return std::unexpected(dns::detail::ResolveError::canceled);
+                if (Clock::now()>=deadline) co_return std::unexpected(dns::detail::ResolveError::timeout);
                 if (error || endpoints.empty() || endpoints.size()>64) co_return std::unexpected(dns::detail::ResolveError::transport);
                 if (family==dns::detail::AddressStrategy::ipv4_only || family==dns::detail::AddressStrategy::ipv6_only) {
                     auto ipv6=family==dns::detail::AddressStrategy::ipv6_only;
@@ -92,7 +94,7 @@ namespace nexus::proxy {
 #ifdef NEXUS_TEST_DNS_LIFETIME
                 nexus_test_dns_registered();
 #endif
-                auto resolved=co_await operation.resolve(upstream,server_index+1,name,session.started+std::chrono::seconds(10));
+                auto resolved=co_await operation.resolve(upstream,server_index+1,name,deadline);
                 if (session.closed) co_return std::unexpected(dns::detail::ResolveError::canceled);
                 if (!resolved) {
                     if (resolved.error()==dns::detail::ResolveError::transport) continue;
@@ -115,7 +117,7 @@ namespace nexus::proxy {
             co_return std::unexpected(dns::detail::ResolveError::transport);
         }
         auto resolve_dns(Session& session, io::io_context& context, std::size_t selected,
-                         std::string name, std::uint16_t port, dns::detail::AddressStrategy family) -> capy::task<DnsResult> {
+                         std::string name, std::uint16_t port, dns::detail::AddressStrategy family, Clock::time_point deadline) -> capy::task<DnsResult> {
             auto const& routing=session.dns->routing;
             std::vector<std::size_t> chain;
             auto current=selected;
@@ -127,12 +129,12 @@ namespace nexus::proxy {
             if (routing.servers[current].port) endpoints.push_back(session.dns->endpoint(current));
             for (auto it=chain.rbegin();it!=chain.rend();++it) {
                 auto const& next=routing.servers[*it];
-                auto resolved=co_await query_server(session,context,current,endpoints,next.host,next.port,family);
+                auto resolved=co_await query_server(session,context,current,endpoints,next.host,next.port,family,deadline);
                 if (!resolved) co_return std::unexpected(resolved.error());
                 endpoints=std::move(*resolved);
                 current=*it;
             }
-            co_return co_await query_server(session,context,current,endpoints,name,port,family);
+            co_return co_await query_server(session,context,current,endpoints,name,port,family,deadline);
         }
     }
 
@@ -144,10 +146,33 @@ namespace nexus::proxy {
         if (strategy==DnsStrategy::prefer_ipv6) family=dns::detail::AddressStrategy::prefer_ipv6;
         else if (strategy==DnsStrategy::ipv4_only) family=dns::detail::AddressStrategy::ipv4_only;
         else if (strategy==DnsStrategy::ipv6_only) family=dns::detail::AddressStrategy::ipv6_only;
-        auto resolved=co_await resolve_dns(session,context,selected,std::move(name),port,family);
+        auto resolved=co_await resolve_dns(session,context,selected,std::move(name),port,family,session.started+std::chrono::seconds(10));
         if (!resolved || session.closed) co_return std::nullopt;
         co_return std::move(*resolved);
     }
+
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+    auto resolve_udp_domain(Session& session, io::io_context& context, std::string name,
+                            std::uint16_t port, Clock::time_point deadline) -> capy::task<std::optional<std::vector<io::endpoint>>> {
+        if (session.closed) co_return std::nullopt;
+        if (!session.dns) {
+            session.resolver=std::make_unique<io::resolver>(context);
+            auto [error,endpoints]=co_await session.resolver->resolve(name,std::to_string(port));
+            session.resolver.reset();
+            if (error || endpoints.empty() || endpoints.size()>64 || session.closed || Clock::now()>=deadline) co_return std::nullopt;
+            co_return endpoints;
+        }
+        auto selected=session.dns->select(name);
+        auto strategy=session.dns->routing.strategy;
+        auto family=dns::detail::AddressStrategy::prefer_ipv4;
+        if (strategy==DnsStrategy::prefer_ipv6) family=dns::detail::AddressStrategy::prefer_ipv6;
+        else if (strategy==DnsStrategy::ipv4_only) family=dns::detail::AddressStrategy::ipv4_only;
+        else if (strategy==DnsStrategy::ipv6_only) family=dns::detail::AddressStrategy::ipv6_only;
+        auto resolved=co_await resolve_dns(session,context,selected,std::move(name),port,family,deadline);
+        if (!resolved || resolved->empty() || resolved->size()>64 || session.closed || Clock::now()>=deadline) co_return std::nullopt;
+        co_return std::move(*resolved);
+    }
+#endif
 
         // Shared routing and dialing ensures both protocols enforce the same policy.
         auto dial_impl(Session& session, io::io_context& context,
@@ -179,7 +204,7 @@ namespace nexus::proxy {
                     if (strategy==DnsStrategy::prefer_ipv6) family=dns::detail::AddressStrategy::prefer_ipv6;
                     else if (strategy==DnsStrategy::ipv4_only) family=dns::detail::AddressStrategy::ipv4_only;
                     else if (strategy==DnsStrategy::ipv6_only) family=dns::detail::AddressStrategy::ipv6_only;
-                    auto resolved=co_await resolve_dns(session,context,dns_index,std::string(domain),request.port,family);
+                    auto resolved=co_await resolve_dns(session,context,dns_index,std::string(domain),request.port,family,session.started+std::chrono::seconds(10));
                     if (session.closed) co_return 1;
                     if (!resolved) co_return resolved.error()==dns::detail::ResolveError::timeout ? 6 : 4;
                     destinations=std::move(*resolved);

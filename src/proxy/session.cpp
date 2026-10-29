@@ -185,7 +185,8 @@ namespace nexus::proxy {
                 co_return capy::results<>{};
             } catch (...) { session.close(); throw; }
         }
-        auto udp_drive(Session& session, socks5::UdpIngress& ingress) -> capy::task<capy::results<>> {
+        struct UdpResolution { bool active=false, canceled=false; Clock::time_point deadline{}; };
+        auto udp_drive(Session& session, socks5::UdpIngress& ingress, UdpResolution& resolution) -> capy::task<capy::results<>> {
             using namespace std::chrono_literals;
             try {
                 while (!session.closed) {
@@ -193,6 +194,11 @@ namespace nexus::proxy {
                     if (!result) { session.close(); break; }
                     if (result->output_error) { session.close(); break; }
                     if (result->forwarded || result->delivered) session.touched=Clock::now();
+                    if (resolution.active && !resolution.canceled && Clock::now()>=resolution.deadline) {
+                        resolution.canceled=true;
+                        if (session.resolver) session.resolver->cancel();
+                        if (session.cancel_dns) session.cancel_dns(session.dns_operation);
+                    }
                     auto [error]=co_await io::delay(5ms);
                     if (error) { session.close(); break; }
                 }
@@ -200,7 +206,47 @@ namespace nexus::proxy {
                 co_return capy::results<>{};
             } catch (...) { ingress.close(); session.close(); throw; }
         }
-        auto udp_associate(Session& session, rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<> {
+        auto udp_resolve(Session& session, io::io_context& context, socks5::UdpIngress& ingress,
+                         UdpResolution& resolution) -> capy::task<capy::results<>> {
+            using namespace std::chrono_literals;
+            try {
+                while (!session.closed) {
+                    auto packet=ingress.pending_domain();
+                    if (!packet) {
+                        auto [error]=co_await io::delay(5ms);
+                        if (error) { session.close(); break; }
+                        continue;
+                    }
+                    auto name=std::string(reinterpret_cast<char const*>(packet->address.data()),packet->address_length);
+                    auto port=packet->port;
+                    resolution={true,false,Clock::now()+10s};
+                    auto endpoints=co_await resolve_udp_domain(session,context,std::move(name),port,resolution.deadline);
+                    if (session.closed) break;
+                    if (endpoints && !resolution.canceled) {
+                        for (auto const& endpoint:*endpoints) {
+                            socks5::UdpPeer candidate{endpoint.address().is_v4() ? std::uint8_t{1} : std::uint8_t{4},{},endpoint.port()};
+                            if (candidate.address_type==1) {
+                                auto bytes=endpoint.address().to_v4().to_bytes(); std::ranges::copy(bytes,candidate.address.begin());
+                            } else {
+                                auto bytes=endpoint.address().to_v6().to_bytes(); std::ranges::copy(bytes,candidate.address.begin());
+                            }
+                            while (!session.closed && !resolution.canceled && Clock::now()<resolution.deadline) {
+                                auto sent=ingress.send_resolved(candidate);
+                                if (sent) { session.touched=Clock::now(); break; }
+                                auto error=std::get_if<std::error_code>(&sent.error());
+                                if (!error || (*error!=std::errc::resource_unavailable_try_again && *error!=std::errc::interrupted)) break;
+                                auto [delay_error]=co_await io::delay(5ms);
+                                if (delay_error) { session.close(); break; }
+                            }
+                            if (!ingress.pending_domain() || session.closed || resolution.canceled) break;
+                        }
+                    }
+                    ingress.discard_domain(); resolution.active=false;
+                }
+                co_return capy::results<>{};
+            } catch (...) { session.close(); throw; }
+        }
+        auto udp_associate(Session& session, io::io_context& context, rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<> {
             auto remote=session.client.remote_endpoint(); auto local=session.client.local_endpoint();
             if (!remote.address().is_v4() || !local.address().is_v4() || (request.address_type!=1 && request.address_type!=4)) {
                 (void)co_await reply(session.client,8,{},session); session.close(); session.done=true; co_return;
@@ -211,7 +257,8 @@ namespace nexus::proxy {
             std::copy_n(request.address.begin(),request.address_length,hint.address.begin());
             auto association=socks5::UdpAssociation::create(tcp,hint);
             if (!association) { (void)co_await reply(session.client,2,{},session); session.close(); session.done=true; co_return; }
-            socks5::UdpIngress ingress(*association,policy);
+            socks5::UdpIngress ingress(*association,policy,true);
+            UdpResolution resolution;
             socks5::UdpPeer bind{1,{},0}; auto local_bytes=local.address().to_v4().to_bytes();
             std::ranges::copy(local_bytes,bind.address.begin());
             auto endpoint=ingress.open(bind);
@@ -221,7 +268,7 @@ namespace nexus::proxy {
                 ingress.close(); session.close(); session.done=true; co_return;
             }
             session.relaying=true;
-            try { (void)co_await capy::when_all(udp_control(session),udp_drive(session,ingress)); }
+            try { (void)co_await capy::when_all(udp_control(session),udp_drive(session,ingress,resolution),udp_resolve(session,context,ingress,resolution)); }
             catch (...) { ingress.close(); session.close(); session.done=true; throw; }
             ingress.close(); association->close(); session.close(); session.done=true;
         }
@@ -271,7 +318,7 @@ namespace nexus::proxy {
                 fail(); co_return;
             }
 #ifdef NEXUS_ENABLE_SOCKS_UDP
-            if (request.command==3) { co_await udp_associate(session,policy,request); co_return; }
+            if (request.command==3) { co_await udp_associate(session,context,policy,request); co_return; }
 #endif
             auto code = co_await dial(session, context, policy, request);
             if (code != 0) {
