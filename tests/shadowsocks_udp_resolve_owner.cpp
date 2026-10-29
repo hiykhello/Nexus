@@ -44,14 +44,21 @@ int main(int argc,char** argv) {
     }
     auto third=begin(); if (!third || owner.start(std::move(*third),upstream,1,now,now+2s).error()!=s::detail::UdpResolveStartError::full || dispatcher.pending()!=2) return 4;
     context.restart(); (void)context.run_for(100ms);
+    auto free_cache_slots=[&] {
+        std::vector<nexus::dns::CacheToken> tokens;
+        while (auto token=cache.begin_query({1,"probe.test",1})) tokens.push_back(*token);
+        auto count=tokens.size();
+        for (auto token:tokens) if (!cache.cancel_query(token)) std::terminate();
+        return count;
+    };
     if (exception) {
         for (int i=0;i<20 && owner.failed()==0;++i) { context.restart(); (void)context.run_for(50ms); }
-        if (inject_dns_failure || owner.failed()!=1 || owner.active()!=1 || dispatcher.pending()!=1) return 9;
+        if (inject_dns_failure || owner.failed()!=1 || owner.active()!=1 || dispatcher.pending()!=1 || free_cache_slots()!=4095) return 9;
     }
     if (std::string_view(argv[2])=="expired") owner.cancel_expired(now+2s); else owner.stop();
     if (dispatcher.pending()!=0) return 5;
     context.restart(); (void)context.run_for(1s);
-    if (!owner.drained() || owner.active()!=0 || owner.succeeded()!=0 || owner.failed()!=2 || dispatcher.sockets()!=0) return 6;
+    if (!owner.drained() || owner.active()!=0 || owner.succeeded()!=0 || owner.failed()!=2 || dispatcher.sockets()!=0 || free_cache_slots()!=4096) return 6;
     owner.stop();
     auto late=begin(); if (!late || owner.start(std::move(*late),upstream,1,now,now+2s).error()!=s::detail::UdpResolveStartError::stopped || dispatcher.pending()!=0) return 7;
     std::println("SS-2022 UDP concurrent DNS owner cancellation drained");
