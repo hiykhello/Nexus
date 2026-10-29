@@ -99,9 +99,10 @@ export namespace nexus::http2 {
             if (failed_) { active_=false; cancel(); co_return std::unexpected(TlsServerError::tls); }
             if (*count) {
                 auto bytes=std::span{reinterpret_cast<std::uint8_t const*>(output.data()),*count};
-                // One TLS record and its asynchronous write copy coexist. A
-                // KeyUpdate record may precede short application output.
-                auto charge=2*std::max(*count+22,std::size_t{27});
+                // Sealing holds inner plaintext, ciphertext, and the complete
+                // record simultaneously; writing holds a record and its copy.
+                // A KeyUpdate may precede short application output.
+                auto charge=std::max({3*(*count)+40,2*(*count+22),std::size_t{55}});
                 if (!session_.reserve_output(charge)) { active_=false; cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
                 auto result=co_await tls_.send_all(bytes,deadline); active_=false;
                 session_.release_output();
@@ -140,9 +141,9 @@ export namespace nexus::http2 {
             // while nghttp2 may borrow it during a paused DATA callback.
             if (!session_.reserve_input(16640)) { active_=false; cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             input_reserved_=true;
-            // A peer KeyUpdate may create a 27-byte response while reading.
-            // Reserve it and its write copy before TLS can enqueue it.
-            if (!session_.reserve_output(54)) { active_=false; release_input(); cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
+            // A peer KeyUpdate may create a 27-byte response while reading;
+            // sealing its five bytes requires a 55-byte coexistence peak.
+            if (!session_.reserve_output(55)) { active_=false; release_input(); cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             control_reserved_=true;
             // TLS framing may accumulate a full ciphertext record while a read is parked.
             if (!session_.reserve_ciphertext(16650)) { active_=false; release_input(); release_control(); cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }

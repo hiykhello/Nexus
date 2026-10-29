@@ -1,10 +1,15 @@
 import std;
 import nexus.tls.record;
 static thread_local int allocation_countdown=-1;
+static thread_local bool trace_allocations=false;
+static thread_local std::size_t traced_sizes[8]{}, traced_count=0;
 void* operator new(std::size_t size) {
     if (allocation_countdown==0) { allocation_countdown=-1; throw std::bad_alloc{}; }
     if (allocation_countdown>0) --allocation_countdown;
-    if (auto p=std::malloc(size ? size : 1)) return p;
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (trace_allocations && traced_count<8) traced_sizes[traced_count++]=size;
+        return p;
+    }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept { std::free(p); }
@@ -67,5 +72,10 @@ int main() {
         }
     }
     if (!before_nonce || !after_nonce) return 20;
+    auto traced=make(t::RecordDirection::send); if (!traced) return 21;
+    traced_count=0; trace_allocations=true;
+    auto traced_wire=traced->seal(t::ContentType::application_data,max);
+    trace_allocations=false;
+    if (!traced_wire || traced_count!=3 || traced_sizes[0]!=16385 || traced_sizes[1]!=16401 || traced_sizes[2]!=16406) return 22;
     std::cout << "TLS record RFC 8448 and boundaries passed\n";
 }
