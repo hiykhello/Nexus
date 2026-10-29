@@ -116,7 +116,7 @@ namespace nexus::proxy {
             target.address_type=request->kind==vless::AddressKind::ipv4 ? 1 : request->kind==vless::AddressKind::ipv6 ? 4 : 3;
             target.address_length=static_cast<std::uint8_t>(request->address.size());
             std::copy(request->address.begin(),request->address.end(),target.address.begin());
-            auto result=co_await dial(session,context,policy,target);
+            auto result=co_await dial(*session,context,policy,target);
             if (result || session->closed || !(co_await incoming.complete_dial(true))) { fail(); co_return; }
             session->relaying=true; session->touched=Clock::now();
             RelayState relay{*session,incoming};

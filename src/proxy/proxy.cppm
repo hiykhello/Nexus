@@ -106,7 +106,7 @@ namespace nexus::proxy {
 
     auto resolve_bootstrap(Session& session, io::io_context& context, std::size_t selected,
                            std::string name, std::uint16_t port) -> capy::task<std::optional<std::vector<io::endpoint>>>;
-    auto dial(std::shared_ptr<Session> session, io::io_context& context,
+    auto dial(Session& session, io::io_context& context,
               rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<std::uint8_t>;
     auto forward_http(std::shared_ptr<Session> const& session, io::io_context& context,
                       rules::RouteMatcher const& policy, std::string_view input) -> capy::task<>;

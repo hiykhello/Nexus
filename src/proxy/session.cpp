@@ -154,7 +154,7 @@ namespace nexus::proxy {
             co_return (co_await write_all(session.client, response, session)) && valid;
         }
 
-        auto socks_handshake(std::shared_ptr<Session> session, io::io_context& context,
+        auto socks_handshake(std::shared_ptr<Session> const& session, io::io_context& context,
                        rules::RouteMatcher const& policy, std::optional<Credentials> const& credentials) -> capy::task<> {
             auto fail = [&] { session->close(); session->done = true; };
             std::array<std::uint8_t, 262> buffer{};
@@ -190,7 +190,7 @@ namespace nexus::proxy {
                 (void)co_await reply(session->client, 1, {}, *session);
                 fail(); co_return;
             }
-            auto code = co_await dial(session, context, policy, request);
+            auto code = co_await dial(*session, context, policy, request);
             if (code != 0) {
                 (void)co_await reply(session->client, code, {}, *session);
                 fail(); co_return;
@@ -204,7 +204,7 @@ namespace nexus::proxy {
             co_return co_await write_all(session.client, bytes, session);
         }
 
-        auto http_handshake(std::shared_ptr<Session> session, io::io_context& context,
+        auto http_handshake(std::shared_ptr<Session> const& session, io::io_context& context,
                             rules::RouteMatcher const& policy, std::uint8_t first) -> capy::task<> {
             auto fail = [&] { session->close(); session->done = true; };
             std::array<std::uint8_t, http::max_connect_header_bytes> buffer{};
@@ -251,7 +251,7 @@ namespace nexus::proxy {
                 request.address_length = parsed.kind == http::HostKind::ipv4 ? 4 : 16;
                 std::copy(parsed.address.begin(), parsed.address.end(), request.address.begin());
             }
-            auto code = co_await dial(session, context, policy, request);
+            auto code = co_await dial(*session, context, policy, request);
             if (code != 0) {
                 auto response = code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
                                             "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";

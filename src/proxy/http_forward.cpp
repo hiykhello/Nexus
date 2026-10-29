@@ -193,7 +193,7 @@ namespace nexus::proxy {
             destination.address_length = request.destination.kind == http::HostKind::ipv4 ? 4 : 16;
             std::copy(request.destination.address.begin(), request.destination.address.end(), destination.address.begin());
         }
-        auto code = co_await dial(session, context, policy, destination);
+        auto code = co_await dial(*session, context, policy, destination);
         if (code != 0) {
             auto response = code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
                                         "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";

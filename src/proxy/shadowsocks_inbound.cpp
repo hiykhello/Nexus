@@ -116,7 +116,7 @@ namespace nexus::proxy {
             bytes.insert(bytes.end(),incoming.address().begin(),incoming.address().end());
             auto target=socks5::parse_request(bytes);
             if (target.status!=socks5::Status::accepted) { fail(); co_return; }
-            auto result=co_await dial(session,context,policy,target);
+            auto result=co_await dial(*session,context,policy,target);
             if (result || session->closed) { fail(); co_return; }
             session->relaying=true; session->touched=Clock::now();
             RelayState relay{*session,incoming};

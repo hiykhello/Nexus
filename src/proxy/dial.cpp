@@ -289,13 +289,13 @@ namespace nexus::proxy {
         }
     }
 
-    auto dial(std::shared_ptr<Session> session, io::io_context& context,
+    auto dial(Session& session, io::io_context& context,
               rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<std::uint8_t> {
         auto [signal,code,watch_result]=co_await capy::when_all(
-            dial_branch(*session,context,policy,request),watch_client_error(*session));
+            dial_branch(session,context,policy,request),watch_client_error(session));
         (void)signal;
         (void)watch_result;
-        co_return session->closed ? 1 : code;
+        co_return session.closed ? 1 : code;
     }
 
 }
