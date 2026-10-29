@@ -271,6 +271,26 @@ int main() {
         offset+=9+length;
     }
     if (!protocol_goaway || (**interleaved).header_memory_charge()!=0) return 129;
+    // Preserve a response behind a zero flow-control window while a different
+    // stream causes a connection error, then observe terminal cleanup.
+    Observed terminal_observed;
+    nh::ServerEvents terminal_events{&terminal_observed,on_headers,on_data,on_end,on_closed};
+    auto terminal_budget=std::make_shared<nexus::memory::Budget>(limits.shared_memory_bytes);
+    auto terminal=nh::ServerSession::create(limits,terminal_events,terminal_budget);
+    if (!terminal || !(**terminal).receive(std::as_bytes(std::span{preface}))) return 131;
+    constexpr std::array<std::byte,15> zero_window{std::byte{0},std::byte{0},std::byte{6},std::byte{4},
+        std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{4},
+        std::byte{0},std::byte{0},std::byte{0},std::byte{0}};
+    if (!(**terminal).receive(zero_window) || !(**terminal).receive(request) || !(**terminal).respond_body(1,200,body)) return 132;
+    auto unfinished_other=unfinished; unfinished_other[8]=std::byte{3};
+    if (!(**terminal).receive(unfinished_other) || !(**terminal).receive(ping)) return 133;
+    for (;;) { auto n=(**terminal).output(sink); if (!n) return 134; if (!*n) break; }
+    // nghttp2 may still retain provider pointers after emitting GOAWAY.
+    // The response and its charge remain until session destruction.
+    if ((**terminal).response_memory_used()!=body.size() || !(**terminal).stream_memory_charge() ||
+        terminal_budget->used() < body.size()) return 135;
+    terminal->reset();
+    if (terminal_budget->used()!=0) return 136;
     auto mixed_available=limits.shared_memory_bytes-(**mixed).shared_memory_used();
     std::vector<std::byte> competing_body(mixed_available+1);
     if (competing_body.size()>limits.shared_memory_bytes-(**mixed).library_memory_used()) return 112;
