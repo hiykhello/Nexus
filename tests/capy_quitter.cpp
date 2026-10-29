@@ -1,6 +1,7 @@
 #include <boost/capy/ex/async_waker.hpp>
 #include <boost/capy/ex/run_async.hpp>
 #include <boost/capy/quitter.hpp>
+#include <boost/capy/when_all.hpp>
 #include <boost/corosio/backend.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/local_connect_pair.hpp>
@@ -83,6 +84,61 @@ auto socket_test(bool use_uring) -> bool {
     return unwound && context.stopped();
 }
 
+struct JoinState {
+    std::array<bool, 2> entered{};
+    std::array<bool, 2> destroyed{};
+    bool returned = false;
+    bool threw = false;
+    bool drained_on_return = false;
+};
+
+auto join_child(capy::async_waker& waker, JoinState& state, unsigned index, bool fail)
+    -> capy::task<capy::results<>> {
+    Guard guard{state.destroyed[index]};
+    state.entered[index] = true;
+    auto [error] = co_await waker.wait();
+    if (!error && fail) throw std::runtime_error("child failure");
+    co_return capy::results<>{error};
+}
+
+auto join_parent(capy::async_waker& first, capy::async_waker& second, JoinState& state, bool fail)
+    -> capy::task<> {
+    try {
+        (void)co_await capy::when_all(join_child(first, state, 0, fail),
+                                     join_child(second, state, 1, false));
+    } catch (std::runtime_error const&) { state.threw = true; }
+    state.drained_on_return = state.destroyed[0] && state.destroyed[1];
+    state.returned = true;
+}
+
+// mode: parent cancellation, child exception, or independent completion.
+auto join_test(bool use_uring, unsigned mode) -> bool {
+#if BOOST_COROSIO_HAVE_LIBURING
+    io::io_context context = use_uring ? io::io_context(io::uring) : io::io_context(io::epoll);
+#else
+    (void)use_uring;
+    io::io_context context(io::epoll);
+#endif
+    capy::async_waker first, second;
+    JoinState state;
+    std::stop_source stop;
+    capy::run_async(context.get_executor(), stop.get_token())(join_parent(first, second, state, mode == 1));
+    context.restart();
+    (void)context.run_for(20ms);
+    if (!state.entered[0] || !state.entered[1] || state.returned) return false;
+    if (mode) first.wake();
+    else stop.request_stop();
+    context.restart();
+    if (mode == 2) {
+        (void)context.run_for(20ms);
+        if (!state.destroyed[0] || state.destroyed[1] || state.returned) return false;
+        second.wake();
+        context.restart();
+    }
+    (void)context.run_for(1s);
+    return state.returned && state.drained_on_return && state.threw == (mode == 1) && context.stopped();
+}
+
 auto main() -> int {
     if (!test(false)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
@@ -91,6 +147,10 @@ auto main() -> int {
     if (!socket_test(false)) return 3;
 #if BOOST_COROSIO_HAVE_LIBURING
     if (!socket_test(true)) return 4;
+#endif
+    if (!join_test(false, 0) || !join_test(false, 1) || !join_test(false, 2)) return 5;
+#if BOOST_COROSIO_HAVE_LIBURING
+    if (!join_test(true, 0) || !join_test(true, 1) || !join_test(true, 2)) return 6;
 #endif
     std::println("Capy quitter owner unwind passed");
 }
