@@ -4,6 +4,24 @@ import nexus.tcp.connection;
 namespace p = nexus::packet;
 namespace t = nexus::tcp;
 int main() {
+    p::Tcp6View syn6{.source={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
+                     .destination={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,2},
+                     .source_port=1234,.destination_port=80,.sequence=99,.flags=2};
+    auto c6=t::PassiveConnection6::accept(syn6,50,4096,0);
+    if (!c6 || c6->syn_ack().source!=syn6.destination || c6->syn_ack().destination!=syn6.source) return 1;
+    p::Bytes body6{'a','b'};
+    p::Tcp6View ack6{.source=syn6.source,.destination=syn6.destination,.source_port=1234,.destination_port=80,
+                     .sequence=100,.acknowledgement=51,.flags=0x18,.window=4096,.payload=body6};
+    auto wrong6=ack6; wrong6.source[15]=3;
+    if (c6->input(wrong6).error()!=t::ConnectionError::wrong_peer || c6->state()!=t::ConnectionState::handshake) return 1;
+    if (!c6->input(ack6) || c6->ack().acknowledgement!=102 || c6->ack().destination!=syn6.source) return 1;
+    std::array<std::uint8_t,2> read6{};
+    if (c6->read(read6)!=2 || !std::ranges::equal(read6,body6)) return 1;
+    p::Bytes outgoing6(1400,'x');
+    if (!c6->enqueue(outgoing6) || c6->unsent(1400).bytes.size()!=1220 || !c6->sent(1220,1)) return 1;
+    ack6.sequence=102; ack6.acknowledgement=1271; ack6.flags=0x11; ack6.payload={};
+    if (!c6->input(ack6,2) || !c6->eof() || c6->state()!=t::ConnectionState::peer_closed ||
+        c6->ack().acknowledgement!=103 || c6->unsent(1400).bytes.size()!=180) return 1;
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
                     .destination_port=80, .sequence=0xfffffffe, .flags=2};
     auto c = t::PassiveConnection::accept(syn, 50, 4, 0);

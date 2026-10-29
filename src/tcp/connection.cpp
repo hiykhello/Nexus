@@ -13,10 +13,11 @@ namespace nexus::tcp {
         now_ = now;
         return true;
     }
-    auto PassiveConnection::accept(packet::Tcp4View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now)
+    auto PassiveConnection::accept(packet::Tcp4View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now,
+                                   std::uint16_t default_mss)
         -> std::expected<PassiveConnection, ConnectionError> {
         if (!capacity || capacity > 65535) return std::unexpected(ConnectionError::invalid_capacity);
-        auto handshake = PassiveHandshake::accept(syn, iss);
+        auto handshake = PassiveHandshake::accept(syn, iss,default_mss);
         if (!handshake) return std::unexpected(ConnectionError::invalid_packet);
         auto receive = ReceiveBuffer::create(handshake->receive_next(), capacity);
         if (!receive) return std::unexpected(ConnectionError::invalid_capacity);
@@ -28,6 +29,29 @@ namespace nexus::tcp {
     }
     auto PassiveConnection::syn_ack() const -> packet::Tcp4View {
         return handshake_.syn_ack(static_cast<std::uint16_t>(receive_.window()));
+    }
+    namespace {
+        auto core_segment(packet::Tcp6View v) -> packet::Tcp4View {
+            return {.source_port=v.source_port,.destination_port=v.destination_port,.sequence=v.sequence,
+                    .acknowledgement=v.acknowledgement,.flags=v.flags,.window=v.window,.urgent=v.urgent,
+                    .options=v.options,.payload=v.payload};
+        }
+    }
+    auto PassiveConnection6::accept(packet::Tcp6View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now)
+        -> std::expected<PassiveConnection6, ConnectionError> {
+        auto core=PassiveConnection::accept(core_segment(syn),iss,capacity,now,1220);
+        if (!core) return std::unexpected(core.error());
+        return PassiveConnection6(syn,std::move(*core));
+    }
+    auto PassiveConnection6::as_ipv6(packet::Tcp4View v) const -> packet::Tcp6View {
+        return {.source=local_,.destination=remote_,.source_port=v.source_port,.destination_port=v.destination_port,
+                .sequence=v.sequence,.acknowledgement=v.acknowledgement,.flags=v.flags,.window=v.window,.urgent=v.urgent,
+                .options=v.options,.payload=v.payload};
+    }
+    auto PassiveConnection6::input(packet::Tcp6View segment,std::uint64_t now) -> std::expected<bool,ConnectionError> {
+        if (segment.source!=remote_ || segment.destination!=local_ || segment.source_port!=remote_port_ ||
+            segment.destination_port!=local_port_) return std::unexpected(ConnectionError::wrong_peer);
+        return core_.input(core_segment(segment),now);
     }
     auto PassiveConnection::input(packet::Tcp4View segment, std::uint64_t now) -> std::expected<bool, ConnectionError> {
         if (state_ == ConnectionState::expired) return std::unexpected(ConnectionError::expired);

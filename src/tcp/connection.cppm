@@ -30,7 +30,8 @@ export namespace nexus::tcp {
         auto advance(std::uint64_t now) const noexcept -> bool;
         auto update_close(std::uint64_t now, bool duplicate_fin) noexcept -> void;
     public:
-        [[nodiscard]] static auto accept(packet::Tcp4View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now)
+        [[nodiscard]] static auto accept(packet::Tcp4View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now,
+                                         std::uint16_t default_mss = 536)
             -> std::expected<PassiveConnection, ConnectionError>;
         [[nodiscard]] auto syn_ack() const -> packet::Tcp4View;
         [[nodiscard]] auto input(packet::Tcp4View segment, std::uint64_t now = 0) -> std::expected<bool, ConnectionError>;
@@ -71,5 +72,46 @@ export namespace nexus::tcp {
         [[nodiscard]] auto time_wait_deadline() const noexcept -> std::optional<std::uint64_t> { return time_wait_deadline_; }
         [[nodiscard]] auto state() const noexcept -> ConnectionState { return state_; }
         [[nodiscard]] auto abort(std::uint64_t now) noexcept -> std::expected<void, ConnectionError>;
+    };
+    // IPv6 tuple ownership and validation surround the shared TCP state machine.
+    class PassiveConnection6 {
+        packet::Address6 local_, remote_;
+        std::uint16_t local_port_, remote_port_;
+        PassiveConnection core_;
+        PassiveConnection6(packet::Tcp6View syn, PassiveConnection core)
+            : local_(syn.destination), remote_(syn.source), local_port_(syn.destination_port),
+              remote_port_(syn.source_port), core_(std::move(core)) {}
+        [[nodiscard]] auto as_ipv6(packet::Tcp4View segment) const -> packet::Tcp6View;
+    public:
+        [[nodiscard]] static auto accept(packet::Tcp6View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now)
+            -> std::expected<PassiveConnection6, ConnectionError>;
+        [[nodiscard]] auto input(packet::Tcp6View segment, std::uint64_t now = 0) -> std::expected<bool, ConnectionError>;
+        [[nodiscard]] auto syn_ack() const -> packet::Tcp6View { return as_ipv6(core_.syn_ack()); }
+        [[nodiscard]] auto ack() const -> packet::Tcp6View { return as_ipv6(core_.ack()); }
+        [[nodiscard]] auto ack_after_read(std::size_t n) const -> packet::Tcp6View { return as_ipv6(core_.ack_after_read(n)); }
+        [[nodiscard]] auto fin() const -> packet::Tcp6View { return as_ipv6(core_.fin()); }
+        [[nodiscard]] auto poll(std::uint64_t now) { return core_.poll(now); }
+        [[nodiscard]] auto retransmitted(std::uint64_t now) { return core_.retransmitted(now); }
+        [[nodiscard]] auto read(std::span<std::uint8_t> output) noexcept -> std::size_t { return core_.read(output); }
+        [[nodiscard]] auto eof() const noexcept -> bool { return core_.eof(); }
+        [[nodiscard]] auto enqueue(std::span<std::uint8_t const> data) { return core_.enqueue(data); }
+        [[nodiscard]] auto send_capacity() const noexcept -> std::size_t { return core_.send_capacity(); }
+        [[nodiscard]] auto unsent(std::size_t maximum) const { return core_.unsent(maximum); }
+        [[nodiscard]] auto sent(std::size_t count, std::uint64_t now) { return core_.sent(count,now); }
+        [[nodiscard]] auto send_due(std::uint64_t now,std::size_t maximum) { return core_.send_due(now,maximum); }
+        [[nodiscard]] auto send_retransmitted(std::uint64_t now) { return core_.send_retransmitted(now); }
+        [[nodiscard]] auto probe_due(std::uint64_t now) { return core_.probe_due(now); }
+        [[nodiscard]] auto probe_sent(std::uint64_t now) { return core_.probe_sent(now); }
+        [[nodiscard]] auto close_send() noexcept { return core_.close_send(); }
+        [[nodiscard]] auto fin_ready() const noexcept -> bool { return core_.fin_ready(); }
+        [[nodiscard]] auto fin_sent(std::uint64_t now) noexcept { return core_.fin_sent(now); }
+        [[nodiscard]] auto fin_due(std::uint64_t now) const noexcept { return core_.fin_due(now); }
+        [[nodiscard]] auto fin_retransmitted(std::uint64_t now) noexcept { return core_.fin_retransmitted(now); }
+        [[nodiscard]] auto send_closed() const noexcept -> bool { return core_.send_closed(); }
+        [[nodiscard]] auto fin_pending() const noexcept -> bool { return core_.fin_pending(); }
+        [[nodiscard]] auto reclaimable(std::uint64_t now) noexcept { return core_.reclaimable(now); }
+        [[nodiscard]] auto time_wait_deadline() const noexcept { return core_.time_wait_deadline(); }
+        [[nodiscard]] auto state() const noexcept -> ConnectionState { return core_.state(); }
+        [[nodiscard]] auto abort(std::uint64_t now) noexcept { return core_.abort(now); }
     };
 }
