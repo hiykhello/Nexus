@@ -492,6 +492,24 @@ if is_plat("linux") then
 end
 
 if is_plat("linux") then
+    target("nexus-transport-tun-linux")
+        set_kind("static")
+        add_files("src/transport/tun_linux.cppm", {public = true})
+        add_files("src/transport/tun_linux.cpp")
+        add_deps("nexus-transport-memory", "nexus-packet-fd", "nexus-packet-tun-linux", {public = true})
+
+    target("nexus-transport-tun-linux-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/transport_tun_linux.cpp")
+        add_deps("nexus-transport-tun-linux")
+
+    target("nexus-transport-tun-linux-e2e-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/transport_tun_linux_e2e.cpp")
+        add_deps("nexus-transport-tun-linux")
+
     target("nexus-transport-kernel-tun-test")
         set_kind("binary")
         set_default(false)
