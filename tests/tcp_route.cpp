@@ -10,7 +10,7 @@ int main() {
     p::MemoryLink link;
     t::MemoryEngine engine(link, *table, std::move(*matcher));
     p::Tcp4View syn{.source={10,0,0,1}, .destination={192,0,2,7}, .source_port=1234,
-                    .destination_port=80, .sequence=99, .flags=2};
+                    .destination_port=80, .sequence=99, .flags=0xc2};
     auto denied = p::make_tcp4(syn);
     if (!denied || !link.send(p::Side::first, *denied)) return 1;
     auto blocked = engine.step(0, 50);

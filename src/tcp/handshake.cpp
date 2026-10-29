@@ -8,7 +8,7 @@ namespace nexus::tcp {
           remote_port_(syn.source_port), peer_mss_(peer_mss), iss_(iss), irs_(syn.sequence) {}
     auto PassiveHandshake::accept(packet::Tcp4View syn, std::uint32_t iss, std::uint16_t default_mss)
         -> std::expected<PassiveHandshake, HandshakeError> {
-        if (syn.flags != 0x02 || !syn.payload.empty()) return std::unexpected(HandshakeError::invalid_syn);
+        if (!is_initial_syn(syn.flags) || !syn.payload.empty()) return std::unexpected(HandshakeError::invalid_syn);
         auto options = packet::parse_tcp_syn_options(syn.options);
         if (!options || options->mss == 0 || !default_mss) return std::unexpected(HandshakeError::invalid_options);
         return PassiveHandshake(syn, iss, options->mss.value_or(default_mss));
@@ -21,7 +21,7 @@ namespace nexus::tcp {
         if (segment.source != remote_ || segment.destination != local_ || segment.source_port != remote_port_ ||
             segment.destination_port != local_port_) return std::unexpected(HandshakeError::wrong_peer);
         if (established_) return std::unexpected(HandshakeError::unsupported_segment);
-        if (segment.flags == 0x02 && segment.sequence == irs_ && segment.payload.empty()) {
+        if (is_initial_syn(segment.flags) && segment.sequence == irs_ && segment.payload.empty()) {
             if (!packet::parse_tcp_syn_options(segment.options)) return std::unexpected(HandshakeError::invalid_options);
             return false; // Caller may retransmit syn_ack.
         }

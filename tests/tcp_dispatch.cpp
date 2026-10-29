@@ -36,7 +36,7 @@ int main() {
     if (!table6 || !policy6) return 1;
     p::Tcp6View syn6{.source={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
                      .destination={0x20,1,0x0d,0xb8,0,2,0,0,0,0,0,0,0,0,0,2},
-                     .source_port=1234,.destination_port=80,.sequence=99,.flags=2,.window=8};
+                     .source_port=1234,.destination_port=80,.sequence=99,.flags=0xc2,.window=8};
     auto denied6=syn6; denied6.destination[5]=1;
     auto raw6=p::make_tcp6(denied6); if (!raw6) return 1;
     auto blocked6=t::dispatch_routed(*table6,*policy6,*raw6,50,0);
@@ -57,6 +57,10 @@ int main() {
     if (!mss6 || mss6->mss!=1440) return 1;
     auto repeat6=t::dispatch(*table6,*raw6,99,0);
     if (!repeat6 || repeat6->reply!=opened6->reply) return 1;
+    auto fallback6=syn6; fallback6.flags=2;
+    auto fallback_raw6=p::make_tcp6(fallback6);
+    auto fallback_reply6=t::dispatch(*table6,*fallback_raw6,99,0);
+    if (!fallback_reply6 || fallback_reply6->reply!=opened6->reply) return 1;
     auto ack6=syn6; ack6.flags=0x10; ack6.sequence=100; ack6.acknowledgement=51;
     auto invalid_ack6=ack6; invalid_ack6.acknowledgement=52;
     raw6=p::make_tcp6(invalid_ack6); auto invalid6=t::dispatch(*table6,*raw6,0,1);
@@ -86,7 +90,7 @@ int main() {
     auto table = t::ConnectionTable::create(1, 8);
     if (!table) return 1;
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
-                    .destination_port=80, .sequence=99, .flags=2};
+                    .destination_port=80, .sequence=99, .flags=0xc2};
     auto raw = p::make_tcp4(syn);
     if (!raw) return 1;
     auto corrupt = *raw; corrupt.back() ^= 1;
@@ -100,6 +104,10 @@ int main() {
     if (!mss || mss->mss!=1460) return 1;
     auto duplicate = t::dispatch(*table, *raw, 999, 1);
     if (!duplicate || duplicate->id != first->id || duplicate->opened || duplicate->reply != first->reply) return 1;
+    auto fallback=syn; fallback.flags=2;
+    auto fallback_raw=p::make_tcp4(fallback);
+    auto fallback_reply=t::dispatch(*table,*fallback_raw,999,1);
+    if (!fallback_reply || fallback_reply->reply!=first->reply) return 1;
     auto other = syn; other.source_port++;
     auto other_raw = p::make_tcp4(other);
     auto full = t::dispatch(*table, *other_raw, 60, 2);

@@ -6,6 +6,7 @@
 
 - TUN IPv6 TCP 报文、状态、直连出口和双栈调度已贯通；`4ce6099` 实现直连，`99d228c` 接入 TUN。IPv4/IPv6 共享连接和直连总容量。
 - 回环测试覆盖 IPv6 数据、策略、背压、半关闭及回收；隔离命名空间真实 TUN 测试覆盖 Linux IPv6 TCP 双向数据、半关闭、socket mark 与停止。IPv6 TCP 逐跳和目的地选项头已接入并经真实 TUN 抓包及往返验证；分片、其他扩展头和链路本地作用域未支持。
+- IPv4/IPv6 TCP 已接受 ECN 请求 SYN 并回退到非 ECN 会话，策略拒绝和 Linux 真实 TUN 往返通过；完整 ECN 反馈未实现。
 - TCP SYN-ACK 已按设备配置 MTU 宣告 IPv4/IPv6 MSS，初发、重复 SYN 和定时重传保持一致；驱动拒绝 MTU 小于 65。真实 TUN 以 1280 驱动 MTU 和 1280/1500 设备 MTU 验证协商 MSS、约 6 KiB 双向数据及请求分段。
 - hive 与 unordered_dense 已对照双栈实际调用点评估，结论和未测范围见 `docs/container-evaluation.md`；没有足够负载数据支持引入依赖。
 

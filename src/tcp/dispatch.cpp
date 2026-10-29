@@ -17,7 +17,7 @@ namespace nexus::tcp {
         if (mtu < 40) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
         auto id = table.find(*segment);
         if (!id) {
-            if (segment->flags != 2) return std::unexpected(DispatchFailure{DispatchError::unknown_flow, {}, {}});
+            if (!is_initial_syn(segment->flags)) return std::unexpected(DispatchFailure{DispatchError::unknown_flow, {}, {}});
             if (mtu < 44) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
             auto opened = table.open(*segment, iss, now);
             if (!opened) return std::unexpected(DispatchFailure{DispatchError::table_error, {}, opened.error()});
@@ -39,7 +39,7 @@ namespace nexus::tcp {
         // Reserve response storage before mutating connection state.
         auto option=mss_option(std::max<std::size_t>(mtu,40),40);
         auto reserve_view=connection->ack();
-        if (connection->state()==ConnectionState::handshake && segment->flags==2) reserve_view.options=option;
+        if (connection->state()==ConnectionState::handshake && is_initial_syn(segment->flags)) reserve_view.options=option;
         auto reply_storage = packet::make_tcp4(reserve_view, mtu);
         if (!reply_storage) return std::unexpected(DispatchFailure{DispatchError::output_error, reply_storage.error(), {}});
         auto previous = connection->state();
@@ -77,7 +77,7 @@ namespace nexus::tcp {
         if (mtu < 60) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
         auto id = table.find(*segment);
         if (!id) {
-            if (segment->flags != 2) return std::unexpected(DispatchFailure{DispatchError::unknown_flow, {}, {}});
+            if (!is_initial_syn(segment->flags)) return std::unexpected(DispatchFailure{DispatchError::unknown_flow, {}, {}});
             if (mtu < 64) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
             auto opened = table.open(*segment, iss, now);
             if (!opened) return std::unexpected(DispatchFailure{DispatchError::table_error, {}, opened.error()});
@@ -99,7 +99,7 @@ namespace nexus::tcp {
         // Reserve response storage before mutating connection state.
         auto option=mss_option(std::max<std::size_t>(mtu,60),60);
         auto reserve_view=connection->ack();
-        if (connection->state()==ConnectionState::handshake && segment->flags==2) reserve_view.options=option;
+        if (connection->state()==ConnectionState::handshake && is_initial_syn(segment->flags)) reserve_view.options=option;
         auto reply_storage = packet::make_tcp6(reserve_view, mtu);
         if (!reply_storage) return std::unexpected(DispatchFailure{DispatchError::output_error, reply_storage.error(), {}});
         auto previous = connection->state();

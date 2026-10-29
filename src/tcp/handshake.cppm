@@ -3,6 +3,10 @@ import nexus.packet;
 import std;
 
 export namespace nexus::tcp {
+    // ECE and CWR on SYN request ECN; this stack replies without ECN negotiation.
+    [[nodiscard]] constexpr auto is_initial_syn(std::uint16_t flags) noexcept -> bool {
+        return (flags & ~std::uint16_t{0xc0}) == 0x02;
+    }
     enum class HandshakeError { invalid_syn, invalid_options, wrong_peer, invalid_sequence, invalid_ack, unsupported_segment };
     // One tuple, no timers or socket ownership. ISS is supplied by the caller.
     class PassiveHandshake {

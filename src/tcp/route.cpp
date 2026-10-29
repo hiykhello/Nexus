@@ -8,7 +8,7 @@ namespace nexus::tcp {
         -> std::expected<DispatchResult, DispatchFailure> {
         auto segment = packet::parse_tcp4(bytes);
         if (!segment) return std::unexpected(DispatchFailure{DispatchError::invalid_packet, segment.error(), {}});
-        if (segment->flags == 2 && !table.find(*segment)) {
+        if (is_initial_syn(segment->flags) && !table.find(*segment)) {
             auto const& ip = segment->destination;
             if (!segment->destination_port || std::ranges::all_of(ip,[](auto b) { return b==0; }))
                 return std::unexpected(DispatchFailure{DispatchError::invalid_target, {}, {}});
@@ -25,7 +25,7 @@ namespace nexus::tcp {
         -> std::expected<DispatchResult, DispatchFailure> {
         auto segment=packet::parse_tcp6(bytes);
         if (!segment) return std::unexpected(DispatchFailure{DispatchError::invalid_packet,segment.error(),{}});
-        if (segment->flags==2 && !table.find(*segment)) {
+        if (is_initial_syn(segment->flags) && !table.find(*segment)) {
             auto const& ip=segment->destination;
             bool mapped=std::ranges::all_of(std::span(ip).first<10>(),[](auto b) { return b==0; }) &&
                         ip[10]==255 && ip[11]==255;

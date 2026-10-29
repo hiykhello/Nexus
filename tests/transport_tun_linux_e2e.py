@@ -99,6 +99,7 @@ else:
     if sys.argv[2] != 'inner' or os.stat('/proc/self/ns/net').st_ino == int(sys.argv[3]):
         raise RuntimeError('inner namespace was not isolated')
     ns_fd = int(sys.argv[4])
+    subprocess.run(['sysctl', '-w', 'net.ipv4.tcp_ecn=1'], check=True, stdout=subprocess.DEVNULL)
     proc = subprocess.Popen([binary, str(ns_fd), '42', '1280'], pass_fds=(ns_fd,), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
@@ -120,6 +121,7 @@ else:
             while True:
                 packet = tcp_capture.recv(65535)
                 if len(packet) >= 44 and packet[0] >> 4 == 4 and packet[9] == 6 and packet[37] & 2:
+                    if packet[37] & 0xc0 != 0xc0: raise RuntimeError('IPv4 SYN did not request ECN')
                     if packet[0] != 0x46 or packet[20:24] != bytes([1, 1, 0, 0]):
                         raise RuntimeError(f'IPv4 options missing from TCP SYN: {packet[:24].hex()}')
                     break
@@ -169,6 +171,7 @@ else:
             while True:
                 packet = capture6.recv(65535)
                 if len(packet) >= 76 and packet[0] >> 4 == 6 and packet[6] == 0 and packet[40] == 60 and packet[48] == 6 and packet[69] & 2:
+                    if packet[69] & 0xc0 != 0xc0: raise RuntimeError('IPv6 SYN did not request ECN')
                     if packet[42:48] != bytes([1, 4, 0, 0, 0, 0]) or packet[50:56] != bytes([0x1e, 2, 0xaa, 0xbb, 1, 0]):
                         raise RuntimeError('IPv6 TCP extension options missing from SYN')
                     break
@@ -188,6 +191,7 @@ else:
                     tcp_header = (packet[68] >> 4) * 4
                     if len(packet) > 56 + tcp_header:
                         if len(packet) > 1280: raise RuntimeError(f'oversize IPv6 TCP packet: {len(packet)}')
+                        if packet[1] & 0x30: raise RuntimeError('IPv6 TCP data unexpectedly used ECN')
                         segments += 1
             if segments < 2: raise RuntimeError(f'expected segmented IPv6 request, saw {segments} packets')
         proc.stdin.write('X'); proc.stdin.flush()

@@ -5,6 +5,11 @@ import nexus.tcp.receive;
 namespace p = nexus::packet;
 namespace t = nexus::tcp;
 int main() {
+    for (std::uint16_t flags : {0x02,0x42,0x82,0xc2})
+        if (!t::is_initial_syn(flags)) return 1;
+    for (std::uint16_t flags : {0x00,0x03,0x12,0xc3,0x1c2})
+        if (t::is_initial_syn(flags)) return 1;
+
     p::Tcp6View syn6{.source={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
                      .destination={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,2},
                      .source_port=1234,.destination_port=80,.sequence=0xffffffff,.flags=2};
