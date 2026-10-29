@@ -115,6 +115,30 @@ with tempfile.TemporaryDirectory(prefix="nexus-h2-tls-") as directory:
                 if server.poll() is None:
                     server.kill()
                     server.wait()
+    # A response blocked by a zero stream window remains live while a
+    # malformed header sequence terminates a different stream's connection.
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0)); listener.listen(1)
+        server = subprocess.Popen([fixture, cert_der, key_der, str(listener.fileno()), "protocol"], pass_fds=(listener.fileno(),))
+        try:
+            context = ssl.create_default_context(cafile=str(cert)); context.set_alpn_protocols(["h2"])
+            with context.wrap_socket(socket.create_connection(listener.getsockname(), timeout=5), server_hostname="localhost", suppress_ragged_eofs=False) as client:
+                client.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" +
+                               frame(4, 0, 0, b"\x00\x04\x00\x00\x00\x00") +
+                               frame(1, 5, 1, b"\x82\x87\x84\x01\x09localhost"))
+                while True:
+                    header=exact(client,9); payload=exact(client,int.from_bytes(header[:3],"big"))
+                    if header[3]==1 and int.from_bytes(header[5:9],"big")==1: break
+                client.sendall(frame(1,0,3,b"\x82") + frame(6,0,0,b"12345678"))
+                while True:
+                    header=exact(client,9); payload=exact(client,int.from_bytes(header[:3],"big"))
+                    if header[3]==7:
+                        if len(payload)<8 or int.from_bytes(payload[4:8],"big")!=1: raise RuntimeError("expected protocol-error GOAWAY")
+                        break
+                if client.recv(1)!=b"": raise RuntimeError("expected TLS close after GOAWAY")
+            if server.wait(timeout=5): raise RuntimeError("protocol error fixture failed")
+        finally:
+            if server.poll() is None: server.kill(); server.wait()
     for mode in ("timeout", "cancel"):
         with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))

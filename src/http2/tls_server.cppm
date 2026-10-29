@@ -121,6 +121,11 @@ export namespace nexus::http2 {
                 if (failed_) { cancel(); co_return std::unexpected(TlsServerError::tls); }
                 co_return TlsServerStep::progress;
             }
+            if (session_.terminated_by_error()) {
+                release_input(); resume_pending_=false; active_=false;
+                ready_to_close_=true; ready_revision_=session_.revision();
+                co_return peer_closed_ ? TlsServerStep::peer_closed : TlsServerStep::drained;
+            }
             if (session_.paused_stream()) { active_=false; co_return TlsServerStep::paused; }
             if (resume_pending_) {
                 resume_pending_=false;

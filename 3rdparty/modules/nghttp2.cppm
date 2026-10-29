@@ -55,6 +55,7 @@ export namespace nex::nghttp2 {
     using ::NGHTTP2_DATA;
     using ::NGHTTP2_HCAT_REQUEST;
     using ::nghttp2_session_callbacks_set_on_frame_recv_callback;
+    using ::nghttp2_session_callbacks_set_on_frame_send_callback;
     using ::NGHTTP2_WINDOW_UPDATE;
     using ::nghttp2_submit_settings;
     using ::nghttp2_submit_ping;

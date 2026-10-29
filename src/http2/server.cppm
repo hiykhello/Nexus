@@ -153,7 +153,7 @@ export namespace nexus::http2 {
         std::size_t output_left_ = 0;
         std::uint64_t revision_ = 0;
         bool active_ = false;
-        bool failed_ = false, transport_claimed_ = false, terminated_ = false;
+        bool failed_ = false, transport_claimed_ = false, terminated_ = false, error_goaway_ = false;
         enum class Shutdown { running, notice, draining };
         Shutdown shutdown_ = Shutdown::running;
         std::int32_t paused_stream_ = 0;
@@ -267,6 +267,11 @@ export namespace nexus::http2 {
                 !self.events_.end_stream(self.events_.context, f->hd.stream_id)) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
             return 0;
         }
+        static auto sent(h2::nghttp2_session*, h2::nghttp2_frame const* frame, void* p) noexcept -> int {
+            if (frame->hd.type==h2::NGHTTP2_GOAWAY && frame->goaway.error_code!=h2::NGHTTP2_NO_ERROR)
+                static_cast<ServerSession*>(p)->error_goaway_=true;
+            return 0;
+        }
         static auto data(h2::nghttp2_session* session, std::uint8_t, std::int32_t id,
                          std::uint8_t const* bytes, std::size_t length, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
@@ -341,6 +346,7 @@ export namespace nexus::http2 {
             h2::nghttp2_session_callbacks_set_on_begin_headers_callback(callbacks, begin);
             h2::nghttp2_session_callbacks_set_on_header_callback(callbacks, header);
             h2::nghttp2_session_callbacks_set_on_frame_recv_callback(callbacks, frame);
+            h2::nghttp2_session_callbacks_set_on_frame_send_callback(callbacks, sent);
             h2::nghttp2_session_callbacks_set_on_data_chunk_recv_callback(callbacks, data);
             h2::nghttp2_session_callbacks_set_on_stream_close_callback(callbacks, closed);
             h2::nghttp2_option* option = nullptr;
@@ -488,6 +494,8 @@ export namespace nexus::http2 {
             stream->responded = true;
             return {};
         }
+        [[nodiscard]] auto terminated() const noexcept -> bool { return terminated_; }
+        [[nodiscard]] auto terminated_by_error() const noexcept -> bool { return terminated_ && error_goaway_; }
         [[nodiscard]] auto response_memory_used() const noexcept -> std::size_t { return response_reserved_; }
         [[nodiscard]] auto library_memory_used() const noexcept -> std::size_t { return library_used_; }
         [[nodiscard]] auto header_memory_charge() const noexcept -> std::size_t { return headers_.memory_charge(); }
