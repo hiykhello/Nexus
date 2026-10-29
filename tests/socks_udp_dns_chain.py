@@ -62,7 +62,7 @@ def wait_release(relay):
                 time.sleep(.01)
 
 
-def scenario(binary, workers):
+def scenario(binary, workers, stop_at):
     with contextlib.ExitStack() as stack, tempfile.TemporaryDirectory() as tmp:
         root, client, target = udp(stack), udp(stack), udp(stack)
         leaf = stack.enter_context(socket.socket())
@@ -151,9 +151,40 @@ routing {{ default-outbound "direct"; }}
                 raise RuntimeError('canceled DNS forwarded target packet')
             except socket.timeout:
                 pass
+            # Stop the server with a query pending at each hop in separate runs.
+            control, relay = associate(stack, port)
+            send(client, relay, target_port, b'stop.test')
+            query, peer = root.recvfrom(2048)
+            connection = None
+            if stop_at == 'leaf':
+                root.sendto(reply(query, (1,)), peer)
+                connection, _ = leaf.accept()
+                connection.settimeout(3)
+                leaf_query = exact(connection, int.from_bytes(exact(connection, 2), 'big'))
+                assert leaf_query[12:-4] == b'\x04stop\x04test\x00'
             process.terminate()
             if process.wait(timeout=5) != 0:
                 raise RuntimeError('proxy did not stop cleanly')
+            assert control.recv(1) == b''
+            wait_release(relay)
+            if connection is not None:
+                with connection:
+                    assert connection.recv(1) == b''
+            else:
+                root.sendto(reply(query, (1,)), peer)
+                leaf.settimeout(.3)
+                try:
+                    conn, _ = leaf.accept()
+                    conn.close()
+                    raise RuntimeError('stopped bootstrap started leaf DNS')
+                except socket.timeout:
+                    pass
+            target.settimeout(.3)
+            try:
+                target.recvfrom(1024)
+                raise RuntimeError('stopped DNS forwarded target packet')
+            except socket.timeout:
+                pass
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -166,5 +197,6 @@ routing {{ default-outbound "direct"; }}
 
 binary = str(pathlib.Path(sys.argv[1]).resolve())
 for count in (1, 2):
-    scenario(binary, count)
-print('SOCKS UDP DNS bootstrap retry and per-hop cancellation passed')
+    for hop in ('root', 'leaf'):
+        scenario(binary, count, hop)
+print('SOCKS UDP DNS bootstrap retry, per-hop cancellation and stop passed')
