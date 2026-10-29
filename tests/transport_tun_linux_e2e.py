@@ -96,9 +96,18 @@ else:
         ):
             subprocess.run(command, check=True)
         proc.stdin.write('G'); proc.stdin.flush()
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+        with socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(3)) as tcp_capture, \
+                socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+            tcp_capture.bind(('nx-owned', 0)); tcp_capture.settimeout(10)
             client.settimeout(10)
+            client.setsockopt(socket.IPPROTO_IP, socket.IP_OPTIONS, bytes([1, 1, 0, 0]))
             client.connect(('10.77.0.2', int(sys.argv[5])))
+            while True:
+                packet = tcp_capture.recv(65535)
+                if len(packet) >= 44 and packet[0] >> 4 == 4 and packet[9] == 6 and packet[37] & 2:
+                    if packet[0] != 0x46 or packet[20:24] != bytes([1, 1, 0, 0]):
+                        raise RuntimeError(f'IPv4 options missing from TCP SYN: {packet[:24].hex()}')
+                    break
             with socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(3)) as capture, \
                     socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
                 capture.bind(('nx-owned', 0)); capture.settimeout(10)

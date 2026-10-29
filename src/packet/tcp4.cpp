@@ -15,8 +15,8 @@ namespace nexus::packet {
         auto put32(Bytes& p, std::size_t i, std::uint32_t n) noexcept -> void {
             put16(p, i, static_cast<std::uint16_t>(n >> 16)); put16(p, i + 2, static_cast<std::uint16_t>(n));
         }
-        auto checksum(std::span<std::uint8_t const> p) noexcept -> std::uint16_t {
-            std::uint32_t sum = 6 + static_cast<std::uint32_t>(p.size() - 20);
+        auto checksum(std::span<std::uint8_t const> p, std::size_t offset = 20) noexcept -> std::uint16_t {
+            std::uint32_t sum = 6 + static_cast<std::uint32_t>(p.size() - offset);
             auto add = [&sum](std::span<std::uint8_t const> bytes) {
                 std::size_t i = 0;
                 for (; i + 1 < bytes.size(); i += 2) {
@@ -25,7 +25,7 @@ namespace nexus::packet {
                 }
                 if (i < bytes.size()) sum += std::uint32_t{bytes[i]} << 8;
             };
-            add(p.subspan(12, 8)); add(p.subspan(20));
+            add(p.subspan(12, 8)); add(p.subspan(offset));
             while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
             return static_cast<std::uint16_t>(~sum);
         }
@@ -33,22 +33,28 @@ namespace nexus::packet {
     auto parse_tcp4(std::span<std::uint8_t const> p) noexcept -> std::expected<Tcp4View, PacketError> {
         if (p.size() < 20) return std::unexpected(PacketError::truncated);
         if ((p[0] >> 4) != 4) return std::unexpected(PacketError::invalid_version);
-        if ((p[0] & 15) != 5) return std::unexpected(PacketError::unsupported_header);
-        if (p.size() < 40 || read16(p, 2) != p.size()) return std::unexpected(PacketError::invalid_length);
-        if (internet_checksum(p.first(20)) != 0) return std::unexpected(PacketError::invalid_checksum);
+        auto ip_header = static_cast<std::size_t>(p[0] & 15) * 4;
+        if (ip_header < 20 || ip_header > p.size() || p.size() - ip_header < 20 || read16(p, 2) != p.size())
+            return std::unexpected(PacketError::invalid_length);
+        if (internet_checksum(p.first(ip_header)) != 0) return std::unexpected(PacketError::invalid_checksum);
+        for (std::size_t i=20; i<ip_header; ++i) {
+            if (p[i]==1) continue;
+            if (p[i]==0 && std::ranges::all_of(p.subspan(i,ip_header-i), [](auto byte) { return byte==0; })) break;
+            return std::unexpected(PacketError::unsupported_header);
+        }
         if ((read16(p, 6) & 0xbfff) != 0) return std::unexpected(PacketError::unsupported_fragment);
         if (p[9] != 6) return std::unexpected(PacketError::unsupported_protocol);
-        auto header = static_cast<std::size_t>(p[32] >> 4) * 4;
-        if (header < 20 || header > p.size() - 20) return std::unexpected(PacketError::invalid_length);
-        if (p[32] & 0x0e) return std::unexpected(PacketError::unsupported_header);
-        if (checksum(p) != 0) return std::unexpected(PacketError::invalid_checksum);
+        auto header = static_cast<std::size_t>(p[ip_header+12] >> 4) * 4;
+        if (header < 20 || header > p.size() - ip_header) return std::unexpected(PacketError::invalid_length);
+        if (p[ip_header+12] & 0x0e) return std::unexpected(PacketError::unsupported_header);
+        if (checksum(p,ip_header) != 0) return std::unexpected(PacketError::invalid_checksum);
         Tcp4View v;
         std::copy_n(p.begin() + 12, 4, v.source.begin()); std::copy_n(p.begin() + 16, 4, v.destination.begin());
-        v.source_port = read16(p, 20); v.destination_port = read16(p, 22);
-        v.sequence = read32(p, 24); v.acknowledgement = read32(p, 28);
-        v.flags = static_cast<std::uint16_t>(((p[32] & 1) << 8) | p[33]);
-        v.window = read16(p, 34); v.urgent = read16(p, 38);
-        v.options = p.subspan(40, header - 20); v.payload = p.subspan(20 + header);
+        v.source_port = read16(p, ip_header); v.destination_port = read16(p, ip_header+2);
+        v.sequence = read32(p, ip_header+4); v.acknowledgement = read32(p, ip_header+8);
+        v.flags = static_cast<std::uint16_t>(((p[ip_header+12] & 1) << 8) | p[ip_header+13]);
+        v.window = read16(p, ip_header+14); v.urgent = read16(p, ip_header+18);
+        v.options = p.subspan(ip_header+20, header - 20); v.payload = p.subspan(ip_header + header);
         return v;
     }
     auto make_tcp4(Tcp4View v, std::size_t mtu) -> std::expected<Bytes, PacketError> {

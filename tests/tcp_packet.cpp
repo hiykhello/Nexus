@@ -13,6 +13,27 @@ int main() {
         !std::ranges::equal(v->payload, p::Bytes{'a','b','c'})) return 1;
     auto built = p::make_tcp4(*v);
     if (!built || *built != sample) return 1;
+    auto padded=sample;
+    padded.insert(padded.begin()+20,{1,1,0,0}); padded[0]=0x46; padded[3]=static_cast<std::uint8_t>(padded.size());
+    auto fix_header=[](p::Bytes& packet) {
+        packet[10]=packet[11]=0;
+        auto sum=p::internet_checksum(std::span(packet).first((packet[0]&15)*4));
+        packet[10]=static_cast<std::uint8_t>(sum>>8); packet[11]=static_cast<std::uint8_t>(sum);
+    };
+    fix_header(padded);
+    auto padded_view=p::parse_tcp4(padded);
+    if (!padded_view || padded_view->sequence!=v->sequence || padded_view->source_port!=v->source_port ||
+        !std::ranges::equal(padded_view->options,v->options) || !std::ranges::equal(padded_view->payload,v->payload)) return 1;
+    auto bad_ip=padded; bad_ip[21]=7; fix_header(bad_ip);
+    if (p::parse_tcp4(bad_ip).error()!=p::PacketError::unsupported_header) return 1;
+    bad_ip=padded; bad_ip[23]=1; fix_header(bad_ip);
+    if (p::parse_tcp4(bad_ip).error()!=p::PacketError::unsupported_header) return 1;
+    bad_ip=padded; bad_ip[20]^=1;
+    if (p::parse_tcp4(bad_ip).error()!=p::PacketError::invalid_checksum) return 1;
+    bad_ip=padded; bad_ip.back()^=1;
+    if (p::parse_tcp4(bad_ip).error()!=p::PacketError::invalid_checksum) return 1;
+    bad_ip=padded; bad_ip[0]=0x44;
+    if (p::parse_tcp4(bad_ip).error()!=p::PacketError::invalid_length) return 1;
     auto parsed_options = p::parse_tcp_options(v->options);
     if (!parsed_options || parsed_options->count != 1 || parsed_options->items[0].kind != 2 ||
         !std::ranges::equal(parsed_options->items[0].data, p::Bytes{5,0xb4})) return 1;
