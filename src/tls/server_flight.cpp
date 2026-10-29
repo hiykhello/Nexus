@@ -35,18 +35,21 @@ namespace nexus::tls {
         crypto::Bytes{}.swap(keys.server_hello);
         auto put24=[](crypto::Bytes& out,std::size_t n) { out.push_back(static_cast<std::uint8_t>(n>>16)); out.push_back(static_cast<std::uint8_t>(n>>8)); out.push_back(static_cast<std::uint8_t>(n)); };
         if (selected_alpn.size()>255) return std::unexpected(ServerFlightError::invalid_state);
-        crypto::Bytes extension_body;
-        if (!selected_alpn.empty()) {
-            auto n=selected_alpn.size();
-            extension_body={0,16,static_cast<std::uint8_t>((n+3)>>8),static_cast<std::uint8_t>(n+3),
-                            static_cast<std::uint8_t>((n+1)>>8),static_cast<std::uint8_t>(n+1),static_cast<std::uint8_t>(n)};
-            extension_body.insert(extension_body.end(),selected_alpn.begin(),selected_alpn.end());
+        // Encode directly into the final message: the flight scratch budget
+        // accounts for this message, not separate extension-vector copies.
+        auto n=selected_alpn.size();
+        auto extension_size=n ? n+7 : 0;
+        crypto::Bytes extensions(6+extension_size);
+        extensions[0]=8; extensions[2]=static_cast<std::uint8_t>((extension_size+2)>>8);
+        extensions[3]=static_cast<std::uint8_t>(extension_size+2);
+        extensions[4]=static_cast<std::uint8_t>(extension_size>>8); extensions[5]=static_cast<std::uint8_t>(extension_size);
+        if (n) {
+            extensions[6]=0; extensions[7]=16;
+            extensions[8]=static_cast<std::uint8_t>((n+3)>>8); extensions[9]=static_cast<std::uint8_t>(n+3);
+            extensions[10]=static_cast<std::uint8_t>((n+1)>>8); extensions[11]=static_cast<std::uint8_t>(n+1);
+            extensions[12]=static_cast<std::uint8_t>(n);
+            std::ranges::copy(selected_alpn,extensions.begin()+13);
         }
-        crypto::Bytes extension_vector{static_cast<std::uint8_t>(extension_body.size()>>8),static_cast<std::uint8_t>(extension_body.size())};
-        extension_vector.insert(extension_vector.end(),extension_body.begin(),extension_body.end());
-        auto encoded_extensions=HandshakeDecoder::encode(8,extension_vector);
-        if (!encoded_extensions) return std::unexpected(ServerFlightError::crypto_error);
-        auto extensions=std::move(*encoded_extensions);
         std::size_t list_size=cert.size()+5;
         for (auto const& intermediate:credential.chain()) {
             if (intermediate.empty() || intermediate.size()>list_limit-5 || list_size>list_limit-intermediate.size()-5)

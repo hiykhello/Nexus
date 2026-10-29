@@ -87,6 +87,30 @@ int main(int argc,char** argv) {
         auto flood_record=flood_peer->write.seal(t::ContentType::handshake,flood); if (!flood_record) return 50;
         auto flood_result=flood_flight->client_finished(*flood_record);
         if (flood_result || flood_result.error()!=t::ServerFlightError::invalid_finished || flood_flight->client_finished(*flood_record)) return 51;
+        // Check the complete EncryptedExtensions wire encoding at both ALPN
+        // length boundaries, including the two-byte length transitions.
+        for (std::size_t n:{0u,1u,255u,256u}) {
+            auto private_key=c::X25519Private::generate(); if (!private_key) return 52;
+            auto public_key=private_key->public_key(); if (!public_key) return 53;
+            auto offered=t::KeyShare::encode_client(std::array{t::KeyShareEntry{29,{public_key->begin(),public_key->end()}}}); if (!offered) return 54;
+            hello.extensions.back().data=std::move(*offered); auto encoded=hello.encode(); if (!encoded) return 55;
+            auto message=t::HandshakeDecoder::encode(1,*encoded); if (!message) return 56;
+            auto server_keys=t::server_handshake_keys(*message,std::span{&scheme,1}); if (!server_keys) return 57;
+            auto client_keys=t::client_handshake_keys(*message,server_keys->server_hello,std::move(*private_key)); if (!client_keys) return 58;
+            c::Bytes alpn(n,'a'); auto selected=t::ServerFlight::create(std::move(*server_keys),*cred,alpn);
+            if (n==256) { if (selected || selected.error()!=t::ServerFlightError::invalid_state) return 59; continue; }
+            if (!selected || selected->records().empty()) return 60;
+            auto plain=client_keys->read.open(selected->records().front()); if (!plain || plain->type!=t::ContentType::handshake) return 61;
+            auto messages=t::HandshakeDecoder::create(1048584); if (!messages) return 62;
+            auto decoded=messages->feed(plain->content); if (!decoded || decoded->empty() || decoded->front().type!=8) return 63;
+            c::Bytes expected{static_cast<std::uint8_t>((n ? n+7 : 0)>>8),static_cast<std::uint8_t>(n ? n+7 : 0)};
+            if (n) {
+                expected.insert(expected.end(),{0,16,static_cast<std::uint8_t>((n+3)>>8),static_cast<std::uint8_t>(n+3),
+                    static_cast<std::uint8_t>((n+1)>>8),static_cast<std::uint8_t>(n+1),static_cast<std::uint8_t>(n)});
+                expected.insert(expected.end(),alpn.begin(),alpn.end());
+            }
+            if (decoded->front().body!=expected) return 64;
+        }
         return 0;
     }
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 3;
