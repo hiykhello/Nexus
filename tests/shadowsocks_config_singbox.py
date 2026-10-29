@@ -35,6 +35,40 @@ def connect_proxy(port, destination):
     exact(client,6 if head[3]==1 else 18)
     return client
 
+def http_response(port):
+    with socket.socket() as target:
+        target.bind(("127.0.0.1",0)); target.listen(1); target.settimeout(5)
+        errors=[]; delivered=threading.Event()
+        def origin():
+            try:
+                with target.accept()[0] as peer:
+                    peer.settimeout(5)
+                    header=b""
+                    while b"\r\n\r\n" not in header:
+                        header+=exact(peer,1)
+                    if not header.startswith(b"POST /upload HTTP/1.1\r\n"):
+                        raise RuntimeError("incorrect forwarded HTTP request")
+                    peer.sendall(b"HTTP/1.1 413 Too Large\r\nContent-Length: 2\r\n\r\nno")
+                    if not delivered.wait(5): raise RuntimeError("HTTP response did not reach client")
+            except Exception as error: errors.append(error)
+        thread=threading.Thread(target=origin); thread.start()
+        try:
+            with socket.create_connection(("127.0.0.1",port),timeout=5) as client:
+                client.settimeout(5)
+                client.sendall((f"POST http://127.0.0.1:{target.getsockname()[1]}/upload HTTP/1.1\r\n"
+                                "Host: example.test\r\nContent-Length: 1000000\r\n\r\npartial").encode())
+                header=b""
+                while b"\r\n\r\n" not in header: header+=exact(client,1)
+                if not header.startswith(b"HTTP/1.1 413 "):
+                    raise RuntimeError(f"HTTP response over SS-2022 failed: {header!r}, origin: {errors!r}")
+                if exact(client,2)!=b"no": raise RuntimeError("incorrect HTTP response body")
+                delivered.set()
+                client.shutdown(socket.SHUT_WR)
+                if client.recv(1)!=b"": raise RuntimeError("HTTP response did not end")
+        finally:
+            thread.join(timeout=6)
+        if thread.is_alive() or errors: raise RuntimeError(f"HTTP origin failed: {errors}")
+
 def concurrent_transfer(port):
     count=8
     payload=bytes(range(256))*8192  # 2 MiB per direction, per connection.
@@ -129,7 +163,7 @@ def scenario(root, size, tcp_dns=False):
             conf.write_text(f'''schema-version 1
 role "client"
 {bootstrap}
-inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
+inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "ss" type="shadowsocks" {{ server host="{host}" port={upstream_port}; {resolver} method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
@@ -175,6 +209,7 @@ routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" va
                     if exact(blocked,4)[1]!=2: raise RuntimeError("resolved blocked IP was not rejected")
                 if len(dns_queries)!=before+1 or dns_queries[-1][12]!=10:
                     raise RuntimeError("blocked resolved address triggered node resolution")
+            http_response(port)
             with connect_proxy(port,target.getsockname()[1]) as client:
                 client.sendall(b"helloagain"); client.shutdown(socket.SHUT_WR)
                 with target.accept()[0] as upstream:

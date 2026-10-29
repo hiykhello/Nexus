@@ -67,7 +67,6 @@ namespace nexus::proxy {
         bool relaying = false;
         bool closed = false;
         bool done = false;
-        bool http_upload_active = false;
         bool http_draining = false;
         Clock::time_point http_drain_started{};
         explicit Session(io::io_context& ctx);
@@ -107,7 +106,7 @@ namespace nexus::proxy {
                            std::string name, std::uint16_t port) -> capy::task<std::optional<std::vector<io::endpoint>>>;
     auto dial(std::shared_ptr<Session> session, io::io_context& context,
               rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<std::uint8_t>;
-    auto forward_http(std::shared_ptr<Session> session, io::io_context& context,
+    auto forward_http(std::shared_ptr<Session> const& session, io::io_context& context,
                       rules::RouteMatcher const& policy, std::string_view input) -> capy::task<>;
     auto handshake(std::shared_ptr<Session> session, io::io_context& context,
                    rules::RouteMatcher const& policy, bool mixed, std::optional<Credentials> const& credentials) -> capy::task<>;
