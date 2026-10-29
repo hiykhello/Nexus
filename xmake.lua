@@ -541,6 +541,14 @@ if is_plat("linux") then
         add_files("tests/transport_memory.cpp")
         add_deps("nexus-transport-memory")
 
+    target("nexus-transport-udp-send-fault-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/transport_memory.cpp")
+        add_defines("NEXUS_TRANSPORT_SEND_FAULT")
+        add_ldflags("-Wl,--wrap=sendto")
+        add_deps("nexus-transport-memory")
+
     target("nexus-transport-memory")
         set_kind("static")
         add_files("src/transport/memory.cppm", {public = true})

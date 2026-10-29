@@ -8,6 +8,14 @@ namespace p=nexus::packet;
 namespace t=nexus::tcp;
 namespace u=nexus::udp;
 namespace tr=nexus::transport;
+#ifdef NEXUS_TRANSPORT_SEND_FAULT
+static bool block_udp_send = true;
+extern "C" ssize_t __real_sendto(int,const void*,size_t,int,const sockaddr*,socklen_t);
+extern "C" ssize_t __wrap_sendto(int fd,const void* data,size_t size,int flags,const sockaddr* address,socklen_t length) {
+    if (block_udp_send) { errno=EAGAIN; return -1; }
+    return __real_sendto(fd,data,size,flags,address,length);
+}
+#endif
 struct Socket { int fd=-1; ~Socket() { if (fd>=0) ::close(fd); } };
 int main() {
     Socket listener{::socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0)};
@@ -25,8 +33,14 @@ int main() {
     tr::MemoryEngine engine(link,*table,nexus::rules::Matcher{},4,u::Mapping::endpoint_independent,
                             u::Filtering::address_port_dependent,{4,4,60000},1500,{1500,1,1500});
     std::uint64_t now=10;
+#ifdef NEXUS_TRANSPORT_SEND_FAULT
+    bool udp_blocked=false;
+#endif
     auto step=[&]() -> bool {
         auto result=engine.step(now++,50);
+#ifdef NEXUS_TRANSPORT_SEND_FAULT
+        if (result && result->udp.input_backpressured) udp_blocked=true;
+#endif
         return result && !result->device.rejected && !result->device.input_error && !result->device.output_error &&
             !result->tcp.input.rejected && !result->tcp.input.input_error && !result->tcp.start_error && !result->tcp.direct.error &&
             !result->udp.rejected && !result->udp.ipv4_error && !result->udp.ipv6_error && !result->udp.output_error;
@@ -36,7 +50,7 @@ int main() {
     p::Bytes udp_payload{'u','d','p'}, tcp_payload{'t','c','p'};
     auto syn=p::make_tcp4(client);
     auto datagram=p::make_udp4({10,0,0,1},{127,0,0,1},2345,ntohs(udp_addr.sin_port),udp_payload);
-    if (!syn || !datagram || !link.send(p::Side::first,*syn) || !link.send(p::Side::first,*datagram)) return 1;
+    if (!syn || !datagram || !link.send(p::Side::first,*datagram) || !link.send(p::Side::first,*syn)) return 1;
     if (!step()) return 1;
     auto invalid=engine.step(9,50);
     if (invalid || !std::holds_alternative<tr::MemoryClockError>(invalid.error())) return 1;
@@ -46,6 +60,12 @@ int main() {
         if (!step()) return 1;
         auto out=link.receive(p::Side::first); if (!out) return 1;
         if (*out) { auto packet=p::parse_tcp4(**out); if (!packet || packet->flags!=0x12) return 1; got_synack=true; }
+#ifdef NEXUS_TRANSPORT_SEND_FAULT
+        if (got_synack && block_udp_send) {
+            if (!udp_blocked || udp_n>=0) return 1;
+            block_udp_send=false;
+        }
+#endif
         if (udp_n<0) {
             udp_n=::recvfrom(server.fd,bytes.data(),bytes.size(),0,reinterpret_cast<sockaddr*>(&source),&source_size);
             if (udp_n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK) return 1;
