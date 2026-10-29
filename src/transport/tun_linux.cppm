@@ -15,7 +15,8 @@ export namespace nexus::transport {
         std::optional<std::uint32_t> socket_mark;
     };
     enum class TunDriverError { stopped, invalid_device, invalid_limits, time_reversed };
-    using TunDriverFailure=std::variant<TunDriverError,tcp::TableError,packet::FdFailure,MemoryError>;
+    struct TunRandomFailure { std::error_code error; };
+    using TunDriverFailure=std::variant<TunDriverError,tcp::TableError,packet::FdFailure,MemoryError,TunRandomFailure>;
     struct TunStep { packet::FdStep device; MemoryStep transport; };
     // Single executor owner. The TUN is configured by the caller. No addresses,
     // routes or host state are changed. Stop is terminal, discards queued
@@ -37,6 +38,10 @@ export namespace nexus::transport {
         // may consume it; allocation failures propagate normally.
         [[nodiscard]] static auto create(packet::LinuxTun&& tun,rules::Matcher policy,TunLimits limits={})
             -> std::expected<std::unique_ptr<LinuxTunDirect>,TunDriverFailure>;
+        // Uses Linux getrandom without blocking before processing any packets.
+        // Entropy failure leaves the device and transport untouched.
+        [[nodiscard]] auto step(std::uint64_t now) -> std::expected<TunStep,TunDriverFailure>;
+        // Explicit ISS is for callers providing secure randomness and deterministic tests.
         // Any reported device or transport error must be handled by the caller.
         // ISS must be unpredictable whenever a new TCP flow can be accepted.
         [[nodiscard]] auto step(std::uint64_t now,std::uint32_t iss) -> std::expected<TunStep,TunDriverFailure>;

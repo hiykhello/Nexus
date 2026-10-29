@@ -1,3 +1,6 @@
+module;
+#include <cerrno>
+#include <sys/random.h>
 module nexus.transport.tun_linux;
 import std;
 
@@ -22,6 +25,23 @@ namespace nexus::transport {
         if (!pump) return std::unexpected(TunDriverFailure{pump.error()});
         self->pump_.emplace(std::move(*pump));
         return self;
+    }
+    auto LinuxTunDirect::step(std::uint64_t now) -> std::expected<TunStep,TunDriverFailure> {
+        if (stopped_) return std::unexpected(TunDriverFailure{TunDriverError::stopped});
+        if (initialized_ && now<now_) return std::unexpected(TunDriverFailure{TunDriverError::time_reversed});
+        std::uint32_t iss{};
+        auto bytes=std::as_writable_bytes(std::span(&iss,1));
+        std::size_t offset=0;
+        while (offset<bytes.size()) {
+            auto n=::getrandom(bytes.data()+offset,bytes.size()-offset,GRND_NONBLOCK);
+            if (n<0) {
+                if (errno==EINTR) continue;
+                return std::unexpected(TunDriverFailure{TunRandomFailure{{errno,std::generic_category()}}});
+            }
+            if (!n) return std::unexpected(TunDriverFailure{TunRandomFailure{std::make_error_code(std::errc::io_error)}});
+            offset+=static_cast<std::size_t>(n);
+        }
+        return step(now,iss);
     }
     auto LinuxTunDirect::step(std::uint64_t now,std::uint32_t iss) -> std::expected<TunStep,TunDriverFailure> {
         if (stopped_) return std::unexpected(TunDriverFailure{TunDriverError::stopped});

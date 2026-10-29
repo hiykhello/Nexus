@@ -311,6 +311,8 @@ SS-2022 密钥派生实验使用 `--ss2022=y --crypto=y`，运行 `nexus-blake3-
 unshare -Urn build/linux/x86_64/debug/nexus-transport-tun-linux-test
 python3 tests/transport_tun_linux_e2e.py build/linux/x86_64/debug/nexus-transport-tun-linux-e2e-test
 python3 tests/transport_tun_linux_stop.py build/linux/x86_64/debug/nexus-transport-tun-linux-e2e-test
+xmake build nexus-transport-tun-random-test
+unshare -Urn build/linux/x86_64/debug/nexus-transport-tun-random-test
 xmake build nexus-direct-socket-mark-failure-test
 build/linux/x86_64/debug/nexus-direct-socket-mark-failure-test
 ```

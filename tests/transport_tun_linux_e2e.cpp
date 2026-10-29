@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
             std::println("owned TUN driver carried Linux TCP and UDP direct traffic"); return 0;
         }
         if (n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) return 5;
-        auto result=(*driver)->step(now,0x12345678);
+        auto result=(*driver)->step(now);
         if (!result || result->device.input_error || result->device.output_error || result->transport.device.input_error || result->transport.device.output_error ||
             result->transport.tcp.input.rejected || result->transport.tcp.input.input_error || result->transport.tcp.input.output_error ||
             result->transport.tcp.start_error || result->transport.tcp.direct.error || result->transport.tcp.direct.output_error ||

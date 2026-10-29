@@ -504,6 +504,13 @@ if is_plat("linux") then
         add_files("tests/transport_tun_linux.cpp")
         add_deps("nexus-transport-tun-linux")
 
+    target("nexus-transport-tun-random-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/transport_tun_random.cpp")
+        add_ldflags("-Wl,--wrap=getrandom")
+        add_deps("nexus-transport-tun-linux")
+
     target("nexus-transport-tun-linux-e2e-test")
         set_kind("binary")
         set_default(false)
