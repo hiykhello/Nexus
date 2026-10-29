@@ -70,7 +70,7 @@ export namespace nexus::http2 {
             if (!ptr) return;
             auto& self=*static_cast<ServerSession*>(context);
             auto p=static_cast<Allocation*>(ptr)-1;
-            self.library_used_-=p->size; std::free(p);
+            auto size=p->size; std::free(p); self.library_used_-=size;
         }
         static auto allocate_zero(std::size_t count,std::size_t size,void* context) noexcept -> void* {
             if (size && count>std::numeric_limits<std::size_t>::max()/size) return nullptr;
@@ -298,9 +298,10 @@ export namespace nexus::http2 {
         static auto closed(h2::nghttp2_session*, std::int32_t id, std::uint32_t code, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
             if (auto stream = std::ranges::find(self.streams_, id, &Stream::id); stream != self.streams_.end()) {
-                self.response_reserved_ -= stream->response_size;
-                self.stream_reserved_ -= sizeof(Stream);
+                auto size=stream->response_size;
                 self.streams_.erase(stream);
+                self.response_reserved_ -= size;
+                self.stream_reserved_ -= sizeof(Stream);
             }
             self.events_.closed(self.events_.context, id, code);
             return 0;
@@ -308,7 +309,12 @@ export namespace nexus::http2 {
     public:
         ServerSession(ServerSession const&) = delete;
         auto operator=(ServerSession const&) -> ServerSession& = delete;
-        ~ServerSession() { if (session_) h2::nghttp2_session_del(session_); if (budget_attached_) budget_->detach(this); }
+        ~ServerSession() {
+            if (session_) h2::nghttp2_session_del(session_);
+            streams_.clear(); headers_.discard();
+            response_reserved_=stream_reserved_=0;
+            if (budget_attached_) budget_->detach(this);
+        }
         static auto create(ServerLimits limits, ServerEvents events, std::shared_ptr<memory::Budget> budget = {})
             -> std::expected<std::unique_ptr<ServerSession>, ServerError> {
             if (!limits.concurrent_streams || !limits.header_fields || !limits.header_bytes || !limits.response_bytes || !limits.total_response_bytes ||
@@ -439,8 +445,8 @@ export namespace nexus::http2 {
             auto rc = h2::nghttp2_submit_response2(session_, id, fields->data(), fields->size(), &provider);
             active_ = false;
             if (rc != 0) {
-                response_reserved_ -= body.size();
                 stream->response.reset();
+                response_reserved_ -= body.size();
                 stream->response_size = 0;
                 stream->response_offset = 0;
                 return library_error(rc);

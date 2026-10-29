@@ -3,6 +3,25 @@ import nexus.http2.server;
 import nexus.thirdparty.nghttp2;
 namespace h2 = nex::nghttp2;
 namespace nh = nexus::http2;
+static thread_local bool watch_body=false, body_released_charged=false;
+static thread_local void* body_allocation=nullptr;
+static thread_local nexus::memory::Budget* body_budget=nullptr;
+static thread_local nh::ServerSession* body_session=nullptr;
+void* operator new[](std::size_t size) {
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (watch_body && size==37) body_allocation=p;
+        return p;
+    }
+    throw std::bad_alloc{};
+}
+void operator delete[](void* p) noexcept {
+    if (p && p==body_allocation) {
+        body_released_charged=body_budget && body_session && body_session->response_memory_used()==37 && body_budget->used()>=37;
+        body_allocation=nullptr;
+    }
+    std::free(p);
+}
+void operator delete[](void* p,std::size_t) noexcept { ::operator delete[](p); }
 struct Observed { nh::ServerSession* session = nullptr; unsigned headers = 0; };
 auto on_headers(void* context,std::int32_t,std::span<nh::Header const>,bool,bool) noexcept -> bool {
     ++static_cast<Observed*>(context)->headers; return true;
@@ -324,6 +343,19 @@ int main() {
     if (no_space || no_space.error().library_code!=h2::NGHTTP2_ERR_NOMEM) return 138;
     full.reset();
     if (!nh::ServerSession::create(owned_limits,budget_events,owner)) return 139;
+    for (bool destroy : {false,true}) {
+        auto probe_owner=std::make_shared<nexus::memory::Budget>(owned_limits.shared_memory_bytes);
+        auto probe=nh::ServerSession::create(owned_limits,budget_events,probe_owner);
+        if (!probe || !feed_request(**probe)) return 141;
+        std::array<std::byte,37> probe_body{};
+        body_budget=probe_owner.get(); body_session=probe->get(); body_released_charged=false; watch_body=true;
+        auto response=(**probe).respond_body(1,200,probe_body); watch_body=false;
+        if (!response || !body_allocation) return 142;
+        if (destroy) probe->reset();
+        else if (!(**probe).receive(reset)) return 143;
+        if (body_allocation || !body_released_charged || (destroy && probe_owner->used())) return 144;
+        body_budget=nullptr; body_session=nullptr;
+    }
     auto isolated=std::make_shared<nexus::memory::Budget>(10);
     std::weak_ptr<nexus::memory::Budget> weak=isolated;
     auto survivor=nexus::memory::Budget::reserve(isolated,10);
