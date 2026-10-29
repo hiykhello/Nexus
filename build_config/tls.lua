@@ -320,6 +320,7 @@ if is_plat("linux") and has_config("crypto") then
 
     target("nexus-tls-client-flight")
         set_kind("static")
+        add_deps("nexus-memory-budget", {public = true})
         add_files("../src/tls/client_flight.cppm", {public = true})
         add_files("../src/tls/client_flight.cpp")
         add_deps("nexus-tls-client-auth", "nexus-tls-encrypted-extensions", "nexus-tls-hybrid-client-keys")

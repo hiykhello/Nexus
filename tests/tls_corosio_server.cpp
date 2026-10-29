@@ -17,8 +17,11 @@ using namespace std::chrono_literals;
 static void* watched_unread=nullptr;
 static nexus::memory::Budget* watched_budget=nullptr;
 static bool released_while_reserved=false;
+static void* watched_key_secret=nullptr;
+static bool key_released_while_reserved=false;
 void operator delete(void* p) noexcept {
     if (p && p==watched_unread) { released_while_reserved=watched_budget->reserved()==8; watched_unread=nullptr; }
+    if (p && p==watched_key_secret) { key_released_while_reserved=watched_budget->reserved()==2*t::ApplicationRecords::key_charge; watched_key_secret=nullptr; }
     std::free(p);
 }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
@@ -38,7 +41,30 @@ auto move_assignment_test() -> bool {
     old=std::move(old);
     valid=valid && budget->reserved()==5 && old.unread.size()==5;
     nexus::crypto::Bytes{}.swap(old.unread);
-    return valid && old.release_unread_reservation() && budget->reserved()==0;
+    if (!valid || !old.release_unread_reservation() || budget->reserved()) return false;
+    auto keys_budget=std::make_shared<nexus::memory::Budget>(2*t::ApplicationRecords::key_charge);
+    auto make_keyed=[&]() {
+        auto write=t::RecordLayer::create(t::RecordDirection::send,nexus::crypto::Aead::aes_128_gcm,key,iv);
+        auto read=t::RecordLayer::create(t::RecordDirection::receive,nexus::crypto::Aead::aes_128_gcm,key,iv);
+        nexus::crypto::Bytes first(32,1),second(32,2);
+        auto pointer=first.data();
+        t::ApplicationRecords records(std::move(*write),std::move(*read),16385,16385,nexus::crypto::Hash::sha256,nexus::crypto::Aead::aes_128_gcm,16,t::Secret(std::move(first)),t::Secret(std::move(second)),t::ApplicationRole::server);
+        auto reservation=nexus::memory::Budget::reserve(keys_budget,t::ApplicationRecords::key_charge);
+        if (!reservation || !records.retain_key_reservation(std::move(*reservation))) std::abort();
+        return std::pair{std::move(records),pointer};
+    };
+    {
+        auto first=make_keyed(),second=make_keyed();
+        watched_key_secret=first.second; watched_budget=keys_budget.get(); key_released_while_reserved=false;
+        auto other_budget=std::make_shared<nexus::memory::Budget>(t::ApplicationRecords::key_charge);
+        auto duplicate=nexus::memory::Budget::reserve(other_budget,t::ApplicationRecords::key_charge);
+        if (!duplicate || first.first.retain_key_reservation(std::move(*duplicate)) || duplicate->size()!=t::ApplicationRecords::key_charge) return false;
+        first.first=std::move(second.first);
+        if (watched_key_secret || !key_released_while_reserved || keys_budget->reserved()!=t::ApplicationRecords::key_charge) return false;
+        first.first=std::move(first.first);
+        if (keys_budget->reserved()!=t::ApplicationRecords::key_charge) return false;
+    }
+    return keys_budget->reserved()==0;
 }
 auto file(char const* path) -> nexus::crypto::Bytes { std::ifstream in(path,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 auto now() -> std::uint64_t { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }

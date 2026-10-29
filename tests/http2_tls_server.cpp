@@ -55,7 +55,7 @@ auto serve(Fixture& f) -> capy::task<> {
     auto handshake=co_await t::detail::server_handshake(f.socket,*f.handshake,f.budget);
     if (!handshake || !std::ranges::equal(f.handshake->negotiated_alpn(),nexus::crypto::Bytes{'h','2'})) { f.done=true; co_return; }
     h::TlsServerConnection connection(f.socket,*f.session,std::move(handshake->records),std::move(handshake->unread));
-    if (!handshake->release_unread_reservation() || f.budget->reserved()) { f.done=true; co_return; }
+    if (!handshake->release_unread_reservation() || f.budget->reserved()!=t::ApplicationRecords::key_charge) { f.done=true; co_return; }
     auto deadline=std::chrono::steady_clock::now()+(f.timeout ? 150ms : 5000ms);
     if (f.cancel) capy::run_async(f.context.get_executor())(cancel_later(connection,f.canceled));
     auto premature=co_await connection.close_notify(deadline);

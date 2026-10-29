@@ -21,6 +21,9 @@ export namespace nexus::tls {
         std::optional<HandshakeDecoder> decoder_;
         ServerFlight(ServerHandshakeKeys&& keys, ApplicationRecords&& application, std::vector<crypto::Bytes>&& records) noexcept;
     public:
+        [[nodiscard]] auto retain_application_key_reservation(memory::Budget::Reservation&& reservation) noexcept -> bool {
+            return application_ && application_->retain_key_reservation(std::move(reservation));
+        }
         // Decryption allocates up to the ciphertext payload length before it
         // knows the plaintext size. Decoder output is limited to one message.
         static constexpr std::size_t finished_temporary_charge=16640+48+52+sizeof(HandshakeMessage);

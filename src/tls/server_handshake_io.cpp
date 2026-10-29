@@ -150,6 +150,7 @@ namespace nexus::tls {
             generated_hello_scratch.reset();
             auto& hello=keys->server_hello; if (hello.size()>16384) return fail(ServerHandshakeIoError::protocol_error);
             std::optional<memory::Budget::Reservation> flight_scratch;
+            std::optional<memory::Budget::Reservation> application_keys;
             if (budget_) {
                 hello_reservation_=memory::Budget::reserve(budget_,hello.size()+5);
                 if (!hello_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
@@ -172,12 +173,15 @@ namespace nexus::tls {
                 if (!flight_scratch) return fail(ServerHandshakeIoError::budget_exceeded);
                 finished_decoder_reservation_=memory::Budget::reserve(budget_,ServerFlight::finished_decoder_charge);
                 if (!finished_decoder_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
+                application_keys=memory::Budget::reserve(budget_,ApplicationRecords::key_charge);
+                if (!application_keys) return fail(ServerHandshakeIoError::budget_exceeded);
             }
             server_hello_.resize(hello.size()+5);
             server_hello_[0]=22; server_hello_[1]=3; server_hello_[2]=3;
             server_hello_[3]=static_cast<std::uint8_t>(hello.size()>>8); server_hello_[4]=static_cast<std::uint8_t>(hello.size());
             std::ranges::copy(hello,server_hello_.begin()+5);
             auto flight=ServerFlight::create(std::move(*keys),*credential_,required_alpn_); if (!flight) return fail(ServerHandshakeIoError::protocol_error);
+            if (application_keys && !flight->retain_application_key_reservation(std::move(*application_keys))) return fail(ServerHandshakeIoError::protocol_error);
             generated_hello_reservation.reset();
             flight_scratch.reset();
             if (flight_reservation_) {

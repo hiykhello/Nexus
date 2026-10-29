@@ -2,6 +2,7 @@ export module nexus.tls.client_flight;
 export import nexus.tls.client_auth;
 export import nexus.tls.encrypted_extensions;
 export import nexus.tls.hybrid_client_keys;
+export import nexus.memory.budget;
 import std;
 
 export namespace nexus::tls {
@@ -11,6 +12,8 @@ export namespace nexus::tls {
     enum class ApplicationRole { client, server };
     // Owns one set of application traffic keys. Limits include the TLSInnerPlaintext type and padding.
     class ApplicationRecords {
+        // Declared first so it outlives both record keys and traffic secrets.
+        std::optional<memory::Budget::Reservation> key_reservation_;
         RecordLayer write_, read_;
         std::size_t write_limit_, read_limit_;
         ApplicationRole role_;
@@ -24,6 +27,11 @@ export namespace nexus::tls {
         std::size_t server_handshake_size_=0;
         [[nodiscard]] auto rotate(bool sending) -> bool;
     public:
+        static constexpr std::size_t key_charge=2*(48+32);
+        [[nodiscard]] auto retain_key_reservation(memory::Budget::Reservation&& reservation) noexcept -> bool {
+            if (key_reservation_ || reservation.size()<key_charge) return false;
+            key_reservation_=std::move(reservation); return true;
+        }
         [[nodiscard]] auto role() const noexcept -> ApplicationRole { return role_; }
         // A new transport adapter cannot inherit a pending control message or
         // a closed direction without also inheriting its external I/O state.

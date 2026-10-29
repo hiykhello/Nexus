@@ -149,7 +149,7 @@ int main(int argc,char** argv) {
         auto plaintext=list+8+extensions+8+*signature+52;
         auto output=plaintext+(22+sizeof(c::Bytes))*((plaintext+16383)/16384);
         auto scratch=2*(list+8)+16384+t::ServerHandshakeIo::flight_seal_scratch_charge+(8+*signature)+extensions+52;
-        auto peak=std::max(t::ServerHandshakeIo::generated_hello_scratch_charge+t::ServerHandshakeIo::finished_keys_charge,server->pending_output().size()+output+scratch+(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge));
+        auto peak=std::max(t::ServerHandshakeIo::generated_hello_scratch_charge+t::ServerHandshakeIo::finished_keys_charge,server->pending_output().size()+output+scratch+(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge));
         auto limit=t::ServerHandshakeIo::hello_input_charge+2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+peak-(enough ? 0 : 1);
         auto bounded_budget=std::make_shared<nexus::memory::Budget>(limit);
         auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
@@ -174,11 +174,11 @@ int main(int argc,char** argv) {
         if (!candidate || !candidate->feed(input,2)) return 84;
         while (!candidate->pending_output().empty()) if (!candidate->written(candidate->pending_output().size(),2)) return 85;
         std::optional<nexus::memory::Budget::Reservation> blocker;
-        if (deny_input) blocker=nexus::memory::Budget::reserve(input_budget,input_budget->limit()-t::ServerHandshakeIo::finished_input_charge+1-(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge));
+        if (deny_input) blocker=nexus::memory::Budget::reserve(input_budget,input_budget->limit()-t::ServerHandshakeIo::finished_input_charge+1-(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge));
         std::uint8_t first=23; auto part=candidate->feed(std::span{&first,1},3);
         if (deny_input) {
             if (!blocker || part || part.error()!=t::ServerHandshakeIoError::budget_exceeded || input_budget->reserved()!=blocker->size()) return 86;
-        } else if (!part || input_budget->reserved()!=t::ServerHandshakeIo::finished_input_charge+(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge) || !candidate->cancel() || input_budget->reserved()) return 87;
+        } else if (!part || input_budget->reserved()!=t::ServerHandshakeIo::finished_input_charge+(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge) || !candidate->cancel() || input_budget->reserved()) return 87;
     }
     if (server->written(server->pending_output().size()+1,102).error()!=t::ServerHandshakeIoError::invalid_argument) return 11;
     watched_hello=const_cast<std::uint8_t*>(server->pending_output().data());
@@ -198,7 +198,7 @@ int main(int argc,char** argv) {
         if (held_before<record.size()+index_charge || handshake_budget->reserved()!=held_before-record.size()-index_charge) return 75;
         records.push_back(std::move(record));
     }
-    if (records.size()<(argc>=4 ? 3u : 2u) || records[0].size()<6 || !hello_released || !flight_released || watched_flight || handshake_budget->reserved()!=(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge)) return 13;
+    if (records.size()<(argc>=4 ? 3u : 2u) || records[0].size()<6 || !hello_released || !flight_released || watched_flight || handshake_budget->reserved()!=(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge)) return 13;
     auto client=t::client_handshake_keys(*wire,std::span{records[0]}.subspan(5),std::move(*key)); if (!client) return 14;
     auto decoder=t::HandshakeDecoder::create(1048584); if (!decoder) return 15; bool server_finished=false, alpn_seen=false;
     for (std::size_t i=1;i<records.size();++i) {
@@ -223,13 +223,13 @@ int main(int argc,char** argv) {
     auto b=client->write.seal(t::ContentType::handshake,std::span{*finished}.subspan(3)); if (!a || !b) return 24;
     c::Bytes ccs{20,3,3,0,1,1}; for (auto const* record:{&ccs,&*a,&*b}) for (std::size_t i=0;i<record->size();++i) {
         auto byte=(*record)[i]; auto result=server->feed(std::span{&byte,1},104); if (!result || result->consumed!=1) return 25;
-        auto expected=server->complete() ? 0 : (t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge)+(i+1==record->size() ? 0 : t::ServerHandshakeIo::finished_input_charge);
+        auto expected=server->complete() ? t::ApplicationRecords::key_charge : (t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge)+(i+1==record->size() ? 0 : t::ServerHandshakeIo::finished_input_charge);
         if (handshake_budget->reserved()!=expected) return 82;
         if (record==&*a && i+1==record->size()) {
             auto moved=std::move(*server);
-            if (server->tick(104) || handshake_budget->reserved()!=(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge)) return 110;
+            if (server->tick(104) || handshake_budget->reserved()!=(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge)) return 110;
             *server=std::move(moved);
-            if (moved.tick(104) || handshake_budget->reserved()!=(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge)) return 111;
+            if (moved.tick(104) || handshake_budget->reserved()!=(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge)) return 111;
         }
     }
     if (!server->complete() || server->feed(input,105)->consumed!=0 ||
@@ -241,9 +241,14 @@ int main(int argc,char** argv) {
     auto send=t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,appkey->view(),iv->view());
     c::Bytes data{'o','k'}; auto encrypted=send->seal(t::ContentType::application_data,data); auto opened=app->open(*encrypted);
     if (!opened || *opened!=data) return 28;
+    auto update=app->key_update(false);
+    if (!update || handshake_budget->reserved()!=t::ApplicationRecords::key_charge) return 114;
     c::Bytes ticket{4,0,0,14,0,0,0,1,0,0,0,2,0,0,1,7,0,0};
     auto client_ticket=send->seal(t::ContentType::handshake,ticket);
     if (!client_ticket || app->open_event(*client_ticket) || app->seal(data)) return 61;
+    if (handshake_budget->reserved()!=t::ApplicationRecords::key_charge) return 115;
+    app=std::unexpected(t::ServerHandshakeIoError::invalid_state);
+    if (handshake_budget->reserved()) return 116;
     auto c2=credential(); auto timeout=t::ServerHandshakeIo::create(std::move(*c2),1,5); if (!timeout || timeout->tick(5).error()!=t::ServerHandshakeIoError::timeout || timeout->tick(6)) return 29;
     auto c3=credential(); auto cancel=t::ServerHandshakeIo::create(std::move(*c3),1,5); if (!cancel || !cancel->cancel() || cancel->feed(input,2)) return 30;
     auto c4=credential(); auto eof=t::ServerHandshakeIo::create(std::move(*c4),1,5); if (!eof || eof->finish_input(2).error()!=t::ServerHandshakeIoError::protocol_error) return 31;
