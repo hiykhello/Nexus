@@ -70,17 +70,20 @@ namespace nexus::tls {
         hash=keys.transcript.snapshot(); if (!hash) return std::unexpected(ServerFlightError::crypto_error);
         auto verify=finished_verify_data(keys.hash,keys.server_traffic.view(),*hash); if (!verify) return std::unexpected(ServerFlightError::crypto_error);
         auto finished=HandshakeDecoder::encode(20,verify->view()); if (!finished || !keys.transcript.append(*finished)) return std::unexpected(ServerFlightError::crypto_error);
-        hash=keys.transcript.snapshot(); auto master=master_secret(keys.hash,keys.handshake_secret.view());
-        if (!hash || !master) return std::unexpected(ServerFlightError::crypto_error);
-        auto ct=derive_secret(keys.hash,master->view(),"c ap traffic",*hash), st=derive_secret(keys.hash,master->view(),"s ap traffic",*hash);
-        if (!ct || !st) return std::unexpected(ServerFlightError::crypto_error);
-        auto ck=expand_label(keys.hash,ct->view(),"key",{},key_size), ci=expand_label(keys.hash,ct->view(),"iv",{},12);
-        auto sk=expand_label(keys.hash,st->view(),"key",{},key_size), si=expand_label(keys.hash,st->view(),"iv",{},12);
-        if (!ck || !ci || !sk || !si) return std::unexpected(ServerFlightError::crypto_error);
-        auto read=RecordLayer::create(RecordDirection::receive,algorithm,ck->view(),ci->view());
-        auto write=RecordLayer::create(RecordDirection::send,algorithm,sk->view(),si->view());
-        if (!read || !write) return std::unexpected(ServerFlightError::crypto_error);
-        ApplicationRecords application(std::move(*write),std::move(*read),16385,16385,keys.hash,algorithm,key_size,std::move(*st),std::move(*ct),ApplicationRole::server);
+        auto application=[&]() -> std::expected<ApplicationRecords,ServerFlightError> {
+            auto transcript_hash=keys.transcript.snapshot(); auto master=master_secret(keys.hash,keys.handshake_secret.view());
+            if (!transcript_hash || !master) return std::unexpected(ServerFlightError::crypto_error);
+            auto ct=derive_secret(keys.hash,master->view(),"c ap traffic",*transcript_hash), st=derive_secret(keys.hash,master->view(),"s ap traffic",*transcript_hash);
+            if (!ct || !st) return std::unexpected(ServerFlightError::crypto_error);
+            auto ck=expand_label(keys.hash,ct->view(),"key",{},key_size), ci=expand_label(keys.hash,ct->view(),"iv",{},12);
+            auto sk=expand_label(keys.hash,st->view(),"key",{},key_size), si=expand_label(keys.hash,st->view(),"iv",{},12);
+            if (!ck || !ci || !sk || !si) return std::unexpected(ServerFlightError::crypto_error);
+            auto read=RecordLayer::create(RecordDirection::receive,algorithm,ck->view(),ci->view());
+            auto write=RecordLayer::create(RecordDirection::send,algorithm,sk->view(),si->view());
+            if (!read || !write) return std::unexpected(ServerFlightError::crypto_error);
+            return ApplicationRecords(std::move(*write),std::move(*read),16385,16385,keys.hash,algorithm,key_size,std::move(*st),std::move(*ct),ApplicationRole::server);
+        }();
+        if (!application) return std::unexpected(application.error());
         std::vector<crypto::Bytes> records;
         auto total=extensions.size()+certificate->size()+signature->size()+finished->size();
         records.reserve((total+16383)/16384);
@@ -104,7 +107,7 @@ namespace nexus::tls {
             records.push_back(std::move(*record));
         }
         auto decoder=HandshakeDecoder::create(48); if (!decoder) return std::unexpected(ServerFlightError::crypto_error);
-        ServerFlight flight(std::move(keys),std::move(application),std::move(records));
+        ServerFlight flight(std::move(keys),std::move(*application),std::move(records));
         flight.decoder_.emplace(std::move(*decoder)); return flight;
     }
     auto ServerFlight::client_finished(std::span<std::uint8_t const> record) -> std::expected<bool,ServerFlightError> {
