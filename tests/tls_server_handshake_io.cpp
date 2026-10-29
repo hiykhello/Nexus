@@ -224,7 +224,12 @@ int main(int argc,char** argv) {
     auto a=client->write.seal(t::ContentType::handshake,std::span{*finished}.first(3));
     auto b=client->write.seal(t::ContentType::handshake,std::span{*finished}.subspan(3)); if (!a || !b) return 24;
     c::Bytes ccs{20,3,3,0,1,1}; for (auto const* record:{&ccs,&*a,&*b}) for (std::size_t i=0;i<record->size();++i) {
+        if (record==&*b && i+1==record->size()) {
+            seal_budget=handshake_budget.get(); seal_expected=t::ServerHandshakeIo::finished_input_charge+t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge;
+            derived_key_charged=false;
+        }
         auto byte=(*record)[i]; auto result=server->feed(std::span{&byte,1},104); if (!result || result->consumed!=1) return 25;
+        if (record==&*b && i+1==record->size()) { seal_budget=nullptr; if (!derived_key_charged) return 117; }
         auto expected=server->complete() ? t::ApplicationRecords::key_charge : (t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge)+(i+1==record->size() ? 0 : t::ServerHandshakeIo::finished_input_charge);
         if (handshake_budget->reserved()!=expected) return 82;
         if (record==&*a && i+1==record->size()) {
