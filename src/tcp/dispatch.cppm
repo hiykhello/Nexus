@@ -4,7 +4,7 @@ export import nexus.rules;
 import std;
 
 export namespace nexus::tcp {
-    enum class DispatchError { invalid_packet, unknown_flow, table_error, output_error, blocked, policy_error };
+    enum class DispatchError { invalid_packet, invalid_target, unknown_flow, table_error, output_error, blocked, policy_error };
     struct DispatchFailure {
         DispatchError error;
         std::optional<packet::PacketError> packet_error;

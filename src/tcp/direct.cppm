@@ -3,7 +3,7 @@ export import nexus.tcp.engine;
 import std;
 
 export namespace nexus::tcp {
-    enum class DirectError { blocked, policy_error, full, duplicate, not_found, not_established, time_reversed, connect_timeout };
+    enum class DirectError { blocked, invalid_target, policy_error, full, duplicate, not_found, not_established, time_reversed, connect_timeout };
     using DirectFailure = std::variant<DirectError, EngineError, ConnectionError, std::error_code>;
     struct DirectStep {
         std::optional<ConnectionId> id;

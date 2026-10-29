@@ -18,6 +18,15 @@ int main() {
         blocked->id || blocked->delivered || table->size()) return 1;
     auto no_reply = link.receive(p::Side::first);
     if (!no_reply || *no_reply) return 1;
+    for (auto [address,port] : {std::pair{p::Address4{},std::uint16_t{80}},
+                                std::pair{p::Address4{198,51,100,7},std::uint16_t{0}}}) {
+        auto invalid_syn=syn; invalid_syn.destination=address; invalid_syn.destination_port=port;
+        auto packet=p::make_tcp4(invalid_syn);
+        if (!packet || !link.send(p::Side::first,*packet)) return 1;
+        auto rejected=engine.step(0,50);
+        if (!rejected || !rejected->rejected || rejected->rejected->error!=t::DispatchError::invalid_target ||
+            rejected->id || rejected->delivered || table->size()) return 1;
+    }
     auto corrupt = *denied; corrupt.back() ^= 1;
     if (!link.send(p::Side::first, corrupt)) return 1;
     auto bad = engine.step(1, 50);

@@ -37,6 +37,8 @@ namespace nexus::tcp {
         if (flow->state() != ConnectionState::established && flow->state() != ConnectionState::peer_closed)
             return std::unexpected(DirectFailure{DirectError::not_established});
         auto const& a = target->address;
+        if (!target->port || std::ranges::all_of(a,[](auto b) { return b==0; }))
+            return std::unexpected(DirectFailure{DirectError::invalid_target});
         auto text = std::format("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
         auto match = s.policy.match({.ip=text});
         if (!match) return std::unexpected(DirectFailure{DirectError::policy_error});

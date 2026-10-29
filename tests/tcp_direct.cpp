@@ -19,6 +19,22 @@ int main() {
     if (::getsockname(listener.fd, reinterpret_cast<sockaddr*>(&address), &length)) return 1;
     p::MemoryLink link;
     auto table = t::ConnectionTable::create(2, 8);
+    t::MemoryEngine engine(link, *table);
+    t::Direct4 invalid_direct(*table, engine, r::Matcher{}, 2);
+    for (auto [destination,port] : {std::pair{p::Address4{},ntohs(address.sin_port)},
+                                    std::pair{p::Address4{127,0,0,1},std::uint16_t{0}}}) {
+        p::Tcp4View bad_syn{.source={10,0,0,1},.destination=destination,.source_port=1234,
+                            .destination_port=port,.sequence=99,.flags=2};
+        auto bad_id=table->open(bad_syn,50,0);
+        if (!bad_id) return 1;
+        auto bad_ack=bad_syn; bad_ack.sequence=100; bad_ack.acknowledgement=51; bad_ack.flags=0x10; bad_ack.window=8;
+        if (!table->get(*bad_id)->input(bad_ack,0)) return 1;
+        auto result=invalid_direct.start(*bad_id,0);
+        if (result || std::get<t::DirectError>(result.error())!=t::DirectError::invalid_target || invalid_direct.size()) return 1;
+        if (!table->abort(*bad_id)) return 1;
+    }
+    pollfd no_connection{listener.fd,POLLIN,0};
+    if (::poll(&no_connection,1,50)!=0) return 1;
     p::Tcp4View syn{.source={10,0,0,1}, .destination={127,0,0,1}, .source_port=1234,
                     .destination_port=ntohs(address.sin_port), .sequence=99, .flags=2};
     auto id = table->open(syn, 50, 0);
@@ -29,7 +45,6 @@ int main() {
                     .destination_port=syn.destination_port, .sequence=100, .acknowledgement=51,
                     .flags=0x18, .window=8, .payload=ping};
     if (!flow->input(ack, 0)) return 1;
-    t::MemoryEngine engine(link, *table);
     auto deny = r::Matcher::compile({{{"ip-cidr", "127.0.0.0/8"}}});
     if (!deny) return 1;
     t::Direct4 blocked(*table, engine, std::move(*deny), 2);
