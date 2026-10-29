@@ -1,4 +1,4 @@
-"""Drive the TCP direct path using a Linux client in a disposable network namespace."""
+"""Drive TCP and UDP direct paths using a client in a disposable network namespace."""
 import array
 import fcntl
 import os
@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 
 binary = str(pathlib.Path(sys.argv[1]).resolve())
 if len(sys.argv) == 2:
@@ -15,6 +16,9 @@ if len(sys.argv) == 2:
     origin.bind(("127.0.0.2", 0))
     origin.listen(1)
     origin.settimeout(12)
+    udp_origin = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_origin.bind(("127.0.0.2", 0))
+    udp_origin.settimeout(12)
     parent, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     parent.settimeout(12)
     stop_read, stop_write = os.pipe()
@@ -37,10 +41,23 @@ if len(sys.argv) == 2:
         except Exception as exc:
             errors.append(exc)
     thread = threading.Thread(target=serve, daemon=True)
+    def serve_udp():
+        try:
+            data, peer = udp_origin.recvfrom(64)
+            if data != b"udp-request":
+                raise RuntimeError(f"unexpected UDP request {data!r}")
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rogue:
+                rogue.bind(("127.0.0.2", 0))
+                rogue.sendto(b"unexpected", peer)
+                time.sleep(0.05)
+            udp_origin.sendto(b"udp-response", peer)
+        except Exception as exc:
+            errors.append(exc)
+    udp_thread = threading.Thread(target=serve_udp, daemon=True)
     try:
         namespace = subprocess.Popen(["unshare", "-Urn", sys.executable, __file__, binary,
                                       str(os.stat('/proc/self/ns/net').st_ino), str(child.fileno()),
-                                      str(origin.getsockname()[1])], pass_fds=(child.fileno(),))
+                                      str(origin.getsockname()[1]), str(udp_origin.getsockname()[1])], pass_fds=(child.fileno(),))
         child.close()
         msg, ancillary, _, _ = parent.recvmsg(1, socket.CMSG_SPACE(array.array('i').itemsize))
         descriptors = array.array('i')
@@ -55,11 +72,13 @@ if len(sys.argv) == 2:
         finally:
             os.close(fd)
         thread.start()
+        udp_thread.start()
         parent.sendall(b'G')
         if namespace.wait(timeout=15):
             raise RuntimeError("isolated TCP client failed")
         thread.join(timeout=12)
-        if thread.is_alive() or errors:
+        udp_thread.join(timeout=12)
+        if thread.is_alive() or udp_thread.is_alive() or errors:
             raise RuntimeError(f"upstream failed: {errors}")
         os.write(stop_write, b'X')
         if engine.wait(timeout=5):
@@ -72,6 +91,7 @@ if len(sys.argv) == 2:
         parent.close()
         child.close()
         origin.close()
+        udp_origin.close()
         os.close(stop_read)
         os.close(stop_write)
 else:
@@ -89,6 +109,19 @@ else:
         if control.recv(1) != b'G':
             raise RuntimeError("transport fixture did not start")
         with socket.create_connection(("127.0.0.2", int(sys.argv[4])), timeout=10) as client:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                udp.settimeout(10)
+                udp.sendto(b"udp-request", ("127.0.0.2", int(sys.argv[5])))
+                data, sender = udp.recvfrom(64)
+                if data != b"udp-response" or sender != ("127.0.0.2", int(sys.argv[5])):
+                    raise RuntimeError(f"unexpected UDP response {data!r} from {sender!r}")
+                udp.settimeout(0.1)
+                try:
+                    extra = udp.recvfrom(64)
+                except TimeoutError:
+                    pass
+                else:
+                    raise RuntimeError(f"unexpected extra UDP response {extra!r}")
             client.sendall(b"hello")
             client.shutdown(socket.SHUT_WR)
             response = bytearray()

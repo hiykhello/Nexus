@@ -16,13 +16,13 @@ int main(int argc,char** argv) {
     if (!table || !pump) return 3;
     tr::MemoryEngine engine(link,*table,nexus::rules::Matcher{},4,u::Mapping::endpoint_independent,
                             u::Filtering::address_port_dependent,{4,4,60000},1500,{1500,16,24000});
-    auto start=std::chrono::steady_clock::now(); bool opened=false, connected=false;
+    auto start=std::chrono::steady_clock::now(); bool opened=false, connected=false, udp_input=false, udp_output=false;
     while (std::chrono::steady_clock::now()-start<15s) {
         char signal{}; auto n=::read(stop_fd,&signal,1);
         if (n==1) {
             auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count());
-            if (!opened || !connected || !engine.stop(now) || table->size()) return 4;
-            std::println("isolated Linux TCP client reached a real direct upstream through TUN"); return 0;
+            if (!opened || !connected || !udp_input || !udp_output || !engine.stop(now) || table->size()) return 4;
+            std::println("isolated Linux TCP and UDP clients reached real direct upstreams through TUN"); return 0;
         }
         if (n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) return 5;
         auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count());
@@ -34,6 +34,8 @@ int main(int argc,char** argv) {
             result->udp.rejected || result->udp.ipv4_error || result->udp.ipv6_error || result->udp.output_error) return 7;
         opened |= result->tcp.input.opened;
         connected |= result->tcp.direct.connected;
+        udp_input |= result->udp.input;
+        udp_output |= result->udp.delivered;
         std::this_thread::sleep_for(1ms);
     }
     return 8;
