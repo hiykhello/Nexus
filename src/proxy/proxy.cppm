@@ -58,7 +58,9 @@ namespace nexus::proxy {
         std::unique_ptr<dns::FakeIpShared::Target> fakeip_target;
         std::uint64_t fakeip_view=0;
 #endif
-        std::function<void()> cancel_dns;
+        // Borrowed from the active DNS query on this session's executor.
+        void* dns_operation = nullptr;
+        void (*cancel_dns)(void*) noexcept = nullptr;
         pro::proxy<TunnelFacade> tunnel;
         std::shared_ptr<std::vector<TunnelFactory> const> tunnel_factories;
         Clock::time_point started = Clock::now();

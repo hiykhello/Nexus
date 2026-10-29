@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- DNS 查询协程持有 `DualAddressResolver`，会话仅借用取消句柄，作用域注册在正常返回、异常或协程销毁时先注销再释放解析器；epoll 与 io_uring 的 socket 取消排队完成，调用方与查询均在所属 worker 执行器。双地址解析、完整代理 DNS、bootstrap 地址重试、VLESS 并发和停止、VLESS/SS 候选重置及停止通过；针对实际 DNS 查询的上下文 abandon 和异常析构交错尚未独立验证。DNS 超时回归更新为已有的 SOCKS 超时码或截止时关闭。
+
 - 普通 HTTP 转发的上传、响应和排空改由父任务持有并等待：响应完成后通知上传分支接手客户端排空，响应失败和停止关闭会话并排空子任务；拒绝请求也由父任务直接等待排空。正文处理缓冲随正文子任务结束释放。单/双 worker 的上传、提前响应、`100-continue`、五秒排空和活动停止，以及 SS-2022/VLESS 隧道提前响应、Fake-IP 回归通过。
 
 - SOCKS 和 HTTP CONNECT 的两个 relay 方向由握手父任务等待并借用会话，失败时关闭并排空，半关闭保留另一方向；移除了 relay 完成计数和共享回调。直接 SOCKS/CONNECT 的双向半关闭、活动停止，VLESS/SS 出站、Fake-IP 和普通 HTTP 上传回归通过。GCC 16 下尝试在 `co_return` 条件表达式的两支分别 `co_await` 隧道方向时观察到同方向重复启动、SS 流提前关闭；改为明确分支后 sing-box 回归连续十轮通过，尚未隔离为独立编译器问题。
@@ -128,7 +130,7 @@
 
 ## 当前
 
-- 用户要求梳理并重构 `shared_ptr`，尤其避免以引用计数延长异步操作生命周期。VLESS/SS 入站 relay、SOCKS/HTTP CONNECT relay、普通 HTTP 上传/排空和拨号错误监视由父任务等待并借用其持有的对象。入站父任务当前以无 stop token 启动；固定 Capy `when_all` 启动失败、正常取消、异常排空及双 socket 读取时执行上下文 abandon 已验证。VLESS 的 `tests/vless_relay_throw.py` 覆盖准备与协程异常及活动 relay 停止。剩余 shared owner 包括 DNS 取消、预算 reservation、不可变凭据、Fake-IP lease 等，须按真实所有权审查。
+- 用户要求梳理并重构 `shared_ptr`，尤其避免以引用计数延长异步操作生命周期。VLESS/SS 入站 relay、SOCKS/HTTP CONNECT relay、普通 HTTP 上传/排空、拨号错误监视和 DNS 取消由父任务持有并等待或借用。入站父任务当前以无 stop token 启动；固定 Capy `when_all` 启动失败、正常取消、异常排空及双 socket 读取时执行上下文 abandon 已验证。剩余 shared owner 包括预算 reservation、不可变凭据、Fake-IP lease 等，须按真实所有权审查。
 
 - HTTP/2 TLS 输入、输出及 KeyUpdate 轮换覆盖主要数组的逻辑请求；仍需核查常驻密钥、握手及应用记录其他临时对象和实际容量的记账边界。
 - HTTP/2 TLS 明文输入和应用输出密文/写副本有逻辑预留；TLS 输出控制记录及写副本也有逻辑预留；输入密文记录也有逻辑预留；步骤输出数组也有逻辑预留；常驻读取缓冲也有逻辑预留；握手重组、容量、协程帧、临时副本和传输开销尚无完整计费。
@@ -143,7 +145,7 @@
 
 ## 下一步
 
-- 审查 DNS 取消闭包、会话 owner 和其他 `shared_ptr` 的真实所有权，优先消除只为延长异步操作而持有的引用；继续检查 HTTP 早响应、隧道和跨线程取消的更复杂交错。
+- 审查会话 owner 和其他 `shared_ptr` 的真实所有权，优先消除只为延长异步操作而持有的引用；补实际 DNS 查询异常与上下文 abandon 的析构验证，继续检查 HTTP 早响应、隧道和跨线程取消的更复杂交错。
 
 - 继续覆盖客户端握手和应用密钥、密钥派生临时对象及共享预算竞争；服务端应用记录的常驻密钥已跨交接计费，实际容量和加密库内部对象仍不在逻辑额度内。
 

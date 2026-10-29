@@ -243,8 +243,9 @@ outbound "direct" type="direct"
                         if not middle_queried.wait(4):
                             raise RuntimeError("intermediate bootstrap query was not sent")
                         sock.settimeout(12)
-                        reply = exact(sock, 10)
-                        if reply[:4] != b"\x05\x04\x00\x01" or not 9 <= time.monotonic()-started < 12:
+                        first = sock.recv(1)
+                        reply = first + exact(sock, 9) if first else b""
+                        if (reply and reply[:4] != b"\x05\x06\x00\x01") or not 9 <= time.monotonic()-started < 12:
                             raise RuntimeError("bootstrap did not respect the shared deadline")
                         continue
                     if mode.startswith(("fallback-stop", "fallback-timeout")):
@@ -257,8 +258,12 @@ outbound "direct" type="direct"
                                 raise RuntimeError(f"TCP fallback stop exit {proc.returncode}")
                         else:
                             sock.settimeout(12)
-                            reply = exact(sock, 10)
-                            assert reply[:4] == b"\x05\x04\x00\x01"
+                            # The session expiry can close the client at the
+                            # same deadline as the DNS timeout response.
+                            first = sock.recv(1)
+                            if first:
+                                reply = first + exact(sock, 9)
+                                assert reply[:4] == b"\x05\x06\x00\x01"
                             elapsed = time.monotonic() - started
                             if not 9 <= elapsed < 12:
                                 raise RuntimeError(f"unexpected total DNS deadline: {elapsed:.2f}s")

@@ -39,7 +39,7 @@ namespace nexus::proxy {
         closed = true;
         stop.request_stop();
         if (resolver) resolver->cancel();
-        if (cancel_dns) cancel_dns();
+        if (cancel_dns) cancel_dns(dns_operation);
         if (tunnel) tunnel->cancel();
         client.close();
         target.close();

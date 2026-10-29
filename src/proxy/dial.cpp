@@ -63,11 +63,17 @@ namespace nexus::proxy {
                 co_return endpoints;
             }
             for (auto const& upstream : servers) {
-                auto operation=std::make_shared<dns::detail::DualAddressResolver>(context,session.dns->cache,server.tcp,family,
+                dns::detail::DualAddressResolver operation(context,session.dns->cache,server.tcp,family,
                     session.dns->routing.disable_cache,session.dns->routing.edns);
-                session.cancel_dns=[operation] { operation->cancel(); };
-                auto resolved=co_await operation->resolve(upstream,server_index+1,name,session.started+std::chrono::seconds(10));
-                session.cancel_dns={};
+                struct Registration {
+                    Session& session;
+                    ~Registration() { session.cancel_dns=nullptr; session.dns_operation=nullptr; }
+                } registration{session};
+                session.dns_operation=&operation;
+                session.cancel_dns=[](void* pointer) noexcept {
+                    static_cast<dns::detail::DualAddressResolver*>(pointer)->cancel();
+                };
+                auto resolved=co_await operation.resolve(upstream,server_index+1,name,session.started+std::chrono::seconds(10));
                 if (session.closed) co_return std::unexpected(dns::detail::ResolveError::canceled);
                 if (!resolved) {
                     if (resolved.error()==dns::detail::ResolveError::transport) continue;
