@@ -92,25 +92,26 @@ struct JoinState {
     bool drained_on_return = false;
 };
 
-auto join_child(capy::async_waker& waker, JoinState& state, unsigned index, bool fail)
+auto join_child(capy::async_waker& waker, JoinState& state, unsigned index, bool fail, bool signal = false)
     -> capy::task<capy::results<>> {
     Guard guard{state.destroyed[index]};
     state.entered[index] = true;
     auto [error] = co_await waker.wait();
     if (!error && fail) throw std::runtime_error("child failure");
+    if (!error && signal) co_return capy::results<>{std::make_error_code(std::errc::operation_canceled)};
     co_return capy::results<>{error};
 }
 
-auto join_parent(capy::async_waker& first, capy::async_waker& second, JoinState& state, bool fail, bool range)
+auto join_parent(capy::async_waker& first, capy::async_waker& second, JoinState& state, unsigned mode, bool range)
     -> capy::task<> {
     try {
         if (range) {
             std::vector<capy::task<capy::results<>>> children;
-            children.push_back(join_child(first, state, 0, fail));
+            children.push_back(join_child(first, state, 0, mode == 1, mode == 3));
             children.push_back(join_child(second, state, 1, false));
             (void)co_await capy::when_all(std::move(children));
         } else {
-            (void)co_await capy::when_all(join_child(first, state, 0, fail),
+            (void)co_await capy::when_all(join_child(first, state, 0, mode == 1, mode == 3),
                                          join_child(second, state, 1, false));
         }
     } catch (std::runtime_error const&) { state.threw = true; }
@@ -118,7 +119,7 @@ auto join_parent(capy::async_waker& first, capy::async_waker& second, JoinState&
     state.returned = true;
 }
 
-// mode: parent cancellation, child exception, or independent completion.
+// mode: parent cancellation, child exception, independent completion, or error result.
 auto join_test(bool use_uring, unsigned mode, bool range) -> bool {
 #if BOOST_COROSIO_HAVE_LIBURING
     io::io_context context = use_uring ? io::io_context(io::uring) : io::io_context(io::epoll);
@@ -129,7 +130,7 @@ auto join_test(bool use_uring, unsigned mode, bool range) -> bool {
     capy::async_waker first, second;
     JoinState state;
     std::stop_source stop;
-    capy::run_async(context.get_executor(), stop.get_token())(join_parent(first, second, state, mode == 1, range));
+    capy::run_async(context.get_executor(), stop.get_token())(join_parent(first, second, state, mode, range));
     context.restart();
     (void)context.run_for(20ms);
     if (!state.entered[0] || !state.entered[1] || state.returned) return false;
@@ -206,14 +207,21 @@ auto value_child(int value) -> capy::task<capy::results<int>> {
     co_return capy::results<int>{std::error_code{}, value};
 }
 
+auto signaled_value() -> capy::task<capy::results<int>> {
+    co_return capy::results<int>{std::make_error_code(std::errc::operation_canceled), 59};
+}
+
 auto value_parent(bool& passed) -> capy::task<> {
     auto [error, first, second] = co_await capy::when_all(value_child(17), value_child(29));
     std::vector<capy::task<capy::results<int>>> children;
     children.push_back(value_child(31));
     children.push_back(value_child(47));
     auto [range_error, values] = co_await capy::when_all(std::move(children));
+    auto [signal, value, ignored] = co_await capy::when_all(signaled_value(), value_child(61));
+    (void)ignored;
     passed = !error && first == 17 && second == 29 && !range_error &&
-        values.size() == 2 && values[0] == 31 && values[1] == 47;
+        values.size() == 2 && values[0] == 31 && values[1] == 47 &&
+        signal == std::errc::operation_canceled && value == 59;
 }
 
 auto value_test(bool use_uring) -> bool {
@@ -240,10 +248,10 @@ auto main() -> int {
     if (!socket_test(true)) return 4;
 #endif
     for (bool range : {false, true})
-        if (!join_test(false, 0, range) || !join_test(false, 1, range) || !join_test(false, 2, range)) return 5;
+        if (!join_test(false, 0, range) || !join_test(false, 1, range) || !join_test(false, 2, range) || !join_test(false, 3, range)) return 5;
 #if BOOST_COROSIO_HAVE_LIBURING
     for (bool range : {false, true})
-        if (!join_test(true, 0, range) || !join_test(true, 1, range) || !join_test(true, 2, range)) return 6;
+        if (!join_test(true, 0, range) || !join_test(true, 1, range) || !join_test(true, 2, range) || !join_test(true, 3, range)) return 6;
 #endif
     if (!abandon_test(false, false) || !abandon_test(false, true)) return 7;
     if (!value_test(false)) return 9;
