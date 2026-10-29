@@ -358,6 +358,51 @@ template<class Backend> auto control_budget(Backend backend,int mode) -> bool {
     std::array<std::uint8_t,27> response{}; auto n=::recv(b.native_handle(),response.data(),response.size(),MSG_DONTWAIT);
     return context.stopped() && done && !error && !(**session).output_memory_charge() && n==27 && response[0]==23;
 }
+// A protocol error terminates nghttp2 while its encrypted GOAWAY is still
+// waiting for the socket. Cancellation and write failure must retain the
+// output reservation until the asynchronous write has finished.
+template<class Backend> auto terminal_write(Backend backend,bool cancel) -> bool {
+    io::io_context context(backend); io::local_stream_socket a(context),b(context);
+    if (io::connect_pair(a,b)) return false;
+    auto session=h::ServerSession::create({8,16,4096,1024,4096},{nullptr,headers,data,end,closed});
+    if (!session) return false;
+    constexpr std::string_view preface="PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    constexpr std::array<std::byte,15> settings{std::byte{0},std::byte{0},std::byte{6},std::byte{4},
+        std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{4}};
+    constexpr std::array<std::byte,15> request{std::byte{0},std::byte{0},std::byte{6},std::byte{1},std::byte{5},
+        std::byte{0},std::byte{0},std::byte{0},std::byte{1},std::byte{0x82},std::byte{0x87},
+        std::byte{0x01},std::byte{0x01},std::byte{'x'},std::byte{0x84}};
+    constexpr std::array<std::byte,10> unfinished{std::byte{0},std::byte{0},std::byte{1},std::byte{1},
+        std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{3},std::byte{0x82}};
+    constexpr std::array<std::byte,17> ping{std::byte{0},std::byte{0},std::byte{8},std::byte{6}};
+    std::array<std::byte,512> body{};
+    if (!(**session).receive(std::as_bytes(std::span{preface})) || !(**session).receive(settings) ||
+        !(**session).receive(request) || !(**session).respond_body(1,200,body)) return false;
+    std::array<std::byte,4096> sink{};
+    for (;;) { auto n=(**session).output(sink); if (!n) return false; if (!*n) break; }
+    if (!(**session).receive(unfinished) || !(**session).receive(ping)) return false;
+    Connection connection(a,**session,records(),c::Bytes{});
+    std::array<char,4096> filler{};
+    for (;;) {
+        auto n=::send(a.native_handle(),filler.data(),filler.size(),MSG_DONTWAIT|MSG_NOSIGNAL);
+        if (n>0 || (n<0 && errno==EINTR)) continue;
+        if (n<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) break;
+        return false;
+    }
+    bool done=false; std::optional<h::TlsServerError> error;
+    capy::run_async(context.get_executor())(partial_step(connection,done,error));
+    context.restart(); (void)context.run_for(20ms);
+    auto charge=(**session).output_memory_charge();
+    if (done || !charge || !(**session).terminated_by_error() || (**session).response_memory_used()) {
+        std::cerr << "terminal parked: " << done << ' ' << charge << ' ' << (**session).terminated_by_error() << ' ' << (**session).response_memory_used() << '\n'; return false;
+    }
+    if (cancel) connection.cancel(); else b.close();
+    if ((**session).output_memory_charge()!=charge) return false;
+    context.restart(); (void)context.run_for(1s);
+    return context.stopped() && done && error==h::TlsServerError::tls &&
+        !(**session).output_memory_charge() && !(**session).scratch_memory_charge() &&
+        !(**session).response_memory_used() && (**session).transport_memory_charge()==4096;
+}
 template<class Socket> auto close_step(h::TlsServerConnection<Socket>& connection,bool& done,std::optional<h::TlsServerError>& error) -> capy::task<> {
     auto result=co_await connection.close_notify(); if (!result) error=result.error(); done=true;
 }
@@ -495,6 +540,7 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
 }
 int main() {
     for (int i=0;i<5;++i) {
+        if (!terminal_write(io::epoll,true) || !terminal_write(io::epoll,false)) { std::cerr << "terminal_write(io::epoll) failed\n"; return 1; }
         if (!transport_budget(io::epoll,true) || !transport_budget(io::epoll,false)) return 1;
         for (int mode=0;mode<8;++mode) if (!unready_records(io::epoll,mode)) return 1;
         if (!allocation_failure(io::epoll,false) || !allocation_failure(io::epoll,true)) return 1;
@@ -523,6 +569,7 @@ int main() {
         if (!abandon_paused(io::epoll,2)) { std::cerr << "abandon_paused(io::epoll,2) failed\n"; return 1; }
         if (!abandon_paused(io::epoll,3)) { std::cerr << "abandon_paused(io::epoll,3) failed\n"; return 1; }
 #if BOOST_COROSIO_HAVE_LIBURING
+        if (!terminal_write(io::uring,true) || !terminal_write(io::uring,false)) { std::cerr << "terminal_write(io::uring) failed\n"; return 2; }
         if (!transport_budget(io::uring,true) || !transport_budget(io::uring,false)) return 2;
         for (int mode=0;mode<8;++mode) if (!unready_records(io::uring,mode)) return 2;
         if (!allocation_failure(io::uring,false) || !allocation_failure(io::uring,true)) return 2;

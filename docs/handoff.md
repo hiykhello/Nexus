@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- HTTP/2 零窗口响应遇连接协议错误后，真实异步 socket 写入 GOAWAY 受阻；取消或对端关闭时，输出逻辑额度保持至写操作排空，响应及暂存额度回收。epoll/io_uring 背压回归各五轮通过；该测试覆盖阻塞写入的两种终止，不证明全部实际内存计费。
+
 - HTTP/2 TLS 驱动识别已完整输出的错误 GOAWAY，在释放库会话和活动流后报告 drain、允许 TLS close_notify，不再等待无意义的输入；正常对端关闭仍按原语义处理。OpenSSL 对端在零窗口响应期间触发协议错误，验证 GOAWAY、响应回收和 TLS 关闭，epoll/io_uring 及完整网络、背压回归通过。
 
 - HTTP/2 在 nghttp2 不再需要读写且最终输出完整复制后，先销毁库会话再释放其借用的流和响应体；零窗口响应遇连接协议错误时逐字节输出 GOAWAY，最后一字节后额度归零，外层会话仍存活。优雅关闭、HTTP/2 会话及 TLS 背压/取消回归通过；外部 transport reservation 仍由传输层释放。
@@ -237,6 +239,8 @@
 - TLS 应用记录、无 I/O 和异步连接异常时失效并清理；HTTP/2 TLS 逻辑预算覆盖主要输入、输出和暂存缓冲，但并非完整内存上限。
 
 ## 当前
+
+- HTTP/2 错误 GOAWAY 的阻塞写入取消及对端关闭回归已完成；继续审查其他传输预算释放路径。
 
 
 - 用户要求梳理并重构 `shared_ptr`，尤其避免以引用计数延长异步操作生命周期。VLESS/SS 入站 relay、SOCKS/HTTP CONNECT relay、普通 HTTP 上传/排空、拨号错误监视和 DNS 取消由父任务持有并等待或借用。入站父任务当前以无 stop token 启动；固定 Capy `when_all` 启动失败、正常取消、异常排空及双 socket 读取时执行上下文 abandon 已验证。剩余 shared owner 包括预算 reservation、不可变凭据、Fake-IP lease 等，须按真实所有权审查。
