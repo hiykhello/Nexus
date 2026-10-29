@@ -35,7 +35,7 @@ extern "C" void nexus_test_start_throw();
 extern "C" void nexus_test_root_launch(unsigned);
 extern "C" std::pmr::memory_resource* nexus_test_root_resource();
 #endif
-#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON) || defined(NEXUS_TEST_DNS_OWNER)
+#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON) || defined(NEXUS_TEST_DNS_OWNER) || defined(NEXUS_TEST_FAKEIP_ABANDON)
 extern "C" bool nexus_test_skip_server_stop();
 #endif
 
@@ -102,7 +102,7 @@ namespace nexus::proxy {
             session->client = std::move(peer);
             session->dns=dns.get();
 #ifdef NEXUS_TEST_FAKEIP
-            session->fakeip=fakeip;
+            session->fakeip=fakeip.get();
             session->fakeip_view=fakeip_view;
 #endif
             auto lease=quota.try_acquire();
@@ -146,7 +146,7 @@ namespace nexus::proxy {
 
     Server::Server() = default;
     Server::~Server() {
-#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON) || defined(NEXUS_TEST_DNS_OWNER)
+#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON) || defined(NEXUS_TEST_DNS_OWNER) || defined(NEXUS_TEST_FAKEIP_ABANDON)
         // Exercise member destruction with suspended tasks in the test target.
         if (nexus_test_skip_server_stop()) return;
 #endif

@@ -54,7 +54,8 @@ namespace nexus::proxy {
         std::unique_ptr<io::resolver> resolver;
         DnsState* dns = nullptr;
 #ifdef NEXUS_TEST_FAKEIP
-        std::shared_ptr<dns::FakeIpShared> fakeip;
+        // Borrowed from the server, which outlives its suspended sessions.
+        dns::FakeIpShared* fakeip = nullptr;
         std::unique_ptr<dns::FakeIpShared::Target> fakeip_target;
         std::uint64_t fakeip_view=0;
 #endif
@@ -157,6 +158,11 @@ export namespace nexus::proxy {
         // Session coroutines also borrow the policy and credentials.
         rules::RouteMatcher policy;
         std::optional<Credentials> credentials;
+#ifdef NEXUS_TEST_FAKEIP
+        // Sessions borrow the shared owner through context shutdown.
+        std::shared_ptr<dns::FakeIpShared> fakeip;
+        std::uint64_t fakeip_view=0;
+#endif
         // Inbound factories outlive context shutdown and suspended sessions.
 #ifdef NEXUS_ENABLE_SS2022
         InboundFactory shadowsocks_inbound;
@@ -173,10 +179,6 @@ export namespace nexus::proxy {
         io::tcp_acceptor listener{context};
         SessionQuota quota{64};
         std::optional<DnsRouting> dns_routing;
-#ifdef NEXUS_TEST_FAKEIP
-        std::shared_ptr<dns::FakeIpShared> fakeip;
-        std::uint64_t fakeip_view=0;
-#endif
         std::optional<std::size_t> max_bootstrap_index;
         bool running = false;
         bool mixed = false;

@@ -83,7 +83,7 @@ extern "C" int nexus_test_fakeip_lifetime(unsigned backend, unsigned mode) {
         io::io_context context(io::epoll);
 #endif
         auto session=std::make_unique<Session>(context);
-        session->fakeip=state.pool;
+        session->fakeip=state.pool.get();
         session->fakeip_target=std::move(*target);
         registry.push_back(session.get());
         session->registry=&registry;

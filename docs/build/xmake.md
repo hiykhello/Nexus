@@ -67,6 +67,8 @@ xmake build nexus-proxy-dns-lifetime-test && build/linux/x86_64/debug/nexus-prox
 xmake build nexus-proxy-root-fault-test && build/linux/x86_64/debug/nexus-proxy-root-fault-test
 xmake build nexus-proxy-fakeip-lifetime-test && build/linux/x86_64/debug/nexus-proxy-fakeip-lifetime-test
 python tests/proxy_fakeip_dns_throw.py build/linux/x86_64/debug/nexus-proxy-fakeip-fixture
+xmake build nexus-proxy-fakeip-owner-test
+build/linux/x86_64/debug/nexus-proxy-fakeip-owner-test
 xmake build nexus-dns-system-guard
 uv run --no-project python tests/proxy_dns.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-dns-system-guard.so
 uv run --no-project python tests/proxy_dns_routing.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-dns-system-guard.so 1

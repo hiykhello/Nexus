@@ -27,6 +27,9 @@ extern "C" void nexus_test_session_throw(std::uint8_t);
 #ifdef NEXUS_TEST_FAKEIP
 extern "C" void nexus_test_fakeip_session_release(bool);
 #endif
+#ifdef NEXUS_TEST_FAKEIP_ABANDON
+extern "C" void nexus_test_fakeip_owner_check(bool);
+#endif
 #ifdef NEXUS_TEST_DNS_OWNER
 extern "C" void nexus_test_handshake_borrowed_state(bool);
 #endif
@@ -37,6 +40,9 @@ namespace nexus::proxy {
         if (registry) std::erase(*registry,this);
 #ifdef NEXUS_TEST_FAKEIP
         // Failure leaves the pool pin held, preventing unsafe reuse.
+#ifdef NEXUS_TEST_FAKEIP_ABANDON
+        nexus_test_fakeip_owner_check(fakeip && fakeip->sealed());
+#endif
         nexus_test_fakeip_session_release(static_cast<bool>(fakeip_target));
         close();
         if (fakeip_target) try { (void)fakeip_target->release(); } catch (...) {}
