@@ -16,6 +16,7 @@ export namespace nexus::socks5 {
     struct Request {
         Status status = Status::incomplete;
         std::size_t consumed = 0;
+        std::uint8_t command = 0;
         std::uint8_t address_type = 0;
         std::array<std::uint8_t, 255> address{};
         std::uint8_t address_length = 0;
@@ -25,7 +26,8 @@ export namespace nexus::socks5 {
     // Parse one frame without retaining or modifying the input. Trailing
     // bytes belong to the next frame or the relayed application stream.
     [[nodiscard]] auto parse_greeting(std::span<std::uint8_t const> input, std::uint8_t method = 0) noexcept -> Greeting;
-    [[nodiscard]] auto parse_request(std::span<std::uint8_t const> input) noexcept -> Request;
+    // UDP is opt-in until the caller implements the association lifecycle.
+    [[nodiscard]] auto parse_request(std::span<std::uint8_t const> input, bool allow_udp = false) noexcept -> Request;
 
     // DATA borrows the datagram input. FRAG must be zero; reassembly is not supported.
     struct UdpDatagram {

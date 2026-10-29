@@ -48,11 +48,28 @@ static auto request_frame(std::uint8_t type, std::vector<std::uint8_t> address) 
                    "partial request consumed data")) return false;
     }
     auto result = s::parse_request(request);
-    return check(result.status == s::Status::accepted && result.consumed == frame_size &&
+    return check(result.status == s::Status::accepted && result.command == 1 && result.consumed == frame_size &&
                  result.address_type == type && result.port == 0x1234 &&
                  result.address_length == address.size() &&
                  std::equal(address.begin(), address.end(), result.address.begin()),
                  "request address, port, or payload boundary incorrect");
+}
+
+static auto udp_request_tests() -> bool {
+    using enum s::Status;
+    for (auto type : {1,3,4}) {
+        std::vector<std::uint8_t> wire{5,3,0,static_cast<std::uint8_t>(type)};
+        if (type==3) wire.insert(wire.end(),{3,'a','b','c'});
+        else wire.insert(wire.end(),type==1 ? 4 : 16,0);
+        wire.insert(wire.end(),{0,0});
+        if (s::parse_request(wire).status!=unsupported_command) return false;
+        for (std::size_t i=0;i<wire.size();++i)
+            if (s::parse_request(std::span(wire).first(i),true).status!=incomplete) return false;
+        auto request=s::parse_request(wire,true);
+        if (request.status!=accepted || request.command!=3 || request.address_type!=type ||
+            request.port!=0 || request.consumed!=wire.size()) return false;
+    }
+    return s::parse_request(std::array<std::uint8_t,4>{5,2,0,1},true).status==unsupported_command;
 }
 
 static auto invalid_tests() -> bool {
@@ -149,6 +166,6 @@ int main() {
     std::vector<std::uint8_t> longest_domain(255, 'x');
     if (!greeting_tests() || !request_frame(1, {127, 0, 0, 1}) ||
         !request_frame(4, ipv6) || !request_frame(3, {'e', 'x', 'a', 'm', 'p', 'l', 'e'}) ||
-        !request_frame(3, longest_domain) || !invalid_tests() || !udp_tests() || !udp_association_tests()) return 1;
+        !request_frame(3, longest_domain) || !invalid_tests() || !udp_request_tests() || !udp_tests() || !udp_association_tests()) return 1;
     std::cout << "SOCKS5 greeting, CONNECT and UDP datagram codecs passed\n";
 }

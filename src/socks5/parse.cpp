@@ -13,7 +13,7 @@ namespace nexus::socks5 {
         return {found ? Status::accepted : Status::no_acceptable_method, length};
     }
 
-    auto parse_request(std::span<std::uint8_t const> input) noexcept -> Request {
+    auto parse_request(std::span<std::uint8_t const> input, bool allow_udp) noexcept -> Request {
         Request result;
         if (input.empty()) return result;
         if (input[0] != 5) {
@@ -27,10 +27,11 @@ namespace nexus::socks5 {
             result.status = Status::invalid_reserved;
             return result;
         }
-        if (input[1] != 1) {
+        if (input[1] != 1 && !(allow_udp && input[1] == 3)) {
             result.status = Status::unsupported_command;
             return result;
         }
+        result.command = input[1];
         result.address_type = input[3];
         std::size_t offset = 4;
         std::size_t address_length = 0;
