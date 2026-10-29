@@ -36,6 +36,12 @@ if is_plat("linux") then
         add_files("$(projectdir)/tests/proxy_fakeip_fixture.cpp")
         add_deps("nexus-proxy-fakeip-experiment", "nexus-dns-message")
 
+    target("nexus-proxy-fakeip-lifetime-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_fakeip_lifetime.cpp", "$(projectdir)/tests/proxy_fakeip_lifetime_impl.cpp")
+        add_deps("nexus-proxy-fakeip-experiment", "nexus-dns-message", "nexus-thirdparty-corosio")
+
     target("nexus-dns-udp-test")
         set_kind("binary")
         set_default(false)
