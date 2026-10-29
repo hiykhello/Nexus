@@ -90,6 +90,12 @@ auto fairness(int family) -> bool {
                            ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port),body);
     };
     auto a=make(1234,'a'), b=make(1234,'b'), c=make(1235,'c');
+    if (a && family==AF_INET) {
+        a->insert(a->begin()+20,{1,1,0,0}); (*a)[0]=0x46; (*a)[3]=static_cast<std::uint8_t>(a->size());
+        (*a)[10]=(*a)[11]=0;
+        auto checksum=p::internet_checksum(std::span(*a).first(24));
+        (*a)[10]=static_cast<std::uint8_t>(checksum>>8); (*a)[11]=static_cast<std::uint8_t>(checksum);
+    }
     if (!a || !b || !c || !link.send(p::Side::first,*a) || !link.send(p::Side::first,*b) || !link.send(p::Side::first,*c)) return false;
     mode=5; blocked_fd=-1;
     auto first=engine.step(1), second=engine.step(2), third=engine.step(3);
