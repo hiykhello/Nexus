@@ -78,7 +78,8 @@ namespace nexus::socks5 {
                 packet.address_length=source.address_type==1 ? 4 : 16; packet.port=source.port;
                 std::copy_n(source.address.begin(),packet.address_length,packet.address.begin());
                 packet.data=std::span(bytes).first(static_cast<std::size_t>(n));
-                if (packet.data.size()+6+packet.address_length<=65507) {
+                auto client_limit=client->address_type==1 ? std::size_t{65507} : std::size_t{65527};
+                if (packet.data.size()+6+packet.address_length<=client_limit) {
                     auto wire=encode_udp_datagram(packet);
                     if (wire) result=UdpDirectReply{*client,std::move(*wire)};
                 }

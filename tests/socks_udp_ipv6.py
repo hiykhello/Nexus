@@ -74,6 +74,23 @@ routing {{ default-outbound "direct"; }}
                     raise RuntimeError('other IPv6 client port forwarded')
                 except socket.timeout:
                     pass
+                if family == socket.AF_INET6:
+                    payload = b'x' * 65500
+                    upstream.sendto(payload, source)
+                    response, _ = client.recvfrom(65535)
+                    assert response == header + payload
+                    upstream.sendto(b'x' * 65505, source)
+                    response, _ = client.recvfrom(65535)
+                    assert response == header + b'x' * 65505
+                    upstream.sendto(b'x' * 65506, source)
+                    client.settimeout(.15)
+                    try:
+                        client.recvfrom(65535)
+                        raise RuntimeError('oversized IPv6 SOCKS UDP reply delivered')
+                    except socket.timeout:
+                        pass
+                    finally:
+                        client.settimeout(3)
             upstream4 = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
             upstream4.bind(('127.0.0.1', 0))
             upstream4.settimeout(3)
