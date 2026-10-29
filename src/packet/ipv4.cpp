@@ -24,8 +24,8 @@ namespace nexus::packet {
             while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
             return static_cast<std::uint16_t>(~sum);
         }
-        auto udp_checksum(std::span<std::uint8_t const> p) noexcept -> std::uint16_t {
-            auto udp = p.subspan(20);
+        auto udp_checksum(std::span<std::uint8_t const> p, std::size_t offset = 20) noexcept -> std::uint16_t {
+            auto udp = p.subspan(offset);
             auto sum = add(0, p.subspan(12, 8));
             sum += 17 + static_cast<std::uint32_t>(udp.size());
             return finish(add(sum, udp));
@@ -39,19 +39,25 @@ namespace nexus::packet {
     auto parse_udp4(std::span<std::uint8_t const> p) noexcept -> std::expected<Udp4View, PacketError> {
         if (p.size() < 20) return std::unexpected(PacketError::truncated);
         if ((p[0] >> 4) != 4) return std::unexpected(PacketError::invalid_version);
-        if ((p[0] & 15) != 5) return std::unexpected(PacketError::unsupported_header);
-        if (read16(p, 2) != p.size() || p.size() < 28) return std::unexpected(PacketError::invalid_length);
-        if (internet_checksum(p.first(20)) != 0) return std::unexpected(PacketError::invalid_checksum);
+        auto header = static_cast<std::size_t>(p[0] & 15) * 4;
+        if (header < 20 || header > p.size() || p.size() - header < 8 || read16(p, 2) != p.size())
+            return std::unexpected(PacketError::invalid_length);
+        if (internet_checksum(p.first(header)) != 0) return std::unexpected(PacketError::invalid_checksum);
+        for (std::size_t i=20; i<header; ++i) {
+            if (p[i]==1) continue; // NOP
+            if (p[i]==0 && std::ranges::all_of(p.subspan(i,header-i), [](auto byte) { return byte==0; })) break;
+            return std::unexpected(PacketError::unsupported_header);
+        }
         if ((read16(p, 6) & 0xbfff) != 0) return std::unexpected(PacketError::unsupported_fragment);
         if (p[9] != 17) return std::unexpected(PacketError::unsupported_protocol);
-        if (read16(p, 24) != p.size() - 20 || read16(p, 24) < 8) return std::unexpected(PacketError::invalid_length);
-        if (read16(p, 26) != 0 && udp_checksum(p) != 0) return std::unexpected(PacketError::invalid_checksum);
+        if (read16(p, header+4) != p.size() - header || read16(p, header+4) < 8) return std::unexpected(PacketError::invalid_length);
+        if (read16(p, header+6) != 0 && udp_checksum(p, header) != 0) return std::unexpected(PacketError::invalid_checksum);
         Udp4View result;
         std::copy_n(p.begin() + 12, 4, result.source.begin());
         std::copy_n(p.begin() + 16, 4, result.destination.begin());
-        result.source_port = read16(p, 20);
-        result.destination_port = read16(p, 22);
-        result.payload = p.subspan(28);
+        result.source_port = read16(p, header);
+        result.destination_port = read16(p, header+2);
+        result.payload = p.subspan(header+8);
         return result;
     }
 

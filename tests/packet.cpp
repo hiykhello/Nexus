@@ -10,7 +10,7 @@ namespace {
         0x9f, 0x5c, 'h', 'e', 'l', 'l', 'o'};
     auto header_checksum(p::Bytes& bytes) -> void {
         bytes[10] = bytes[11] = 0;
-        auto sum = p::internet_checksum(std::span(bytes).first(20));
+        auto sum = p::internet_checksum(std::span(bytes).first((bytes[0] & 15) * 4));
         bytes[10] = static_cast<std::uint8_t>(sum >> 8);
         bytes[11] = static_cast<std::uint8_t>(sum);
     }
@@ -40,7 +40,23 @@ namespace {
         bytes = sample; bytes[0] = 0x65;
         if (!fails(bytes, p::PacketError::invalid_version)) return false;
         bytes = sample; bytes[0] = 0x46;
+        if (!fails(bytes, p::PacketError::invalid_checksum)) return false;
+        bytes = sample; bytes.insert(bytes.begin()+20, {1,1,0,0});
+        bytes[0]=0x46; bytes[3]=static_cast<std::uint8_t>(bytes.size()); header_checksum(bytes);
+        auto with_options=p::parse_udp4(bytes);
+        if (!with_options || with_options->source_port!=12345 || with_options->destination_port!=53 ||
+            !std::ranges::equal(with_options->payload,hello)) return false;
+        auto options=bytes;
+        bytes[21]=7; header_checksum(bytes);
         if (!fails(bytes, p::PacketError::unsupported_header)) return false;
+        bytes=options; bytes[23]=1; header_checksum(bytes);
+        if (!fails(bytes, p::PacketError::unsupported_header)) return false;
+        bytes=options; bytes[20]^=1;
+        if (!fails(bytes, p::PacketError::invalid_checksum)) return false;
+        bytes=options; bytes.back()^=1;
+        if (!fails(bytes, p::PacketError::invalid_checksum)) return false;
+        bytes=options; bytes[0]=0x44;
+        if (!fails(bytes, p::PacketError::invalid_length)) return false;
         for (std::uint16_t flags : {0x2000, 0x0001, 0x8000}) {
             bytes = sample; bytes[6] = static_cast<std::uint8_t>(flags >> 8); bytes[7] = static_cast<std::uint8_t>(flags);
             header_checksum(bytes);

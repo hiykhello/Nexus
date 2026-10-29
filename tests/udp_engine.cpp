@@ -31,7 +31,13 @@ int main() {
     auto blocked = engine.step(0);
     if (!blocked || !blocked->input || !blocked->rejected) return 1;
     auto request = p::make_udp4({10,0,0,1}, {127,0,0,1}, 1234, ntohs(address.sin_port), payload);
-    if (!request || !link.send(p::Side::first, *request)) return 1;
+    if (!request) return 1;
+    auto padded=*request;
+    padded.insert(padded.begin()+20,{1,1,0,0}); padded[0]=0x46;
+    padded[3]=static_cast<std::uint8_t>(padded.size()); padded[10]=padded[11]=0;
+    auto checksum=p::internet_checksum(std::span(padded).first(24));
+    padded[10]=static_cast<std::uint8_t>(checksum>>8); padded[11]=static_cast<std::uint8_t>(checksum);
+    if (!link.send(p::Side::first, padded)) return 1;
     auto forwarded = engine.step(1);
     if (!forwarded || !forwarded->input || forwarded->rejected) return 1;
     pollfd ready{server.fd, POLLIN, 0};
