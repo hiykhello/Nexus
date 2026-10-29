@@ -2,9 +2,15 @@ import std;
 import nexus.tls.server_credential;
 import nexus.tls.certificate_verify;
 static thread_local bool deny_allocation=false;
+static thread_local bool track_allocation=false;
+static thread_local std::size_t allocation_count=0, allocation_size=0;
+static thread_local void* allocation_pointer=nullptr;
 void* operator new(std::size_t size) {
     if (deny_allocation) throw std::bad_alloc{};
-    if (auto p=std::malloc(size ? size : 1)) return p;
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (track_allocation) { ++allocation_count; allocation_size=size; allocation_pointer=p; }
+        return p;
+    }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept { std::free(p); }
@@ -31,7 +37,9 @@ int main(int argc,char** argv) {
     if (moved.scheme() || replacement->scheme()!=expected || !std::ranges::equal(replacement->certificate(),cert)) return 13;
     moved=std::move(*replacement);
     for (auto hash:{c::Hash::sha256,c::Hash::sha384}) {
-        c::Bytes digest(hash==c::Hash::sha256 ? 32 : 48,0x42); auto signature=moved.sign(hash,digest); if (!signature) return 6;
+        c::Bytes digest(hash==c::Hash::sha256 ? 32 : 48,0x42);
+        allocation_count=0; track_allocation=true; auto signature=moved.sign(hash,digest); track_allocation=false;
+        if (!signature || allocation_count!=1 || allocation_pointer!=signature->data() || allocation_size<signature->size()) return 6;
         std::array<std::uint16_t,1> offered{expected};
         if (!t::verify_server_certificate_signature(cert,hash,digest,offered,*signature)) return 7;
         auto altered=*signature; altered.back()^=1;

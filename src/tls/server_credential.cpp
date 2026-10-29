@@ -142,17 +142,21 @@ namespace nexus::tls {
             EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx,32)!=1 || EVP_PKEY_CTX_set_rsa_mgf1_md(pctx,EVP_sha256())!=1))
             return std::unexpected(ServerCredentialError::crypto_error);
         constexpr std::string_view context="TLS 1.3, server CertificateVerify";
-        crypto::Bytes input(64,0x20); input.insert(input.end(),context.begin(),context.end()); input.push_back(0);
-        input.insert(input.end(),transcript_hash.begin(),transcript_hash.end());
+        std::array<std::uint8_t,64+context.size()+1+48> input{};
+        std::fill_n(input.begin(),64,0x20);
+        std::ranges::copy(context,input.begin()+64);
+        std::ranges::copy(transcript_hash,input.begin()+64+context.size()+1);
+        auto input_size=64+context.size()+1+transcript_hash.size();
         std::size_t size=0;
-        if (EVP_DigestSign(ctx.get(),nullptr,&size,input.data(),input.size())!=1 || size==0 || size>65535)
+        if (EVP_DigestSign(ctx.get(),nullptr,&size,input.data(),input_size)!=1 || size==0 || size>65535)
             return std::unexpected(ServerCredentialError::crypto_error);
-        crypto::Bytes signature(size);
-        if (EVP_DigestSign(ctx.get(),signature.data(),&size,input.data(),input.size())!=1 || size==0 || size>signature.size())
+        crypto::Bytes message(8+size);
+        auto capacity=size;
+        if (EVP_DigestSign(ctx.get(),message.data()+8,&size,input.data(),input_size)!=1 || size==0 || size>capacity)
             return std::unexpected(ServerCredentialError::crypto_error);
-        signature.resize(size); auto body_size=4+size;
-        crypto::Bytes message{15,static_cast<std::uint8_t>(body_size>>16),static_cast<std::uint8_t>(body_size>>8),static_cast<std::uint8_t>(body_size),
-            static_cast<std::uint8_t>(scheme_>>8),static_cast<std::uint8_t>(scheme_),static_cast<std::uint8_t>(size>>8),static_cast<std::uint8_t>(size)};
-        message.insert(message.end(),signature.begin(),signature.end()); return message;
+        message.resize(8+size); auto body_size=4+size;
+        message[0]=15; message[1]=static_cast<std::uint8_t>(body_size>>16); message[2]=static_cast<std::uint8_t>(body_size>>8); message[3]=static_cast<std::uint8_t>(body_size);
+        message[4]=static_cast<std::uint8_t>(scheme_>>8); message[5]=static_cast<std::uint8_t>(scheme_); message[6]=static_cast<std::uint8_t>(size>>8); message[7]=static_cast<std::uint8_t>(size);
+        return message;
     }
 }
