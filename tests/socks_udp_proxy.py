@@ -61,6 +61,27 @@ try:
         upstream.sendto(b'resolved', domain_source)
         reply, reply_source = client.recvfrom(100)
         if reply != wire[:-5] + b'resolved' or reply_source != relay: raise RuntimeError('resolved reply failed')
+        # A burst should not be limited to one packet per 5 ms timer tick.
+        header = wire[:-5]
+        count = 200
+        start = time.monotonic()
+        for i in range(count):
+            client.sendto(header + i.to_bytes(2, 'big'), relay)
+        for i in range(count):
+            data, source = upstream.recvfrom(100)
+            if data != i.to_bytes(2, 'big') or source != upstream_source:
+                raise RuntimeError('burst input was lost or reordered')
+        if time.monotonic() - start >= .8:
+            raise RuntimeError('burst input was limited by the polling interval')
+        start = time.monotonic()
+        for i in range(count):
+            upstream.sendto(i.to_bytes(2, 'big'), upstream_source)
+        for i in range(count):
+            data, source = client.recvfrom(100)
+            if data != header + i.to_bytes(2, 'big') or source != relay:
+                raise RuntimeError('burst reply was lost or reordered')
+        if time.monotonic() - start >= .8:
+            raise RuntimeError('burst replies were limited by the polling interval')
         unspecified = b'\x00\x00\x00\x04' + bytes(10) + b'\xff\xff' + bytes(4) + dest[1].to_bytes(2, 'big') + b'invalid'
         client.sendto(unspecified, relay)
         upstream.settimeout(.2)

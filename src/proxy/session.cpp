@@ -190,16 +190,21 @@ namespace nexus::proxy {
             using namespace std::chrono_literals;
             try {
                 while (!session.closed) {
-                    auto result=ingress.step();
-                    if (!result) { session.close(); break; }
-                    if (result->output_error) { session.close(); break; }
-                    if (result->forwarded || result->delivered) session.touched=Clock::now();
-                    if (resolution.active && !resolution.canceled && Clock::now()>=resolution.deadline) {
-                        resolution.canceled=true;
-                        if (session.resolver) session.resolver->cancel();
-                        if (session.cancel_dns) session.cancel_dns(session.dns_operation);
+                    bool busy=false;
+                    for (unsigned batch=0; batch<64 && !session.closed; ++batch) {
+                        auto result=ingress.step();
+                        if (!result || result->output_error) { session.close(); break; }
+                        if (result->forwarded || result->delivered) session.touched=Clock::now();
+                        if (resolution.active && !resolution.canceled && Clock::now()>=resolution.deadline) {
+                            resolution.canceled=true;
+                            if (session.resolver) session.resolver->cancel();
+                            if (session.cancel_dns) session.cancel_dns(session.dns_operation);
+                        }
+                        busy=result->forwarded || result->delivered || result->output_dropped || result->input_error.has_value();
+                        if (!busy) break;
                     }
-                    auto [error]=co_await io::delay(5ms);
+                    if (session.closed) break;
+                    auto [error]=co_await io::delay(busy ? 0ms : 5ms);
                     if (error) { session.close(); break; }
                 }
                 ingress.close();
