@@ -4,6 +4,10 @@ module;
 #include <boost/capy/cond.hpp>
 #include <boost/capy/when_all.hpp>
 #include <boost/capy/task.hpp>
+#ifdef NEXUS_TEST_DNS_LIFETIME
+#include <boost/capy/ex/run_async.hpp>
+#include <boost/corosio/backend.hpp>
+#endif
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/tcp_socket.hpp>
@@ -31,6 +35,9 @@ extern "C" void nexus_test_fakeip_blocked();
 
 #include "dns_state.hpp"
 #include "../dns/corosio_dual_resolve.hpp"
+#ifdef NEXUS_TEST_DNS_LIFETIME
+extern "C" void nexus_test_dns_registered();
+#endif
 
 namespace nexus::proxy {
     namespace {
@@ -73,6 +80,9 @@ namespace nexus::proxy {
                 session.cancel_dns=[](void* pointer) noexcept {
                     static_cast<dns::detail::DualAddressResolver*>(pointer)->cancel();
                 };
+#ifdef NEXUS_TEST_DNS_LIFETIME
+                nexus_test_dns_registered();
+#endif
                 auto resolved=co_await operation.resolve(upstream,server_index+1,name,session.started+std::chrono::seconds(10));
                 if (session.closed) co_return std::unexpected(dns::detail::ResolveError::canceled);
                 if (!resolved) {
@@ -289,3 +299,7 @@ namespace nexus::proxy {
     }
 
 }
+
+#ifdef NEXUS_TEST_DNS_LIFETIME
+#include "../../tests/proxy_dns_lifetime_impl.hpp"
+#endif
