@@ -3,10 +3,16 @@ import nexus.tls.handshake;
 static thread_local int fail_after=-1;
 static void* watched_pending=nullptr;
 static bool watch_pending=false, pending_released=false;
+static bool trace_encode=false;
+static std::size_t encode_allocations=0, encode_size=0;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
-    if (auto p=std::malloc(size ? size : 1)) { if (watch_pending && size==8196) watched_pending=p; return p; }
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (watch_pending && size==8196) watched_pending=p;
+        if (trace_encode) { ++encode_allocations; encode_size=size; }
+        return p;
+    }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept { if (p && p==watched_pending) { watched_pending=nullptr; pending_released=true; } std::free(p); }
@@ -31,6 +37,12 @@ int main() {
     if (!decoder->finish() || decoder->failed()) return 6;
     auto encoded=t::HandshakeDecoder::encode(1,std::vector<std::uint8_t>{'x','y'}); if (!encoded || *encoded!=std::vector<std::uint8_t>({1,0,0,2,'x','y'})) return 7;
     auto empty=t::HandshakeDecoder::encode(8,std::span<std::uint8_t const>{}); if (!empty || *empty!=std::vector<std::uint8_t>({8,0,0,0})) return 8;
+    std::vector<std::uint8_t> encode_body(65535,42);
+    encode_allocations=encode_size=0; trace_encode=true;
+    auto encoded_large=t::HandshakeDecoder::encode(1,encode_body,65535);
+    trace_encode=false;
+    if (!encoded_large || encode_allocations!=1 || encode_size!=encode_body.size()+4 ||
+        encoded_large->size()!=encode_body.size()+4 || !std::ranges::equal(std::span{*encoded_large}.subspan(4),encode_body)) return 36;
     auto bad_type=t::HandshakeDecoder::create(8); if (!bad_type || bad_type->feed(std::vector<std::uint8_t>{0xfe,0,0,0}).error()!=t::HandshakeError::invalid_type || bad_type->feed(std::span<std::uint8_t const>{}).error()!=t::HandshakeError::invalid_state) return 9;
     auto too_long=t::HandshakeDecoder::create(2); if (!too_long || too_long->feed(std::vector<std::uint8_t>{1,0,0,3}).error()!=t::HandshakeError::message_too_large || too_long->finish().error()!=t::HandshakeError::invalid_state) return 10;
     auto truncated=t::HandshakeDecoder::create(8); if (!truncated || !truncated->feed(std::vector<std::uint8_t>{1,0,0,2,9}) || truncated->finish().error()!=t::HandshakeError::truncated || truncated->feed(std::span<std::uint8_t const>{}).error()!=t::HandshakeError::invalid_state) return 11;

@@ -77,12 +77,12 @@ namespace nexus::tls {
         if (type == 0xfe) return std::unexpected(HandshakeError::invalid_type);
         if (max_message_size == 0 || max_message_size > 0x00ffffffu || body.size() > max_message_size)
             return std::unexpected(body.size() > max_message_size ? HandshakeError::message_too_large : HandshakeError::input_too_large);
-        std::vector<std::uint8_t> result(4);
+        std::vector<std::uint8_t> result(4+body.size());
         result[0] = type;
         result[1] = static_cast<std::uint8_t>(body.size() >> 16);
         result[2] = static_cast<std::uint8_t>(body.size() >> 8);
         result[3] = static_cast<std::uint8_t>(body.size());
-        result.insert(result.end(), body.begin(), body.end());
+        std::ranges::copy(body,result.begin()+4);
         return result;
     }
 }
