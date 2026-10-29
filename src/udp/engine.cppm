@@ -9,6 +9,7 @@ export namespace nexus::udp {
         bool delivered = false;
         bool backpressured = false;
         bool input_allocation_failed = false;
+        bool input_backpressured = false;
         bool ipv4_allocation_failed = false, ipv6_allocation_failed = false;
         std::size_t expired = 0;
         std::optional<DirectError> rejected;
@@ -19,6 +20,7 @@ export namespace nexus::udp {
     using EngineError = std::variant<packet::DeviceError, DirectError, Error>;
     // Single owner; the link must outlive the engine. The engine uses its
     // second side. step processes at most one input and holds at most 128 replies.
+    // A transient send error retains one input for retry; later inputs wait.
     class MemoryEngine {
         packet::MemoryLink& link_;
         Direct4 ipv4_;

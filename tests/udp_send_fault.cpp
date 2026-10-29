@@ -13,7 +13,7 @@ extern "C" ssize_t __wrap_sendto(int fd,const void* data,size_t size,int flags,c
     ++calls;
     if (!mode) return __real_sendto(fd,data,size,flags,dest,length);
     if (mode==2 && __real_sendto(fd,data,size,flags,dest,length)!=static_cast<ssize_t>(size)) return -1;
-    mode=0; errno=EIO; return -1;
+    auto fault=mode; mode=0; errno=fault==3 ? EAGAIN : fault==4 ? EINTR : EIO; return -1;
 }
 struct Socket { int fd; ~Socket() { if (fd>=0) ::close(fd); } };
 auto scenario(int family,int fault) -> bool {
@@ -64,7 +64,47 @@ auto scenario(int family,int fault) -> bool {
     }
     return engine.stop(5).has_value();
 }
+auto transient(int family, int fault) -> bool {
+    Socket server{::socket(family,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0)};
+    sockaddr_storage address{}; socklen_t length;
+    if (family==AF_INET) {
+        auto* a=reinterpret_cast<sockaddr_in*>(&address); a->sin_family=AF_INET; a->sin_addr.s_addr=htonl(INADDR_LOOPBACK); length=sizeof(*a);
+    } else {
+        auto* a=reinterpret_cast<sockaddr_in6*>(&address); a->sin6_family=AF_INET6; a->sin6_addr=in6addr_loopback; length=sizeof(*a);
+    }
+    if (server.fd<0 || ::bind(server.fd,reinterpret_cast<sockaddr*>(&address),length) ||
+        ::getsockname(server.fd,reinterpret_cast<sockaddr*>(&address),&length)) return false;
+    p::MemoryLink link; u::MemoryEngine engine(link,nexus::rules::Matcher{},u::Mapping::endpoint_independent,
+                                              u::Filtering::address_port_dependent,{1,2,1000});
+    p::Bytes body{'x'};
+    auto packet=family==AF_INET
+        ? p::make_udp4({10,0,0,1},{127,0,0,1},1234,ntohs(reinterpret_cast<sockaddr_in*>(&address)->sin_port),body)
+        : p::make_udp6({0x20,1,0xd,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
+                       {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},1234,
+                       ntohs(reinterpret_cast<sockaddr_in6*>(&address)->sin6_port),body);
+    if (!packet || !link.send(p::Side::first,*packet)) return false;
+    mode=0; calls=0; auto first=engine.step(1);
+    if (!first || first->rejected || calls!=1) return false;
+    std::array<char,16> bytes{}; sockaddr_storage origin{}; socklen_t origin_size=sizeof(origin);
+    if (::recvfrom(server.fd,bytes.data(),bytes.size(),0,reinterpret_cast<sockaddr*>(&origin),&origin_size)!=1) return false;
+    // A previously authorized response remains valid during transient send failure.
+    if (!link.send(p::Side::first,*packet) || ::sendto(server.fd,bytes.data(),1,0,
+        reinterpret_cast<sockaddr*>(&origin),origin_size)!=1) return false;
+    mode=fault; calls=0; auto blocked=engine.step(2);
+    if (!blocked || !blocked->input_backpressured || blocked->rejected || !blocked->delivered || calls!=1) return false;
+    auto reply=link.receive(p::Side::first); if (!reply || !*reply) return false;
+    auto retried=engine.step(3);
+    if (!retried || !retried->input || retried->input_backpressured || retried->rejected || calls!=2) return false;
+    sockaddr_storage second{}; socklen_t second_size=sizeof(second);
+    if (::recvfrom(server.fd,bytes.data(),bytes.size(),0,reinterpret_cast<sockaddr*>(&second),&second_size)!=1) return false;
+    auto port=[](sockaddr_storage const& a) { return a.ss_family==AF_INET
+        ? reinterpret_cast<sockaddr_in const*>(&a)->sin_port : reinterpret_cast<sockaddr_in6 const*>(&a)->sin6_port; };
+    if (port(origin)!=port(second) || ::recv(server.fd,bytes.data(),bytes.size(),0)>=0 ||
+        (errno!=EAGAIN && errno!=EWOULDBLOCK)) return false;
+    return engine.stop(4).has_value();
+}
 int main() {
     for (int family : {AF_INET,AF_INET6}) for (int fault : {1,2}) if (!scenario(family,fault)) return 1;
-    std::println("UDP send failures before or after delivery do not cause automatic retries");
+    for (int family : {AF_INET,AF_INET6}) for (int fault : {3,4}) if (!transient(family,fault)) return 1;
+    std::println("UDP transient send errors retry without losing existing flows; permanent errors do not retry");
 }

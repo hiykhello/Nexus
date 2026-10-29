@@ -28,6 +28,8 @@ export namespace nexus::udp {
         ~Direct4();
         Direct4(Direct4 const&) = delete;
         auto operator=(Direct4 const&) -> Direct4& = delete;
+        // EAGAIN/EINTR leave the flow intact and the datagram uncommitted;
+        // the caller may retry it. Other send errors close the flow.
         [[nodiscard]] auto submit(std::span<std::uint8_t const> packet, std::uint64_t now) -> std::expected<void, DirectError>;
         // Peeks before consuming; sockets must have no other readers. Reads at most
         // one datagram per flow and at most 64 per call. Invalid,

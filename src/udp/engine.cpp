@@ -47,12 +47,17 @@ namespace nexus::udp {
             if (version == 4 || version == 6) {
                 try {
                     auto result = version == 4 ? ipv4_.submit(bytes, now) : ipv6_.submit(bytes, now);
-                    if (!result) report.rejected = result.error();
+                    if (!result) {
+                        auto const* error = std::get_if<std::error_code>(&result.error());
+                        if (error && (*error == std::errc::resource_unavailable_try_again || *error == std::errc::interrupted))
+                            report.input_backpressured = true;
+                        else report.rejected = result.error();
+                    }
                 } catch (std::bad_alloc const&) { report.input_allocation_failed = true; }
             } else {
                 report.rejected = DirectError{RoutedError{RouteError::invalid_packet}};
             }
-            if (!report.input_allocation_failed) incoming_.reset();
+            if (!report.input_allocation_failed && !report.input_backpressured) incoming_.reset();
         }
         auto collect = [&](auto& direct, std::optional<DirectError>& error, bool& allocation_failed) {
             try {

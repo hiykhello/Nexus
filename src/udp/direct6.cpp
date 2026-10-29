@@ -77,7 +77,8 @@ namespace nexus::udp {
         if (n < 0 || static_cast<std::size_t>(n) != outgoing->payload.size()) {
             auto error = n < 0 ? system_error() : std::make_error_code(std::errc::io_error);
             (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
-            (void)this->bridge.close(outgoing->flow, now);
+            if (error != std::errc::resource_unavailable_try_again && error != std::errc::interrupted)
+                (void)this->bridge.close(outgoing->flow, now);
             return std::unexpected(DirectError{error});
         }
         auto complete = this->bridge.complete(outgoing->flow, outgoing->token, true, now);
