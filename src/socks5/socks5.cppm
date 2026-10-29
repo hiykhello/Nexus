@@ -56,14 +56,14 @@ export namespace nexus::socks5 {
         std::array<Target,64> targets_{};
         std::size_t target_count_ = 0;
         std::uint64_t next_token_ = 1;
-        bool closed_ = false;
+        bool closed_ = false, client_seen_ = false;
         explicit UdpAssociation(UdpPeer peer) : peer_(peer) {}
     public:
         UdpAssociation(UdpAssociation const&) = delete;
         auto operator=(UdpAssociation const&) -> UdpAssociation& = delete;
         UdpAssociation(UdpAssociation&& other) noexcept
             : peer_(other.peer_), targets_(other.targets_), target_count_(other.target_count_), next_token_(other.next_token_),
-              closed_(std::exchange(other.closed_,true)) {}
+              closed_(std::exchange(other.closed_,true)), client_seen_(other.client_seen_) {}
         auto operator=(UdpAssociation&&) -> UdpAssociation& = delete;
         // Hint address may be unspecified; any specified address must match the TCP peer.
         [[nodiscard]] static auto create(UdpPeer tcp_peer, UdpPeer hint) noexcept -> std::expected<UdpAssociation,Status>;
@@ -75,6 +75,12 @@ export namespace nexus::socks5 {
         [[nodiscard]] auto begin_send(UdpPeer target) noexcept -> std::expected<std::uint64_t,Status>;
         [[nodiscard]] auto finish_send(std::uint64_t token, bool success) noexcept -> std::expected<void,Status>;
         [[nodiscard]] auto accepts_reply(UdpPeer source) const noexcept -> bool;
+        // Available only after a client datagram has passed admission, even if
+        // a port was supplied in the request. Closed associations have no peer.
+        [[nodiscard]] auto client_peer() const noexcept -> std::optional<UdpPeer> {
+            if (closed_ || !client_seen_) return {};
+            return peer_;
+        }
         auto close() noexcept -> void { closed_=true; }
     };
 }

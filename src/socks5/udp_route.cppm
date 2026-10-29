@@ -11,4 +11,11 @@ export namespace nexus::socks5 {
         -> std::expected<void,UdpRouteError>;
     [[nodiscard]] auto udp_route(rules::RouteMatcher const& policy, UdpDatagram const& packet, UdpPeer candidate)
         -> std::expected<UdpPeer,UdpRouteError>;
+    struct UdpSend { UdpPeer target; std::uint64_t token; };
+    using UdpPrepareError = std::variant<UdpRouteError,Status>;
+    // packet must come from this association's admit(); candidate must be an
+    // actual resolved endpoint. Finish the token after the socket operation.
+    [[nodiscard]] auto udp_prepare_send(UdpAssociation& association, rules::RouteMatcher const& policy,
+                                        UdpDatagram const& packet, UdpPeer candidate)
+        -> std::expected<UdpSend,UdpPrepareError>;
 }

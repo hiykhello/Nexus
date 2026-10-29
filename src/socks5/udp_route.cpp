@@ -68,4 +68,13 @@ namespace nexus::socks5 {
         if (!allowed) return std::unexpected(allowed.error());
         return canonical(candidate);
     }
+    auto udp_prepare_send(UdpAssociation& association, rules::RouteMatcher const& policy,
+                          UdpDatagram const& packet, UdpPeer candidate) -> std::expected<UdpSend,UdpPrepareError> {
+        if (!association.client_peer()) return std::unexpected(UdpPrepareError{Status::unauthorized_source});
+        auto target=udp_route(policy,packet,candidate);
+        if (!target) return std::unexpected(UdpPrepareError{target.error()});
+        auto token=association.begin_send(*target);
+        if (!token) return std::unexpected(UdpPrepareError{token.error()});
+        return UdpSend{*target,*token};
+    }
 }

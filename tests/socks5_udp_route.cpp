@@ -27,6 +27,16 @@ int main() {
         s::udp_route(*policy,packet,mapped).error()!=s::UdpRouteError::blocked) return 6;
     auto normalized=s::udp_route(*direct,packet,mapped);
     if (!normalized || *normalized!=denied) return 7;
+    auto association=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
+    if (!association || s::udp_prepare_send(*association,*direct,packet,mapped)) return 9;
+    std::array<std::uint8_t,23> wire{0,0,0,4,0,0,0,0,0,0,0,0,0,0,255,255,192,0,2,1,0,53,'x'};
+    auto admitted=association->admit({1,{127,0,0,1},5000},wire);
+    if (!admitted) return 10;
+    auto blocked_send=s::udp_prepare_send(*association,*policy,*admitted,mapped);
+    if (blocked_send || !std::holds_alternative<s::UdpRouteError>(blocked_send.error()) || association->accepts_reply(denied)) return 11;
+    auto prepared=s::udp_prepare_send(*association,*direct,*admitted,mapped);
+    if (!prepared || prepared->target!=denied || association->accepts_reply(denied) ||
+        !association->finish_send(prepared->token,true) || !association->accepts_reply(denied)) return 12;
     packet.address_length=3;
     if (s::udp_route(*direct,packet,denied).error()!=s::UdpRouteError::invalid_target) return 8;
     std::println("SOCKS UDP domain and candidate routing passed");

@@ -131,6 +131,7 @@ namespace nexus::socks5 {
         auto packet=parse_udp_datagram(input);
         if (!packet) return std::unexpected(packet.error());
         if (!peer_.port) peer_.port=source.port;
+        client_seen_=true;
         return packet;
     }
     auto UdpAssociation::begin_send(UdpPeer target) noexcept -> std::expected<std::uint64_t,Status> {

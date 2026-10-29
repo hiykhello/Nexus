@@ -129,23 +129,25 @@ static auto udp_association_tests() -> bool {
     using enum s::Status;
     s::UdpPeer tcp{1,{127,0,0,1},4444}, hint{1,{},0};
     auto association=s::UdpAssociation::create(tcp,hint);
-    if (!association) return false;
+    if (!association || association->client_peer()) return false;
     s::UdpPeer first{1,{127,0,0,1},5000}, second{1,{127,0,0,1},5001}, stranger{1,{127,0,0,2},5000};
     std::vector<std::uint8_t> valid{0,0,0,1,1,2,3,4,0,53,'x'}, fragment=valid;
     fragment[2]=1;
     if (association->admit(first,fragment).error()!=unsupported_fragment ||
-        association->admit(stranger,valid).error()!=unauthorized_source) return false;
+        association->admit(stranger,valid).error()!=unauthorized_source || association->client_peer()) return false;
     // Malformed traffic did not claim the unknown port.
     auto admitted=association->admit(second,valid);
     if (!admitted || admitted->port!=53 || !std::ranges::equal(admitted->data,std::array<std::uint8_t,1>{'x'}) ||
-        association->admit(first,valid).error()!=unauthorized_source) return false;
+        association->admit(first,valid).error()!=unauthorized_source || association->client_peer()!=second) return false;
     auto moved=std::move(*association);
-    if (association->admit(second,valid).error()!=association_closed || !moved.admit(second,valid)) return false;
+    if (association->client_peer() || association->admit(second,valid).error()!=association_closed ||
+        moved.client_peer()!=second || !moved.admit(second,valid)) return false;
     moved.close();
-    if (moved.admit(second,valid).error()!=association_closed) return false;
+    if (moved.client_peer() || moved.admit(second,valid).error()!=association_closed) return false;
     hint=tcp; hint.port=5000;
     auto fixed=s::UdpAssociation::create(tcp,hint);
-    if (!fixed || fixed->admit(second,valid).error()!=unauthorized_source || !fixed->admit(first,valid)) return false;
+    if (!fixed || fixed->client_peer() || fixed->admit(second,valid).error()!=unauthorized_source ||
+        !fixed->admit(first,valid) || fixed->client_peer()!=first) return false;
     hint.address[3]=2;
     if (s::UdpAssociation::create(tcp,hint).error()!=unauthorized_source) return false;
     hint={4,{},0};
