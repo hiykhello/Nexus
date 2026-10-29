@@ -4,7 +4,9 @@
 
 ## 上一步
 
-- DNS 状态改为 worker 独占，会话借用；状态先于执行上下文声明，查询任务排空或 abandon 后才销毁。真实 SOCKS DNS 查询挂起时专用构建直接销毁 Server，确认查询注销先于 DNS 状态析构，连续十轮通过；DNS 取消、异常和缓存槽释放在 epoll/io_uring 通过，单/双 worker bootstrap、SS-2022 候选取消与 VLESS 并发回归通过。真实 Server abandon 只覆盖默认后端的 UDP 查询。
+- 真实 Server 中两个 SOCKS DNS 查询分别通过 UDP 或 TCP 挂起时直接销毁上下文，两个查询均先注销、worker DNS 状态随后析构，两种传输各连续十轮通过；epoll/io_uring 的底层查询取消和异常、单/双 worker bootstrap 回归通过。真实 Server abandon 使用默认后端，尚未覆盖所有传输和交错。
+
+- DNS 状态改为 worker 独占，会话借用；状态先于执行上下文声明，查询任务排空或 abandon 后才销毁。真实 SOCKS DNS 查询挂起时专用构建直接销毁 Server，确认查询注销先于 DNS 状态析构；DNS 取消、异常和缓存槽释放在 epoll/io_uring 通过，单/双 worker bootstrap、SS-2022 候选取消与 VLESS 并发回归通过。
 
 - 出站 factory 快照由各 Server 持有并先于执行上下文声明，会话借用快照，不再持有共享引用；活动会话和监听器仍阻止配置替换。VLESS 握手挂起和 SS-2022 上游读取挂起时直接销毁上下文，验证隧道先于 profile 销毁，各连续五轮通过；32 路并发 VLESS/TLS 转发、两种协议单/双 worker 候选重试、超时和停止及正式构建通过。更广泛的上下文销毁交错仍待验证。
 
