@@ -38,20 +38,22 @@ namespace nexus::packet {
                 } else { result.output_delivered=true; output_.reset(); }
             }
         }
-        if (!input_) {
+        if (!input_size_) {
             auto n=::read(fd_,buffer_.data(),buffer_.size());
             if (n < 0) {
                 if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)
                     result.input_error=FdFailure{std::error_code{errno,std::generic_category()}};
             } else if (!n) result.input_error=FdFailure{FdError::end_of_file};
             else if (static_cast<std::size_t>(n)>mtu_) result.input_error=FdFailure{FdError::packet_too_large};
-            else { result.input=true; input_=Bytes(buffer_.begin(),buffer_.begin()+n); }
+            else { result.input=true; input_size_=static_cast<std::size_t>(n); }
         }
-        if (input_) {
-            auto sent=link_->send(Side::first,*input_);
-            if (sent) { result.input_delivered=true; input_.reset(); }
-            else if (sent.error()==DeviceError::queue_full) result.input_backpressured=true;
-            else { result.input_error=FdFailure{sent.error()}; input_.reset(); }
+        if (input_size_) {
+            try {
+                auto sent=link_->send(Side::first,std::span(buffer_).first(input_size_));
+                if (sent) { result.input_delivered=true; input_size_=0; }
+                else if (sent.error()==DeviceError::queue_full) result.input_backpressured=true;
+                else { result.input_error=FdFailure{sent.error()}; input_size_=0; }
+            } catch (std::bad_alloc const&) { result.input_backpressured=true; }
         }
         return result;
     }

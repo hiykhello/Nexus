@@ -5,6 +5,14 @@
 import std;
 import nexus.packet.fd;
 namespace p=nexus::packet;
+static bool fail_packet_allocation=false;
+void* operator new(std::size_t size) {
+    if (fail_packet_allocation && size==3) { fail_packet_allocation=false; throw std::bad_alloc{}; }
+    if (auto p=std::malloc(size ? size : 1)) return p;
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
 struct Pair { int fd[2]{-1,-1}; ~Pair() { for (int n:fd) if (n>=0) ::close(n); } };
 int main() {
     Pair pair;
@@ -28,6 +36,14 @@ int main() {
     if (!oversized.input_error || std::get<p::FdError>(*oversized.input_error)!=p::FdError::packet_too_large) return 1;
     if (::send(pair.fd[1],first.data(),first.size(),0)!=3 || !pump->step().input_delivered) return 1;
     consumed=link.receive(p::Side::second); if (!consumed || !*consumed || **consumed!=first) return 1;
+    if (::send(pair.fd[1],first.data(),first.size(),0)!=3) return 1;
+    fail_packet_allocation=true;
+    auto failed=pump->step();
+    if (fail_packet_allocation || !failed.input || !failed.input_backpressured || failed.input_delivered) return 1;
+    auto empty=link.receive(p::Side::second); if (!empty || *empty) return 1;
+    auto recovered=pump->step(); if (recovered.input || !recovered.input_delivered) return 1;
+    consumed=link.receive(p::Side::second); if (!consumed || !*consumed || **consumed!=first) return 1;
+    empty=link.receive(p::Side::second); if (!empty || *empty) return 1;
     p::Bytes filler(100,7); int filled=0;
     while (::send(pair.fd[0],filler.data(),filler.size(),0)==static_cast<ssize_t>(filler.size())) ++filled;
     if (!filled || (errno!=EAGAIN && errno!=EWOULDBLOCK) || !link.send(p::Side::second,second)) return 1;

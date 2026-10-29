@@ -12,13 +12,15 @@ export namespace nexus::packet {
     };
     // Borrows a nonblocking, packet-preserving descriptor and the link's first side.
     // Neither descriptor nor link may be closed or replaced during a step.
-    // Caller handles SIGPIPE where the descriptor can generate it.
+    // Caller handles SIGPIPE where the descriptor can generate it. An input
+    // queue allocation failure retains the packet and reports backpressure.
     class FdPump {
         int fd_;
         MemoryLink* link_;
         std::size_t mtu_;
         Bytes buffer_;
-        std::optional<Bytes> input_, output_;
+        std::size_t input_size_ = 0;
+        std::optional<Bytes> output_;
         FdPump(int fd, MemoryLink& link, std::size_t mtu);
     public:
         ~FdPump();
