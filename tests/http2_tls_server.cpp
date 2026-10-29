@@ -98,7 +98,7 @@ auto serve(Fixture& f) -> capy::task<> {
             break;
         }
         if (*result==h::TlsServerStep::paused) {
-            if (f.session->input_memory_charge()!=16384) break;
+            if (f.session->input_memory_charge()!=16640) break;
             if ((f.pause_output || f.pause_multi) && !f.response) {
                 constexpr std::string_view body="hello h2";
                 if (f.pause_multi && (f.requests.size()!=2 || f.session->paused_stream()!=f.requests[1])) break;

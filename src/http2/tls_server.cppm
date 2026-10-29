@@ -135,9 +135,10 @@ export namespace nexus::http2 {
             }
             if (peer_closed_) { active_=false; ready_to_close_=true; ready_revision_=session_.revision(); co_return TlsServerStep::peer_closed; }
             if (session_.shutdown_complete()) { active_=false; ready_to_close_=true; ready_revision_=session_.revision(); co_return TlsServerStep::drained; }
-            // Reserve a maximum-sized application record before reading. It may
-            // remain borrowed by nghttp2 while a DATA callback is paused.
-            if (!session_.reserve_input(16384)) { active_=false; cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
+            // Decryption allocates the complete ciphertext payload, including its tag,
+            // even for invalid records. Successful output retains that capacity
+            // while nghttp2 may borrow it during a paused DATA callback.
+            if (!session_.reserve_input(16640)) { active_=false; cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             input_reserved_=true;
             // A peer KeyUpdate may create a 27-byte response while reading.
             // Reserve it and its write copy before TLS can enqueue it.
