@@ -99,10 +99,19 @@ else:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
             client.settimeout(10)
             client.connect(('10.77.0.2', int(sys.argv[5])))
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            with socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(3)) as capture, \
+                    socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                capture.bind(('nx-owned', 0)); capture.settimeout(10)
                 udp.settimeout(10)
+                udp.setsockopt(socket.IPPROTO_IP, socket.IP_OPTIONS, bytes([1, 1, 0, 0]))
                 udp.sendto(b'udp', ('10.77.0.2', int(sys.argv[6])))
                 if udp.recvfrom(64)[0] != b'UDP': raise RuntimeError('invalid UDP response')
+                while True:
+                    packet = capture.recv(65535)
+                    if len(packet) >= 35 and packet[0] >> 4 == 4 and packet[9] == 17 and packet.endswith(b'udp'):
+                        if packet[0] != 0x46 or packet[20:24] != bytes([1, 1, 0, 0]):
+                            raise RuntimeError(f'IPv4 options missing from TUN packet: {packet[:24].hex()}')
+                        break
             with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as udp6:
                 udp6.settimeout(10)
                 for request in (b'udp6', b'options', b'both', b'unknown'):
