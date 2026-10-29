@@ -13,6 +13,7 @@ export namespace nexus::tcp {
     struct DispatchResult {
         ConnectionId id;
         bool opened = false;
+        bool challenge_suppressed = false;
         std::optional<ConnectionError> input_error;
         std::optional<packet::Bytes> reply;
     };

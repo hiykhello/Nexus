@@ -5,7 +5,8 @@ import std;
 export namespace nexus::tcp {
     using ConnectionId = std::uint64_t;
     struct Target4 { packet::Address4 address; std::uint16_t port; };
-    enum class TableError { invalid_capacity, duplicate, full, invalid_syn, id_exhausted, not_found, time_reversed };
+    enum class TableError { invalid_capacity, invalid_challenge_limit, duplicate, full, invalid_syn, id_exhausted, not_found, time_reversed };
+    struct ChallengeAckLimits { std::size_t count = 100; std::uint64_t interval_ms = 1000; };
     // Single owner. Pointers returned by get are invalidated by removal or table destruction.
     class ConnectionTable {
         struct Entry {
@@ -18,15 +19,21 @@ export namespace nexus::tcp {
         };
         std::list<Entry> entries_;
         std::size_t limit_, buffer_capacity_;
+        ChallengeAckLimits challenge_limits_;
+        std::optional<std::uint64_t> challenge_start_;
+        std::size_t challenge_count_ = 0;
         ConnectionId next_id_ = 1;
-        ConnectionTable(std::size_t limit, std::size_t capacity) : limit_(limit), buffer_capacity_(capacity) {}
+        ConnectionTable(std::size_t limit, std::size_t capacity, ChallengeAckLimits challenge)
+            : limit_(limit), buffer_capacity_(capacity), challenge_limits_(challenge) {}
     public:
         ConnectionTable(ConnectionTable const&) = delete;
         auto operator=(ConnectionTable const&) -> ConnectionTable& = delete;
         ConnectionTable(ConnectionTable&&) = default;
         auto operator=(ConnectionTable&&) -> ConnectionTable& = default;
-        [[nodiscard]] static auto create(std::size_t limit, std::size_t buffer_capacity)
+        [[nodiscard]] static auto create(std::size_t limit, std::size_t buffer_capacity, ChallengeAckLimits challenge = {})
             -> std::expected<ConnectionTable, TableError>;
+        // Shared across this table. A backwards clock never grants a fresh allowance.
+        [[nodiscard]] auto claim_challenge_ack(std::uint64_t now) noexcept -> bool;
         [[nodiscard]] auto open(packet::Tcp4View syn, std::uint32_t iss, std::uint64_t now)
             -> std::expected<ConnectionId, TableError>;
         [[nodiscard]] auto find(packet::Tcp4View segment) const noexcept -> std::optional<ConnectionId>;

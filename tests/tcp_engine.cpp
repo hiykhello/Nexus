@@ -107,6 +107,18 @@ int main() {
     auto completed_reset=reset_engine.step(3,0);
     if (!reset_view || reset_view->flags!=4 || reset_view->sequence!=52 || !completed_reset ||
         completed_reset->input_error || reset_table->get(*reset_id)->state()!=t::ConnectionState::established) return 1;
+    p::MemoryLink limited_link({1500,1,1500});
+    auto limited_table=t::ConnectionTable::create(1,8,{0,1000});
+    auto limited_id=limited_table->open(syn,50,0);
+    if (!limited_id || !limited_table->get(*limited_id)->input(valid_ack,0)) return 1;
+    t::MemoryEngine limited_engine(limited_link,*limited_table);
+    auto attack=valid_ack; attack.flags=2;
+    auto attack_wire=p::make_tcp4(attack);
+    if (!attack_wire || !limited_link.send(p::Side::first,*attack_wire)) return 1;
+    auto suppressed=limited_engine.step(1,0);
+    auto no_challenge=limited_link.receive(p::Side::first);
+    if (!suppressed || !suppressed->challenge_suppressed || suppressed->delivered || !no_challenge || *no_challenge ||
+        limited_table->get(*limited_id)->state()!=t::ConnectionState::established) return 1;
     p::MemoryLink small_link({1500, 1, 1500});
     auto small_table = t::ConnectionTable::create(1, 8);
     auto small_id = small_table->open(syn, 50, 0);

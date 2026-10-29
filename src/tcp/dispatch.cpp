@@ -20,7 +20,7 @@ namespace nexus::tcp {
                     (void)table.abort(*opened);
                     return std::unexpected(DispatchFailure{DispatchError::output_error, reply.error(), {}});
                 }
-                return DispatchResult{*opened, true, {}, std::move(*reply)};
+                return DispatchResult{.id=*opened, .opened=true, .reply=std::move(*reply)};
             } catch (...) {
                 (void)table.abort(*opened);
                 throw;
@@ -41,6 +41,9 @@ namespace nexus::tcp {
              result.error() == ConnectionError::invalid_ack)) answer = true;
         if (!result && (segment->flags & 4) && result.error() == ConnectionError::challenge_ack) answer = true;
         if (answer) {
+            bool challenge = !result && (result.error() == ConnectionError::challenge_ack ||
+                (previous != ConnectionState::handshake && result.error() == ConnectionError::invalid_ack));
+            if (challenge && !table.claim_challenge_ack(now)) { outcome.challenge_suppressed=true; return outcome; }
             auto view = previous == ConnectionState::handshake && result && !*result ? connection->syn_ack() : connection->ack();
             if (previous == ConnectionState::handshake && !result && result.error() == ConnectionError::invalid_ack) {
                 view.sequence = segment->acknowledgement; view.acknowledgement = 0;

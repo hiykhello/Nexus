@@ -5,7 +5,7 @@ import std;
 export namespace nexus::tcp {
     enum class EngineError { time_reversed, unknown_flow, invalid_mtu };
     struct EngineStep {
-        bool input = false, delivered = false, backpressured = false, stale_reply = false;
+        bool input = false, delivered = false, backpressured = false, stale_reply = false, challenge_suppressed = false;
         std::optional<ConnectionId> id;
         bool opened = false;
         std::optional<ConnectionError> input_error;

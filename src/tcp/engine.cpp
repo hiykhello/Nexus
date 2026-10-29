@@ -41,6 +41,7 @@ namespace nexus::tcp {
         incoming_.reset();
         if (!result) { report.rejected = result.error(); return report; }
         report.id = result->id; report.opened = result->opened; report.input_error = result->input_error;
+        report.challenge_suppressed = result->challenge_suppressed;
         if (result->reply) {
             pending_ = std::move(*result->reply); pending_id_ = result->id;
             try { flush(report); }

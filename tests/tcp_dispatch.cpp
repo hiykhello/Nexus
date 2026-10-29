@@ -2,7 +2,36 @@ import std;
 import nexus.tcp.dispatch;
 namespace p = nexus::packet;
 namespace t = nexus::tcp;
+auto challenge_limit() -> bool {
+    if (t::ConnectionTable::create(1,8,{2,0})) return false;
+    auto table=t::ConnectionTable::create(2,8,{2,10});
+    p::Tcp4View syn{.source={10,0,0,1},.destination={10,0,0,2},.source_port=1234,
+                    .destination_port=80,.sequence=99,.flags=2,.window=8};
+    auto first=table->open(syn,50,0); syn.source_port++;
+    auto second=table->open(syn,50,0);
+    if (!first || !second) return false;
+    auto ack=syn; ack.sequence=100; ack.acknowledgement=51; ack.flags=0x10;
+    if (!table->get(*second)->input(ack,0)) return false;
+    ack.source_port--; if (!table->get(*first)->input(ack,0)) return false;
+    auto syn_attack=ack; syn_attack.flags=2; syn_attack.sequence=1000;
+    auto wire=p::make_tcp4(syn_attack); auto a=t::dispatch(*table,*wire,0,100);
+    syn_attack.source_port++; auto future=ack; future.source_port++; future.acknowledgement=52;
+    wire=p::make_tcp4(future); auto b=t::dispatch(*table,*wire,0,100);
+    wire=p::make_tcp4(syn_attack);
+    auto suppressed=t::dispatch(*table,*wire,0,100);
+    if (!a || !b || !a->reply || !b->reply || !suppressed || suppressed->reply || !suppressed->challenge_suppressed) return false;
+    p::Bytes payload{'x'}; auto data=ack; data.flags=0x18; data.payload=payload;
+    wire=p::make_tcp4(data); auto ordinary=t::dispatch(*table,*wire,0,100);
+    if (!ordinary || !ordinary->reply || ordinary->challenge_suppressed) return false;
+    syn_attack.source_port--; wire=p::make_tcp4(syn_attack);
+    auto early=t::dispatch(*table,*wire,0,109); auto renewed=t::dispatch(*table,*wire,0,110);
+    if (!early || early->reply || !early->challenge_suppressed || !renewed || !renewed->reply || renewed->challenge_suppressed) return false;
+    auto backwards=table->claim_challenge_ack(109);
+    auto disabled=t::ConnectionTable::create(1,8,{0,10});
+    return !backwards && disabled && !disabled->claim_challenge_ack(1) && !disabled->claim_challenge_ack(11);
+}
 int main() {
+    if (!challenge_limit()) return 1;
     auto table = t::ConnectionTable::create(1, 8);
     if (!table) return 1;
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,

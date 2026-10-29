@@ -18,7 +18,7 @@ namespace nexus::transport {
         if (limits.mtu<48 || limits.mtu>65535 || !limits.tcp_direct || !limits.udp.flows ||
             !limits.udp.peers_per_flow || !limits.udp.idle_ms || !usable(limits.external) || !usable(limits.internal))
             return std::unexpected(TunDriverFailure{TunDriverError::invalid_limits});
-        auto table=tcp::ConnectionTable::create(limits.tcp_flows,limits.tcp_buffer);
+        auto table=tcp::ConnectionTable::create(limits.tcp_flows,limits.tcp_buffer,limits.challenge_ack);
         if (!table) return std::unexpected(TunDriverFailure{table.error()});
         auto self=std::unique_ptr<LinuxTunDirect>(new LinuxTunDirect(std::move(tun),std::move(*table),std::move(policy),limits));
         auto pump=packet::FdPump::create(self->tun_.native_handle(),self->link_,limits.mtu);

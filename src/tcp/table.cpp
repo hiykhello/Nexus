@@ -2,9 +2,18 @@ module nexus.tcp.table;
 import std;
 
 namespace nexus::tcp {
-    auto ConnectionTable::create(std::size_t limit, std::size_t capacity) -> std::expected<ConnectionTable, TableError> {
+    auto ConnectionTable::create(std::size_t limit, std::size_t capacity, ChallengeAckLimits challenge) -> std::expected<ConnectionTable, TableError> {
         if (!limit || !capacity || capacity > 65535) return std::unexpected(TableError::invalid_capacity);
-        return ConnectionTable(limit, capacity);
+        if (!challenge.interval_ms) return std::unexpected(TableError::invalid_challenge_limit);
+        return ConnectionTable(limit, capacity, challenge);
+    }
+    auto ConnectionTable::claim_challenge_ack(std::uint64_t now) noexcept -> bool {
+        if (challenge_start_ && now < *challenge_start_) return false;
+        if (!challenge_start_ || now - *challenge_start_ >= challenge_limits_.interval_ms) {
+            challenge_start_ = now; challenge_count_ = 0;
+        }
+        if (challenge_count_ >= challenge_limits_.count) return false;
+        ++challenge_count_; return true;
     }
     auto ConnectionTable::find(packet::Tcp4View segment) const noexcept -> std::optional<ConnectionId> {
         for (auto const& entry : entries_)

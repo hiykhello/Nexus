@@ -13,6 +13,7 @@ export namespace nexus::transport {
         packet::DeviceLimits external{}, internal{};
         // Applied to every direct socket before connect/send; failures are reported.
         std::optional<std::uint32_t> socket_mark;
+        tcp::ChallengeAckLimits challenge_ack{};
     };
     enum class TunDriverError { stopped, invalid_device, invalid_limits, time_reversed };
     struct TunRandomFailure { std::error_code error; };
