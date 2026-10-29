@@ -24,6 +24,7 @@ export namespace nexus::config {
         std::optional<PasswordAuth> password_auth;
         std::optional<VlessInbound> vless;
         std::optional<ShadowsocksInbound> shadowsocks;
+        bool listen_ipv6 = false;
     };
     enum class TlsKeyExchange { x25519, x25519_mlkem768, x25519_mlkem768_only };
     struct VlessOutbound {
@@ -64,6 +65,7 @@ export namespace nexus::config {
     };
     struct Config {
         std::uint16_t port = 0;
+        bool listen_ipv6 = false;
         std::vector<InboundConfig> inbounds;
         unsigned workers = 1;
         Inbound inbound = Inbound::socks5;

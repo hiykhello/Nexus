@@ -196,7 +196,7 @@ export namespace nexus::proxy {
         auto get_failure() const -> std::optional<RuntimeFailure>;
         auto accept_loop() -> capy::task<>;
         auto serve_session(std::unique_ptr<Session> session) -> capy::task<>;
-        auto start_one(std::uint16_t port, Inbound inbound, bool reuse) -> std::expected<std::uint16_t, std::error_code>;
+        auto start_one(std::uint16_t port, Inbound inbound, bool reuse, bool ipv6) -> std::expected<std::uint16_t, std::error_code>;
     public:
         Server();
         // Converts context initialization system failures into an error result.
@@ -252,7 +252,7 @@ export namespace nexus::proxy {
         // Configure once; matching keys share a process-lifetime replay table.
         [[nodiscard]] auto prepare_shadowsocks_inbound(std::span<std::uint8_t const> key) -> std::expected<void,std::string>;
         // Workers: 1..16.
-        [[nodiscard]] auto start(std::uint16_t port, Inbound inbound = Inbound::socks5, unsigned workers = 1) -> std::expected<std::uint16_t, std::error_code>;
+        [[nodiscard]] auto start(std::uint16_t port, Inbound inbound = Inbound::socks5, unsigned workers = 1, bool ipv6 = false) -> std::expected<std::uint16_t, std::error_code>;
         [[nodiscard]] auto healthy() const noexcept -> bool;
         // First unexpected runtime failure, retained through stop and cleared on the next start.
         [[nodiscard]] auto failure() const -> std::optional<RuntimeFailure>;

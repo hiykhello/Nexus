@@ -387,7 +387,7 @@ namespace nexus::proxy {
 #endif
     }
 
-    auto Server::start_one(std::uint16_t port, Inbound inbound, bool reuse) -> std::expected<std::uint16_t, std::error_code> {
+    auto Server::start_one(std::uint16_t port, Inbound inbound, bool reuse, bool ipv6) -> std::expected<std::uint16_t, std::error_code> {
         if (this->running || this->listener.is_open() || !this->sessions.empty())
             return std::unexpected(std::make_error_code(std::errc::operation_in_progress));
 #ifdef NEXUS_ENABLE_VLESS
@@ -403,13 +403,19 @@ namespace nexus::proxy {
         if (this->credentials && inbound != Inbound::socks5)
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         if (this->dns_routing && !this->dns) this->dns=std::make_unique<DnsState>(*this->dns_routing);
-        if (auto error = this->listener.open()) return std::unexpected(error);
+        if (auto error = this->listener.open(ipv6 ? io::family::v6 : io::family::v4)) return std::unexpected(error);
+        if (ipv6) {
+            if (auto error=this->listener.set_option(io::socket_option::v6_only(true))) {
+                this->listener.close(); return std::unexpected(error);
+            }
+        }
         if (reuse) {
             if (auto error = this->listener.set_option(io::socket_option::reuse_port(true))) {
                 this->listener.close(); return std::unexpected(error);
             }
         }
-        if (auto error = this->listener.bind(io::endpoint(io::ipv4_address::loopback(), port))) {
+        auto endpoint=ipv6 ? io::endpoint(io::ipv6_address::loopback(),port) : io::endpoint(io::ipv4_address::loopback(),port);
+        if (auto error = this->listener.bind(endpoint)) {
             this->listener.close(); return std::unexpected(error);
         }
         if (auto error = this->listener.listen()) {
@@ -437,14 +443,15 @@ namespace nexus::proxy {
         return bound_port;
     }
 
-    auto Server::start(std::uint16_t port, Inbound inbound, unsigned count) -> std::expected<std::uint16_t,std::error_code> {
+    auto Server::start(std::uint16_t port, Inbound inbound, unsigned count, bool ipv6) -> std::expected<std::uint16_t,std::error_code> {
         auto& state=*this;
         if (state.running || state.listener.is_open() || !state.sessions.empty() || !state.workers.empty())
             return std::unexpected(std::make_error_code(std::errc::operation_in_progress));
-        if (!count || count>16 || (state.credentials && inbound==Inbound::mixed))
+        if (!count || count>16 || (state.credentials && inbound==Inbound::mixed) ||
+            (ipv6 && inbound!=Inbound::socks5 && inbound!=Inbound::mixed))
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         { std::lock_guard lock(state.failure_mutex); state.failure_state.reset(); }
-        if (count==1) return start_one(port,inbound,false);
+        if (count==1) return start_one(port,inbound,false,ipv6);
         state.stopping=false; state.failed=false;
         auto bound=port;
         try {
@@ -465,7 +472,7 @@ namespace nexus::proxy {
                 worker->shadowsocks_inbound=state.shadowsocks_inbound;
 #endif
                 worker->quota=state.quota;
-                auto result=worker->start_one(bound,inbound,true);
+                auto result=worker->start_one(bound,inbound,true,ipv6);
                 if (!result) { state.workers.clear(); return std::unexpected(result.error()); }
                 bound=*result;
                 state.workers.push_back(std::move(worker));

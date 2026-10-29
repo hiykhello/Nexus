@@ -96,7 +96,7 @@ auto nexus_run(int argc, char** argv) -> int {
     }
     auto created = nexus::proxy::Server::create();
     if (!created) { std::cerr << "cannot initialize proxy: " << created.error().message() << '\n'; return 1; }
-    struct Listener { std::unique_ptr<nexus::proxy::Server> server; std::uint16_t port; nexus::proxy::Inbound inbound; };
+    struct Listener { std::unique_ptr<nexus::proxy::Server> server; std::uint16_t port; nexus::proxy::Inbound inbound; bool ipv6=false; };
     std::vector<Listener> listeners;
 #ifdef NEXUS_ENABLE_SS2022
     std::unique_ptr<UdpInbounds> udp_inbounds;
@@ -117,6 +117,7 @@ auto nexus_run(int argc, char** argv) -> int {
         if (!config) { std::cerr << "configuration: " << config.error() << '\n'; return 1; }
         workers=config->workers;
         listeners.front().port=config->inbounds.front().port;
+        listeners.front().ipv6=config->inbounds.front().listen_ipv6;
         auto convert_inbound=[](nexus::config::Inbound type) {
             return type==nexus::config::Inbound::mixed ? nexus::proxy::Inbound::mixed :
                 type==nexus::config::Inbound::vless ? nexus::proxy::Inbound::vless :
@@ -127,7 +128,7 @@ auto nexus_run(int argc, char** argv) -> int {
             auto next=nexus::proxy::Server::create();
             if (!next) { std::cerr << "cannot initialize proxy: " << next.error().message() << '\n'; return 1; }
             auto const& entry=config->inbounds[i];
-            listeners.push_back({std::move(*next),entry.port,convert_inbound(entry.type)});
+            listeners.push_back({std::move(*next),entry.port,convert_inbound(entry.type),entry.listen_ipv6});
         }
         std::vector<std::string> rules_data;
         std::vector<std::size_t> rule_data_index;
@@ -270,7 +271,7 @@ auto nexus_run(int argc, char** argv) -> int {
 #endif
     }
     for (auto& listener : listeners) {
-        auto bound=listener.server->start(listener.port,listener.inbound,workers);
+        auto bound=listener.server->start(listener.port,listener.inbound,workers,listener.ipv6);
         if (!bound) {
             std::cerr << "cannot listen: " << bound.error().message() << '\n';
             return 1;
@@ -286,7 +287,7 @@ auto nexus_run(int argc, char** argv) -> int {
     std::signal(SIGTERM, handle_signal);
     for (auto const& listener : listeners)
         std::cout << (listener.inbound == nexus::proxy::Inbound::mixed ? "Mixed" : listener.inbound == nexus::proxy::Inbound::vless ? "VLESS/TLS" : listener.inbound == nexus::proxy::Inbound::shadowsocks ? "SS-2022" : "SOCKS5")
-                  << " listening on 127.0.0.1:" << listener.port << '\n';
+                  << " listening on " << (listener.ipv6 ? "[::1]:" : "127.0.0.1:") << listener.port << '\n';
     auto healthy=[&] {
 #ifdef NEXUS_ENABLE_SS2022
         if (udp_inbounds && !udp_inbounds->healthy()) return false;

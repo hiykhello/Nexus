@@ -248,23 +248,34 @@ namespace nexus::proxy {
         }
         auto udp_associate(Session& session, io::io_context& context, rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<> {
             auto remote=session.client.remote_endpoint(); auto local=session.client.local_endpoint();
-            if (!remote.address().is_v4() || !local.address().is_v4() || (request.address_type!=1 && request.address_type!=4)) {
+            bool ipv6=remote.address().is_v6();
+            if (local.address().is_v6()!=ipv6 || (request.address_type!=1 && request.address_type!=4) ||
+                (ipv6 && (remote.address().to_v6().scope_id() || local.address().to_v6().scope_id()))) {
                 (void)co_await reply(session.client,8,{},session); session.close(); session.done=true; co_return;
             }
-            socks5::UdpPeer tcp{1,{},remote.port()}, hint{request.address_type,{},request.port};
-            auto remote_bytes=remote.address().to_v4().to_bytes();
-            std::ranges::copy(remote_bytes,tcp.address.begin());
+            socks5::UdpPeer tcp{ipv6 ? std::uint8_t{4} : std::uint8_t{1},{},remote.port()}, hint{request.address_type,{},request.port};
+            socks5::UdpPeer bind{tcp.address_type,{},0};
+            if (ipv6) {
+                auto remote_bytes=remote.address().to_v6().to_bytes(); auto local_bytes=local.address().to_v6().to_bytes();
+                std::ranges::copy(remote_bytes,tcp.address.begin()); std::ranges::copy(local_bytes,bind.address.begin());
+            } else {
+                auto remote_bytes=remote.address().to_v4().to_bytes(); auto local_bytes=local.address().to_v4().to_bytes();
+                std::ranges::copy(remote_bytes,tcp.address.begin()); std::ranges::copy(local_bytes,bind.address.begin());
+            }
             std::copy_n(request.address.begin(),request.address_length,hint.address.begin());
             auto association=socks5::UdpAssociation::create(tcp,hint);
             if (!association) { (void)co_await reply(session.client,2,{},session); session.close(); session.done=true; co_return; }
             socks5::UdpIngress ingress(*association,policy,true);
             UdpResolution resolution;
-            socks5::UdpPeer bind{1,{},0}; auto local_bytes=local.address().to_v4().to_bytes();
-            std::ranges::copy(local_bytes,bind.address.begin());
             auto endpoint=ingress.open(bind);
             if (!endpoint) { (void)co_await reply(session.client,1,{},session); session.close(); session.done=true; co_return; }
-            io::ipv4_address::bytes_type bytes{}; std::copy_n(endpoint->address.begin(),4,bytes.begin());
-            if (!co_await reply(session.client,0,{io::ipv4_address(bytes),endpoint->port},session)) {
+            io::endpoint bound;
+            if (ipv6) bound={io::ipv6_address(endpoint->address),endpoint->port};
+            else {
+                io::ipv4_address::bytes_type bytes{}; std::copy_n(endpoint->address.begin(),4,bytes.begin());
+                bound={io::ipv4_address(bytes),endpoint->port};
+            }
+            if (!co_await reply(session.client,0,bound,session)) {
                 ingress.close(); session.close(); session.done=true; co_return;
             }
             session.relaying=true;

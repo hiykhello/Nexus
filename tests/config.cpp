@@ -24,6 +24,10 @@ routing {
 }
 )";
     auto config = nexus::config::parse_kdl(complete);
+    auto ipv6=nexus::config::parse_kdl(replace(complete,"listen host=\"127.0.0.1\"","listen host=\"::1\""));
+    if (!ipv6 || !ipv6->listen_ipv6 || ipv6->inbounds.size()!=1 || !ipv6->inbounds[0].listen_ipv6) return 1;
+    for (auto host : {"::", "::2", "::1%lo", "::ffff:127.0.0.1"})
+        if (nexus::config::parse_kdl(replace(complete,"127.0.0.1",host))) return 1;
     auto ss=replace(complete,"outbound \"direct\" type=\"direct\"", R"(outbound "direct" type="direct"
 outbound "ss" type="shadowsocks" { server host="127.0.0.1" port=8388; method "2022-blake3-aes-128-gcm"; key-file "/secret"; })");
     ss=replace(ss,"default-outbound \"direct\"","default-outbound \"ss\"");

@@ -16,8 +16,10 @@
                     auto host = text_property(child, "host");
                     auto port_value = property(child, "port");
                     auto number = port_value ? integer(*port_value) : std::nullopt;
-                    if (!host || *host != "127.0.0.1" || !number || *number == 0 || *number > 65535)
-                        return error("listen requires host=\"127.0.0.1\" and port 1..65535");
+                    if (!host || (*host != "127.0.0.1" && !(*host=="::1" && (*type=="socks5" || *type=="mixed"))) ||
+                        !number || *number == 0 || *number > 65535)
+                        return error("listen requires a supported loopback host and port 1..65535");
+                    result.listen_ipv6=*host=="::1";
                     port = static_cast<std::uint16_t>(*number);
                     listen_seen = true;
                 } else if (*type=="shadowsocks" && (child.name=="method" || child.name=="key-file")) {
