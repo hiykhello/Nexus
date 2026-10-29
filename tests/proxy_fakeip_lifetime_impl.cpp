@@ -4,6 +4,7 @@ module;
 #include <boost/capy/task.hpp>
 #include <boost/capy/when_all.hpp>
 #include <boost/corosio/backend.hpp>
+#include <boost/corosio/delay.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/local_connect_pair.hpp>
 #include <boost/corosio/local_stream_socket.hpp>
@@ -21,25 +22,29 @@ namespace nexus::proxy {
             std::shared_ptr<dns::FakeIpShared> pool;
             std::vector<std::uint8_t> other;
             std::array<bool,2> entered{}, destroyed{}, pinned_on_destroy{};
-            bool parent_destroyed=false, children_first=false, returned=false;
+            bool parent_destroyed=false, children_first=false, returned=false, caught=false;
             auto pinned() -> bool {
                 auto result=pool->respond(base,other,7);
                 return !result && result.error()==std::variant<dns::FakeIpRegistryError,dns::FakeIpDnsError>{dns::FakeIpDnsError::full};
             }
         };
-        auto child(io::local_stream_socket& socket, LifetimeState& state, unsigned index)
+        auto child(io::local_stream_socket& socket, LifetimeState& state, unsigned index, bool fail)
             -> capy::task<capy::results<>> {
             struct Guard {
                 LifetimeState& state; unsigned index;
                 ~Guard() { state.pinned_on_destroy[index]=state.pinned(); state.destroyed[index]=true; }
             } guard{state,index};
             state.entered[index]=true;
+            if (fail) {
+                (void)co_await io::delay(std::chrono::milliseconds(5));
+                throw std::runtime_error("injected asynchronous failure");
+            }
             std::array<char,1> bytes{};
             auto [error,count]=co_await socket.read_some(capy::mutable_buffer(bytes.data(),bytes.size()));
             (void)count;
             co_return capy::results<>{error};
         }
-        auto parent(std::unique_ptr<Session> session, io::io_context& context, LifetimeState& state)
+        auto parent(std::unique_ptr<Session> session, io::io_context& context, LifetimeState& state, bool fail)
             -> capy::task<> {
             struct Guard {
                 LifetimeState& state;
@@ -47,13 +52,15 @@ namespace nexus::proxy {
             } guard{state};
             io::local_stream_socket first(context),second(context);
             if (io::connect_pair(first,second)) co_return;
-            (void)co_await capy::when_all(child(first,state,0),child(second,state,1));
-            state.returned=true;
+            try {
+                (void)co_await capy::when_all(child(first,state,0,fail),child(second,state,1,false));
+                state.returned=true;
+            } catch (...) { state.caught=true; }
         }
     }
 }
 
-extern "C" int nexus_test_fakeip_lifetime(unsigned backend) {
+extern "C" int nexus_test_fakeip_lifetime(unsigned backend, unsigned mode) {
     using namespace nexus::proxy;
     using namespace std::chrono_literals;
     LifetimeState state;
@@ -80,11 +87,13 @@ extern "C" int nexus_test_fakeip_lifetime(unsigned backend) {
         session->fakeip_target=std::move(*target);
         registry.push_back(session.get());
         session->registry=&registry;
-        capy::run_async(context.get_executor())(parent(std::move(session),context,state));
+        capy::run_async(context.get_executor())(parent(std::move(session),context,state,mode==1));
         context.restart(); (void)context.run_for(30ms);
-        if (!state.entered[0] || !state.entered[1] || state.parent_destroyed || !state.pinned()) return 4;
+        if (!state.entered[0] || !state.entered[1]) return 4;
+        if (mode==0 && (state.parent_destroyed || !state.pinned())) return 4;
+        if (mode==1 && (!state.parent_destroyed || !state.caught || !registry.empty())) return 7;
     }
-    if (!registry.empty() || !state.parent_destroyed || !state.children_first || state.returned ||
+    if (!registry.empty() || !state.parent_destroyed || !state.children_first || state.returned || state.caught!=(mode==1) ||
         !state.pinned_on_destroy[0] || !state.pinned_on_destroy[1]) return 5;
     auto recovered=state.pool->respond(base,state.other,7);
     if (!recovered || !(*recovered)->finish(false)) return 6;
