@@ -368,6 +368,7 @@ if is_plat("linux") and has_config("ss2022") and has_config("crypto") then
     target("nexus-shadowsocks-udp-resolve-owner-test")
         set_kind("binary")
         set_default(false)
+        add_defines("NEXUS_TEST_DNS_LIFETIME")
         add_files("../tests/shadowsocks_udp_resolve_owner.cpp")
         add_packages("nexus-corosio", "nexus-capy")
         add_deps("nexus-shadowsocks-udp-dispatch", "nexus-dns-cache")

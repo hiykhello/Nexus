@@ -13,10 +13,14 @@ import nexus.shadowsocks.udp_packet;
 namespace s=nexus::shadowsocks;
 namespace io=boost::corosio;
 using namespace std::chrono_literals;
+bool inject_dns_failure=false;
+extern "C" void nexus_test_dns_received() {
+    if (std::exchange(inject_dns_failure,false)) throw std::runtime_error("injected DNS receive failure");
+}
 int main(int argc,char** argv) {
-    if (argc!=3) return 1;
+    if (argc!=3 && argc!=4) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
-    io::io_context context{io::uring};
+    io::io_context context = argc==4 && std::string_view(argv[3])=="epoll" ? io::io_context(io::epoll) : io::io_context(io::uring);
 #else
     io::io_context context;
 #endif
@@ -30,6 +34,8 @@ int main(int argc,char** argv) {
     auto begin=[&] { auto wire=*s::encode_udp_packet(key,s::UdpDirection::client,packet,{}); ++packet.packet_id;
         return dispatcher.begin(key,wire,{4,{127,0,0,1},1234},now,wall,now+2s); };
     auto upstream=io::endpoint(io::ipv4_address::loopback(),static_cast<std::uint16_t>(std::stoi(argv[1])));
+    bool exception=std::string_view(argv[2])=="exception";
+    inject_dns_failure=exception;
     for (int i=0;i<2;++i) {
         auto pending=begin(); if (!pending) return 3;
         auto duplicate=*pending;
@@ -38,6 +44,10 @@ int main(int argc,char** argv) {
     }
     auto third=begin(); if (!third || owner.start(std::move(*third),upstream,1,now,now+2s).error()!=s::detail::UdpResolveStartError::full || dispatcher.pending()!=2) return 4;
     context.restart(); (void)context.run_for(100ms);
+    if (exception) {
+        for (int i=0;i<20 && owner.failed()==0;++i) { context.restart(); (void)context.run_for(50ms); }
+        if (inject_dns_failure || owner.failed()!=1 || owner.active()!=1 || dispatcher.pending()!=1) return 9;
+    }
     if (std::string_view(argv[2])=="expired") owner.cancel_expired(now+2s); else owner.stop();
     if (dispatcher.pending()!=0) return 5;
     context.restart(); (void)context.run_for(1s);
