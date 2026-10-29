@@ -32,6 +32,10 @@ int main() {
     if (!blocked) return 1;
     auto denied = direct.submit(*blocked, 0);
     if (denied || !std::holds_alternative<u::RoutedError>(denied.error()) || direct.size() != 0) return 1;
+    auto unspecified = p::make_udp4({10,0,0,2}, {0,0,0,0}, 1234, ntohs(server_addr->sin_port), body);
+    if (!unspecified || direct.submit(*unspecified, 0) || direct.size() != 0) return 1;
+    pollfd no_packet{server.fd, POLLIN, 0};
+    if (::poll(&no_packet, 1, 50) != 0) return 1;
     auto request = p::make_udp4({10,0,0,2}, {127,0,0,1}, 1234, ntohs(server_addr->sin_port), body);
     if (!request) return 1;
     auto malformed = *request; malformed.back() ^= 1;

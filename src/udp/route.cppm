@@ -4,7 +4,7 @@ import nexus.rules;
 import std;
 
 export namespace nexus::udp {
-    enum class RouteError { blocked, invalid_packet, policy_error };
+    enum class RouteError { blocked, invalid_packet, invalid_target, policy_error };
     using RoutedError = std::variant<RouteError, BridgeError>;
     // A policy snapshot is owned for the lifetime of the bridge.
     class RoutedBridge4 {

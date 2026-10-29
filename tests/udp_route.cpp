@@ -25,6 +25,16 @@ auto route6() -> bool {
     invalid->back() ^= 1;
     auto bad = bridge.prepare(*invalid, 0);
     if (bad || std::get<u::RouteError>(bad.error()) != u::RouteError::invalid_packet || bridge.size() != 0) return false;
+    for (auto address : {p::Address6{}, p::Address6{0,0,0,0,0,0,0,0,0,0,0xff,0xff}}) {
+        auto packet = make(address);
+        if (!packet) return false;
+        auto denied = bridge.prepare(*packet, 0);
+        if (denied || std::get<u::RouteError>(denied.error()) != u::RouteError::invalid_target || bridge.size() != 0) return false;
+    }
+    auto zero_port = p::make_udp6(local.address, allowed, local.port, 0, body);
+    if (!zero_port) return false;
+    auto bad_port = bridge.prepare(*zero_port, 0);
+    if (bad_port || std::get<u::RouteError>(bad_port.error()) != u::RouteError::invalid_target || bridge.size() != 0) return false;
     for (auto address : {blocked6, mapped4, mapped6}) {
         auto packet = make(address);
         if (!packet) return false;
@@ -64,6 +74,12 @@ int main() {
     auto invalid = *denied; invalid.back() ^= 1;
     auto bad = bridge.prepare(invalid, 0);
     if (bad || std::get<u::RouteError>(bad.error()) != u::RouteError::invalid_packet || bridge.size() != 0) return 1;
+    for (auto endpoint : {u::Endpoint4{{0,0,0,0},53}, u::Endpoint4{allowed.address,0}}) {
+        auto packet = p::make_udp4(local.address, endpoint.address, local.port, endpoint.port, body);
+        if (!packet) return 1;
+        auto rejected = bridge.prepare(*packet, 0);
+        if (rejected || std::get<u::RouteError>(rejected.error()) != u::RouteError::invalid_target || bridge.size() != 0) return 1;
+    }
     auto no = bridge.prepare(*denied, 0);
     if (no || std::get<u::RouteError>(no.error()) != u::RouteError::blocked || bridge.size() != 0) return 1;
     auto yes = bridge.prepare(*permit, 1);
