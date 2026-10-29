@@ -22,7 +22,8 @@ export namespace nexus::socks5 {
         auto operator=(UdpDirect const&) -> UdpDirect& = delete;
         [[nodiscard]] auto send(UdpDatagram const& packet,UdpPeer candidate) -> std::expected<void,UdpDirectError>;
         // One received datagram per call; unauthorized or oversized replies are discarded.
-        [[nodiscard]] auto poll() -> std::expected<std::optional<UdpDirectReply>,UdpDirectError>;
+        // If supplied, consumed reports whether a datagram was removed from the socket.
+        [[nodiscard]] auto poll(bool* consumed=nullptr) -> std::expected<std::optional<UdpDirectReply>,UdpDirectError>;
         auto close() noexcept -> void;
     };
 }

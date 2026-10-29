@@ -116,9 +116,11 @@ namespace nexus::socks5 {
         }
         if (domain_pending_) report.domain_pending=true;
         if (!pending_) {
-            auto reply=direct_.poll();
+            bool consumed=false;
+            auto reply=direct_.poll(&consumed);
             if (!reply) report.output_error=reply.error();
             else if (*reply) pending_=std::move(**reply);
+            else if (consumed) report.output_dropped=true;
         }
         if (pending_) {
             auto dest=address(pending_->client);

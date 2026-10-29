@@ -57,7 +57,8 @@ namespace nexus::socks5 {
         if (!committed) return std::unexpected(UdpDirectError{committed.error()});
         return {};
     }
-    auto UdpDirect::poll() -> std::expected<std::optional<UdpDirectReply>,UdpDirectError> {
+    auto UdpDirect::poll(bool* consumed_packet) -> std::expected<std::optional<UdpDirectReply>,UdpDirectError> {
+        if (consumed_packet) *consumed_packet=false;
         if (closed_ || association_.closed()) {
             close(); return std::unexpected(UdpDirectError{Status::association_closed});
         }
@@ -90,6 +91,7 @@ namespace nexus::socks5 {
             if (errno==EAGAIN || errno==EWOULDBLOCK || errno==EINTR) return std::optional<UdpDirectReply>{};
             return std::unexpected(UdpDirectError{error()});
         }
+        if (consumed_packet) *consumed_packet=true;
         if (consumed!=n) return std::optional<UdpDirectReply>{};
         return result;
     }

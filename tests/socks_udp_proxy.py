@@ -82,6 +82,16 @@ try:
                 raise RuntimeError('burst reply was lost or reordered')
         if time.monotonic() - start >= .8:
             raise RuntimeError('burst replies were limited by the polling interval')
+        # Unsolicited packets must not pin authorized replies behind one poll per tick.
+        for i in range(count):
+            attacker.sendto(i.to_bytes(2, 'big'), upstream_source)
+        upstream.sendto(b'after-forged', upstream_source)
+        start = time.monotonic()
+        reply, reply_source = client.recvfrom(100)
+        if reply != header + b'after-forged' or reply_source != relay:
+            raise RuntimeError('forged upstream packet was delivered')
+        if time.monotonic() - start >= .8:
+            raise RuntimeError('forged packets delayed an authorized reply')
         unspecified = b'\x00\x00\x00\x04' + bytes(10) + b'\xff\xff' + bytes(4) + dest[1].to_bytes(2, 'big') + b'invalid'
         client.sendto(unspecified, relay)
         upstream.settimeout(.2)
