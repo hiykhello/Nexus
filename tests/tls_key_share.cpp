@@ -1,5 +1,17 @@
 import std;
 import nexus.tls.key_share;
+static bool trace=false, deny=false;
+static std::size_t allocations=0, first_size=0;
+void* operator new(std::size_t size) {
+    if (deny) throw std::bad_alloc{};
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (trace) { if (!allocations) first_size=size; ++allocations; }
+        return p;
+    }
+    throw std::bad_alloc{};
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls;
 int main() {
     std::vector<t::KeyShareEntry> entries{{0x001d,std::vector<std::uint8_t>(32,0x11)},{0x0017,std::vector<std::uint8_t>(65,0x22)}};
@@ -30,5 +42,13 @@ int main() {
     auto bad_server=*server; bad_server[3]--; if (t::KeyShare::parse_server(bad_server).error()!=t::KeyShareError::invalid_length) return 11;
     if (t::KeyShare::view_server(bad_server).error()!=t::KeyShareError::invalid_length) return 22;
     if (t::KeyShare::parse_retry(std::vector<std::uint8_t>{1}).error()!=t::KeyShareError::truncated || t::KeyShare::parse_retry(std::vector<std::uint8_t>{1,2,3}).error()!=t::KeyShareError::invalid_length) return 12;
+    std::vector<t::KeyShareEntry> many;
+    for (std::uint16_t i=0;i<500;++i) many.push_back({i,{42}});
+    allocations=0; trace=true; auto many_encoded=t::KeyShare::encode_client(many); trace=false;
+    if (!many_encoded || allocations!=1 || first_size!=2502) return 23;
+    allocations=0; trace=true; auto many_parsed=t::KeyShare::parse_client(*many_encoded); trace=false;
+    if (!many_parsed || *many_parsed!=many || allocations!=501 || first_size!=500*sizeof(t::KeyShareEntry)) return 24;
+    deny=true; auto invalid_duplicate=t::KeyShare::encode_client(duplicate); auto invalid_empty=t::KeyShare::encode_client(empty); deny=false;
+    if (invalid_duplicate || invalid_duplicate.error()!=t::KeyShareError::duplicate_group || invalid_empty || invalid_empty.error()!=t::KeyShareError::empty) return 25;
     std::cout << "TLS key_share encoding and boundaries passed\n";
 }

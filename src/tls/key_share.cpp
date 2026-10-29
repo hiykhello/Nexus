@@ -33,7 +33,9 @@ namespace nexus::tls {
     auto KeyShare::parse_client(std::span<std::uint8_t const> data, std::size_t max_size)
         -> std::expected<std::vector<KeyShareEntry>, KeyShareError> {
         auto view=view_client(data,max_size); if (!view) return std::unexpected(view.error());
-        std::vector<KeyShareEntry> result; std::size_t cursor=0;
+        std::vector<KeyShareEntry> result; std::size_t cursor=0, count=0;
+        while (view->next(cursor)) ++count;
+        result.reserve(count); cursor=0;
         while (auto entry=view->next(cursor)) result.push_back({entry->group,{entry->key_exchange.begin(),entry->key_exchange.end()}});
         return result;
     }
@@ -53,17 +55,21 @@ namespace nexus::tls {
     auto KeyShare::encode_client(std::span<KeyShareEntry const> entries, std::size_t max_size)
         -> std::expected<std::vector<std::uint8_t>, KeyShareError> {
         if (max_size < 2) return std::unexpected(KeyShareError::message_too_large);
-        std::vector<std::uint8_t> list; std::bitset<65536> groups;
+        std::size_t list_size=0; std::bitset<65536> groups;
         for (auto const& entry: entries) {
             if (!valid_entry_size(entry)) return std::unexpected(KeyShareError::empty);
             if (groups.test(entry.group)) return std::unexpected(KeyShareError::duplicate_group);
             groups.set(entry.group);
-            if (entry.key_exchange.size()>0xffff-4 || list.size()>0xffff-4-entry.key_exchange.size()) return std::unexpected(KeyShareError::message_too_large);
-            if (!add_u16(list,entry.group) || !add_u16(list,entry.key_exchange.size())) return std::unexpected(KeyShareError::message_too_large);
-            list.insert(list.end(),entry.key_exchange.begin(),entry.key_exchange.end());
+            if (entry.key_exchange.size()>0xffff-4 || list_size>0xffff-4-entry.key_exchange.size()) return std::unexpected(KeyShareError::message_too_large);
+            list_size+=4+entry.key_exchange.size();
         }
-        if (list.size()>max_size-2 || list.size()>0xffff-2) return std::unexpected(KeyShareError::message_too_large);
-        std::vector<std::uint8_t> result; result.reserve(list.size()+2); add_u16(result,list.size()); result.insert(result.end(),list.begin(),list.end()); return result;
+        if (list_size>max_size-2 || list_size>0xffff-2) return std::unexpected(KeyShareError::message_too_large);
+        std::vector<std::uint8_t> result; result.reserve(list_size+2); (void)add_u16(result,list_size);
+        for (auto const& entry:entries) {
+            (void)add_u16(result,entry.group); (void)add_u16(result,entry.key_exchange.size());
+            result.insert(result.end(),entry.key_exchange.begin(),entry.key_exchange.end());
+        }
+        return result;
     }
     auto KeyShare::encode_server(KeyShareEntry const& entry) -> std::expected<std::vector<std::uint8_t>, KeyShareError> {
         if (!valid_entry_size(entry)) return std::unexpected(KeyShareError::empty);
