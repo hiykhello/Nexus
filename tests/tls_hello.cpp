@@ -1,9 +1,14 @@
 import std;
 import nexus.tls.hello;
 static bool deny_allocations=false;
+static bool trace_parse=false;
+static std::size_t parse_count=0, parse_sizes[8]{};
 void* operator new(std::size_t size) {
     if (deny_allocations) throw std::bad_alloc{};
-    if (auto p=std::malloc(size ? size : 1)) return p;
+    if (auto p=std::malloc(size ? size : 1)) {
+        if (trace_parse && parse_count<std::size(parse_sizes)) parse_sizes[parse_count++]=size;
+        return p;
+    }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept { std::free(p); }
@@ -45,5 +50,18 @@ int main() {
     auto invalid_without_allocation=duplicate.validate_encoding();
     deny_allocations=false;
     if (!valid_without_allocation || invalid_without_allocation.error()!=t::HelloError::duplicate_extension) return 18;
+    t::ClientHello many; many.compression_methods={0};
+    for (std::uint16_t i=0;i<500;++i) { many.cipher_suites.push_back(i); many.extensions.push_back({i,{}}); }
+    auto many_wire=many.encode(); if (!many_wire) return 20;
+    parse_count=0; trace_parse=true;
+    auto many_parsed=t::ClientHello::parse(*many_wire);
+    trace_parse=false;
+    if (!many_parsed || *many_parsed!=many || parse_count!=3 || parse_sizes[0]!=500*sizeof(std::uint16_t) ||
+        parse_sizes[1]!=1 || parse_sizes[2]!=500*sizeof(t::Extension)) return 21;
+    auto duplicate_wire=*many_wire;
+    auto ext_start=2+32+1+2+1000+1+1+2;
+    duplicate_wire[ext_start+4]=duplicate_wire[ext_start]; duplicate_wire[ext_start+5]=duplicate_wire[ext_start+1];
+    auto duplicate_result=t::ClientHello::parse(duplicate_wire);
+    if (duplicate_result || duplicate_result.error()!=t::HelloError::duplicate_extension) return 22;
     std::cout << "TLS ClientHello encoding and validation passed\n";
 }

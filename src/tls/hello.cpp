@@ -57,18 +57,27 @@ namespace nexus::tls {
         if (sid->size()>32) return std::unexpected(HelloError::invalid_session_id); result.session_id.assign(sid->begin(),sid->end());
         auto suites=r.vector16(); if (!suites) return std::unexpected(suites.error());
         if (suites->empty() || suites->size()%2 != 0) return std::unexpected(HelloError::invalid_cipher_suites);
+        result.cipher_suites.reserve(suites->size()/2);
         for (std::size_t i=0;i<suites->size();i+=2) result.cipher_suites.push_back(static_cast<std::uint16_t>((*suites)[i]<<8|(*suites)[i+1]));
         auto compression=r.vector8(); if (!compression) return std::unexpected(compression.error());
         if (compression->empty() || !std::ranges::contains(*compression,std::uint8_t{0})) return std::unexpected(HelloError::invalid_compression);
         result.compression_methods.assign(compression->begin(),compression->end());
         auto ext=r.vector16(); if (!ext) return std::unexpected(ext.error());
         if (ext->size() != 0 && ext->size() < 4) return std::unexpected(HelloError::invalid_extensions);
-        Reader e{*ext}; std::bitset<65536> seen;
+        // Validate and count before allocating extension objects. This avoids
+        // geometric growth and its old/new allocation peak for peer input.
+        Reader e{*ext}; std::bitset<65536> seen; std::size_t extension_count=0;
         while (e.pos < e.bytes.size()) {
             auto type=e.u16(); if (!type) return std::unexpected(HelloError::invalid_extensions);
             auto data=e.vector16(); if (!data || e.pos > e.bytes.size()) return std::unexpected(HelloError::invalid_extensions);
             if (seen.test(*type)) return std::unexpected(HelloError::duplicate_extension);
             seen.set(*type);
+            ++extension_count;
+        }
+        result.extensions.reserve(extension_count);
+        e.pos=0;
+        while (e.pos < e.bytes.size()) {
+            auto type=e.u16(); auto data=e.vector16();
             result.extensions.push_back({*type,std::vector<std::uint8_t>(data->begin(),data->end())});
         }
         if (r.pos != body.size()) return std::unexpected(HelloError::invalid_length);
