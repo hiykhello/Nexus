@@ -85,6 +85,12 @@ if is_plat("linux") then
             set_default(false)
             add_files("$(projectdir)/tests/proxy_ss_tunnel_profile.cpp", "$(projectdir)/tests/proxy_ss_tunnel_profile_impl.cpp")
             add_deps("nexus-proxy-ss-abandon")
+
+        target("nexus-proxy-ss-outbound-abandon-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/proxy_ss_outbound_abandon.cpp")
+            add_deps("nexus-proxy-ss-abandon")
     end
 
     target("nexus-proxy-launch-throw-test")
