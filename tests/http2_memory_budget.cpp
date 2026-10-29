@@ -22,9 +22,17 @@ void operator delete[](void* p) noexcept {
     std::free(p);
 }
 void operator delete[](void* p,std::size_t) noexcept { ::operator delete[](p); }
-struct Observed { nh::ServerSession* session = nullptr; unsigned headers = 0; };
-auto on_headers(void* context,std::int32_t,std::span<nh::Header const>,bool,bool) noexcept -> bool {
-    ++static_cast<Observed*>(context)->headers; return true;
+struct Observed { nh::ServerSession* session = nullptr; unsigned headers = 0; bool fail_in_callback = false, view_survived = false; };
+auto on_headers(void* context,std::int32_t,std::span<nh::Header const> fields,bool,bool) noexcept -> bool {
+    auto& observed=*static_cast<Observed*>(context); ++observed.headers;
+    if (observed.fail_in_callback) {
+        if (fields.empty() || fields.front().name!=":method") return false;
+        auto charged=observed.session->header_memory_charge();
+        observed.session->fail_transport(false);
+        observed.view_survived=charged && observed.session->header_memory_charge()==charged &&
+            fields.front().name==":method" && fields.front().value=="GET";
+    }
+    return true;
 }
 auto on_data(void*,std::int32_t,std::span<std::byte const>) noexcept -> nh::DataDisposition { return nh::DataDisposition::accepted; }
 auto on_end(void*,std::int32_t) noexcept -> bool { return true; }
@@ -202,6 +210,21 @@ int main() {
     (**abandoned).fail_transport(false);
     if ((**abandoned).header_memory_charge()!=0 || (**abandoned).shared_memory_used()!=before_failure-header_charge ||
         (**abandoned).receive({}).error().kind!=nh::ServerErrorKind::failed) return 115;
+    // Defensive coverage: even if failure is reported during a callback, the
+    // borrowed header view must survive until it returns. Normal callbacks
+    // must not reenter the session.
+    Observed callback_observed; callback_observed.fail_in_callback=true;
+    nh::ServerEvents callback_events{&callback_observed,on_headers,on_data,on_end,on_closed};
+    auto callback_session=nh::ServerSession::create(limits,callback_events);
+    if (!callback_session) return 116;
+    callback_observed.session=callback_session->get();
+    auto callback_initial=(**callback_session).receive(std::as_bytes(std::span{preface}));
+    auto callback_settings=(**callback_session).receive(settings);
+    auto callback_request=(**callback_session).receive(request);
+    if (!callback_initial || !callback_settings || !callback_request || !callback_observed.view_survived ||
+        (**callback_session).header_memory_charge()!=0) return 117;
+    auto callback_after=(**callback_session).receive({});
+    if (callback_after || callback_after.error().kind!=nh::ServerErrorKind::failed) return 118;
     auto mixed_available=limits.shared_memory_bytes-(**mixed).shared_memory_used();
     std::vector<std::byte> competing_body(mixed_available+1);
     if (competing_body.size()>limits.shared_memory_bytes-(**mixed).library_memory_used()) return 112;
