@@ -79,6 +79,19 @@ if is_plat("linux") then
         add_files("tests/socks5_udp_direct.cpp")
         add_ldflags("-Wl,--wrap=sendto")
         add_deps("nexus-socks5-udp-direct", "nexus-rules")
+
+    target("nexus-socks5-udp-ingress")
+        set_kind("static")
+        add_files("src/socks5/udp_ingress.cppm", {public = true})
+        add_files("src/socks5/udp_ingress.cpp")
+        add_deps("nexus-socks5-udp-direct", "nexus-rules")
+
+    target("nexus-socks5-udp-ingress-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/socks5_udp_ingress.cpp")
+        add_ldflags("-Wl,--wrap=sendto")
+        add_deps("nexus-socks5-udp-ingress", "nexus-rules")
 end
 
 target("nexus-config")
