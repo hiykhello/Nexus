@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- 服务端路由策略和 SOCKS 认证配置先于执行上下文声明，确保直接销毁上下文时借用它们的会话帧先析构。真实 SOCKS 握手挂起时专用探针在帧析构期间读取策略和凭据，连续十轮通过；SOCKS 正常代理、双传输 DNS、SS-2022 出站和 VLESS 入站的上下文销毁回归通过。专项探针覆盖默认后端的握手首读挂起。
+
 - 真实 Server 中两个 SOCKS DNS 查询分别通过 UDP 或 TCP 挂起时直接销毁上下文，两个查询均先注销、worker DNS 状态随后析构，两种传输各连续十轮通过；epoll/io_uring 的底层查询取消和异常、单/双 worker bootstrap 回归通过。真实 Server abandon 使用默认后端，尚未覆盖所有传输和交错。
 
 - DNS 状态改为 worker 独占，会话借用；状态先于执行上下文声明，查询任务排空或 abandon 后才销毁。真实 SOCKS DNS 查询挂起时专用构建直接销毁 Server，确认查询注销先于 DNS 状态析构；DNS 取消、异常和缓存槽释放在 epoll/io_uring 通过，单/双 worker bootstrap、SS-2022 候选取消与 VLESS 并发回归通过。

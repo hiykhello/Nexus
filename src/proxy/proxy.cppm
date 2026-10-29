@@ -154,6 +154,9 @@ export namespace nexus::proxy {
         std::vector<Session*> sessions;
         // Pending DNS tasks borrow this worker-local state until context shutdown.
         std::unique_ptr<DnsState> dns;
+        // Session coroutines also borrow the policy and credentials.
+        rules::RouteMatcher policy;
+        std::optional<Credentials> credentials;
         // Inbound factories outlive context shutdown and suspended sessions.
 #ifdef NEXUS_ENABLE_SS2022
         InboundFactory shadowsocks_inbound;
@@ -169,8 +172,6 @@ export namespace nexus::proxy {
 #endif
         io::tcp_acceptor listener{context};
         SessionQuota quota{64};
-        rules::RouteMatcher policy;
-        std::optional<Credentials> credentials;
         std::optional<DnsRouting> dns_routing;
 #ifdef NEXUS_TEST_FAKEIP
         std::shared_ptr<dns::FakeIpShared> fakeip;

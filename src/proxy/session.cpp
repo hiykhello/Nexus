@@ -27,6 +27,9 @@ extern "C" void nexus_test_session_throw(std::uint8_t);
 #ifdef NEXUS_TEST_FAKEIP
 extern "C" void nexus_test_fakeip_session_release(bool);
 #endif
+#ifdef NEXUS_TEST_DNS_OWNER
+extern "C" void nexus_test_handshake_borrowed_state(bool);
+#endif
 
 namespace nexus::proxy {
     Session::Session(io::io_context& ctx) : client(ctx), target(ctx) {}
@@ -276,6 +279,20 @@ namespace nexus::proxy {
 
         auto handshake(Session& session, io::io_context& context,
                        rules::RouteMatcher const& policy, bool mixed, std::optional<Credentials> const& credentials) -> capy::task<> {
+#ifdef NEXUS_TEST_DNS_OWNER
+            struct BorrowProbe {
+                rules::RouteMatcher const& policy;
+                std::optional<Credentials> const& credentials;
+                ~BorrowProbe() {
+                    bool valid=false;
+                    try {
+                        auto result=policy.match({{},"127.0.0.1"});
+                        valid=result && *result==1 && credentials && credentials->username_size==4 && credentials->username[0]=='u';
+                    } catch (...) {}
+                    nexus_test_handshake_borrowed_state(valid);
+                }
+            } probe{policy,credentials};
+#endif
             std::array<std::uint8_t, 1> first{};
             if (!co_await read_exact(session.client, first, session)) {
                 session.close(); session.done = true; co_return;

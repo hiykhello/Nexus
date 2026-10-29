@@ -44,6 +44,12 @@ if is_plat("linux") then
         add_files("$(projectdir)/tests/proxy_dns_owner.cpp")
         add_deps("nexus-proxy-dns-owner")
 
+    target("nexus-proxy-borrowed-state-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_borrowed_state.cpp")
+        add_deps("nexus-proxy-dns-owner")
+
     target("nexus-allocation-probe")
         set_kind("binary")
         set_default(false)

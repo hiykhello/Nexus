@@ -8,6 +8,7 @@ using namespace std::chrono_literals;
 bool skip_stop=false, owner_destroyed=false, all_unregistered_before_owner=true;
 unsigned registrations_destroyed=0;
 extern "C" bool nexus_test_skip_server_stop() { return skip_stop; }
+extern "C" void nexus_test_handshake_borrowed_state(bool) {}
 extern "C" void nexus_test_dns_owner_destroy() { owner_destroyed=true; }
 extern "C" void nexus_test_dns_registration_destroy() { ++registrations_destroyed; all_unregistered_before_owner &= !owner_destroyed; }
 auto read_exact(nexus::proxy::Server& server,int fd,std::span<unsigned char> output) -> bool {
