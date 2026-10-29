@@ -145,7 +145,9 @@ flowchart LR
 
 隔离网络命名空间的 `tests/tcp_kernel_tun.py` 在临时 TUN 上连接 Linux 内核 TCP 客户端与 `MemoryEngine`：真实 SYN/ACK、双向数据及客户端先半关闭后服务端关闭连续十轮通过（Linux 7.3.0-4-cachyos，GCC 16）。另丢弃首个 SYN-ACK、首个客户端数据段和首个服务端数据段，观察双方重传后数据各交付一次、正常关闭，连续五轮通过。测试用 `FdPump` 驱动 TUN，过滤 IPv6 后将 IPv4 报文交给 TCP 引擎；应用侧是内存应答，不包含直连出口。先运行 `xmake build nexus-tcp-kernel-tun-test`，再运行 `python3 tests/tcp_kernel_tun.py build/linux/x86_64/debug/nexus-tcp-kernel-tun-test`；执行需要用户命名空间、网络命名空间、`ip` 和可用的 `/dev/net/tun`，网络配置随命名空间消失。此结果不证明系统接管、代理回环防护、其他丢包与乱序交错、性能或其他平台的互操作。
 
-进一步的 `tests/transport_kernel_tun.py` 将隔离命名空间中的 TUN 描述符传递给宿主侧测试进程，Linux TCP 客户端经 `FdPump`、内存传输和 IPv4 直连访问宿主回环测试上游；客户端先半关闭，上游收到完整请求后回复并半关闭，双向数据与停止回收连续十轮通过。TCP 活动期间还通过同一 TUN 完成 IPv4 UDP 直连往返：另一源端口先注入回包，客户端仅收到预期上游的回复，连续五轮通过。夹具只在临时命名空间配置 TUN、回环目标路由和 `route_localnet`，宿主只创建回环监听 socket。运行 `xmake build nexus-transport-kernel-tun-test` 后执行 `python3 tests/transport_kernel_tun.py build/linux/x86_64/debug/nexus-transport-kernel-tun-test`。该实验不执行宿主系统接管，也不证明防环回、生产调度、IPv6 UDP 或其他平台支持。
+进一步的 `tests/transport_kernel_tun.py` 将隔离命名空间中的 TUN 描述符传递给宿主侧测试进程，Linux TCP 客户端经 `FdPump`、内存传输和 IPv4 直连访问宿主回环测试上游；客户端先半关闭，上游收到完整请求后回复并半关闭，双向数据与停止回收连续十轮通过。TCP 活动期间还通过同一 TUN 完成 IPv4 UDP 直连往返：另一源端口先注入回包，客户端仅收到预期上游的回复，连续五轮通过。夹具只在临时命名空间配置 TUN、回环目标路由和 `route_localnet`，宿主只创建回环监听 socket。运行 `xmake build nexus-transport-kernel-tun-test` 后执行 `python3 tests/transport_kernel_tun.py build/linux/x86_64/debug/nexus-transport-kernel-tun-test`。该实验不执行宿主系统接管，也不证明防环回、生产调度或其他平台支持。
+
+`tests/transport_kernel_tun6.py` 在两个嵌套临时网络命名空间分别运行 Linux IPv6 UDP 客户端和 Nexus 直连出口，通过真实 TUN 访问外层命名空间的 IPv6 回环上游；不同源端口先发送的回包未被客户端收到，预期回包完整，连续十轮通过。运行已构建的 `nexus-transport-kernel-tun-test`：`python3 tests/transport_kernel_tun6.py build/linux/x86_64/debug/nexus-transport-kernel-tun-test`。测试需要支持嵌套网络命名空间和 IPv6；未覆盖 IPv6 扩展头、分片、zone 或系统接管。
 
 ## TCP 与 UDP 的范围
 

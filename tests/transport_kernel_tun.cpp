@@ -7,7 +7,9 @@ import nexus.transport.memory;
 namespace p=nexus::packet; namespace t=nexus::tcp; namespace u=nexus::udp; namespace tr=nexus::transport;
 using namespace std::chrono_literals;
 int main(int argc,char** argv) {
-    if (argc!=3) return 1;
+    if (argc!=3 && argc!=4) return 1;
+    bool udp_only=argc==4 && std::string_view(argv[3])=="udp6";
+    if (argc==4 && !udp_only) return 1;
     int fd=std::atoi(argv[1]), stop_fd=std::atoi(argv[2]);
     if (::fcntl(stop_fd,F_SETFL,::fcntl(stop_fd,F_GETFL)|O_NONBLOCK)<0) return 2;
     p::MemoryLink link({1500,32,48000});
@@ -21,8 +23,8 @@ int main(int argc,char** argv) {
         char signal{}; auto n=::read(stop_fd,&signal,1);
         if (n==1) {
             auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count());
-            if (!opened || !connected || !udp_input || !udp_output || !engine.stop(now) || table->size()) return 4;
-            std::println("isolated Linux TCP and UDP clients reached real direct upstreams through TUN"); return 0;
+            if ((!udp_only && (!opened || !connected)) || !udp_input || !udp_output || !engine.stop(now) || table->size()) return 4;
+            std::println("isolated Linux {} clients reached real direct upstreams through TUN",udp_only ? "IPv6 UDP" : "TCP and UDP"); return 0;
         }
         if (n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) return 5;
         auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count());
