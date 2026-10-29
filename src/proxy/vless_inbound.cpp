@@ -25,6 +25,9 @@ import nexus.thirdparty.capy;
 #ifdef NEXUS_TEST_VLESS_RELAY_THROW
 extern "C" void nexus_test_vless_relay_throw(unsigned);
 #endif
+#ifdef NEXUS_TEST_VLESS_PROFILE_LIFETIME
+extern "C" void nexus_test_vless_profile_enter();
+#endif
 namespace nexus::proxy {
     namespace {
         using Connection=tls::detail::ApplicationConnection<io::tcp_socket>;
@@ -95,6 +98,9 @@ namespace nexus::proxy {
         }
         auto serve(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
                    vless::ServerProfile const& profile) -> capy::task<> {
+#ifdef NEXUS_TEST_VLESS_PROFILE_LIFETIME
+            nexus_test_vless_profile_enter();
+#endif
             auto fail=[&] { session.close(); session.done=true; };
             auto ms=[](Clock::time_point time) { return std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count(); };
             auto start=ms(session.started), deadline=ms(session.started+std::chrono::seconds(10));

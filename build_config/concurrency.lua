@@ -121,6 +121,22 @@ if is_plat("linux") then
             set_default(false)
             add_files("$(projectdir)/tests/proxy_vless_reconfigure.cpp")
             add_deps("nexus-proxy")
+
+        target("nexus-proxy-vless-root-fault")
+            set_kind("static")
+            set_default(false)
+            add_defines("NEXUS_TEST_ROOT_LAUNCH", "NEXUS_TEST_VLESS_PROFILE_LIFETIME")
+            add_defines("NEXUS_ENABLE_VLESS", {public = true})
+            add_files("$(projectdir)/src/proxy/proxy.cppm", {public = true})
+            add_files("$(projectdir)/src/proxy/proxy.cpp", "$(projectdir)/src/proxy/session.cpp", "$(projectdir)/src/proxy/dial.cpp", "$(projectdir)/src/proxy/http_forward.cpp", "$(projectdir)/src/proxy/vless.cpp", "$(projectdir)/src/proxy/vless_inbound.cpp")
+            add_packages("nexus-corosio", "nexus-capy", "nexus-ngcpp-proxy", {public = true})
+            add_deps("nexus-session-quota", "nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-thirdparty-corosio", "nexus-dns-cache", "nexus-vless-corosio-client", "nexus-vless-tls-server", "nexus-vless-server-profile", "nexus-tls-corosio-server-handshake", "nexus-config", "nexus-rulefile")
+
+        target("nexus-proxy-vless-accept-fault-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/proxy_vless_accept_fault.cpp")
+            add_deps("nexus-proxy-vless-root-fault")
     end
 
     target("nexus-proxy-accept-aborted-test")
