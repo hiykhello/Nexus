@@ -9,6 +9,8 @@ bool entered=false, exited=false, alive_on_exit=false, skip_stop=false;
 extern "C" void nexus_test_vless_profile_owner(std::weak_ptr<void const> owner) { profile=std::move(owner); }
 extern "C" void nexus_test_vless_profile_frame_enter() { entered=true; }
 extern "C" void nexus_test_vless_profile_frame_exit() { exited=true; alive_on_exit=!profile.expired(); }
+extern "C" void nexus_test_vless_relay_frame_enter() {}
+extern "C" void nexus_test_vless_relay_frame_exit() {}
 extern "C" bool nexus_test_skip_server_stop() { return skip_stop; }
 int main(int argc,char** argv) {
     if (argc!=4) return 1;

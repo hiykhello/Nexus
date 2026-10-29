@@ -32,6 +32,8 @@ extern "C" void nexus_test_vless_profile_enter();
 extern "C" void nexus_test_vless_profile_owner(std::weak_ptr<void const>);
 extern "C" void nexus_test_vless_profile_frame_enter();
 extern "C" void nexus_test_vless_profile_frame_exit();
+extern "C" void nexus_test_vless_relay_frame_enter();
+extern "C" void nexus_test_vless_relay_frame_exit();
 #endif
 namespace nexus::proxy {
     namespace {
@@ -92,6 +94,10 @@ namespace nexus::proxy {
         // A failed direction closes the session before the join cancels and
         // drains its sibling. A successful EOF preserves the other direction.
         auto relay_direction(Session& session, capy::quitter<bool> direction) -> capy::task<capy::results<>> {
+#ifdef NEXUS_TEST_VLESS_ABANDON
+            struct RelayProbe { ~RelayProbe() { nexus_test_vless_relay_frame_exit(); } } probe;
+            nexus_test_vless_relay_frame_enter();
+#endif
             try {
                 if (co_await std::move(direction)) co_return capy::results<>{};
                 session.close();

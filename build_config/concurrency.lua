@@ -212,6 +212,12 @@ if is_plat("linux") then
             set_default(false)
             add_files("$(projectdir)/tests/proxy_vless_abandon.cpp")
             add_deps("nexus-proxy-vless-abandon")
+
+        target("nexus-proxy-vless-relay-abandon-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/proxy_vless_relay_abandon.cpp")
+            add_deps("nexus-proxy-vless-abandon")
     end
 
     target("nexus-proxy-accept-aborted-test")
