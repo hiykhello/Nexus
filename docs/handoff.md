@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- 配置按监听地址族和端口判重，允许 IPv4 与 IPv6 回环入站共用端口，同族重复仍拒绝。单、双 worker 真实双监听同时完成 UDP 往返，关闭一侧后另一侧继续；IPv6 端口占用导致启动失败时 IPv4 监听回滚，连续五轮通过。
+
 - SOCKS5/Mixed 配置可选择 IPv6 回环 `::1`，监听 socket 强制 V6ONLY，正式 UDP ASSOCIATE 绑定同族地址、拒绝 scoped 地址并返回 IPv6 端点；其他入站仍限 IPv4。单、双 worker 真实 SOCKS/Mixed 客户端完成双栈 UDP、域名、错误来源与提示拒绝、端口回收，以及 TCP CONNECT；IPv6 UDP 场景连续五轮，IPv4 和配置回归通过。仍未支持非回环或 scoped/mapped 控制客户端。
 
 - SOCKS UDP 入站驱动新增独立 IPv6 socket（V6ONLY），拒绝未指定及 IPv4 映射绑定地址；IPv6 客户端到 IPv4、IPv6 上游往返、错误源端口过滤和端口回收连续五轮，IPv4 会话及容量回归通过。正式监听与会话仍为 IPv4：配置解析限定回环 IPv4，Server::start_one 固定 IPv4 监听；下一步贯通 IPv6 回环配置、监听和 SOCKS 会话，再做真实控制连接验收，须保留 scoped/mapped 边界。

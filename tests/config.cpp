@@ -78,6 +78,11 @@ outbounds {)", R"(}
 }
 outbounds {)");
     auto parsed_multi=nexus::config::parse_kdl(second);
+    auto dual=replace(second,"listen host=\"127.0.0.1\" port=1081","listen host=\"::1\" port=1080");
+    auto parsed_dual=nexus::config::parse_kdl(dual);
+    if (!parsed_dual || parsed_dual->inbounds.size()!=2 || parsed_dual->inbounds[0].listen_ipv6 ||
+        !parsed_dual->inbounds[1].listen_ipv6 || parsed_dual->inbounds[0].port!=parsed_dual->inbounds[1].port ||
+        nexus::config::parse_kdl(replace(dual,"listen host=\"127.0.0.1\" port=1080","listen host=\"::1\" port=1080"))) return 1;
     if (!parsed_multi || parsed_multi->inbounds.size()!=2 || parsed_multi->inbounds[1].port!=1081 ||
         parsed_multi->inbounds[1].type!=nexus::config::Inbound::mixed || nexus::config::parse_kdl(multiple) ||
         nexus::config::parse_kdl(replace(second,"port=1081","port=1080")) ||

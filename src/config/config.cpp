@@ -352,8 +352,9 @@ namespace nexus::config {
                 Config parsed_inbound;
                 auto port = inbound(node, parsed_inbound);
                 if (!port) return std::unexpected(port.error());
-                if (std::ranges::any_of(result.inbounds,[&](auto const& entry) { return entry.port==*port; }))
-                    return error("inbound listen ports must be unique");
+                if (std::ranges::any_of(result.inbounds,[&](auto const& entry) {
+                    return entry.port==*port && entry.listen_ipv6==parsed_inbound.listen_ipv6;
+                })) return error("inbound listen endpoints must be unique");
                 result.inbounds.push_back({*name,*port,parsed_inbound.inbound,std::move(parsed_inbound.password_auth),std::move(parsed_inbound.vless_inbound),std::move(parsed_inbound.shadowsocks_inbound),parsed_inbound.listen_ipv6});
                 if (!inbound_seen) {
                     result.port=*port; result.inbound=result.inbounds.back().type;
