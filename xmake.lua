@@ -77,6 +77,7 @@ if is_plat("linux") then
         set_kind("binary")
         set_default(false)
         add_files("tests/socks5_udp_direct.cpp")
+        add_ldflags("-Wl,--wrap=sendto")
         add_deps("nexus-socks5-udp-direct", "nexus-rules")
 end
 
