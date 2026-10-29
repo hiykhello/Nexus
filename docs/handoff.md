@@ -342,6 +342,8 @@
 
 ## 当前
 
+- 用户要求实时更新本接手文档。正在核查各正式入站的目标地址校验；VLESS 和 SS-2022 TCP 入站复用 `dial`。发现上一切片 DNS 测试中 SOCKS 域名长度编码错误，已修正并断言实际查询 `zero.test` 与 `fallback.test`，单/双 worker 连续三轮通过；修正尚未提交。
+
 - 用户临时要求的 plf_hive、plf_colony 和 unordered_dense 评估已整理至 [容器评估](container-evaluation.md)：PLF 优先 hive，dense 按调用点条件选用；本机工具链及上游测试通过，但 TCP 表依赖递增遍历，不能直接替换。暂未接入依赖或做项目负载基准。
 
 - HTTP/2 错误 GOAWAY 的阻塞写入取消及对端关闭回归已完成；继续审查其他传输预算释放路径。
@@ -361,6 +363,8 @@
 - HTTP/2 无 I/O 服务端已修复跨流关闭时的响应 provider 生命周期；TLS/Corosio 握手和应用记录适配器仍保持既有验证范围。HTTP/2 实验驱动已与 Python/OpenSSL 简单对端互通；完整连接级预算、正式应用接入及更广泛的网络关闭验证仍未完成。
 
 ## 下一步
+
+- 提交 DNS 测试夹具修正，并继续核查 DNS 上游及代理服务器 bootstrap 的未指定地址处理和实际连接边界。
 
 - 扩展 SOCKS5 UDP 域名解析链的其他失败及多候选耗尽；再扩展错误、背压及多关联停止交错。当前 UDP 出站仅支持 direct/block，控制监听仅限回环。
 

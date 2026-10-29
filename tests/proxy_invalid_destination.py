@@ -35,10 +35,12 @@ outbound "direct" type="direct"
 routing {{ default-outbound "direct"; }}
 ''')
         stop = threading.Event()
+        queries = []
         def answer():
             while not stop.is_set():
                 try: query, peer = dns.recvfrom(2048)
                 except TimeoutError: continue
+                queries.append(query[12:-4])
                 addresses = [b'\x00\x00\x00\x00']
                 if query[12:-4] == b'\x08fallback\x04test\x00': addresses.append(b'\x7f\x00\x00\x01')
                 response = bytearray(query)
@@ -59,7 +61,7 @@ routing {{ default-outbound "direct"; }}
             target_port = target.getsockname()[1]
             targets = [(b'\x01' + bytes(4), target_port), (b'\x04' + bytes(16), target_port),
                        (b'\x04' + bytes(10) + b'\xff\xff' + bytes(4), target_port),
-                       (b'\x03\x04zero\x05test', target_port), (b'\x01\x7f\x00\x00\x01', 0)]
+                       (b'\x03\x09zero.test', target_port), (b'\x01\x7f\x00\x00\x01', 0)]
             for addr, requested_port in targets:
                 with socket.create_connection(('127.0.0.1', port), timeout=3) as client:
                     client.sendall(b'\x05\x01\x00'); assert exact(client, 2) == b'\x05\x00'
@@ -82,6 +84,8 @@ routing {{ default-outbound "direct"; }}
                 if exact(client, 10)[1] != 0: raise RuntimeError('valid DNS fallback failed')
                 with target.accept()[0] as peer:
                     client.sendall(b'ok'); assert exact(peer, 2) == b'ok'
+            if queries != [b'\x04zero\x04test\x00', b'\x08fallback\x04test\x00']:
+                raise RuntimeError(f'unexpected DNS queries: {queries!r}')
         finally:
             proc.terminate(); proc.wait(timeout=5)
             stop.set(); thread.join(timeout=2)
