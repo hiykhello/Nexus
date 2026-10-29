@@ -70,6 +70,19 @@ int main() {
     if (!response || response->flags!=0x10 || response->sequence!=52 || response->acknowledgement!=102 ||
         !response->payload.empty() || flow->read(output)!=0 || flow->send_capacity()!=6 ||
         flow->unsent(8).bytes.size()!=1) return 1;
+    // Unexpected SYNs inside or outside the receive window must neither
+    // acknowledge outstanding bytes nor inject data or replace the flow.
+    for (auto sequence : {102u,1000u}) {
+        auto unexpected=ack; unexpected.sequence=sequence; unexpected.flags=0x1a;
+        auto wire=p::make_tcp4(unexpected);
+        auto challenged=t::dispatch(*table,*wire,999,5);
+        if (!challenged || challenged->input_error!=t::ConnectionError::challenge_ack || !challenged->reply ||
+            table->get(first->id)!=flow || flow->state()!=t::ConnectionState::established) return 1;
+        auto reply=p::parse_tcp4(*challenged->reply);
+        if (!reply || reply->flags!=0x10 || reply->sequence!=52 || reply->acknowledgement!=102 ||
+            !reply->payload.empty() || flow->read(output)!=0 || flow->send_capacity()!=6 ||
+            flow->unsent(8).bytes.size()!=1) return 1;
+    }
     ack.flags=4; ack.payload={}; ack.sequence=103;
     raw = p::make_tcp4(ack);
     auto challenge = t::dispatch(*table, *raw, 0, 6);

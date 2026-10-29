@@ -62,6 +62,10 @@ namespace nexus::tcp {
                 return std::unexpected(ConnectionError::challenge_ack);
             return std::unexpected(ConnectionError::unacceptable);
         }
+        // An unexpected SYN on a synchronized tuple cannot replace or mutate
+        // the current connection. Challenge it before processing ACK or data.
+        if (state_ != ConnectionState::handshake && (segment.flags & 0x02))
+            return std::unexpected(ConnectionError::challenge_ack);
         bool duplicate_fin = false;
         if (state_ == ConnectionState::handshake) {
             auto result = handshake_.input(segment, static_cast<std::uint16_t>(receive_.window()));
