@@ -169,7 +169,18 @@ auto transient(int family, int fault) -> bool {
         ? reinterpret_cast<sockaddr_in const*>(&a)->sin_port : reinterpret_cast<sockaddr_in6 const*>(&a)->sin6_port; };
     if (port(origin)!=port(second) || ::recv(server.fd,bytes.data(),bytes.size(),0)>=0 ||
         (errno!=EAGAIN && errno!=EWOULDBLOCK)) return false;
-    return engine.stop(4).has_value();
+    // A blocked datagram survives expiration of its old flow and is sent once
+    // through a newly opened flow when the retry resumes at the idle deadline.
+    if (!link.send(p::Side::first,*packet)) return false;
+    mode=fault; calls=0;
+    auto delayed=engine.step(4);
+    if (!delayed || !delayed->input_backpressured || delayed->expired || calls!=1) return false;
+    auto expired_retry=engine.step(1003);
+    if (!expired_retry || expired_retry->expired!=1 || !expired_retry->input ||
+        expired_retry->input_backpressured || expired_retry->rejected || calls!=2) return false;
+    if (::recv(server.fd,bytes.data(),bytes.size(),0)!=1 || bytes[0]!='x' ||
+        ::recv(server.fd,bytes.data(),bytes.size(),0)!=-1 || (errno!=EAGAIN && errno!=EWOULDBLOCK)) return false;
+    return engine.stop(1004).has_value();
 }
 int main() {
     for (int family : {AF_INET,AF_INET6}) for (int fault : {1,2}) if (!scenario(family,fault)) return 1;
