@@ -12,6 +12,9 @@ static bool server_hello_released=false;
 static void* watched_secret=nullptr;
 static std::size_t watched_secret_size=0;
 static bool secret_cleansed=false;
+static void* watched_early_secret=nullptr;
+static std::size_t watched_early_secret_size=0;
+static bool early_secret_cleansed=false;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
@@ -23,6 +26,10 @@ void operator delete(void* p) noexcept {
     if (p && p==watched_secret) {
         auto bytes=std::span{static_cast<std::uint8_t const*>(p),watched_secret_size};
         secret_cleansed=std::ranges::all_of(bytes,[](auto byte) { return byte==0; }); watched_secret=nullptr;
+    }
+    if (p && p==watched_early_secret) {
+        auto bytes=std::span{static_cast<std::uint8_t const*>(p),watched_early_secret_size};
+        early_secret_cleansed=std::ranges::all_of(bytes,[](auto byte) { return byte==0; }); watched_early_secret=nullptr;
     }
     std::free(p);
 }
@@ -76,9 +83,10 @@ int main(int argc,char** argv) {
         auto keys=t::server_handshake_keys(*wire,std::span{&scheme,1}); if (!keys) return 25;
         auto peer=t::client_handshake_keys(*wire,keys->server_hello,std::move(*key)); if (!peer) return 26;
         watched_server_hello=keys->server_hello.data(); server_hello_released=false;
-        watched_secret=const_cast<std::uint8_t*>(keys->handshake_secret.view().data()); watched_secret_size=keys->handshake_secret.view().size(); secret_cleansed=false;
+        watched_early_secret=const_cast<std::uint8_t*>(keys->handshake_secret.view().data()); watched_early_secret_size=keys->handshake_secret.view().size(); early_secret_cleansed=false;
+        watched_secret=const_cast<std::uint8_t*>(keys->client_traffic.view().data()); watched_secret_size=keys->client_traffic.view().size(); secret_cleansed=false;
         auto flight=t::ServerFlight::create(std::move(*keys),*cred); if (!flight) return 27;
-        if (!server_hello_released || watched_server_hello) return 41;
+        if (!server_hello_released || watched_server_hello || watched_early_secret || !early_secret_cleansed || !watched_secret) return 41;
         c::Bytes bogus(36,0); bogus[0]=20; bogus[3]=32;
         auto record=peer->write.seal(t::ContentType::handshake,bogus); if (!record) return 28;
         auto result=flight->client_finished(*record);
@@ -105,7 +113,7 @@ int main(int argc,char** argv) {
             auto message=t::HandshakeDecoder::encode(1,*encoded); if (!message) return 56;
             auto server_keys=t::server_handshake_keys(*message,std::span{&scheme,1}); if (!server_keys) return 57;
             auto client_keys=t::client_handshake_keys(*message,server_keys->server_hello,std::move(*private_key)); if (!client_keys) return 58;
-            if (n==0) { watched_secret=const_cast<std::uint8_t*>(server_keys->handshake_secret.view().data()); watched_secret_size=server_keys->handshake_secret.view().size(); secret_cleansed=false; }
+            if (n==0) { watched_secret=const_cast<std::uint8_t*>(server_keys->client_traffic.view().data()); watched_secret_size=server_keys->client_traffic.view().size(); secret_cleansed=false; }
             c::Bytes alpn(n,'a'); auto selected=t::ServerFlight::create(std::move(*server_keys),*cred,alpn);
             if (n==256) { if (selected || selected.error()!=t::ServerFlightError::invalid_state) return 59; continue; }
             if (!selected || selected->records().empty()) return 60;

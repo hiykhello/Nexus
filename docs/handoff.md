@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- 服务端 flight 构造结束后只保留验证客户端 Finished 所需的读取密钥、客户端流量 secret 和 transcript；主握手 secret、服务端流量 secret 与发送密钥随构造临时对象销毁。实际释放探针确认主 secret 创建返回前清零、客户端 secret 延续至 Finished；三种算法、分片、异常注入及 VLESS/TLS、HTTP/2 网络回归通过。
+
 - 服务端 flight 验证 Finished 成功或失败时立即销毁握手密钥和 transcript；失败还销毁待交接应用密钥，成功保留应用记录供交接。释放探针确认握手 secret 清零后释放，分片、异常注入、三种算法、VLESS/TLS 和 HTTP/2 网络回归通过；应用密钥及加密库内部资源仍有独立生命周期。
 
 - CertificateVerify 的固定长度签名输入改用栈数组，签名直接写入最终握手消息，消除未单独计费的输入扩容及签名副本；RSA、EC、Ed25519 的单次 C++ 分配探针、签名互验、握手故障注入和 VLESS/TLS、HTTP/2 网络回归通过。加密库内部及其他临时分配仍未完整计费。

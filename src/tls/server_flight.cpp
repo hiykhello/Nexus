@@ -4,7 +4,8 @@ import nexus.tls.server_hello;
 import std;
 namespace nexus::tls {
     ServerFlight::ServerFlight(ServerHandshakeKeys&& keys, ApplicationRecords&& application, std::vector<crypto::Bytes>&& records) noexcept
-        : keys_(std::move(keys)), application_(std::move(application)), records_(std::move(records)) {}
+        : keys_(FinishedKeys{keys.hash,std::move(keys.transcript),std::move(keys.client_traffic),std::move(keys.read)}),
+          application_(std::move(application)), records_(std::move(records)) {}
     ServerFlight::ServerFlight(ServerFlight&& o) noexcept
         : state_(o.state_), keys_(std::move(o.keys_)), application_(std::move(o.application_)), records_(std::move(o.records_)), decoder_(std::move(o.decoder_)) { o.state_=State::failed; }
     auto ServerFlight::operator=(ServerFlight&& o) noexcept -> ServerFlight& {
