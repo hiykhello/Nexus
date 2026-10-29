@@ -19,7 +19,12 @@ int main(int argc, char** argv) {
         auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count());
         char signal{}; auto n=::read(STDIN_FILENO,&signal,1);
         if (n==1) {
-            if (signal!='X' || !opened || !connected || !udp_input || !udp_output || !(*driver)->stop(now)) return 4;
+            if ((signal!='X' && signal!='S') || !opened || !connected || !udp_input || !udp_output || !(*driver)->stop(now)) return 4;
+            if (signal=='S') {
+                std::println("stopped"); std::fflush(stdout);
+                if (::fcntl(STDIN_FILENO,F_SETFL,::fcntl(STDIN_FILENO,F_GETFL)&~O_NONBLOCK)<0 ||
+                    ::read(STDIN_FILENO,&signal,1)!=1 || signal!='Q') return 9;
+            }
             std::println("owned TUN driver carried Linux TCP and UDP direct traffic"); return 0;
         }
         if (n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) return 5;
