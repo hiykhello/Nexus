@@ -36,6 +36,8 @@ namespace nexus::transport {
         if (stopped_) return {};
         if (initialized_ && now<now_) return std::unexpected(TunDriverFailure{TunDriverError::time_reversed});
         if (auto result=engine_.stop(now); !result) return std::unexpected(TunDriverFailure{result.error()});
-        pump_.reset(); tun_.close(); stopped_=true; return {};
+        pump_.reset();
+        link_.close(packet::Side::first); link_.close(packet::Side::second);
+        tun_.close(); stopped_=true; return {};
     }
 }

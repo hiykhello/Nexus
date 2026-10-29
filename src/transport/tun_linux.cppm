@@ -16,7 +16,8 @@ export namespace nexus::transport {
     using TunDriverFailure=std::variant<TunDriverError,tcp::TableError,packet::FdFailure,MemoryError>;
     struct TunStep { packet::FdStep device; MemoryStep transport; };
     // Single executor owner. The TUN is configured by the caller. No addresses,
-    // routes or host state are changed. Stop is terminal and closes the device.
+    // routes or host state are changed. Stop is terminal, discards queued
+    // packets and closes the device.
     class LinuxTunDirect {
         packet::LinuxTun tun_;
         packet::MemoryLink link_;
