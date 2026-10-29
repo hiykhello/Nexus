@@ -9,7 +9,7 @@ export namespace nexus::tls {
     // Leaf and configured chain, no client authentication or retry. The caller owns transport framing.
     class ServerFlight {
         enum class State { awaiting_finished, complete, failed } state_=State::awaiting_finished;
-        ServerHandshakeKeys keys_;
+        std::optional<ServerHandshakeKeys> keys_;
         std::optional<ApplicationRecords> application_;
         std::vector<crypto::Bytes> records_;
         std::optional<HandshakeDecoder> decoder_;

@@ -108,23 +108,25 @@ namespace nexus::tls {
     }
     auto ServerFlight::client_finished(std::span<std::uint8_t const> record) -> std::expected<bool,ServerFlightError> {
         if (state_!=State::awaiting_finished) return std::unexpected(ServerFlightError::invalid_state);
+        auto fail=[this](ServerFlightError error) -> std::unexpected<ServerFlightError> {
+            state_=State::failed; keys_.reset(); decoder_.reset(); application_.reset(); return std::unexpected(error);
+        };
         try {
-        auto plain=keys_.read.open(record);
-        if (!plain || plain->type!=ContentType::handshake || plain->content.empty()) { state_=State::failed; return std::unexpected(ServerFlightError::invalid_finished); }
+        auto plain=keys_->read.open(record);
+        if (!plain || plain->type!=ContentType::handshake || plain->content.empty()) return fail(ServerFlightError::invalid_finished);
         auto messages=decoder_->feed(plain->content,1);
-        if (!messages || messages->size()>1 || (!messages->empty() && decoder_->pending_bytes())) { state_=State::failed; return std::unexpected(ServerFlightError::invalid_finished); }
+        if (!messages || messages->size()>1 || (!messages->empty() && decoder_->pending_bytes())) return fail(ServerFlightError::invalid_finished);
         if (messages->empty()) return false;
-        state_=State::failed; auto const& message=messages->front();
-        auto size=keys_.hash==crypto::Hash::sha256 ? 32u : 48u;
-        if (message.type!=20 || message.body.size()!=size) return std::unexpected(ServerFlightError::invalid_finished);
-        auto hash=keys_.transcript.snapshot(); if (!hash) return std::unexpected(ServerFlightError::crypto_error);
-        auto verify=finished_verify_data(keys_.hash,keys_.client_traffic.view(),*hash);
-        if (!verify) return std::unexpected(ServerFlightError::crypto_error);
-        if (!crypto::constant_time_equal(verify->view(),message.body)) return std::unexpected(ServerFlightError::invalid_finished);
-        auto wire=HandshakeDecoder::encode(20,message.body,48);
-        if (!wire || !keys_.transcript.append(*wire)) return std::unexpected(ServerFlightError::crypto_error);
-        decoder_.reset(); state_=State::complete; return true;
-        } catch (...) { state_=State::failed; application_.reset(); throw; }
+        auto const& message=messages->front();
+        auto size=keys_->hash==crypto::Hash::sha256 ? 32u : 48u;
+        if (message.type!=20 || message.body.size()!=size) return fail(ServerFlightError::invalid_finished);
+        auto hash=keys_->transcript.snapshot(); if (!hash) return fail(ServerFlightError::crypto_error);
+        auto verify=finished_verify_data(keys_->hash,keys_->client_traffic.view(),*hash);
+        if (!verify) return fail(ServerFlightError::crypto_error);
+        if (!crypto::constant_time_equal(verify->view(),message.body)) return fail(ServerFlightError::invalid_finished);
+        // No later operation consumes the handshake transcript or keys.
+        keys_.reset(); decoder_.reset(); state_=State::complete; return true;
+        } catch (...) { (void)fail(ServerFlightError::crypto_error); throw; }
     }
     auto ServerFlight::take_application_records() -> std::expected<ApplicationRecords,ServerFlightError> {
         if (state_!=State::complete || !application_) return std::unexpected(ServerFlightError::invalid_state);

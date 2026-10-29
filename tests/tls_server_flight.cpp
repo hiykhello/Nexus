@@ -9,6 +9,9 @@ import nexus.tls.key_share;
 static thread_local int fail_after=-1;
 static void* watched_server_hello=nullptr;
 static bool server_hello_released=false;
+static void* watched_secret=nullptr;
+static std::size_t watched_secret_size=0;
+static bool secret_cleansed=false;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
@@ -17,6 +20,10 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept {
     if (p && p==watched_server_hello) { server_hello_released=true; watched_server_hello=nullptr; }
+    if (p && p==watched_secret) {
+        auto bytes=std::span{static_cast<std::uint8_t const*>(p),watched_secret_size};
+        secret_cleansed=std::ranges::all_of(bytes,[](auto byte) { return byte==0; }); watched_secret=nullptr;
+    }
     std::free(p);
 }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
@@ -69,12 +76,13 @@ int main(int argc,char** argv) {
         auto keys=t::server_handshake_keys(*wire,std::span{&scheme,1}); if (!keys) return 25;
         auto peer=t::client_handshake_keys(*wire,keys->server_hello,std::move(*key)); if (!peer) return 26;
         watched_server_hello=keys->server_hello.data(); server_hello_released=false;
+        watched_secret=const_cast<std::uint8_t*>(keys->handshake_secret.view().data()); watched_secret_size=keys->handshake_secret.view().size(); secret_cleansed=false;
         auto flight=t::ServerFlight::create(std::move(*keys),*cred); if (!flight) return 27;
         if (!server_hello_released || watched_server_hello) return 41;
         c::Bytes bogus(36,0); bogus[0]=20; bogus[3]=32;
         auto record=peer->write.seal(t::ContentType::handshake,bogus); if (!record) return 28;
         auto result=flight->client_finished(*record);
-        if (result || result.error()!=t::ServerFlightError::invalid_finished || flight->take_application_records()) return 29;
+        if (result || result.error()!=t::ServerFlightError::invalid_finished || flight->take_application_records() || watched_secret || !secret_cleansed) return 29;
         auto flood_key=c::X25519Private::generate(); if (!flood_key) return 42;
         auto flood_pub=flood_key->public_key(); if (!flood_pub) return 43;
         auto flood_share=t::KeyShare::encode_client(std::array{t::KeyShareEntry{29,{flood_pub->begin(),flood_pub->end()}}}); if (!flood_share) return 44;
@@ -97,6 +105,7 @@ int main(int argc,char** argv) {
             auto message=t::HandshakeDecoder::encode(1,*encoded); if (!message) return 56;
             auto server_keys=t::server_handshake_keys(*message,std::span{&scheme,1}); if (!server_keys) return 57;
             auto client_keys=t::client_handshake_keys(*message,server_keys->server_hello,std::move(*private_key)); if (!client_keys) return 58;
+            if (n==0) { watched_secret=const_cast<std::uint8_t*>(server_keys->handshake_secret.view().data()); watched_secret_size=server_keys->handshake_secret.view().size(); secret_cleansed=false; }
             c::Bytes alpn(n,'a'); auto selected=t::ServerFlight::create(std::move(*server_keys),*cred,alpn);
             if (n==256) { if (selected || selected.error()!=t::ServerFlightError::invalid_state) return 59; continue; }
             if (!selected || selected->records().empty()) return 60;
@@ -110,6 +119,26 @@ int main(int argc,char** argv) {
                 expected.insert(expected.end(),alpn.begin(),alpn.end());
             }
             if (decoded->front().body!=expected) return 64;
+            if (n==0) {
+                auto append=[&](auto const& batch) {
+                    for (auto const& item:batch) {
+                        auto encoded=t::HandshakeDecoder::encode(item.type,item.body,1048584);
+                        if (!encoded || !client_keys->transcript.append(*encoded)) return false;
+                    }
+                    return true;
+                };
+                if (!append(*decoded)) return 65;
+                for (auto const& record:selected->records().subspan(1)) {
+                    auto part=client_keys->read.open(record); if (!part) return 66;
+                    auto batch=messages->feed(part->content); if (!batch || !append(*batch)) return 67;
+                }
+                auto digest=client_keys->transcript.snapshot(); if (!digest) return 68;
+                auto verify=t::finished_verify_data(client_keys->hash,client_keys->client_traffic.view(),*digest); if (!verify) return 69;
+                auto finished=t::HandshakeDecoder::encode(20,verify->view()); if (!finished) return 70;
+                auto encrypted=client_keys->write.seal(t::ContentType::handshake,*finished); if (!encrypted) return 71;
+                auto accepted=selected->client_finished(*encrypted);
+                if (!accepted || !*accepted || watched_secret || !secret_cleansed || !selected->take_application_records()) return 72;
+            }
         }
         return 0;
     }
