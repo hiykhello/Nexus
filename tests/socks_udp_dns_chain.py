@@ -35,6 +35,12 @@ def reply(query, addresses):
     return result
 
 
+def nxdomain(query):
+    result = bytearray(query)
+    result[2:4] = b'\x81\x83'
+    return result
+
+
 def associate(stack, port):
     control = stack.enter_context(socket.create_connection(('127.0.0.1', port), timeout=3))
     control.sendall(b'\x05\x01\x00')
@@ -47,6 +53,16 @@ def associate(stack, port):
 
 def send(client, relay, port, name):
     client.sendto(b'\x00\x00\x00\x03' + bytes([len(name)]) + name + port.to_bytes(2, 'big') + b'payload', relay)
+
+
+def check_numeric_recovery(client, relay, target):
+    port = target.getsockname()[1]
+    client.sendto(b'\x00\x00\x00\x01\x7f\x00\x00\x01' + port.to_bytes(2, 'big') + b'recovery', relay)
+    data, source = target.recvfrom(1024)
+    assert data == b'recovery'
+    target.sendto(b'recovered', source)
+    wire, _ = client.recvfrom(1024)
+    assert wire == b'\x00\x00\x00\x01\x7f\x00\x00\x01' + port.to_bytes(2, 'big') + b'recovered'
 
 
 def wait_release(relay):
@@ -115,6 +131,36 @@ routing {{ default-outbound "direct"; }}
             target.sendto(b'answer', source)
             wire, _ = client.recvfrom(1024)
             assert wire == b'\x00\x00\x00\x01\x7f\x00\x00\x01' + target_port.to_bytes(2, 'big') + b'answer'
+            control.close()
+            wait_release(relay)
+            # Failed bootstrap must neither contact the leaf nor stall the association.
+            control, relay = associate(stack, port)
+            send(client, relay, target_port, b'root-failure.test')
+            query, peer = root.recvfrom(2048)
+            root.sendto(nxdomain(query), peer)
+            leaf.settimeout(.3)
+            try:
+                conn, _ = leaf.accept()
+                conn.close()
+                raise RuntimeError('failed bootstrap started leaf DNS')
+            except socket.timeout:
+                pass
+            leaf.settimeout(3)
+            check_numeric_recovery(client, relay, target)
+            control.close()
+            wait_release(relay)
+            # A failed leaf query likewise drops only that datagram.
+            control, relay = associate(stack, port)
+            send(client, relay, target_port, b'leaf-failure.test')
+            query, peer = root.recvfrom(2048)
+            root.sendto(reply(query, (1,)), peer)
+            with leaf.accept()[0] as connection:
+                connection.settimeout(3)
+                query = exact(connection, int.from_bytes(exact(connection, 2), 'big'))
+                assert query[12:-4] == b'\x0cleaf-failure\x04test\x00'
+                response = nxdomain(query)
+                connection.sendall(len(response).to_bytes(2, 'big') + response)
+            check_numeric_recovery(client, relay, target)
             control.close()
             wait_release(relay)
             # Cancel during the bootstrap query. A late answer must not start leaf DNS.
@@ -199,4 +245,4 @@ binary = str(pathlib.Path(sys.argv[1]).resolve())
 for count in (1, 2):
     for hop in ('root', 'leaf'):
         scenario(binary, count, hop)
-print('SOCKS UDP DNS bootstrap retry, per-hop cancellation and stop passed')
+print('SOCKS UDP DNS bootstrap retry, per-hop failure, cancellation and stop passed')
