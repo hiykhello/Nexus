@@ -12,11 +12,17 @@ module;
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/ipv6_address.hpp>
 #include <boost/corosio/resolver.hpp>
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+#include <boost/corosio/delay.hpp>
+#endif
 
 module nexus.proxy;
 import proxy.v4;
 import std;
 import nexus.socks5;
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+import nexus.socks5.udp_ingress;
+#endif
 import nexus.rules;
 import nexus.http.connect;
 
@@ -167,6 +173,59 @@ namespace nexus::proxy {
             co_return (co_await write_all(session.client, response, session)) && valid;
         }
 
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+        auto udp_control(Session& session) -> capy::task<capy::results<>> {
+            std::array<std::uint8_t,256> buffer{};
+            try {
+                while (!session.closed) {
+                    auto [error,count]=co_await session.client.read_some(capy::mutable_buffer(buffer.data(),buffer.size()));
+                    if (error || !count) break;
+                }
+                session.close();
+                co_return capy::results<>{};
+            } catch (...) { session.close(); throw; }
+        }
+        auto udp_drive(Session& session, socks5::UdpIngress& ingress) -> capy::task<capy::results<>> {
+            using namespace std::chrono_literals;
+            try {
+                while (!session.closed) {
+                    auto result=ingress.step();
+                    if (!result) { session.close(); break; }
+                    if (result->output_error) { session.close(); break; }
+                    if (result->forwarded || result->delivered) session.touched=Clock::now();
+                    auto [error]=co_await io::delay(5ms);
+                    if (error) { session.close(); break; }
+                }
+                ingress.close();
+                co_return capy::results<>{};
+            } catch (...) { ingress.close(); session.close(); throw; }
+        }
+        auto udp_associate(Session& session, rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<> {
+            auto remote=session.client.remote_endpoint(); auto local=session.client.local_endpoint();
+            if (!remote.address().is_v4() || !local.address().is_v4() || (request.address_type!=1 && request.address_type!=4)) {
+                (void)co_await reply(session.client,8,{},session); session.close(); session.done=true; co_return;
+            }
+            socks5::UdpPeer tcp{1,{},remote.port()}, hint{request.address_type,{},request.port};
+            auto remote_bytes=remote.address().to_v4().to_bytes();
+            std::ranges::copy(remote_bytes,tcp.address.begin());
+            std::copy_n(request.address.begin(),request.address_length,hint.address.begin());
+            auto association=socks5::UdpAssociation::create(tcp,hint);
+            if (!association) { (void)co_await reply(session.client,2,{},session); session.close(); session.done=true; co_return; }
+            socks5::UdpIngress ingress(*association,policy);
+            socks5::UdpPeer bind{1,{},0}; auto local_bytes=local.address().to_v4().to_bytes();
+            std::ranges::copy(local_bytes,bind.address.begin());
+            auto endpoint=ingress.open(bind);
+            if (!endpoint) { (void)co_await reply(session.client,1,{},session); session.close(); session.done=true; co_return; }
+            io::ipv4_address::bytes_type bytes{}; std::copy_n(endpoint->address.begin(),4,bytes.begin());
+            if (!co_await reply(session.client,0,{io::ipv4_address(bytes),endpoint->port},session)) {
+                ingress.close(); session.close(); session.done=true; co_return;
+            }
+            session.relaying=true;
+            try { (void)co_await capy::when_all(udp_control(session),udp_drive(session,ingress)); }
+            catch (...) { ingress.close(); session.close(); session.done=true; throw; }
+            ingress.close(); association->close(); session.close(); session.done=true;
+        }
+#endif
         auto socks_handshake(Session& session, io::io_context& context,
                        rules::RouteMatcher const& policy, std::optional<Credentials> const& credentials) -> capy::task<> {
             auto fail = [&] { session.close(); session.done = true; };
@@ -183,7 +242,11 @@ namespace nexus::proxy {
             if (credentials && !co_await authenticate(session, *credentials)) { fail(); co_return; }
 
             if (!co_await read_exact(session.client, std::span(buffer).first(4), session)) { fail(); co_return; }
-            auto head = socks5::parse_request(std::span(buffer).first(4));
+            auto head = socks5::parse_request(std::span(buffer).first(4)
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+                                              ,true
+#endif
+            );
             if (head.status != socks5::Status::incomplete) {
                 auto code = head.status == socks5::Status::unsupported_command ? 7 :
                             head.status == socks5::Status::unsupported_address ? 8 : 1;
@@ -198,11 +261,18 @@ namespace nexus::proxy {
                 offset = 5;
             }
             if (!co_await read_exact(session.client, std::span(buffer).subspan(offset, length + 2), session)) { fail(); co_return; }
-            auto request = socks5::parse_request(std::span(buffer).first(offset + length + 2));
+            auto request = socks5::parse_request(std::span(buffer).first(offset + length + 2)
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+                                                 ,true
+#endif
+            );
             if (request.status != socks5::Status::accepted) {
                 (void)co_await reply(session.client, 1, {}, session);
                 fail(); co_return;
             }
+#ifdef NEXUS_ENABLE_SOCKS_UDP
+            if (request.command==3) { co_await udp_associate(session,policy,request); co_return; }
+#endif
             auto code = co_await dial(session, context, policy, request);
             if (code != 0) {
                 (void)co_await reply(session.client, code, {}, session);

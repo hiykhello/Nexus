@@ -6,7 +6,7 @@ Nexus 定位为通用代理（proxy）平台，同时支持 client 与 server，
 
 目前在 Linux x86_64 上使用 GCC 16.2.1 验证构建和测试；默认使用 io_uring，也可配置 epoll。网络 socket 类型不通过项目代理接口直接导出；构建与测试步骤见 [xmake 构建](docs/build/xmake.md)，转换命令和格式限制见 [规则集互转](docs/configuration/rule-sets.md)。
 
-Linux 上可运行 `build/linux/x86_64/debug/nexus run 1080`，在 `127.0.0.1:1080` 提供无需认证的 SOCKS5 CONNECT，支持 IP 和系统解析的域名直连；追加 `kdl rules.kdl` 或 `beve rules.beve` 可按规则集阻断请求。也可用 `--config docs/configuration/examples/socks5.kdl` 启动有限的 KDL 配置。[Mixed 示例](docs/configuration/examples/mixed.kdl)在同一监听器支持 SOCKS5、HTTP CONNECT 和有限的单次 HTTP 正向代理；SOCKS5 可启用用户名密码认证。SOCKS5 UDP ASSOCIATE 和 Mixed 认证尚未接入；SS-2022 入站另有实验性 UDP 支持。详见 [SOCKS5 说明](docs/architecture/protocols/socks5-mixed.md)和[配置示例](docs/configuration/examples/README.md)。
+Linux 上可运行 `build/linux/x86_64/debug/nexus run 1080`，在 `127.0.0.1:1080` 提供无需认证的 SOCKS5 CONNECT，支持 IP 和系统解析的域名直连；追加 `kdl rules.kdl` 或 `beve rules.beve` 可按规则集阻断请求。也可用 `--config docs/configuration/examples/socks5.kdl` 启动有限的 KDL 配置。[Mixed 示例](docs/configuration/examples/mixed.kdl)在同一监听器支持 SOCKS5、HTTP CONNECT 和有限的单次 HTTP 正向代理；SOCKS5 可启用用户名密码认证。SOCKS5 UDP ASSOCIATE 已接入实验性 IPv4 客户端和数值目标直连，域名目标尚未支持；Mixed 认证尚未接入；SS-2022 入站另有实验性 UDP 支持。详见 [SOCKS5 说明](docs/architecture/protocols/socks5-mixed.md)和[配置示例](docs/configuration/examples/README.md)。
 
 ## 已确定的技术方向
 
