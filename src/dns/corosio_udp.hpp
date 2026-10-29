@@ -8,6 +8,10 @@
 #include <boost/corosio/timeout.hpp>
 #include <boost/corosio/udp_socket.hpp>
 
+#ifdef NEXUS_TEST_DNS_LIFETIME
+extern "C" void nexus_test_dns_received();
+#endif
+
 namespace nexus::dns::detail {
     enum class UdpError { state, invalid_query, transport, timeout, canceled, truncated, response_limit, protocol };
     // Single use, single executor. The owner must retain this object until query
@@ -50,6 +54,9 @@ namespace nexus::dns::detail {
                 if (error || std::chrono::steady_clock::now() >= deadline)
                     co_return finish(error == capy::cond::timeout || std::chrono::steady_clock::now() >= deadline ?
                                      UdpError::timeout : UdpError::transport);
+#ifdef NEXUS_TEST_DNS_LIFETIME
+                nexus_test_dns_received();
+#endif
                 if (source != upstream || size > (edns ? 1232u : 4096u)) continue;
                 auto parsed = parse_response(std::span(buffer).first(size), id, question);
                 if (parsed) { socket_.close(); co_return std::move(*parsed); }

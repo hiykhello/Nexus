@@ -3,7 +3,7 @@
 namespace nexus::proxy {
     struct DnsLifetimeState {
         Session* session = nullptr;
-        bool destroyed = false, unregistered = false, returned = false, threw = false;
+        bool destroyed = false, unregistered = false, returned = false, threw = false, cache_released = false;
     };
 
     auto dns_lifetime_parent(io::io_context& context, DnsLifetimeState& state, std::uint16_t port)
@@ -14,6 +14,14 @@ namespace nexus::proxy {
             DnsLifetimeState& state;
             ~Guard() {
                 state.unregistered = !session.cancel_dns && !session.dns_operation;
+                try {
+                    if (!session.dns) throw 1;
+                    // A leaked pending token leaves fewer than 4096 slots.
+                    unsigned registered=0;
+                    for (; registered<4096; ++registered)
+                        if (!session.dns->cache.begin_query({1,"probe.test",1})) break;
+                    state.cache_released=registered==4096;
+                } catch (...) { state.cache_released=false; }
                 state.session = nullptr;
                 state.destroyed = true;
             }
@@ -32,6 +40,7 @@ namespace nexus::proxy {
     }
 }
 
+extern "C" bool nexus_test_dns_reply();
 extern "C" int nexus_test_dns_lifetime(unsigned backend, unsigned mode, std::uint16_t port) {
     using namespace nexus::proxy;
     using namespace std::chrono_literals;
@@ -46,8 +55,14 @@ extern "C" int nexus_test_dns_lifetime(unsigned backend, unsigned mode, std::uin
         capy::run_async(context.get_executor())(dns_lifetime_parent(context,state,port));
         context.restart();
         (void)context.run_for(50ms);
-        if (mode == 2) return state.destroyed && state.unregistered && state.threw && !state.returned ? 0 : 1;
+        if (mode == 2) return state.destroyed && state.unregistered && state.threw && state.cache_released && !state.returned ? 0 : 1;
         if (!state.session || !state.session->cancel_dns || !state.session->dns_operation || state.destroyed) return 2;
+        if (mode == 3) {
+            if (!nexus_test_dns_reply()) return 5;
+            context.restart();
+            (void)context.run_for(1s);
+            return state.destroyed && state.unregistered && state.threw && state.cache_released && !state.returned ? 0 : 6;
+        }
         if (mode == 1) {
             state.session->close();
             context.restart();
@@ -55,5 +70,5 @@ extern "C" int nexus_test_dns_lifetime(unsigned backend, unsigned mode, std::uin
             if (!state.destroyed || !state.returned || state.threw) return 3;
         }
     }
-    return state.destroyed && state.unregistered && (mode == 1 ? state.returned : !state.returned) ? 0 : 4;
+    return state.destroyed && state.unregistered && state.cache_released && (mode == 1 ? state.returned : !state.returned) ? 0 : 4;
 }
