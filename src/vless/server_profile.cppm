@@ -3,6 +3,7 @@ import std;
 import nexus.vless;
 import nexus.rulefile;
 import nexus.tls.server_handshake_io;
+export import nexus.memory.budget;
 export namespace nexus::vless {
     // Immutable startup snapshot. Each session obtains its own handshake state
     // and a retained key reference; the snapshot outlives calls to these methods.
@@ -53,12 +54,12 @@ export namespace nexus::vless {
             if (!credential) return std::unexpected("invalid or mismatched TLS credential");
             return ServerProfile(std::move(*credential),std::move(users));
         }
-        [[nodiscard]] auto tls_handshake(std::uint64_t now,std::uint64_t deadline) const
+        [[nodiscard]] auto tls_handshake(std::uint64_t now,std::uint64_t deadline,std::shared_ptr<memory::Budget> budget={}) const
             -> std::expected<tls::ServerHandshakeIo,std::string> {
             auto credential=credential_.clone();
             if (!credential) return std::unexpected("cannot retain TLS credential");
-            auto handshake=tls::ServerHandshakeIo::create(std::move(*credential),now,deadline);
-            if (!handshake) return std::unexpected("invalid TLS handshake deadline");
+            auto handshake=tls::ServerHandshakeIo::create(std::move(*credential),now,deadline,{},tls::ServerCredential::max_certificate_list_size,std::move(budget));
+            if (!handshake) return std::unexpected(handshake.error()==tls::ServerHandshakeIoError::budget_exceeded ? "TLS handshake budget exceeded" : "invalid TLS handshake options");
             return std::move(*handshake);
         }
         [[nodiscard]] auto vless_handshake() const -> std::expected<ServerHandshake,std::string> {

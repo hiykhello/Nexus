@@ -23,6 +23,7 @@ struct Fixture {
 #endif
     io::tcp_socket incoming{context},target{context};
     std::optional<t::ServerHandshakeIo> handshake;
+    std::shared_ptr<nexus::memory::Budget> budget;
     std::optional<v::ServerProfile> profile;
     bool done=false,success=false; unsigned activity=0;
 };
@@ -35,6 +36,7 @@ auto download(RelayState& r) -> capy::task<> { auto ok=co_await r.relay.download
 auto serve(Fixture& f) -> capy::task<> {
     auto established=co_await t::detail::server_handshake(f.incoming,*f.handshake); if (!established) { f.done=true; co_return; }
     Connection tls(f.incoming,std::move(established->records),std::move(established->unread));
+    if (!established->release_unread_reservation() || f.budget->reserved()) { f.done=true; co_return; }
     auto state=f.profile->vless_handshake(); if (!state) { f.done=true; co_return; }
     Inbound inbound(tls,std::move(*state)); auto request=co_await inbound.read_request();
     if (!request || request->kind!=v::AddressKind::ipv4 || request->address!=std::vector<std::uint8_t>{127,0,0,1}) { f.done=true; co_return; }
@@ -51,7 +53,8 @@ int main(int argc,char** argv) {
     auto profile=v::ServerProfile::load(argv[2],argv[3],user_paths); if (!profile) return 4;
     f.profile.emplace(std::move(*profile));
     auto now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    auto h=f.profile->tls_handshake(now,now+5000); if (!h) return 5;
+    f.budget=std::make_shared<nexus::memory::Budget>(8u*1024*1024);
+    auto h=f.profile->tls_handshake(now,now+5000,f.budget); if (!h) return 5;
     f.handshake.emplace(std::move(*h)); capy::run_async(f.context.get_executor())(serve(f)); (void)f.context.run_for(20s);
     if (!f.done) { f.incoming.cancel(); f.target.cancel(); f.context.restart(); (void)f.context.run_for(2s); if (!f.done) std::_Exit(90); }
     return f.success ? 0 : 6;
