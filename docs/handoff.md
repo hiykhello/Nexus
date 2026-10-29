@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- SOCKS 和 HTTP CONNECT 的两个 relay 方向由握手父任务等待并借用会话，失败时关闭并排空，半关闭保留另一方向；移除了 relay 完成计数和共享回调。直接 SOCKS/CONNECT 的双向半关闭、活动停止，VLESS/SS 出站、Fake-IP 和普通 HTTP 上传回归通过。GCC 16 下尝试在 `co_return` 条件表达式的两支分别 `co_await` 隧道方向时观察到同方向重复启动、SS 流提前关闭；改为明确分支后 sing-box 回归连续十轮通过，尚未隔离为独立编译器问题。
+
 - 拨号与客户端错误监视改为父任务的 `when_all` 子任务，均借用父任务持有的会话；拨号结果用内部取消信号结束监视并保留 SOCKS 返回码，异常和上下文 abandon 走组合任务排空。监视先关闭会话时拨号直接退出。Capy 回归验证错误结果取消并排空另一分支、保留返回值；真实代理的直接拨号、并发 bootstrap、候选连接重置/重试/超时/停止、慢 DNS、VLESS 和 SS 入站及 Fake-IP 路由回归通过。
 
 - VLESS/SS 入站 relay 不再以 shared owner 保留双向任务：父任务持有 relay 状态并等待 `when_all` 排空；失败关闭会话并取消另一方向，成功半关闭继续另一方向。真实 VLESS 的准备/协程异常、活动停止、双 worker 配额和半关闭，以及 SS-2022 的半关闭、损坏记录、单/双 worker 配额及活动停止通过。拨号 watcher 和普通 SOCKS/HTTP relay 的 shared owner 仍待审查。
@@ -124,7 +126,7 @@
 
 ## 当前
 
-- 用户要求梳理并重构 `shared_ptr`，尤其避免以引用计数延长异步操作生命周期。VLESS/SS 入站 relay 和拨号错误监视由父任务等待并借用其持有的对象；普通 SOCKS/HTTP relay 仍使用 shared owner。入站父任务当前以无 stop token 启动；固定 Capy `when_all` 启动失败、正常取消、异常排空及双 socket 读取时执行上下文 abandon 已验证。VLESS 的 `tests/vless_relay_throw.py` 覆盖准备与协程异常及活动 relay 停止。预算 reservation、不可变凭据、Fake-IP lease 等须按真实所有权审查。
+- 用户要求梳理并重构 `shared_ptr`，尤其避免以引用计数延长异步操作生命周期。VLESS/SS 入站 relay、SOCKS/HTTP CONNECT relay 和拨号错误监视由父任务等待并借用其持有的对象；普通 HTTP 转发的上传/排空仍使用 shared owner。入站父任务当前以无 stop token 启动；固定 Capy `when_all` 启动失败、正常取消、异常排空及双 socket 读取时执行上下文 abandon 已验证。VLESS 的 `tests/vless_relay_throw.py` 覆盖准备与协程异常及活动 relay 停止。预算 reservation、不可变凭据、Fake-IP lease 等须按真实所有权审查。
 
 - HTTP/2 TLS 输入、输出及 KeyUpdate 轮换覆盖主要数组的逻辑请求；仍需核查常驻密钥、握手及应用记录其他临时对象和实际容量的记账边界。
 - HTTP/2 TLS 明文输入和应用输出密文/写副本有逻辑预留；TLS 输出控制记录及写副本也有逻辑预留；输入密文记录也有逻辑预留；步骤输出数组也有逻辑预留；常驻读取缓冲也有逻辑预留；握手重组、容量、协程帧、临时副本和传输开销尚无完整计费。
@@ -139,7 +141,7 @@
 
 ## 下一步
 
-- 设计普通 SOCKS/HTTP relay 的结构化取消及排空，覆盖半关闭、worker 停止和更多上下文 abandon 交错，再重构 `shared_ptr`；入站 relay 和拨号 watcher 已改为父任务等待，仍需检查更复杂的隧道及跨线程交错。
+- 设计普通 HTTP 转发上传与响应排空的结构化所有权，覆盖提前响应、等待客户端输入、超时及 worker 停止；其他 relay 和拨号 watcher 已改为父任务等待，仍需检查更复杂的隧道及跨线程交错。
 
 - 继续覆盖客户端握手和应用密钥、密钥派生临时对象及共享预算竞争；服务端应用记录的常驻密钥已跨交接计费，实际容量和加密库内部对象仍不在逻辑额度内。
 

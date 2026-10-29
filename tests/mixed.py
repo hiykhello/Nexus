@@ -114,6 +114,28 @@ routing {{
             finally:
                 thread.join(timeout=5)
             assert not thread.is_alive() and outcome == [True], outcome
+            # The target can finish its output first while the client still
+            # has data to send; both relay directions must remain alive.
+            for protocol in ('connect', 'socks'):
+                with connect(port) as client:
+                    if protocol == 'connect':
+                        client.sendall(f'CONNECT 127.0.0.1:{target_port} HTTP/1.1\r\nHost: 127.0.0.1:{target_port}\r\n\r\n'.encode())
+                        assert headers(client).startswith(b'HTTP/1.1 200 ')
+                    else:
+                        client.sendall(b'\x05\x01\x00')
+                        assert exact(client, 2) == b'\x05\x00'
+                        client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01' + target_port.to_bytes(2, 'big'))
+                        assert exact(client, 10)[:2] == b'\x05\x00'
+                    with target.accept()[0] as peer:
+                        peer.settimeout(4)
+                        peer.sendall(b'early')
+                        peer.shutdown(socket.SHUT_WR)
+                        assert exact(client, 5) == b'early'
+                        assert client.recv(1) == b''
+                        client.sendall(b'late')
+                        client.shutdown(socket.SHUT_WR)
+                        assert exact(peer, 4) == b'late'
+                        assert peer.recv(1) == b''
         # Literal IPv6 CONNECT exercises bracket parsing and address-family dialing.
         try:
             ipv6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)

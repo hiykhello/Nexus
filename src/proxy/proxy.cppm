@@ -70,7 +70,6 @@ namespace nexus::proxy {
         bool http_upload_active = false;
         bool http_draining = false;
         Clock::time_point http_drain_started{};
-        unsigned relay_finished = 0;
         explicit Session(io::io_context& ctx);
 #ifdef NEXUS_TEST_FAKEIP
         ~Session();
@@ -83,13 +82,6 @@ namespace nexus::proxy {
     inline auto session_error(std::shared_ptr<Session> session) {
         return [session=std::move(session)](std::exception_ptr) noexcept {
             session->close(); session->done=true;
-        };
-    }
-
-    // Each relay holds the session until its completion handler runs.
-    inline auto relay_complete(std::shared_ptr<Session> session) {
-        return [session=std::move(session)]() noexcept {
-            if (++session->relay_finished == 2) { session->close(); session->done=true; }
         };
     }
 

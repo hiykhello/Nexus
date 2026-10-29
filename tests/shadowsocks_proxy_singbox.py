@@ -74,5 +74,7 @@ def scenario(root, size):
             except subprocess.TimeoutExpired: box.kill(); box.communicate()
 
 with tempfile.TemporaryDirectory(prefix="nexus-ss2022-proxy-") as directory:
-    for size in (16,32): scenario(pathlib.Path(directory),size)
+    # Exercise the two relay directions under several startup interleavings.
+    for _ in range(4):
+        for size in (16,32): scenario(pathlib.Path(directory),size)
 print(f"SS-2022 Nexus proxy API with sing-box {revision} passed")
