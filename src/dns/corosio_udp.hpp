@@ -11,6 +11,9 @@
 #ifdef NEXUS_TEST_DNS_LIFETIME
 extern "C" void nexus_test_dns_received();
 #endif
+#ifdef NEXUS_TEST_FAKEIP
+extern "C" void nexus_test_fakeip_dns_received();
+#endif
 
 namespace nexus::dns::detail {
     enum class UdpError { state, invalid_query, transport, timeout, canceled, truncated, response_limit, protocol };
@@ -56,6 +59,9 @@ namespace nexus::dns::detail {
                                      UdpError::timeout : UdpError::transport);
 #ifdef NEXUS_TEST_DNS_LIFETIME
                 nexus_test_dns_received();
+#endif
+#ifdef NEXUS_TEST_FAKEIP
+                nexus_test_fakeip_dns_received();
 #endif
                 if (source != upstream || size > (edns ? 1232u : 4096u)) continue;
                 auto parsed = parse_response(std::span(buffer).first(size), id, question);

@@ -24,6 +24,9 @@ import nexus.http.connect;
 #ifdef NEXUS_TEST_SESSION_THROW
 extern "C" void nexus_test_session_throw(std::uint8_t);
 #endif
+#ifdef NEXUS_TEST_FAKEIP
+extern "C" void nexus_test_fakeip_session_release(bool);
+#endif
 
 namespace nexus::proxy {
     Session::Session(io::io_context& ctx) : client(ctx), target(ctx) {}
@@ -31,6 +34,7 @@ namespace nexus::proxy {
         if (registry) std::erase(*registry,this);
 #ifdef NEXUS_TEST_FAKEIP
         // Failure leaves the pool pin held, preventing unsafe reuse.
+        nexus_test_fakeip_session_release(static_cast<bool>(fakeip_target));
         close();
         if (fakeip_target) try { (void)fakeip_target->release(); } catch (...) {}
 #endif

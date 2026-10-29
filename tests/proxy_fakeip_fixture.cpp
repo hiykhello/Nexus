@@ -8,7 +8,18 @@ using namespace std::chrono_literals;
 namespace d=nexus::dns;
 namespace p=nexus::proxy;
 std::atomic<unsigned> blocked_candidates=0;
+std::atomic<unsigned> watcher_done=0, pin_release_after_watcher=0, pin_release_before_watcher=0;
 extern "C" auto nexus_test_fakeip_blocked() -> void { ++blocked_candidates; }
+extern "C" void nexus_test_fakeip_watcher_done() { ++watcher_done; }
+extern "C" void nexus_test_fakeip_session_release(bool pinned) {
+    if (pinned && std::getenv("NEXUS_TEST_FAKEIP_DNS_THROW")) {
+        if (watcher_done) ++pin_release_after_watcher;
+        else ++pin_release_before_watcher;
+    }
+}
+extern "C" void nexus_test_fakeip_dns_received() {
+    if (std::getenv("NEXUS_TEST_FAKEIP_DNS_THROW")) throw std::runtime_error("injected DNS receive failure");
+}
 auto main(int argc,char** argv) -> int {
     if (argc<3) return 2;
     auto dns_port=std::stoi(argv[1]);
@@ -56,6 +67,7 @@ auto main(int argc,char** argv) -> int {
             continue;
         }
         if (line=="blocked") { std::cout << blocked_candidates.load() << std::endl; continue; }
+        if (line=="order") { std::cout << pin_release_after_watcher.load() << ' ' << pin_release_before_watcher.load() << std::endl; continue; }
         if (line!="probe") break;
         auto probe=owner->respond(base,*other,7);
         if (probe) {

@@ -21,6 +21,9 @@ namespace capy=boost::capy;
 namespace io=boost::corosio;
 std::atomic<unsigned> blocked=0;
 extern "C" auto nexus_test_fakeip_blocked() -> void { ++blocked; }
+extern "C" void nexus_test_fakeip_dns_received() {}
+extern "C" void nexus_test_fakeip_watcher_done() {}
+extern "C" void nexus_test_fakeip_session_release(bool) {}
 auto run_dns(d::detail::FakeIpListener& listener,
              std::optional<std::expected<void,d::detail::FakeIpListenerError>>& result) -> capy::task<> {
     result=co_await listener.run();

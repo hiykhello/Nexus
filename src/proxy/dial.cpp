@@ -31,6 +31,7 @@ import nexus.thirdparty.corosio;
 #ifdef NEXUS_TEST_FAKEIP
 import nexus.dns.fakeip_request;
 extern "C" void nexus_test_fakeip_blocked();
+extern "C" void nexus_test_fakeip_watcher_done();
 #endif
 
 #include "dns_state.hpp"
@@ -270,6 +271,9 @@ namespace nexus::proxy {
         // write-side EOF with a reset. It is best effort: an error occurring
         // before registration may be missed by the underlying backend.
         auto watch_client_error(Session& session) -> capy::task<capy::results<>> {
+#ifdef NEXUS_TEST_FAKEIP
+            struct WatchGuard { ~WatchGuard() { nexus_test_fakeip_watcher_done(); } } guard;
+#endif
             try {
                 auto [error]=co_await session.client.wait(io::wait_type::error);
                 // Corosio consumes SO_ERROR and returns it; EIO can also mean a

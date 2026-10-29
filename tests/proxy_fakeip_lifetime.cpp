@@ -1,6 +1,9 @@
 #include <cstdio>
 extern "C" int nexus_test_fakeip_lifetime(unsigned,unsigned);
 extern "C" void nexus_test_fakeip_blocked() {}
+extern "C" void nexus_test_fakeip_dns_received() {}
+extern "C" void nexus_test_fakeip_watcher_done() {}
+extern "C" void nexus_test_fakeip_session_release(bool) {}
 int main() {
     for (unsigned backend=0; backend<2; ++backend) {
         for (unsigned mode=0; mode<2; ++mode) {
