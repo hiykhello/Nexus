@@ -4,9 +4,9 @@ import std;
 
 namespace nexus::udp {
     MemoryEngine::MemoryEngine(packet::MemoryLink& link, rules::Matcher policy, Mapping mapping, Filtering filtering,
-                               Limits limits, std::size_t mtu)
-        : link_(link), ipv4_(policy,mapping,filtering,limits,mtu),
-          ipv6_(std::move(policy),mapping,filtering,limits,mtu) {}
+                               Limits limits, std::size_t mtu, std::optional<std::uint32_t> socket_mark)
+        : link_(link), ipv4_(policy,mapping,filtering,limits,mtu,socket_mark),
+          ipv6_(std::move(policy),mapping,filtering,limits,mtu,socket_mark) {}
     MemoryEngine::~MemoryEngine() = default;
     auto MemoryEngine::step(std::uint64_t now) -> std::expected<EngineStep, EngineError> {
         if (initialized_ && now < last_time_) return std::unexpected(EngineError{Error::time_reversed});

@@ -34,12 +34,14 @@ export namespace nexus::tcp {
         MemoryEngine& engine;
         rules::Matcher policy;
         std::size_t limit;
+        std::optional<std::uint32_t> socket_mark;
         std::list<Flow> flows;
         ConnectionId cursor = 0;
         std::uint64_t now = 0;
         bool initialized = false;
     public:
-        Direct4(ConnectionTable& table, MemoryEngine& engine, rules::Matcher policy, std::size_t limit);
+        Direct4(ConnectionTable& table, MemoryEngine& engine, rules::Matcher policy, std::size_t limit,
+                std::optional<std::uint32_t> socket_mark = {});
         ~Direct4();
         Direct4(Direct4 const&) = delete;
         auto operator=(Direct4 const&) -> Direct4& = delete;

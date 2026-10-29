@@ -22,7 +22,8 @@ export namespace nexus::tcp {
         bool stopped_ = false;
     public:
         MemoryDirect4(packet::MemoryLink& link, ConnectionTable& table, rules::Matcher policy,
-                      std::size_t direct_limit, std::size_t mtu = 1500);
+                      std::size_t direct_limit, std::size_t mtu = 1500,
+                      std::optional<std::uint32_t> socket_mark = {});
         ~MemoryDirect4();
         // Terminal: close owned sockets and remove flows opened by this stack.
         auto stop() noexcept -> void;

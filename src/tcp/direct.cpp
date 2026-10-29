@@ -15,8 +15,9 @@ namespace nexus::tcp {
     Direct4::Flow::Flow(ConnectionId i, std::uint64_t time, int f, bool c)
         : id(i), started(time), fd(f), connecting(c) {}
     Direct4::Flow::~Flow() { if (fd >= 0) ::close(fd); }
-    Direct4::Direct4(ConnectionTable& table, MemoryEngine& engine, rules::Matcher policy, std::size_t limit)
-        : table(table), engine(engine), policy(std::move(policy)), limit(limit) {}
+    Direct4::Direct4(ConnectionTable& table, MemoryEngine& engine, rules::Matcher policy, std::size_t limit,
+                     std::optional<std::uint32_t> socket_mark)
+        : table(table), engine(engine), policy(std::move(policy)), limit(limit), socket_mark(socket_mark) {}
     Direct4::~Direct4() = default;
     auto Direct4::size() const noexcept -> std::size_t { return this->flows.size(); }
     auto Direct4::close(ConnectionId id) noexcept -> bool {
@@ -43,6 +44,11 @@ namespace nexus::tcp {
         int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (fd < 0) {
             DirectFailure error{system_error()};
+            s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
+            return std::unexpected(error);
+        }
+        if (s.socket_mark && ::setsockopt(fd, SOL_SOCKET, SO_MARK, &*s.socket_mark, sizeof(*s.socket_mark)) != 0) {
+            DirectFailure error{system_error()}; ::close(fd);
             s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
             return std::unexpected(error);
         }

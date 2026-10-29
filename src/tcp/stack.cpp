@@ -3,8 +3,8 @@ import std;
 
 namespace nexus::tcp {
     MemoryDirect4::MemoryDirect4(packet::MemoryLink& link, ConnectionTable& table, rules::Matcher policy,
-                                 std::size_t direct_limit, std::size_t mtu)
-        : table_(table), engine_(link,table,policy,mtu), direct_(table,engine_,std::move(policy),direct_limit) {}
+                                 std::size_t direct_limit, std::size_t mtu, std::optional<std::uint32_t> socket_mark)
+        : table_(table), engine_(link,table,policy,mtu), direct_(table,engine_,std::move(policy),direct_limit,socket_mark) {}
     MemoryDirect4::~MemoryDirect4() { stop(); }
     auto MemoryDirect4::stop() noexcept -> void {
         if (stopped_) return;

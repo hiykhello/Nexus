@@ -4,7 +4,7 @@ import std;
 namespace nexus::transport {
     LinuxTunDirect::LinuxTunDirect(packet::LinuxTun&& tun,tcp::ConnectionTable&& table,rules::Matcher policy,TunLimits limits)
         : tun_(std::move(tun)),link_(limits.external),table_(std::move(table)),
-          engine_(link_,table_,std::move(policy),limits.tcp_direct,limits.mapping,limits.filtering,limits.udp,limits.mtu,limits.internal) {}
+          engine_(link_,table_,std::move(policy),limits.tcp_direct,limits.mapping,limits.filtering,limits.udp,limits.mtu,limits.internal,limits.socket_mark) {}
     LinuxTunDirect::~LinuxTunDirect() = default;
     auto LinuxTunDirect::create(packet::LinuxTun&& tun,rules::Matcher policy,TunLimits limits)
         -> std::expected<std::unique_ptr<LinuxTunDirect>,TunDriverFailure> {

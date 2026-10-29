@@ -24,7 +24,7 @@ export namespace nexus::transport {
         MemoryEngine(packet::MemoryLink& link, tcp::ConnectionTable& table, rules::Matcher policy,
                      std::size_t tcp_limit, udp::Mapping mapping, udp::Filtering filtering,
                      udp::Limits udp_limits = {}, std::size_t mtu = 1500,
-                     packet::DeviceLimits internal_limits = {});
+                     packet::DeviceLimits internal_limits = {}, std::optional<std::uint32_t> socket_mark = {});
         ~MemoryEngine();
         // Terminal; closes owned outlets and discards internal queued packets.
         [[nodiscard]] auto stop(std::uint64_t now) -> std::expected<void, MemoryError>;

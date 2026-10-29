@@ -16,6 +16,26 @@ elif sys.argv[2] == 'outer':
     subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
     subprocess.run(['ip', 'addr', 'add', '10.77.0.2/32', 'dev', 'lo'], check=True)
     subprocess.run(['ip', '-6', 'addr', 'add', 'fd77::2/128', 'dev', 'lo', 'nodad'], check=True)
+    for command in (
+        ['ip', 'addr', 'add', '10.77.0.3/32', 'dev', 'lo'],
+        ['ip', '-6', 'addr', 'add', 'fd77::3/128', 'dev', 'lo', 'nodad'],
+        ['ip', 'route', 'add', 'local', '10.77.0.2/32', 'dev', 'lo', 'src', '10.77.0.3', 'table', '100'],
+        ['ip', '-6', 'route', 'add', 'local', 'fd77::2/128', 'dev', 'lo', 'src', 'fd77::3', 'table', '100'],
+        ['ip', 'rule', 'del', 'priority', '0'],
+        ['ip', 'rule', 'add', 'priority', '1', 'fwmark', '42', 'lookup', '100'],
+        ['ip', 'rule', 'add', 'priority', '2', 'to', '10.77.0.2/32', 'prohibit'],
+        ['ip', 'rule', 'add', 'priority', '3', 'lookup', 'local'],
+        ['ip', '-6', 'rule', 'del', 'priority', '0'],
+        ['ip', '-6', 'rule', 'add', 'priority', '1', 'fwmark', '42', 'lookup', '100'],
+        ['ip', '-6', 'rule', 'add', 'priority', '2', 'to', 'fd77::2/128', 'prohibit'],
+        ['ip', '-6', 'rule', 'add', 'priority', '3', 'lookup', 'local'],
+    ):
+        subprocess.run(command, check=True)
+    for family, destination in (([], '10.77.0.2'), (['-6'], 'fd77::2')):
+        denied = subprocess.run(['ip', *family, 'route', 'get', destination], capture_output=True)
+        allowed = subprocess.run(['ip', *family, 'route', 'get', destination, 'mark', '42'], capture_output=True)
+        if denied.returncode == 0 or allowed.returncode != 0:
+            raise RuntimeError(f'policy routes do not require mark 42 for {destination}')
     origin = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     origin.bind(('10.77.0.2', 0)); origin.listen(1); origin.settimeout(12)
     udp_origin = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -64,7 +84,7 @@ else:
     if sys.argv[2] != 'inner' or os.stat('/proc/self/ns/net').st_ino == int(sys.argv[3]):
         raise RuntimeError('inner namespace was not isolated')
     ns_fd = int(sys.argv[4])
-    proc = subprocess.Popen([binary, str(ns_fd)], pass_fds=(ns_fd,), stdin=subprocess.PIPE,
+    proc = subprocess.Popen([binary, str(ns_fd), '42'], pass_fds=(ns_fd,), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         if proc.stdout.readline().strip() != 'ready':

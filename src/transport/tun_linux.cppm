@@ -11,6 +11,8 @@ export namespace nexus::transport {
         udp::Filtering filtering=udp::Filtering::address_port_dependent;
         udp::Limits udp{};
         packet::DeviceLimits external{}, internal{};
+        // Applied to every direct socket before connect/send; failures are reported.
+        std::optional<std::uint32_t> socket_mark;
     };
     enum class TunDriverError { stopped, invalid_device, invalid_limits, time_reversed };
     using TunDriverFailure=std::variant<TunDriverError,tcp::TableError,packet::FdFailure,MemoryError>;

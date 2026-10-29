@@ -32,7 +32,8 @@ export namespace nexus::udp {
         std::uint64_t last_time_ = 0;
     public:
         MemoryEngine(packet::MemoryLink& link, rules::Matcher policy, Mapping mapping, Filtering filtering,
-                     Limits limits = {}, std::size_t mtu = 1500);
+                     Limits limits = {}, std::size_t mtu = 1500,
+                     std::optional<std::uint32_t> socket_mark = {});
         ~MemoryEngine();
         MemoryEngine(MemoryEngine const&) = delete;
         auto operator=(MemoryEngine const&) -> MemoryEngine& = delete;

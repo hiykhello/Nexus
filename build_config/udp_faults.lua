@@ -1,4 +1,11 @@
 if is_plat("linux") then
+    target("nexus-direct-socket-mark-failure-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/direct_socket_mark_failure.cpp")
+        add_ldflags("-Wl,--wrap=setsockopt", "-Wl,--wrap=connect", "-Wl,--wrap=sendto")
+        add_deps("nexus-tcp-direct", "nexus-udp-direct", "nexus-rules")
+
     target("nexus-udp-deferred-allocation-test")
         set_kind("binary")
         set_default(false)

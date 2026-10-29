@@ -9,8 +9,9 @@ namespace p=nexus::packet; namespace tr=nexus::transport;
 using namespace std::chrono_literals;
 int main(int argc, char** argv) {
     auto tun=p::LinuxTun::create("nx-owned"); if (!tun) return 1;
-    if (argc != 2 || ::setns(std::atoi(argv[1]), CLONE_NEWNET) != 0) return 8;
-    auto driver=tr::LinuxTunDirect::create(std::move(*tun),nexus::rules::Matcher{}); if (!driver) return 2;
+    if ((argc != 2 && argc != 3) || ::setns(std::atoi(argv[1]), CLONE_NEWNET) != 0) return 8;
+    tr::TunLimits limits; if (argc==3) limits.socket_mark=42;
+    auto driver=tr::LinuxTunDirect::create(std::move(*tun),nexus::rules::Matcher{},limits); if (!driver) return 2;
     std::println("ready"); std::fflush(stdout);
     char begin{}; if (::read(STDIN_FILENO,&begin,1)!=1 || begin!='G') return 3;
     if (::fcntl(STDIN_FILENO,F_SETFL,::fcntl(STDIN_FILENO,F_GETFL)|O_NONBLOCK)<0) return 3;

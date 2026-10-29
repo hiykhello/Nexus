@@ -26,12 +26,12 @@ namespace nexus::udp {
         }
 
     }
-    Direct6::Direct6(rules::Matcher policy, Mapping mapping, Filtering filtering, Limits limits, std::size_t mtu)
+    Direct6::Direct6(rules::Matcher policy, Mapping mapping, Filtering filtering, Limits limits, std::size_t mtu, std::optional<std::uint32_t> mark)
         : bridge(std::move(policy), mapping, filtering, limits, mtu,
                  {this, [](void* self, FlowId id) noexcept {
                      auto& entries = static_cast<Direct6*>(self)->sockets;
                      std::erase_if(entries, [id](DirectSocket const& entry) { return entry.id == id; });
-                 }}) {}
+                 }}), socket_mark(mark) {}
     Direct6::~Direct6() = default;
     auto Direct6::size() const noexcept -> std::size_t { return this->bridge.size(); }
     auto Direct6::expire(std::uint64_t now) -> std::expected<std::size_t, Error> { return this->bridge.expire(now); }
@@ -56,6 +56,12 @@ namespace nexus::udp {
                 return std::unexpected(DirectError{error});
             }
             DirectSocket guard(outgoing->flow, fd);
+            if (socket_mark && ::setsockopt(fd, SOL_SOCKET, SO_MARK, &*socket_mark, sizeof(*socket_mark)) != 0) {
+                auto error = system_error();
+                (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
+                (void)this->bridge.close(outgoing->flow, now);
+                return std::unexpected(DirectError{error});
+            }
             int v6only = 0;
             if (::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) != 0) {
                 auto error = system_error();

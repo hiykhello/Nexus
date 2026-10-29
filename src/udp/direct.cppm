@@ -20,11 +20,13 @@ export namespace nexus::udp {
     class Direct4 {
         std::vector<DirectSocket> sockets;
         RoutedBridge4 bridge;
+        std::optional<std::uint32_t> socket_mark;
         std::size_t cursor = 0;
         std::optional<std::error_code> deferred_error;
         bool deferred_allocation_failure = false;
     public:
-        Direct4(rules::Matcher policy, Mapping mapping, Filtering filtering, Limits limits = {}, std::size_t mtu = 1500);
+        Direct4(rules::Matcher policy, Mapping mapping, Filtering filtering, Limits limits = {}, std::size_t mtu = 1500,
+                std::optional<std::uint32_t> socket_mark = {});
         ~Direct4();
         Direct4(Direct4 const&) = delete;
         auto operator=(Direct4 const&) -> Direct4& = delete;
@@ -45,11 +47,13 @@ export namespace nexus::udp {
     class Direct6 {
         std::vector<DirectSocket> sockets;
         RoutedBridge6 bridge;
+        std::optional<std::uint32_t> socket_mark;
         std::size_t cursor = 0;
         std::optional<std::error_code> deferred_error;
         bool deferred_allocation_failure = false;
     public:
-        Direct6(rules::Matcher policy, Mapping mapping, Filtering filtering, Limits limits = {}, std::size_t mtu = 1500);
+        Direct6(rules::Matcher policy, Mapping mapping, Filtering filtering, Limits limits = {}, std::size_t mtu = 1500,
+                std::optional<std::uint32_t> socket_mark = {});
         ~Direct6();
         Direct6(Direct6 const&) = delete;
         auto operator=(Direct6 const&) -> Direct6& = delete;

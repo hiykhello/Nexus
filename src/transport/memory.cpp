@@ -4,9 +4,10 @@ import std;
 namespace nexus::transport {
     MemoryEngine::MemoryEngine(packet::MemoryLink& link, tcp::ConnectionTable& table, rules::Matcher policy,
                                std::size_t tcp_limit, udp::Mapping mapping, udp::Filtering filtering,
-                               udp::Limits udp_limits, std::size_t mtu, packet::DeviceLimits internal_limits)
+                               udp::Limits udp_limits, std::size_t mtu, packet::DeviceLimits internal_limits,
+                               std::optional<std::uint32_t> socket_mark)
         : tcp_link_(internal_limits), udp_link_(internal_limits), device_(link,tcp_link_,udp_link_),
-          tcp_(tcp_link_,table,policy,tcp_limit,mtu), udp_(udp_link_,std::move(policy),mapping,filtering,udp_limits,mtu) {}
+          tcp_(tcp_link_,table,policy,tcp_limit,mtu,socket_mark), udp_(udp_link_,std::move(policy),mapping,filtering,udp_limits,mtu,socket_mark) {}
     MemoryEngine::~MemoryEngine() = default;
     auto MemoryEngine::stop(std::uint64_t now) -> std::expected<void, MemoryError> {
         if (stopped_) return {};
