@@ -108,12 +108,47 @@ static auto udp_tests() -> bool {
     return s::encode_udp_datagram(invalid).error()==invalid_address;
 }
 
+static auto udp_association_tests() -> bool {
+    using enum s::Status;
+    s::UdpPeer tcp{1,{127,0,0,1},4444}, hint{1,{},0};
+    auto association=s::UdpAssociation::create(tcp,hint);
+    if (!association) return false;
+    s::UdpPeer first{1,{127,0,0,1},5000}, second{1,{127,0,0,1},5001}, stranger{1,{127,0,0,2},5000};
+    std::vector<std::uint8_t> valid{0,0,0,1,1,2,3,4,0,53,'x'}, fragment=valid;
+    fragment[2]=1;
+    if (association->admit(first,fragment).error()!=unsupported_fragment ||
+        association->admit(stranger,valid).error()!=unauthorized_source) return false;
+    // Malformed traffic did not claim the unknown port.
+    auto admitted=association->admit(second,valid);
+    if (!admitted || admitted->port!=53 || !std::ranges::equal(admitted->data,std::array<std::uint8_t,1>{'x'}) ||
+        association->admit(first,valid).error()!=unauthorized_source) return false;
+    auto moved=std::move(*association);
+    if (association->admit(second,valid).error()!=association_closed || !moved.admit(second,valid)) return false;
+    moved.close();
+    if (moved.admit(second,valid).error()!=association_closed) return false;
+    hint=tcp; hint.port=5000;
+    auto fixed=s::UdpAssociation::create(tcp,hint);
+    if (!fixed || fixed->admit(second,valid).error()!=unauthorized_source || !fixed->admit(first,valid)) return false;
+    hint.address[3]=2;
+    if (s::UdpAssociation::create(tcp,hint).error()!=unauthorized_source) return false;
+    hint={4,{},0};
+    if (!s::UdpAssociation::create(tcp,hint)) return false;
+    first.address[4]=1;
+    if (fixed->admit(first,valid).error()!=unauthorized_source) return false;
+    s::UdpPeer tcp6{4,{0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},443};
+    auto ipv6=s::UdpAssociation::create(tcp6,{1,{},0});
+    tcp6.port=6000;
+    if (!ipv6 || !ipv6->admit(tcp6,valid)) return false;
+    tcp6.address[15]=2;
+    return ipv6->admit(tcp6,valid).error()==unauthorized_source;
+}
+
 int main() {
     std::vector<std::uint8_t> ipv6(16);
     for (std::size_t n = 0; n < ipv6.size(); ++n) ipv6[n] = static_cast<std::uint8_t>(n);
     std::vector<std::uint8_t> longest_domain(255, 'x');
     if (!greeting_tests() || !request_frame(1, {127, 0, 0, 1}) ||
         !request_frame(4, ipv6) || !request_frame(3, {'e', 'x', 'a', 'm', 'p', 'l', 'e'}) ||
-        !request_frame(3, longest_domain) || !invalid_tests() || !udp_tests()) return 1;
+        !request_frame(3, longest_domain) || !invalid_tests() || !udp_tests() || !udp_association_tests()) return 1;
     std::cout << "SOCKS5 greeting, CONNECT and UDP datagram codecs passed\n";
 }

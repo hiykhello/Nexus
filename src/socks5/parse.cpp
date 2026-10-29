@@ -106,4 +106,30 @@ namespace nexus::socks5 {
         result.insert(result.end(),packet.data.begin(),packet.data.end());
         return result;
     }
+
+    namespace {
+        auto valid_peer(UdpPeer const& peer) noexcept -> bool {
+            if (peer.address_type==4) return true;
+            return peer.address_type==1 && std::ranges::all_of(std::span(peer.address).subspan(4), [](auto byte) { return byte==0; });
+        }
+        auto unspecified(UdpPeer const& peer) noexcept -> bool {
+            return std::ranges::all_of(peer.address, [](auto byte) { return byte==0; });
+        }
+    }
+    auto UdpAssociation::create(UdpPeer tcp_peer, UdpPeer hint) noexcept -> std::expected<UdpAssociation,Status> {
+        if (!valid_peer(tcp_peer) || !valid_peer(hint) || unspecified(tcp_peer)) return std::unexpected(Status::invalid_address);
+        if (!unspecified(hint) && (hint.address_type!=tcp_peer.address_type || hint.address!=tcp_peer.address))
+            return std::unexpected(Status::unauthorized_source);
+        tcp_peer.port=hint.port;
+        return UdpAssociation(tcp_peer);
+    }
+    auto UdpAssociation::admit(UdpPeer source, std::span<std::uint8_t const> input) noexcept -> std::expected<UdpDatagram,Status> {
+        if (closed_) return std::unexpected(Status::association_closed);
+        if (!valid_peer(source) || !source.port || source.address_type!=peer_.address_type || source.address!=peer_.address ||
+            (peer_.port && source.port!=peer_.port)) return std::unexpected(Status::unauthorized_source);
+        auto packet=parse_udp_datagram(input);
+        if (!packet) return std::unexpected(packet.error());
+        if (!peer_.port) peer_.port=source.port;
+        return packet;
+    }
 }
