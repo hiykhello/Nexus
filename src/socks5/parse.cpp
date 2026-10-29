@@ -133,4 +133,31 @@ namespace nexus::socks5 {
         if (!peer_.port) peer_.port=source.port;
         return packet;
     }
+    auto UdpAssociation::begin_send(UdpPeer target) noexcept -> std::expected<std::uint64_t,Status> {
+        if (closed_) return std::unexpected(Status::association_closed);
+        if (!valid_peer(target) || unspecified(target) || !target.port) return std::unexpected(Status::invalid_address);
+        auto end=targets_.begin()+target_count_;
+        auto it=std::find_if(targets_.begin(),end,[&](auto const& item) { return item.peer==target; });
+        if (it!=end && it->pending) return std::unexpected(Status::send_in_progress);
+        if (it==end && target_count_==targets_.size()) return std::unexpected(Status::target_capacity);
+        if (!next_token_) return std::unexpected(Status::token_exhausted);
+        if (it==end) { it=targets_.begin()+target_count_++; *it=Target{target}; }
+        it->pending=next_token_++;
+        return it->pending;
+    }
+    auto UdpAssociation::finish_send(std::uint64_t token, bool success) noexcept -> std::expected<void,Status> {
+        if (closed_) return std::unexpected(Status::association_closed);
+        auto end=targets_.begin()+target_count_;
+        auto it=std::find_if(targets_.begin(),end,[&](auto const& item) { return token && item.pending==token; });
+        if (it==end) return std::unexpected(Status::stale_send);
+        it->pending=0;
+        if (success) it->confirmed=true;
+        else if (!it->confirmed) { *it=targets_[--target_count_]; targets_[target_count_]=Target{}; }
+        return {};
+    }
+    auto UdpAssociation::accepts_reply(UdpPeer source) const noexcept -> bool {
+        if (closed_) return false;
+        auto end=targets_.begin()+target_count_;
+        return std::find_if(targets_.begin(),end,[&](auto const& item) { return item.confirmed && item.peer==source; })!=end;
+    }
 }

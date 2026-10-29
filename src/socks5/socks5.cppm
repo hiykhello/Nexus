@@ -5,7 +5,7 @@ export namespace nexus::socks5 {
     enum class Status {
         incomplete, accepted, invalid_version, invalid_reserved,
         no_acceptable_method, unsupported_command, unsupported_address, invalid_address, unsupported_fragment, too_large,
-        unauthorized_source, association_closed
+        unauthorized_source, association_closed, target_capacity, send_in_progress, stale_send, token_exhausted
     };
 
     struct Greeting {
@@ -51,21 +51,30 @@ export namespace nexus::socks5 {
     // One TCP control connection owns this state. Callers normalize mapped
     // addresses before creation and admission, and serialize all operations.
     class UdpAssociation {
+        struct Target { UdpPeer peer; std::uint64_t pending=0; bool confirmed=false; };
         UdpPeer peer_;
+        std::array<Target,64> targets_{};
+        std::size_t target_count_ = 0;
+        std::uint64_t next_token_ = 1;
         bool closed_ = false;
         explicit UdpAssociation(UdpPeer peer) : peer_(peer) {}
     public:
         UdpAssociation(UdpAssociation const&) = delete;
         auto operator=(UdpAssociation const&) -> UdpAssociation& = delete;
-        UdpAssociation(UdpAssociation&& other) noexcept : peer_(other.peer_), closed_(std::exchange(other.closed_,true)) {}
-        auto operator=(UdpAssociation&& other) noexcept -> UdpAssociation& {
-            if (this!=&other) { peer_=other.peer_; closed_=std::exchange(other.closed_,true); }
-            return *this;
-        }
+        UdpAssociation(UdpAssociation&& other) noexcept
+            : peer_(other.peer_), targets_(other.targets_), target_count_(other.target_count_), next_token_(other.next_token_),
+              closed_(std::exchange(other.closed_,true)) {}
+        auto operator=(UdpAssociation&&) -> UdpAssociation& = delete;
         // Hint address may be unspecified; any specified address must match the TCP peer.
         [[nodiscard]] static auto create(UdpPeer tcp_peer, UdpPeer hint) noexcept -> std::expected<UdpAssociation,Status>;
         // An unknown port is learned only after a complete, unfragmented packet parses.
         [[nodiscard]] auto admit(UdpPeer source, std::span<std::uint8_t const> input) noexcept -> std::expected<UdpDatagram,Status>;
+        // Do not move while operations borrow this object. Reserve before an
+        // asynchronous send; finish exactly once after completion.
+        // At most one send per target is pending and at most 64 targets are retained.
+        [[nodiscard]] auto begin_send(UdpPeer target) noexcept -> std::expected<std::uint64_t,Status>;
+        [[nodiscard]] auto finish_send(std::uint64_t token, bool success) noexcept -> std::expected<void,Status>;
+        [[nodiscard]] auto accepts_reply(UdpPeer source) const noexcept -> bool;
         auto close() noexcept -> void { closed_=true; }
     };
 }

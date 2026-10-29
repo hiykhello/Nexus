@@ -160,12 +160,50 @@ static auto udp_association_tests() -> bool {
     return ipv6->admit(tcp6,valid).error()==unauthorized_source;
 }
 
+static auto udp_target_tests() -> bool {
+    using enum s::Status;
+    auto association=s::UdpAssociation::create({1,{127,0,0,1},1},{1,{},0});
+    if (!association) return false;
+    s::UdpPeer target{1,{192,0,2,1},53}, other=target; other.port=54;
+    auto first=association->begin_send(target);
+    if (!first || association->accepts_reply(target) || association->begin_send(target).error()!=send_in_progress ||
+        association->accepts_reply(other) || !association->finish_send(*first,false) || association->accepts_reply(target) ||
+        association->finish_send(*first,true).error()!=stale_send) return false;
+    auto success=association->begin_send(target);
+    if (!success || !association->finish_send(*success,true) || !association->accepts_reply(target)) return false;
+    auto again=association->begin_send(target);
+    if (!again || !association->accepts_reply(target) || !association->finish_send(*again,false) ||
+        !association->accepts_reply(target)) return false;
+    auto pending=association->begin_send(other);
+    if (!pending || association->accepts_reply(other)) return false;
+    for (std::uint16_t port=100;port<162;++port) {
+        auto item=target; item.port=port;
+        auto token=association->begin_send(item);
+        if (!token || !association->finish_send(*token,true)) return false;
+    }
+    auto overflow=target; overflow.port=200;
+    if (association->begin_send(overflow).error()!=target_capacity || !association->finish_send(*pending,false)) return false;
+    auto retry=association->begin_send(overflow);
+    if (!retry || !association->finish_send(*retry,true) || !association->accepts_reply(overflow)) return false;
+    auto separate=s::UdpAssociation::create({1,{127,0,0,1},1},{1,{},0});
+    if (!separate) return false;
+    auto one=separate->begin_send(target), two=separate->begin_send(other);
+    if (!one || !two || !separate->finish_send(*one,false) || !separate->finish_send(*two,true) ||
+        separate->accepts_reply(target) || !separate->accepts_reply(other)) return false;
+    auto in_flight=association->begin_send(target);
+    if (!in_flight) return false;
+    association->close();
+    return !association->accepts_reply(target) && association->finish_send(*in_flight,true).error()==association_closed &&
+        association->begin_send(target).error()==association_closed;
+}
+
 int main() {
     std::vector<std::uint8_t> ipv6(16);
     for (std::size_t n = 0; n < ipv6.size(); ++n) ipv6[n] = static_cast<std::uint8_t>(n);
     std::vector<std::uint8_t> longest_domain(255, 'x');
     if (!greeting_tests() || !request_frame(1, {127, 0, 0, 1}) ||
         !request_frame(4, ipv6) || !request_frame(3, {'e', 'x', 'a', 'm', 'p', 'l', 'e'}) ||
-        !request_frame(3, longest_domain) || !invalid_tests() || !udp_request_tests() || !udp_tests() || !udp_association_tests()) return 1;
+        !request_frame(3, longest_domain) || !invalid_tests() || !udp_request_tests() || !udp_tests() ||
+        !udp_association_tests() || !udp_target_tests()) return 1;
     std::cout << "SOCKS5 greeting, CONNECT and UDP datagram codecs passed\n";
 }
