@@ -8,10 +8,9 @@ namespace nexus::tcp {
     }
     auto SendBuffer::enqueue(std::span<std::uint8_t const> bytes) -> std::expected<void, SendError> {
         if (bytes.size() > capacity_ - bytes_.size()) return std::unexpected(SendError::capacity);
-        // Stage before mutation so allocation failure cannot leave a partially appended write.
-        auto staged = bytes_;
-        staged.insert(staged.end(), bytes.begin(), bytes.end());
-        bytes_.swap(staged);
+        // deque range insertion has no effects on allocation failure; uint8_t
+        // and span iterators cannot throw while copying elements.
+        bytes_.insert(bytes_.end(), bytes.begin(), bytes.end());
         return {};
     }
     auto SendBuffer::unsent(std::size_t maximum) const -> SendSlice {

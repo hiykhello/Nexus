@@ -272,6 +272,12 @@ target("nexus-tcp-send-test")
     add_files("tests/tcp_send.cpp")
     add_deps("nexus-tcp-send")
 
+target("nexus-tcp-send-allocation-test")
+    set_kind("binary")
+    set_default(false)
+    add_files("tests/tcp_send_allocation.cpp")
+    add_deps("nexus-tcp-send")
+
 target("nexus-tcp-memory-test")
     set_kind("binary")
     set_default(false)
