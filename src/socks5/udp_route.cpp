@@ -50,12 +50,13 @@ namespace nexus::socks5 {
     }
     auto udp_route(rules::RouteMatcher const& policy, UdpDatagram const& packet, UdpPeer candidate)
         -> std::expected<UdpPeer,UdpRouteError> {
-        if (!valid_packet(packet) || !valid(candidate) || candidate.port!=packet.port)
+        if (!valid_packet(packet) || !valid(candidate) || !valid(canonical(candidate)) || candidate.port!=packet.port)
             return std::unexpected(UdpRouteError::invalid_target);
         UdpPeer literal{packet.address_type,{},packet.port};
         if (packet.address_type!=3) {
             std::copy_n(packet.address.begin(),packet.address_length,literal.address.begin());
-            if (!valid(literal) || canonical(literal)!=canonical(candidate)) return std::unexpected(UdpRouteError::invalid_target);
+            if (!valid(literal) || !valid(canonical(literal)) || canonical(literal)!=canonical(candidate))
+                return std::unexpected(UdpRouteError::invalid_target);
         }
         auto preflight=udp_preflight(policy,packet);
         if (!preflight) return std::unexpected(preflight.error());

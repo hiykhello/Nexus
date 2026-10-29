@@ -27,6 +27,16 @@ int main() {
         s::udp_route(*policy,packet,mapped).error()!=s::UdpRouteError::blocked) return 6;
     auto normalized=s::udp_route(*direct,packet,mapped);
     if (!normalized || *normalized!=denied) return 7;
+    auto mapped_unspecified=mapped;
+    std::ranges::fill(std::span(mapped_unspecified.address).last<4>(),0);
+    std::ranges::copy(mapped_unspecified.address,packet.address.begin());
+    if (s::udp_route(*direct,packet,mapped_unspecified).error()!=s::UdpRouteError::invalid_target) return 13;
+    packet.address_type=3; packet.address_length=7;
+    std::ranges::copy(std::string_view("ok.test"),packet.address.begin());
+    if (s::udp_route(*direct,packet,mapped_unspecified).error()!=s::UdpRouteError::invalid_target ||
+        s::udp_route(*policy,packet,mapped).error()!=s::UdpRouteError::blocked) return 14;
+    packet.address_type=4; packet.address_length=16;
+    std::ranges::copy(mapped.address,packet.address.begin());
     auto association=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
     if (!association || s::udp_prepare_send(*association,*direct,packet,mapped)) return 9;
     std::array<std::uint8_t,23> wire{0,0,0,4,0,0,0,0,0,0,0,0,0,0,255,255,192,0,2,1,0,53,'x'};

@@ -61,6 +61,14 @@ try:
         upstream.sendto(b'resolved', domain_source)
         reply, reply_source = client.recvfrom(100)
         if reply != wire[:-5] + b'resolved' or reply_source != relay: raise RuntimeError('resolved reply failed')
+        unspecified = b'\x00\x00\x00\x04' + bytes(10) + b'\xff\xff' + bytes(4) + dest[1].to_bytes(2, 'big') + b'invalid'
+        client.sendto(unspecified, relay)
+        upstream.settimeout(.2)
+        try:
+            data, _ = upstream.recvfrom(100)
+            raise RuntimeError(f'mapped unspecified target forwarded: {data!r}')
+        except socket.timeout:
+            pass
         control.close()
         deadline = time.monotonic()+3
         while True:
