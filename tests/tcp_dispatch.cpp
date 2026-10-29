@@ -24,6 +24,21 @@ int main() {
     if (full || full.error().error != t::DispatchError::table_error || full.error().table_error != t::TableError::full) return 1;
     p::Tcp4View ack{.source=syn.source, .destination=syn.destination, .source_port=syn.source_port,
                     .destination_port=syn.destination_port, .sequence=100, .acknowledgement=51, .flags=0x10, .window=8};
+    for (auto invalid_ack : {50u,52u}) {
+        auto bad=ack; bad.acknowledgement=invalid_ack;
+        auto bad_raw=p::make_tcp4(bad);
+        auto rejected=t::dispatch(*table,*bad_raw,0,2);
+        if (!rejected || rejected->input_error!=t::ConnectionError::invalid_ack || !rejected->reply ||
+            table->get(first->id)->state()!=t::ConnectionState::handshake) return 1;
+        auto reset=p::parse_tcp4(*rejected->reply);
+        if (!reset || reset->flags!=4 || reset->sequence!=invalid_ack || reset->acknowledgement ||
+            reset->window || !reset->payload.empty()) return 1;
+    }
+    auto wrong_seq=ack; wrong_seq.sequence=101; wrong_seq.acknowledgement=52;
+    auto wrong_raw=p::make_tcp4(wrong_seq);
+    auto ignored_ack=t::dispatch(*table,*wrong_raw,0,2);
+    if (!ignored_ack || ignored_ack->input_error!=t::ConnectionError::invalid_packet || ignored_ack->reply ||
+        table->get(first->id)->state()!=t::ConnectionState::handshake) return 1;
     raw = p::make_tcp4(ack);
     auto established = t::dispatch(*table, *raw, 0, 3);
     if (!established || established->input_error || established->reply ||

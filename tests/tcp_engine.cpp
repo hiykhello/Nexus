@@ -83,6 +83,30 @@ int main() {
     auto only_sentinel = second_link.receive(p::Side::first);
     auto no_old_reply = second_link.receive(p::Side::first);
     if (!only_sentinel || !*only_sentinel || **only_sentinel != sentinel || !no_old_reply || *no_old_reply) return 1;
+    // A handshake RST is retained under output pressure without ending the
+    // handshake; a valid ACK may still complete it after the RST drains.
+    p::MemoryLink reset_link({1500, 1, 1500});
+    auto reset_table=t::ConnectionTable::create(1,8);
+    auto reset_id=reset_table->open(syn,50,0);
+    t::MemoryEngine reset_engine(reset_link,*reset_table);
+    auto bad_ack=ack; bad_ack.sequence=100; bad_ack.acknowledgement=52; bad_ack.flags=0x10; bad_ack.payload={};
+    auto bad_wire=p::make_tcp4(bad_ack);
+    if (!reset_id || !bad_wire || !reset_link.send(p::Side::second,sentinel) || !reset_link.send(p::Side::first,*bad_wire)) return 1;
+    auto blocked_reset=reset_engine.step(1,0);
+    if (!blocked_reset || !blocked_reset->backpressured || blocked_reset->input_error!=t::ConnectionError::invalid_ack ||
+        reset_table->get(*reset_id)->state()!=t::ConnectionState::handshake) return 1;
+    auto valid_ack=bad_ack; valid_ack.acknowledgement=51;
+    auto valid_wire=p::make_tcp4(valid_ack);
+    if (!valid_wire || !reset_link.send(p::Side::first,*valid_wire)) return 1;
+    auto reset_sentinel=reset_link.receive(p::Side::first);
+    auto delivered_reset=reset_engine.step(2,0);
+    auto reset_packet=reset_link.receive(p::Side::first);
+    if (!reset_sentinel || !*reset_sentinel || **reset_sentinel!=sentinel || !delivered_reset ||
+        !delivered_reset->delivered || !reset_packet || !*reset_packet) return 1;
+    auto reset_view=p::parse_tcp4(**reset_packet);
+    auto completed_reset=reset_engine.step(3,0);
+    if (!reset_view || reset_view->flags!=4 || reset_view->sequence!=52 || !completed_reset ||
+        completed_reset->input_error || reset_table->get(*reset_id)->state()!=t::ConnectionState::established) return 1;
     p::MemoryLink small_link({1500, 1, 1500});
     auto small_table = t::ConnectionTable::create(1, 8);
     auto small_id = small_table->open(syn, 50, 0);

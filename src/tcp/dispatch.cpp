@@ -7,7 +7,7 @@ namespace nexus::tcp {
         -> std::expected<DispatchResult, DispatchFailure> {
         auto segment = packet::parse_tcp4(bytes);
         if (!segment) return std::unexpected(DispatchFailure{DispatchError::invalid_packet, segment.error(), {}});
-        // All responses in this path are fixed 40-byte ACK or SYN-ACK packets.
+        // All responses in this path are fixed 40-byte ACK, SYN-ACK or RST packets.
         if (mtu < 40) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
         auto id = table.find(*segment);
         if (!id) {
@@ -42,6 +42,10 @@ namespace nexus::tcp {
         if (!result && (segment->flags & 4) && result.error() == ConnectionError::challenge_ack) answer = true;
         if (answer) {
             auto view = previous == ConnectionState::handshake && result && !*result ? connection->syn_ack() : connection->ack();
+            if (previous == ConnectionState::handshake && !result && result.error() == ConnectionError::invalid_ack) {
+                view.sequence = segment->acknowledgement; view.acknowledgement = 0;
+                view.flags = 4; view.window = 0;
+            }
             auto reply = packet::make_tcp4(view, mtu, std::move(*reply_storage));
             if (!reply) return std::unexpected(DispatchFailure{DispatchError::output_error, reply.error(), {}});
             outcome.reply = std::move(*reply);

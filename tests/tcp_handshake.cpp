@@ -24,6 +24,8 @@ int main() {
     p::Tcp4View ack{.source=syn.source, .destination=syn.destination, .source_port=1234,
                     .destination_port=80, .sequence=0, .acknowledgement=1, .flags=0x10};
     if (h->input(ack).error() != t::HandshakeError::invalid_ack || h->established()) return 1;
+    auto wrong_sequence=ack; wrong_sequence.sequence=1;
+    if (h->input(wrong_sequence).error() != t::HandshakeError::invalid_sequence || h->established()) return 1;
     ack.acknowledgement = 0; ack.source_port++;
     if (h->input(ack).error() != t::HandshakeError::wrong_peer || h->established()) return 1;
     ack.source_port--;

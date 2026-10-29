@@ -3,7 +3,7 @@ import nexus.packet;
 import std;
 
 export namespace nexus::tcp {
-    enum class HandshakeError { invalid_syn, invalid_options, wrong_peer, invalid_ack, unsupported_segment };
+    enum class HandshakeError { invalid_syn, invalid_options, wrong_peer, invalid_sequence, invalid_ack, unsupported_segment };
     // One tuple, no timers or socket ownership. ISS is supplied by the caller.
     class PassiveHandshake {
         packet::Address4 local_, remote_;

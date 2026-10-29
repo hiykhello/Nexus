@@ -65,7 +65,8 @@ namespace nexus::tcp {
         bool duplicate_fin = false;
         if (state_ == ConnectionState::handshake) {
             auto result = handshake_.input(segment);
-            if (!result) return std::unexpected(ConnectionError::invalid_packet);
+            if (!result) return std::unexpected(result.error() == HandshakeError::invalid_ack
+                ? ConnectionError::invalid_ack : ConnectionError::invalid_packet);
             if (!*result) return false;
             timer_.stop(); state_ = ConnectionState::established; peer_window_ = segment.window;
             window_sequence_ = segment.sequence; window_ack_ = segment.acknowledgement;

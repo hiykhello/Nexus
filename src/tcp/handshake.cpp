@@ -27,9 +27,9 @@ namespace nexus::tcp {
         }
         if (segment.flags != 0x10 && segment.flags != 0x18 && segment.flags != 0x11 && segment.flags != 0x19)
             return std::unexpected(HandshakeError::unsupported_segment);
-        if (segment.sequence != irs_ + 1 || segment.acknowledgement != iss_ + 1)
-            return std::unexpected(HandshakeError::invalid_ack);
+        if (segment.sequence != irs_ + 1) return std::unexpected(HandshakeError::invalid_sequence);
         if (!packet::parse_tcp_options(segment.options)) return std::unexpected(HandshakeError::invalid_options);
+        if (segment.acknowledgement != iss_ + 1) return std::unexpected(HandshakeError::invalid_ack);
         established_ = true;
         return true;
     }
