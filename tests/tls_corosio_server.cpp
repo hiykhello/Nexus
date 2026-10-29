@@ -1,5 +1,6 @@
 #include <boost/corosio/backend.hpp>
 #include <cerrno>
+#include <cstdlib>
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
@@ -13,6 +14,32 @@ import nexus.tls.corosio_client;
 import nexus.tls.handshake;
 namespace t=nexus::tls; namespace io=nex::corosio; namespace capy=nex::capy;
 using namespace std::chrono_literals;
+static void* watched_unread=nullptr;
+static nexus::memory::Budget* watched_budget=nullptr;
+static bool released_while_reserved=false;
+void operator delete(void* p) noexcept {
+    if (p && p==watched_unread) { released_while_reserved=watched_budget->reserved()==8; watched_unread=nullptr; }
+    std::free(p);
+}
+void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
+auto move_assignment_test() -> bool {
+    std::array<std::uint8_t,16> key{}; std::array<std::uint8_t,12> iv{};
+    auto make_records=[&]() {
+        auto write=t::RecordLayer::create(t::RecordDirection::send,nexus::crypto::Aead::aes_128_gcm,key,iv);
+        auto read=t::RecordLayer::create(t::RecordDirection::receive,nexus::crypto::Aead::aes_128_gcm,key,iv);
+        return t::ApplicationRecords(std::move(*write),std::move(*read),16385,16385,t::ApplicationRole::server);
+    };
+    auto budget=std::make_shared<nexus::memory::Budget>(8);
+    t::detail::ServerAsyncResult old(make_records(),nexus::memory::Budget::reserve(budget,3),nexus::crypto::Bytes(3,1));
+    t::detail::ServerAsyncResult next(make_records(),nexus::memory::Budget::reserve(budget,5),nexus::crypto::Bytes(5,2));
+    watched_unread=old.unread.data(); watched_budget=budget.get(); released_while_reserved=false;
+    old=std::move(next);
+    auto valid=released_while_reserved && !watched_unread && budget->reserved()==5 && old.unread==nexus::crypto::Bytes(5,2);
+    old=std::move(old);
+    valid=valid && budget->reserved()==5 && old.unread.size()==5;
+    nexus::crypto::Bytes{}.swap(old.unread);
+    return valid && old.release_unread_reservation() && budget->reserved()==0;
+}
 auto file(char const* path) -> nexus::crypto::Bytes { std::ifstream in(path,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 auto now() -> std::uint64_t { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 struct Fixture {
@@ -234,7 +261,7 @@ auto serve(Network& f) -> capy::task<> {
 }
 int main(int argc,char** argv) {
     if (argc!=4 && (argc!=5 || std::string_view(argv[4])!="h2")) return 1;
-    if (std::string_view(argv[3])=="failures") return failure(argv[1],argv[2],false) && failure(argv[1],argv[2],true) && budget_failure(argv[1],argv[2],0) && budget_failure(argv[1],argv[2],1) && budget_failure(argv[1],argv[2],2) && budget_failure(argv[1],argv[2],3) && peer_close(argv[1],argv[2]) && exception_test(argv[1],argv[2],false) && exception_test(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false) && coalesced_handover(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false,true) && client_coalesced_handover(argv[1],argv[2]) ? 0 : 2;
+    if (std::string_view(argv[3])=="failures") return move_assignment_test() && failure(argv[1],argv[2],false) && failure(argv[1],argv[2],true) && budget_failure(argv[1],argv[2],0) && budget_failure(argv[1],argv[2],1) && budget_failure(argv[1],argv[2],2) && budget_failure(argv[1],argv[2],3) && peer_close(argv[1],argv[2]) && exception_test(argv[1],argv[2],false) && exception_test(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false) && coalesced_handover(argv[1],argv[2],true) && coalesced_handover(argv[1],argv[2],false,true) && client_coalesced_handover(argv[1],argv[2]) ? 0 : 2;
     auto fd=::accept(std::atoi(argv[3]),nullptr,nullptr); if (fd<0) return 3;
     Network f; if (f.socket.assign(fd)) { ::close(fd); return 4; }
     auto cred=t::ServerCredential::create(file(argv[1]),file(argv[2])); if (!cred) return 5;

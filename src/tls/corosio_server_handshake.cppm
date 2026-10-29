@@ -10,6 +10,18 @@ export namespace nexus::tls::detail {
         ApplicationRecords records;
         std::optional<memory::Budget::Reservation> unread_reservation;
         crypto::Bytes unread;
+        ServerAsyncResult(ApplicationRecords&& records_, std::optional<memory::Budget::Reservation>&& reservation_, crypto::Bytes&& unread_) noexcept
+            : records(std::move(records_)), unread_reservation(std::move(reservation_)), unread(std::move(unread_)) {}
+        ServerAsyncResult(ServerAsyncResult&&) noexcept = default;
+        auto operator=(ServerAsyncResult&& other) noexcept -> ServerAsyncResult& {
+            if (this!=&other) {
+                crypto::Bytes{}.swap(unread);
+                unread_reservation=std::move(other.unread_reservation);
+                unread=std::move(other.unread);
+                records=std::move(other.records);
+            }
+            return *this;
+        }
         // Release after the unread allocation has been destroyed or transferred
         // to an independently charged owner. Keep this result alive until then.
         auto release_unread_reservation() noexcept -> bool {
