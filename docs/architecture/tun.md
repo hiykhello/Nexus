@@ -149,6 +149,8 @@ flowchart LR
 
 `tests/transport_kernel_tun6.py` 在两个嵌套临时网络命名空间分别运行 Linux IPv6 UDP 客户端和 Nexus 直连出口，通过真实 TUN 访问外层命名空间的 IPv6 回环上游；不同源端口先发送的回包未被客户端收到，预期回包完整，连续十轮通过。运行已构建的 `nexus-transport-kernel-tun-test`：`python3 tests/transport_kernel_tun6.py build/linux/x86_64/debug/nexus-transport-kernel-tun-test`。测试需要支持嵌套网络命名空间和 IPv6；未覆盖 IPv6 扩展头、分片、zone 或系统接管。
 
+Linux 模块 `nexus.packet.tun_linux` 提供 `LinuxTun` 独占所有者：在调用方当前网络命名空间通过 `IFF_TUN | IFF_NO_PI | IFF_TUN_EXCL` 创建非持久 TUN，描述符设为非阻塞和 close-on-exec；名称可以由内核生成，也可指定不含模板的名称。名称无效、打开或 ioctl 失败返回错误，移动转移所有权，关闭或析构释放描述符；使用借用描述符的 I/O 必须在关闭前结束。接口不配置地址、MTU、路由、DNS 或防火墙，也不接入正式运行配置。`xmake build nexus-packet-tun-linux-test` 后执行 `python3 tests/packet_tun_linux.py build/linux/x86_64/debug/nexus-packet-tun-linux-test`，隔离命名空间测试已覆盖独占名称、描述符属性、移动及设备回收；权限不足和其他平台行为未穷尽。
+
 ## TCP 与 UDP 的范围
 
 自研 TCP 需要明确序号空间、握手、重传、乱序重组、ACK、窗口、流量控制、拥塞控制、FIN/RST、半关闭和定时器。对本地应用终止 TCP 的代理路径与原样转发 IP 包的 L3 路径分别实现和验证，不能将两者混为一种“转发”。

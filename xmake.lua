@@ -202,6 +202,17 @@ target("nexus-packet-test")
     add_deps("nexus-packet")
 
 if is_plat("linux") then
+    target("nexus-packet-tun-linux")
+        set_kind("static")
+        add_files("src/packet/tun_linux.cppm", {public = true})
+        add_files("src/packet/tun_linux.cpp")
+
+    target("nexus-packet-tun-linux-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/packet_tun_linux.cpp")
+        add_deps("nexus-packet-tun-linux", "nexus-packet-fd")
+
     target("nexus-packet-fd")
         set_kind("static")
         add_files("src/packet/fd.cppm", {public = true})
