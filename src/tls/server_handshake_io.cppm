@@ -42,6 +42,10 @@ export namespace nexus::tls {
         // Sealing a full fragment holds TLSInnerPlaintext and the encrypted
         // payload simultaneously; the completed record is charged separately.
         static constexpr std::size_t flight_seal_scratch_charge=16385+16401;
+        // Conservatively cover hash/verify/master (3*48), four key/IV
+        // temporaries (2*(32+12)), and master derivation's zeros, digest,
+        // derived secret and largest HKDF label (3*48+64). Logical lengths.
+        static constexpr std::size_t flight_key_scratch_charge=512;
         static constexpr std::size_t finished_input_charge=16645+5+ServerFlight::finished_temporary_charge;
         ServerHandshakeIo(ServerHandshakeIo const&)=delete;
         auto operator=(ServerHandshakeIo const&) -> ServerHandshakeIo& = delete;

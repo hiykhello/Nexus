@@ -11,6 +11,7 @@ static bool hello_released=false, flight_released=false;
 static nexus::memory::Budget* seal_budget=nullptr;
 static std::size_t seal_expected=0;
 static bool inner_charged=false, ciphertext_charged=false;
+static bool derived_key_charged=false;
 static std::size_t certificate_body_size=0;
 static bool certificate_body_charged=false;
 static bool capture_allocations=false;
@@ -22,6 +23,7 @@ void* operator new(std::size_t size) {
     if (auto p=std::malloc(size ? size : 1)) {
         if (seal_budget && size==16385) inner_charged=seal_budget->reserved()>=seal_expected;
         if (seal_budget && size==16401) ciphertext_charged=seal_budget->reserved()>=seal_expected;
+        if (seal_budget && size==32 && seal_budget->reserved()>=seal_expected) derived_key_charged=true;
         if (seal_budget && size==certificate_body_size) certificate_body_charged=seal_budget->reserved()>=seal_expected;
         if (capture_allocations && captured_count<std::size(captured)) captured[captured_count++]={p,size};
         return p;
@@ -148,18 +150,18 @@ int main(int argc,char** argv) {
         auto extensions=std::size_t{15}; // h2 EncryptedExtensions handshake message
         auto plaintext=list+8+extensions+8+*signature+52;
         auto output=plaintext+(22+sizeof(c::Bytes))*((plaintext+16383)/16384);
-        auto scratch=2*(list+8)+16384+t::ServerHandshakeIo::flight_seal_scratch_charge+(8+*signature)+extensions+52;
+        auto scratch=2*(list+8)+16384+t::ServerHandshakeIo::flight_seal_scratch_charge+t::ServerHandshakeIo::flight_key_scratch_charge+(8+*signature)+extensions+52;
         auto peak=std::max(t::ServerHandshakeIo::generated_hello_scratch_charge+t::ServerHandshakeIo::finished_keys_charge,server->pending_output().size()+output+scratch+(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge));
         auto limit=t::ServerHandshakeIo::hello_input_charge+2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+peak-(enough ? 0 : 1);
         auto bounded_budget=std::make_shared<nexus::memory::Budget>(limit);
         auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
         if (!candidate) return 92;
         if (enough) { captured_count=0; capture_allocations=true; }
-        if (argc==5 && enough) { seal_budget=bounded_budget.get(); seal_expected=limit; certificate_body_size=list+4; inner_charged=ciphertext_charged=certificate_body_charged=false; }
+        if (argc==5 && enough) { seal_budget=bounded_budget.get(); seal_expected=limit; certificate_body_size=list+4; inner_charged=ciphertext_charged=certificate_body_charged=derived_key_charged=false; }
         auto result=candidate->feed(input,2);
         seal_budget=nullptr; capture_allocations=false;
         if (enough && (!result || !exact_output_allocation(candidate->pending_output()))) return 111;
-        if (argc==5 && enough && (!inner_charged || !ciphertext_charged || !certificate_body_charged)) return 110;
+        if (argc==5 && enough && (!inner_charged || !ciphertext_charged || !certificate_body_charged || !derived_key_charged)) return 110;
         if (argc==5 && enough && std::ranges::count_if(std::span{captured}.first(captured_count),[&](auto const& entry) { return entry.second==certificate_body_size; })!=1) return 113;
         if (!enough) {
             if (result || result.error()!=t::ServerHandshakeIoError::budget_exceeded || bounded_budget->reserved()) return 93;
