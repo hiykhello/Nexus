@@ -234,7 +234,7 @@ target("nexus-http-forward-test")
 target("nexus-packet")
     set_kind("static")
     add_files("src/packet/packet.cppm", {public = true})
-    add_files("src/packet/ipv4.cpp", "src/packet/ipv6.cpp", "src/packet/tcp4.cpp", "src/packet/memory.cpp")
+    add_files("src/packet/ipv4.cpp", "src/packet/ipv6.cpp", "src/packet/tcp4.cpp", "src/packet/tcp6.cpp", "src/packet/memory.cpp")
 
 target("nexus-packet-test")
     set_kind("binary")

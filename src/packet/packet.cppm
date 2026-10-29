@@ -31,6 +31,16 @@ export namespace nexus::packet {
     [[nodiscard]] auto make_tcp4(Tcp4View segment, std::size_t mtu = 1500) -> std::expected<Bytes, PacketError>;
     // Reuses storage where possible; the resulting bytes do not borrow the input.
     [[nodiscard]] auto make_tcp4(Tcp4View segment, std::size_t mtu, Bytes storage) -> std::expected<Bytes, PacketError>;
+    struct Tcp6View {
+        Address6 source{}, destination{};
+        std::uint16_t source_port = 0, destination_port = 0;
+        std::uint32_t sequence = 0, acknowledgement = 0;
+        std::uint16_t flags = 0, window = 0, urgent = 0;
+        std::span<std::uint8_t const> options, payload;
+    };
+    // Basic IPv6 header only; options and payload borrow the input.
+    [[nodiscard]] auto parse_tcp6(std::span<std::uint8_t const> packet) noexcept -> std::expected<Tcp6View, PacketError>;
+    [[nodiscard]] auto make_tcp6(Tcp6View segment, std::size_t mtu = 1500) -> std::expected<Bytes, PacketError>;
     struct TcpOptionView { std::uint8_t kind = 0; std::span<std::uint8_t const> data; };
     struct TcpOptions {
         std::array<TcpOptionView, 40> items{};
