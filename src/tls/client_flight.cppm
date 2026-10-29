@@ -20,6 +20,8 @@ export namespace nexus::tls {
         crypto::Aead algorithm_=crypto::Aead::aes_128_gcm;
         std::size_t key_size_=0;
         crypto::Bytes handshake_pending_;
+        std::array<std::uint8_t,5> server_handshake_pending_{};
+        std::size_t server_handshake_size_=0;
         [[nodiscard]] auto rotate(bool sending) -> bool;
     public:
         [[nodiscard]] auto role() const noexcept -> ApplicationRole { return role_; }
@@ -29,7 +31,7 @@ export namespace nexus::tls {
             return active_ && write_.usable(RecordDirection::send) && read_.usable(RecordDirection::receive) &&
                 write_.send_limit()>1 && write_.send_remaining()>0 &&
                 (write_.send_remaining()>1 || write_secret_.has_value()) &&
-                !read_closed_ && !write_closed_ && !update_response_ && handshake_pending_.empty() &&
+                !read_closed_ && !write_closed_ && !update_response_ && handshake_pending_.empty() && !server_handshake_size_ &&
                 write_limit_ >= 64 && write_limit_ <= 16385 && read_limit_ >= 64 && read_limit_ <= 16385;
         }
         // Maximum application bytes in one unpadded record, after peer negotiation.

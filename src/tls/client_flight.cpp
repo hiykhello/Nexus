@@ -40,9 +40,9 @@ namespace nexus::tls {
         (sending ? write_ : read_)=std::move(*layer); secret=std::move(*next); return true;
     }
     ApplicationRecords::ApplicationRecords(ApplicationRecords&& o) noexcept
-        : write_(std::move(o.write_)), read_(std::move(o.read_)), write_limit_(o.write_limit_), read_limit_(o.read_limit_), role_(o.role_), active_(o.active_), read_closed_(o.read_closed_), write_closed_(o.write_closed_), update_response_(o.update_response_), write_secret_(std::move(o.write_secret_)), read_secret_(std::move(o.read_secret_)), hash_(o.hash_), algorithm_(o.algorithm_), key_size_(o.key_size_), handshake_pending_(std::move(o.handshake_pending_)) { o.active_=false; }
+        : write_(std::move(o.write_)), read_(std::move(o.read_)), write_limit_(o.write_limit_), read_limit_(o.read_limit_), role_(o.role_), active_(o.active_), read_closed_(o.read_closed_), write_closed_(o.write_closed_), update_response_(o.update_response_), write_secret_(std::move(o.write_secret_)), read_secret_(std::move(o.read_secret_)), hash_(o.hash_), algorithm_(o.algorithm_), key_size_(o.key_size_), handshake_pending_(std::move(o.handshake_pending_)), server_handshake_pending_(o.server_handshake_pending_), server_handshake_size_(std::exchange(o.server_handshake_size_,0)) { o.active_=false; }
     auto ApplicationRecords::operator=(ApplicationRecords&& o) noexcept -> ApplicationRecords& {
-        if (this!=&o) { write_=std::move(o.write_); read_=std::move(o.read_); write_limit_=o.write_limit_; read_limit_=o.read_limit_; role_=o.role_; active_=o.active_; read_closed_=o.read_closed_; write_closed_=o.write_closed_; update_response_=o.update_response_; write_secret_=std::move(o.write_secret_); read_secret_=std::move(o.read_secret_); hash_=o.hash_; algorithm_=o.algorithm_; key_size_=o.key_size_; handshake_pending_=std::move(o.handshake_pending_); o.active_=false; } return *this;
+        if (this!=&o) { write_=std::move(o.write_); read_=std::move(o.read_); write_limit_=o.write_limit_; read_limit_=o.read_limit_; role_=o.role_; active_=o.active_; read_closed_=o.read_closed_; write_closed_=o.write_closed_; update_response_=o.update_response_; write_secret_=std::move(o.write_secret_); read_secret_=std::move(o.read_secret_); hash_=o.hash_; algorithm_=o.algorithm_; key_size_=o.key_size_; handshake_pending_=std::move(o.handshake_pending_); server_handshake_pending_=o.server_handshake_pending_; server_handshake_size_=std::exchange(o.server_handshake_size_,0); o.active_=false; } return *this;
     }
     auto ApplicationRecords::seal(std::span<std::uint8_t const> data) -> std::expected<crypto::Bytes,RecordError> {
         if (!active_ || write_closed_ || update_response_) return std::unexpected(RecordError::invalid_state);
@@ -59,19 +59,28 @@ namespace nexus::tls {
         if (record.size()<22 || record.size()-21>read_limit_) { active_=false; return std::unexpected(RecordError::invalid_record); }
         try {
         auto plain=read_.open(record); if (!plain) { active_=false; return std::unexpected(plain.error()); }
-        if (!handshake_pending_.empty() && plain->type!=ContentType::handshake) { active_=false; return std::unexpected(RecordError::invalid_record); }
+        if ((!handshake_pending_.empty() || server_handshake_size_) && plain->type!=ContentType::handshake) { active_=false; return std::unexpected(RecordError::invalid_record); }
         if (plain->type==ContentType::handshake) {
+            // A server only accepts a single five-byte KeyUpdate. Keep its
+            // fragments inline so they cannot retain an uncharged allocation.
+            if (role_==ApplicationRole::server) {
+                if (!read_secret_ || plain->content.empty() || plain->content.size()>server_handshake_pending_.size()-server_handshake_size_) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                std::ranges::copy(plain->content,server_handshake_pending_.begin()+static_cast<std::ptrdiff_t>(server_handshake_size_));
+                server_handshake_size_+=plain->content.size();
+                if (server_handshake_size_>=4 && (server_handshake_pending_[0]!=24 || server_handshake_pending_[1]!=0 || server_handshake_pending_[2]!=0 || server_handshake_pending_[3]!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                if (server_handshake_size_<5) return ApplicationEvent{ApplicationEventKind::handshake_fragment,{},0};
+                auto request=server_handshake_pending_[4];
+                if (request>1 || !rotate(false)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                server_handshake_size_=0;
+                if (request==1) update_response_=true;
+                return ApplicationEvent{request ? ApplicationEventKind::key_update_requested : ApplicationEventKind::key_update,{},0};
+            }
             // NewSessionTicket: two uint32s, uint8 nonce length and nonce,
             // uint16 ticket and extensions lengths and their contents. Allow
             // one extra record for bytes following a nearly complete message.
             constexpr std::size_t max_ticket=8+1+255+2+65535+2+65534;
             constexpr std::size_t max_pending=4+max_ticket+16384-1;
             if (!read_secret_ || plain->content.empty() || plain->content.size()>max_pending-handshake_pending_.size()) { active_=false; return std::unexpected(RecordError::invalid_record); }
-            // A server accepts only KeyUpdate, which must end its record. No
-            // valid server-side post-handshake message exceeds its five bytes.
-            if (role_==ApplicationRole::server && plain->content.size()>5-handshake_pending_.size()) {
-                active_=false; return std::unexpected(RecordError::invalid_record);
-            }
             handshake_pending_.insert(handshake_pending_.end(),plain->content.begin(),plain->content.end());
             std::size_t offset=0;
             while (handshake_pending_.size()-offset>=4) {

@@ -35,14 +35,26 @@ int main() {
     for (std::size_t i=0;i<msg.size();++i) {
         auto fragment=server_peer.seal(t::ContentType::handshake,std::span{msg}.subspan(i,1));
         if (!fragment) return 19;
+        // The only C++ allocation for a partial record is the AEAD output.
+        if (i+1<msg.size()) fail_after=1;
         auto result=server.open_event(*fragment);
+        fail_after=-1;
         if (!result || result->kind!=(i+1==msg.size() ? t::ApplicationEventKind::key_update_requested : t::ApplicationEventKind::handshake_fragment)) return 20;
+        if (i+1<msg.size() && server.ready_for_transport()) return 26;
+        if (i==1) { auto moved=std::move(server); if (moved.ready_for_transport()) return 27; server=std::move(moved); }
     }
     // A large authenticated client handshake record cannot be a valid KeyUpdate.
     auto server_invalid=app(1,2,1u << 24,t::ApplicationRole::server); auto invalid_peer=layer(t::RecordDirection::send,2);
     Bytes oversized(16384,0); oversized[0]=24; oversized[3]=1;
     auto invalid_wire=invalid_peer.seal(t::ContentType::handshake,oversized);
     if (!invalid_wire || server_invalid.open_event(*invalid_wire) || server_invalid.seal(data)) return 21;
+    auto server_interleave=app(1,2,1u << 24,t::ApplicationRole::server); auto interleaved_peer=layer(t::RecordDirection::send,2);
+    auto first=interleaved_peer.seal(t::ContentType::handshake,std::span{msg}.first(2));
+    auto next_data=interleaved_peer.seal(t::ContentType::application_data,data);
+    if (!first || !next_data || !server_interleave.open_event(*first) || server_interleave.open_event(*next_data) || server_interleave.seal(data)) return 28;
+    auto server_wrong=app(1,2,1u << 24,t::ApplicationRole::server); auto wrong_peer=layer(t::RecordDirection::send,2);
+    auto wrong_header=wrong_peer.seal(t::ContentType::handshake,Bytes{4,0,0,1});
+    if (!wrong_header || server_wrong.open_event(*wrong_header) || server_wrong.seal(data)) return 29;
     auto d=app(1,2); auto attacker=layer(t::RecordDirection::send,2); msg[4]=2; auto bad=attacker.seal(t::ContentType::handshake,msg);
     if (!bad || d.open_event(*bad) || d.seal(data)) return 11;
     auto e=app(1,2); auto wrong=layer(t::RecordDirection::send,2); msg[4]=0; msg.push_back(0); auto extra=wrong.seal(t::ContentType::handshake,msg);
