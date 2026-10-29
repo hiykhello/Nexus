@@ -30,6 +30,10 @@ int main() {
     sockaddr_in relay{}; relay.sin_family=AF_INET; relay.sin_addr.s_addr=htonl(INADDR_LOOPBACK); relay.sin_port=htons(local->port);
     std::vector<std::uint8_t> wire{0,0,0,1,127,0,0,1,static_cast<std::uint8_t>(target_port>>8),static_cast<std::uint8_t>(target_port),'h','i'};
     if (::sendto(client.fd,wire.data(),wire.size(),0,reinterpret_cast<sockaddr*>(&relay),sizeof(relay))!=static_cast<ssize_t>(wire.size())) return 5;
+    fail_reply=true;
+    auto blocked_input=driver.step();
+    if (!blocked_input || !blocked_input->input_backpressured || blocked_input->forwarded || fail_reply ||
+        association->accepts_reply({1,{127,0,0,1},target_port})) return 5;
     bool sent=false; char bytes[32]{}; sockaddr_in origin{}; length=sizeof(origin); ssize_t n=-1;
     for(int i=0;i<100 && n<0;++i) {
         auto result=driver.step(); if (!result || result->input_error || result->output_error) return 6;

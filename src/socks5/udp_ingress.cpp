@@ -20,7 +20,7 @@ namespace nexus::socks5 {
     }
     UdpIngress::~UdpIngress() { close(); }
     auto UdpIngress::close() noexcept -> void {
-        closed_=true; pending_.reset(); direct_.close();
+        closed_=true; pending_.reset(); input_pending_=false; input_size_=0; direct_.close();
         if (fd_>=0) { ::close(fd_); fd_=-1; }
     }
     auto UdpIngress::open(UdpPeer local) -> std::expected<UdpPeer,UdpDirectError> {
@@ -45,24 +45,33 @@ namespace nexus::socks5 {
         if (closed_ || association_.closed()) { close(); return std::unexpected(UdpDirectError{Status::association_closed}); }
         if (fd_<0) return std::unexpected(UdpDirectError{std::make_error_code(std::errc::bad_file_descriptor)});
         UdpIngressStep report;
-        std::array<std::uint8_t,65536> bytes{}; sockaddr_in from{}; socklen_t length=sizeof(from);
-        auto n=::recvfrom(fd_,bytes.data(),bytes.size(),MSG_TRUNC,reinterpret_cast<sockaddr*>(&from),&length);
-        if (n>=0) {
-            report.input=true;
-            if (static_cast<std::size_t>(n)>bytes.size() || length!=sizeof(from) || from.sin_family!=AF_INET)
+        if (!input_pending_) {
+            sockaddr_in from{}; socklen_t length=sizeof(from);
+            auto n=::recvfrom(fd_,input_bytes_.data(),input_bytes_.size(),MSG_TRUNC,reinterpret_cast<sockaddr*>(&from),&length);
+            if (n>=0) {
+                report.input=true;
+                if (static_cast<std::size_t>(n)>input_bytes_.size() || length!=sizeof(from) || from.sin_family!=AF_INET)
                 report.input_error=UdpDirectError{Status::too_large};
+                else { input_size_=static_cast<std::size_t>(n); input_source_=peer(from); input_pending_=true; }
+            } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) report.input_error=UdpDirectError{error()};
+        }
+        if (input_pending_) {
+            report.input=true;
+            auto packet=association_.admit(input_source_,std::span(input_bytes_).first(input_size_));
+            if (!packet) report.input_error=UdpDirectError{packet.error()};
+            else if (packet->address_type==3) report.input_error=UdpDirectError{UdpRouteError::unsupported};
             else {
-                auto packet=association_.admit(peer(from),std::span(bytes).first(static_cast<std::size_t>(n)));
-                if (!packet) report.input_error=UdpDirectError{packet.error()};
-                else if (packet->address_type==3) report.input_error=UdpDirectError{UdpRouteError::unsupported};
-                else {
-                    UdpPeer target{packet->address_type,{},packet->port};
-                    std::copy_n(packet->address.begin(),packet->address_length,target.address.begin());
-                    auto sent=direct_.send(*packet,target);
-                    if (sent) report.forwarded=true; else report.input_error=sent.error();
-                }
+                UdpPeer target{packet->address_type,{},packet->port};
+                std::copy_n(packet->address.begin(),packet->address_length,target.address.begin());
+                auto sent=direct_.send(*packet,target);
+                if (sent) report.forwarded=true;
+                else if (auto e=std::get_if<std::error_code>(&sent.error()); e &&
+                         (*e==std::errc::resource_unavailable_try_again || *e==std::errc::interrupted))
+                    report.input_backpressured=true;
+                else report.input_error=sent.error();
             }
-        } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) report.input_error=UdpDirectError{error()};
+            if (!report.input_backpressured) { input_pending_=false; input_size_=0; }
+        }
         if (!pending_) {
             auto reply=direct_.poll();
             if (!reply) report.output_error=reply.error();

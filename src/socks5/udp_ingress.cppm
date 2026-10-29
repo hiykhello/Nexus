@@ -5,7 +5,7 @@ import std;
 
 export namespace nexus::socks5 {
     struct UdpIngressStep {
-        bool input=false, forwarded=false, delivered=false, backpressured=false;
+        bool input=false, forwarded=false, input_backpressured=false, delivered=false, backpressured=false;
         std::optional<UdpDirectError> input_error, output_error;
     };
     // Experimental single-owner driver. The policy and association outlive it.
@@ -16,6 +16,10 @@ export namespace nexus::socks5 {
         UdpDirect direct_;
         int fd_=-1;
         bool closed_=false;
+        std::array<std::uint8_t,65536> input_bytes_{};
+        std::size_t input_size_=0;
+        UdpPeer input_source_{};
+        bool input_pending_=false;
         std::optional<UdpDirectReply> pending_;
     public:
         UdpIngress(UdpAssociation& association, rules::RouteMatcher const& policy) noexcept
