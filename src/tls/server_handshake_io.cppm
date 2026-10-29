@@ -13,7 +13,7 @@ export namespace nexus::tls {
         std::shared_ptr<memory::Budget> budget_;
         std::optional<memory::Budget::Reservation> hello_reservation_, flight_reservation_, hello_input_reservation_, finished_input_reservation_;
         std::optional<memory::Budget::Reservation> encoded_hello_reservation_, first_hello_reservation_, retry_hello_reservation_;
-        std::optional<memory::Budget::Reservation> finished_decoder_reservation_;
+        std::optional<memory::Budget::Reservation> finished_decoder_reservation_, finished_keys_reservation_;
         std::optional<ServerCredential> credential_;
         std::optional<ClientHelloStream> hello_;
         std::optional<ServerFlight> flight_;
@@ -36,6 +36,9 @@ export namespace nexus::tls {
         // Generated hello fields, body and retry comparison message; logical
         // lengths only, excluding container capacities and other temporaries.
         static constexpr std::size_t generated_hello_scratch_charge=3*16384;
+        // Finished verification retains at most a SHA-384 traffic secret and
+        // a 256-bit record key. Crypto internals and container capacity are excluded.
+        static constexpr std::size_t finished_keys_charge=48+32;
         // Sealing a full fragment holds TLSInnerPlaintext and the encrypted
         // payload simultaneously; the completed record is charged separately.
         static constexpr std::size_t flight_seal_scratch_charge=16385+16401;

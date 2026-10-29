@@ -4,16 +4,16 @@ namespace nexus::tls {
     ServerHandshakeIo::ServerHandshakeIo(ServerCredential&& c, ClientHelloStream&& h, std::uint64_t now, std::uint64_t deadline) noexcept
         : credential_(std::move(c)), hello_(std::move(h)), now_(now), deadline_(deadline) {}
     ServerHandshakeIo::ServerHandshakeIo(ServerHandshakeIo&& o) noexcept
-        : state_(o.state_),budget_(std::move(o.budget_)),hello_reservation_(std::move(o.hello_reservation_)),flight_reservation_(std::move(o.flight_reservation_)),hello_input_reservation_(std::move(o.hello_input_reservation_)),finished_input_reservation_(std::move(o.finished_input_reservation_)),encoded_hello_reservation_(std::move(o.encoded_hello_reservation_)),first_hello_reservation_(std::move(o.first_hello_reservation_)),retry_hello_reservation_(std::move(o.retry_hello_reservation_)),finished_decoder_reservation_(std::move(o.finished_decoder_reservation_)),credential_(std::move(o.credential_)),hello_(std::move(o.hello_)),flight_(std::move(o.flight_)),records_(std::move(o.records_)),
+        : state_(o.state_),budget_(std::move(o.budget_)),hello_reservation_(std::move(o.hello_reservation_)),flight_reservation_(std::move(o.flight_reservation_)),hello_input_reservation_(std::move(o.hello_input_reservation_)),finished_input_reservation_(std::move(o.finished_input_reservation_)),encoded_hello_reservation_(std::move(o.encoded_hello_reservation_)),first_hello_reservation_(std::move(o.first_hello_reservation_)),retry_hello_reservation_(std::move(o.retry_hello_reservation_)),finished_decoder_reservation_(std::move(o.finished_decoder_reservation_)),finished_keys_reservation_(std::move(o.finished_keys_reservation_)),credential_(std::move(o.credential_)),hello_(std::move(o.hello_)),flight_(std::move(o.flight_)),records_(std::move(o.records_)),
           server_hello_(std::move(o.server_hello_)),first_hello_(std::move(o.first_hello_)),retry_hello_(std::move(o.retry_hello_)),required_alpn_(std::move(o.required_alpn_)),record_(o.record_),offset_(o.offset_),ccs_seen_(o.ccs_seen_),encrypted_seen_(o.encrypted_seen_),now_(o.now_),deadline_(o.deadline_) { o.state_=State::failed; }
     auto ServerHandshakeIo::operator=(ServerHandshakeIo&& o) noexcept -> ServerHandshakeIo& {
         if (this!=&o) { state_=o.state_; credential_=std::move(o.credential_); hello_=std::move(o.hello_); flight_=std::move(o.flight_); records_=std::move(o.records_);
-            server_hello_=std::move(o.server_hello_); first_hello_=std::move(o.first_hello_); retry_hello_=std::move(o.retry_hello_); required_alpn_=std::move(o.required_alpn_); hello_reservation_=std::move(o.hello_reservation_); flight_reservation_=std::move(o.flight_reservation_); hello_input_reservation_=std::move(o.hello_input_reservation_); finished_input_reservation_=std::move(o.finished_input_reservation_); encoded_hello_reservation_=std::move(o.encoded_hello_reservation_); first_hello_reservation_=std::move(o.first_hello_reservation_); retry_hello_reservation_=std::move(o.retry_hello_reservation_); finished_decoder_reservation_=std::move(o.finished_decoder_reservation_); budget_=std::move(o.budget_); record_=o.record_; offset_=o.offset_; ccs_seen_=o.ccs_seen_; encrypted_seen_=o.encrypted_seen_; now_=o.now_; deadline_=o.deadline_; o.state_=State::failed; } return *this;
+            server_hello_=std::move(o.server_hello_); first_hello_=std::move(o.first_hello_); retry_hello_=std::move(o.retry_hello_); required_alpn_=std::move(o.required_alpn_); hello_reservation_=std::move(o.hello_reservation_); flight_reservation_=std::move(o.flight_reservation_); hello_input_reservation_=std::move(o.hello_input_reservation_); finished_input_reservation_=std::move(o.finished_input_reservation_); encoded_hello_reservation_=std::move(o.encoded_hello_reservation_); first_hello_reservation_=std::move(o.first_hello_reservation_); retry_hello_reservation_=std::move(o.retry_hello_reservation_); finished_decoder_reservation_=std::move(o.finished_decoder_reservation_); finished_keys_reservation_=std::move(o.finished_keys_reservation_); budget_=std::move(o.budget_); record_=o.record_; offset_=o.offset_; ccs_seen_=o.ccs_seen_; encrypted_seen_=o.encrypted_seen_; now_=o.now_; deadline_=o.deadline_; o.state_=State::failed; } return *this;
     }
     auto ServerHandshakeIo::fail(ServerHandshakeIoError error) -> std::unexpected<ServerHandshakeIoError> {
         state_=State::failed; credential_.reset(); hello_.reset(); flight_.reset(); records_=RecordStream{};
         crypto::Bytes{}.swap(server_hello_); crypto::Bytes{}.swap(first_hello_); crypto::Bytes{}.swap(retry_hello_);
-        crypto::Bytes{}.swap(required_alpn_); hello_reservation_.reset(); flight_reservation_.reset(); hello_input_reservation_.reset(); finished_input_reservation_.reset(); encoded_hello_reservation_.reset(); first_hello_reservation_.reset(); retry_hello_reservation_.reset(); finished_decoder_reservation_.reset(); return std::unexpected(error);
+        crypto::Bytes{}.swap(required_alpn_); hello_reservation_.reset(); flight_reservation_.reset(); hello_input_reservation_.reset(); finished_input_reservation_.reset(); encoded_hello_reservation_.reset(); first_hello_reservation_.reset(); retry_hello_reservation_.reset(); finished_decoder_reservation_.reset(); finished_keys_reservation_.reset(); return std::unexpected(error);
     }
     auto ServerHandshakeIo::check_time(std::uint64_t now) -> std::expected<void,ServerHandshakeIoError> {
         if (state_==State::failed) return std::unexpected(ServerHandshakeIoError::invalid_state);
@@ -87,6 +87,7 @@ namespace nexus::tls {
             std::optional<memory::Budget::Reservation> generated_hello_reservation;
             std::optional<memory::Budget::Reservation> generated_hello_scratch;
             std::optional<memory::Budget::Reservation> encoded_local;
+            std::optional<memory::Budget::Reservation> finished_keys_local;
             auto result=hello_->feed(input,budget_);
             if (!result) return fail(result.error()==ClientHelloStreamError::budget_exceeded ? ServerHandshakeIoError::budget_exceeded : ServerHandshakeIoError::protocol_error);
             if (result->compatibility_ccs) ccs_seen_=true;
@@ -141,6 +142,10 @@ namespace nexus::tls {
                 hello_.reset(); hello_input_reservation_.reset(); state_=State::retry_output; return ServerHandshakeIoFeed{consumed};
             }
             if (!keys) return fail(ServerHandshakeIoError::protocol_error);
+            if (budget_) {
+                finished_keys_local=memory::Budget::reserve(budget_,finished_keys_charge);
+                if (!finished_keys_local) return fail(ServerHandshakeIoError::budget_exceeded);
+            }
             generated_hello_scratch.reset();
             auto& hello=keys->server_hello; if (hello.size()>16384) return fail(ServerHandshakeIoError::protocol_error);
             std::optional<memory::Budget::Reservation> flight_scratch;
@@ -189,7 +194,7 @@ namespace nexus::tls {
                 }
                 (void)flight_reservation_->shrink(actual);
             }
-            flight_.emplace(std::move(*flight)); credential_.reset(); hello_.reset(); hello_input_reservation_.reset(); crypto::Bytes{}.swap(first_hello_); crypto::Bytes{}.swap(retry_hello_); first_hello_reservation_.reset(); retry_hello_reservation_.reset(); state_=State::output; return ServerHandshakeIoFeed{consumed};
+            flight_.emplace(std::move(*flight)); finished_keys_reservation_=std::move(finished_keys_local); credential_.reset(); hello_.reset(); hello_input_reservation_.reset(); crypto::Bytes{}.swap(first_hello_); crypto::Bytes{}.swap(retry_hello_); first_hello_reservation_.reset(); retry_hello_reservation_.reset(); state_=State::output; return ServerHandshakeIoFeed{consumed};
         }
         if (budget_ && !input.empty() && !finished_input_reservation_) {
             finished_input_reservation_=memory::Budget::reserve(budget_,finished_input_charge);
@@ -205,7 +210,7 @@ namespace nexus::tls {
         encrypted_seen_=true; auto result=flight_->client_finished(bytes);
         record->record.reset(); finished_input_reservation_.reset();
         if (!result) return fail(ServerHandshakeIoError::protocol_error);
-        if (*result) { finished_decoder_reservation_.reset(); state_=State::complete; }
+        if (*result) { finished_decoder_reservation_.reset(); finished_keys_reservation_.reset(); state_=State::complete; }
         return ServerHandshakeIoFeed{consumed};
         } catch (...) { (void)fail(ServerHandshakeIoError::protocol_error); throw; }
     }
