@@ -53,7 +53,9 @@ namespace nexus::tls {
                 return std::unexpected(ServerFlightError::invalid_credential);
             list_size+=intermediate.size()+5;
         }
-        crypto::Bytes body{0}; put24(body,list_size);
+        // Allocate the complete certificate body once, so growing the large
+        // chain cannot temporarily retain an old body alongside a new one.
+        crypto::Bytes body; body.reserve(list_size+4); body.push_back(0); put24(body,list_size);
         auto append_cert=[&](std::span<std::uint8_t const> value) { put24(body,value.size()); body.insert(body.end(),value.begin(),value.end()); body.insert(body.end(),{0,0}); };
         append_cert(cert); for (auto const& intermediate:credential.chain()) append_cert(intermediate);
         auto certificate=HandshakeDecoder::encode(11,body,1048580); if (!certificate) return std::unexpected(ServerFlightError::crypto_error);

@@ -11,6 +11,8 @@ static bool hello_released=false, flight_released=false;
 static nexus::memory::Budget* seal_budget=nullptr;
 static std::size_t seal_expected=0;
 static bool inner_charged=false, ciphertext_charged=false;
+static std::size_t certificate_body_size=0;
+static bool certificate_body_charged=false;
 static bool capture_allocations=false;
 static std::pair<void*,std::size_t> captured[512];
 static std::size_t captured_count=0;
@@ -20,6 +22,7 @@ void* operator new(std::size_t size) {
     if (auto p=std::malloc(size ? size : 1)) {
         if (seal_budget && size==16385) inner_charged=seal_budget->reserved()>=seal_expected;
         if (seal_budget && size==16401) ciphertext_charged=seal_budget->reserved()>=seal_expected;
+        if (seal_budget && size==certificate_body_size) certificate_body_charged=seal_budget->reserved()>=seal_expected;
         if (capture_allocations && captured_count<std::size(captured)) captured[captured_count++]={p,size};
         return p;
     }
@@ -152,11 +155,12 @@ int main(int argc,char** argv) {
         auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
         if (!candidate) return 92;
         if (enough) { captured_count=0; capture_allocations=true; }
-        if (argc==5 && enough) { seal_budget=bounded_budget.get(); seal_expected=limit; inner_charged=ciphertext_charged=false; }
+        if (argc==5 && enough) { seal_budget=bounded_budget.get(); seal_expected=limit; certificate_body_size=list+4; inner_charged=ciphertext_charged=certificate_body_charged=false; }
         auto result=candidate->feed(input,2);
         seal_budget=nullptr; capture_allocations=false;
         if (enough && (!result || !exact_output_allocation(candidate->pending_output()))) return 111;
-        if (argc==5 && enough && (!inner_charged || !ciphertext_charged)) return 110;
+        if (argc==5 && enough && (!inner_charged || !ciphertext_charged || !certificate_body_charged)) return 110;
+        if (argc==5 && enough && std::ranges::count_if(std::span{captured}.first(captured_count),[&](auto const& entry) { return entry.second==certificate_body_size; })!=1) return 113;
         if (!enough) {
             if (result || result.error()!=t::ServerHandshakeIoError::budget_exceeded || bounded_budget->reserved()) return 93;
         } else {
