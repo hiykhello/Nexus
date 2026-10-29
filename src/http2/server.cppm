@@ -302,6 +302,7 @@ export namespace nexus::http2 {
         }
         static auto closed(h2::nghttp2_session*, std::int32_t id, std::uint32_t code, void* p) noexcept -> int {
             auto& self = *static_cast<ServerSession*>(p);
+            if (self.headers_.stream() == id) self.headers_.discard();
             if (auto stream = std::ranges::find(self.streams_, id, &Stream::id); stream != self.streams_.end()) {
                 auto size=stream->response_size;
                 self.streams_.erase(stream);

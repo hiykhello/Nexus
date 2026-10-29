@@ -225,6 +225,25 @@ int main() {
         (**callback_session).header_memory_charge()!=0) return 117;
     auto callback_after=(**callback_session).receive({});
     if (callback_after || callback_after.error().kind!=nh::ServerErrorKind::failed) return 118;
+    // A malformed field rejected by nghttp2 after valid fields must not
+    // retain the partially decoded application header block.
+    Observed malformed_observed;
+    nh::ServerEvents malformed_events{&malformed_observed,on_headers,on_data,on_end,on_closed};
+    auto malformed=nh::ServerSession::create(limits,malformed_events);
+    if (!malformed) return 119;
+    auto malformed_initial=(**malformed).receive(std::as_bytes(std::span{preface}));
+    auto malformed_settings=(**malformed).receive(settings);
+    constexpr std::array<std::byte,17> invalid_request{
+        std::byte{0},std::byte{0},std::byte{8},std::byte{1},std::byte{5},std::byte{0},std::byte{0},std::byte{0},std::byte{1},
+        std::byte{0x82},std::byte{0x87},std::byte{0x84},std::byte{0},std::byte{1},std::byte{'X'},std::byte{1},std::byte{'y'}};
+    auto invalid_result=(**malformed).receive(invalid_request);
+    if (!malformed_initial || !malformed_settings || !invalid_result) return 120;
+    for (;;) { auto n=(**malformed).output(sink); if (!n) return 121; if (!*n) break; }
+    if ((**malformed).header_memory_charge()!=0 || malformed_observed.headers) return 122;
+    auto valid_after=request; valid_after[8]=std::byte{3};
+    auto accepted_after=(**malformed).receive(valid_after);
+    if (!accepted_after || *accepted_after!=valid_after.size() || malformed_observed.headers!=1 ||
+        !(**malformed).respond_empty(3,204)) return 123;
     auto mixed_available=limits.shared_memory_bytes-(**mixed).shared_memory_used();
     std::vector<std::byte> competing_body(mixed_available+1);
     if (competing_body.size()>limits.shared_memory_bytes-(**mixed).library_memory_used()) return 112;
