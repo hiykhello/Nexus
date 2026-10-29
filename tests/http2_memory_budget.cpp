@@ -191,6 +191,17 @@ int main() {
     auto partial_request=request; partial_request[8]=std::byte{3};
     auto partial=(**mixed).receive(std::span{partial_request}.first(10));
     if (!partial || *partial!=10 || !(**mixed).header_memory_charge()) return 107;
+    // Failed transport must release an incomplete header block while the
+    // session and its shared budget are still alive.
+    auto abandoned=nh::ServerSession::create(limits,budget_events);
+    if (!abandoned || !feed_request(**abandoned)) return 113;
+    auto abandoned_partial=(**abandoned).receive(std::span{partial_request}.first(10));
+    if (!abandoned_partial || *abandoned_partial!=10 || !(**abandoned).header_memory_charge()) return 114;
+    auto header_charge=(**abandoned).header_memory_charge();
+    auto before_failure=(**abandoned).shared_memory_used();
+    (**abandoned).fail_transport(false);
+    if ((**abandoned).header_memory_charge()!=0 || (**abandoned).shared_memory_used()!=before_failure-header_charge ||
+        (**abandoned).receive({}).error().kind!=nh::ServerErrorKind::failed) return 115;
     auto mixed_available=limits.shared_memory_bytes-(**mixed).shared_memory_used();
     std::vector<std::byte> competing_body(mixed_available+1);
     if (competing_body.size()>limits.shared_memory_bytes-(**mixed).library_memory_used()) return 112;

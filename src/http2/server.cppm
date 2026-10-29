@@ -135,7 +135,12 @@ export namespace nexus::http2 {
             if (active_ || failed_ || !size || transport_reserved_ || size>shared_limit_-shared_memory_used()) return false;
             transport_reserved_=size; return true; }
         void release_transport() noexcept { transport_reserved_=0; }
-        void fail_transport(bool release=true) noexcept { if (release) input_reserved_=0; failed_=true; ++revision_; }
+        // Called outside nghttp2 callbacks; header views are no longer borrowed.
+        void fail_transport(bool release=true) noexcept {
+            if (!active_) headers_.discard();
+            if (release) input_reserved_=0;
+            failed_=true; ++revision_;
+        }
     private:
         struct FieldsReservation { ServerSession& owner;
             ~FieldsReservation() { owner.fields_reserved_=0; }
@@ -157,7 +162,7 @@ export namespace nexus::http2 {
             : library_limit_(limits.library_memory_bytes), shared_limit_(limits.shared_memory_bytes), budget_(std::move(budget)), headers_(limits.header_fields, limits.header_bytes), max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes), total_response_limit_(limits.total_response_bytes), response_header_fields_(limits.response_header_fields), response_header_bytes_(limits.response_header_bytes), input_window_(limits.input_window), events_(events) {
         }
         auto library_error(int rc) noexcept -> std::unexpected<ServerError> {
-            if (h2::nghttp2_is_fatal(rc)) { failed_=true; ++revision_; }
+            if (h2::nghttp2_is_fatal(rc)) { if (!active_) headers_.discard(); failed_=true; ++revision_; }
             return std::unexpected(ServerError{ServerErrorKind::library, rc});
         }
         auto response_fields(unsigned status, bool head_request, std::size_t body_size, std::span<Header const> headers,
@@ -517,7 +522,8 @@ export namespace nexus::http2 {
             active_ = true;
             auto rc = h2::nghttp2_session_mem_recv2(session_, reinterpret_cast<std::uint8_t const*>(input.data()), input.size());
             active_ = false;
-            if (rc < 0) { failed_ = true; return std::unexpected(ServerError{ServerErrorKind::library, static_cast<int>(rc)}); }
+            if (failed_) headers_.discard();
+            if (rc < 0) { headers_.discard(); failed_ = true; return std::unexpected(ServerError{ServerErrorKind::library, static_cast<int>(rc)}); }
             return static_cast<std::size_t>(rc);
         }
         // Output is copied before returning; an incomplete nghttp2 chunk stays
@@ -530,12 +536,13 @@ export namespace nexus::http2 {
             active_ = true;
             if (output_left_ == 0) {
                 auto rc = h2::nghttp2_session_mem_send2(session_, &output_);
-                if (rc < 0) { active_ = false; failed_ = true; return std::unexpected(ServerError{ServerErrorKind::library, static_cast<int>(rc)}); }
+                if (rc < 0) { active_ = false; headers_.discard(); failed_ = true; return std::unexpected(ServerError{ServerErrorKind::library, static_cast<int>(rc)}); }
                 output_left_ = static_cast<std::size_t>(rc);
             }
             auto count = std::min(destination.size(), output_left_);
             if (count) { std::memcpy(destination.data(), output_, count); output_ += count; output_left_ -= count; }
             active_ = false;
+            if (failed_) headers_.discard();
             return count;
         }
     };
