@@ -29,14 +29,15 @@ elif sys.argv[2] == 'outer':
     errors = []
     def serve():
         try:
-            data, peer = origin.recvfrom(128)
-            if data != b'ipv6-request':
-                raise RuntimeError(f'unexpected request {data!r}')
-            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as rogue:
-                rogue.bind(('fd77::2', 0))
-                rogue.sendto(b'unexpected', peer)
-                time.sleep(0.05)
-            origin.sendto(b'ipv6-response', peer)
+            for request in (b'ipv6-request', b'ipv6-options', b'ipv6-both'):
+                data, peer = origin.recvfrom(128)
+                if data != request:
+                    raise RuntimeError(f'unexpected request {data!r}')
+                with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as rogue:
+                    rogue.bind(('fd77::2', 0))
+                    rogue.sendto(b'unexpected', peer)
+                    time.sleep(0.05)
+                origin.sendto(b'ipv6-response', peer)
         except Exception as exc:
             errors.append(exc)
     thread = threading.Thread(target=serve, daemon=True)
@@ -92,17 +93,24 @@ else:
         with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as client:
             client.settimeout(10)
             port = int(sys.argv[5])
-            client.sendto(b'ipv6-request', ('fd77::2', port))
-            data, peer = client.recvfrom(128)
-            if data != b'ipv6-response' or peer[:2] != ('fd77::2', port):
-                raise RuntimeError(f'unexpected response {data!r} from {peer!r}')
-            client.settimeout(0.1)
-            try:
-                extra = client.recvfrom(128)
-            except TimeoutError:
-                pass
-            else:
-                raise RuntimeError(f'unexpected extra response {extra!r}')
+            for request in (b'ipv6-request', b'ipv6-options', b'ipv6-both'):
+                if request == b'ipv6-options':
+                    # Linux fills the next-header byte when emitting the packet.
+                    client.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_DSTOPTS, bytes([0,0,1,4,0,0,0,0]))
+                if request == b'ipv6-both':
+                    client.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_HOPOPTS, bytes([0,0,1,4,0,0,0,0]))
+                client.settimeout(10)
+                client.sendto(request, ('fd77::2', port))
+                data, peer = client.recvfrom(128)
+                if data != b'ipv6-response' or peer[:2] != ('fd77::2', port):
+                    raise RuntimeError(f'unexpected response {data!r} from {peer!r}')
+                client.settimeout(0.1)
+                try:
+                    extra = client.recvfrom(128)
+                except TimeoutError:
+                    pass
+                else:
+                    raise RuntimeError(f'unexpected extra response {extra!r}')
     finally:
         os.close(fd)
         control.close()

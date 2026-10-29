@@ -10,8 +10,8 @@ namespace nexus::packet {
             p[offset] = static_cast<std::uint8_t>(value >> 8);
             p[offset + 1] = static_cast<std::uint8_t>(value);
         }
-        auto checksum(std::span<std::uint8_t const> p) noexcept -> std::uint16_t {
-            std::uint32_t sum = 17 + static_cast<std::uint32_t>(p.size() - 40);
+        auto checksum(std::span<std::uint8_t const> p, std::size_t udp_offset) noexcept -> std::uint16_t {
+            std::uint32_t sum = 17 + static_cast<std::uint32_t>(p.size() - udp_offset);
             auto add = [&sum](std::span<std::uint8_t const> bytes) {
                 std::size_t i = 0;
                 while (i + 1 < bytes.size()) {
@@ -22,7 +22,7 @@ namespace nexus::packet {
                 if (i < bytes.size()) sum += std::uint32_t{bytes[i]} << 8;
             };
             add(p.subspan(8, 32));
-            add(p.subspan(40));
+            add(p.subspan(udp_offset));
             while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
             return static_cast<std::uint16_t>(~sum);
         }
@@ -30,18 +30,41 @@ namespace nexus::packet {
     auto parse_udp6(std::span<std::uint8_t const> p) noexcept -> std::expected<Udp6View, PacketError> {
         if (p.size() < 40) return std::unexpected(PacketError::truncated);
         if ((p[0] >> 4) != 6) return std::unexpected(PacketError::invalid_version);
-        if (p[6] == 44) return std::unexpected(PacketError::unsupported_fragment);
-        if (p[6] == 0 || p[6] == 43 || p[6] == 60 || p[6] == 51 || p[6] == 50)
-            return std::unexpected(PacketError::unsupported_header);
-        if (p[6] != 17) return std::unexpected(PacketError::unsupported_protocol);
-        if (p.size() < 48 || read16(p, 4) != p.size() - 40 || read16(p, 44) != p.size() - 40)
+        if (read16(p, 4) != p.size() - 40) return std::unexpected(PacketError::invalid_length);
+        std::size_t offset=40;
+        auto next=p[6]; bool hop=false, destination=false;
+        while (next==0 || next==60) {
+            if ((next==0 && (hop || destination || offset!=40)) || (next==60 && destination))
+                return std::unexpected(PacketError::unsupported_header);
+            if (next==0) hop=true; else destination=true;
+            if (p.size()-offset<2) return std::unexpected(PacketError::invalid_length);
+            auto length=(static_cast<std::size_t>(p[offset+1])+1)*8;
+            if (length>p.size()-offset) return std::unexpected(PacketError::invalid_length);
+            auto end=offset+length;
+            for (auto i=offset+2;i<end;) {
+                auto type=p[i++];
+                if (type==0) continue;
+                if (i==end) return std::unexpected(PacketError::invalid_length);
+                auto size=static_cast<std::size_t>(p[i++]);
+                if (size>end-i) return std::unexpected(PacketError::invalid_length);
+                if (type!=1) return std::unexpected(PacketError::unsupported_header);
+                if (!std::ranges::all_of(p.subspan(i,size),[](auto byte) { return byte==0; }))
+                    return std::unexpected(PacketError::unsupported_header);
+                i+=size;
+            }
+            next=p[offset]; offset=end;
+        }
+        if (next==44) return std::unexpected(PacketError::unsupported_fragment);
+        if (next==43 || next==51 || next==50) return std::unexpected(PacketError::unsupported_header);
+        if (next!=17) return std::unexpected(PacketError::unsupported_protocol);
+        if (p.size()-offset<8 || read16(p, offset+4) != p.size()-offset)
             return std::unexpected(PacketError::invalid_length);
-        if (read16(p, 46) == 0 || checksum(p) != 0) return std::unexpected(PacketError::invalid_checksum);
+        if (read16(p, offset+6) == 0 || checksum(p,offset) != 0) return std::unexpected(PacketError::invalid_checksum);
         Udp6View result;
         std::copy_n(p.begin() + 8, 16, result.source.begin());
         std::copy_n(p.begin() + 24, 16, result.destination.begin());
-        result.source_port = read16(p, 40); result.destination_port = read16(p, 42);
-        result.payload = p.subspan(48);
+        result.source_port = read16(p, offset); result.destination_port = read16(p, offset+2);
+        result.payload = p.subspan(offset+8);
         return result;
     }
     auto make_udp6(Address6 source, Address6 destination, std::uint16_t source_port,
@@ -57,7 +80,7 @@ namespace nexus::packet {
         put16(p, 40, source_port); put16(p, 42, destination_port);
         put16(p, 44, static_cast<std::uint16_t>(payload.size() + 8));
         std::copy(payload.begin(), payload.end(), p.begin() + 48);
-        auto value = checksum(p);
+        auto value = checksum(p,40);
         put16(p, 46, value == 0 ? 0xffff : value);
         return p;
     }

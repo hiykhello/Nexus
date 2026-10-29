@@ -24,6 +24,22 @@ int main() {
     bad = *packet; ++bad[5]; if (p::parse_udp6(bad)) return 1;
     bad = *packet; --bad[45]; if (p::parse_udp6(bad)) return 1;
     bad = *packet; bad.push_back(0); if (p::parse_udp6(bad)) return 1;
+    // The UDP pseudo-header length excludes both extension headers.
+    auto extended=*packet;
+    constexpr std::array<std::uint8_t,16> options{60,0,1,4,0,0,0,0, 17,0,0,0,1,2,0,0};
+    extended.insert(extended.begin()+40,options.begin(),options.end());
+    extended[6]=0; extended[5]+=16;
+    auto with_options=p::parse_udp6(extended);
+    if (!with_options || with_options->source_port!=12345 || with_options->destination_port!=53 ||
+        !std::ranges::equal(with_options->payload,payload)) return 1;
+    for (std::size_t i=0;i<extended.size();++i) if (p::parse_udp6(std::span(extended).first(i))) return 1;
+    bad=extended; bad[41]=2; if (p::parse_udp6(bad)) return 1;
+    bad=extended; bad[43]=7; if (p::parse_udp6(bad)) return 1;
+    bad=extended; bad[44]=1; if (p::parse_udp6(bad)) return 1;
+    bad=extended; bad[42]=2; if (p::parse_udp6(bad)) return 1;
+    bad=extended; bad[48]=0; if (p::parse_udp6(bad)) return 1;
+    bad=extended; bad[48]=44; if (p::parse_udp6(bad)) return 1;
+    bad=extended; bad[64]^=1; if (p::parse_udp6(bad)) return 1;
     if (p::make_udp6(src, dst, 1, 2, payload, 52) || p::make_udp6(src, dst, 1, 2, p::Bytes(65528), 70000)) return 1;
     auto max = p::make_udp6(src, dst, 1, 2, p::Bytes(65527, 7), 65575);
     if (!max || !p::parse_udp6(*max)) return 1;

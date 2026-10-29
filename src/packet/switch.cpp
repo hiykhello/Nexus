@@ -12,7 +12,9 @@ namespace nexus::packet {
                 auto& bytes = **received;
                 bool tcp = bytes.size() >= 20 && (bytes[0] >> 4) == 4 && bytes[9] == 6;
                 bool udp4 = bytes.size() >= 20 && (bytes[0] >> 4) == 4 && bytes[9] == 17;
-                bool udp6 = bytes.size() >= 40 && (bytes[0] >> 4) == 6 && bytes[6] == 17;
+                // IPv6 options are checked by the UDP parser after dispatch.
+                bool udp6 = bytes.size() >= 40 && (bytes[0] >> 4) == 6 &&
+                            (bytes[6] == 17 || bytes[6] == 0 || bytes[6] == 60);
                 if (!tcp && !udp4 && !udp6) result.rejected = SwitchReject::unsupported_packet;
                 else { input_tcp_ = tcp; input_ = std::move(bytes); }
             }

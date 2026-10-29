@@ -55,6 +55,8 @@ export namespace nexus::packet {
         // The payload borrows the input passed to parse_udp6.
         std::span<std::uint8_t const> payload;
     };
+    // Supports at most one Hop-by-Hop header followed by one Destination
+    // Options header, containing only Pad1/PadN; rejects other extensions.
     [[nodiscard]] auto parse_udp6(std::span<std::uint8_t const> packet) noexcept -> std::expected<Udp6View, PacketError>;
     [[nodiscard]] auto make_udp6(Address6 source, Address6 destination, std::uint16_t source_port,
         std::uint16_t destination_port, std::span<std::uint8_t const> payload, std::size_t mtu = 1500)

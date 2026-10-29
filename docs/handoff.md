@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- IPv6 UDP 支持至多一个逐跳和一个目的地选项头，仅接受 Pad1/零值 PadN，校验长度、顺序及不含扩展头的 UDP 伪首部；畸形输入与校验和回归通过。隔离 TUN 上 Linux 客户端发送目的地选项、以及两个选项头组合，真实 UDP 往返连续五轮通过；其他选项、分片和 jumbogram 仍不支持。
+
 - 将 `LinuxTun` 所有者接入隔离 TUN 的 IPv4 TCP/UDP 真实传输夹具；描述符副本跨进程传递，双向转发和关闭连续十轮通过。运行需同时构建 `nexus-packet-tun-helper` 和 `nexus-transport-kernel-tun-test`。
 
 - 新增 Linux TUN 独占所有者接口：非阻塞、close-on-exec、名称校验、移动和析构回收；隔离命名空间的重名拒绝、描述符属性与设备回收连续十轮通过，现有真实 TUN 双族传输回归通过。接口未配置网络或接入正式运行。
