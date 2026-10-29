@@ -52,7 +52,7 @@ namespace nexus::proxy {
         io::tcp_socket client;
         io::tcp_socket target;
         std::unique_ptr<io::resolver> resolver;
-        std::shared_ptr<DnsState> dns;
+        DnsState* dns = nullptr;
 #ifdef NEXUS_TEST_FAKEIP
         std::shared_ptr<dns::FakeIpShared> fakeip;
         std::unique_ptr<dns::FakeIpShared::Target> fakeip_target;
@@ -152,6 +152,8 @@ export namespace nexus::proxy {
     class Server {
         // The registry outlives context shutdown, which can destroy task frames.
         std::vector<Session*> sessions;
+        // Pending DNS tasks borrow this worker-local state until context shutdown.
+        std::unique_ptr<DnsState> dns;
         // Inbound factories outlive context shutdown and suspended sessions.
 #ifdef NEXUS_ENABLE_SS2022
         InboundFactory shadowsocks_inbound;
@@ -170,7 +172,6 @@ export namespace nexus::proxy {
         rules::RouteMatcher policy;
         std::optional<Credentials> credentials;
         std::optional<DnsRouting> dns_routing;
-        std::shared_ptr<DnsState> dns;
 #ifdef NEXUS_TEST_FAKEIP
         std::shared_ptr<dns::FakeIpShared> fakeip;
         std::uint64_t fakeip_view=0;

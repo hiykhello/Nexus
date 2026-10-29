@@ -1,4 +1,7 @@
 #pragma once
+#ifdef NEXUS_TEST_DNS_OWNER
+extern "C" void nexus_test_dns_owner_destroy();
+#endif
 
 namespace nexus::proxy {
     // Each network worker owns its own cache and uses it on its executor only.
@@ -6,6 +9,9 @@ namespace nexus::proxy {
         DnsRouting routing;
         dns::AddressCache cache{256};
         inline explicit DnsState(DnsRouting value) : routing(std::move(value)) {}
+#ifdef NEXUS_TEST_DNS_OWNER
+        ~DnsState();
+#endif
         inline auto select(std::string_view domain) const -> std::size_t {
             std::string normalized(domain);
             for (auto& c : normalized) if (c>='A' && c<='Z') c+=('a'-'A');

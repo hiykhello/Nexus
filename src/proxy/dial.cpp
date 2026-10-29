@@ -39,6 +39,9 @@ extern "C" void nexus_test_fakeip_watcher_done();
 #ifdef NEXUS_TEST_DNS_LIFETIME
 extern "C" void nexus_test_dns_registered();
 #endif
+#ifdef NEXUS_TEST_DNS_OWNER
+extern "C" void nexus_test_dns_registration_destroy();
+#endif
 
 namespace nexus::proxy {
     namespace {
@@ -75,7 +78,12 @@ namespace nexus::proxy {
                     session.dns->routing.disable_cache,session.dns->routing.edns);
                 struct Registration {
                     Session& session;
-                    ~Registration() { session.cancel_dns=nullptr; session.dns_operation=nullptr; }
+                    ~Registration() {
+                        session.cancel_dns=nullptr; session.dns_operation=nullptr;
+#ifdef NEXUS_TEST_DNS_OWNER
+                        nexus_test_dns_registration_destroy();
+#endif
+                    }
                 } registration{session};
                 session.dns_operation=&operation;
                 session.cancel_dns=[](void* pointer) noexcept {

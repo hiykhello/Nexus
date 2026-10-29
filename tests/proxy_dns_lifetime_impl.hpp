@@ -6,7 +6,7 @@ namespace nexus::proxy {
         bool destroyed = false, unregistered = false, returned = false, threw = false, cache_released = false;
     };
 
-    auto dns_lifetime_parent(std::unique_ptr<Session> owned, io::io_context& context, DnsLifetimeState& state, std::uint16_t port)
+    auto dns_lifetime_parent(std::unique_ptr<Session> owned, io::io_context& context, DnsLifetimeState& state)
         -> capy::task<> {
         auto& session=*owned;
         struct Guard {
@@ -26,12 +26,6 @@ namespace nexus::proxy {
                 state.destroyed = true;
             }
         } guard{session,state};
-        DnsRouting routing;
-        DnsServer server;
-        server.address[0]=127; server.address[3]=1; server.port=port;
-        routing.servers.push_back(server);
-        routing.strategy=DnsStrategy::ipv4_only;
-        session.dns=std::make_shared<DnsState>(std::move(routing));
         state.session=&session;
         try {
             (void)co_await resolve_bootstrap(session,context,0,"pending.test",80);
@@ -46,6 +40,12 @@ extern "C" int nexus_test_dns_lifetime(unsigned backend, unsigned mode, std::uin
     using namespace std::chrono_literals;
     DnsLifetimeState state;
     std::vector<Session*> registry;
+    DnsRouting routing;
+    DnsServer server;
+    server.address[0]=127; server.address[3]=1; server.port=port;
+    routing.servers.push_back(server);
+    routing.strategy=DnsStrategy::ipv4_only;
+    DnsState dns(std::move(routing));
     {
 #if BOOST_COROSIO_HAVE_LIBURING
         io::io_context context = backend ? io::io_context(io::uring) : io::io_context(io::epoll);
@@ -54,9 +54,10 @@ extern "C" int nexus_test_dns_lifetime(unsigned backend, unsigned mode, std::uin
         io::io_context context(io::epoll);
 #endif
         auto session=std::make_unique<Session>(context);
+        session->dns=&dns;
         registry.push_back(session.get());
         session->registry=&registry;
-        capy::run_async(context.get_executor())(dns_lifetime_parent(std::move(session),context,state,port));
+        capy::run_async(context.get_executor())(dns_lifetime_parent(std::move(session),context,state));
         context.restart();
         (void)context.run_for(50ms);
         if (mode == 2) return state.destroyed && state.unregistered && state.threw && state.cache_released && registry.empty() && !state.returned ? 0 : 1;

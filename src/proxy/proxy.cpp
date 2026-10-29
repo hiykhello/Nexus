@@ -35,12 +35,15 @@ extern "C" void nexus_test_start_throw();
 extern "C" void nexus_test_root_launch(unsigned);
 extern "C" std::pmr::memory_resource* nexus_test_root_resource();
 #endif
-#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON)
+#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON) || defined(NEXUS_TEST_DNS_OWNER)
 extern "C" bool nexus_test_skip_server_stop();
 #endif
 
 namespace nexus::proxy {
     using namespace std::chrono_literals;
+#ifdef NEXUS_TEST_DNS_OWNER
+    DnsState::~DnsState() { nexus_test_dns_owner_destroy(); }
+#endif
 
     namespace {
         // Linux may surface a pending connection's network error from accept.
@@ -97,7 +100,7 @@ namespace nexus::proxy {
             }
             auto session = std::make_unique<Session>(context);
             session->client = std::move(peer);
-            session->dns=dns;
+            session->dns=dns.get();
 #ifdef NEXUS_TEST_FAKEIP
             session->fakeip=fakeip;
             session->fakeip_view=fakeip_view;
@@ -143,7 +146,7 @@ namespace nexus::proxy {
 
     Server::Server() = default;
     Server::~Server() {
-#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON)
+#if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON) || defined(NEXUS_TEST_DNS_OWNER)
         // Exercise member destruction with suspended tasks in the test target.
         if (nexus_test_skip_server_stop()) return;
 #endif
@@ -399,7 +402,7 @@ namespace nexus::proxy {
 #endif
         if (this->credentials && inbound != Inbound::socks5)
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-        if (this->dns_routing && !this->dns) this->dns=std::make_shared<DnsState>(*this->dns_routing);
+        if (this->dns_routing && !this->dns) this->dns=std::make_unique<DnsState>(*this->dns_routing);
         if (auto error = this->listener.open()) return std::unexpected(error);
         if (reuse) {
             if (auto error = this->listener.set_option(io::socket_option::reuse_port(true))) {
