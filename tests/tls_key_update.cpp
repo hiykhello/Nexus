@@ -81,5 +81,28 @@ int main() {
         if (threw) { ++receive_failures; auto retry=rx.open_event(*update_wire); if (retry || retry.error()!=t::RecordError::invalid_state) return 24; }
     }
     if (send_failures<3 || receive_failures<3) return 25;
+    t::ApplicationRecords invalid_parameters(layer(t::RecordDirection::send,1),layer(t::RecordDirection::receive,2),16385,16385,
+        c::Hash::sha256,c::Aead::aes_128_gcm,12000,secret(1),secret(2),t::ApplicationRole::server);
+    fail_after=3; // The record's three allocations may succeed; rotation must reject before HKDF.
+    auto invalid_update=invalid_parameters.key_update(false);
+    fail_after=-1;
+    if (invalid_update || invalid_update.error()!=t::RecordError::crypto_error || invalid_parameters.seal(data)) return 30;
+    for (auto algorithm : {c::Aead::aes_256_gcm,c::Aead::chacha20_poly1305}) {
+        auto make_secret=[](int n) { return t::Secret(Bytes(48,static_cast<std::uint8_t>(n))); };
+        auto make_layer=[&](t::RecordDirection direction,int n) {
+            auto s=make_secret(n); auto key=t::expand_label(c::Hash::sha384,s.view(),"key",{},32), iv=t::expand_label(c::Hash::sha384,s.view(),"iv",{},12);
+            if (!key || !iv) std::abort(); auto result=t::RecordLayer::create(direction,algorithm,key->view(),iv->view());
+            if (!result) std::abort(); return std::move(*result);
+        };
+        t::ApplicationRecords tx(make_layer(t::RecordDirection::send,1),make_layer(t::RecordDirection::receive,2),16385,16385,
+            c::Hash::sha384,algorithm,32,make_secret(1),make_secret(2),t::ApplicationRole::client);
+        t::ApplicationRecords rx(make_layer(t::RecordDirection::send,2),make_layer(t::RecordDirection::receive,1),16385,16385,
+            c::Hash::sha384,algorithm,32,make_secret(2),make_secret(1),t::ApplicationRole::server);
+        auto changed=tx.key_update(true); if (!changed) return 31;
+        auto received=rx.open_event(*changed); if (!received || received->kind!=t::ApplicationEventKind::key_update_requested) return 32;
+        auto reply=rx.key_update(false); if (!reply || !tx.open_event(*reply)) return 33;
+        auto wire=tx.seal(data); if (!wire) return 34;
+        auto decoded=rx.open_event(*wire); if (!decoded || decoded->data!=data) return 35;
+    }
     std::cout << "TLS KeyUpdate bidirectional rotation, fragmentation and rejection passed\n";
 }

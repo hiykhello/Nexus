@@ -31,7 +31,9 @@ namespace nexus::tls {
     auto ApplicationRecords::rotate(bool sending) -> bool {
         auto& secret=sending ? write_secret_ : read_secret_; if (!secret) return false;
         auto n=hash_==crypto::Hash::sha256 ? 32u : hash_==crypto::Hash::sha384 ? 48u : 0u;
-        if (!n) return false;
+        auto expected_key=algorithm_==crypto::Aead::aes_128_gcm ? 16u :
+            (algorithm_==crypto::Aead::aes_256_gcm || algorithm_==crypto::Aead::chacha20_poly1305) ? 32u : 0u;
+        if (!n || !expected_key || key_size_!=expected_key) return false;
         auto next=expand_label(hash_,secret->view(),"traffic upd",{},n); if (!next) return false;
         auto key=expand_label(hash_,next->view(),"key",{},key_size_), iv=expand_label(hash_,next->view(),"iv",{},12);
         if (!key || !iv) return false;

@@ -95,7 +95,7 @@ template<class Backend> auto sealing_charge(Backend backend) -> bool {
     capy::run_async(f.context.get_executor())(partial_step(connection,done,error)); f.context.restart(); (void)f.context.run_for(1s);
     if (!f.context.stopped() || !done || error || socket.size<=27) return false;
     auto plaintext=socket.size-22;
-    return socket.charge==std::max({3*plaintext+40,2*socket.size,std::size_t{55}}) && !f.session->output_memory_charge();
+    return socket.charge==std::max({3*plaintext+40,2*socket.size,std::size_t{55}})+128 && !f.session->output_memory_charge();
 }
 struct ThrowSocket {
     io::local_stream_socket& socket; bool throw_read; bool enabled=true;
@@ -267,7 +267,7 @@ template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
     std::array<std::byte,4096> sink{};
     for (;;) { auto n=(**reference).output(sink); if (!n) return false; if (!*n) break; }
     auto baseline=(**reference).shared_memory_used(); reference->reset();
-    limits.shared_memory_bytes=baseline+(enough ? 53825 : 53824);
+    limits.shared_memory_bytes=baseline+(enough ? 53953 : 53952);
     auto session=h::ServerSession::create(limits,events); if (!session) return false;
     for (;;) { auto n=(**session).output(sink); if (!n) return false; if (!*n) break; }
     io::io_context context(backend); io::local_stream_socket a(context),b(context); if (io::connect_pair(a,b)) return false;
@@ -278,7 +278,7 @@ template<class Backend> auto input_budget(Backend backend,bool enough) -> bool {
     }
     capy::run_async(context.get_executor())(read_step(connection,done,error)); context.restart(); (void)context.run_for(20ms);
     if (enough) {
-        if (done || (**session).shared_memory_used()!=baseline+53825 || (**session).ciphertext_memory_charge()!=16650 || (**session).scratch_memory_charge()!=16384) return false;
+        if (done || (**session).shared_memory_used()!=baseline+53953 || (**session).ciphertext_memory_charge()!=16650 || (**session).scratch_memory_charge()!=16384) return false;
         connection.cancel(); context.restart(); (void)context.run_for(1s);
         auto output=(**session).output(sink);
         return done && error==h::TlsServerError::tls && context.stopped() && (**session).shared_memory_used()==baseline+4096 && (**session).transport_memory_charge()==4096 && !(**session).ciphertext_memory_charge() && !(**session).scratch_memory_charge() &&
@@ -312,7 +312,7 @@ template<class Backend> auto control_budget(Backend backend,int mode) -> bool {
     auto connection=std::make_unique<Connection>(a,**session,records(),std::move(*wire));
     bool done=false,progress=false;
     capy::run_async(context.get_executor())(progress_step(*connection,done,progress)); context.restart(); (void)context.run_for(1s);
-    if (!context.stopped() || !done || !progress || (**session).output_memory_charge()!=55 || (**session).input_memory_charge()) return false;
+    if (!context.stopped() || !done || !progress || (**session).output_memory_charge()!=183 || (**session).input_memory_charge()) return false;
     if (mode==1) { connection->cancel(); return (**session).output_memory_charge()==0; }
     if (mode==2) {
         std::array<char,4096> filler{};
@@ -322,8 +322,8 @@ template<class Backend> auto control_budget(Backend backend,int mode) -> bool {
     done=false; std::optional<h::TlsServerError> error;
     capy::run_async(context.get_executor())(read_step(*connection,done,error)); context.restart(); (void)context.run_for(20ms);
     if (mode==2) {
-        if (done || (**session).output_memory_charge()!=55) return false;
-        connection->cancel(); if ((**session).output_memory_charge()!=55) return false;
+        if (done || (**session).output_memory_charge()!=183) return false;
+        connection->cancel(); if ((**session).output_memory_charge()!=183) return false;
         context.restart(); (void)context.run_for(1s);
         return context.stopped() && done && error==h::TlsServerError::tls && !(**session).output_memory_charge();
     }
@@ -343,7 +343,7 @@ template<class Backend> auto control_allocation_failure(Backend backend,bool clo
     ThrowSocket socket{a,false,false}; h::TlsServerConnection connection(socket,**session,records(),std::move(*wire));
     bool done=false; std::optional<h::TlsServerError> error;
     capy::run_async(context.get_executor())(partial_step(connection,done,error)); context.restart(); (void)context.run_for(1s);
-    if (!done || error || (**session).output_memory_charge()!=(closing ? 0u : 55u)) return false;
+    if (!done || error || (**session).output_memory_charge()!=(closing ? 0u : 183u)) return false;
     if (closing) {
         done=false; capy::run_async(context.get_executor())(partial_step(connection,done,error)); context.restart(); (void)context.run_for(1s);
         if (!done || error) return false;
