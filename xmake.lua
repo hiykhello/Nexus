@@ -54,6 +54,18 @@ target("nexus-socks5")
     add_files("src/socks5/socks5.cppm", {public = true})
     add_files("src/socks5/parse.cpp")
 
+target("nexus-socks5-udp-route")
+    set_kind("static")
+    add_files("src/socks5/udp_route.cppm", {public = true})
+    add_files("src/socks5/udp_route.cpp")
+    add_deps("nexus-socks5", "nexus-rules")
+
+target("nexus-socks5-udp-route-test")
+    set_kind("binary")
+    set_default(false)
+    add_files("tests/socks5_udp_route.cpp")
+    add_deps("nexus-socks5-udp-route", "nexus-rules")
+
 target("nexus-config")
     set_kind("static")
     add_files("src/config/config.cppm", {public = true})
