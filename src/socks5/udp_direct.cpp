@@ -32,7 +32,9 @@ namespace nexus::socks5 {
         if (fd_>=0) { ::close(fd_); fd_=-1; }
     }
     auto UdpDirect::send(UdpDatagram const& packet,UdpPeer candidate) -> std::expected<void,UdpDirectError> {
-        if (closed_) return std::unexpected(UdpDirectError{Status::association_closed});
+        if (closed_ || association_.closed()) {
+            close(); return std::unexpected(UdpDirectError{Status::association_closed});
+        }
         auto prepared=udp_prepare_send(association_,policy_,packet,candidate);
         if (!prepared) return std::unexpected(std::visit([](auto value) -> UdpDirectError { return value; },prepared.error()));
         auto rollback=[&] { (void)association_.finish_send(prepared->token,false); };
@@ -56,7 +58,9 @@ namespace nexus::socks5 {
         return {};
     }
     auto UdpDirect::poll() -> std::expected<std::optional<UdpDirectReply>,UdpDirectError> {
-        if (closed_) return std::unexpected(UdpDirectError{Status::association_closed});
+        if (closed_ || association_.closed()) {
+            close(); return std::unexpected(UdpDirectError{Status::association_closed});
+        }
         if (fd_<0) return std::optional<UdpDirectReply>{};
         std::array<std::uint8_t,65536> bytes{}; sockaddr_in6 from{}; socklen_t length=sizeof(from);
         auto n=::recvfrom(fd_,bytes.data(),bytes.size(),MSG_TRUNC|MSG_PEEK,reinterpret_cast<sockaddr*>(&from),&length);

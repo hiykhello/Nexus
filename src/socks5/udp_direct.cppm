@@ -8,6 +8,7 @@ export namespace nexus::socks5 {
     struct UdpDirectReply { UdpPeer client; std::vector<std::uint8_t> wire; };
     // Linux nonblocking single-owner socket. Association and policy outlive it.
     // Caller serializes access, drives poll, and closes it with the control session.
+    // If the association was closed first, the next send/poll also closes the socket.
     class UdpDirect {
         UdpAssociation& association_;
         rules::RouteMatcher const& policy_;

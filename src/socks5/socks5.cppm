@@ -81,6 +81,7 @@ export namespace nexus::socks5 {
             if (closed_ || !client_seen_) return {};
             return peer_;
         }
+        [[nodiscard]] auto closed() const noexcept -> bool { return closed_; }
         auto close() noexcept -> void { closed_=true; }
     };
 }

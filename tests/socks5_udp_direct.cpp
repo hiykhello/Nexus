@@ -83,8 +83,12 @@ int main() {
     auto decoded=s::parse_udp_datagram(reply->wire);
     if (!decoded || decoded->port!=target.port || decoded->address_type!=1 ||
         !std::ranges::equal(decoded->data,std::array<std::uint8_t,2>{'o','k'})) return 9;
-    direct.close();
+    // Control owner closes the association before the next drive step.
+    // That step must close the still-live socket and discard pending replies.
+    if (::sendto(server.fd,"late",4,0,reinterpret_cast<sockaddr*>(&from),size)!=4) return 10;
+    association->close();
     if (direct.poll().error()!=s::UdpDirectError{s::Status::association_closed}) return 10;
+    if (direct.send(*packet,target).error()!=s::UdpDirectError{s::Status::association_closed}) return 10;
     Socket reused{::socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0)};
     if (reused.fd<0 || ::bind(reused.fd,reinterpret_cast<sockaddr*>(&from),sizeof(from))) return 11;
     if (!ipv6_test()) return 12;
