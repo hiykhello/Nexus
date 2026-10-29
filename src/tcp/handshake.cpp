@@ -6,12 +6,12 @@ namespace nexus::tcp {
     PassiveHandshake::PassiveHandshake(packet::Tcp4View syn, std::uint32_t iss, std::uint16_t peer_mss)
         : local_(syn.destination), remote_(syn.source), local_port_(syn.destination_port),
           remote_port_(syn.source_port), peer_mss_(peer_mss), iss_(iss), irs_(syn.sequence) {}
-    auto PassiveHandshake::accept(packet::Tcp4View syn, std::uint32_t iss)
+    auto PassiveHandshake::accept(packet::Tcp4View syn, std::uint32_t iss, std::uint16_t default_mss)
         -> std::expected<PassiveHandshake, HandshakeError> {
         if (syn.flags != 0x02 || !syn.payload.empty()) return std::unexpected(HandshakeError::invalid_syn);
         auto options = packet::parse_tcp_syn_options(syn.options);
-        if (!options || options->mss == 0) return std::unexpected(HandshakeError::invalid_options);
-        return PassiveHandshake(syn, iss, options->mss.value_or(536));
+        if (!options || options->mss == 0 || !default_mss) return std::unexpected(HandshakeError::invalid_options);
+        return PassiveHandshake(syn, iss, options->mss.value_or(default_mss));
     }
     auto PassiveHandshake::syn_ack(std::uint16_t window) const -> packet::Tcp4View {
         return {.source=local_, .destination=remote_, .source_port=local_port_, .destination_port=remote_port_,
@@ -38,6 +38,29 @@ namespace nexus::tcp {
         if (segment.acknowledgement != iss_ + 1) return std::unexpected(HandshakeError::invalid_ack);
         established_ = true;
         return true;
+    }
+    namespace {
+        auto core_segment(packet::Tcp6View v) -> packet::Tcp4View {
+            return {.source_port=v.source_port,.destination_port=v.destination_port,.sequence=v.sequence,
+                    .acknowledgement=v.acknowledgement,.flags=v.flags,.window=v.window,.urgent=v.urgent,
+                    .options=v.options,.payload=v.payload};
+        }
+    }
+    auto PassiveHandshake6::accept(packet::Tcp6View syn, std::uint32_t iss)
+        -> std::expected<PassiveHandshake6, HandshakeError> {
+        auto core=PassiveHandshake::accept(core_segment(syn),iss,1220);
+        if (!core) return std::unexpected(core.error());
+        return PassiveHandshake6(syn,std::move(*core));
+    }
+    auto PassiveHandshake6::syn_ack(std::uint16_t window) const -> packet::Tcp6View {
+        auto v=core_.syn_ack(window);
+        return {.source=local_,.destination=remote_,.source_port=v.source_port,.destination_port=v.destination_port,
+                .sequence=v.sequence,.acknowledgement=v.acknowledgement,.flags=v.flags,.window=v.window};
+    }
+    auto PassiveHandshake6::input(packet::Tcp6View segment, std::uint16_t receive_window) -> std::expected<bool,HandshakeError> {
+        if (segment.source!=remote_ || segment.destination!=local_ || segment.source_port!=remote_port_ ||
+            segment.destination_port!=local_port_) return std::unexpected(HandshakeError::wrong_peer);
+        return core_.input(core_segment(segment),receive_window);
     }
     auto HandshakeTimer::add(std::uint64_t a, std::uint64_t b) noexcept -> std::uint64_t {
         return a > std::numeric_limits<std::uint64_t>::max() - b ? std::numeric_limits<std::uint64_t>::max() : a + b;

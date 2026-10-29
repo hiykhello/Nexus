@@ -5,6 +5,28 @@ import nexus.tcp.receive;
 namespace p = nexus::packet;
 namespace t = nexus::tcp;
 int main() {
+    p::Tcp6View syn6{.source={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
+                     .destination={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,2},
+                     .source_port=1234,.destination_port=80,.sequence=0xffffffff,.flags=2};
+    auto raw6=p::make_tcp6(syn6); if (!raw6) return 1;
+    auto decoded6=p::parse_tcp6(*raw6); if (!decoded6) return 1;
+    auto h6=t::PassiveHandshake6::accept(*decoded6,0xffffffff);
+    if (!h6 || h6->peer_mss()!=1220 || h6->receive_next()!=0 || h6->send_next()!=0) return 1;
+    auto response6=p::make_tcp6(h6->syn_ack(4096));
+    if (!response6) return 1;
+    auto view6=p::parse_tcp6(*response6);
+    if (!view6 || view6->destination!=syn6.source || view6->source!=syn6.destination || view6->flags!=0x12) return 1;
+    p::Tcp6View ack6{.source=syn6.source,.destination=syn6.destination,.source_port=1234,
+                     .destination_port=80,.sequence=0,.acknowledgement=0,.flags=0x10};
+    auto wrong6=ack6; wrong6.source[15]=3;
+    if (h6->input(wrong6,1).error()!=t::HandshakeError::wrong_peer || h6->established()) return 1;
+    wrong6=ack6; wrong6.acknowledgement=1;
+    if (h6->input(wrong6,1).error()!=t::HandshakeError::invalid_ack || h6->established()) return 1;
+    auto completed6=h6->input(ack6,1);
+    if (!completed6 || !*completed6 || !h6->established()) return 1;
+    p::Bytes mss6{2,4,5,0xb4}; syn6.options=mss6;
+    auto advertised6=t::PassiveHandshake6::accept(syn6,1);
+    if (!advertised6 || advertised6->peer_mss()!=1460) return 1;
     p::Bytes options{2,4,5,0xb4};
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
                     .destination_port=80, .sequence=0xffffffff, .flags=2, .options=options};

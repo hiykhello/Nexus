@@ -13,7 +13,7 @@ export namespace nexus::tcp {
         bool established_ = false;
         PassiveHandshake(packet::Tcp4View syn, std::uint32_t iss, std::uint16_t peer_mss);
     public:
-        [[nodiscard]] static auto accept(packet::Tcp4View syn, std::uint32_t iss)
+        [[nodiscard]] static auto accept(packet::Tcp4View syn, std::uint32_t iss, std::uint16_t default_mss = 536)
             -> std::expected<PassiveHandshake, HandshakeError>;
         [[nodiscard]] auto syn_ack(std::uint16_t window) const -> packet::Tcp4View;
         // On true, caller must process the same segment's payload and FIN with receive_next().
@@ -23,6 +23,24 @@ export namespace nexus::tcp {
         [[nodiscard]] auto send_next() const noexcept -> std::uint32_t { return iss_ + 1; }
         [[nodiscard]] auto receive_next() const noexcept -> std::uint32_t { return irs_ + 1; }
         [[nodiscard]] auto peer_mss() const noexcept -> std::uint16_t { return peer_mss_; }
+    };
+    // IPv6 tuple validation is separate from the address-independent handshake state.
+    class PassiveHandshake6 {
+        packet::Address6 local_, remote_;
+        std::uint16_t local_port_, remote_port_;
+        PassiveHandshake core_;
+        PassiveHandshake6(packet::Tcp6View syn, PassiveHandshake core)
+            : local_(syn.destination), remote_(syn.source), local_port_(syn.destination_port),
+              remote_port_(syn.source_port), core_(std::move(core)) {}
+    public:
+        [[nodiscard]] static auto accept(packet::Tcp6View syn, std::uint32_t iss)
+            -> std::expected<PassiveHandshake6, HandshakeError>;
+        [[nodiscard]] auto syn_ack(std::uint16_t window) const -> packet::Tcp6View;
+        [[nodiscard]] auto input(packet::Tcp6View segment, std::uint16_t receive_window) -> std::expected<bool, HandshakeError>;
+        [[nodiscard]] auto established() const noexcept -> bool { return core_.established(); }
+        [[nodiscard]] auto send_next() const noexcept -> std::uint32_t { return core_.send_next(); }
+        [[nodiscard]] auto receive_next() const noexcept -> std::uint32_t { return core_.receive_next(); }
+        [[nodiscard]] auto peer_mss() const noexcept -> std::uint16_t { return core_.peer_mss(); }
     };
     enum class HandshakeTimerError { time_reversed, not_due, stopped };
     enum class HandshakeTimerEvent { waiting, retransmit, expired };
