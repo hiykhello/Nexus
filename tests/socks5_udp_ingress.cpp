@@ -7,7 +7,7 @@ import nexus.rules;
 import nexus.socks5.udp_ingress;
 namespace s=nexus::socks5; namespace r=nexus::rules;
 static bool fail_reply=false;
-static bool oversized_reply=false;
+static int reply_error=0;
 static int receive_error=0;
 extern "C" ssize_t __real_sendto(int,const void*,size_t,int,const sockaddr*,socklen_t);
 extern "C" ssize_t __real_recvfrom(int,void*,size_t,int,sockaddr*,socklen_t*);
@@ -17,7 +17,7 @@ extern "C" ssize_t __wrap_recvfrom(int fd,void* data,size_t size,int flags,socka
 }
 extern "C" ssize_t __wrap_sendto(int fd,const void* data,size_t size,int flags,const sockaddr* dest,socklen_t length) {
     if (fail_reply) { fail_reply=false; errno=EAGAIN; return -1; }
-    if (oversized_reply) { oversized_reply=false; errno=EMSGSIZE; return -1; }
+    if (reply_error) { errno=std::exchange(reply_error,0); return -1; }
     return __real_sendto(fd,data,size,flags,dest,length);
 }
 struct Socket { int fd; ~Socket() { if(fd>=0) ::close(fd); } };
@@ -65,24 +65,34 @@ int main() {
     if (n<0) return 12;
     auto parsed=s::parse_udp_datagram(std::span(response).first(n));
     if (!parsed || parsed->port!=target_port || !std::ranges::equal(parsed->data,std::array<std::uint8_t,2>{'o','k'})) return 13;
-    if (::sendto(target.fd,"drop",4,0,reinterpret_cast<sockaddr*>(&origin),length)!=4) return 61;
-    oversized_reply=true; bool dropped=false;
-    for (int i=0;i<100 && !dropped;++i) {
-        auto result=driver.step(); if (!result || result->output_error) return 62;
-        dropped=result->output_dropped;
-        if (!dropped) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    for (int failure : {EMSGSIZE, ENETUNREACH, EHOSTUNREACH, ECONNREFUSED}) {
+        if (::sendto(target.fd,"drop",4,0,reinterpret_cast<sockaddr*>(&origin),length)!=4) return 61;
+        reply_error=failure; bool dropped=false;
+        for (int i=0;i<100 && !dropped;++i) {
+            auto result=driver.step(); if (!result || result->output_error) return 62;
+            dropped=result->output_dropped;
+            if (!dropped) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (!dropped || reply_error || ::recv(client.fd,response.data(),response.size(),0)>=0) return 63;
+        if (::sendto(target.fd,"next",4,0,reinterpret_cast<sockaddr*>(&origin),length)!=4) return 64;
+        n=-1;
+        for (int i=0;i<100 && n<0;++i) {
+            auto result=driver.step(); if (!result || result->output_error) return 65;
+            n=::recv(client.fd,response.data(),response.size(),0);
+            if (n<0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        if (n<0) return 66;
+        parsed=s::parse_udp_datagram(std::span(response).first(n));
+        if (!parsed || !std::ranges::equal(parsed->data,std::array<std::uint8_t,4>{'n','e','x','t'})) return 67;
     }
-    if (!dropped || oversized_reply || ::recv(client.fd,response.data(),response.size(),0)>=0) return 63;
-    if (::sendto(target.fd,"next",4,0,reinterpret_cast<sockaddr*>(&origin),length)!=4) return 64;
-    n=-1;
-    for (int i=0;i<100 && n<0;++i) {
-        auto result=driver.step(); if (!result || result->output_error) return 65;
-        n=::recv(client.fd,response.data(),response.size(),0);
-        if (n<0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (::sendto(target.fd,"error",5,0,reinterpret_cast<sockaddr*>(&origin),length)!=5) return 68;
+    reply_error=EIO; bool fatal=false;
+    for (int i=0;i<100 && !fatal;++i) {
+        auto result=driver.step(); if (!result) return 69;
+        fatal=result->output_error && *result->output_error==s::UdpDirectError{std::error_code(EIO,std::generic_category())};
+        if (!fatal) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    if (n<0) return 66;
-    parsed=s::parse_udp_datagram(std::span(response).first(n));
-    if (!parsed || !std::ranges::equal(parsed->data,std::array<std::uint8_t,4>{'n','e','x','t'})) return 67;
+    if (!fatal || reply_error) return 70;
     association->close(); auto stopped=driver.step();
     if (stopped || stopped.error()!=s::UdpDirectError{s::Status::association_closed}) return 14;
     Socket reuse{::socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0)};

@@ -124,7 +124,9 @@ namespace nexus::socks5 {
             auto dest=address(pending_->client);
             auto sent=::sendto(fd_,pending_->wire.data(),pending_->wire.size(),0,reinterpret_cast<sockaddr*>(&dest.data),dest.size);
             if (sent<0 && (errno==EAGAIN || errno==EWOULDBLOCK || errno==EINTR)) report.backpressured=true;
-            else if (sent<0 && errno==EMSGSIZE) { report.output_dropped=true; pending_.reset(); }
+            else if (sent<0 && (errno==EMSGSIZE || errno==ENETUNREACH || errno==EHOSTUNREACH || errno==ECONNREFUSED)) {
+                report.output_dropped=true; pending_.reset();
+            }
             else if (sent<0 || static_cast<std::size_t>(sent)!=pending_->wire.size()) {
                 report.output_error=UdpDirectError{sent<0 ? error() : std::make_error_code(std::errc::io_error)}; pending_.reset();
             } else { report.delivered=true; pending_.reset(); }
