@@ -93,45 +93,45 @@ namespace nexus::proxy {
                 throw;
             }
         }
-        auto serve(std::shared_ptr<Session> session,io::io_context& context,rules::RouteMatcher const& policy,
+        auto serve(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
                    std::shared_ptr<vless::ServerProfile const> profile) -> capy::task<> {
-            auto fail=[&] { session->close(); session->done=true; };
+            auto fail=[&] { session.close(); session.done=true; };
             auto ms=[](Clock::time_point time) { return std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count(); };
-            auto start=ms(session->started), deadline=ms(session->started+std::chrono::seconds(10));
+            auto start=ms(session.started), deadline=ms(session.started+std::chrono::seconds(10));
             if (start<0 || deadline<=start) { fail(); co_return; }
             // This bounds the handshake's accounted buffers; it is not a
             // complete per-connection memory limit.
             auto budget=std::make_shared<memory::Budget>(8u*1024*1024);
             auto handshake=profile->tls_handshake(start,deadline,budget);
             if (!handshake) { fail(); co_return; }
-            auto established=co_await tls::detail::server_handshake(session->client,*handshake);
-            if (!established || session->closed) { fail(); co_return; }
-            Connection connection(session->client,std::move(established->records),std::move(established->unread));
+            auto established=co_await tls::detail::server_handshake(session.client,*handshake);
+            if (!established || session.closed) { fail(); co_return; }
+            Connection connection(session.client,std::move(established->records),std::move(established->unread));
             if (!established->release_unread_reservation()) { fail(); co_return; }
             auto state=profile->vless_handshake(); if (!state) { fail(); co_return; }
             Incoming incoming(connection,std::move(*state));
             auto request=co_await incoming.read_request();
-            if (!request || session->closed) { fail(); co_return; }
+            if (!request || session.closed) { fail(); co_return; }
             socks5::Request target; target.status=socks5::Status::accepted; target.port=request->port;
             target.address_type=request->kind==vless::AddressKind::ipv4 ? 1 : request->kind==vless::AddressKind::ipv6 ? 4 : 3;
             target.address_length=static_cast<std::uint8_t>(request->address.size());
             std::copy(request->address.begin(),request->address.end(),target.address.begin());
-            auto result=co_await dial(*session,context,policy,target);
-            if (result || session->closed || !(co_await incoming.complete_dial(true))) { fail(); co_return; }
-            session->relaying=true; session->touched=Clock::now();
-            RelayState relay{*session,incoming};
+            auto result=co_await dial(session,context,policy,target);
+            if (result || session.closed || !(co_await incoming.complete_dial(true))) { fail(); co_return; }
+            session.relaying=true; session.touched=Clock::now();
+            RelayState relay{session,incoming};
             try {
 #ifdef NEXUS_TEST_VLESS_RELAY_THROW
                 nexus_test_vless_relay_throw(1);
 #endif
-                auto first=relay_direction(*session,upload(relay));
+                auto first=relay_direction(session,upload(relay));
 #ifdef NEXUS_TEST_VLESS_RELAY_THROW
                 nexus_test_vless_relay_throw(2);
 #endif
-                auto second=relay_direction(*session,download(relay));
+                auto second=relay_direction(session,download(relay));
                 (void)co_await capy::when_all(std::move(first),std::move(second));
             } catch (...) {
-                session->close();
+                session.close();
             }
             fail();
         }
@@ -141,8 +141,8 @@ namespace nexus::proxy {
         auto profile=vless::ServerProfile::load(certificate,key,users);
         if (!profile) return std::unexpected(profile.error());
         auto shared=std::make_shared<vless::ServerProfile const>(std::move(*profile));
-        return InboundFactory([shared](std::shared_ptr<Session> session,io::io_context& context,rules::RouteMatcher const& policy) {
-            return serve(std::move(session),context,policy,shared);
+        return InboundFactory([shared](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
+            return serve(session,context,policy,shared);
         });
     }
 }

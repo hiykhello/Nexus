@@ -58,6 +58,22 @@ namespace nexus::proxy {
     }
 
 
+    auto Server::serve_session(std::unique_ptr<Session> session) -> capy::task<> {
+#ifdef NEXUS_ENABLE_VLESS
+        if (inbound_type==Inbound::vless) {
+            co_await vless_inbound(*session,context,policy);
+            co_return;
+        }
+#endif
+#ifdef NEXUS_ENABLE_SS2022
+        if (inbound_type==Inbound::shadowsocks) {
+            co_await shadowsocks_inbound(*session,context,policy);
+            co_return;
+        }
+#endif
+        co_await handshake(*session,context,policy,mixed,credentials);
+    }
+
     auto Server::accept_loop() -> capy::task<> {
         while (running) {
             auto [error, peer] = co_await listener.accept();
@@ -72,14 +88,13 @@ namespace nexus::proxy {
                 if (running) record_failure({FailureKind::accept,error});
                 break;
             }
-            auto session = std::make_shared<Session>(context);
+            auto session = std::make_unique<Session>(context);
             session->client = std::move(peer);
             session->dns=dns;
 #ifdef NEXUS_TEST_FAKEIP
             session->fakeip=fakeip;
             session->fakeip_view=fakeip_view;
 #endif
-            std::erase_if(sessions, [](auto const& existing) { return existing->done; });
             auto lease=quota.try_acquire();
             if (!lease) { session->close(); continue; }
             session->quota=std::move(lease);
@@ -87,20 +102,21 @@ namespace nexus::proxy {
 #ifdef NEXUS_ENABLE_VLESS
             session->tunnel_factories=vless;
 #endif
-            sessions.push_back(session);
+            sessions.push_back(session.get());
+            session->registry=&sessions;
 #ifdef NEXUS_ENABLE_VLESS
             if (inbound_type==Inbound::vless) {
-                capy::run_async(context.get_executor(), [] {}, session_error(*session))(vless_inbound(session,context,policy));
+                capy::run_async(context.get_executor(), [] {}, session_error(*session))(serve_session(std::move(session)));
                 continue;
             }
 #endif
 #ifdef NEXUS_ENABLE_SS2022
             if (inbound_type==Inbound::shadowsocks) {
-                capy::run_async(context.get_executor(), [] {}, session_error(*session))(shadowsocks_inbound(session,context,policy));
+                capy::run_async(context.get_executor(), [] {}, session_error(*session))(serve_session(std::move(session)));
                 continue;
             }
 #endif
-            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(handshake(session, context, policy, mixed, credentials));
+            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(serve_session(std::move(session)));
         }
         running = false;
     }
@@ -470,7 +486,6 @@ namespace nexus::proxy {
                                  session->relaying ? now - session->touched >= 300s : now - session->started >= 10s;
             if (!session->done && expired) session->close();
         }
-        std::erase_if(state.sessions, [](auto const& session) { return session->done; });
     }
 
     auto Server::stop() noexcept -> void {
@@ -490,6 +505,5 @@ namespace nexus::proxy {
         for (auto const& session : state.sessions) session->close();
         state.context.restart();
         (void)state.context.run();
-        state.sessions.clear();
     }
 }

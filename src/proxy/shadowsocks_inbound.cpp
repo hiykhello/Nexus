@@ -101,31 +101,31 @@ namespace nexus::proxy {
                 throw;
             }
         }
-        auto serve(std::shared_ptr<Session> session,io::io_context& context,rules::RouteMatcher const& policy,
+        auto serve(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
                    std::shared_ptr<Profile> profile) -> capy::task<> {
-            auto fail=[&] { session->close(); session->done=true; };
-            auto request=co_await shadowsocks::detail::receive_request(session->client,profile->key,profile->replay,
-                                                                        session->started+std::chrono::seconds(10));
-            if (!request || session->closed) {
-                if (!session->closed && !request && request.error()==shadowsocks::detail::ServerReadError::invalid_request)
-                    (void)shadowsocks::detail::prepare_probe_reset(session->client.native_handle());
+            auto fail=[&] { session.close(); session.done=true; };
+            auto request=co_await shadowsocks::detail::receive_request(session.client,profile->key,profile->replay,
+                                                                        session.started+std::chrono::seconds(10));
+            if (!request || session.closed) {
+                if (!session.closed && !request && request.error()==shadowsocks::detail::ServerReadError::invalid_request)
+                    (void)shadowsocks::detail::prepare_probe_reset(session.client.native_handle());
                 fail(); co_return;
             }
-            Incoming incoming(session->client,profile->key,std::move(*request));
+            Incoming incoming(session.client,profile->key,std::move(*request));
             std::vector<std::uint8_t> bytes{5,1,0};
             bytes.insert(bytes.end(),incoming.address().begin(),incoming.address().end());
             auto target=socks5::parse_request(bytes);
             if (target.status!=socks5::Status::accepted) { fail(); co_return; }
-            auto result=co_await dial(*session,context,policy,target);
-            if (result || session->closed) { fail(); co_return; }
-            session->relaying=true; session->touched=Clock::now();
-            RelayState relay{*session,incoming};
+            auto result=co_await dial(session,context,policy,target);
+            if (result || session.closed) { fail(); co_return; }
+            session.relaying=true; session.touched=Clock::now();
+            RelayState relay{session,incoming};
             try {
-                auto first=relay_direction(*session,upload(relay));
-                auto second=relay_direction(*session,download(relay));
+                auto first=relay_direction(session,upload(relay));
+                auto second=relay_direction(session,download(relay));
                 (void)co_await capy::when_all(std::move(first),std::move(second));
             } catch (...) {
-                session->close();
+                session.close();
             }
             fail();
         }
@@ -134,8 +134,8 @@ namespace nexus::proxy {
         if (key.size()!=16 && key.size()!=32) return std::unexpected("invalid Shadowsocks 2022 key length");
         auto profile=shared_profile(key);
         if (!profile) return std::unexpected(profile.error());
-        return InboundFactory([profile=std::move(*profile)](std::shared_ptr<Session> session,io::io_context& context,rules::RouteMatcher const& policy) {
-            return serve(std::move(session),context,policy,profile);
+        return InboundFactory([profile=std::move(*profile)](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
+            return serve(session,context,policy,profile);
         });
     }
 }

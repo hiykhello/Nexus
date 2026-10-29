@@ -43,7 +43,7 @@ namespace nexus::proxy {
         ::add_convention<TunnelCloseOutput, capy::task<bool>()>
         ::add_convention<TunnelCancel, void() noexcept>::build {};
     using TunnelFactory = std::function<pro::proxy<TunnelFacade>(Session&,io::io_context&)>;
-    using InboundFactory = std::function<capy::task<>(std::shared_ptr<Session>,io::io_context&,rules::RouteMatcher const&)>;
+    using InboundFactory = std::function<capy::task<>(Session&,io::io_context&,rules::RouteMatcher const&)>;
     struct DnsState;
 
     struct Session {
@@ -66,15 +66,15 @@ namespace nexus::proxy {
         Clock::time_point started = Clock::now();
         Clock::time_point touched = started;
         std::stop_source stop;
+        // The server registry only borrows this session and outlives its task.
+        std::vector<Session*>* registry = nullptr;
         bool relaying = false;
         bool closed = false;
         bool done = false;
         bool http_draining = false;
         Clock::time_point http_drain_started{};
         explicit Session(io::io_context& ctx);
-#ifdef NEXUS_TEST_FAKEIP
         ~Session();
-#endif
         auto close() noexcept -> void;
     };
 
@@ -110,7 +110,7 @@ namespace nexus::proxy {
               rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<std::uint8_t>;
     auto forward_http(Session& session, io::io_context& context,
                       rules::RouteMatcher const& policy, std::string_view input) -> capy::task<>;
-    auto handshake(std::shared_ptr<Session> session, io::io_context& context,
+    auto handshake(Session& session, io::io_context& context,
                    rules::RouteMatcher const& policy, bool mixed, std::optional<Credentials> const& credentials) -> capy::task<>;
 }
 
@@ -149,6 +149,8 @@ export namespace nexus::proxy {
     // Loopback server; one worker runs in the caller, multiple workers use threads.
     // Public methods must be called from one controlling thread.
     class Server {
+        // The registry outlives context shutdown, which can destroy task frames.
+        std::vector<Session*> sessions;
 #if BOOST_COROSIO_HAVE_LIBURING
         io::io_context context{io::uring};
 #else
@@ -159,7 +161,6 @@ export namespace nexus::proxy {
 #endif
         io::tcp_acceptor listener{context};
         SessionQuota quota{64};
-        std::vector<std::shared_ptr<Session>> sessions;
         rules::RouteMatcher policy;
         std::optional<Credentials> credentials;
         std::optional<DnsRouting> dns_routing;
@@ -184,6 +185,7 @@ export namespace nexus::proxy {
         auto record_failure(RuntimeFailure value) -> void;
         auto get_failure() const -> std::optional<RuntimeFailure>;
         auto accept_loop() -> capy::task<>;
+        auto serve_session(std::unique_ptr<Session> session) -> capy::task<>;
         auto start_one(std::uint16_t port, Inbound inbound, bool reuse) -> std::expected<std::uint16_t, std::error_code>;
     public:
         Server();

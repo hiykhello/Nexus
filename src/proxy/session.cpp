@@ -27,14 +27,14 @@ extern "C" void nexus_test_session_throw(std::uint8_t);
 
 namespace nexus::proxy {
     Session::Session(io::io_context& ctx) : client(ctx), target(ctx) {}
-#ifdef NEXUS_TEST_FAKEIP
     Session::~Session() {
-        // The last session reference disappears only after all I/O tasks drain.
+        if (registry) std::erase(*registry,this);
+#ifdef NEXUS_TEST_FAKEIP
         // Failure leaves the pool pin held, preventing unsafe reuse.
         close();
         if (fakeip_target) try { (void)fakeip_target->release(); } catch (...) {}
-    }
 #endif
+    }
     auto Session::close() noexcept -> void {
         closed = true;
         stop.request_stop();
@@ -270,17 +270,17 @@ namespace nexus::proxy {
 
     }
 
-        auto handshake(std::shared_ptr<Session> session, io::io_context& context,
+        auto handshake(Session& session, io::io_context& context,
                        rules::RouteMatcher const& policy, bool mixed, std::optional<Credentials> const& credentials) -> capy::task<> {
             std::array<std::uint8_t, 1> first{};
-            if (!co_await read_exact(session->client, first, *session)) {
-                session->close(); session->done = true; co_return;
+            if (!co_await read_exact(session.client, first, session)) {
+                session.close(); session.done = true; co_return;
             }
 #ifdef NEXUS_TEST_SESSION_THROW
             nexus_test_session_throw(first[0]);
 #endif
-            if (first[0] == 5) co_await socks_handshake(*session, context, policy, credentials);
-            else if (mixed) co_await http_handshake(*session, context, policy, first[0]);
-            else { session->close(); session->done = true; }
+            if (first[0] == 5) co_await socks_handshake(session, context, policy, credentials);
+            else if (mixed) co_await http_handshake(session, context, policy, first[0]);
+            else { session.close(); session.done = true; }
         }
 }
