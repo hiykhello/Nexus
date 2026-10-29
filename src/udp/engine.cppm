@@ -20,12 +20,16 @@ export namespace nexus::udp {
     using EngineError = std::variant<packet::DeviceError, DirectError, Error>;
     // Single owner; the link must outlive the engine. The engine uses its
     // second side. step processes at most one input and holds at most 128 replies.
-    // A transient send error retains one input for retry; later inputs wait.
+    // Up to 32 inputs may wait for transient send/allocation failures. Inputs
+    // from the same source endpoint keep their order; other sources can proceed.
     class MemoryEngine {
         packet::MemoryLink& link_;
         Direct4 ipv4_;
         Direct6 ipv6_;
-        std::optional<packet::Bytes> incoming_;
+        using Source = std::variant<std::monostate, Endpoint4, Endpoint6>;
+        struct Input { packet::Bytes bytes; Source source; };
+        std::array<Input,32> incoming_;
+        std::size_t incoming_count_ = 0, incoming_cursor_ = 0;
         std::array<packet::Bytes, 128> pending_;
         std::size_t pending_begin_ = 0, pending_end_ = 0;
         bool initialized_ = false;
