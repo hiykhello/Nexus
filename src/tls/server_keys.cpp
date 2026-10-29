@@ -21,19 +21,19 @@ namespace nexus::tls {
         if (!selection->x25519_share && !selection->hybrid_share) return std::unexpected(ServerKeyError::retry_required);
         auto key=crypto::X25519Private::generate(); if (!key) return std::unexpected(ServerKeyError::crypto_error);
         std::optional<crypto::Secret32> x_secret; std::optional<HybridServerResult> hybrid;
-        crypto::Bytes public_share; std::span<std::uint8_t const> shared;
+        std::array<std::uint8_t,32> public_key{}; std::span<std::uint8_t const> public_share, shared;
         if (selection->group==0x001d && selection->x25519_share) {
             auto value=key->agree(*selection->x25519_share); if (!value) return std::unexpected(ServerKeyError::invalid_peer);
             x_secret.emplace(std::move(*value)); shared=x_secret->view();
-            auto public_key=key->public_key(); if (!public_key) return std::unexpected(ServerKeyError::crypto_error);
-            public_share.assign(public_key->begin(),public_key->end());
+            auto value_public=key->public_key(); if (!value_public) return std::unexpected(ServerKeyError::crypto_error);
+            public_key=*value_public; public_share=public_key;
         } else if (selection->group==x25519_mlkem768_group && selection->hybrid_share) {
             auto result=hybrid_server_accept(*selection->hybrid_share,std::move(*key));
             if (!result) return std::unexpected(result.error()==HybridError::crypto_error ? ServerKeyError::crypto_error : ServerKeyError::invalid_peer);
             hybrid.emplace(std::move(*result)); shared=hybrid->secret.view();
-            public_share.assign(hybrid->share.begin(),hybrid->share.end());
+            public_share=hybrid->share;
         } else return std::unexpected(ServerKeyError::invalid_hello);
-        auto encoded_share=KeyShare::encode_server({selection->group,std::move(public_share)});
+        auto encoded_share=KeyShare::encode_server_view({selection->group,public_share});
         if (!encoded_share) return std::unexpected(ServerKeyError::crypto_error);
         ServerHello hello; hello.session_id_echo=client->session_id; hello.cipher_suite=selection->cipher_suite;
         hello.extensions={{43,{3,4}},{51,std::move(*encoded_share)}};

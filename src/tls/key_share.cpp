@@ -72,7 +72,10 @@ namespace nexus::tls {
         return result;
     }
     auto KeyShare::encode_server(KeyShareEntry const& entry) -> std::expected<std::vector<std::uint8_t>, KeyShareError> {
-        if (!valid_entry_size(entry)) return std::unexpected(KeyShareError::empty);
+        return encode_server_view({entry.group,entry.key_exchange});
+    }
+    auto KeyShare::encode_server_view(KeyShareView entry) -> std::expected<std::vector<std::uint8_t>, KeyShareError> {
+        if (entry.key_exchange.empty() || entry.key_exchange.size()>0xffff) return std::unexpected(KeyShareError::empty);
         if (entry.key_exchange.size()>0xffff-4) return std::unexpected(KeyShareError::message_too_large);
         std::vector<std::uint8_t> result; result.reserve(entry.key_exchange.size()+4); add_u16(result,entry.group); add_u16(result,entry.key_exchange.size()); result.insert(result.end(),entry.key_exchange.begin(),entry.key_exchange.end()); return result;
     }

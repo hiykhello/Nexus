@@ -39,6 +39,8 @@ export namespace nexus::tls {
             -> std::expected<std::vector<std::uint8_t>, KeyShareError>;
         [[nodiscard]] static auto encode_server(KeyShareEntry const& entry)
             -> std::expected<std::vector<std::uint8_t>, KeyShareError>;
+        [[nodiscard]] static auto encode_server_view(KeyShareView entry)
+            -> std::expected<std::vector<std::uint8_t>, KeyShareError>;
         [[nodiscard]] static auto encode_retry(std::uint16_t group) -> std::vector<std::uint8_t>;
     };
 }

@@ -32,6 +32,11 @@ int main() {
     auto server=t::KeyShare::encode_server(entries[0]); if (!server) return 3; auto server_parsed=t::KeyShare::parse_server(*server); if (!server_parsed || *server_parsed!=entries[0]) return 4;
     auto server_view=t::KeyShare::view_server(*server);
     if (!server_view || server_view->group!=entries[0].group || !std::ranges::equal(server_view->key_exchange,entries[0].key_exchange)) return 21;
+    std::array<std::uint8_t,1120> hybrid{}; allocations=0; trace=true;
+    auto encoded_hybrid=t::KeyShare::encode_server_view({0x11ec,hybrid}); trace=false;
+    if (!encoded_hybrid || allocations!=1 || first_size!=1124 || !std::ranges::equal(std::span{*encoded_hybrid}.subspan(4),hybrid)) return 26;
+    deny=true; auto empty_server=t::KeyShare::encode_server_view({29,{}}); deny=false;
+    if (empty_server || empty_server.error()!=t::KeyShareError::empty) return 27;
     auto retry=t::KeyShare::encode_retry(0x001d); if (t::KeyShare::parse_retry(retry)!=0x001d) return 5;
     auto bad= *encoded; bad[1]--; if (t::KeyShare::parse_client(bad).error()!=t::KeyShareError::invalid_length) return 6;
     if (t::KeyShare::view_client(bad).error()!=t::KeyShareError::invalid_length) return 16;
