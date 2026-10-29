@@ -122,5 +122,70 @@ int main() {
     auto denied=blocked_driver.step();
     if (!denied || denied->domain_pending || blocked_driver.pending_domain() ||
         !denied->input_error || *denied->input_error!=s::UdpDirectError{s::UdpRouteError::blocked}) return 37;
+    s::UdpPeer loopback6{4,{},0}; loopback6.address[15]=1;
+    auto fifth=s::UdpAssociation::create(loopback6,{4,{},0});
+    if (!fifth) return 38;
+    s::UdpIngress invalid6(*fifth,*policy);
+    auto wildcard6=loopback6; wildcard6.address[15]=0;
+    auto mapped6=wildcard6; mapped6.address[10]=255; mapped6.address[11]=255; mapped6.address[12]=127; mapped6.address[15]=1;
+    if (invalid6.open(wildcard6) || invalid6.open(mapped6)) return 60;
+    s::UdpIngress ipv6(*fifth,*policy);
+    auto endpoint6=ipv6.open(loopback6); if (!endpoint6) return 39;
+    Socket client6{::socket(AF_INET6,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0)};
+    Socket attacker6{::socket(AF_INET6,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0)};
+    sockaddr_in6 addr6{}; addr6.sin6_family=AF_INET6; addr6.sin6_addr=in6addr_loopback;
+    if (client6.fd<0 || attacker6.fd<0 || ::bind(client6.fd,reinterpret_cast<sockaddr*>(&addr6),sizeof(addr6)) ||
+        ::bind(attacker6.fd,reinterpret_cast<sockaddr*>(&addr6),sizeof(addr6))) return 40;
+    addr6.sin6_port=htons(endpoint6->port);
+    if (::sendto(client6.fd,wire.data(),wire.size(),0,reinterpret_cast<sockaddr*>(&addr6),sizeof(addr6))!=static_cast<ssize_t>(wire.size())) return 41;
+    bool forwarded6=false; n=-1;
+    for (int i=0;i<100 && n<0;++i) {
+        auto result=ipv6.step(); if (!result || result->input_error || result->output_error) return 42;
+        forwarded6 |= result->forwarded; length=sizeof(origin);
+        n=::recvfrom(target.fd,bytes,sizeof(bytes),0,reinterpret_cast<sockaddr*>(&origin),&length);
+        if (n<0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (!forwarded6 || n!=2 || std::string_view(bytes,2)!="hi") return 43;
+    if (::sendto(attacker6.fd,wire.data(),wire.size(),0,reinterpret_cast<sockaddr*>(&addr6),sizeof(addr6))!=static_cast<ssize_t>(wire.size())) return 44;
+    auto rejected6=ipv6.step();
+    if (!rejected6 || !rejected6->input_error || *rejected6->input_error!=s::UdpDirectError{s::Status::unauthorized_source}) return 45;
+    if (::sendto(target.fd,"v6",2,0,reinterpret_cast<sockaddr*>(&origin),length)!=2) return 46;
+    n=-1;
+    for (int i=0;i<100 && n<0;++i) {
+        auto result=ipv6.step(); if (!result || result->output_error) return 47;
+        n=::recv(client6.fd,response.data(),response.size(),0);
+        if (n<0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (n<0) return 48;
+    parsed=s::parse_udp_datagram(std::span(response).first(n));
+    if (!parsed || !std::ranges::equal(parsed->data,std::array<std::uint8_t,2>{'v','6'})) return 49;
+    Socket target6{::socket(AF_INET6,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0)};
+    sockaddr_in6 upstream6{}; upstream6.sin6_family=AF_INET6; upstream6.sin6_addr=in6addr_loopback;
+    if (target6.fd<0 || ::bind(target6.fd,reinterpret_cast<sockaddr*>(&upstream6),sizeof(upstream6))) return 51;
+    length=sizeof(upstream6);
+    if (::getsockname(target6.fd,reinterpret_cast<sockaddr*>(&upstream6),&length)) return 52;
+    s::UdpDatagram packet6; packet6.address_type=4; packet6.address_length=16; packet6.address[15]=1;
+    packet6.port=ntohs(upstream6.sin6_port); std::array<std::uint8_t,1> payload6{'6'}; packet6.data=payload6;
+    auto wire6=s::encode_udp_datagram(packet6); if (!wire6) return 53;
+    if (::sendto(client6.fd,wire6->data(),wire6->size(),0,reinterpret_cast<sockaddr*>(&addr6),sizeof(addr6))!=static_cast<ssize_t>(wire6->size())) return 54;
+    sockaddr_in6 origin6{}; n=-1;
+    for (int i=0;i<100 && n<0;++i) {
+        auto result=ipv6.step(); if (!result || result->input_error || result->output_error) return 55;
+        length=sizeof(origin6); n=::recvfrom(target6.fd,bytes,sizeof(bytes),0,reinterpret_cast<sockaddr*>(&origin6),&length);
+        if (n<0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (n!=1 || bytes[0]!='6' || ::sendto(target6.fd,"z",1,0,reinterpret_cast<sockaddr*>(&origin6),length)!=1) return 56;
+    n=-1;
+    for (int i=0;i<100 && n<0;++i) {
+        auto result=ipv6.step(); if (!result || result->output_error) return 57;
+        n=::recv(client6.fd,response.data(),response.size(),0);
+        if (n<0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (n<0) return 58;
+    parsed=s::parse_udp_datagram(std::span(response).first(n));
+    if (!parsed || parsed->address_type!=4 || parsed->port!=packet6.port || parsed->data.size()!=1 || parsed->data[0]!='z') return 59;
+    ipv6.close();
+    Socket reuse6{::socket(AF_INET6,SOCK_DGRAM|SOCK_CLOEXEC,0)};
+    if (reuse6.fd<0 || ::bind(reuse6.fd,reinterpret_cast<sockaddr*>(&addr6),sizeof(addr6))) return 50;
     std::println("SOCKS UDP ingress forwards and filters real datagrams");
 }

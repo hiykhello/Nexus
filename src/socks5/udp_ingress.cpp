@@ -9,13 +9,33 @@ import nexus.rules;
 namespace nexus::socks5 {
     namespace {
         auto error() -> std::error_code { return {errno,std::generic_category()}; }
-        auto address(UdpPeer const& peer) -> sockaddr_in {
-            sockaddr_in addr{}; addr.sin_family=AF_INET; addr.sin_port=htons(peer.port);
-            std::copy_n(peer.address.begin(),4,reinterpret_cast<std::uint8_t*>(&addr.sin_addr)); return addr;
+        struct SocketAddress { sockaddr_storage data{}; socklen_t size=0; };
+        auto address(UdpPeer const& peer) -> SocketAddress {
+            SocketAddress result;
+            if (peer.address_type==1) {
+                sockaddr_in addr{}; addr.sin_family=AF_INET; addr.sin_port=htons(peer.port);
+                std::copy_n(peer.address.begin(),4,reinterpret_cast<std::uint8_t*>(&addr.sin_addr));
+                std::memcpy(&result.data,&addr,sizeof(addr)); result.size=sizeof(addr);
+            } else {
+                sockaddr_in6 addr{}; addr.sin6_family=AF_INET6; addr.sin6_port=htons(peer.port);
+                std::ranges::copy(peer.address,addr.sin6_addr.s6_addr);
+                std::memcpy(&result.data,&addr,sizeof(addr)); result.size=sizeof(addr);
+            }
+            return result;
         }
-        auto peer(sockaddr_in const& addr) -> UdpPeer {
-            UdpPeer result{1,{},ntohs(addr.sin_port)};
-            std::copy_n(reinterpret_cast<std::uint8_t const*>(&addr.sin_addr),4,result.address.begin()); return result;
+        auto peer(sockaddr_storage const& storage,socklen_t length) -> std::optional<UdpPeer> {
+            if (storage.ss_family==AF_INET && length==sizeof(sockaddr_in)) {
+                sockaddr_in addr{}; std::memcpy(&addr,&storage,sizeof(addr));
+                UdpPeer result{1,{},ntohs(addr.sin_port)};
+                std::copy_n(reinterpret_cast<std::uint8_t const*>(&addr.sin_addr),4,result.address.begin()); return result;
+            }
+            if (storage.ss_family==AF_INET6 && length==sizeof(sockaddr_in6)) {
+                sockaddr_in6 addr{}; std::memcpy(&addr,&storage,sizeof(addr));
+                if (addr.sin6_scope_id || IN6_IS_ADDR_V4MAPPED(&addr.sin6_addr)) return {};
+                UdpPeer result{4,{},ntohs(addr.sin6_port)};
+                std::copy_n(addr.sin6_addr.s6_addr,16,result.address.begin()); return result;
+            }
+            return {};
         }
     }
     UdpIngress::~UdpIngress() { close(); }
@@ -26,33 +46,45 @@ namespace nexus::socks5 {
     auto UdpIngress::open(UdpPeer local) -> std::expected<UdpPeer,UdpDirectError> {
         if (closed_ || association_.closed()) return std::unexpected(UdpDirectError{Status::association_closed});
         if (fd_>=0) return std::unexpected(UdpDirectError{std::make_error_code(std::errc::operation_not_permitted)});
-        if (local.address_type!=1 || std::ranges::all_of(std::span(local.address).first<4>(),[](auto b){return b==0;}) ||
-            std::ranges::any_of(std::span(local.address).subspan(4),[](auto b){return b!=0;}))
+        if ((local.address_type!=1 && local.address_type!=4) ||
+            std::ranges::all_of(local.address,[](auto b){return b==0;}) ||
+            (local.address_type==1 && std::ranges::any_of(std::span(local.address).subspan(4),[](auto b){return b!=0;})) ||
+            (local.address_type==4 && std::ranges::all_of(std::span(local.address).first<10>(),[](auto b){return b==0;}) &&
+             local.address[10]==255 && local.address[11]==255))
             return std::unexpected(UdpDirectError{Status::invalid_address});
-        int fd=::socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
+        int fd=::socket(local.address_type==1 ? AF_INET : AF_INET6,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
         if (fd<0) return std::unexpected(UdpDirectError{error()});
+        if (local.address_type==4) {
+            int on=1;
+            if (::setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY,&on,sizeof(on))<0) {
+                auto failure=error(); ::close(fd); return std::unexpected(UdpDirectError{failure});
+            }
+        }
         auto addr=address(local);
-        if (::bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))<0) {
+        if (::bind(fd,reinterpret_cast<sockaddr*>(&addr.data),addr.size)<0) {
             auto failure=error(); ::close(fd); return std::unexpected(UdpDirectError{failure});
         }
-        socklen_t length=sizeof(addr);
-        if (::getsockname(fd,reinterpret_cast<sockaddr*>(&addr),&length)<0) {
+        sockaddr_storage bound{}; socklen_t length=sizeof(bound);
+        if (::getsockname(fd,reinterpret_cast<sockaddr*>(&bound),&length)<0) {
             auto failure=error(); ::close(fd); return std::unexpected(UdpDirectError{failure});
         }
-        fd_=fd; return peer(addr);
+        auto result=peer(bound,length);
+        if (!result) { ::close(fd); return std::unexpected(UdpDirectError{Status::invalid_address}); }
+        fd_=fd; return *result;
     }
     auto UdpIngress::step() -> std::expected<UdpIngressStep,UdpDirectError> {
         if (closed_ || association_.closed()) { close(); return std::unexpected(UdpDirectError{Status::association_closed}); }
         if (fd_<0) return std::unexpected(UdpDirectError{std::make_error_code(std::errc::bad_file_descriptor)});
         UdpIngressStep report;
         if (!input_pending_) {
-            sockaddr_in from{}; socklen_t length=sizeof(from);
+            sockaddr_storage from{}; socklen_t length=sizeof(from);
             auto n=::recvfrom(fd_,input_bytes_.data(),input_bytes_.size(),MSG_TRUNC,reinterpret_cast<sockaddr*>(&from),&length);
             if (n>=0) {
                 report.input=true;
-                if (static_cast<std::size_t>(n)>input_bytes_.size() || length!=sizeof(from) || from.sin_family!=AF_INET)
-                report.input_error=UdpDirectError{Status::too_large};
-                else { input_size_=static_cast<std::size_t>(n); input_source_=peer(from); input_pending_=true; }
+                auto source=peer(from,length);
+                if (static_cast<std::size_t>(n)>input_bytes_.size()) report.input_error=UdpDirectError{Status::too_large};
+                else if (!source) report.input_error=UdpDirectError{Status::invalid_address};
+                else { input_size_=static_cast<std::size_t>(n); input_source_=*source; input_pending_=true; }
             } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) {
                 auto failure=error(); close(); return std::unexpected(UdpDirectError{failure});
             }
@@ -90,7 +122,7 @@ namespace nexus::socks5 {
         }
         if (pending_) {
             auto dest=address(pending_->client);
-            auto sent=::sendto(fd_,pending_->wire.data(),pending_->wire.size(),0,reinterpret_cast<sockaddr*>(&dest),sizeof(dest));
+            auto sent=::sendto(fd_,pending_->wire.data(),pending_->wire.size(),0,reinterpret_cast<sockaddr*>(&dest.data),dest.size);
             if (sent<0 && (errno==EAGAIN || errno==EWOULDBLOCK || errno==EINTR)) report.backpressured=true;
             else if (sent<0 || static_cast<std::size_t>(sent)!=pending_->wire.size()) {
                 report.output_error=UdpDirectError{sent<0 ? error() : std::make_error_code(std::errc::io_error)}; pending_.reset();
