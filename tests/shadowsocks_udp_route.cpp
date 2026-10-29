@@ -39,6 +39,11 @@ int main() {
     packet.packet_id++; packet.address={3,7,'o','k','.','t','e','s','t',0,80}; accepted=receive();
     s::UdpPeer mapped_blocked{6,{0,0,0,0,0,0,0,0,0,0,255,255,192,0,2,1},80};
     if (!accepted || !is_error(server.forward(*accepted,mapped_blocked),s::UdpRouteError::blocked) || server.sockets()!=0) return 11;
+    s::UdpPeer zero4{4,{},80}, zero6{6,{},80}, mapped_zero{6,{0,0,0,0,0,0,0,0,0,0,255,255},80};
+    for (auto candidate : {zero4,zero6,mapped_zero})
+        if (!is_error(server.forward(*accepted,candidate),s::UdpRouteError::invalid_target) || server.sockets()!=0) return 17;
+    packet.packet_id++; packet.address={4,0,0,0,0,0,0,0,0,0,0,255,255,0,0,0,0,0,80}; accepted=receive();
+    if (!accepted || !is_error(server.forward(*accepted,mapped_zero),s::UdpRouteError::invalid_target) || server.sockets()!=0) return 18;
     int fd=socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0); sockaddr_in addr{};
     addr.sin_family=AF_INET; addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     if (fd<0 || bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))) return 8;

@@ -15,6 +15,11 @@ int main() {
     s::UdpPeer dest{4,{127,0,0,1},ntohs(local.sin_port)};
     std::array<std::uint8_t,8> id{1}; std::array<std::uint8_t,3> data{1,2,3};
     s::UdpRelay relay(1,1);
+    for (auto zero : {s::UdpPeer{4,{},dest.port},s::UdpPeer{6,{},dest.port},
+                      s::UdpPeer{6,{0,0,0,0,0,0,0,0,0,0,255,255},dest.port}}) {
+        auto rejected=relay.send(id,zero,data);
+        if (rejected || rejected.error().kind!=s::UdpRelayError::invalid_target || relay.size()!=0) return 20;
+    }
     if (!relay.send(id,dest,data) || relay.size()!=1) return 4;
     std::array<std::uint8_t,100> buf{}; sockaddr_in sender{}; len=sizeof(sender);
     auto n=recvfrom(target,buf.data(),buf.size(),0,reinterpret_cast<sockaddr*>(&sender),&len);

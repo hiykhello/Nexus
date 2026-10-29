@@ -52,6 +52,7 @@ namespace nexus::shadowsocks {
     auto UdpRoutedServer::forward(UdpAccepted const& packet,UdpPeer resolved) -> std::expected<void,UdpRoutedFailure> {
         auto request=parse(packet.packet.address);
         if (!request || (resolved.family!=4 && resolved.family!=6) || resolved.port!=request->port ||
+            std::ranges::all_of(canonical(resolved).address,[](auto b){return b==0;}) ||
             (resolved.family==4 && std::ranges::any_of(std::span{resolved.address}.subspan(4),[](auto b){return b!=0;})))
             return std::unexpected(UdpRoutedFailure{UdpRouteError::invalid_target});
         if (request->literal && canonical(*request->literal)!=canonical(resolved))

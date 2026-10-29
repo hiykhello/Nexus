@@ -10,7 +10,7 @@ namespace nexus::shadowsocks {
         auto failure(UdpRelayError kind) -> UdpRelayFailure { return {kind,{}}; }
         auto system_failure() -> UdpRelayFailure { return {UdpRelayError::system,{errno,std::generic_category()}}; }
         auto valid(UdpPeer const& peer) -> bool {
-            return peer.port && (peer.family==6 || (peer.family==4 &&
+            return peer.port && std::ranges::any_of(peer.address,[](auto b){return b!=0;}) && (peer.family==6 || (peer.family==4 &&
                 std::ranges::none_of(std::span{peer.address}.subspan(4),[](auto b){return b!=0;})));
         }
         auto socket_address(UdpPeer const& peer) -> sockaddr_in6 {
