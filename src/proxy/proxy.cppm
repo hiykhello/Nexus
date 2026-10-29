@@ -151,13 +151,18 @@ export namespace nexus::proxy {
     class Server {
         // The registry outlives context shutdown, which can destroy task frames.
         std::vector<Session*> sessions;
+#ifdef NEXUS_ENABLE_SS2022
+        InboundFactory shadowsocks_inbound;
+#endif
+#ifdef NEXUS_ENABLE_VLESS
+        // Session tasks borrow their profile from this factory, including
+        // during context destruction when suspended tasks are abandoned.
+        InboundFactory vless_inbound;
+#endif
 #if BOOST_COROSIO_HAVE_LIBURING
         io::io_context context{io::uring};
 #else
         io::io_context context;
-#endif
-#ifdef NEXUS_ENABLE_SS2022
-        InboundFactory shadowsocks_inbound;
 #endif
         io::tcp_acceptor listener{context};
         SessionQuota quota{64};
@@ -172,7 +177,6 @@ export namespace nexus::proxy {
         std::optional<std::size_t> max_bootstrap_index;
 #ifdef NEXUS_ENABLE_VLESS
         std::shared_ptr<std::vector<TunnelFactory> const> vless;
-        InboundFactory vless_inbound;
 #endif
         bool running = false;
         bool mixed = false;

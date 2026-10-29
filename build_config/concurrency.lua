@@ -115,6 +115,14 @@ if is_plat("linux") then
         add_files("$(projectdir)/tests/proxy_worker_failure.cpp")
         add_deps("nexus-proxy")
 
+    if has_config("crypto") then
+        target("nexus-proxy-vless-reconfigure-test")
+            set_kind("binary")
+            set_default(false)
+            add_files("$(projectdir)/tests/proxy_vless_reconfigure.cpp")
+            add_deps("nexus-proxy")
+    end
+
     target("nexus-proxy-accept-aborted-test")
         set_kind("binary")
         set_default(false)

@@ -353,7 +353,7 @@ namespace nexus::proxy {
 
     auto Server::prepare_vless_inbound(std::string_view certificate,std::string_view key,
             std::span<std::string const> users) -> std::expected<void,std::string> {
-        if (running || !workers.empty()) return std::unexpected("server is running");
+        if (running || listener.is_open() || !sessions.empty() || !workers.empty()) return std::unexpected("server is running");
 #ifdef NEXUS_ENABLE_VLESS
         auto prepared=make_vless_inbound_factory(certificate,key,users);
         if (!prepared) return std::unexpected(prepared.error());

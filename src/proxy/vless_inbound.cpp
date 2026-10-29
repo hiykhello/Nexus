@@ -94,7 +94,7 @@ namespace nexus::proxy {
             }
         }
         auto serve(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
-                   std::shared_ptr<vless::ServerProfile const> profile) -> capy::task<> {
+                   vless::ServerProfile const& profile) -> capy::task<> {
             auto fail=[&] { session.close(); session.done=true; };
             auto ms=[](Clock::time_point time) { return std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()).count(); };
             auto start=ms(session.started), deadline=ms(session.started+std::chrono::seconds(10));
@@ -102,13 +102,13 @@ namespace nexus::proxy {
             // This bounds the handshake's accounted buffers; it is not a
             // complete per-connection memory limit.
             auto budget=std::make_shared<memory::Budget>(8u*1024*1024);
-            auto handshake=profile->tls_handshake(start,deadline,budget);
+            auto handshake=profile.tls_handshake(start,deadline,budget);
             if (!handshake) { fail(); co_return; }
             auto established=co_await tls::detail::server_handshake(session.client,*handshake);
             if (!established || session.closed) { fail(); co_return; }
             Connection connection(session.client,std::move(established->records),std::move(established->unread));
             if (!established->release_unread_reservation()) { fail(); co_return; }
-            auto state=profile->vless_handshake(); if (!state) { fail(); co_return; }
+            auto state=profile.vless_handshake(); if (!state) { fail(); co_return; }
             Incoming incoming(connection,std::move(*state));
             auto request=co_await incoming.read_request();
             if (!request || session.closed) { fail(); co_return; }
@@ -142,7 +142,7 @@ namespace nexus::proxy {
         if (!profile) return std::unexpected(profile.error());
         auto shared=std::make_shared<vless::ServerProfile const>(std::move(*profile));
         return InboundFactory([shared](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
-            return serve(session,context,policy,shared);
+            return serve(session,context,policy,*shared);
         });
     }
 }

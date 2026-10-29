@@ -19,7 +19,11 @@ auto main(int argc, char** argv) -> int {
     if (!failure || failure->kind!=nexus::proxy::FailureKind::accept ||
         (failure->system_error!=std::errc::io_error && (!race || failure->system_error!=std::errc::no_space_on_device)) ||
         nexus::proxy::describe(failure->kind)!="accept failed") return 8;
+    auto before_stop=server.prepare_vless_inbound("","",{});
+    if (before_stop || before_stop.error()!="server is running") return 11;
     server.stop();
+    auto after_stop=server.prepare_vless_inbound("","",{});
+    if (after_stop || after_stop.error()=="server is running") return 12;
     if (!server.failure() || server.failure()->system_error!=failure->system_error || server.failure()->kind!=failure->kind) return 9;
     if (count("/proc/self/fd")!=fds || count("/proc/self/task")!=threads) return 3;
     auto again=server.start(*port,nexus::proxy::Inbound::socks5,workers);
