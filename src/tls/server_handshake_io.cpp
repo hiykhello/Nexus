@@ -130,8 +130,10 @@ namespace nexus::tls {
                 first_hello_reservation_=std::move(encoded_local);
                 auto size=retry_hello_.size();
                 if (budget_) { hello_reservation_=memory::Budget::reserve(budget_,size+5); if (!hello_reservation_) return fail(ServerHandshakeIoError::budget_exceeded); }
-                server_hello_={22,3,3,static_cast<std::uint8_t>(size>>8),static_cast<std::uint8_t>(size)};
-                server_hello_.insert(server_hello_.end(),retry_hello_.begin(),retry_hello_.end());
+                server_hello_.resize(size+5);
+                server_hello_[0]=22; server_hello_[1]=3; server_hello_[2]=3;
+                server_hello_[3]=static_cast<std::uint8_t>(size>>8); server_hello_[4]=static_cast<std::uint8_t>(size);
+                std::ranges::copy(retry_hello_,server_hello_.begin()+5);
                 hello_.reset(); hello_input_reservation_.reset(); state_=State::retry_output; return ServerHandshakeIoFeed{consumed};
             }
             if (!keys) return fail(ServerHandshakeIoError::protocol_error);
@@ -161,8 +163,10 @@ namespace nexus::tls {
                 finished_decoder_reservation_=memory::Budget::reserve(budget_,ServerFlight::finished_decoder_charge);
                 if (!finished_decoder_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
             }
-            server_hello_={22,3,3,static_cast<std::uint8_t>(hello.size()>>8),static_cast<std::uint8_t>(hello.size())};
-            server_hello_.insert(server_hello_.end(),hello.begin(),hello.end());
+            server_hello_.resize(hello.size()+5);
+            server_hello_[0]=22; server_hello_[1]=3; server_hello_[2]=3;
+            server_hello_[3]=static_cast<std::uint8_t>(hello.size()>>8); server_hello_[4]=static_cast<std::uint8_t>(hello.size());
+            std::ranges::copy(hello,server_hello_.begin()+5);
             auto flight=ServerFlight::create(std::move(*keys),*credential_,required_alpn_); if (!flight) return fail(ServerHandshakeIoError::protocol_error);
             generated_hello_reservation.reset();
             flight_scratch.reset();

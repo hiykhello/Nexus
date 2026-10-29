@@ -11,12 +11,16 @@ static bool hello_released=false, flight_released=false;
 static nexus::memory::Budget* seal_budget=nullptr;
 static std::size_t seal_expected=0;
 static bool inner_charged=false, ciphertext_charged=false;
+static bool capture_allocations=false;
+static std::pair<void*,std::size_t> captured[512];
+static std::size_t captured_count=0;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
     if (auto p=std::malloc(size ? size : 1)) {
         if (seal_budget && size==16385) inner_charged=seal_budget->reserved()>=seal_expected;
         if (seal_budget && size==16401) ciphertext_charged=seal_budget->reserved()>=seal_expected;
+        if (capture_allocations && captured_count<std::size(captured)) captured[captured_count++]={p,size};
         return p;
     }
     throw std::bad_alloc{};
@@ -28,6 +32,11 @@ void operator delete(void* p) noexcept {
 }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
 namespace t=nexus::tls; namespace c=nexus::crypto;
+auto exact_output_allocation(std::span<std::uint8_t const> output) -> bool {
+    return std::ranges::any_of(std::span{captured}.first(captured_count),[&](auto const& entry) {
+        return entry.first==output.data() && entry.second==output.size();
+    });
+}
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 int main(int argc,char** argv) {
     if (argc<3 || argc>5) return 1; auto cert=read_file(argv[1]), priv=read_file(argv[2]);
@@ -139,9 +148,11 @@ int main(int argc,char** argv) {
         auto bounded_budget=std::make_shared<nexus::memory::Budget>(limit);
         auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
         if (!candidate) return 92;
+        if (enough) { captured_count=0; capture_allocations=true; }
         if (argc==5 && enough) { seal_budget=bounded_budget.get(); seal_expected=limit; inner_charged=ciphertext_charged=false; }
         auto result=candidate->feed(input,2);
-        seal_budget=nullptr;
+        seal_budget=nullptr; capture_allocations=false;
+        if (enough && (!result || !exact_output_allocation(candidate->pending_output()))) return 111;
         if (argc==5 && enough && (!inner_charged || !ciphertext_charged)) return 110;
         if (!enough) {
             if (result || result.error()!=t::ServerHandshakeIoError::budget_exceeded || bounded_budget->reserved()) return 93;
@@ -258,7 +269,10 @@ int main(int argc,char** argv) {
     for (int scenario=0;scenario<8;++scenario) {
         auto retry_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
         auto retained=credential(); auto retrying=t::ServerHandshakeIo::create(std::move(*retained),1,50,"h2",t::ServerCredential::max_certificate_list_size,retry_budget); if (!retrying) return 36;
+        if (scenario==0) { captured_count=0; capture_allocations=true; }
         for (auto byte:first_record) { auto result=retrying->feed(std::span{&byte,1},2); if (!result || result->consumed!=1) return 37; }
+        capture_allocations=false;
+        if (scenario==0 && !exact_output_allocation(retrying->pending_output())) return 112;
         if (retrying->pending_output().size()<5) return 38;
         auto retained_charge=initial_wire->size()+retrying->pending_output().size()-5;
         if (retry_budget->reserved()!=retrying->pending_output().size()+retained_charge || retrying->feed(first_record,2)->consumed!=0) return 38;
