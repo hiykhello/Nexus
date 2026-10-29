@@ -28,6 +28,7 @@ xmake run nexus-dns-udp-test
 xmake build nexus-dns-tcp-test
 uv run --no-project python tests/dns_tcp.py build/linux/x86_64/debug/nexus-dns-tcp-test
 xmake build nexus-test-slow-resolver
+python tests/socks_udp_system_dns_stop.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-test-slow-resolver.so
 xmake build nexus-resolver-threads-test
 uv run --no-project python tests/resolver_threads.py build/linux/x86_64/debug/nexus-resolver-threads-test build/linux/x86_64/debug/libnexus-test-slow-resolver.so
 xmake build nexus-proxy-start-fault
