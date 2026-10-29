@@ -177,6 +177,17 @@ int main() {
     if (!reordered || !reordered->input(ack) || !reordered->enqueue(data) || !reordered->sent(2, 1)) return 1;
     ack.acknowledgement = 1;
     if (!reordered->input(ack, 2)) return 1;
+    auto reduced=ack; reduced.window=0;
+    if (!reordered->input(reduced, 2)) return 1;
+    // A stale ACK outside the largest advertised window must not inject data
+    // or FIN. The inclusive boundary is still accepted across sequence wrap.
+    auto forged_old=ack; forged_old.acknowledgement=0xfffffffcu; forged_old.flags=0x19; forged_old.payload=data;
+    if (reordered->input(forged_old, 2).error()!=t::ConnectionError::invalid_ack ||
+        reordered->ack().acknowledgement!=0xffffffff || reordered->state()!=t::ConnectionState::established ||
+        reordered->read(out)!=0) return 1;
+    auto edge=ack; edge.acknowledgement=0xfffffffdu;
+    if (!reordered->input(edge, 2)) return 1;
+    if (!reordered->input(ack, 2)) return 1;
     ack.acknowledgement = 0xffffffff; ack.window = 0; ack.flags = 0x18; ack.payload = data;
     if (!reordered->input(ack, 3) || reordered->ack().acknowledgement != 1 ||
         reordered->read(out) != 2 || out != std::array<std::uint8_t, 2>{'a', 'b'} ||

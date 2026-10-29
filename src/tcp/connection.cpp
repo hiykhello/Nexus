@@ -22,7 +22,9 @@ namespace nexus::tcp {
         if (!receive) return std::unexpected(ConnectionError::invalid_capacity);
         auto send = TimedSend::create(handshake->send_next(), capacity);
         if (!send) return std::unexpected(ConnectionError::invalid_capacity);
-        return PassiveConnection(std::move(*handshake), std::move(*receive), std::move(*send), now);
+        auto connection=PassiveConnection(std::move(*handshake), std::move(*receive), std::move(*send), now);
+        connection.max_peer_window_=syn.window;
+        return connection;
     }
     auto PassiveConnection::syn_ack() const -> packet::Tcp4View {
         return handshake_.syn_ack(static_cast<std::uint16_t>(receive_.window()));
@@ -73,6 +75,7 @@ namespace nexus::tcp {
                 : result.error() == HandshakeError::invalid_sequence ? ConnectionError::unacceptable : ConnectionError::invalid_packet);
             if (!*result) return false;
             timer_.stop(); state_ = ConnectionState::established; peer_window_ = segment.window;
+            max_peer_window_ = std::max(max_peer_window_, segment.window);
             window_sequence_ = segment.sequence; window_ack_ = segment.acknowledgement;
             (void)send_.due(now, 0);
         } else {
@@ -96,6 +99,10 @@ namespace nexus::tcp {
             auto ack_before = [](std::uint32_t a, std::uint32_t b) {
                 return a != b && static_cast<std::uint32_t>(b - a) < 0x80000000u;
             };
+            auto una = fin_acked_ ? fin_sequence_ + 1 : send_.una();
+            if (ack_before(segment.acknowledgement, una) &&
+                static_cast<std::uint32_t>(una - segment.acknowledgement) > max_peer_window_)
+                return std::unexpected(ConnectionError::invalid_ack);
             auto stale_ack = ack_before(segment.acknowledgement, send_.una());
             if (!stale_ack && fin_sent_ && segment.acknowledgement == fin_sequence_ + 1) {
                 fin_time_ = now; fin_acked_ = true;
@@ -108,6 +115,7 @@ namespace nexus::tcp {
             auto same_sequence = window_sequence_ == segment.sequence;
             if (!stale_ack && (newer_sequence || (same_sequence && !ack_before(segment.acknowledgement, window_ack_)))) {
                 peer_window_ = segment.window;
+                max_peer_window_ = std::max(max_peer_window_, segment.window);
                 window_sequence_ = segment.sequence; window_ack_ = segment.acknowledgement;
                 if (peer_window_) { probe_deadline_.reset(); probe_rto_ = 1000; }
             }

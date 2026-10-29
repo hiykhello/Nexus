@@ -15,7 +15,7 @@ export namespace nexus::tcp {
         ReceiveBuffer receive_;
         TimedSend send_;
         mutable std::uint64_t now_;
-        std::uint16_t peer_window_ = 0;
+        std::uint16_t peer_window_ = 0, max_peer_window_ = 0;
         std::uint32_t window_sequence_ = 0, window_ack_ = 0;
         bool close_requested_ = false, fin_sent_ = false, fin_acked_ = false;
         bool active_close_ = false, retired_ = false;
