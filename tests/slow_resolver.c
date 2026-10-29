@@ -39,6 +39,15 @@ int getaddrinfo(char const* node, char const* service,
     }
     pthread_once(&init_once, init_resolver);
     if (!next_resolver) return EAI_SYSTEM;
+    if (node && strcmp(node, "nexus-scoped.test") == 0) {
+        struct addrinfo numeric_hints = {0};
+        numeric_hints.ai_family = AF_INET6;
+        numeric_hints.ai_socktype = SOCK_STREAM;
+        numeric_hints.ai_flags = AI_NUMERICHOST;
+        int error = next_resolver("::1", service, &numeric_hints, result);
+        if (!error) ((struct sockaddr_in6*)(*result)->ai_addr)->sin6_scope_id = 1;
+        return error;
+    }
     if (node && (strcmp(node, "nexus-64.test") == 0 || strcmp(node, "nexus-65.test") == 0)) {
         struct addrinfo numeric_hints = {0};
         numeric_hints.ai_family = AF_INET;

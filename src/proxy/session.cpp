@@ -224,6 +224,7 @@ namespace nexus::proxy {
                     if (session.closed) break;
                     if (endpoints && !resolution.canceled) {
                         for (auto const& endpoint:*endpoints) {
+                            if (endpoint.address().is_v6() && endpoint.address().to_v6().scope_id()!=0) continue;
                             socks5::UdpPeer candidate{endpoint.address().is_v4() ? std::uint8_t{1} : std::uint8_t{4},{},endpoint.port()};
                             if (candidate.address_type==1) {
                                 auto bytes=endpoint.address().to_v4().to_bytes(); std::ranges::copy(bytes,candidate.address.begin());
