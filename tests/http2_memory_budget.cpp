@@ -284,11 +284,26 @@ int main() {
     if (!(**terminal).receive(zero_window) || !(**terminal).receive(request) || !(**terminal).respond_body(1,200,body)) return 132;
     auto unfinished_other=unfinished; unfinished_other[8]=std::byte{3};
     if (!(**terminal).receive(unfinished_other) || !(**terminal).receive(ping)) return 133;
-    for (;;) { auto n=(**terminal).output(sink); if (!n) return 134; if (!*n) break; }
-    // nghttp2 may still retain provider pointers after emitting GOAWAY.
-    // The response and its charge remain until session destruction.
-    if ((**terminal).response_memory_used()!=body.size() || !(**terminal).stream_memory_charge() ||
-        terminal_budget->used() < body.size()) return 135;
+    std::vector<std::byte> terminal_wire; std::size_t released_at=0;
+    for (;;) {
+        auto n=(**terminal).output(std::span{sink}.first(1)); if (!n) return 134; if (!*n) break;
+        terminal_wire.push_back(sink[0]);
+        if (!released_at && (**terminal).response_memory_used()==0) released_at=terminal_wire.size();
+    }
+    bool released_after_goaway=false;
+    for (std::size_t offset=0; offset+9<=terminal_wire.size();) {
+        auto byte=[&](std::size_t i) { return std::to_integer<unsigned>(terminal_wire[offset+i]); };
+        auto length=(byte(0)<<16)|(byte(1)<<8)|byte(2);
+        if (length>terminal_wire.size()-offset-9) return 137;
+        auto type=byte(3);
+        offset+=9+length;
+        if (type==7 && offset==released_at) released_after_goaway=true;
+    }
+    if (!released_after_goaway) return 138;
+    // The library is destroyed before its borrowed providers, without waiting
+    // for destruction of the enclosing ServerSession.
+    if ((**terminal).response_memory_used()!=0 || (**terminal).stream_memory_charge()!=0 ||
+        terminal_budget->used()!=0 || (**terminal).receive({}) || (**terminal).respond_empty(1,204)) return 135;
     terminal->reset();
     if (terminal_budget->used()!=0) return 136;
     auto mixed_available=limits.shared_memory_bytes-(**mixed).shared_memory_used();
