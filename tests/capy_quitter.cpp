@@ -3,6 +3,7 @@
 #include <boost/capy/quitter.hpp>
 #include <boost/capy/when_all.hpp>
 #include <boost/corosio/backend.hpp>
+#include <boost/corosio/delay.hpp>
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/local_connect_pair.hpp>
 #include <boost/corosio/local_stream_socket.hpp>
@@ -238,6 +239,49 @@ auto value_test(bool use_uring) -> bool {
     return passed && context.stopped();
 }
 
+struct HandlerLifetimeState {
+    bool entered=false, destroyed=false, error_called=false, error_saw_owner=false;
+};
+struct HandlerOwner {
+    HandlerLifetimeState& state;
+    ~HandlerOwner() { state.destroyed=true; }
+};
+auto handler_lifetime_task(std::unique_ptr<HandlerOwner> owner, io::io_context& context, bool abandon)
+    -> capy::task<> {
+    owner->state.entered=true;
+    if (!abandon) {
+        (void)co_await io::delay(1ms);
+        throw std::runtime_error("injected task failure");
+    }
+    io::local_stream_socket first(context), second(context);
+    if (io::connect_pair(first,second)) throw std::runtime_error("socket pair");
+    std::array<char,1> buffer{};
+    (void)co_await first.read_some(capy::mutable_buffer(buffer.data(),buffer.size()));
+}
+auto handler_lifetime_test(bool use_uring, bool abandon) -> bool {
+    HandlerLifetimeState state;
+    {
+#if BOOST_COROSIO_HAVE_LIBURING
+        io::io_context context = use_uring ? io::io_context(io::uring) : io::io_context(io::epoll);
+#else
+        (void)use_uring;
+        io::io_context context(io::epoll);
+#endif
+        auto owner=std::make_unique<HandlerOwner>(state);
+        auto* borrowed=owner.get();
+        capy::run_async(context.get_executor(), [] {}, [borrowed,&state](std::exception_ptr error) noexcept {
+            state.error_called=true;
+            state.error_saw_owner=error && !state.destroyed && &borrowed->state==&state;
+        })(handler_lifetime_task(std::move(owner),context,abandon));
+        context.restart();
+        (void)context.run_for(30ms);
+        if (!state.entered) return false;
+        if (abandon && (state.destroyed || state.error_called)) return false;
+        if (!abandon && (!state.destroyed || !state.error_called || !state.error_saw_owner)) return false;
+    }
+    return state.destroyed && (abandon ? !state.error_called : state.error_saw_owner);
+}
+
 auto main() -> int {
     if (!test(false)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
@@ -255,9 +299,11 @@ auto main() -> int {
 #endif
     if (!abandon_test(false, false) || !abandon_test(false, true)) return 7;
     if (!value_test(false)) return 9;
+    if (!handler_lifetime_test(false,false) || !handler_lifetime_test(false,true)) return 11;
 #if BOOST_COROSIO_HAVE_LIBURING
     if (!abandon_test(true, false) || !abandon_test(true, true)) return 8;
     if (!value_test(true)) return 10;
+    if (!handler_lifetime_test(true,false) || !handler_lifetime_test(true,true)) return 12;
 #endif
     std::println("Capy quitter owner unwind passed");
 }

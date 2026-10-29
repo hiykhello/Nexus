@@ -78,11 +78,11 @@ namespace nexus::proxy {
         auto close() noexcept -> void;
     };
 
-    // Detached task failures close the connection; other in-flight directions
-    // retain shared ownership until their cancellation completes.
-    inline auto session_error(std::shared_ptr<Session> session) {
-        return [session=std::move(session)](std::exception_ptr) noexcept {
-            session->close(); session->done=true;
+    // The root task owns the session. Capy's trampoline invokes this handler
+    // before destroying that task's frame; abandonment invokes no handler.
+    inline auto session_error(Session& session) {
+        return [&session](std::exception_ptr) noexcept {
+            session.close(); session.done=true;
         };
     }
 

@@ -90,17 +90,17 @@ namespace nexus::proxy {
             sessions.push_back(session);
 #ifdef NEXUS_ENABLE_VLESS
             if (inbound_type==Inbound::vless) {
-                capy::run_async(context.get_executor(), [] {}, session_error(session))(vless_inbound(session,context,policy));
+                capy::run_async(context.get_executor(), [] {}, session_error(*session))(vless_inbound(session,context,policy));
                 continue;
             }
 #endif
 #ifdef NEXUS_ENABLE_SS2022
             if (inbound_type==Inbound::shadowsocks) {
-                capy::run_async(context.get_executor(), [] {}, session_error(session))(shadowsocks_inbound(session,context,policy));
+                capy::run_async(context.get_executor(), [] {}, session_error(*session))(shadowsocks_inbound(session,context,policy));
                 continue;
             }
 #endif
-            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(session))(handshake(session, context, policy, mixed, credentials));
+            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(handshake(session, context, policy, mixed, credentials));
         }
         running = false;
     }
