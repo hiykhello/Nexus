@@ -244,6 +244,33 @@ int main() {
     auto accepted_after=(**malformed).receive(valid_after);
     if (!accepted_after || *accepted_after!=valid_after.size() || malformed_observed.headers!=1 ||
         !(**malformed).respond_empty(3,204)) return 123;
+    // HEADERS without END_HEADERS must be followed by CONTINUATION. A PING
+    // here terminates the connection; its partial header must be discarded.
+    Observed interleaved_observed;
+    nh::ServerEvents interleaved_events{&interleaved_observed,on_headers,on_data,on_end,on_closed};
+    auto interleaved=nh::ServerSession::create(limits,interleaved_events);
+    if (!interleaved) return 124;
+    if (!(**interleaved).receive(std::as_bytes(std::span{preface})) || !(**interleaved).receive(settings)) return 125;
+    constexpr std::array<std::byte,10> unfinished{std::byte{0},std::byte{0},std::byte{1},std::byte{1},
+        std::byte{0},std::byte{0},std::byte{0},std::byte{0},std::byte{1},std::byte{0x82}};
+    if (!(**interleaved).receive(unfinished) || !(**interleaved).header_memory_charge()) return 126;
+    auto violation=(**interleaved).receive(ping);
+    if (!violation) return 127;
+    std::vector<std::byte> shutdown_wire;
+    for (;;) {
+        auto n=(**interleaved).output(sink); if (!n) return 128; if (!*n) break;
+        shutdown_wire.insert(shutdown_wire.end(),sink.begin(),sink.begin()+*n);
+    }
+    bool protocol_goaway=false;
+    for (std::size_t offset=0; offset+9<=shutdown_wire.size();) {
+        auto byte=[&](std::size_t i) { return std::to_integer<unsigned>(shutdown_wire[offset+i]); };
+        auto length=(byte(0)<<16)|(byte(1)<<8)|byte(2);
+        if (length>shutdown_wire.size()-offset-9) return 130;
+        if (byte(3)==7 && length>=8 && byte(13)==0 && byte(14)==0 && byte(15)==0 && byte(16)==1)
+            protocol_goaway=true;
+        offset+=9+length;
+    }
+    if (!protocol_goaway || (**interleaved).header_memory_charge()!=0) return 129;
     auto mixed_available=limits.shared_memory_bytes-(**mixed).shared_memory_used();
     std::vector<std::byte> competing_body(mixed_available+1);
     if (competing_body.size()>limits.shared_memory_bytes-(**mixed).library_memory_used()) return 112;

@@ -543,7 +543,10 @@ export namespace nexus::http2 {
             auto count = std::min(destination.size(), output_left_);
             if (count) { std::memcpy(destination.data(), output_, count); output_ += count; output_left_ -= count; }
             active_ = false;
-            if (failed_) headers_.discard();
+            // Once nghttp2 wants neither input nor output, the connection
+            // cannot complete an unfinished header block.
+            if (failed_ || (!h2::nghttp2_session_want_read(session_) && !h2::nghttp2_session_want_write(session_)))
+                headers_.discard();
             return count;
         }
     };
