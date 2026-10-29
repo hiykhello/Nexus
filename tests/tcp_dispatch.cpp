@@ -53,6 +53,10 @@ int main() {
     auto synack6=p::parse_tcp6(*opened6->reply);
     if (!synack6 || synack6->source!=syn6.destination || synack6->destination!=syn6.source ||
         synack6->sequence!=50 || synack6->acknowledgement!=100 || synack6->flags!=0x12) return 1;
+    auto mss6=p::parse_tcp_syn_options(synack6->options);
+    if (!mss6 || mss6->mss!=1440) return 1;
+    auto repeat6=t::dispatch(*table6,*raw6,99,0);
+    if (!repeat6 || repeat6->reply!=opened6->reply) return 1;
     auto ack6=syn6; ack6.flags=0x10; ack6.sequence=100; ack6.acknowledgement=51;
     auto invalid_ack6=ack6; invalid_ack6.acknowledgement=52;
     raw6=p::make_tcp6(invalid_ack6); auto invalid6=t::dispatch(*table6,*raw6,0,1);
@@ -72,6 +76,13 @@ int main() {
     auto suppressed6=t::dispatch(*table6,*raw6,0,3);
     if (!challenge6 || !challenge6->reply || !suppressed6 || suppressed6->reply || !suppressed6->challenge_suppressed) return 1;
     if (!challenge_limit()) return 1;
+    auto tiny6=t::ConnectionTable6::create(1,8);
+    raw6=p::make_tcp6(syn6);
+    auto fail6=t::dispatch(*tiny6,*raw6,50,0,63);
+    if (fail6 || tiny6->size() || fail6.error().error!=t::DispatchError::output_error) return 1;
+    auto small6=t::dispatch(*tiny6,*raw6,50,0,1280);
+    auto parsed_small6=small6 && small6->reply ? p::parse_tcp6(*small6->reply) : std::expected<p::Tcp6View,p::PacketError>{std::unexpected(p::PacketError::truncated)};
+    if (!parsed_small6 || p::parse_tcp_syn_options(parsed_small6->options)->mss!=1220) return 1;
     auto table = t::ConnectionTable::create(1, 8);
     if (!table) return 1;
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
@@ -85,6 +96,8 @@ int main() {
     if (!first || !first->opened || !first->reply || table->size() != 1) return 1;
     auto synack = p::parse_tcp4(*first->reply);
     if (!synack || synack->flags != 0x12 || synack->sequence != 50 || synack->acknowledgement != 100) return 1;
+    auto mss=p::parse_tcp_syn_options(synack->options);
+    if (!mss || mss->mss!=1460) return 1;
     auto duplicate = t::dispatch(*table, *raw, 999, 1);
     if (!duplicate || duplicate->id != first->id || duplicate->opened || duplicate->reply != first->reply) return 1;
     auto other = syn; other.source_port++;

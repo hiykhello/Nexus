@@ -3,6 +3,20 @@ import nexus.tcp.engine;
 namespace p = nexus::packet;
 namespace t = nexus::tcp;
 int main() {
+    {
+        p::MemoryLink link6;
+        auto table6=t::ConnectionTable6::create(1,8);
+        p::Tcp6View syn6{.source={0x20,1,0xdb,8,0,0,0,0,0,0,0,0,0,0,0,1},
+                         .destination={0x20,1,0xdb,8,0,0,0,0,0,0,0,0,0,0,0,2},
+                         .source_port=1234,.destination_port=80,.sequence=99,.flags=2};
+        auto id6=table6->open(syn6,50,0);
+        t::MemoryEngine6 engine6(link6,*table6,1280);
+        auto retransmit6=engine6.service(1000);
+        auto packet6=link6.receive(p::Side::first);
+        if (!id6 || !retransmit6 || retransmit6->action!=t::ServiceAction::syn_ack || !packet6 || !*packet6) return 1;
+        auto view6=p::parse_tcp6(**packet6);
+        if (!view6 || p::parse_tcp_syn_options(view6->options)->mss!=1220) return 1;
+    }
     p::MemoryLink link({1500, 1, 1500});
     auto table = t::ConnectionTable::create(2, 8);
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
@@ -29,7 +43,8 @@ int main() {
     if (!retry_syn || retry_syn->id != *first || retry_syn->action != t::ServiceAction::syn_ack ||
         !retry_syn->output.delivered || !received || !*received) return 1;
     auto response = p::parse_tcp4(**received);
-    if (!response || response->flags != 0x12 || response->sequence != 50) return 1;
+    if (!response || response->flags != 0x12 || response->sequence != 50 ||
+        p::parse_tcp_syn_options(response->options)->mss!=1460) return 1;
     p::Tcp4View ack{.source=syn.source, .destination=syn.destination, .source_port=syn.source_port,
                     .destination_port=syn.destination_port, .sequence=100, .acknowledgement=51, .flags=0x10, .window=8};
     auto* f1 = table->get(*first); auto* f2 = table->get(*second);

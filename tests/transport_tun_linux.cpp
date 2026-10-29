@@ -9,6 +9,9 @@ int main() {
     auto rejected=tr::LinuxTunDirect::create(std::move(*tun),nexus::rules::Matcher{},invalid);
     if (rejected || !std::holds_alternative<tr::TunDriverError>(rejected.error()) ||
         std::get<tr::TunDriverError>(rejected.error())!=tr::TunDriverError::invalid_limits || tun->native_handle()<0) return 2;
+    invalid={}; invalid.mtu=64;
+    rejected=tr::LinuxTunDirect::create(std::move(*tun),nexus::rules::Matcher{},invalid);
+    if (rejected || !std::holds_alternative<tr::TunDriverError>(rejected.error()) || tun->native_handle()<0) return 2;
     invalid={}; invalid.tcp_buffer=0;
     rejected=tr::LinuxTunDirect::create(std::move(*tun),nexus::rules::Matcher{},invalid);
     if (rejected || !std::holds_alternative<nexus::tcp::TableError>(rejected.error()) || tun->native_handle()<0) return 3;

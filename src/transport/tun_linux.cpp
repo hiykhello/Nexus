@@ -15,7 +15,7 @@ namespace nexus::transport {
         auto usable=[&](packet::DeviceLimits const& value) {
             return value.packet_bytes>=limits.mtu && value.queue_bytes>=limits.mtu && value.queue_packets>0;
         };
-        if (limits.mtu<48 || limits.mtu>65535 || !limits.tcp_direct || !limits.udp.flows ||
+        if (limits.mtu<65 || limits.mtu>65535 || !limits.tcp_direct || !limits.udp.flows ||
             !limits.udp.peers_per_flow || !limits.udp.idle_ms || !usable(limits.external) || !usable(limits.internal))
             return std::unexpected(TunDriverFailure{TunDriverError::invalid_limits});
         auto table=tcp::ConnectionTable::create(limits.tcp_flows,limits.tcp_buffer,limits.challenge_ack);
