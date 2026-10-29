@@ -8,8 +8,9 @@ import threading
 
 binary = str(pathlib.Path(sys.argv[1]).resolve())
 if len(sys.argv) == 2:
-    subprocess.run(['unshare', '-Urn', sys.executable, __file__, binary, 'outer',
-                    str(os.stat('/proc/self/ns/net').st_ino)], check=True, timeout=40)
+    for link_mtu in (1280, 1500):
+        subprocess.run(['unshare', '-Urn', sys.executable, __file__, binary, 'outer',
+                        str(os.stat('/proc/self/ns/net').st_ino), str(link_mtu)], check=True, timeout=40)
 elif sys.argv[2] == 'outer':
     if os.stat('/proc/self/ns/net').st_ino == int(sys.argv[3]):
         raise RuntimeError('outer namespace was not isolated')
@@ -64,8 +65,8 @@ elif sys.argv[2] == 'outer':
                     part = peer.recv(64)
                     if not part: break
                     data.extend(part)
-                if data != b'hello6': raise RuntimeError(f'unexpected IPv6 TCP request {data!r}')
-                peer.sendall(b'world6'); peer.shutdown(socket.SHUT_WR)
+                if data != b'hello6' * 1024: raise RuntimeError(f'unexpected IPv6 TCP request {data!r}')
+                peer.sendall(b'world6' * 1024); peer.shutdown(socket.SHUT_WR)
         except Exception as exc: errors.append(exc)
     def udp_upstream():
         try:
@@ -88,7 +89,7 @@ elif sys.argv[2] == 'outer':
         subprocess.run(['unshare', '-n', sys.executable, __file__, binary, 'inner',
                         str(os.stat('/proc/self/ns/net').st_ino), str(ns_fd),
                         str(origin.getsockname()[1]), str(udp_origin.getsockname()[1]), str(udp6_origin.getsockname()[1]),
-                        str(origin6.getsockname()[1])],
+                        str(origin6.getsockname()[1]), sys.argv[4]],
                        pass_fds=(ns_fd,), check=True, timeout=25)
         for thread in threads: thread.join(timeout=12)
         if any(thread.is_alive() for thread in threads) or errors: raise RuntimeError(f'upstream errors: {errors}')
@@ -98,7 +99,7 @@ else:
     if sys.argv[2] != 'inner' or os.stat('/proc/self/ns/net').st_ino == int(sys.argv[3]):
         raise RuntimeError('inner namespace was not isolated')
     ns_fd = int(sys.argv[4])
-    proc = subprocess.Popen([binary, str(ns_fd), '42'], pass_fds=(ns_fd,), stdin=subprocess.PIPE,
+    proc = subprocess.Popen([binary, str(ns_fd), '42', '1280'], pass_fds=(ns_fd,), stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         if proc.stdout.readline().strip() != 'ready':
@@ -106,7 +107,7 @@ else:
         for command in (
             ['ip', 'addr', 'add', '10.77.0.1/24', 'dev', 'nx-owned'],
             ['ip', '-6', 'addr', 'add', 'fd77::1/64', 'dev', 'nx-owned', 'nodad'],
-            ['ip', 'link', 'set', 'nx-owned', 'up'],
+            ['ip', 'link', 'set', 'nx-owned', 'mtu', sys.argv[9], 'up'],
         ):
             subprocess.run(command, check=True)
         proc.stdin.write('G'); proc.stdin.flush()
@@ -162,19 +163,33 @@ else:
             client6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_HOPOPTS, bytes([0, 0, 1, 4, 0, 0, 0, 0]))
             client6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_DSTOPTS, bytes([0, 0, 0x1e, 2, 0xaa, 0xbb, 1, 0]))
             client6.connect(('fd77::2', int(sys.argv[8])))
+            negotiated_mss = client6.getsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG)
+            if not 0 < negotiated_mss <= 1220:
+                raise RuntimeError(f'IPv6 TCP MSS exceeds advertised limit: {negotiated_mss}')
             while True:
                 packet = capture6.recv(65535)
                 if len(packet) >= 76 and packet[0] >> 4 == 6 and packet[6] == 0 and packet[40] == 60 and packet[48] == 6 and packet[69] & 2:
                     if packet[42:48] != bytes([1, 4, 0, 0, 0, 0]) or packet[50:56] != bytes([0x1e, 2, 0xaa, 0xbb, 1, 0]):
                         raise RuntimeError('IPv6 TCP extension options missing from SYN')
                     break
-            client6.sendall(b'hello6'); client6.shutdown(socket.SHUT_WR)
+            client6.sendall(b'hello6' * 1024); client6.shutdown(socket.SHUT_WR)
             response = bytearray()
             while True:
                 part = client6.recv(64)
                 if not part: break
                 response.extend(part)
-            if response != b'world6': raise RuntimeError(f'unexpected IPv6 TCP response {response!r}')
+            if response != b'world6' * 1024: raise RuntimeError(f'unexpected IPv6 TCP response of {len(response)} bytes')
+            capture6.setblocking(False)
+            segments = 0
+            while True:
+                try: packet = capture6.recv(65535)
+                except BlockingIOError: break
+                if len(packet) >= 76 and packet[0] >> 4 == 6 and packet[6] == 0 and packet[40] == 60 and packet[48] == 6:
+                    tcp_header = (packet[68] >> 4) * 4
+                    if len(packet) > 56 + tcp_header:
+                        if len(packet) > 1280: raise RuntimeError(f'oversize IPv6 TCP packet: {len(packet)}')
+                        segments += 1
+            if segments < 2: raise RuntimeError(f'expected segmented IPv6 request, saw {segments} packets')
         proc.stdin.write('X'); proc.stdin.flush()
         out, err = proc.communicate(timeout=5)
         if proc.returncode: raise RuntimeError(f'driver failed: {proc.returncode} {out} {err}')
