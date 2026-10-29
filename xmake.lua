@@ -419,7 +419,7 @@ if is_plat("linux") then
     target("nexus-tcp-direct")
         set_kind("static")
         add_files("src/tcp/direct.cppm", {public = true})
-        add_files("src/tcp/direct.cpp")
+        add_files("src/tcp/direct.cpp", "src/tcp/direct6.cpp")
         add_deps("nexus-tcp-engine")
 
     target("nexus-tcp-kernel-tun-test")
@@ -450,6 +450,12 @@ if is_plat("linux") then
         set_kind("binary")
         set_default(false)
         add_files("tests/tcp_direct.cpp")
+        add_deps("nexus-tcp-direct")
+
+    target("nexus-tcp-direct6-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/tcp_direct6.cpp")
         add_deps("nexus-tcp-direct")
 
     target("nexus-tcp-direct-packets-test")
