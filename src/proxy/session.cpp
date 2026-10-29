@@ -204,7 +204,7 @@ namespace nexus::proxy {
                         if (!busy) break;
                     }
                     if (session.closed) break;
-                    auto [error]=co_await io::delay(busy ? 0ms : 5ms);
+                    auto [error]=co_await io::delay(busy ? 1ms : 5ms);
                     if (error) { session.close(); break; }
                 }
                 ingress.close();

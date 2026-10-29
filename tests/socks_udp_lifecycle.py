@@ -5,6 +5,7 @@ import pathlib
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 
@@ -94,9 +95,33 @@ try:
             raise RuntimeError('remaining association changed upstream socket')
         third = associate(stack, port)
         third_source = exchange(third, upstream, b'third')
-        proc.terminate()
-        if proc.wait(timeout=5) != 0:
-            raise RuntimeError(f'proxy did not stop cleanly: {proc.returncode}')
+        flood_target = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+        flood_target.bind(('127.0.0.1', 0))
+        destination = flood_target.getsockname()
+        flood_wire = (b'\x00\x00\x00\x01' + socket.inet_aton(destination[0]) +
+                      destination[1].to_bytes(2, 'big') + b'flood')
+        stop_flood, started = threading.Event(), threading.Event()
+        def flood():
+            for _ in range(1000):
+                third[1].sendto(flood_wire, third[2])
+            started.set()
+            while not stop_flood.is_set():
+                third[1].sendto(flood_wire, third[2])
+        sender = threading.Thread(target=flood)
+        sender.start()
+        try:
+            if not started.wait(3):
+                raise RuntimeError('flood did not start')
+            if exchange(second, upstream, b'under-load') != second_source:
+                raise RuntimeError('other association failed under load')
+            proc.terminate()
+            if proc.wait(timeout=5) != 0:
+                raise RuntimeError(f'proxy did not stop cleanly: {proc.returncode}')
+        finally:
+            stop_flood.set()
+            sender.join(timeout=3)
+            if sender.is_alive():
+                raise RuntimeError('flood sender did not stop')
         for control, _, _ in (second, third):
             if control.recv(1) != b'':
                 raise RuntimeError('control connection remained open after stop')
