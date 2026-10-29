@@ -70,12 +70,50 @@ static auto invalid_tests() -> bool {
     return true;
 }
 
+static auto udp_tests() -> bool {
+    using enum s::Status;
+    for (auto [type,length] : {std::pair{1,4}, std::pair{4,16}, std::pair{3,1}, std::pair{3,255}}) {
+        std::vector<std::uint8_t> wire{0,0,0,static_cast<std::uint8_t>(type)};
+        if (type==3) wire.push_back(static_cast<std::uint8_t>(length));
+        for (int i=0;i<length;++i) wire.push_back(static_cast<std::uint8_t>(i));
+        wire.push_back(0x12); wire.push_back(0x34);
+        auto header=wire.size();
+        for (std::size_t n=0;n<header;++n) {
+            auto partial=s::parse_udp_datagram(std::span(wire).first(n));
+            if (partial || partial.error()!=incomplete) return false;
+        }
+        auto empty=s::parse_udp_datagram(wire);
+        if (!empty || !empty->data.empty()) return false;
+        wire.insert(wire.end(),{0,1,255});
+        auto decoded=s::parse_udp_datagram(wire);
+        if (!decoded || decoded->address_type!=type || decoded->address_length!=length || decoded->port!=0x1234 ||
+            decoded->data.data()!=wire.data()+header || !std::ranges::equal(decoded->data,std::array<std::uint8_t,3>{0,1,255})) return false;
+        auto encoded=s::encode_udp_datagram(*decoded);
+        if (!encoded || *encoded!=wire) return false;
+    }
+    for (auto [wire,error] : std::vector<std::pair<std::vector<std::uint8_t>,s::Status>>{
+             {{1,0,0,1},invalid_reserved}, {{0,1,0,1},invalid_reserved},
+             {{0,0,1,1},unsupported_fragment}, {{0,0,0x80,1},unsupported_fragment},
+             {{0,0,0,2},unsupported_address}, {{0,0,0,3,0},invalid_address}}) {
+        auto parsed=s::parse_udp_datagram(wire);
+        if (parsed || parsed.error()!=error) return false;
+    }
+    s::UdpDatagram invalid;
+    if (s::encode_udp_datagram(invalid).error()!=unsupported_address) return false;
+    invalid.address_type=1; invalid.address_length=3;
+    if (s::encode_udp_datagram(invalid).error()!=invalid_address) return false;
+    invalid.address_type=4; invalid.address_length=15;
+    if (s::encode_udp_datagram(invalid).error()!=invalid_address) return false;
+    invalid.address_type=3; invalid.address_length=0;
+    return s::encode_udp_datagram(invalid).error()==invalid_address;
+}
+
 int main() {
     std::vector<std::uint8_t> ipv6(16);
     for (std::size_t n = 0; n < ipv6.size(); ++n) ipv6[n] = static_cast<std::uint8_t>(n);
     std::vector<std::uint8_t> longest_domain(255, 'x');
     if (!greeting_tests() || !request_frame(1, {127, 0, 0, 1}) ||
         !request_frame(4, ipv6) || !request_frame(3, {'e', 'x', 'a', 'm', 'p', 'l', 'e'}) ||
-        !request_frame(3, longest_domain) || !invalid_tests()) return 1;
-    std::cout << "SOCKS5 greeting and CONNECT request parsing passed\n";
+        !request_frame(3, longest_domain) || !invalid_tests() || !udp_tests()) return 1;
+    std::cout << "SOCKS5 greeting, CONNECT and UDP datagram codecs passed\n";
 }

@@ -26,6 +26,8 @@ Request 为 `VER=5, CMD, RSV=0, ATYP, DST.ADDR, DST.PORT`，端口大端。IPv4/
 
 ## UDP ASSOCIATE
 
+目前仅有独立数据报编解码：支持 IPv4、IPv6 和 1–255 字节域名、空数据，以及非零 FRAG 拒绝；解析结果的数据借用输入。编码调用方负责 UDP 大小限制。该编解码尚未接入会话，运行时仍以命令不支持拒绝 UDP ASSOCIATE。
+
 控制 TCP 连接拥有一个 association：授权用户、对端源 IP、可选客户端 UDP 地址/端口、relay socket、活动计时器和目标映射。请求的目的地址可为未知地址/端口；不将它当作被代理的目标。绑定可达的 UDP 地址及端口后，将实际 `BND.ADDR/BND.PORT` 回告客户端；多网卡与 NAT 下不能给远程客户端返回不可达的 wildcard 地址。控制 TCP 关闭时，association 必须结束并清理所有 UDP 映射；空闲超时可以提前释放，新的关联需重新握手。
 
 每个 UDP 数据报头为 `RSV=00 00, FRAG, ATYP, DST.ADDR, DST.PORT, DATA`；回包使用相同头格式，地址表示实际源端点。首版可不实现 SOCKS UDP 分片，但必须丢弃 `FRAG != 0`；若将来支持重组，需要实现序号、最后片标志、计时器和 RFC 要求，且对来源/关联/重组字节设上限，不能把多个片当独立数据报发送。UDP 数据要经独立路由/出站能力检查；不能把它当作 TCP 流或要求单个固定目标。
