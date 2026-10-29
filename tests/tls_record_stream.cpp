@@ -5,10 +5,12 @@ import nexus.tls.handshake;
 static thread_local int fail_after=-1;
 static bool watch_pending=false, pending_released=false;
 static void* watched_pending=nullptr;
+static bool count_allocations=false;
+static std::size_t allocation_count=0;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
     if (fail_after>0) --fail_after;
-    if (auto p=std::malloc(size ? size : 1)) { if (watch_pending && size>=8192) watched_pending=p; return p; }
+    if (auto p=std::malloc(size ? size : 1)) { if (watch_pending && size>=8192) watched_pending=p; if (count_allocations) ++allocation_count; return p; }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept { if (p && p==watched_pending) { watched_pending=nullptr; pending_released=true; } std::free(p); }
@@ -74,5 +76,15 @@ int main() {
         }
         if (!pending_released || watched_pending || candidate.pending_bytes()) return 25;
     }
+    c::Bytes max_record(16389,7); max_record[0]=22; max_record[1]=3; max_record[2]=3; max_record[3]=0x40; max_record[4]=0;
+    t::RecordStream bytewise; allocation_count=0; count_allocations=true;
+    bool complete=false;
+    for (auto const& byte:max_record) {
+        auto part=bytewise.feed(std::span{&byte,1},t::RecordFraming::plaintext);
+        if (!part || part->consumed!=1) { count_allocations=false; return 26; }
+        if (part->record) complete=part->record->bytes==max_record;
+    }
+    count_allocations=false;
+    if (!complete || allocation_count!=2 || !bytewise.finish()) return 27;
     std::cout << "TLS record stream fragmentation, epochs and handshake integration passed\n";
 }

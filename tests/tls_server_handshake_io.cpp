@@ -53,7 +53,7 @@ int main(int argc,char** argv) {
     auto body=hello.encode(); auto wire=t::HandshakeDecoder::encode(1,*body); if (!body || !wire) return 8;
     auto parsed_charge=body->size()+(body->size()/4)*sizeof(t::Extension);
     c::Bytes input{22,3,1,static_cast<std::uint8_t>(wire->size()>>8),static_cast<std::uint8_t>(wire->size())}; input.insert(input.end(),wire->begin(),wire->end());
-    if (t::ServerHandshakeIo::hello_reassembly_charge!=16389+65539+65535) return 100;
+    if (t::ServerHandshakeIo::hello_reassembly_charge!=16389+5+65539+4096+65535) return 100;
     auto old_limit_credential=credential();
     auto old_limit_budget=std::make_shared<nexus::memory::Budget>(16389+65539+t::ServerHandshakeIo::hello_encoded_charge);
     if (!old_limit_credential) return 101;

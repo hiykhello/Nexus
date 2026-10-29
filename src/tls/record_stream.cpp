@@ -18,7 +18,7 @@ namespace nexus::tls {
         if (mode_ && *mode_ != mode) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::invalid_state); }
         try {
         RecordFeed out;
-        if (!input.empty() && !mode_) mode_=mode;
+        if (!input.empty() && !mode_) { pending_.reserve(5); mode_=mode; }
         while (out.consumed<input.size()) {
             auto count=std::min(target_-pending_.size(),input.size()-out.consumed);
             pending_.insert(pending_.end(),input.begin()+static_cast<std::ptrdiff_t>(out.consumed),input.begin()+static_cast<std::ptrdiff_t>(out.consumed+count));
@@ -33,7 +33,7 @@ namespace nexus::tls {
                 }
                 if (length>(mode==RecordFraming::plaintext ? 16384u : 16640u)) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::record_too_large); }
                 target_=5+length;
-                if (target_!=5) continue;
+                if (target_!=5) { pending_.reserve(target_); continue; }
             }
             out.record=FramedRecord{std::move(pending_)}; pending_.clear(); target_=5; mode_.reset();
             break;

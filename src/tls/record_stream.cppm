@@ -25,6 +25,8 @@ export namespace nexus::tls {
         RecordStream(RecordStream&& other) noexcept;
         auto operator=(RecordStream&& other) noexcept -> RecordStream&;
         // mode must remain unchanged until the current record is complete.
+        // A validated header causes the complete record size to be reserved,
+        // even if the remaining bytes have not arrived yet.
         // Failure releases partial input. On exception consumption is unknown.
         [[nodiscard]] auto feed(std::span<std::uint8_t const> input, RecordFraming mode) -> std::expected<RecordFeed,RecordStreamError>;
         [[nodiscard]] auto finish() -> std::expected<void,RecordStreamError>;

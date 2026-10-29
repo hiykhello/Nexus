@@ -144,7 +144,7 @@ export namespace nexus::http2 {
             if (!session_.reserve_output(54)) { active_=false; release_input(); cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             control_reserved_=true;
             // TLS framing may accumulate a full ciphertext record while a read is parked.
-            if (!session_.reserve_ciphertext(16645)) { active_=false; release_input(); release_control(); cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
+            if (!session_.reserve_ciphertext(16650)) { active_=false; release_input(); release_control(); cancel(); co_return std::unexpected(TlsServerError::budget_exceeded); }
             auto received=co_await tls_.read(deadline); active_=false;
             session_.release_ciphertext();
             if (!received || failed_ || !tls_.pending_output()) release_control();

@@ -27,15 +27,16 @@ export namespace nexus::tls {
         auto fail(ServerHandshakeIoError error) -> std::unexpected<ServerHandshakeIoError>;
         auto check_time(std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;
     public:
-        // The record, decoder's pending message and decoded body can coexist.
-        static constexpr std::size_t hello_reassembly_charge=16389+65539+65535;
+        // Include old header and initial decoder allocations during growth.
+        // Vector implementation capacity and allocator overhead remain excluded.
+        static constexpr std::size_t hello_reassembly_charge=16389+5+65539+4096+65535;
         static constexpr std::size_t hello_encoded_charge=65539;
         static constexpr std::size_t hello_input_charge=hello_reassembly_charge+hello_encoded_charge;
         static constexpr std::size_t generated_hello_charge=16384;
         // Generated hello fields, body and retry comparison message; logical
         // lengths only, excluding container capacities and other temporaries.
         static constexpr std::size_t generated_hello_scratch_charge=3*16384;
-        static constexpr std::size_t finished_input_charge=16645+ServerFlight::finished_temporary_charge;
+        static constexpr std::size_t finished_input_charge=16645+5+ServerFlight::finished_temporary_charge;
         ServerHandshakeIo(ServerHandshakeIo const&)=delete;
         auto operator=(ServerHandshakeIo const&) -> ServerHandshakeIo& = delete;
         ServerHandshakeIo(ServerHandshakeIo&&) noexcept;
