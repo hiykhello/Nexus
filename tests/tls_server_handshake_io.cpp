@@ -15,6 +15,10 @@ static bool derived_key_charged=false;
 static std::size_t certificate_body_size=0;
 static bool certificate_body_charged=false;
 static bool capture_allocations=false;
+static nexus::memory::Budget* fault_watch_budget=nullptr;
+static void* fault_small_allocations[512]{};
+static std::size_t fault_small_count=0;
+static bool zeroed_with_key_budget=false;
 static std::pair<void*,std::size_t> captured[512];
 static std::size_t captured_count=0;
 void* operator new(std::size_t size) {
@@ -26,11 +30,17 @@ void* operator new(std::size_t size) {
         if (seal_budget && size==32 && seal_budget->reserved()>=seal_expected) derived_key_charged=true;
         if (seal_budget && size==certificate_body_size) certificate_body_charged=seal_budget->reserved()>=seal_expected;
         if (capture_allocations && captured_count<std::size(captured)) captured[captured_count++]={p,size};
+        if (fault_watch_budget && size==32 && fault_small_count<std::size(fault_small_allocations)) fault_small_allocations[fault_small_count++]=p;
         return p;
     }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept {
+    if (p && fault_watch_budget) for (std::size_t i=0;i<fault_small_count;++i) if (fault_small_allocations[i]==p) {
+        auto bytes=std::span{static_cast<std::uint8_t const*>(p),std::size_t{32}};
+        if (std::ranges::all_of(bytes,[](auto b) { return b==0; }) && fault_watch_budget->reserved()>=nexus::tls::ServerHandshakeIo::handshake_key_retained_charge+nexus::tls::ServerHandshakeIo::finished_keys_charge) zeroed_with_key_budget=true;
+        fault_small_allocations[i]=nullptr; break;
+    }
     if (p && p==watched_hello) { hello_released=true; watched_hello=nullptr; }
     if (p && p==watched_flight) { flight_released=true; watched_flight=nullptr; }
     std::free(p);
@@ -120,21 +130,22 @@ int main(int argc,char** argv) {
         auto result=candidate->feed(input,2);
         if (result || result.error()!=t::ServerHandshakeIoError::budget_exceeded || budget->reserved() || candidate->tick(2)) return 97;
     }
-    int failures=0; bool success=false;
+    int failures=0; bool success=false, cleanup_observed=false;
     for (int index=0;index<256;++index) {
         auto c=credential(); if (!c) return 62;
         auto fault_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
         auto candidate=t::ServerHandshakeIo::create(std::move(*c),1,100,"h2",t::ServerCredential::max_certificate_list_size,fault_budget); if (!candidate) return 63;
-        bool threw=false; fail_after=index;
+        bool threw=false; fail_after=index; fault_watch_budget=fault_budget.get(); fault_small_count=0; zeroed_with_key_budget=false;
         try { auto result=candidate->feed(input,2); if (result && !candidate->pending_output().empty()) success=true; }
         catch (std::bad_alloc const&) { threw=true; }
-        fail_after=-1;
+        fail_after=-1; fault_watch_budget=nullptr;
         if (threw) {
+            cleanup_observed|=zeroed_with_key_budget;
             ++failures; auto again=candidate->feed(input,2);
             if (again || again.error()!=t::ServerHandshakeIoError::invalid_state || !candidate->pending_output().empty() || candidate->tick(2) || candidate->take_application_records() || fault_budget->reserved()) return 64;
         } else if (success) break;
     }
-    if (failures<5 || !success) return 65;
+    if (failures<5 || !success || !cleanup_observed) return 65;
     for (auto byte:input) { auto result=server->feed(std::span{&byte,1},101); if (!result || result->consumed!=1) return 9; }
     if (server->pending_output().empty() || server->feed(input,102)->consumed!=0 || server->take_application_records()) return 10;
     auto output_credential=credential(); auto output_budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge+server->pending_output().size());
