@@ -66,6 +66,20 @@ target("nexus-socks5-udp-route-test")
     add_files("tests/socks5_udp_route.cpp")
     add_deps("nexus-socks5-udp-route", "nexus-rules")
 
+if is_plat("linux") then
+    target("nexus-socks5-udp-direct")
+        set_kind("static")
+        add_files("src/socks5/udp_direct.cppm", {public = true})
+        add_files("src/socks5/udp_direct.cpp")
+        add_deps("nexus-socks5-udp-route", "nexus-rules")
+
+    target("nexus-socks5-udp-direct-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/socks5_udp_direct.cpp")
+        add_deps("nexus-socks5-udp-direct", "nexus-rules")
+end
+
 target("nexus-config")
     set_kind("static")
     add_files("src/config/config.cppm", {public = true})
