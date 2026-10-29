@@ -139,6 +139,55 @@ auto join_test(bool use_uring, unsigned mode) -> bool {
     return state.returned && state.drained_on_return && state.threw == (mode == 1) && context.stopped();
 }
 
+struct AbandonState {
+    std::array<bool, 2> entered{};
+    std::array<bool, 2> destroyed{};
+    bool parent_destroyed = false;
+    bool children_destroyed_first = false;
+    bool returned = false;
+};
+
+auto abandon_child(io::local_stream_socket& socket, AbandonState& state, unsigned index)
+    -> capy::task<capy::results<>> {
+    Guard guard{state.destroyed[index]};
+    state.entered[index] = true;
+    std::array<char, 1> buffer{};
+    auto [error, bytes] = co_await socket.read_some(capy::mutable_buffer(buffer.data(), buffer.size()));
+    (void)bytes;
+    co_return capy::results<>{error};
+}
+
+auto abandon_parent(io::io_context& context, AbandonState& state) -> capy::task<> {
+    io::local_stream_socket first{context}, second{context};
+    struct ParentGuard {
+        AbandonState& state;
+        ~ParentGuard() {
+            state.children_destroyed_first = state.destroyed[0] && state.destroyed[1];
+            state.parent_destroyed = true;
+        }
+    } guard{state};
+    if (io::connect_pair(first, second)) co_return;
+    (void)co_await capy::when_all(abandon_child(first, state, 0), abandon_child(second, state, 1));
+    state.returned = true;
+}
+
+auto abandon_test(bool use_uring) -> bool {
+    AbandonState state;
+    {
+#if BOOST_COROSIO_HAVE_LIBURING
+        io::io_context context = use_uring ? io::io_context(io::uring) : io::io_context(io::epoll);
+#else
+        (void)use_uring;
+        io::io_context context(io::epoll);
+#endif
+        capy::run_async(context.get_executor())(abandon_parent(context, state));
+        context.restart();
+        (void)context.run_for(20ms);
+        if (!state.entered[0] || !state.entered[1] || state.parent_destroyed) return false;
+    }
+    return state.parent_destroyed && state.children_destroyed_first && !state.returned;
+}
+
 auto main() -> int {
     if (!test(false)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
@@ -151,6 +200,10 @@ auto main() -> int {
     if (!join_test(false, 0) || !join_test(false, 1) || !join_test(false, 2)) return 5;
 #if BOOST_COROSIO_HAVE_LIBURING
     if (!join_test(true, 0) || !join_test(true, 1) || !join_test(true, 2)) return 6;
+#endif
+    if (!abandon_test(false)) return 7;
+#if BOOST_COROSIO_HAVE_LIBURING
+    if (!abandon_test(true)) return 8;
 #endif
     std::println("Capy quitter owner unwind passed");
 }

@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- Capy `when_all` 的父任务持有一对本地 socket、两个子任务分别挂起读取时，销毁 Corosio 执行上下文会先析构两个子任务再析构父任务，父任务不会恢复；epoll、io_uring 回归通过。这只覆盖该双读取交错，不解决启动失败。
+
 - Capy `when_all` 回归验证父取消、子任务异常及单向先完成：父协程只在两个子任务析构后恢复；epoll、io_uring 均通过。源码审查发现启动时逐个分配并投递 runner，后续分配抛异常可能留下已投递 runner 借用已销毁状态，尚需故障注入确认和修复，不能直接用于生产 relay。
 
 - 服务端应用密钥派生限定在独立作用域，master secret 和临时 key/IV 在 flight 记录封装前析构，异常也沿同一作用域清理；三种算法、逐位置分配故障、混合组 VLESS/TLS 和 HTTP/2 网络回归通过。清除依赖 Secret 析构实现。
@@ -116,7 +118,7 @@
 
 ## 当前
 
-- 用户要求梳理并重构 `shared_ptr`，尤其避免以引用计数延长异步操作生命周期。VLESS/SS 入站 relay 和拨号错误监视器使用 shared owner；relay 借用父协程 Incoming。入站父任务当前以无 stop token 启动，但执行上下文 abandon 仍须验证。固定 Capy `when_all` 正常取消和异常排空已验证，启动失败存在源码层面的潜在悬空风险；模块尚未导出。VLESS 的 `tests/vless_relay_throw.py` 覆盖四个启动及协程异常和正常 relay 停止。预算 reservation、不可变凭据、Fake-IP lease 等须按真实所有权审查。
+- 用户要求梳理并重构 `shared_ptr`，尤其避免以引用计数延长异步操作生命周期。VLESS/SS 入站 relay 和拨号错误监视器使用 shared owner；relay 借用父协程 Incoming。入站父任务当前以无 stop token 启动；固定 Capy `when_all` 正常取消、异常排空及双 socket 读取时执行上下文 abandon 已验证，启动失败存在源码层面的潜在悬空风险；模块尚未导出。VLESS 的 `tests/vless_relay_throw.py` 覆盖四个启动及协程异常和正常 relay 停止。预算 reservation、不可变凭据、Fake-IP lease 等须按真实所有权审查。
 
 - HTTP/2 TLS 输入、输出及 KeyUpdate 轮换覆盖主要数组的逻辑请求；仍需核查常驻密钥、握手及应用记录其他临时对象和实际容量的记账边界。
 - HTTP/2 TLS 明文输入和应用输出密文/写副本有逻辑预留；TLS 输出控制记录及写副本也有逻辑预留；输入密文记录也有逻辑预留；步骤输出数组也有逻辑预留；常驻读取缓冲也有逻辑预留；握手重组、容量、协程帧、临时副本和传输开销尚无完整计费。
@@ -131,7 +133,7 @@
 
 ## 下一步
 
-- 优先验证并解决 Capy `when_all` 后续 runner 分配失败时已投递 runner 的生命周期，再覆盖执行上下文 abandon；然后设计代理 relay 与拨号 watcher 的结构化取消及排空，覆盖半关闭和 worker 停止，再重构 `shared_ptr`。
+- 优先验证并解决 Capy `when_all` 后续 runner 分配失败时已投递 runner 的生命周期，并覆盖其他执行上下文 abandon 交错；然后设计代理 relay 与拨号 watcher 的结构化取消及排空，覆盖半关闭和 worker 停止，再重构 `shared_ptr`。
 
 - 继续覆盖客户端握手和应用密钥、密钥派生临时对象及共享预算竞争；服务端应用记录的常驻密钥已跨交接计费，实际容量和加密库内部对象仍不在逻辑额度内。
 
