@@ -85,6 +85,7 @@ namespace nexus::proxy {
                 auto deadline_ms=std::chrono::duration_cast<std::chrono::milliseconds>(deadline.time_since_epoch()).count();
                 for (auto endpoint : endpoints) {
                     if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
+                    if (!valid_destination(endpoint)) continue;
                     auto now=std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
                     auto seconds=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
                     if (now<0) co_return TunnelConnectResult::failed;

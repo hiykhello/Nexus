@@ -76,6 +76,7 @@ namespace nexus::proxy {
                 co_return endpoints;
             }
             for (auto const& upstream : servers) {
+                if (!valid_destination(upstream)) continue;
                 dns::detail::DualAddressResolver operation(context,session.dns->cache,server.tcp,family,
                     session.dns->routing.disable_cache,session.dns->routing.edns);
                 struct Registration {
@@ -251,16 +252,10 @@ namespace nexus::proxy {
                     if (boundary) return false;
                     if (session.closed) { boundary=true; return false; }
                     ++next;
-                    auto address=destination.address();
-                    if (!destination.port() || address.is_unspecified()) return false;
-                    if (address.is_v6()) {
-                        auto bytes=address.to_v6().to_bytes();
-                        bool mapped=std::ranges::all_of(std::span(bytes).first<10>(),[](auto b) { return b==0; }) &&
-                                    bytes[10]==255 && bytes[11]==255;
-                        if (mapped && std::ranges::all_of(std::span(bytes).last<4>(),[](auto b) { return b==0; })) return false;
-                    }
+                    if (!valid_destination(destination)) return false;
 #ifdef NEXUS_TEST_FAKEIP
                     if (session.fakeip) {
+                        auto address=destination.address();
                         auto allowed=address.is_v4() ? dns::validate_fakeip_resolution(*session.fakeip,address.to_v4().to_bytes()) :
                                                        dns::validate_fakeip_resolution(*session.fakeip,address.to_v6().to_bytes());
                         if (!allowed) { nexus_test_fakeip_blocked(); blocked=true; return false; }

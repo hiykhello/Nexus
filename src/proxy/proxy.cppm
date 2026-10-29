@@ -25,6 +25,16 @@ namespace nexus::proxy {
     namespace io = boost::corosio;
     using Clock = std::chrono::steady_clock;
 
+    auto valid_destination(io::endpoint const& endpoint) noexcept -> bool {
+        auto address=endpoint.address();
+        if (!endpoint.port() || address.is_unspecified()) return false;
+        if (!address.is_v6()) return true;
+        auto bytes=address.to_v6().to_bytes();
+        bool mapped=std::ranges::all_of(std::span(bytes).first<10>(),[](auto b) { return b==0; }) &&
+                    bytes[10]==255 && bytes[11]==255;
+        return !mapped || std::ranges::any_of(std::span(bytes).last<4>(),[](auto b) { return b!=0; });
+    }
+
     struct Session;
     enum class TunnelConnectResult { connected, retryable, failed, timeout };
     PRO_DEF_MEM_DISPATCH(TunnelConnect, connect);

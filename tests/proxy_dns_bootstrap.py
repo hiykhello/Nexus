@@ -57,9 +57,10 @@ def scenario(mode, workers):
                 calls[0].append(query)
                 answer = bytearray(query)
                 answer[2:4] = b"\x81\x80"
-                answer[7] = 2
-                for address in (2, 1):
-                    answer.extend(b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04\x7f\x00\x00" + bytes([address]))
+                addresses = [b'\x00\x00\x00\x00'] if mode == 'unspecified' else [b'\x7f\x00\x00\x02', b'\x7f\x00\x00\x01']
+                answer[7] = len(addresses)
+                for address in addresses:
+                    answer.extend(b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04" + address)
                 sock.sendto(answer, peer)
         except Exception as exc:
             errors.append(exc)
@@ -150,15 +151,15 @@ routing {{ default-outbound "direct"; }}
                     name = b"target.test"
                     sock.sendall(b"\x05\x01\x00\x03" + bytes([len(name)]) + name + target.getsockname()[1].to_bytes(2, "big"))
                     reply = exact(sock, 10)
-                    if mode == "servfail":
+                    if mode in ("servfail", "unspecified"):
                         assert reply[:4] == b"\x05\x04\x00\x01"
                     else:
                         assert reply[:4] == b"\x05\x00\x00\x01"
                         assert exact(sock, 2) == b"ok"
-                expected_calls = [1, 1, 0] if mode == "servfail" else [1, 0, 1]
+                expected_calls = [1, 1, 0] if mode == "servfail" else [1, 0, 0] if mode == 'unspecified' else [1, 0, 1]
                 if errors or [len(c) for c in calls] != expected_calls:
                     raise RuntimeError(f"unexpected server calls: {[len(c) for c in calls]}, errors={errors}")
-                if bool(targets) != (mode != "servfail"):
+                if bool(targets) != (mode == "retry"):
                     raise RuntimeError(f"unexpected target connections: {targets}")
             finally:
                 proc.terminate()
@@ -177,4 +178,5 @@ routing {{ default-outbound "direct"; }}
 for count in (1, 2):
     scenario("retry", count)
     scenario("servfail", count)
+    scenario("unspecified", count)
 print("DNS bootstrap address retry and failure boundary passed")

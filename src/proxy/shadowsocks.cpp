@@ -68,6 +68,7 @@ namespace nexus::proxy {
                 auto deadline=session_.started+std::chrono::seconds(10);
                 for (auto endpoint:endpoints) {
                     if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
+                    if (!valid_destination(endpoint)) continue;
                     if (Clock::now()>=deadline) co_return TunnelConnectResult::timeout;
                     remote_=std::make_unique<io::tcp_socket>(context_);
                     auto operation=remote_->connect(endpoint);

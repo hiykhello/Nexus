@@ -319,6 +319,45 @@ routing {{ default-outbound "edge"; }}
             process.stderr.close()
 
 
+def unspecified_bootstrap(root, workers, shadowsocks):
+    with socket.socket() as listener, socket.socket() as reserved, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns:
+        listener.bind(('127.0.0.1',0)); listener.listen(2); listener.settimeout(.3)
+        reserved.bind(('127.0.0.1',0)); port=reserved.getsockname()[1]; reserved.close()
+        dns.bind(('127.0.0.1',0)); dns.settimeout(4)
+        outbound=(f'outbound "edge" type="shadowsocks" {{ bootstrap-resolver "boot"; server host="edge.test" port={listener.getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root / "ss.key"}"; }}' if shadowsocks else
+                  f'outbound "edge" type="vless" {{ bootstrap-resolver "boot"; server host="edge.test" port={listener.getsockname()[1]}; authentication {{ uuid-file "{root / "user.uuid"}"; }}; tls {{ server-name "localhost"; ca-file "{root / "cert.pem"}"; verify #true; }}; }}')
+        config=root/'invalid-bootstrap.kdl'
+        config.write_text(f'''schema-version 1
+role "client"
+workers {workers}
+inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
+outbound "direct" type="direct"
+dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
+{outbound}
+routing {{ default-outbound "edge"; }}
+''')
+        process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        try:
+            deadline=time.monotonic()+5
+            while True:
+                try: client=socket.create_connection(('127.0.0.1',port),timeout=.2); break
+                except OSError:
+                    if process.poll() is not None or time.monotonic()>=deadline: raise AssertionError('proxy did not start')
+                    time.sleep(.02)
+            with client:
+                client.settimeout(4); client.sendall(b'\x05\x01\x00'); assert exact(client,2)==b'\x05\x00'
+                client.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01\x04\xd2')
+                query,peer=dns.recvfrom(2048)
+                assert query[12:-4]==b'\x04edge\x04test\x00'
+                dns.sendto(query[:2]+b'\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00'+query[12:]+b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00',peer)
+                assert exact(client,10)[1]!=0
+                try: listener.accept()[0].close()
+                except TimeoutError: pass
+                else: raise AssertionError('unspecified bootstrap connected local listener')
+        finally:
+            process.terminate(); process.wait(timeout=5); process.stderr.close()
+
+
 with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory:
     root=pathlib.Path(directory)
     (root/'user.uuid').write_text('00010203-0405-0607-0809-0a0b0c0d0e0f\n'); (root/'user.uuid').chmod(0o600)
@@ -326,6 +365,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-vless-dial-cancel-') as directory
     subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(root/'key.pem'),'-out',str(root/'cert.pem'),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost','-days','1'],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     shadowsocks=len(sys.argv)>2 and sys.argv[2]=='ss'
     for workers in (1,2):
+        unspecified_bootstrap(root,workers,shadowsocks)
         for retry in (False,True): scenario(root,workers,shadowsocks,retry)
         scenario(root,workers,shadowsocks,timeout=True)
         if not shadowsocks: scenario(root,workers,False,retry=True,delayed_retry=True)
