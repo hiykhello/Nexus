@@ -165,7 +165,7 @@ namespace nexus::proxy {
         }
     }
 
-    auto forward_http(std::shared_ptr<Session> const& session, io::io_context& context,
+    auto forward_http(Session& session, io::io_context& context,
                       rules::RouteMatcher const& policy, std::string_view input) -> capy::task<> {
         auto request = http::parse_forward_request(input);
         if (request.status != http::ConnectStatus::accepted) {
@@ -174,11 +174,11 @@ namespace nexus::proxy {
                 request.status == http::ConnectStatus::unsupported ?
                 "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
                 "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            if (co_await write_text(session->client, response, *session)) {
-                finish_response(*session);
-                co_await drain(*session);
-            } else finish(*session);
-            session->done = true;
+            if (co_await write_text(session.client, response, session)) {
+                finish_response(session);
+                co_await drain(session);
+            } else finish(session);
+            session.done = true;
             co_return;
         }
         socks5::Request destination;
@@ -193,32 +193,32 @@ namespace nexus::proxy {
             destination.address_length = request.destination.kind == http::HostKind::ipv4 ? 4 : 16;
             std::copy(request.destination.address.begin(), request.destination.address.end(), destination.address.begin());
         }
-        auto code = co_await dial(*session, context, policy, destination);
+        auto code = co_await dial(session, context, policy, destination);
         if (code != 0) {
             auto response = code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
                                         "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            if (co_await write_text(session->client, response, *session)) {
-                finish_response(*session);
-                co_await drain(*session);
-            } else finish(*session);
-            session->done = true;
+            if (co_await write_text(session.client, response, session)) {
+                finish_response(session);
+                co_await drain(session);
+            } else finish(session);
+            session.done = true;
             co_return;
         }
-        session->relaying = true;
-        if (!co_await write_target(*session, request.wire)) { finish(*session); session->done = true; co_return; }
+        session.relaying = true;
+        if (!co_await write_target(session, request.wire)) { finish(session); session.done = true; co_return; }
         auto tail = input.substr(request.consumed);
         if (!request.chunked) tail = tail.substr(0, static_cast<std::size_t>(std::min<std::uint64_t>(request.body_length, tail.size())));
         capy::async_event response_done;
         try {
             (void)co_await capy::when_all(
-                joined_upload(*session,std::string(tail),request.body_length,request.chunked,response_done),
-                joined_response(*session,request.head,response_done));
+                joined_upload(session,std::string(tail),request.body_length,request.chunked,response_done),
+                joined_response(session,request.head,response_done));
         } catch (...) {
-            session->close();
-            session->done = true;
+            session.close();
+            session.done = true;
             throw;
         }
-        session->close();
-        session->done = true;
+        session.close();
+        session.done = true;
     }
 }

@@ -154,59 +154,59 @@ namespace nexus::proxy {
             co_return (co_await write_all(session.client, response, session)) && valid;
         }
 
-        auto socks_handshake(std::shared_ptr<Session> const& session, io::io_context& context,
+        auto socks_handshake(Session& session, io::io_context& context,
                        rules::RouteMatcher const& policy, std::optional<Credentials> const& credentials) -> capy::task<> {
-            auto fail = [&] { session->close(); session->done = true; };
+            auto fail = [&] { session.close(); session.done = true; };
             std::array<std::uint8_t, 262> buffer{};
             buffer[0] = 5;
-            if (!co_await read_exact(session->client, std::span(buffer).subspan(1, 1), *session)) { fail(); co_return; }
+            if (!co_await read_exact(session.client, std::span(buffer).subspan(1, 1), session)) { fail(); co_return; }
             auto const methods = std::size_t{buffer[1]};
-            if (!co_await read_exact(session->client, std::span(buffer).subspan(2, methods), *session)) { fail(); co_return; }
+            if (!co_await read_exact(session.client, std::span(buffer).subspan(2, methods), session)) { fail(); co_return; }
             auto const method = credentials ? std::uint8_t{2} : std::uint8_t{0};
             auto const greeting = socks5::parse_greeting(std::span(buffer).first(2 + methods), method);
             if (greeting.status == socks5::Status::invalid_version) { fail(); co_return; }
             std::array<std::uint8_t, 2> selected{5, greeting.status == socks5::Status::accepted ? method : std::uint8_t{255}};
-            if (!co_await write_all(session->client, selected, *session) || selected[1] == 255) { fail(); co_return; }
-            if (credentials && !co_await authenticate(*session, *credentials)) { fail(); co_return; }
+            if (!co_await write_all(session.client, selected, session) || selected[1] == 255) { fail(); co_return; }
+            if (credentials && !co_await authenticate(session, *credentials)) { fail(); co_return; }
 
-            if (!co_await read_exact(session->client, std::span(buffer).first(4), *session)) { fail(); co_return; }
+            if (!co_await read_exact(session.client, std::span(buffer).first(4), session)) { fail(); co_return; }
             auto head = socks5::parse_request(std::span(buffer).first(4));
             if (head.status != socks5::Status::incomplete) {
                 auto code = head.status == socks5::Status::unsupported_command ? 7 :
                             head.status == socks5::Status::unsupported_address ? 8 : 1;
-                (void)co_await reply(session->client, static_cast<std::uint8_t>(code), {}, *session);
+                (void)co_await reply(session.client, static_cast<std::uint8_t>(code), {}, session);
                 fail(); co_return;
             }
             std::size_t offset = 4;
             std::size_t length = buffer[3] == 1 ? 4 : buffer[3] == 4 ? 16 : 0;
             if (buffer[3] == 3) {
-                if (!co_await read_exact(session->client, std::span(buffer).subspan(4, 1), *session)) { fail(); co_return; }
+                if (!co_await read_exact(session.client, std::span(buffer).subspan(4, 1), session)) { fail(); co_return; }
                 length = buffer[4];
                 offset = 5;
             }
-            if (!co_await read_exact(session->client, std::span(buffer).subspan(offset, length + 2), *session)) { fail(); co_return; }
+            if (!co_await read_exact(session.client, std::span(buffer).subspan(offset, length + 2), session)) { fail(); co_return; }
             auto request = socks5::parse_request(std::span(buffer).first(offset + length + 2));
             if (request.status != socks5::Status::accepted) {
-                (void)co_await reply(session->client, 1, {}, *session);
+                (void)co_await reply(session.client, 1, {}, session);
                 fail(); co_return;
             }
-            auto code = co_await dial(*session, context, policy, request);
+            auto code = co_await dial(session, context, policy, request);
             if (code != 0) {
-                (void)co_await reply(session->client, code, {}, *session);
+                (void)co_await reply(session.client, code, {}, session);
                 fail(); co_return;
             }
-            if (!co_await reply(session->client, 0, session->tunnel ? io::endpoint{} : session->target.local_endpoint(), *session)) { fail(); co_return; }
-            session->relaying = true;
-            co_await relay_pair(*session);
+            if (!co_await reply(session.client, 0, session.tunnel ? io::endpoint{} : session.target.local_endpoint(), session)) { fail(); co_return; }
+            session.relaying = true;
+            co_await relay_pair(session);
         }
         auto http_response(Session& session, std::string_view text) -> capy::task<bool> {
             auto bytes = std::span(reinterpret_cast<std::uint8_t const*>(text.data()), text.size());
             co_return co_await write_all(session.client, bytes, session);
         }
 
-        auto http_handshake(std::shared_ptr<Session> const& session, io::io_context& context,
+        auto http_handshake(Session& session, io::io_context& context,
                             rules::RouteMatcher const& policy, std::uint8_t first) -> capy::task<> {
-            auto fail = [&] { session->close(); session->done = true; };
+            auto fail = [&] { session.close(); session.done = true; };
             std::array<std::uint8_t, http::max_connect_header_bytes> buffer{};
             buffer[0] = first;
             std::size_t size = 1, scan = 0;
@@ -218,9 +218,9 @@ namespace nexus::proxy {
                     break;
                 }
                 scan = size > 3 ? size - 3 : 0;
-                auto [error, n] = co_await session->client.read_some(capy::mutable_buffer(buffer.data() + size, buffer.size() - size));
+                auto [error, n] = co_await session.client.read_some(capy::mutable_buffer(buffer.data() + size, buffer.size() - size));
                 if (error || n == 0) { fail(); co_return; }
-                session->touched = Clock::now();
+                session.touched = Clock::now();
                 size += n;
             }
             if (parsed.status == http::ConnectStatus::unsupported) {
@@ -236,7 +236,7 @@ namespace nexus::proxy {
                     parsed.status == http::ConnectStatus::unsupported ?
                     "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
                     "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                (void)co_await http_response(*session, response);
+                (void)co_await http_response(session, response);
                 fail(); co_return;
             }
             socks5::Request request;
@@ -251,21 +251,21 @@ namespace nexus::proxy {
                 request.address_length = parsed.kind == http::HostKind::ipv4 ? 4 : 16;
                 std::copy(parsed.address.begin(), parsed.address.end(), request.address.begin());
             }
-            auto code = co_await dial(*session, context, policy, request);
+            auto code = co_await dial(session, context, policy, request);
             if (code != 0) {
                 auto response = code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
                                             "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                (void)co_await http_response(*session, response);
+                (void)co_await http_response(session, response);
                 fail(); co_return;
             }
-            if (!co_await http_response(*session, "HTTP/1.1 200 Connection Established\r\n\r\n")) {
+            if (!co_await http_response(session, "HTTP/1.1 200 Connection Established\r\n\r\n")) {
                 fail(); co_return;
             }
             auto tail=std::span(buffer).subspan(parsed.consumed, size - parsed.consumed);
-            auto sent=session->tunnel ? co_await session->tunnel->send(tail) : co_await write_all(session->target, tail, *session);
+            auto sent=session.tunnel ? co_await session.tunnel->send(tail) : co_await write_all(session.target, tail, session);
             if (!sent) { fail(); co_return; }
-            session->relaying = true;
-            co_await relay_pair(*session);
+            session.relaying = true;
+            co_await relay_pair(session);
         }
 
     }
@@ -279,8 +279,8 @@ namespace nexus::proxy {
 #ifdef NEXUS_TEST_SESSION_THROW
             nexus_test_session_throw(first[0]);
 #endif
-            if (first[0] == 5) co_await socks_handshake(session, context, policy, credentials);
-            else if (mixed) co_await http_handshake(session, context, policy, first[0]);
+            if (first[0] == 5) co_await socks_handshake(*session, context, policy, credentials);
+            else if (mixed) co_await http_handshake(*session, context, policy, first[0]);
             else { session->close(); session->done = true; }
         }
 }
