@@ -6,7 +6,7 @@
 
 `nexus.packet` 提供不依赖系统网络的 IPv4/UDP 报文解析和构造，以及单执行上下文拥有的双向内存包链路。解析要求 IPv4 无选项、报文长度与输入精确一致，验证 IPv4 头部及非零 UDP 校验和，接受 IPv4 合法的零 UDP 校验和；拒绝分片、保留标志和非 UDP 协议。构造器设置 DF 和 TTL 64，计算两个校验和并遵守调用方 MTU；不做分片或重组。解析返回的 payload 借用输入，输入被修改或释放后不可使用。
 
-IPv6/UDP 包层支持基础头直接承载 UDP，或依次携带至多一个逐跳选项头和一个目的地选项头；选项仅接受 Pad1 和零值 PadN，校验 UDP 长度和必需的非零校验和，伪首部长度不包含扩展头。其他选项、路由头、分片及 jumbogram 不支持；选项格式依据 [RFC 8200](https://www.rfc-editor.org/rfc/rfc8200.html)。构造器按 MTU 构造，payload 借用输入的生命周期规则与 IPv4 相同。固定样本及内存往返已通过；IPv6 报文的独立原始包对端尚未验证。
+IPv6/UDP 包层支持基础头直接承载 UDP，或依次携带至多一个逐跳选项头和一个目的地选项头；选项接受 Pad1、零值 PadN 和处理位要求跳过的未知选项，校验 UDP 长度和必需的非零校验和，伪首部长度不包含扩展头。要求丢弃的未知选项、路由头、分片及 jumbogram 不支持；尚未生成选项错误对应的 ICMP 报文，选项格式依据 [RFC 8200](https://www.rfc-editor.org/rfc/rfc8200.html)。构造器按 MTU 构造，payload 借用输入的生命周期规则与 IPv4 相同。固定样本及内存往返已通过；IPv6 报文的独立原始包对端尚未验证。
 
 IPv4/TCP 报文层解析和构造固定 IPv4 头、TCP 序列号、确认号、标志、窗口、紧急指针、选项与载荷，验证 IP 和 TCP 伪首部校验和、TCP 头长度和 MTU；IPv4 选项、分片和 TCP 保留位拒绝。独立的 TCP 选项解析器校验选项区长度和每个变长选项的边界，保留 NOP 和未知类型，遇 EOL 停止；不检查各选项的语义，报文解析本身也不会自动调用它。返回的选项和载荷借用输入。GCC 16 固定字节样本、截断、校验和、长度和最大报文测试通过；尚无 TCP 连接状态机、IPv6 TCP 或独立原始报文对端验证。
 
@@ -147,7 +147,7 @@ flowchart LR
 
 进一步的 `tests/transport_kernel_tun.py` 由 `LinuxTun` 在隔离命名空间独占创建 TUN，将描述符副本传递给宿主侧测试进程，Linux TCP 客户端经 `FdPump`、内存传输和 IPv4 直连访问宿主回环测试上游；客户端先半关闭，上游收到完整请求后回复并半关闭，双向数据与停止回收连续十轮通过。TCP 活动期间还通过同一 TUN 完成 IPv4 UDP 直连往返：另一源端口先注入回包，客户端仅收到预期上游的回复，连续五轮通过。夹具只在临时命名空间配置 TUN、回环目标路由和 `route_localnet`，宿主只创建回环监听 socket。先运行 `xmake build nexus-packet-tun-helper` 和 `xmake build nexus-transport-kernel-tun-test`，再执行 `python3 tests/transport_kernel_tun.py build/linux/x86_64/debug/nexus-transport-kernel-tun-test`。该实验不执行宿主系统接管，也不证明防环回、生产调度或其他平台支持。
 
-`tests/transport_kernel_tun6.py` 在两个嵌套临时网络命名空间分别运行 Linux IPv6 UDP 客户端和 Nexus 直连出口，通过真实 TUN 访问外层命名空间的 IPv6 回环上游；不同源端口先发送的回包未被客户端收到，预期回包完整，连续十轮通过。运行已构建的 `nexus-transport-kernel-tun-test`：`python3 tests/transport_kernel_tun6.py build/linux/x86_64/debug/nexus-transport-kernel-tun-test`。Linux 客户端还发送带目的地选项以及同时带逐跳和目的地选项的填充报文，真实往返连续五轮通过。测试需要支持嵌套网络命名空间和 IPv6；其他选项、分片、zone 和系统接管仍未覆盖。
+`tests/transport_kernel_tun6.py` 在两个嵌套临时网络命名空间分别运行 Linux IPv6 UDP 客户端和 Nexus 直连出口，通过真实 TUN 访问外层命名空间的 IPv6 回环上游；不同源端口先发送的回包未被客户端收到，预期回包完整，连续十轮通过。运行已构建的 `nexus-transport-kernel-tun-test`：`python3 tests/transport_kernel_tun6.py build/linux/x86_64/debug/nexus-transport-kernel-tun-test`。Linux 客户端还发送带目的地选项、两个填充选项头组合及可跳过未知选项的报文，真实往返连续五轮通过。测试需要支持嵌套网络命名空间和 IPv6；其他选项行为、分片、zone 和系统接管仍未覆盖。
 
 Linux 模块 `nexus.packet.tun_linux` 提供 `LinuxTun` 独占所有者：在调用方当前网络命名空间通过 `IFF_TUN | IFF_NO_PI | IFF_TUN_EXCL` 创建非持久 TUN，描述符设为非阻塞和 close-on-exec；名称可以由内核生成，也可指定不含模板的名称。名称无效、打开或 ioctl 失败返回错误，移动转移所有权，关闭或析构释放描述符；使用借用描述符的 I/O 必须在关闭前结束。接口不配置地址、MTU、路由、DNS 或防火墙，也不接入正式运行配置。`xmake build nexus-packet-tun-linux-test` 后执行 `python3 tests/packet_tun_linux.py build/linux/x86_64/debug/nexus-packet-tun-linux-test`，隔离命名空间测试已覆盖独占名称、描述符属性、移动及设备回收；其创建的设备也经上述 IPv4 TCP/UDP 真实传输测试；权限不足和其他平台行为未穷尽。
 

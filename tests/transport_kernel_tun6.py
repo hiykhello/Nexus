@@ -29,7 +29,7 @@ elif sys.argv[2] == 'outer':
     errors = []
     def serve():
         try:
-            for request in (b'ipv6-request', b'ipv6-options', b'ipv6-both'):
+            for request in (b'ipv6-request', b'ipv6-options', b'ipv6-both', b'ipv6-unknown'):
                 data, peer = origin.recvfrom(128)
                 if data != request:
                     raise RuntimeError(f'unexpected request {data!r}')
@@ -93,12 +93,14 @@ else:
         with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as client:
             client.settimeout(10)
             port = int(sys.argv[5])
-            for request in (b'ipv6-request', b'ipv6-options', b'ipv6-both'):
+            for request in (b'ipv6-request', b'ipv6-options', b'ipv6-both', b'ipv6-unknown'):
                 if request == b'ipv6-options':
                     # Linux fills the next-header byte when emitting the packet.
                     client.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_DSTOPTS, bytes([0,0,1,4,0,0,0,0]))
                 if request == b'ipv6-both':
                     client.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_HOPOPTS, bytes([0,0,1,4,0,0,0,0]))
+                if request == b'ipv6-unknown':
+                    client.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_DSTOPTS, bytes([0,0,0x1e,2,0xaa,0xbb,1,0]))
                 client.settimeout(10)
                 client.sendto(request, ('fd77::2', port))
                 data, peer = client.recvfrom(128)

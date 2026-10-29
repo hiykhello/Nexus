@@ -47,9 +47,13 @@ namespace nexus::packet {
                 if (i==end) return std::unexpected(PacketError::invalid_length);
                 auto size=static_cast<std::size_t>(p[i++]);
                 if (size>end-i) return std::unexpected(PacketError::invalid_length);
-                if (type!=1) return std::unexpected(PacketError::unsupported_header);
-                if (!std::ranges::all_of(p.subspan(i,size),[](auto byte) { return byte==0; }))
+                if (type==1) {
+                    if (!std::ranges::all_of(p.subspan(i,size),[](auto byte) { return byte==0; }))
+                        return std::unexpected(PacketError::unsupported_header);
+                } else if ((type & 0xc0)!=0) {
+                    // ICMP error generation for the 10 and 11 actions is not implemented.
                     return std::unexpected(PacketError::unsupported_header);
+                }
                 i+=size;
             }
             next=p[offset]; offset=end;

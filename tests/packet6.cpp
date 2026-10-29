@@ -36,7 +36,15 @@ int main() {
     bad=extended; bad[41]=2; if (p::parse_udp6(bad)) return 1;
     bad=extended; bad[43]=7; if (p::parse_udp6(bad)) return 1;
     bad=extended; bad[44]=1; if (p::parse_udp6(bad)) return 1;
-    bad=extended; bad[42]=2; if (p::parse_udp6(bad)) return 1;
+    auto unknown=extended; unknown[42]=0x1e; unknown[44]=0xaa; unknown[45]=0xbb;
+    if (!p::parse_udp6(unknown)) return 1;
+    unknown[50]=0x20; unknown[51]=2; unknown[52]=0x55; unknown[53]=0xaa;
+    if (!p::parse_udp6(unknown)) return 1;
+    for (auto type : {0x40,0x80,0xc0}) {
+        bad=unknown; bad[42]=type; if (p::parse_udp6(bad)) return 1;
+        bad=unknown; bad[50]=type; if (p::parse_udp6(bad)) return 1;
+    }
+    bad=unknown; bad[43]=7; if (p::parse_udp6(bad)) return 1;
     bad=extended; bad[48]=0; if (p::parse_udp6(bad)) return 1;
     bad=extended; bad[48]=44; if (p::parse_udp6(bad)) return 1;
     bad=extended; bad[64]^=1; if (p::parse_udp6(bad)) return 1;
