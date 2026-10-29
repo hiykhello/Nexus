@@ -34,11 +34,13 @@ int main() {
         if (!reset || reset->flags!=4 || reset->sequence!=invalid_ack || reset->acknowledgement ||
             reset->window || !reset->payload.empty()) return 1;
     }
-    auto wrong_seq=ack; wrong_seq.sequence=101; wrong_seq.acknowledgement=52;
+    auto wrong_seq=ack; wrong_seq.sequence=108; wrong_seq.acknowledgement=52;
     auto wrong_raw=p::make_tcp4(wrong_seq);
     auto ignored_ack=t::dispatch(*table,*wrong_raw,0,2);
-    if (!ignored_ack || ignored_ack->input_error!=t::ConnectionError::invalid_packet || ignored_ack->reply ||
+    if (!ignored_ack || ignored_ack->input_error!=t::ConnectionError::unacceptable || !ignored_ack->reply ||
         table->get(first->id)->state()!=t::ConnectionState::handshake) return 1;
+    auto window_ack=p::parse_tcp4(*ignored_ack->reply);
+    if (!window_ack || window_ack->flags!=0x10 || window_ack->sequence!=51 || window_ack->acknowledgement!=100) return 1;
     raw = p::make_tcp4(ack);
     auto established = t::dispatch(*table, *raw, 0, 3);
     if (!established || established->input_error || established->reply ||

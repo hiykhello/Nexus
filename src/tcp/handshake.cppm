@@ -17,7 +17,8 @@ export namespace nexus::tcp {
             -> std::expected<PassiveHandshake, HandshakeError>;
         [[nodiscard]] auto syn_ack(std::uint16_t window) const -> packet::Tcp4View;
         // On true, caller must process the same segment's payload and FIN with receive_next().
-        [[nodiscard]] auto input(packet::Tcp4View segment) -> std::expected<bool, HandshakeError>;
+        // receive_window is the currently advertised unscaled window.
+        [[nodiscard]] auto input(packet::Tcp4View segment, std::uint16_t receive_window) -> std::expected<bool, HandshakeError>;
         [[nodiscard]] auto established() const noexcept -> bool { return established_; }
         [[nodiscard]] auto send_next() const noexcept -> std::uint32_t { return iss_ + 1; }
         [[nodiscard]] auto receive_next() const noexcept -> std::uint32_t { return irs_ + 1; }

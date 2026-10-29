@@ -17,7 +17,7 @@ namespace nexus::tcp {
         return {.source=local_, .destination=remote_, .source_port=local_port_, .destination_port=remote_port_,
                 .sequence=iss_, .acknowledgement=irs_ + 1, .flags=0x12, .window=window};
     }
-    auto PassiveHandshake::input(packet::Tcp4View segment) -> std::expected<bool, HandshakeError> {
+    auto PassiveHandshake::input(packet::Tcp4View segment, std::uint16_t receive_window) -> std::expected<bool, HandshakeError> {
         if (segment.source != remote_ || segment.destination != local_ || segment.source_port != remote_port_ ||
             segment.destination_port != local_port_) return std::unexpected(HandshakeError::wrong_peer);
         if (established_) return std::unexpected(HandshakeError::unsupported_segment);
@@ -27,7 +27,13 @@ namespace nexus::tcp {
         }
         if (segment.flags != 0x10 && segment.flags != 0x18 && segment.flags != 0x11 && segment.flags != 0x19)
             return std::unexpected(HandshakeError::unsupported_segment);
-        if (segment.sequence != irs_ + 1) return std::unexpected(HandshakeError::invalid_sequence);
+        if (segment.payload.size() > 65535) return std::unexpected(HandshakeError::invalid_sequence);
+        auto length=static_cast<std::uint32_t>(segment.payload.size()) + ((segment.flags & 1) ? 1u : 0u);
+        auto next=receive_next();
+        auto in_window=[&](std::uint32_t sequence) { return static_cast<std::uint32_t>(sequence-next)<receive_window; };
+        auto acceptable=length==0 ? (receive_window ? in_window(segment.sequence) : segment.sequence==next)
+            : receive_window && (in_window(segment.sequence) || in_window(segment.sequence+length-1));
+        if (!acceptable) return std::unexpected(HandshakeError::invalid_sequence);
         if (!packet::parse_tcp_options(segment.options)) return std::unexpected(HandshakeError::invalid_options);
         if (segment.acknowledgement != iss_ + 1) return std::unexpected(HandshakeError::invalid_ack);
         established_ = true;

@@ -25,6 +25,15 @@ int main() {
     p::Bytes data{'a','b'};
     p::Tcp4View ack{.source=syn.source, .destination=syn.destination, .source_port=1234, .destination_port=80,
                     .sequence=0xffffffff, .acknowledgement=51, .flags=0x18, .payload=data};
+    // The final ACK can carry data after a gap, including across sequence wrap.
+    auto handshake_reordered=t::PassiveConnection::accept(syn,50,4,0);
+    auto late=ack; late.sequence=0; late.payload=std::span{data}.subspan(1);
+    if (!handshake_reordered || !handshake_reordered->input(late) || handshake_reordered->state()!=t::ConnectionState::established ||
+        handshake_reordered->ack().acknowledgement!=0xffffffff) return 1;
+    auto early=ack; early.payload=std::span{data}.first(1);
+    std::array<std::uint8_t,2> handshake_reordered_output{};
+    if (!handshake_reordered->input(early) || handshake_reordered->ack().acknowledgement!=1 ||
+        handshake_reordered->read(handshake_reordered_output)!=2 || handshake_reordered_output!=std::array<std::uint8_t,2>{'a','b'}) return 1;
     if (c->input(ack, 999).error() != t::ConnectionError::time_reversed || c->state() != t::ConnectionState::handshake) return 1;
     auto result = c->input(ack, 1000);
     if (!result || !*result || c->state() != t::ConnectionState::established || c->ack().acknowledgement != 1 ||
