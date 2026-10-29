@@ -8,8 +8,10 @@ import nexus.tcp.engine;
 namespace p=nexus::packet; namespace t=nexus::tcp;
 using namespace std::chrono_literals;
 int main(int argc,char** argv) {
-    if (argc!=2) return 1;
+    if (argc!=3) return 1;
     int fd=std::atoi(argv[1]);
+    bool loss=std::string_view(argv[2])=="loss";
+    if (!loss && std::string_view(argv[2])!="normal") return 1;
     p::MemoryLink link({1500,16,24000});
     p::MemoryLink tcp_link({1500,16,24000});
     auto pump=p::FdPump::create(fd,link,1500);
@@ -20,7 +22,7 @@ int main(int argc,char** argv) {
     std::jthread client([&] {
         int socket=::socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);
         if (socket<0) { client_result=-1; return; }
-        timeval timeout{5,0};
+        timeval timeout{10,0};
         (void)::setsockopt(socket,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
         (void)::setsockopt(socket,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
         sockaddr_in target{}; target.sin_family=AF_INET; target.sin_port=htons(34567);
@@ -35,14 +37,24 @@ int main(int argc,char** argv) {
     auto start=std::chrono::steady_clock::now();
     std::optional<t::ConnectionId> id;
     std::string received;
-    bool sent=false, closed=false;
-    while (std::chrono::steady_clock::now()-start<7s && !client_result.load()) {
+    bool sent=false, closed=false, dropped_synack=false, dropped_data=false, dropped_client_data=false;
+    unsigned synacks=0, data_packets=0, client_data_packets=0;
+    while (std::chrono::steady_clock::now()-start<15s && !client_result.load()) {
         auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count());
         auto moved=pump->step();
         if (moved.input_error || moved.output_error) return 3;
         auto packet=link.receive(p::Side::second);
         if (!packet) return 3;
-        if (*packet && !(**packet).empty() && ((**packet)[0]>>4)==4 && !tcp_link.send(p::Side::first,**packet)) return 3;
+        if (*packet && !(**packet).empty() && ((**packet)[0]>>4)==4) {
+            auto decoded=p::parse_tcp4(**packet);
+            if (!decoded) return 3;
+            bool drop=false;
+            if (!decoded->payload.empty()) {
+                ++client_data_packets;
+                if (loss && !dropped_client_data) { dropped_client_data=true; drop=true; }
+            }
+            if (!drop && !tcp_link.send(p::Side::first,**packet)) return 3;
+        }
         auto input=engine.step(now,0x12345678);
         if (!input) { std::println(stderr,"engine error"); return 4; }
         if (input->rejected) { auto error=*input->rejected; std::println(stderr,"dispatch error={} packet={} table={}",static_cast<int>(error.error),error.packet_error ? static_cast<int>(*error.packet_error) : -1,error.table_error ? static_cast<int>(*error.table_error) : -1); return 4; }
@@ -68,10 +80,21 @@ int main(int argc,char** argv) {
         auto service=engine.service(now);
         if (!service || service->table_error || service->output.connection_error || service->output.output_error) return 10;
         auto output=tcp_link.receive(p::Side::first);
-        if (!output || (*output && !link.send(p::Side::second,**output))) return 10;
+        if (!output) return 10;
+        if (*output) {
+            auto packet=p::parse_tcp4(**output);
+            if (!packet) return 10;
+            bool drop=false;
+            if ((packet->flags & 0x12)==0x12) { ++synacks; if (loss && !dropped_synack) { dropped_synack=true; drop=true; } }
+            if (!packet->payload.empty()) { ++data_packets; if (loss && !dropped_data) { dropped_data=true; drop=true; } }
+            if (!drop && !link.send(p::Side::second,**output)) return 10;
+        }
         std::this_thread::sleep_for(1ms);
     }
     client.join();
-    if (client_result!=1 || received!="hello" || !closed) { std::println(stderr,"client={} received={} closed={}",client_result.load(),received,closed); return 11; }
-    std::println("Linux TCP client exchanged data and half-closed through isolated TUN");
+    if (client_result!=1 || received!="hello" || !closed ||
+        (loss && (!dropped_synack || !dropped_data || !dropped_client_data || synacks<2 || data_packets<2 || client_data_packets<2))) {
+        std::println(stderr,"client={} received={} closed={} synacks={} server_data={} client_data={}",client_result.load(),received,closed,synacks,data_packets,client_data_packets); return 11;
+    }
+    std::println("Linux TCP client exchanged data and half-closed through isolated TUN ({})",argv[2]);
 }

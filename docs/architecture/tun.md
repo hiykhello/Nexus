@@ -143,7 +143,7 @@ flowchart LR
 
 包设备接口建议支持内存实现。先在不操作系统网络配置的环境下验证包序列与状态，再验证真实 TUN 接入。
 
-隔离网络命名空间的 `tests/tcp_kernel_tun.py` 在临时 TUN 上连接 Linux 内核 TCP 客户端与 `MemoryEngine`：真实 SYN/ACK、双向数据及客户端先半关闭后服务端关闭连续十轮通过（Linux 7.3.0-4-cachyos，GCC 16）。测试用 `FdPump` 驱动 TUN，过滤 IPv6 后将 IPv4 报文交给 TCP 引擎；应用侧是内存应答，不包含直连出口。先运行 `xmake build nexus-tcp-kernel-tun-test`，再运行 `python3 tests/tcp_kernel_tun.py build/linux/x86_64/debug/nexus-tcp-kernel-tun-test`；执行需要用户命名空间、网络命名空间、`ip` 和可用的 `/dev/net/tun`，网络配置随命名空间消失。此结果不证明系统接管、代理回环防护、丢包、性能或其他平台的互操作。
+隔离网络命名空间的 `tests/tcp_kernel_tun.py` 在临时 TUN 上连接 Linux 内核 TCP 客户端与 `MemoryEngine`：真实 SYN/ACK、双向数据及客户端先半关闭后服务端关闭连续十轮通过（Linux 7.3.0-4-cachyos，GCC 16）。另丢弃首个 SYN-ACK、首个客户端数据段和首个服务端数据段，观察双方重传后数据各交付一次、正常关闭，连续五轮通过。测试用 `FdPump` 驱动 TUN，过滤 IPv6 后将 IPv4 报文交给 TCP 引擎；应用侧是内存应答，不包含直连出口。先运行 `xmake build nexus-tcp-kernel-tun-test`，再运行 `python3 tests/tcp_kernel_tun.py build/linux/x86_64/debug/nexus-tcp-kernel-tun-test`；执行需要用户命名空间、网络命名空间、`ip` 和可用的 `/dev/net/tun`，网络配置随命名空间消失。此结果不证明系统接管、代理回环防护、其他丢包与乱序交错、性能或其他平台的互操作。
 
 ## TCP 与 UDP 的范围
 
