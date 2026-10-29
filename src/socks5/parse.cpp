@@ -140,9 +140,16 @@ namespace nexus::socks5 {
         auto end=targets_.begin()+target_count_;
         auto it=std::find_if(targets_.begin(),end,[&](auto const& item) { return item.peer==target; });
         if (it!=end && it->pending) return std::unexpected(Status::send_in_progress);
-        if (it==end && target_count_==targets_.size()) return std::unexpected(Status::target_capacity);
+        if (it==end && std::find_if(targets_.begin(),end,[&](auto const& item) {
+                return item.replacing && item.replacement==target;
+            })!=end) return std::unexpected(Status::send_in_progress);
         if (!next_token_) return std::unexpected(Status::token_exhausted);
-        if (it==end) { it=targets_.begin()+target_count_++; *it=Target{target}; }
+        if (it==end && target_count_==targets_.size()) {
+            for (auto candidate=targets_.begin();candidate!=end;++candidate)
+                if (candidate->confirmed && !candidate->pending && (it==end || candidate->last_send<it->last_send)) it=candidate;
+            if (it==end) return std::unexpected(Status::target_capacity);
+            it->replacement=target; it->replacing=true;
+        } else if (it==end) { it=targets_.begin()+target_count_++; *it=Target{target}; }
         it->pending=next_token_++;
         return it->pending;
     }
@@ -152,7 +159,10 @@ namespace nexus::socks5 {
         auto it=std::find_if(targets_.begin(),end,[&](auto const& item) { return token && item.pending==token; });
         if (it==end) return std::unexpected(Status::stale_send);
         it->pending=0;
-        if (success) it->confirmed=true;
+        if (it->replacing) {
+            if (success) { it->peer=it->replacement; it->last_send=token; }
+            it->replacement={}; it->replacing=false;
+        } else if (success) { it->confirmed=true; it->last_send=token; }
         else if (!it->confirmed) { *it=targets_[--target_count_]; targets_[target_count_]=Target{}; }
         return {};
     }

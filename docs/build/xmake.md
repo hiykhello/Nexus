@@ -18,6 +18,7 @@ xmake run nexus-socks5-test
 xmake build nexus
 python tests/socks_udp_proxy.py build/linux/x86_64/debug/nexus
 python tests/socks_udp_lifecycle.py build/linux/x86_64/debug/nexus
+python tests/socks_udp_capacity.py build/linux/x86_64/debug/nexus
 python tests/socks_udp_dns.py build/linux/x86_64/debug/nexus
 python tests/socks_udp_dns.py build/linux/x86_64/debug/nexus tcp
 python tests/socks_udp_dns_chain.py build/linux/x86_64/debug/nexus

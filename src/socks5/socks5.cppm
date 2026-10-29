@@ -51,7 +51,11 @@ export namespace nexus::socks5 {
     // One TCP control connection owns this state. Callers normalize mapped
     // addresses before creation and admission, and serialize all operations.
     class UdpAssociation {
-        struct Target { UdpPeer peer; std::uint64_t pending=0; bool confirmed=false; };
+        struct Target {
+            UdpPeer peer{}, replacement{};
+            std::uint64_t pending=0, last_send=0;
+            bool confirmed=false, replacing=false;
+        };
         UdpPeer peer_;
         std::array<Target,64> targets_{};
         std::size_t target_count_ = 0;
@@ -72,6 +76,8 @@ export namespace nexus::socks5 {
         // Do not move while operations borrow this object. Reserve before an
         // asynchronous send; finish exactly once after completion.
         // At most one send per target is pending and at most 64 targets are retained.
+        // At capacity, a successful new send replaces the least recently sent
+        // non-pending target; failure preserves its previous authorization.
         [[nodiscard]] auto begin_send(UdpPeer target) noexcept -> std::expected<std::uint64_t,Status>;
         [[nodiscard]] auto finish_send(std::uint64_t token, bool success) noexcept -> std::expected<void,Status>;
         [[nodiscard]] auto accepts_reply(UdpPeer source) const noexcept -> bool;

@@ -184,15 +184,35 @@ static auto udp_target_tests() -> bool {
         if (!token || !association->finish_send(*token,true)) return false;
     }
     auto overflow=target; overflow.port=200;
-    if (association->begin_send(overflow).error()!=target_capacity || !association->finish_send(*pending,false)) return false;
+    auto replacement=association->begin_send(overflow);
+    if (!replacement || !association->accepts_reply(target) || association->accepts_reply(overflow) ||
+        association->begin_send(overflow).error()!=send_in_progress || association->begin_send(target).error()!=send_in_progress ||
+        !association->finish_send(*replacement,false) || !association->accepts_reply(target) || association->accepts_reply(overflow)) return false;
     auto retry=association->begin_send(overflow);
-    if (!retry || !association->finish_send(*retry,true) || !association->accepts_reply(overflow)) return false;
+    if (!retry || !association->finish_send(*retry,true) || association->accepts_reply(target) ||
+        !association->accepts_reply(overflow)) return false;
+    auto refreshed=target; refreshed.port=100;
+    auto next_oldest=target; next_oldest.port=101;
+    auto refresh=association->begin_send(refreshed);
+    auto another=target; another.port=201;
+    if (!refresh || !association->finish_send(*refresh,true)) return false;
+    auto second_replacement=association->begin_send(another);
+    if (!second_replacement || !association->finish_send(*second_replacement,true) ||
+        !association->accepts_reply(refreshed) || association->accepts_reply(next_oldest) ||
+        !association->accepts_reply(another) || !association->finish_send(*pending,false)) return false;
+    auto full=s::UdpAssociation::create({1,{127,0,0,1},1},{1,{},0});
+    if (!full) return false;
+    for (std::uint16_t port=100;port<164;++port) {
+        auto item=target; item.port=port;
+        if (!full->begin_send(item)) return false;
+    }
+    if (full->begin_send(overflow).error()!=target_capacity) return false;
     auto separate=s::UdpAssociation::create({1,{127,0,0,1},1},{1,{},0});
     if (!separate) return false;
     auto one=separate->begin_send(target), two=separate->begin_send(other);
     if (!one || !two || !separate->finish_send(*one,false) || !separate->finish_send(*two,true) ||
         separate->accepts_reply(target) || !separate->accepts_reply(other)) return false;
-    auto in_flight=association->begin_send(target);
+    auto in_flight=association->begin_send(overflow);
     if (!in_flight) return false;
     association->close();
     return !association->accepts_reply(target) && association->finish_send(*in_flight,true).error()==association_closed &&
