@@ -381,6 +381,14 @@ if is_plat("linux") and has_config("ss2022") and has_config("crypto") then
         add_files("../tests/shadowsocks_udp_listener.cpp")
         add_packages("nexus-corosio", "nexus-capy")
         add_deps("nexus-shadowsocks-udp-dispatch", "nexus-dns-cache", "nexus-proxy")
+
+    target("nexus-shadowsocks-udp-pending-fault-test")
+        set_kind("binary")
+        set_default(false)
+        add_defines("NEXUS_TEST_UDP_PENDING")
+        add_files("../tests/shadowsocks_udp_pending_fault.cpp")
+        add_packages("nexus-corosio", "nexus-capy")
+        add_deps("nexus-shadowsocks-udp-dispatch", "nexus-dns-cache")
 end
 
 if is_plat("linux") and has_config("ss2022") and has_config("crypto") then

@@ -9,6 +9,9 @@
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/ipv6_address.hpp>
 #include "corosio_udp_resolve_owner.hpp"
+#ifdef NEXUS_TEST_UDP_PENDING
+extern "C" void nexus_test_udp_pending();
+#endif
 
 namespace nexus::shadowsocks::detail {
     // Retain this owner across listener replacements. All access is serialized;
@@ -164,11 +167,18 @@ namespace nexus::shadowsocks::detail {
                 auto deadline=now+std::chrono::seconds(10);
                 auto pending=state_.dispatcher_.begin(state_.key_,std::span{buffer}.first(n),*remote,now,*seconds,deadline);
                 if (!pending) continue;
+                struct PendingGuard {
+                    UdpDispatcher& dispatcher; std::uint64_t token; bool transferred=false;
+                    ~PendingGuard() { if (!transferred) (void)dispatcher.cancel(token); }
+                } guard{state_.dispatcher_,pending->token};
+#ifdef NEXUS_TEST_UDP_PENDING
+                nexus_test_udp_pending();
+#endif
                 auto const& a=pending->address;
-                if (a.empty()) { (void)state_.dispatcher_.cancel(pending->token); continue; }
+                if (a.empty()) continue;
                 if (a[0]==3) {
                     if (a.size()<5 || a.size()!=static_cast<std::size_t>(a[1])+4) {
-                        (void)state_.dispatcher_.cancel(pending->token); continue;
+                        continue;
                     }
                     auto selected=dns_routing_ ? dns_server(a) : 0;
                     std::vector<UdpResolveHop> hops;
@@ -185,13 +195,14 @@ namespace nexus::shadowsocks::detail {
                     }
                     auto upstream=dns_routing_ ? dns_routing_->servers[root].endpoint : upstream_;
                     auto tcp=dns_routing_ ? dns_routing_->servers[root].tcp_only : dns_options_.tcp_only;
-                    (void)resolver_.start(std::move(*pending),upstream,root+1,now,deadline,dns_options_.strategy,
+                    auto started=resolver_.start(std::move(*pending),upstream,root+1,now,deadline,dns_options_.strategy,
                         tcp,dns_options_.disable_cache,dns_options_.edns,std::move(hops));
+                    guard.transferred=started.has_value();
                 } else {
-                    if (a[0]!=1 && a[0]!=4) { (void)state_.dispatcher_.cancel(pending->token); continue; }
+                    if (a[0]!=1 && a[0]!=4) continue;
                     UdpPeer target{}; target.family=a[0]==1 ? 4 : 6;
                     auto size=target.family==4 ? 4u : 16u;
-                    if (a.size()!=size+3) { (void)state_.dispatcher_.cancel(pending->token); continue; }
+                    if (a.size()!=size+3) continue;
                     std::copy_n(a.begin()+1,size,target.address.begin());
                     target.port=static_cast<std::uint16_t>((static_cast<unsigned>(a[size+1])<<8)|a[size+2]);
                     std::array candidates{target}; (void)state_.dispatcher_.complete(pending->token,candidates,now);
@@ -296,6 +307,9 @@ namespace nexus::shadowsocks::detail {
         [[nodiscard]] auto timer_waiting() const noexcept -> bool { return timer_waiting_; }
         [[nodiscard]] auto running() const noexcept -> bool { return started_ && !stopped_; }
         [[nodiscard]] auto relay_sockets() const noexcept -> std::size_t { return state_.dispatcher_.sockets(); }
+#ifdef NEXUS_TEST_UDP_PENDING
+        [[nodiscard]] auto pending_for_test() const noexcept -> std::size_t { return state_.dispatcher_.pending(); }
+#endif
         [[nodiscard]] auto drained() const noexcept -> bool { return !receive_active_ && !timer_active_ && !send_active_ && resolver_.drained(); }
     };
 }
