@@ -76,4 +76,49 @@ export namespace nexus::tcp {
         // Abort an established flow and queue a RST; retry if another response is pending.
         [[nodiscard]] auto reset(ConnectionId id, std::uint64_t now) -> std::expected<ReadResult, EngineError>;
     };
+    // Single owner. The table and link must outlive the engine; uses the second side.
+    class MemoryEngine6 {
+        packet::MemoryLink& link_;
+        ConnectionTable6& table_;
+        rules::Matcher policy_;
+        std::optional<packet::Bytes> incoming_;
+        std::uint32_t incoming_iss_ = 0;
+        std::optional<packet::Bytes> pending_;
+        std::optional<ConnectionId> pending_id_;
+        bool pending_reset_ = false;
+        std::size_t mtu_;
+        std::uint64_t now_ = 0;
+        bool initialized_ = false;
+        ConnectionId cursor_ = 0;
+        enum class Action { data, retransmit, probe, fin, fin_retry };
+        auto flush(EngineStep& report) -> void;
+        auto emit(PassiveConnection6& flow, SendSlice const& slice, std::uint64_t now, Action action)
+            -> std::expected<TransmitResult, EngineError>;
+    public:
+        MemoryEngine6(packet::MemoryLink& link, ConnectionTable6& table, std::size_t mtu = 1500)
+            : link_(link), table_(table), mtu_(mtu) {}
+        MemoryEngine6(packet::MemoryLink& link, ConnectionTable6& table, rules::Matcher policy, std::size_t mtu = 1500)
+            : link_(link), table_(table), policy_(std::move(policy)), mtu_(mtu) {}
+        ~MemoryEngine6();
+        MemoryEngine6(MemoryEngine6 const&) = delete;
+        auto operator=(MemoryEngine6 const&) -> MemoryEngine6& = delete;
+        // ISS is used only if this step opens a flow; caller supplies a secure value.
+        // An input retained after an exception keeps the ISS from its original step.
+        [[nodiscard]] auto step(std::uint64_t now, std::uint32_t iss)
+            -> std::expected<EngineStep, std::variant<EngineError, packet::DeviceError>>;
+        [[nodiscard]] auto transmit(ConnectionId id, std::uint64_t now)
+            -> std::expected<TransmitResult, EngineError>;
+        [[nodiscard]] auto retransmit(ConnectionId id, std::uint64_t now)
+            -> std::expected<TransmitResult, EngineError>;
+        [[nodiscard]] auto probe(ConnectionId id, std::uint64_t now)
+            -> std::expected<TransmitResult, EngineError>;
+        [[nodiscard]] auto send_fin(ConnectionId id, std::uint64_t now, bool retry = false)
+            -> std::expected<TransmitResult, EngineError>;
+        // Advances at most one connection and emits at most one packet.
+        [[nodiscard]] auto service(std::uint64_t now) -> std::expected<ServiceResult, EngineError>;
+        [[nodiscard]] auto read(ConnectionId id, std::span<std::uint8_t> output, std::uint64_t now, bool observe_eof = true)
+            -> std::expected<ReadResult, EngineError>;
+        // Abort an established flow and queue a RST; retry if another response is pending.
+        [[nodiscard]] auto reset(ConnectionId id, std::uint64_t now) -> std::expected<ReadResult, EngineError>;
+    };
 }

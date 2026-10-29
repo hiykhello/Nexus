@@ -3,6 +3,56 @@ import nexus.tcp.engine;
 namespace p = nexus::packet;
 namespace t = nexus::tcp;
 int main() {
+    p::MemoryLink link6({1500,1,1500});
+    auto table6=t::ConnectionTable6::create(2,8);
+    if (!table6) return 1;
+    t::MemoryEngine6 engine6(link6,*table6);
+    p::Bytes sentinel6{42};
+    p::Tcp6View syn6{.source={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
+                     .destination={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,2},
+                     .source_port=1234,.destination_port=80,.sequence=99,.flags=2};
+    auto raw6=p::make_tcp6(syn6);
+    if (!raw6 || !link6.send(p::Side::second,sentinel6) || !link6.send(p::Side::first,*raw6)) return 1;
+    auto opened6=engine6.step(0,50);
+    if (!opened6 || !opened6->opened || !opened6->id || !opened6->backpressured) return 1;
+    auto sentinel_out6=link6.receive(p::Side::first);
+    auto flush6=engine6.step(1,999); auto synack_raw6=link6.receive(p::Side::first);
+    if (!sentinel_out6 || !*sentinel_out6 || **sentinel_out6!=sentinel6 || !flush6 || !flush6->delivered || !synack_raw6 || !*synack_raw6) return 1;
+    auto synack6=p::parse_tcp6(**synack_raw6);
+    if (!synack6 || synack6->sequence!=50 || synack6->acknowledgement!=100 || synack6->destination!=syn6.source) return 1;
+    p::Tcp6View ack6{.source=syn6.source,.destination=syn6.destination,.source_port=1234,.destination_port=80,
+                     .sequence=100,.acknowledgement=51,.flags=0x10,.window=8};
+    raw6=p::make_tcp6(ack6);
+    if (!raw6 || !link6.send(p::Side::first,*raw6) || !engine6.step(2,0)) return 1;
+    p::Bytes incoming6{'h','i'}; ack6.flags=0x18; ack6.payload=incoming6;
+    raw6=p::make_tcp6(ack6); if (!raw6 || !link6.send(p::Side::first,*raw6)) return 1;
+    auto received6=engine6.step(3,0); auto response6=link6.receive(p::Side::first);
+    if (!received6 || !received6->delivered || !response6 || !*response6 || p::parse_tcp6(**response6)->acknowledgement!=102) return 1;
+    std::array<std::uint8_t,2> read6{};
+    auto read_result6=engine6.read(*opened6->id,read6,4);
+    if (!read_result6 || read_result6->bytes!=2 || !std::ranges::equal(read6,incoming6)) return 1;
+    if (read_result6->notification.delivered) { auto update=link6.receive(p::Side::first); if (!update || !*update) return 1; }
+    auto* flow6=table6->get(*opened6->id); p::Bytes outgoing6{'o','k'};
+    if (!flow6 || !flow6->enqueue(outgoing6) || !link6.send(p::Side::second,sentinel6)) return 1;
+    auto blocked6=engine6.transmit(*opened6->id,5);
+    if (!blocked6 || !blocked6->backpressured || flow6->ack().sequence!=51) return 1;
+    if (!link6.receive(p::Side::first)) return 1;
+    auto sent6=engine6.transmit(*opened6->id,6); auto output6=link6.receive(p::Side::first);
+    if (!sent6 || sent6->bytes!=2 || !output6 || !*output6) return 1;
+    auto output_view6=p::parse_tcp6(**output6);
+    if (!output_view6 || output_view6->sequence!=51 || !std::ranges::equal(output_view6->payload,outgoing6)) return 1;
+    auto retry6=engine6.service(1006); auto retry_wire6=link6.receive(p::Side::first);
+    if (!retry6 || retry6->action!=t::ServiceAction::retransmit || !retry_wire6 || !*retry_wire6) return 1;
+    auto retry_view6=p::parse_tcp6(**retry_wire6);
+    if (!retry_view6 || retry_view6->sequence!=51 || !std::ranges::equal(retry_view6->payload,outgoing6)) return 1;
+    if (!link6.send(p::Side::second,sentinel6)) return 1;
+    auto reset6=engine6.reset(*opened6->id,1007);
+    if (!reset6 || !reset6->notification.backpressured || table6->reclaim(*opened6->id,1007)!=false) return 1;
+    if (!link6.receive(p::Side::first)) return 1;
+    auto reset_flush6=engine6.step(1008,0); auto reset_wire6=link6.receive(p::Side::first);
+    if (!reset_flush6 || !reset_flush6->delivered || !reset_wire6 || !*reset_wire6) return 1;
+    auto reset_view6=p::parse_tcp6(**reset_wire6);
+    if (!reset_view6 || reset_view6->flags!=0x14 || table6->reclaim(*opened6->id,1008)!=true) return 1;
     p::MemoryLink link({1500, 1, 1500});
     auto table = t::ConnectionTable::create(2, 8);
     if (!table) return 1;
