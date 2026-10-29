@@ -1,10 +1,8 @@
 """Drive TCP and UDP direct paths using a client in a disposable network namespace."""
 import array
-import fcntl
 import os
 import pathlib
 import socket
-import struct
 import subprocess
 import sys
 import threading
@@ -98,9 +96,21 @@ else:
     if os.stat('/proc/self/ns/net').st_ino == int(sys.argv[2]):
         raise RuntimeError("fixture must run in a separate network namespace")
     control = socket.socket(fileno=int(sys.argv[3]))
-    fd = os.open("/dev/net/tun", os.O_RDWR | os.O_NONBLOCK | os.O_CLOEXEC)
+    owner_control, owner_child = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    owner_control.settimeout(10)
+    helper = pathlib.Path(binary).with_name('nexus-packet-tun-helper')
+    owner = subprocess.Popen([helper, str(owner_child.fileno())], pass_fds=(owner_child.fileno(),))
+    owner_child.close()
+    fd = -1
     try:
-        fcntl.ioctl(fd, 0x400454ca, struct.pack("16sH", b"nx-test", 0x0001 | 0x1000))
+        msg, ancillary, _, _ = owner_control.recvmsg(1, socket.CMSG_SPACE(array.array('i').itemsize))
+        descriptors = array.array('i')
+        for level, kind, data in ancillary:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                descriptors.frombytes(data[:descriptors.itemsize])
+        if msg != b'T' or len(descriptors) != 1:
+            raise RuntimeError('TUN owner did not provide its descriptor')
+        fd = descriptors[0]
         subprocess.run(["ip", "addr", "add", "10.77.0.1/24", "dev", "nx-test"], check=True)
         subprocess.run(["ip", "link", "set", "nx-test", "up"], check=True)
         pathlib.Path('/proc/sys/net/ipv4/conf/nx-test/route_localnet').write_text('1\n')
@@ -133,5 +143,13 @@ else:
             if response != b"world":
                 raise RuntimeError(f"unexpected response {response!r}")
     finally:
-        os.close(fd)
+        if fd >= 0:
+            os.close(fd)
+        if owner.poll() is None:
+            owner_control.sendall(b'X')
+            if owner.wait(timeout=5):
+                raise RuntimeError('TUN owner failed to close')
+        elif owner.returncode:
+            raise RuntimeError('TUN owner failed')
+        owner_control.close()
         control.close()

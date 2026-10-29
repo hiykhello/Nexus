@@ -4,6 +4,8 @@
 
 ## 上一步
 
+- 将 `LinuxTun` 所有者接入隔离 TUN 的 IPv4 TCP/UDP 真实传输夹具；描述符副本跨进程传递，双向转发和关闭连续十轮通过。运行需同时构建 `nexus-packet-tun-helper` 和 `nexus-transport-kernel-tun-test`。
+
 - 新增 Linux TUN 独占所有者接口：非阻塞、close-on-exec、名称校验、移动和析构回收；隔离命名空间的重名拒绝、描述符属性与设备回收连续十轮通过，现有真实 TUN 双族传输回归通过。接口未配置网络或接入正式运行。
 
 - 两个隔离网络命名空间经真实 TUN 和 IPv6 直连完成 UDP 往返：客户端未收到先注入的错误源端口回包，连续十轮通过；IPv4 TCP/UDP 同设备夹具回归通过。未覆盖 IPv6 扩展头、分片、zone 和系统接管。

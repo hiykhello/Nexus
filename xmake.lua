@@ -207,6 +207,12 @@ if is_plat("linux") then
         add_files("src/packet/tun_linux.cppm", {public = true})
         add_files("src/packet/tun_linux.cpp")
 
+    target("nexus-packet-tun-helper")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/tun_linux_helper.cpp")
+        add_deps("nexus-packet-tun-linux")
+
     target("nexus-packet-tun-linux-test")
         set_kind("binary")
         set_default(false)
