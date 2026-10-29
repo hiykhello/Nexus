@@ -475,6 +475,12 @@ if is_plat("linux") then
 end
 
 if is_plat("linux") then
+    target("nexus-transport-kernel-tun-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/transport_kernel_tun.cpp")
+        add_deps("nexus-transport-memory", "nexus-packet-fd")
+
     target("nexus-transport-fd-test")
         set_kind("binary")
         set_default(false)
