@@ -25,4 +25,11 @@ export namespace nexus::tcp {
                                        std::span<std::uint8_t const> bytes, std::uint32_t iss,
                                        std::uint64_t now, std::size_t mtu = 1500)
         -> std::expected<DispatchResult, DispatchFailure>;
+    [[nodiscard]] auto dispatch(ConnectionTable6& table, std::span<std::uint8_t const> bytes,
+                                std::uint32_t iss, std::uint64_t now, std::size_t mtu = 1500)
+        -> std::expected<DispatchResult, DispatchFailure>;
+    [[nodiscard]] auto dispatch_routed(ConnectionTable6& table, rules::Matcher const& policy,
+                                       std::span<std::uint8_t const> bytes, std::uint32_t iss,
+                                       std::uint64_t now, std::size_t mtu = 1500)
+        -> std::expected<DispatchResult, DispatchFailure>;
 }

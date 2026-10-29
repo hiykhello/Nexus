@@ -31,6 +31,46 @@ auto challenge_limit() -> bool {
     return !backwards && disabled && !disabled->claim_challenge_ack(1) && !disabled->claim_challenge_ack(11);
 }
 int main() {
+    auto table6=t::ConnectionTable6::create(2,8,{1,1000});
+    auto policy6=nexus::rules::Matcher::compile({{{"ip-cidr","192.0.2.0/24"},{"ip-cidr","2001:db8:1::/48"}}});
+    if (!table6 || !policy6) return 1;
+    p::Tcp6View syn6{.source={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
+                     .destination={0x20,1,0x0d,0xb8,0,2,0,0,0,0,0,0,0,0,0,2},
+                     .source_port=1234,.destination_port=80,.sequence=99,.flags=2,.window=8};
+    auto denied6=syn6; denied6.destination[5]=1;
+    auto raw6=p::make_tcp6(denied6); if (!raw6) return 1;
+    auto blocked6=t::dispatch_routed(*table6,*policy6,*raw6,50,0);
+    if (blocked6 || blocked6.error().error!=t::DispatchError::blocked || table6->size()) return 1;
+    denied6.destination={0,0,0,0,0,0,0,0,0,0,255,255,192,0,2,1};
+    raw6=p::make_tcp6(denied6); blocked6=t::dispatch_routed(*table6,*policy6,*raw6,50,0);
+    if (blocked6 || blocked6.error().error!=t::DispatchError::blocked || table6->size()) return 1;
+    denied6.destination={}; raw6=p::make_tcp6(denied6); blocked6=t::dispatch_routed(*table6,*policy6,*raw6,50,0);
+    if (blocked6 || blocked6.error().error!=t::DispatchError::invalid_target || table6->size()) return 1;
+    raw6=p::make_tcp6(syn6); if (!raw6) return 1;
+    if (t::dispatch(*table6,*raw6,50,0,59).error().error!=t::DispatchError::output_error || table6->size()) return 1;
+    auto opened6=t::dispatch_routed(*table6,*policy6,*raw6,50,0);
+    if (!opened6 || !opened6->opened || !opened6->reply || table6->size()!=1) return 1;
+    auto synack6=p::parse_tcp6(*opened6->reply);
+    if (!synack6 || synack6->source!=syn6.destination || synack6->destination!=syn6.source ||
+        synack6->sequence!=50 || synack6->acknowledgement!=100 || synack6->flags!=0x12) return 1;
+    auto ack6=syn6; ack6.flags=0x10; ack6.sequence=100; ack6.acknowledgement=51;
+    auto invalid_ack6=ack6; invalid_ack6.acknowledgement=52;
+    raw6=p::make_tcp6(invalid_ack6); auto invalid6=t::dispatch(*table6,*raw6,0,1);
+    if (!invalid6 || invalid6->input_error!=t::ConnectionError::invalid_ack || !invalid6->reply) return 1;
+    auto reset6=p::parse_tcp6(*invalid6->reply);
+    if (!reset6 || reset6->flags!=4 || reset6->sequence!=52 || reset6->acknowledgement!=0) return 1;
+    raw6=p::make_tcp6(ack6); auto established6=t::dispatch(*table6,*raw6,0,1);
+    if (!established6 || established6->reply || table6->get(opened6->id)->state()!=t::ConnectionState::established) return 1;
+    p::Bytes body6{'h','i'}; ack6.flags=0x18; ack6.payload=body6;
+    raw6=p::make_tcp6(ack6); auto received6=t::dispatch(*table6,*raw6,0,2);
+    if (!received6 || !received6->reply || received6->input_error) return 1;
+    auto reply6=p::parse_tcp6(*received6->reply); std::array<std::uint8_t,2> data6{};
+    if (!reply6 || reply6->acknowledgement!=102 || table6->get(opened6->id)->read(data6)!=2 ||
+        !std::ranges::equal(data6,body6)) return 1;
+    auto attack6=ack6; attack6.flags=2; attack6.sequence=102; attack6.payload={};
+    raw6=p::make_tcp6(attack6); auto challenge6=t::dispatch(*table6,*raw6,0,3);
+    auto suppressed6=t::dispatch(*table6,*raw6,0,3);
+    if (!challenge6 || !challenge6->reply || !suppressed6 || suppressed6->reply || !suppressed6->challenge_suppressed) return 1;
     if (!challenge_limit()) return 1;
     auto table = t::ConnectionTable::create(1, 8);
     if (!table) return 1;

@@ -47,11 +47,14 @@ namespace nexus::packet {
         return v;
     }
     auto make_tcp6(Tcp6View v,std::size_t mtu) -> std::expected<Bytes,PacketError> {
+        return make_tcp6(v,mtu,{});
+    }
+    auto make_tcp6(Tcp6View v,std::size_t mtu,Bytes p) -> std::expected<Bytes,PacketError> {
         if (v.options.size()>40 || v.options.size()%4 || v.flags>0x1ff) return std::unexpected(PacketError::unsupported_header);
         auto header=60+v.options.size();
         if (mtu<header || v.payload.size()>65535-(header-40) || v.payload.size()>mtu-header)
             return std::unexpected(PacketError::too_large);
-        Bytes p(header+v.payload.size()); p[0]=0x60; p[6]=6; p[7]=64;
+        p.resize(header+v.payload.size()); std::ranges::fill(p,0); p[0]=0x60; p[6]=6; p[7]=64;
         put16(p,4,static_cast<std::uint16_t>(p.size()-40));
         std::ranges::copy(v.source,p.begin()+8); std::ranges::copy(v.destination,p.begin()+24);
         put16(p,40,v.source_port); put16(p,42,v.destination_port); put32(p,44,v.sequence); put32(p,48,v.acknowledgement);

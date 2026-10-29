@@ -41,6 +41,7 @@ export namespace nexus::packet {
     // Basic IPv6 header only; options and payload borrow the input.
     [[nodiscard]] auto parse_tcp6(std::span<std::uint8_t const> packet) noexcept -> std::expected<Tcp6View, PacketError>;
     [[nodiscard]] auto make_tcp6(Tcp6View segment, std::size_t mtu = 1500) -> std::expected<Bytes, PacketError>;
+    [[nodiscard]] auto make_tcp6(Tcp6View segment, std::size_t mtu, Bytes storage) -> std::expected<Bytes, PacketError>;
     struct TcpOptionView { std::uint8_t kind = 0; std::span<std::uint8_t const> data; };
     struct TcpOptions {
         std::array<TcpOptionView, 40> items{};
