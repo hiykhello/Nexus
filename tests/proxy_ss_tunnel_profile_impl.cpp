@@ -8,7 +8,6 @@ extern "C" int nexus_test_ss_tunnel_profile() {
     using namespace nexus::proxy;
     io::io_context context;
     {
-        Session session(context);
         auto factories=std::make_shared<std::vector<TunnelFactory>>();
         std::array<std::uint8_t,16> key{};
         {
@@ -16,10 +15,13 @@ extern "C" int nexus_test_ss_tunnel_profile() {
             if (!factory) return 1;
             factories->push_back(std::move(*factory));
         }
-        session.tunnel_factories=factories;
-        session.tunnel=(*session.tunnel_factories)[0](session,context);
+        {
+            Session session(context);
+            session.tunnel_factories=factories.get();
+            session.tunnel=(*session.tunnel_factories)[0](session,context);
+            if (!session.tunnel || !nexus_test_tunnel_profile_is_alive()) return 2;
+        }
         factories.reset();
-        if (!session.tunnel || !nexus_test_tunnel_profile_is_alive()) return 2;
     }
     return 0;
 }

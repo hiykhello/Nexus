@@ -61,8 +61,8 @@ namespace nexus::proxy {
         // Borrowed from the active DNS query on this session's executor.
         void* dns_operation = nullptr;
         void (*cancel_dns)(void*) noexcept = nullptr;
-        // The tunnel borrows its profile from this retained factory snapshot.
-        std::shared_ptr<std::vector<TunnelFactory> const> tunnel_factories;
+        // The server retains this snapshot until the context destroys its tasks.
+        std::vector<TunnelFactory> const* tunnel_factories = nullptr;
         pro::proxy<TunnelFacade> tunnel;
         Clock::time_point started = Clock::now();
         Clock::time_point touched = started;
@@ -158,6 +158,7 @@ export namespace nexus::proxy {
 #endif
 #ifdef NEXUS_ENABLE_VLESS
         InboundFactory vless_inbound;
+        std::shared_ptr<std::vector<TunnelFactory> const> vless;
 #endif
 #if BOOST_COROSIO_HAVE_LIBURING
         io::io_context context{io::uring};
@@ -175,9 +176,6 @@ export namespace nexus::proxy {
         std::uint64_t fakeip_view=0;
 #endif
         std::optional<std::size_t> max_bootstrap_index;
-#ifdef NEXUS_ENABLE_VLESS
-        std::shared_ptr<std::vector<TunnelFactory> const> vless;
-#endif
         bool running = false;
         bool mixed = false;
         Inbound inbound_type = Inbound::socks5;

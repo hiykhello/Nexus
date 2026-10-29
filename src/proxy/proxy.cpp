@@ -107,7 +107,7 @@ namespace nexus::proxy {
             session->quota=std::move(lease);
             session->started = session->touched = Clock::now();
 #ifdef NEXUS_ENABLE_VLESS
-            session->tunnel_factories=vless;
+            session->tunnel_factories=vless.get();
 #endif
             sessions.push_back(session.get());
             session->registry=&sessions;
