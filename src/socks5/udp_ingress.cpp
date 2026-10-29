@@ -20,7 +20,7 @@ namespace nexus::socks5 {
     }
     UdpIngress::~UdpIngress() { close(); }
     auto UdpIngress::close() noexcept -> void {
-        closed_=true; pending_.reset(); input_pending_=false; input_size_=0; direct_.close();
+        closed_=true; pending_.reset(); input_pending_=false; domain_pending_=false; input_size_=0; direct_.close();
         if (fd_>=0) { ::close(fd_); fd_=-1; }
     }
     auto UdpIngress::open(UdpPeer local) -> std::expected<UdpPeer,UdpDirectError> {
@@ -57,11 +57,16 @@ namespace nexus::socks5 {
                 auto failure=error(); close(); return std::unexpected(UdpDirectError{failure});
             }
         }
-        if (input_pending_) {
+        if (input_pending_ && !domain_pending_) {
             report.input=true;
             auto packet=association_.admit(input_source_,std::span(input_bytes_).first(input_size_));
             if (!packet) report.input_error=UdpDirectError{packet.error()};
-            else if (packet->address_type==3) report.input_error=UdpDirectError{UdpRouteError::unsupported};
+            else if (packet->address_type==3) {
+                auto preflight=udp_preflight(policy_,*packet);
+                if (!preflight) report.input_error=UdpDirectError{preflight.error()};
+                else if (!allow_domains_) report.input_error=UdpDirectError{UdpRouteError::unsupported};
+                else { domain_pending_=true; report.domain_pending=true; }
+            }
             else {
                 UdpPeer target{packet->address_type,{},packet->port};
                 std::copy_n(packet->address.begin(),packet->address_length,target.address.begin());
@@ -72,8 +77,9 @@ namespace nexus::socks5 {
                     report.input_backpressured=true;
                 else report.input_error=sent.error();
             }
-            if (!report.input_backpressured) { input_pending_=false; input_size_=0; }
+            if (!report.input_backpressured && !domain_pending_) { input_pending_=false; input_size_=0; }
         }
+        if (domain_pending_) report.domain_pending=true;
         if (!pending_) {
             auto reply=direct_.poll();
             if (!reply) report.output_error=reply.error();
@@ -88,5 +94,22 @@ namespace nexus::socks5 {
             } else { report.delivered=true; pending_.reset(); }
         }
         return report;
+    }
+    auto UdpIngress::pending_domain() const noexcept -> std::optional<UdpDatagram> {
+        if (closed_ || association_.closed() || !domain_pending_) return {};
+        auto packet=parse_udp_datagram(std::span(input_bytes_).first(input_size_));
+        if (!packet || packet->address_type!=3) return {};
+        return *packet;
+    }
+    auto UdpIngress::send_resolved(UdpPeer candidate) -> std::expected<void,UdpDirectError> {
+        if (closed_ || association_.closed()) { close(); return std::unexpected(UdpDirectError{Status::association_closed}); }
+        auto packet=pending_domain();
+        if (!packet) return std::unexpected(UdpDirectError{std::make_error_code(std::errc::operation_not_permitted)});
+        auto sent=direct_.send(*packet,candidate);
+        if (sent) discard_domain();
+        return sent;
+    }
+    auto UdpIngress::discard_domain() noexcept -> void {
+        if (domain_pending_) { domain_pending_=false; input_pending_=false; input_size_=0; }
     }
 }

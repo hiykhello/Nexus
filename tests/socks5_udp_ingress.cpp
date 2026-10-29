@@ -84,5 +84,43 @@ int main() {
     Socket recovered{::socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0)};
     relay.sin_port=htons(endpoint->port);
     if (recovered.fd<0 || ::bind(recovered.fd,reinterpret_cast<sockaddr*>(&relay),sizeof(relay))) return 21;
+    auto third=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
+    if (!third) return 22;
+    s::UdpIngress domains(*third,*policy,true);
+    auto domain_endpoint=domains.open({1,{127,0,0,1},0}); if (!domain_endpoint) return 23;
+    relay.sin_port=htons(domain_endpoint->port);
+    std::vector<std::uint8_t> named{0,0,0,3,4,'t','e','s','t',static_cast<std::uint8_t>(target_port>>8),static_cast<std::uint8_t>(target_port),'d'};
+    if (::sendto(client.fd,named.data(),named.size(),0,reinterpret_cast<sockaddr*>(&relay),sizeof(relay))!=static_cast<ssize_t>(named.size())) return 24;
+    auto waiting=domains.step(); auto request=domains.pending_domain();
+    if (!waiting || !waiting->domain_pending || !request || request->address_type!=3 || request->data.size()!=1 || request->data[0]!='d') return 25;
+    if (domains.send_resolved({1,{127,0,0,1},static_cast<std::uint16_t>(target_port+1)}) || !domains.pending_domain()) return 26;
+    fail_reply=true;
+    auto retry=domains.send_resolved({1,{127,0,0,1},target_port});
+    if (retry || !domains.pending_domain() || third->accepts_reply({1,{127,0,0,1},target_port})) return 33;
+    if (!domains.send_resolved({1,{127,0,0,1},target_port}) || domains.pending_domain()) return 27;
+    length=sizeof(origin); n=::recvfrom(target.fd,bytes,sizeof(bytes),0,reinterpret_cast<sockaddr*>(&origin),&length);
+    if (n!=1 || bytes[0]!='d') return 28;
+    if (::sendto(client.fd,named.data(),named.size(),0,reinterpret_cast<sockaddr*>(&relay),sizeof(relay))!=static_cast<ssize_t>(named.size()) ||
+        ::sendto(target.fd,"r",1,0,reinterpret_cast<sockaddr*>(&origin),length)!=1) return 29;
+    bool delivered=false;
+    for (int i=0;i<100 && !delivered;++i) {
+        auto result=domains.step(); if (!result || !result->domain_pending || result->output_error) return 30;
+        delivered=result->delivered;
+        if (!delivered) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (!delivered || !domains.pending_domain() || ::recv(client.fd,response.data(),response.size(),0)<0) return 31;
+    domains.discard_domain();
+    if (domains.pending_domain() || domains.send_resolved({1,{127,0,0,1},target_port})) return 32;
+    r::RuleSet blocked_name{{{"domain-suffix","test"}}};
+    auto deny=r::RouteMatcher::compile(std::array{r::RouteRule{blocked_name,1}},0,2);
+    auto fourth=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
+    if (!deny || !fourth) return 34;
+    s::UdpIngress blocked_driver(*fourth,*deny,true);
+    auto block_endpoint=blocked_driver.open({1,{127,0,0,1},0}); if (!block_endpoint) return 35;
+    relay.sin_port=htons(block_endpoint->port);
+    if (::sendto(client.fd,named.data(),named.size(),0,reinterpret_cast<sockaddr*>(&relay),sizeof(relay))!=static_cast<ssize_t>(named.size())) return 36;
+    auto denied=blocked_driver.step();
+    if (!denied || denied->domain_pending || blocked_driver.pending_domain() ||
+        !denied->input_error || *denied->input_error!=s::UdpDirectError{s::UdpRouteError::blocked}) return 37;
     std::println("SOCKS UDP ingress forwards and filters real datagrams");
 }
