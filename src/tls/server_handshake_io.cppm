@@ -39,6 +39,12 @@ export namespace nexus::tls {
         // Finished verification retains at most a SHA-384 traffic secret and
         // a 256-bit record key. Crypto internals and container capacity are excluded.
         static constexpr std::size_t finished_keys_charge=48+32;
+        // Handshake key derivation's digest, early/handshake/traffic secrets,
+        // key/IV copies and HKDF temporaries; excludes crypto internals.
+        static constexpr std::size_t handshake_key_scratch_charge=512;
+        // After derivation, master handshake secret, server traffic secret and
+        // write key persist until the encrypted flight has been constructed.
+        static constexpr std::size_t handshake_key_retained_charge=48+48+32;
         // Sealing a full fragment holds TLSInnerPlaintext and the encrypted
         // payload simultaneously; the completed record is charged separately.
         static constexpr std::size_t flight_seal_scratch_charge=16385+16401;

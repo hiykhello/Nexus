@@ -88,6 +88,7 @@ namespace nexus::tls {
             std::optional<memory::Budget::Reservation> generated_hello_scratch;
             std::optional<memory::Budget::Reservation> encoded_local;
             std::optional<memory::Budget::Reservation> finished_keys_local;
+            std::optional<memory::Budget::Reservation> handshake_keys_local;
             auto result=hello_->feed(input,budget_);
             if (!result) return fail(result.error()==ClientHelloStreamError::budget_exceeded ? ServerHandshakeIoError::budget_exceeded : ServerHandshakeIoError::protocol_error);
             if (result->compatibility_ccs) ccs_seen_=true;
@@ -120,10 +121,13 @@ namespace nexus::tls {
                 // them, and keep the reservation through any local unwinding.
                 finished_keys_local=memory::Budget::reserve(budget_,finished_keys_charge);
                 if (!finished_keys_local) return fail(ServerHandshakeIoError::budget_exceeded);
+                handshake_keys_local=memory::Budget::reserve(budget_,handshake_key_scratch_charge);
+                if (!handshake_keys_local) return fail(ServerHandshakeIoError::budget_exceeded);
             }
             auto keys=state_==State::hello ? server_handshake_keys(result->message,std::span{&scheme,1}) :
                 server_handshake_keys_retry(first_hello_,retry_hello_,result->message,std::span{&scheme,1});
             if (!keys && state_==State::hello && keys.error()==ServerKeyError::retry_required) {
+                handshake_keys_local.reset();
                 finished_keys_local.reset();
                 generated_hello_reservation.reset();
                 if (budget_) {
@@ -147,6 +151,7 @@ namespace nexus::tls {
                 hello_.reset(); hello_input_reservation_.reset(); state_=State::retry_output; return ServerHandshakeIoFeed{consumed};
             }
             if (!keys) return fail(ServerHandshakeIoError::protocol_error);
+            if (handshake_keys_local) (void)handshake_keys_local->shrink(handshake_key_retained_charge);
             generated_hello_scratch.reset();
             auto& hello=keys->server_hello; if (hello.size()>16384) return fail(ServerHandshakeIoError::protocol_error);
             std::optional<memory::Budget::Reservation> flight_scratch;
@@ -181,6 +186,7 @@ namespace nexus::tls {
             server_hello_[3]=static_cast<std::uint8_t>(hello.size()>>8); server_hello_[4]=static_cast<std::uint8_t>(hello.size());
             std::ranges::copy(hello,server_hello_.begin()+5);
             auto flight=ServerFlight::create(std::move(*keys),*credential_,required_alpn_); if (!flight) return fail(ServerHandshakeIoError::protocol_error);
+            handshake_keys_local.reset();
             if (application_keys && !flight->retain_application_key_reservation(std::move(*application_keys))) return fail(ServerHandshakeIoError::protocol_error);
             generated_hello_reservation.reset();
             flight_scratch.reset();
