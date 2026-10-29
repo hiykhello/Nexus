@@ -11,11 +11,20 @@ namespace nexus::packet {
                 result.input = true;
                 auto& bytes = **received;
                 bool tcp = bytes.size() >= 20 && (bytes[0] >> 4) == 4 && bytes[9] == 6;
-                bool tcp6 = tcp6_ && bytes.size() >= 40 && (bytes[0] >> 4) == 6 && bytes[6] == 6;
                 bool udp4 = bytes.size() >= 20 && (bytes[0] >> 4) == 4 && bytes[9] == 17;
-                // IPv6 options are checked by the UDP parser after dispatch.
-                bool udp6 = bytes.size() >= 40 && (bytes[0] >> 4) == 6 &&
-                            (bytes[6] == 17 || bytes[6] == 0 || bytes[6] == 60);
+                bool tcp6 = false, udp6 = false;
+                if (bytes.size() >= 40 && (bytes[0] >> 4) == 6) {
+                    auto next = bytes[6]; std::size_t offset = 40;
+                    // Only locate the upper-layer protocol; its parser validates the chain.
+                    for (int count=0; count<2 && (next==0 || next==60); ++count) {
+                        if (bytes.size()-offset<2) break;
+                        auto length=(static_cast<std::size_t>(bytes[offset+1])+1)*8;
+                        if (length>bytes.size()-offset) break;
+                        next=bytes[offset]; offset+=length;
+                    }
+                    tcp6 = tcp6_ && next==6;
+                    udp6 = next==17 || next==0 || next==60;
+                }
                 if (!tcp && !tcp6 && !udp4 && !udp6) result.rejected = SwitchReject::unsupported_packet;
                 else { input_route_ = tcp ? 0 : tcp6 ? 2 : 1; input_ = std::move(bytes); }
             }

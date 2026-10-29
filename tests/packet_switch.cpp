@@ -30,6 +30,17 @@ int main() {
     if (!tcp.send(p::Side::second,tcp_reply) || !udp.send(p::Side::second,udp_reply)) return 1;
     auto fair=sw.step(); if (!fair || !fair->output_delivered || pop(device,p::Side::first)!=tcp_reply) return 1;
     auto last=sw.step(); if (!last || !last->output_delivered || pop(device,p::Side::first)!=udp_reply) return 1;
+    p::MemoryLink dual_device, dual4, dualudp, dual6;
+    p::MemorySwitch dual(dual_device,dual4,dualudp,dual6);
+    p::Bytes extended(56); extended[0]=0x60; extended[6]=0;
+    extended[40]=60; extended[48]=6;
+    if (!dual_device.send(p::Side::first,extended)) return 1;
+    auto routed=dual.step();
+    if (!routed || !routed->input_delivered || pop(dual6,p::Side::second)!=extended) return 1;
+    extended[48]=17;
+    if (!dual_device.send(p::Side::first,extended)) return 1;
+    routed=dual.step();
+    if (!routed || !routed->input_delivered || pop(dualudp,p::Side::second)!=extended) return 1;
     device.close(p::Side::first);
     auto closed=sw.step(); if (closed || closed.error()!=p::DeviceError::peer_closed) return 1;
     std::cout << "packet switch routing, fairness and backpressure passed\n";

@@ -155,9 +155,19 @@ else:
                 if not part: break
                 response.extend(part)
             if response != b'world': raise RuntimeError(f'unexpected TCP response {response!r}')
-        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as client6:
+        with socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(3)) as capture6, \
+                socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as client6:
+            capture6.bind(('nx-owned', 0)); capture6.settimeout(10)
             client6.settimeout(10)
+            client6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_HOPOPTS, bytes([0, 0, 1, 4, 0, 0, 0, 0]))
+            client6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_DSTOPTS, bytes([0, 0, 0x1e, 2, 0xaa, 0xbb, 1, 0]))
             client6.connect(('fd77::2', int(sys.argv[8])))
+            while True:
+                packet = capture6.recv(65535)
+                if len(packet) >= 76 and packet[0] >> 4 == 6 and packet[6] == 0 and packet[40] == 60 and packet[48] == 6 and packet[69] & 2:
+                    if packet[42:48] != bytes([1, 4, 0, 0, 0, 0]) or packet[50:56] != bytes([0x1e, 2, 0xaa, 0xbb, 1, 0]):
+                        raise RuntimeError('IPv6 TCP extension options missing from SYN')
+                    break
             client6.sendall(b'hello6'); client6.shutdown(socket.SHUT_WR)
             response = bytearray()
             while True:

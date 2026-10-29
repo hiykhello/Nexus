@@ -15,7 +15,30 @@ int main() {
     bad6=sample6; bad6[6]=44;
     if (p::parse_tcp6(bad6).error()!=p::PacketError::unsupported_fragment) return 1;
     bad6=sample6; bad6[6]=60;
-    if (p::parse_tcp6(bad6).error()!=p::PacketError::unsupported_header) return 1;
+    if (p::parse_tcp6(bad6)) return 1;
+    // The TCP pseudo-header excludes extension bytes and their length.
+    auto ext6=sample6;
+    ext6.insert(ext6.begin()+40,{60,0,1,4,0,0,0,0, 6,0,0x1e,2,0xaa,0xbb,1,0});
+    ext6[6]=0; ext6[5]=static_cast<std::uint8_t>(ext6.size()-40);
+    auto parsed6=p::parse_tcp6(ext6);
+    if (!parsed6 || parsed6->sequence!=v6->sequence || !std::ranges::equal(parsed6->payload,v6->payload)) return 1;
+    auto invalid6=ext6; invalid6[50]=0x80;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::unsupported_header) return 1;
+    invalid6=ext6; invalid6[43]=7;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::invalid_length) return 1;
+    invalid6=ext6; invalid6[40]=0;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::unsupported_header) return 1;
+    invalid6=ext6; invalid6[48]=44;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::unsupported_fragment) return 1;
+    invalid6=ext6; invalid6[48]=43;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::unsupported_header) return 1;
+    invalid6=ext6; invalid6[51]=7;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::invalid_length) return 1;
+    invalid6=ext6; invalid6[44]=1;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::unsupported_header) return 1;
+    invalid6=ext6; invalid6.back()^=1;
+    if (p::parse_tcp6(invalid6).error()!=p::PacketError::invalid_checksum) return 1;
+    for (std::size_t i=0;i<ext6.size();++i) if (p::parse_tcp6(std::span(ext6).first(i))) return 1;
     if (p::make_tcp6(*v6, sample6.size()-1).error()!=p::PacketError::too_large) return 1;
     p::Bytes sample{0x45,0,0,0x2f,0,0,0x40,0,0x40,6,0x4e,0x92,0xc0,0,2,1,
         0xc6,0x33,0x64,2,0x04,0xd2,0x01,0xbb,0x12,0x34,0x56,0x78,0x9a,0xbc,0xde,0xf0,
