@@ -358,6 +358,12 @@ if is_plat("linux") then
         add_files("src/tcp/direct.cpp")
         add_deps("nexus-tcp-engine")
 
+    target("nexus-tcp-kernel-tun-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("tests/tcp_kernel_tun.cpp")
+        add_deps("nexus-tcp-engine", "nexus-packet-fd")
+
     target("nexus-tcp-stack")
         set_kind("static")
         add_files("src/tcp/stack.cppm", {public = true})
