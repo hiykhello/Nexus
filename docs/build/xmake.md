@@ -64,6 +64,7 @@ uv run --no-project python tests/dns_cached_resolve.py build/linux/x86_64/debug/
 xmake build nexus-dns-dual-resolve-test
 uv run --no-project python tests/dns_dual_resolve.py build/linux/x86_64/debug/nexus-dns-dual-resolve-test
 xmake build nexus-proxy-dns-lifetime-test && build/linux/x86_64/debug/nexus-proxy-dns-lifetime-test
+xmake build nexus-proxy-root-fault-test && build/linux/x86_64/debug/nexus-proxy-root-fault-test
 xmake build nexus-dns-system-guard
 uv run --no-project python tests/proxy_dns.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-dns-system-guard.so
 uv run --no-project python tests/proxy_dns_routing.py build/linux/x86_64/debug/nexus build/linux/x86_64/debug/libnexus-dns-system-guard.so 1

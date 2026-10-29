@@ -1,0 +1,21 @@
+--- a/include/boost/capy/ex/run_async.hpp
++++ b/include/boost/capy/ex/run_async.hpp
+@@ -424,15 +424,14 @@
+         @param a The allocator for frame allocation.
+ 
+         @note When `Alloc` is not `std::pmr::memory_resource*` it must be
+-        nothrow move constructible (enforced by a `static_assert`), which
+-        is what allows this constructor to be `noexcept`. If allocating
+-        the launch state throws, `std::terminate` is called.
++        nothrow move constructible (enforced by a `static_assert`). Failure
++        to allocate the launch state propagates to the caller.
+     */
+     run_async_wrapper(
+         Ex ex,
+         std::stop_token st,
+         Handlers h,
+-        Alloc a) noexcept
++        Alloc a)
+         : tr_(detail::make_trampoline<Ex, Handlers, Alloc>(
+             std::move(ex), std::move(h), std::move(a)))
+         , st_(std::move(st))

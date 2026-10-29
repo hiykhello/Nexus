@@ -1,4 +1,19 @@
 if is_plat("linux") then
+    target("nexus-proxy-root-fault")
+        set_kind("static")
+        set_default(false)
+        add_defines("NEXUS_TEST_ROOT_LAUNCH")
+        add_files("$(projectdir)/src/proxy/proxy.cppm", {public = true})
+        add_files("$(projectdir)/src/proxy/proxy.cpp", "$(projectdir)/src/proxy/session.cpp", "$(projectdir)/src/proxy/dial.cpp", "$(projectdir)/src/proxy/http_forward.cpp")
+        add_packages("nexus-corosio", "nexus-capy", "nexus-ngcpp-proxy", {public = true})
+        add_deps("nexus-session-quota", "nexus-socks5", "nexus-rules", "nexus-http-connect", "nexus-thirdparty-proxy", "nexus-thirdparty-corosio", "nexus-dns-cache")
+
+    target("nexus-proxy-root-fault-test")
+        set_kind("binary")
+        set_default(false)
+        add_files("$(projectdir)/tests/proxy_root_fault.cpp")
+        add_deps("nexus-proxy-root-fault")
+
     target("nexus-proxy-dns-lifetime")
         set_kind("static")
         set_default(false)

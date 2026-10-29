@@ -24,8 +24,8 @@ if is_plat("linux") and has_config("crypto") then
 end
 if is_plat("linux") then
     add_requires("nexus-ngcpp-proxy 0.1.0", {system = false})
-    add_requires("nexus-capy 0.2.3", {system = false})
-    add_requires("nexus-corosio 0.3.4", {system = false, configs = {uring = has_config("io_uring")}})
+    add_requires("nexus-capy 0.2.4", {system = false})
+    add_requires("nexus-corosio 0.3.5", {system = false, configs = {uring = has_config("io_uring")}})
 end
 
 includes("build_config/network_modules.lua")

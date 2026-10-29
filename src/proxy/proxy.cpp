@@ -31,6 +31,10 @@ import nexus.dns.cache;
 #ifdef NEXUS_TEST_START_THROW
 extern "C" void nexus_test_start_throw();
 #endif
+#ifdef NEXUS_TEST_ROOT_LAUNCH
+extern "C" void nexus_test_root_launch(unsigned);
+extern "C" std::pmr::memory_resource* nexus_test_root_resource();
+#endif
 
 namespace nexus::proxy {
     using namespace std::chrono_literals;
@@ -104,19 +108,32 @@ namespace nexus::proxy {
 #endif
             sessions.push_back(session.get());
             session->registry=&sessions;
+#ifdef NEXUS_TEST_ROOT_LAUNCH
+            nexus_test_root_launch(0);
+#endif
+            auto launch=[&]() -> capy::task<> {
+#ifdef NEXUS_TEST_ROOT_LAUNCH
+                nexus_test_root_launch(1);
+#endif
+                return serve_session(std::move(session));
+            };
 #ifdef NEXUS_ENABLE_VLESS
             if (inbound_type==Inbound::vless) {
-                capy::run_async(context.get_executor(), [] {}, session_error(*session))(serve_session(std::move(session)));
+                capy::run_async(context.get_executor(), [] {}, session_error(*session))(launch());
                 continue;
             }
 #endif
 #ifdef NEXUS_ENABLE_SS2022
             if (inbound_type==Inbound::shadowsocks) {
-                capy::run_async(context.get_executor(), [] {}, session_error(*session))(serve_session(std::move(session)));
+                capy::run_async(context.get_executor(), [] {}, session_error(*session))(launch());
                 continue;
             }
 #endif
-            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(serve_session(std::move(session)));
+#ifdef NEXUS_TEST_ROOT_LAUNCH
+            capy::run_async(context.get_executor(), session->stop.get_token(), nexus_test_root_resource(), [] {}, session_error(*session))(launch());
+#else
+            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(launch());
+#endif
         }
         running = false;
     }

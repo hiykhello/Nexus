@@ -7,6 +7,12 @@ Capy 更新至 `a8e93ccfec2ace5b3e35029a4b2f1b7e087c7aa2`（项目包版本 `0.2
 
 本文件记录 Nexus 实际遇到的依赖和工具链问题、复现范围、影响及处理。记录不等于已向上游提交 issue，也不预判责任归属。每次升级相关组件时复验并更新状态；只有确认上游跟踪地址后才填写链接。
 
+## Capy run_async 启动帧分配失败
+
+- 固定提交的 `run_async_wrapper` 构造函数标为 `noexcept`，但它先分配 trampoline；实际注入资源分配失败会调用 `std::terminate`，无法由代理的 accept 协程捕获。
+- [项目补丁](../../3rdparty/packages/n/nexus-capy/run_async_startup.patch)移除该构造函数的 `noexcept`，使分配异常传播；Capy 项目包改为 `0.2.4`，Corosio 改为 `0.3.5`，上游提交不变。
+- Linux/GCC 测试在真实代理登记会话后分别注入启动帧及根任务帧分配失败，单、双 worker 均验证连接和线程释放及重新启动；还覆盖登记后的直接异常。启动帧测试使用专门的内存资源，根任务帧测试依赖弱符号替换；尚未验证其他工具链或向上游报告。
+
 ## Capy when_all 启动时 runner 分配失败
 
 - 固定提交的可变参数重载逐个创建并投递 runner；后续分配失败时，已投递的 runner 仍借用父状态。范围重载先创建再投递，但分配失败时未释放已创建的帧。任务悬挂包装器为 `noexcept`，启动异常直接传播还会终止进程。

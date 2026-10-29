@@ -282,6 +282,40 @@ auto handler_lifetime_test(bool use_uring, bool abandon) -> bool {
     return state.destroyed && (abandon ? !state.error_called : state.error_saw_owner);
 }
 
+class FailingResource final : public std::pmr::memory_resource {
+    void* do_allocate(std::size_t,std::size_t) override { throw std::bad_alloc{}; }
+    void do_deallocate(void*,std::size_t,std::size_t) override {}
+    bool do_is_equal(std::pmr::memory_resource const& other) const noexcept override { return this==&other; }
+};
+template<class T> struct FailingAllocator {
+    using value_type=T;
+    FailingAllocator()=default;
+    template<class U> FailingAllocator(FailingAllocator<U> const&) noexcept {}
+    auto allocate(std::size_t) -> T* { throw std::bad_alloc{}; }
+    void deallocate(T*,std::size_t) noexcept {}
+};
+auto launch_allocation_test(bool use_uring) -> bool {
+#if BOOST_COROSIO_HAVE_LIBURING
+    io::io_context context = use_uring ? io::io_context(io::uring) : io::io_context(io::epoll);
+#else
+    (void)use_uring;
+    io::io_context context(io::epoll);
+#endif
+    auto* previous=capy::get_current_frame_allocator();
+    bool constructed=false, passed=false;
+    auto task=[&]() -> capy::task<> { constructed=true; return value_parent(passed); };
+    FailingResource resource;
+    bool caught_resource=false, caught_allocator=false;
+    try { capy::run_async(context.get_executor(), &resource)(task()); }
+    catch (std::bad_alloc const&) { caught_resource=true; }
+    try { capy::run_async(context.get_executor(), FailingAllocator<std::byte>{})(task()); }
+    catch (std::bad_alloc const&) { caught_allocator=true; }
+    context.restart();
+    (void)context.run_for(20ms);
+    return caught_resource && caught_allocator && !constructed && !passed && context.stopped() &&
+           capy::get_current_frame_allocator()==previous;
+}
+
 auto main() -> int {
     if (!test(false)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
@@ -300,10 +334,12 @@ auto main() -> int {
     if (!abandon_test(false, false) || !abandon_test(false, true)) return 7;
     if (!value_test(false)) return 9;
     if (!handler_lifetime_test(false,false) || !handler_lifetime_test(false,true)) return 11;
+    if (!launch_allocation_test(false)) return 13;
 #if BOOST_COROSIO_HAVE_LIBURING
     if (!abandon_test(true, false) || !abandon_test(true, true)) return 8;
     if (!value_test(true)) return 10;
     if (!handler_lifetime_test(true,false) || !handler_lifetime_test(true,true)) return 12;
+    if (!launch_allocation_test(true)) return 14;
 #endif
     std::println("Capy quitter owner unwind passed");
 }
