@@ -3,6 +3,29 @@ import nexus.tcp.table;
 namespace p = nexus::packet;
 namespace t = nexus::tcp;
 int main() {
+    auto table6=t::ConnectionTable6::create(2,8);
+    if (!table6 || t::ConnectionTable6::create(0,8)) return 1;
+    p::Tcp6View syn6{.source={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,1},
+                     .destination={0x20,1,0x0d,0xb8,0,0,0,0,0,0,0,0,0,0,0,2},
+                     .source_port=1234,.destination_port=80,.sequence=99,.flags=2};
+    auto id6=table6->open(syn6,50,0);
+    auto syn6b=syn6; syn6b.source[15]=3;
+    auto id6b=table6->open(syn6b,60,0);
+    if (!id6 || !id6b || *id6==*id6b || table6->find(syn6)!=*id6 || table6->find(syn6b)!=*id6b ||
+        table6->open(syn6,50,0).error()!=t::TableError::duplicate || table6->size()!=2) return 1;
+    auto syn6c=syn6; syn6c.destination[15]=4;
+    if (table6->open(syn6c,70,0).error()!=t::TableError::full || table6->find(syn6c)) return 1;
+    auto target6=table6->target(*id6);
+    if (!target6 || target6->address!=syn6.destination || target6->port!=80) return 1;
+    p::Tcp6View ack6{.source=syn6.source,.destination=syn6.destination,.source_port=1234,.destination_port=80,
+                     .sequence=100,.acknowledgement=51,.flags=0x10,.window=8};
+    auto* first6=table6->get(*id6);
+    if (!first6 || !first6->input(ack6,0) || !first6->close_send() || !first6->fin_sent(1)) return 1;
+    ack6.flags=0x11; ack6.acknowledgement=52;
+    if (!first6->input(ack6,2) || table6->reclaim(*id6,120002)!=false || !table6->observe_eof(*id6) ||
+        table6->reclaim(*id6,120002)!=true || table6->find(syn6)) return 1;
+    auto fresh6=table6->open(syn6,70,120002);
+    if (!fresh6 || *fresh6==*id6 || !table6->abort(*fresh6) || !table6->abort(*id6b) || table6->size()) return 1;
     if (t::ConnectionTable::create(0, 8) || t::ConnectionTable::create(1, 0) ||
         t::ConnectionTable::create(1, 65536)) return 1;
     auto table = t::ConnectionTable::create(2, 8);
