@@ -1,12 +1,30 @@
 # 项目进度与交付基线
 
-更新：2026-11-21。本文记录 Nexus 当前已验证交付基线（第 91–146 批）与后续工作约束。功能目标以 [功能完整度清单](planning/feature-completion.md)、[支持矩阵](planning/proxy-kernel-support-matrix.md) 和 [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) 为准，编码与工程规范遵循 [C++ 编码规范](development/cpp-guidelines.md) 与 [文件行数规范](development/file-sizes.md)。
+更新：2026-11-22。本文记录 Nexus 当前已验证交付基线（第 91–152 批）与后续工作约束。功能目标以 [功能完整度清单](planning/feature-completion.md)、[支持矩阵](planning/proxy-kernel-support-matrix.md) 和 [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) 为准，编码与工程规范遵循 [C++ 编码规范](development/cpp-guidelines.md) 与 [文件行数规范](development/file-sizes.md)。
 
 ---
 
-## 当前交付状态（第 91–146 批全部已完成并验收）
+## 当前交付状态（第 91–152 批全部已完成并验收）
 
-### 1. 第 141–146 批 · `mcpp 2026.11` 现代化工作区重构与历史包袱清理
+### 1. 第 147–152 批 · 生产配置闭环、P1 协议、Capy/Corosio 升级收敛、OS 模块拆分与四端 GUI 联动
+详细规划见 [next-batches-147-152.md](planning/next-batches-147-152.md)。
+
+- **Batch 147（生产配置闭环、`dns.reverse-mapping`、三级 `http-clients`、托管规则集与 `-D`/`-C`）**：
+  - 打通纯内存零 I/O 被动 `dns.reverse-mapping`（严守零隐式 DNS 原则）、顶层 `http-clients` + `route.default-http-client` + 单规则集覆盖、`inline`/`local`/`remote` 规则集（持久化缓存 + `ETag 304` + 原子快照热切换）、全场景持久 DNS 缓存、`HTTPS`/`SVCB` 空应答及 `-D <dir>`/`-C <dir>` 部署目录解耦；`batch147-unit` 与 `batch147_live_integration.py` 全绿。
+- **Batch 148（`log-ring`、弱网多接口 `fallback`、TUN/精细 `reject`、`tls-record-fragment`、SNTPv4 与三端可观测对齐）**：
+  - 落地有界 `log-ring`（`GET /v1/logs` 快照/SSE 流/`nexus control logs` 与 `GET /v1/connections/{id}`）、多接口 `fallback` + `500ms` 延迟 + `15s` 回退、Linux `exclude-mptcp`/`multi-queue`、精细 `reject` `method`/`no-drop`、`tls-record-fragment`、`tcp-prefix`、全协议 `certificate-sha256`、`ntp` SNTPv4；三端 GUI 统一对齐 `/v1/logs`、`/v1/connections/{id}` 与 KDL 2.0；`batch148-unit` 与 `batch148_live_integration.py` 全绿。
+- **Batch 149（SOCKS4/4a、`fixed-udp`、Trojan/AnyTLS 传输、Snell v5 出站、Hy2 端口跳跃、Web 控制台与四端 GUI 深化）**：
+  - 补齐 SOCKS4/4a、`fixed-udp`、Trojan/AnyTLS over WS/HTTPUpgrade/gRPC、Snell v5 出站、Hy2 随机端口跳跃、`route-options` 协议感知 UDP NAT 自适应超时、`rule explain` 一体化断言及只读安全沙箱 `dashboard-root`（托管 `web/` Vite 8 + Lit + `@elelcode/lit-router` 静态产物）；`batch149-unit` 与 `batch149_live_integration.py` 全绿。
+- **Batch 150（SSHv2 隧道出站 + Phase A 核心 OS 原语）**：
+  - 新增独立特性 `ssh`（RFC 4251–4254 `curve25519-sha256`、`aes128/256-gcm@openssh.com`、`chacha20-poly1305@openssh.com`、`ssh-ed25519`/ECDSA/密码认证、HostKey 指纹校验与 `direct-tcpip` 多路复用池），并补齐 `src/{logging,state,control_api}` Win32/Darwin 原语及三端 `ssh://` 导入；`batch150-unit` 与真实 `sshd` 端到端集成全绿。
+- **Batch 151（H2/H3 HTTP 代理、NaiveProxy 双向与三端 GUI 体验收口）**：
+  - 升级 HTTP 代理 H2 `CONNECT`/H3 `CONNECT` + `CONNECT-UDP`，落地零重型外部依赖的独立特性 `naive`（H2/H3 + 双向 `padding` + 伪装 HTML 回落）；收口 Desktop 系统托盘、Apple 自适应入口/`NetworkPathWatcher` 与 Android `TileService`/`ScreenStateMonitor`；`batch151-unit` 与 5 组实机套件全绿。
+- **Batch 152（Capy `0.2.8`/Corosio `0.3.12` 升级、`[target.'cfg(...)'.build]` 模块拆分、三产物收敛与终审）**：
+  - 升级 Capy 至 `0.2.8`（`6a956906`）与 Corosio 至 `0.3.12`（`2d246de8`），撤销 6 项 OOM/非模块化补丁，仅保留 3 项最小补丁（`cpo_modules.patch`、`thread_local_modules.patch`、`empty_datagram.patch`）；`nexus.proxy-fault-tests`（`root-launch` 两个启动分配故障 + `reconfigure` + `vless-accept`）、`nexus.thirdparty-tests` 与 `batch123-tcp-udp-datapath-unit` / `socket-binding-{tcp,udp}` 全绿。
+  - 利用 `mcpp 2026.11.21.1` `[target.'cfg(...)'.build]` 完成 `src/{logging,state,control_api,dns,platform}/` 跨平台模块拆分（全仓 `src/` 零残留 `*_windows.hpp` 与 `http_socket.hpp`）；同步修复 `src/control_api/http_server.cpp` 控制面空闲连接超时 `kPeerTimeout = 2s`（SSE 保持 `30s`）。
+  - 离线锁定重建 `target/batch152/{android-profile,epoll,uring}-cli`（`134 MiB` / `138 MiB` / `138 MiB`），全量通过 `low-memory-client.kdl`、ELF 符号隔离审计（`android-profile-cli` 零 `io_uring_setup`/`sd_journal`/`KtlsSession`/`tproxy_udp`/`liburing`/`libsystemd`）、三产物 Batch 129–131（`android-profile-cli` FDs `16→16 (Δ0)` / VmRSS `14.45→16.24 MiB`、`epoll-cli` FDs `15→16 (Δ1)` / VmRSS `14.49→16.55 MiB`、`uring-cli` FDs `14→14 (Δ0)` / VmRSS `15.18→17.07 MiB`）、三产物 Batch 147–151 + `trojan_network` + `batch95a` + `batch95c` 全绿、双后端 Batch 132/133（96/96 场景双向互通）+ `httpupgrade_cli_network`（workers=1/2）全绿、`web/dist`（`185ms`）构建与 Desktop C++26 三产物 CTest（均 **0.55s**）及全仓守护终审。
+
+### 2. 第 141–146 批 · `mcpp 2026.11` 工作区现代化与历史包袱清理
 详细规划见 [next-batches-141-146.md](planning/next-batches-141-146.md)。
 
 - **Batch 141（历史迁移动态壳子与 `.gitignore` 清理）**：
@@ -21,7 +39,7 @@
   - 根 `mcpp.toml` 添加 `[target.'cfg(not(os = "linux"))'.test]` 裁剪 Linux 专属单测；`mcpp test --strict --offline --locked --profile ci`（`http_header`/`dns_local_config`/`tcp_socket_options`）与 `batch135-138-unit`/`batch96b-ktls-unit`/`quic-sniff` 全部通过；将 `src/tools/proxy_dns_reload.hpp` 匿名 lambda 改为具名仿函数 `DnsRuleSource` 消除 GCC 16 `-O3 -flto` mangling ICE，`mcpp pack --offline --locked --pkg-format dir` 成功产出 `target/dist/batch145-pack`（含 `bin/nexus`、`docs/`、`packaging/{systemd,openwrt,completions}`）。
   - 使用全新聚合特性离线锁定重建 `target/batch146/{android-profile,epoll,uring}-cli`，通过 ELF 符号隔离审计、三产物 `low-memory-client.kdl` 校验、三产物 Batch 129–131（`android-profile` `15→16 / 13.77 MiB`、`epoll` `16→16 (Δ0) / 14.02 MiB`、`io_uring` `14→14 (Δ0) / 14.07 MiB`）、三产物 Trojan/控制面/策略组、双后端 96/96 多实现双向互通矩阵 + 多跳互通 + HTTPUpgrade、Desktop C++26 三产物 CTest（均 **0.51s**）及全仓守护审计。
 
-### 2. 第 135–140 批 · 跨平台内核硬化与生产边缘场景深挖
+### 3. 第 135–140 批 · 跨平台内核硬化与生产边缘场景深挖
 详细规划见 [next-batches-135-140.md](planning/next-batches-135-140.md)。
 
 - **Batch 135 & 136（三端套接字绑定抽象、宿主原语清障与平台安全默认值）**：
@@ -35,7 +53,7 @@
   - 同步 Apple `NexusPacketTunnelProvider.swift` 与 `TunnelSettingsBuilder.swift` 默认与钳制 `maxSafeMtu = 4064`（对齐 Android `ProfileRepository.kt` `coerceIn(1280, 9000)`）；新增 `tests/batch135_138_cross_platform_edge_cases_unit.cpp`，与 `batch96b-ktls-unit`、`quic-sniff` 同步全绿。
   - 离线锁定重建 `target/batch140/{android-profile,epoll,uring}-cli`，通过 ELF 符号隔离、三产物 `low-memory-client.kdl` 校验、三产物 Batch 129–131（三产物均达到 **FDs Δ0**：`android-profile` `16→16 / 13.32 MiB`、`epoll` `16→16 / 13.82 MiB`、`io_uring` `14→14 / 13.48 MiB`）、三产物 `trojan_network.py`、双后端 96/96 多实现双向互通矩阵、控制面/策略组/HTTPUpgrade/Desktop 三产物 CTest（均 **0.51s**）及全仓守护审计。
 
-### 2. 第 129–134 批 · 黑盒一致性/对抗测试套、多实现双向实机互通与兼容性修复
+### 4. 第 129–134 批 · 黑盒一致性/对抗测试套、多实现双向实机互通与兼容性修复
 详细规划见 [next-batches-129-134.md](planning/next-batches-129-134.md)。
 
 - **Batch 129–131（离线黑盒一致性、DNS/Sniffer 对抗与零泄漏压测）**：
@@ -49,7 +67,7 @@
 - **Batch 134（三产物重建、全量复验与终审）**：
   - 离线锁定重建 `target/batch134/{android-profile,epoll,uring}-cli`，通过 ELF 符号隔离、3 组更新 C++26 单元单测、三产物 Batch 129–131、双后端 18+30=48 组多实现双向矩阵（共 96/96 实机场景全绿）、原有控制面/策略组/Trojan/HTTPUpgrade/多跳互通回归、Desktop C++26 三产物 CTest（均 **0.51s**）及全仓守护审计。
 
-### 3. 第 123–128 批 · 数据面深度提速、kTLS 接入、低内存抗泄漏加固与超大规则集 $O(\log N)$ 索引
+### 5. 第 123–128 批 · 数据面深度提速、kTLS 接入、低内存抗泄漏加固与超大规则集 $O(\log N)$ 索引
 详细规划见 [next-batches-123-128.md](planning/next-batches-123-128.md)。
 
 - **Batch 123（TCP/UDP 底层热路径提速与半关闭防泄漏）**：
@@ -68,7 +86,7 @@
   - 离线锁定构建 `target/batch128/{android-profile,epoll,uring}-cli`，通过 ELF 符号隔离、三产物核心/DNS 回归、双后端 Trojan/SOCKS5 UDP NAT/Hy2/TUIC 双向互通回归、Desktop C++26 三产物 CTest（均 **0.51s**）及全仓守护审计。
   - 同机 512 MiB 回环 SOCKS5+`splice` 实测：`android-profile` **93.50 Gbps / 11.03 MiB RSS**、`epoll` **92.44 Gbps / 11.55 MiB RSS**、`io_uring` **91.99 Gbps / 11.51 MiB RSS**。
 
-### 4. 第 117–122 批 · 控制面批断流/按需测速/诊断 API、EWMA 可观测、桌面系统护栏与发行打包
+### 6. 第 117–122 批 · 控制面批断流/按需测速/诊断 API、EWMA 可观测、桌面系统护栏与发行打包
 详细规划见 [next-batches-117-122.md](planning/next-batches-117-122.md)。
 
 - **Batch 117（控制面批断流、按需测速与诊断/事件 API）**：
@@ -83,7 +101,7 @@
 - **Batch 121 & 122（发行自动化打包与全量终审）**：
   - 同步 Bash/Zsh/Fish 补全脚本，新增 [packaging/README.md](../packaging/README.md) 与 `scripts/package-linux-release.sh`；离线锁定构建 `target/batch122/{android-profile,epoll,uring}-cli` 并实机产出 `epoll`/`uring` 发行压缩包（`sha256sum -c` 通过），全套回归与全仓守护审计 100% 通过。
 
-### 5. 第 111–116 批 · 控制面断流/切网闭环、EWMA 防抖选路、全端打通与发行打包
+### 7. 第 111–116 批 · 控制面断流/切网闭环、EWMA 防抖选路、全端打通与发行打包
 详细规划见 [next-batches-111-116.md](planning/next-batches-111-116.md)。
 
 - **Batch 111（控制面断流与切网事件闭环）**：
@@ -103,7 +121,7 @@
 - **Batch 116（三产物终审与全量回归）**：
   - 离线锁定构建 `target/batch116/{android-profile,epoll,uring}-cli`，通过 ELF 符号隔离审计、`batch95c`、`batch95a`、双向互通压测、`selector_state_network`、Desktop 三产物 CTest 与全仓守护检查。
 
-### 6. 第 105–110 批 · 控制面闭环、OS 抽象层、四端 CI/CD 与生产级客户端
+### 8. 第 105–110 批 · 控制面闭环、OS 抽象层、四端 CI/CD 与生产级客户端
 详细规划见 [next-batches-105-110.md](planning/next-batches-105-110.md)。
 
 - **Batch 105 & 106（HTTP `/v1` 清缓存闭环 + 跨平台 OS 抽象层）**：
@@ -120,13 +138,13 @@
 - **Batch 110（Apple Swift 6 `NEPacketTunnelProvider` 与终审）**：
   - 新增 `KeychainTokenStore.swift`、`NexusPacketTunnelProvider.swift`、`ConnectionsView.swift`，`HttpControlClient.swift` 补齐 `/v1/connections` 解码与 `clearCache(target:)`，扩展 `NexusCoreBridgeTests.swift`。
 
-### 7. 第 99–104 批 · 跨平台内核解耦与全端客户端基座
+### 9. 第 99–104 批 · 跨平台内核解耦与全端客户端基座
 详细规划见 [next-batches-99-104.md](planning/next-batches-99-104.md)。
 
 - **内核解耦与 ARM64 移植（Batch 99–101）**：纯 C++26 零 libc `constexpr` IPv4/IPv6 解析与严格 RFC 5952 格式化器（`src/platform/ip_address.cppm`，56 例 `inet_pton` + 25 例 `inet_ntop` 对等单测全绿）；修复 `aarch64` `O_NOFOLLOW=32768` 并放宽 6 处 LP64 守卫；`src/state/` 全面改用 BoringSSL `crypto::random_bytes`；新增 `nexus check [--config] <config.kdl>` 干跑校验；落地 `mcpp/android-arm64/mcpp.toml` 与 [跨平台 OS 边界矩阵](platform/cross-platform-os-boundaries.md)。
 - **三端基座（Batch 102–104）**：完成 Android（`ShareLinkParser.kt`、`GroupsScreen.kt`、`SplitTunnelScreen.kt`、自适应 `NavigationBar`/`NavigationRail`、`:bg` `NexusVpnService`）、Desktop（`desktop.http_control`、实时 `/metrics`、分享链接 `0600` 密钥导入）与 Apple（Swift 6 `actor` `HttpControlClient.swift`、`GroupsPane`）并完成三端 `/v1` JSON 线协议统一对齐。
 
-### 8. 第 91–98 批 · Linux x86-64 双后端正式收官基线
+### 10. 第 91–98 批 · Linux x86-64 双后端正式收官基线
 详细规划见 [next-batches-91-96.md](planning/next-batches-91-96.md)，完整验收汇总见 `target/batch98/summary.md`。
 
 - **Batch 91（异步日志）**：`logging` 模块族、无锁每生产者环形槽 + 单 writer `writev`、轮转/reopen、`Redacted<T>` 脱敏与可选 `log-journald`。
@@ -141,6 +159,6 @@
 
 ## 仓库守护与硬约束
 
-- 默认 `mcpp/epoll/mcpp.lock` SHA-256 锁定为 `3bfb5ffce5e5f477e8e8d3ed82071609e5505353b5e6a789c3c81a75e96fc405`。
+- 默认 `mcpp/epoll/mcpp.lock` SHA-256 锁定为 `91580f265b74fafc8fe626e128401535fc0a61e8a70757f3264b2e14757d06ac`。
 - 生产 `src/` 严禁 `nexus.` / `nexus::` 模块前缀，不新增虚函数，保持 `scripts/mcpp-generate-pinned-guard.py --check`、`scripts/check-source-lines.sh` 与 `git diff --check` 全绿。
 - 仅在用户明确指示时执行 `git commit` / `git push`。

@@ -19,7 +19,7 @@ namespace control_api {
         constexpr std::size_t kMaxPeers = 16;
         constexpr std::size_t kMaxRequestBytes = 8192;
         constexpr std::size_t kMaxWriteBytes = kMaxDashboardFileBytes + 8192;
-        constexpr auto kPeerTimeout = std::chrono::seconds(5);
+        constexpr auto kPeerTimeout = std::chrono::seconds(2);
 
         auto secure_wipe(std::span<std::uint8_t> bytes) noexcept -> void {
             for (auto& b : bytes) {
