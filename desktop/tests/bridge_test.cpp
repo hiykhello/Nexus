@@ -262,8 +262,13 @@ namespace {
                R"(\\srv\share\nexus.exe)", "strip Windows UNC extended prefix");
         auto fw_diag = desktop::ensure_loopback_firewall_rule("/usr/bin/nexus", "Nexus Test", true);
         expect(fw_diag.ok && fw_diag.skipped, "firewall helper skips in diagnostic mode");
+#ifndef _WIN32
         auto fw_nonwin = desktop::ensure_loopback_firewall_rule("/usr/bin/nexus", "Nexus Test", false);
         expect(fw_nonwin.ok, "firewall helper safe on non-Windows");
+#else
+        auto fw_empty = desktop::ensure_loopback_firewall_rule("", "Nexus Test", false);
+        expect(!fw_empty.ok && !fw_empty.skipped, "firewall helper rejects empty executable path");
+#endif
 
         desktop::SystemProxyController proxy;
         proxy.set_diagnostic_mode(true);

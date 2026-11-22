@@ -6,7 +6,11 @@ plugins {
 
 android {
     namespace = "org.nexus.android.bridge"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         minSdk = 29

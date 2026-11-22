@@ -7,6 +7,8 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -74,7 +76,7 @@ class DefaultNetworkMonitor(
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            connectivityManager.registerBestMatchingNetworkCallback(request, callback, null)
+            connectivityManager.registerBestMatchingNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
         } else {
             connectivityManager.registerNetworkCallback(request, callback)
         }

@@ -22,7 +22,7 @@ data class MetricsSummary(
 /**
  * Dual-transport Nexus control client:
  * 1. Local AF_UNIX NEXUS/1 NUL-delimited control socket (zero TCP footprint)
- * 2. Optional loopback HTTP /v1/* & /metrics with Bearer token auth (Batch 95C)
+ * 2. Optional loopback HTTP /v1/ API & /metrics with Bearer token auth (Batch 95C)
  */
 class NexusControlClient(
     private val unixSocketPath: String,
