@@ -24,6 +24,7 @@ namespace desktop {
 
 #ifdef _WIN32
         constexpr UINT kTrayCallbackMsg = WM_APP + 101;
+        constexpr UINT kTrayQuitMsg = WM_APP + 102;
         constexpr UINT kMenuShowId = 1001;
         constexpr UINT kMenuReloadId = 1002;
         constexpr UINT kMenuQuitId = 1003;
@@ -73,6 +74,10 @@ namespace desktop {
                 }
                 return 0;
             }
+            if (msg == kTrayQuitMsg) {
+                ::PostQuitMessage(0);
+                return 0;
+            }
             if (self && msg == WM_COMMAND) {
                 switch (LOWORD(wp)) {
                 case kMenuShowId:
@@ -99,7 +104,7 @@ namespace desktop {
                 wc.lpszClassName = L"NexusTrayHiddenWnd";
                 ::RegisterClassW(&wc);
                 HWND w = ::CreateWindowExW(0, wc.lpszClassName, L"NexusTray", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, hinst, this);
-                hwnd.store(w, std::memory_order_release);
+                hwnd.store(w, std::memory_order_seq_cst);
                 if (w) {
                     NOTIFYICONDATAW nid{};
                     nid.cbSize = sizeof(nid);
@@ -107,12 +112,12 @@ namespace desktop {
                     nid.uID = 1;
                     nid.uFlags = NIF_MESSAGE | NIF_TIP | NIF_ICON;
                     nid.uCallbackMessage = kTrayCallbackMsg;
-                    nid.hIcon = ::LoadIconW(nullptr, IDI_APPLICATION);
+                    nid.hIcon = ::LoadIconW(nullptr, MAKEINTRESOURCEW(32512) /* IDI_APPLICATION */);
                     wcsncpy_s(nid.szTip, L"Nexus - 已停止", _TRUNCATE);
                     ::Shell_NotifyIconW(NIM_ADD, &nid);
                 }
                 MSG m{};
-                while (!stopped.load(std::memory_order_acquire) && ::GetMessageW(&m, nullptr, 0, 0) > 0) {
+                while (!stopped.load(std::memory_order_seq_cst) && ::GetMessageW(&m, nullptr, 0, 0) > 0) {
                     ::TranslateMessage(&m);
                     ::DispatchMessageW(&m);
                 }
@@ -194,10 +199,10 @@ namespace desktop {
 
     auto TrayController::stop(this TrayController& self) noexcept -> void {
         if (!self.impl_) return;
-        if (self.impl_->stopped.exchange(true, std::memory_order_acq_rel)) return;
+        if (self.impl_->stopped.exchange(true, std::memory_order_seq_cst)) return;
 #ifdef _WIN32
-        if (HWND w = self.impl_->hwnd.load(std::memory_order_acquire))
-            ::PostMessageW(w, WM_QUIT, 0, 0);
+        if (HWND w = self.impl_->hwnd.load(std::memory_order_seq_cst))
+            ::PostMessageW(w, kTrayQuitMsg, 0, 0);
         if (self.impl_->ui_thread.joinable()) self.impl_->ui_thread.join();
 #endif
     }

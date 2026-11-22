@@ -1,4 +1,6 @@
+import java.io.File
 import java.security.MessageDigest
+import org.gradle.api.logging.Logging
 
 plugins {
     alias(libs.plugins.android.application) apply false
@@ -26,8 +28,8 @@ tasks.register("syncNexusCore") {
 
     doLast {
         val raw = sourcePath.get()
-        val candidate = java.io.File(raw)
-        val src = if (candidate.isAbsolute) candidate else java.io.File(baseDir, raw)
+        val candidate = File(raw)
+        val src = if (candidate.isAbsolute) candidate else File(baseDir, raw)
         require(src.isFile) { "Nexus core binary not found at: ${src.absolutePath}" }
 
         val bytes = src.readBytes()
@@ -49,6 +51,6 @@ tasks.register("syncNexusCore") {
         destFile.writeBytes(bytes)
         digestFile.parentFile.mkdirs()
         digestFile.writeText("$sha256  libnexus.so\n")
-        logger.lifecycle("Synced libnexus.so (${bytes.size} bytes, sha256=$sha256)")
+        Logging.getLogger("syncNexusCore").lifecycle("Synced libnexus.so (${bytes.size} bytes, sha256=$sha256)")
     }
 }

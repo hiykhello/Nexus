@@ -1,4 +1,6 @@
+import java.io.File
 import java.security.MessageDigest
+import org.gradle.api.logging.Logging
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -79,8 +81,8 @@ tasks.register("syncNexusCore") {
     val shaFile = layout.projectDirectory.file("src/main/assets/nexus-core.sha256").asFile
     doLast {
         val rawPath = coreBinProvider.orNull ?: return@doLast
-        val candidate = java.io.File(rawPath)
-        val src = if (candidate.isAbsolute) candidate else java.io.File(baseDir, rawPath)
+        val candidate = File(rawPath)
+        val src = if (candidate.isAbsolute) candidate else File(baseDir, rawPath)
         require(src.isFile) { "NEXUS_CORE_BIN not found: ${src.absolutePath}" }
         val bytes = src.readBytes()
         require(bytes.size >= 20) { "ELF binary too small: ${bytes.size}" }
@@ -103,7 +105,7 @@ tasks.register("syncNexusCore") {
             .joinToString("") { "%02x".format(it) }
         shaFile.parentFile.mkdirs()
         shaFile.writeText("$digest  libnexus.so\n")
-        logger.lifecycle("Synced nexus arm64-v8a core (${bytes.size} bytes, sha256=$digest)")
+        Logging.getLogger("syncNexusCore").lifecycle("Synced nexus arm64-v8a core (${bytes.size} bytes, sha256=$digest)")
     }
 }
 
