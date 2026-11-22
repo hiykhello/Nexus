@@ -1,12 +1,11 @@
-module;
-#include <boost/corosio/io_context.hpp>
-module nexus.proxy;
+module proxy;
 import std;
 import proxy.v4;
+import nexus.thirdparty.corosio;
 extern "C" bool nexus_test_tunnel_profile_is_alive();
 extern "C" int nexus_test_ss_tunnel_profile() {
-    using namespace nexus::proxy;
-    io::io_context context;
+    using namespace proxy;
+    nex::corosio::io_context context;
     {
         auto factories=std::make_shared<std::vector<TunnelFactory>>();
         std::array<std::uint8_t,16> key{};

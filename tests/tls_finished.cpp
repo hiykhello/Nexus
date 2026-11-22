@@ -1,7 +1,7 @@
 import std;
-import nexus.tls.finished;
+import tls.finished;
 #include "support/rfc8448_server_flight.hpp"
-namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace t=tls; namespace c = ::crypto;
 auto hex(std::string_view s) -> c::Bytes { auto n=[](char x){return x<='9'?x-'0':x-'a'+10;}; c::Bytes b; for (std::size_t i=0;i<s.size();i+=2) b.push_back(static_cast<std::uint8_t>((n(s[i])<<4)|n(s[i+1]))); return b; }
 auto make(c::Hash alg) -> t::ClientFinished {
     auto transcript=t::Transcript::create(alg); if (!transcript) std::abort();

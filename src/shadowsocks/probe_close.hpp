@@ -3,7 +3,7 @@
 #include <system_error>
 #include <sys/socket.h>
 
-namespace nexus::shadowsocks::detail {
+namespace shadowsocks::detail {
     // Configure before closing an unauthenticated TCP connection. The caller
     // must still close the socket and handle failure to configure the option.
     inline auto prepare_probe_reset(int fd) noexcept -> std::error_code {

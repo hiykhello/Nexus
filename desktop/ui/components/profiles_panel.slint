@@ -1,0 +1,68 @@
+import { Button, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { ProfileItem } from "../types.slint";
+import { Theme } from "../theme.slint";
+
+export component ProfilesPanel inherits VerticalBox {
+    in property <[ProfileItem]> profiles: [];
+    in-out property <string> new-profile-name: "";
+
+    callback activate-profile(string);
+    callback create-profile(string);
+    callback delete-profile(string);
+    callback refresh-profiles();
+
+    spacing: 10px;
+
+    HorizontalBox {
+        spacing: 8px;
+        LineEdit {
+            horizontal-stretch: 1;
+            text <=> root.new-profile-name;
+            placeholder-text: "输入新配置档案名（如 hk-prod）...";
+        }
+        Button {
+            text: "新建档案";
+            primary: true;
+            clicked => {
+                if (root.new-profile-name != "") {
+                    root.create-profile(root.new-profile-name);
+                    root.new-profile-name = "";
+                }
+            }
+        }
+        Button {
+            text: "刷新";
+            clicked => { root.refresh-profiles(); }
+        }
+    }
+
+    ListView {
+        vertical-stretch: 1;
+        for prof in root.profiles : Rectangle {
+            height: 46px;
+            border-radius: 6px;
+            background: Theme.card-bg;
+            HorizontalBox {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 10px;
+                Text {
+                    text: prof.active ? "● " + prof.name : prof.name;
+                    font-weight: prof.active ? 700 : 400;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: prof.active ? "当前使用" : "切换激活";
+                    enabled: !prof.active;
+                    clicked => { root.activate-profile(prof.id); }
+                }
+                Button {
+                    text: "删除";
+                    enabled: !prof.active;
+                    clicked => { root.delete-profile(prof.id); }
+                }
+            }
+        }
+    }
+}

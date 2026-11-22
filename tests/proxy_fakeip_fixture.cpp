@@ -1,12 +1,13 @@
 import std;
-import nexus.proxy;
-import nexus.dns.fakeip_shared;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_response;
-import nexus.dns.message;
+import proxy;
+import dns.fakeip_shared;
+import dns.fakeip_registry;
+import dns.fakeip_response;
+import dns.message;
+import rules;
 using namespace std::chrono_literals;
-namespace d=nexus::dns;
-namespace p=nexus::proxy;
+namespace d=dns;
+namespace p=proxy;
 std::atomic<unsigned> blocked_candidates=0;
 std::atomic<unsigned> watcher_done=0, pin_release_after_watcher=0, pin_release_before_watcher=0;
 extern "C" auto nexus_test_fakeip_blocked() -> void { ++blocked_candidates; }
@@ -40,6 +41,17 @@ auto main(int argc,char** argv) -> int {
     if (!server.set_fakeip(owner,7) || !server.set_dns_routing(std::move(routing))) return 4;
     auto inbound=p::Inbound::mixed;
     bool block=argc>3 && std::string_view(argv[argc-1])=="block";
+#ifdef NEXUS_TEST_SOURCE_ROUTE
+    bool source_block=argc>3 && std::string_view(argv[argc-1])=="source-block";
+    if (source_block) {
+        namespace r = ::rules;
+        r::RuleSet rules{{{"and","",{{"source-ip-cidr","127.0.0.0/8",{}},
+            {"source-port-range","1-65535",{}},{"domain-suffix","example.test",{}}}}},2};
+        auto matcher=r::RouteMatcher::compile(std::array{r::RouteRule{rules,1}},0,2,r::SourceMetadata::provided);
+        if (!matcher || !server.set_source_policy_for_test(std::move(*matcher))) return 4;
+        --argc;
+    }
+#endif
     if (block) {
         if (!server.set_block_rules("schema-version 1\nkind \"predicate\"\nrule type=\"domain-suffix\" value=\"example.test\"\n",p::RuleFormat::kdl)) return 4;
         --argc;

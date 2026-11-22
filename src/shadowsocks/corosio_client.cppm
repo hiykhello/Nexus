@@ -1,20 +1,22 @@
-export module nexus.shadowsocks.corosio_client;
+export module shadowsocks.corosio_client;
 import std;
-import nexus.crypto;
-import nexus.shadowsocks.chunk;
-import nexus.shadowsocks.request;
-import nexus.shadowsocks.response;
-import nexus.shadowsocks.frame;
+import crypto;
+import shadowsocks.chunk;
+import shadowsocks.key;
+import shadowsocks.request;
+import shadowsocks.response;
+import shadowsocks.frame;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-export namespace nexus::shadowsocks::detail {
+export namespace shadowsocks::detail {
     enum class StartError { invalid_input, random, timeout, transport, partial_write };
     struct StartedRequest { std::vector<std::uint8_t> salt; ChunkCipher cipher; };
     // One executor owns the socket. Input spans and the socket must live until completion.
     // Failure after submission cancels the socket; retain it until cancellation drains.
     template<class Socket>
     auto start_request(Socket& socket, std::span<std::uint8_t const> psk,
-                       std::span<std::uint8_t const> address, std::chrono::steady_clock::time_point deadline)
+                       std::span<std::uint8_t const> address, std::chrono::steady_clock::time_point deadline,
+                       std::span<std::array<std::uint8_t,32> const> identity_keys={},CipherMethod method=CipherMethod::aes)
         -> nex::capy::task<std::expected<StartedRequest,StartError>> {
         if (psk.size()!=16 && psk.size()!=32) co_return std::unexpected(StartError::invalid_input);
         if (std::chrono::steady_clock::now()>=deadline) co_return std::unexpected(StartError::timeout);
@@ -25,7 +27,7 @@ export namespace nexus::shadowsocks::detail {
         if (!crypto::random_bytes(padding)) co_return std::unexpected(StartError::random);
         auto wall=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         if (wall<0) co_return std::unexpected(StartError::invalid_input);
-        auto request=encode_request(psk,salt,static_cast<std::uint64_t>(wall),address,padding,{});
+        auto request=encode_request(psk,salt,static_cast<std::uint64_t>(wall),address,padding,{},identity_keys,method);
         if (!request) co_return std::unexpected(StartError::invalid_input);
         if (std::chrono::steady_clock::now()>=deadline) co_return std::unexpected(StartError::timeout);
         struct Guard { Socket& socket; bool done=false; ~Guard() { if (!done) socket.cancel(); } } guard{socket};
@@ -71,7 +73,8 @@ export namespace nexus::shadowsocks::detail {
     // One reader owns the socket and all inputs remain alive until completion.
     template<class Socket>
     auto receive_response(Socket& socket, std::span<std::uint8_t const> psk,
-                          std::span<std::uint8_t const> request_salt, std::chrono::steady_clock::time_point deadline)
+                          std::span<std::uint8_t const> request_salt, std::chrono::steady_clock::time_point deadline,
+                          CipherMethod method=CipherMethod::aes)
         -> nex::capy::task<std::expected<StartedResponse,ReceiveError>> {
         struct Guard { Socket& socket; bool done=false; ~Guard() { if (!done) socket.cancel(); } } guard{socket};
         if ((psk.size()!=16 && psk.size()!=32) || request_salt.size()!=psk.size())
@@ -87,7 +90,7 @@ export namespace nexus::shadowsocks::detail {
         input.resize(n);
         auto wall=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         if (wall<0) co_return std::unexpected(ReceiveError::invalid_input);
-        auto prefix=decode_response_prefix(psk,request_salt,input,static_cast<std::uint64_t>(wall));
+        auto prefix=decode_response_prefix(psk,request_salt,input,static_cast<std::uint64_t>(wall),method);
         if (!prefix) co_return std::unexpected(prefix.error()==ResponseError::authentication ? ReceiveError::authentication : ReceiveError::invalid_header);
         auto start=prefix->consumed;
         auto end=start+prefix->payload_length+16;
@@ -126,14 +129,14 @@ export namespace nexus::shadowsocks::detail {
         auto operator=(FrameReader const&) -> FrameReader& = delete;
         auto cancel() noexcept -> void { active_=false; socket_.cancel(); }
         // Returns zero only for clean EOF. Errors and exceptions cancel the socket.
-        auto read(std::span<std::uint8_t> output, std::chrono::steady_clock::time_point deadline)
+        auto read(std::span<std::uint8_t> output, std::chrono::steady_clock::time_point deadline,bool preserve_timeout=false)
             -> nex::capy::task<std::expected<std::size_t,ReadError>> {
             if (!active_ || reading_ || output.empty()) co_return std::unexpected(ReadError::state);
             reading_=true;
             struct Guard { FrameReader& self; bool done=false; ~Guard() { self.reading_=false; if (!done) self.cancel(); } } guard{*this};
             for (;;) {
                 if (!active_) co_return std::unexpected(ReadError::state);
-                if (std::chrono::steady_clock::now()>=deadline) co_return std::unexpected(ReadError::timeout);
+                if (std::chrono::steady_clock::now()>=deadline) {guard.done=preserve_timeout;co_return std::unexpected(ReadError::timeout);}
                 if (output_offset_<output_.size()) {
                     auto n=std::min(output.size(),output_.size()-output_offset_);
                     std::ranges::copy(std::span{output_}.subspan(output_offset_,n),output.begin()); output_offset_+=n;
@@ -150,8 +153,11 @@ export namespace nexus::shadowsocks::detail {
                 std::array<std::uint8_t,16384> bytes{};
                 auto operation=socket_.read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size()));
                 auto [error,n]=co_await nex::corosio::timeout(std::move(operation),deadline);
-                if (nex::capy::is_timeout(error) || (!error && std::chrono::steady_clock::now()>=deadline))
-                    co_return std::unexpected(ReadError::timeout);
+                if(n>bytes.size())co_return std::unexpected(ReadError::transport);
+                if (nex::capy::is_timeout(error) || (!error && std::chrono::steady_clock::now()>=deadline)) {
+                    if(preserve_timeout && !error && n) {input_.assign(bytes.begin(),bytes.begin()+n);input_offset_=0;}
+                    guard.done=preserve_timeout;co_return std::unexpected(ReadError::timeout);
+                }
                 if (!active_) co_return std::unexpected(ReadError::state);
                 if (nex::capy::is_eof(error) || (!error && !n)) {
                     if (!decoder_.finish()) co_return std::unexpected(ReadError::truncated);

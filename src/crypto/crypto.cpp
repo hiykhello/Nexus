@@ -1,18 +1,12 @@
-module;
-#include <openssl/aead.h>
-#include <openssl/crypto.h>
-#include <openssl/curve25519.h>
-#include <openssl/rand.h>
-#include <openssl/evp.h>
-#include <openssl/hkdf.h>
-#include <openssl/hmac.h>
-module nexus.crypto;
+module crypto;
+import nexus.thirdparty.boringssl;
 import std;
+using namespace nex::boringssl;
 
-namespace nexus::crypto {
+namespace crypto {
     namespace {
         auto md(Hash hash) noexcept -> EVP_MD const* {
-            switch (hash) { case Hash::sha256: return EVP_sha256(); case Hash::sha384: return EVP_sha384(); }
+            switch (hash) { case Hash::sha256: return EVP_sha256(); case Hash::sha384: return EVP_sha384(); case Hash::sha512: return EVP_sha512(); case Hash::sha224: return EVP_sha224(); }
             return nullptr;
         }
         auto aead(Aead algorithm) noexcept -> EVP_AEAD const* {
@@ -35,7 +29,7 @@ namespace nexus::crypto {
             if ((!encrypt && input.size()<overhead) || (encrypt && input.size()>Bytes{}.max_size()-overhead))
                 return std::unexpected(Error::invalid_length);
             std::unique_ptr<EVP_AEAD_CTX, decltype(&EVP_AEAD_CTX_free)> ctx(
-                EVP_AEAD_CTX_new(cipher,key.data(),key.size(),EVP_AEAD_DEFAULT_TAG_LENGTH), EVP_AEAD_CTX_free);
+                EVP_AEAD_CTX_new(cipher,key.data(),key.size(),evp_aead_default_tag_length), EVP_AEAD_CTX_free);
             if (!ctx) return std::unexpected(Error::backend_failure);
             Bytes output(encrypt ? input.size()+overhead : input.size());
             std::size_t length=0;
@@ -88,6 +82,15 @@ namespace nexus::crypto {
         return result;
     }
     auto cleanse(std::span<std::uint8_t> data) noexcept -> void { if (!data.empty()) OPENSSL_cleanse(data.data(),data.size()); }
+    auto blake2b_256_parts(std::span<std::uint8_t,32> output,
+        std::span<std::uint8_t const> first,std::span<std::uint8_t const> second) noexcept -> void {
+        BLAKE2B_CTX context;
+        BLAKE2B256_Init(&context);
+        if (!first.empty()) BLAKE2B256_Update(&context,first.data(),first.size());
+        if (!second.empty()) BLAKE2B256_Update(&context,second.data(),second.size());
+        BLAKE2B256_Final(output.data(),&context);
+        OPENSSL_cleanse(&context,sizeof(context));
+    }
     DigestContext::DigestContext(EVP_MD_CTX* context, std::size_t size) noexcept : context_(context), size_(size) {}
     DigestContext::~DigestContext() { EVP_MD_CTX_free(context_); }
     DigestContext::DigestContext(DigestContext&& other) noexcept
@@ -126,6 +129,59 @@ namespace nexus::crypto {
         if (!EVP_Digest(input.data(),input.size(),result.data(),&length,type,nullptr) || length!=result.size())
             return std::unexpected(Error::backend_failure);
         return result;
+    }
+    auto md5_fingerprint(std::span<std::uint8_t const> input) -> std::expected<std::array<std::uint8_t,16>,Error> {
+        std::array<std::uint8_t,16> result{};
+        unsigned int length=0;
+        if (!EVP_Digest(input.data(),input.size(),result.data(),&length,EVP_md5(),nullptr) || length!=result.size())
+            return std::unexpected(Error::backend_failure);
+        return result;
+    }
+    HmacSha1Context::HmacSha1Context(HMAC_CTX* context) noexcept : context_(context) {}
+    HmacSha1Context::~HmacSha1Context() { HMAC_CTX_free(context_); }
+    HmacSha1Context::HmacSha1Context(HmacSha1Context&& other) noexcept
+        : context_(std::exchange(other.context_,nullptr)), failed_(other.failed_) {}
+    auto HmacSha1Context::operator=(HmacSha1Context&& other) noexcept -> HmacSha1Context& {
+        if (this!=&other) {
+            HMAC_CTX_free(context_); context_=std::exchange(other.context_,nullptr); failed_=other.failed_;
+        }
+        return *this;
+    }
+    auto HmacSha1Context::create(std::span<std::uint8_t const> key) -> std::expected<HmacSha1Context, Error> {
+        std::unique_ptr<HMAC_CTX,decltype(&HMAC_CTX_free)> context(HMAC_CTX_new(),HMAC_CTX_free);
+        if (!context || !HMAC_Init_ex(context.get(),key.data(),key.size(),EVP_sha1(),nullptr))
+            return std::unexpected(Error::backend_failure);
+        return HmacSha1Context(context.release());
+    }
+    auto HmacSha1Context::reset(std::span<std::uint8_t const> key) -> std::expected<void, Error> {
+        if (!context_) return std::unexpected(Error::invalid_state);
+        if (!HMAC_Init_ex(context_,key.data(),key.size(),EVP_sha1(),nullptr)) {
+            failed_=true; return std::unexpected(Error::backend_failure);
+        }
+        failed_=false;
+        return {};
+    }
+    auto HmacSha1Context::update(std::span<std::uint8_t const> input) -> std::expected<void, Error> {
+        if (!context_ || failed_) return std::unexpected(Error::invalid_state);
+        if (!input.empty() && !HMAC_Update(context_,input.data(),input.size())) {
+            failed_=true; return std::unexpected(Error::backend_failure);
+        }
+        return {};
+    }
+    auto HmacSha1Context::snapshot() const -> std::expected<std::array<std::uint8_t, 20>, Error> {
+        if (!context_ || failed_) return std::unexpected(Error::invalid_state);
+        std::unique_ptr<HMAC_CTX,decltype(&HMAC_CTX_free)> copy(HMAC_CTX_new(),HMAC_CTX_free);
+        if (!copy || !HMAC_CTX_copy(copy.get(),context_)) return std::unexpected(Error::backend_failure);
+        std::array<std::uint8_t,20> output{}; unsigned int length=0;
+        if (!HMAC_Final(copy.get(),output.data(),&length) || length!=output.size())
+            return std::unexpected(Error::backend_failure);
+        return output;
+    }
+    auto HmacSha1Context::clone() const -> std::expected<HmacSha1Context, Error> {
+        if (!context_ || failed_) return std::unexpected(Error::invalid_state);
+        std::unique_ptr<HMAC_CTX,decltype(&HMAC_CTX_free)> copy(HMAC_CTX_new(),HMAC_CTX_free);
+        if (!copy || !HMAC_CTX_copy(copy.get(),context_)) return std::unexpected(Error::backend_failure);
+        return HmacSha1Context(copy.release());
     }
     auto hmac(Hash hash, std::span<std::uint8_t const> key, std::span<std::uint8_t const> input) -> std::expected<Bytes, Error> {
         auto* type=md(hash); if (!type) return std::unexpected(Error::unsupported_algorithm);

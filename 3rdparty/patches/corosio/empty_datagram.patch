@@ -1,0 +1,30 @@
+--- a/include/boost/corosio/native/detail/uring/uring_types.hpp
++++ b/include/boost/corosio/native/detail/uring/uring_types.hpp
+@@ -2215,11 +2215,11 @@
+         iovec iovecs[uring_max_iov];
+         int iovec_count = copy_to_iovec(buffers, iovecs);
+         bool stop_now   = token.stop_possible() && token.stop_requested();
+-        bool empty_buf  = (iovec_count == 0);
+ 
+         ssize_t n          = 0;
+         int err            = 0;
+-        bool have_sync_res = stop_now || empty_buf;
++        // An empty datagram still needs an actual sendmsg/SQE.
++        bool have_sync_res = stop_now;
+         if (!have_sync_res && spec_.may_speculate_write())
+         {
+             msghdr msg{};
+@@ -2878,11 +2878,11 @@
+         iovec iovecs[uring_max_iov];
+         int iovec_count = copy_to_iovec(buffers, iovecs);
+         bool stop_now   = token.stop_possible() && token.stop_requested();
+-        bool empty_buf  = (iovec_count == 0);
+ 
+         ssize_t n          = 0;
+         int err            = 0;
+-        bool have_sync_res = stop_now || empty_buf;
++        // An empty datagram still needs an actual sendmsg/SQE.
++        bool have_sync_res = stop_now;
+         if (!have_sync_res && spec_.may_speculate_write())
+         {
+             msghdr msg{};

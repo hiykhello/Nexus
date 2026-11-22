@@ -2,10 +2,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.shadowsocks.request;
-import nexus.shadowsocks.response;
-import nexus.shadowsocks.frame;
-namespace s=nexus::shadowsocks;
+import shadowsocks.request;
+import shadowsocks.response;
+import shadowsocks.frame;
+namespace s=shadowsocks;
 auto main(int argc,char** argv) -> int {
     if (argc!=4 && argc!=5 && argc!=6) return 1;
     int fd=std::stoi(argv[1]); auto size=static_cast<std::size_t>(std::stoul(argv[2])); auto port=std::stoul(argv[3]);

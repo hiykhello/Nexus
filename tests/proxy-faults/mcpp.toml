@@ -1,0 +1,97 @@
+[package]
+namespace = "nexus"
+name = "proxy-fault-tests"
+version = "0.1.0"
+
+# Exercise the real proxy implementation with hooks selected only in this
+# dedicated graph. Different fault modes must be built separately.
+[dependencies]
+"nexus" = { path = "../..", features = ["vless"] }
+"nexus.proxy-runtime" = { path = "../../src/proxy" }
+
+[features]
+relay-throw = { implies = ["nexus.protocols/vless", "nexus.proxy-runtime/test-vless-relay-throw"], sources = ["../vless_relay_throw.cpp"] }
+relay-abandon = ["nexus.protocols/vless", "nexus.proxy-runtime/test-vless-abandon"]
+root-launch = ["nexus.protocols/vless", "nexus.proxy-runtime/test-root-launch"]
+vless-accept = ["nexus.protocols/vless", "nexus.proxy-runtime/test-root-launch", "nexus.proxy-runtime/test-vless-profile-lifetime"]
+vless-reconfigure = ["nexus.protocols/vless"]
+ss-abandon = ["nexus.protocols/ss2022", "nexus.proxy-runtime/test-ss-abandon"]
+tunnel-abandon = ["nexus.protocols/ss2022", "nexus.proxy-runtime/test-tunnel-profile"]
+ss-tunnel-profile = ["nexus.protocols/ss2022", "nexus.proxy-runtime/test-ss-tunnel-profile"]
+
+[build]
+sources = []
+
+[feature-deps.relay-throw]
+nexus.protocols = { path = "../../src", features = ["vless"] }
+
+[feature-deps.relay-abandon]
+nexus.protocols = { path = "../../src", features = ["vless"] }
+
+[feature-deps.root-launch]
+nexus.protocols = { path = "../../src", features = ["vless"] }
+
+[feature-deps.vless-accept]
+nexus.protocols = { path = "../../src", features = ["vless"] }
+
+[feature-deps.vless-reconfigure]
+nexus.protocols = { path = "../../src", features = ["vless"] }
+
+[feature-deps.ss-abandon]
+nexus.protocols = { path = "../../src", features = ["vless", "ss2022"] }
+
+[feature-deps.tunnel-abandon]
+nexus.protocols = { path = "../../src", features = ["vless", "ss2022"] }
+
+[feature-deps.ss-tunnel-profile]
+nexus.protocols = { path = "../../src", features = ["vless", "ss2022"] }
+
+[targets.nexus-vless-relay-throw-fixture]
+kind = "bin"
+main = "../../src/tools/main.cpp"
+required_features = ["relay-throw"]
+
+[targets.proxy-vless-relay-abandon-test]
+kind = "bin"
+main = "../proxy_vless_relay_abandon.cpp"
+required_features = ["relay-abandon"]
+
+[targets.proxy-vless-abandon-test]
+kind = "bin"
+main = "../proxy_vless_abandon.cpp"
+required_features = ["relay-abandon"]
+
+[targets.proxy-vless-reconfigure-test]
+kind = "bin"
+main = "../proxy_vless_reconfigure.cpp"
+required_features = ["vless-reconfigure"]
+
+[targets.proxy-ss-abandon-test]
+kind = "bin"
+main = "../proxy_ss_abandon.cpp"
+required_features = ["ss-abandon"]
+
+[targets.proxy-tunnel-outbound-abandon-test]
+kind = "bin"
+main = "../proxy_tunnel_outbound_abandon.cpp"
+required_features = ["tunnel-abandon"]
+
+[targets.proxy-ss-tunnel-profile-test]
+kind = "bin"
+main = "../proxy_ss_tunnel_profile.cpp"
+required_features = ["ss-tunnel-profile"]
+
+[targets.proxy-root-launch-fault]
+kind = "bin"
+main = "../proxy_root_fault.cpp"
+required_features = ["root-launch"]
+
+[targets.proxy-reconfigure-fault]
+kind = "bin"
+main = "../proxy_reconfigure_fault.cpp"
+required_features = ["root-launch"]
+
+[targets.proxy-vless-accept-fault]
+kind = "bin"
+main = "../proxy_vless_accept_fault.cpp"
+required_features = ["vless-accept"]

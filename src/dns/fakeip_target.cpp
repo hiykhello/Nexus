@@ -1,7 +1,7 @@
-module nexus.dns.fakeip_target;
+module dns.fakeip_target;
 import std;
-import nexus.dns.fakeip;
-namespace nexus::dns {
+import dns.fakeip;
+namespace dns {
     auto acquire_fakeip_target(FakeIpPool& pool,std::uint32_t address,std::uint64_t view,
         std::chrono::steady_clock::time_point now) -> std::expected<std::unique_ptr<FakeIpTarget>,FakeIpTargetError> {
         auto mapping=pool.lookup(address,now);

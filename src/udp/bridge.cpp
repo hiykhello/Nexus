@@ -1,7 +1,7 @@
-module nexus.udp;
+module udp;
 import std;
 
-namespace nexus::udp {
+namespace udp {
     auto Bridge4::prepare(std::span<std::uint8_t const> input, std::uint64_t now)
         -> std::expected<OutboundDatagram, BridgeError> {
         auto parsed = packet::parse_udp4(input);

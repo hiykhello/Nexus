@@ -1,9 +1,12 @@
-export module nexus.http2.server;
+export module http2.server;
 import std;
-export import nexus.http2.headers;
-export import nexus.memory.budget;
+export import http2.headers;
+export import memory.budget;
 import nexus.thirdparty.nghttp2;
-export namespace nexus::http2 {
+#ifdef NEXUS_TEST_HTTP2_ALLOCATOR
+extern "C" auto nexus_test_http2_fail_realloc() noexcept -> bool;
+#endif
+export namespace http2 {
     namespace h2 = nex::nghttp2;
     // Views are valid only during the callback. All callbacks run synchronously
     // on the caller's thread and must not reenter the session.
@@ -43,6 +46,10 @@ export namespace nexus::http2 {
         // Actual header capacities, other TLS buffers, transport, allocator
         // overhead and other transient copies are excluded; this is not a complete budget.
         std::size_t shared_memory_bytes = std::numeric_limits<std::size_t>::max();
+        // Bound non-deferred queued outbound control/response frames against flooding.
+        std::size_t outbound_queue_frames = 5000;
+        // RFC 9113 default 16 KiB frame cap prevents 512 KiB/stream peer buffer bloat on 50 MiB/128 MiB targets.
+        std::uint32_t max_frame_size = 16384;
     };
     enum class ServerErrorKind { invalid_argument, invalid_state, allocation, library, reentrant, failed, budget_exceeded };
     struct ServerError { ServerErrorKind kind; int library_code = 0; };
@@ -88,6 +95,9 @@ export namespace nexus::http2 {
             // Reserve both requested sizes even when the allocator can resize in place.
             if (total>self.library_limit_-self.library_used_ ||
                 total>self.shared_limit_-self.shared_memory_used()) return nullptr;
+#ifdef NEXUS_TEST_HTTP2_ALLOCATOR
+            if (nexus_test_http2_fail_realloc()) return nullptr;
+#endif
             auto replacement=static_cast<Allocation*>(std::realloc(p,total));
             if (!replacement) return nullptr;
             self.library_peak_=std::max(self.library_peak_,self.library_used_+total);
@@ -222,9 +232,9 @@ export namespace nexus::http2 {
                 try { self.streams_.push_back({frame->hd.stream_id}); }
                 catch (...) { return h2::NGHTTP2_ERR_CALLBACK_FAILURE; }
                 self.stream_reserved_ += sizeof(Stream);
-                if (h2::nghttp2_session_set_local_window_size(session, 0, frame->hd.stream_id,
-                                                              static_cast<std::int32_t>(self.input_window_)) != 0)
-                    return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
+                // INITIAL_WINDOW_SIZE applies to every stream when the peer
+                // acknowledges SETTINGS. Setting it here as well would apply
+                // that delta twice to streams opened before the ACK.
             }
             self.headers_.begin(frame->hd.stream_id);
             return 0;
@@ -330,7 +340,7 @@ export namespace nexus::http2 {
             -> std::expected<std::unique_ptr<ServerSession>, ServerError> {
             if (!limits.concurrent_streams || !limits.header_fields || !limits.header_bytes || !limits.response_bytes || !limits.total_response_bytes ||
                 !limits.input_window || limits.input_window > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) ||
-                !limits.outbound_ack_frames || !limits.library_memory_bytes || !limits.shared_memory_bytes ||
+                !limits.outbound_ack_frames || !limits.outbound_queue_frames || !limits.library_memory_bytes || !limits.shared_memory_bytes ||
                 !events.headers || !events.data || !events.end_stream || !events.closed)
                 return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
             if (budget && budget->limit()!=limits.shared_memory_bytes) return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
@@ -354,6 +364,7 @@ export namespace nexus::http2 {
             if (rc == 0) {
                 h2::nghttp2_option_set_no_auto_window_update(option, 1);
                 h2::nghttp2_option_set_max_outbound_ack(option, limits.outbound_ack_frames);
+                h2::nghttp2_option_set_max_outbound_queue_size(option, limits.outbound_queue_frames);
                 h2::nghttp2_option_set_max_deflate_dynamic_table_size(option, limits.encoder_table_bytes);
             }
             h2::nghttp2_mem memory{self.get(),allocate,deallocate,allocate_zero,resize};
@@ -365,11 +376,14 @@ export namespace nexus::http2 {
             rc = h2::nghttp2_session_set_local_window_size(
                 self->session_, 0, 0, static_cast<std::int32_t>(self->input_window_));
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
-            std::array<h2::nghttp2_settings_entry, 3> settings{
+            constexpr std::int32_t kSettingsMaxFrameSize = 0x5; // RFC 9113 §6.5.2
+            auto const clamped_frame = std::clamp(limits.max_frame_size, std::uint32_t{16384}, std::uint32_t{16777215});
+            std::array<h2::nghttp2_settings_entry, 4> settings{
                 h2::nghttp2_settings_entry{h2::NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, limits.concurrent_streams},
                 h2::nghttp2_settings_entry{h2::NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE,
                                             static_cast<std::uint32_t>(limits.input_window)},
-                h2::nghttp2_settings_entry{h2::NGHTTP2_SETTINGS_HEADER_TABLE_SIZE, limits.decoder_table_bytes}};
+                h2::nghttp2_settings_entry{h2::NGHTTP2_SETTINGS_HEADER_TABLE_SIZE, limits.decoder_table_bytes},
+                h2::nghttp2_settings_entry{kSettingsMaxFrameSize, clamped_frame}};
             rc = h2::nghttp2_submit_settings(self->session_, 0, settings.data(), settings.size());
             if (rc != 0) return std::unexpected(ServerError{ServerErrorKind::library, rc});
             return self;
@@ -508,6 +522,9 @@ export namespace nexus::http2 {
         [[nodiscard]] auto local_memory_used() const noexcept -> std::size_t { return library_used_ + response_reserved_ + stream_reserved_ + headers_.memory_charge() + fields_reserved_ + input_reserved_ + output_reserved_ + ciphertext_reserved_ + scratch_reserved_ + transport_reserved_; }
         [[nodiscard]] auto shared_memory_used() const noexcept -> std::size_t { return local_memory_used()+budget_->reserved(); }
         [[nodiscard]] auto library_memory_peak() const noexcept -> std::size_t { return library_peak_; }
+        [[nodiscard]] auto outbound_queue_size() const noexcept -> std::size_t {
+            return session_ ? h2::nghttp2_session_get_outbound_queue_size(session_) : 0;
+        }
         [[nodiscard]] auto revision() const noexcept -> std::uint64_t { return revision_; }
         [[nodiscard]] auto paused_stream() const noexcept -> std::int32_t { return paused_stream_; }
         // A paused input callback has already consumed the bytes that produced

@@ -4,15 +4,21 @@
 #include <unistd.h>
 #include <sched.h>
 import std;
-import nexus.transport.tun_linux;
-namespace p=nexus::packet; namespace tr=nexus::transport;
+import transport.tun_linux;
+namespace p = ::packet; namespace tr=transport;
 using namespace std::chrono_literals;
 int main(int argc, char** argv) {
     auto tun=p::LinuxTun::create("nx-owned"); if (!tun) return 1;
-    if ((argc != 2 && argc != 3 && argc != 4) || ::setns(std::atoi(argv[1]), CLONE_NEWNET) != 0) return 8;
+    if ((argc < 2 || argc > 5) || ::setns(std::atoi(argv[1]), CLONE_NEWNET) != 0) return 8;
+    bool source_test=argc==5 && std::string_view(argv[4])=="source";
+    if (argc==5 && !source_test) return 8;
     tr::TunLimits limits; if (argc>=3) limits.socket_mark=42;
-    if (argc==4) limits.mtu=1280;
-    auto driver=tr::LinuxTunDirect::create(std::move(*tun),nexus::rules::Matcher{},limits); if (!driver) return 2;
+    if (argc>=4) limits.mtu=1280;
+    auto policy=source_test ? ::rules::Matcher::compile({{{"source-ip-cidr","10.77.0.4/32"},
+        {"source-ip-cidr","fd77::4/128"},{"source-port","43110"}},2})
+        : std::expected<::rules::Matcher,::rules::Error>{::rules::Matcher{}};
+    if (!policy) return 2;
+    auto driver=tr::LinuxTunDirect::create(std::move(*tun),std::move(*policy),limits); if (!driver) return 2;
     std::println("ready"); std::fflush(stdout);
     char begin{}; if (::read(STDIN_FILENO,&begin,1)!=1 || begin!='G') return 3;
     if (::fcntl(STDIN_FILENO,F_SETFL,::fcntl(STDIN_FILENO,F_GETFL)|O_NONBLOCK)<0) return 3;
@@ -31,13 +37,23 @@ int main(int argc, char** argv) {
         }
         if (n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) return 5;
         auto result=(*driver)->step(now);
+        auto unexpected_rejection=[&](auto const& rejected) {
+            return rejected && rejected->error!=tcp::DispatchError::unknown_flow &&
+                !(source_test && rejected->error==tcp::DispatchError::blocked);
+        };
+        auto udp_rejected=result->transport.udp.rejected;
+        bool udp_blocked=false;
+        if (source_test && udp_rejected) {
+            if (auto routed=std::get_if<udp::RoutedError>(&*udp_rejected))
+                if (auto error=std::get_if<udp::RouteError>(routed)) udp_blocked=*error==udp::RouteError::blocked;
+        }
         if (!result || result->device.input_error || result->device.output_error || result->transport.device.input_error || result->transport.device.output_error ||
-            result->transport.tcp.input.rejected || result->transport.tcp.input.input_error || result->transport.tcp.input.output_error ||
+            unexpected_rejection(result->transport.tcp.input.rejected) || result->transport.tcp.input.input_error || result->transport.tcp.input.output_error ||
             result->transport.tcp.start_error || result->transport.tcp.direct.error || result->transport.tcp.direct.output_error ||
             result->transport.tcp.service.output.connection_error || result->transport.tcp.service.output.output_error ||
-            result->transport.udp.rejected || result->transport.udp.ipv4_error || result->transport.udp.ipv6_error || result->transport.udp.output_error) return 6;
+            (udp_rejected && !udp_blocked) || result->transport.udp.ipv4_error || result->transport.udp.ipv6_error || result->transport.udp.output_error) return 6;
         if (auto const& tcp6=result->transport.tcp6; tcp6 &&
-            (tcp6->input.rejected || tcp6->input.input_error || tcp6->input.output_error ||
+            (unexpected_rejection(tcp6->input.rejected) || tcp6->input.input_error || tcp6->input.output_error ||
              tcp6->start_error || tcp6->direct.error || tcp6->direct.output_error ||
              tcp6->service.output.connection_error || tcp6->service.output.output_error)) return 6;
         opened |= result->transport.tcp.input.opened; connected |= result->transport.tcp.direct.connected;

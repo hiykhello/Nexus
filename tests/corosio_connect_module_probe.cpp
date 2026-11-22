@@ -9,12 +9,7 @@ namespace io = nex::corosio;
 using namespace std::chrono_literals;
 
 static auto make_context(bool use_uring) -> io::io_context {
-#if NEXUS_TEST_URING
-    return use_uring ? io::io_context(io::uring) : io::io_context();
-#else
-    (void)use_uring;
-    return io::io_context();
-#endif
+    return io::make_io_context(use_uring);
 }
 
 struct Fixture {
@@ -122,8 +117,8 @@ static auto failure_cleanup_test(bool use_uring) -> bool {
 int main() {
     if (!retry_test(false) || !canceled_test(false) || !failure_cleanup_test(false)) return 1;
     std::cout << "epoll: Corosio exported connect retry, caller cleanup and cancellation passed\n";
-#if NEXUS_TEST_URING
-    if (!retry_test(true) || !canceled_test(true) || !failure_cleanup_test(true)) return 1;
-    std::cout << "io_uring: Corosio exported connect retry, caller cleanup and cancellation passed\n";
-#endif
+    if (io::has_uring) {
+        if (!retry_test(true) || !canceled_test(true) || !failure_cleanup_test(true)) return 1;
+        std::cout << "io_uring: Corosio exported connect retry, caller cleanup and cancellation passed\n";
+    }
 }

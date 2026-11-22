@@ -1,8 +1,8 @@
 # 源码工程目录规划与 C++26 模块映射
 
-状态：设计规范。定义 Nexus 源码物理布局与 xmake 构建工程映射。
+状态：设计规范。定义 Nexus 源码物理布局与 mcpp 工作区映射。
 
-目前真实源码包括 Glaze 模块、规则集、规则文件工具、SOCKS5 解析器及 Linux 实验代理；Capy 和 Corosio 由代理私有实现使用。下图其余内容是未来布局草案，不表示对应文件已经创建。实际 target 及测试见 [xmake 构建](../build/xmake.md)。
+目前真实源码包括 Glaze 模块、规则集、规则文件工具、SOCKS5 解析器及 Linux 实验代理；Capy 和 Corosio 由代理私有实现使用。下图其余内容是未来布局草案，不表示对应文件已经创建。实际 target 及测试见 [mcpp 工作区](../build/mcpp-workspace.md)。
 
 ---
 
@@ -12,9 +12,9 @@ Nexus 全面采用 **C++26 命名模块（Named Modules）** 架构。源码按�
 
 ```text
 nexus/
-├── xmake.lua                     # 统一构建配置 (对接 GCC 16.2+ C++26)
-├── xmake/dependencies.lua        # 第三方包声明（规划）
-├── 3rdparty/packages/            # 由 add_repositories 注册的项目内 package recipe
+├── mcpp.toml                     # 根工作区及应用包
+├── mcpp.lock                     # 已解析依赖
+├── 3rdparty/mcpp-index/          # 固定第三方依赖描述符
 ├── docs/                         # 完备的技术架构与设计规范文档
 ├── src/
 │   ├── thirdparty/               # Glaze 已实现，其余模块规划中
@@ -66,29 +66,15 @@ nexus/
 
 ---
 
-## 二、xmake 构建脚本设计草案
+## 二、工作区与模块边界
 
-以下只展示项目入口与依赖第三方模块 target 的关系；路径、target、编译选项及依赖版本均须验证。实际 recipe 和锁文件的目录、获取与维护方式见[第三方依赖封装](../build/third-party-xmake.md)，包与命名模块的关系见[第三方 Modules 封装](../build/third-party-modules.md)。不直接引用本地工作区里的 Glaze，也不假设 `includes` 一个 Lua 文件会自动生成模块 target。
+实际构建清单及功能组合见[mcpp 工作区](../build/mcpp-workspace.md)。源码按真实职责归属工作区成员；每个命名模块都由构建图中的唯一提供者提供。模块与功能选择约定见[开发规范](../development/module-feature-policy.md)。
 
-```lua
--- xmake.lua，示意而非当前可执行构建脚本
-set_project("Nexus")
-set_policy("package.requires_lock", true)
-includes("xmake/dependencies.lua")
+### 自实现容器与数据结构
 
--- 第三方模块 target 须另行声明并绑定各自 package；以下仅表示业务依赖方向。
-target("nexus_crypto")
-    set_kind("static")
-    add_files("src/crypto/*.cpp", "src/crypto/*.ixx", "src/crypto/*.cppm")
-    add_deps("nexus-thirdparty-boringssl-crypto")
+`src/containers/` 存放自实现通用容器和数据结构。基础模块使用 `containers.*`，由代理、DNS、路由和协议组件单向依赖。`containers.byte_ring` 提供地址稳定的定长字节存储，Hysteria 2 和 TUIC 分别决定偏移、ACK 和释放区间。`containers.ring_queue` 维护 FIFO 槽序，Shadowsocks 原生 UDP 发送队列和 Hysteria 2 重组输出继续拥有槽对象、内存和过期。槽表和独立索引按实际复用场景继续迁移。
 
-target("nexus_config")
-    set_kind("static")
-    add_files("src/config/*.cpp", "src/config/*.ixx", "src/config/*.cppm")
-    add_deps("nexus-thirdparty-glaze")
-```
-
-示例未声明第三方模块 target，也未覆盖模块接口的公开属性、完整项目链接关系或 Linux 系统库。C++26、反射、优化、LTO 与异常等设置需按工具链和 target 验证，不能把项目选项无条件施加给第三方。
+逐项迁移时核对容量、满载行为、分配次数、地址与视图稳定性、迭代顺序以及对象销毁时机。优先保留使用方接口和现有模块入口，让调用点按实际需求迁移。验收批次与支持状态见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [项目进度](../progress.md)。
 
 ---
 

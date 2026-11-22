@@ -1,6 +1,7 @@
 #include <boost/capy/ex/async_waker.hpp>
 #include <boost/capy/ex/run_async.hpp>
-#include <boost/capy/quitter.hpp>
+#include <boost/capy/concept/context_runnable.hpp>
+#include "../src/coro/quitter.hpp"
 #include <boost/capy/when_all.hpp>
 #include <boost/corosio/backend.hpp>
 #include <boost/corosio/delay.hpp>
@@ -14,6 +15,11 @@ namespace capy = boost::capy;
 namespace io = boost::corosio;
 using namespace std::chrono_literals;
 
+auto stopped_handler(std::exception_ptr error) -> void {
+    try {std::rethrow_exception(error);}
+    catch(coro::stop_requested const&) {}
+}
+
 struct State {
     bool entered = false;
     bool destroyed = false;
@@ -24,7 +30,7 @@ struct Guard {
     ~Guard() { destroyed = true; }
 };
 
-auto parked(capy::async_waker& waker, State& state) -> capy::quitter<> {
+auto parked(capy::async_waker& waker, State& state) -> coro::quitter<> {
     Guard guard{state.destroyed};
     state.entered = true;
     auto [error] = co_await waker.wait();
@@ -41,7 +47,7 @@ auto test(bool use_uring) -> bool {
     capy::async_waker waker;
     State state;
     std::stop_source stop;
-    capy::run_async(context.get_executor(), stop.get_token())(parked(waker, state));
+    capy::run_async(context.get_executor(), stop.get_token(), [] {}, stopped_handler)(parked(waker, state));
     context.restart();
     (void)context.run_for(20ms);
     if (!state.entered || state.destroyed || context.stopped()) return false;
@@ -51,7 +57,7 @@ auto test(bool use_uring) -> bool {
     return state.destroyed && context.stopped();
 }
 
-auto socket_parked(io::local_stream_socket& socket, State& state) -> capy::quitter<> {
+auto socket_parked(io::local_stream_socket& socket, State& state) -> coro::quitter<> {
     Guard guard{state.destroyed};
     state.entered = true;
     std::array<char, 1> buffer{};
@@ -70,7 +76,7 @@ auto socket_test(bool use_uring) -> bool {
     if (io::connect_pair(first, second)) return false;
     State state;
     std::stop_source stop;
-    capy::run_async(context.get_executor(), stop.get_token())(socket_parked(first, state));
+    capy::run_async(context.get_executor(), stop.get_token(), [] {}, stopped_handler)(socket_parked(first, state));
     context.restart();
     (void)context.run_for(20ms);
     if (!state.entered || state.destroyed || context.stopped()) return false;
@@ -316,6 +322,61 @@ auto launch_allocation_test(bool use_uring) -> bool {
            capy::get_current_frame_allocator()==previous;
 }
 
+static_assert(capy::ContextRunnable<coro::quitter<bool>>);
+
+struct AcquireState {
+    bool entered=false,held=false,touched=false,resumed=false,delivered=false,after=false,destroyed=false,stopped=false;
+};
+struct Acquired {
+    bool* held;
+    explicit Acquired(bool& value) :held(&value) {}
+    Acquired(Acquired&& other) noexcept :held(std::exchange(other.held,nullptr)) {}
+    ~Acquired() {if(held)*held=false;}
+};
+// Each synchronous completion form can acquire before it requests stop.
+// Skipping await_resume would leave held set and leak that acquisition.
+template<unsigned Mode> struct AcquireOnStop {
+    std::stop_source& stop;
+    AcquireState& state;
+    auto acquire() -> void {state.touched=true;state.held=true;stop.request_stop();}
+    auto await_ready() -> bool {
+        if constexpr(Mode==0) {acquire();return true;}
+        return false;
+    }
+    auto await_suspend(std::coroutine_handle<> current,capy::await_context const*) {
+        acquire();
+        if constexpr(Mode==1)return false;
+        else return current;
+    }
+    auto await_resume() -> Acquired {state.resumed=true;return Acquired{state.held};}
+};
+template<unsigned Mode>
+auto acquire_task(std::stop_source& stop,AcquireState& state,capy::async_waker& waker,bool pre_stopped)
+    -> coro::quitter<bool> {
+    Guard guard{state.destroyed};state.entered=true;
+    if(pre_stopped)stop.request_stop();
+    auto acquired=co_await AcquireOnStop<Mode>{stop,state};
+    state.delivered=true;
+    (void)co_await waker.wait();
+    state.after=true;co_return true;
+}
+template<unsigned Mode> auto acquisition_test(bool use_uring,bool pre_stopped) -> bool {
+#if BOOST_COROSIO_HAVE_LIBURING
+    io::io_context context=use_uring ? io::io_context(io::uring) : io::io_context(io::epoll);
+#else
+    (void)use_uring;io::io_context context(io::epoll);
+#endif
+    AcquireState state;std::stop_source stop;capy::async_waker waker;
+    capy::run_async(context.get_executor(),stop.get_token(),[](bool) {std::terminate();},
+        [&state](std::exception_ptr error) {
+            try {std::rethrow_exception(error);}
+            catch(coro::stop_requested const&) {state.stopped=state.destroyed && !state.held;}
+        })(acquire_task<Mode>(stop,state,waker,pre_stopped));
+    context.restart();(void)context.run_for(1s);
+    return context.stopped() && state.entered && state.stopped && !state.held && !state.after &&
+        state.touched==!pre_stopped && state.resumed==!pre_stopped && state.delivered==!pre_stopped;
+}
+
 auto main() -> int {
     if (!test(false)) return 1;
 #if BOOST_COROSIO_HAVE_LIBURING
@@ -335,11 +396,15 @@ auto main() -> int {
     if (!value_test(false)) return 9;
     if (!handler_lifetime_test(false,false) || !handler_lifetime_test(false,true)) return 11;
     if (!launch_allocation_test(false)) return 13;
+    for(bool stopped:{false,true})
+        if(!acquisition_test<0>(false,stopped) || !acquisition_test<1>(false,stopped) || !acquisition_test<2>(false,stopped))return 15;
 #if BOOST_COROSIO_HAVE_LIBURING
     if (!abandon_test(true, false) || !abandon_test(true, true)) return 8;
     if (!value_test(true)) return 10;
     if (!handler_lifetime_test(true,false) || !handler_lifetime_test(true,true)) return 12;
     if (!launch_allocation_test(true)) return 14;
+    for(bool stopped:{false,true})
+        if(!acquisition_test<0>(true,stopped) || !acquisition_test<1>(true,stopped) || !acquisition_test<2>(true,stopped))return 16;
 #endif
     std::println("Capy quitter owner unwind passed");
 }

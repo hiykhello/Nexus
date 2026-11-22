@@ -2,9 +2,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 import std;
-import nexus.packet.fd;
-import nexus.transport.memory;
-namespace p=nexus::packet; namespace t=nexus::tcp; namespace u=nexus::udp; namespace tr=nexus::transport;
+import packet.fd;
+import transport.memory;
+namespace p = ::packet; namespace t=tcp; namespace u=udp; namespace tr=transport;
 using namespace std::chrono_literals;
 int main(int argc,char** argv) {
     if (argc!=3 && argc!=4) return 1;
@@ -16,7 +16,7 @@ int main(int argc,char** argv) {
     auto table=t::ConnectionTable::create(4,4096);
     auto pump=p::FdPump::create(fd,link,1500);
     if (!table || !pump) return 3;
-    tr::MemoryEngine engine(link,*table,nexus::rules::Matcher{},4,u::Mapping::endpoint_independent,
+    tr::MemoryEngine engine(link,*table,::rules::Matcher{},4,u::Mapping::endpoint_independent,
                             u::Filtering::address_port_dependent,{4,4,60000},1500,{1500,16,24000});
     auto start=std::chrono::steady_clock::now(); bool opened=false, connected=false, udp_input=false, udp_output=false;
     while (std::chrono::steady_clock::now()-start<15s) {
@@ -28,7 +28,10 @@ int main(int argc,char** argv) {
         }
         if (n==0 || (n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)) return 5;
         auto now=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count());
-        auto moved=pump->step(); if (moved.input_error || moved.output_error) return 6;
+        auto moved=pump->step([](void* context,p::QueuedPacket const& packet) noexcept {
+            return static_cast<tr::MemoryEngine*>(context)->valid_output(packet);
+        },&engine);
+        if (moved.input_error || moved.output_error) return 6;
         auto result=engine.step(now,0x12345678);
         if (!result || result->device.input_error || result->device.output_error ||
             result->tcp.input.rejected || result->tcp.input.input_error || result->tcp.input.output_error || result->tcp.start_error || result->tcp.direct.error ||

@@ -1,0 +1,90 @@
+[package]
+namespace = "nexus"
+name = "proxy-preload-tests"
+version = "0.1.0"
+
+# accept4 interposition requires epoll; ring initialization has a separate
+# graph. The shared libraries are independent packages and never linked here.
+[dependencies]
+nexus = { path = "../..", default-features = false }
+
+[features]
+io-uring = ["nexus/io-uring"]
+factory-fault = ["ss2022", "vless"]
+ss2022 = ["nexus/ss2022"]
+vless = ["nexus/vless"]
+trojan = ["nexus/trojan"]
+anytls = ["nexus/anytls"]
+hy2-budget-fixture = ["nexus/hy2-cli"]
+
+[feature-deps.factory-fault]
+"nexus.proxy-runtime" = { path = "../../src/proxy", features = ["test-detour-factory"] }
+
+[feature-deps.ss2022]
+nexus.protocols = { path = "../../src", features = ["ss2022"] }
+
+[feature-deps.vless]
+nexus.protocols = { path = "../../src", features = ["vless"] }
+
+[feature-deps.trojan]
+nexus.protocols = { path = "../../src", features = ["trojan"] }
+
+[feature-deps.anytls]
+nexus.protocols = { path = "../../src", features = ["anytls"] }
+
+[build]
+sources = []
+ldflags = ["-ldl"]
+
+[targets.proxy-start-fault]
+kind = "bin"
+main = "../proxy_start_fault.cpp"
+
+[targets.proxy-init-failure]
+kind = "bin"
+main = "../proxy_init_failure.cpp"
+required_features = ["io-uring"]
+
+[targets.proxy-worker-failure]
+kind = "bin"
+main = "../proxy_worker_failure.cpp"
+
+[targets.proxy-accept-aborted]
+kind = "bin"
+main = "../proxy_accept_aborted.cpp"
+
+[targets.proxy-retry-stop]
+kind = "bin"
+main = "../proxy_retry_stop.cpp"
+
+[targets.resolver-threads]
+kind = "bin"
+main = "../resolver_threads.cpp"
+
+[targets.reuseport]
+kind = "bin"
+main = "../reuseport.cpp"
+
+[targets.proxy-preload-cli]
+kind = "bin"
+main = "../../src/tools/main.cpp"
+
+[targets.hy2-udp-budget-production]
+kind = "bin"
+main = "../hy2_udp_budget_production.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hy2-budget-fixture"]
+
+[targets.detour-factory-fault]
+kind = "bin"
+main = "../proxy_detour_factory.cpp"
+required_features = ["factory-fault"]
+
+[targets.proxy-shared-dns-restart]
+kind = "bin"
+main = "../proxy_shared_dns_restart.cpp"
+
+[targets.hy2-host-shared-dns-restart]
+kind = "bin"
+main = "../hy2_host_shared_dns_restart.cpp"
+required_features = ["hy2-budget-fixture"]

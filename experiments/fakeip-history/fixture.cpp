@@ -4,13 +4,13 @@
 #include <unistd.h>
 #include "../state-owner/owner_lock.hpp"
 import std;
-import nexus.dns.fakeip_history;
-import nexus.dns.fakeip_recovery;
-import nexus.dns.fakeip_shared;
-import nexus.dns.message;
-import nexus.dns.fakeip_response;
+import dns.fakeip_history;
+import dns.fakeip_recovery;
+import dns.fakeip_shared;
+import dns.message;
+import dns.fakeip_response;
 using namespace std::chrono_literals;
-namespace d=nexus::dns;
+namespace d=dns;
 constexpr std::uint32_t old_base=0xc6120000, new_base=0xc6130000;
 std::array<std::uint8_t,16> instance{};
 std::array<std::uint8_t,32> key{};

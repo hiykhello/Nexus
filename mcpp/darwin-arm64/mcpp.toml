@@ -1,0 +1,24 @@
+# Apple ARM64 (macOS / iOS) kqueue sidecar profile.
+# Selects the cross-platform aggregate feature `profile-sidecar`.
+[package]
+name = "nexus-darwin-arm64"
+version = "0.1.0"
+standard = "c++26"
+mcpp = ">=2026.11.20.1"
+
+[target.aarch64-macos]
+sysroot = "darwin@system"
+
+[indices]
+nexus = { path = "../../3rdparty/mcpp-index" }
+
+[dependencies]
+nexus = { path = "../..", default-features = false, features = ["profile-sidecar"] }
+
+[build]
+dialect_cxxflags = ["-freflection"]
+sources = []
+
+[targets.nexus]
+kind = "bin"
+main = { from = "nexus/nexus-cli" }

@@ -1,9 +1,9 @@
 import std;
-import nexus.dns.fakeip_response;
-import nexus.dns.fakeip;
-import nexus.dns.message;
+import dns.fakeip_response;
+import dns.fakeip;
+import dns.message;
 using namespace std::chrono_literals;
-namespace d=nexus::dns;
+namespace d=dns;
 int main() {
     auto t=std::chrono::steady_clock::time_point{};
     auto pool=d::FakeIpPool::create(0xc6120001,0xc6120001,60s,5s);

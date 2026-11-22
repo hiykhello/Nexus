@@ -1,9 +1,9 @@
 import std;
-import nexus.dns.fakeip_history;
-import nexus.dns.fakeip_recovery;
-import nexus.crypto;
+import dns.fakeip_history;
+import dns.fakeip_recovery;
+import crypto;
 using namespace std::chrono_literals;
-namespace d=nexus::dns;
+namespace d=dns;
 auto main() -> int {
     std::array<std::uint8_t,16> instance{}; instance[0]=42;
     std::array<std::uint8_t,32> key{}; std::iota(key.begin(),key.end(),std::uint8_t{0});
@@ -28,7 +28,7 @@ auto main() -> int {
         d::encode_fakeip_history({0,std::vector<d::FakeIpHistoricalRange>(ranges.begin(),ranges.end())},instance,key)) return 7;
     // Forge valid tags over semantically invalid records to test validation independently of authentication.
     auto malformed=*wire; malformed[24+16+3]=4;
-    auto mac=nexus::crypto::hmac(nexus::crypto::Hash::sha256,key,std::span{malformed}.first(malformed.size()-32));
+    auto mac=::crypto::hmac(::crypto::Hash::sha256,key,std::span{malformed}.first(malformed.size()-32));
     if (!mac) return 8;
     std::ranges::copy(*mac,malformed.end()-32);
     if (d::decode_fakeip_history(malformed,instance,key)) return 9;

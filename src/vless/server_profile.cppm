@@ -1,16 +1,16 @@
-export module nexus.vless.server_profile;
+export module vless.server_profile;
 import std;
-import nexus.vless;
-import nexus.rulefile;
-import nexus.tls.server_handshake_io;
-export import nexus.memory.budget;
-export namespace nexus::vless {
+import vless;
+import rulefile;
+import tls.server_handshake_io;
+export import memory.budget;
+export namespace vless {
     // Immutable startup snapshot. Each session obtains its own handshake state
     // and a retained key reference; the snapshot outlives calls to these methods.
     class ServerProfile {
-        tls::ServerCredential credential_;
+        std::optional<tls::ServerCredential> credential_;
         std::vector<UserId> users_;
-        ServerProfile(tls::ServerCredential&& credential,std::vector<UserId>&& users)
+        ServerProfile(std::optional<tls::ServerCredential>&& credential,std::vector<UserId>&& users)
             : credential_(std::move(credential)),users_(std::move(users)) {}
     public:
         ServerProfile(ServerProfile const&)=delete;
@@ -54,16 +54,53 @@ export namespace nexus::vless {
             if (!credential) return std::unexpected("invalid or mismatched TLS credential");
             return ServerProfile(std::move(*credential),std::move(users));
         }
-        [[nodiscard]] auto tls_handshake(std::uint64_t now,std::uint64_t deadline,std::shared_ptr<memory::Budget> budget={}) const
+        // Reality provides its own per-session TLS credential.
+        [[nodiscard]] static auto load_users(std::span<std::string const> paths) -> std::expected<ServerProfile,std::string> {
+            if (paths.empty() || paths.size()>64) return std::unexpected("invalid VLESS users");
+            std::vector<UserId> users; users.reserve(paths.size());
+            for (auto const& path:paths) {
+                auto content=rulefile::read_private_file(path); if (!content) return std::unexpected("UUID file: "+content.error());
+                auto bytes=content->bytes(); if (!bytes.empty() && bytes.back()=='\n') bytes=bytes.first(bytes.size()-1);
+                auto user=parse_user_id(std::string_view(bytes.data(),bytes.size()));
+                if (!user) return std::unexpected("UUID file must contain a canonical UUID");
+                users.push_back(*user);
+            }
+            if (!ServerHandshake::create(users)) return std::unexpected("invalid VLESS users");
+            return ServerProfile({},std::move(users));
+        }
+        [[nodiscard]] auto tls_handshake(std::uint64_t now,std::uint64_t deadline,std::shared_ptr<memory::Budget> budget={},std::string_view required_alpn={}) const
             -> std::expected<tls::ServerHandshakeIo,std::string> {
-            auto credential=credential_.clone();
+            if (!credential_) return std::unexpected("TLS credential unavailable");
+            // Reserve before clone allocates. The reservation follows the
+            // credential and is released only after its storage is destroyed.
+            std::optional<memory::Budget::Reservation> certificate_reservation;
+            if (budget) {
+                auto size=credential_->certificate().size();
+                for (auto const& certificate:credential_->chain()) size+=certificate.size()+sizeof(crypto::Bytes);
+                certificate_reservation=memory::Budget::reserve(budget,size);
+                if (!certificate_reservation) return std::unexpected("TLS handshake budget exceeded");
+            }
+            auto credential=credential_->clone();
             if (!credential) return std::unexpected("cannot retain TLS credential");
-            auto handshake=tls::ServerHandshakeIo::create(std::move(*credential),now,deadline,{},tls::ServerCredential::max_certificate_list_size,std::move(budget));
+            auto handshake=tls::ServerHandshakeIo::create(std::move(*credential),now,deadline,required_alpn,tls::ServerCredential::max_certificate_list_size,std::move(budget),std::move(certificate_reservation));
             if (!handshake) return std::unexpected(handshake.error()==tls::ServerHandshakeIoError::budget_exceeded ? "TLS handshake budget exceeded" : "invalid TLS handshake options");
             return std::move(*handshake);
         }
         [[nodiscard]] auto vless_handshake() const -> std::expected<ServerHandshake,std::string> {
             return ServerHandshake::create(users_);
+        }
+        [[nodiscard]] auto vision_handshake() const -> std::expected<ServerHandshake,std::string> {
+            return ServerHandshake::create_vision(users_);
+        }
+        // The caller supplies an identity already accepted by a handshake.
+        [[nodiscard]] auto user_index(UserId const& identity) const noexcept -> std::optional<std::size_t> {
+            std::optional<std::size_t> result;
+            for (std::size_t i=0;i<users_.size();++i) {
+                unsigned difference=0;
+                for (std::size_t j=0;j<identity.size();++j) difference |= identity[j]^users_[i][j];
+                if (!difference) result=i;
+            }
+            return result;
         }
     };
 }

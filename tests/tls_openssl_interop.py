@@ -1,66 +1,18 @@
 """Local TLS 1.3 integration against an independent OpenSSL s_server."""
 import socket
-import ssl
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
-from interop_common import ROOT, CLIENT, ASYNC_CLIENT, VLESS_CLIENT
+from interop_common import ROOT, FIXTURE_DIR, CLIENT, ASYNC_CLIENT, VLESS_CLIENT
+from https_response_openssl import framed_https
 from vless_fixture_interop import vless_tls, vless_bad_response, vless_stalled_handshake
 from vless_singbox_interop import vless_singbox
 
 def run(*args):
     subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
-def framed_https(directory, case, response, expected):
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
-    context.load_cert_chain(directory / "server.pem", directory / "server.key")
-    context.set_alpn_protocols(["http/1.1"])
-    context.set_ecdh_curve("X25519")
-    listener = socket.socket()
-    listener.bind(("127.0.0.1", 0))
-    listener.listen(1)
-    listener.settimeout(10)
-    errors = []
-    def server():
-        try:
-            with listener.accept()[0] as raw:
-                raw.settimeout(10)
-                with context.wrap_socket(raw, server_side=True) as conn:
-                    request = bytearray()
-                    while not request.endswith(b"\r\n\r\n"):
-                        block = conn.recv(4096)
-                        if not block or len(request) + len(block) > 30000:
-                            raise RuntimeError("incomplete HTTPS request")
-                        request += block
-                    for offset in range(0, len(response), 7):
-                        conn.sendall(response[offset:offset + 7])
-                    try:
-                        conn.unwrap().close()
-                    except (ssl.SSLError, OSError):
-                        if expected == 0:
-                            raise
-        except Exception as exc:
-            errors.append(exc)
-        finally:
-            listener.close()
-    thread = threading.Thread(target=server)
-    thread.start()
-    try:
-        result = subprocess.run([ASYNC_CLIENT, str(listener.getsockname()[1]), directory / "root.pem", "x25519", "server.example", case],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
-        if result.returncode != expected:
-            raise RuntimeError(f"HTTPS {case} expected exit {expected}, got {result.returncode}: {result.stderr.decode(errors='replace')}")
-    finally:
-        thread.join(timeout=12)
-    if thread.is_alive() or errors:
-        raise RuntimeError(f"HTTPS {case} server failed: {errors}")
-    print(f"HTTPS {case} framing passed")
 
 
 def test(directory, group, mode, cipher, failure=None, identity="server", asynchronous=False, sni_test=False, ip_test=False, exchange_failure=None):
@@ -173,11 +125,11 @@ def main():
         test(p, "X25519", "x25519", "TLS_AES_128_GCM_SHA256", failure="wrong", asynchronous=True, ip_test=True)
         test(p, "X25519", "x25519", "TLS_AES_128_GCM_SHA256", asynchronous=True, sni_test=True, exchange_failure="alpn-required")
         test(p, "X25519", "x25519", "TLS_AES_128_GCM_SHA256", asynchronous=True, exchange_failure="reject-output")
-        framed_https(p, "fixed", b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello", 0)
-        framed_https(p, "chunked", b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3;x=y\r\nabc\r\n0\r\nX-T: z\r\n\r\n", 0)
-        framed_https(p, "empty", b"HTTP/1.1 204 No Content\r\n\r\n", 0)
-        framed_https(p, "truncated", b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nab", 11)
-        framed_https(p, "malformed", b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\naX", 12)
+        framed_https(ASYNC_CLIENT, p, "fixed", b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello", 0)
+        framed_https(ASYNC_CLIENT, p, "chunked", b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3;x=y\r\nabc\r\n0\r\nX-T: z\r\n\r\n", 0)
+        framed_https(ASYNC_CLIENT, p, "empty", b"HTTP/1.1 204 No Content\r\n\r\n", 0)
+        framed_https(ASYNC_CLIENT, p, "truncated", b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nab", 11)
+        framed_https(ASYNC_CLIENT, p, "malformed", b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\naX", 12)
         vless_tls(p)
         vless_tls(p, invalid=True)
         vless_tls(p, relay=True)
@@ -201,7 +153,7 @@ def main():
                 run("openssl", "dgst", "-sha256", "-sign", str(p / (identity + ".key")), "-out", str(p / "signature"), str(p / "sign-input"))
             else:
                 run("openssl", "pkeyutl", "-sign", "-rawin", "-inkey", str(p / (identity + ".key")), "-in", str(p / "sign-input"), "-out", str(p / "signature"))
-            subprocess.run([ROOT / "build/linux/x86_64/debug/nexus-tls-signature-interop-test", p / (identity + ".der"), p / "signature", identity], check=True)
+            subprocess.run([FIXTURE_DIR / "nexus-tls-signature-interop-test", p / (identity + ".der"), p / "signature", identity], check=True)
             test(p, "X25519", "x25519", "TLS_AES_128_GCM_SHA256", identity=identity)
             test(p, "X25519MLKEM768", "hybrid", "TLS_AES_256_GCM_SHA384", identity=identity)
         test(p, "X25519", "x25519", "TLS_AES_128_GCM_SHA256", failure="wrong")

@@ -1,0 +1,31 @@
+// Low-memory client configuration profile for 50 MiB mobile extensions
+// and 128 MiB embedded OpenWrt routers.
+schema-version 1
+role "client"
+workers 1
+tcp-splice-pipes 4
+
+log {
+    level "warn"
+    format "text"
+}
+
+state {
+    cache-directory "/tmp/nexus/cache"
+    dns-cache-max-bytes 2097152
+    ruleset-cache-max-bytes 4194304
+}
+
+control http-listen="127.0.0.1:9090" metrics=#true
+
+inbound "local" type="socks5" {
+    listen host="127.0.0.1" port=10808
+    authentication "none"
+}
+
+outbound "direct" type="direct"
+outbound "block" type="block"
+
+routing {
+    default-outbound "direct"
+}

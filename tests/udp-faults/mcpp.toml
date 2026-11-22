@@ -1,0 +1,52 @@
+[package]
+namespace = "nexus"
+name = "udp-fault-tests"
+version = "0.1.0"
+
+# Exercise real SOCKS and UoT modules with process-local socket faults.
+[dependencies]
+nexus.protocols = { path = "../../src" }
+nexus.policy = { path = "../../src/rules" }
+
+[features]
+send = ["nexus.protocols/uot-direct"]
+ingress = []
+ss-relay = ["nexus.protocols/ss2022"]
+
+[build]
+sources = []
+
+[profile.send]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=sendto"]
+
+[profile.ingress]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=sendto", "-Wl,--wrap=recvfrom"]
+
+[profile.ss-relay]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=socket", "-Wl,--wrap=setsockopt", "-Wl,--wrap=sendto", "-Wl,--wrap=recvfrom"]
+
+[targets.socks-udp-direct]
+kind = "bin"
+main = "socks5_udp_direct.cpp"
+required_features = ["send"]
+
+[targets.uot-direct]
+kind = "bin"
+main = "uot_direct.cpp"
+required_features = ["send"]
+
+[targets.socks-udp-ingress]
+kind = "bin"
+main = "socks5_udp_ingress.cpp"
+required_features = ["ingress"]
+
+[targets.ss-udp-relay-fault]
+kind = "bin"
+main = "ss_udp_relay_fault.cpp"
+required_features = ["ss-relay"]

@@ -1,7 +1,7 @@
-module nexus.tls.finished;
+module tls.finished;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     ClientFinished::ClientFinished(crypto::Hash hash, Transcript&& transcript, Secret&& client, Secret&& server) noexcept
         : hash_(hash), transcript_(std::move(transcript)), client_traffic_(std::move(client)), server_traffic_(std::move(server)) {}
     ClientFinished::ClientFinished(ClientFinished&& other) noexcept
@@ -23,14 +23,19 @@ namespace nexus::tls {
         if (!transcript_.append(message)) return std::unexpected(FinishedError::crypto_error);
         state_=State::await_client; return {};
     }
-    auto ClientFinished::make_client() -> std::expected<crypto::Bytes,FinishedError> {
+    auto ClientFinished::make_client(std::span<std::uint8_t const> preceding) -> std::expected<crypto::Bytes,FinishedError> {
         if (state_!=State::await_client) return std::unexpected(FinishedError::invalid_state);
         state_=State::failed;
+        if (!preceding.empty() && !transcript_.append(preceding)) return std::unexpected(FinishedError::crypto_error);
         auto digest=transcript_.snapshot(); if (!digest) return std::unexpected(FinishedError::crypto_error);
         auto verify=finished_verify_data(hash_,client_traffic_.view(),*digest); if (!verify) return std::unexpected(FinishedError::crypto_error);
         crypto::Bytes message{20,0,0,static_cast<std::uint8_t>(verify->view().size())}; message.insert(message.end(),verify->view().begin(),verify->view().end());
         if (!transcript_.append(message)) return std::unexpected(FinishedError::crypto_error);
-        state_=State::complete; return message;
+        state_=State::complete;
+        if (preceding.empty()) return message;
+        crypto::Bytes output(preceding.begin(),preceding.end());
+        output.append_range(message);
+        return output;
     }
     auto ClientFinished::transcript_hash() const -> std::expected<crypto::Bytes,FinishedError> {
         if (state_==State::failed) return std::unexpected(FinishedError::invalid_state);

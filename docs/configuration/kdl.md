@@ -43,7 +43,7 @@ KDL 对重复属性规定后出现的值覆盖先前值。若 Nexus 希望额外
 
 已确定加入自研 TUN 与 TLS/uTLS 类能力，具体 KDL 节点和默认值尚未冻结；[成对示例](examples/README.md)只是展示拟定字段，不表示已有配置支持。
 
-建议 TUN 配置分别表达设备与地址、路由/DNS、资源预算、UDP 映射和过滤行为；不照搬 sing-box 历史上的 `system`/`gvisor`/`mixed` 栈选择。TLS 配置分别表达连接地址、验证身份、信任策略与 profile，profile 不隐式关闭证书验证。引用不支持的算法或未编译的能力应作为配置错误。
+建议 TUN 配置分别表达设备与地址、路由/DNS、资源预算、UDP 映射和过滤行为，不引入历史上的多网络栈切换选项。TLS 配置分别表达连接地址、验证身份、信任策略与 profile，profile 不隐式关闭证书验证。引用不支持的算法或未编译的能力应作为配置错误。
 
 配置解码类型与组件工厂的配对注册见[组件模型](../architecture/component-model.md)，自研范围见[TUN](../architecture/tun.md)与[TLS](../architecture/tls.md)。
 

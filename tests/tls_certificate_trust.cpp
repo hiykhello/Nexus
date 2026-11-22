@@ -1,6 +1,6 @@
 import std;
-import nexus.tls.certificate_trust;
-namespace t = nexus::tls;
+import tls.certificate_trust;
+namespace t = tls;
 using Bytes = std::vector<std::uint8_t>;
 using View = std::span<std::uint8_t const>;
 static auto read(std::string const& name) -> Bytes {

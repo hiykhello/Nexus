@@ -1,0 +1,16 @@
+[package]
+namespace = "nexus"
+name = "wireguard-reverse-fault-tests"
+version = "0.1.0"
+
+# Native syscall interposition belongs only to this fault executable.
+[dependencies]
+nexus.tun = { path = "../../src/transport", features = ["default-network"] }
+
+[build]
+sources = ["../lease_support.cppm"]
+ldflags = ["-Wl,--wrap=open", "-Wl,--wrap=read", "-Wl,--wrap=write"]
+
+[targets.default-policy-reverse-fault]
+kind = "bin"
+main = "../default_policy_reverse_fault.cpp"

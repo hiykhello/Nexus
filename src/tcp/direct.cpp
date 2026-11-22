@@ -1,14 +1,15 @@
 module;
 #include <experimental/scope>
-#include <arpa/inet.h>
 #include <cerrno>
+#include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
-module nexus.tcp.direct;
+module tcp.direct;
 import std;
+import platform.ip_address;
 
-namespace nexus::tcp {
+namespace tcp {
     namespace {
         auto system_error() -> std::error_code { return {errno, std::generic_category()}; }
     }
@@ -32,15 +33,16 @@ namespace nexus::tcp {
         if (std::ranges::find(s.flows, id, &Flow::id) != s.flows.end()) return std::unexpected(DirectFailure{DirectError::duplicate});
         if (s.flows.size() >= s.limit) return std::unexpected(DirectFailure{DirectError::full});
         auto* flow = s.table.get(id);
-        auto target = s.table.target(id);
-        if (!flow || !target) return std::unexpected(DirectFailure{DirectError::not_found});
+        auto endpoints = s.table.endpoints(id);
+        if (!flow || !endpoints) return std::unexpected(DirectFailure{DirectError::not_found});
+        auto target = &endpoints->target;
         if (flow->state() != ConnectionState::established && flow->state() != ConnectionState::peer_closed)
             return std::unexpected(DirectFailure{DirectError::not_established});
         auto const& a = target->address;
         if (!target->port || std::ranges::all_of(a,[](auto b) { return b==0; }))
             return std::unexpected(DirectFailure{DirectError::invalid_target});
         auto text = std::format("{}.{}.{}.{}", a[0], a[1], a[2], a[3]);
-        auto match = s.policy.match({.ip=text});
+        auto match = s.policy.match({.ip=text,.source_port=endpoints->source.port,.source_ip_bytes=std::span(endpoints->source.address)});
         if (!match) return std::unexpected(DirectFailure{DirectError::policy_error});
         if (match->has_value()) return std::unexpected(DirectFailure{DirectError::blocked});
         int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
@@ -54,9 +56,9 @@ namespace nexus::tcp {
             s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
             return std::unexpected(error);
         }
-        sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(target->port);
+        sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = platform::host_to_net16(target->port);
         auto host = (std::uint32_t{a[0]} << 24) | (std::uint32_t{a[1]} << 16) | (std::uint32_t{a[2]} << 8) | a[3];
-        address.sin_addr.s_addr = htonl(host);
+        address.sin_addr.s_addr = platform::host_to_net32(host);
         auto status = ::connect(fd, reinterpret_cast<sockaddr const*>(&address), sizeof(address));
         if (status < 0 && errno != EINPROGRESS) {
             DirectFailure error{system_error()}; ::close(fd);

@@ -87,18 +87,5 @@ routing {
     default-outbound "preferred"
 }
 
-control {
-    http {
-        listen host="127.0.0.1" port=9090
-        read-token-file "/etc/nexus/secrets/control-read.token"
-        manage-token-file "/etc/nexus/secrets/control-manage.token"
-        allow-origin "https://panel.example.net"
-        allow-no-origin #true
-    }
-    ipc {
-        path "/run/nexus/control.sock"
-        max-frame-bytes 1048576
-        read-uid 1000
-        manage-uid 0
-    }
-}
+// Create this private directory as the user running Nexus before enabling control.
+control socket="/run/user/1000/nexus/control.sock"

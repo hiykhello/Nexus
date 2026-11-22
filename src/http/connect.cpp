@@ -1,15 +1,9 @@
-module;
-#if defined(_WIN32)
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#else
-#include <arpa/inet.h>
-#endif
-
-module nexus.http.connect;
+module http.connect;
 import std;
+import platform.ip_address;
+import http.header;
 
-namespace nexus::http {
+namespace http {
     namespace {
         struct Authority {
             HostKind kind = HostKind::domain;
@@ -21,10 +15,6 @@ namespace nexus::http {
         auto equal_ci(std::string_view a, std::string_view b) -> bool {
             return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(),
                 [](char x, char y) { return lower(x) == lower(y); });
-        }
-        auto token(char c) -> bool {
-            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                   std::string_view("!#$%&'*+-.^_`|~").find(c) != std::string_view::npos;
         }
         auto domain(std::string_view value) -> bool {
             if (value.empty() || value.size() > 253) return false;
@@ -49,9 +39,11 @@ namespace nexus::http {
                 auto rest = text.substr(end + 1);
                 if (!rest.empty()) { if (rest.front() != ':') return {}; port = rest.substr(1); }
                 else if (port_required) return {};
-                if (host.size() >= INET6_ADDRSTRLEN) return {};
+                if (host.size() > 45) return {};
+                auto parsed = platform::parse_ip_address(host);
+                if (!parsed || parsed->size != 16) return {};
                 result.host = host;
-                if (::inet_pton(AF_INET6, result.host.c_str(), result.address.data()) != 1) return {};
+                result.address = parsed->bytes;
                 result.kind = HostKind::ipv6;
             } else {
                 auto split = text.find(':');
@@ -60,7 +52,10 @@ namespace nexus::http {
                 else if (port_required) return {};
                 if (!domain(host)) return {};
                 result.host = host;
-                if (::inet_pton(AF_INET, result.host.c_str(), result.address.data()) == 1) result.kind = HostKind::ipv4;
+                if (auto parsed = platform::parse_ip_address(host); parsed && parsed->size == 4) {
+                    result.address = parsed->bytes;
+                    result.kind = HostKind::ipv4;
+                }
                 else if (std::all_of(host.begin(), host.end(), [](char c) { return (c >= '0' && c <= '9') || c == '.'; }))
                     return {}; // Prevent alternate numeric-address interpretations by the system resolver.
             }
@@ -78,42 +73,33 @@ namespace nexus::http {
             if (a.kind == HostKind::domain) return equal_ci(a.host, b.host);
             return a.address == b.address;
         }
-        auto trim(std::string_view value) -> std::string_view {
-            while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.remove_prefix(1);
-            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) value.remove_suffix(1);
-            return value;
-        }
+    }
+
+    auto parse_destination_authority(std::string_view input) -> ConnectRequest {
+        auto parsed=authority(input,true);if(!parsed || !parsed->port)return {ConnectStatus::malformed};
+        return {ConnectStatus::accepted,0,parsed->kind,std::move(parsed->host),parsed->address,*parsed->port};
     }
 
     auto parse_connect(std::string_view input) -> ConnectRequest {
-        auto end = input.find("\r\n\r\n");
-        if (end == std::string_view::npos)
-            return {input.size() >= max_connect_header_bytes ? ConnectStatus::too_large : ConnectStatus::incomplete};
-        auto consumed = end + 4;
-        if (consumed > max_connect_header_bytes) return {ConnectStatus::too_large};
-        auto line_end = input.find("\r\n");
-        if (line_end == std::string_view::npos || line_end > 8192) return {ConnectStatus::malformed};
-        auto line = input.substr(0, line_end);
+        auto header = inspect_header(input);
+        if (header.status == HeaderStatus::incomplete) return {ConnectStatus::incomplete};
+        if (header.status == HeaderStatus::too_large) return {ConnectStatus::too_large};
+        if (header.status == HeaderStatus::malformed) return {ConnectStatus::malformed};
+        auto line = header.first;
         auto first = line.find(' '), second = first == line.npos ? line.npos : line.find(' ', first + 1);
         if (first == line.npos || second == line.npos || first == 0 || second == first + 1 ||
             line.find(' ', second + 1) != line.npos || line.substr(second + 1) != "HTTP/1.1" ||
-            !std::all_of(line.begin(), line.begin() + first, token)) return {ConnectStatus::malformed};
+            !std::all_of(line.begin(), line.begin() + first, header_token)) return {ConnectStatus::malformed};
         if (line.substr(0, first) != "CONNECT") return {ConnectStatus::unsupported};
         auto target = authority(line.substr(first + 1, second - first - 1), true);
         if (!target) return {ConnectStatus::malformed};
         bool host_seen = false;
-        std::size_t fields = 0, pos = line_end + 2;
-        while (pos < end + 2) {
-            auto next = input.find("\r\n", pos);
-            if (next == input.npos || next > end || next - pos > 8192 || ++fields > max_connect_fields)
-                return {ConnectStatus::malformed};
-            auto field = input.substr(pos, next - pos);
-            auto colon = field.find(':');
-            if (colon == field.npos || colon == 0 || !std::all_of(field.begin(), field.begin() + colon, token))
-                return {ConnectStatus::malformed};
-            auto name = field.substr(0, colon);
-            auto value = trim(field.substr(colon + 1));
-            for (unsigned char c : value) if ((c < 32 && c != '\t') || c == 127) return {ConnectStatus::malformed};
+        HeaderFieldCursor fields(header.field_lines);
+        while (true) {
+            auto field = fields.next();
+            if (field.status == HeaderFieldStatus::end) break;
+            if (field.status == HeaderFieldStatus::malformed) return {ConnectStatus::malformed};
+            auto [name, value] = field.field;
             if (equal_ci(name, "host")) {
                 if (host_seen) return {ConnectStatus::malformed};
                 auto host = authority(value, false);
@@ -124,9 +110,29 @@ namespace nexus::http {
                        equal_ci(name, "proxy-authorization") || equal_ci(name, "upgrade") || equal_ci(name, "expect")) {
                 return {ConnectStatus::unsupported};
             }
-            pos = next + 2;
         }
         if (!host_seen) return {ConnectStatus::malformed};
-        return {ConnectStatus::accepted, consumed, target->kind, std::move(target->host), target->address, *target->port};
+        return {ConnectStatus::accepted, header.consumed, target->kind, std::move(target->host), target->address, *target->port};
+    }
+
+    auto ConnectDecoder::feed(std::string_view input) -> ConnectStep {
+        if (state_==State::complete) return {ConnectEvent::accepted};
+        if (state_==State::failed) return {ConnectEvent::rejected};
+        if (state_==State::truncated) return {ConnectEvent::truncated};
+        if (boundary_.inspect(input)==HeaderBoundaryStatus::incomplete) return {ConnectEvent::need_more};
+        request_=parse_connect(input);
+        if (request_.status!=ConnectStatus::accepted) {
+            state_=State::failed;
+            return {ConnectEvent::rejected};
+        }
+        state_=State::complete;
+        return {ConnectEvent::accepted,request_.consumed};
+    }
+
+    auto ConnectDecoder::finish() noexcept -> ConnectStep {
+        if (state_==State::complete) return {ConnectEvent::accepted};
+        if (state_==State::failed) return {ConnectEvent::rejected};
+        state_=State::truncated;
+        return {ConnectEvent::truncated};
     }
 }

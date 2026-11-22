@@ -1,0 +1,40 @@
+[package]
+namespace = "nexus"
+name = "http2-tests"
+version = "0.1.0"
+
+# Exercise the real HTTP/2 session independently of the proxy and TLS.
+[dependencies]
+nexus.protocols = { path = "../../src", features = ["http2"] }
+nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[features]
+default = ["io-uring"]
+io-uring = ["nexus.corosio-source/uring"]
+tls = ["nexus.protocols/http2-tls"]
+test-allocator = { implies = ["nexus.protocols/test-http2-allocator"], sources = ["http2_allocator_probe.cpp"] }
+
+[feature-deps.io-uring]
+nexus.uring-system.workspace = true
+
+[build]
+sources = []
+
+[test]
+discover = ["http2_server.cpp", "http2_memory_budget.cpp", "nghttp2_memory.cpp", "window.cpp"]
+
+[targets.http2-tls-server]
+kind = "bin"
+main = "http2_tls_server.cpp"
+required_features = ["tls"]
+
+[targets.http2-allocator-boundary]
+kind = "bin"
+main = "http2_allocator_boundary.cpp"
+required_features = ["test-allocator"]
+
+[targets.http2-tls-backpressure]
+kind = "bin"
+main = "http2_tls_backpressure.cpp"
+required_features = ["tls"]

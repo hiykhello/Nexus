@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Nexus</string>
+    <string name="vpn_service_desc">Non-root local VPN tunnel and DNS routing proxy service</string>
+    <string name="qs_tile_label">Nexus</string>
+</resources>

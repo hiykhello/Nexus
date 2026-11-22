@@ -15,6 +15,16 @@
 static atomic_uint listens;
 static atomic_uint reuse_options;
 static atomic_uint threads;
+static atomic_uint threads_started;
+static atomic_uint threads_rejected;
+void nexus_test_thread_fault_reset(void) {
+    atomic_store(&threads,0);
+    atomic_store(&threads_started,0);
+    atomic_store(&threads_rejected,0);
+}
+unsigned nexus_test_thread_fault_attempts(void) { return atomic_load(&threads); }
+unsigned nexus_test_thread_fault_started(void) { return atomic_load(&threads_started); }
+unsigned nexus_test_thread_fault_rejected(void) { return atomic_load(&threads_rejected); }
 static atomic_uint accepts;
 static atomic_long first_accept_fault_ns;
 long nexus_test_accept_fault_time_ns(void) { return atomic_load(&first_accept_fault_ns); }
@@ -71,8 +81,14 @@ int setsockopt(int fd, int level, int name, const void* value, socklen_t length)
 int pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start)(void*), void* arg) {
     int (*next)(pthread_t*,const pthread_attr_t*,void* (*)(void*),void*) = dlsym(RTLD_NEXT,"pthread_create");
     const char* mode=getenv("NEXUS_START_FAULT");
-    if (mode && strcmp(mode,"thread")==0 && atomic_fetch_add(&threads,1)==1) {
-        mark(); return EAGAIN;
+    if (mode && strcmp(mode,"thread")==0) {
+        if (atomic_fetch_add(&threads,1)==1) {
+            atomic_fetch_add(&threads_rejected,1);
+            mark(); return EAGAIN;
+        }
+        int result=next(thread,attr,start,arg);
+        if (result==0) atomic_fetch_add(&threads_started,1);
+        return result;
     }
     return next(thread,attr,start,arg);
 }

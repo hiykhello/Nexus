@@ -1,7 +1,7 @@
-module nexus.tls.schedule;
+module tls.schedule;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     Secret::~Secret() { crypto::cleanse(bytes_); }
     Secret::Secret(Secret&& other) noexcept : bytes_(std::move(other.bytes_)) {}
     auto Secret::operator=(Secret&& other) noexcept -> Secret& {
@@ -67,5 +67,20 @@ namespace nexus::tls {
         auto key=expand_label(hash,traffic_secret,"finished",{},*size);
         if (!key) return std::unexpected(key.error());
         return wrap(crypto::hmac(hash,key->view(),transcript_hash));
+    }
+    auto exporter_master_secret(crypto::Hash hash, std::span<std::uint8_t const> master,
+                                std::span<std::uint8_t const> server_finished_transcript) -> std::expected<Secret, crypto::Error> {
+        return derive_secret(hash,master,"exp master",server_finished_transcript);
+    }
+    auto export_keying_material(crypto::Hash hash, std::span<std::uint8_t const> exporter_master,
+                                std::string_view label, std::span<std::uint8_t const> context,
+                                std::size_t length) -> std::expected<Secret, crypto::Error> {
+        auto size=hash_size(hash); if (!size) return std::unexpected(crypto::Error::unsupported_algorithm);
+        if (exporter_master.size()!=*size) return std::unexpected(crypto::Error::invalid_length);
+        auto empty_hash=crypto::digest(hash,{}); if (!empty_hash) return std::unexpected(empty_hash.error());
+        auto derived=derive_secret(hash,exporter_master,label,*empty_hash);
+        if (!derived) return std::unexpected(derived.error());
+        auto context_hash=crypto::digest(hash,context); if (!context_hash) return std::unexpected(context_hash.error());
+        return expand_label(hash,derived->view(),"exporter",*context_hash,length);
     }
 }

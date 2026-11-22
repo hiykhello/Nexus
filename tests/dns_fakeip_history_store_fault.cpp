@@ -1,8 +1,8 @@
 #include <stdlib.h>
 import std;
-import nexus.dns.fakeip_history_store;
-import nexus.dns.fakeip_recovery;
-namespace d=nexus::dns;
+import dns.fakeip_history_store;
+import dns.fakeip_recovery;
+namespace d=dns;
 using namespace std::chrono_literals;
 auto main(int argc,char** argv) -> int {
     if (argc!=3) return 2;

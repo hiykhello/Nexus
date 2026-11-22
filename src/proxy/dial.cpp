@@ -4,46 +4,33 @@ module;
 #include <boost/capy/cond.hpp>
 #include <boost/capy/when_all.hpp>
 #include <boost/capy/task.hpp>
-#ifdef NEXUS_TEST_DNS_LIFETIME
 #include <boost/capy/ex/run_async.hpp>
-#include <boost/corosio/backend.hpp>
-#endif
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/tcp_socket.hpp>
 #include <boost/corosio/endpoint.hpp>
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/ipv6_address.hpp>
-#include <boost/corosio/resolver.hpp>
 #include <boost/corosio/timeout.hpp>
 #include <boost/corosio/udp_socket.hpp>
-#include <sys/random.h>
-
-module nexus.proxy;
+module proxy;
 import proxy.v4;
 import std;
-import nexus.socks5;
-import nexus.rules;
-import nexus.http.connect;
-import nexus.dns.message;
-import nexus.dns.cache;
+import proxy.request_backend;
+import rules;
+import http.connect;
+import dns.message;
+import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
+import net.tcp_connect;
+import net.tcp_fast_open;
 #ifdef NEXUS_TEST_FAKEIP
-import nexus.dns.fakeip_request;
 extern "C" void nexus_test_fakeip_blocked();
 extern "C" void nexus_test_fakeip_watcher_done();
 #endif
 
-#include "dns_state.hpp"
-#include "../dns/corosio_dual_resolve.hpp"
-#ifdef NEXUS_TEST_DNS_LIFETIME
-extern "C" void nexus_test_dns_registered();
-#endif
-#ifdef NEXUS_TEST_DNS_OWNER
-extern "C" void nexus_test_dns_registration_destroy();
-#endif
 
-namespace nexus::proxy {
+namespace proxy {
     namespace {
         auto failure_code(std::error_code error) noexcept -> std::uint8_t {
             if (error == std::errc::network_unreachable) return 3;
@@ -52,134 +39,268 @@ namespace nexus::proxy {
             if (error == std::errc::timed_out || error == capy::cond::timeout) return 6;
             return 1;
         }
-        using DnsResult=std::expected<std::vector<io::endpoint>,dns::detail::ResolveError>;
-        auto query_server(Session& session, io::io_context& context, std::size_t server_index,
-                          std::vector<io::endpoint> const& servers, std::string const& name, std::uint16_t port,
-                          dns::detail::AddressStrategy family, Clock::time_point deadline) -> capy::task<DnsResult> {
-            if (Clock::now()>=deadline) co_return std::unexpected(dns::detail::ResolveError::timeout);
-            auto const& server=session.dns->routing.servers[server_index];
-            if (!server.port) {
-                session.resolver=std::make_unique<io::resolver>(context);
-                auto [error,endpoints]=co_await session.resolver->resolve(name,std::to_string(port));
-                session.resolver.reset();
-                if (session.closed) co_return std::unexpected(dns::detail::ResolveError::canceled);
-                if (Clock::now()>=deadline) co_return std::unexpected(dns::detail::ResolveError::timeout);
-                if (error || endpoints.empty() || endpoints.size()>64) co_return std::unexpected(dns::detail::ResolveError::transport);
-                if (family==dns::detail::AddressStrategy::ipv4_only || family==dns::detail::AddressStrategy::ipv6_only) {
-                    auto ipv6=family==dns::detail::AddressStrategy::ipv6_only;
-                    std::erase_if(endpoints,[ipv6](auto const& ep) { return ep.address().is_v6()!=ipv6; });
-                } else {
-                    auto ipv6=family==dns::detail::AddressStrategy::prefer_ipv6;
-                    std::stable_partition(endpoints.begin(),endpoints.end(),[ipv6](auto const& ep) { return ep.address().is_v6()==ipv6; });
-                }
-                if (endpoints.empty()) co_return std::unexpected(dns::detail::ResolveError::no_data);
-                co_return endpoints;
-            }
-            for (auto const& upstream : servers) {
-                if (!valid_destination(upstream)) continue;
-                dns::detail::DualAddressResolver operation(context,session.dns->cache,server.tcp,family,
-                    session.dns->routing.disable_cache,session.dns->routing.edns);
-                struct Registration {
-                    Session& session;
-                    ~Registration() {
-                        session.cancel_dns=nullptr; session.dns_operation=nullptr;
-#ifdef NEXUS_TEST_DNS_OWNER
-                        nexus_test_dns_registration_destroy();
-#endif
-                    }
-                } registration{session};
-                session.dns_operation=&operation;
-                session.cancel_dns=[](void* pointer) noexcept {
-                    static_cast<dns::detail::DualAddressResolver*>(pointer)->cancel();
-                };
-#ifdef NEXUS_TEST_DNS_LIFETIME
-                nexus_test_dns_registered();
-#endif
-                auto resolved=co_await operation.resolve(upstream,server_index+1,name,deadline);
-                if (session.closed) co_return std::unexpected(dns::detail::ResolveError::canceled);
-                if (!resolved) {
-                    if (resolved.error()==dns::detail::ResolveError::transport) continue;
-                    co_return std::unexpected(resolved.error());
-                }
-                std::vector<io::endpoint> endpoints;
-                for (auto const& address : *resolved) {
-                    if (address.size==4) {
-                        io::ipv4_address::bytes_type bytes{};
-                        std::copy_n(address.bytes.begin(),4,bytes.begin());
-                        endpoints.emplace_back(io::ipv4_address(bytes),port);
-                    } else {
-                        io::ipv6_address::bytes_type bytes{};
-                        std::copy_n(address.bytes.begin(),16,bytes.begin());
-                        endpoints.emplace_back(io::ipv6_address(bytes),port);
-                    }
-                }
-                co_return endpoints;
-            }
-            co_return std::unexpected(dns::detail::ResolveError::transport);
-        }
-        auto resolve_dns(Session& session, io::io_context& context, std::size_t selected,
-                         std::string name, std::uint16_t port, dns::detail::AddressStrategy family, Clock::time_point deadline) -> capy::task<DnsResult> {
-            auto const& routing=session.dns->routing;
-            std::vector<std::size_t> chain;
-            auto current=selected;
-            while (routing.servers[current].resolver) {
-                chain.push_back(current);
-                current=*routing.servers[current].resolver;
-            }
-            std::vector<io::endpoint> endpoints;
-            if (routing.servers[current].port) endpoints.push_back(session.dns->endpoint(current));
-            for (auto it=chain.rbegin();it!=chain.rend();++it) {
-                auto const& next=routing.servers[*it];
-                auto resolved=co_await query_server(session,context,current,endpoints,next.host,next.port,family,deadline);
-                if (!resolved) co_return std::unexpected(resolved.error());
-                endpoints=std::move(*resolved);
-                current=*it;
-            }
-            co_return co_await query_server(session,context,current,endpoints,name,port,family,deadline);
-        }
     }
 
-    auto resolve_bootstrap(Session& session, io::io_context& context, std::size_t selected,
-                           std::string name, std::uint16_t port) -> capy::task<std::optional<std::vector<io::endpoint>>> {
-        if (!session.dns || selected>=session.dns->routing.servers.size() || session.closed) co_return std::nullopt;
-        auto strategy=session.dns->routing.strategy;
-        auto family=dns::detail::AddressStrategy::prefer_ipv4;
-        if (strategy==DnsStrategy::prefer_ipv6) family=dns::detail::AddressStrategy::prefer_ipv6;
-        else if (strategy==DnsStrategy::ipv4_only) family=dns::detail::AddressStrategy::ipv4_only;
-        else if (strategy==DnsStrategy::ipv6_only) family=dns::detail::AddressStrategy::ipv6_only;
-        auto resolved=co_await resolve_dns(session,context,selected,std::move(name),port,family,session.started+std::chrono::seconds(10));
-        if (!resolved || session.closed) co_return std::nullopt;
-        co_return std::move(*resolved);
-    }
-
-#ifdef NEXUS_ENABLE_SOCKS_UDP
-    auto resolve_udp_domain(Session& session, io::io_context& context, std::string name,
-                            std::uint16_t port, Clock::time_point deadline) -> capy::task<std::optional<std::vector<io::endpoint>>> {
-        if (session.closed) co_return std::nullopt;
-        if (!session.dns) {
-            session.resolver=std::make_unique<io::resolver>(context);
-            auto [error,endpoints]=co_await session.resolver->resolve(name,std::to_string(port));
-            session.resolver.reset();
-            if (error || endpoints.empty() || endpoints.size()>64 || session.closed || Clock::now()>=deadline) co_return std::nullopt;
-            co_return endpoints;
+        namespace {
+            struct SocketRoutingSource {
+                auto snapshot(Session& session,rules::RouteMatcher const& policy) const -> std::optional<net::UdpEndpoint> {return source_endpoint(session,policy);}
+            };
+            struct DatagramRoutingSource {
+                net::UdpEndpoint const& peer;
+                auto snapshot(Session& session,rules::RouteMatcher const& policy) const -> std::optional<net::UdpEndpoint> {
+                    return policy.needs_source() || session.dns_requirements().source ? std::optional(peer) : std::nullopt;
+                }
+            };
         }
-        auto selected=session.dns->select(name);
-        auto strategy=session.dns->routing.strategy;
-        auto family=dns::detail::AddressStrategy::prefer_ipv4;
-        if (strategy==DnsStrategy::prefer_ipv6) family=dns::detail::AddressStrategy::prefer_ipv6;
-        else if (strategy==DnsStrategy::ipv4_only) family=dns::detail::AddressStrategy::ipv4_only;
-        else if (strategy==DnsStrategy::ipv6_only) family=dns::detail::AddressStrategy::ipv6_only;
-        auto resolved=co_await resolve_dns(session,context,selected,std::move(name),port,family,deadline);
-        if (!resolved || resolved->empty() || resolved->size()>64 || session.closed || Clock::now()>=deadline) co_return std::nullopt;
-        co_return std::move(*resolved);
-    }
+        auto OrderedTcpRequest::prepare(Session& session,socks5::Request const& original) -> bool {
+            if(!target.empty() || !endpoints.empty() || input.port || session.closed || !original.port ||
+                original.status!=socks5::Status::accepted)return false;
+#ifdef NEXUS_ENABLE_FAKEIP
+            auto request=original;
+            if (session.fakeip) {
+                auto translated=dns::translate_fakeip_request(*session.fakeip,original,session.fakeip_view);
+                if (!translated) return false;
+                request=translated->request;
+                session.fakeip_target=std::move(translated->target);
+                if (session.fakeip_target) {
+                    input.domain_absent[static_cast<std::size_t>(rules::DomainSource::explicit_target)]=true;
+                } else input.domain_absent[static_cast<std::size_t>(rules::DomainSource::fakeip)]=true;
+            }
+#else
+            auto const& request=original;
 #endif
+            if(request.address_type==3) {
+                if(!request.address_length)return false;
+                target.assign(reinterpret_cast<char const*>(request.address.data()),request.address_length);
+#ifdef NEXUS_ENABLE_FAKEIP
+                if (session.fakeip_target) input.fakeip_domain=target;
+                else
+#endif
+                    input.explicit_domain=target;
+            } else if(request.address_type==1 && request.address_length==4) {
+                io::ipv4_address::bytes_type bytes{};std::copy_n(request.address.begin(),bytes.size(),bytes.begin());
+                io::endpoint endpoint(io::ipv4_address(bytes),request.port);
+                target=endpoint.address().to_string();endpoints.push_back(endpoint);input.ip=target;
+                input.domain_absent[static_cast<std::size_t>(rules::DomainSource::explicit_target)]=true;
+                if (session.reverse_cache) {
+                    dns::Address addr{};addr.size=4;std::copy_n(bytes.begin(),4,addr.bytes.begin());
+                    auto now_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                        Clock::now().time_since_epoch()).count());
+                    if (auto found=session.reverse_cache->lookup(session.reverse_view,addr,now_ms)) {
+                        reverse_name=*found;input.reverse_domain=reverse_name->view();
+                    } else input.domain_absent[static_cast<std::size_t>(rules::DomainSource::reverse_dns)]=true;
+                } else input.domain_absent[static_cast<std::size_t>(rules::DomainSource::reverse_dns)]=true;
+            } else if(request.address_type==4 && request.address_length==16) {
+                io::ipv6_address::bytes_type bytes{};std::copy_n(request.address.begin(),bytes.size(),bytes.begin());
+                io::endpoint endpoint(io::ipv6_address(bytes),request.port);
+                target=endpoint.address().to_string();endpoints.push_back(endpoint);input.ip=target;
+                input.domain_absent[static_cast<std::size_t>(rules::DomainSource::explicit_target)]=true;
+                if (session.reverse_cache) {
+                    dns::Address addr{};addr.size=16;std::copy_n(bytes.begin(),16,addr.bytes.begin());
+                    auto now_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                        Clock::now().time_since_epoch()).count());
+                    if (auto found=session.reverse_cache->lookup(session.reverse_view,addr,now_ms)) {
+                        reverse_name=*found;input.reverse_domain=reverse_name->view();
+                    } else input.domain_absent[static_cast<std::size_t>(rules::DomainSource::reverse_dns)]=true;
+                } else input.domain_absent[static_cast<std::size_t>(rules::DomainSource::reverse_dns)]=true;
+            } else return false;
+            if (request.address_type==3)
+                input.domain_absent[static_cast<std::size_t>(rules::DomainSource::reverse_dns)]=true;
+            input.port=request.port;input.network=rules::Network::tcp;
+            input.inbound=session.inbound;input.auth_user=session.auth_user;input.source_uid=session.source_uid;input.process_path=session.process_metadata();
+            input.source_interface=session.source_interface;
+            input=session.ingress.apply(input);
+            source=source_endpoint(session,true);
+            if(source) {
+                input.source_port=source->port;
+                input.source_ip_bytes=std::span(source->address).first(source->family==4 ? 4 : 16);
+            }
+            return true;
+        }
 
-        // Shared routing and dialing ensures both protocols enforce the same policy.
-        auto dial_impl(Session& session, io::io_context& context,
-                  rules::RouteMatcher const& policy, socks5::Request const& original) -> capy::task<std::uint8_t> {
+        // The caller owns the endpoints and classifier until this operation completes.
+        // A fixed classifier lets an ordered program dial its selected outbound
+        // without performing DNS or evaluating the legacy policy again.
+        template<class Classifier>
+        auto dial_candidates(Session& session,io::io_context& context,
+            std::span<io::endpoint const> destinations,Clock::time_point limit,Classifier& classify,
+            std::span<std::uint8_t const> first={},bool* first_sent=nullptr,
+            std::optional<std::string_view> tunnel_domain={}) -> capy::task<std::uint8_t> {
             if (session.closed) co_return 1;
+            if (Clock::now()>=limit) co_return 6;
+            std::vector<io::endpoint> interleaved;
+            if (!destinations.empty() &&
+                net::has_dual_stack_families(destinations,[](io::endpoint const& ep) noexcept { return ep.is_v6(); })) {
+                interleaved=net::interleave_happy_eyeballs(
+                    destinations,[](io::endpoint const& ep) noexcept { return ep.is_v6(); },destinations.front().is_v6());
+                destinations=interleaved;
+            }
+            std::error_code error;
+            bool blocked = false;
+            std::size_t next = 0;
+            // A node that exhausted its bootstrap/socket candidates cannot be
+            // repaired by another business address in this same request.
+            std::bitset<16> exhausted_tunnels;
+            if (session.meters_principal_bytes()) first={};
+            auto const connect_deadline = std::min(limit,session.started + std::chrono::milliseconds(session.direct_connect_timeout_ms));
+            if (session.direct_connect_timeout_ms>10000)
+                session.handshake_deadline=std::max(session.handshake_deadline,connect_deadline+std::chrono::seconds(1));
+            while (next < destinations.size()) {
+                // The condition cannot await a tunnel. Stop classifying at the
+                // first tunnel or policy error; handle that candidate after
+                // the direct sequence completes, then resume in order.
+                bool attempted = false, boundary = false, policy_error = false;
+                std::optional<TrafficRoute> route;
+                io::endpoint routed_destination;
+                auto condition = [&](std::error_code const&, io::endpoint const& destination) {
+                    if (boundary) return false;
+                    if (session.closed) { boundary=true; return false; }
+                    ++next;
+                    if (!valid_destination(destination)) return false;
+#ifdef NEXUS_ENABLE_FAKEIP
+                    if (session.fakeip) {
+                        auto address=destination.address();
+                        auto allowed=address.is_v4() ? dns::validate_fakeip_resolution(*session.fakeip,address.to_v4().to_bytes()) :
+                                                       dns::validate_fakeip_resolution(*session.fakeip,address.to_v6().to_bytes());
+                        if (!allowed) {
 #ifdef NEXUS_TEST_FAKEIP
+                            nexus_test_fakeip_blocked();
+#endif
+                            blocked=true;
+                            return false;
+                        }
+                    }
+#endif
+                    auto matched=classify(destination);
+                    if (!matched) { boundary=true; policy_error=true; return false; }
+                    if (matched->outbound==static_cast<std::size_t>(RouteAction::block)) { blocked=true; return false; }
+                    if (matched->outbound>=static_cast<std::size_t>(RouteAction::vless)) {
+                        auto index=matched->outbound-static_cast<std::size_t>(RouteAction::vless);
+                        if (index<exhausted_tunnels.size() && exhausted_tunnels[index]) return false;
+                        boundary=true; route=*matched; routed_destination=destination; return false;
+                    }
+                    route=*matched;
+                    routed_destination=destination;
+                    attempted=true;
+                    return true;
+                };
+                auto candidates=destinations.subspan(next);
+                std::error_code connect_error;
+                if (Clock::now() >= connect_deadline) {
+                    // Classify without starting another direct connection: a later
+                    // candidate may use a tunnel with a longer deadline.
+                    (void)condition({},candidates.front());
+                    if (policy_error) co_return 1;
+                    if (!route || route->outbound<static_cast<std::size_t>(RouteAction::vless)) {
+                        error=std::make_error_code(std::errc::timed_out);
+                        continue;
+                    }
+                    connect_error=std::make_error_code(std::errc::host_unreachable);
+                } else {
+                    bool preparation_failed=false;
+                    if(!first.empty() && session.direct_tcp_options && session.direct_tcp_options->tcp_fast_open.value_or(false)) {
+                        auto result=co_await net::tcp_fast_open_candidates(session.target,candidates,condition,first,connect_deadline,*session.direct_tcp_options);
+                        connect_error=result.result.error;preparation_failed=result.preparation_failed;
+                        if (result.result.accepted && result.result.accepted<=first.size()) {
+                            session.select_traffic_path(ConnectPath::direct);
+                            session.count_traffic(true,result.result.accepted);
+                        }
+                        if(preparation_failed)co_return failure_code(connect_error);
+                        if(connect_error && result.result.accepted)co_return failure_code(connect_error);
+                        if(!connect_error) {
+                            if(result.result.accepted>first.size()){session.target.close();co_return 1;}
+                            if(Clock::now()>=connect_deadline){session.target.close();co_return 6;}
+                            auto suffix=first.subspan(result.result.accepted);
+                            while(!suffix.empty()) {
+                                auto [write_error,count]=co_await nex::corosio::timeout(
+                                    session.target.write_some(capy::const_buffer(suffix.data(),suffix.size())),connect_deadline);
+                                if (count && count<=suffix.size()) session.count_traffic(true,count);
+                                if(session.closed)co_return 1;
+                                if(write_error || !count || count>suffix.size() || Clock::now()>=connect_deadline) {
+                                    session.target.close();
+                                    co_return Clock::now()>=connect_deadline || nex::capy::is_timeout(write_error) ? 6 : failure_code(write_error);
+                                }
+                                suffix=suffix.subspan(count);
+                            }
+                            if(first_sent)*first_sent=true;
+                        }
+                    } else {
+                        platform::TcpSocketOptions default_tcp_options;
+                        auto const& tcp_options = session.direct_tcp_options ? *session.direct_tcp_options : default_tcp_options;
+                        auto operation = net::connect_tcp_candidates(
+                            session.target,candidates,condition,tcp_options,preparation_failed,connect_deadline);
+                        auto [result, connected_endpoint]=co_await nex::corosio::timeout(std::move(operation), connect_deadline);
+                        connect_error=result;
+                        if (connect_error) session.target.close();
+                        if (preparation_failed) co_return failure_code(connect_error);
+                        (void)connected_endpoint;
+                    }
+                }
+                if (session.closed) co_return 1;
+                if (!connect_error) {
+                    session.record_traffic_route(*route,ConnectPath::direct);
+                    co_return 0;
+                }
+                if (connect_error == capy::cond::timeout) {
+                    error=std::make_error_code(std::errc::timed_out);
+                    continue;
+                }
+                // Upstream leaves the last failed socket open; close it before
+                // starting a tunnel or leaving the candidate loop.
+                if (attempted && error!=std::errc::timed_out) error=connect_error;
+                if (policy_error) co_return 1;
+                if (route && route->outbound>=static_cast<std::size_t>(RouteAction::vless)) {
+                    auto index=route->outbound-static_cast<std::size_t>(RouteAction::vless);
+                    if (!session.tunnel_factories || index>=session.tunnel_factories->size()) co_return 1;
+                    auto const& factory=(*session.tunnel_factories)[index];
+                    auto tunnel_deadline=std::min(limit,session.started+std::chrono::milliseconds(factory.timeout_ms));
+                    if (Clock::now()>=tunnel_deadline) {
+                        error=std::make_error_code(std::errc::timed_out);
+                        continue;
+                    }
+                    session.tunnel=factory(session,context);
+                    if (!session.tunnel) co_return 1;
+                    auto connected_tunnel=tunnel_domain ?
+                        co_await session.tunnel->connect_domain(*tunnel_domain,routed_destination.port(),tunnel_deadline) :
+                        co_await session.tunnel->connect_until(routed_destination,tunnel_deadline);
+                    if (session.closed) co_return 1;
+                    if (connected_tunnel==TunnelConnectResult::connected) {
+                        session.record_traffic_route(*route,ConnectPath::tunnel);
+                        co_return 0;
+                    }
+                    if (connected_tunnel==TunnelConnectResult::timeout) {
+                        session.tunnel={};
+                        error=std::make_error_code(std::errc::timed_out);
+                        continue;
+                    }
+                    if (connected_tunnel==TunnelConnectResult::failed) co_return 1;
+                    session.tunnel={};
+                    if (index<exhausted_tunnels.size()) exhausted_tunnels[index]=true;
+                    if (error!=std::errc::timed_out) error=std::make_error_code(std::errc::host_unreachable);
+                }
+            }
+            co_return error ? failure_code(error) : blocked ? 2 : 4;
+        }
+
+        // One routing/dial algorithm. The source policy is static: socket
+        // callers retain their native path, datagram streams borrow the peer
+        // already authenticated by their physical QUIC connection.
+        template<class Source>
+        auto dial_selected_destination(Session& session, io::io_context& context,
+                  rules::RouteMatcher const& policy, socks5::Request const& original,Clock::time_point limit,Source source_policy,
+                  std::span<std::uint8_t const> first={},bool* first_sent=nullptr) -> capy::task<std::uint8_t> {
+            if (session.closed) co_return 1;
+            if (Clock::now()>=limit) co_return 6;
+            // Fetch once only for traffic/DNS source predicates; the
+            // same snapshot is used before DNS and for every candidate.
+            auto source=source_policy.snapshot(session,policy);
+            std::optional<std::span<std::uint8_t const>> source_ip;
+            std::optional<std::uint16_t> source_port;
+            if (source) {
+                source_ip=std::span(source->address).first(source->family==4 ? 4 : 16);
+                source_port=source->port;
+            }
+#ifdef NEXUS_ENABLE_FAKEIP
             auto request=original;
             if (session.fakeip) {
                 auto translated=dns::translate_fakeip_request(*session.fakeip,original,session.fakeip_view);
@@ -195,39 +316,34 @@ namespace nexus::proxy {
             if (request.address_type == 3) {
                 auto domain = std::string_view(reinterpret_cast<char const*>(request.address.data()), request.address_length);
                 domain_name=domain;
-                auto preflight=policy.preflight(domain);
+                auto preflight=policy.preflight(session.ingress.apply(rules::MatchInput{.domain=domain,.port=request.port,.network=rules::Network::tcp,
+                    .source_port=source_port,.source_ip_bytes=source_ip,.auth_user=session.auth_user,.source_uid=session.source_uid,.process_path=session.process_metadata(),.source_interface=session.source_interface}));
                 if (!preflight) co_return 1;
                 if (*preflight && **preflight==static_cast<std::size_t>(RouteAction::block)) co_return 2;
-                auto dns_index=session.dns ? session.dns->select(domain) : 0;
-                auto strategy=session.dns ? session.dns->routing.strategy : DnsStrategy::automatic;
-                if (session.dns && session.dns->routing.servers[dns_index].port) {
-                    auto family=dns::detail::AddressStrategy::prefer_ipv4;
-                    if (strategy==DnsStrategy::prefer_ipv6) family=dns::detail::AddressStrategy::prefer_ipv6;
-                    else if (strategy==DnsStrategy::ipv4_only) family=dns::detail::AddressStrategy::ipv4_only;
-                    else if (strategy==DnsStrategy::ipv6_only) family=dns::detail::AddressStrategy::ipv6_only;
-                    auto resolved=co_await resolve_dns(session,context,dns_index,std::string(domain),request.port,family,session.started+std::chrono::seconds(10));
-                    if (session.closed) co_return 1;
-                    if (!resolved) co_return resolved.error()==dns::detail::ResolveError::timeout ? 6 : 4;
-                    destinations=std::move(*resolved);
-                } else {
-                    session.resolver = std::make_unique<io::resolver>(context);
-                    auto [error, endpoints] = co_await session.resolver->resolve(domain, std::to_string(request.port));
-                    session.resolver.reset();
-                    if (session.closed) co_return 1;
-                    if (error || endpoints.empty()) co_return 4;
-                    if (endpoints.size() > 64) co_return 1;
-                    destinations = std::move(endpoints);
-                    if (strategy==DnsStrategy::ipv4_only || strategy==DnsStrategy::ipv6_only) {
-                        auto ipv6=strategy==DnsStrategy::ipv6_only;
-                        std::erase_if(destinations,[ipv6](auto const& endpoint) { return endpoint.address().is_v6()!=ipv6; });
-                    } else if (strategy==DnsStrategy::prefer_ipv4 || strategy==DnsStrategy::prefer_ipv6) {
-                        auto ipv6=strategy==DnsStrategy::prefer_ipv6;
-                        std::stable_partition(destinations.begin(),destinations.end(),[ipv6](auto const& endpoint) {
-                            return endpoint.address().is_v6()==ipv6;
-                        });
+                // If all possible policy outcomes agree, its outbound timeout
+                // bounds resolution too. Otherwise keep the largest possible
+                // budget until the resolved address selects an outbound.
+                auto timeout_ms=session.direct_connect_timeout_ms;
+                if (*preflight) {
+                    auto action=**preflight;
+                    if (action>=static_cast<std::size_t>(RouteAction::vless)) {
+                        auto index=action-static_cast<std::size_t>(RouteAction::vless);
+                        if (!session.tunnel_factories || index>=session.tunnel_factories->size()) co_return 1;
+                        timeout_ms=(*session.tunnel_factories)[index].timeout_ms;
                     }
-                    if (destinations.empty()) co_return 4;
+                } else if (session.tunnel_factories) {
+                    for (auto const& factory:*session.tunnel_factories) timeout_ms=std::max(timeout_ms,factory.timeout_ms);
                 }
+                auto deadline=std::min(limit,session.started+std::chrono::milliseconds(timeout_ms));
+                if (timeout_ms>10000)
+                    session.handshake_deadline=std::max(session.handshake_deadline,deadline+std::chrono::seconds(1));
+                if (Clock::now()>=deadline) co_return 6;
+                auto resolved=co_await resolve_destination(session,context,std::string(domain),request.port,deadline,
+                    {.network=rules::Network::tcp,.source_port=source_port,.source_ip_bytes=source_ip});
+                if (session.closed) co_return 1;
+                if (!resolved) co_return resolved.error()==dns::detail::ResolveError::timeout ? 6 :
+                    resolved.error()==dns::detail::ResolveError::policy_rejected ? 2 : 4;
+                destinations=std::move(*resolved);
             } else if (request.address_type == 1) {
                 io::ipv4_address::bytes_type raw{};
                 std::copy_n(request.address.begin(), raw.size(), raw.begin());
@@ -237,71 +353,38 @@ namespace nexus::proxy {
                 std::copy_n(request.address.begin(), raw.size(), raw.begin());
                 destinations.emplace_back(io::ipv6_address(raw), request.port);
             }
-            std::error_code error;
-            bool blocked = false;
-            std::size_t next = 0;
-            auto const connect_deadline = session.started + std::chrono::seconds(10);
-            while (next < destinations.size()) {
-                // The condition cannot await a tunnel. Stop classifying at the
-                // first tunnel or policy error; handle that candidate after
-                // the direct sequence completes, then resume in order.
-                bool attempted = false, boundary = false, policy_error = false;
-                std::optional<std::size_t> tunnel_action;
-                io::endpoint tunnel_destination;
-                auto condition = [&](std::error_code const&, io::endpoint const& destination) {
-                    if (boundary) return false;
-                    if (session.closed) { boundary=true; return false; }
-                    ++next;
-                    if (!valid_destination(destination)) return false;
-#ifdef NEXUS_TEST_FAKEIP
-                    if (session.fakeip) {
-                        auto address=destination.address();
-                        auto allowed=address.is_v4() ? dns::validate_fakeip_resolution(*session.fakeip,address.to_v4().to_bytes()) :
-                                                       dns::validate_fakeip_resolution(*session.fakeip,address.to_v6().to_bytes());
-                        if (!allowed) { nexus_test_fakeip_blocked(); blocked=true; return false; }
-                    }
-#endif
-                    auto ip=destination.address().to_string();
-                    auto matched=policy.match({.domain=domain_name,.ip=ip});
-                    if (!matched) { boundary=true; policy_error=true; return false; }
-                    if (*matched==static_cast<std::size_t>(RouteAction::block)) { blocked=true; return false; }
-                    if (*matched>=static_cast<std::size_t>(RouteAction::vless)) {
-                        boundary=true; tunnel_action=*matched; tunnel_destination=destination; return false;
-                    }
-                    attempted=true;
-                    return true;
-                };
-                auto candidates=std::span{destinations}.subspan(next);
-                if (Clock::now() >= connect_deadline) co_return failure_code(std::make_error_code(std::errc::timed_out));
-                auto operation = nex::corosio::connect(session.target, candidates, condition);
-                auto [connect_error, connected_endpoint]=co_await nex::corosio::timeout(
-                    std::move(operation), connect_deadline);
-                if (connect_error) session.target.close();
-                (void)connected_endpoint;
-                if (session.closed) co_return 1;
-                if (!connect_error) co_return 0;
-                if (connect_error == capy::cond::timeout) co_return 6;
-                // Upstream leaves the last failed socket open; close it before
-                // starting a tunnel or leaving the candidate loop.
-                if (attempted) error=connect_error;
-                if (policy_error) co_return 1;
-                if (tunnel_action) {
-                    auto index=*tunnel_action-static_cast<std::size_t>(RouteAction::vless);
-                    if (!session.tunnel_factories || index>=session.tunnel_factories->size()) co_return 1;
-                    session.tunnel=(*session.tunnel_factories)[index](session,context);
-                    auto connected_tunnel=co_await session.tunnel->connect(tunnel_destination);
-                    if (session.closed) co_return 1;
-                    if (connected_tunnel==TunnelConnectResult::connected) co_return 0;
-                    if (connected_tunnel==TunnelConnectResult::timeout || Clock::now()>=connect_deadline) co_return 6;
-                    if (connected_tunnel==TunnelConnectResult::failed) co_return 1;
-                    session.tunnel={};
-                    error=std::make_error_code(std::errc::host_unreachable);
-                }
-            }
-            co_return error ? failure_code(error) : blocked ? 2 : 4;
+            auto classify = [&](io::endpoint const& destination) -> std::optional<TrafficRoute> {
+                auto ip=destination.address().to_string();
+                auto matched=policy.match_with_rule(session.ingress.apply(rules::MatchInput{.domain=domain_name,.ip=ip,.port=request.port,.network=rules::Network::tcp,
+                    .source_port=source_port,.source_ip_bytes=source_ip,.auth_user=session.auth_user,.source_uid=session.source_uid,.process_path=session.process_metadata(),.source_interface=session.source_interface}));
+                if (!matched) return {};
+                return TrafficRoute{TrafficRouteMode::indexed,matched->outbound,matched->rule,matched->predicate,
+                    traffic_endpoint(destination)};
+            };
+            co_return co_await dial_candidates(session,context,destinations,limit,classify,first,first_sent);
         }
 
-    namespace {
+        auto dial_route_candidates(Session& session,io::io_context& context,
+            std::span<io::endpoint const> destinations,std::size_t action,Clock::time_point limit,
+            std::span<std::uint8_t const> first,bool* first_sent,std::optional<std::size_t> rule,
+            std::optional<std::string_view> tunnel_domain) -> capy::task<std::uint8_t> {
+            auto classify=[action,rule](io::endpoint const& destination) -> std::optional<TrafficRoute> {
+                return TrafficRoute{TrafficRouteMode::ordered,action,rule,{},traffic_endpoint(destination)};
+            };
+            co_return co_await dial_candidates(session,context,destinations,limit,classify,first,first_sent,tunnel_domain);
+        }
+
+        // These ordinary functions return the selected operation directly;
+        // no forwarding coroutine, extra heap owner, or Session field.
+        auto dial_destination(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
+            socks5::Request const& request,Clock::time_point limit) -> capy::task<std::uint8_t> {
+            return dial_selected_destination(session,context,policy,request,limit,SocketRoutingSource{});
+        }
+        auto dial_destination(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
+            socks5::Request const& request,net::UdpEndpoint const& source,Clock::time_point limit) -> capy::task<std::uint8_t> {
+            return dial_selected_destination(session,context,policy,request,limit,DatagramRoutingSource{source});
+        }
+
         // Error readiness does not consume pipelined bytes or confuse a normal
         // write-side EOF with a reset. It is best effort: an error occurring
         // before registration may be missed by the underlying backend.
@@ -318,10 +401,12 @@ namespace nexus::proxy {
                 co_return capy::results<>{};
             } catch (...) { session.close(); throw; }
         }
+    namespace {
         auto dial_branch(Session& session, io::io_context& context,
-                         rules::RouteMatcher const& policy, socks5::Request const& request)
+                         rules::RouteMatcher const& policy, socks5::Request const& request,Clock::time_point limit,
+                         std::span<std::uint8_t const> first,bool* first_sent)
             -> capy::task<capy::results<std::uint8_t>> {
-            auto code=co_await dial_impl(session,context,policy,request);
+            auto code=co_await dial_selected_destination(session,context,policy,request,limit,SocketRoutingSource{},first,first_sent);
             // The join treats this private completion signal as a stop request
             // for the error watcher, while retaining the actual SOCKS code.
             co_return capy::results<std::uint8_t>{std::make_error_code(std::errc::operation_canceled),code};
@@ -329,16 +414,13 @@ namespace nexus::proxy {
     }
 
     auto dial(Session& session, io::io_context& context,
-              rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<std::uint8_t> {
+              rules::RouteMatcher const& policy, socks5::Request const& request,Clock::time_point limit,
+              std::span<std::uint8_t const> first,bool* first_sent) -> capy::task<std::uint8_t> {
         auto [signal,code,watch_result]=co_await capy::when_all(
-            dial_branch(session,context,policy,request),watch_client_error(session));
+            dial_branch(session,context,policy,request,limit,first,first_sent),watch_client_error(session));
         (void)signal;
         (void)watch_result;
         co_return session.closed ? 1 : code;
     }
 
 }
-
-#ifdef NEXUS_TEST_DNS_LIFETIME
-#include "../../tests/proxy_dns_lifetime_impl.hpp"
-#endif

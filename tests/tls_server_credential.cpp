@@ -1,6 +1,6 @@
 import std;
-import nexus.tls.server_credential;
-import nexus.tls.certificate_verify;
+import tls.server_credential;
+import tls.certificate_verify;
 static thread_local bool deny_allocation=false;
 static thread_local bool track_allocation=false;
 static thread_local std::size_t allocation_count=0, allocation_size=0;
@@ -15,7 +15,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { std::free(p); }
-namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace t=tls; namespace c = ::crypto;
 auto read(char const* path) -> c::Bytes { std::ifstream f(path,std::ios::binary); return {std::istreambuf_iterator<char>(f),{}}; }
 int main(int argc,char** argv) {
     if (argc==4 && std::string_view(argv[3])=="unsupported") {
@@ -30,8 +30,16 @@ int main(int argc,char** argv) {
     auto credential=t::ServerCredential::create(cert,key); if (!credential || credential->scheme()!=expected) return 4;
     auto moved=std::move(*credential); if (credential->scheme() || credential->sign(c::Hash::sha256,c::Bytes(32)).error()!=t::ServerCredentialError::invalid_state) return 5;
     if (credential->clone().error()!=t::ServerCredentialError::invalid_state) return 14;
-    deny_allocation=true; auto retained=moved.clone(); deny_allocation=false;
-    if (!retained || retained->scheme()!=expected || retained->certificate().data()!=moved.certificate().data()) return 15;
+    // A clone owns its certificate bytes; a failed copy must leave the source
+    // usable and a successful copy must not borrow its storage.
+    bool allocation_failed=false;
+    deny_allocation=true;
+    try { (void)moved.clone(); } catch (std::bad_alloc const&) { allocation_failed=true; }
+    deny_allocation=false;
+    if (!allocation_failed || moved.scheme()!=expected || !std::ranges::equal(moved.certificate(),cert)) return 15;
+    auto retained=moved.clone();
+    if (!retained || retained->scheme()!=expected || retained->certificate().data()==moved.certificate().data() ||
+        !std::ranges::equal(retained->certificate(),cert)) return 15;
     auto replacement=t::ServerCredential::create(cert,key); if (!replacement) return 12;
     *replacement=std::move(moved);
     if (moved.scheme() || replacement->scheme()!=expected || !std::ranges::equal(replacement->certificate(),cert)) return 13;

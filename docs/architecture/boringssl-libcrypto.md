@@ -26,7 +26,7 @@ BoringSSL 官方明确不保证 API/ABI 稳定，也不推荐将其视为通用�
 
 建议将 BoringSSL 原始接口的使用限制在 `nexus.thirdparty.boringssl_crypto` 与 `nexus.crypto`/`nexus.pki` 的集成边界；第三方模块按需导出类型和函数以供适配及独立消费，业务公共接口不泄漏裸句柄或宏，见[第三方 Modules 封装](../build/third-party-modules.md)。对象用 RAII 持有，按函数返回值判断成败并立即转换为 expected；不能仅用错误队列判定成败。协程跨线程恢复前先捕获本次错误上下文，避免后续操作混入诊断。[API 约定](https://boringssl.googlesource.com/boringssl/+/HEAD/API-CONVENTIONS.md)
 
-xmake 仍是统一入口。先评估封装上游构建并只链接 crypto 目标；若后续原生集成，使用锁定版本提供的源文件清单并保留必要平台/汇编构建逻辑，避免手工挑选若干算法源文件。[构建指南](https://boringssl.googlesource.com/boringssl/+/HEAD/BUILDING.md)
+mcpp 工作区使用固定版本的 libcrypto 源文件清单并保留必要平台及汇编构建逻辑，避免手工挑选若干算法源文件。[构建指南](https://boringssl.googlesource.com/boringssl/+/HEAD/BUILDING.md)
 
 候选默认优先评估随程序静态链接；检查其他依赖是否又引入系统 OpenSSL 或另一份 BoringSSL，不能只看动态库列表。符号可见性、重复符号、头文件搜索顺序与跨库对象释放需要验证；上游集成说明明确指出混用多份实现存在符号冲突。
 
@@ -34,7 +34,7 @@ xmake 仍是统一入口。先评估封装上游构建并只链接 crypto 目标
 
 后续决策已将约束修订为“允许 BoringSSL libcrypto 作为密码底座，TLS 协议和指纹仍自研；不使用 BoringSSL/OpenSSL libssl，不引入独立 OpenSSL 实现作为回退”。这确实引入 BoringSSL 依赖，不能继续写“完全不依赖 BoringSSL/OpenSSL”。
 
-Linux 实验依赖固定上游提交 `e651545da6e26e1f4420723a3b69a78ed1b9c51d`；GCC 16 下仅构建静态 crypto 目标，已验证 SHA-256 与 AES-128-GCM 空消息已知答案及篡改拒绝。项目级 API、其他算法、平台及完整发布链接图仍待验证；接入步骤见[第三方依赖封装](../build/third-party-xmake.md)。
+Linux 实验依赖固定上游提交 `e651545da6e26e1f4420723a3b69a78ed1b9c51d`；GCC 16 下仅构建静态 crypto 目标，已验证 SHA-256 与 AES-128-GCM 空消息已知答案及篡改拒绝。项目级 API、其他算法、平台及完整发布链接图仍待验证；接入步骤见[工作区构建](../build/mcpp-workspace.md)。
 
 后续验证涵盖算法已知答案、错误与资源回收、随机源和 fork 行为、不同硬件路径、证书负例、TLS 互操作及最终链接输入；原语通过不替代 TLS 状态机及模糊测试。
 

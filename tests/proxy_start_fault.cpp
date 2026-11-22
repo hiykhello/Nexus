@@ -1,15 +1,31 @@
 #include <arpa/inet.h>
 #include <cerrno>
+#include <dlfcn.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.proxy;
+import proxy;
+import dns.local_config;
 
 auto count(std::string_view path) -> std::size_t {
     return std::ranges::distance(std::filesystem::directory_iterator(path),std::filesystem::directory_iterator{});
 }
 auto main() -> int {
+    // The DNS refresh thread belongs to the process, not the server.
+    (void)dns::system_local_snapshots();
+    auto* mode=std::getenv("NEXUS_START_FAULT");
+    using Reset=void(*)();
+    using Count=unsigned(*)();
+    Count attempts=nullptr, started=nullptr, rejected=nullptr;
+    if (mode && std::string_view(mode)=="thread") {
+        auto reset=reinterpret_cast<Reset>(::dlsym(RTLD_DEFAULT,"nexus_test_thread_fault_reset"));
+        attempts=reinterpret_cast<Count>(::dlsym(RTLD_DEFAULT,"nexus_test_thread_fault_attempts"));
+        started=reinterpret_cast<Count>(::dlsym(RTLD_DEFAULT,"nexus_test_thread_fault_started"));
+        rejected=reinterpret_cast<Count>(::dlsym(RTLD_DEFAULT,"nexus_test_thread_fault_rejected"));
+        if (!reset || !attempts || !started || !rejected) return 13;
+        reset();
+    }
     int fd=::socket(AF_INET,SOCK_STREAM,0);
     if (fd<0) return 1;
     sockaddr_in address{};
@@ -18,14 +34,16 @@ auto main() -> int {
     if (::bind(fd,reinterpret_cast<sockaddr*>(&address),size)!=0 ||
         ::getsockname(fd,reinterpret_cast<sockaddr*>(&address),&size)!=0) return 2;
     ::close(fd);
-    nexus::proxy::Server server;
+    proxy::Server server;
     auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
     auto port=ntohs(address.sin_port);
-    auto failed=server.start(port,nexus::proxy::Inbound::socks5,2);
+    auto failed=server.start(port,proxy::Inbound::socks5,2);
     if (failed || server.healthy() || count("/proc/self/fd")!=fds || count("/proc/self/task")!=threads) return 3;
-    auto* mode=std::getenv("NEXUS_START_FAULT");
+    // The failure must occur after one worker was started, so this actually
+    // exercises rollback of a partially started server.
+    if (attempts && (attempts()!=2 || started()!=1 || rejected()!=1)) return 14;
     if (mode && std::string_view(mode)=="reuse" && failed.error()!=std::errc::permission_denied) return 12;
-    auto retry=server.start(port,nexus::proxy::Inbound::socks5,2);
+    auto retry=server.start(port,proxy::Inbound::socks5,2);
     if (!retry || *retry!=port || !server.healthy()) return 4;
     fd=::socket(AF_INET,SOCK_STREAM,0);
     if (fd<0) return 6;

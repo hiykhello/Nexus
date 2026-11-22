@@ -1,11 +1,11 @@
-export module nexus.tls.corosio_server_handshake;
-export import nexus.memory.budget;
+export module tls.corosio_server_handshake;
+export import memory.budget;
 import std;
-import nexus.tls.server_handshake_io;
+import tls.server_handshake_io;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-export namespace nexus::tls::detail {
-    enum class ServerAsyncError { transport, protocol, timeout, budget_exceeded };
+export namespace tls::detail {
+    enum class ServerAsyncError { transport, protocol, timeout, budget_exceeded, crypto };
     struct ServerAsyncResult {
         ApplicationRecords records;
         std::optional<memory::Budget::Reservation> unread_reservation;
@@ -29,16 +29,18 @@ export namespace nexus::tls::detail {
             unread_reservation.reset(); return true;
         }
     };
-    // Socket and handshake must outlive this operation; cancel the socket and drain completion before destruction.
+    // Socket, handshake and initial bytes must outlive this operation; cancel
+    // the socket and drain completion before destruction.
     // The deadline uses the steady-clock millisecond epoch. Returned unread bytes belong to the application reader.
     template<class Socket>
-    auto server_handshake(Socket& socket, ServerHandshakeIo& handshake, std::shared_ptr<memory::Budget> budget = {}) -> nex::capy::task<std::expected<ServerAsyncResult,ServerAsyncError>> {
+    auto server_handshake(Socket& socket, ServerHandshakeIo& handshake, std::shared_ptr<memory::Budget> budget = {},
+                          std::span<std::uint8_t const> initial = {}) -> nex::capy::task<std::expected<ServerAsyncResult,ServerAsyncError>> {
         try {
         auto handshake_budget=handshake.budget();
         if (handshake_budget && budget && handshake_budget!=budget) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::protocol); }
         if (!budget) budget=std::move(handshake_budget);
         auto io_error=[](ServerHandshakeIoError error) {
-            return error==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout :
+            return error==ServerHandshakeIoError::crypto_error ? ServerAsyncError::crypto : error==ServerHandshakeIoError::timeout ? ServerAsyncError::timeout :
                    error==ServerHandshakeIoError::budget_exceeded ? ServerAsyncError::budget_exceeded : ServerAsyncError::protocol;
         };
         auto now=[] { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); };
@@ -73,7 +75,7 @@ export namespace nexus::tls::detail {
                 if (!written) co_return std::unexpected(io_error(written.error()));
                 continue;
             }
-            if (begin==end) {
+            if (initial.empty() && begin==end) {
                 auto [error,n]=co_await nex::corosio::timeout(socket.read_some(nex::capy::mutable_buffer(buffer.data(),buffer.size())),deadline);
                 if (error || !n || n>buffer.size()) {
                     if (nex::capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::timeout); }
@@ -83,18 +85,22 @@ export namespace nexus::tls::detail {
                 }
                 begin=0; end=n;
             }
-            auto result=handshake.feed(std::span{buffer}.subspan(begin,end-begin),now());
+            auto result=handshake.feed(initial.empty() ? std::span<std::uint8_t const>{buffer}.subspan(begin,end-begin) : initial,now());
             if (!result) co_return std::unexpected(io_error(result.error()));
             if (!result->consumed) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::protocol); }
-            begin+=result->consumed;
+            if (initial.empty()) begin+=result->consumed;
+            else initial=initial.subspan(result->consumed);
         }
         auto app=handshake.take_application_records(); if (!app) co_return std::unexpected(ServerAsyncError::protocol);
         std::optional<memory::Budget::Reservation> unread_reservation;
-        if (budget && begin!=end) {
-            unread_reservation=memory::Budget::reserve(budget,end-begin);
+        auto unread_size=initial.size()+end-begin;
+        if (budget && unread_size) {
+            unread_reservation=memory::Budget::reserve(budget,unread_size);
             if (!unread_reservation) co_return std::unexpected(ServerAsyncError::budget_exceeded);
         }
-        co_return ServerAsyncResult{std::move(*app),std::move(unread_reservation),crypto::Bytes(buffer.begin()+static_cast<std::ptrdiff_t>(begin),buffer.begin()+static_cast<std::ptrdiff_t>(end))};
+        crypto::Bytes unread; unread.reserve(unread_size); unread.insert(unread.end(),initial.begin(),initial.end());
+        unread.insert(unread.end(),buffer.begin()+static_cast<std::ptrdiff_t>(begin),buffer.begin()+static_cast<std::ptrdiff_t>(end));
+        co_return ServerAsyncResult{std::move(*app),std::move(unread_reservation),std::move(unread)};
         } catch (...) { (void)handshake.cancel(); throw; }
     }
 }

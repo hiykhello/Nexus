@@ -2,11 +2,11 @@
 #include <unistd.h>
 #include "../state-owner/owner_lock.hpp"
 import std;
-import nexus.shadowsocks.udp_sessions;
-import nexus.shadowsocks.udp_packet;
-import nexus.shadowsocks.udp_replay;
-import nexus.shadowsocks.udp_id_reservation;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_sessions;
+import shadowsocks.udp_packet;
+import shadowsocks.udp_replay;
+import shadowsocks.udp_id_reservation;
+namespace s=shadowsocks;
 
 // A test fixture with multiple sessions and full-width watermarks, not a
 // production store. Transactions use the real session callbacks.

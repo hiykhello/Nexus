@@ -1,6 +1,6 @@
 # 入站、出站与协议解耦
 
-状态：设计草案，未实现。根据[决策 0008](../decisions/0008-protocol-priorities-and-vmess-deprecation.md)，协议优先级与排除范围已确定，具体互操作与实现仍待验证。
+状态：核心协议矩阵已接入生产双后端，各协议边界与构建特性见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [协议与策略组原则](../design-principles/protocols-and-groups.md)。
 
 主力协议详细规范见：
 * [Reality 协议深度规范](protocols/reality.md)
@@ -17,9 +17,13 @@
 | 梯队 | 包含协议与模块 | 战略定位与目标 |
 | :--- | :--- | :--- |
 | **P0 (核心基石与 MVP)** | **TUN 模式**、**Shadowsocks 2022**、**VLESS + Reality**、**Mixed (SOCKS5/HTTP)**、**Direct / Block** | 首期最小可用系统，覆盖系统全局接管、专线极速低延迟与防 DPI 穿透 |
-| **P1 (扩展目标)** | **WireGuard**、**Hysteria 2**、**Trojan**、**V2Ray HTTPUpgrade / gRPC** | 组网、条件性的 WARP 互操作、QUIC 承载与其他传输 |
+| **P1 (扩展目标)** | **WireGuard/WARP**、**MASQUE**、**Tailscale**、**Hysteria 2/QUIC**、**AnyTLS**、**Trojan**、**HTTPUpgrade / gRPC / WebSocket / XHTTP** | 组网、私网 Mesh、QUIC 承载、TLS 会话复用与其他传输 |
 | **P2 (特定生态补充)** | **TUIC v5**、**ShadowTLS v3**、**Snell** | 特殊客户端生态与替代方案 |
 | **❌ 明确拒绝** | **VMess 协议** | 存在严重内层双重加密开销、阻碍零拷贝且历史缺陷多，Nexus 默认不提供 |
+
+Trojan 的 `trojan` feature 已提供 TLS 1.2/1.3 上的 TCP/UDP 客户端和服务端、密码文件认证、DNS/流量上下文与混合 detour，双后端已完成双向互通、分片/合包、空包、TLS 身份拒绝、半关闭与队满恢复验证。
+
+AnyTLS 的密码文件/TLS、跨业务预热/复用池、入站多逻辑流、有序子流路由与 UoT v2 已接入双后端生产构建。其 FIN 表示整个逻辑流关闭，不沿用普通 TCP 的独立半关闭语义；池拥有独立传输状态并按 worker、身份和配置代次隔离，客户端元数据默认留空。
 
 ## 分离的职责
 
@@ -77,6 +81,8 @@ flowchart LR
 TLS、WebSocket、HTTP/2、QUIC、复用不是任意顺序叠加的通用积木。每个有效组合声明前提、承载能力、握手顺序、消息边界、ALPN、认证及关闭语义；QUIC 原生流/数据报不简单当作“TCP 加 TLS”装饰器。模块允许扩展不等于首期实现全部组合。
 
 出站明确区分业务目标、代理服务器目标和下一跳。detour 注入下层连接器，节点 hostname 通过指定 bootstrap/DNS 视图解析；不要让出站重新调用顶层路由而产生自循环。启动前检查出口链、DNS 引导和 endpoint 依赖图；运行时仍携带链路身份与深度限制，见[DNS 设计](dns.md)。
+
+策略模块的启动期依赖图接受使用者到依赖的多条边，拒绝越界和循环，并返回依赖优先的顺序。配置已联合校验 DNS 引导和 SS/VLESS/Trojan detour，服务器 API 可在停止后原子替换出站依赖集。detour 在下层字节流或数据报通道上复用既有协议握手，整条链共用一次绝对期限；节点解析不重新执行业务路由。候选重试、失败隔离与完整覆盖见 [拨号字段覆盖](../planning/dial-field-coverage.md)。
 
 selector/健康策略输出当前目标出口的受控引用或快照，和实际协议出口分开；选择操作不创建新协议类型。设备/长期隧道若同时接收与发送，由一个 endpoint owner 管理状态，暴露相应能力，避免入出两实例各自启动同一设备。
 

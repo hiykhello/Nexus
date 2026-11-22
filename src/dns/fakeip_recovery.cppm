@@ -1,9 +1,10 @@
-export module nexus.dns.fakeip_recovery;
+export module dns.fakeip_recovery;
 import std;
-import nexus.dns.fakeip_shared;
-import nexus.dns.fakeip_registry;
+import dns.fakeip;
+import dns.fakeip_shared;
+import dns.fakeip_registry;
 
-export namespace nexus::dns {
+export namespace dns {
     struct FakeIpHistoricalRange {
         std::uint32_t first, last;
         // Longest previously published TTL plus its protection grace.
@@ -12,6 +13,7 @@ export namespace nexus::dns {
     struct FakeIpRecoveryPool {
         std::uint32_t first, last, alloc_first, alloc_last;
         std::chrono::seconds ttl, grace;
+        std::optional<FakeIpIpv6Range> ipv6{};
     };
     enum class FakeIpRecoveryError { invalid, too_many_ranges, interval_overflow, registry };
 

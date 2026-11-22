@@ -1,0 +1,36 @@
+import std;
+import endpoint.config;
+import endpoint.owner;
+import platform.netlink_socket;
+import platform.netlink_watch;
+import packet.tun_network;
+import packet.tun_network_types;
+import packet.tun_network_records;
+import packet.tun_default_policy;
+import wireguard.port_types;
+import wireguard;
+import wireguard.port;
+import endpoint.resolved_dns;
+import endpoint.host_dns_types;
+namespace e=endpoint;
+namespace p = ::packet;
+namespace n = ::platform::netlink;
+using Default=e::Owner<n::NoHooks,wireguard::PortNoHooks,p::TunDefaultPolicy<>>;
+static_assert(sizeof(e::Owner<>)==438720);
+static_assert(sizeof(p::TunNetworkLease<>)==72632);
+static_assert(sizeof(p::TunNetworkOptions)==1464);
+static_assert(sizeof(p::tun_network_detail::RouteRecord)==60);
+auto main()->int {
+    using namespace wireguard;
+    using Dns=e::Owner<n::NoHooks,wireguard::PortNoHooks,e::SplitRoutePolicy,wireguard::PortStandardWire,e::ResolvedHostDns<>>;
+    using DefaultDns=e::Owner<n::NoHooks,wireguard::PortNoHooks,p::TunDefaultPolicy<>,wireguard::PortStandardWire,e::ResolvedHostDns<>>;
+    static_assert(sizeof(e::Owner<>)==438720 && sizeof(Default)==511720);
+    std::println("host DNS static policy: disabledOwner={} enabledOwner={} disabledDefault={} enabledDefault={} necessaryPolicy={} config={} options={}",sizeof(e::Owner<>),sizeof(Dns),sizeof(Default),sizeof(DefaultDns),sizeof(e::ResolvedHostDns<>),sizeof(e::Wireguard),sizeof(e::HostDnsOptions));
+    using Warp=e::Owner<n::NoHooks,PortNoHooks,e::SplitRoutePolicy,ReservedProfile>;
+    using WarpDefault=e::Owner<n::NoHooks,PortNoHooks,p::TunDefaultPolicy<>,ReservedProfile>;
+    using WarpPort=UdpPort<32,32,2048,1024,PortNoHooks,PortOuterAllowAll,ReservedProfile>;
+    static_assert(sizeof(UdpPort<>)==361784);
+    static_assert(std::is_empty_v<PortStandardWire> && std::is_trivially_default_constructible_v<PortStandardWire>);
+    std::println("provider state sizes: standard Port={} Warp Port={} standard Owner={} Warp Owner={} standard default Owner={} Warp default Owner={} profile={} config={}",sizeof(UdpPort<>),sizeof(WarpPort),sizeof(e::Owner<>),sizeof(Warp),sizeof(Default),sizeof(WarpDefault),sizeof(ReservedProfile),sizeof(e::Wireguard));
+    std::println("same-flags static composition: split Owner={} default Owner={} necessary policy={} config={} baseline Lease={} options={} route={} rich_route={} Watch={}; new virtuals=0 pImpl=0 heap-owners=0 public tasks=0",sizeof(e::Owner<>),sizeof(Default),sizeof(p::TunDefaultPolicy<>),sizeof(e::Wireguard),sizeof(p::TunNetworkLease<>),sizeof(p::TunNetworkOptions),sizeof(p::tun_network_detail::RouteRecord),sizeof(p::tun_network_detail::GatewayRouteRecord),sizeof(n::Watch));
+}

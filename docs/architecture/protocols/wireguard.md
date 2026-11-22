@@ -37,7 +37,7 @@ Initiation 的 TAI64N 是 12 字节、网络序的秒与纳秒时间表示。响
 
 WARP 配置应作为普通 peer 参数之上的**独立 provider profile**：本地私钥、对端公钥、分配的隧道 IPv4/IPv6、endpoint/端口、allowed IPs、MTU、keepalive 以及可选 reserved 3 字节均由用户提供或来自经授权且验证过的配置源。不得把静态公网地址、账号注册、密钥或保留位硬编码成永久有效数据。Cloudflare 当前分别列出了客户端使用 WireGuard/MASQUE 及其入口信息，账号与客户端策略可能变化，见 [Cloudflare One 客户端防火墙说明](https://developers.cloudflare.com/cloudflare-one/team-and-resources/devices/cloudflare-one-client/deployment/firewall/)；这些资料不保证第三方 WireGuard 配置、免费账号注册或本项目兼容。
 
-标准 profile 强制 `reserved = [0, 0, 0]`。非零值仅在显式选择、经特定服务端验证的 WARP 类兼容 profile 时允许，长度恰为 3、每项为 `0..255`；它不是 WireGuard 标准协商字段，也不能从公钥/地址推导。参考本地 sing-box 快照的 `transport/wireguard/client_bind.go`，一种兼容做法是在报文完整生成后将字节 1..3 写入配置值，在交给标准解码器前清零对应字节；接收侧必须校验来源及长度。由于这些字节也位于握手 MAC 覆盖范围内，远端必须支持并在验证 MAC 前正确还原，不能对普通 WireGuard peer 套用。Cloudflare 当前具体行为及双向互操作尚未验证，非零模式默认关闭，不能保证成功。
+标准 profile 强制 `reserved = [0, 0, 0]`。非零值仅在显式选择、经特定服务端验证的 WARP 类兼容 profile 时允许，长度恰为 3、每项为 `0..255`；它不是 WireGuard 标准协商字段，也不能从公钥/地址推导。兼容做法是在报文完整生成后将字节 1..3 写入配置值，并在交给标准解码器前清零对应字节；接收侧必须校验来源及长度。由于这些字节也位于握手 MAC 覆盖范围内，远端必须支持并在验证 MAC 前正确还原，不能对普通 WireGuard peer 套用。非零模式默认关闭。
 
 允许轮换的 endpoint 应先解析和探测，再安全切换；新旧路径均要通过防环回与 MTU 验证。对于 WARP 的注册/凭据刷新，仅定义外部注入与过期诊断，不伪造自动注册协议或把消费者 WARP 与组织 Zero Trust 配置混为一谈。
 

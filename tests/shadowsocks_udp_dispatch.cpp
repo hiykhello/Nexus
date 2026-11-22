@@ -2,10 +2,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.rules;
-import nexus.shadowsocks.udp_dispatch;
-import nexus.shadowsocks.udp_packet;
-namespace s=nexus::shadowsocks;
+import rules;
+import shadowsocks.udp_dispatch;
+import shadowsocks.udp_packet;
+namespace s=shadowsocks;
 using namespace std::chrono_literals;
 int main() {
     int fd=socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0); sockaddr_in addr{};
@@ -13,7 +13,7 @@ int main() {
     if (fd<0 || bind(fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))) return 1;
     socklen_t len=sizeof(addr); getsockname(fd,reinterpret_cast<sockaddr*>(&addr),&len);
     timeval timeout{2,0}; setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
-    auto policy=nexus::rules::Matcher::compile({{{"ip-cidr","192.0.2.0/24"},{"domain-suffix","blocked.example"}}});
+    auto policy=::rules::Matcher::compile({{{"ip-cidr","192.0.2.0/24"},{"domain-suffix","blocked.example"}}});
     if (!policy) return 2;
     s::UdpDispatcher dispatcher(std::move(*policy),2,2,2,100);
     auto t=std::chrono::steady_clock::time_point{}; std::array<std::uint8_t,16> key{};
@@ -25,13 +25,13 @@ int main() {
         return dispatcher.begin(key,wire,peer,now,wall,deadline);
     };
     auto op=begin(t,1000,t+10s); if (!op || dispatcher.pending()!=1 || op->address!=packet.address) return 3;
-    auto deny_all=nexus::rules::Matcher::compile({{{"ip-cidr","0.0.0.0/0"}}});
+    auto deny_all=::rules::Matcher::compile({{{"ip-cidr","0.0.0.0/0"}}});
     if (!deny_all || dispatcher.replace_policy(std::move(*deny_all))) return 24;
     auto second=begin(t,1000,t+10s);
     if (!second || begin(t,1000,t+10s).error()!=s::UdpDispatchError::full || !dispatcher.cancel(second->token)) return 4;
     std::array<s::UdpPeer,2> candidates{blocked,target};
     if (!dispatcher.complete(op->token,candidates,t+1s) || dispatcher.pending()!=0) return 5;
-    deny_all=nexus::rules::Matcher::compile({{{"ip-cidr","0.0.0.0/0"}}});
+    deny_all=::rules::Matcher::compile({{{"ip-cidr","0.0.0.0/0"}}});
     if (!deny_all || dispatcher.replace_policy(std::move(*deny_all))) return 25;
     if (dispatcher.complete(op->token,candidates,t+1s).error()!=s::UdpDispatchError::stale) return 6;
     std::array<std::uint8_t,16> buf{}; if (recv(fd,buf.data(),buf.size(),0)!=3) return 7;
@@ -42,6 +42,16 @@ int main() {
     auto expired=dispatcher.expire(t+3s,1003); if (!expired || *expired!=1 || dispatcher.pending()) return 12;
     packet.address={3,15,'b','l','o','c','k','e','d','.','e','x','a','m','p','l','e',static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)};
     if (begin(t+3s,1003,t+5s).error()!=s::UdpDispatchError::route || dispatcher.pending()) return 13;
+    packet.timestamp=1003;auto ordered_wire=*s::encode_udp_packet(key,s::UdpDirection::client,packet,{});++packet.packet_id;
+    auto ordered=dispatcher.begin_ordered(key,ordered_wire,peer,t+3s,1003,t+5s);
+    if(!ordered || !dispatcher.pending_packet(ordered->token) || dispatcher.pending_packet(ordered->token)->packet.payload!=packet.payload)return 26;
+    auto wrong=target;wrong.port=port+1;
+    std::array wrong_candidate{wrong};
+    if(dispatcher.complete_selected(ordered->token,wrong_candidate,t+3s).error()!=s::UdpDispatchError::no_candidate || dispatcher.pending_packet(ordered->token))return 27;
+    ordered_wire=*s::encode_udp_packet(key,s::UdpDirection::client,packet,{});++packet.packet_id;
+    ordered=dispatcher.begin_ordered(key,ordered_wire,peer,t+3s,1003,t+5s);
+    if(!ordered || !dispatcher.complete_selected(ordered->token,std::span(&target,1),t+3s) ||
+        dispatcher.pending_packet(ordered->token) || recv(fd,buf.data(),buf.size(),0)!=3)return 28;
     packet.address={3,7,'o','k','.','t','e','s','t',static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)};
     op=begin(t+3s,1003,t+200s); if (!op) return 14;
     expired=dispatcher.expire(t+66s,1066); if (!expired || dispatcher.sockets()!=0) return 15;
@@ -52,7 +62,7 @@ int main() {
     std::array<s::UdpPeer,65> too_many{};
     if (dispatcher.complete(op->token,too_many,t+66s).error()!=s::UdpDispatchError::limit || dispatcher.pending()) return 20;
     if (begin(t+65s,1065,t+70s).error()!=s::UdpDispatchError::time_reversed) return 21;
-    auto empty=nexus::rules::Matcher::compile({}); if (!empty) return 22;
+    auto empty=::rules::Matcher::compile({}); if (!empty) return 22;
     s::UdpDispatcher tiny(std::move(*empty),1,1,2,13);
     packet.timestamp=2000; auto oversized=*s::encode_udp_packet(key,s::UdpDirection::client,packet,{});
     if (tiny.begin(key,oversized,peer,t,2000,t+5s).error()!=s::UdpDispatchError::full || tiny.pending()) return 23;

@@ -1,6 +1,6 @@
 import std;
-import nexus.proxy.session_quota;
-using nexus::proxy::SessionQuota;
+import proxy.session_quota;
+using proxy::SessionQuota;
 
 auto main() -> int {
     SessionQuota quota(7);
@@ -34,5 +34,16 @@ auto main() -> int {
     std::optional<SessionQuota::Lease> survives;
     { SessionQuota temporary(1); survives=temporary.try_acquire(); }
     survives.reset();
+    SessionQuota shared(3);
+    auto transport=shared.try_acquire();
+    auto child=transport->try_acquire();
+    auto grandchild=child->try_acquire();
+    if (!transport || !child || !grandchild || transport->try_acquire() || shared.try_acquire() || shared.used()!=3) return 6;
+    transport.reset();
+    if (shared.used()!=2) return 7;
+    auto sibling=child->try_acquire();
+    if (!sibling || shared.used()!=3 || grandchild->try_acquire()) return 8;
+    child.reset(); grandchild.reset(); sibling.reset();
+    if (shared.used()) return 9;
     std::println("concurrent session quota and lease lifetime passed");
 }

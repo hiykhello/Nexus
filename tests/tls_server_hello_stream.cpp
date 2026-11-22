@@ -1,5 +1,5 @@
 import std;
-import nexus.tls.server_hello_stream;
+import tls.server_hello_stream;
 static thread_local int fail_after=-1;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
@@ -9,7 +9,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { std::free(p); }
-namespace t=nexus::tls; using Bytes=std::vector<std::uint8_t>;
+namespace t=tls; using Bytes=std::vector<std::uint8_t>;
 auto record(std::span<std::uint8_t const> p, std::uint8_t type=22) -> Bytes {
     Bytes b{type,3,3,static_cast<std::uint8_t>(p.size()>>8),static_cast<std::uint8_t>(p.size())}; b.insert(b.end(),p.begin(),p.end()); return b;
 }

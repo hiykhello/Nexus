@@ -1,11 +1,11 @@
-export module nexus.http2.tls_server;
-export import nexus.http2.server;
-import nexus.tls.corosio_application;
-import nexus.tls.application_io;
+export module http2.tls_server;
+export import http2.server;
+import tls.corosio_application;
+import tls.application_io;
 import nexus.thirdparty.capy;
 import std;
 
-export namespace nexus::http2 {
+export namespace http2 {
     enum class TlsServerStep { progress, paused, drained, peer_closed };
     enum class TlsServerError { invalid_state, http2, tls, timeout, budget_exceeded, allocation };
 

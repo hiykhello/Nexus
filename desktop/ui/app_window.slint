@@ -1,0 +1,265 @@
+import { AboutSlint, Button, Palette, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { OutboundGroupItem, OutboundMemberItem, LogLineItem, ActiveConnectionItem, ProfileItem } from "types.slint";
+import { Theme, ThemePreference } from "theme.slint";
+import { StatusCard } from "components/status_card.slint";
+import { GroupsPanel } from "components/groups_panel.slint";
+import { ConnectionsPanel } from "components/connections_panel.slint";
+import { ProfilesPanel } from "components/profiles_panel.slint";
+import { ConfigPanel } from "components/config_panel.slint";
+import { LogsPanel } from "components/logs_panel.slint";
+import { RuleExplainPanel } from "components/rule_explain_panel.slint";
+
+export component AppWindow inherits Window {
+    title: "Nexus";
+    min-width: 780px;
+    min-height: 520px;
+    preferred-width: 960px;
+    preferred-height: 640px;
+
+    in-out property <int> active-tab: 0;
+    in-out property <bool> core-running: false;
+    in-out property <bool> system-proxy-supported: true;
+    in-out property <bool> system-proxy-enabled: false;
+    in-out property <bool> tun-enabled: false;
+    in-out property <string> active-profile: "config.kdl";
+    in-out property <string> status-summary: "未启动";
+    in-out property <string> control-endpoint: "";
+    in-out property <string> metrics-summary: "代次: 0 · 活跃会话: 0 · 上行: 0 KiB · 下行: 0 KiB";
+    in-out property <string> rate-summary: "实时速率: ↑ 0.0 KiB/s · ↓ 0.0 KiB/s";
+    in-out property <[float]> rate-bars: [];
+    in-out property <[OutboundGroupItem]> groups: [];
+    in-out property <[OutboundMemberItem]> members: [];
+    in-out property <string> selected-group: "";
+    in-out property <string> kdl-text: "";
+    in-out property <string> config-path: "";
+    in-out property <string> diagnostic-message: "";
+    in-out property <bool> diagnostic-ok: true;
+    in-out property <[LogLineItem]> logs: [];
+    in-out property <[ActiveConnectionItem]> connections: [];
+    in-out property <string> selected-connection-detail: "";
+    in-out property <string> connection-filter: "";
+    in-out property <[ProfileItem]> profiles: [];
+    in-out property <string> log-level: "info";
+    in-out property <string> log-domain-filter: "all";
+    in-out property <string> log-search: "";
+    in-out property <string> log-export-status: "";
+    in-out property <string> explain-result: "";
+    in-out property <bool> explain-ok: true;
+
+    callback toggle-core();
+    callback toggle-system-proxy(bool);
+    callback toggle-tun(bool);
+    callback reload-config();
+    callback refresh-metrics();
+    callback clear-cache();
+    callback choose-group(string);
+    callback select-member(string, string);
+    callback reset-group-auto(string);
+    callback probe-group(string);
+    callback refresh-groups();
+    callback refresh-connections();
+    callback inspect-connection(string);
+    callback close-connection(string);
+    callback close-all-connections();
+    callback activate-profile(string);
+    callback create-profile(string);
+    callback delete-profile(string);
+    callback refresh-profiles();
+    callback validate-kdl(string);
+    callback save-and-reload(string);
+    callback open-external-editor();
+    callback import-share-link(string);
+    callback apply-log-level(string);
+    callback refresh-logs();
+    callback export-logs();
+    callback clear-logs();
+    callback run-rule-explain(string, string, string, string);
+    callback quit-requested();
+
+    FocusScope {
+        capture-key-pressed(event) => {
+            if (event.modifiers.control) {
+                if (event.text == "r" || event.text == "R") { root.reload-config(); return accept; }
+                if (event.text == "q" || event.text == "Q") { root.quit-requested(); return accept; }
+                if (event.text == "1") { root.active-tab = 0; return accept; }
+                if (event.text == "2") { root.active-tab = 1; return accept; }
+                if (event.text == "3") { root.active-tab = 5; root.refresh-connections(); return accept; }
+                if (event.text == "4") { root.active-tab = 6; root.refresh-profiles(); return accept; }
+                if (event.text == "5") { root.active-tab = 2; return accept; }
+                if (event.text == "6") { root.active-tab = 7; return accept; }
+                if (event.text == "7") { root.active-tab = 3; root.refresh-logs(); return accept; }
+            }
+            reject
+        }
+
+    HorizontalBox {
+        spacing: 0px;
+
+        // Sidebar navigation
+        Rectangle {
+            width: 176px;
+            background: Theme.sidebar-bg;
+            VerticalBox {
+                padding: 14px;
+                spacing: 8px;
+                Text {
+                    text: "NEXUS";
+                    font-size: 20px;
+                    font-weight: 800;
+                    letter-spacing: 2px;
+                }
+                Button { text: "概览"; primary: active-tab == 0; clicked => { active-tab = 0; } }
+                Button { text: "策略组"; primary: active-tab == 1; clicked => { active-tab = 1; } }
+                Button { text: "连接"; primary: active-tab == 5; clicked => { active-tab = 5; root.refresh-connections(); } }
+                Button { text: "档案"; primary: active-tab == 6; clicked => { active-tab = 6; root.refresh-profiles(); } }
+                Button { text: "配置"; primary: active-tab == 2; clicked => { active-tab = 2; } }
+                Button { text: "规则测试"; primary: active-tab == 7; clicked => { active-tab = 7; } }
+                Button { text: "日志"; primary: active-tab == 3; clicked => { active-tab = 3; root.refresh-logs(); } }
+                Button { text: "关于"; primary: active-tab == 4; clicked => { active-tab = 4; } }
+                Rectangle { vertical-stretch: 1; }
+                Text {
+                    text: core-running ? "● 在线" : "○ 离线";
+                    font-size: 12px;
+                    opacity: 0.75;
+                }
+            }
+        }
+
+        // Content workspace
+        VerticalBox {
+            padding: 18px;
+            spacing: 14px;
+            horizontal-stretch: 1;
+
+            if active-tab == 0 : StatusCard {
+                core-running: root.core-running;
+                system-proxy-supported: root.system-proxy-supported;
+                system-proxy-enabled: root.system-proxy-enabled;
+                tun-enabled: root.tun-enabled;
+                active-profile: root.active-profile;
+                status-summary: root.status-summary;
+                control-endpoint: root.control-endpoint;
+                metrics-summary: root.metrics-summary;
+                rate-summary: root.rate-summary;
+                rate-bars: root.rate-bars;
+                toggle-core => { root.toggle-core(); }
+                toggle-system-proxy(on) => { root.toggle-system-proxy(on); }
+                toggle-tun(on) => { root.toggle-tun(on); }
+                reload-config => { root.reload-config(); }
+                refresh-metrics => { root.refresh-metrics(); }
+                clear-cache => { root.clear-cache(); }
+            }
+
+            if active-tab == 1 : GroupsPanel {
+                vertical-stretch: 1;
+                groups: root.groups;
+                members: root.members;
+                selected-group: root.selected-group;
+                choose-group(tag) => { root.choose-group(tag); }
+                select-member(g, m) => { root.select-member(g, m); }
+                reset-group-auto(g) => { root.reset-group-auto(g); }
+                probe-group(g) => { root.probe-group(g); }
+                refresh-groups => { root.refresh-groups(); }
+            }
+
+            if active-tab == 2 : ConfigPanel {
+                vertical-stretch: 1;
+                kdl-text <=> root.kdl-text;
+                config-path: root.config-path;
+                diagnostic-message: root.diagnostic-message;
+                diagnostic-ok: root.diagnostic-ok;
+                validate-kdl(t) => { root.validate-kdl(t); }
+                save-and-reload(t) => { root.save-and-reload(t); }
+                open-external-editor => { root.open-external-editor(); }
+                import-share-link(uri) => { root.import-share-link(uri); }
+            }
+
+            if active-tab == 3 : LogsPanel {
+                vertical-stretch: 1;
+                logs: root.logs;
+                log-level <=> root.log-level;
+                domain-filter <=> root.log-domain-filter;
+                search-text <=> root.log-search;
+                export-status: root.log-export-status;
+                apply-log-level(lvl) => { root.apply-log-level(lvl); }
+                refresh-logs => { root.refresh-logs(); }
+                export-logs => { root.export-logs(); }
+                clear-logs => { root.clear-logs(); }
+            }
+
+            if active-tab == 7 : RuleExplainPanel {
+                vertical-stretch: 1;
+                explain-result: root.explain-result;
+                explain-ok: root.explain-ok;
+                run-explain(inb, net, tgt, extra) => { root.run-rule-explain(inb, net, tgt, extra); }
+            }
+
+            if active-tab == 5 : ConnectionsPanel {
+                vertical-stretch: 1;
+                connections: root.connections;
+                filter-text <=> root.connection-filter;
+                selected-detail: root.selected-connection-detail;
+                refresh-connections => { root.refresh-connections(); }
+                inspect-connection(id) => { root.inspect-connection(id); }
+                close-connection(id) => { root.close-connection(id); }
+                close-all-connections => { root.close-all-connections(); }
+            }
+
+            if active-tab == 6 : ProfilesPanel {
+                vertical-stretch: 1;
+                profiles: root.profiles;
+                activate-profile(id) => { root.activate-profile(id); }
+                create-profile(name) => { root.create-profile(name); }
+                delete-profile(id) => { root.delete-profile(id); }
+                refresh-profiles => { root.refresh-profiles(); }
+            }
+
+            if active-tab == 4 : VerticalBox {
+                spacing: 12px;
+                Text {
+                    text: "Nexus Desktop (Slint v1.19 · C++26)";
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "原生 C++26 代理内核独立进程 + 轻量 Slint 桌面控制外壳。";
+                    font-size: 13px;
+                    opacity: 0.85;
+                }
+                HorizontalBox {
+                    spacing: 8px;
+                    Text { text: "外观主题:"; vertical-alignment: center; }
+                    Button {
+                        text: "跟随系统";
+                        primary: Theme.preference == ThemePreference.system;
+                        clicked => {
+                            Theme.preference = ThemePreference.system;
+                            Palette.color-scheme = ColorScheme.unknown;
+                        }
+                    }
+                    Button {
+                        text: "浅色";
+                        primary: Theme.preference == ThemePreference.light;
+                        clicked => {
+                            Theme.preference = ThemePreference.light;
+                            Palette.color-scheme = ColorScheme.light;
+                        }
+                    }
+                    Button {
+                        text: "深色";
+                        primary: Theme.preference == ThemePreference.dark;
+                        clicked => {
+                            Theme.preference = ThemePreference.dark;
+                            Palette.color-scheme = ColorScheme.dark;
+                        }
+                    }
+                }
+                // Required attribution badge under Slint's Royalty-Free Desktop License
+                AboutSlint {
+                    preferred-height: 120px;
+                }
+            }
+        }
+    }
+    }
+}

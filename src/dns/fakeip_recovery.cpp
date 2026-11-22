@@ -1,8 +1,8 @@
-module nexus.dns.fakeip_recovery;
+module dns.fakeip_recovery;
 import std;
-import nexus.dns.fakeip_shared;
-import nexus.dns.fakeip_registry;
-namespace nexus::dns {
+import dns.fakeip_shared;
+import dns.fakeip_registry;
+namespace dns {
     auto update_fakeip_history(FakeIpRecoveryPool current,std::span<FakeIpHistoricalRange const> history)
         -> std::expected<std::vector<FakeIpHistoricalRange>,FakeIpRecoveryError> {
         using Seconds=std::chrono::seconds;
@@ -69,7 +69,7 @@ namespace nexus::dns {
                 merged.back().last=std::max(merged.back().last,range.last);
             else merged.push_back(range);
         }
-        auto owner=std::make_shared<FakeIpShared>(merged.size()+1,std::move(lifetime));
+        auto owner=std::make_shared<FakeIpShared>(merged.size()+1,std::move(lifetime),current.ipv6);
         for (auto range:merged)
             if (!owner->reserve(range.first,range.last)) return std::unexpected(FakeIpRecoveryError::registry);
         if (!owner->add_quarantined(current.first,current.last,current.alloc_first,current.alloc_last,

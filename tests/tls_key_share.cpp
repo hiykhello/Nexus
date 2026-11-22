@@ -1,5 +1,5 @@
 import std;
-import nexus.tls.key_share;
+import tls.key_share;
 static bool trace=false, deny=false;
 static std::size_t allocations=0, first_size=0;
 void* operator new(std::size_t size) {
@@ -12,7 +12,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
-namespace t=nexus::tls;
+namespace t=tls;
 int main() {
     std::vector<t::KeyShareEntry> entries{{0x001d,std::vector<std::uint8_t>(32,0x11)},{0x0017,std::vector<std::uint8_t>(65,0x22)}};
     auto encoded=t::KeyShare::encode_client(entries); if (!encoded) return 1; auto parsed=t::KeyShare::parse_client(*encoded); if (!parsed || *parsed!=entries) return 2;

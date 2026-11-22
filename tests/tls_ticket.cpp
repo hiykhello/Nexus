@@ -1,6 +1,6 @@
 import std;
-import nexus.tls.client_flight;
-namespace t=nexus::tls; namespace c=nexus::crypto; using Bytes=c::Bytes;
+import tls.client_flight;
+namespace t=tls; namespace c = ::crypto; using Bytes=c::Bytes;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction,int n) -> t::RecordLayer {
     auto s=secret(n); auto key=t::expand_label(c::Hash::sha256,s.view(),"key",{},16), iv=t::expand_label(c::Hash::sha256,s.view(),"iv",{},12);

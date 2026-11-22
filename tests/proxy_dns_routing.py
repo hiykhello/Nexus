@@ -1,5 +1,6 @@
 """Exercise ordered DNS server selection through the proxy on loopback."""
 import os
+import collections
 import pathlib
 import socket
 import subprocess
@@ -161,7 +162,16 @@ routing {{ default-outbound "direct"; }}
                 sock.sendall(b"\x05\x01\x00\x03" + bytes([len(name)]) + name + target_port.to_bytes(2, "big"))
                 assert exact(sock, 10)[:4] == b"\x05\x00\x00\x01"
                 assert exact(sock, 1) == b"\x02"
-            if len(queries[0]) != 4 or len(queries[1]) not in ((8,) if workers == 1 else (8, 9)):
+            expected = [
+                {(b"\x05exact\x07example\x00", 1): 1, (b"\x05exact\x07example\x00", 28): 1,
+                 (b"\x0anotexample\x00", 1): 1, (b"\x0anotexample\x00", 28): 1},
+                {(b"\x03sub\x07example\x00", 1): 1, (b"\x03sub\x07example\x00", 28): 3,
+                 (b"\x07example\x00", 1): 1, (b"\x07example\x00", 28): 1,
+                 (b"\x04fail\x07example\x00", 1): 1},
+            ]
+            # Both listeners share positive answers. The peer's zero SOA
+            # MINIMUM deliberately prevents reuse of the three AAAA misses.
+            if [collections.Counter(items) for items in queries] != expected:
                 raise RuntimeError(f"unexpected DNS queries: {queries}")
             if errors:
                 raise RuntimeError(f"server errors: {errors}")
@@ -177,4 +187,4 @@ finally:
         thread.join(timeout=2)
     for sock in sockets:
         sock.close()
-print("DNS routing, per-inbound cache and reuse passed")
+print("DNS routing, cross-inbound shared positives and uncached zero-TTL negatives passed")

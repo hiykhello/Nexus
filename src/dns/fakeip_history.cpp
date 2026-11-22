@@ -1,8 +1,8 @@
-module nexus.dns.fakeip_history;
+module dns.fakeip_history;
 import std;
-import nexus.dns.fakeip_recovery;
-import nexus.crypto;
-namespace nexus::dns {
+import dns.fakeip_recovery;
+import crypto;
+namespace dns {
     namespace {
         constexpr std::size_t header=32, entry_size=16, tag_size=32, limit=256;
         constexpr std::array<std::uint8_t,4> magic{'N','F','H',1};

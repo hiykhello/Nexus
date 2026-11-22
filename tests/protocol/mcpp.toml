@@ -1,0 +1,38 @@
+[package]
+namespace = "nexus"
+name = "protocol-tests"
+version = "0.1.0"
+
+# These are protocol integration and cryptographic tests, not a copy of the
+# server build: they exercise the real package with its VLESS feature enabled.
+[dependencies]
+nexus = { path = "../..", features = ["vless"] }
+
+[features]
+ss-relay = ["nexus/ss2022"]
+
+[build]
+sources = []
+
+[test]
+discover = [
+    "crypto.cpp", "crypto_mlkem.cpp", "reality_auth.cpp", "reality_server_auth.cpp",
+    "reality_server_probe.cpp", "tls_hello.cpp", "tls_record.cpp", "tls_schedule.cpp",
+    "tls_transcript.cpp", "tls_hybrid.cpp", "vision_random.cpp", "vless_vision_client.cpp",
+    "tls_client_hello_driver.cpp", "tls_client_handshake_io.cpp", "vision_corosio_writer.cpp",
+    "vless_vision_server.cpp", "xudp_client_io.cpp", "xudp_client_sessions.cpp",
+    "xudp_server_direct.cpp", "xudp_server_io.cpp", "xudp_server_sessions.cpp",
+]
+
+[targets.reality-client-fixture]
+kind = "bin"
+main = "../reality_client_fixture.cpp"
+
+[targets.shadowsocks-corosio-relay]
+kind = "bin"
+main = "../shadowsocks_corosio_relay.cpp"
+required_features = ["ss-relay"]
+
+[targets.nexus-vless-tls-test]
+kind = "bin"
+main = "../vless_tls.cpp"

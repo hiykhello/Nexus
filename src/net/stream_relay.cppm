@@ -1,0 +1,259 @@
+export module net.stream_relay;
+import std;
+import nexus.thirdparty.capy;
+import nexus.thirdparty.corosio;
+
+export namespace net::stream_relay {
+    struct Delivery {
+        void* owner=nullptr;
+        void (*notify)(void*,bool,std::size_t) noexcept=nullptr;
+        auto operator()(bool upstream,std::size_t size) const noexcept -> void {
+            if (notify) notify(owner,upstream,size);
+        }
+    };
+
+    enum class ReadState { data, eof, failure };
+
+    template<class Adapter,class Result>
+    auto read_state(Adapter& adapter,Result const& result,std::size_t size) -> ReadState {
+        if constexpr (Adapter::socket_input) {
+            auto const& [error,n]=result;
+            if (adapter.eof(error,n)) return ReadState::eof;
+            if (adapter.invalid_read(error,n,size)) return ReadState::failure;
+            return ReadState::data;
+        } else {
+            if (adapter.invalid_read(result)) return ReadState::failure;
+            return *result ? ReadState::data : ReadState::eof;
+        }
+    }
+
+    template<class Adapter,class Result>
+    auto read_size(Result const& result) -> std::size_t {
+        if constexpr (Adapter::socket_input) {
+            auto const& [error,n]=result;
+            (void)error; return n;
+        } else return *result;
+    }
+
+    // Adapters describe a single direction. Socket operations expose partial
+    // writes; framed streams expose complete writes. The owner drains the task.
+    template<template<class> class Coroutine=nex::capy::task,class Adapter>
+    auto transfer(Adapter adapter) -> Coroutine<bool> {
+        if constexpr (requires { adapter.delegates(); adapter.delegate(); })
+            if (adapter.delegates()) co_return co_await adapter.delegate();
+        if (!adapter.start()) co_return false;
+        std::array<std::uint8_t,16384> bytes{};
+        for (;;) {
+            auto result=co_await adapter.read(bytes);
+            switch (read_state(adapter,result,bytes.size())) {
+            case ReadState::failure:
+                adapter.read_failed(); co_return false;
+            case ReadState::eof:
+                if constexpr (Adapter::locked_output) {
+                    auto [lock_error,guard]=co_await adapter.lock();
+                    if (lock_error || adapter.canceled()) co_return false;
+                    auto closed=co_await adapter.close_locked();
+                    if (!closed) { adapter.cancel(); co_return false; }
+                    co_return true;
+                } else if constexpr (requires { adapter.close_now(); }) co_return adapter.close_now();
+                else co_return co_await adapter.close_output();
+            case ReadState::data:
+                break;
+            }
+            adapter.after_read();
+            if constexpr (requires {adapter.meters_output(); adapter.reserve_output(std::size_t{});}) {
+                if (adapter.meters_output()) {
+                    auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                    while (!pending.empty()) {
+                        auto credit=co_await adapter.reserve_output(pending.size());
+                        if (!credit) co_return false;
+                        auto output=pending.first(credit->size());
+                        std::size_t written=output.size();
+                        credit->submit();
+                        if constexpr (Adapter::socket_output) {
+                            auto [error,n]=co_await adapter.write(output);
+                            written=n<=output.size() ? n : 0;
+                            credit->complete(written);
+                            if (written) adapter.delivered(written);
+                            if (adapter.invalid_write(error,n,output.size())) {
+                                adapter.write_failed(); co_return false;
+                            }
+                            adapter.after_write();
+                        } else {
+                            if (!co_await adapter.write(output)) co_return false;
+                            credit->complete(written);
+                            adapter.delivered(written);
+                        }
+                        pending=pending.subspan(written);
+                    }
+                    continue;
+                }
+            }
+            if constexpr (Adapter::socket_output) {
+                auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                while (!pending.empty()) {
+                    auto [error,n]=co_await adapter.write(pending);
+                    if constexpr (requires { adapter.delivered(n); })
+                        if (n && n<=pending.size()) adapter.delivered(n);
+                    if (adapter.invalid_write(error,n,pending.size())) { adapter.write_failed(); co_return false; }
+                    adapter.after_write(); pending=pending.subspan(n);
+                }
+            } else if constexpr (Adapter::locked_output) {
+                auto [lock_error,guard]=co_await adapter.lock();
+                if (lock_error || adapter.canceled()) co_return false;
+                auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                auto sent=co_await adapter.send_locked(pending);
+                if (!sent) { adapter.cancel(); co_return false; }
+                if constexpr (requires { adapter.delivered(pending.size()); }) adapter.delivered(pending.size());
+            } else {
+                auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                if (!co_await adapter.write(pending)) co_return false;
+                if constexpr (requires { adapter.delivered(pending.size()); }) adapter.delivered(pending.size());
+            }
+        }
+    }
+
+    // Existing outbound adapters map their socket-to-stream direction here.
+    template<class Adapter>
+    struct UploadAdapter {
+        Adapter adapter;
+        static constexpr bool socket_input=true, socket_output=false, locked_output=Adapter::locked_upload;
+        auto delegates() const requires requires(Adapter const& a) { a.delegates(); } { return adapter.delegates(); }
+        auto delegate() const requires requires(Adapter const& a) { a.delegate(); } { return adapter.delegate(); }
+        auto start() { return adapter.start_upload(); }
+        auto read(std::span<std::uint8_t> bytes) { return adapter.local().read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size())); }
+        template<class Error> auto eof(Error const& error,std::size_t n) { return adapter.upload_eof(error,n); }
+        template<class Error> auto invalid_read(Error const& error,std::size_t n,std::size_t size) { return adapter.invalid_upload(error,n,size); }
+        auto read_failed() { adapter.cancel(); }
+        auto after_read() { adapter.after_local_read(); }
+        auto close_now() requires requires(Adapter& a) { a.close_now(); } { return adapter.close_now(); }
+        auto close_output() { return adapter.close_upload(); }
+        auto write(std::span<std::uint8_t const> bytes) { return adapter.send_upload(bytes); }
+        auto lock() { return adapter.lock(); }
+        auto canceled() { return adapter.canceled(); }
+        auto close_locked() { return adapter.close_locked(); }
+        auto send_locked(std::span<std::uint8_t const> bytes) { return adapter.send_locked(bytes); }
+        auto delivered(std::size_t size) requires requires(Adapter& a) { a.delivery(true,size); } {
+            adapter.delivery(true,size);
+        }
+        auto cancel() { adapter.cancel(); }
+    };
+
+    // Stream-to-socket direction retains the stream's own error handling.
+    template<class Adapter>
+    struct DownloadAdapter {
+        Adapter adapter;
+        static constexpr bool socket_input=false, socket_output=true, locked_output=false;
+        auto start() { return adapter.start_download(); }
+        auto read(std::span<std::uint8_t> bytes) { return adapter.receive(bytes); }
+        template<class Result> auto invalid_read(Result const& result) { return !result; }
+        auto read_failed() {}
+        auto after_read() {}
+        auto close_now() { return adapter.shutdown_local(); }
+        auto write(std::span<std::uint8_t const> bytes) { return adapter.local().write_some(nex::capy::const_buffer(bytes.data(),bytes.size())); }
+        template<class Error> auto invalid_write(Error const& error,std::size_t n,std::size_t size) { return adapter.invalid_download(error,n,size); }
+        auto write_failed() { adapter.cancel(); }
+        auto after_write() { adapter.after_local_write(); }
+        auto delivered(std::size_t size) requires requires(Adapter& a) { a.delivery(false,size); } {
+            adapter.delivery(false,size);
+        }
+    };
+
+    template<template<class> class Coroutine=nex::capy::task,class Adapter>
+    auto upload(Adapter adapter) -> Coroutine<bool> { return transfer<Coroutine>(UploadAdapter<Adapter>{std::move(adapter)}); }
+    template<class Adapter>
+    auto download(Adapter adapter) -> nex::capy::task<bool> { return transfer(DownloadAdapter<Adapter>{std::move(adapter)}); }
+}
+
+export namespace net {
+    // A plain stream already owns authentication/framing. Reuse the shared
+    // directional loops for protocols that expose read/send/close_output.
+    template<class Local,class Stream,class Touch>
+    struct ByteRelayAdapter {
+        Local& socket;
+        Stream& stream;
+        Touch touch;
+        bool cancel_local=true;
+        stream_relay::Delivery delivery;
+        static constexpr bool locked_upload=false;
+        auto local() const -> Local& { return socket; }
+        auto start_upload() const -> bool { return true; }
+        auto start_download() const -> bool { return true; }
+        template<class Error> auto upload_eof(Error const& error,std::size_t) const -> bool { return nex::capy::is_eof(error); }
+        template<class Error> auto invalid_upload(Error const& error,std::size_t n,std::size_t size) const -> bool { return error || !n || n>size; }
+        template<class Error> auto invalid_download(Error const& error,std::size_t n,std::size_t size) const -> bool { return error || !n || n>size; }
+        auto after_local_read() const -> void { touch(); }
+        auto after_local_write() const -> void { touch(); }
+        auto cancel() const noexcept -> void { stream.cancel(); if (cancel_local) socket.cancel(); }
+        auto close_upload() const { return stream.close_output(); }
+        auto send_upload(std::span<std::uint8_t const> bytes) const { return stream.send(bytes); }
+        auto receive(std::span<std::uint8_t> bytes) const { return stream.read(bytes); }
+        auto shutdown_local() const -> bool { (void)socket.shutdown(nex::corosio::shutdown_send); return true; }
+    };
+
+    // Adapts a framed byte stream to the partial-I/O interface used by TLS
+    // and protocol handshakes. send() must consume the entire borrowed span on
+    // success; read() returns 0 only for clean EOF. The owner drains pending
+    // operations before destroying either object. No adapter coroutine is made.
+    template<class Transport>
+    class ByteStreamAdapter {
+        Transport& transport_;
+        template<class Operation,bool Write>
+        class ResultAdapter {
+            std::optional<Operation> operation_;
+            std::size_t limit_;
+            std::stop_token const* stop_=nullptr;
+            auto failure() const -> std::error_code {
+                return std::make_error_code(stop_ && stop_->stop_requested() ?
+                    std::errc::operation_canceled : std::errc::io_error);
+            }
+        public:
+            ResultAdapter(std::optional<Operation>&& operation,std::size_t limit)
+                : operation_(std::move(operation)),limit_(limit) {}
+            auto await_ready() const noexcept -> bool { return !operation_ || operation_->await_ready(); }
+            template<class Context>
+            auto await_suspend(std::coroutine_handle<> continuation,Context const* context) {
+                stop_=&context->stop_token;
+                return operation_->await_suspend(continuation,context);
+            }
+            [[nodiscard]] auto await_resume() -> nex::capy::results<std::size_t> {
+                if (!operation_) return {std::error_code{},0};
+                if constexpr (Write) {
+                    if (!operation_->await_resume()) return {failure(),0};
+                    return {std::error_code{},limit_};
+                } else {
+                    auto result=operation_->await_resume();
+                    if (!result) return {failure(),0};
+                    if (*result>limit_) return {std::make_error_code(std::errc::protocol_error),0};
+                    return {std::error_code{},*result};
+                }
+            }
+        };
+    public:
+        explicit ByteStreamAdapter(Transport& transport) noexcept : transport_(transport) {}
+        ByteStreamAdapter(ByteStreamAdapter const&)=delete;
+        auto operator=(ByteStreamAdapter const&) -> ByteStreamAdapter& = delete;
+        auto read_some(nex::capy::mutable_buffer buffer) {
+            using Operation=decltype(transport_.read(std::span<std::uint8_t>{}));
+            std::optional<Operation> operation;
+            if (buffer.size()) operation.emplace(transport_.read({static_cast<std::uint8_t*>(buffer.data()),buffer.size()}));
+            return ResultAdapter<Operation,false>(std::move(operation),buffer.size());
+        }
+        auto write_some(nex::capy::const_buffer buffer) {
+            using Operation=decltype(transport_.send(std::span<std::uint8_t const>{}));
+            std::optional<Operation> operation;
+            if (buffer.size()) operation.emplace(transport_.send({static_cast<std::uint8_t const*>(buffer.data()),buffer.size()}));
+            return ResultAdapter<Operation,true>(std::move(operation),buffer.size());
+        }
+        auto close_output() { return transport_.close_output(); }
+        // Expose the asynchronous half-close as a cancellable results operation
+        // so a caller can apply the same absolute deadline as its writes.
+        auto close_output_some() {
+            using Operation=decltype(transport_.close_output());
+            std::optional<Operation> operation;
+            operation.emplace(transport_.close_output());
+            return ResultAdapter<Operation,true>(std::move(operation),0);
+        }
+        auto cancel() noexcept -> void { transport_.cancel(); }
+    };
+}

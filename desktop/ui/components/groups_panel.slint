@@ -1,0 +1,80 @@
+import { Button, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { OutboundGroupItem, OutboundMemberItem } from "../types.slint";
+import { Theme } from "../theme.slint";
+
+export component GroupsPanel inherits VerticalBox {
+    in property <[OutboundGroupItem]> groups: [];
+    in property <[OutboundMemberItem]> members: [];
+    in property <string> selected-group: "";
+
+    callback choose-group(string);
+    callback select-member(string, string);
+    callback reset-group-auto(string);
+    callback probe-group(string);
+    callback refresh-groups();
+
+    spacing: 12px;
+
+    HorizontalBox {
+        Text {
+            text: "出站策略组";
+            font-size: 16px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        if root.selected-group != "" : Button {
+            text: "立即测速";
+            clicked => { root.probe-group(root.selected-group); }
+        }
+        if root.selected-group != "" : Button {
+            text: "恢复自动选优";
+            clicked => { root.reset-group-auto(root.selected-group); }
+        }
+        Button {
+            text: "刷新";
+            clicked => { root.refresh-groups(); }
+        }
+    }
+
+    HorizontalBox {
+        spacing: 8px;
+        for g in root.groups : Button {
+            text: "\{g.tag} (\{g.active-member})";
+            primary: g.tag == root.selected-group;
+            clicked => { root.choose-group(g.tag); }
+        }
+    }
+
+    ListView {
+        vertical-stretch: 1;
+        for m in root.members : Rectangle {
+            height: 44px;
+            border-radius: 6px;
+            border-width: m.selected ? 1px : 0px;
+            border-color: Theme.selected-border;
+            background: m.selected ? Theme.selected-bg : Theme.row-bg;
+
+            HorizontalBox {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 12px;
+                Text {
+                    text: m.overridden ? "\{m.name} [手动覆盖]" : m.name;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: m.latency-ms > 0 ? "\{m.latency-ms} ms" : m.state;
+                    vertical-alignment: center;
+                    opacity: 0.8;
+                }
+                Button {
+                    text: m.selected ? "当前" : "切换";
+                    enabled: !m.selected;
+                    clicked => { root.select-member(root.selected-group, m.name); }
+                }
+            }
+        }
+    }
+}

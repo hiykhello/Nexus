@@ -1,5 +1,5 @@
 import std;
-import nexus.tls.client_hello_stream;
+import tls.client_hello_stream;
 static thread_local int fail_after=-1;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
@@ -9,7 +9,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { std::free(p); }
-namespace t=nexus::tls;
+namespace t=tls;
 using Bytes=std::vector<std::uint8_t>;
 auto record(std::span<std::uint8_t const> p, std::uint8_t type=22, std::uint8_t version=3) -> Bytes {
     Bytes out{type,3,version,static_cast<std::uint8_t>(p.size()>>8),static_cast<std::uint8_t>(p.size())};
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     auto packet=record(message); int failures=0;
     {
         auto charge=t::ClientHelloStream::parsed_charge(message.size()-4);
-        auto budget=std::make_shared<nexus::memory::Budget>(charge);
+        auto budget=std::make_shared<::memory::Budget>(charge);
         auto candidate=t::ClientHelloStream::create();
         auto parsed=candidate->feed(packet,budget);
         if (!parsed || !parsed->hello || budget->reserved()!=charge) return 33;
@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
         if (!moved.hello || budget->reserved()!=charge) return 34;
         moved=t::ClientHelloFeed{};
         if (budget->reserved()) return 35;
-        auto short_budget=std::make_shared<nexus::memory::Budget>(charge-1);
+        auto short_budget=std::make_shared<::memory::Budget>(charge-1);
         candidate=t::ClientHelloStream::create();
         auto denied=candidate->feed(packet,short_budget);
         if (denied || denied.error()!=t::ClientHelloStreamError::budget_exceeded || short_budget->reserved() || candidate->feed(packet)) return 36;

@@ -1,14 +1,15 @@
-export module nexus.tls.corosio_client;
+export module tls.corosio_client;
 import std;
-import nexus.tls.client_handshake_io;
-import nexus.tls.application_io;
-import nexus.tls.corosio_application;
+import tls.client_handshake_io;
+import platform.socket_options;
+import tls.application_io;
+import tls.corosio_application;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 
 
-export namespace nexus::tls::detail {
-    enum class AsyncHandshakeError { transport, protocol, authentication, timeout };
+export namespace tls::detail {
+    enum class AsyncHandshakeError { transport, protocol, authentication, timeout, crypto, socket_policy };
     struct AsyncHandshakeResult {
         ApplicationRecords records;
         crypto::Bytes unread;
@@ -53,7 +54,7 @@ export namespace nexus::tls::detail {
                 begin=0; end=n;
             }
             auto result=handshake.feed(std::span{buffer}.subspan(begin,end-begin),now());
-            if (!result) co_return std::unexpected(result.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : result.error()==ClientHandshakeIoError::authentication_failed ? AsyncHandshakeError::authentication : AsyncHandshakeError::protocol);
+            if (!result) co_return std::unexpected(result.error()==ClientHandshakeIoError::crypto_error ? AsyncHandshakeError::crypto : result.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : result.error()==ClientHandshakeIoError::authentication_failed ? AsyncHandshakeError::authentication : AsyncHandshakeError::protocol);
             if (!result->consumed) { (void)handshake.cancel(); co_return std::unexpected(AsyncHandshakeError::protocol); }
             begin+=result->consumed;
         }
@@ -63,7 +64,7 @@ export namespace nexus::tls::detail {
     }
 }
 
-export namespace nexus::tls::detail {
+export namespace tls::detail {
     // Single-executor owner. Socket and this object must outlive start() and any application
     // operation; cancel and drain those operations before destroying either object.
     template<class Socket>
@@ -121,7 +122,7 @@ export namespace nexus::tls::detail {
 }
 
 
-export namespace nexus::tls::detail {
+export namespace tls::detail {
     // Owns the socket from numeric-endpoint connect through authenticated TLS. All calls
     // run on one executor; cancel and drain start/application operations before destruction.
     class OwnedClient {
@@ -131,43 +132,17 @@ export namespace nexus::tls::detail {
         ClientConnection<nex::corosio::tcp_socket> client_;
         bool canceled_=false;
     public:
-        OwnedClient(nex::corosio::io_context& context, ClientHandshakeIo&& handshake)
-            : deadline_ms_(handshake.deadline()), socket_(context), client_(socket_,std::move(handshake)) {}
+        OwnedClient(nex::corosio::io_context& context, ClientHandshakeIo&& handshake);
+        ~OwnedClient();
         OwnedClient(OwnedClient const&)=delete;
         auto operator=(OwnedClient const&) -> OwnedClient& = delete;
         [[nodiscard]] auto idle() const noexcept -> bool { return state_!=State::connecting && state_!=State::handshaking && client_.idle(); }
         [[nodiscard]] auto client() noexcept -> ClientConnection<nex::corosio::tcp_socket>* { return state_==State::ready ? &client_ : nullptr; }
-        auto cancel() noexcept -> void {
-            if (canceled_) return;
-            canceled_=true;
-            if (state_==State::connecting) socket_.cancel();
-            client_.cancel();
-            if (state_!=State::connecting && state_!=State::handshaking) state_=State::stopped;
-        }
-        auto start(nex::corosio::endpoint endpoint) -> nex::capy::task<std::expected<void,AsyncHandshakeError>> {
-            if (state_!=State::initial || canceled_) co_return std::unexpected(AsyncHandshakeError::protocol);
-            auto max_ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::duration::max()).count();
-            if (deadline_ms_>static_cast<std::uint64_t>(max_ms)) { cancel(); co_return std::unexpected(AsyncHandshakeError::protocol); }
-            auto deadline=std::chrono::steady_clock::time_point(std::chrono::milliseconds(deadline_ms_));
-            if (std::chrono::steady_clock::now()>=deadline) { cancel(); co_return std::unexpected(AsyncHandshakeError::timeout); }
-            state_=State::connecting;
-            try {
-            auto [error]=co_await nex::corosio::timeout(socket_.connect(endpoint),deadline);
-            if (error || canceled_ || std::chrono::steady_clock::now()>=deadline) {
-                auto timed_out=!canceled_ && (nex::capy::is_timeout(error) || std::chrono::steady_clock::now()>=deadline);
-                client_.cancel(); socket_.close(); state_=State::stopped;
-                co_return std::unexpected(timed_out ? AsyncHandshakeError::timeout : AsyncHandshakeError::transport);
-            }
-            state_=State::handshaking;
-            auto result=co_await client_.start();
-            if (canceled_ || !result) {
-                auto failure=canceled_ ? AsyncHandshakeError::transport : result.error();
-                client_.cancel(); socket_.close(); state_=State::stopped;
-                co_return std::unexpected(failure);
-            }
-            state_=State::ready;
-            co_return std::expected<void,AsyncHandshakeError>{};
-            } catch (...) { client_.cancel(); socket_.close(); state_=State::stopped; throw; }
-        }
+        [[nodiscard]] auto socket() noexcept -> nex::corosio::tcp_socket* { return state_==State::ready ? &socket_ : nullptr; }
+        // Connection policy may configure the physical socket before start().
+        [[nodiscard]] auto unconnected_socket() noexcept -> nex::corosio::tcp_socket* { return state_==State::initial && !canceled_ ? &socket_ : nullptr; }
+        auto cancel() noexcept -> void;
+        auto start(nex::corosio::endpoint endpoint,platform::TcpSocketOptions const* interfaces=nullptr)
+            -> nex::capy::task<std::expected<void,AsyncHandshakeError>>;
     };
 }

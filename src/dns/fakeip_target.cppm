@@ -1,7 +1,7 @@
-export module nexus.dns.fakeip_target;
+export module dns.fakeip_target;
 import std;
-import nexus.dns.fakeip;
-export namespace nexus::dns {
+import dns.fakeip;
+export namespace dns {
     enum class FakeIpTargetError { unknown, wrong_view, clock, capacity, stale };
     class FakeIpTarget {
         FakeIpPool* pool_;

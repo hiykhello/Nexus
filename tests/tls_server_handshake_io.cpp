@@ -1,21 +1,21 @@
 import std;
-import nexus.tls.server_handshake_io;
-import nexus.tls.client_keys;
-import nexus.tls.handshake;
-import nexus.tls.key_share;
-import nexus.tls.server_hello;
+import tls.server_handshake_io;
+import tls.client_keys;
+import tls.handshake;
+import tls.key_share;
+import tls.server_hello;
 static thread_local int fail_after=-1;
 static void* watched_hello=nullptr;
 static void* watched_flight=nullptr;
 static bool hello_released=false, flight_released=false;
-static nexus::memory::Budget* seal_budget=nullptr;
+static ::memory::Budget* seal_budget=nullptr;
 static std::size_t seal_expected=0;
 static bool inner_charged=false, ciphertext_charged=false;
 static bool derived_key_charged=false;
 static std::size_t certificate_body_size=0;
 static bool certificate_body_charged=false;
 static bool capture_allocations=false;
-static nexus::memory::Budget* fault_watch_budget=nullptr;
+static ::memory::Budget* fault_watch_budget=nullptr;
 static void* fault_small_allocations[512]{};
 static std::size_t fault_small_count=0;
 static bool zeroed_with_key_budget=false;
@@ -38,7 +38,7 @@ void* operator new(std::size_t size) {
 void operator delete(void* p) noexcept {
     if (p && fault_watch_budget) for (std::size_t i=0;i<fault_small_count;++i) if (fault_small_allocations[i]==p) {
         auto bytes=std::span{static_cast<std::uint8_t const*>(p),std::size_t{32}};
-        if (std::ranges::all_of(bytes,[](auto b) { return b==0; }) && fault_watch_budget->reserved()>=nexus::tls::ServerHandshakeIo::handshake_key_retained_charge+nexus::tls::ServerHandshakeIo::finished_keys_charge) zeroed_with_key_budget=true;
+        if (std::ranges::all_of(bytes,[](auto b) { return b==0; }) && fault_watch_budget->reserved()>=tls::ServerHandshakeIo::handshake_key_retained_charge+tls::ServerHandshakeIo::finished_keys_charge) zeroed_with_key_budget=true;
         fault_small_allocations[i]=nullptr; break;
     }
     if (p && p==watched_hello) { hello_released=true; watched_hello=nullptr; }
@@ -46,7 +46,7 @@ void operator delete(void* p) noexcept {
     std::free(p);
 }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
-namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace t=tls; namespace c = ::crypto;
 auto exact_output_allocation(std::span<std::uint8_t const> output) -> bool {
     return std::ranges::any_of(std::span{captured}.first(captured_count),[&](auto const& entry) {
         return entry.first==output.data() && entry.second==output.size();
@@ -72,12 +72,29 @@ int main(int argc,char** argv) {
     if (argc==5) {
         auto chain=t::ServerCredential::create_file_contents(read_file(argv[4]),priv);
         if (!chain || chain->chain().size()!=1) return 70;
-        fail_after=0; auto shared_chain=chain->clone(); auto no_allocation=fail_after==0; fail_after=-1;
-        if (!shared_chain || !no_allocation || shared_chain->certificate().data()!=chain->certificate().data() ||
-            shared_chain->chain()[0].data()!=chain->chain()[0].data() || !check_limit(std::move(*chain))) return 70;
+        c::Bytes leaf(chain->certificate().begin(),chain->certificate().end()), intermediate=chain->chain()[0];
+        std::optional<t::ServerCredential> copied_chain;
+        unsigned clone_failures=0;
+        for (int index=0;index<16 && !copied_chain;++index) {
+            fail_after=index;
+            try {
+                auto copy=chain->clone(); fail_after=-1;
+                if (!copy) return 70;
+                copied_chain.emplace(std::move(*copy));
+            } catch (std::bad_alloc const&) {
+                fail_after=-1; ++clone_failures;
+                if (!chain->scheme() || !std::ranges::equal(chain->certificate(),leaf) ||
+                    chain->chain().size()!=1 || chain->chain()[0]!=intermediate) return 70;
+            }
+        }
+        if (clone_failures<2 || !copied_chain || copied_chain->certificate().data()==chain->certificate().data() ||
+            copied_chain->chain().size()!=1 || copied_chain->chain()[0].data()==chain->chain()[0].data() ||
+            !std::ranges::equal(copied_chain->certificate(),leaf) || copied_chain->chain()[0]!=intermediate ||
+            !check_limit(std::move(*chain)) || !copied_chain->scheme() ||
+            !std::ranges::equal(copied_chain->certificate(),leaf) || copied_chain->chain()[0]!=intermediate) return 70;
     }
     auto creds=credential(); if (!creds) return 2;
-    auto scheme=*creds->scheme(); auto handshake_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
+    auto scheme=*creds->scheme(); auto handshake_budget=std::make_shared<::memory::Budget>(4*1024*1024);
     auto server=t::ServerHandshakeIo::create(std::move(*creds),100,1000,"h2",t::ServerCredential::max_certificate_list_size,handshake_budget); if (!server) return 3;
     if (server->tick(99).error()!=t::ServerHandshakeIoError::time_reversed || server->take_application_records()) return 4;
     auto key=c::X25519Private::generate(); if (!key) return 5; auto pub=key->public_key(); if (!pub) return 6;
@@ -89,7 +106,7 @@ int main(int argc,char** argv) {
     c::Bytes input{22,3,1,static_cast<std::uint8_t>(wire->size()>>8),static_cast<std::uint8_t>(wire->size())}; input.insert(input.end(),wire->begin(),wire->end());
     if (t::ServerHandshakeIo::hello_reassembly_charge!=16389+5+65539+4096+65535) return 100;
     auto old_limit_credential=credential();
-    auto old_limit_budget=std::make_shared<nexus::memory::Budget>(16389+65539+t::ServerHandshakeIo::hello_encoded_charge);
+    auto old_limit_budget=std::make_shared<::memory::Budget>(16389+65539+t::ServerHandshakeIo::hello_encoded_charge);
     if (!old_limit_credential) return 101;
     auto old_limit=t::ServerHandshakeIo::create(std::move(*old_limit_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,old_limit_budget);
     if (old_limit || old_limit.error()!=t::ServerHandshakeIoError::budget_exceeded || old_limit_budget->reserved() || !old_limit_credential->scheme()) return 102;
@@ -97,7 +114,7 @@ int main(int argc,char** argv) {
         auto large=hello; large.extensions.push_back({21,c::Bytes(60000,0)});
         auto large_body=large.encode(); if (!large_body) return 103;
         auto large_wire=t::HandshakeDecoder::encode(1,*large_body); if (!large_wire) return 104;
-        auto c=credential(); auto budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
+        auto c=credential(); auto budget=std::make_shared<::memory::Budget>(4*1024*1024);
         if (!c) return 105;
         auto candidate=t::ServerHandshakeIo::create(std::move(*c),1,100,"h2",t::ServerCredential::max_certificate_list_size,budget);
         if (!candidate || budget->reserved()!=t::ServerHandshakeIo::hello_input_charge) return 106;
@@ -112,11 +129,11 @@ int main(int argc,char** argv) {
         }
         if (candidate->pending_output().empty() || !candidate->cancel() || budget->reserved()) return 109;
     }
-    auto small_credential=credential(); auto small_budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge-1);
+    auto small_credential=credential(); auto small_budget=std::make_shared<::memory::Budget>(t::ServerHandshakeIo::hello_input_charge-1);
     if (!small_credential) return 71;
     auto small=t::ServerHandshakeIo::create(std::move(*small_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,small_budget);
     if (small || small.error()!=t::ServerHandshakeIoError::budget_exceeded || !small_credential->scheme() || small_budget->reserved()) return 72;
-    small_budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge);
+    small_budget=std::make_shared<::memory::Budget>(t::ServerHandshakeIo::hello_input_charge);
     small=t::ServerHandshakeIo::create(std::move(*small_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,small_budget);
     if (!small || small_budget->reserved()!=t::ServerHandshakeIo::hello_input_charge) return 81;
     auto denied=small->feed(input,2);
@@ -124,7 +141,7 @@ int main(int argc,char** argv) {
     // Deny stream parse, key-parser copy, generated hello and construction scratch.
     for (auto extra:{parsed_charge-1,2*parsed_charge-1,2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge-1,2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+t::ServerHandshakeIo::generated_hello_scratch_charge-1,2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+t::ServerHandshakeIo::generated_hello_scratch_charge+t::ServerHandshakeIo::finished_keys_charge-1,2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+t::ServerHandshakeIo::generated_hello_scratch_charge+t::ServerHandshakeIo::finished_keys_charge+t::ServerHandshakeIo::handshake_key_scratch_charge-1}) {
         auto c=credential(); if (!c) return 95;
-        auto budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge+extra);
+        auto budget=std::make_shared<::memory::Budget>(t::ServerHandshakeIo::hello_input_charge+extra);
         auto candidate=t::ServerHandshakeIo::create(std::move(*c),1,100,"h2",t::ServerCredential::max_certificate_list_size,budget);
         if (!candidate) return 96;
         auto result=candidate->feed(input,2);
@@ -133,7 +150,7 @@ int main(int argc,char** argv) {
     int failures=0; bool success=false, cleanup_observed=false;
     for (int index=0;index<256;++index) {
         auto c=credential(); if (!c) return 62;
-        auto fault_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
+        auto fault_budget=std::make_shared<::memory::Budget>(4*1024*1024);
         auto candidate=t::ServerHandshakeIo::create(std::move(*c),1,100,"h2",t::ServerCredential::max_certificate_list_size,fault_budget); if (!candidate) return 63;
         bool threw=false; fail_after=index; fault_watch_budget=fault_budget.get(); fault_small_count=0; zeroed_with_key_budget=false;
         try { auto result=candidate->feed(input,2); if (result && !candidate->pending_output().empty()) success=true; }
@@ -148,7 +165,7 @@ int main(int argc,char** argv) {
     if (failures<5 || !success || !cleanup_observed) return 65;
     for (auto byte:input) { auto result=server->feed(std::span{&byte,1},101); if (!result || result->consumed!=1) return 9; }
     if (server->pending_output().empty() || server->feed(input,102)->consumed!=0 || server->take_application_records()) return 10;
-    auto output_credential=credential(); auto output_budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge+server->pending_output().size());
+    auto output_credential=credential(); auto output_budget=std::make_shared<::memory::Budget>(t::ServerHandshakeIo::hello_input_charge+server->pending_output().size());
     if (!output_credential) return 76;
     auto output_limited=t::ServerHandshakeIo::create(std::move(*output_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,output_budget);
     if (!output_limited) return 77;
@@ -164,7 +181,7 @@ int main(int argc,char** argv) {
         auto scratch=2*(list+8)+16384+t::ServerHandshakeIo::flight_seal_scratch_charge+t::ServerHandshakeIo::flight_key_scratch_charge+(8+*signature)+extensions+52;
         auto peak=std::max(t::ServerHandshakeIo::generated_hello_scratch_charge+t::ServerHandshakeIo::finished_keys_charge+t::ServerHandshakeIo::handshake_key_scratch_charge,server->pending_output().size()+output+scratch+(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge+t::ServerHandshakeIo::handshake_key_retained_charge));
         auto limit=t::ServerHandshakeIo::hello_input_charge+2*parsed_charge+t::ServerHandshakeIo::generated_hello_charge+peak-(enough ? 0 : 1);
-        auto bounded_budget=std::make_shared<nexus::memory::Budget>(limit);
+        auto bounded_budget=std::make_shared<::memory::Budget>(limit);
         auto candidate=t::ServerHandshakeIo::create(std::move(*bounded_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,bounded_budget);
         if (!candidate) return 92;
         if (enough) { captured_count=0; capture_allocations=true; }
@@ -181,13 +198,13 @@ int main(int argc,char** argv) {
         }
     }
     for (bool deny_input:{false,true}) {
-        auto input_credential=credential(); auto input_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
+        auto input_credential=credential(); auto input_budget=std::make_shared<::memory::Budget>(4*1024*1024);
         if (!input_credential) return 83;
         auto candidate=t::ServerHandshakeIo::create(std::move(*input_credential),1,100,"h2",t::ServerCredential::max_certificate_list_size,input_budget);
         if (!candidate || !candidate->feed(input,2)) return 84;
         while (!candidate->pending_output().empty()) if (!candidate->written(candidate->pending_output().size(),2)) return 85;
-        std::optional<nexus::memory::Budget::Reservation> blocker;
-        if (deny_input) blocker=nexus::memory::Budget::reserve(input_budget,input_budget->limit()-t::ServerHandshakeIo::finished_input_charge+1-(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge));
+        std::optional<::memory::Budget::Reservation> blocker;
+        if (deny_input) blocker=::memory::Budget::reserve(input_budget,input_budget->limit()-t::ServerHandshakeIo::finished_input_charge+1-(t::ServerFlight::finished_decoder_charge+t::ServerHandshakeIo::finished_keys_charge+t::ApplicationRecords::key_charge));
         std::uint8_t first=23; auto part=candidate->feed(std::span{&first,1},3);
         if (deny_input) {
             if (!blocker || part || part.error()!=t::ServerHandshakeIoError::budget_exceeded || input_budget->reserved()!=blocker->size()) return 86;
@@ -298,7 +315,7 @@ int main(int argc,char** argv) {
     auto frame=[](c::Bytes const& msg) { c::Bytes out{22,3,3,static_cast<std::uint8_t>(msg.size()>>8),static_cast<std::uint8_t>(msg.size())}; out.insert(out.end(),msg.begin(),msg.end()); return out; };
     auto first_record=frame(*initial_wire);
     for (int scenario=0;scenario<8;++scenario) {
-        auto retry_budget=std::make_shared<nexus::memory::Budget>(4*1024*1024);
+        auto retry_budget=std::make_shared<::memory::Budget>(4*1024*1024);
         auto retained=credential(); auto retrying=t::ServerHandshakeIo::create(std::move(*retained),1,50,"h2",t::ServerCredential::max_certificate_list_size,retry_budget); if (!retrying) return 36;
         if (scenario==0) { captured_count=0; capture_allocations=true; }
         for (auto byte:first_record) { auto result=retrying->feed(std::span{&byte,1},2); if (!result || result->consumed!=1) return 37; }
@@ -307,9 +324,9 @@ int main(int argc,char** argv) {
         if (retrying->pending_output().size()<5) return 38;
         auto retained_charge=initial_wire->size()+retrying->pending_output().size()-5;
         if (retry_budget->reserved()!=retrying->pending_output().size()+retained_charge || retrying->feed(first_record,2)->consumed!=0) return 38;
-        std::optional<nexus::memory::Budget::Reservation> retry_blocker;
+        std::optional<::memory::Budget::Reservation> retry_blocker;
         if (scenario==5) {
-            retry_blocker=nexus::memory::Budget::reserve(retry_budget,retry_budget->limit()-t::ServerHandshakeIo::hello_input_charge+1-retained_charge);
+            retry_blocker=::memory::Budget::reserve(retry_budget,retry_budget->limit()-t::ServerHandshakeIo::hello_input_charge+1-retained_charge);
             if (!retry_blocker) return 88;
         }
         c::Bytes retry_record;
@@ -335,7 +352,7 @@ int main(int argc,char** argv) {
             auto needed=2*charge(second_wire->size()-4)+charge(initial_wire->size()-4);
             if (scenario==7) needed+=t::ServerHandshakeIo::generated_hello_charge+t::ServerHandshakeIo::generated_hello_scratch_charge;
             auto available=retry_budget->limit()-retry_budget->reserved();
-            auto blocker=nexus::memory::Budget::reserve(retry_budget,available-needed+1);
+            auto blocker=::memory::Budget::reserve(retry_budget,available-needed+1);
             if (!blocker) return 98;
             auto result=retrying->feed(second_record,5);
             if (result || result.error()!=t::ServerHandshakeIoError::budget_exceeded || retry_budget->reserved()!=blocker->size()) return 99;

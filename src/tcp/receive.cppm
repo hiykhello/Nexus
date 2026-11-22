@@ -1,15 +1,17 @@
-export module nexus.tcp.receive;
+export module tcp.receive;
 import std;
 
-export namespace nexus::tcp {
+export namespace tcp {
     enum class ReceiveError { invalid_capacity };
     enum class FinResult { accepted, duplicate, outside, conflict };
     struct ReceiveResult { std::size_t accepted = 0, duplicate = 0, outside = 0; };
-    // Single owner. The fixed window includes unread contiguous data and buffered gaps.
+    struct SackBlock { std::uint32_t left = 0, right = 0; };
+    // Single owner. Flat byte ring + present bitmap with O(1) contiguous in-order memcpy fast path.
     class ReceiveBuffer {
-        std::vector<std::optional<std::uint8_t>> slots_;
-        std::uint32_t base_;
-        std::size_t head_ = 0, ready_ = 0;
+        std::vector<std::uint8_t> data_;
+        std::vector<std::uint8_t> present_;
+        std::uint32_t base_ = 0;
+        std::size_t head_ = 0, ready_ = 0, ooo_count_ = 0;
         std::optional<std::uint32_t> fin_;
         ReceiveBuffer(std::uint32_t initial, std::size_t capacity);
     public:
@@ -21,6 +23,8 @@ export namespace nexus::tcp {
         [[nodiscard]] auto next() const noexcept -> std::uint32_t;
         [[nodiscard]] auto ready() const noexcept -> std::size_t { return ready_; }
         [[nodiscard]] auto finished() const noexcept -> bool;
-        [[nodiscard]] auto window() const noexcept -> std::size_t { return finished() ? 0 : slots_.size() - ready_; }
+        [[nodiscard]] auto window() const noexcept -> std::size_t { return finished() ? 0 : data_.size() - ready_; }
+        // Returns up to 3 RFC 2018 SACK blocks when out-of-order bytes are buffered.
+        [[nodiscard]] auto sack_blocks() const noexcept -> std::pair<std::array<SackBlock, 3>, std::size_t>;
     };
 }

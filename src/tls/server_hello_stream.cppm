@@ -1,10 +1,10 @@
-export module nexus.tls.server_hello_stream;
-export import nexus.tls.server_hello;
-import nexus.tls.handshake;
-import nexus.tls.record_stream;
+export module tls.server_hello_stream;
+export import tls.server_hello;
+import tls.handshake;
+import tls.record_stream;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     enum class ServerHelloStreamError { invalid_state, invalid_record, invalid_message, invalid_retry, truncated };
     struct ServerHelloFeed {
         std::size_t consumed = 0;

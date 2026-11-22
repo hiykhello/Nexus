@@ -2,13 +2,13 @@
 #include <cerrno>
 #include <sys/socket.h>
 import std;
-import nexus.vless;
-import nexus.tls.application_io;
-import nexus.tls.corosio_application;
-import nexus.vless.tls_server;
+import vless;
+import tls.application_io;
+import tls.corosio_application;
+import vless.tls_server;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace v=nexus::vless; namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace v=vless; namespace t=tls; namespace c = ::crypto;
 namespace io=nex::corosio; namespace capy=nex::capy;
 using Bytes=c::Bytes; using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }

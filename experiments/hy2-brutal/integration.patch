@@ -1,0 +1,330 @@
+--- a/src/hysteria2/auth.cppm
++++ b/src/hysteria2/auth.cppm
+@@ -7,6 +7,21 @@
+     enum class AuthError { malformed,too_large,duplicate,not_auth,credentials,rate,udp,status,rejected };
+     struct ClientAuthView { std::string_view credential; std::uint64_t receive_bps=0; }; // 0 means unknown.
+     struct ServerAuth { bool udp=false,automatic=false; std::uint64_t receive_bps=0; }; // Non-auto 0 means unlimited.
++    struct CongestionPolicy {
++        std::uint64_t send_bps=0,receive_bps=0;
++        bool ignore_client_bandwidth=false,disable_compensation=false;
++    };
++    // A zero result selects standard congestion control. The empty optional
++    // represents the fixed server policy which refuses an unknown client rate.
++    inline auto server_congestion(CongestionPolicy const& policy,std::uint64_t client_receive) noexcept -> std::optional<std::uint64_t> {
++        if(policy.ignore_client_bandwidth && policy.receive_bps && !client_receive)return {};
++        if(policy.ignore_client_bandwidth || !client_receive)return 0;
++        return policy.send_bps ? std::min(policy.send_bps,client_receive) : client_receive;
++    }
++    inline auto client_congestion(CongestionPolicy const& policy,ServerAuth const& server) noexcept -> std::uint64_t {
++        if(server.automatic || !policy.send_bps)return 0;
++        return server.receive_bps ? std::min(policy.send_bps,server.receive_bps) : policy.send_bps;
++    }
+     namespace auth_detail {
+         enum class Role { request,response };
+         struct Fields {
+--- a/src/hysteria2/transport_options.cppm
++++ b/src/hysteria2/transport_options.cppm
+@@ -1,6 +1,7 @@
+ export module nexus.hysteria2.transport_options;
+ import std;
+ import nexus.quic.varint;
++import nexus.hysteria2.auth;
+ import nexus.thirdparty.ngtcp2;
+ 
+ export namespace nexus::hysteria2 {
+@@ -13,9 +14,11 @@
+         // Physical UDP payload limit, including the optional Salamander salt.
+         std::optional<std::size_t> max_udp_payload_size;
+         bool disable_path_mtu_discovery=false;
++        CongestionPolicy congestion;
+         auto valid() const noexcept -> bool {
+             return handshake_timeout.count()>0 && handshake_timeout<=std::chrono::hours(1) && idle_timeout.count()>0 && idle_timeout<=std::chrono::hours(24) &&
+                 native_bytes>=65536 && native_bytes<=1024ull*1024*1024 &&
++                congestion.send_bps<=1000000000000ull && congestion.receive_bps<=1000000000000ull &&
+                 (!salamander_password || !salamander_password->empty()) &&
+                 (!max_udp_payload_size || (*max_udp_payload_size>=1200+(salamander_password ? 8 : 0) && *max_udp_payload_size<=1500));
+         }
+--- a/src/hysteria2/application.cppm
++++ b/src/hysteria2/application.cppm
+@@ -38,6 +38,8 @@
+         std::optional<ClientAuthHeaders> client_auth_;
+         ServerAuth local_auth_{false,true,0};
+         std::optional<ServerAuth> peer_auth_;
++        std::optional<CongestionPolicy> congestion_;
++        std::optional<std::pair<std::uint64_t,bool>> pending_congestion_;
+         bool server_,handshake_=false,authenticated_=false,stopping_=false,io_joined_=false;
+         std::uint8_t output_turn_=0;
+         auto signal() noexcept -> void { static_assert(noexcept(hooks_.changed())); hooks_.changed(); }
+@@ -108,19 +110,20 @@
+         }
+     public:
+         Application(Tls& tls,Hooks& hooks,bool server,nex::nghttp3::nghttp3_mem const& memory,
+-            std::string_view credential={},ServerAuth auth={false,true,0})
+-            :tls_(tls),hooks_(hooks),memory_(memory),local_auth_(auth),server_(server) {
++            std::string_view credential={},ServerAuth auth={false,true,0},std::optional<CongestionPolicy> congestion={})
++            :tls_(tls),hooks_(hooks),memory_(memory),local_auth_(auth),congestion_(congestion),server_(server) {
+             if (!server) {
+-                auto headers=ClientAuthHeaders::create(credential,0); if (!headers) throw std::invalid_argument("invalid Hy2 credential");
++                auto headers=ClientAuthHeaders::create(credential,congestion_ ? congestion_->receive_bps : 0); if (!headers) throw std::invalid_argument("invalid Hy2 credential");
+                 client_auth_=*headers;
+             }
+             // This application currently selects standard QUIC congestion.
+             // Fixed local rates require the separate Brutal implementation.
+-            if (auth.receive_bps) throw std::invalid_argument("unsupported Hy2 congestion policy");
++            if (auth.receive_bps && !congestion_) throw std::invalid_argument("unsupported Hy2 congestion policy");
+         }
+         Application(Application const&)=delete;
+         auto operator=(Application const&) -> Application& = delete;
+         auto attach(Transport& transport) noexcept -> void { transport_=&transport; }
++        auto take_congestion() noexcept -> std::optional<std::pair<std::uint64_t,bool>> {return std::exchange(pending_congestion_,{});}
+         auto authenticated() const noexcept -> bool { return authenticated_; }
+         auto handshake_complete() const noexcept -> bool { return handshake_; }
+         auto peer_auth() const noexcept -> std::optional<ServerAuth> { return peer_auth_; }
+@@ -302,18 +305,23 @@
+             auto* state=find(id); if (!state) return nex::nghttp3::err_callback_failure;
+             if (!server_) {
+                 if (id!=auth_stream_ || authenticated_) return nex::nghttp3::err_callback_failure;
+-                // This client advertises no fixed receive rate and has no
+-                // configured fixed send rate, so a numeric peer limit still
+-                // selects the ordinary QUIC congestion controller.
+                 auto auth=parse_server_auth(state->headers.fields()); if (!auth) return nex::nghttp3::err_callback_failure;
++                if(congestion_)pending_congestion_=std::pair{client_congestion(*congestion_,*auth),!congestion_->disable_compensation};
+                 peer_auth_=*auth; authenticated_=true; signal(); return 0;
+             }
+             auto auth=parse_client_auth(state->headers.fields());
+-            // Automatic mode explicitly ignores the client's receive rate.
+-            // Other policies still require Brutal for a nonzero rate.
+-            if (auth && (local_auth_.automatic || !auth->receive_bps) && (authenticated_ || hooks_.authenticate(*auth))) {
++            auto selected=auth && congestion_ ? server_congestion(*congestion_,auth->receive_bps) : std::optional<std::uint64_t>{0};
++            if (auth && selected && (congestion_ || local_auth_.automatic || !auth->receive_bps) && (authenticated_ || hooks_.authenticate(*auth))) {
++                if(!authenticated_ && congestion_) {
++                    local_auth_.automatic=!*selected;local_auth_.receive_bps=congestion_->receive_bps;
++                }
+                 auto response=ServerAuthHeaders::create(local_auth_); if (!response) return nex::nghttp3::err_callback_failure;
+-                auto error=owner.response(id,fields(response->fields())); if (!error) { authenticated_=true; auth_stream_=id; signal(); } return error;
++                auto error=owner.response(id,fields(response->fields()));
++                if (!error) {
++                    if(!authenticated_ && congestion_)pending_congestion_=std::pair{*selected,!congestion_->disable_compensation};
++                    authenticated_=true; auth_stream_=id; signal();
++                }
++                return error;
+             }
+             std::array<http::HeaderField,2> cover{{{":status","404"},{"content-length","0"}}}; return owner.response(id,fields(cover));
+         }
+--- a/src/hysteria2/client.cppm
++++ b/src/hysteria2/client.cppm
+@@ -72,7 +72,7 @@
+             Bundle(std::unique_ptr<ClientProfile::Tls> value,Registry& registry,quic::SessionHandle owner,
+                 nex::capy::async_event& changed,nex::corosio::endpoint const& local,ClientProfile const& profile)
+                 :tls(std::move(value)),hooks(registry,owner,changed),memory(profile.transport().native_bytes),
+-                 application(*tls,hooks,false,memory.http3(),profile.credential()),session(*tls,application,local) {}
++                 application(*tls,hooks,false,memory.http3(),profile.credential(),ServerAuth{false,true,0},profile.transport().congestion),session(*tls,application,local) {}
+         };
+         struct Factory {
+             using Session=typename BasicClient::Session;
+--- a/src/hysteria2/listener.cppm
++++ b/src/hysteria2/listener.cppm
+@@ -67,7 +67,7 @@
+             std::size_t business=0;std::optional<int> failure;bool canceled=false,reported=false;
+             Bundle(Listener& listener,Registry& registry,quic::SessionHandle owner,nex::corosio::endpoint const& peer,ConnectionState&& connection)
+                 :connection(std::move(connection)),tls(listener.credential_,"h3"),memory(listener.options_.native_bytes),policy{listener.hooks_,registry,owner,listener.work_},
+-                app(tls,policy,true,memory.http3(),{},ServerAuth{listener.options_.udp,true,0}),session(tls,app,listener.local_),peer(peer),owner(owner){}
++                app(tls,policy,true,memory.http3(),{},ServerAuth{listener.options_.udp,true,0},listener.options_.congestion),session(tls,app,listener.local_),peer(peer),owner(owner){}
+         };
+         struct Factory {
+             using Session=NativeSession;using ControlFailure=quic::RetryFailure;
+--- a/src/quic/pmtud_native.cppm
++++ b/src/quic/pmtud_native.cppm
+@@ -1,8 +1,10 @@
+ export module nexus.quic.pmtud_native;
++import std;
+ import nexus.thirdparty.ngtcp2;
+ 
+ // Implemented by the pinned ngtcp2 source patch. Call only at a quiescent
+ // connection boundary; the function restarts native PMTU discovery.
+ export namespace nexus::quic {
++    extern "C" auto nexus_ngtcp2_set_brutal(nex::ngtcp2::ngtcp2_conn*,std::uint64_t,int,std::uint64_t) -> int;
+     extern "C" auto nexus_ngtcp2_restart_pmtud(nex::ngtcp2::ngtcp2_conn*,int) -> int;
+ }
+--- a/src/quic/datagram_session.cppm
++++ b/src/quic/datagram_session.cppm
+@@ -75,6 +75,12 @@
+             namespace n=nex::ngtcp2;
+             if(stopping())return std::optional<net::DatagramOutput>{};
+             if(pending_ || token_==std::numeric_limits<std::uint64_t>::max())return std::unexpected(n::err_invalid_argument);
++            if constexpr(requires {application_.take_congestion();}) {
++                if(auto selected=application_.take_congestion();selected && selected->first) {
++                    auto code=nexus_ngtcp2_set_brutal(transport_.native(),selected->first,selected->second,time(now));
++                    if(code)return std::unexpected(code);
++                }
++            }
+             // Native selects the authenticated path; incoming source addresses
+             // neither select a session nor silently replace its output peer.
+             n::ngtcp2_path_storage path{};n::ngtcp2_path_storage_zero(&path);
+--- a/src/config/config.cppm
++++ b/src/config/config.cppm
+@@ -64,6 +64,8 @@
+         std::optional<std::string> salamander_password_file;
+         std::optional<std::size_t> max_udp_payload_size;
+         bool disable_path_mtu_discovery=false;
++        std::uint64_t send_bps=0,receive_bps=0;
++        bool ignore_client_bandwidth=false,disable_compensation=false;
+     };
+     struct Hysteria2Inbound {
+         PasswordTlsInbound connection;
+--- a/src/config/hysteria2.cpp
++++ b/src/config/hysteria2.cpp
+@@ -9,7 +9,7 @@
+     auto validate_password_tls_outbound(PasswordTlsOutbound&,Config const&,std::string_view) -> std::expected<void,std::string>;
+     namespace {
+         auto parse_quic_options(nex::glaze::KdlNode const& node) -> std::expected<Hysteria2Transport,std::string> {
+-            Hysteria2Transport result;bool block=false;std::array<bool,6> fields{};
++            Hysteria2Transport result;bool block=false;std::array<bool,10> fields{};
+             for(auto const& child:node.children){
+                 if(child.name!="quic")continue;
+                 if(block || child.tag || !child.arguments.empty() || !child.properties.empty())return kdl::error("invalid or duplicate Hysteria2 quic block");
+@@ -24,6 +24,20 @@
+                     if(field.name=="udp"){
+                         auto value=kdl::boolean(field);if(fields[0] || !value)return kdl::error("invalid or duplicate Hysteria2 UDP option");
+                         fields[0]=true;result.udp=*value;continue;
++                    }
++                    if(field.name=="ignore-client-bandwidth" || field.name=="disable-loss-compensation") {
++                        auto index=field.name=="ignore-client-bandwidth" ? 8u : 9u;
++                        auto value=kdl::boolean(field);if(fields[index] || !value)return kdl::error("invalid or duplicate Hysteria2 congestion option");
++                        fields[index]=true;
++                        if(index==8)result.ignore_client_bandwidth=*value;else result.disable_compensation=*value;
++                        continue;
++                    }
++                    if(field.name=="send-bps" || field.name=="receive-bps") {
++                        auto index=field.name=="send-bps" ? 6u : 7u;
++                        auto value=kdl::integer(field);if(fields[index] || !value || *value>1000000000000ull)return kdl::error("invalid or duplicate Hysteria2 bandwidth");
++                        fields[index]=true;
++                        if(index==6)result.send_bps=*value;else result.receive_bps=*value;
++                        continue;
+                     }
+                     if(field.name=="disable-path-mtu-discovery") {
+                         auto value=kdl::boolean(field);if(fields[4] || !value)return kdl::error("invalid or duplicate Hysteria2 path MTU discovery option");
+@@ -57,6 +71,8 @@
+         // TCP-only settings have no meaning on a physical QUIC UDP socket.
+         if(parsed->tcp_options.keepalive_configured() || parsed->tcp_options.bind_address_no_port.has_value() || parsed->tcp_options.multipath_tcp.has_value())return kdl::error("TCP-only dial options are not valid for Hysteria2");
+         auto options=parse_quic_options(node);if(!options)return std::unexpected(options.error());
++        if(std::ranges::any_of(node.children,[](auto const& block){return block.name=="quic" && std::ranges::any_of(block.children,[](auto const& field){return field.name=="ignore-client-bandwidth";});}))
++            return kdl::error("Hysteria2 ignore-client-bandwidth is inbound only");
+         return Hysteria2Outbound{std::move(*parsed),*options};
+     }
+     auto validate_hysteria2(Config& config,std::string_view direct,std::optional<std::string> const& block) -> std::expected<void,std::string> {
+--- a/src/tools/hy2_cli.cpp
++++ b/src/tools/hy2_cli.cpp
+@@ -33,6 +33,7 @@
+         profile->options={std::chrono::milliseconds(cfg.transport.handshake_timeout_ms),std::chrono::milliseconds(cfg.transport.idle_timeout_ms),cfg.transport.native_bytes,cfg.transport.udp};
+         profile->options.max_udp_payload_size=cfg.transport.max_udp_payload_size;
+         profile->options.disable_path_mtu_discovery=cfg.transport.disable_path_mtu_discovery;
++        profile->options.congestion={cfg.transport.send_bps,cfg.transport.receive_bps,cfg.transport.ignore_client_bandwidth,cfg.transport.disable_compensation};
+         if(cfg.transport.salamander_password_file){
+             auto value=rulefile::read_password_file(*cfg.transport.salamander_password_file);
+             if(!value)return std::unexpected(value.error());
+--- a/src/tools/proxy_run.cppm
++++ b/src/tools/proxy_run.cppm
+@@ -276,7 +276,7 @@
+                     outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,transport.handshake_timeout_ms,
+                     transport.idle_timeout_ms,transport.native_bytes,transport.udp,
+                     transport.salamander_password_file ? std::optional<std::string_view>(*transport.salamander_password_file) : std::nullopt,
+-                    transport.max_udp_payload_size,transport.disable_path_mtu_discovery);
++                    transport.max_udp_payload_size,transport.disable_path_mtu_discovery,transport.send_bps,transport.receive_bps,transport.disable_compensation);
+                 if (!prepared) { std::cerr << "Hysteria2 configuration: " << prepared.error() << '\n'; return 1; }
+             }
+             for (auto const& named:config->snell_outbounds) {
+--- a/src/proxy/proxy.cppm
++++ b/src/proxy/proxy.cppm
+@@ -299,7 +299,7 @@
+     auto make_snell_factory(std::string_view,std::uint16_t,std::string_view,std::optional<std::string_view>,std::optional<std::size_t>,std::uint32_t,TcpSocketOptions,bool fast_open=false) -> std::expected<TunnelFactory,std::string>;
+ #endif
+ #ifdef NEXUS_ENABLE_HY2_CLIENT
+-    auto make_hysteria2_factory(std::string_view,std::uint16_t,std::string_view,std::string_view,std::string_view,TlsKeyExchange,std::optional<std::size_t>,std::uint32_t,TcpSocketOptions,std::uint32_t,std::uint32_t,std::size_t,bool,std::optional<std::string_view>,std::optional<std::size_t>,bool) -> std::expected<TunnelFactory,std::string>;
++    auto make_hysteria2_factory(std::string_view,std::uint16_t,std::string_view,std::string_view,std::string_view,TlsKeyExchange,std::optional<std::size_t>,std::uint32_t,TcpSocketOptions,std::uint32_t,std::uint32_t,std::size_t,bool,std::optional<std::string_view>,std::optional<std::size_t>,bool,std::uint64_t,std::uint64_t,bool) -> std::expected<TunnelFactory,std::string>;
+ #endif
+ 
+     auto resolve_destination(Session&,io::io_context&,std::string,std::uint16_t,Clock::time_point,
+@@ -613,7 +613,7 @@
+         [[nodiscard]] auto add_hysteria2(std::string_view host,std::uint16_t port,std::string_view password_file,std::string_view server_name,
+             std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout_ms,
+             TcpSocketOptions options,std::uint32_t handshake_ms,std::uint32_t idle_ms,std::size_t native_bytes,bool udp,
+-            std::optional<std::string_view> salamander_file={},std::optional<std::size_t> max_udp_payload_size={},bool disable_path_mtu_discovery=false) -> std::expected<std::size_t,std::string>;
++            std::optional<std::string_view> salamander_file={},std::optional<std::size_t> max_udp_payload_size={},bool disable_path_mtu_discovery=false,std::uint64_t send_bps=0,std::uint64_t receive_bps=0,bool disable_compensation=false) -> std::expected<std::size_t,std::string>;
+         [[nodiscard]] auto prepare_trojan_inbound(std::string_view certificate,std::string_view key,
+             std::span<std::string const> password_files,std::span<std::string const> names={}) -> std::expected<void,std::string>;
+         [[nodiscard]] auto prepare_snell_inbound(std::string_view psk,std::optional<std::string_view> user,std::uint32_t replay_window_seconds,std::shared_ptr<SnellReplayRegistry> registry) -> std::expected<void,std::string>;
+--- a/src/proxy/hysteria2_outbound_api.cpp
++++ b/src/proxy/hysteria2_outbound_api.cpp
+@@ -5,19 +5,19 @@
+     auto Server::add_hysteria2(std::string_view host,std::uint16_t port,std::string_view password_file,std::string_view server_name,
+         std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout_ms,
+         TcpSocketOptions options,std::uint32_t handshake_ms,std::uint32_t idle_ms,std::size_t native_bytes,bool udp,
+-        std::optional<std::string_view> salamander_file,std::optional<std::size_t> max_udp_payload_size,bool disable_path_mtu_discovery) -> std::expected<std::size_t,std::string> {
++        std::optional<std::string_view> salamander_file,std::optional<std::size_t> max_udp_payload_size,bool disable_path_mtu_discovery,std::uint64_t send_bps,std::uint64_t receive_bps,bool disable_compensation) -> std::expected<std::size_t,std::string> {
+         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return std::unexpected("stop the server before changing the outbound");
+ #ifdef NEXUS_ENABLE_HY2_CLIENT
+         if (outbounds.size()>=16) return std::unexpected("too many tunnel outbounds");
+         if (bootstrap && (!dns_routing || *bootstrap>=dns_routing->servers.size())) return std::unexpected("invalid bootstrap resolver");
+-        auto factory=make_hysteria2_factory(host,port,password_file,server_name,ca_file,exchange,bootstrap,timeout_ms,options,handshake_ms,idle_ms,native_bytes,udp,salamander_file,max_udp_payload_size,disable_path_mtu_discovery);
++        auto factory=make_hysteria2_factory(host,port,password_file,server_name,ca_file,exchange,bootstrap,timeout_ms,options,handshake_ms,idle_ms,native_bytes,udp,salamander_file,max_udp_payload_size,disable_path_mtu_discovery,send_bps,receive_bps,disable_compensation);
+         if (!factory) return std::unexpected(factory.error());
+         auto index=outbounds.size()+2;outbounds.push_back(std::move(*factory));
+         if (bootstrap && (!max_bootstrap_index || *bootstrap>*max_bootstrap_index)) max_bootstrap_index=bootstrap;
+         return index;
+ #else
+         (void)host;(void)port;(void)password_file;(void)server_name;(void)ca_file;(void)exchange;(void)bootstrap;(void)timeout_ms;
+-        (void)options;(void)handshake_ms;(void)idle_ms;(void)native_bytes;(void)udp;(void)salamander_file;(void)max_udp_payload_size;(void)disable_path_mtu_discovery;
++        (void)options;(void)handshake_ms;(void)idle_ms;(void)native_bytes;(void)udp;(void)salamander_file;(void)max_udp_payload_size;(void)disable_path_mtu_discovery;(void)send_bps;(void)receive_bps;(void)disable_compensation;
+         return std::unexpected("Hysteria2 outbound is not available in this build");
+ #endif
+     }
+--- a/src/proxy/hysteria2_outbound.cpp
++++ b/src/proxy/hysteria2_outbound.cpp
+@@ -325,12 +325,13 @@
+     auto make_hysteria2_factory(std::string_view host,std::uint16_t port,std::string_view password_file,std::string_view server_name,
+         std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout,TcpSocketOptions options,
+         std::uint32_t handshake_ms,std::uint32_t idle_ms,std::size_t native_bytes,bool udp,
+-        std::optional<std::string_view> salamander_file,std::optional<std::size_t> max_udp_payload_size,bool disable_path_mtu_discovery) -> std::expected<TunnelFactory,std::string> {
++        std::optional<std::string_view> salamander_file,std::optional<std::size_t> max_udp_payload_size,bool disable_path_mtu_discovery,std::uint64_t send_bps,std::uint64_t receive_bps,bool disable_compensation) -> std::expected<TunnelFactory,std::string> {
+         if (host.empty() || !port || !timeout || timeout>3600000 || !options.valid() || options.keepalive_configured() || options.bind_address_no_port.has_value() || options.multipath_tcp.has_value())
+             return std::unexpected("invalid or unsupported Hysteria2 dial options");
+         auto group=exchange==TlsKeyExchange::x25519 ? std::uint16_t{0x001d} : std::uint16_t{0x11ec};
+         h::TransportOptions transport{std::chrono::milliseconds(handshake_ms),std::chrono::milliseconds(idle_ms),native_bytes,udp};
+         transport.max_udp_payload_size=max_udp_payload_size;transport.disable_path_mtu_discovery=disable_path_mtu_discovery;
++        transport.congestion={send_bps,receive_bps,false,disable_compensation};
+         auto client=h::ClientProfile::load(server_name,ca_file,password_file,group,exchange==TlsKeyExchange::x25519_mlkem768_only,transport,salamander_file);
+         if (!client) return std::unexpected(client.error());
+         auto profile=std::make_unique<Profile>(std::string(host),port,bootstrap,timeout,std::move(*client),udp,options);auto* borrowed=profile.get();
+--- a/tests/hysteria2_auth.cpp
++++ b/tests/hysteria2_auth.cpp
+@@ -59,6 +59,12 @@
+     for (auto value:{"1","TRUE","false ",""}) { raw[1].value=value; if (h::parse_server_auth(raw)) return 18; }
+     raw[1].value="true";
+     for (auto value:{"-1","+1","AUTO","18446744073709551616",""}) { raw[2].value=value; if (h::parse_server_auth(raw)) return 19; }
++    h::CongestionPolicy policy{2000000,3000000,false,false};
++    if(h::server_congestion(policy,0)!=0 || h::server_congestion(policy,1000000)!=1000000 || h::server_congestion(policy,4000000)!=2000000)return 20;
++    if(h::client_congestion(policy,{true,true,0})!=0 || h::client_congestion(policy,{true,false,0})!=2000000 || h::client_congestion(policy,{true,false,1000000})!=1000000)return 21;
++    policy.send_bps=0;if(h::server_congestion(policy,1000000)!=1000000 || h::client_congestion(policy,{true,false,1000000})!=0)return 22;
++    policy.ignore_client_bandwidth=true;if(h::server_congestion(policy,0) || h::server_congestion(policy,1000000)!=0)return 23;
++    policy.receive_bps=0;if(h::server_congestion(policy,0)!=0)return 24;
+     std::println("Hy2 bounded HTTP3 auth fields, lowercase/pseudo rules, credential views, 233 and rate semantics passed");
+ }
+ 
+--- a/tests/config.cpp
++++ b/tests/config.cpp
+@@ -99,6 +99,14 @@
+         if(nexus::config::parse_kdl(replace(hy2_mtu,"1208",value)))return 1;
+     for(auto value:{"0","\"true\"","#true; disable-path-mtu-discovery #false"})
+         if(nexus::config::parse_kdl(replace(hy2_mtu,"disable-path-mtu-discovery #true",std::string("disable-path-mtu-discovery ")+value)))return 1;
++    auto hy2_bandwidth=replace(hy2_mtu,"disable-path-mtu-discovery #true", "disable-path-mtu-discovery #true; send-bps 2000000; receive-bps 3000000; disable-loss-compensation #true");
++    auto rate_out=nexus::config::parse_kdl(hy2_bandwidth);
++    if(!rate_out || rate_out->hysteria2_outbounds[0].config.transport.send_bps!=2000000 || rate_out->hysteria2_outbounds[0].config.transport.receive_bps!=3000000 || !rate_out->hysteria2_outbounds[0].config.transport.disable_compensation)return 1;
++    auto inbound_rate=replace(hy2_inbound,"salamander-password-file \"/tmp/obfs\"", "salamander-password-file \"/tmp/obfs\"; send-bps 1; receive-bps 0; ignore-client-bandwidth #true");
++    auto rate_in=nexus::config::parse_kdl(complete+inbound_rate);
++    if(!rate_in || rate_in->inbounds.back().hysteria2->transport.send_bps!=1 || !rate_in->inbounds.back().hysteria2->transport.ignore_client_bandwidth)return 1;
++    for(auto value:{"-1","1000000000001","\"1\"","1; send-bps 2"})if(nexus::config::parse_kdl(replace(hy2_bandwidth,"send-bps 2000000",std::string("send-bps ")+value)))return 1;
++    if(nexus::config::parse_kdl(replace(hy2_bandwidth,"send-bps 2000000","send-bps 2; ignore-client-bandwidth #false")))return 1;
+     auto config = nexus::config::parse_kdl(complete);
+     auto direct_timeout=replace(complete,"outbound \"direct\" type=\"direct\"", "outbound \"direct\" type=\"direct\" { connect-timeout-ms 12500; }");
+     auto parsed_direct_timeout=nexus::config::parse_kdl(direct_timeout);

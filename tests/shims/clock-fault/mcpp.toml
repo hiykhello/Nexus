@@ -1,0 +1,10 @@
+[package]
+namespace = "nexus"
+name = "clock-fault-shim"
+version = "0.1.0"
+
+[build]
+sources = ["../../clock_fault.c"]
+
+[targets.clock-fault-shim]
+kind = "shared"

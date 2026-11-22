@@ -1,0 +1,22 @@
+[package]
+namespace = "nexus"
+name = "chain-client-tests"
+version = "0.1.0"
+
+[dependencies]
+nexus.proxy-runtime = { path = "../../src/proxy", default-features = false, features = ["dns-standard", "request-standard", "test-chain-deadline", "io-uring"] }
+
+[build]
+sources = []
+
+[targets.nexus-proxy-chain-deadline]
+kind = "bin"
+main = "../proxy_chain_deadline.cpp"
+
+[targets.nexus-proxy-chain-ss]
+kind = "bin"
+main = "../proxy_chain_ss.cpp"
+
+[targets.nexus-proxy-chain-vless]
+kind = "bin"
+main = "../proxy_chain_vless.cpp"

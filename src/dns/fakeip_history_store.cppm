@@ -5,12 +5,13 @@ module;
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdio.h>
-export module nexus.dns.fakeip_history_store;
+export module dns.fakeip_history_store;
 import std;
-import nexus.dns.fakeip_history;
-import nexus.dns.fakeip_recovery;
-import nexus.dns.fakeip_shared;
-export namespace nexus::dns {
+import dns.fakeip;
+import dns.fakeip_history;
+import dns.fakeip_recovery;
+import dns.fakeip_shared;
+export namespace dns {
     enum class FakeIpHistoryStoreError { invalid, permission, busy, missing, corrupt, rollback, io, authentication, crypto };
     enum class FakeIpHistoryStoreMode { create_new, open_existing };
     class FakeIpHistoryStore {
@@ -29,7 +30,7 @@ export namespace nexus::dns {
         [[nodiscard]] auto write_file(std::string_view temporary,std::string_view final,std::span<std::uint8_t const> bytes)
             -> std::expected<void,FakeIpHistoryStoreError>;
         [[nodiscard]] static auto open_impl(std::string_view path,FakeIpHistoryStoreMode mode,
-            std::span<std::uint8_t const,16> instance,std::span<std::uint8_t const,32> key,bool from_files)
+            std::span<std::uint8_t const,16> instance,std::span<std::uint8_t const,32> key,bool from_files,std::optional<FakeIpIpv6Range>)
             -> std::expected<FakeIpHistoryStore,FakeIpHistoryStoreError>;
     public:
         FakeIpHistoryStore(FakeIpHistoryStore const&)=delete;
@@ -42,7 +43,8 @@ export namespace nexus::dns {
             -> std::expected<FakeIpHistoryStore,FakeIpHistoryStoreError>;
         // Read the fixed credentials from the locked store directory using
         // strict owner/mode/link checks, then open the store with them.
-        [[nodiscard]] static auto open_with_credentials(std::string_view path, FakeIpHistoryStoreMode mode)
+        [[nodiscard]] static auto open_with_credentials(std::string_view path, FakeIpHistoryStoreMode mode,
+            std::optional<FakeIpIpv6Range> ipv6={})
             -> std::expected<FakeIpHistoryStore,FakeIpHistoryStoreError>;
         [[nodiscard]] auto generation() const noexcept -> std::uint64_t { return generation_; }
         [[nodiscard]] auto failed() const noexcept -> bool { return failed_; }

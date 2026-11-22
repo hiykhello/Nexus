@@ -1,0 +1,117 @@
+#compdef nexus
+
+_nexus() {
+    local -a commands rule_cmds control_cmds state_cmds endpoint_cmds
+    commands=(
+        'run:Run proxy server from KDL configuration'
+        'check:Validate KDL configuration without starting'
+        'rule:Convert, explain, fetch, or watch rule sets'
+        'endpoint:Check or run standalone protocol endpoints'
+        'control:Send NEXUS/1 commands over local control socket'
+        'state:Inspect, clear caches, or reset persistent state'
+    )
+    rule_cmds=(
+        'convert:Convert rules between kdl, beve, and srs formats'
+        'explain:Explain route decision for a synthetic flow'
+        'fetch:Fetch remote ruleset with optional SHA-256 verification'
+        'watch:Periodically refresh a remote ruleset'
+    )
+    control_cmds=(
+        'status:Show listener and runtime status'
+        'connections:List active connections'
+        'close:Close connection on a specific listener'
+        'close-any:Close connection by global connection ID'
+        'close-all:Close all active connections across listeners'
+        'select:Select outbound group member or --auto'
+        'probe:Trigger immediate health probe for an outbound group'
+        'group-health:Show outbound group probe status'
+        'user-usage:Show per-user traffic counters'
+        'reload:Trigger live configuration reload'
+        'clear-cache:Clear DNS and/or ruleset caches'
+        'network-change:Notify physical network generation change'
+        'operation:Query control operation status'
+        'events:Stream runtime control events'
+        'diagnostics:Dump runtime diagnostics snapshot'
+        'log-level:Update runtime log level'
+    )
+    state_cmds=(
+        'inspect:Inspect durable state directory'
+        'clear-cache:Clear DNS and/or ruleset caches'
+        'reset:Reset fakeip or selector durable state'
+    )
+    endpoint_cmds=(
+        'check:Validate endpoint configuration'
+        'run:Run endpoint'
+    )
+
+    _arguments -C \
+        '1:command:->cmd' \
+        '*::arg:->args'
+
+    case "$state" in
+        cmd)
+            _describe -t commands 'nexus command' commands
+            ;;
+        args)
+            case "$words[1]" in
+                run)
+                    _arguments \
+                        '--config[Configuration file]:config file:_files -g "*.kdl"' \
+                        '--traffic-stats[Enable per-connection traffic stats]' \
+                        '--help[Show help]'
+                    ;;
+                check)
+                    _arguments \
+                        '--config[Configuration file]:config file:_files -g "*.kdl"' \
+                        '--help[Show help]' \
+                        '*:config file:_files -g "*.kdl"'
+                    ;;
+                rule)
+                    if (( CURRENT == 2 )); then
+                        _describe -t rule-commands 'rule subcommand' rule_cmds
+                    else
+                        _arguments \
+                            '--sha256[Expected SHA-256 hex digest]:hex:' \
+                            '--cache-dir[Ruleset cache directory]:dir:_files -/' \
+                            '--ruleset-cache-max-bytes[Maximum ruleset cache size]:bytes:' \
+                            '--offline-cache[Allow offline cache fallback]' \
+                            '--help[Show help]' \
+                            '*:file:_files'
+                    fi
+                    ;;
+                control)
+                    if (( CURRENT == 2 )); then
+                        _files
+                    else
+                        _describe -t control-commands 'control command' control_cmds
+                    fi
+                    ;;
+                state)
+                    if (( CURRENT == 2 )); then
+                        _describe -t state-commands 'state subcommand' state_cmds
+                    else
+                        _arguments \
+                            '--config[Configuration file]:config file:_files -g "*.kdl"' \
+                            '--dns[Clear DNS cache]' \
+                            '--rulesets[Clear ruleset cache]' \
+                            '--target[Reset target]:target:(fakeip selectors)' \
+                            '--confirm[Confirm destructive reset]' \
+                            '--help[Show help]'
+                    fi
+                    ;;
+                endpoint)
+                    if (( CURRENT == 2 )); then
+                        _describe -t endpoint-commands 'endpoint subcommand' endpoint_cmds
+                    else
+                        _arguments \
+                            '--config[Configuration file]:config file:_files -g "*.kdl"' \
+                            '--resolve[Resolve endpoints during check]' \
+                            '--help[Show help]'
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_nexus "$@"

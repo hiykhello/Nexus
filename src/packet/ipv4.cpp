@@ -1,7 +1,7 @@
-module nexus.packet;
+module packet;
 import std;
 
-namespace nexus::packet {
+namespace packet {
     namespace {
         auto read16(std::span<std::uint8_t const> p, std::size_t offset) noexcept -> std::uint16_t {
             return static_cast<std::uint16_t>((std::uint16_t{p[offset]} << 8) | p[offset + 1]);
@@ -58,6 +58,7 @@ namespace nexus::packet {
         result.source_port = read16(p, header);
         result.destination_port = read16(p, header+2);
         result.payload = p.subspan(header+8);
+        result.dscp=static_cast<std::uint8_t>(p[1] >> 2);
         return result;
     }
 

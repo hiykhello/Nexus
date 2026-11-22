@@ -1,6 +1,6 @@
 import std;
-import nexus.shadowsocks.replay;
-namespace s=nexus::shadowsocks;
+import shadowsocks.replay;
+namespace s=shadowsocks;
 using namespace std::chrono_literals;
 int main() {
     auto start=std::chrono::steady_clock::time_point{};

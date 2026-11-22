@@ -1,6 +1,50 @@
 # Nexus 原生控制面与 BEVE IPC
 
-状态：**设计草案，未实现**。控制面以 Nexus 的会话、路由、出口、配置代次为模型，参考本地 sing-box `a6952ccf6907c18e18917fcb763a433e8e36937b` 的组件状态、统计和生命周期处理，使用自定义原生 API；不以 Clash API 或特定仪表盘兼容为目标。HTTP/JSON 与本地 BEVE IPC 共享窄服务接口，不直接拥有数据面对象，也不能绕过路由、资源或权限校验。
+Linux CLI 提供本机控制 socket。本文后半的 HTTP/JSON 与跨平台 BEVE IPC 为设计草案。
+
+## Linux 本机控制
+
+在配置中加入顶层 `control socket="/run/user/1000/nexus/control.sock"`。默认要求运行账户拥有私有父目录，服务使用 Unix `SOCK_SEQPACKET`、`0600` 权限和 `SO_PEERCRED`，同 UID 的客户端拥有管理权限。路径被占用时启动失败，正常退出时删除自己绑定的 socket。
+
+可在同一配置节点增加 `read-uid=1001`，授权一个独立 Linux UID 查询聚合状态、重载结果、事件和传输计数。共享 socket 以 `0666` 发布，以内核认证的 UID 限定访问。socket 的父目录须为运行账户所有，写权限限于目录 owner。给只读账户提供目录遍历权限，例如使用 `0711` 的专用目录。该账户通过 `nexus control SOCKET --server-uid 1000 status` 显式验证服务端 UID。只读状态省略组成员选择，事件不包含规则、用户名、地址、会话、凭据或原始配置错误。
+
+| 命令 | 结果 |
+| --- | --- |
+| `nexus control SOCKET status` | 监听序号、端口、活动连接、上下行累计和手动选择。支持监听器换代时，`listener-generation` 给出最近一次成功发布的代次。Linux 的 `network-generation` 随链路、地址和路由快照更新，附双栈默认路由计数。快照暂不可用时报告 `unknown`。 |
+| `nexus control SOCKET connections LISTENER [AFTER_ID]` | 列出 ID 大于游标的活动连接，每页最多 96 条并受回包字节上限约束，有下一页时返回 `next`。已取得的可执行文件路径以 `process-path` 返回 |
+| `nexus control SOCKET close LISTENER ID [GENERATION [INSTANCE]]` | 向会话所在的 executor 排队取消，处理完成后该条目退出活动表 |
+| `nexus control SOCKET select GROUP MEMBER [GENERATION [INSTANCE]]` | 原子发布手动选择，新会话使用新代，已建立会话沿用旧代 |
+| `nexus control SOCKET group-health GROUP` | 返回组类型和当前成员，以及每个成员的实际出站、最近探测和探测进行状态 |
+| `nexus control SOCKET reload` | 将既有主配置的重载排入宿主循环，返回操作 ID 和 `pending`。有操作待处理时返回 `reload-busy` |
+| `nexus control SOCKET operation ID` | 查询 `pending`、`succeeded` 或 `failed` 及对应 `control-generation`。最近 64 个操作有效。失败时，服务日志保留详细原因 |
+| `nexus control SOCKET events [AFTER_ID [INSTANCE]]` | 从最近 128 条操作及选择事件中按序读取至多 32 条。使用首行的 `next` 和 `instance` 拉取下一页，`gap=1` 表示已有部分历史被覆盖 |
+| `nexus control SOCKET diagnostics` | 返回已授权接入、未知 UID 拒绝、读请求超时和回包失败计数 |
+
+每个连接交换一条请求和一条响应，请求上限 1024 字节，响应上限 65536 字节。最多保留 32 个已接受连接，请求等候期为两秒。服务器尝试一次非阻塞回包后关闭连接，事件客户端可从游标重新拉取。请求以 `NEXUS/1 ` 开头，后接子命令。每个参数前加一个 NUL 字节，参数可以包含空格或 Unicode。响应首行为 `NEXUS/1 OK` 或 `NEXUS/1 ERROR`，后跟换行和结果。含特殊字符的组名和成员名用双引号包裹并转义。列表游标基于活动 ID，跨页期间会话可变化。监听序号、会话 ID、事件序号、操作 ID 和控制代次的作用域为当前进程实例。成功重载或发布组选择后递增控制代次。新进程发布新 `instance`，客户端用它识别重启。
+
+在 `select` 或 `close` 中带上状态返回的 `control-generation` 和 `instance` 可防止旧操作作用于换代或重启后的目标。传入的代次或实例不匹配时返回 `stale-generation`。
+
+自动探测组的成员状态为 `unknown`、`up`、`down` 或 `stale`。`stale` 表示成员的实际出站已变化，旧测量不再参与选择。正在重测时，`probing=1` 与最近有效结果同时显示。成功样本报告 `latency-ms`，成功或失败样本均报告 `sample-age-ms`。手动选择和负载均衡组显示 `not-probed`。读取状态不会触发探测。
+
+在 `control` 上设置 `selector-state-directory="/var/lib/nexus/selectors"` 后，手动选择写入该私有目录的 `selectors.state`。宿主持有目录独占锁，先编译候选路由，再同步临时文件和原子替换，最后发布新选择。写入或替换失败保留当前选择。替换成功但目录同步失败时，新选择生效，命令返回 `selector-active-persistence-uncertain`。
+
+启动和重载先应用配置，再用已保存的手动选择覆盖对应组。错误版本、截断或不再合法的组和成员会阻止候选启动或发布，保留状态文件供恢复。自动探测结果和活动会话只存在于当前进程。
+
+Linux UDP TPROXY 的活动条目额外返回 `transport-source`、`original-destination` 及可用的 `ingress-ifindex`。前两项是内核交付的端点，IPv6 地址用方括号。入接口索引属于代理的网络命名空间。透明 UDP 的 `source-uid` 和 `process-path` 保持未知，因而省略。相同源端口可以由多个发送 socket 共享，内核的 IP 辅助数据只提供包的网络元数据。
+
+普通 Server 的会话保留建立时的 `route-generation`，初始代次为 1，每次成功发布递增。已成功拨号的 TCP 和已转交数据报的 UDP 条目返回 `route-mode`、`route-rule`、`route-target` 和实际物理 `outbound`。规则与 indexed 谓词编号从 1 开始，与 `rule explain` 一致，后备出口显示 `route-rule=default`。UDP 关联可能访问多个目的，这些路由字段描述最近成功转交的数据报。透明 TPROXY 的原目的始终保存在独立字段。
+
+## 本机流量快照
+
+用 `nexus run --traffic-stats --config config.kdl` 启动。向运行中的进程发送 `SIGUSR1`，从标准错误读取快照。每条 `traffic` 给出监听器序号、端口、活动会话数和双向累计。其后的 `connection` 行显示该监听器内的会话 ID、协议、源和目标端口、转发类型、双向字节以及 `can-close`。最后一行 `traffic-total` 汇总各监听器。按代次隔离的活动会话由各自的 executor 管理。多个 worker 共用监听器的统计表，会话退出后保留已提交字节。
+
+TCP 记录交给目标 socket 或出站协议的应用字节，以及交给客户端的字节。直连按成功的部分写入计数，代理出站通常按完整写操作计数。预读和 TCP Fast Open 的前缀只计一次。普通 HTTP 正向代理计实际转发的 HTTP 消息，包括 HTTP 应用头。SOCKS5 协商、CONNECT 响应和外层代理帧排除。
+
+UDP 记录完整转交的 payload。统计按所有者的逻辑关联划分，关联可以覆盖多个目标。CONNECT-IP 连接记录承载的完整 IP 包，包括 IP 头。MASQUE 服务端的下行字节在对应 Capsule 完成确认时累加。由 TUN 设备转发的 TCP/UDP 则按入队和 socket 写入等对应的交付边界计数，对重传的包不重复计算 TCP payload。
+
+嵌入式调用方可用 `Server::request_traffic_close(id)` 请求关闭标记为 `can-close=1` 的会话。接受请求后由该流的 executor 执行关闭，活动记录在其转发任务清理后退出。原生 SS-2022 UDP 保留由其认证会话决定的撤回和过期规则。
+
+快照按监听器采样。并发写入时各流的读数可能相差一个写入时点，累计字节按无符号 64 位回绕。
 
 ## HTTP/JSON API
 

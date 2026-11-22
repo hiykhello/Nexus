@@ -1,0 +1,11 @@
+[package]
+namespace = "nexus"
+name = "slow-resolver-shim"
+version = "0.1.0"
+
+[build]
+sources = ["../../slow_resolver.c"]
+ldflags = ["-ldl"]
+
+[targets.slow-resolver-shim]
+kind = "shared"

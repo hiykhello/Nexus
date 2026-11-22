@@ -1,8 +1,8 @@
-module nexus.udp.engine;
-import nexus.rules;
+module udp.engine;
+import rules;
 import std;
 
-namespace nexus::udp {
+namespace udp {
     MemoryEngine::MemoryEngine(packet::MemoryLink& link, rules::Matcher policy, Mapping mapping, Filtering filtering,
                                Limits limits, std::size_t mtu, std::optional<std::uint32_t> socket_mark)
         : link_(link), ipv4_(policy,mapping,filtering,limits,mtu,socket_mark),

@@ -1,6 +1,6 @@
-module nexus.dns.fakeip;
+module dns.fakeip;
 import std;
-namespace nexus::dns {
+namespace dns {
     namespace {
         auto name(std::string_view input) -> std::optional<std::string> {
             if (input.ends_with('.')) input.remove_suffix(1);
@@ -31,6 +31,11 @@ namespace nexus::dns {
         if (last_ && now<*last_) return false;
         last_=now; return true;
     }
+    auto FakeIpPool::restore(std::uint32_t address,std::uint64_t view,std::string_view domain) -> bool {
+        if (!contains(address) || entries_[address-first_].generation) return false;
+        entries_[address-first_]=Entry{std::string(domain),view,1,{},0};
+        return true;
+    }
     auto FakeIpPool::publish(std::string_view domain,std::uint64_t view,Clock::time_point now)
         -> std::expected<FakeIpLease,FakeIpError> {
         auto canonical=name(domain);
@@ -39,6 +44,14 @@ namespace nexus::dns {
         auto duration=std::chrono::duration_cast<Clock::duration>(ttl_+grace_);
         if (now>Clock::time_point::max()-duration) return std::unexpected(FakeIpError::time_overflow);
         auto until=now+duration;
+        if (durable_assign_) {
+            auto address=durable_assign_(durable_store_,*canonical,view);
+            if (!address || !contains(*address)) return std::unexpected(FakeIpError::full);
+            auto& entry=entries_[*address-first_];
+            if (!entry.generation) entry=Entry{std::move(*canonical),view,1,until,0};
+            else entry.reusable=std::max(entry.reusable,until);
+            return FakeIpLease{*address,entry.generation,this};
+        }
         for (std::size_t i=0;i<entries_.size();++i) {
             auto& e=entries_[i];
             if (e.generation && e.view==view && e.domain==*canonical) {

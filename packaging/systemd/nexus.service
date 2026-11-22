@@ -1,0 +1,42 @@
+[Unit]
+Description=Nexus Network Proxy Service
+Documentation=https://github.com/nexus-proxy/nexus
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ConfigurationDirectory=nexus
+ConfigurationDirectoryMode=0750
+StateDirectory=nexus
+StateDirectoryMode=0700
+CacheDirectory=nexus
+CacheDirectoryMode=0700
+RuntimeDirectory=nexus
+RuntimeDirectoryMode=0700
+
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+LimitNOFILE=1048576
+
+ExecStartPre=/usr/bin/nexus check --config /etc/nexus/config.kdl
+ExecStart=/usr/bin/nexus run --config /etc/nexus/config.kdl
+ExecReload=/bin/sh -c '/usr/bin/nexus check --config /etc/nexus/config.kdl && kill -HUP $MAINPID'
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target

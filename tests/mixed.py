@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise SOCKS5 and HTTP CONNECT on one real mixed listener."""
+import base64
 import pathlib
 import socket
 import shutil
@@ -8,6 +9,8 @@ import sys
 import tempfile
 import threading
 import time
+
+from dns_rule_support import free_port, nexus_process
 
 server = pathlib.Path(sys.argv[1]).resolve()
 workers = int(sys.argv[2]) if len(sys.argv) > 2 else 1
@@ -244,6 +247,73 @@ routing {{
         assert proc.returncode == 0, proc.stderr.read().decode()
 
 
+def password_auth(root):
+    port = free_port()
+    config = root / "mixed.kdl"
+    secret = root / "password"
+    secret.write_bytes(b"hello:world\n")
+    secret.chmod(0o600)
+    config.write_text(f'''schema-version 1
+role "client"
+workers {workers}
+inbound "local" type="mixed" {{
+    listen host="127.0.0.1" port={port}
+    authentication "password" username="alice" password-file="{secret}"
+}}
+outbound "direct" type="direct"
+routing {{ default-outbound "direct"; }}
+''')
+    valid = b"pRoXy-aUtHoRiZaTiOn: bAsIc " + base64.b64encode(b"alice:hello:world") + b"\r\n"
+    invalid = b"Proxy-Authorization: Basic " + base64.b64encode(b"alice:incorrect") + b"\r\n"
+    with nexus_process(server, config), listener() as target:
+        address = f"127.0.0.1:{target.getsockname()[1]}"
+        connect_head = f"CONNECT {address} HTTP/1.1\r\nHost: {address}\r\n".encode()
+        forward_head = f"POST http://{address}/origin HTTP/1.1\r\nHost: {address}\r\nContent-Length: 4\r\n".encode()
+        for head in (connect_head, forward_head):
+            for credentials in (b"", invalid, valid + valid, b"Proxy-Authorization: Basic YQ=A\r\n"):
+                with connect(port) as client:
+                    client.sendall(head + credentials + b"\r\n")
+                    response = headers(client)
+                    assert response.startswith(b"HTTP/1.1 407 "), response
+                    assert b"Proxy-Authenticate: Basic " in response, response
+        with connect(port) as client:
+            client.sendall(connect_head + valid[:-4])
+            client.sendall(valid[-4:] + b"\r\nPING")
+            client.shutdown(socket.SHUT_WR)
+            assert headers(client).startswith(b"HTTP/1.1 200 ")
+            with target.accept()[0] as peer:
+                peer.settimeout(3)
+                assert exact(peer, 4) == b"PING" and peer.recv(1) == b""
+                peer.sendall(b"PONG")
+                peer.shutdown(socket.SHUT_WR)
+                assert exact(client, 4) == b"PONG" and client.recv(1) == b""
+        with connect(port) as client:
+            client.sendall(forward_head + valid + b"\r\nBODY")
+            with target.accept()[0] as peer:
+                peer.settimeout(3)
+                request = headers(peer)
+                assert request.startswith(b"POST /origin HTTP/1.1\r\n")
+                assert b"proxy-authorization" not in request.lower(), request
+                assert exact(peer, 4) == b"BODY"
+                peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK")
+                assert headers(client).startswith(b"HTTP/1.1 200 ") and exact(client, 2) == b"OK"
+        with connect(port) as client:
+            client.sendall(b"\x05\x02\x00\x02")
+            assert exact(client, 2) == b"\x05\x02"
+            client.sendall(b"\x01\x05alice\x0bhello:world")
+            assert exact(client, 2) == b"\x01\x00"
+            client.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" + target.getsockname()[1].to_bytes(2, "big"))
+            assert exact(client, 10)[:2] == b"\x05\x00"
+            with target.accept()[0] as peer:
+                peer.sendall(b"authenticated SOCKS")
+                assert exact(client, 19) == b"authenticated SOCKS"
+
+
 with tempfile.TemporaryDirectory(prefix='nexus-mixed-test-') as directory:
-    run(pathlib.Path(directory))
-print('Mixed SOCKS5 and HTTP CONNECT, routing and failures passed')
+    root = pathlib.Path(directory)
+    if "--password" in sys.argv[3:]:
+        password_auth(root)
+        print("Mixed HTTP Basic and SOCKS5 authentication, fragmented CONNECT and credential stripping passed")
+    else:
+        run(root)
+        print('Mixed SOCKS5 and HTTP CONNECT, routing and failures passed')

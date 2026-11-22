@@ -1,0 +1,42 @@
+[package]
+namespace = "nexus"
+name = "fakeip-tests"
+version = "0.1.0"
+
+# FakeIP proxy tests opt into their implementation and callbacks; the default
+# workspace graph keeps the ordinary request provider.
+[features]
+fakeip-base = []
+proxy = ["fakeip-base"]
+source-route = { implies = ["proxy", "nexus.proxy-runtime/test-source-route"], defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
+inbound-protocols = ["proxy", "nexus.proxy-runtime/vless", "nexus.proxy-runtime/ss2022"]
+lifetime = ["fakeip-base", "nexus.proxy-runtime/test-fakeip-lifetime"]
+owner = ["fakeip-base", "nexus.proxy-runtime/test-fakeip-abandon"]
+io-uring = ["nexus.corosio-source/uring"]
+
+[feature-deps.fakeip-base]
+nexus.dns = { path = "../../src/dns", features = ["fakeip", "test-fakeip"] }
+nexus.proxy-runtime = { path = "../../src/proxy", default-features = false, features = ["dns-standard", "test-fakeip"] }
+nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[feature-deps.inbound-protocols]
+nexus.protocols = { path = "../../src", features = ["vless", "ss2022"] }
+
+[feature-deps.io-uring]
+nexus.uring-system.workspace = true
+
+[targets.proxy-fakeip-fixture]
+kind = "bin"
+main = "../proxy_fakeip_fixture.cpp"
+required_features = ["proxy"]
+
+[targets.proxy-fakeip-lifetime]
+kind = "bin"
+main = "../proxy_fakeip_lifetime.cpp"
+required_features = ["lifetime"]
+
+[targets.proxy-fakeip-owner]
+kind = "bin"
+main = "../proxy_fakeip_owner.cpp"
+required_features = ["owner"]

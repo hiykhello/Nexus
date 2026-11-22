@@ -1,6 +1,6 @@
 import std;
-import nexus.shadowsocks.header;
-namespace s=nexus::shadowsocks;
+import shadowsocks.header;
+namespace s=shadowsocks;
 int main() {
     std::array<std::uint8_t,7> address{1,127,0,0,1,0x1f,0x90};
     std::array<std::uint8_t,2> padding{0xaa,0xbb};

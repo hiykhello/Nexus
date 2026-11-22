@@ -1,0 +1,57 @@
+[package]
+namespace = "nexus"
+name = "ss-udp-tests"
+version = "0.1.0"
+
+[dependencies]
+nexus.ss-udp-runtime = { path = "../../src/udp-runtime" }
+nexus.policy = { path = "../../src/rules" }
+nexus.proxy-runtime = { path = "../../src/proxy" }
+nexus.protocols = { path = "../../src", features = ["ss2022"] }
+nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[features]
+default = ["io-uring"]
+io-uring = ["nexus.corosio-source/uring"]
+test-udp-pending = { implies = ["nexus.ss-udp-runtime/test-udp-pending"], defines = ["NEXUS_TEST_UDP_PENDING"] }
+test-udp-send = { implies = ["nexus.ss-udp-runtime/test-udp-send"], defines = ["NEXUS_TEST_UDP_SEND_DELAY"] }
+
+[feature-deps.io-uring]
+nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+
+[build]
+sources = ["hooks.cpp"]
+
+[targets.resolve-fixture]
+kind = "bin"
+main = "resolve.cpp"
+
+[targets.resolve-owner-fixture]
+kind = "bin"
+main = "resolve_owner.cpp"
+
+[targets.listener-fixture]
+kind = "bin"
+main = "listener.cpp"
+
+[targets.ss-udp-relay]
+kind = "bin"
+main = "relay.cpp"
+
+[targets.cache-restart-fixture]
+kind = "bin"
+main = "cache_restart.cpp"
+
+[targets.pending-fault]
+kind = "bin"
+main = "pending_fault.cpp"
+required_features = ["test-udp-pending"]
+
+[targets.ss-udp-route]
+kind = "bin"
+main = "../shadowsocks_udp_route.cpp"
+
+[targets.ss-udp-sessions]
+kind = "bin"
+main = "../shadowsocks_udp_sessions.cpp"

@@ -1,13 +1,25 @@
-module;
-#include <openssl/evp.h>
-#include <openssl/ec.h>
-#include <openssl/nid.h>
-#include <openssl/rsa.h>
-#include <openssl/x509.h>
-module nexus.tls.certificate_verify;
+module tls.certificate_verify;
+import nexus.thirdparty.boringssl;
+import tls.signature;
+import crypto.backend_errors;
 import std;
+using namespace nex::boringssl;
 
-namespace nexus::tls {
+namespace tls {
+    auto ed25519_certificate_fields(std::span<std::uint8_t const> der) -> std::expected<Ed25519CertificateFields,CertificateVerifyError> {
+        if (der.empty() || der.size()>1048576) return std::unexpected(CertificateVerifyError::invalid_certificate);
+        crypto::BackendErrors backend_errors;
+        auto cursor=der.data(); std::unique_ptr<X509,decltype(&X509_free)> cert(d2i_X509(nullptr,&cursor,static_cast<long>(der.size())),X509_free);
+        if (backend_errors.allocation_failed()) return std::unexpected(CertificateVerifyError::crypto_error);
+        if (!cert || cursor!=der.data()+der.size()) return std::unexpected(CertificateVerifyError::invalid_certificate);
+        std::unique_ptr<EVP_PKEY,decltype(&EVP_PKEY_free)> key(X509_get_pubkey(cert.get()),EVP_PKEY_free);
+        if (!key || EVP_PKEY_id(key.get())!=evp_pkey_ed25519) return std::unexpected(backend_errors.allocation_failed() ? CertificateVerifyError::crypto_error : CertificateVerifyError::invalid_certificate);
+        Ed25519CertificateFields result{}; std::size_t size=result.public_key.size();
+        if (EVP_PKEY_get_raw_public_key(key.get(),result.public_key.data(),&size)!=1 || size!=result.public_key.size()) return std::unexpected(CertificateVerifyError::invalid_certificate);
+        ASN1_BIT_STRING const* sig=nullptr; X509_get0_signature(&sig,nullptr,cert.get());
+        if (!sig || ASN1_BIT_STRING_unused_bits(sig)!=0 || ASN1_STRING_length(sig)!=64) return std::unexpected(CertificateVerifyError::invalid_certificate);
+        std::copy_n(ASN1_STRING_get0_data(sig),result.signature.size(),result.signature.begin()); return result;
+    }
     auto verify_server_certificate_signature(std::span<std::uint8_t const> der, crypto::Hash hash,
         std::span<std::uint8_t const> transcript_hash, std::span<std::uint16_t const> offered,
         std::span<std::uint8_t const> message) -> std::expected<void,CertificateVerifyError> {
@@ -18,35 +30,29 @@ namespace nexus::tls {
         auto signature_length=(std::size_t{message[6]}<<8)|message[7];
         if (length!=message.size()-4 || signature_length==0 || signature_length!=message.size()-8) return std::unexpected(CertificateVerifyError::invalid_message);
         auto scheme=static_cast<std::uint16_t>((std::uint16_t{message[4]}<<8)|message[5]);
-        if (scheme!=0x0804 && scheme!=0x0403 && scheme!=0x0807) return std::unexpected(CertificateVerifyError::unsupported_scheme);
+        auto parameters=signature_parameters(scheme);
+        if (!parameters) return std::unexpected(CertificateVerifyError::unsupported_scheme);
         if (!std::ranges::contains(offered,scheme)) return std::unexpected(CertificateVerifyError::unoffered_scheme);
         if (der.empty() || der.size()>1048576) return std::unexpected(CertificateVerifyError::invalid_certificate);
+        crypto::BackendErrors backend_errors;
         auto cursor=der.data(); std::unique_ptr<X509,decltype(&X509_free)> cert(d2i_X509(nullptr,&cursor,static_cast<long>(der.size())),X509_free);
+        if (backend_errors.allocation_failed()) return std::unexpected(CertificateVerifyError::crypto_error);
         if (!cert || cursor!=der.data()+der.size()) return std::unexpected(CertificateVerifyError::invalid_certificate);
         std::unique_ptr<EVP_PKEY,decltype(&EVP_PKEY_free)> key(X509_get_pubkey(cert.get()),EVP_PKEY_free);
-        if (!key) return std::unexpected(CertificateVerifyError::invalid_certificate);
-        if ((scheme==0x0804 && EVP_PKEY_id(key.get())!=EVP_PKEY_RSA) ||
-            (scheme==0x0403 && EVP_PKEY_id(key.get())!=EVP_PKEY_EC) ||
-            (scheme==0x0807 && EVP_PKEY_id(key.get())!=EVP_PKEY_ED25519))
-            return std::unexpected(CertificateVerifyError::invalid_certificate);
-        if (scheme==0x0403) {
-            auto ec=EVP_PKEY_get0_EC_KEY(key.get());
-            auto group=ec ? EC_KEY_get0_group(ec) : nullptr;
-            if (!group || EC_GROUP_get_curve_name(group)!=NID_X9_62_prime256v1)
-                return std::unexpected(CertificateVerifyError::invalid_certificate);
-        }
+        if (!key) return std::unexpected(backend_errors.allocation_failed() ? CertificateVerifyError::crypto_error : CertificateVerifyError::invalid_certificate);
+        if (!signature_key_matches(*parameters,key.get())) return std::unexpected(CertificateVerifyError::invalid_certificate);
         std::unique_ptr<EVP_MD_CTX,decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(),EVP_MD_CTX_free); EVP_PKEY_CTX* pctx=nullptr;
-        auto md=scheme==0x0807 ? nullptr : EVP_sha256();
+        auto md=parameters->digest;
         if (!ctx || EVP_DigestVerifyInit(ctx.get(),&pctx,md,nullptr,key.get())!=1 || !pctx)
             return std::unexpected(CertificateVerifyError::crypto_error);
-        if (scheme==0x0804 && (EVP_PKEY_CTX_set_rsa_padding(pctx,RSA_PKCS1_PSS_PADDING)!=1 ||
-            EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx,32)!=1 || EVP_PKEY_CTX_set_rsa_mgf1_md(pctx,EVP_sha256())!=1))
+        if (parameters->pss_salt && (EVP_PKEY_CTX_set_rsa_padding(pctx,rsa_pkcs1_pss_padding)!=1 ||
+            EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx,parameters->pss_salt)!=1 || EVP_PKEY_CTX_set_rsa_mgf1_md(pctx,md)!=1))
             return std::unexpected(CertificateVerifyError::crypto_error);
         constexpr std::string_view context="TLS 1.3, server CertificateVerify";
         std::vector<std::uint8_t> input(64,0x20); input.insert(input.end(),context.begin(),context.end()); input.push_back(0);
         input.insert(input.end(),transcript_hash.begin(),transcript_hash.end());
         if (EVP_DigestVerify(ctx.get(),message.data()+8,signature_length,input.data(),input.size())!=1)
-            return std::unexpected(CertificateVerifyError::invalid_signature);
+            return std::unexpected(backend_errors.allocation_failed() ? CertificateVerifyError::crypto_error : CertificateVerifyError::invalid_signature);
         return {};
     }
 }

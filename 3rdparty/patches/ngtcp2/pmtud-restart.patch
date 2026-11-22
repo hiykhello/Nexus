@@ -1,0 +1,27 @@
+--- a/ngtcp2-1.26.0/lib/ngtcp2_conn.c
++++ b/ngtcp2-1.26.0/lib/ngtcp2_conn.c
+@@ -5142,6 +5142,24 @@
+   conn->pmtud = NULL;
+ }
+ 
++/* Nexus: restart path MTU discovery after a local EMSGSIZE.  The public
++   ngtcp2 API does not expose a way to lower the confirmed path MTU. */
++int nexus_ngtcp2_restart_pmtud(ngtcp2_conn *conn, int reset_path) {
++  if (conn->local.settings.no_pmtud ||
++      conn->local.settings.no_tx_udp_payload_size_shaping ||
++      !conn_is_tls_handshake_completed(conn) || !conn->remote.transport_params) {
++    return NGTCP2_ERR_INVALID_STATE;
++  }
++
++  ngtcp2_conn_stop_pmtud(conn);
++  if (reset_path) {
++    conn->dcid.current.max_udp_payload_size = NGTCP2_MAX_UDP_PAYLOAD_SIZE;
++    conn->cstat.max_tx_udp_payload_size =
++      ngtcp2_conn_get_path_max_tx_udp_payload_size2(conn);
++  }
++  return conn_start_pmtud(conn);
++}
++
+ static ngtcp2_ssize conn_write_pmtud_probe(ngtcp2_conn *conn,
+                                            ngtcp2_pkt_info *pi, uint8_t *dest,
+                                            size_t destlen, ngtcp2_tstamp ts) {

@@ -3,8 +3,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.shadowsocks.udp_packet;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_packet;
+namespace s=shadowsocks;
 struct Socket { int fd; explicit Socket(int family=AF_INET) : fd(::socket(family,SOCK_DGRAM|SOCK_CLOEXEC,0)) {} ~Socket() { if (fd>=0) ::close(fd); } };
 int main(int argc,char** argv) {
     if (argc!=3 && argc!=4 && argc!=5) return 1;
@@ -40,6 +40,83 @@ int main(int argc,char** argv) {
         auto decoded=s::decode_udp_packet(psk,s::UdpDirection::server,std::span{buffer}.first(n),wall(),packet.session_id);
         return decoded && decoded->payload==std::vector<std::uint8_t>{payload};
     };
+    if (argc==4 && std::string_view(argv[3])=="generation") {
+        auto initial=encode();
+        sockaddr_in original{},relay{};
+        if (!send_wire(first.fd,initial) || !read_target(1,original) || !reply(original,11,first.fd)) return 110;
+        std::cout << "ready\n" << std::flush;
+        char next{};
+        if (!(std::cin>>next)) return 111;
+        packet.packet_id=1; packet.payload={2};
+        if (!send_wire(first.fd,encode()) || !read_target(2,relay) ||
+            relay.sin_port!=original.sin_port || !reply(relay,12,first.fd)) return 112;
+        std::cout << "before-publish\n" << std::flush;
+        unsigned port{};
+        if (!(std::cin>>port) || !port || port>65535) return 113;
+        listener.sin_port=htons(static_cast<std::uint16_t>(port));
+        if (::connect(second.fd,reinterpret_cast<sockaddr*>(&listener),sizeof(listener))) return 114;
+        if (!send_wire(second.fd,initial) || !no_data(target.fd,100)) return 115;
+        packet.packet_id=2; packet.payload={3};
+        if (!send_wire(first.fd,encode()) || !read_target(3,relay) ||
+            relay.sin_port!=original.sin_port || !reply(relay,13,first.fd)) return 116;
+        packet.session_id[0]=2; packet.packet_id=0; packet.payload={4};
+        if (!send_wire(second.fd,encode()) || !read_target(4,relay) ||
+            relay.sin_port==original.sin_port || !reply(relay,14,second.fd)) return 117;
+        std::cout << "draining\n" << std::flush;
+        if (!(std::cin>>next)) return 118;
+        packet.session_id[0]=1; packet.packet_id=3; packet.payload={5};
+        if (!send_wire(second.fd,encode()) || !no_data(target.fd,150)) return 119;
+        packet.session_id[0]=2; packet.packet_id=1; packet.payload={6};
+        if (!send_wire(second.fd,encode()) || !read_target(6,relay) || !reply(relay,16,second.fd)) return 120;
+        return 0;
+    }
+    if (argc==4 && (std::string_view(argv[3])=="inbound-blocked" || std::string_view(argv[3])=="inbound-allowed")) {
+        if (std::string_view(argv[3])=="inbound-allowed") packet.session_id[0]=19;
+        if (!send_wire(first.fd,encode())) return 104;
+        if (std::string_view(argv[3])=="inbound-blocked") return no_data(target.fd,300) ? 0 : 105;
+        sockaddr_in relay{};
+        return read_target(1,relay) && reply(relay,12,first.fd) ? 0 : 106;
+    }
+    if (argc==4 && std::string_view(argv[3])=="source") {
+        sockaddr_in first_address{},second_address{}; socklen_t a=sizeof(first_address),b=sizeof(second_address);
+        if (::getsockname(first.fd,reinterpret_cast<sockaddr*>(&first_address),&a) ||
+            ::getsockname(second.fd,reinterpret_cast<sockaddr*>(&second_address),&b)) return 90;
+        std::cout << ntohs(first_address.sin_port) << ' ' << ntohs(second_address.sin_port) << '\n' << std::flush;
+        char start; if (!(std::cin>>start)) return 91;
+        sockaddr_in relay{};
+        if (!send_wire(first.fd,encode()) || !no_data(target.fd,300)) return 92;
+        packet.packet_id=1; packet.payload={2};
+        if (!send_wire(second.fd,encode()) || !read_target(2,relay) || !reply(relay,12,second.fd)) return 93;
+        packet.packet_id=2; packet.payload={3};
+        if (!send_wire(first.fd,encode()) || !no_data(target.fd,300)) return 94;
+        packet.packet_id=3; packet.payload={4};
+        if (!send_wire(second.fd,encode()) || !read_target(4,relay) || !reply(relay,14,second.fd)) return 95;
+        return 0;
+    }
+    if ((argc==4 && std::string_view(argv[3])=="source-dns") ||
+        (argc==5 && std::string_view(argv[3])=="inbound-dns")) {
+        if (argc==5) {
+            listener.sin_port=htons(static_cast<std::uint16_t>(std::atoi(argv[4])));
+            if (::connect(second.fd,reinterpret_cast<sockaddr*>(&listener),sizeof(listener))) return 107;
+        }
+        sockaddr_in first_address{},second_address{}; socklen_t a=sizeof(first_address),b=sizeof(second_address);
+        if (::getsockname(first.fd,reinterpret_cast<sockaddr*>(&first_address),&a) ||
+            ::getsockname(second.fd,reinterpret_cast<sockaddr*>(&second_address),&b)) return 96;
+        std::cout << ntohs(first_address.sin_port) << ' ' << ntohs(second_address.sin_port) << '\n' << std::flush;
+        char start; if (!(std::cin>>start)) return 97;
+        packet.address={3,12,'p','e','n','d','i','n','g','.','t','e','s','t',static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)};
+        if (!send_wire(first.fd,encode())) return 98;
+        std::cout << "first\n" << std::flush;
+        if (!(std::cin>>start)) return 99;
+        if (start=='q') return no_data(target.fd,500) ? 0 : 103;
+        packet.packet_id=1; packet.payload={2};
+        if (!send_wire(second.fd,encode())) return 100;
+        std::cout << "second\n" << std::flush;
+        if (!(std::cin>>start)) return 101;
+        sockaddr_in relay{};
+        if (!read_target(2,relay) || !no_data(target.fd,300) || !reply(relay,12,second.fd)) return 102;
+        return 0;
+    }
     if (argc==5 && (std::string_view(argv[3])=="multi" || std::string_view(argv[3])=="multi6")) {
         Socket second6(AF_INET6); int second_fd=second.fd;
         if (std::string_view(argv[3])=="multi6") {
@@ -60,7 +137,8 @@ int main(int argc,char** argv) {
         std::println("SS-2022 UDP multiple listeners share replay and reply routing");
         return 0;
     }
-    if (argc==4 && std::string_view(argv[3])=="system-stall") {
+    if (argc==4 && (std::string_view(argv[3])=="system-stall" || std::string_view(argv[3])=="system-stall-next")) {
+        if (std::string_view(argv[3])=="system-stall-next") packet.packet_id=1;
         packet.address={3,16,'n','e','x','u','s','-','d','e','l','a','y','.','t','e','s','t',0,80};
         return send_wire(first.fd,encode()) ? 0 : 61;
     }

@@ -1,6 +1,6 @@
 import std;
-import nexus.vless;
-namespace v=nexus::vless;
+import vless;
+namespace v=vless;
 using Bytes=std::vector<std::uint8_t>;
 int main() {
     auto user=v::parse_user_id("00010203-0405-0607-0809-0A0B0C0D0E0f");
@@ -81,5 +81,65 @@ int main() {
     auto full=v::ServerHandshake::create(limit);
     auto last=expected; std::ranges::fill(std::span(last).subspan(1,16),0); last[1]=63;
     if (!full || full->feed(last).status!=v::ServerStatus::dialing) return 28;
+    v::TcpRequest vision_request{*user,v::AddressKind::domain,443,Bytes{'e','x','a','m','p','l','e','.','c','o','m'}};
+    auto vision=v::encode_vision_tcp_request(vision_request);
+    Bytes addon{18,0x0a,16,'x','t','l','s','-','r','p','r','x','-','v','i','s','i','o','n'};
+    auto expected_vision=expected;
+    expected_vision.erase(expected_vision.begin()+17);
+    expected_vision.insert(expected_vision.begin()+17,addon.begin(),addon.end());
+    if (!vision || *vision!=expected_vision) return 29;
+    for (std::size_t i=0;i<vision->size();++i)
+        if (v::parse_vision_tcp_request(std::span(*vision).first(i)).status!=v::HeaderStatus::incomplete) return 30;
+    vision->push_back(42);
+    auto parsed_vision=v::parse_vision_tcp_request(*vision);
+    if (parsed_vision.status!=v::HeaderStatus::accepted || parsed_vision.consumed!=expected_vision.size() ||
+        !parsed_vision.request || parsed_vision.request->address!=vision_request.address ||
+        v::parse_tcp_request(*vision).status!=v::HeaderStatus::unsupported) return 31;
+    auto with_unknown=expected_vision;
+    with_unknown.insert(with_unknown.begin()+36,{0x12,0x02,0x11,0x22,0x18,0x01,0x25,1,2,3,4}); with_unknown[17]+=11;
+    if (v::parse_vision_tcp_request(with_unknown).status!=v::HeaderStatus::accepted) return 32;
+    auto malformed_vision=expected_vision; malformed_vision[19]=0x7f;
+    if (v::parse_vision_tcp_request(malformed_vision).status!=v::HeaderStatus::malformed) return 33;
+    malformed_vision=expected_vision; malformed_vision[18]=0;
+    if (v::parse_vision_tcp_request(malformed_vision).status!=v::HeaderStatus::malformed) return 34;
+    malformed_vision=expected_vision; malformed_vision[20]='z';
+    if (v::parse_vision_tcp_request(malformed_vision).status!=v::HeaderStatus::unsupported) return 35;
+    auto legacy_server=v::ServerHandshake::create(users);
+    if (!legacy_server || legacy_server->feed(expected_vision).status!=v::ServerStatus::rejected) return 36;
+    v::TcpRequest max_vision{*user,v::AddressKind::domain,443,Bytes(255,'a')};
+    auto max_header=v::encode_vision_tcp_request(max_vision);
+    if (!max_header || max_header->size()!=296 || v::parse_vision_tcp_request(*max_header).consumed!=296) return 37;
+    auto duplicate=expected_vision;
+    duplicate.insert(duplicate.begin()+36,{0x0a,0x01,'x'}); duplicate[17]+=3;
+    if (v::parse_vision_tcp_request(duplicate).status!=v::HeaderStatus::unsupported) return 38;
+    auto overflow=expected_vision;
+    overflow.insert(overflow.begin()+36,{0x18,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x02}); overflow[17]+=11;
+    if (v::parse_vision_tcp_request(overflow).status!=v::HeaderStatus::malformed) return 39;
+    auto group=expected_vision; group.insert(group.begin()+36,0x1b); ++group[17];
+    if (v::parse_vision_tcp_request(group).status!=v::HeaderStatus::unsupported) return 40;
+    if (v::ServerHandshake::create_vision({}) || v::ServerHandshake::create_vision(std::array<v::UserId,2>{*user,*user})) return 41;
+    auto full_addon=*max_header;
+    full_addon.insert(full_addon.begin()+36,{0x12,0xea,0x01});
+    full_addon.insert(full_addon.begin()+39,234,0x42); full_addon[17]=255;
+    if (full_addon.size()!=533 || v::parse_vision_tcp_request(full_addon).consumed!=533) return 42;
+    auto with_tail=full_addon; with_tail.insert(with_tail.end(),{'d','a','t','a'});
+    for (std::size_t split=0;split<=full_addon.size();++split) {
+        auto handshake=v::ServerHandshake::create_vision(users);
+        if (!handshake || handshake->request() || handshake->complete_dial(true)) return 43;
+        auto first=handshake->feed(std::span(full_addon).first(split));
+        auto second=handshake->feed(std::span(with_tail).subspan(split));
+        if (first.consumed!=split || second.consumed!=full_addon.size()-split || second.status!=v::ServerStatus::dialing ||
+            !handshake->request() || handshake->request()->user!=*user || handshake->request()->address!=max_vision.address) return 44;
+        auto response=handshake->complete_dial(true);
+        if (!response || *response!=v::encode_response() || handshake->status()!=v::ServerStatus::established || handshake->feed(Bytes{1}).consumed) return 45;
+    }
+    auto denied_vision=expected_vision; denied_vision[1]^=0x80;
+    auto rejected=v::ServerHandshake::create_vision(users);
+    if (!rejected || rejected->feed(denied_vision).status!=v::ServerStatus::rejected || rejected->request() || rejected->complete_dial(true)) return 46;
+    auto plain_vision=v::ServerHandshake::create_vision(users);
+    if (!plain_vision || plain_vision->feed(expected).status!=v::ServerStatus::rejected) return 47;
+    auto failed_vision=v::ServerHandshake::create_vision(users);
+    if (!failed_vision || failed_vision->feed(expected_vision).status!=v::ServerStatus::dialing || failed_vision->complete_dial(false) ||
+        failed_vision->status()!=v::ServerStatus::rejected || failed_vision->request()) return 48;
     std::cout << "VLESS version 0 TCP header boundaries and rejection passed\n";
 }

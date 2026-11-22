@@ -1,7 +1,7 @@
-module nexus.tcp.engine;
+module tcp.engine;
 import std;
 
-namespace nexus::tcp {
+namespace tcp {
     namespace {
         auto mss_option(std::size_t mtu, std::size_t overhead) noexcept -> std::array<std::uint8_t,4> {
             auto mss=static_cast<std::uint16_t>(std::min<std::size_t>(mtu-overhead,65535-overhead));
@@ -33,7 +33,7 @@ namespace nexus::tcp {
             auto bytes = packet::make_tcp4(view, mtu_);
             if (!bytes) return std::unexpected(EngineError::invalid_mtu);
             report.action = ServiceAction::syn_ack;
-            auto sent = link_.send(packet::Side::second, *bytes);
+            auto sent = link_.send(packet::Side::second, *bytes, packet::PacketKind::ordinary, 0, watch(*bytes));
             if (!sent) {
                 if (sent.error() == packet::DeviceError::queue_full) report.output.backpressured = true;
                 else report.output.output_error = sent.error();
@@ -94,7 +94,7 @@ namespace nexus::tcp {
             auto bytes = packet::make_tcp6(view, mtu_);
             if (!bytes) return std::unexpected(EngineError::invalid_mtu);
             report.action = ServiceAction::syn_ack;
-            auto sent = link_.send(packet::Side::second, *bytes);
+            auto sent = link_.send(packet::Side::second, *bytes, packet::PacketKind::ordinary, 0, watch(*bytes));
             if (!sent) {
                 if (sent.error() == packet::DeviceError::queue_full) report.output.backpressured = true;
                 else report.output.output_error = sent.error();

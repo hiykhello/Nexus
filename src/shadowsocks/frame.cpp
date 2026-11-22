@@ -1,7 +1,7 @@
-module nexus.shadowsocks.frame;
+module shadowsocks.frame;
 import std;
-import nexus.shadowsocks.chunk;
-namespace nexus::shadowsocks {
+import shadowsocks.chunk;
+namespace shadowsocks {
     namespace {
         auto frame_error(ChunkError error) -> FrameError {
             return error==ChunkError::authentication_failed ? FrameError::authentication : FrameError::crypto;

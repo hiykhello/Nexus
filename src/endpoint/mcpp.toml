@@ -1,0 +1,25 @@
+[package]
+namespace = "nexus"
+name = "wireguard-endpoint"
+version = "0.1.0"
+
+# Control-plane construction is separate from reusable protocol/packet cores.
+[dependencies]
+nexus.protocols = { path = "..", features = ["wireguard-tun"] }
+nexus.tun = { path = "../transport", features = ["network", "default-network"] }
+nexus.dns = { path = "../dns" }
+nexus.policy = { path = "../rules" }
+
+[features]
+# Templates always have one module provider; only enabled CLI instances link
+# the actual system sd-bus implementation. Closed import/link is verified.
+host-dns-resolved = []
+
+[feature-deps.host-dns-resolved]
+nexus.systemd-system = { path = "../../3rdparty/mcpp-systemd" }
+
+[build]
+sources = [
+    "config.cppm", "config.cpp", "config_addresses.cpp", "credentials.cppm",
+    "route_probe.cppm", "host_dns_types.cppm", "resolved_dns.cppm", "owner.cppm", "process_signals.cppm", "bootstrap.cppm", "bootstrap.cpp",
+]

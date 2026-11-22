@@ -1,13 +1,21 @@
-module nexus.tcp.connection;
-import nexus.packet;
-import nexus.tcp.handshake;
-import nexus.tcp.receive;
-import nexus.tcp.send;
+module tcp.connection;
+import packet;
+import tcp.handshake;
+import tcp.receive;
+import tcp.send;
 import std;
 
-namespace nexus::tcp {
+namespace tcp {
+    namespace {
+        auto compute_wscale(std::size_t capacity) noexcept -> std::uint8_t {
+            std::uint8_t shift = 0;
+            while (shift < 14 && (capacity >> shift) > 65535) ++shift;
+            return shift;
+        }
+    }
     PassiveConnection::PassiveConnection(PassiveHandshake handshake, ReceiveBuffer receive, TimedSend send, std::uint64_t now)
-        : handshake_(std::move(handshake)), timer_(now), receive_(std::move(receive)), send_(std::move(send)), now_(now) {}
+        : handshake_(std::move(handshake)), timer_(now), receive_(std::move(receive)), send_(std::move(send)),
+          now_(now), effective_mss_(handshake_.peer_mss()) {}
     auto PassiveConnection::advance(std::uint64_t now) const noexcept -> bool {
         if (now < now_) return false;
         now_ = now;
@@ -16,25 +24,37 @@ namespace nexus::tcp {
     auto PassiveConnection::accept(packet::Tcp4View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now,
                                    std::uint16_t default_mss)
         -> std::expected<PassiveConnection, ConnectionError> {
-        if (!capacity || capacity > 65535) return std::unexpected(ConnectionError::invalid_capacity);
-        auto handshake = PassiveHandshake::accept(syn, iss,default_mss);
+        constexpr std::size_t kMaxBufferCapacity = 4u * 1024u * 1024u;
+        if (!capacity || capacity > kMaxBufferCapacity) return std::unexpected(ConnectionError::invalid_capacity);
+        auto handshake = PassiveHandshake::accept(syn, iss, default_mss, compute_wscale(capacity));
         if (!handshake) return std::unexpected(ConnectionError::invalid_packet);
         auto receive = ReceiveBuffer::create(handshake->receive_next(), capacity);
         if (!receive) return std::unexpected(ConnectionError::invalid_capacity);
         auto send = TimedSend::create(handshake->send_next(), capacity);
         if (!send) return std::unexpected(ConnectionError::invalid_capacity);
-        auto connection=PassiveConnection(std::move(*handshake), std::move(*receive), std::move(*send), now);
-        connection.max_peer_window_=syn.window;
+        auto connection = PassiveConnection(std::move(*handshake), std::move(*receive), std::move(*send), now);
+        connection.max_peer_window_ = syn.window;
+        connection.initial_dscp_ = syn.dscp;
         return connection;
     }
     auto PassiveConnection::syn_ack() const -> packet::Tcp4View {
-        return handshake_.syn_ack(static_cast<std::uint16_t>(receive_.window()));
+        // RFC 7323 §2.2: window in SYN-ACK itself is unscaled, clamped to 65535.
+        return handshake_.syn_ack(static_cast<std::uint16_t>(std::min<std::size_t>(65535, receive_.window())));
+    }
+    auto PassiveConnection::set_pmtu(std::uint16_t mtu, bool ipv6) noexcept -> void {
+        std::uint16_t hdr = ipv6 ? 60u : 40u;
+        std::uint16_t min_mtu = ipv6 ? 1280u : 576u;
+        if (mtu < min_mtu) mtu = min_mtu;
+        if (mtu > hdr) {
+            std::uint16_t candidate = static_cast<std::uint16_t>(mtu - hdr);
+            effective_mss_ = std::min(effective_mss_, candidate);
+        }
     }
     namespace {
         auto core_segment(packet::Tcp6View v) -> packet::Tcp4View {
             return {.source_port=v.source_port,.destination_port=v.destination_port,.sequence=v.sequence,
                     .acknowledgement=v.acknowledgement,.flags=v.flags,.window=v.window,.urgent=v.urgent,
-                    .options=v.options,.payload=v.payload};
+                    .options=v.options,.payload=v.payload,.dscp=v.dscp};
         }
     }
     auto PassiveConnection6::accept(packet::Tcp6View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now)
@@ -94,12 +114,14 @@ namespace nexus::tcp {
             return std::unexpected(ConnectionError::challenge_ack);
         bool duplicate_fin = false;
         if (state_ == ConnectionState::handshake) {
-            auto result = handshake_.input(segment, static_cast<std::uint16_t>(receive_.window()));
+            auto result = handshake_.input(segment, receive_.window());
             if (!result) return std::unexpected(result.error() == HandshakeError::invalid_ack ? ConnectionError::invalid_ack
                 : result.error() == HandshakeError::invalid_sequence ? ConnectionError::unacceptable : ConnectionError::invalid_packet);
             if (!*result) return false;
-            timer_.stop(); state_ = ConnectionState::established; peer_window_ = segment.window;
-            max_peer_window_ = std::max(max_peer_window_, segment.window);
+            timer_.stop(); state_ = ConnectionState::established;
+            auto scaled_win = static_cast<std::uint32_t>(segment.window) << handshake_.peer_window_scale();
+            peer_window_ = scaled_win;
+            max_peer_window_ = std::max(max_peer_window_, scaled_win);
             window_sequence_ = segment.sequence; window_ack_ = segment.acknowledgement;
             (void)send_.due(now, 0);
         } else {
@@ -138,8 +160,9 @@ namespace nexus::tcp {
             auto newer_sequence = ack_before(window_sequence_, segment.sequence);
             auto same_sequence = window_sequence_ == segment.sequence;
             if (!stale_ack && (newer_sequence || (same_sequence && !ack_before(segment.acknowledgement, window_ack_)))) {
-                peer_window_ = segment.window;
-                max_peer_window_ = std::max(max_peer_window_, segment.window);
+                auto scaled_win = static_cast<std::uint32_t>(segment.window) << handshake_.peer_window_scale();
+                peer_window_ = scaled_win;
+                max_peer_window_ = std::max(max_peer_window_, scaled_win);
                 window_sequence_ = segment.sequence; window_ack_ = segment.acknowledgement;
                 if (peer_window_) { probe_deadline_.reset(); probe_rto_ = 1000; }
             }
@@ -174,8 +197,34 @@ namespace nexus::tcp {
         return {};
     }
     auto PassiveConnection::ack() const -> packet::Tcp4View {
-        auto result = syn_ack(); result.sequence = send_.next() + (fin_sent_ ? 1u : 0u);
-        result.acknowledgement = receive_.next(); result.flags = 0x10; return result;
+        auto result = syn_ack();
+        result.sequence = send_.next() + (fin_sent_ ? 1u : 0u);
+        result.acknowledgement = receive_.next();
+        result.flags = 0x10;
+        result.window = static_cast<std::uint16_t>(std::min<std::size_t>(65535, receive_.window() >> handshake_.local_window_scale()));
+        ack_opts_len_ = 0;
+        if (handshake_.sack_permitted()) {
+            auto [blocks, n] = receive_.sack_blocks();
+            if (n > 0) {
+                ack_opts_[0] = 1; ack_opts_[1] = 1; // 2x NOP for 4-byte alignment
+                ack_opts_[2] = 5; // SACK kind
+                ack_opts_[3] = static_cast<std::uint8_t>(2 + n * 8);
+                std::size_t off = 4;
+                for (std::size_t i = 0; i < n; ++i) {
+                    auto put32 = [&](std::uint32_t v) {
+                        ack_opts_[off++] = static_cast<std::uint8_t>(v >> 24);
+                        ack_opts_[off++] = static_cast<std::uint8_t>(v >> 16);
+                        ack_opts_[off++] = static_cast<std::uint8_t>(v >> 8);
+                        ack_opts_[off++] = static_cast<std::uint8_t>(v);
+                    };
+                    put32(blocks[i].left);
+                    put32(blocks[i].right);
+                }
+                ack_opts_len_ = off;
+            }
+        }
+        result.options = std::span<std::uint8_t const>(ack_opts_.data(), ack_opts_len_);
+        return result;
     }
     auto PassiveConnection::abort(std::uint64_t now) noexcept -> std::expected<void, ConnectionError> {
         if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed)
@@ -193,14 +242,14 @@ namespace nexus::tcp {
     auto PassiveConnection::unsent(std::size_t maximum) const -> SendSlice {
         if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed) return send_.unsent(0);
         auto allowance = peer_window_ > send_.in_flight() ? peer_window_ - send_.in_flight() : 0;
-        return send_.unsent(std::min({maximum, allowance, static_cast<std::size_t>(handshake_.peer_mss())}));
+        return send_.unsent(std::min({maximum, allowance, static_cast<std::size_t>(effective_mss_)}));
     }
     auto PassiveConnection::sent(std::size_t count, std::uint64_t now) -> std::expected<void, ConnectionError> {
         if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed) return std::unexpected(ConnectionError::unsupported);
         if (!advance(now)) return std::unexpected(ConnectionError::time_reversed);
         auto allowance = peer_window_ > send_.in_flight() ? peer_window_ - send_.in_flight() : 0;
         auto available = std::min({allowance, send_.queued() - send_.in_flight(),
-                                   static_cast<std::size_t>(handshake_.peer_mss())});
+                                   static_cast<std::size_t>(effective_mss_)});
         if (count > available) return std::unexpected(ConnectionError::unsupported);
         auto result = send_.sent(count, now);
         if (!result) return std::unexpected(result.error() == SendError::time_reversed ? ConnectionError::time_reversed : ConnectionError::unsupported);
@@ -210,7 +259,7 @@ namespace nexus::tcp {
         if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed) return std::unexpected(ConnectionError::unsupported);
         if (!advance(now)) return std::unexpected(ConnectionError::time_reversed);
         auto result = send_.due(now, std::min({maximum, static_cast<std::size_t>(peer_window_),
-                                               static_cast<std::size_t>(handshake_.peer_mss())}));
+                                               static_cast<std::size_t>(effective_mss_)}));
         if (!result) return std::unexpected(ConnectionError::time_reversed);
         return std::move(*result);
     }

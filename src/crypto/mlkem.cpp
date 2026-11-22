@@ -1,11 +1,9 @@
-module;
-#include <openssl/mlkem.h>
-#include <openssl/bytestring.h>
-#include <openssl/crypto.h>
-module nexus.crypto.mlkem;
+module crypto.mlkem;
+import nexus.thirdparty.boringssl;
 import std;
+using namespace nex::boringssl;
 
-namespace nexus::crypto {
+namespace crypto {
     MlkemSecret::~MlkemSecret() { OPENSSL_cleanse(bytes_.data(),bytes_.size()); }
     MlkemSecret::MlkemSecret(MlkemSecret&& other) noexcept : bytes_(other.bytes_) { OPENSSL_cleanse(other.bytes_.data(),other.bytes_.size()); }
     auto MlkemSecret::operator=(MlkemSecret&& other) noexcept -> MlkemSecret& {

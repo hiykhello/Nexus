@@ -1,10 +1,8 @@
-#include <boost/capy/ex/run_async.hpp>
-#include <boost/capy/task.hpp>
-#include <boost/corosio/io_context.hpp>
-#include <boost/corosio/resolver.hpp>
 import std;
-namespace io=boost::corosio;
-namespace capy=boost::capy;
+import nexus.thirdparty.capy;
+import nexus.thirdparty.corosio;
+namespace io=nex::corosio;
+namespace capy=nex::capy;
 
 auto query(io::io_context& context, std::atomic<unsigned>& completed) -> capy::task<> {
     io::resolver resolver{context};

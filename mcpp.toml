@@ -1,0 +1,1840 @@
+# The workspace is being organized by responsibility; only declared features
+# and tests are available in the current build graph.
+[workspace]
+members = ["tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", "tests/wireguard-reverse-fault", "src", "src/rules", "src/dns", "src/proxy", "src/crypto", "src/platform", "src/transport", "src/udp-runtime", "tests/protocol", "tests/dns", "tests/fakeip", "tests/http2", "tests/http2-client", "tests/tls", "tests/platform", "tests/thirdparty", "tests/proxy-faults", "tests/proxy-preload", "tests/shims/proxy-start", "tests/shims/slow-resolver", "tests/shims/clock-fault", "tests/shims/dns-system-guard", "tests/shims/ss-udp-observe", "tests/tun", "tests/tun-faults", "tests/udp-faults", "tests/udp-runtime", "tests/udp-owner-faults", "tests/uot-client", "tests/chain-client", "src/dns-shared", "src/udp-shared", "experiments/dns-shared-cache/integration", "experiments/dns-shared-cache"]
+
+[workspace.package]
+standard = "c++26"
+mcpp = ">=2026.11.20.1"
+
+[workspace.build]
+# Reflection changes standard-library declarations, so every member and the
+# shared std BMI must use the same dialect.
+dialect_cxxflags = ["-freflection"]
+
+[workspace.dependencies]
+nexus.glaze-kdl = "=0.1.0"
+nexus.ngcpp-proxy = "=0.1.0"
+nexus.capy-source = "=0.2.8"
+nexus.corosio-source = "=0.3.12"
+nexus.boringssl-crypto-source = "=0.1.2"
+nexus.blake3-source = "=1.8.7"
+nexus.argon2-source = "=20190702-nexus.2"
+nexus.nghttp2-source = "=1.71.0"
+nexus.nghttp3-source = "=1.19.0-nexus.1"
+nexus.uring-system = { path = "3rdparty/mcpp-uring" }
+nexus.zlib-system = { path = "3rdparty/mcpp-zlib" }
+nexus.systemd-system = { path = "3rdparty/mcpp-systemd" }
+
+[package]
+name = "nexus"
+version = "0.1.0"
+
+[workspace.toolchain]
+# The requested host toolchain. Explicit family and drivers matter because
+# /usr/bin also contains Clang, which mcpp otherwise prefers for path:/usr.
+default = { path = "/usr", family = "gcc", tools = { cc = "/usr/bin/gcc", cxx = "/usr/bin/g++" } }
+
+[workspace.target.x86_64-linux-gnu]
+sysroot = "glibc@system"
+
+[workspace.indices]
+nexus = { path = "3rdparty/mcpp-index" }
+
+[dependencies]
+nexus.policy = { path = "src/rules" }
+nexus.dns = { path = "src/dns" }
+nexus.protocols = { path = "src", features = ["logging", "state"] }
+nexus.proxy-runtime = { path = "src/proxy" }
+nexus.platform = { path = "src/platform", features = ["network-state"] }
+nexus.glaze-kdl = "=0.1.0"
+nexus.ngcpp-proxy = "=0.1.0"
+nexus.capy-source = { version = "=0.2.8", patches = ["3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { version = "=0.3.12", patches = ["3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[features]
+default = ["io-uring"]
+# Named aggregate release profiles:
+# - profile-sidecar: cross-platform non-root core (Android / macOS / iOS / Windows).
+# - profile-linux-epoll: full Linux epoll profile (adds kTLS, TPROXY, host DNS, journald).
+# - profile-linux-uring: full Linux io_uring profile.
+profile-sidecar = [
+    "http-connect-tls", "quic-sniff", "dns-https3", "tls-certificate-compression",
+    "vless", "xhttp-vless", "tls-resumption", "http-client-h2", "http-client-h3",
+    "srs", "anytls", "dns-https", "dns-quic-resumption", "hy2-cli", "tuic",
+    "masque-ip-endpoint", "ss2022", "trojan", "dns-fakeip", "dns-response-ss",
+    "quic-resumption", "masque-ip-server", "snell", "shadowtls-proxy",
+    "grpc-vless", "wireguard-outbound", "ssh", "naive", "control-http", "metrics-openmetrics", "ntp",
+]
+profile-linux-epoll = [
+    "profile-sidecar", "log-journald", "tun-host-dns", "wireguard-host-dns",
+    "tproxy-udp", "ktls",
+]
+profile-linux-uring = ["profile-linux-epoll", "io-uring"]
+state-unit = []
+state-fakeip-dns-unit = []
+ruleset-cache-unit = []
+routing-batch93a-unit = []
+logging = ["nexus.protocols/logging"]
+log-journald = ["nexus.protocols/log-journald"]
+ntp = { implies = ["nexus.protocols/ntp"], defines = ["NEXUS_ENABLE_NTP"], sources = ["src/tools/proxy_ntp_enabled.cpp", "!src/tools/proxy_ntp_disabled.cpp"] }
+control-http = { implies = ["crypto"], defines = ["NEXUS_ENABLE_CONTROL_HTTP"], sources = ["src/control_api/http_socket.cppm", "src/control_api/http_socket_posix.cpp", "src/control_api/http_socket_windows.cpp", "src/control_api/http_server.cppm", "src/control_api/http_server.cpp", "!src/control_api/control_api_disabled.cppm"] }
+metrics-openmetrics = { implies = ["control-http"], defines = ["NEXUS_ENABLE_OPENMETRICS"], sources = ["src/control_api/openmetrics.cppm", "!src/control_api/openmetrics_disabled.cppm"] }
+srs = ["nexus.policy/srs"]
+tproxy-udp = ["nexus.proxy-runtime/tproxy-udp"]
+http-connect-tls = ["tls", "nexus.proxy-runtime/http-connect-tls"]
+io-uring = ["nexus.corosio-source/uring", "nexus.platform/io-uring"]
+# Crypto can also be selected without the VLESS transport.
+crypto = ["crypto-primitives"]
+crypto-primitives = []
+tls = ["crypto", "nexus.protocols/tls"]
+tls-resumption = ["tls", "nexus.protocols/tls-resumption"]
+tls-certificate-compression = ["tls", "nexus.protocols/tls-certificate-compression"]
+ktls = { implies = ["tls", "nexus.protocols/ktls"], defines = ["NEXUS_ENABLE_KTLS"] }
+dns-fakeip = { implies = ["nexus.dns/fakeip-history", "nexus.proxy-runtime/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources = ["src/tools/dns_fakeip_backend.cppm", "!src/tools/dns_fakeip_backend_disabled.cppm"] }
+dns-tls = { implies = ["tls", "nexus.dns/tls-query"], sources = ["src/tools/dns_transports.cpp", "!src/tools/dns_transports_disabled.cpp", "src/tools/dns_proxy_stream.cppm", "src/tools/dns_proxy_tls.cppm", "src/tools/dns_proxy_tls.cpp"] }
+dns-https = { implies = ["dns-tls", "http2", "nexus.dns/https-query"], sources = ["src/tools/dns_proxy_https.cpp", "!src/tools/dns_proxy_https_disabled.cpp"] }
+dns-quic = { implies = ["dns-tls", "quic-tls", "quic-shared-port", "packet-stream-socket", "nexus.dns/quic-query"], sources = ["src/tools/dns_proxy_quic.cpp", "!src/tools/dns_proxy_quic_disabled.cpp"] }
+dns-quic-resumption = ["dns-quic", "quic-resumption", "nexus.dns/quic-query-resumption"]
+dns-https3 = { implies = ["dns-https", "dns-quic", "nexus.dns/https3-query"], sources = ["src/tools/dns_https3.cpp", "!src/tools/dns_https3_disabled.cpp"] }
+http-client = { implies = ["tls", "nexus.protocols/http1-tls-client"], sources = ["src/tools/rule_fetch.cpp", "src/tools/named_http_client.cppm", "src/tools/named_http_client.cpp", "src/tools/rule_fetch_response.cppm", "src/tools/rule_fetch_h2_disabled.cppm", "src/tools/rule_fetch_h3_disabled.cppm", "!src/tools/rule_fetch_disabled.cpp"] }
+http-client-h2 = { implies = ["http-client", "http2"], sources = ["src/tools/rule_fetch_h2.cppm", "src/tools/rule_fetch_h2.cpp", "!src/tools/rule_fetch_h2_disabled.cppm"] }
+http-client-h3 = { implies = ["http-client", "quic-tls", "quic-shared-port", "packet-stream-socket", "nexus.protocols/masque-client"], sources = ["src/tools/rule_fetch_h3.cppm", "src/tools/rule_fetch_h3.cpp", "!src/tools/rule_fetch_h3_disabled.cppm"] }
+vless = { implies = ["tls", "nexus.proxy-runtime/vless"], defines = ["NEXUS_ENABLE_VLESS"] }
+trojan = { implies = ["tls", "nexus.proxy-runtime/trojan"], defines = ["NEXUS_ENABLE_TROJAN"] }
+anytls = { implies = ["tls", "nexus.proxy-runtime/anytls"], defines = ["NEXUS_ENABLE_ANYTLS"] }
+wireguard-endpoint = { implies = ["wireguard"], sources = ["src/tools/endpoint.cpp", "src/tools/tailscale_endpoint.cppm", "src/tools/tailscale_endpoint_disabled.cpp"] }
+wireguard-host-dns = { implies = ["wireguard-endpoint"], defines = ["NEXUS_ENDPOINT_HOST_DNS=1"] }
+tun-host-dns = { implies = ["tun-inbound"], defines = ["NEXUS_TUN_HOST_DNS=1"], sources = ["src/tools/tun_resolved.cpp", "!src/tools/tun_resolved_disabled.cpp"] }
+wireguard = ["crypto", "nexus.protocols/wireguard"]
+tailscale = ["crypto", "nexus.protocols/tailscale"]
+tailscale-control = ["tailscale", "tls", "http2", "nexus.protocols/tailscale-control"]
+tailscale-policy = ["nexus.protocols/tailscale-policy"]
+tailscale-map-projection = ["tailscale-control", "tailscale-policy", "nexus.protocols/tailscale-map-projection"]
+tailscale-endpoint = { implies = ["wireguard-endpoint", "tailscale-map-projection", "nexus.protocols/tailscale-wireguard-tun"], sources = ["src/tools/tailscale_endpoint.cpp", "src/tools/tailscale_endpoint_config.cpp", "src/tools/tailscale_identity.cppm", "src/tools/tailscale_identity.cpp", "!src/tools/tailscale_endpoint_disabled.cpp"] }
+tailscale-outbound = { implies = ["tailscale-endpoint", "nexus.proxy-runtime/mesh-outbound"], sources = ["src/tools/tailscale_outbound.cpp", "!src/tools/tailscale_outbound_disabled.cpp"] }
+hysteria2-core = ["nexus.protocols/hysteria2-core"]
+quic-crypto = ["crypto", "nexus.protocols/quic-crypto"]
+quic-sniff = ["quic-crypto", "nexus.protocols/quic-sniff"]
+quic-native = ["nexus.protocols/quic-native"]
+quic-transport = ["crypto", "nexus.protocols/quic-transport"]
+quic-tls = ["tls", "quic-transport", "nexus.protocols/quic-tls"]
+quic-resumption = ["quic-tls", "tls-resumption", "nexus.protocols/quic-resumption"]
+datagram-driver = ["nexus.protocols/datagram-driver"]
+packet-stream-socket = ["nexus.protocols/packet-stream-socket"]
+http3-core = ["nexus.protocols/http3-core"]
+masque-core = ["nexus.protocols/masque-core"]
+masque-session = ["masque-core", "http3-core", "quic-transport", "nexus.protocols/masque-session"]
+masque-server = ["masque-session", "nexus.protocols/masque-server"]
+masque-cli = { implies = ["masque-host"], defines = ["NEXUS_ENABLE_MASQUE"], sources = ["src/tools/masque_cli.cppm", "src/tools/masque_cli.cpp", "src/tools/masque_ip_server.cppm", "src/tools/masque_ip_server_disabled.cpp", "!src/tools/masque_cli_enabled_disabled.cppm"] }
+masque-ip-server = { implies = ["masque-cli"], sources = ["src/tools/masque_ip_server.cpp", "!src/tools/masque_ip_server_disabled.cpp"] }
+masque-host = { implies = ["masque-server", "quic-shared-port", "quic-tls", "nexus.protocols/hysteria2-support", "hysteria2-core", "nexus.protocols/quic-retry"], sources = ["src/masque/config.cppm", "src/masque/host.cppm", "src/masque/listener.cppm"] }
+test-masque-listener-start = { implies = ["masque-host"], defines = ["NEXUS_TEST_MASQUE_LISTENER_START"] }
+test-masque-host-lifetime = { implies = ["masque-host", "nexus.protocols/test-masque-host-lifetime"], defines = ["NEXUS_TEST_MASQUE_HOST_LIFETIME"] }
+grpc = ["http2", "nexus.protocols/grpc"]
+grpc-vless = { implies = ["grpc", "vless", "nexus.proxy-runtime/grpc-vless"], defines = ["NEXUS_ENABLE_GRPC_VLESS"] }
+xhttp-vless = { implies = ["vless", "nexus.proxy-runtime/xhttp-vless"], defines = ["NEXUS_ENABLE_XHTTP_VLESS"] }
+test-grpc-runtime = ["grpc-vless", "nexus.proxy-runtime/test-grpc-runtime"]
+test-grpc-startup = ["grpc-vless", "nexus.proxy-runtime/test-grpc-startup"]
+test-grpc-lifecycle = ["grpc-vless", "nexus.proxy-runtime/test-grpc-lifecycle"]
+test-httpupgrade-fixture = []
+test-http3-fixture = { implies = ["http3-core", "hysteria2-core", "quic-tls"], sources = ["tests/support/quic_tls_link.cppm", "tests/support/http3_link.cppm"] }
+test-datagram-fixture = { implies = ["datagram-driver", "test-http3-fixture"], sources = ["tests/support/quic_datagram_link.cppm"] }
+quic-retry = ["crypto", "nexus.protocols/quic-retry"]
+hysteria2-listener = ["crypto", "nexus.protocols/hysteria2-listener"]
+snell-core = ["crypto", "nexus.protocols/snell"]
+snell = ["snell-core", "nexus.proxy-runtime/snell-outbound"]
+hy2-client = ["crypto", "nexus.protocols/hysteria2-client", "nexus.proxy-runtime/hy2-outbound"]
+test-hy2-production = { implies = ["test-hy2-retry-fixture", "hysteria2-listener"], sources = ["tests/support/hy2_production_resource_link.cppm", "tests/support/hy2_production_resource_link.cpp"] }
+test-hy2-retry-fixture = { implies = ["test-hy2-fixture", "quic-retry"], sources = ["tests/support/hy2_retry_port_link.cppm"] }
+test-hy2-retry-resource = { implies = ["test-hy2-retry-fixture"], sources = ["tests/support/hy2_retry_resource_link.cppm", "tests/support/hy2_retry_resource_link.cpp"] }
+quic-shared-port = ["nexus.protocols/quic-shared-port"]
+hysteria2-application = ["nexus.protocols/hysteria2-application"]
+test-hy2-fixture = { implies = ["test-datagram-fixture", "hysteria2-application", "quic-shared-port"], sources = ["tests/support/hysteria2_application_link.cppm", "tests/support/hy2_port_link.cppm", "tests/support/hy2_native_memory.cppm"] }
+test-hy2-resource = { implies = ["test-hy2-fixture"], sources = ["tests/support/hy2_resource_link.cppm", "tests/support/hy2_resource_link.cpp"] }
+
+# HTTP/2 provides bounded sessions/channels; CLI transport integration is separate.
+http2 = ["nexus.protocols/http2"]
+http2-tls = ["http2", "nexus.protocols/http2-tls"]
+hy2-cli = { implies = ["hy2-client", "hysteria2-listener", "nexus.proxy-runtime/hy2-inbound"], defines = ["NEXUS_ENABLE_HY2"], sources = ["src/tools/hy2_cli.cppm", "src/tools/hy2_cli.cpp", "!src/tools/hy2_cli_enabled_disabled.cppm"] }
+dns-response = { implies = ["nexus.proxy-runtime/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
+dns-response-ss = { implies = ["dns-response", "ss2022", "nexus.ss-udp-runtime/dns-response", "nexus.dns-group-udp/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
+ss2022 = { implies = ["crypto", "nexus.protocols/ss2022", "nexus.proxy-runtime/ss2022"], sources = ["src/tools/udp_cli_enabled.cpp"] }
+shadowtls = ["crypto", "nexus.protocols/shadowtls"]
+shadowtls-proxy = { implies = ["tls", "nexus.protocols/shadowtls-runtime", "nexus.proxy-runtime/shadowtls"], defines = ["NEXUS_ENABLE_SHADOWTLS"] }
+tuic-core = ["crypto", "tls", "nexus.protocols/tuic-core"]
+tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "nexus.protocols/tuic", "nexus.proxy-runtime/tuic"], defines = ["NEXUS_ENABLE_TUIC"], sources = ["src/tools/tuic_cli.cppm", "src/tools/tuic_cli.cpp", "!src/tools/tuic_cli_enabled_disabled.cppm"] }
+tun-inbound = { implies = ["nexus.platform/nftables"], defines = ["NEXUS_ENABLE_TUN"], sources = ["src/tools/tun_host.cppm", "src/tools/tun_host.cpp", "src/tools/tun_network_owner.cppm", "src/tools/tun_network_owner.cpp", "src/tools/tun_resolved.cppm", "src/tools/tun_resolved_disabled.cpp", "src/tools/tun_cli.cppm", "src/tools/tun_cli.cpp", "src/tools/masque_tun.cppm", "src/tools/masque_tun_disabled.cpp", "!src/tools/tun_cli_enabled_disabled.cppm"] }
+masque-ip-endpoint = { implies = ["tun-inbound", "masque-outbound", "packet-stream-socket"], sources = ["src/tools/masque_tun.cpp", "src/tools/masque_tun_policy.cppm", "!src/tools/masque_tun_disabled.cpp"] }
+masque-outbound = { implies = ["quic-tls", "quic-shared-port", "nexus.protocols/masque-client", "nexus.proxy-runtime/masque-outbound"], defines = ["NEXUS_ENABLE_MASQUE_OUTBOUND"] }
+wireguard-outbound = { implies = ["wireguard", "nexus.proxy-runtime/wireguard"], defines = ["NEXUS_ENABLE_WIREGUARD"] }
+ssh = { implies = ["crypto", "nexus.protocols/ssh", "nexus.proxy-runtime/ssh"], defines = ["NEXUS_ENABLE_SSH"] }
+naive = { implies = ["tls", "http2", "quic-tls", "quic-retry", "quic-shared-port", "packet-stream-socket", "masque-server", "nexus.protocols/naive", "nexus.proxy-runtime/naive"], defines = ["NEXUS_ENABLE_NAIVE"] }
+test-http-header-fixture = []
+test-dns-resource = []
+test-rules-bench = []
+test-dns-reverse = ["nexus.dns/reverse"]
+test-source-route = { implies = ["nexus.proxy-runtime/test-source-route"], defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
+
+[feature-deps.wireguard-endpoint]
+nexus.wireguard-endpoint = { path = "src/endpoint" }
+
+[feature-deps.wireguard-host-dns]
+nexus.wireguard-endpoint = { path = "src/endpoint", features = ["host-dns-resolved"] }
+
+[feature-deps.io-uring]
+nexus.uring-system = { path = "3rdparty/mcpp-uring" }
+
+[feature-deps.crypto-primitives]
+nexus.crypto = { path = "src/crypto" }
+
+[feature-deps.ss2022]
+nexus.ss-udp-runtime = { path = "src/udp-runtime" }
+nexus.dns-group-udp = { path = "src/udp-shared", default-features = false }
+
+[feature-deps.tun-inbound]
+nexus.tun = { path = "src/transport", features = ["default-network"] }
+
+[feature-deps.tun-host-dns]
+nexus.wireguard-endpoint = { path = "src/endpoint", features = ["host-dns-resolved"] }
+
+[feature-deps.masque-outbound]
+nexus.tun = { path = "src/transport", default-features = false }
+
+[feature-deps.masque-ip-server]
+nexus.tun = { path = "src/transport", default-features = false, features = ["network"] }
+
+[build]
+target_budget = "24GiB"
+# Match the static-link interface of the original Capy/Corosio recipes.
+defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",
+           "BOOST_COROSIO_NO_LIB", "BOOST_COROSIO_STATIC_LINK",
+           "NEXUS_ENABLE_SOCKS_UDP"]
+flags = [
+    { glob = "src/tools/dns_message_runtime.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/rule_fetch_response.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/rule_fetch_h2.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/rule_fetch_h2.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/rule_fetch_h3.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/rule_fetch_h3.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/masque_tun.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/dns_proxy_https.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/dns_proxy_quic.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/dns_https3.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/dns_proxy_stream.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/dns_proxy_tls.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/tailscale_endpoint.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "src/tools/udp_cli_enabled.cpp", cxxflags = ["-fno-module-lazy"] },
+    # GCC 16 can recursively lazy-load std::vector in this test-only module
+    # when TLS resumption and the shared QUIC port are enabled together.
+    { glob = "tests/support/hy2_port_link.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tests/support/hy2_retry_port_link.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tests/support/hysteria2_application_link.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tests/support/hy2_retry_resource_link.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tests/support/hy2_resource_link.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tests/support/hy2_production_resource_link.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tests/support/hy2_production_resource_link.cpp", cxxflags = ["-fno-module-lazy"] },
+]
+sources = [
+    # Verify pinned network dependency snapshots before building the app.
+    "src/build/mcpp_pinned_guard.cpp",
+    "src/tools/logging.cppm", "src/tools/logging.cpp",
+    "src/control_api/types.cppm", "src/control_api/openmetrics_disabled.cppm", "src/control_api/control_api_disabled.cppm",
+    "src/tools/dns_transports.cppm", "src/tools/dns_transports_disabled.cpp", "src/tools/dns_fakeip_backend_disabled.cppm",
+    "src/tools/control.cppm", "src/tools/selector_state.cpp", "src/tools/state_cli.cpp", "src/tools/dns_message_runtime.cppm", "src/tools/dns_message_runtime.cpp", "src/tools/dns_proxy_https.cppm", "src/tools/dns_proxy_https_disabled.cpp", "src/tools/dns_proxy_quic.cppm", "src/tools/dns_proxy_quic_disabled.cpp", "src/tools/dns_https3.cppm", "src/tools/dns_https3_disabled.cpp", "src/tools/endpoint.cppm", "src/tools/endpoint_disabled.cpp", "src/tools/hy2_cli_disabled.cppm", "src/tools/hy2_cli_enabled_disabled.cppm", "src/tools/masque_cli_disabled.cppm", "src/tools/masque_cli_enabled_disabled.cppm", "src/tools/tuic_cli_disabled.cppm", "src/tools/tuic_cli_enabled_disabled.cppm", "src/tools/tun_cli_disabled.cppm", "src/tools/tun_cli_enabled_disabled.cppm", "src/tools/udp_cli.cppm", "src/tools/tailscale_outbound.cppm", "src/tools/tailscale_outbound_disabled.cpp", "src/tools/proxy_ntp.cppm", "src/tools/proxy_ntp_disabled.cpp", "src/tools/proxy_run.cppm", "src/tools/route_files.cppm", "src/tools/route_files.cpp", "src/tools/outbound_config.cppm", "src/tools/outbound_config.cpp", "src/tools/proxy_server.cpp", "src/tools/rule_convert.cpp", "src/tools/rule_explain.cpp", "src/tools/rule_fetch_disabled.cpp",
+]
+
+[target.'cfg(not(os = "windows"))'.build]
+sources = ["src/tools/control_posix.cpp", "!src/control_api/http_socket_windows.cpp"]
+
+[target.'cfg(os = "windows")'.build]
+sources = ["src/tools/control_windows.cpp", "!src/control_api/http_socket_posix.cpp"]
+
+[targets.nexus-core]
+kind = "lib"
+
+[targets.tun-auto-redirect-unit]
+kind = "bin"
+main = "tests/tun_auto_redirect_unit.cpp"
+required_features = ["tun-inbound"]
+
+[targets.nexus-cli]
+kind = "entry"
+main = "src/tools/main.cpp"
+
+[targets.nexus]
+kind = "bin"
+main = "src/tools/main.cpp"
+
+[targets.routing-batch93a-unit]
+kind = "bin"
+main = "tests/routing_batch93a_unit.cpp"
+required_features = ["routing-batch93a-unit"]
+
+[targets.state-ruleset-cache-unit]
+kind = "bin"
+main = "tests/state_ruleset_cache_unit.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["ruleset-cache-unit"]
+
+[targets.state-fakeip-dns-unit]
+kind = "bin"
+main = "tests/state_fakeip_dns_unit.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["state-fakeip-dns-unit"]
+
+[targets.state-unit]
+kind = "bin"
+main = "tests/state_unit.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["state-unit"]
+
+[targets.logging-unit]
+kind = "bin"
+main = "tests/logging_unit.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["logging"]
+
+[targets.tcp-fast-open-fixture]
+kind = "bin"
+main = "tests/tcp_fast_open.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.tcp-fast-open-stream-fixture]
+kind = "bin"
+main = "tests/tcp_fast_open_stream.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.vision-reality-fixture]
+kind = "bin"
+main = "tests/vision_reality_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["vless"]
+
+[targets.crypto-vectors]
+kind = "bin"
+main = "tests/protocol/crypto.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["crypto-primitives"]
+
+[targets.hy2-client-start-fault]
+kind = "bin"
+main = "tests/hy2_client_start_fault.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hy2-client"]
+
+[targets.hy2-udp-budget-production]
+kind = "bin"
+main = "tests/hy2_udp_budget_production.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hy2-cli"]
+
+[targets.hysteria2-salamander-test]
+kind = "bin"
+main = "tests/hysteria2_salamander.cpp"
+required_features = ["hy2-cli"]
+
+[targets.crypto-mlkem-vectors]
+kind = "bin"
+main = "tests/protocol/crypto_mlkem.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["crypto-primitives"]
+
+[targets.poly1305-vectors]
+kind = "bin"
+main = "tests/poly1305.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["crypto-primitives"]
+
+[targets.aead-context-vectors]
+kind = "bin"
+main = "tests/aead_context.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["crypto-primitives"]
+
+[targets.tls-owned-prefix]
+kind = "bin"
+main = "tests/tls_owned_prefix.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["http2-tls"]
+
+
+
+[targets.crypto-ecdh-errors]
+kind = "bin"
+main = "tests/crypto_ecdh_errors.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-typed-verifier]
+kind = "bin"
+main = "tests/tls_typed_verifier.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-spki-error]
+kind = "bin"
+main = "tests/tls_spki_error.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-crypto-fault]
+kind = "bin"
+main = "tests/tls_crypto_fault.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-crypto-tcp-fault]
+kind = "bin"
+main = "tests/tls_crypto_tcp_fault.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-fingerprint]
+kind = "bin"
+main = "tests/tls_fingerprint.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.crypto-ecdh]
+kind = "bin"
+main = "tests/crypto_ecdh.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.crypto-ecdh-fault]
+kind = "bin"
+main = "tests/crypto_ecdh_fault.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-ecdh-boundary]
+kind = "bin"
+main = "tests/tls_ecdh_boundary.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-ecdh-allocation]
+kind = "bin"
+main = "tests/tls_ecdh_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-ecdh]
+kind = "bin"
+main = "tests/tls_ecdh.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-ecdh-openssl]
+kind = "bin"
+main = "tests/tls_ecdh_openssl.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-ip-profile]
+kind = "bin"
+main = "tests/tls_ip_profile.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.vless-tls-ip-profile]
+kind = "bin"
+main = "tests/vless_tls_ip_profile.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["vless"]
+
+[targets.ss-ordered-dispatch-test]
+kind = "bin"
+main = "tests/shadowsocks_udp_dispatch.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["ss2022"]
+
+[targets.shadowsocks-response-test]
+kind = "bin"
+main = "tests/shadowsocks_response.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["ss2022"]
+
+[targets.ss-preserve-read]
+kind = "bin"
+main = "tests/ss_preserve_read.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["ss2022"]
+
+[targets.ordered-tcp-fixture]
+kind = "bin"
+main = "tests/ordered_tcp_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.tcp-sniff-io-test]
+kind = "bin"
+main = "tests/tcp_sniff_io.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.tls-ecdh-quic]
+kind = "bin"
+main = "tests/tls_ecdh_quic.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-tls"]
+
+[targets.tls-ecdh-quic-udp]
+kind = "bin"
+main = "tests/tls_ecdh_quic_udp.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-tls"]
+
+[targets.tls-signature]
+kind = "bin"
+main = "tests/tls_signature.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-signature-openssl]
+kind = "bin"
+main = "tests/tls_signature_openssl.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-signature-layout]
+kind = "bin"
+main = "tests/tls_signature_layout.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-tls"]
+
+# The entropy oracle must be relinked with tls_fingerprint_random_relink.py.
+[targets.tls-fingerprint-random]
+kind = "bin"
+main = "tests/tls_fingerprint_random.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.packet-stream-socket]
+kind = "bin"
+main = "tests/packet_stream_socket.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["packet-stream-socket"]
+
+[targets.datagram-driver-empty]
+kind = "bin"
+main = "tests/datagram_driver_empty.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["datagram-driver"]
+
+[targets.quic-chacha]
+kind = "bin"
+main = "tests/quic_chacha.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-transport"]
+
+[targets.quic-chacha-layout]
+kind = "bin"
+main = "tests/quic_chacha_layout.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-transport"]
+
+[targets.tls-fingerprint-allocation]
+kind = "bin"
+main = "tests/tls_fingerprint_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-fingerprint-layout]
+kind = "bin"
+main = "tests/tls_fingerprint_layout.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-tls"]
+
+# Network drivers supply certificates/role arguments to these fixtures.
+[targets.tls-fingerprint-openssl]
+kind = "bin"
+main = "tests/tls_fingerprint_openssl.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.tls-fingerprint-quic-udp]
+kind = "bin"
+main = "tests/tls_fingerprint_quic_udp.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-tls"]
+
+[targets.tls-fingerprint-reality]
+kind = "bin"
+main = "tests/tls_fingerprint_reality.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["vless"]
+
+[targets.tls-fingerprint-reality-fixture]
+kind = "bin"
+main = "tests/tls_fingerprint_reality_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["vless"]
+
+[targets.trojan-auth-vectors]
+kind = "bin"
+main = "tests/trojan_auth.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["trojan"]
+
+[targets.anytls-auth-vectors]
+kind = "bin"
+main = "tests/anytls_auth.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["anytls"]
+
+[targets.anytls-io]
+kind = "bin"
+main = "tests/anytls_io.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["anytls"]
+
+[targets.anytls-network-fixture]
+kind = "bin"
+main = "tests/anytls_network_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["anytls"]
+
+[targets.anytls-pool-fixture]
+kind = "bin"
+main = "tests/anytls_pool_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["anytls"]
+
+[targets.anytls-proxy-fixture]
+kind = "bin"
+main = "tests/anytls_proxy_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["anytls"]
+
+[targets.anytls-watchdog]
+kind = "bin"
+main = "tests/anytls_watchdog.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["anytls"]
+
+[targets.httpupgrade-fixture]
+kind = "bin"
+main = "tests/httpupgrade_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-httpupgrade-fixture"]
+
+[targets.httpupgrade-tls-fixture]
+kind = "bin"
+main = "tests/httpupgrade_tls_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-httpupgrade-fixture", "http2-tls"]
+
+[targets.httpupgrade-tls-stress]
+kind = "bin"
+main = "tests/httpupgrade_tls_stress.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-httpupgrade-fixture", "http2-tls"]
+
+[targets.wireguard-noise-vectors]
+kind = "bin"
+main = "tests/wireguard_noise.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-network-fixture]
+kind = "bin"
+main = "tests/wireguard_network_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-endpoint-test]
+kind = "bin"
+main = "tests/wireguard_endpoint.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-endpoint-network-fixture]
+kind = "bin"
+main = "tests/wireguard_endpoint_network_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-endpoint-cookie-test]
+kind = "bin"
+main = "tests/wireguard_endpoint_cookie.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-registry-test]
+kind = "bin"
+main = "tests/wireguard_registry.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-host-test]
+kind = "bin"
+main = "tests/wireguard_host.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-routing-test]
+kind = "bin"
+main = "tests/wireguard_routing.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-source-policy-test]
+kind = "bin"
+main = "tests/wireguard_source_policy.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-identity-test]
+kind = "bin"
+main = "tests/wireguard_identity.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-identity-handshake-test]
+kind = "bin"
+main = "tests/wireguard_identity_handshake.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-routing-cost]
+kind = "bin"
+main = "tests/wireguard_routing_cost.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-port-test]
+kind = "bin"
+main = "tests/wireguard_port.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-port-allocation-test]
+kind = "bin"
+main = "tests/wireguard_port_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.wireguard-port-network-fixture]
+kind = "bin"
+main = "tests/wireguard_port_network_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["wireguard"]
+
+[targets.socket-binding-tcp]
+kind = "bin"
+main = "tests/socket_binding_tcp.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.socket-binding-udp]
+kind = "bin"
+main = "tests/socket_binding_udp.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+# Uses an isolated network namespace and explicit family/policy arguments.
+[targets.udp-fragment-fixture]
+kind = "bin"
+main = "tests/udp_fragment.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.httpupgrade-vless-fixture]
+kind = "bin"
+main = "tests/httpupgrade_vless_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["vless"]
+
+[targets.httpupgrade-vless-layout]
+kind = "bin"
+main = "tests/httpupgrade_vless_layout.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["vless"]
+
+[targets.httpupgrade-vless-io]
+kind = "bin"
+main = "tests/httpupgrade_vless_io.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["vless"]
+
+[targets.quic-native-test]
+kind = "bin"
+main = "tests/quic_native.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-native"]
+
+[targets.datagram-driver]
+kind = "bin"
+main = "tests/datagram_driver.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["datagram-driver"]
+
+[targets.datagram-driver-allocation]
+kind = "bin"
+main = "tests/datagram_driver_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["datagram-driver"]
+
+[targets.datagram-driver-abandon]
+kind = "bin"
+main = "tests/datagram_driver_abandon.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["datagram-driver"]
+
+[targets.quic-http3-datagram-fixture]
+kind = "bin"
+main = "tests/quic_http3_datagram_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-datagram-fixture"]
+
+[targets.quic-datagram-lifecycle]
+kind = "bin"
+main = "tests/quic_datagram_lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-datagram-fixture"]
+
+[targets.quic-datagram-pending]
+kind = "bin"
+main = "tests/quic_datagram_pending.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-datagram-fixture"]
+
+[targets.quic-datagram-abandon]
+kind = "bin"
+main = "tests/quic_datagram_abandon.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-datagram-fixture"]
+
+[targets.quic-connection]
+kind = "bin"
+main = "tests/quic_connection.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-transport"]
+
+[targets.quic-transport-parameters]
+kind = "bin"
+main = "tests/quic_transport_parameters.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-transport"]
+
+# Certificate/role arguments are supplied by the raw TLS and UDP drivers.
+[targets.tls-raw-flights]
+kind = "bin"
+main = "tests/raw_flights.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tls"]
+
+[targets.quic-tls]
+kind = "bin"
+main = "tests/quic_tls.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-tls"]
+
+[targets.quic-udp-fixture]
+kind = "bin"
+main = "tests/quic_udp_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-tls"]
+
+[targets.tailscale-control-connection-fault]
+kind = "bin"
+main = "tests/tailscale-control-connection-fault.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-connection-fixture]
+kind = "bin"
+main = "tests/tailscale-control-connection-fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-connection-layered]
+kind = "bin"
+main = "tests/tailscale-control-connection-layered.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-connection-lifecycle]
+kind = "bin"
+main = "tests/tailscale-control-connection-lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-connection-probe]
+kind = "bin"
+main = "tests/tailscale-control-connection-probe.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-connection-resources]
+kind = "bin"
+main = "tests/tailscale-control-connection-resources.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-early-unit]
+kind = "bin"
+main = "tests/tailscale-control-early-unit.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-startup-fixture]
+kind = "bin"
+main = "tests/tailscale-control-startup-fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-framed-early]
+kind = "bin"
+main = "tests/tailscale-framed-early.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-framed-frame-probe]
+kind = "bin"
+main = "tests/tailscale-framed-frame-probe.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-framed-network-fixture]
+kind = "bin"
+main = "tests/tailscale-framed-network-fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-framed-unit]
+kind = "bin"
+main = "tests/tailscale-framed-unit.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-http]
+kind = "bin"
+main = "tests/tailscale_control_http.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-messages]
+kind = "bin"
+main = "tests/tailscale_control_messages.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-control"]
+
+[targets.tailscale-control-test]
+kind = "bin"
+main = "tests/tailscale_control.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-control-allocation]
+kind = "bin"
+main = "tests/tailscale_control_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-control-network-fixture]
+kind = "bin"
+main = "tests/tailscale_control_network_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.quic-http3-dispatch]
+kind = "bin"
+main = "tests/quic_http3_dispatch.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["http3-core", "hysteria2-core"]
+
+[targets.quic-http3-owner]
+kind = "bin"
+main = "tests/quic_http3_owner.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["http3-core", "hysteria2-core"]
+
+[targets.quic-http3-lifecycle]
+kind = "bin"
+main = "tests/quic_http3_lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-http3-fixture"]
+
+[targets.quic-http3-udp-fixture]
+kind = "bin"
+main = "tests/quic_http3_udp_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-http3-fixture"]
+
+[targets.tailscale-derp-test]
+kind = "bin"
+main = "tests/tailscale_derp.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-stun-test]
+kind = "bin"
+main = "tests/tailscale_stun.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-stun-network-fixture]
+kind = "bin"
+main = "tests/tailscale_stun_network_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-box-test]
+kind = "bin"
+main = "tests/tailscale_box.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-box-allocation]
+kind = "bin"
+main = "tests/tailscale_box_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-derp-handshake-test]
+kind = "bin"
+main = "tests/tailscale_derp_handshake.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.tailscale-derp-network-fixture]
+kind = "bin"
+main = "tests/tailscale_derp_network_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale"]
+
+[targets.masque-http3-test]
+kind = "bin"
+main = "tests/masque_http3.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-core", "http3-core"]
+
+[targets.masque-codec-test]
+kind = "bin"
+main = "tests/masque_codec.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-core"]
+
+[targets.masque-ip-packet-test]
+kind = "bin"
+main = "tests/masque_ip_packet.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-core"]
+
+[targets.masque-connect-ip-test]
+kind = "bin"
+main = "tests/masque_connect_ip.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-core"]
+
+[targets.quic-varint-test]
+kind = "bin"
+main = "tests/quic_varint.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hysteria2-core"]
+
+[targets.quic-packet-keys]
+kind = "bin"
+main = "tests/quic_packet_keys.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-crypto"]
+
+[targets.quic-sniff]
+kind = "bin"
+main = "tests/quic_sniff.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-sniff"]
+
+[targets.quic-ss-cursor]
+kind = "bin"
+main = "tests/quic_ss_cursor.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["quic-sniff", "ss2022"]
+
+[targets.stream-datagram-deadline]
+kind = "bin"
+main = "tests/stream_datagram_deadline.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["ss2022"]
+
+[targets.lazy-readers]
+kind = "bin"
+main = "tests/lazy_readers.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.srs-payload]
+kind = "bin"
+main = "tests/srs_payload.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-upstream-budget-race]
+kind = "bin"
+main = "tests/dns_upstream_budget_race.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-upstream-budget]
+kind = "bin"
+main = "tests/dns_upstream_budget.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-transport-allocation]
+kind = "bin"
+main = "tests/dns_transport_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-override-budget]
+kind = "bin"
+main = "tests/dns_override_budget.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-message-race-start-fault]
+kind = "bin"
+main = "tests/dns_message_race_start_fault.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-race-start-failure]
+kind = "bin"
+main = "tests/dns_race_start_failure.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-query-allocation]
+kind = "bin"
+main = "tests/dns_query_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-listener-query-budget]
+kind = "bin"
+main = "tests/dns_listener_query_budget.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-input-budget-network]
+kind = "bin"
+main = "tests/dns_input_budget_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-evaluate-owner]
+kind = "bin"
+main = "tests/dns_evaluate_owner.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-evaluate-race]
+kind = "bin"
+main = "tests/dns_evaluate_race.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-response-race-walk]
+kind = "bin"
+main = "tests/dns_response_race_walk.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-message-race-network]
+kind = "bin"
+main = "tests/dns_message_race_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-udp-response-slots]
+kind = "bin"
+main = "tests/dns_udp_response_slots.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response-ss"]
+
+[targets.dns-tcp-response-slots]
+kind = "bin"
+main = "tests/dns_tcp_response_slots.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-address-race-network]
+kind = "bin"
+main = "tests/dns_address_race_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-udp-address-race-network]
+kind = "bin"
+main = "tests/dns_udp_address_race_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response-ss"]
+
+[targets.dns-proxy-address-race-network]
+kind = "bin"
+main = "tests/dns_proxy_address_race_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-udp-production-race-network]
+kind = "bin"
+main = "tests/dns_udp_production_race_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response-ss"]
+
+[targets.dns-address-race-local]
+kind = "bin"
+main = "tests/dns_address_race_local.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-address-race-local-production]
+kind = "bin"
+main = "tests/dns_address_race_local_production.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response-ss"]
+
+[targets.dns-race-admission]
+kind = "bin"
+main = "tests/dns_race_admission.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-evaluate-race-network]
+kind = "bin"
+main = "tests/dns_evaluate_race_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["dns-response"]
+
+[targets.dns-evaluate-owner-network]
+kind = "bin"
+main = "tests/dns_evaluate_owner_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.dns-message-exchange-owner]
+kind = "bin"
+main = "tests/dns_message_exchange_owner.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.srs-file]
+kind = "bin"
+main = "tests/srs_file.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["srs"]
+
+[targets.hysteria2-wire-test]
+kind = "bin"
+main = "tests/hysteria2_wire.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hysteria2-core"]
+
+[targets.hysteria2-auth-test]
+kind = "bin"
+main = "tests/hysteria2_auth.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hysteria2-core"]
+
+[targets.hysteria2-udp-test]
+kind = "bin"
+main = "tests/hysteria2_udp.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hysteria2-core"]
+
+[targets.hysteria2-fragment-allocation-test]
+kind = "bin"
+main = "tests/hysteria2_fragment_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hysteria2-core"]
+
+[targets.hysteria2-vectors]
+kind = "bin"
+main = "tests/hysteria2_vectors.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["hysteria2-core"]
+
+[targets.grpc-session-test]
+kind = "bin"
+main = "tests/grpc_session.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc"]
+
+[targets.grpc-stream-test]
+kind = "bin"
+main = "tests/grpc_stream.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc"]
+
+[targets.grpc-fixture]
+kind = "bin"
+main = "tests/grpc_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc"]
+
+[targets.grpc-tls-fixture]
+kind = "bin"
+main = "tests/grpc_tls_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc", "http2-tls"]
+
+[targets.grpc-tls-stress]
+kind = "bin"
+main = "tests/grpc_tls_stress.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc", "http2-tls"]
+
+[targets.grpc-handshake-lifecycle]
+kind = "bin"
+main = "tests/grpc_handshake_lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc", "http2-tls"]
+
+[targets.grpc-writer-deadline]
+kind = "bin"
+main = "tests/grpc_writer_deadline.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc", "http2-tls"]
+
+[targets.grpc-terminal-test]
+kind = "bin"
+main = "tests/grpc_terminal.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc"]
+
+[targets.http2-window-test]
+kind = "bin"
+main = "tests/http2/window.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["http2"]
+
+[targets.nexus-shadowsocks-udp-rebind-test]
+kind = "bin"
+main = "tests/shadowsocks_udp_rebind.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["ss2022"]
+
+[targets.dns-reverse-test]
+kind = "bin"
+main = "tests/dns_reverse.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-dns-reverse"]
+
+[targets.dns-reverse-allocation-test]
+kind = "bin"
+main = "tests/dns_reverse_allocation.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-dns-reverse"]
+
+[targets.dns-reverse-bench]
+kind = "bin"
+main = "experiments/dns-shared-cache/reverse_bench.cpp"
+required_features = ["test-dns-reverse"]
+
+[targets.rules-index-bench]
+kind = "bin"
+main = "experiments/rules/index_bench.cpp"
+required_features = ["test-rules-bench"]
+
+[targets.rules-program-bench]
+kind = "bin"
+main = "experiments/rules/program_bench.cpp"
+required_features = ["test-rules-bench"]
+
+[targets.rules-memory-bench]
+kind = "bin"
+main = "experiments/rules/memory_bench.cpp"
+required_features = ["test-rules-bench"]
+
+[targets.rules-private-fixture]
+kind = "bin"
+main = "tests/rules_private_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-rules-bench"]
+
+[targets.dns-shared-reader-capacity]
+kind = "bin"
+main = "tests/dns_shared_reader_capacity.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-dns-resource"]
+
+[targets.dns-shared-production-memory]
+kind = "bin"
+main = "tests/dns_shared_production_memory.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-dns-resource"]
+
+[targets.http-header-compat-fixture]
+kind = "bin"
+main = "tests/http_header_compat_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-http-header-fixture"]
+
+[test]
+discover = [
+    "tests/ngcpp_proxy_module.cpp", "tests/network_modules.cpp",
+    "tests/capy_quitter.cpp", "tests/corosio_endpoint.cpp", "tests/corosio_connect_module_probe.cpp",
+    "tests/corosio_connect.cpp", "tests/io.cpp", "tests/io_threads.cpp",
+    "tests/http_sniff.cpp", "tests/tls_sniff.cpp", "tests/sniff_route.cpp", "tests/config.cpp", "tests/config_detour.cpp", "tests/config_dial.cpp", "tests/tcp_socket_options.cpp", "tests/dependency_graph.cpp", "tests/rules_kdl.cpp", "tests/rules_beve.cpp", "tests/rules_match.cpp", "tests/rules_v2.cpp", "tests/rules_patterns_allocation.cpp",
+    "tests/socks5.cpp", "tests/uot.cpp", "tests/vision.cpp",
+    "tests/trojan.cpp",
+    "tests/anytls.cpp", "tests/anytls_settings.cpp", "tests/anytls_padding.cpp",
+    "tests/anytls_pool.cpp", "tests/anytls_streams.cpp",
+    "tests/wireguard.cpp", "tests/wireguard_blake2s.cpp",
+    "tests/httpupgrade.cpp", "tests/httpupgrade_stream.cpp",
+    "tests/grpc_message.cpp", "tests/grpc_headers.cpp",
+    "tests/config_trojan.cpp", "tests/config_anytls.cpp", "tests/config_httpupgrade.cpp", "tests/config_grpc.cpp",
+    "tests/vless.cpp", "tests/vless_mux.cpp", "tests/xudp.cpp", "tests/http_connect.cpp",
+    "tests/http_forward.cpp", "tests/http_response.cpp", "tests/http_request_state.cpp", "tests/http_header.cpp",
+    "tests/dns_batch93c_unit.cpp",
+    "tests/dns_message.cpp", "tests/dns_cache.cpp", "tests/dns_shared_cache.cpp", "tests/dns_local_config.cpp", "tests/dns_question_rules.cpp",
+    "tests/dns_refresh_budget.cpp", "tests/dns_refresh_owner.cpp",
+    "tests/dns_refresh_allocation.cpp", "tests/dns_refresh_multiexecutor.cpp",
+    "tests/socks5_udp_route.cpp", "tests/socks5_udp_tunnel_authorization.cpp", "tests/udp_socket.cpp", "tests/net_udp_route.cpp",
+    "tests/proxy.cpp", "tests/proxy_limits.cpp", "tests/proxy_single_worker.cpp", "tests/proxy_feature_api.cpp", "tests/udp_cli_disabled.cpp",
+    "tests/session_quota.cpp", "tests/session_registry.cpp",
+]
+
+[target.'cfg(not(os = "linux"))'.test]
+discover = ["!tests/tcp_socket_options.cpp"]
+
+[pack]
+include = ["docs/**", "packaging/**"]
+
+[workspace.profile.release]
+opt = 3
+lto = true
+strip = true
+
+[workspace.profile.ci]
+opt = 0
+debug = "lines"
+
+[targets.grpc-vless-runtime]
+kind = "bin"
+main = "tests/grpc_runtime.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-grpc-runtime"]
+
+[targets.grpc-vless-lifecycle]
+kind = "bin"
+main = "tests/grpc_lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-grpc-lifecycle"]
+
+[targets.grpc-vless-static]
+kind = "bin"
+main = "tests/grpc_vless_static.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc-vless"]
+
+[targets.grpc-retire]
+kind = "bin"
+main = "tests/grpc_retire.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc"]
+
+[targets.hy2-application-fixture]
+kind = "bin"
+main = "tests/hy2_application_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-application-lifecycle]
+kind = "bin"
+main = "tests/hy2_application_lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-shared-client-fixture]
+kind = "bin"
+main = "tests/hy2_shared_client_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-shared-port-abandon]
+kind = "bin"
+main = "tests/hy2_shared_port_abandon.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-shared-port-cpp-cold]
+kind = "bin"
+main = "tests/hy2_shared_port_cpp_cold.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-resource"]
+
+[targets.hy2-shared-port-fixture]
+kind = "bin"
+main = "tests/hy2_shared_port_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-shared-port-resources]
+kind = "bin"
+main = "tests/hy2_shared_port_resources.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-resource"]
+
+[targets.hy2-stream-buffer]
+kind = "bin"
+main = "tests/hy2_stream_buffer.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-udp-fixture]
+kind = "bin"
+main = "tests/hy2_udp_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-udp-owners]
+kind = "bin"
+main = "tests/hy2_udp_owners.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.quic-cid-registry]
+kind = "bin"
+main = "tests/quic_cid_registry.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.quic-datagram-port]
+kind = "bin"
+main = "tests/quic_datagram_port.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-fixture"]
+
+[targets.hy2-retry-abandon]
+kind = "bin"
+main = "tests/hy2_retry_abandon.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-fixture"]
+
+[targets.hy2-retry-cpp-cold]
+kind = "bin"
+main = "tests/hy2_retry_cpp_cold.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-resource"]
+
+[targets.hy2-retry-resources]
+kind = "bin"
+main = "tests/hy2_retry_resources.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-resource"]
+
+[targets.hy2-retry-shared-port-fixture]
+kind = "bin"
+main = "tests/hy2_retry_shared_port_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-fixture"]
+
+[targets.quic-retry-admission]
+kind = "bin"
+main = "tests/quic_retry_admission.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-fixture"]
+
+[targets.quic-retry-control-lifecycle]
+kind = "bin"
+main = "tests/quic_retry_control_lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-fixture"]
+
+[targets.quic-retry-packet]
+kind = "bin"
+main = "tests/quic_retry_packet.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-fixture"]
+
+[targets.quic-retry-port]
+kind = "bin"
+main = "tests/quic_retry_port.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-fixture"]
+
+[targets.quic-retry-token]
+kind = "bin"
+main = "tests/quic_retry_token.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-retry-fixture"]
+
+[targets.grpc-multiplex]
+kind = "bin"
+main = "tests/multiplex.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc"]
+
+[targets.grpc-multiplex-async]
+kind = "bin"
+main = "tests/multiplex_async.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc"]
+
+[targets.grpc-operation-token]
+kind = "bin"
+main = "tests/operation_token.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["grpc-vless"]
+
+[targets.shared-connection-pool]
+kind = "bin"
+main = "tests/shared_pool.cpp"
+cxxflags = ["-fno-module-lazy"]
+
+[targets.grpc-vless-startup]
+kind = "bin"
+main = "tests/grpc_startup.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-grpc-startup"]
+
+
+[targets.http-destination-authority]
+kind = "bin"
+main = "tests/http_destination_authority.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.hy2-production-listener-abandon]
+kind = "bin"
+main = "tests/hy2_production_listener_abandon.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.hy2-production-listener-cpp-cold]
+kind = "bin"
+main = "tests/hy2_production_listener_cpp_cold.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.hy2-production-listener-fixture]
+kind = "bin"
+main = "tests/hy2_production_listener_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.hy2-production-listener-resources]
+kind = "bin"
+main = "tests/hy2_production_listener_resources.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.hy2-production-profiles]
+kind = "bin"
+main = "tests/hy2_production_profiles.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.quic-native-memory]
+kind = "bin"
+main = "tests/quic_native_memory.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.quic-graceful-port]
+kind = "bin"
+main = "tests/quic_graceful_port.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.quic-graceful-driver]
+kind = "bin"
+main = "tests/quic_graceful_driver.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.hy2-graceful-start]
+kind = "bin"
+main = "tests/hy2_graceful_start.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-hy2-production"]
+
+[targets.tailscale-packet-filter-test]
+kind = "bin"
+main = "tests/tailscale_packet_filter.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-policy"]
+
+[targets.snell-http-obfs-test]
+kind = "bin"
+main = "tests/snell_http_obfs.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["snell"]
+
+[targets.tailscale-map-policy-test]
+kind = "bin"
+main = "tests/tailscale_map_policy.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-map-projection"]
+
+[targets.tailscale-map-policy-network]
+kind = "bin"
+main = "tests/tailscale_map_policy_network.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["tailscale-map-projection"]
+
+[targets.snell-client-reuse-fixture]
+kind = "bin"
+main = "tests/snell_client_reuse_fixture.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["snell"]
+
+[targets.snell-client-pool-test]
+kind = "bin"
+main = "tests/snell_client_pool.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["snell"]
+
+[targets.snell-client-reuse-lifetime]
+kind = "bin"
+main = "tests/snell_client_reuse_lifetime.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["snell"]
+
+[targets.masque-udp-session-test]
+kind = "bin"
+main = "tests/masque_udp_session.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-session"]
+
+[targets.masque-quic-session-test]
+kind = "bin"
+main = "tests/masque_quic_session.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-session", "test-http3-fixture"]
+
+[targets.masque-quic-udp-fixture]
+kind = "bin"
+main = "tests/masque_quic_udp.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-session", "test-http3-fixture"]
+
+[targets.masque-connect-udp-test]
+kind = "bin"
+main = "tests/masque_connect_udp.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-server"]
+
+[targets.masque-udp-owner-test]
+kind = "bin"
+main = "tests/masque_udp_owner.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-server"]
+
+[targets.masque-server-session-test]
+kind = "bin"
+main = "tests/masque_server_session.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-server", "test-http3-fixture"]
+
+[targets.masque-listener-fixture]
+kind = "bin"
+main = "tests/masque_listener.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-host", "test-http3-fixture"]
+
+[targets.masque-client-fixture]
+kind = "bin"
+main = "tests/masque_client.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["masque-host", "test-http3-fixture"]
+
+[targets.masque-listener-start-test]
+kind = "bin"
+main = "tests/masque_listener_start.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-masque-listener-start", "test-http3-fixture"]
+
+[targets.masque-host-lifecycle-test]
+kind = "bin"
+main = "tests/masque_host_lifecycle.cpp"
+cxxflags = ["-fno-module-lazy"]
+required_features = ["test-masque-host-lifetime", "test-http3-fixture"]
+
+[targets.masque-config-test]
+kind = "bin"
+main = "tests/masque_config.cpp"
+
+[targets.shadowtls-v3-test]
+kind = "bin"
+main = "tests/shadowtls_v3.cpp"
+required_features = ["shadowtls"]
+
+[targets.tuic-v5-test]
+kind = "bin"
+main = "tests/tuic_v5.cpp"
+required_features = ["tuic-core"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.config-protocols-ext-test]
+kind = "bin"
+main = "tests/config_protocols_ext.cpp"
+
+[targets.shadowtls-loopback-test]
+kind = "bin"
+main = "tests/shadowtls_loopback.cpp"
+required_features = ["shadowtls-proxy"]
+
+[targets.tuic-loopback-test]
+kind = "bin"
+main = "tests/tuic_loopback.cpp"
+required_features = ["tuic"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.masque-outbound-loopback-test]
+kind = "bin"
+main = "tests/masque_outbound_loopback.cpp"
+required_features = ["masque-host", "masque-outbound"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch94a-unit]
+kind = "bin"
+main = "tests/batch94a_unit.cpp"
+required_features = ["vless", "hy2-cli"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch94b-xhttp-unit]
+kind = "bin"
+main = "tests/batch94b_xhttp_unit.cpp"
+required_features = ["vless", "http2"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch94c-utls-unit]
+kind = "bin"
+main = "tests/batch94c_utls.cpp"
+required_features = ["tls"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch96b-ktls-unit]
+kind = "bin"
+main = "tests/batch96b_ktls.cpp"
+required_features = ["ktls"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch135-138-unit]
+kind = "bin"
+main = "tests/batch135_138_cross_platform_edge_cases_unit.cpp"
+required_features = ["ktls", "quic-sniff"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch147-unit]
+kind = "bin"
+main = "tests/batch147_config_reverse_rulesets_unit.cpp"
+required_features = ["dns-response"]
+
+[targets.batch148-unit]
+kind = "bin"
+main = "tests/batch148_unit.cpp"
+required_features = ["ntp", "tun-inbound"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch149-unit]
+kind = "bin"
+main = "tests/batch149_unit.cpp"
+required_features = ["hy2-cli", "trojan", "anytls", "snell", "tun-inbound"]
+
+[targets.batch150-unit]
+kind = "bin"
+main = "tests/batch150_unit.cpp"
+required_features = ["ssh", "control-http"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch151-unit]
+kind = "bin"
+main = "tests/batch151_unit.cpp"
+required_features = ["naive", "http-connect-tls"]
+cxxflags = ["-fno-module-lazy"]
+
+[targets.batch123-tcp-udp-datapath-unit]
+kind = "bin"
+main = "tests/batch123_tcp_udp_datapath_unit.cpp"
+cxxflags = ["-fno-module-lazy"]

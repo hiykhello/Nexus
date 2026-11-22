@@ -7,17 +7,17 @@
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/udp_socket.hpp>
 import std;
-import nexus.dns.fakeip;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_response;
-import nexus.dns.fakeip_target;
-import nexus.dns.fakeip_shared;
-import nexus.dns.message;
+import dns.fakeip;
+import dns.fakeip_registry;
+import dns.fakeip_response;
+import dns.fakeip_target;
+import dns.fakeip_shared;
+import dns.message;
+import dns.corosio_query;
 #include "../src/dns/corosio_fakeip_listener.hpp"
-#include "../src/dns/corosio_udp.hpp"
 namespace capy=boost::capy;
-namespace io=boost::corosio;
-namespace d=nexus::dns;
+namespace io=nex::corosio;
+namespace d=dns;
 using namespace std::chrono_literals;
 constexpr std::uint32_t base=0xc6120000;
 struct Fixture {

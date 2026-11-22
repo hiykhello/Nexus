@@ -1,7 +1,10 @@
 import std;
-import nexus.shadowsocks.response;
-import nexus.shadowsocks.frame;
-namespace s=nexus::shadowsocks;
+import shadowsocks.response;
+import shadowsocks.frame;
+import shadowsocks.key;
+import shadowsocks.chunk;
+import shadowsocks.header;
+namespace s=shadowsocks;
 auto hex(std::string_view text) -> std::vector<std::uint8_t> {
     auto digit=[](char c) { return c<='9' ? c-'0' : c-'a'+10; };
     std::vector<std::uint8_t> result;
@@ -35,6 +38,16 @@ int main() {
         if (!max) return 11; auto p=s::decode_response_prefix(k,r,max->wire,42);
         if (!p || s::decode_response_payload(std::move(*p),std::span{max->wire}.subspan(2*size+27))->payload!=large) return 12;
         large.push_back(0); if (s::encode_response(k,s,r,42,large).error()!=s::ResponseError::invalid_payload) return 13;
+        auto zkey=s::SessionKey::derive(k,s); auto zhdr=s::make_fixed_header(true,42,0,r); auto zcipher=s::ChunkCipher::create(std::move(*zkey),true);
+        auto zf=zcipher->process(*zhdr); auto zs=zcipher->process(std::span<std::uint8_t const>{});
+        std::vector<std::uint8_t> zwire(s.begin(),s.end()); zwire.insert(zwire.end(),zf->begin(),zf->end()); zwire.insert(zwire.end(),zs->begin(),zs->end());
+        auto zp=s::decode_response_prefix(k,r,zwire,42); if (!zp || zp->consumed!=2*size+27 || zp->payload_length!=0) return 14;
+        auto zd=s::decode_response_payload(std::move(*zp),std::span{zwire}.subspan(2*size+27));
+        if (!zd || !zd->payload.empty()) return 15;
+        s::FrameEncoder zw(std::move(*zcipher)); s::FrameDecoder zr(std::move(zd->cipher));
+        auto znext=zw.encode(payload); if (!znext) return 16;
+        auto zstep=zr.feed(*znext);
+        if (!zstep || !zstep->payload || !std::ranges::equal(*zstep->payload,payload)) return 17;
     }
     std::cout << "Shadowsocks 2022 response vectors passed\n";
 }

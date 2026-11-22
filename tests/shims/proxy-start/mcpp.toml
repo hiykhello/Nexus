@@ -1,0 +1,11 @@
+[package]
+namespace = "nexus"
+name = "proxy-start-shim"
+version = "0.1.0"
+
+[build]
+sources = ["../../proxy_start_fault.c"]
+ldflags = ["-ldl"]
+
+[targets.proxy-start-shim]
+kind = "shared"

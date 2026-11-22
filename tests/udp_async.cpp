@@ -7,12 +7,12 @@
 #include <boost/corosio/endpoint.hpp>
 #include <boost/corosio/ipv4_address.hpp>
 import std;
-import nexus.udp;
+import udp;
 
 namespace capy = boost::capy;
 namespace io = boost::corosio;
-namespace u = nexus::udp;
-namespace p = nexus::packet;
+namespace u = udp;
+namespace p = ::packet;
 using namespace std::chrono_literals;
 
 struct Fixture {

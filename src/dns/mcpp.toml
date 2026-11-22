@@ -1,0 +1,53 @@
+[package]
+namespace = "nexus"
+name = "dns"
+version = "0.1.0"
+
+# DNS models and query transport are independent of the proxy and can be
+# consumed by other network components.
+[dependencies]
+nexus.protocols = { path = ".." }
+nexus.policy = { path = "../rules" }
+nexus.platform = { path = "../platform" }
+nexus.ngcpp-proxy = "=0.1.0"
+
+[features]
+tls-query = { implies = ["nexus.protocols/tls"], sources = ["tls_query.cpp", "!tls_query_disabled.cpp"] }
+https-query = { implies = ["nexus.protocols/http1-tls-client", "nexus.protocols/http2"], sources = ["doh_exchange.cppm", "doh_pool.cppm", "doh_pool.cpp", "https_query.cpp", "!https_query_disabled.cpp"] }
+https3-query = { implies = ["https-query", "quic-query", "nexus.protocols/masque-client"], defines = ["NEXUS_DNS_DOH3"], sources = ["doh3_pool.cpp"] }
+quic-query = { implies = ["nexus.protocols/quic-tls", "nexus.protocols/quic-shared-port"], sources = ["quic_query.cpp", "!quic_query_disabled.cpp"] }
+quic-query-resumption = { implies = ["quic-query", "nexus.protocols/quic-resumption"], sources = ["quic_query_resumption.cpp", "!quic_query.cpp"] }
+reverse = { defines = ["NEXUS_DNS_REVERSE_CORE"] }
+fakeip = { defines = ["NEXUS_DNS_FAKEIP"], sources = [
+    "fakeip.cppm", "fakeip.cpp", "fakeip_response.cppm", "fakeip_response.cpp",
+    "fakeip_target.cppm", "fakeip_target.cpp", "fakeip_registry.cppm", "fakeip_registry.cpp",
+    "fakeip_shared.cppm", "fakeip_request.cppm", "fakeip_request.cpp", "message_fakeip.cppm", "!message_fakeip_disabled.cppm",
+] }
+fakeip-history = { implies = ["fakeip"], sources = [
+    "fakeip_recovery.cppm", "fakeip_recovery.cpp", "fakeip_history.cppm", "fakeip_history.cpp",
+    "fakeip_history_store.cppm", "fakeip_history_store.cpp",
+] }
+# Test-only callbacks are compiled into the query module itself. Consumers
+# requesting either hook must supply its matching external function.
+test-dns-lifetime = { defines = ["NEXUS_TEST_DNS_RECEIVE"] }
+test-fakeip = { defines = ["NEXUS_TEST_FAKEIP"] }
+
+[feature-deps.fakeip-history]
+nexus.crypto = { path = "../crypto" }
+
+[build]
+flags = [{ glob = "doh3_pool.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "quic_query.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "quic_query_resumption.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "https_query.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "doh_exchange.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "doh_pool.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "tls_query.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "address_race_program.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_program.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_exchange.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "message_exchange.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_tcp.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_tcp_listener.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "message_udp_listener.cpp", cxxflags = ["-fno-module-lazy"] }]
+sources = [
+    "message.cppm", "message.cpp", "message_addresses.cpp", "message_ecs.cpp", "message_encode.cpp", "message_parse.cpp", "input_budget.cppm", "response_match.cppm", "response_addresses.cppm", "response_program.cppm", "evaluate_owner.cppm", "evaluate_race.cppm", "response_race_walk.cppm", "race_admission.cppm", "address_race_program.cppm", "message_cache.cppm", "message_exchange.cppm", "message_exchange.cpp", "message_synthetic.cppm", "message_race_program.cppm", "message_program.cppm", "message_fakeip_disabled.cppm", "message_tcp.cppm", "message_tcp_listener.cppm", "message_tcp_listener.cpp", "message_udp_listener.cppm", "message_udp_listener.cpp", "response_cache.cppm", "response_query.cppm", "local_response.cppm", "predefined.cppm", "cache.cppm", "cache.cpp", "reverse.cppm",
+    "local_config.cppm", "local_config.cpp", "corosio_query.cppm", "corosio_query.cpp", "tls_query.cppm", "tls_query_disabled.cpp", "https_query.cppm", "https_query_disabled.cpp", "doh3_pool.cppm", "quic_query.cppm", "quic_query_disabled.cpp",
+    "corosio_resolver.cppm", "address_sequence.cppm", "corosio_cached.cppm", "corosio_local.cppm", "corosio_local.cpp",
+]
+
+[target.'cfg(all(unix, not(any(os = "macos", os = "ios"))))'.build]
+sources = ["local_config_io_posix.cpp"]
+
+[target.'cfg(any(os = "macos", os = "ios"))'.build]
+sources = ["local_config_io_darwin.cpp"]
+
+[target.'cfg(os = "windows")'.build]
+sources = ["local_config_io_windows.cpp"]

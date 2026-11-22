@@ -1,0 +1,8 @@
+mode=matcher kind=domain count=4000 source_live_bytes=696448 retained_delta_bytes=633504 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240
+mode=matcher kind=ip count=4000 source_live_bytes=440432 retained_delta_bytes=248432 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240
+mode=matcher kind=mixed count=4000 source_live_bytes=568448 retained_delta_bytes=443056 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240
+mode=matcher kind=logical count=4000 source_live_bytes=1336400 retained_delta_bytes=807568 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240
+mode=program kind=domain count=4000 source_live_bytes=949840 retained_delta_bytes=797232 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240
+mode=program kind=ip count=4000 source_live_bytes=693792 retained_delta_bytes=412032 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240
+mode=program kind=mixed count=4000 source_live_bytes=821904 retained_delta_bytes=606640 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240
+mode=program kind=logical count=4000 source_live_bytes=1590176 retained_delta_bytes=970992 rule_object_bytes=88 matcher_object_bytes=216 program_object_bytes=240

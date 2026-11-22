@@ -1,11 +1,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.tls.server_flight;
-import nexus.tls.client_hello_stream;
-import nexus.tls.client_keys;
-import nexus.tls.handshake;
-import nexus.tls.key_share;
+import tls.server_flight;
+import tls.client_hello_stream;
+import tls.client_keys;
+import tls.handshake;
+import tls.key_share;
 static thread_local int fail_after=-1;
 static void* watched_server_hello=nullptr;
 static bool server_hello_released=false;
@@ -34,7 +34,7 @@ void operator delete(void* p) noexcept {
     std::free(p);
 }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
-namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace t=tls; namespace c = ::crypto;
 auto read_file(char const* p) -> c::Bytes { std::ifstream in(p,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 auto read_exact(int fd,std::span<std::uint8_t> out) -> bool {
     while (!out.empty()) { auto n=::recv(fd,out.data(),out.size(),0); if (n<=0) return false; out=out.subspan(static_cast<std::size_t>(n)); } return true;

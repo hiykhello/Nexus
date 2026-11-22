@@ -1,7 +1,7 @@
-module nexus.tls.record_stream;
+module tls.record_stream;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     RecordStream::RecordStream(RecordStream&& other) noexcept
         : pending_(std::move(other.pending_)), target_(other.target_), failed_(other.failed_), finished_(other.finished_), mode_(other.mode_) {
         other.failed_=true;
@@ -28,10 +28,13 @@ namespace nexus::tls {
                 auto type=pending_[0]; auto length=(std::size_t{pending_[3]}<<8)|pending_[4];
                 if (((mode==RecordFraming::ciphertext || mode==RecordFraming::handshake_ciphertext) &&
                      (pending_[1]!=3 || pending_[2]!=3 || ((type!=23 || length<17) && !(mode==RecordFraming::handshake_ciphertext && type==20 && length==1)))) ||
+                    (mode==RecordFraming::tls12_gcm &&
+                     (pending_[1]!=3 || pending_[2]!=3 || type<21 || type>23 || length<16)) ||
                     (mode==RecordFraming::plaintext && ((type!=20 && type!=21 && type!=22 && type!=23) || pending_[1]!=3 || pending_[2]>3))) {
                     failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::invalid_header);
                 }
-                if (length>(mode==RecordFraming::plaintext ? 16384u : 16640u)) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::record_too_large); }
+                auto maximum=mode==RecordFraming::plaintext ? 16384u : mode==RecordFraming::tls12_gcm ? 16408u : 16640u;
+                if (length>maximum) { failed_=true; std::vector<std::uint8_t>{}.swap(pending_); return std::unexpected(RecordStreamError::record_too_large); }
                 target_=5+length;
                 if (target_!=5) { pending_.reserve(target_); continue; }
             }

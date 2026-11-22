@@ -1,12 +1,12 @@
 #include <unistd.h>
 #include <errno.h>
 import std;
-import nexus.tls.client_handshake_io;
-import nexus.tls.handshake;
-import nexus.tls.key_share;
-import nexus.tls.server_hello;
-import nexus.tls.server_hello_stream;
-namespace t=nexus::tls; namespace c=nexus::crypto; using Bytes=c::Bytes;
+import tls.client_handshake_io;
+import tls.handshake;
+import tls.key_share;
+import tls.server_hello;
+import tls.server_hello_stream;
+namespace t=tls; namespace c = ::crypto; using Bytes=c::Bytes;
 auto io(bool writing, std::span<std::uint8_t> data) -> bool {
     for (std::size_t p=0;p<data.size();) { auto n=writing ? ::write(1,data.data()+p,data.size()-p) : ::read(0,data.data()+p,data.size()-p);
         if (n<0 && errno==EINTR) continue; if (n<=0) return false; p+=static_cast<std::size_t>(n); } return true;

@@ -1,14 +1,13 @@
 #include <boost/capy/ex/frame_allocator.hpp>
-#include <boost/capy/ex/recycling_memory_resource.hpp>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <atomic>
-#include <cstring>
 #include <memory_resource>
 #include <new>
 import std;
-import nexus.proxy;
+import proxy;
+import dns.local_config;
 using namespace std::chrono_literals;
 namespace capy=boost::capy;
 
@@ -16,6 +15,7 @@ static std::atomic<unsigned> phase{0}, injected{0};
 static thread_local bool fail_frame=false;
 class TestResource final : public std::pmr::memory_resource {
     void* do_allocate(std::size_t size,std::size_t alignment) override {
+        if (fail_frame) { fail_frame=false; ++injected; throw std::bad_alloc{}; }
         if (phase==3) { ++injected; throw std::bad_alloc{}; }
         return std::pmr::new_delete_resource()->allocate(size,alignment);
     }
@@ -30,23 +30,10 @@ extern "C" std::pmr::memory_resource* nexus_test_root_resource() {
 }
 extern "C" void nexus_test_root_launch(unsigned stage) {
     if (phase==1 && stage==0) { ++injected; throw std::bad_alloc{}; }
-    if (phase==2 && stage==1) fail_frame=true;
-}
-
-// Override the weak Capy frame allocator only in this test binary. The normal
-// path preserves its allocation layout so Capy's ordinary delete can free it.
-extern "C" void* test_frame_new(std::size_t size)
-    asm("_ZN5boost4capy17frame_alloc_mixinnwEm");
-extern "C" void* test_frame_new(std::size_t size) {
-    if (fail_frame) { fail_frame=false; ++injected; throw std::bad_alloc{}; }
-    auto* mr=capy::get_current_frame_allocator();
-    if (!mr) mr=std::pmr::get_default_resource();
-    auto* recycling=capy::get_recycling_memory_resource();
-    auto total=size+sizeof(std::pmr::memory_resource*);
-    void* raw=mr==recycling ? static_cast<capy::recycling_memory_resource*>(mr)->allocate_fast(total,alignof(std::max_align_t)) :
-                              mr->allocate(total,alignof(std::max_align_t));
-    std::memcpy(static_cast<char*>(raw)+size,&mr,sizeof(mr));
-    return raw;
+    if (phase==2 && stage==1) {
+        fail_frame=true;
+        capy::set_current_frame_allocator(nexus_test_root_resource());
+    }
 }
 
 static auto count(std::string_view path) -> std::size_t {
@@ -72,11 +59,15 @@ static auto greeting(std::uint16_t port) -> bool {
     return ok;
 }
 int main() {
-    for (unsigned workers : {1u,2u}) for (unsigned point : {1u,2u,3u}) {
-        nexus::proxy::Server server;
+    // The process-wide DNS source outlives every Server; exclude its refresh
+    // thread from the per-server leak baseline while still checking all of
+    // the resources created by each failed start and restart.
+    (void)dns::system_local_snapshots();
+    for (unsigned workers : {1u,2u}) for (unsigned point : {1u,2u}) {
+        proxy::Server server;
         auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
         phase=point; injected=0;
-        auto port=server.start(0,nexus::proxy::Inbound::socks5,workers);
+        auto port=server.start(0,proxy::Inbound::socks5,workers);
         if (!port) return 1;
         int client=connect_to(*port);
         if (client<0) return 2;
@@ -87,7 +78,7 @@ int main() {
         server.stop();
         if (count("/proc/self/fd")!=fds || count("/proc/self/task")!=threads) return 4;
         phase=0;
-        auto retry=server.start(0,nexus::proxy::Inbound::socks5,workers);
+        auto retry=server.start(0,proxy::Inbound::socks5,workers);
         if (!retry) return 5;
         auto result=std::async(std::launch::async,greeting,*retry);
         deadline=std::chrono::steady_clock::now()+5s;

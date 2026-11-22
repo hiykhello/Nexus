@@ -1,11 +1,11 @@
-export module nexus.tcp.engine;
-export import nexus.tcp.dispatch;
+export module tcp.engine;
+export import tcp.dispatch;
 import std;
 
-export namespace nexus::tcp {
+export namespace tcp {
     enum class EngineError { time_reversed, unknown_flow, invalid_mtu };
     struct EngineStep {
-        bool input = false, delivered = false, backpressured = false, stale_reply = false, challenge_suppressed = false;
+        bool input = false, delivered = false, backpressured = false, stale_reply = false, challenge_suppressed = false, reset_suppressed = false;
         std::optional<ConnectionId> id;
         bool opened = false;
         std::optional<ConnectionError> input_error;
@@ -39,14 +39,17 @@ export namespace nexus::tcp {
         std::optional<packet::Bytes> incoming_;
         std::uint32_t incoming_iss_ = 0;
         std::optional<packet::Bytes> pending_;
+        std::shared_ptr<packet::TcpGeneration> pending_generation_;
         std::optional<ConnectionId> pending_id_;
         bool pending_reset_ = false;
+        bool pending_reply_reset_ = false;
         std::size_t mtu_;
         std::uint64_t now_ = 0;
         bool initialized_ = false;
         ConnectionId cursor_ = 0;
         enum class Action { data, retransmit, probe, fin, fin_retry };
         auto flush(EngineStep& report) -> void;
+        auto watch(std::span<std::uint8_t const> bytes) -> std::shared_ptr<packet::TcpGeneration>;
         auto emit(PassiveConnection& flow, SendSlice const& slice, std::uint64_t now, Action action)
             -> std::expected<TransmitResult, EngineError>;
     public:
@@ -55,6 +58,8 @@ export namespace nexus::tcp {
         MemoryEngine(packet::MemoryLink& link, ConnectionTable& table, rules::Matcher policy, std::size_t mtu = 1500)
             : link_(link), table_(table), policy_(std::move(policy)), mtu_(mtu) {}
         ~MemoryEngine();
+        // Discard retained input and output during terminal stack shutdown.
+        auto discard() noexcept -> void;
         MemoryEngine(MemoryEngine const&) = delete;
         auto operator=(MemoryEngine const&) -> MemoryEngine& = delete;
         // ISS is used only if this step opens a flow; caller supplies a secure value.
@@ -84,14 +89,17 @@ export namespace nexus::tcp {
         std::optional<packet::Bytes> incoming_;
         std::uint32_t incoming_iss_ = 0;
         std::optional<packet::Bytes> pending_;
+        std::shared_ptr<packet::TcpGeneration> pending_generation_;
         std::optional<ConnectionId> pending_id_;
         bool pending_reset_ = false;
+        bool pending_reply_reset_ = false;
         std::size_t mtu_;
         std::uint64_t now_ = 0;
         bool initialized_ = false;
         ConnectionId cursor_ = 0;
         enum class Action { data, retransmit, probe, fin, fin_retry };
         auto flush(EngineStep& report) -> void;
+        auto watch(std::span<std::uint8_t const> bytes) -> std::shared_ptr<packet::TcpGeneration>;
         auto emit(PassiveConnection6& flow, SendSlice const& slice, std::uint64_t now, Action action)
             -> std::expected<TransmitResult, EngineError>;
     public:
@@ -100,6 +108,7 @@ export namespace nexus::tcp {
         MemoryEngine6(packet::MemoryLink& link, ConnectionTable6& table, rules::Matcher policy, std::size_t mtu = 1500)
             : link_(link), table_(table), policy_(std::move(policy)), mtu_(mtu) {}
         ~MemoryEngine6();
+        auto discard() noexcept -> void;
         MemoryEngine6(MemoryEngine6 const&) = delete;
         auto operator=(MemoryEngine6 const&) -> MemoryEngine6& = delete;
         // ISS is used only if this step opens a flow; caller supplies a secure value.

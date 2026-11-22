@@ -1,0 +1,10 @@
+[package]
+namespace = "nexus"
+name = "dns-system-guard-shim"
+version = "0.1.0"
+
+[build]
+sources = ["../../proxy_dns_system_guard.c"]
+
+[targets.dns-system-guard-shim]
+kind = "shared"

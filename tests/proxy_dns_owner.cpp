@@ -3,7 +3,7 @@
 #include <unistd.h>
 #include <cerrno>
 import std;
-import nexus.proxy;
+import proxy;
 using namespace std::chrono_literals;
 bool skip_stop=false, owner_destroyed=false, all_unregistered_before_owner=true;
 unsigned registrations_destroyed=0;
@@ -11,7 +11,7 @@ extern "C" bool nexus_test_skip_server_stop() { return skip_stop; }
 extern "C" void nexus_test_handshake_borrowed_state(bool) {}
 extern "C" void nexus_test_dns_owner_destroy() { owner_destroyed=true; }
 extern "C" void nexus_test_dns_registration_destroy() { ++registrations_destroyed; all_unregistered_before_owner &= !owner_destroyed; }
-auto read_exact(nexus::proxy::Server& server,int fd,std::span<unsigned char> output) -> bool {
+auto read_exact(proxy::Server& server,int fd,std::span<unsigned char> output) -> bool {
     auto deadline=std::chrono::steady_clock::now()+3s;
     while (!output.empty() && std::chrono::steady_clock::now()<deadline) {
         server.poll(10ms);
@@ -30,9 +30,9 @@ int main(int argc,char** argv) {
     socklen_t size=sizeof(address); if (getsockname(dns,reinterpret_cast<sockaddr*>(&address),&size)) return 4;
     std::array<int,2> clients{-1,-1}, peers{-1,-1};
     {
-        nexus::proxy::Server server;
-        nexus::proxy::DnsServer upstream; upstream.address[0]=127; upstream.address[3]=1; upstream.port=ntohs(address.sin_port); upstream.tcp=tcp;
-        nexus::proxy::DnsRouting routing; routing.servers.push_back(upstream); routing.strategy=nexus::proxy::DnsStrategy::ipv4_only;
+        proxy::Server server;
+        proxy::DnsServer upstream; upstream.address[0]=127; upstream.address[3]=1; upstream.port=ntohs(address.sin_port); upstream.tcp=tcp;
+        proxy::DnsRouting routing; routing.servers.push_back(upstream); routing.strategy=proxy::DnsStrategy::ipv4_only;
         if (!server.set_dns_routing(std::move(routing))) return 5;
         auto port=server.start(0); if (!port) return 6;
         address.sin_port=htons(*port);

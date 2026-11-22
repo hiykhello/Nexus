@@ -1,6 +1,6 @@
-module nexus.shadowsocks.replay;
+module shadowsocks.replay;
 import std;
-namespace nexus::shadowsocks {
+namespace shadowsocks {
     auto ReplayTable::admit(std::span<std::uint8_t const> salt, std::chrono::steady_clock::time_point now, std::uint64_t wall_seconds)
         -> std::expected<void,ReplayError> {
         if (salt.size()!=16 && salt.size()!=32) return std::unexpected(ReplayError::invalid_salt);

@@ -1,7 +1,7 @@
-module nexus.tls.record;
+module tls.record;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     namespace {
         auto valid_type(ContentType t) -> bool { return t==ContentType::alert || t==ContentType::handshake || t==ContentType::application_data; }
     }
@@ -9,13 +9,13 @@ namespace nexus::tls {
         : algorithm_(algorithm), key_(std::move(key)), iv_(iv), send_limit_(send_limit), direction_(direction) {}
     RecordLayer::~RecordLayer() { crypto::cleanse(key_); crypto::cleanse(iv_); }
     RecordLayer::RecordLayer(RecordLayer&& other) noexcept
-        : algorithm_(other.algorithm_), key_(std::move(other.key_)), iv_(other.iv_), sequence_(other.sequence_), send_limit_(other.send_limit_), direction_(other.direction_), active_(other.active_) {
+        : algorithm_(other.algorithm_), key_(std::move(other.key_)), iv_(other.iv_), sequence_(other.sequence_), send_limit_(other.send_limit_), direction_(other.direction_), active_(other.active_), legacy_(other.legacy_) {
         other.active_=false; crypto::cleanse(other.iv_); crypto::cleanse(other.key_);
     }
     auto RecordLayer::operator=(RecordLayer&& other) noexcept -> RecordLayer& {
         if (this != &other) {
             crypto::cleanse(key_); crypto::cleanse(iv_);
-            algorithm_=other.algorithm_; key_=std::move(other.key_); iv_=other.iv_; sequence_=other.sequence_; send_limit_=other.send_limit_; direction_=other.direction_; active_=other.active_;
+            algorithm_=other.algorithm_; key_=std::move(other.key_); iv_=other.iv_; sequence_=other.sequence_; send_limit_=other.send_limit_; direction_=other.direction_; active_=other.active_; legacy_=other.legacy_;
             other.active_=false; crypto::cleanse(other.iv_); crypto::cleanse(other.key_);
         }
         return *this;
@@ -46,6 +46,10 @@ namespace nexus::tls {
         if (direction_!=RecordDirection::send) return std::unexpected(RecordError::invalid_state);
         if (sequence_>=send_limit_) return std::unexpected(RecordError::key_usage_limit);
         if (!valid_type(type) || (content.empty() && type!=ContentType::application_data) || content.size()>16384 || padding>16384-content.size()) return std::unexpected(RecordError::invalid_input);
+        if (legacy_) {
+            if (padding) return std::unexpected(RecordError::invalid_input);
+            return seal_tls12(type,content);
+        }
         crypto::Bytes inner; inner.reserve(content.size()+1+padding);
         inner.insert(inner.end(),content.begin(),content.end());
         struct Cleanse { crypto::Bytes& bytes; ~Cleanse() { crypto::cleanse(bytes); } } cleanse{inner};
@@ -62,6 +66,7 @@ namespace nexus::tls {
     }
     auto RecordLayer::open(std::span<std::uint8_t const> record) -> std::expected<PlaintextRecord,RecordError> {
         if (!active_ || direction_!=RecordDirection::receive) return std::unexpected(RecordError::invalid_state);
+        if (legacy_) return open_tls12(record);
         auto fail=[this](RecordError e) -> std::expected<PlaintextRecord,RecordError> { active_=false; return std::unexpected(e); };
         if (record.size()<5 || record[0]!=23 || record[1]!=3 || record[2]!=3) return fail(RecordError::invalid_record);
         auto length=(std::size_t{record[3]}<<8)|record[4];
@@ -76,5 +81,32 @@ namespace nexus::tls {
         if (inner->empty() && type!=ContentType::application_data) return fail(RecordError::invalid_record);
         active_=true; advance();
         return PlaintextRecord{type,std::move(*inner)};
+    }
+    KtlsKeyMaterial::KtlsKeyMaterial(KtlsKeyMaterial&& other) noexcept
+        : algorithm(other.algorithm), key(std::move(other.key)), iv(other.iv), sequence(other.sequence) {
+        crypto::cleanse(other.iv); other.sequence = 0;
+    }
+    auto KtlsKeyMaterial::operator=(KtlsKeyMaterial&& other) noexcept -> KtlsKeyMaterial& {
+        if (this != &other) {
+            crypto::cleanse(key); crypto::cleanse(iv);
+            algorithm = other.algorithm; key = std::move(other.key); iv = other.iv; sequence = other.sequence;
+            crypto::cleanse(other.iv); other.sequence = 0;
+        }
+        return *this;
+    }
+    KtlsKeyMaterial::~KtlsKeyMaterial() { crypto::cleanse(key); crypto::cleanse(iv); }
+    auto RecordLayer::export_ktls_material() -> std::optional<KtlsKeyMaterial> {
+        if (!active_ || legacy_) return {};
+        if (key_.size() != 16 && key_.size() != 32) return {};
+        KtlsKeyMaterial out;
+        out.algorithm = algorithm_;
+        out.key = std::move(key_);
+        out.iv = iv_;
+        out.sequence = sequence_;
+        active_ = false;
+        crypto::cleanse(key_);
+        crypto::cleanse(iv_);
+        sequence_ = 0;
+        return out;
     }
 }

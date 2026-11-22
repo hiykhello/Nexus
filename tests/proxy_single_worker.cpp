@@ -1,6 +1,7 @@
 #include <sched.h>
 import std;
-import nexus.proxy;
+import proxy;
+import dns.local_config;
 using namespace std::chrono_literals;
 
 auto threads() -> std::size_t {
@@ -16,10 +17,13 @@ auto main() -> int {
     if (cpu==CPU_SETSIZE) return 2;
     CPU_ZERO(&single); CPU_SET(cpu,&single);
     if (::sched_setaffinity(0,sizeof(single),&single)!=0) return 3;
+    // The process-wide local DNS source owns a refresh thread. Initialize it
+    // before counting so the test measures only the server's network loop.
+    (void)dns::system_local_snapshots();
     auto before=threads();
     int result=0;
     {
-        nexus::proxy::Server server;
+        proxy::Server server;
         auto port=server.start(0);
         if (!port || threads()!=before) result=4;
         else {

@@ -4,7 +4,8 @@
 #include <time.h>
 #include <unistd.h>
 import std;
-import nexus.proxy;
+import proxy;
+import dns.local_config;
 using namespace std::chrono_literals;
 
 auto count(std::string_view path) -> std::size_t {
@@ -18,9 +19,11 @@ auto now_ns() -> long {
 auto main() -> int {
     auto fault_time=reinterpret_cast<long(*)()>(::dlsym(RTLD_DEFAULT, "nexus_test_accept_fault_time_ns"));
     if (!fault_time) return 1;
+    // The process-wide DNS refresh thread outlives each server.
+    (void)dns::system_local_snapshots();
     auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
     {
-    nexus::proxy::Server server;
+    proxy::Server server;
     auto port=server.start(0);
     if (!port) return 2;
     int fd=::socket(AF_INET, SOCK_STREAM, 0);
@@ -38,7 +41,7 @@ auto main() -> int {
     auto again=server.start(0);
     if (!again || !server.healthy()) {
         if (!again) std::println("restart error: {}", again.error().message());
-        else if (auto failure=server.failure()) std::println("restart failure: {}", nexus::proxy::describe(failure->kind));
+        else if (auto failure=server.failure()) std::println("restart failure: {}", proxy::describe(failure->kind));
         return 8;
     }
     server.stop();

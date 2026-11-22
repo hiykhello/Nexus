@@ -1,9 +1,9 @@
-export module nexus.udp.route;
-export import nexus.udp;
-import nexus.rules;
+export module udp.route;
+export import udp;
+import rules;
 import std;
 
-export namespace nexus::udp {
+export namespace udp {
     enum class RouteError { blocked, invalid_packet, invalid_target, policy_error };
     using RoutedError = std::variant<RouteError, BridgeError>;
     // A policy snapshot is owned for the lifetime of the bridge.
@@ -21,6 +21,7 @@ export namespace nexus::udp {
         [[nodiscard]] auto reply(FlowId id, Endpoint4 remote, std::span<std::uint8_t const> payload, std::uint64_t now)
             -> std::expected<packet::Bytes, BridgeError> { return bridge_.reply(id, remote, payload, now); }
         [[nodiscard]] auto expire(std::uint64_t now) -> std::expected<std::size_t, Error> { return bridge_.expire(now); }
+        auto set_flow_idle_ms(FlowId id, std::uint64_t idle_ms) noexcept -> bool { return bridge_.set_flow_idle_ms(id, idle_ms); }
         [[nodiscard]] auto close(FlowId id, std::uint64_t now) -> std::expected<void, Error> { return bridge_.close(id, now); }
         [[nodiscard]] auto clear(std::uint64_t now) -> std::expected<std::size_t, Error> { return bridge_.clear(now); }
         [[nodiscard]] auto size() const noexcept -> std::size_t { return bridge_.size(); }
@@ -39,6 +40,7 @@ export namespace nexus::udp {
         [[nodiscard]] auto reply(FlowId id, Endpoint6 remote, std::span<std::uint8_t const> payload, std::uint64_t now)
             -> std::expected<packet::Bytes, BridgeError> { return bridge_.reply(id, remote, payload, now); }
         [[nodiscard]] auto expire(std::uint64_t now) -> std::expected<std::size_t, Error> { return bridge_.expire(now); }
+        auto set_flow_idle_ms(FlowId id, std::uint64_t idle_ms) noexcept -> bool { return bridge_.set_flow_idle_ms(id, idle_ms); }
         [[nodiscard]] auto close(FlowId id, std::uint64_t now) -> std::expected<void, Error> { return bridge_.close(id, now); }
         [[nodiscard]] auto clear(std::uint64_t now) -> std::expected<std::size_t, Error> { return bridge_.clear(now); }
         [[nodiscard]] auto size() const noexcept -> std::size_t { return bridge_.size(); }

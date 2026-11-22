@@ -1,0 +1,128 @@
+import { Button, Switch, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component StatusCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> system-proxy-supported: true;
+    in property <bool> system-proxy-enabled: false;
+    in property <bool> tun-enabled: false;
+    in property <string> active-profile: "default.kdl";
+    in property <string> status-summary: "未启动";
+    in property <string> control-endpoint: "";
+    in property <string> metrics-summary: "代次: 0 · 活跃会话: 0 · 上行: 0 KiB · 下行: 0 KiB";
+    in property <string> rate-summary: "实时速率: ↑ 0.0 KiB/s · ↓ 0.0 KiB/s";
+    in property <[float]> rate-bars: [];
+
+    callback toggle-core();
+    callback toggle-system-proxy(bool);
+    callback toggle-tun(bool);
+    callback reload-config();
+    callback refresh-metrics();
+    callback clear-cache();
+
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-bg;
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalBox {
+            spacing: 12px;
+            Text {
+                text: root.core-running ? "Nexus 运行中" : "Nexus 已停止";
+                font-size: 18px;
+                font-weight: 700;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: root.core-running ? "停止核心" : "启动核心";
+                primary: !root.core-running;
+                clicked => { root.toggle-core(); }
+            }
+            Button {
+                text: "热重载";
+                enabled: root.core-running;
+                clicked => { root.reload-config(); }
+            }
+        }
+
+        Text {
+            text: "配置: \{root.active-profile}  ·  \{root.status-summary}";
+            font-size: 13px;
+            opacity: 0.85;
+        }
+
+        if root.control-endpoint != "" : Text {
+            text: "控制通道: \{root.control-endpoint}";
+            font-size: 12px;
+            opacity: 0.65;
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+            Text {
+                text: root.metrics-summary;
+                font-size: 12px;
+                opacity: 0.8;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+            Button {
+                text: "刷新指标";
+                enabled: root.core-running;
+                clicked => { root.refresh-metrics(); }
+            }
+            Button {
+                text: "清缓存";
+                enabled: root.core-running;
+                clicked => { root.clear-cache(); }
+            }
+        }
+
+        Text {
+            text: root.rate-summary;
+            font-size: 12px;
+            font-weight: 600;
+            opacity: 0.9;
+        }
+
+        if root.rate-bars.length > 0 : Rectangle {
+            height: 48px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Theme.card-border;
+            HorizontalLayout {
+                padding: 6px;
+                spacing: 4px;
+                alignment: end;
+                for level in root.rate-bars : Rectangle {
+                    width: 10px;
+                    height: max(4px, 34px * clamp(level, 0.0, 1.0));
+                    y: 36px - self.height;
+                    border-radius: 2px;
+                    background: #3b82f6;
+                }
+            }
+        }
+
+        HorizontalBox {
+            spacing: 20px;
+            Switch {
+                text: root.system-proxy-supported ? "系统代理" : "系统代理（当前桌面不可用）";
+                enabled: root.core-running && root.system-proxy-supported;
+                checked: root.system-proxy-enabled;
+                toggled => { root.toggle-system-proxy(self.checked); }
+            }
+            Switch {
+                text: "TUN 接管";
+                enabled: root.core-running;
+                checked: root.tun-enabled;
+                toggled => { root.toggle-tun(self.checked); }
+            }
+        }
+    }
+}

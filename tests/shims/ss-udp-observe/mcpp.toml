@@ -1,0 +1,10 @@
+[package]
+namespace = "nexus"
+name = "ss-udp-observe-shim"
+version = "0.1.0"
+
+[build]
+sources = ["../../shadowsocks_udp_observe.c"]
+
+[targets.ss-udp-observe-shim]
+kind = "shared"

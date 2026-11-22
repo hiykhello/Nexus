@@ -62,7 +62,7 @@ GCC 16 下原 ASan 复现不再报错；`vector-alias-probe.cpp` 验证自身子
 
 这只处理指针追加与 span 扩展；单元素右值引用、前置、插入、其他类型或不合法指针等路径尚未验证或修复。生产接入前仍须审查别名契约、平台行为及 AK 的断言和其他容器。
 
-另有独立 `xmake.lua`，在显式指定项目目录、隔离 `TMPDIR`、`XMAKE_GLOBALDIR` 与 `XMAKE_CONFIGDIR` 后，用 GCC 16 和 `-fno-exceptions` 构建私有 AK 模块与消费者。模块导入 `std`，分配失败返回 `ENOMEM` 后重试成功；仅证明该最小构建组合，未证明完整 AK 或正式工程依赖接入。必须显式传 `-P <此实验目录>`，避免 xmake 选择上级项目。
+
 
 ## AK 源码库构建
 
@@ -79,7 +79,7 @@ cmake --build /tmp/ak-library-build -j 4
 
 ## 自身右值追加隔离原型
 
-`vector-rvalue-probe.patch` 在容量和指针别名补丁之后应用，令非引用元素的 `try_append(move(vector[i]))` 在扩容前记录源偏移，成功后从新存储中的对应元素移动。`vector-rvalue-probe.cpp` 用不可复制元素和 malloc 故障验证：失败时源值与对象数量不变；成功时追加元素接收源值、原元素处于其类型定义的已移动状态，最后所有对象被销毁。GCC 16 `-fno-exceptions`、AddressSanitizer 及链接真实 AK 静态库均通过；已有容量、指针/跨度别名和独立 xmake 模块回归也通过。
+`vector-rvalue-probe.patch` 在容量和指针别名补丁之后应用，令非引用元素的 `try_append(move(vector[i]))` 在扩容前记录源偏移，成功后从新存储中的对应元素移动。`vector-rvalue-probe.cpp` 用不可复制元素和 malloc 故障验证：失败时源值与对象数量不变；成功时追加元素接收源值、原元素处于其类型定义的已移动状态，最后所有对象被销毁。GCC 16 `-fno-exceptions`、AddressSanitizer 及链接真实 AK 静态库均通过；已有容量、指针/跨度别名和当时的独立模块回归也通过。
 
 这只是 `try_append(T&&)` 的实验；`try_insert`、`try_prepend`、`try_empend` 的别名以及其他平台、异常元素、断言路径尚未处理。使用前必须按容量、指针别名、右值别名顺序应用三个补丁；实验仍未纳入项目正式依赖。
 

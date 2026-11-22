@@ -62,7 +62,7 @@ def invalid_starts(root):
                (root / 'missing', None, 'socks5'), ('relative', None, 'socks5'),
                (secret, b'', 'socks5'), (secret, b'a\x00b', 'socks5'),
                (secret, b'a\nb\n', 'socks5'), (secret, b'x' * 256, 'socks5'),
-               (secret, b'correct', 'mixed'), (secret, b'a' * 255 + b'\n\n', 'socks5')]
+               (secret, b'a' * 255 + b'\n\n', 'socks5')]
     for file, contents, inbound in invalid:
         if contents is not None:
             secret.write_bytes(contents)
@@ -74,14 +74,14 @@ def invalid_starts(root):
             assert probe.connect_ex(('127.0.0.1', port)) != 0
 
 
-def live(root):
+def live(root, inbound):
     secret = root / 'password'
     secret.write_bytes(b'correct\n')
     os.chmod(secret, 0o600)
     path = root / 'config.kdl'
     with listener() as reserved:
         port = reserved.getsockname()[1]
-    path.write_text(config(port, secret))
+    path.write_text(config(port, secret, inbound))
     proc = subprocess.Popen([server, 'run', '--config', path], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 5
@@ -107,8 +107,10 @@ def live(root):
                 client.sendall(b'\x05\x01\x02\x01\x05alice\x05wrong' +
                                b'\x05\x01\x00\x01\x7f\x00\x00\x01' + target_port.to_bytes(2, 'big'))
                 assert exact(client, 2) == b'\x05\x02'
-                assert exact(client, 2) == b'\x01\x01'
                 try:
+                    # Closing with unread CONNECT bytes may reset the socket
+                    # before the authentication reply reaches the client.
+                    assert exact(client, 2) == b'\x01\x01'
                     assert client.recv(1) == b''
                 except ConnectionResetError:
                     pass
@@ -195,5 +197,6 @@ def live(root):
 with tempfile.TemporaryDirectory(prefix='nexus-auth-test-') as directory:
     root = pathlib.Path(directory)
     invalid_starts(root)
-    live(root)
-print('SOCKS5 password authentication, safe startup and relay passed')
+    for inbound in ('socks5', 'mixed'):
+        live(root, inbound)
+print('SOCKS5 password authentication, safe startup and relay passed on socks5 and mixed listeners')

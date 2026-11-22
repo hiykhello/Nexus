@@ -1,0 +1,65 @@
+[package]
+namespace = "nexus"
+name = "http2-client-tests"
+version = "0.1.0"
+
+[dependencies]
+nexus.protocols = { path = "../../src", features = ["http2"] }
+nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[features]
+default = ["io-uring", "probe"]
+io-uring = ["nexus.corosio-source/uring"]
+probe = { sources = ["client_probe.cpp"] }
+allocation = { sources = ["allocation_meter.cpp"] }
+grpc = ["nexus.protocols/grpc"]
+
+[feature-deps.io-uring]
+nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+
+[build]
+sources = []
+
+# Link interposition stays in this dedicated profile/member.
+[profile.allocation]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=realloc", "-Wl,--wrap=free"]
+
+[targets.http2-client]
+kind = "bin"
+main = "client.cpp"
+
+[targets.http2-client-boundaries]
+kind = "bin"
+main = "client_boundaries.cpp"
+required_features = ["probe"]
+
+[targets.http2-client-lifecycle]
+kind = "bin"
+main = "client_lifecycle.cpp"
+
+[targets.http2-client-network]
+kind = "bin"
+main = "client_network.cpp"
+
+[targets.http2-client-faults]
+kind = "bin"
+main = "client_faults.cpp"
+required_features = ["allocation"]
+
+[targets.http2-client-layout]
+kind = "bin"
+main = "client_layout.cpp"
+required_features = ["allocation"]
+
+[targets.http2-grpc-transport-terminal]
+kind = "bin"
+main = "grpc_transport_terminal.cpp"
+required_features = ["grpc"]
+
+[targets.http2-grpc-channel-allocation]
+kind = "bin"
+main = "grpc_channel_allocation.cpp"
+required_features = ["grpc", "allocation"]

@@ -1,0 +1,48 @@
+2026-10-30T12:11:57+08:00
+    PID PSR %CPU  NI COMMAND
+  30366   6 28.0  -4 ghostty
+  31877   7 23.2  -4 RDD Process
+   1373   2  6.2 -12 niri
+  72335   6  5.2  -4 Isolated Web Co
+  31750  10  4.4  -4 firefox
+    840  10  3.4   0 nvidia-powerd
+  73427  12  2.9   - node-MainThread
+  32815   8  2.8  -4 haruna
+  27132  10  2.6 -12 noctalia
+    355  10  2.3   0 nvidia-modeset/kthread_q
+  30429   6  1.9  -4 codex
+  67943   7  1.6  -4 agy
+  73142   4  1.1   - npm exec @deeps
+  31936   8  0.6  -4 WebExtensions
+2026-10-30T12:13:12+08:00
+    PID PSR %CPU  NI COMMAND
+ 108652   5  124   - rustc
+  30366   7 28.0  -4 ghostty
+  31877   9 23.6  -4 RDD Process
+   1373  18  6.1 -12 niri
+  72335   7  5.1  -4 Isolated Web Co
+  31750   7  4.4  -4 firefox
+    840   7  3.4   0 nvidia-powerd
+  32815   7  2.8  -4 haruna
+  73427  18  2.8   - node-MainThread
+  27132  19  2.7 -12 noctalia
+    355  13  2.3   0 nvidia-modeset/kthread_q
+  30429   6  1.9  -4 codex
+  67943   7  1.5  -4 agy
+  73142   4  1.0   - npm exec @deeps
+2026-10-30T12:14:26+08:00
+    PID PSR %CPU  NI COMMAND
+ 109725   5 98.3   - rustc
+  30366   1 27.9  -4 ghostty
+  31877   0 24.1  -4 RDD Process
+   1373  13  6.1 -12 niri
+  72335   5  5.0  -4 Isolated Web Co
+  31750   6  4.4  -4 firefox
+    840   7  3.4   0 nvidia-powerd
+  32815   9  2.8  -4 haruna
+  73427   9  2.7   - node-MainThread
+  27132   7  2.7 -12 noctalia
+    355  14  2.3   0 nvidia-modeset/kthread_q
+  30429   6  1.9  -4 codex
+  67943   7  1.5  -4 agy
+ 109689   9  1.1   - bwrap

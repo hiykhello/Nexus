@@ -1,9 +1,9 @@
-module;
-#include <openssl/mlkem.h>
-export module nexus.crypto.mlkem;
+export module crypto.mlkem;
+export import nexus.thirdparty.boringssl;
 import std;
+using namespace nex::boringssl;
 
-export namespace nexus::crypto {
+export namespace crypto {
     enum class MlkemError { invalid_key, invalid_ciphertext, invalid_state, backend_failure };
     class MlkemSecret {
         std::array<std::uint8_t,32> bytes_{};

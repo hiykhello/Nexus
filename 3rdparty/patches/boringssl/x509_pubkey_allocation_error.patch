@@ -1,0 +1,38 @@
+--- a/crypto/x509/x_pubkey.cc
++++ b/crypto/x509/x_pubkey.cc
+@@ -39,6 +39,19 @@
+ 
+ namespace {
+ 
++// A syntactically valid SPKI may use an unsupported algorithm, but a local
++// allocation failure must remain distinguishable to the caller.
++void ClearNonAllocationErrors() {
++  bool allocation_failed = false;
++  while (uint32_t error = ERR_get_error()) {
++    allocation_failed |= ERR_GET_REASON(error) == ERR_R_MALLOC_FAILURE ||
++                         ERR_equals(error, ERR_LIB_BN, BN_R_TOO_MANY_TEMPORARY_VARIABLES);
++  }
++  if (allocation_failed) {
++    OPENSSL_PUT_ERROR(X509, ERR_R_MALLOC_FAILURE);
++  }
++}
++
+ void x509_pubkey_changed(X509Pubkey *pub,
+                          Span<const EVP_PKEY_ALG *const> algs) {
+   pub->pkey = nullptr;
+@@ -48,13 +61,13 @@
+   // is still a valid SPKI. It just cannot be converted to an `EVP_PKEY`.
+   ScopedCBB cbb;
+   if (!CBB_init(cbb.get(), 64) || !x509_marshal_public_key(cbb.get(), pub)) {
+-    ERR_clear_error();
++    ClearNonAllocationErrors();
+     return;
+   }
+   UniquePtr<EVP_PKEY> pkey(EVP_PKEY_from_subject_public_key_info(
+       CBB_data(cbb.get()), CBB_len(cbb.get()), algs.data(), algs.size()));
+   if (pkey == nullptr) {
+-    ERR_clear_error();
++    ClearNonAllocationErrors();
+     return;
+   }
+ 

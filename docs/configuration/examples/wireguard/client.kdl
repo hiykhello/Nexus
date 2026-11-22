@@ -1,0 +1,19 @@
+schema-version 1
+role "client"
+endpoint "office" type="wireguard" {
+    private-key-file "/run/credentials/nexus/wireguard-private"
+    listen host="::" port=51820
+    device name="nexus-wg" mtu=1420
+    local-address "10.42.0.1/32"
+    local-address "fd42::1/128"
+    route-include "10.42.0.2/32"
+    route-include "fd42::2/128"
+    peer "office" {
+        public-key-file "/etc/nexus/office-public"
+        preshared-key-file "/run/credentials/nexus/office-psk"
+        endpoint host="192.0.2.2" port=51820
+        allowed-ip "10.42.0.2/32"
+        allowed-ip "fd42::2/128"
+        persistent-keepalive-seconds 25
+    }
+}

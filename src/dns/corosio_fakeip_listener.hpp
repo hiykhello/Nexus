@@ -7,7 +7,7 @@
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/udp_socket.hpp>
 
-namespace nexus::dns::detail {
+namespace dns::detail {
     enum class FakeIpListenerError { state, transport, completion };
     // One executor, one receive or send at a time. The owner, shared registry and
     // all dependent objects must live until run() completes after stop().

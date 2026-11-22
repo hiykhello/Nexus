@@ -1,0 +1,34 @@
+[package]
+namespace = "nexus"
+name = "platform"
+version = "0.1.0"
+
+[features]
+network-state = { implies = ["netlink-policy"], sources = ["network_state.cppm", "network_state.cpp", "network_selection.cppm"] }
+netlink = { sources = ["netlink_codec.cppm", "netlink_socket.cppm"] }
+netlink-policy = { implies = ["netlink"], sources = ["netlink_watch.cppm", "routing_rule.cppm", "ipv4_reverse_path.cppm"] }
+nftables = { sources = ["nftables.cppm", "nftables.cpp", "nftables_encode.cpp"] }
+io-uring = { defines = ["NEXUS_ENABLE_IO_URING"], sources = ["uring_buf_ring.cppm", "uring_buf_ring.cpp"] }
+# The consumer supplies the test hook; production has no hook or indirect call.
+test-random = { defines = ["NEXUS_TEST_LINUX_RANDOM"] }
+
+[feature-deps.io-uring]
+nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+
+[build]
+sources = ["linux_random.cppm", "platform_defaults.cppm", "socket_options.cppm", "ip_address.cppm", "stream_peer.cppm", "os_fs.cppm", "netlink_abi.cppm", "sd_bus_abi.cppm", "resolved_bus.cppm", "resolved_types.cppm", "resolved_codec.cppm", "resolved_client.cppm"]
+
+[target.'cfg(not(os = "windows"))'.build]
+sources = ["os_fs_posix.cpp", "udp_batch_posix.cppm"]
+
+[target.'cfg(os = "linux")'.build]
+sources = ["socket_namespace_linux.cpp", "udp_batch_linux.cpp"]
+
+[target.'cfg(any(os = "macos", os = "ios"))'.build]
+sources = ["socket_namespace_darwin.cpp"]
+
+[target.'cfg(all(not(os = "linux"), not(os = "windows")))'.build]
+sources = ["udp_batch_posix.cpp"]
+
+[target.'cfg(os = "windows")'.build]
+sources = ["socket_namespace_windows.cpp", "os_fs_windows.cpp", "udp_batch_windows.cppm", "udp_batch_windows.cpp"]

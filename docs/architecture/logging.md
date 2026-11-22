@@ -1,6 +1,31 @@
 # 日志系统设计
 
-状态：设计，尚未实现。当前程序仍直接向标准输出和标准错误写启动、退出及配置诊断。本设计覆盖本机客户端、服务和未来宿主嵌入，具体配置字段与默认预算需随实现验证。
+状态：第 91A 实现无前缀日志核心及专用 POSIX writer，第 91B 接入 `nexus run` 的 `log { ... }`、本机水位控制及可选 native journald。监听就绪 stdout 和 SIGUSR1 快照沿用既有协议，其他工具入口仍有独立诊断。模块以 `logging` 为根，命名空间为 `logging`。[配置规范](../configuration/spec.md#运行日志)
+
+## 工程选型与核心结构
+
+- **零外部重依赖**：自研异步核心，直接复用标准库 `import std;` 的 `std::format_to_n` / `std::format_string`（编译期格式校验）和项目已有 `containers.ring_queue`，不引入 `spdlog` 或 `Quill`。
+- **分级与分域无锁短路**：定义 6 级（`trace < debug < info < warn < error < fatal` 及 `off`）与固定枚举域（`core / net / tls / quic / dns / route / tun / proxy / control / state`）。全局域水位表采用 `alignas(64) std::array<std::atomic<std::uint8_t>, kDomainCount>`，热路径单次 `memory_order_relaxed` 加载即可短路；支持通过 `control` 与 `SIGHUP` 动态调级。
+- **每生产者定长 SPSC 环形槽**：各 worker / DNS / TUN / 控制线程持有独立固定容量 `LogSlot` 环形缓冲（计入内存预算）。单槽含单调/墙钟时间、级别、域、事件码、`worker_id`、`session_id`、`generation` 与固定字节消息区；调用点通过 `std::format_to_n` 原地格式化，热路径零堆分配、无全局锁、超长截断并置 `truncated` 标志。
+- **分级背压保底**：队列剩余槽位低于 15% 时自动仅接收 `warn/error/fatal`，低级别记录直接丢弃并原子递增 `dropped[domain][level]`；独立单日志 Sink 线程以 `writev` 批量冲刷，并周期性把非零丢弃计数汇总为 `log.dropped` 告警。
+- **多态与脱敏约束**：遵循[C++ 编码规范](../development/cpp-guidelines.md)，多 Sink 抽象使用 `ngcpp/proxy` facade 而非虚函数。默认隐私模式为 `redacted`：凭据/密钥通过 `logging::Redacted<T>` 禁用 `std::formatter` 在编译期拦截；域名、用户名与完整客户端 IP 默认不逐条输出，显式启用 `privacy "verbose"` 或诊断开关后才输出。
+- **可选格式与系统集成**：支持单行文本与 `JSONL` 两种格式；原生 `systemd journald`（`sd_journal_sendv`）作为可选编译特性 `log-journald`，关闭图不引入 `libsystemd`。
+
+```kdl
+log {
+    level "info"
+    format "text"              // "text" | "jsonl"
+    timestamp "rfc3339"        // "rfc3339" | "monotonic" | "none"
+    privacy "redacted"         // "redacted" (default) | "verbose"
+    domain-levels {
+        dns "warn"
+        route "info"
+    }
+    sink "stderr"
+    sink "file" path="/var/log/nexus/nexus.log" max-size-mib=32 max-files=5
+    // sink "journald"         // 仅 log-journald 特性开启时可用
+}
+```
 
 ## 输出选择和服务管理器
 
@@ -17,6 +42,8 @@ systemd 通常把服务的 stdout/stderr 接至 journal，可由 `journalctl -u 
 标准错误可能是终端、管道、普通文件或 journal 的 AF_UNIX stream socket，不假设可 seek 或由 `stream_file` 操作。其阻塞和断开需在专用 sink/执行器与适配方案中验证；保序、部分写、EINTR、EPIPE 和 SIGPIPE 均需处理，不能改变宿主进程全局信号行为而不声明。journal 和外部接收器可能另行限速/丢弃。
 
 ## 异步文件 sink
+
+第 91 批的生产实现由同一专用日志线程调用 POSIX `writev`，两套代理后端共用。下面的 Corosio 文件路径仍是备选设计。
 
 使用固定 Corosio 提交 `70adbd5aff90569aac588e78a717fecbd5b7dedc` 进行验证：选择 `io_context(uring)` 时 `stream_file` 分派至 uring 文件服务，通过 `io_uring_prep_writev` 提交写入；epoll/POSIX 回退采用线程池执行阻塞文件操作。当前 Nexus 代理仍使用默认 epoll，因此不能因编译启用 liburing 就声称文件日志走了 uring。内核可能自行将操作交给工作线程；真正异步提交不代表零阻塞、零复制或设备已经持久化。
 

@@ -1,6 +1,6 @@
-module nexus.tls.server_hello_stream;
+module tls.server_hello_stream;
 import std;
-namespace nexus::tls {
+namespace tls {
     ServerHelloStream::ServerHelloStream(HandshakeDecoder&& messages) noexcept : messages_(std::move(messages)) {}
     auto ServerHelloStream::create() -> std::expected<ServerHelloStream,ServerHelloStreamError> {
         auto messages=HandshakeDecoder::create(65535); if (!messages) return std::unexpected(ServerHelloStreamError::invalid_state);

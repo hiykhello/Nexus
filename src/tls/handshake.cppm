@@ -1,7 +1,7 @@
-export module nexus.tls.handshake;
+export module tls.handshake;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     enum class HandshakeError { invalid_type, message_too_large, input_too_large, truncated, invalid_state, too_many_messages };
     struct HandshakeMessage {
         std::uint8_t type = 0;

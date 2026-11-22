@@ -1,0 +1,48 @@
+CPU(s):                                  20
+On-line CPU(s) list:                     0-19
+Model name:                              13th Gen Intel(R) Core(TM) i9-13900H
+Thread(s) per core:                      2
+Core(s) per socket:                      14
+Socket(s):                               1
+CPU(s) scaling MHz:                      83%
+NUMA node0 CPU(s):                       0-19
+    PID %CPU COMMAND
+  31877 42.8 RDD Process
+  30366 26.1 ghostty
+ 212277 11.1 Isolated Web Co
+  31750  9.0 firefox
+   1373  7.7 niri
+  72335  4.7 Isolated Web Co
+  32815  3.7 haruna
+    840  3.5 nvidia-powerd
+ 212283  3.1 Isolated Web Co
+  27132  3.0 noctalia
+    355  2.4 nvidia-modeset/kthread_q
+  30429  2.0 codex
+  73427  1.7 node-MainThread
+ 212633  1.3 Isolated Web Co
+  67943  1.1 agy
+ 212698  0.7 Web Content
+  33043  0.6 codex
+  31936  0.6 WebExtensions
+ 212749  0.5 Web Content
+    PID %CPU COMMAND
+ 213840 99.5 python
+  31877 43.2 RDD Process
+  30366 26.0 ghostty
+ 212808 21.5 Isolated Web Co
+  31750  9.4 firefox
+   1373  7.8 niri
+  72335  4.8 Isolated Web Co
+  32815  3.7 haruna
+    840  3.5 nvidia-powerd
+  27132  3.0 noctalia
+    355  2.4 nvidia-modeset/kthread_q
+  30429  2.1 codex
+  73427  1.7 node-MainThread
+  67943  1.1 agy
+  33043  0.6 codex
+  31936  0.6 WebExtensions
+  30374  0.4 nvidia-drm/timeline-8d
+ 213841  0.4 Isolated Servic
+   4284  0.3 sing-box

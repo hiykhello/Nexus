@@ -1,9 +1,14 @@
-export module nexus.tcp.dispatch;
-export import nexus.tcp.table;
-export import nexus.rules;
+export module tcp.dispatch;
+export import tcp.table;
+export import rules;
 import std;
 
-export namespace nexus::tcp {
+namespace tcp {
+    [[nodiscard]] auto valid_syn_endpoints(packet::Tcp4View segment) noexcept -> bool;
+    [[nodiscard]] auto valid_syn_endpoints(packet::Tcp6View segment) noexcept -> bool;
+}
+
+export namespace tcp {
     enum class DispatchError { invalid_packet, invalid_target, unknown_flow, table_error, output_error, blocked, policy_error };
     struct DispatchFailure {
         DispatchError error;
@@ -11,9 +16,12 @@ export namespace nexus::tcp {
         std::optional<TableError> table_error;
     };
     struct DispatchResult {
-        ConnectionId id;
+        // Zero denotes a stateless reply, with no associated connection.
+        ConnectionId id = 0;
         bool opened = false;
         bool challenge_suppressed = false;
+        bool reset_suppressed = false;
+        bool reply_reset = false;
         std::optional<ConnectionError> input_error;
         std::optional<packet::Bytes> reply;
     };

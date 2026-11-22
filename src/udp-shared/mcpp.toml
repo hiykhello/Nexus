@@ -1,0 +1,18 @@
+[package]
+namespace = "nexus"
+name = "dns-group-udp"
+version = "0.1.0"
+
+# Compile-time adapters connect the shared cache to the SS UDP runtime.
+[dependencies]
+nexus.dns-group-core = { path = "../dns-shared" }
+nexus.ss-udp-runtime = { path = "../udp-runtime", default-features = false }
+nexus.proxy-runtime = { path = "../proxy", default-features = false }
+
+[features]
+default = ["standard-proxy"]
+dns-response = { implies = ["nexus.proxy-runtime/dns-response", "nexus.ss-udp-runtime/dns-response", "nexus.dns-group-core/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
+standard-proxy = ["nexus.proxy-runtime/dns-standard", "nexus.proxy-runtime/request-standard"]
+
+[build]
+sources = ["udp_group.cppm", "udp_coordinator.cppm"]

@@ -1,7 +1,7 @@
-module nexus.packet;
+module packet;
 import std;
 
-namespace nexus::packet {
+namespace packet {
     namespace {
         auto read16(std::span<std::uint8_t const> p, std::size_t i) noexcept -> std::uint16_t {
             return static_cast<std::uint16_t>((std::uint16_t{p[i]}<<8)|p[i+1]);
@@ -70,6 +70,7 @@ namespace nexus::packet {
         v.flags=static_cast<std::uint16_t>(((p[offset+12]&1)<<8)|p[offset+13]);
         v.window=read16(p,offset+14); v.urgent=read16(p,offset+18);
         v.options=p.subspan(offset+20,header-20); v.payload=p.subspan(offset+header);
+        v.dscp=static_cast<std::uint8_t>(((p[0] & 15) << 2) | (p[1] >> 6));
         return v;
     }
     auto make_tcp6(Tcp6View v,std::size_t mtu) -> std::expected<Bytes,PacketError> {

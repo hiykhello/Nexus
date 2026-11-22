@@ -11,10 +11,10 @@
 #include <unistd.h>
 #include "../src/shadowsocks/probe_close.hpp"
 import std;
-import nexus.shadowsocks.replay;
-import nexus.shadowsocks.corosio_server;
-import nexus.shadowsocks.corosio_inbound;
-namespace capy=boost::capy; namespace io=boost::corosio; namespace s=nexus::shadowsocks;
+import shadowsocks.replay;
+import shadowsocks.corosio_server;
+import shadowsocks.corosio_inbound;
+namespace capy=boost::capy; namespace io=boost::corosio; namespace s=shadowsocks;
 using namespace std::chrono_literals;
 struct Fixture {
 #if BOOST_COROSIO_HAVE_LIBURING

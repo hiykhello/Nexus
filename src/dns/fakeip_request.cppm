@@ -1,10 +1,10 @@
-export module nexus.dns.fakeip_request;
+export module dns.fakeip_request;
 import std;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_target;
-import nexus.dns.fakeip_shared;
-import nexus.socks5;
-export namespace nexus::dns {
+import dns.fakeip_registry;
+import dns.fakeip_target;
+import dns.fakeip_shared;
+import socks5;
+export namespace dns {
     struct FakeIpRequest {
         socks5::Request request;
         // Null for an ordinary destination. Registry must outlive this handle;

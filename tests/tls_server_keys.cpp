@@ -1,12 +1,12 @@
 import std;
-import nexus.tls.server_keys;
-import nexus.tls.client_keys;
-import nexus.tls.handshake;
-import nexus.tls.key_share;
-import nexus.tls.client_hello_stream;
-import nexus.tls.server_hello;
-import nexus.tls.hybrid_client_keys;
-namespace t=nexus::tls; namespace c=nexus::crypto;
+import tls.server_keys;
+import tls.client_keys;
+import tls.handshake;
+import tls.key_share;
+import tls.client_hello_stream;
+import tls.server_hello;
+import tls.hybrid_client_keys;
+namespace t=tls; namespace c = ::crypto;
 auto message(t::ClientHello const& hello) -> c::Bytes { return *t::HandshakeDecoder::encode(1,*hello.encode()); }
 int main(int argc,char** argv) {
     if (argc==3) {

@@ -1,7 +1,7 @@
 import std;
-import nexus.dns.fakeip;
+import dns.fakeip;
 using namespace std::chrono_literals;
-namespace d=nexus::dns;
+namespace d=dns;
 int main() {
     using Clock=std::chrono::steady_clock;
     auto t=Clock::time_point{};

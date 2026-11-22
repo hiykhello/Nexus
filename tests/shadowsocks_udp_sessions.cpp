@@ -1,9 +1,9 @@
 import std;
-import nexus.shadowsocks.udp_sessions;
-import nexus.shadowsocks.udp_packet;
-import nexus.shadowsocks.udp_replay;
-import nexus.shadowsocks.udp_id_reservation;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_sessions;
+import shadowsocks.udp_packet;
+import shadowsocks.udp_replay;
+import shadowsocks.udp_id_reservation;
+namespace s=shadowsocks;
 using namespace std::chrono_literals;
 int main() {
     std::array<std::uint8_t,16> key{}; std::iota(key.begin(),key.end(),0);
@@ -19,7 +19,8 @@ int main() {
     auto original=wire();
     s::UdpServerSessions sessions(1);
     auto accepted=sessions.receive(key,original,first,t,1000);
-    if (!accepted || !accepted->new_session || sessions.peer(packet.session_id)!=first || sessions.size()!=1) return 1;
+    if (!accepted || !accepted->new_session || accepted->source!=first || sessions.peer(packet.session_id)!=first || sessions.size()!=1) return 1;
+    auto first_accepted=*accepted;
     s::UdpServerSessions other_owner(1);
     auto other_accepted=other_owner.receive(key,original,first,t,1000);
     if (!other_accepted || !sessions.current(*accepted) || !other_owner.current(*other_accepted) ||
@@ -29,7 +30,8 @@ int main() {
     auto forged=next; forged.back()^=1;
     if (sessions.receive(key,forged,second,t+1s,1001).error()!=s::UdpSessionError::packet || sessions.peer(packet.session_id)!=first) return 3;
     accepted=sessions.receive(key,next,second,t+1s,1001);
-    if (!accepted || accepted->new_session || sessions.peer(packet.session_id)!=second) return 4;
+    if (!accepted || accepted->new_session || accepted->source!=second || first_accepted.source!=first ||
+        sessions.peer(packet.session_id)!=second) return 4;
     packet.packet_id=5000; packet.timestamp=1001; auto forged_high=wire(); forged_high.back()^=1;
     if (sessions.receive(key,forged_high,first,t+1s,1001).error()!=s::UdpSessionError::packet) return 14;
     packet.packet_id=2; auto lower=wire();

@@ -1,0 +1,27 @@
+schema-version 1
+role "client"
+workers 1
+
+inbounds {
+    socks5 "local" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
+}
+outbounds {
+    direct "direct"
+    trojan "edge" {
+        server host="127.0.0.1" port=2443
+        authentication {
+            password-file "/etc/nexus/secrets/trojan-password"
+        }
+        tls {
+            server-name "localhost"
+            ca-file "/etc/nexus/certificates/trojan.pem"
+            verify #true
+        }
+    }
+}
+routing {
+    default-outbound "edge"
+}

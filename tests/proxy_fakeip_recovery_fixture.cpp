@@ -7,16 +7,16 @@
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/udp_socket.hpp>
 import std;
-import nexus.proxy;
-import nexus.dns.fakeip_history_store;
-import nexus.dns.fakeip_shared;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_response;
-import nexus.dns.message;
+import proxy;
+import dns.fakeip_history_store;
+import dns.fakeip_shared;
+import dns.fakeip_registry;
+import dns.fakeip_response;
+import dns.message;
 #include "../src/dns/corosio_fakeip_listener.hpp"
 using namespace std::chrono_literals;
-namespace d=nexus::dns;
-namespace p=nexus::proxy;
+namespace d=dns;
+namespace p=proxy;
 namespace capy=boost::capy;
 namespace io=boost::corosio;
 std::atomic<unsigned> blocked=0;

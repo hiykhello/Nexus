@@ -1,0 +1,21 @@
+[package]
+namespace = "nexus"
+name = "crypto"
+version = "0.1.0"
+
+[dependencies]
+nexus.boringssl-crypto-source = { version = "=0.1.2", patches = ["../../3rdparty/patches/boringssl/mcpp-exact.patch"], embed = true }
+
+[features]
+backend-errors = { sources = ["backend_errors.cppm"] }
+ecdh = { implies = ["backend-errors"], sources = ["ecdh.cppm", "ecdh.cpp"] }
+hpke = { sources = ["hpke_sender.cppm"] }
+
+[build]
+sources = [
+    "../../3rdparty/modules/boringssl.cppm",
+    "crypto.cppm", "crypto.cpp", "poly1305.cpp", "aead_context.cppm", "mlkem.cppm", "mlkem.cpp",
+]
+
+[lib]
+path = "crypto.cppm"

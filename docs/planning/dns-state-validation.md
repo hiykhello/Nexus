@@ -1,6 +1,6 @@
 # DNS 与持久状态验证
 
-状态：后续实验计划，尚未执行。对应 [DNS 草案](../architecture/dns.md)、[缓存与持久状态](../architecture/state-and-cache.md)及[参考依据](../references/dns-and-persistence.md)。
+状态：验证方案，对应 [DNS 设计](../architecture/dns.md)、[缓存与持久状态](../architecture/state-and-cache.md) 及 [路由、DNS 与状态原则](../design-principles/routing-dns-and-state.md)。
 
 ## 可控实验环境
 

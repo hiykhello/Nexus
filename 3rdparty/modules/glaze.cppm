@@ -5,6 +5,9 @@ module;
 export module nexus.thirdparty.glaze;
 
 export namespace nex::glaze {
+    using ::glz::raw_json_view;
+    using ::glz::read;
+    using ::glz::read_json;
     using ::glz::format_error;
     using ::glz::opts;
     using ::glz::read_beve_at;

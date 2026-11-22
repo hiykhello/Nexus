@@ -1,9 +1,9 @@
-export module nexus.udp.engine;
-export import nexus.udp.direct;
-import nexus.rules;
+export module udp.engine;
+export import udp.direct;
+import rules;
 import std;
 
-export namespace nexus::udp {
+export namespace udp {
     struct EngineStep {
         bool input = false;
         bool delivered = false;

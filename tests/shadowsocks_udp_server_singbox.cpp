@@ -1,15 +1,15 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 import std;
-import nexus.shadowsocks.udp_dispatch;
-import nexus.rules;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_dispatch;
+import rules;
+namespace s=shadowsocks;
 using namespace std::chrono_literals;
 int main(int argc,char** argv) {
     if (argc!=4) return 1;
     int fd=std::atoi(argv[1]), size=std::atoi(argv[2]), target_port=std::atoi(argv[3]);
     std::array<std::uint8_t,32> key{}; std::iota(key.begin(),key.end(),0);
-    auto policy=nexus::rules::Matcher::compile({});
+    auto policy=::rules::Matcher::compile({});
     if (!policy) return 9;
     s::UdpDispatcher server(std::move(*policy),2,2,4,262144);
     for (int i=0;i<2;++i) {

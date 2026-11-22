@@ -1,27 +1,48 @@
-module nexus.tcp.engine;
+module tcp.engine;
 import std;
 
-namespace nexus::tcp {
+namespace tcp {
+    auto MemoryEngine::watch(std::span<std::uint8_t const> bytes) -> std::shared_ptr<packet::TcpGeneration> {
+        auto view=packet::parse_tcp4(bytes);
+        if (!view) return {};
+        std::swap(view->source,view->destination); std::swap(view->source_port,view->destination_port);
+        return table_.watch(*view);
+    }
     MemoryEngine::~MemoryEngine() {
+        discard();
+    }
+    auto MemoryEngine::discard() noexcept -> void {
         if (pending_reset_ && pending_id_) (void)table_.hold_reset(*pending_id_, false);
+        incoming_.reset(); pending_.reset(); pending_generation_.reset(); pending_id_.reset();
+        pending_reset_=false; pending_reply_reset_=false;
     }
     auto MemoryEngine::flush(EngineStep& report) -> void {
-        auto* flow = table_.get(*pending_id_);
-        if (!flow || (flow->state() == ConnectionState::reset && !pending_reset_) || flow->state() == ConnectionState::expired) {
-            pending_.reset(); pending_id_.reset(); pending_reset_ = false; report.stale_reply = true; return;
+        bool stale=pending_generation_ && !pending_generation_->valid;
+        if (pending_id_) {
+            auto* flow = table_.get(*pending_id_);
+            stale = stale || !flow || (flow->state() == ConnectionState::reset && !pending_reset_) || flow->state() == ConnectionState::expired;
+        } else {
+            auto reverse=packet::parse_tcp4(*pending_);
+            if (reverse) { std::swap(reverse->source,reverse->destination); std::swap(reverse->source_port,reverse->destination_port); stale=stale || table_.find(*reverse).has_value(); }
         }
+        if (stale) { pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.stale_reply = true; return; }
         std::expected<void, packet::DeviceError> sent;
-        try { sent = link_.send(packet::Side::second, *pending_); }
+        auto kind = !pending_id_ ? packet::PacketKind::stateless_tcp_reset :
+                    (pending_reset_ || pending_reply_reset_) ? packet::PacketKind::stateful_tcp_reset : packet::PacketKind::ordinary;
+        try {
+            if (!pending_generation_) pending_generation_=watch(*pending_);
+            sent = link_.send(packet::Side::second, *pending_, kind, pending_id_.value_or(0), pending_generation_);
+        }
         catch (std::bad_alloc const&) { report.backpressured = true; return; }
         if (sent) {
             if (pending_reset_) (void)table_.hold_reset(*pending_id_, false);
-            pending_.reset(); pending_id_.reset(); pending_reset_ = false; report.delivered = true; return;
+            pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.delivered = true; return;
         }
         if (sent.error() == packet::DeviceError::queue_full) { report.backpressured = true; return; }
         report.output_error = sent.error();
         if (sent.error() == packet::DeviceError::packet_too_large) {
             if (pending_reset_) (void)table_.hold_reset(*pending_id_, false);
-            pending_.reset(); pending_id_.reset(); pending_reset_ = false;
+            pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false;
         }
     }
     auto MemoryEngine::step(std::uint64_t now, std::uint32_t iss)
@@ -40,15 +61,18 @@ namespace nexus::tcp {
         auto result = dispatch_routed(table_, policy_, *incoming_, incoming_iss_, now, mtu_);
         incoming_.reset();
         if (!result) { report.rejected = result.error(); return report; }
-        report.id = result->id; report.opened = result->opened; report.input_error = result->input_error;
+        if (result->id) report.id = result->id;
+        report.opened = result->opened; report.input_error = result->input_error;
         report.challenge_suppressed = result->challenge_suppressed;
+        report.reset_suppressed = result->reset_suppressed;
         if (result->reply) {
-            pending_ = std::move(*result->reply); pending_id_ = result->id;
+            pending_ = std::move(*result->reply); pending_id_ = result->id ? std::optional{result->id} : std::nullopt;
+            pending_reply_reset_ = result->reply_reset;
             try { flush(report); }
             catch (...) {
                 if (result->opened) {
                     (void)table_.abort(result->id);
-                    pending_.reset(); pending_id_.reset(); pending_reset_ = false;
+                    pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false;
                 }
                 throw;
             }
@@ -121,7 +145,7 @@ namespace nexus::tcp {
         if (action != Action::fin && action != Action::fin_retry) { view.sequence = slice.sequence; view.payload = slice.bytes; }
         auto bytes = packet::make_tcp4(view, mtu_);
         if (!bytes) return std::unexpected(EngineError::invalid_mtu);
-        auto sent = link_.send(packet::Side::second, *bytes);
+        auto sent = link_.send(packet::Side::second, *bytes, packet::PacketKind::ordinary, 0, watch(*bytes));
         if (!sent) {
             if (sent.error() == packet::DeviceError::queue_full) result.backpressured = true;
             else result.output_error = sent.error();
@@ -141,26 +165,47 @@ namespace nexus::tcp {
         if (!committed) result.connection_error = committed.error();
         return result;
     }
+    auto MemoryEngine6::watch(std::span<std::uint8_t const> bytes) -> std::shared_ptr<packet::TcpGeneration> {
+        auto view=packet::parse_tcp6(bytes);
+        if (!view) return {};
+        std::swap(view->source,view->destination); std::swap(view->source_port,view->destination_port);
+        return table_.watch(*view);
+    }
     MemoryEngine6::~MemoryEngine6() {
+        discard();
+    }
+    auto MemoryEngine6::discard() noexcept -> void {
         if (pending_reset_ && pending_id_) (void)table_.hold_reset(*pending_id_, false);
+        incoming_.reset(); pending_.reset(); pending_generation_.reset(); pending_id_.reset();
+        pending_reset_=false; pending_reply_reset_=false;
     }
     auto MemoryEngine6::flush(EngineStep& report) -> void {
-        auto* flow = table_.get(*pending_id_);
-        if (!flow || (flow->state() == ConnectionState::reset && !pending_reset_) || flow->state() == ConnectionState::expired) {
-            pending_.reset(); pending_id_.reset(); pending_reset_ = false; report.stale_reply = true; return;
+        bool stale=pending_generation_ && !pending_generation_->valid;
+        if (pending_id_) {
+            auto* flow = table_.get(*pending_id_);
+            stale = stale || !flow || (flow->state() == ConnectionState::reset && !pending_reset_) || flow->state() == ConnectionState::expired;
+        } else {
+            auto reverse=packet::parse_tcp6(*pending_);
+            if (reverse) { std::swap(reverse->source,reverse->destination); std::swap(reverse->source_port,reverse->destination_port); stale=stale || table_.find(*reverse).has_value(); }
         }
+        if (stale) { pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.stale_reply = true; return; }
         std::expected<void, packet::DeviceError> sent;
-        try { sent = link_.send(packet::Side::second, *pending_); }
+        auto kind = !pending_id_ ? packet::PacketKind::stateless_tcp_reset :
+                    (pending_reset_ || pending_reply_reset_) ? packet::PacketKind::stateful_tcp_reset : packet::PacketKind::ordinary;
+        try {
+            if (!pending_generation_) pending_generation_=watch(*pending_);
+            sent = link_.send(packet::Side::second, *pending_, kind, pending_id_.value_or(0), pending_generation_);
+        }
         catch (std::bad_alloc const&) { report.backpressured = true; return; }
         if (sent) {
             if (pending_reset_) (void)table_.hold_reset(*pending_id_, false);
-            pending_.reset(); pending_id_.reset(); pending_reset_ = false; report.delivered = true; return;
+            pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.delivered = true; return;
         }
         if (sent.error() == packet::DeviceError::queue_full) { report.backpressured = true; return; }
         report.output_error = sent.error();
         if (sent.error() == packet::DeviceError::packet_too_large) {
             if (pending_reset_) (void)table_.hold_reset(*pending_id_, false);
-            pending_.reset(); pending_id_.reset(); pending_reset_ = false;
+            pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false;
         }
     }
     auto MemoryEngine6::step(std::uint64_t now, std::uint32_t iss)
@@ -179,15 +224,18 @@ namespace nexus::tcp {
         auto result = dispatch_routed(table_, policy_, *incoming_, incoming_iss_, now, mtu_);
         incoming_.reset();
         if (!result) { report.rejected = result.error(); return report; }
-        report.id = result->id; report.opened = result->opened; report.input_error = result->input_error;
+        if (result->id) report.id = result->id;
+        report.opened = result->opened; report.input_error = result->input_error;
         report.challenge_suppressed = result->challenge_suppressed;
+        report.reset_suppressed = result->reset_suppressed;
         if (result->reply) {
-            pending_ = std::move(*result->reply); pending_id_ = result->id;
+            pending_ = std::move(*result->reply); pending_id_ = result->id ? std::optional{result->id} : std::nullopt;
+            pending_reply_reset_ = result->reply_reset;
             try { flush(report); }
             catch (...) {
                 if (result->opened) {
                     (void)table_.abort(result->id);
-                    pending_.reset(); pending_id_.reset(); pending_reset_ = false;
+                    pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false;
                 }
                 throw;
             }
@@ -260,7 +308,7 @@ namespace nexus::tcp {
         if (action != Action::fin && action != Action::fin_retry) { view.sequence = slice.sequence; view.payload = slice.bytes; }
         auto bytes = packet::make_tcp6(view, mtu_);
         if (!bytes) return std::unexpected(EngineError::invalid_mtu);
-        auto sent = link_.send(packet::Side::second, *bytes);
+        auto sent = link_.send(packet::Side::second, *bytes, packet::PacketKind::ordinary, 0, watch(*bytes));
         if (!sent) {
             if (sent.error() == packet::DeviceError::queue_full) result.backpressured = true;
             else result.output_error = sent.error();

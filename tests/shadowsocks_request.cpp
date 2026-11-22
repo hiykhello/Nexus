@@ -1,8 +1,8 @@
 import std;
-import nexus.shadowsocks.request;
-import nexus.shadowsocks.frame;
-import nexus.shadowsocks.replay;
-namespace s=nexus::shadowsocks;
+import shadowsocks.request;
+import shadowsocks.frame;
+import shadowsocks.replay;
+namespace s=shadowsocks;
 auto hex(std::string_view text) -> std::vector<std::uint8_t> {
     auto digit=[](char c) { return c<='9' ? c-'0' : c-'a'+10; };
     std::vector<std::uint8_t> result;

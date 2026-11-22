@@ -1,0 +1,126 @@
+--- a/include/boost/capy/buffers.hpp
++++ b/include/boost/capy/buffers.hpp
+@@ -312,7 +312,8 @@
+ 
+     @functionobject
+ */
+-constexpr struct
++namespace detail {
++struct buffer_sequence_begin_fn
+ {
+     /** Return a pointer to a single buffer, forming a one-element range.
+ 
+@@ -351,13 +352,16 @@
+     {
+         return std::ranges::begin(bs);
+     }
+-} buffer_sequence_begin {};
++};
++} // detail
++inline constexpr detail::buffer_sequence_begin_fn buffer_sequence_begin{};
+ 
+ /** Return an iterator past the last buffer in a sequence.
+ 
+     @functionobject
+ */
+-constexpr struct
++namespace detail {
++struct buffer_sequence_end_fn
+ {
+     /** Return a pointer one past a single buffer, forming a one-element range.
+ 
+@@ -396,13 +400,16 @@
+     {
+         return std::ranges::end(bs);
+     }
+-} buffer_sequence_end {};
++};
++} // detail
++inline constexpr detail::buffer_sequence_end_fn buffer_sequence_end{};
+ 
+ /** Return the total byte count across all buffers in a sequence.
+ 
+     @functionobject
+ */
+-constexpr struct
++namespace detail {
++struct buffer_size_fn
+ {
+     // GCC 13 falsely flags reads of arr_[i].n_ in detail::buffer_array
+     // when iterating here. The class uses union storage with placement
+@@ -440,13 +447,16 @@
+ #if defined(__GNUC__) && !defined(__clang__)
+ #pragma GCC diagnostic pop
+ #endif
+-} buffer_size {};
++};
++} // detail
++inline constexpr detail::buffer_size_fn buffer_size{};
+ 
+ /** Check if a buffer sequence contains no data.
+ 
+     @functionobject
+ */
+-constexpr struct
++namespace detail {
++struct buffers_empty_fn
+ {
+     // See note on buffer_size above — same union-storage false positive.
+ #if defined(__GNUC__) && !defined(__clang__)
+@@ -477,7 +487,9 @@
+ #if defined(__GNUC__) && !defined(__clang__)
+ #pragma GCC diagnostic pop
+ #endif
+-} buffers_empty {};
++};
++} // detail
++inline constexpr detail::buffers_empty_fn buffers_empty{};
+ 
+ namespace detail {
+ 
+--- a/include/boost/capy/buffers/buffer_copy.hpp
++++ b/include/boost/capy/buffers/buffer_copy.hpp
+@@ -22,7 +22,8 @@
+ 
+     @functionobject
+ */
+-constexpr struct
++namespace detail {
++struct buffer_copy_fn
+ {
+     /** Copy the contents of a buffer sequence into another buffer sequence.
+ 
+@@ -102,7 +103,9 @@
+         }
+         return total;
+     }
+-} buffer_copy {};
++};
++} // detail
++inline constexpr detail::buffer_copy_fn buffer_copy{};
+ 
+ } // capy
+ } // boost
+--- a/include/boost/capy/buffers/buffers_front.hpp
++++ b/include/boost/capy/buffers/buffers_front.hpp
+@@ -29,7 +29,8 @@
+ 
+     @functionobject
+ */
+-constexpr struct
++namespace detail {
++struct buffers_front_fn
+ {
+     /** Return the first mutable buffer, or an empty buffer.
+ 
+@@ -66,7 +67,9 @@
+             return *it;
+         return {};
+     }
+-} const buffers_front{};
++};
++} // detail
++inline constexpr detail::buffers_front_fn buffers_front{};
+ 
+ } // capy
+ } // boost

@@ -1,6 +1,6 @@
 import std;
-import nexus.tls.client_auth;
-namespace t=nexus::tls; namespace c=nexus::crypto;
+import tls.client_auth;
+namespace t=tls; namespace c = ::crypto;
 using Bytes=std::vector<std::uint8_t>; using View=std::span<std::uint8_t const>;
 auto read(std::string const& file) -> Bytes { std::ifstream f("tests/fixtures/tls-trust/"+file,std::ios::binary); return Bytes(std::istreambuf_iterator<char>(f),{}); }
 auto dns(std::string_view s) -> View { return {reinterpret_cast<std::uint8_t const*>(s.data()),s.size()}; }
@@ -41,6 +41,17 @@ int main() {
         f.certificate(cert,anchors,t::PeerNameKind::dns,dns("server.example"),when)) return 10;
     auto g=auth(); if (!g.certificate(cert,anchors,t::PeerNameKind::dns,dns("server.example"),when) ||
         g.certificate_verify(cv,std::span<std::uint16_t const>{}) || g.server_finished(fin)) return 11;
+    bool called=false;
+    t::CertificateVerifier policy=[&](std::span<View const> chain) { called=true; return chain.size()==2 && !chain[0].empty(); };
+    auto custom=auth();
+    if (!custom.certificate(cert,policy) || !called || !custom.certificate_verify(cv,offered) || !custom.server_finished(fin) || !custom.client_finished()) return 15;
+    auto corrupt_custom=auth();
+    if (!corrupt_custom.certificate(cert,policy) || corrupt_custom.certificate_verify(corrupt,offered) || corrupt_custom.server_finished(fin)) return 16;
+    t::CertificateVerifier deny=[](std::span<View const>) { return false; };
+    auto denied=auth();
+    if (denied.certificate(cert,deny) || denied.certificate(cert,policy) || denied.certificate_verify(cv,offered)) return 17;
+    auto corrupt_finished=auth();
+    if (!corrupt_finished.certificate(cert,policy) || !corrupt_finished.certificate_verify(cv,offered) || corrupt_finished.server_finished(badfin) || corrupt_finished.client_finished()) return 18;
     auto u24=[&](std::size_t p) { return (std::size_t{cert[p]}<<16)|(std::size_t{cert[p+1]}<<8)|cert[p+2]; };
     auto second=8+3+u24(8)+2;
     if (second>=cert.size()) return 12;

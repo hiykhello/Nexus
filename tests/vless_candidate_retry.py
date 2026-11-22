@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
 """Retry a later routed DNS address after a VLESS pre-request failure."""
+import argparse
 import os
 import pathlib
 import socket
 import ssl
 import subprocess
-import sys
 import tempfile
 import threading
 import time
 
-binary=pathlib.Path(sys.argv[1]).resolve()
-mode=sys.argv[2] if len(sys.argv)>2 else "retry"
-if mode not in ("retry","blocked","partial","stop"): raise ValueError("invalid mode")
+from httpupgrade_cli_network import HOST, TARGET, transport_kdl
+from httpupgrade_tls_network import RESPONSE, header
+
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('binary',type=pathlib.Path)
+parser.add_argument('mode',choices=('retry','blocked','partial','stop'),default='retry',nargs='?',
+                    help='partial requires the dedicated NEXUS_TEST_VLESS_PARTIAL_REQUEST build')
+parser.add_argument('--httpupgrade',action='store_true')
+parser.add_argument('--workers',type=int,choices=(1,2),default=1)
+parser.add_argument('--failure',choices=('status','framing','alpn'),default='status',
+                    help='pre-VLESS HTTPUpgrade rejection; used in retry/blocked modes')
+args=parser.parse_args()
+binary,mode=args.binary.resolve(),args.mode
+if not args.httpupgrade and args.failure!='status': parser.error('--failure requires --httpupgrade')
 blocked=mode=="blocked"
 
 def exact(sock,n):
@@ -34,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-candidate-") as directory:
         dns.bind(("127.0.0.1",0)); dns.settimeout(5)
         origin.bind(("127.0.0.2",0)); origin.listen(1); origin.settimeout(5)
         reserve.bind(("127.0.0.1",0)); closed=reserve.getsockname()[1]; reserve.close()
-        if mode in ("partial", "stop"):
+        if mode in ("partial", "stop") or args.httpupgrade:
             tls_listener.bind(("127.0.0.1",0)); tls_listener.listen(1); tls_listener.settimeout(5)
             closed=tls_listener.getsockname()[1]
         with socket.socket() as reservation:
@@ -45,11 +56,14 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-candidate-") as directory:
         block_rule='- kind="rule-set" value="blocked" outbound="reject";' if blocked else ''
         config.write_text(f'''schema-version 1
 role "client"
+workers {args.workers}
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 dns {{ server "dns" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; }}
 outbound "direct" type="direct"
 {block_outbound}
-outbound "edge" type="vless" {{ server host="127.0.0.1" port={closed}; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}; }}
+outbound "edge" type="vless" {{ server host="127.0.0.1" port={closed}; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
+ {transport_kdl() if args.httpupgrade else ''}
+}}
 routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ - kind="rule-set" value="first" outbound="edge"; {block_rule} }}; default-outbound "direct"; }}
 ''')
         errors=[]
@@ -64,7 +78,7 @@ routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ 
         thread=threading.Thread(target=dns_peer); thread.start()
         tls_thread=None
         handshake_started=threading.Event()
-        if mode=="stop":
+        if mode=="stop" and not args.httpupgrade:
             def stalled_tls_peer():
                 try:
                     with tls_listener.accept()[0] as raw:
@@ -74,14 +88,38 @@ routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ 
                         while raw.recv(4096): pass
                 except Exception as exc: errors.append(exc)
             tls_thread=threading.Thread(target=stalled_tls_peer); tls_thread.start()
-        if mode=="partial":
+        if mode=="partial" or args.httpupgrade:
             def tls_peer():
                 try:
                     context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.minimum_version=ssl.TLSVersion.TLSv1_3
+                    # The client deliberately closes after its partial request.
+                    # Do not let post-handshake tickets turn the EOF check into
+                    # a write to that already-closed connection.
+                    context.num_tickets=0
+                    if args.httpupgrade and (args.failure!='alpn' or mode not in ('retry','blocked')):
+                        context.set_alpn_protocols(['http/1.1'])
                     context.load_cert_chain(cert,key)
                     with tls_listener.accept()[0] as raw:
                         raw.settimeout(5)
                         with context.wrap_socket(raw,server_side=True) as tls:
+                            if args.httpupgrade:
+                                if args.failure=='alpn' and mode in ('retry','blocked'):
+                                    if tls.selected_alpn_protocol() is not None or tls.recv(1): raise RuntimeError('ALPN rejection sent Upgrade/VLESS bytes')
+                                    return
+                                wire=header(tls)
+                                if tls.selected_alpn_protocol()!='http/1.1' or not wire.startswith(f'GET {TARGET} HTTP/1.1\r\nHost: {HOST}\r\n'.encode()):
+                                    raise RuntimeError('candidate did not receive the configured TLS Upgrade')
+                                if mode=='stop':
+                                    tls.sendall(b'HTTP/1.1 101 Switching Protocols\r\n')
+                                    handshake_started.set()
+                                    if tls.recv(1): raise RuntimeError('stopped partial Upgrade sent VLESS')
+                                    return
+                                if mode in ('retry','blocked'):
+                                    rejected=RESPONSE.replace(b' 101 ',b' 403 ') if args.failure=='status' else RESPONSE[:-2]+b'Content-Length: 1\r\n\r\n'
+                                    tls.sendall(rejected)
+                                    if tls.recv(1): raise RuntimeError('failed Upgrade candidate received VLESS identity')
+                                    return
+                                tls.sendall(RESPONSE)
                             if exact(tls,8)!=b"\x00"+bytes(range(7)): raise RuntimeError("incorrect partial request")
                             try: remaining=tls.recv(1024)
                             except (ConnectionResetError,ssl.SSLError): remaining=b""
@@ -140,4 +178,5 @@ routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ 
             thread.join(timeout=6)
             if tls_thread: tls_thread.join(timeout=6)
         if process.returncode!=0: raise RuntimeError(process.stderr.read().decode())
-print("stalled VLESS handshake stopped without retry" if mode=="stop" else "partial request did not retry" if mode=="partial" else "blocked next address rejected" if blocked else "VLESS pre-request failure retries the next routed DNS address")
+print(("stalled VLESS handshake stopped without retry" if mode=="stop" else "partial request did not retry" if mode=="partial" else "blocked next address rejected" if blocked else "VLESS pre-request failure retries the next routed DNS address")+
+      f': transport={"httpupgrade" if args.httpupgrade else "TLS"}, workers={args.workers}, failure={args.failure}')

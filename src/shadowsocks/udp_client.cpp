@@ -1,12 +1,12 @@
-module nexus.shadowsocks.udp_client;
+module shadowsocks.udp_client;
 import std;
-import nexus.crypto;
+import crypto;
 
-namespace nexus::shadowsocks {
+namespace shadowsocks {
     UdpClientSession::UdpClientSession(std::span<std::uint8_t const> key,
-        std::array<std::uint8_t,8> client,std::size_t server_capacity)
-        : client_(client),capacity_(server_capacity) {
-        if (key.size()==16 || key.size()==32) {
+        std::array<std::uint8_t,8> client,std::size_t server_capacity,CipherMethod method)
+        : client_(client),capacity_(server_capacity),method_(method) {
+        if (key.size()==32 || (key.size()==16 && method==CipherMethod::aes)) {
             std::ranges::copy(key,key_.begin()); key_size_=key.size();
         }
     }
@@ -24,8 +24,8 @@ namespace nexus::shadowsocks {
         last_=now; last_wall_=wall; return true;
     }
     auto UdpClientSession::request(std::span<std::uint8_t const> address,
-        std::span<std::uint8_t const> payload,std::span<std::uint8_t const> padding,Clock::time_point now,std::uint64_t wall)
-        -> std::expected<std::vector<std::uint8_t>,UdpClientError> {
+        std::span<std::uint8_t const> payload,std::span<std::uint8_t const> padding,Clock::time_point now,std::uint64_t wall,
+        std::span<std::array<std::uint8_t,32> const> identities) -> std::expected<std::vector<std::uint8_t>,UdpClientError> {
         if (!key_size_) return std::unexpected(UdpClientError::invalid_key);
         if (!advance(now,wall)) return std::unexpected(UdpClientError::time_reversed);
         if (exhausted_) return std::unexpected(UdpClientError::exhausted);
@@ -33,7 +33,7 @@ namespace nexus::shadowsocks {
         if (id==std::numeric_limits<std::uint64_t>::max()) exhausted_=true;
         else ++next_;
         UdpPacket packet{client_,id,wall,{}, {address.begin(),address.end()}, {payload.begin(),payload.end()}};
-        auto result=encode_udp_packet(std::span{key_}.first(key_size_),UdpDirection::client,packet,padding);
+        auto result=encode_udp_packet(std::span{key_}.first(key_size_),UdpDirection::client,packet,padding,method_,identities);
         if (!result) return std::unexpected(UdpClientError::packet);
         return std::move(*result);
     }
@@ -41,7 +41,7 @@ namespace nexus::shadowsocks {
         -> std::expected<UdpPacket,UdpClientError> {
         if (!key_size_) return std::unexpected(UdpClientError::invalid_key);
         if (!advance(now,wall)) return std::unexpected(UdpClientError::time_reversed);
-        auto packet=decode_udp_packet(std::span{key_}.first(key_size_),UdpDirection::server,wire,wall,client_);
+        auto packet=decode_udp_packet(std::span{key_}.first(key_size_),UdpDirection::server,wire,wall,client_,method_);
         if (!packet) return std::unexpected(packet.error()==UdpPacketError::session_collision ?
             UdpClientError::session_conflict : UdpClientError::packet);
         auto it=servers_.find(packet->session_id);

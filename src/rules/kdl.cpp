@@ -1,9 +1,11 @@
-module nexus.rules;
+module rules;
 import std;
 import nexus.thirdparty.glaze;
+import rules.kdl_predicate;
 
-namespace nexus::rules {
+namespace rules {
     namespace g = nex::glaze;
+    auto normalize_set(RuleSet set) -> std::expected<RuleSet, Error>;
 
     namespace {
         auto schema_error(std::string message) -> std::unexpected<Error> {
@@ -20,30 +22,16 @@ namespace nexus::rules {
             return scalar_string(node.arguments.front());
         }
 
-        auto version_is_one(g::KdlNode const& node) -> bool {
-            if (node.tag || !node.properties.empty() || !node.children.empty() || node.arguments.size() != 1) return false;
+        auto version(g::KdlNode const& node) -> std::optional<unsigned> {
+            if (node.tag || !node.properties.empty() || !node.children.empty() || node.arguments.size() != 1) return {};
             auto const& value = node.arguments.front();
-            if (value.tag) return false;
-            if (auto p = std::get_if<std::int64_t>(&value.data)) return *p == 1;
-            if (auto p = std::get_if<std::uint64_t>(&value.data)) return *p == 1;
-            return false;
+            if (value.tag) return {};
+            if (auto p = std::get_if<std::int64_t>(&value.data); p && (*p==1 || *p==2)) return static_cast<unsigned>(*p);
+            if (auto p = std::get_if<std::uint64_t>(&value.data); p && (*p==1 || *p==2)) return static_cast<unsigned>(*p);
+            return {};
         }
 
-        auto decode_rule(g::KdlNode const& node) -> std::expected<Rule, Error> {
-            if (node.tag || !node.arguments.empty() || !node.children.empty() || node.properties.size() != 2)
-                return schema_error("rule requires only type and value properties");
-            Rule rule;
-            bool has_type = false, has_value = false;
-            for (auto const& [key, value] : node.properties) {
-                auto text = scalar_string(value);
-                if (!text) return schema_error("rule properties must be untagged strings");
-                if (key == "type") { rule.type = *text; has_type = true; }
-                else if (key == "value") { rule.value = *text; has_value = true; }
-                else return schema_error("unknown rule property: " + key);
-            }
-            if (!has_type || !has_value) return schema_error("rule requires type and value");
-            return normalize_rule(std::move(rule));
-        }
+
     }
 
     auto parse_kdl(std::string_view input) -> std::expected<RuleSet, Error> {
@@ -51,43 +39,46 @@ namespace nexus::rules {
         auto document = g::read_kdl<g::KdlDocument>(input);
         if (!document) return std::unexpected(Error{ErrorCode::syntax, g::format_error(document.error(), input)});
         bool version_seen = false, kind_seen = false;
+        std::size_t count=0;
         RuleSet result;
         for (auto const& node : *document) {
             if (node.name == "schema-version") {
-                if (version_seen || !version_is_one(node)) return schema_error("expected one schema-version 1");
+                auto value=version(node);
+                if (version_seen || !value) return schema_error("expected one supported schema-version");
+                result.version=*value;
                 version_seen = true;
             } else if (node.name == "kind") {
                 auto value = single_string(node);
                 if (kind_seen || !value || *value != "predicate") return schema_error("expected one kind predicate");
                 kind_seen = true;
-            } else if (node.name == "rule") {
-                if (result.rules.size() >= max_rules) return std::unexpected(Error{ErrorCode::limit, "too many rules"});
-                auto rule = decode_rule(node);
+            } else {
+                auto rule = decode_kdl_predicate(node,1,count);
                 if (!rule) return std::unexpected(std::move(rule.error()));
                 result.rules.push_back(std::move(*rule));
-            } else return schema_error("unknown node: " + node.name);
+            }
         }
         if (!version_seen || !kind_seen) return schema_error("schema-version and kind are required");
-        return result;
+        return normalize_set(std::move(result));
     }
 
     auto write_kdl(RuleSet const& set) -> std::expected<std::string, Error> {
-        if (set.rules.size() > max_rules) return std::unexpected(Error{ErrorCode::limit, "too many rules"});
+        auto normalized=normalize_set(set);
+        if (!normalized) return std::unexpected(std::move(normalized.error()));
         g::KdlDocument document;
         g::KdlNode version; version.name = "schema-version";
-        version.arguments.push_back({std::uint64_t{1}, {}});
+        version.arguments.push_back({static_cast<std::uint64_t>(normalized->version), {}});
         document.push_back(std::move(version));
         g::KdlNode kind; kind.name = "kind";
         kind.arguments.push_back({std::string("predicate"), {}});
         document.push_back(std::move(kind));
-        for (auto const& entry : set.rules) {
-            auto rule = normalize_rule(entry);
-            if (!rule) return std::unexpected(std::move(rule.error()));
+        auto encode_rule=[&](auto&& self,Rule const& rule) -> g::KdlNode {
             g::KdlNode node; node.name = "rule";
-            node.properties.push_back({"type", {rule->type, {}}});
-            node.properties.push_back({"value", {rule->value, {}}});
-            document.push_back(std::move(node));
-        }
+            node.properties.push_back({"type", {rule.type, {}}});
+            if (rule.children.empty()) node.properties.push_back({"value", {rule.value, {}}});
+            else for (auto const& child:rule.children) node.children.push_back(self(self,child));
+            return node;
+        };
+        for (auto const& entry:normalized->rules) document.push_back(encode_rule(encode_rule,entry));
         auto encoded = g::write_kdl(document);
         if (!encoded) return std::unexpected(Error{ErrorCode::syntax, "could not encode KDL"});
         if (encoded->size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL output exceeds 1 MiB"});

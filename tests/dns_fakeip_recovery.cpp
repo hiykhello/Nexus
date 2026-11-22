@@ -1,11 +1,11 @@
 import std;
-import nexus.dns.fakeip_recovery;
-import nexus.dns.fakeip_shared;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_response;
-import nexus.dns.message;
+import dns.fakeip_recovery;
+import dns.fakeip_shared;
+import dns.fakeip_registry;
+import dns.fakeip_response;
+import dns.message;
 using namespace std::chrono_literals;
-namespace d=nexus::dns;
+namespace d=dns;
 auto main() -> int {
     constexpr std::uint32_t base=0xc6120000;
     auto start=std::chrono::steady_clock::time_point{};

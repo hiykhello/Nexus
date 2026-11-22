@@ -1,0 +1,22 @@
+schema-version 1
+role "server"
+workers 1
+
+inbounds {
+    trojan "edge-in" {
+        listen host="127.0.0.1" port=2443
+        authentication {
+            user "client-1" password-file="/etc/nexus/secrets/trojan-password"
+        }
+        tls {
+            certificate-file "/etc/nexus/certificates/trojan.pem"
+            private-key-file "/etc/nexus/secrets/trojan-key.pem"
+        }
+    }
+}
+outbounds {
+    direct "direct"
+}
+routing {
+    default-outbound "direct"
+}

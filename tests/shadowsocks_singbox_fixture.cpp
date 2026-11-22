@@ -1,11 +1,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.shadowsocks.request;
-import nexus.shadowsocks.response;
-import nexus.shadowsocks.frame;
-import nexus.shadowsocks.replay;
-namespace s=nexus::shadowsocks;
+import shadowsocks.request;
+import shadowsocks.response;
+import shadowsocks.frame;
+import shadowsocks.replay;
+namespace s=shadowsocks;
 auto main(int argc,char** argv) -> int {
     if (argc!=3 && argc!=5 && !(argc==4 && std::string_view(argv[3])=="halfclose")) return 1;
     int listener=std::stoi(argv[1]); auto size=static_cast<std::size_t>(std::stoul(argv[2]));

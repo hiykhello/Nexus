@@ -1,0 +1,397 @@
+{
+  "capture": {
+    "clock_offset_change_ns": 2,
+    "kernel_packets": 71906,
+    "kernel_drops": 0,
+    "recorded_ipv4_udp": 14364
+  },
+  "counts": {
+    "tcp0": {
+      "completed": 1197,
+      "skipped_inflight": 3,
+      "skipped_late": 0,
+      "started": 1197
+    },
+    "tcp1": {
+      "completed": 1197,
+      "skipped_inflight": 3,
+      "skipped_late": 0,
+      "started": 1197
+    },
+    "udp0": {
+      "completed": 1195,
+      "skipped_inflight": 5,
+      "skipped_late": 0,
+      "started": 1195
+    },
+    "udp1": {
+      "completed": 1195,
+      "skipped_inflight": 5,
+      "skipped_late": 0,
+      "started": 1195
+    }
+  },
+  "proxy_loop_stalls": [
+    {
+      "elapsed_us": 7582,
+      "start_us": 4921526,
+      "thread_cpu_us": 97
+    }
+  ],
+  "proxy_loop_stalls_dropped": 0,
+  "harness_loop_stalls": [],
+  "udp0": {
+    "listener_upstream_ports": [
+      60708
+    ],
+    "counts": {
+      "client_sent": 1195,
+      "encrypted_to_listener": 1195,
+      "encrypted_from_listener": 1195,
+      "client_received": 1195
+    },
+    "ordering_check_failures": {
+      "forward": 0,
+      "reverse": 0
+    },
+    "slowest": [
+      {
+        "token": 1786,
+        "relative_us": {
+          "client_sent": 2230652,
+          "box_sent": 2230725,
+          "target_received": 2230743,
+          "target_sent": 2231005,
+          "proxy_sent": 2235914,
+          "box_received": 2362174,
+          "client_callback": 2362364
+        },
+        "segment_us": {
+          "client_to_box_send": 73,
+          "box_to_target": 18,
+          "target_callback": 262,
+          "target_to_proxy_send": 4909,
+          "proxy_to_box_send": 126260,
+          "box_to_client_callback": 190
+        }
+      },
+      {
+        "token": 1790,
+        "relative_us": {
+          "client_sent": 2230910,
+          "box_sent": 2230975,
+          "target_received": 2230990,
+          "target_sent": 2231280,
+          "proxy_sent": 2235924,
+          "box_received": 2362185,
+          "client_callback": 2362483
+        },
+        "segment_us": {
+          "client_to_box_send": 65,
+          "box_to_target": 15,
+          "target_callback": 290,
+          "target_to_proxy_send": 4644,
+          "proxy_to_box_send": 126261,
+          "box_to_client_callback": 298
+        }
+      },
+      {
+        "token": 1794,
+        "relative_us": {
+          "client_sent": 2241434,
+          "box_sent": 2361918,
+          "target_received": 2361964,
+          "target_sent": 2362095,
+          "proxy_sent": 2366245,
+          "box_received": 2366327,
+          "client_callback": 2366418
+        },
+        "segment_us": {
+          "client_to_box_send": 120484,
+          "box_to_target": 46,
+          "target_callback": 131,
+          "target_to_proxy_send": 4150,
+          "proxy_to_box_send": 82,
+          "box_to_client_callback": 91
+        }
+      },
+      {
+        "token": 1798,
+        "relative_us": {
+          "client_sent": 2241668,
+          "box_sent": 2361945,
+          "target_received": 2361983,
+          "target_sent": 2362237,
+          "proxy_sent": 2366259,
+          "box_received": 2366344,
+          "client_callback": 2366472
+        },
+        "segment_us": {
+          "client_to_box_send": 120277,
+          "box_to_target": 38,
+          "target_callback": 254,
+          "target_to_proxy_send": 4022,
+          "proxy_to_box_send": 85,
+          "box_to_client_callback": 128
+        }
+      },
+      {
+        "token": 1802,
+        "relative_us": {
+          "client_sent": 2250896,
+          "box_sent": 2361956,
+          "target_received": 2361990,
+          "target_sent": 2362324,
+          "proxy_sent": 2366262,
+          "box_received": 2366351,
+          "client_callback": 2366512
+        },
+        "segment_us": {
+          "client_to_box_send": 111060,
+          "box_to_target": 34,
+          "target_callback": 334,
+          "target_to_proxy_send": 3938,
+          "proxy_to_box_send": 89,
+          "box_to_client_callback": 161
+        }
+      },
+      {
+        "token": 1806,
+        "relative_us": {
+          "client_sent": 2251133,
+          "box_sent": 2361967,
+          "target_received": 2361996,
+          "target_sent": 2362456,
+          "proxy_sent": 2366265,
+          "box_received": 2366356,
+          "client_callback": 2366548
+        },
+        "segment_us": {
+          "client_to_box_send": 110834,
+          "box_to_target": 29,
+          "target_callback": 460,
+          "target_to_proxy_send": 3809,
+          "proxy_to_box_send": 91,
+          "box_to_client_callback": 192
+        }
+      },
+      {
+        "token": 1810,
+        "relative_us": {
+          "client_sent": 2261460,
+          "box_sent": 2361978,
+          "target_received": 2362003,
+          "target_sent": 2362602,
+          "proxy_sent": 2366269,
+          "box_received": 2366362,
+          "client_callback": 2366585
+        },
+        "segment_us": {
+          "client_to_box_send": 100518,
+          "box_to_target": 25,
+          "target_callback": 599,
+          "target_to_proxy_send": 3667,
+          "proxy_to_box_send": 93,
+          "box_to_client_callback": 223
+        }
+      },
+      {
+        "token": 1814,
+        "relative_us": {
+          "client_sent": 2261697,
+          "box_sent": 2361988,
+          "target_received": 2362007,
+          "target_sent": 2362695,
+          "proxy_sent": 2366272,
+          "box_received": 2366368,
+          "client_callback": 2366645
+        },
+        "segment_us": {
+          "client_to_box_send": 100291,
+          "box_to_target": 19,
+          "target_callback": 688,
+          "target_to_proxy_send": 3577,
+          "proxy_to_box_send": 96,
+          "box_to_client_callback": 277
+        }
+      }
+    ]
+  },
+  "udp1": {
+    "listener_upstream_ports": [
+      58211
+    ],
+    "counts": {
+      "client_sent": 1195,
+      "encrypted_to_listener": 1195,
+      "encrypted_from_listener": 1195,
+      "client_received": 1195
+    },
+    "ordering_check_failures": {
+      "forward": 0,
+      "reverse": 0
+    },
+    "slowest": [
+      {
+        "token": 1787,
+        "relative_us": {
+          "client_sent": 2230682,
+          "box_sent": 2230766,
+          "target_received": 2230798,
+          "target_sent": 2231193,
+          "proxy_sent": 2235934,
+          "box_received": 2362462,
+          "client_callback": 2362629
+        },
+        "segment_us": {
+          "client_to_box_send": 84,
+          "box_to_target": 32,
+          "target_callback": 395,
+          "target_to_proxy_send": 4741,
+          "proxy_to_box_send": 126528,
+          "box_to_client_callback": 167
+        }
+      },
+      {
+        "token": 1791,
+        "relative_us": {
+          "client_sent": 2230936,
+          "box_sent": 2231013,
+          "target_received": 2231021,
+          "target_sent": 2231437,
+          "proxy_sent": 2235942,
+          "box_received": 2362469,
+          "client_callback": 2362717
+        },
+        "segment_us": {
+          "client_to_box_send": 77,
+          "box_to_target": 8,
+          "target_callback": 416,
+          "target_to_proxy_send": 4505,
+          "proxy_to_box_send": 126527,
+          "box_to_client_callback": 248
+        }
+      },
+      {
+        "token": 1795,
+        "relative_us": {
+          "client_sent": 2241461,
+          "box_sent": 2362235,
+          "target_received": 2362245,
+          "target_sent": 2363201,
+          "proxy_sent": 2366332,
+          "box_received": 2366522,
+          "client_callback": 2366603
+        },
+        "segment_us": {
+          "client_to_box_send": 120774,
+          "box_to_target": 10,
+          "target_callback": 956,
+          "target_to_proxy_send": 3131,
+          "proxy_to_box_send": 190,
+          "box_to_client_callback": 81
+        }
+      },
+      {
+        "token": 1799,
+        "relative_us": {
+          "client_sent": 2241693,
+          "box_sent": 2362248,
+          "target_received": 2362253,
+          "target_sent": 2363230,
+          "proxy_sent": 2366340,
+          "box_received": 2366534,
+          "client_callback": 2366667
+        },
+        "segment_us": {
+          "client_to_box_send": 120555,
+          "box_to_target": 5,
+          "target_callback": 977,
+          "target_to_proxy_send": 3110,
+          "proxy_to_box_send": 194,
+          "box_to_client_callback": 133
+        }
+      },
+      {
+        "token": 1803,
+        "relative_us": {
+          "client_sent": 2250925,
+          "box_sent": 2362255,
+          "target_received": 2362259,
+          "target_sent": 2363258,
+          "proxy_sent": 2366344,
+          "box_received": 2366543,
+          "client_callback": 2366729
+        },
+        "segment_us": {
+          "client_to_box_send": 111330,
+          "box_to_target": 4,
+          "target_callback": 999,
+          "target_to_proxy_send": 3086,
+          "proxy_to_box_send": 199,
+          "box_to_client_callback": 186
+        }
+      },
+      {
+        "token": 1807,
+        "relative_us": {
+          "client_sent": 2251155,
+          "box_sent": 2362261,
+          "target_received": 2362266,
+          "target_sent": 2363287,
+          "proxy_sent": 2366350,
+          "box_received": 2366555,
+          "client_callback": 2366790
+        },
+        "segment_us": {
+          "client_to_box_send": 111106,
+          "box_to_target": 5,
+          "target_callback": 1021,
+          "target_to_proxy_send": 3063,
+          "proxy_to_box_send": 205,
+          "box_to_client_callback": 235
+        }
+      },
+      {
+        "token": 1811,
+        "relative_us": {
+          "client_sent": 2261488,
+          "box_sent": 2362266,
+          "target_received": 2362272,
+          "target_sent": 2363316,
+          "proxy_sent": 2366356,
+          "box_received": 2366565,
+          "client_callback": 2366889
+        },
+        "segment_us": {
+          "client_to_box_send": 100778,
+          "box_to_target": 6,
+          "target_callback": 1044,
+          "target_to_proxy_send": 3040,
+          "proxy_to_box_send": 209,
+          "box_to_client_callback": 324
+        }
+      },
+      {
+        "token": 1815,
+        "relative_us": {
+          "client_sent": 2261719,
+          "box_sent": 2362273,
+          "target_received": 2362278,
+          "target_sent": 2363344,
+          "proxy_sent": 2366362,
+          "box_received": 2366574,
+          "client_callback": 2366954
+        },
+        "segment_us": {
+          "client_to_box_send": 100554,
+          "box_to_target": 5,
+          "target_callback": 1066,
+          "target_to_proxy_send": 3018,
+          "proxy_to_box_send": 212,
+          "box_to_client_callback": 380
+        }
+      }
+    ]
+  }
+}

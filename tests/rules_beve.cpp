@@ -1,5 +1,5 @@
 import std;
-import nexus.rules;
+import rules;
 
 namespace {
     int failures = 0;
@@ -36,7 +36,7 @@ namespace {
 }
 
 int main() {
-    using namespace nexus::rules;
+    using namespace ::rules;
     // A hand-built fixture fixes the v1 wire names and BEVE tags independently of the writer.
     auto fixture = document(entry("domain-suffix", "Example.COM"));
     auto parsed = parse_beve(fixture);
@@ -67,6 +67,29 @@ int main() {
     check(!parse_beve(document(duplicate_rule)), "duplicate rule field rejected");
     auto duplicate_top = container(std::string(1, '\3') + count(3) + version() + kind() + kind());
     check(!parse_beve(duplicate_top), "duplicate top-level field rejected");
+    auto version2 = key("schema_version") + std::string("\x51\x02\0\0\0", 5);
+    auto document2 = [&](std::string const& rule) {
+        return container(std::string(1, '\3') + count(3) + version2 + kind() + key("rules") +
+                         std::string(1, '\5') + count(1) + rule);
+    };
+    auto nested = [&](std::string_view type, std::string_view value, std::string const& children, unsigned n) {
+        return std::string(1, '\3') + count(3) + key("type") + str(type) + key("value") + str(value) +
+               key("children") + std::string(1, '\5') + count(n) + children;
+    };
+    auto leaf = nested("port","443",{},0);
+    auto v2 = document2(nested("not","",leaf,1));
+    check(bool(parse_beve(v2)), "hand-built v2 nested profile accepted");
+    auto duplicate_child = std::string(1, '\3') + count(3) + key("type") + str("port") +
+        key("children") + std::string(1, '\5') + count(0) + key("children") + std::string(1, '\5') + count(0);
+    check(!parse_beve(document2(duplicate_child)), "v2 duplicate child field rejected");
+    auto unknown_field = std::string(1, '\3') + count(3) + key("type") + str("port") +
+        key("value") + str("443") + key("unknown") + std::string(1, '\5') + count(0);
+    check(!parse_beve(document2(unknown_field)), "v2 unknown child field rejected");
+    auto deep = leaf;
+    for (unsigned i=0;i<max_rule_depth;++i) deep=nested("not","",deep,1);
+    check(!parse_beve(document2(deep)), "v2 BEVE nesting limit enforced before decode");
+    for (std::size_t length=0;length<v2.size();++length)
+        check(!parse_beve(std::string_view(v2).substr(0,length)), "truncated v2 container rejected");
     auto too_many = container(std::string(1, '\3') + count(3) + version() + kind() + key("rules") +
                               std::string(1, '\5') + count(max_rules + 1));
     check(!parse_beve(too_many), "oversized declared array rejected");

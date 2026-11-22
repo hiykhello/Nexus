@@ -1,7 +1,7 @@
-export module nexus.tls.certificate_trust;
+export module tls.certificate_trust;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     enum class CertificateTrustError { invalid_input, invalid_certificate, verification_failed, crypto_error };
     enum class PeerNameKind { dns, ip };
     enum class TrustBundleError { invalid_input, invalid_pem, invalid_certificate, limit_exceeded, io_error };
@@ -18,6 +18,7 @@ export namespace nexus::tls {
     [[nodiscard]] auto verify_server_certificate_chain(
         std::span<std::span<std::uint8_t const> const> chain,
         std::span<std::span<std::uint8_t const> const> anchors,
-        PeerNameKind name_kind, std::span<std::uint8_t const> name, std::int64_t verification_time)
+        PeerNameKind name_kind, std::span<std::uint8_t const> name, std::int64_t verification_time,
+        std::span<std::array<std::uint8_t,32> const> pins={})
         -> std::expected<void, CertificateTrustError>;
 }

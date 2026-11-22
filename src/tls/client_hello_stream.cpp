@@ -1,6 +1,6 @@
-module nexus.tls.client_hello_stream;
+module tls.client_hello_stream;
 import std;
-namespace nexus::tls {
+namespace tls {
     ClientHelloStream::ClientHelloStream(HandshakeDecoder&& messages,bool allow_ccs) noexcept : messages_(std::move(messages)),allow_ccs_(allow_ccs) {}
     auto ClientHelloStream::create(std::size_t limit,bool allow_ccs) -> std::expected<ClientHelloStream,ClientHelloStreamError> {
         if (limit>65535) return std::unexpected(ClientHelloStreamError::invalid_state);

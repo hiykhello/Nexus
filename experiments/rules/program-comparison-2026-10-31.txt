@@ -1,0 +1,16 @@
+before rules=16 ns=617
+before rules=512 ns=13373
+before rules=4000 ns=75191
+before checksum=9918619
+flat rules=16 ns=341
+flat rules=512 ns=4821
+flat rules=4000 ns=22315
+flat checksum=9918619
+flat rules=16 ns=227
+flat rules=512 ns=4834
+flat rules=4000 ns=28161
+flat checksum=9918619
+before rules=16 ns=364
+before rules=512 ns=8007
+before rules=4000 ns=50243
+before checksum=9918619

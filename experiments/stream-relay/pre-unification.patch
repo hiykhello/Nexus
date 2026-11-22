@@ -1,0 +1,256 @@
+--- a/src/net/stream_relay.cppm
++++ b/src/net/stream_relay.cppm
+@@ -3,53 +3,113 @@
+ import nexus.thirdparty.capy;
+ 
+ export namespace nexus::net::stream_relay {
+-    // Adapter is stored in the existing direction coroutine; its operations
+-    // return the underlying awaitables directly. The owner drains both tasks.
++    enum class ReadState { data, eof, failure };
++
++    template<class Adapter,class Result>
++    auto read_state(Adapter& adapter,Result const& result,std::size_t size) -> ReadState {
++        if constexpr (Adapter::socket_input) {
++            auto const& [error,n]=result;
++            if (adapter.eof(error,n)) return ReadState::eof;
++            if (adapter.invalid_read(error,n,size)) return ReadState::failure;
++            return ReadState::data;
++        } else {
++            if (adapter.invalid_read(result)) return ReadState::failure;
++            return *result ? ReadState::data : ReadState::eof;
++        }
++    }
++
++    template<class Adapter,class Result>
++    auto read_size(Result const& result) -> std::size_t {
++        if constexpr (Adapter::socket_input) {
++            auto const& [error,n]=result;
++            (void)error; return n;
++        } else return *result;
++    }
++
++    // Adapters describe a single direction. Socket operations expose partial
++    // writes; framed streams expose complete writes. The owner drains the task.
+     template<template<class> class Coroutine=nex::capy::task,class Adapter>
+-    auto upload(Adapter adapter) -> Coroutine<bool> {
+-        // A session can select an already established stream once for the
+-        // whole direction, before entering the per-buffer loop.
++    auto transfer(Adapter adapter) -> Coroutine<bool> {
+         if constexpr (requires { adapter.delegates(); adapter.delegate(); })
+             if (adapter.delegates()) co_return co_await adapter.delegate();
+-        if (!adapter.start_upload()) co_return false;
++        if (!adapter.start()) co_return false;
+         std::array<std::uint8_t,16384> bytes{};
+         for (;;) {
+-            auto [error,n]=co_await adapter.local().read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size()));
+-            if (adapter.upload_eof(error,n)) {
+-                if constexpr (Adapter::locked_upload) {
++            auto result=co_await adapter.read(bytes);
++            switch (read_state(adapter,result,bytes.size())) {
++            case ReadState::failure:
++                adapter.read_failed(); co_return false;
++            case ReadState::eof:
++                if constexpr (Adapter::locked_output) {
+                     auto [lock_error,guard]=co_await adapter.lock();
+                     if (lock_error || adapter.canceled()) co_return false;
+                     auto closed=co_await adapter.close_locked();
+                     if (!closed) { adapter.cancel(); co_return false; }
+                     co_return true;
+                 } else if constexpr (requires { adapter.close_now(); }) co_return adapter.close_now();
+-                else co_return co_await adapter.close_upload();
++                else co_return co_await adapter.close_output();
++            case ReadState::data:
++                break;
+             }
+-            if (adapter.invalid_upload(error,n,bytes.size())) { adapter.cancel(); co_return false; }
+-            adapter.after_local_read();
+-            if constexpr (Adapter::locked_upload) {
++            adapter.after_read();
++            if constexpr (Adapter::socket_output) {
++                auto pending=std::span{bytes}.first(read_size<Adapter>(result));
++                while (!pending.empty()) {
++                    auto [error,n]=co_await adapter.write(pending);
++                    if (adapter.invalid_write(error,n,pending.size())) { adapter.write_failed(); co_return false; }
++                    adapter.after_write(); pending=pending.subspan(n);
++                }
++            } else if constexpr (Adapter::locked_output) {
+                 auto [lock_error,guard]=co_await adapter.lock();
+                 if (lock_error || adapter.canceled()) co_return false;
+-                auto sent=co_await adapter.send_locked(std::span{bytes}.first(n));
++                auto sent=co_await adapter.send_locked(std::span{bytes}.first(read_size<Adapter>(result)));
+                 if (!sent) { adapter.cancel(); co_return false; }
+-            } else if (!co_await adapter.send_upload(std::span{bytes}.first(n))) co_return false;
++            } else if (!co_await adapter.write(std::span{bytes}.first(read_size<Adapter>(result)))) co_return false;
+         }
+     }
+ 
++    // Existing outbound adapters map their socket-to-stream direction here.
+     template<class Adapter>
+-    auto download(Adapter adapter) -> nex::capy::task<bool> {
+-        if (!adapter.start_download()) co_return false;
+-        std::array<std::uint8_t,16384> bytes{};
+-        for (;;) {
+-            auto result=co_await adapter.receive(bytes);
+-            if (!result) co_return false;
+-            if (!*result) co_return adapter.shutdown_local();
+-            auto pending=std::span{bytes}.first(*result);
+-            while (!pending.empty()) {
+-                auto [error,n]=co_await adapter.local().write_some(nex::capy::const_buffer(pending.data(),pending.size()));
+-                if (adapter.invalid_download(error,n,pending.size())) { adapter.cancel(); co_return false; }
+-                adapter.after_local_write(); pending=pending.subspan(n);
+-            }
+-        }
+-    }
++    struct UploadAdapter {
++        Adapter adapter;
++        static constexpr bool socket_input=true, socket_output=false, locked_output=Adapter::locked_upload;
++        auto delegates() const requires requires(Adapter const& a) { a.delegates(); } { return adapter.delegates(); }
++        auto delegate() const requires requires(Adapter const& a) { a.delegate(); } { return adapter.delegate(); }
++        auto start() { return adapter.start_upload(); }
++        auto read(std::span<std::uint8_t> bytes) { return adapter.local().read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size())); }
++        template<class Error> auto eof(Error const& error,std::size_t n) { return adapter.upload_eof(error,n); }
++        template<class Error> auto invalid_read(Error const& error,std::size_t n,std::size_t size) { return adapter.invalid_upload(error,n,size); }
++        auto read_failed() { adapter.cancel(); }
++        auto after_read() { adapter.after_local_read(); }
++        auto close_now() requires requires(Adapter& a) { a.close_now(); } { return adapter.close_now(); }
++        auto close_output() { return adapter.close_upload(); }
++        auto write(std::span<std::uint8_t const> bytes) { return adapter.send_upload(bytes); }
++        auto lock() { return adapter.lock(); }
++        auto canceled() { return adapter.canceled(); }
++        auto close_locked() { return adapter.close_locked(); }
++        auto send_locked(std::span<std::uint8_t const> bytes) { return adapter.send_locked(bytes); }
++        auto cancel() { adapter.cancel(); }
++    };
++
++    // Stream-to-socket direction retains the stream's own error handling.
++    template<class Adapter>
++    struct DownloadAdapter {
++        Adapter adapter;
++        static constexpr bool socket_input=false, socket_output=true, locked_output=false;
++        auto start() { return adapter.start_download(); }
++        auto read(std::span<std::uint8_t> bytes) { return adapter.receive(bytes); }
++        template<class Result> auto invalid_read(Result const& result) { return !result; }
++        auto read_failed() {}
++        auto after_read() {}
++        auto close_now() { return adapter.shutdown_local(); }
++        auto write(std::span<std::uint8_t const> bytes) { return adapter.local().write_some(nex::capy::const_buffer(bytes.data(),bytes.size())); }
++        template<class Error> auto invalid_write(Error const& error,std::size_t n,std::size_t size) { return adapter.invalid_download(error,n,size); }
++        auto write_failed() { adapter.cancel(); }
++        auto after_write() { adapter.after_local_write(); }
++    };
++
++    template<template<class> class Coroutine=nex::capy::task,class Adapter>
++    auto upload(Adapter adapter) -> Coroutine<bool> { return transfer<Coroutine>(UploadAdapter<Adapter>{std::move(adapter)}); }
++    template<class Adapter>
++    auto download(Adapter adapter) -> nex::capy::task<bool> { return transfer(DownloadAdapter<Adapter>{std::move(adapter)}); }
+ }
+--- a/src/proxy/stream_relay.cppm
++++ b/src/proxy/stream_relay.cppm
+@@ -2,6 +2,7 @@
+ import std;
+ import nexus.thirdparty.capy;
+ import nexus.thirdparty.corosio;
++import nexus.net.stream_relay;
+ 
+ export namespace nexus::proxy::stream_relay {
+     // Inbound supplies read, send and close_output operations for a byte stream.
+@@ -9,51 +10,60 @@
+     // Both directions run on the session's executor; its owner must drain them.
+     struct NoHooks {};
+ 
++    // A successful dial fixes the tunnel choice until both directions drain.
++    // Session::close cancels that tunnel without replacing it.
++    template<class Hooks,class Session,class Inbound,bool Upload,bool Tunnel>
++    struct InboundAdapter {
++        Session& session;
++        Inbound& incoming;
++        static constexpr bool socket_input=!Upload && !Tunnel;
++        static constexpr bool socket_output=Upload && !Tunnel;
++        static constexpr bool locked_output=false;
++
++        auto start() -> bool {
++            if constexpr (Upload) { if constexpr (requires { Hooks::upload(); }) Hooks::upload(); }
++            else { if constexpr (requires { Hooks::download(); }) Hooks::download(); }
++            return true;
++        }
++        auto read(std::span<std::uint8_t> bytes) {
++            if constexpr (Upload) return incoming.read(bytes);
++            else if constexpr (Tunnel) return session.tunnel->read(bytes);
++            else return session.target.read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size()));
++        }
++        template<class Error> auto eof(Error const& error,std::size_t) { return nex::capy::is_eof(error); }
++        template<class Error> auto invalid_read(Error const& error,std::size_t n,std::size_t size) {
++            return error || !n || n>size || session.closed;
++        }
++        template<class Result> auto invalid_read(Result const& result) { return !result || session.closed; }
++        auto read_failed() {}
++        auto after_read() { session.touched=std::chrono::steady_clock::now(); }
++        auto close_now() requires (Upload && !Tunnel) { return !session.target.shutdown(nex::corosio::shutdown_send); }
++        auto close_output() requires (!Upload || Tunnel) {
++            if constexpr (Upload) return session.tunnel->close_output();
++            else return incoming.close_output();
++        }
++        auto write(std::span<std::uint8_t const> bytes) {
++            if constexpr (!Upload) return incoming.send(bytes);
++            else if constexpr (Tunnel) return session.tunnel->send(bytes);
++            else return session.target.write_some(nex::capy::const_buffer(bytes.data(),bytes.size()));
++        }
++        template<class Error> auto invalid_write(Error const& error,std::size_t n,std::size_t size) {
++            return error || !n || n>size || session.closed;
++        }
++        auto write_failed() {}
++        auto after_write() {}
++    };
++
+     template<class Hooks=NoHooks,class Session,class Inbound>
+     auto upload(Session& session,Inbound& incoming) -> nex::capy::quitter<bool> {
+-        if constexpr (requires { Hooks::upload(); }) Hooks::upload();
+-        std::array<std::uint8_t,16384> bytes{};
+-        for (;;) {
+-            auto n=co_await incoming.read(bytes);
+-            if (!n || session.closed) co_return false;
+-            if (!*n) {
+-                if (session.tunnel) co_return co_await session.tunnel->close_output();
+-                co_return !session.target.shutdown(nex::corosio::shutdown_send);
+-            }
+-            session.touched=std::chrono::steady_clock::now();
+-            if (session.tunnel) {
+-                if (!co_await session.tunnel->send(std::span{bytes}.first(*n))) co_return false;
+-            } else {
+-                std::size_t offset=0;
+-                while (offset<*n) {
+-                    auto [error,count]=co_await session.target.write_some(nex::capy::const_buffer(bytes.data()+offset,*n-offset));
+-                    if (error || !count || count>*n-offset || session.closed) co_return false;
+-                    offset+=count;
+-                }
+-            }
+-        }
++        if (session.tunnel) return net::stream_relay::transfer<nex::capy::quitter>(InboundAdapter<Hooks,Session,Inbound,true,true>{session,incoming});
++        return net::stream_relay::transfer<nex::capy::quitter>(InboundAdapter<Hooks,Session,Inbound,true,false>{session,incoming});
+     }
+ 
+     template<class Hooks=NoHooks,class Session,class Inbound>
+     auto download(Session& session,Inbound& incoming) -> nex::capy::quitter<bool> {
+-        if constexpr (requires { Hooks::download(); }) Hooks::download();
+-        std::array<std::uint8_t,16384> bytes{};
+-        for (;;) {
+-            std::size_t count=0;
+-            if (session.tunnel) {
+-                auto result=co_await session.tunnel->read(bytes);
+-                if (!result || session.closed) co_return false;
+-                count=*result;
+-            } else {
+-                auto [error,n]=co_await session.target.read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size()));
+-                if (nex::capy::is_eof(error)) count=0;
+-                else if (error || !n || n>bytes.size() || session.closed) co_return false;
+-                else count=n;
+-            }
+-            if (!count) co_return co_await incoming.close_output();
+-            session.touched=std::chrono::steady_clock::now();
+-            if (!co_await incoming.send(std::span{bytes}.first(count))) co_return false;
+-        }
++        if (session.tunnel) return net::stream_relay::transfer<nex::capy::quitter>(InboundAdapter<Hooks,Session,Inbound,false,true>{session,incoming});
++        return net::stream_relay::transfer<nex::capy::quitter>(InboundAdapter<Hooks,Session,Inbound,false,false>{session,incoming});
+     }
+ 
+     // A failed direction closes the session before the join cancels and drains

@@ -1,7 +1,7 @@
-export module nexus.socks5;
+export module socks5;
 import std;
 
-export namespace nexus::socks5 {
+export namespace socks5 {
     enum class Status {
         incomplete, accepted, invalid_version, invalid_reserved,
         no_acceptable_method, unsupported_command, unsupported_address, invalid_address, unsupported_fragment, too_large,
@@ -28,6 +28,8 @@ export namespace nexus::socks5 {
     [[nodiscard]] auto parse_greeting(std::span<std::uint8_t const> input, std::uint8_t method = 0) noexcept -> Greeting;
     // UDP is opt-in until the caller implements the association lifecycle.
     [[nodiscard]] auto parse_request(std::span<std::uint8_t const> input, bool allow_udp = false) noexcept -> Request;
+    // Parse one SOCKS4 or SOCKS4a CONNECT request frame.
+    [[nodiscard]] auto parse_socks4_request(std::span<std::uint8_t const> input) noexcept -> Request;
 
     // DATA borrows the datagram input. FRAG must be zero; reassembly is not supported.
     struct UdpDatagram {

@@ -1,8 +1,8 @@
-export module nexus.tls.schedule;
-export import nexus.crypto;
+export module tls.schedule;
+export import crypto;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     // Move-only, owns and erases its bytes; views remain valid only while this object is alive and unmoved.
     class Secret {
         crypto::Bytes bytes_;
@@ -31,4 +31,11 @@ export namespace nexus::tls {
     [[nodiscard]] auto finished_verify_data(crypto::Hash hash, std::span<std::uint8_t const> traffic_secret,
                                             std::span<std::uint8_t const> transcript_hash)
         -> std::expected<Secret, crypto::Error>;
+    [[nodiscard]] auto exporter_master_secret(crypto::Hash hash, std::span<std::uint8_t const> master,
+                                              std::span<std::uint8_t const> server_finished_transcript)
+        -> std::expected<Secret, crypto::Error>;
+    // RFC 8446 Section 7.5 exporter using exporter_master_secret.
+    [[nodiscard]] auto export_keying_material(crypto::Hash hash, std::span<std::uint8_t const> exporter_master,
+                                              std::string_view label, std::span<std::uint8_t const> context,
+                                              std::size_t length) -> std::expected<Secret, crypto::Error>;
 }

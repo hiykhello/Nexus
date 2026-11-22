@@ -2,11 +2,11 @@
 #include <errno.h>
 #include <sys/socket.h>
 import std;
-import nexus.tls.application_io;
+import tls.application_io;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-import nexus.tls.corosio_application;
-namespace capy=nex::capy; namespace io=nex::corosio; namespace t=nexus::tls; namespace c=nexus::crypto;
+import tls.corosio_application;
+namespace capy=nex::capy; namespace io=nex::corosio; namespace t=tls; namespace c = ::crypto;
 using Bytes=c::Bytes; using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction,int n,std::uint64_t limit=1u << 24) -> t::RecordLayer {
@@ -116,6 +116,56 @@ template<class Backend> auto stream_read_test(Backend backend) -> bool {
     capy::run_async(f.context.get_executor())(stream_read(f)); f.context.restart(); (void)f.context.run_for(1s);
     return f.context.stopped() && f.connection.idle() && f.read_done && f.fatal;
 }
+auto detach_reader(Fixture& f) -> capy::task<> {
+    t::detail::ApplicationStreamReader reader(f.connection); std::array<std::uint8_t,2> output{};
+    auto first=co_await reader.read_some(output);
+    if (!first || first->kind!=t::detail::AsyncStreamReadKind::data || first->size!=2 || output!=std::array<std::uint8_t,2>{1,2}) { f.read_done=true; co_return; }
+    auto detached=reader.detach_input();
+    if (!detached || detached->plaintext!=Bytes({3,4,5}) || detached->transport!=Bytes({9,8,7}) || reader.detach_input()) { f.read_done=true; co_return; }
+    auto again=co_await reader.read_some(output);
+    auto direct_read=co_await f.connection.read();
+    auto sent=co_await f.connection.send(Bytes{42});
+    f.fatal=!again && again.error()==t::detail::AsyncApplicationError::state && !direct_read && direct_read.error()==t::detail::AsyncApplicationError::state && sent.has_value();
+    f.read_done=true;
+}
+template<class Backend> auto detach_test(Backend backend) -> bool {
+    auto peer=layer(t::RecordDirection::send,2); auto wire=peer.seal(t::ContentType::application_data,Bytes{1,2,3,4,5});
+    if (!wire) return false; wire->insert(wire->end(),{9,8,7});
+    Fixture f(backend,1u << 24,16385,std::move(*wire)); if (io::connect_pair(f.a,f.b)) return false;
+    capy::run_async(f.context.get_executor())(detach_reader(f)); f.context.restart(); (void)f.context.run_for(1s);
+    if (!f.context.stopped() || !f.read_done || !f.fatal || !f.connection.active()) return false;
+    std::array<std::uint8_t,128> data{}; auto n=::recv(f.b.native_handle(),data.data(),data.size(),MSG_DONTWAIT);
+    auto receiver=layer(t::RecordDirection::receive,1);
+    if (n<=0) return false;
+    auto opened=receiver.open(std::span(data).first(static_cast<std::size_t>(n)));
+    return opened && opened->content==Bytes{42};
+}
+auto detach_writer(Fixture& f) -> capy::task<> {
+    if (!co_await f.connection.send(Bytes{1,2}) || !f.connection.detach_output() || f.connection.detach_output()) { f.write_done=true; co_return; }
+    auto no_send=co_await f.connection.send(Bytes{3});
+    auto no_empty=co_await f.connection.send_all({});
+    auto no_update=co_await f.connection.key_update(false);
+    auto no_close=co_await f.connection.close_notify();
+    auto no_flush=co_await f.connection.flush();
+    std::array<std::uint8_t,3> raw{7,8,9};
+    auto n=::send(f.a.native_handle(),raw.data(),raw.size(),MSG_NOSIGNAL);
+    auto read=co_await f.connection.read();
+    f.fatal=!no_send && !no_empty && !no_update && !no_close && !no_flush && n==3 && read && read->event && read->event->data==Bytes({4,5});
+    f.write_done=true;
+}
+template<class Backend> auto detach_writer_test(Backend backend) -> bool {
+    auto peer=layer(t::RecordDirection::send,2); auto incoming=peer.seal(t::ContentType::application_data,Bytes{4,5});
+    if (!incoming) return false;
+    Fixture f(backend,1u << 24,16385,std::move(*incoming)); if (io::connect_pair(f.a,f.b)) return false;
+    capy::run_async(f.context.get_executor())(detach_writer(f)); f.context.restart(); (void)f.context.run_for(1s);
+    if (!f.context.stopped() || !f.write_done || !f.fatal || !f.connection.active()) return false;
+    std::array<std::uint8_t,128> data{}; auto n=::recv(f.b.native_handle(),data.data(),data.size(),MSG_DONTWAIT);
+    if (n<8) return false;
+    auto count=static_cast<std::size_t>(n)-3;
+    if (!std::ranges::equal(std::span(data).subspan(count,3),std::array<std::uint8_t,3>{7,8,9})) return false;
+    auto receiver=layer(t::RecordDirection::receive,1); auto opened=receiver.open(std::span(data).first(count));
+    return opened && opened->content==Bytes({1,2});
+}
 auto stream_writer(Fixture& f) -> capy::task<> { Bytes data(200,42); auto result=co_await f.connection.send_all(data); f.write_failed=!result; if (!result) f.write_error=result.error(); f.write_done=true; }
 template<class Backend> auto stream_test(Backend backend) -> bool {
     Fixture f(backend,3,65); if (io::connect_pair(f.a,f.b)) return false;
@@ -191,6 +241,26 @@ auto expired_reader(Fixture& f) -> capy::task<> {
     auto result=co_await f.connection.read(std::chrono::steady_clock::now()-1ms);
     if (!result) f.read_error=result.error(); f.read_done=true;
 }
+auto preserve_reader(Fixture& f) -> capy::task<> {
+    auto result=co_await f.connection.read(std::chrono::steady_clock::now()+50ms,t::detail::ReadTimeoutPolicy::preserve_connection);
+    if(!result)f.read_error=result.error();f.read_done=true;
+}
+auto preserve_verify(Fixture& f) -> capy::task<> {
+    auto result=co_await f.connection.read();
+    f.fatal=result && result->event && result->event->kind==t::ApplicationEventKind::data && result->event->data==Bytes{1,2,3};
+    f.read_done=true;
+}
+template<class Backend> auto preserve_timeout_test(Backend backend) -> bool {
+    Fixture f(backend);if(io::connect_pair(f.a,f.b))return false;
+    auto peer=layer(t::RecordDirection::send,2);auto wire=peer.seal(t::ContentType::application_data,Bytes{1,2,3});
+    if(!wire || ::send(f.b.native_handle(),wire->data(),6,MSG_NOSIGNAL)!=6)return false;
+    capy::run_async(f.context.get_executor())(preserve_reader(f));f.context.restart();(void)f.context.run_for(1s);
+    if(!f.read_done || f.read_error!=t::detail::AsyncApplicationError::timeout || !f.connection.active() || !f.connection.idle())return false;
+    if(::send(f.b.native_handle(),wire->data()+6,wire->size()-6,MSG_NOSIGNAL)!=static_cast<ssize_t>(wire->size()-6))return false;
+    f.read_done=false;capy::run_async(f.context.get_executor())(preserve_verify(f));
+    f.context.restart();(void)f.context.run_for(1s);
+    return f.read_done && f.fatal && f.connection.active() && f.connection.idle();
+}
 template<class Backend> auto expired_test(Backend backend) -> bool {
     Fixture f(backend); if (io::connect_pair(f.a,f.b)) return false;
     capy::run_async(f.context.get_executor())(expired_reader(f)); f.context.restart(); (void)f.context.run_for(1s);
@@ -219,6 +289,8 @@ template<class Backend> auto exercise(Backend backend) -> bool {
     auto ex=f.context.get_executor(); capy::run_async(ex)(reader(f)); capy::run_async(ex)(writer(f));
     f.context.restart(); (void)f.context.run_for(20ms);
     if (f.read_done || f.write_done || f.connection.idle() || !f.connection.pending_output()) return false;
+    if (f.connection.detach_input()) return false;
+    if (f.connection.detach_output()) return false;
     capy::run_async(ex)(duplicates(f)); f.context.restart(); (void)f.context.run_for(20ms);
     if (!f.duplicate_read || !f.duplicate_write || f.read_done || f.write_done) return false;
     f.connection.cancel(); f.connection.cancel(); f.context.restart(); (void)f.context.run_for(1s);
@@ -241,16 +313,16 @@ template<class Backend> auto protocol_failure(Backend backend, bool fatal=false)
 int main() {
     if (!exception_overlap(io::epoll,false) || !exception_overlap(io::epoll,true)) return 7;
     for (int mode=0;mode<5;++mode) if (!exception_test(io::epoll,mode)) return 5;
-    if (!unread_boundary_test(io::epoll)) return 3;
+    if (!unread_boundary_test(io::epoll) || !detach_test(io::epoll) || !detach_writer_test(io::epoll)) return 3;
 #if BOOST_COROSIO_HAVE_LIBURING
     if (!exception_overlap(io::uring,false) || !exception_overlap(io::uring,true)) return 8;
     for (int mode=0;mode<5;++mode) if (!exception_test(io::uring,mode)) return 6;
-    if (!unread_boundary_test(io::uring)) return 4;
+    if (!unread_boundary_test(io::uring) || !detach_test(io::uring) || !detach_writer_test(io::uring)) return 4;
 #endif
     for (int i=0;i<10;++i) {
-        if (!stream_read_test(io::epoll) || !stream_test(io::epoll) || !blocked_update_test(io::epoll) || !budget_test(io::epoll) || !expired_test(io::epoll) || !deadline_test(io::epoll,true) || !deadline_test(io::epoll,false) || !exercise(io::epoll) || !protocol_failure(io::epoll) || !protocol_failure(io::epoll,true)) { std::cerr << "epoll connection cancellation failed at " << i << '\n'; return 1; }
+        if (!preserve_timeout_test(io::epoll) || !stream_read_test(io::epoll) || !stream_test(io::epoll) || !blocked_update_test(io::epoll) || !budget_test(io::epoll) || !expired_test(io::epoll) || !deadline_test(io::epoll,true) || !deadline_test(io::epoll,false) || !exercise(io::epoll) || !protocol_failure(io::epoll) || !protocol_failure(io::epoll,true)) { std::cerr << "epoll connection cancellation failed at " << i << '\n'; return 1; }
 #if BOOST_COROSIO_HAVE_LIBURING
-        if (!stream_read_test(io::uring) || !stream_test(io::uring) || !blocked_update_test(io::uring) || !budget_test(io::uring) || !expired_test(io::uring) || !deadline_test(io::uring,true) || !deadline_test(io::uring,false) || !exercise(io::uring) || !protocol_failure(io::uring) || !protocol_failure(io::uring,true)) { std::cerr << "io_uring connection cancellation failed at " << i << '\n'; return 2; }
+        if (!preserve_timeout_test(io::uring) || !stream_read_test(io::uring) || !stream_test(io::uring) || !blocked_update_test(io::uring) || !budget_test(io::uring) || !expired_test(io::uring) || !deadline_test(io::uring,true) || !deadline_test(io::uring,false) || !exercise(io::uring) || !protocol_failure(io::uring) || !protocol_failure(io::uring,true)) { std::cerr << "io_uring connection cancellation failed at " << i << '\n'; return 2; }
 #endif
     }
     std::cout << "TLS application owner deadlines, overlapping operations and cancellation passed\n";

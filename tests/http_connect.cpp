@@ -1,7 +1,7 @@
 import std;
-import nexus.http.connect;
+import http.connect;
 
-namespace h = nexus::http;
+namespace h = http;
 
 int main() {
     std::string request = "CONNECT Example.COM:443 HTTP/1.1\r\nHost: example.com\r\nUser-Agent: test\r\n\r\n";

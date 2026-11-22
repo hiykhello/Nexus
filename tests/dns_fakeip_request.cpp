@@ -1,14 +1,14 @@
 import std;
-import nexus.dns.fakeip;
-import nexus.dns.fakeip_response;
-import nexus.dns.fakeip_target;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_request;
-import nexus.dns.fakeip_shared;
-import nexus.dns.message;
-import nexus.socks5;
-namespace d=nexus::dns;
-namespace s=nexus::socks5;
+import dns.fakeip;
+import dns.fakeip_response;
+import dns.fakeip_target;
+import dns.fakeip_registry;
+import dns.fakeip_request;
+import dns.fakeip_shared;
+import dns.message;
+import socks5;
+namespace d=dns;
+namespace s=socks5;
 using namespace std::chrono_literals;
 auto request(std::initializer_list<std::uint8_t> address,std::uint8_t type) -> s::Request {
     s::Request r; r.status=s::Status::accepted; r.address_type=type;

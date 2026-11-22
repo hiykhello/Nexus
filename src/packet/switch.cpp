@@ -1,7 +1,7 @@
-module nexus.packet.mux;
+module packet.mux;
 import std;
 
-namespace nexus::packet {
+namespace packet {
     auto MemorySwitch::step() -> std::expected<SwitchStep, DeviceError> {
         SwitchStep result;
         if (!input_) {
@@ -23,7 +23,8 @@ namespace nexus::packet {
                         next=bytes[offset]; offset+=length;
                     }
                     tcp6 = tcp6_ && next==6;
-                    udp6 = next==17 || next==0 || next==60;
+                    udp6 = next==17 || next==0 || next==60 ||
+                        (udp_fragments_ && next==44 && parse_udp6_fragment(bytes));
                 }
                 if (!tcp && !tcp6 && !udp4 && !udp6) result.rejected = SwitchReject::unsupported_packet;
                 else { input_route_ = tcp ? 0 : tcp6 ? 2 : 1; input_ = std::move(bytes); }
@@ -39,7 +40,7 @@ namespace nexus::packet {
         }
         if (!output_) {
             auto take = [&](MemoryLink& link) -> std::expected<bool, DeviceError> {
-                auto received = link.receive(Side::first);
+                auto received = link.receive_packet(Side::first);
                 if (!received) return std::unexpected(received.error());
                 if (!*received) return false;
                 output_ = std::move(**received); return true;
@@ -54,7 +55,7 @@ namespace nexus::packet {
         }
         if (output_) {
             try {
-                auto sent = external_.send(Side::second, *output_);
+                auto sent = external_.send(Side::second, output_->bytes, output_->kind, output_->flow_id, output_->generation);
                 if (sent) { output_.reset(); result.output_delivered = true; }
                 else if (sent.error() == DeviceError::queue_full) result.output_backpressured = true;
                 else { result.output_error = sent.error(); if (sent.error() == DeviceError::packet_too_large) output_.reset(); }

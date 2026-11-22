@@ -12,6 +12,7 @@ import threading
 import time
 
 fixture=pathlib.Path(sys.argv[1]).resolve()
+replay_wire=pathlib.Path(sys.argv[2]).resolve() if len(sys.argv)>2 else fixture.with_name("nexus-shadowsocks-replay-wire")
 revision="824dbcfb4dd0a95921840b1737b950cde590241e"
 if f"Revision: {revision}" not in subprocess.run(["sing-box","version"],check=True,capture_output=True,text=True).stdout:
     raise RuntimeError("unexpected sing-box revision")
@@ -96,7 +97,7 @@ routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" va
                 time.sleep(.02)
         with socket.socket() as target, socket.socket() as reserved:
             target.bind(("127.0.0.1",0)); target.listen(8); target.settimeout(5)
-            wire=subprocess.run([fixture.with_name("nexus-shadowsocks-replay-wire"),str(size),str(target.getsockname()[1])],check=True,capture_output=True).stdout
+            wire=subprocess.run([replay_wire,str(size),str(target.getsockname()[1])],check=True,capture_output=True).stdout
             with socket.create_connection(("127.0.0.1",port),timeout=5) as first:
                 first.sendall(wire)
                 with target.accept()[0] as accepted:
@@ -112,7 +113,7 @@ routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" va
                     else: extra.close(); raise RuntimeError("replay reached target")
                     target.settimeout(5)
             # Race the same new salt across both listeners; one request may dial.
-            raced=subprocess.run([fixture.with_name("nexus-shadowsocks-replay-wire"),str(size),str(target.getsockname()[1]),"100"],check=True,capture_output=True).stdout
+            raced=subprocess.run([replay_wire,str(size),str(target.getsockname()[1]),"100"],check=True,capture_output=True).stdout
             barrier=threading.Barrier(16)
             def race(index):
                 with socket.create_connection(("127.0.0.1",port if index%2==0 else second_port),timeout=5) as sock:

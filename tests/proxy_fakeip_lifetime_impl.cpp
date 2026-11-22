@@ -8,14 +8,14 @@ module;
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/local_connect_pair.hpp>
 #include <boost/corosio/local_stream_socket.hpp>
-module nexus.proxy;
+module proxy;
 import std;
-import nexus.dns.fakeip_shared;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_response;
-import nexus.dns.message;
+import dns.fakeip_shared;
+import dns.fakeip_registry;
+import dns.fakeip_response;
+import dns.message;
 
-namespace nexus::proxy {
+namespace proxy {
     namespace {
         constexpr std::uint32_t base=0xc6120000;
         struct LifetimeState {
@@ -61,13 +61,13 @@ namespace nexus::proxy {
 }
 
 extern "C" int nexus_test_fakeip_lifetime(unsigned backend, unsigned mode) {
-    using namespace nexus::proxy;
+    using namespace proxy;
     using namespace std::chrono_literals;
     LifetimeState state;
-    state.pool=std::make_shared<nexus::dns::FakeIpShared>(1);
+    state.pool=std::make_shared<dns::FakeIpShared>(1);
     auto old=Clock::now()-10s;
-    auto query=nexus::dns::make_query(1,{"old.test",1});
-    auto other=nexus::dns::make_query(2,{"other.test",1});
+    auto query=dns::make_query(1,{"old.test",1});
+    auto other=dns::make_query(2,{"other.test",1});
     if (!query || !other || !state.pool->add(base,base+3,base+1,base+1,1s,0s) || !state.pool->seal()) return 1;
     state.other=std::move(*other);
     auto response=state.pool->respond(base,*query,7,old);

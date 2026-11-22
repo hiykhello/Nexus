@@ -1,8 +1,8 @@
 import std;
-import nexus.vless;
-import nexus.tls.server_handshake_io;
-import nexus.vless.server_profile;
-namespace v=nexus::vless; namespace t=nexus::tls; namespace c=nexus::crypto;
+import vless;
+import tls.server_handshake_io;
+import vless.server_profile;
+namespace v=vless; namespace t=tls; namespace c = ::crypto;
 auto read(char const* path) -> c::Bytes { std::ifstream f(path,std::ios::binary); return {std::istreambuf_iterator<char>(f),{}}; }
 int main(int argc,char** argv) {
     if (argc==6) {
@@ -19,12 +19,18 @@ int main(int argc,char** argv) {
     std::array<v::UserId,2> duplicates{user,user};
     if (v::ServerProfile::create(cert,key,duplicates)) return 3;
     auto profile=v::ServerProfile::create(cert,key,users); if (!profile) return 4;
-    auto too_small=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge-1);
+    auto too_small=std::make_shared<::memory::Budget>(t::ServerHandshakeIo::hello_input_charge-1);
     auto denied=profile->tls_handshake(1,10,too_small);
     if (denied || denied.error()!="TLS handshake budget exceeded" || too_small->reserved()) return 10;
-    auto budget=std::make_shared<nexus::memory::Budget>(t::ServerHandshakeIo::hello_input_charge);
+    auto copy_only=std::make_shared<::memory::Budget>(cert.size()-1);
+    if (profile->tls_handshake(1,10,copy_only) || copy_only->reserved()) return 12;
+    auto between=std::make_shared<::memory::Budget>(cert.size()+t::ServerHandshakeIo::hello_input_charge-1);
+    if (profile->tls_handshake(1,10,between) || between->reserved()) return 13;
+    auto budget=std::make_shared<::memory::Budget>(t::ServerHandshakeIo::hello_input_charge+cert.size());
     auto bounded=profile->tls_handshake(1,10,budget);
-    if (!bounded || bounded->budget()!=budget || budget->reserved()!=t::ServerHandshakeIo::hello_input_charge || !bounded->cancel() || budget->reserved()) return 11;
+    if (!bounded || bounded->budget()!=budget || budget->reserved()!=t::ServerHandshakeIo::hello_input_charge+cert.size()) return 11;
+    auto moved=std::move(*bounded);
+    if (budget->reserved()!=t::ServerHandshakeIo::hello_input_charge+cert.size() || !moved.cancel() || budget->reserved()) return 14;
     if (profile->tls_handshake(5,5)) return 5;
     auto first=profile->tls_handshake(1,10),second=profile->tls_handshake(2,11);
     auto a=profile->vless_handshake(), b=profile->vless_handshake();

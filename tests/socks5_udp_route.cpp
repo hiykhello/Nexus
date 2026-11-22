@@ -1,8 +1,8 @@
 import std;
-import nexus.rules;
-import nexus.socks5.udp_route;
-namespace s=nexus::socks5;
-namespace r=nexus::rules;
+import rules;
+import socks5.udp_route;
+namespace s=socks5;
+namespace r = ::rules;
 int main() {
     r::RuleSet domain{{{"domain-suffix","ok.test"}}};
     r::RuleSet blocked{{{"ip-cidr","192.0.2.0/24"}}};
@@ -13,7 +13,23 @@ int main() {
     s::UdpPeer denied{1,{192,0,2,1},53}, allowed{1,{127,0,0,1},53};
     if (!s::udp_preflight(*policy,packet) || s::udp_route(*policy,packet,denied).error()!=s::UdpRouteError::blocked ||
         !s::udp_route(*policy,packet,allowed)) return 2;
+    auto unresolved=s::udp_select_preflight(*policy,packet);
+    if (!unresolved || unresolved->has_value()) return 15; // Earlier IP rule must be evaluated after DNS.
+    auto chosen=s::udp_select(*policy,packet,allowed);
+    if (!chosen || chosen->outbound!=0 || chosen->target!=allowed ||
+        s::udp_select(*policy,packet,denied).error()!=s::UdpRouteError::blocked) return 16;
     auto other=packet; other.address[0]='x';
+    auto tunnel=s::udp_select(*policy,other,allowed);
+    if (!tunnel || tunnel->outbound!=2 || tunnel->target!=allowed) return 17;
+    auto tunnel_policy=r::RouteMatcher::compile(std::array{r::RouteRule{domain,2}},0,3);
+    if (!tunnel_policy) return 18;
+    auto early=s::udp_select_preflight(*tunnel_policy,packet);
+    if (!early || !early->has_value() || **early!=2 || s::udp_preflight(*tunnel_policy,packet).error()!=s::UdpRouteError::unsupported) return 19;
+    auto selected=s::udp_select(*tunnel_policy,packet,allowed);
+    if (!selected || selected->outbound!=2 || selected->target!=allowed) return 20;
+    auto blocked_policy=r::RouteMatcher::compile(std::array{r::RouteRule{domain,1}},0,3);
+    if (!blocked_policy || s::udp_select_preflight(*blocked_policy,packet).error()!=s::UdpRouteError::blocked ||
+        s::udp_select(*blocked_policy,packet,allowed).error()!=s::UdpRouteError::blocked) return 21;
     if (!s::udp_preflight(*policy,other) || s::udp_route(*policy,other,allowed).error()!=s::UdpRouteError::unsupported) return 3;
     packet.address_type=1; packet.address_length=4; packet.address={127,0,0,1};
     auto direct=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,3);
@@ -42,6 +58,12 @@ int main() {
     std::array<std::uint8_t,23> wire{0,0,0,4,0,0,0,0,0,0,0,0,0,0,255,255,192,0,2,1,0,53,'x'};
     auto admitted=association->admit({1,{127,0,0,1},5000},wire);
     if (!admitted) return 10;
+    r::RuleSet source{{{"and","",{{"source-ip-cidr","127.0.0.0/8",{}},{"source-port","5000",{}}}}},2};
+    auto source_policy=r::RouteMatcher::compile(std::array{r::RouteRule{source,1}},0,2,r::SourceMetadata::provided);
+    if (!source_policy) return 22;
+    auto source_blocked=s::udp_prepare_send(*association,*source_policy,*admitted,mapped);
+    if (source_blocked || !std::holds_alternative<s::UdpRouteError>(source_blocked.error()) ||
+        std::get<s::UdpRouteError>(source_blocked.error())!=s::UdpRouteError::blocked) return 23;
     auto blocked_send=s::udp_prepare_send(*association,*policy,*admitted,mapped);
     if (blocked_send || !std::holds_alternative<s::UdpRouteError>(blocked_send.error()) || association->accepts_reply(denied)) return 11;
     auto prepared=s::udp_prepare_send(*association,*direct,*admitted,mapped);

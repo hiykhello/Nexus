@@ -1,5 +1,5 @@
 import std;
-import nexus.tls.handshake;
+import tls.handshake;
 static thread_local int fail_after=-1;
 static void* watched_pending=nullptr;
 static bool watch_pending=false, pending_released=false;
@@ -17,7 +17,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { if (p && p==watched_pending) { watched_pending=nullptr; pending_released=true; } std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
-namespace t=nexus::tls;
+namespace t=tls;
 int main() {
     std::vector<std::uint8_t> hello{1,0,0,3,'a','b','c'}, cert{11,0,0,0}, done{20,0,0,1,7};
     auto decoder=t::HandshakeDecoder::create(16); if (!decoder) return 1;

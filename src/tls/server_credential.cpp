@@ -1,15 +1,10 @@
-module;
-#include <openssl/evp.h>
-#include <openssl/ec.h>
-#include <openssl/nid.h>
-#include <openssl/rsa.h>
-#include <openssl/x509.h>
-#include <openssl/pem.h>
-#include <openssl/mem.h>
-module nexus.tls.server_credential;
+module tls.server_credential;
+import nexus.thirdparty.boringssl;
 import std;
-namespace nexus::tls {
-    ServerCredential::ServerCredential(EVP_PKEY* key, std::uint16_t scheme, std::shared_ptr<Certificates> certificates) noexcept
+import tls.signature;
+using namespace nex::boringssl;
+namespace tls {
+    ServerCredential::ServerCredential(EVP_PKEY* key, std::uint16_t scheme, Certificates&& certificates) noexcept
         : key_(key), scheme_(scheme), certificates_(std::move(certificates)) {}
     ServerCredential::~ServerCredential() { EVP_PKEY_free(key_); }
     ServerCredential::ServerCredential(ServerCredential&& other) noexcept
@@ -20,6 +15,36 @@ namespace nexus::tls {
             scheme_=other.scheme_; certificates_=std::move(other.certificates_);
         }
         return *this;
+    }
+    auto ServerCredential::generate_ed25519() -> std::expected<ServerCredential,ServerCredentialError> {
+        std::unique_ptr<EVP_PKEY_CTX,decltype(&EVP_PKEY_CTX_free)> context(EVP_PKEY_CTX_new_id(evp_pkey_ed25519,nullptr),EVP_PKEY_CTX_free);
+        if (!context || EVP_PKEY_keygen_init(context.get())!=1) return std::unexpected(ServerCredentialError::crypto_error);
+        EVP_PKEY* raw=nullptr; auto generated=EVP_PKEY_keygen(context.get(),&raw);
+        std::unique_ptr<EVP_PKEY,decltype(&EVP_PKEY_free)> key(raw,EVP_PKEY_free);
+        if (generated!=1 || !key) return std::unexpected(ServerCredentialError::crypto_error);
+        std::unique_ptr<X509,decltype(&X509_free)> certificate(X509_new(),X509_free);
+        if (!certificate || X509_set_version(certificate.get(),2)!=1 || ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()),1)!=1 ||
+            !X509_gmtime_adj(X509_getm_notBefore(certificate.get()),-60) ||
+            !X509_gmtime_adj(X509_getm_notAfter(certificate.get()),31536000) ||
+            X509_set_pubkey(certificate.get(),key.get())!=1 ||
+            X509_set_issuer_name(certificate.get(),X509_get_subject_name(certificate.get()))!=1 ||
+            X509_sign(certificate.get(),key.get(),nullptr)<=0) return std::unexpected(ServerCredentialError::crypto_error);
+        auto size=i2d_X509(certificate.get(),nullptr);
+        if (size<=0 || static_cast<std::size_t>(size)>max_certificate_list_size-5) return std::unexpected(ServerCredentialError::invalid_certificate);
+        crypto::Bytes encoded(size); auto cursor=encoded.data();
+        if (i2d_X509(certificate.get(),&cursor)!=size) return std::unexpected(ServerCredentialError::crypto_error);
+        return ServerCredential(key.release(),0x0807,Certificates{std::move(encoded),{}});
+    }
+    auto ServerCredential::with_certificate(std::span<std::uint8_t const> certificate) const -> std::expected<ServerCredential,ServerCredentialError> {
+        if (!key_) return std::unexpected(ServerCredentialError::invalid_state);
+        if (certificate.empty() || certificate.size()>max_certificate_list_size-5) return std::unexpected(ServerCredentialError::invalid_certificate);
+        auto cursor=certificate.data();
+        std::unique_ptr<X509,decltype(&X509_free)> cert(d2i_X509(nullptr,&cursor,static_cast<long>(certificate.size())),X509_free);
+        if (!cert || cursor!=certificate.data()+certificate.size()) return std::unexpected(ServerCredentialError::invalid_certificate);
+        if (X509_check_private_key(cert.get(),key_)!=1) return std::unexpected(ServerCredentialError::key_mismatch);
+        Certificates certificates{crypto::Bytes(certificate.begin(),certificate.end()),{}};
+        if (EVP_PKEY_up_ref(key_)!=1) return std::unexpected(ServerCredentialError::crypto_error);
+        return ServerCredential(key_,scheme_,std::move(certificates));
     }
     auto ServerCredential::create(std::span<std::uint8_t const> certificate, std::span<std::uint8_t const> private_key)
         -> std::expected<ServerCredential,ServerCredentialError> {
@@ -33,15 +58,20 @@ namespace nexus::tls {
         if (!key || cursor!=private_key.data()+private_key.size()) return std::unexpected(ServerCredentialError::invalid_private_key);
         if (X509_check_private_key(cert.get(),key.get())!=1) return std::unexpected(ServerCredentialError::key_mismatch);
         std::uint16_t scheme=0;
-        if (EVP_PKEY_id(key.get())==EVP_PKEY_RSA && EVP_PKEY_bits(key.get())>=2048) scheme=0x0804;
-        else if (EVP_PKEY_id(key.get())==EVP_PKEY_ED25519) scheme=0x0807;
-        else if (EVP_PKEY_id(key.get())==EVP_PKEY_EC) {
+        if (EVP_PKEY_id(key.get())==evp_pkey_rsa && EVP_PKEY_bits(key.get())>=2048) scheme=0x0804;
+        else if (EVP_PKEY_id(key.get())==evp_pkey_ed25519) scheme=0x0807;
+        else if (EVP_PKEY_id(key.get())==evp_pkey_ec) {
             auto ec=EVP_PKEY_get0_EC_KEY(key.get()); auto group=ec ? EC_KEY_get0_group(ec) : nullptr;
-            if (group && EC_GROUP_get_curve_name(group)==NID_X9_62_prime256v1) scheme=0x0403;
+            if (group) {
+                auto curve=EC_GROUP_get_curve_name(group);
+                if (curve==nid_x9_62_prime256v1) scheme=0x0403;
+                else if (curve==nid_secp384r1) scheme=0x0503;
+                else if (curve==nid_secp521r1) scheme=0x0603;
+            }
         }
         if (!scheme) return std::unexpected(ServerCredentialError::unsupported_key);
         crypto::Bytes encoded(certificate.begin(),certificate.end());
-        auto certificates=std::make_shared<Certificates>(std::move(encoded),std::vector<crypto::Bytes>{});
+        Certificates certificates{std::move(encoded),{}};
         return ServerCredential(key.release(),scheme,std::move(certificates));
     }
     auto ServerCredential::create_file_contents(std::span<std::uint8_t const> certificate,
@@ -108,16 +138,23 @@ namespace nexus::tls {
             list_size+=item.size()+5;
         }
         auto result=create(certificate,private_key);
-        if (result) result->certificates_->chain=std::move(chain);
+        if (result) result->certificates_.chain=std::move(chain);
         return result;
     }
     auto ServerCredential::clone() const -> std::expected<ServerCredential,ServerCredentialError> {
         if (!key_) return std::unexpected(ServerCredentialError::invalid_state);
+        Certificates copy=certificates_;
         if (EVP_PKEY_up_ref(key_)!=1) return std::unexpected(ServerCredentialError::crypto_error);
-        return ServerCredential(key_,scheme_,certificates_);
+        return ServerCredential(key_,scheme_,std::move(copy));
     }
     auto ServerCredential::scheme() const noexcept -> std::optional<std::uint16_t> {
         if (!key_) return {}; return scheme_;
+    }
+    auto ServerCredential::signature_schemes() const noexcept -> std::span<std::uint16_t const> {
+        if (!key_) return {};
+        static constexpr std::array<std::uint16_t,3> rsa{0x0804,0x0805,0x0806};
+        if (scheme_==0x0804) return rsa;
+        return {&scheme_,1};
     }
     auto ServerCredential::max_signature_size() const noexcept -> std::optional<std::size_t> {
         if (!key_) return {};
@@ -126,20 +163,26 @@ namespace nexus::tls {
         return static_cast<std::size_t>(size);
     }
     auto ServerCredential::certificate() const noexcept -> std::span<std::uint8_t const> {
-        return key_ ? std::span<std::uint8_t const>{certificates_->leaf} : std::span<std::uint8_t const>{};
+        return key_ ? std::span<std::uint8_t const>{certificates_.leaf} : std::span<std::uint8_t const>{};
     }
-    auto ServerCredential::chain() const noexcept -> std::span<crypto::Bytes const> { return key_ ? std::span<crypto::Bytes const>{certificates_->chain} : std::span<crypto::Bytes const>{}; }
+    auto ServerCredential::chain() const noexcept -> std::span<crypto::Bytes const> { return key_ ? std::span<crypto::Bytes const>{certificates_.chain} : std::span<crypto::Bytes const>{}; }
     auto ServerCredential::sign(crypto::Hash hash, std::span<std::uint8_t const> transcript_hash) const
         -> std::expected<crypto::Bytes,ServerCredentialError> {
+        return sign(scheme_,hash,transcript_hash);
+    }
+    auto ServerCredential::sign(std::uint16_t scheme,crypto::Hash hash,std::span<std::uint8_t const> transcript_hash) const
+        -> std::expected<crypto::Bytes,ServerCredentialError> {
         if (!key_) return std::unexpected(ServerCredentialError::invalid_state);
+        auto parameters=signature_parameters(scheme);
+        if (!parameters || !signature_key_matches(*parameters,key_)) return std::unexpected(ServerCredentialError::unsupported_key);
         auto length=hash==crypto::Hash::sha256 ? 32u : hash==crypto::Hash::sha384 ? 48u : 0u;
         if (!length || transcript_hash.size()!=length) return std::unexpected(ServerCredentialError::invalid_transcript);
         std::unique_ptr<EVP_MD_CTX,decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(),EVP_MD_CTX_free); EVP_PKEY_CTX* pctx=nullptr;
-        auto md=scheme_==0x0807 ? nullptr : EVP_sha256();
+        auto md=parameters->digest;
         if (!ctx || EVP_DigestSignInit(ctx.get(),&pctx,md,nullptr,key_)!=1 || !pctx)
             return std::unexpected(ServerCredentialError::crypto_error);
-        if (scheme_==0x0804 && (EVP_PKEY_CTX_set_rsa_padding(pctx,RSA_PKCS1_PSS_PADDING)!=1 ||
-            EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx,32)!=1 || EVP_PKEY_CTX_set_rsa_mgf1_md(pctx,EVP_sha256())!=1))
+        if (parameters->pss_salt && (EVP_PKEY_CTX_set_rsa_padding(pctx,rsa_pkcs1_pss_padding)!=1 ||
+            EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx,parameters->pss_salt)!=1 || EVP_PKEY_CTX_set_rsa_mgf1_md(pctx,md)!=1))
             return std::unexpected(ServerCredentialError::crypto_error);
         constexpr std::string_view context="TLS 1.3, server CertificateVerify";
         std::array<std::uint8_t,64+context.size()+1+48> input{};
@@ -156,7 +199,7 @@ namespace nexus::tls {
             return std::unexpected(ServerCredentialError::crypto_error);
         message.resize(8+size); auto body_size=4+size;
         message[0]=15; message[1]=static_cast<std::uint8_t>(body_size>>16); message[2]=static_cast<std::uint8_t>(body_size>>8); message[3]=static_cast<std::uint8_t>(body_size);
-        message[4]=static_cast<std::uint8_t>(scheme_>>8); message[5]=static_cast<std::uint8_t>(scheme_); message[6]=static_cast<std::uint8_t>(size>>8); message[7]=static_cast<std::uint8_t>(size);
+        message[4]=static_cast<std::uint8_t>(scheme>>8); message[5]=static_cast<std::uint8_t>(scheme); message[6]=static_cast<std::uint8_t>(size>>8); message[7]=static_cast<std::uint8_t>(size);
         return message;
     }
 }

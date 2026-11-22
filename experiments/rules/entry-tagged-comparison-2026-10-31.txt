@@ -1,0 +1,56 @@
+pre-entry index rules=16 repeat=0 indexed_ns=159 linear_ns=160
+pre-entry index rules=16 repeat=1 indexed_ns=174 linear_ns=158
+pre-entry index rules=16 repeat=2 indexed_ns=158 linear_ns=160
+pre-entry index rules=512 repeat=0 indexed_ns=244 linear_ns=2671
+pre-entry index rules=512 repeat=1 indexed_ns=259 linear_ns=2932
+pre-entry index rules=512 repeat=2 indexed_ns=260 linear_ns=2693
+pre-entry index rules=4000 repeat=0 indexed_ns=303 linear_ns=24384
+pre-entry index rules=4000 repeat=1 indexed_ns=455 linear_ns=24279
+pre-entry index rules=4000 repeat=2 indexed_ns=437 linear_ns=20777
+pre-entry index checksum=241078932
+pre-entry program rules=16 ns=332
+pre-entry program rules=512 ns=5369
+pre-entry program rules=4000 ns=31468
+pre-entry program checksum=9918619
+tagged index rules=16 repeat=0 indexed_ns=231 linear_ns=290
+tagged index rules=16 repeat=1 indexed_ns=233 linear_ns=284
+tagged index rules=16 repeat=2 indexed_ns=232 linear_ns=285
+tagged index rules=512 repeat=0 indexed_ns=366 linear_ns=4827
+tagged index rules=512 repeat=1 indexed_ns=337 linear_ns=4960
+tagged index rules=512 repeat=2 indexed_ns=334 linear_ns=4876
+tagged index rules=4000 repeat=0 indexed_ns=457 linear_ns=31939
+tagged index rules=4000 repeat=1 indexed_ns=294 linear_ns=33107
+tagged index rules=4000 repeat=2 indexed_ns=287 linear_ns=28527
+tagged index checksum=241078932
+tagged program rules=16 ns=215
+tagged program rules=512 ns=3653
+tagged program rules=4000 ns=23326
+tagged program checksum=9918619
+tagged index rules=16 repeat=0 indexed_ns=152 linear_ns=196
+tagged index rules=16 repeat=1 indexed_ns=152 linear_ns=200
+tagged index rules=16 repeat=2 indexed_ns=152 linear_ns=206
+tagged index rules=512 repeat=0 indexed_ns=239 linear_ns=3703
+tagged index rules=512 repeat=1 indexed_ns=238 linear_ns=3644
+tagged index rules=512 repeat=2 indexed_ns=232 linear_ns=3639
+tagged index rules=4000 repeat=0 indexed_ns=264 linear_ns=26037
+tagged index rules=4000 repeat=1 indexed_ns=263 linear_ns=29172
+tagged index rules=4000 repeat=2 indexed_ns=257 linear_ns=26440
+tagged index checksum=241078932
+tagged program rules=16 ns=235
+tagged program rules=512 ns=4081
+tagged program rules=4000 ns=25596
+tagged program checksum=9918619
+pre-entry index rules=16 repeat=0 indexed_ns=163 linear_ns=165
+pre-entry index rules=16 repeat=1 indexed_ns=162 linear_ns=169
+pre-entry index rules=16 repeat=2 indexed_ns=163 linear_ns=167
+pre-entry index rules=512 repeat=0 indexed_ns=248 linear_ns=2375
+pre-entry index rules=512 repeat=1 indexed_ns=239 linear_ns=2345
+pre-entry index rules=512 repeat=2 indexed_ns=239 linear_ns=2846
+pre-entry index rules=4000 repeat=0 indexed_ns=281 linear_ns=16117
+pre-entry index rules=4000 repeat=1 indexed_ns=284 linear_ns=16228
+pre-entry index rules=4000 repeat=2 indexed_ns=280 linear_ns=17090
+pre-entry index checksum=241078932
+pre-entry program rules=16 ns=330
+pre-entry program rules=512 ns=5380
+pre-entry program rules=4000 ns=20552
+pre-entry program checksum=9918619

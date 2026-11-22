@@ -1,8 +1,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 import std;
-import nexus.shadowsocks.udp_sessions;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_sessions;
+namespace s=shadowsocks;
 int main(int argc,char** argv) {
     if (argc!=3) return 1;
     int fd=std::atoi(argv[1]), size=std::atoi(argv[2]);

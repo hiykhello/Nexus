@@ -1,5 +1,5 @@
 import std;
-import nexus.tls.application_io;
+import tls.application_io;
 // Track the actual allocation backing one output record, including sized delete.
 static std::atomic<void*> watched_allocation{nullptr};
 static std::atomic<bool> watched_freed{false};
@@ -15,7 +15,7 @@ void operator delete(void* p) noexcept {
     std::free(p);
 }
 void operator delete(void* p, std::size_t) noexcept { ::operator delete(p); }
-namespace t=nexus::tls; namespace c=nexus::crypto; using Bytes=c::Bytes;
+namespace t=tls; namespace c = ::crypto; using Bytes=c::Bytes;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction, int value) -> t::RecordLayer {
     auto s=secret(value); auto k=t::expand_label(c::Hash::sha256,s.view(),"key",{},16), iv=t::expand_label(c::Hash::sha256,s.view(),"iv",{},12);
@@ -34,6 +34,36 @@ auto deliver(t::ApplicationIo& sender,t::ApplicationIo& receiver) -> std::option
     return event;
 }
 int main() {
+    {
+        auto receiver=app(1,2), peer=app(2,1);
+        if (!receiver.send(Bytes{7}) || receiver.detach_output()) return 64;
+        auto size=receiver.pending_output().size();
+        if (!receiver.written(size-1) || receiver.detach_output() || !receiver.written(1) || !receiver.detach_output() || receiver.detach_output()) return 65;
+        if (receiver.send(Bytes{8}) || receiver.close_notify() || receiver.request_key_update(false)) return 66;
+        if (!peer.send(Bytes{3}) || !deliver(peer,receiver) || !peer.request_key_update(false)) return 67;
+        auto update=deliver(peer,receiver);
+        if (!update || update->kind!=t::ApplicationEventKind::key_update || !peer.request_key_update(true)) return 68;
+        auto rejected=receiver.feed(peer.pending_output());
+        if (rejected || rejected.error()!=t::ApplicationIoError::invalid_state || !receiver.pending_output().empty()) return 69;
+    }
+    {
+        auto receiver=app(1,2), peer=app(2,1);
+        if (!receiver.send(Bytes{7}) || !peer.request_key_update(true)) return 70;
+        auto request=receiver.feed(peer.pending_output());
+        if (!request || !request->event || request->event->kind!=t::ApplicationEventKind::key_update_requested || receiver.detach_output()) return 71;
+        auto pending=receiver.pending_output().size();
+        if (!receiver.written(pending) || receiver.pending_output().empty() || receiver.detach_output()) return 72;
+        if (!receiver.written(receiver.pending_output().size()) || !receiver.detach_output()) return 73;
+    }
+    {
+        auto receiver=app(1,2), peer=app(2,1);
+        if (!peer.send(Bytes{1,2,3})) return 60;
+        auto wire=peer.pending_output(); auto partial=receiver.feed(wire.first(3));
+        if (!partial || partial->consumed!=3 || receiver.detach_input()) return 61;
+        auto rest=receiver.feed(wire.subspan(3));
+        if (!rest || !rest->event || rest->event->data!=Bytes({1,2,3}) || !receiver.detach_input() || receiver.detach_input()) return 62;
+        if (receiver.feed({}) || receiver.finish_input() || !receiver.send(Bytes{4})) return 63;
+    }
     {
         auto sender=app(1,2); Bytes payload(16384,42);
         if (!sender.send(payload)) return 38;

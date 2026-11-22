@@ -1,0 +1,3 @@
+# Reality ClientHello authentication vector
+
+Run `go run experiments/reality-auth-vector/main.go` from the repository root. The program uses Go's standard X25519, HMAC-SHA256 and AES-GCM, X.509 and HMAC-SHA512 implementations to generate the fixed ClientHello and Ed25519 certificate vectors in `tests/reality_auth.cpp`. Its ClientHello and keys are deterministic test inputs, never production credentials. HKDF extract and expand are computed explicitly for this 32-byte output. The construction follows the ClientHello authentication performed by Xray v1.260327.0; this is a cryptographic component test, not an interoperability test or a complete Reality implementation.

@@ -1,0 +1,81 @@
+import { Button, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { ActiveConnectionItem } from "../types.slint";
+import { Theme } from "../theme.slint";
+
+export component ConnectionsPanel inherits VerticalBox {
+    in property <[ActiveConnectionItem]> connections: [];
+    in-out property <string> filter-text: "";
+    in property <string> selected-detail: "";
+
+    callback refresh-connections();
+    callback inspect-connection(string);
+    callback close-connection(string);
+    callback close-all-connections();
+
+    spacing: 10px;
+
+    HorizontalBox {
+        spacing: 8px;
+        LineEdit {
+            horizontal-stretch: 1;
+            text <=> root.filter-text;
+            placeholder-text: "按协议 / 路径 / 端口过滤连接...";
+            accepted => { root.refresh-connections(); }
+        }
+        Button {
+            text: "断开全部";
+            clicked => { root.close-all-connections(); }
+        }
+        Button {
+            text: "刷新连接";
+            clicked => { root.refresh-connections(); }
+        }
+    }
+
+    if root.selected-detail != "" : Rectangle {
+        border-radius: 6px;
+        background: Theme.card-bg;
+        HorizontalBox {
+            padding: 10px;
+            Text {
+                text: root.selected-detail;
+                font-size: 12px;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+            }
+        }
+    }
+
+    ListView {
+        vertical-stretch: 1;
+        for conn in root.connections : Rectangle {
+            height: 44px;
+            border-radius: 6px;
+            background: Theme.card-bg;
+            HorizontalBox {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                Text {
+                    text: "#" + conn.id + " · " + conn.protocol + " (" + conn.path + ") → :" + conn.destination-port;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: "↑ " + Math.floor(conn.upload-bytes / 1024) + " KiB  ↓ " + Math.floor(conn.download-bytes / 1024) + " KiB";
+                    font-size: 12px;
+                    opacity: 0.8;
+                    vertical-alignment: center;
+                }
+                Button {
+                    text: "详情";
+                    clicked => { root.inspect-connection(conn.id); }
+                }
+                Button {
+                    text: "断开";
+                    clicked => { root.close-connection(conn.id); }
+                }
+            }
+        }
+    }
+}

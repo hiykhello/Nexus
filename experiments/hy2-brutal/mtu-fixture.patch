@@ -1,0 +1,11 @@
+--- a/tests/hy2_salamander_mtu_pair.py
++++ b/tests/hy2_salamander_mtu_pair.py
+@@ -235,7 +235,7 @@
+             port, front = udp_port(host), reserve()
+             server, client = root / 'server.kdl', root / 'client.kdl'
+             def quic_config(side):
+-                fields = []
++                fields = ["send-bps 500000;", "receive-bps 500000;"]
+                 if not plain: fields.append(f'salamander-password-file "{root / "obfs"}";')
+                 if quic_side in ('both', side):
+                     if payload_limit is not None: fields.append(f'max-udp-payload-size {payload_limit};')

@@ -1,8 +1,8 @@
 import std;
-import nexus.rules;
+import rules;
 
 namespace {
-    using namespace nexus::rules;
+    using namespace ::rules;
     int failures = 0;
 
     auto check(bool passed, std::string_view description) -> void {

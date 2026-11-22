@@ -60,6 +60,6 @@ auto positive(int value) -> int {
 }
 ```
 
-本节探测没有运行这些片段，未检查契约违反时的处理策略，也未验证反射与标准库类型跨 Modules 导出、xmake 扫描及各依赖的组合。另有不含反射的 Glaze 模块最小实验，范围见[第三方 Modules 封装](../build/third-party-modules.md)；正式集成需继续覆盖本节场景。
+本节探测没有运行这些片段，未检查契约违反时的处理策略，也未验证反射与标准库类型跨 Modules 导出、构建系统扫描及各依赖的组合。另有不含反射的 Glaze 模块最小实验，范围见[第三方 Modules 封装](../build/third-party-modules.md)；正式集成需继续覆盖本节场景。
 
 官方资料：[GCC C++ 支持表](https://gcc.gnu.org/projects/cxx-status.html)列出 GCC 16 的反射与契约支持，并注明反射需要 `-freflection`；库能力还需分别核对 [libstdc++ 状态](https://gcc.gnu.org/onlinedocs/libstdc++/manual/status.html)与本机编译结果。

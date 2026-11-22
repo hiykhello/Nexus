@@ -1,9 +1,9 @@
-export module nexus.tls.hybrid;
-export import nexus.crypto;
-export import nexus.crypto.mlkem;
+export module tls.hybrid;
+export import crypto;
+export import crypto.mlkem;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     inline constexpr std::uint16_t x25519_mlkem768_group = 0x11ec;
     enum class HybridError { invalid_share, invalid_public_key, invalid_state, crypto_error };
     class HybridSecret {
@@ -34,6 +34,8 @@ export namespace nexus::tls {
         // Consumes independent ephemeral keys. Do not reuse them for another handshake.
         [[nodiscard]] static auto from_keys(crypto::Mlkem768Private&& kem, crypto::X25519Private&& x25519) -> HybridClient;
         [[nodiscard]] auto share() const -> std::expected<std::array<std::uint8_t,1216>,HybridError>;
+        // Borrowed for first-Hello authentication while this handshake owns the key.
+        [[nodiscard]] auto x25519_key() const noexcept -> crypto::X25519Private const* { return x25519_ ? &*x25519_ : nullptr; }
         // One attempt consumes both private keys, including on failure. Successful decapsulation does not authenticate ciphertext.
         [[nodiscard]] auto finish(std::span<std::uint8_t const> server_share) -> std::expected<HybridSecret,HybridError>;
     };

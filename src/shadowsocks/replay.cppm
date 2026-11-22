@@ -1,6 +1,6 @@
-export module nexus.shadowsocks.replay;
+export module shadowsocks.replay;
 import std;
-export namespace nexus::shadowsocks {
+export namespace shadowsocks {
     enum class ReplayError { invalid_salt, time_reversed, duplicate, full, invalid_timestamp };
     // Thread-safe; share one table across every worker using the same server key.
     // Admit only after authenticating the fixed header and checking its timestamp.

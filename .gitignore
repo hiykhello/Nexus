@@ -1,6 +1,18 @@
-/.xmake/
-/build/
+/.mcpp/
+/target/
+# Local dependency caches (including temporary symlinks) and build outputs
+# for all isolated profiles and workspace members.
+/mcpp/**/.mcpp
+/mcpp/**/target/
 /compile_commands.json
 
 __pycache__/
 *.pyc
+/gcm.cache/
+/.agents/
+/android/.gradle/
+/android/build/
+/android/*/build/
+/android/local.properties
+/apple/.build/
+/apple/.swiftpm/

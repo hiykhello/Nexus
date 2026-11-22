@@ -1,10 +1,12 @@
-export module nexus.shadowsocks.udp_sessions;
+export module shadowsocks.udp_sessions;
 import std;
-import nexus.shadowsocks.udp_packet;
-import nexus.shadowsocks.udp_replay;
-import nexus.shadowsocks.udp_id_reservation;
+import shadowsocks.key;
+import shadowsocks.udp_packet;
+import shadowsocks.udp_replay;
+import shadowsocks.udp_id_reservation;
+import net.principal_bytes;
 
-export namespace nexus::shadowsocks {
+export namespace shadowsocks {
     struct UdpPeer {
         // Family is 4 or 6; IPv4 uses the first four address bytes and zeros the rest.
         std::uint8_t family=0;
@@ -15,10 +17,41 @@ export namespace nexus::shadowsocks {
         auto operator<=>(UdpPeer const&) const = default;
     };
     enum class UdpSessionError { packet, invalid_peer, time_reversed, duplicate, too_old, full, missing, random, exhausted, key_mismatch,
-                                 storage, durability_required, busy, invalid_state, session_id_conflict };
+                                 storage, durability_required, busy, invalid_state, session_id_conflict, other_listener_generation, admission, byte_quota };
+    struct UdpRequestIdentity {
+        std::array<std::uint8_t,16> header;
+        std::string_view user;
+        void const* principal=nullptr;
+        net::PrincipalBytes const* byte_budget=nullptr;
+        std::shared_ptr<void> (*acquire)(void const*)=nullptr;
+    };
+    struct UdpReceiveScope {
+        std::uint64_t listener_generation=0;
+        bool allow_new=true;
+        std::optional<UdpRequestIdentity> identity{};
+    };
     class UdpServerSessions;
-    struct UdpAccepted { UdpPacket packet; bool new_session; std::uint64_t generation; UdpServerSessions const* owner; };
-    struct UdpResponse { UdpPeer peer; std::vector<std::uint8_t> wire; };
+    struct UdpSessionHandle {
+        std::array<std::uint8_t,8> id{};
+        std::uint64_t generation=0;
+        UdpServerSessions const* owner=nullptr;
+    };
+    // Capture the authenticated datagram's sender. The session's reply peer
+    // can change while this packet is waiting for DNS or another operation.
+    struct UdpAccepted {
+        UdpPacket packet;
+        bool new_session;
+        std::uint64_t generation;
+        UdpServerSessions const* owner;
+        UdpPeer source;
+        std::optional<std::string_view> auth_user{};
+    };
+    struct UdpResponse {
+        UdpPeer peer;
+        std::vector<std::uint8_t> wire;
+        UdpSessionHandle session;
+        std::size_t payload_size=0;
+    };
     struct UdpStoredSession { std::array<std::uint8_t,8> id; UdpReplaySnapshot replay; };
     struct UdpClockSample { std::chrono::steady_clock::time_point monotonic; std::uint64_t wall; };
     // One serialized owner for one PSK across all listeners and workers. The
@@ -29,8 +62,11 @@ export namespace nexus::shadowsocks {
         using Clock=std::chrono::steady_clock;
         struct Entry {
             UdpReplayWindow replay; UdpPeer peer; Clock::time_point last; std::uint64_t generation=0;
+            std::uint64_t listener_generation=0;
+            std::shared_ptr<void> principal_lease;
+            net::PrincipalBytes const* byte_budget=nullptr;
             std::optional<std::array<std::uint8_t,8>> server_id;
-            std::uint64_t next_packet=0; bool exhausted=false;
+            std::uint64_t next_packet=0; bool exhausted=false,retired=false;
         };
         std::map<std::array<std::uint8_t,8>,Entry> entries_;
         // Never recycle IDs during this owner's lifetime, including after
@@ -39,6 +75,7 @@ export namespace nexus::shadowsocks {
         std::set<std::array<std::uint8_t,8>> known_client_ids_;
         static constexpr std::size_t max_server_ids_=65536;
         std::size_t capacity_;
+        CipherMethod method_;
         std::array<std::uint8_t,32> key_{};
         std::size_t key_size_=0;
         std::optional<Clock::time_point> last_;
@@ -63,7 +100,7 @@ export namespace nexus::shadowsocks {
         auto advance(Clock::time_point now, std::uint64_t wall) -> bool;
         auto receive_impl(std::span<std::uint8_t const> psk, std::span<std::uint8_t const> wire,
             UdpPeer peer, Clock::time_point now, std::uint64_t wall, std::optional<Commit> commit,
-            std::optional<SampleClock> sample)
+            std::optional<SampleClock> sample,UdpReceiveScope scope)
             -> std::expected<UdpAccepted,UdpSessionError>;
         auto response_impl(std::span<std::uint8_t const> psk, std::array<std::uint8_t,8> client,
             std::span<std::uint8_t const> address, std::span<std::uint8_t const> payload,
@@ -73,8 +110,16 @@ export namespace nexus::shadowsocks {
     public:
         // Durable mode is experimental: expiry and actual trusted storage are
         // not implemented, so it is not suitable for the live service.
-        explicit UdpServerSessions(std::size_t capacity, bool durable=false) : capacity_(capacity), durable_(durable) {}
+        explicit UdpServerSessions(std::size_t capacity, bool durable=false,CipherMethod method=CipherMethod::aes)
+            : capacity_(capacity),method_(method),durable_(durable) {}
+        [[nodiscard]] auto method() const noexcept -> CipherMethod {return method_;}
         ~UdpServerSessions();
+        [[nodiscard]] auto has_history() const noexcept -> bool {return key_size_!=0;}
+        [[nodiscard]] auto active(std::uint64_t generation) const noexcept -> bool {
+            return std::ranges::any_of(entries_,[generation](auto const& item) {
+                return !item.second.retired && item.second.listener_generation==generation;
+            });
+        }
         UdpServerSessions(UdpServerSessions const&) = delete;
         auto operator=(UdpServerSessions const&) -> UdpServerSessions& = delete;
         // Restore the complete, trusted state for this PSK exactly once before
@@ -86,7 +131,8 @@ export namespace nexus::shadowsocks {
             -> std::expected<void,UdpSessionError>;
         // Packet authentication and all header semantics precede replay and peer updates.
         [[nodiscard]] auto receive(std::span<std::uint8_t const> psk, std::span<std::uint8_t const> wire,
-            UdpPeer peer, Clock::time_point now, std::uint64_t wall) -> std::expected<UdpAccepted,UdpSessionError>;
+            UdpPeer peer, Clock::time_point now, std::uint64_t wall,UdpReceiveScope scope={})
+            -> std::expected<UdpAccepted,UdpSessionError>;
         // The synchronous callback must atomically and durably record the
         // snapshot and global wall-clock high water mark, and must not reenter
         // the owner. The stored watermark must never decrease.
@@ -110,16 +156,24 @@ export namespace nexus::shadowsocks {
             -> std::expected<UdpResponse,UdpSessionError>;
         // Caller closes the associated relay socket for every returned ID.
         // Never evicts a session before 62 seconds of successful request or response inactivity.
-        [[nodiscard]] auto expire(Clock::time_point now, std::uint64_t wall)
+        [[nodiscard]] auto expire(Clock::time_point now, std::uint64_t wall,
+            std::optional<std::uint64_t> listener_generation={})
             -> std::expected<std::vector<std::array<std::uint8_t,8>>,UdpSessionError>;
         [[nodiscard]] auto peer(std::array<std::uint8_t,8> id) const -> std::optional<UdpPeer>;
+        // A retired listener leaves authenticated session IDs reserved for the
+        // normal replay window. Only this generation's relay belongs to it.
+        auto retire_listener(std::uint64_t listener_generation,Clock::time_point now) noexcept -> void;
         // Revalidate immediately before an external effect. Durable callers must
         // not rely on current() alone after queueing an accepted packet.
         [[nodiscard]] auto authorize_durable(UdpAccepted const& packet, SampleClock sample)
             -> std::expected<void,UdpSessionError>;
         // Valid only during the originating owner's lifetime and for the
         // current incarnation of the session.
-        [[nodiscard]] auto current(UdpAccepted const& packet) const noexcept -> bool;
+        [[nodiscard]] auto current(UdpAccepted const& packet,std::optional<std::uint64_t> listener_generation={}) const noexcept -> bool;
+        [[nodiscard]] auto retire(UdpSessionHandle const& session,Clock::time_point now) noexcept -> bool;
+        [[nodiscard]] auto current(UdpSessionHandle const& session,std::optional<std::uint64_t> listener_generation={}) const noexcept -> bool;
+        [[nodiscard]] auto reserve_bytes(UdpSessionHandle const&,std::uint64_t listener_generation,
+            bool upstream,std::size_t size,Clock::time_point now) const -> std::optional<net::PrincipalBytes::Reservation>;
         [[nodiscard]] auto size() const noexcept -> std::size_t { return entries_.size(); }
     };
 }

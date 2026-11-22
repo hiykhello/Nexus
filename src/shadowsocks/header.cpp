@@ -1,7 +1,7 @@
-module nexus.shadowsocks.header;
+module shadowsocks.header;
 import std;
-import nexus.crypto;
-namespace nexus::shadowsocks {
+import crypto;
+namespace shadowsocks {
     namespace {
         auto address_size(std::span<std::uint8_t const> bytes) -> std::optional<std::size_t> {
             if (bytes.empty()) return {};

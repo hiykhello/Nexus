@@ -4,12 +4,12 @@
 import std;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-import nexus.vless;
-import nexus.vless.corosio_server;
+import vless;
+import vless.corosio_server;
 
 namespace io=nex::corosio;
 namespace capy=nex::capy;
-namespace v=nexus::vless;
+namespace v=vless;
 using namespace std::chrono_literals;
 struct Fixture {
 #if BOOST_COROSIO_HAVE_LIBURING

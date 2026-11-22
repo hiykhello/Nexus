@@ -1,0 +1,30 @@
+--- a/tests/hy2_application_fixture.cpp
++++ b/tests/hy2_application_fixture.cpp
+@@ -138,11 +138,13 @@
+             while (app.phase(stream)==h::StreamPhase::opening) if (!co_await wait()) co_return capy::results<>{std::make_error_code(std::errc::io_error)};
+         }
+         h::TcpChannel channel(app,*driver,stream,Clock::now()+25s);
++        bool one_way=std::getenv("NEXUS_TEST_UNIDIRECTIONAL");
++        std::size_t send_total=one_way && server ? 0 : total, receive_total=one_way && !server ? 0 : total;
+         std::size_t outgoing=0,incoming=0;bool remote_fin=false,success=true;
+         auto upload=[&]() -> capy::task<capy::results<>> {
+             std::array<std::uint8_t,7000> buffer{};
+-            while(outgoing<total){
+-                auto size=std::min(buffer.size(),total-outgoing);for(std::size_t i=0;i<size;++i)buffer[i]=static_cast<std::uint8_t>((outgoing+i)*71+(server?19:37));
++            while(outgoing<send_total){
++                auto size=std::min(buffer.size(),send_total-outgoing);for(std::size_t i=0;i<size;++i)buffer[i]=static_cast<std::uint8_t>((outgoing+i)*71+(server?19:37));
+                 if(!co_await channel.send(std::span(buffer).first(size))){success=false;co_return capy::results<>{std::make_error_code(std::errc::io_error)};}
+                 outgoing+=size;
+                 if(std::getenv("NEXUS_TEST_SWITCH")) {
+@@ -170,9 +172,10 @@
+         // byte/FIN arrived. Its final CONNECTION_CLOSE need not ACK the last
+         // client frame; that client's retained span lives through native del.
+         if(server)while(!stopping && success && !app.acknowledged(stream))if(!co_await wait())break;
+-        passed=!error && success && outgoing==total && incoming==total && remote_fin && (!server || app.acknowledged(stream));
++        passed=!error && success && outgoing==send_total && incoming==receive_total && remote_fin && (!server || app.acknowledged(stream));
+         std::println("Hy2 application {} sent={} received={} FIN={} ACK={} owner={} channel={}",server?"server":"client",outgoing,incoming,remote_fin,app.acknowledged(stream),sizeof(App),sizeof(channel));
+         if(brutal && switch_done!=2)std::println("BRUTAL role={} ms={} cwnd={} rate={} packets={} loss_total={} acks={} losses={}",server?"server":"client",std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-brutal_start).count(),nexus_ngtcp2_brutal_stat(connection.native(),0),nexus_ngtcp2_brutal_stat(connection.native(),1),nexus_ngtcp2_brutal_stat(connection.native(),3),nexus_ngtcp2_brutal_stat(connection.native(),4),nexus_ngtcp2_brutal_stat(connection.native(),5),nexus_ngtcp2_brutal_stat(connection.native(),6));
++        if(brutal && switch_done!=2)std::println("BRUTAL_OBSERVE role={} late_acks={} ack_only_bytes={}",server?"server":"client",nexus_ngtcp2_brutal_stat(connection.native(),8),nexus_ngtcp2_brutal_stat(connection.native(),9));
+         if(!passed)driver->cancel();else if(!paired && !server)driver->finish();else{
+             driver->notify();
+             while(driver->running())if(!co_await wait())break;

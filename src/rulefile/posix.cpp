@@ -1,16 +1,17 @@
 module;
 #include <cerrno>
+#include <cstdio>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <string.h>
 
-module nexus.rulefile;
+module rulefile;
 import std;
-import nexus.rules;
+import rules;
 
-namespace nexus::rulefile {
+namespace rulefile {
     namespace {
         auto system_error(std::string_view action) -> std::unexpected<std::string> {
             return std::unexpected(std::string(action) + ": " + std::strerror(errno));
@@ -79,7 +80,7 @@ namespace nexus::rulefile {
         struct stat info{};
         if (::fstat(input.value, &info) < 0) return system_error("inspect input");
         if (!S_ISREG(info.st_mode)) return std::unexpected("input must be a regular file");
-        if (info.st_size > rules::max_input_bytes) return std::unexpected("input exceeds 1 MiB");
+        if (info.st_size > ::rules::max_input_bytes) return std::unexpected("input exceeds 1 MiB");
         std::string data;
         char buffer[8192];
         for (;;) {
@@ -89,7 +90,7 @@ namespace nexus::rulefile {
                 if (errno == EINTR) continue;
                 return system_error("read input");
             }
-            if (static_cast<std::size_t>(n) > rules::max_input_bytes - data.size())
+            if (static_cast<std::size_t>(n) > ::rules::max_input_bytes - data.size())
                 return std::unexpected("input exceeds 1 MiB");
             data.append(buffer, static_cast<std::size_t>(n));
         }
@@ -139,6 +140,10 @@ namespace nexus::rulefile {
         if (!S_ISREG(info.st_mode) || info.st_uid != ::geteuid() || (info.st_mode & 07077) != 0)
             return std::unexpected("password file must be a private regular file owned by the current user");
         std::array<char, 257> data{};
+        struct WipeBuffer {
+            std::array<char, 257>& bytes;
+            ~WipeBuffer() { explicit_bzero(bytes.data(), bytes.size()); }
+        } wipe{data};
         std::size_t size = 0;
         while (size < data.size()) {
             auto n = ::read(input.value, data.data() + size, data.size() - size);
@@ -156,7 +161,7 @@ namespace nexus::rulefile {
         return std::string(data.data(), size);
     }
 
-    auto publish_new_file(std::string_view path, std::string_view data) -> std::expected<void, std::string> {
+    static auto publish(std::string_view path, std::string_view data, bool replace) -> std::expected<void, std::string> {
         if (path.find('\0') != std::string_view::npos) return std::unexpected("invalid output path");
         std::filesystem::path output{std::string(path)};
         auto filename = output.filename().string();
@@ -178,9 +183,22 @@ namespace nexus::rulefile {
             if (n == 0) return std::unexpected("write temporary file: no progress");
             written += static_cast<std::size_t>(n);
         }
+        if (replace && ::fsync(file.value)<0) return system_error("synchronize temporary file");
         if (!file.close_checked()) return system_error("close temporary file");
+        if (replace) {
+            if (::renameat(temp.dir.value,"result",parent.value,filename.c_str())<0)
+                return system_error("replace output");
+            return {};
+        }
         if (::linkat(temp.dir.value, "result", parent.value, filename.c_str(), 0) < 0)
             return system_error("publish output (existing files are never overwritten)");
         return {};
     }
+    auto publish_new_file(std::string_view path, std::string_view data) -> std::expected<void,std::string> {
+        return publish(path,data,false);
+    }
+    auto replace_file(std::string_view path, std::string_view data) -> std::expected<void,std::string> {
+        return publish(path,data,true);
+    }
+
 }

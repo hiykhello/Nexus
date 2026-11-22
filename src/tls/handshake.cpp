@@ -1,7 +1,7 @@
-module nexus.tls.handshake;
+module tls.handshake;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     HandshakeDecoder::HandshakeDecoder(std::size_t max_message_size) : max_message_size_(max_message_size) {
         pending_.reserve(std::min<std::size_t>(max_message_size_ + 4, 4096));
     }

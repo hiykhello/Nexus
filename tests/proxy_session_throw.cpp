@@ -4,7 +4,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.proxy;
+import proxy;
+import dns.local_config;
 using namespace std::chrono_literals;
 
 namespace {
@@ -81,10 +82,12 @@ extern "C" void nexus_test_session_throw(std::uint8_t first) {
     if (first == 5) survivor_started = true;
 }
 auto main() -> int {
+    // Count the process-wide DNS refresh thread in the baseline.
+    (void)dns::system_local_snapshots();
     for (unsigned workers : {1u, 2u}) {
-        nexus::proxy::Server server;
+        proxy::Server server;
         auto fds = count("/proc/self/fd"), threads = count("/proc/self/task");
-        auto port = server.start(0, nexus::proxy::Inbound::socks5, workers);
+        auto port = server.start(0, proxy::Inbound::socks5, workers);
         if (!port) return 1;
         injected = 0; survivor_started = false;
         auto client = std::async(std::launch::async, exercise, *port);

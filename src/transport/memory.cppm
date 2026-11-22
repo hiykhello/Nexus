@@ -1,10 +1,10 @@
-export module nexus.transport.memory;
-export import nexus.packet.mux;
-export import nexus.tcp.stack;
-export import nexus.udp.engine;
+export module transport.memory;
+export import packet.mux;
+export import tcp.stack;
+export import udp.engine;
 import std;
 
-export namespace nexus::transport {
+export namespace transport {
     enum class MemoryClockError { time_reversed, stopped };
     using MemoryError = std::variant<MemoryClockError, packet::DeviceError, tcp::StackError, udp::EngineError>;
     struct MemoryStep {
@@ -39,6 +39,12 @@ export namespace nexus::transport {
         ~MemoryEngine();
         // Terminal; closes owned outlets and discards internal queued packets.
         [[nodiscard]] auto stop(std::uint64_t now) -> std::expected<void, MemoryError>;
+        // Stateful reset IDs are unique for the lifetime of the supplied tables;
+        // do not replace those tables while any output remains queued.
+        // Output consumers must retain packet metadata and call this immediately
+        // before delivery, including retries after backpressure. The engine and
+        // its tables must outlive that check.
+        [[nodiscard]] auto valid_output(packet::QueuedPacket const& packet) const noexcept -> bool;
         MemoryEngine(MemoryEngine const&) = delete;
         auto operator=(MemoryEngine const&) -> MemoryEngine& = delete;
         // Single monotonic clock, milliseconds; ISS must be unpredictable for any new TCP SYN.

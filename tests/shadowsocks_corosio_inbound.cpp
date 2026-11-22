@@ -9,14 +9,14 @@
 #include <boost/corosio/local_connect_pair.hpp>
 #include <boost/corosio/shutdown_type.hpp>
 import std;
-import nexus.shadowsocks.chunk;
-import nexus.shadowsocks.frame;
-import nexus.shadowsocks.request;
-import nexus.shadowsocks.replay;
-import nexus.shadowsocks.corosio_server;
-import nexus.shadowsocks.corosio_client;
-import nexus.shadowsocks.corosio_inbound;
-namespace capy=boost::capy; namespace io=boost::corosio; namespace s=nexus::shadowsocks;
+import shadowsocks.chunk;
+import shadowsocks.frame;
+import shadowsocks.request;
+import shadowsocks.replay;
+import shadowsocks.corosio_server;
+import shadowsocks.corosio_client;
+import shadowsocks.corosio_inbound;
+namespace capy=boost::capy; namespace io=boost::corosio; namespace s=shadowsocks;
 using namespace std::chrono_literals;
 using Socket=io::local_stream_socket;
 struct State {

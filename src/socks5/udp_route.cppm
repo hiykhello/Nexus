@@ -1,21 +1,39 @@
-export module nexus.socks5.udp_route;
-export import nexus.socks5;
-import nexus.rules;
+export module socks5.udp_route;
+export import socks5;
+export import net.udp_route;
+import rules;
 import std;
 
-export namespace nexus::socks5 {
-    enum class UdpRouteError { invalid_target, blocked, unsupported, policy_error };
-    // Outbound 0 is direct, 1 is block; other outbounds lack UDP support.
-    // The resolver must supply an actual candidate, not a client assertion.
-    [[nodiscard]] auto udp_preflight(rules::RouteMatcher const& policy, UdpDatagram const& packet)
+export namespace socks5 {
+    using UdpRouteError=net::UdpRouteError;
+    [[nodiscard]] constexpr auto udp_endpoint(UdpPeer peer) noexcept -> net::UdpEndpoint {
+        auto family=peer.address_type==1 ? std::uint8_t{4} : peer.address_type==4 ? std::uint8_t{6} : std::uint8_t{0};
+        return {family,peer.address,peer.port};
+    }
+    [[nodiscard]] constexpr auto udp_peer(net::UdpEndpoint peer) noexcept -> UdpPeer {
+        auto type=peer.family==4 ? std::uint8_t{1} : peer.family==6 ? std::uint8_t{4} : std::uint8_t{0};
+        return {type,peer.address,peer.port};
+    }
+    [[nodiscard]] constexpr auto udp_target(UdpDatagram const& packet) noexcept -> net::UdpTarget {
+        auto kind=packet.address_type==1 ? net::UdpTargetKind::ipv4 : packet.address_type==4 ? net::UdpTargetKind::ipv6 :
+            packet.address_type==3 ? net::UdpTargetKind::domain : net::UdpTargetKind::invalid;
+        return {kind,std::span{packet.address}.first(packet.address_length),packet.port};
+    }
+    struct UdpSelection {
+        UdpPeer target;
+        std::size_t outbound;
+        std::optional<std::size_t> rule{},predicate{};
+    };
+    [[nodiscard]] auto udp_select_preflight(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
+        -> std::expected<std::optional<std::size_t>,UdpRouteError>;
+    [[nodiscard]] auto udp_select(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer candidate,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
+        -> std::expected<UdpSelection,UdpRouteError>;
+    [[nodiscard]] auto udp_preflight(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
         -> std::expected<void,UdpRouteError>;
-    [[nodiscard]] auto udp_route(rules::RouteMatcher const& policy, UdpDatagram const& packet, UdpPeer candidate)
+    [[nodiscard]] auto udp_route(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer candidate,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
         -> std::expected<UdpPeer,UdpRouteError>;
     struct UdpSend { UdpPeer target; std::uint64_t token; };
-    using UdpPrepareError = std::variant<UdpRouteError,Status>;
-    // packet must come from this association's admit(); candidate must be an
-    // actual resolved endpoint. Finish the token after the socket operation.
-    [[nodiscard]] auto udp_prepare_send(UdpAssociation& association, rules::RouteMatcher const& policy,
-                                        UdpDatagram const& packet, UdpPeer candidate)
-        -> std::expected<UdpSend,UdpPrepareError>;
+    using UdpPrepareError=std::variant<UdpRouteError,Status>;
+    [[nodiscard]] auto udp_prepare_send(UdpAssociation& association,rules::RouteMatcher const& policy,
+        UdpDatagram const& packet,UdpPeer candidate,std::optional<std::string_view> auth_user={}) -> std::expected<UdpSend,UdpPrepareError>;
 }

@@ -24,7 +24,7 @@ def exact(sock, size):
         data += chunk
     return data
 
-def scenario(root, size):
+def scenario(root, size, workers, legacy):
     with socket.socket() as target, socket.socket() as reserved:
         target.bind(("127.0.0.1",0)); target.listen(1); target.settimeout(5)
         reserved.bind(("127.0.0.1",0)); upstream_port=reserved.getsockname()[1]; reserved.close()
@@ -46,7 +46,9 @@ def scenario(root, size):
                 except OSError:
                     if time.monotonic()>=deadline: raise
                     time.sleep(.02)
-            proxy=subprocess.Popen([fixture,"0",str(upstream_port),str(size)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            args=[fixture,"0",str(upstream_port),str(size),str(workers)]
+            if legacy: args.append("legacy")
+            proxy=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
             if not select.select([proxy.stdout],[],[],5)[0]: raise RuntimeError("proxy failed to start")
             port=int(proxy.stdout.readline().strip())
             with socket.create_connection(("127.0.0.1",port),timeout=5) as client:
@@ -76,5 +78,7 @@ def scenario(root, size):
 with tempfile.TemporaryDirectory(prefix="nexus-ss2022-proxy-") as directory:
     # Exercise the two relay directions under several startup interleavings.
     for _ in range(4):
-        for size in (16,32): scenario(pathlib.Path(directory),size)
+        for size in (16,32):
+            for workers in (1,2):
+                for legacy in (False,True): scenario(pathlib.Path(directory),size,workers,legacy)
 print(f"SS-2022 Nexus proxy API with sing-box {revision} passed")

@@ -1,8 +1,8 @@
-export module nexus.tcp.stack;
-export import nexus.tcp.direct;
+export module tcp.stack;
+export import tcp.direct;
 import std;
 
-export namespace nexus::tcp {
+export namespace tcp {
     enum class StackStopped { stopped };
     using StackError = std::variant<EngineError, packet::DeviceError, DirectError, StackStopped>;
     struct StackStep {

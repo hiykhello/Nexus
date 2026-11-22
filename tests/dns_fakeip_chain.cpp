@@ -7,19 +7,19 @@
 #include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/tcp_socket.hpp>
 import std;
-import nexus.dns.fakeip;
-import nexus.dns.fakeip_registry;
-import nexus.dns.fakeip_response;
-import nexus.dns.fakeip_shared;
-import nexus.dns.fakeip_request;
-import nexus.dns.message;
-import nexus.socks5;
+import dns.fakeip;
+import dns.fakeip_registry;
+import dns.fakeip_response;
+import dns.fakeip_shared;
+import dns.fakeip_request;
+import dns.message;
+import dns.corosio_query;
+import socks5;
 #include "../src/dns/corosio_fakeip_listener.hpp"
-#include "../src/dns/corosio_udp.hpp"
 namespace capy=boost::capy;
-namespace io=boost::corosio;
-namespace d=nexus::dns;
-namespace s=nexus::socks5;
+namespace io=nex::corosio;
+namespace d=dns;
+namespace s=socks5;
 using namespace std::chrono_literals;
 constexpr std::uint32_t base=0xc6120000;
 struct Fixture {

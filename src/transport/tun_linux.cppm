@@ -1,10 +1,10 @@
-export module nexus.transport.tun_linux;
-export import nexus.transport.memory;
-export import nexus.packet.fd;
-export import nexus.packet.tun_linux;
+export module transport.tun_linux;
+export import transport.memory;
+export import packet.fd;
+export import packet.tun_linux;
 import std;
 
-export namespace nexus::transport {
+export namespace transport {
     struct TunLimits {
         std::size_t tcp_flows=256, tcp_buffer=65535, tcp_direct=256, mtu=1500;
         udp::Mapping mapping=udp::Mapping::endpoint_independent;

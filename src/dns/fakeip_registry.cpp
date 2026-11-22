@@ -1,9 +1,9 @@
-module nexus.dns.fakeip_registry;
+module dns.fakeip_registry;
 import std;
-import nexus.dns.fakeip;
-import nexus.dns.fakeip_target;
-import nexus.dns.fakeip_response;
-namespace nexus::dns {
+import dns.fakeip;
+import dns.fakeip_target;
+import dns.fakeip_response;
+namespace dns {
     auto FakeIpRegistry::add(std::uint32_t first,std::uint32_t last,std::unique_ptr<FakeIpPool> pool)
         -> std::expected<void,FakeIpRegistryError> {
         if (first>last || (pool && (pool->first_address()<first || pool->last_address()>last)))
@@ -34,7 +34,7 @@ namespace nexus::dns {
         return {};
     }
     auto FakeIpRegistry::respond(std::uint32_t first,std::span<std::uint8_t const> query,
-        std::uint64_t view,std::chrono::steady_clock::time_point now)
+        std::uint64_t view,std::chrono::steady_clock::time_point now,std::optional<FakeIpIpv6Range> ipv6)
         -> std::expected<std::unique_ptr<FakeIpResponse>,std::variant<FakeIpRegistryError,FakeIpDnsError>> {
         using Error=std::variant<FakeIpRegistryError,FakeIpDnsError>;
         auto it=std::ranges::find(ranges_,first,&Range::first);
@@ -42,7 +42,7 @@ namespace nexus::dns {
         if (!it->active) return std::unexpected(Error{FakeIpRegistryError::inactive});
         if (it->quarantine_start && now<*it->quarantine_start) return std::unexpected(Error{FakeIpRegistryError::clock});
         if (it->quarantine_end && now<*it->quarantine_end) return std::unexpected(Error{FakeIpRegistryError::quarantine});
-        auto result=fakeip_response(*it->pool,query,view,now);
+        auto result=fakeip_response(*it->pool,query,view,now,ipv6);
         if (!result) return std::unexpected(Error{result.error()});
         return std::move(*result);
     }

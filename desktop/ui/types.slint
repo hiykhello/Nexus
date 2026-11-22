@@ -1,0 +1,35 @@
+export struct OutboundMemberItem {
+    name: string,
+    state: string,
+    latency-ms: int,
+    selected: bool,
+    overridden: bool,
+}
+
+export struct OutboundGroupItem {
+    tag: string,
+    mode: string,
+    active-member: string,
+    auto-mode: bool,
+}
+
+export struct LogLineItem {
+    level: string,
+    domain: string,
+    message: string,
+}
+
+export struct ActiveConnectionItem {
+    id: string,
+    protocol: string,
+    path: string,
+    destination-port: int,
+    upload-bytes: int,
+    download-bytes: int,
+}
+
+export struct ProfileItem {
+    id: string,
+    name: string,
+    active: bool,
+}

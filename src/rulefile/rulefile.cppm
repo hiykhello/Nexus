@@ -1,7 +1,7 @@
-export module nexus.rulefile;
+export module rulefile;
 import std;
 
-export namespace nexus::rulefile {
+export namespace rulefile {
     // Binary private file storage; erases the whole allocation on destruction.
     class PrivateFile {
         std::unique_ptr<char[]> data_;
@@ -23,4 +23,5 @@ export namespace nexus::rulefile {
     // Reads a private, owner-controlled ASCII secret from an absolute path.
     [[nodiscard]] auto read_password_file(std::string_view path) -> std::expected<std::string, std::string>;
     [[nodiscard]] auto publish_new_file(std::string_view path, std::string_view data) -> std::expected<void, std::string>;
+    [[nodiscard]] auto replace_file(std::string_view path, std::string_view data) -> std::expected<void, std::string>;
 }

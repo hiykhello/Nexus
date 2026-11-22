@@ -1,19 +1,23 @@
-export module nexus.shadowsocks.udp_relay;
+export module shadowsocks.udp_relay;
 import std;
-export import nexus.shadowsocks.udp_sessions;
-export namespace nexus::shadowsocks {
+import net.udp_dial;
+import net.udp_socket;
+import platform.socket_options;
+export import shadowsocks.udp_sessions;
+export namespace shadowsocks {
     enum class UdpRelayError { invalid_target, session_limit, target_limit, system };
     struct UdpRelayFailure { UdpRelayError kind; std::error_code system; };
     struct UdpRelayReply { std::array<std::uint8_t,8> session; UdpPeer source; std::vector<std::uint8_t> payload; };
     // Single owner, Linux nonblocking sockets. Caller must authenticate packets,
     // resolve and authorize every destination, and close IDs returned by expire().
     class UdpRelay {
-        struct Entry { int fd=-1; std::set<UdpPeer> targets; };
+        struct Entry { net::UdpDialSockets socket; std::set<UdpPeer> targets; explicit Entry(platform::SocketBinding const* binding) : socket(binding) {} };
         std::map<std::array<std::uint8_t,8>,Entry> sockets_;
         std::optional<std::array<std::uint8_t,8>> cursor_;
         std::size_t max_sessions_,max_targets_;
+        platform::SocketBinding const* binding_;
     public:
-        UdpRelay(std::size_t sessions,std::size_t targets) : max_sessions_(sessions),max_targets_(targets) {}
+        UdpRelay(std::size_t sessions,std::size_t targets,platform::SocketBinding const* binding=nullptr) : max_sessions_(sessions),max_targets_(targets),binding_(binding) {}
         ~UdpRelay();
         UdpRelay(UdpRelay const&)=delete;
         auto operator=(UdpRelay const&) -> UdpRelay& = delete;

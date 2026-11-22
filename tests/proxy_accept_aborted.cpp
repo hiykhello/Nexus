@@ -4,7 +4,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.proxy;
+import proxy;
+import dns.local_config;
 using namespace std::chrono_literals;
 
 auto client(std::uint16_t port) -> bool {
@@ -43,11 +44,13 @@ auto count(std::string_view path) -> std::size_t {
 }
 auto main(int argc,char** argv) -> int {
     if (argc!=2 || (std::string_view(argv[1])!="1" && std::string_view(argv[1])!="2")) return 1;
+    // The process-wide DNS refresh thread outlives each server.
+    (void)dns::system_local_snapshots();
     unsigned workers=argv[1][0]-'0';
     auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
     {
-    nexus::proxy::Server server;
-    auto port=server.start(0,nexus::proxy::Inbound::socks5,workers);
+    proxy::Server server;
+    auto port=server.start(0,proxy::Inbound::socks5,workers);
     if (!port) return 2;
     auto start=std::chrono::steady_clock::now();
     auto peer=std::async(std::launch::async,client,*port);

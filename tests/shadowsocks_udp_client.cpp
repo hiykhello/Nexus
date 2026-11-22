@@ -1,7 +1,7 @@
 import std;
-import nexus.shadowsocks.udp_client;
-import nexus.shadowsocks.udp_cipher;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_client;
+import shadowsocks.udp_cipher;
+namespace s=shadowsocks;
 using namespace std::chrono_literals;
 
 int main() {

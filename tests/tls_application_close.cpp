@@ -1,6 +1,6 @@
 import std;
-import nexus.tls.client_flight;
-namespace t=nexus::tls; namespace c=nexus::crypto; using Bytes=c::Bytes;
+import tls.client_flight;
+namespace t=tls; namespace c = ::crypto; using Bytes=c::Bytes;
 auto layer(t::RecordDirection d) -> t::RecordLayer { auto x=t::RecordLayer::create(d,c::Aead::aes_128_gcm,Bytes(16,1),Bytes(12,2)); if (!x) std::abort(); return std::move(*x); }
 auto app() -> t::ApplicationRecords { return {layer(t::RecordDirection::send),layer(t::RecordDirection::receive),16385,16385,t::ApplicationRole::client}; }
 int main() {

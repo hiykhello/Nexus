@@ -1,12 +1,12 @@
 # Reality 接入设计
 
-状态：**P0 目标的设计草案，未实现**。Reality 与自研 TLS/uTLS 边界共用；基于固定版本的 [XTLS/REALITY 服务端](https://github.com/XTLS/REALITY)和 [Xray 客户端](https://github.com/XTLS/Xray-core/blob/main/transport/internet/reality/reality.go)建立互操作目标。上游分支持续变化，本文概述不代替逐字段线规、固定提交与测试向量。
+状态：REALITY 客户端/服务端（含 `X25519MLKEM768` 与 fallback）已接入生产双后端，与自研 TLS/uTLS 边界共用。本文记录协议认证模型、边界与互操作契约，具体实现以逐字段线规与测试向量为准。
 
 ## 身份与承载
 
 客户端需要经授权配置服务端公钥、server name、short ID 和允许的 ClientHello profile；服务端保管对应私钥、允许的 short ID/名称及受控 fallback 目标。密钥来源、解析、轮换及生命周期须显式定义。Reality 是外层握手/传输能力，VLESS 用户 UUID 是另一层身份；两者都需验证，不能仅凭观察到合法 SNI 就把请求当已认证用户。
 
-所读 Xray 客户端在 TLS ClientHello 及 session ID 中组织认证信息，并利用密钥交换、HKDF 和 AEAD 等流程实现特定认证；client 还执行 Reality 特定的对端认证，而不是简单借用目标站的正常证书就可完成代理身份验证。具体字段、transcript、KDF、附加数据、时间窗口、证书处理和新版算法需按锁定实现逐字节核查，不能用“X25519 成功就返回认证通过”的伪代码代替验证。[客户端实现](https://github.com/XTLS/Xray-core/blob/main/transport/internet/reality/reality.go)、[服务端实现](https://github.com/XTLS/REALITY/blob/main/tls.go)。
+REALITY 客户端在 TLS ClientHello 及 session ID 中组织认证信息，并利用密钥交换、HKDF 和 AEAD 流程实现隐蔽认证；客户端必须执行 REALITY 特定的服务端签名/证书认证，而非简单借用目标站的普通证书完成代理身份验证。具体字段、transcript、KDF、附加数据、时间窗口、证书处理与混合后量子密钥交换均按线规逐字节核查。
 
 TLS 握手、认证及不受信输入由连接 owner 串行驱动，长度、时间、并发和资源均有上限。认证失败不能交给代理协议；必要的 secret 要限期保存并清理。时钟差、重放处理、key share/profile 和错误行为以固定互操作目标为准，不假设复用同一 short ID 就代表一次重放，也不虚构固定的全局“零重放”保证。
 

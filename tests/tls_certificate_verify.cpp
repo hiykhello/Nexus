@@ -1,9 +1,9 @@
 import std;
-import nexus.tls.certificate_verify;
-import nexus.tls.transcript;
-import nexus.tls.finished;
+import tls.certificate_verify;
+import tls.transcript;
+import tls.finished;
 #include "support/rfc8448_server_flight.hpp"
-namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace t=tls; namespace c = ::crypto;
 auto hex(std::string_view s) -> c::Bytes { auto n=[](char x){return x<='9'?x-'0':x-'a'+10;}; c::Bytes b; for (std::size_t i=0;i<s.size();i+=2) b.push_back(static_cast<std::uint8_t>((n(s[i])<<4)|n(s[i+1]))); return b; }
 int main() {
     auto client_wire=hex("010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001");
@@ -30,7 +30,7 @@ int main() {
     if (t::verify_server_certificate_signature(cert.first(cert.size()-1),c::Hash::sha256,*hash,offered,message).error()!=t::CertificateVerifyError::invalid_certificate) return 8;
     c::Bytes trailing(cert.begin(),cert.end()); trailing.push_back(0);
     if (t::verify_server_certificate_signature(trailing,c::Hash::sha256,*hash,offered,message).error()!=t::CertificateVerifyError::invalid_certificate) return 9;
-    bad=c::Bytes(message.begin(),message.end()); bad[5]=5;
+    bad=c::Bytes(message.begin(),message.end()); bad[5]=8;
     if (t::verify_server_certificate_signature(cert,c::Hash::sha256,*hash,offered,bad).error()!=t::CertificateVerifyError::unsupported_scheme) return 10;
     if (t::verify_server_certificate_signature(cert,c::Hash::sha384,*hash,offered,message).error()!=t::CertificateVerifyError::invalid_transcript) return 11;
     if (t::verify_server_certificate_signature(cert,c::Hash::sha256,*hash,offered,message.first(message.size()-1)).error()!=t::CertificateVerifyError::invalid_message) return 12;

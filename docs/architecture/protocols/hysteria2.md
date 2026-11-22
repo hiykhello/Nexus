@@ -1,12 +1,12 @@
 # Hysteria 2 与 QUIC 承载设计
 
-状态：**P1 设计草案，未实现**。协议依据为 [Hysteria 2 规范](https://v2.hysteria.network/docs/developers/Protocol/)、[QUIC RFC 9000](https://www.rfc-editor.org/rfc/rfc9000)、[QUIC TLS RFC 9001](https://www.rfc-editor.org/rfc/rfc9001) 和 [QUIC DATAGRAM RFC 9221](https://www.rfc-editor.org/rfc/rfc9221)。Hysteria 2 不是 Hysteria 1；不能只自写特定 UDP 包格式，就声称兼容 QUIC。
+状态：Hysteria 2 入站与出站已接入生产双后端，最新实测与边界见 [项目进度](../../progress.md) 与 [支持矩阵](../../planning/proxy-kernel-support-matrix.md)。协议依据为 [Hysteria 2 规范](https://v2.hysteria.network/docs/developers/Protocol/)、[QUIC RFC 9000](https://www.rfc-editor.org/rfc/rfc9000)、[QUIC TLS RFC 9001](https://www.rfc-editor.org/rfc/rfc9001) 和 [QUIC DATAGRAM RFC 9221](https://www.rfc-editor.org/rfc/rfc9221)。Hysteria 2 不是 Hysteria 1；不能只自写特定 UDP 包格式，就声称兼容 QUIC。
 
 ## QUIC 技术路线
 
 选择**用户态、无 I/O 的通用 QUIC 核心**作为实现路线，而不是另写仅够 Hysteria 使用的 QUIC 状态机。首选验证候选为 `libngtcp2` + `libnghttp3` 的核心库；由 Nexus 负责 UDP I/O、定时器、HTTP/3 与 Hysteria 编解码，并将自研 TLS 1.3 以 QUIC TLS 接口接入。`libngtcp2` 上游说明核心库本身不依赖外部库，其现成 crypto helper 则依赖各自的 TLS 后端；Nexus **不链接任何第三方 libssl 或该类现成 TLS helper**，密码原语继续使用已选 BoringSSL libcrypto。[ngtcp2 上游](https://github.com/ngtcp2/ngtcp2)，[nghttp3 上游](https://github.com/ngtcp2/nghttp3)。
 
-这是一项待验证的设计选择，ngtcp2/nghttp3 尚未纳入正式依赖、锁定版本或创建包/模块。自研 TLS 必须补齐握手字节、各加密级别 secret、QUIC transport parameters、证书验证、密钥更新和失败事件，不能把 TCP TLS record 或 Linux kTLS 直接套在 UDP QUIC 上。还需实现/验证 QUIC Initial 密钥、头保护、AEAD、重传和数据所有权，核对 libcrypto 所需原语及 provider 回调。`nghttp3` 是否能与 Hysteria 认证后 `0x401` 非标准请求流正确分流，必须做实验；若需要补丁，应明确维护边界。上述适配失败时不允许悄悄引入 libssl，也不宣称 Hysteria 2 可用。
+ngtcp2/nghttp3 已按固定 release 加入正式包、锁和无文本包含的命名模块，具体来源和边界见[QUIC 依赖](../../build/quic-dependencies.md)。自研 TLS 必须补齐握手字节、各加密级别 secret、QUIC transport parameters、证书验证、密钥更新和失败事件，不能把 TCP TLS record 或 Linux kTLS 直接套在 UDP QUIC 上。还需实现/验证 QUIC Initial 密钥、头保护、AEAD、重传和数据所有权，核对 libcrypto 所需原语及 provider 回调。`nghttp3` 是否能与 Hysteria 认证后 `0x401` 非标准请求流正确分流，必须做实验；若需要补丁，应明确维护边界。上述适配失败时不允许悄悄引入 libssl，也不宣称 Hysteria 2 可用。
 
 `lsquic`/`msquic` 可在调研中对照，但其 TLS provider、平台支持、HTTP/3 与拥塞控制的可插拔性需要同样验证，不因名字轻量就默认满足约束。模块草案为 `nexus.thirdparty.ngtcp2`、`nexus.thirdparty.nghttp3` 和项目内 `nexus.quic` / `nexus.protocol.hysteria2`；按[第三方模块封装](../../build/third-party-modules.md)和依赖锁定要求接入。
 
@@ -17,6 +17,10 @@
 每个 TCP 代理请求使用新的双向 QUIC stream：依次为 QUIC varint `0x401`、地址字符串长度、`host:port` 字节、填充长度与随机填充；服务端回单字节状态、消息长度/消息和填充长度/填充。成功后再双向转发字节，失败则关闭该 stream。地址、消息、填充、活跃流及握手耗时均须有上限；varint 支持分片到达且拒绝溢出。
 
 UDP 通过 QUIC DATAGRAM 双向承载，报文依次为大端 session ID（32 位）、packet ID（16 位）、fragment ID（8 位）、fragment count（8 位）、varint 地址长度、地址及 payload。无分片时 count 为 1；分片按同 session/packet、地址和方向有界重组，乱序可以接受，缺片超时整体丢弃，限制总字节、并发数和生存期。服务端需给会话可靠地区分回包，空闲时回收资源；重新收到已过期 session ID 视为新会话。不能把 QUIC 自身 DATAGRAM 能力与自定义 UDP 分片混淆。
+
+客户端最多保留八个完成的数据报：首个缓冲随连接内联，其余缓冲按实际包长分配、增长，并在队列非空时复用；队列排空或连接关闭时释放。空包不需要额外缓冲。所有 Hy2 入站和出站共享 32 MiB 动态数据报载荷额度，覆盖已保留分片及额外完成包缓冲，增长期间同时计入新旧缓冲。队列满、额度耗尽或分配失败时丢弃新数据报；现有数据报及已接收分片保持有效。内联缓冲、固定对象、分配器开销和原生 QUIC 内存不计入此额度，因此它不是进程内存总账。
+
+构建启用 `quic-resumption` 时，每个具名出站的执行器保留最多八张单次提取的 TLS 票据。票据匹配实际 peer 地址和端口、证书信任、身份和 ALPN。静态或解析取得的 ECH 仍做完整握手。Hy2 在 TLS 完成后发送 `POST /auth`，每次连接重新认证，所有请求均使用 1-RTT。
 
 ## Brutal 拥塞控制与公平性
 

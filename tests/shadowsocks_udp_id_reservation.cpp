@@ -1,6 +1,6 @@
 import std;
-import nexus.shadowsocks.udp_id_reservation;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_id_reservation;
+namespace s=shadowsocks;
 int main() {
     using W=s::UdpIdWatermark;
     using E=s::UdpIdError;

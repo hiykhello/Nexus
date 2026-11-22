@@ -1,8 +1,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.shadowsocks.udp_client;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_client;
+namespace s=shadowsocks;
 int main(int argc,char** argv) {
     if (argc!=4) return 1;
     int fd=std::atoi(argv[1]), size=std::atoi(argv[2]), port=std::atoi(argv[3]);

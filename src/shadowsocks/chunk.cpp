@@ -1,7 +1,7 @@
-module nexus.shadowsocks.chunk;
+module shadowsocks.chunk;
 import std;
-import nexus.crypto;
-namespace nexus::shadowsocks {
+import crypto;
+namespace shadowsocks {
     ChunkCipher::ChunkCipher(SessionKey&& key, bool encrypt) noexcept : key_(std::move(key)), active_(true), encrypt_(encrypt) {}
     ChunkCipher::ChunkCipher(ChunkCipher&& other) noexcept
         : key_(std::move(other.key_)), nonce_(other.nonce_), active_(std::exchange(other.active_,false)), encrypt_(other.encrypt_) {}
@@ -21,7 +21,8 @@ namespace nexus::shadowsocks {
         active_=false; // An exception or any error must never leave a nonce reusable.
         if (encrypt_ ? input.size()>65535 : input.size()<16 || input.size()>65535+16)
             return std::unexpected(ChunkError::invalid_length);
-        auto algorithm=key_.view().size()==16 ? crypto::Aead::aes_128_gcm : crypto::Aead::aes_256_gcm;
+        auto algorithm=key_.method()==CipherMethod::chacha20 ? crypto::Aead::chacha20_poly1305 :
+            key_.view().size()==16 ? crypto::Aead::aes_128_gcm : crypto::Aead::aes_256_gcm;
         auto result=encrypt_ ? crypto::seal(algorithm,key_.view(),nonce_,input) : crypto::open(algorithm,key_.view(),nonce_,input);
         if (!result) return std::unexpected(result.error()==crypto::Error::authentication_failed ? ChunkError::authentication_failed : ChunkError::backend_failure);
         advance();

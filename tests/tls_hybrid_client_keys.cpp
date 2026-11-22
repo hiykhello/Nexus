@@ -1,8 +1,8 @@
 import std;
-import nexus.tls.hybrid_client_keys;
-import nexus.tls.server_hello;
-import nexus.tls.handshake;
-namespace t=nexus::tls; namespace c=nexus::crypto;
+import tls.hybrid_client_keys;
+import tls.server_hello;
+import tls.handshake;
+namespace t=tls; namespace c = ::crypto;
 int main() {
     auto ephemeral=t::HybridClient::generate(); if (!ephemeral) return 1; auto offer=ephemeral->share(); if (!offer) return 2;
     t::KeyShareEntry client_entry{t::x25519_mlkem768_group,c::Bytes(offer->begin(),offer->end())};

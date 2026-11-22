@@ -1,9 +1,9 @@
-export module nexus.udp.direct;
-export import nexus.udp.route;
-import nexus.rules;
+export module udp.direct;
+export import udp.route;
+import rules;
 import std;
 
-export namespace nexus::udp {
+export namespace udp {
     using DirectError = std::variant<RoutedError, Error, std::error_code>;
     struct DirectSocket {
         FlowId id;

@@ -1,0 +1,152 @@
+{
+  "kind": "mcpp.graph",
+  "packages": [
+    {
+      "features": [],
+      "instances": [
+        "target"
+      ],
+      "manifest_dir": "/home/yk/Code/Nexus/src/platform",
+      "metadata": {},
+      "package": {
+        "canonical": "nexus.platform@0.1.0",
+        "name": "platform",
+        "namespace": "nexus",
+        "source": "path+/home/yk/Code/Nexus/src/platform",
+        "version": "0.1.0"
+      },
+      "requested_by": [
+        {
+          "key": "nexus.platform",
+          "requester": "nexus.tun@0.1.0",
+          "table": "[dependencies]"
+        }
+      ],
+      "root": false,
+      "targets": []
+    },
+    {
+      "features": [],
+      "instances": [
+        "target"
+      ],
+      "link": {
+        "form": "static",
+        "reason": "default"
+      },
+      "manifest_dir": "/home/yk/Code/Nexus/.mcpp/.xlings/data/xpkgs/nexus-x-glaze-kdl/0.1.0",
+      "metadata": {},
+      "package": {
+        "canonical": "nexus.glaze-kdl@0.1.0",
+        "name": "glaze-kdl",
+        "namespace": "nexus",
+        "source": "index+nexus@0.1.0",
+        "version": "0.1.0"
+      },
+      "requested_by": [
+        {
+          "key": "nexus.glaze-kdl",
+          "requester": "nexus.policy@0.1.0",
+          "table": "[dependencies]"
+        }
+      ],
+      "root": false,
+      "targets": [
+        {
+          "kind": "lib",
+          "name": "glaze-kdl"
+        }
+      ]
+    },
+    {
+      "features": [],
+      "instances": [
+        "target"
+      ],
+      "manifest_dir": "/home/yk/Code/Nexus/src/rules",
+      "metadata": {},
+      "package": {
+        "canonical": "nexus.policy@0.1.0",
+        "name": "policy",
+        "namespace": "nexus",
+        "source": "path+/home/yk/Code/Nexus/src/rules",
+        "version": "0.1.0"
+      },
+      "requested_by": [
+        {
+          "key": "nexus.policy",
+          "requester": "nexus.tun@0.1.0",
+          "table": "[dependencies]"
+        }
+      ],
+      "root": false,
+      "targets": []
+    },
+    {
+      "features": [],
+      "instances": [
+        "target"
+      ],
+      "manifest_dir": "/home/yk/Code/Nexus/src/transport",
+      "metadata": {},
+      "package": {
+        "canonical": "nexus.tun@0.1.0",
+        "name": "tun",
+        "namespace": "nexus",
+        "source": "path+/home/yk/Code/Nexus/src/transport",
+        "version": "0.1.0"
+      },
+      "requested_by": [
+        {
+          "key": "nexus.tun",
+          "requester": "nexus.tun-fault-tests@0.1.0",
+          "table": "[dependencies]"
+        }
+      ],
+      "root": false,
+      "targets": []
+    },
+    {
+      "features": [
+        "udp-receive"
+      ],
+      "instances": [
+        "target"
+      ],
+      "manifest_dir": "/home/yk/Code/Nexus/tests/tun-faults",
+      "metadata": {},
+      "package": {
+        "canonical": "nexus.tun-fault-tests@0.1.0",
+        "name": "tun-fault-tests",
+        "namespace": "nexus",
+        "source": "path+/home/yk/Code/Nexus/tests/tun-faults",
+        "version": "0.1.0"
+      },
+      "requested_by": [],
+      "root": true,
+      "targets": [
+        {
+          "kind": "bin",
+          "name": "udp-deferred-allocation"
+        },
+        {
+          "kind": "bin",
+          "name": "udp-direct-fault"
+        },
+        {
+          "kind": "bin",
+          "name": "udp-engine-fault"
+        },
+        {
+          "kind": "bin",
+          "name": "udp-output-allocation"
+        },
+        {
+          "kind": "bin",
+          "name": "udp-reply-allocation"
+        }
+      ]
+    }
+  ],
+  "version": 1
+}

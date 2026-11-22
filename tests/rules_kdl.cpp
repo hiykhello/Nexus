@@ -1,5 +1,5 @@
 import std;
-import nexus.rules;
+import rules;
 import nexus.thirdparty.glaze;
 
 namespace g = nex::glaze;
@@ -7,7 +7,7 @@ namespace g = nex::glaze;
 struct WireExtra {
     std::uint32_t schema_version = 1;
     std::string kind = "predicate";
-    std::vector<nexus::rules::Rule> rules;
+    std::vector<::rules::Rule> rules;
     std::string extra = "not-allowed";
 };
 
@@ -27,7 +27,7 @@ namespace {
     }
 
     auto fails(std::string_view text) -> bool {
-        return !nexus::rules::parse_kdl(text);
+        return !::rules::parse_kdl(text);
     }
 
     auto read(std::string_view path) -> std::string {
@@ -48,7 +48,7 @@ namespace {
 }
 
 int main() {
-    using namespace nexus::rules;
+    using namespace ::rules;
     constexpr auto source = R"(schema-version 1
 kind "predicate"
 rule type="domain-suffix" value="Example.COM"
@@ -90,7 +90,7 @@ rule type="ip-cidr" value="2001:db8::/32"
     check(fails(""), "empty document is not a rule set");
     check(fails("schema-version 1\nkind \"predicate\"\nrule {"), "malformed KDL fails");
     check(fails("schema-version 1\nschema-version 1\nkind \"predicate\""), "duplicate version fails");
-    check(fails("schema-version 2\nkind \"predicate\""), "unsupported version fails");
+    check(fails("schema-version 3\nkind \"predicate\""), "unsupported version fails");
     check(fails("schema-version 1\nkind \"predicate\"\nunknown 1"), "unknown node fails");
     check(fails("schema-version 1\nkind \"predicate\"\nrule type=\"domain-suffix\" value=\"bad..name\""), "invalid domain fails");
     check(fails("schema-version 1\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"1.2.3.4/33\""), "invalid CIDR fails");

@@ -1,7 +1,7 @@
-export module nexus.dns.fakeip_history;
+export module dns.fakeip_history;
 import std;
-import nexus.dns.fakeip_recovery;
-export namespace nexus::dns {
+import dns.fakeip_recovery;
+export namespace dns {
     enum class FakeIpHistoryError { invalid, authentication, crypto };
     struct FakeIpHistorySnapshot {
         std::uint64_t generation=0;

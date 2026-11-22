@@ -1,0 +1,189 @@
+export module desktop.http_control;
+
+import std;
+
+export namespace desktop {
+    struct HttpReply {
+        bool ok = false;
+        int status_code = 0;
+        std::string body;
+    };
+
+    struct OutboundMemberSnapshot {
+        std::string name;
+        std::string state;
+        std::int64_t latency_ms = -1;
+        bool selected = false;
+        bool overridden = false;
+    };
+
+    struct OutboundGroupSnapshot {
+        std::string tag;
+        std::string mode;
+        std::string active;
+        bool manual_override = false;
+        std::vector<OutboundMemberSnapshot> members;
+    };
+
+    struct ActiveConnectionSnapshot {
+        std::uint64_t id = 0;
+        std::uint32_t listener = 0;
+        std::string inbound;
+        std::string protocol;
+        std::string path;
+        std::string source;
+        std::string target;
+        std::string outbound;
+        std::string route_mode;
+        std::string route_rule;
+        std::string process_path;
+        std::int64_t source_uid = -1;
+        std::uint16_t destination_port = 0;
+        std::uint64_t duration_ms = 0;
+        std::uint64_t upload_bytes = 0;
+        std::uint64_t download_bytes = 0;
+        bool can_close = false;
+    };
+
+    struct LogEntrySnapshot {
+        std::uint64_t seq = 0;
+        std::string level;
+        std::string domain;
+        std::uint32_t event_code = 0;
+        std::string message;
+    };
+
+    struct LogsSnapshot {
+        std::uint64_t latest_seq = 0;
+        std::uint64_t evicted = 0;
+        std::vector<LogEntrySnapshot> entries;
+    };
+
+    struct MetricsSnapshot {
+        std::uint64_t control_generation = 0;
+        std::uint64_t active_sessions = 0;
+        std::uint64_t upload_bytes = 0;
+        std::uint64_t download_bytes = 0;
+    };
+
+    // Parses OpenMetrics /metrics output emitted by Nexus (Batch 95C).
+    [[nodiscard]] auto parse_openmetrics_summary(std::string_view text) -> MetricsSnapshot;
+
+    // Parses JSON emitted by GET /v1/outbounds.
+    [[nodiscard]] auto parse_outbounds_json(std::string_view json) -> std::vector<OutboundGroupSnapshot>;
+
+    // Parses JSON emitted by GET /v1/connections.
+    [[nodiscard]] auto parse_connections_json(std::string_view json) -> std::vector<ActiveConnectionSnapshot>;
+
+    // Parses JSON emitted by GET /v1/connections/{id}.
+    [[nodiscard]] auto parse_connection_detail_json(std::string_view json) -> std::optional<ActiveConnectionSnapshot>;
+
+    // Parses JSON emitted by GET /v1/logs.
+    [[nodiscard]] auto parse_logs_json(std::string_view json) -> LogsSnapshot;
+
+    // Minimal zero-dependency HTTP/1.1 client for Nexus /v1/* and /metrics endpoints.
+    class HttpControlClient {
+        std::string host_;
+        std::uint16_t port_;
+        std::string bearer_token_;
+        std::chrono::milliseconds timeout_{2000};
+
+    public:
+        HttpControlClient(std::string host, std::uint16_t port, std::string bearer_token = {})
+            : host_(std::move(host)), port_(port), bearer_token_(std::move(bearer_token)) {}
+
+        [[nodiscard]] auto host(this HttpControlClient const& self) noexcept -> std::string_view { return self.host_; }
+        [[nodiscard]] auto port(this HttpControlClient const& self) noexcept -> std::uint16_t { return self.port_; }
+        auto set_bearer_token(this HttpControlClient& self, std::string token) -> void {
+            self.bearer_token_ = std::move(token);
+        }
+
+        [[nodiscard]] auto request(this HttpControlClient const& self,
+                                   std::string_view method,
+                                   std::string_view path,
+                                   std::string_view body = {}) -> HttpReply;
+
+        [[nodiscard]] auto health(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/v1/health");
+        }
+        [[nodiscard]] auto status(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/v1/status");
+        }
+        [[nodiscard]] auto outbounds(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/v1/outbounds");
+        }
+        [[nodiscard]] auto select_group(this HttpControlClient const& self,
+                                        std::string_view tag,
+                                        std::string_view member) -> HttpReply {
+            return self.request("PUT", std::format("/v1/groups/{}", tag),
+                                std::format("{{\"member\":\"{}\"}}", member));
+        }
+        [[nodiscard]] auto reset_group_auto(this HttpControlClient const& self,
+                                            std::string_view tag) -> HttpReply {
+            return self.request("PUT", std::format("/v1/groups/{}", tag), "{\"member\":\"--auto\"}");
+        }
+        [[nodiscard]] auto probe_group(this HttpControlClient const& self, std::string_view tag) -> HttpReply {
+            return self.request("POST", std::format("/v1/groups/{}/probe", tag), "{}");
+        }
+        [[nodiscard]] auto reload(this HttpControlClient const& self) -> HttpReply {
+            return self.request("POST", "/v1/reload");
+        }
+        [[nodiscard]] auto set_log_level(this HttpControlClient const& self,
+                                         std::string_view level) -> HttpReply {
+            return self.request("POST", "/v1/log-level", std::format("{{\"level\":\"{}\"}}", level));
+        }
+        [[nodiscard]] auto connections(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/v1/connections");
+        }
+        [[nodiscard]] auto connection_detail(this HttpControlClient const& self, std::uint64_t id) -> HttpReply {
+            return self.request("GET", std::format("/v1/connections/{}", id));
+        }
+        [[nodiscard]] auto logs(this HttpControlClient const& self,
+                                std::string_view level = {},
+                                std::string_view domain = {},
+                                std::string_view search = {},
+                                std::uint64_t since = 0,
+                                std::size_t limit = 128) -> HttpReply {
+            std::string path = std::format("/v1/logs?limit={}", limit);
+            if (since > 0) path += std::format("&since={}", since);
+            if (!level.empty() && level != "all") path += std::format("&level={}", level);
+            if (!domain.empty() && domain != "all") path += std::format("&domain={}", domain);
+            if (!search.empty()) {
+                path += "&search=";
+                for (unsigned char c : search) {
+                    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') path.push_back(static_cast<char>(c));
+                    else path += std::format("%{:02X}", c);
+                }
+            }
+            return self.request("GET", path);
+        }
+        [[nodiscard]] auto close_all_connections(this HttpControlClient const& self) -> HttpReply {
+            return self.request("DELETE", "/v1/connections");
+        }
+        [[nodiscard]] auto close_connection(this HttpControlClient const& self, std::uint64_t id) -> HttpReply {
+            return self.request("DELETE", std::format("/v1/connections/{}", id));
+        }
+        [[nodiscard]] auto diagnostics(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/v1/diagnostics");
+        }
+        [[nodiscard]] auto events(this HttpControlClient const& self, std::uint64_t cursor = 0) -> HttpReply {
+            return self.request("GET", std::format("/v1/events?cursor={}", cursor));
+        }
+        [[nodiscard]] auto notify_network_change(this HttpControlClient const& self,
+                                                 std::uint64_t generation = 0) -> HttpReply {
+            if (generation > 0) {
+                return self.request("POST", "/v1/network-change",
+                                    std::format("{{\"generation\":\"{}\"}}", generation));
+            }
+            return self.request("POST", "/v1/network-change", "{}");
+        }
+        [[nodiscard]] auto clear_cache(this HttpControlClient const& self,
+                                       std::string_view target = "all") -> HttpReply {
+            return self.request("POST", "/v1/state/clear-cache",
+                                std::format("{{\"target\":\"{}\"}}", target));
+        }
+        [[nodiscard]] auto metrics(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/metrics");
+        }
+    };
+}

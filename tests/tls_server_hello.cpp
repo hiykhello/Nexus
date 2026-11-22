@@ -1,7 +1,7 @@
 import std;
-import nexus.tls.server_hello;
-import nexus.tls.transcript;
-import nexus.tls.schedule;
+import tls.server_hello;
+import tls.transcript;
+import tls.schedule;
 static bool deny_allocations=false;
 static bool count_allocations=false;
 static std::size_t allocation_count=0;
@@ -13,7 +13,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { std::free(p); }
-namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace t=tls; namespace c = ::crypto;
 auto hex(std::string_view s) -> c::Bytes { auto n=[](char x){return x<='9'?x-'0':x-'a'+10;}; c::Bytes b; for (std::size_t i=0;i<s.size();i+=2) b.push_back(static_cast<std::uint8_t>((n(s[i])<<4)|n(s[i+1]))); return b; }
 int main() {
     auto client_wire=hex("010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001");
@@ -91,7 +91,9 @@ int main() {
     auto cookie_hello=bad_retry.retry_client_hello(*client,std::nullopt); if (!cookie_hello || *cookie_hello!=second || bad_retry.retry_client_hello(*client,(*entries)[0])) return 37;
     bad_retry=retry; bad_retry.extensions[2].data={0,0}; if (bad_retry.validate_retry_request(first)) return 38;
     bad_retry=retry; bad_retry.extensions.push_back({43,{3,4}}); if (bad_retry.validate_retry_request(first)) return 39;
-    bad_retry=retry; bad_retry.extensions[1].data={0,0x17}; if (bad_retry.validate_retry_request(first).error()!=t::ServerHelloError::unsupported) return 40;
+    bad_retry=retry; bad_retry.extensions[1].data={0,0x17};
+    auto nist_retry=bad_retry.validate_retry_request(first);if (!nist_retry || !*nist_retry || **nist_retry!=23) return 40;
+    bad_retry.extensions[1].data={1,0};if (bad_retry.validate_retry_request(first).error()!=t::ServerHelloError::unsupported) return 50;
     auto large=*server; large.extensions={{43,{3,4}},{16,c::Bytes(65525,0)}};
     auto large_wire=large.encode(); if (!large_wire || !t::ServerHello::parse(*large_wire) || *t::ServerHello::parse(*large_wire)!=large) return 48;
     large.extensions.back().data.push_back(0);

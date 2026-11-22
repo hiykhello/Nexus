@@ -1,0 +1,88 @@
+import { Button, ComboBox, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { LogLineItem } from "../types.slint";
+
+export component LogsPanel inherits VerticalBox {
+    in property <[LogLineItem]> logs: [];
+    in-out property <string> log-level: "info";
+    in-out property <string> domain-filter: "all";
+    in-out property <string> search-text: "";
+    in property <string> export-status: "";
+
+    callback apply-log-level(string);
+    callback refresh-logs();
+    callback export-logs();
+    callback clear-logs();
+
+    spacing: 10px;
+
+    HorizontalBox {
+        spacing: 8px;
+        Text {
+            text: "运行日志";
+            font-size: 16px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        LineEdit {
+            horizontal-stretch: 1;
+            text <=> root.search-text;
+            placeholder-text: "搜索日志关键字...";
+            accepted => { root.refresh-logs(); }
+        }
+        ComboBox {
+            model: ["all", "core", "proxy", "route", "dns", "tun", "quic", "control"];
+            current-value <=> root.domain-filter;
+            selected => { root.refresh-logs(); }
+        }
+        ComboBox {
+            model: ["error", "warn", "info", "debug", "trace"];
+            current-value <=> root.log-level;
+            selected(val) => { root.apply-log-level(val); }
+        }
+        Button {
+            text: "刷新";
+            clicked => { root.refresh-logs(); }
+        }
+        Button {
+            text: "导出快照";
+            clicked => { root.export-logs(); }
+        }
+        Button {
+            text: "清空";
+            clicked => { root.clear-logs(); }
+        }
+    }
+
+    if root.export-status != "" : Text {
+        text: root.export-status;
+        font-size: 12px;
+        opacity: 0.8;
+    }
+
+    ListView {
+        vertical-stretch: 1;
+        for entry in root.logs : HorizontalBox {
+            spacing: 8px;
+            padding-top: 2px;
+            padding-bottom: 2px;
+            Text {
+                text: "[\{entry.level}]";
+                font-size: 12px;
+                font-weight: 600;
+                width: 58px;
+            }
+            Text {
+                text: entry.domain;
+                font-size: 12px;
+                opacity: 0.7;
+                width: 84px;
+            }
+            Text {
+                text: entry.message;
+                font-size: 12px;
+                horizontal-stretch: 1;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

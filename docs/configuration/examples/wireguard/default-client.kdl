@@ -1,0 +1,17 @@
+schema-version 1
+role "client"
+endpoint "wg" type="wireguard" {
+    private-key-file "/etc/nexus/wireguard/private.key"
+    listen host="::" port=0
+    device name="nx-wg" mtu=1420
+    local-address "10.42.0.1/32"
+    local-address "fd42::1/128"
+    route-mode "default"
+    peer "exit" {
+        public-key-file "/etc/nexus/wireguard/exit-public.key"
+        endpoint host="192.0.2.2" port=51820
+        allowed-ip "0.0.0.0/0"
+        allowed-ip "::/0"
+        persistent-keepalive-seconds 25
+    }
+}

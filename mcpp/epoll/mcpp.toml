@@ -1,0 +1,28 @@
+# mcpp's root default features cannot be switched off on the command line.
+# This application consumes the same Nexus package without its io-uring
+# default and reuses the package's CLI entry point.
+[package]
+name = "nexus-epoll"
+version = "0.1.0"
+standard = "c++26"
+mcpp = ">=2026.10.30.1"
+
+[toolchain]
+default = { path = "/usr", family = "gcc", tools = { cc = "/usr/bin/gcc", cxx = "/usr/bin/g++" } }
+
+[target.x86_64-linux-gnu]
+sysroot = "glibc@system"
+
+[indices]
+nexus = { path = "../../3rdparty/mcpp-index" }
+
+[dependencies]
+nexus = { path = "../..", default-features = false }
+
+[build]
+dialect_cxxflags = ["-freflection"]
+sources = []
+
+[targets.nexus]
+kind = "bin"
+main = { from = "nexus/nexus-cli" }

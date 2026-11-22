@@ -1,7 +1,8 @@
-module nexus.shadowsocks.udp_sessions;
+module shadowsocks.udp_sessions;
+import net.principal_bytes;
 import std;
-import nexus.crypto;
-namespace nexus::shadowsocks {
+import crypto;
+namespace shadowsocks {
     namespace { constexpr std::uint64_t wall_reservation_seconds=60; }
     UdpServerSessions::~UdpServerSessions() { crypto::cleanse(key_); }
     auto UdpServerSessions::advance(Clock::time_point now,std::uint64_t wall) -> bool {
@@ -54,15 +55,17 @@ namespace nexus::shadowsocks {
         return {};
     }
     auto UdpServerSessions::receive(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,
-        UdpPeer peer,Clock::time_point now,std::uint64_t wall) -> std::expected<UdpAccepted,UdpSessionError> {
-        return receive_impl(psk,wire,peer,now,wall,{},{});
+        UdpPeer peer,Clock::time_point now,std::uint64_t wall,UdpReceiveScope scope)
+        -> std::expected<UdpAccepted,UdpSessionError> {
+        return receive_impl(psk,wire,peer,now,wall,{},{},scope);
     }
     auto UdpServerSessions::receive_durable(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,
         UdpPeer peer,Clock::time_point now,std::uint64_t wall,Commit commit,SampleClock sample) -> std::expected<UdpAccepted,UdpSessionError> {
-        return receive_impl(psk,wire,peer,now,wall,commit,sample);
+        return receive_impl(psk,wire,peer,now,wall,commit,sample,{});
     }
     auto UdpServerSessions::receive_impl(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,
-        UdpPeer peer,Clock::time_point now,std::uint64_t wall,std::optional<Commit> commit,std::optional<SampleClock> sample) -> std::expected<UdpAccepted,UdpSessionError> {
+        UdpPeer peer,Clock::time_point now,std::uint64_t wall,std::optional<Commit> commit,
+        std::optional<SampleClock> sample,UdpReceiveScope scope) -> std::expected<UdpAccepted,UdpSessionError> {
         if (committing_) return std::unexpected(UdpSessionError::busy);
         if (storage_failed_) return std::unexpected(UdpSessionError::storage);
         if (durable_!=commit.has_value()) return std::unexpected(UdpSessionError::durability_required);
@@ -72,7 +75,9 @@ namespace nexus::shadowsocks {
             return std::unexpected(UdpSessionError::invalid_peer);
         if (key_size_ && !crypto::constant_time_equal(psk,std::span{key_}.first(key_size_)))
             return std::unexpected(UdpSessionError::key_mismatch);
-        auto packet=decode_udp_packet(psk,UdpDirection::client,wire,wall);
+        if (scope.identity && method_!=CipherMethod::aes) return std::unexpected(UdpSessionError::packet);
+        auto packet=scope.identity ? decode_udp_identity_packet(psk,scope.identity->header,wire,wall) :
+            decode_udp_packet(psk,UdpDirection::client,wire,wall,{},method_);
         if (!packet) return std::unexpected(UdpSessionError::packet);
         if (issued_server_ids_.contains(packet->session_id)) return std::unexpected(UdpSessionError::session_id_conflict);
         if (durable_) {
@@ -81,20 +86,33 @@ namespace nexus::shadowsocks {
             if (durable_ids_->reserved(id) && !known_client_ids_.contains(packet->session_id))
                 return std::unexpected(UdpSessionError::session_id_conflict);
         }
+        auto it=entries_.find(packet->session_id);
+        bool fresh=it==entries_.end();
+        auto const* byte_budget=scope.identity ? scope.identity->byte_budget : nullptr;
+        if ((fresh && !scope.allow_new) || (!fresh && (it->second.listener_generation!=scope.listener_generation ||
+            it->second.byte_budget!=byte_budget)))
+            return std::unexpected(UdpSessionError::other_listener_generation);
         if (!key_size_) { std::ranges::copy(psk,key_.begin()); key_size_=psk.size(); }
         if (!advance(now,wall)) return std::unexpected(UdpSessionError::time_reversed);
         if (commit && wall>std::numeric_limits<std::uint64_t>::max()-wall_reservation_seconds)
             return std::unexpected(UdpSessionError::exhausted);
-        auto it=entries_.find(packet->session_id);
-        bool fresh=it==entries_.end();
+        if (!fresh && it->second.retired) return std::unexpected(UdpSessionError::missing);
         if (fresh) {
             if (entries_.size()>=capacity_) return std::unexpected(UdpSessionError::full);
             if (generations_exhausted_) return std::unexpected(UdpSessionError::exhausted);
             if (!known_client_ids_.contains(packet->session_id) && known_client_ids_.size()>=max_server_ids_)
                 return std::unexpected(UdpSessionError::full);
+            std::shared_ptr<void> lease;
+            if (scope.identity && scope.identity->acquire) {
+                lease=scope.identity->acquire(scope.identity->principal);
+                if (!lease) return std::unexpected(UdpSessionError::admission);
+            }
             known_client_ids_.insert(packet->session_id);
             it=entries_.try_emplace(packet->session_id).first;
+            it->second.principal_lease=std::move(lease);
+            it->second.byte_budget=byte_budget;
             it->second.generation=next_generation_;
+            it->second.listener_generation=scope.listener_generation;
             if (next_generation_==std::numeric_limits<std::uint64_t>::max()) generations_exhausted_=true;
             else ++next_generation_;
         }
@@ -136,13 +154,14 @@ namespace nexus::shadowsocks {
             if (replay==UdpReplayResult::too_old) return std::unexpected(UdpSessionError::too_old);
         }
         it->second.peer=peer; it->second.last=now;
-        return UdpAccepted{std::move(*packet),fresh,it->second.generation,this};
+        return UdpAccepted{std::move(*packet),fresh,it->second.generation,this,peer,
+            scope.identity ? std::optional(scope.identity->user) : std::nullopt};
     }
     auto UdpServerSessions::allocate_server_id(std::array<std::uint8_t,8> client)
         -> std::expected<std::array<std::uint8_t,8>,UdpSessionError> {
         if (!next_server_id_ && !server_ids_exhausted_) {
             std::array<std::uint8_t,8> seed{};
-            if (!nexus::crypto::random_bytes(seed)) return std::unexpected(UdpSessionError::random);
+            if (!::crypto::random_bytes(seed)) return std::unexpected(UdpSessionError::random);
             std::uint64_t value=0;
             for (auto byte:seed) value=(value<<8)|byte;
             next_server_id_=value;
@@ -181,7 +200,7 @@ namespace nexus::shadowsocks {
         if (key_size_ && !crypto::constant_time_equal(psk,std::span{key_}.first(key_size_)))
             return std::unexpected(UdpSessionError::key_mismatch);
         auto it=entries_.find(client);
-        if (it==entries_.end()) return std::unexpected(UdpSessionError::missing);
+        if (it==entries_.end() || it->second.retired) return std::unexpected(UdpSessionError::missing);
         if (!it->second.peer.port) return std::unexpected(UdpSessionError::missing);
         if (!advance(now,wall)) return std::unexpected(UdpSessionError::time_reversed);
         if (wall_commit) {
@@ -238,12 +257,13 @@ namespace nexus::shadowsocks {
         UdpPacket packet{*entry.server_id,packet_id,wall,client,
             std::vector<std::uint8_t>(address.begin(),address.end()),
             std::vector<std::uint8_t>(payload.begin(),payload.end())};
-        auto wire=encode_udp_packet(psk,UdpDirection::server,packet,padding);
+        auto wire=encode_udp_packet(psk,UdpDirection::server,packet,padding,method_);
         if (!wire) return std::unexpected(UdpSessionError::packet);
         entry.last=now;
-        return UdpResponse{entry.peer,std::move(*wire)};
+        return UdpResponse{entry.peer,std::move(*wire),{client,entry.generation,this},payload.size()};
     }
-    auto UdpServerSessions::expire(Clock::time_point now,std::uint64_t wall)
+    auto UdpServerSessions::expire(Clock::time_point now,std::uint64_t wall,
+        std::optional<std::uint64_t> listener_generation)
         -> std::expected<std::vector<std::array<std::uint8_t,8>>,UdpSessionError> {
         if (committing_) return std::unexpected(UdpSessionError::busy);
         if (storage_failed_) return std::unexpected(UdpSessionError::storage);
@@ -253,16 +273,49 @@ namespace nexus::shadowsocks {
         // Reserve first so allocation failure cannot remove sessions silently.
         expired.reserve(entries_.size());
         for (auto it=entries_.begin();it!=entries_.end();) {
-            if (now-it->second.last>=std::chrono::seconds(62)) {
-                expired.push_back(it->first); it=entries_.erase(it);
+            auto const& entry=it->second;
+            bool owns=!listener_generation || entry.listener_generation==*listener_generation;
+            if ((owns || entry.retired) && now-entry.last>=std::chrono::seconds(62)) {
+                if (owns) expired.push_back(it->first);
+                it=entries_.erase(it);
             } else ++it;
         }
         return expired;
     }
-    auto UdpServerSessions::current(UdpAccepted const& packet) const noexcept -> bool {
-        if (packet.owner!=this || storage_failed_ || committing_) return false;
-        auto it=entries_.find(packet.packet.session_id);
-        return it!=entries_.end() && it->second.generation==packet.generation;
+    auto UdpServerSessions::current(UdpAccepted const& packet,std::optional<std::uint64_t> listener_generation) const noexcept -> bool {
+        return current(UdpSessionHandle{packet.packet.session_id,packet.generation,packet.owner},listener_generation);
+    }
+    auto UdpServerSessions::retire_listener(std::uint64_t listener_generation,Clock::time_point now) noexcept -> void {
+        if (durable_) return;
+        for (auto& [id,entry] : entries_) {
+            if (entry.listener_generation!=listener_generation || entry.retired) continue;
+            entry.retired=true;
+            entry.principal_lease.reset();
+            entry.last=std::max(entry.last,now);
+        }
+    }
+    auto UdpServerSessions::retire(UdpSessionHandle const& session,Clock::time_point now) noexcept -> bool {
+        if (durable_ || !current(session)) return false;
+        // Keep the generation closed until its replay state reaches normal expiry.
+        auto& entry=entries_.find(session.id)->second;
+        entry.retired=true;
+        entry.principal_lease.reset();
+        entry.last=std::max(entry.last,now);
+        return true;
+    }
+
+    auto UdpServerSessions::reserve_bytes(UdpSessionHandle const& session,std::uint64_t listener_generation,
+        bool upstream,std::size_t size,Clock::time_point now) const -> std::optional<net::PrincipalBytes::Reservation> {
+        if (!current(session,listener_generation)) return {};
+        auto const* budget=entries_.find(session.id)->second.byte_budget;
+        if (budget) return budget->reserve_datagram(upstream,size,now);
+        return std::optional<net::PrincipalBytes::Reservation>(std::in_place);
+    }
+    auto UdpServerSessions::current(UdpSessionHandle const& session,std::optional<std::uint64_t> listener_generation) const noexcept -> bool {
+        if (session.owner!=this || storage_failed_ || committing_) return false;
+        auto it=entries_.find(session.id);
+        return it!=entries_.end() && !it->second.retired && it->second.generation==session.generation &&
+            (!listener_generation || it->second.listener_generation==*listener_generation);
     }
     auto UdpServerSessions::authorize_durable(UdpAccepted const& packet,SampleClock sample)
         -> std::expected<void,UdpSessionError> {

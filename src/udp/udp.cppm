@@ -1,8 +1,8 @@
-export module nexus.udp;
-export import nexus.packet;
+export module udp;
+export import packet;
 import std;
 
-export namespace nexus::udp {
+export namespace udp {
     struct Endpoint4 {
         packet::Address4 address{};
         std::uint16_t port = 0;
@@ -36,6 +36,14 @@ export namespace nexus::udp {
     // IDs are unique for this table's lifetime, including after expiry.
     template <typename Endpoint>
     class BasicFlowTable {
+        struct EndpointHash {
+            auto operator()(Endpoint const& ep) const noexcept -> std::size_t {
+                std::size_t h = 14695981039346656037ull;
+                for (auto b : ep.address) { h ^= b; h *= 1099511628211ull; }
+                h ^= ep.port; h *= 1099511628211ull;
+                return h;
+            }
+        };
         struct Flow {
             FlowId id;
             Endpoint local, mapped_remote;
@@ -43,14 +51,19 @@ export namespace nexus::udp {
             bool sent = false;
             std::vector<Endpoint> peers;
             std::optional<std::pair<std::uint64_t, Endpoint>> pending;
+            std::uint64_t idle_override_ms = 0;
         };
+        using List = std::list<Flow>;
         Mapping mapping_;
         Filtering filtering_;
         Limits limits_;
-        std::vector<Flow> flows_;
+        List flows_;
+        std::unordered_map<FlowId, typename List::iterator> by_id_;
+        std::unordered_map<Endpoint, std::vector<typename List::iterator>, EndpointHash> by_local_;
         std::uint64_t now_ = 0, next_id_ = 1, next_send_ = 1;
         bool initialized_ = false;
         RetirementHandler retirement_{};
+        auto erase_flow(typename List::iterator it) noexcept -> void;
         [[nodiscard]] auto advance(std::uint64_t now) -> std::expected<std::size_t, Error>;
         [[nodiscard]] auto compatible(Flow const& flow, Endpoint remote) const -> bool;
     public:
@@ -75,6 +88,7 @@ export namespace nexus::udp {
         // Retire every flow, including in-flight sends, and notify the owner.
         [[nodiscard]] auto clear(std::uint64_t now) -> std::expected<std::size_t, Error>;
         [[nodiscard]] auto expire(std::uint64_t now) -> std::expected<std::size_t, Error> { return advance(now); }
+        auto set_flow_idle_ms(FlowId id, std::uint64_t idle_ms) noexcept -> bool;
         [[nodiscard]] auto size() const noexcept -> std::size_t { return flows_.size(); }
     };
     using FlowTable = BasicFlowTable<Endpoint4>;
@@ -103,6 +117,7 @@ export namespace nexus::udp {
         [[nodiscard]] auto close(FlowId id, std::uint64_t now) -> std::expected<void, Error> { return flows_.close(id, now); }
         [[nodiscard]] auto clear(std::uint64_t now) -> std::expected<std::size_t, Error> { return flows_.clear(now); }
         [[nodiscard]] auto expire(std::uint64_t now) -> std::expected<std::size_t, Error> { return flows_.expire(now); }
+        auto set_flow_idle_ms(FlowId id, std::uint64_t idle_ms) noexcept -> bool { return flows_.set_flow_idle_ms(id, idle_ms); }
         [[nodiscard]] auto size() const noexcept -> std::size_t { return flows_.size(); }
     };
 
@@ -128,6 +143,7 @@ export namespace nexus::udp {
         [[nodiscard]] auto close(FlowId id, std::uint64_t now) -> std::expected<void, Error> { return flows_.close(id, now); }
         [[nodiscard]] auto clear(std::uint64_t now) -> std::expected<std::size_t, Error> { return flows_.clear(now); }
         [[nodiscard]] auto expire(std::uint64_t now) -> std::expected<std::size_t, Error> { return flows_.expire(now); }
+        auto set_flow_idle_ms(FlowId id, std::uint64_t idle_ms) noexcept -> bool { return flows_.set_flow_idle_ms(id, idle_ms); }
         [[nodiscard]] auto size() const noexcept -> std::size_t { return flows_.size(); }
     };
 

@@ -1,6 +1,6 @@
 import std;
-import nexus.http.connect;
-namespace h=nexus::http;
+import http.connect;
+namespace h=http;
 
 auto exercise(std::string const& message,std::string_view expected_body,std::size_t split,bool head=false,bool close=false) -> bool {
     h::ResponseDecoder decoder(head); std::string wire; std::size_t offset=0, headers=0; bool complete=false;

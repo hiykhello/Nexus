@@ -1,7 +1,7 @@
 import std;
-import nexus.dns.cache;
-import nexus.dns.message;
-namespace d=nexus::dns;
+import dns.cache;
+import dns.message;
+namespace d=dns;
 
 auto main() -> int {
     d::AddressCache cache(2);
@@ -139,5 +139,87 @@ auto main() -> int {
     if (!negatives.clear(4000)) return 55;
     auto cleared=negatives.publish_negative(key,d::NegativeKind::no_data,3,4000,before_clear);
     if (cleared || cleared.error()!=d::CacheError::stale_generation) return 56;
+    d::AddressCache optimistic(2,3000);
+    answer.ttl=2; answer.addresses[0].bytes[3]=7;
+    if (!optimistic.publish(key,answer,1000,*optimistic.begin_query(key))) return 57;
+    if (*optimistic.lookup_stale(key,2999) || *optimistic.lookup(key,2999) || optimistic.size()!=1) return 58;
+    auto expired=optimistic.lookup_stale(key,3000);
+    if (!expired || !*expired || (**expired).answer.ttl!=1 || (**expired).age_ms!=0 ||
+        (**expired).answer.addresses[0].bytes[3]!=7 || *optimistic.lookup(key,3000) || *optimistic.lookup_negative(key,3000)) return 59;
+    if (*optimistic.lookup_stale({2,"example.test",1},3000) || *optimistic.lookup_stale({1,"example.test",28},3000)) return 60;
+    expired=optimistic.lookup_stale(key,5000);
+    if (!expired || !*expired || (**expired).age_ms!=2000) return 61;
+    if (*optimistic.lookup_stale(key,5001) || optimistic.size()!=1 || *optimistic.lookup_stale(key,6000) || optimistic.size()) return 62;
+    auto negative_token=*optimistic.begin_query(key);
+    if (!optimistic.publish_negative(key,d::NegativeKind::no_data,1,6000,negative_token) ||
+        *optimistic.lookup_stale(key,7000) || optimistic.size()) return 63;
+    answer.ttl=0;
+    if (!optimistic.publish(key,answer,7000,*optimistic.begin_query(key)) || *optimistic.lookup_stale(key,7000)) return 64;
+    answer.ttl=1;
+    if (!optimistic.publish(key,answer,7000,*optimistic.begin_query(key))) return 65;
+    auto refresh=*optimistic.begin_query(key);
+    if (!*optimistic.lookup_stale(key,8000) || !optimistic.clear(8000)) return 66;
+    auto late=optimistic.publish(key,answer,8000,refresh);
+    if (late || late.error()!=d::CacheError::stale_generation || *optimistic.lookup_stale(key,8000)) return 67;
+    if (!optimistic.publish(key,answer,8000,*optimistic.begin_query(key))) return 68;
+    auto negative_refresh=*optimistic.begin_query(key);
+    if (!*optimistic.lookup_stale(key,9000) || !optimistic.publish_negative(key,d::NegativeKind::name_not_found,2,9000,negative_refresh) ||
+        *optimistic.lookup_stale(key,9000) || *optimistic.lookup_negative(key,9000)!=d::NegativeKind::name_not_found) return 69;
+    d::AddressCache near_limit(1,std::numeric_limits<std::uint64_t>::max());
+    if (!near_limit.publish(key,answer,0,*near_limit.begin_query(key)) || !*near_limit.lookup_stale(key,1000)) return 70;
+    auto bad_key=near_limit.lookup_stale({1,"example.test",15},1000);
+    if (bad_key || bad_key.error()!=d::CacheError::invalid_key) return 71;
+    auto backwards=near_limit.lookup_stale(key,999);
+    if (backwards || backwards.error()!=d::CacheError::time_reversed) return 72;
+    d::AddressCache default_policy(1);
+    if (!default_policy.publish(key,answer,0,*default_policy.begin_query(key)) || *default_policy.lookup_stale(key,1000) || default_policy.size()) return 73;
+    d::AddressCache eviction(1,5000);
+    if (!eviction.publish(key,answer,0,*eviction.begin_query(key)) || !*eviction.lookup_stale(key,1000) ||
+        !eviction.publish({1,"new.test",1},answer,1000,*eviction.begin_query({1,"new.test",1})) ||
+        *eviction.lookup_stale(key,1000) || !*eviction.lookup({1,"new.test",1},1000)) return 74;
+    d::AddressCache refreshes(2,5000);
+    d::CacheKey another{1,"another.test",1};
+    if (!refreshes.publish(key,answer,0,*refreshes.begin_query(key)) || !refreshes.publish(another,answer,0,*refreshes.begin_query(another))) return 75;
+    if (*refreshes.begin_refresh(key,999,1) || *refreshes.begin_refresh(key,1000,0)) return 76;
+    auto first_refresh=refreshes.begin_refresh(key,1000,1);
+    if (!first_refresh || !*first_refresh || *refreshes.begin_refresh(key,1000,2) || *refreshes.begin_refresh(another,1000,1)) return 77;
+    if (!refreshes.cancel_query(**first_refresh)) return 78;
+    auto foreground=*refreshes.begin_query(key);
+    if (*refreshes.begin_refresh(key,1000,1) || !refreshes.cancel_query(foreground)) return 79;
+    first_refresh=refreshes.begin_refresh(key,1000,2);
+    auto second_refresh=refreshes.begin_refresh(another,1000,2);
+    if (!first_refresh || !*first_refresh || !second_refresh || !*second_refresh) return 80;
+    if (!refreshes.publish(key,answer,1000,**first_refresh) || !*refreshes.lookup(key,1000) || !refreshes.cancel_query(**second_refresh)) return 81;
+    d::AddressCache refresh_evict(1,5000);
+    if (!refresh_evict.publish(key,answer,0,*refresh_evict.begin_query(key))) return 82;
+    auto lost=*refresh_evict.begin_refresh(key,1000,1); if (!lost) return 83;
+    if (!refresh_evict.publish(another,answer,1000,*refresh_evict.begin_query(another))) return 84;
+    auto late_positive=refresh_evict.publish(key,answer,1000,*lost);
+    if (late_positive || late_positive.error()!=d::CacheError::stale_query || !refresh_evict.cancel_query(*lost) ||
+        *refresh_evict.lookup(key,1000) || !*refresh_evict.lookup(another,1000)) return 85;
+    if (!refresh_evict.publish(key,answer,1000,*refresh_evict.begin_query(key))) return 86;
+    lost=*refresh_evict.begin_refresh(key,2000,1); if (!lost) return 87;
+    if (!refresh_evict.publish(another,answer,2000,*refresh_evict.begin_query(another))) return 88;
+    auto late_negative=refresh_evict.publish_negative(key,d::NegativeKind::no_data,2,2000,*lost);
+    if (late_negative || late_negative.error()!=d::CacheError::stale_query || !refresh_evict.cancel_query(*lost)) return 89;
+    if (!refresh_evict.publish(key,answer,2000,*refresh_evict.begin_query(key))) return 90;
+    lost=*refresh_evict.begin_refresh(key,3000,1); if (!lost) return 91;
+    if (!refresh_evict.publish(another,answer,3000,*refresh_evict.begin_query(another))) return 92;
+    auto late_invalidation=refresh_evict.invalidate(key,3000,*lost);
+    if (late_invalidation || late_invalidation.error()!=d::CacheError::stale_query || !refresh_evict.cancel_query(*lost)) return 93;
+    if (!refresh_evict.publish(key,answer,3000,*refresh_evict.begin_query(key))) return 94;
+    lost=*refresh_evict.begin_refresh(key,4000,1); if (!lost || !refresh_evict.clear(4000)) return 95;
+    auto cleared_refresh=refresh_evict.publish(key,answer,4000,*lost);
+    if (cleared_refresh || cleared_refresh.error()!=d::CacheError::stale_generation) return 96;
+    if (!refresh_evict.publish(key,answer,4000,*refresh_evict.begin_query(key))) return 97;
+    lost=*refresh_evict.begin_refresh(key,5000,1); if (!lost) return 98;
+    late_positive=refresh_evict.publish(key,answer,10000,*lost);
+    if (late_positive || late_positive.error()!=d::CacheError::stale_query || !refresh_evict.cancel_query(*lost)) return 99;
+    if (!refresh_evict.publish(key,answer,10000,*refresh_evict.begin_query(key))) return 100;
+    lost=*refresh_evict.begin_refresh(key,11000,1); if (!lost) return 101;
+    if (!refresh_evict.publish(another,answer,11000,*refresh_evict.begin_query(another)) ||
+        !refresh_evict.publish(key,answer,11000,*refresh_evict.begin_query(key))) return 102;
+    auto old_refresh=refresh_evict.publish(key,answer,11000,*lost);
+    if (old_refresh || old_refresh.error()!=d::CacheError::stale_query || !*refresh_evict.lookup(key,11000)) return 103;
     std::println("DNS positive cache, view isolation, expiry and clear barrier passed");
 }

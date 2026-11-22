@@ -1,0 +1,223 @@
+[package]
+namespace = "nexus"
+name = "protocols"
+version = "0.1.0"
+
+# Protocol codecs and transport adapters used by the proxy. The optional
+# encrypted transport is selected by its actual consumers.
+[dependencies]
+nexus.policy = { path = "rules" }
+nexus.platform = { path = "platform" }
+nexus.capy-source = { version = "=0.2.8", patches = ["../3rdparty/patches/capy/mcpp-exact.patch"], embed = true }
+nexus.corosio-source = { version = "=0.3.12", patches = ["../3rdparty/patches/corosio/mcpp-exact.patch"], embed = true }
+
+[features]
+ring-queue = { sources = ["containers/ring_queue.cppm"] }
+logging = { implies = ["ring-queue"], sources = [
+    "logging/core.cppm", "logging/core.cpp", "logging/fd_posix.cppm", "logging/fd_windows.cppm", "logging/logging.cppm", "logging/logging.cpp",
+    "logging/record.cppm", "logging/record.cpp", "logging/sink.cppm", "logging/sink_posix.cpp", "logging/sink_windows.cpp",
+    "logging/sink_group.cpp", "logging/journald_disabled.cpp",
+] }
+log-journald = { implies = ["logging"], sources = ["logging/journald_enabled.cpp", "!logging/journald_disabled.cpp"] }
+byte-ring = { sources = ["containers/byte_ring.cppm"] }
+blake3 = { sources = ["../3rdparty/modules/blake3.cppm"] }
+state = { implies = ["blake3"], sources = ["state/*.cpp", "state/*.cppm"] }
+memory-budget = { sources = ["memory/budget.cppm"] }
+ntp = { sources = ["ntp/sntp.cppm", "ntp/sntp.cpp"] }
+tls = { implies = ["memory-budget"], sources = [
+    "tls/*.cpp", "tls/*.cppm", "tls/ktls/ktls_disabled.cppm", "tls/resumption/psk.cpp", "tls/resumption/psk.cppm", "tls/resumption/client_policy.cppm",
+] }
+http1-tls-client = { implies = ["tls"], sources = ["http/corosio_https.cppm"] }
+tls-resumption = { implies = ["tls"], sources = ["tls/resumption/client.cppm", "tls/resumption/server.cppm", "tls/resumption/server_policy.cppm"] }
+tls-certificate-compression = { implies = ["tls"], defines = ["NEXUS_ENABLE_TLS_CERT_COMPRESSION"] }
+ktls = { implies = ["tls"], defines = ["NEXUS_ENABLE_KTLS"], sources = ["tls/ktls/ktls.cppm", "tls/ktls/ktls.cpp", "!tls/ktls/ktls_disabled.cppm"] }
+websocket = { implies = ["tls"], sources = ["websocket/handshake.cppm", "websocket/stream.cppm"] }
+xhttp = { implies = ["memory-budget"], sources = ["xhttp/client.cppm", "xhttp/server.cppm", "xhttp/xmux.cppm", "xhttp/xhttp.cppm"] }
+vless = { implies = ["tls", "websocket", "xhttp"], sources = [
+    "reality/auth.cpp", "reality/auth.cppm", "reality/client.cpp", "reality/client.cppm",
+    "reality/fallback.cppm", "reality/server_auth.cppm", "reality/server_credential.cppm",
+    "reality/server_probe.cppm", "reality/server_profile.cppm",
+    "vision/random.cpp", "vision/random.cppm",
+    "vision/corosio_reader.cppm", "vision/corosio_writer.cppm",
+    "vless/client_profile.cppm", "vless/corosio_client.cppm",
+    "vless/corosio_server.cppm", "vless/server_profile.cppm",
+    "vless/tls_server.cppm", "vless/vision_client.cppm", "vless/vision_server.cppm",
+    "xudp/server_sessions.cppm", "xudp/server_direct.cppm", "xudp/server_io.cppm",
+] }
+snell = { implies = ["stream-datagrams"], sources = ["snell/http_obfs.cppm", "snell/http_obfs.cpp", "snell/record.cppm", "snell/kdf.cppm", "snell/cipher.cppm", "snell/async_record.cppm", "snell/packet.cppm", "snell/async_packet.cppm", "snell/replay.cppm", "snell/server_start.cppm", "snell/server_reply.cppm", "snell/server_stream.cppm", "snell/owner.cppm", "snell/credential_file.cppm", "snell/client_start.cppm", "snell/client_owner.cppm", "snell/client_stream.cppm", "snell/client_pool.cppm"] }
+trojan = { implies = ["tls", "websocket", "grpc-tls", "stream-datagrams"], sources = ["trojan/auth.cppm", "trojan/stream.cppm"] }
+anytls = { implies = ["tls", "websocket", "grpc-tls", "stream-datagrams"], sources = ["anytls/auth.cppm", "anytls/writer.cppm", "anytls/session.cppm", "anytls/connection.cppm", "anytls/client.cppm"] }
+wireguard-tun = { implies = ["wireguard"], sources = ["wireguard/packet_link.cppm", "wireguard/tun.cppm"] }
+ssh = { sources = ["ssh/wire.cppm", "ssh/crypto.cppm", "ssh/crypto.cpp", "ssh/session.cppm", "ssh/connection.cppm"] }
+wireguard = { sources = ["wireguard/crypto.cppm", "wireguard/session.cppm", "wireguard/admission.cppm", "wireguard/initiation.cppm", "wireguard/noise.cppm", "wireguard/identity.cppm", "wireguard/cookie.cppm", "wireguard/endpoint.cppm", "wireguard/endpoint.cpp", "wireguard/endpoint_handshake.cpp", "wireguard/endpoint_timers.cpp", "wireguard/endpoint_cookie.cpp", "wireguard/registry.cppm", "wireguard/host.cppm", "wireguard/routing.cppm", "wireguard/port_types.cppm", "wireguard/port.cppm"] }
+tailscale = { sources = ["tailscale/derp.cppm", "tailscale/derp_messages.cppm", "tailscale/stun.cppm", "tailscale/stun_queries.cppm", "tailscale/box.cppm", "tailscale/derp_info.cppm", "tailscale/derp_info.cpp", "tailscale/derp_handshake.cppm", "tailscale/control.cppm"] }
+
+stream-framing = { sources = ["net/framed_stream.cppm"] }
+datagram-driver = { sources = ["net/datagram_driver.cppm"] }
+packet-stream-socket = { sources = ["net/packet_stream_socket.cppm"] }
+tailscale-policy = { sources = ["tailscale/packet_filter.cppm", "tailscale/packet_filter.cpp"] }
+tailscale-map-projection = { implies = ["tailscale-control", "tailscale-policy"], sources = ["tailscale/snapshot.cppm", "tailscale/map_session.cppm", "tailscale/control_application.cppm"] }
+tailscale-wireguard-tun = { implies = ["tailscale-map-projection", "wireguard-tun"], sources = ["tailscale/wireguard_routes.cppm", "tailscale/wireguard_tun.cppm", "tailscale/wireguard_tun.cpp", "tailscale/derp_connection.cppm"] }
+tailscale-control = { implies = ["tailscale", "tls", "http2", "stream-framing"], sources = [
+    "tailscale/control_http.cppm", "tailscale/control_messages.cppm", "tailscale/control_messages.cpp",
+    "tailscale/control_record_codec.cppm", "tailscale/control_stream.cppm",
+    "tailscale/control_early.cppm", "tailscale/control_early.cpp", "tailscale/control_connection.cppm",
+] }
+quic-core = { sources = ["quic/varint.cppm"] }
+quic-crypto = { implies = ["quic-core"], sources = ["quic/packet_keys.cppm", "quic/packet_keys.cpp"] }
+quic-sniff = { implies = ["quic-crypto"], defines = ["NEXUS_QUIC_SNIFF"], sources = ["sniff/quic.cppm", "sniff/quic_datagrams.cppm", "sniff/udp_quic_enabled.cpp"] }
+quic-native = { sources = ["../3rdparty/modules/ngtcp2.cppm"] }
+quic-transport = { implies = ["quic-native", "quic-crypto", "memory-budget"], sources = ["quic/packet_protection.cppm", "quic/connection.cppm", "quic/transport_parameters.cppm", "quic/transport_parameters.cpp", "quic/transport_memory.cppm"] }
+quic-tls = { implies = ["quic-transport", "tls"], sources = ["quic/tls_common.cppm", "quic/tls_client.cppm", "quic/tls_server.cppm", "quic/ech_config.cppm", "quic/ech_config.cpp", "quic/ech_client.cppm", "quic/ech_client.cpp"] }
+quic-resumption = { implies = ["quic-tls", "tls-resumption"], defines = ["NEXUS_QUIC_RESUMPTION"], sources = ["quic/resumption.cppm", "quic/optional_client_resumption.cppm", "!quic/optional_client_resumption_disabled.cppm"] }
+http3-core = { implies = ["quic-core"], sources = ["../3rdparty/modules/nghttp3.cppm", "quic/http3.cppm", "quic/http3_headers.cppm"] }
+masque-core = { implies = ["quic-core"], sources = ["masque/datagram.cppm", "masque/capsule.cppm", "masque/ip_control.cppm", "masque/ip_receiver.cppm", "masque/ip_packet.cppm", "masque/ip_packet.cpp", "masque/connect_ip.cppm", "masque/http3.cppm"] }
+masque-session = { implies = ["masque-core", "http3-core", "quic-transport"], sources = ["masque/udp_session.cppm", "masque/session.cppm"] }
+masque-server = { implies = ["masque-session"], sources = ["masque/connect_udp.cppm", "masque/connect_udp.cpp", "masque/target.cppm", "masque/target.cpp", "masque/udp_owner.cppm", "masque/bearer.cppm", "masque/ip_server.cppm", "masque/ip_server.cpp", "masque/server.cppm"] }
+test-masque-host-lifetime = { implies = ["masque-server"], defines = ["NEXUS_TEST_MASQUE_HOST_LIFETIME"] }
+hysteria2-core = { implies = ["quic-core", "ring-queue"], sources = ["hysteria2/wire.cppm", "hysteria2/wire.cpp", "hysteria2/auth.cppm", "hysteria2/udp.cppm", "hysteria2/sessions.cppm", "hysteria2/fragments.cppm", "hysteria2/dispatch.cppm"] }
+quic-retry = { implies = ["quic-shared-port"], sources = ["quic/retry_token.cppm", "quic/retry_packet.cppm", "quic/retry_admission.cppm"] }
+quic-shared-port = { implies = ["quic-transport", "datagram-driver"], sources = ["quic/cid_registry.cppm", "quic/endpoint_path.cppm", "quic/pmtud_native.cppm", "quic/datagram_session.cppm", "quic/datagram_port.cppm"] }
+hysteria2-support = { implies = ["hysteria2-core", "http3-core", "quic-transport"], sources = ["quic/native_memory.cppm", "hysteria2/credential.cppm", "hysteria2/transport_options.cppm"] }
+hysteria2-salamander = { implies = ["quic-shared-port"], sources = ["hysteria2/salamander.cppm"] }
+hysteria2-listener = { implies = ["hysteria2-application", "quic-retry", "quic-tls", "hysteria2-support", "hysteria2-salamander"], sources = ["hysteria2/listener.cppm"] }
+hysteria2-client = { implies = ["hysteria2-application", "quic-tls", "quic-shared-port", "hysteria2-support", "hysteria2-salamander", "packet-stream-socket"], sources = ["hysteria2/client_profile.cppm", "hysteria2/client_profile.cpp", "hysteria2/client.cppm", "quic/optional_client_resumption_disabled.cppm"] }
+hysteria2-application = { implies = ["byte-ring", "hysteria2-core", "http3-core", "quic-transport"], sources = ["hysteria2/stream_buffer.cppm", "hysteria2/receive_buffer.cppm", "hysteria2/stream_state.cppm", "hysteria2/application.cppm", "hysteria2/tcp_channel.cppm", "hysteria2/udp_receiver.cppm", "hysteria2/udp_transmitter.cppm"] }
+http2 = { implies = ["memory-budget"], sources = [
+    "../3rdparty/modules/nghttp2.cppm", "http2/headers.cppm", "http2/server.cppm",
+    "http2/session_core.cppm", "http2/client_types.cppm", "http2/client_state.cppm",
+    "http2/client.cppm", "http2/driver.cppm", "http2/client_channel.cppm", "http2/server_streams.cppm",
+] }
+http2-tls = { implies = ["http2", "tls"], sources = ["http2/tls_server.cppm"] }
+grpc = { implies = ["http2"], sources = ["grpc/session.cppm", "grpc/stream_operations.cppm", "grpc/stream.cppm", "grpc/multiplex.cppm", "grpc/multiplex_channel.cppm"] }
+grpc-tls = { implies = ["grpc", "tls"], sources = ["grpc/connection.cppm", "net/operation_token.cppm"] }
+test-http2-allocator = { implies = ["http2"], defines = ["NEXUS_TEST_HTTP2_ALLOCATOR"] }
+# Exercise the real stream-rotation path near ID exhaustion in a dedicated graph.
+test-xudp-rotation = { implies = ["vless"], defines = ["NEXUS_TEST_XUDP_ROTATION"] }
+udp-direct = { sources = ["net/udp_direct.cpp", "net/udp_direct.cppm"] }
+stream-datagrams = { implies = ["udp-direct"], sources = ["net/stream_datagrams.cppm"] }
+uot-direct = { implies = ["udp-direct"], sources = ["uot/direct.cppm"] }
+ss2022 = { sources = ["shadowsocks/*.cpp", "shadowsocks/*.cppm"], implies = ["blake3", "uot-direct", "stream-datagrams"] }
+shadowtls = { sources = ["shadowtls/v3.cppm", "shadowtls/v3.cpp"] }
+shadowtls-runtime = { implies = ["shadowtls", "tls"], sources = ["shadowtls/stream.cppm"] }
+tuic-core = { implies = ["tls"], sources = ["tuic/wire.cppm", "tuic/wire.cpp"] }
+tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "byte-ring"], sources = ["tuic/transport_options.cppm", "tuic/application.cppm", "tuic/stream.cppm", "tuic/client.cppm", "tuic/client_profile.cpp", "tuic/server.cppm",
+    "quic/optional_client_resumption_disabled.cppm"] }
+masque-client = { implies = ["masque-session", "quic-tls", "quic-shared-port", "hysteria2-support"], sources = ["masque/client_profile.cppm", "masque/client_profile.cpp", "masque/client_session.cppm", "quic/optional_client_resumption_disabled.cppm"] }
+naive = { implies = ["http2", "masque-client", "masque-server", "quic-retry", "packet-stream-socket"], sources = ["naive/*.cpp", "naive/*.cppm"] }
+
+[feature-deps.shadowtls]
+nexus.crypto = { path = "crypto" }
+
+[feature-deps.snell]
+nexus.crypto = { path = "crypto" }
+nexus.argon2-source = { version = "=20190702-nexus.2", embed = true }
+
+[feature-deps.logging]
+nexus.ngcpp-proxy = "=0.1.0"
+
+[feature-deps.log-journald]
+nexus.systemd-system = { path = "../3rdparty/mcpp-systemd" }
+
+[feature-deps.tls]
+nexus.crypto = { path = "crypto", features = ["ecdh"] }
+
+[feature-deps.tls-certificate-compression]
+nexus.zlib-system = { path = "../3rdparty/mcpp-zlib" }
+nexus.tls-cert-compression-system = { path = "../3rdparty/mcpp-cert-compression" }
+
+[feature-deps.wireguard-tun]
+nexus.tun = { path = "transport" }
+
+[feature-deps.wireguard]
+nexus.crypto = { path = "crypto" }
+
+[feature-deps.ssh]
+nexus.crypto = { path = "crypto" }
+
+[feature-deps.tailscale]
+nexus.crypto = { path = "crypto" }
+
+[feature-deps.quic-crypto]
+nexus.crypto = { path = "crypto" }
+
+[feature-deps.quic-tls]
+nexus.crypto = { path = "crypto", features = ["hpke"] }
+
+[feature-deps.quic-native]
+nexus.ngtcp2-source = { version = "=1.26.0-nexus.1", patches = ["../3rdparty/patches/ngtcp2/pmtud-restart.patch", "../3rdparty/patches/ngtcp2/brutal.patch"], embed = true }
+
+[feature-deps.http3-core]
+nexus.nghttp3-source = { version = "=1.19.0-nexus.1", embed = true }
+
+[feature-deps.http2]
+nexus.nghttp2-source = { version = "=1.71.0", embed = true }
+
+[feature-deps.ss2022]
+nexus.crypto = { path = "crypto" }
+
+[feature-deps.state]
+nexus.crypto = { path = "crypto" }
+
+[feature-deps.blake3]
+nexus.blake3-source = { version = "=1.8.7", embed = true }
+
+[build]
+flags = [
+    { glob = "snell/http_obfs.cpp", cxxflags = ["-fno-module-lazy"] },
+    { glob = "shadowtls/stream.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tuic/client.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tuic/server.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "masque/client_profile.cpp*", cxxflags = ["-fno-module-lazy"] },
+    { glob = "hysteria2/client_profile.cpp*", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tuic/client*.cpp*", cxxflags = ["-fno-module-lazy"] },
+    { glob = "hysteria2/client.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "masque/client_session.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tls/tls12_client.cppm", cxxflags = ["-fno-module-lazy"] },
+    { glob = "tls/ktls/ktls.cpp*", cxxflags = ["-fno-module-lazy"] },
+    { glob = "ssh/*.cpp*", cxxflags = ["-fno-module-lazy"] },
+    { glob = "naive/*.cpp*", cxxflags = ["-fno-module-lazy"] },
+]
+c_standard = "gnu23"
+ldflags = ["-lpthread"]
+defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",
+           "BOOST_COROSIO_NO_LIB", "BOOST_COROSIO_STATIC_LINK"]
+sources = [
+    "../3rdparty/modules/capy.cppm", "../3rdparty/modules/corosio.cppm", "../3rdparty/modules/corosio.cpp",
+    "containers/cache_index.cppm",
+    "net/udp_socket.cppm", "net/udp_socket.cpp", "net/udp_dial.cppm", "net/udp_dial.cpp", "net/udp_connect.cppm", "net/udp_route.cppm", "net/udp_route.cpp", "net/datagram_frame.cppm", "net/ordered_datagram.cppm",
+    "net/udp_authorization.cppm", "net/principal_bytes.cppm", "net/stream_relay.cppm", "net/happy_eyeballs.cppm", "net/tcp_connect.cppm", "net/tcp_fast_open.cppm", "net/connection_pool.cppm",
+    "socks5/socks5.cppm", "socks5/parse.cpp",
+    "socks5/udp_route.cppm", "socks5/udp_route.cpp",
+    "socks5/udp_direct.cppm", "socks5/udp_direct.cpp",
+    "socks5/udp_ingress.cppm", "socks5/udp_ingress.cpp",
+    "socks5/udp_tunnel_authorization.cppm",
+    "uot/uot.cppm", "uot/uot.cpp",
+    "trojan/trojan.cppm",
+    "anytls/anytls.cppm", "anytls/settings.cppm", "anytls/padding.cppm",
+    "anytls/pool.cppm", "anytls/streams.cppm",
+    "wireguard/wireguard.cppm", "wireguard/blake2s.cppm",
+    "httpupgrade/httpupgrade.cppm", "httpupgrade/stream.cppm",
+    "net/socket_stream.cppm", "net/tcp_fast_open_stream.cppm", "net/tcp_fast_open_stream.cpp", "net/buffered_input.cppm", "net/lazy_readers.cppm",
+    "grpc/message.cppm", "grpc/headers.cppm",
+    "vision/vision.cppm", "vision/vision.cpp",
+    "vless/vless.cppm", "vless/vless.cpp",
+    "xudp/xudp.cppm", "xudp/xudp.cpp",
+    "xudp/client_sessions.cppm", "xudp/client_io.cppm",
+    "sniff/tls.cppm", "sniff/tls_record_fragment.cppm", "sniff/tcp.cppm", "sniff/tcp_io.cppm", "sniff/route_tcp.cppm", "sniff/udp_quic.cppm", "sniff/udp_quic_stub.cpp", "sniff/stun.cppm", "http/header.cppm", "http/sniff.cppm", "http/connect.cppm", "http/connect.cpp", "http/forward.cpp", "http/request.cpp",
+    "http/chunk.cpp", "http/response.cpp",
+]
+
+[target.'cfg(not(os = "windows"))'.build]
+sources = [
+    "!logging/fd_windows.cppm", "!logging/sink_windows.cpp",
+    "!state/file_windows.cppm", "!state/file_windows.cpp",
+    "!state/lock_windows.cppm", "!state/lock_windows.cpp",
+]
+
+[target.'cfg(os = "windows")'.build]
+sources = [
+    "!logging/fd_posix.cppm", "!logging/sink_posix.cpp",
+    "!state/file_posix.cppm", "!state/file_posix.cpp",
+    "!state/lock_posix.cppm", "!state/lock_posix.cpp",
+]

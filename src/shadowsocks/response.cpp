@@ -1,9 +1,9 @@
-module nexus.shadowsocks.response;
+module shadowsocks.response;
 import std;
-import nexus.shadowsocks.key;
-import nexus.shadowsocks.chunk;
-import nexus.shadowsocks.header;
-namespace nexus::shadowsocks {
+import shadowsocks.key;
+import shadowsocks.chunk;
+import shadowsocks.header;
+namespace shadowsocks {
     namespace {
         auto chunk_error(ChunkError error) -> ResponseError {
             return error==ChunkError::authentication_failed ? ResponseError::authentication : ResponseError::crypto;
@@ -11,11 +11,11 @@ namespace nexus::shadowsocks {
     }
     auto encode_response(std::span<std::uint8_t const> psk, std::span<std::uint8_t const> salt,
                          std::span<std::uint8_t const> request_salt, std::uint64_t timestamp,
-                         std::span<std::uint8_t const> payload) -> std::expected<EncodedResponse,ResponseError> {
+                         std::span<std::uint8_t const> payload,CipherMethod method) -> std::expected<EncodedResponse,ResponseError> {
         if ((psk.size()!=16 && psk.size()!=32) || salt.size()!=psk.size() || request_salt.size()!=psk.size())
             return std::unexpected(ResponseError::invalid_key_or_salt);
         if (payload.empty() || payload.size()>65535) return std::unexpected(ResponseError::invalid_payload);
-        auto key=SessionKey::derive(psk,salt);
+        auto key=SessionKey::derive(psk,salt,method);
         if (!key) return std::unexpected(ResponseError::invalid_key_or_salt);
         auto fixed=make_fixed_header(true,timestamp,static_cast<std::uint16_t>(payload.size()),request_salt);
         auto cipher=ChunkCipher::create(std::move(*key),true);
@@ -28,20 +28,20 @@ namespace nexus::shadowsocks {
         return EncodedResponse{std::move(wire),std::move(*cipher)};
     }
     auto decode_response_prefix(std::span<std::uint8_t const> psk, std::span<std::uint8_t const> request_salt,
-                                std::span<std::uint8_t const> input, std::uint64_t now)
+                                std::span<std::uint8_t const> input, std::uint64_t now,CipherMethod method)
         -> std::expected<ResponsePrefix,ResponseError> {
         if ((psk.size()!=16 && psk.size()!=32) || request_salt.size()!=psk.size())
             return std::unexpected(ResponseError::invalid_key_or_salt);
         auto consumed=2*psk.size()+27;
         if (input.size()<consumed) return std::unexpected(ResponseError::short_read);
-        auto key=SessionKey::derive(psk,input.first(psk.size()));
+        auto key=SessionKey::derive(psk,input.first(psk.size()),method);
         if (!key) return std::unexpected(ResponseError::invalid_key_or_salt);
         auto cipher=ChunkCipher::create(std::move(*key),false);
         if (!cipher) return std::unexpected(ResponseError::crypto);
         auto plaintext=cipher->process(input.subspan(psk.size(),psk.size()+27));
         if (!plaintext) return std::unexpected(chunk_error(plaintext.error()));
         auto fixed=parse_fixed_header(*plaintext,true,now,request_salt);
-        if (!fixed || fixed->length==0) return std::unexpected(ResponseError::invalid_header);
+        if (!fixed) return std::unexpected(ResponseError::invalid_header);
         return ResponsePrefix{std::move(*cipher),fixed->length,consumed};
     }
     auto decode_response_payload(ResponsePrefix prefix, std::span<std::uint8_t const> ciphertext)

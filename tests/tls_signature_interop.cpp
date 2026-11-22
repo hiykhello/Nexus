@@ -1,6 +1,6 @@
 import std;
-import nexus.tls.certificate_verify;
-namespace t=nexus::tls; using Bytes=std::vector<std::uint8_t>;
+import tls.certificate_verify;
+namespace t=tls; using Bytes=std::vector<std::uint8_t>;
 auto read(char const* file) -> Bytes { std::ifstream f(file,std::ios::binary); return Bytes(std::istreambuf_iterator<char>(f),{}); }
 int main(int argc,char** argv) {
     if (argc!=4) return 1; auto cert=read(argv[1]), sig=read(argv[2]); if (cert.empty() || sig.empty() || sig.size()>65535) return 2;
@@ -8,7 +8,7 @@ int main(int argc,char** argv) {
     Bytes message{15,0,0,0,static_cast<std::uint8_t>(scheme>>8),static_cast<std::uint8_t>(scheme),static_cast<std::uint8_t>(sig.size()>>8),static_cast<std::uint8_t>(sig.size())};
     message.insert(message.end(),sig.begin(),sig.end()); auto length=message.size()-4; message[1]=static_cast<std::uint8_t>(length>>16); message[2]=static_cast<std::uint8_t>(length>>8); message[3]=static_cast<std::uint8_t>(length);
     Bytes digest(32,0x42); std::array<std::uint16_t,1> offered{scheme};
-    auto check=[&](auto hash,auto schemes,auto msg) { return t::verify_server_certificate_signature(cert,nexus::crypto::Hash::sha256,hash,schemes,msg); };
+    auto check=[&](auto hash,auto schemes,auto msg) { return t::verify_server_certificate_signature(cert,::crypto::Hash::sha256,hash,schemes,msg); };
     if (!check(digest,offered,message)) return 3;
     auto altered=message; altered.back()^=1; if (check(digest,offered,altered).error()!=t::CertificateVerifyError::invalid_signature) return 4;
     auto wrong_hash=digest; wrong_hash[0]^=1; if (check(wrong_hash,offered,message).error()!=t::CertificateVerifyError::invalid_signature) return 5;

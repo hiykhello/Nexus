@@ -19,7 +19,7 @@ def exact(sock, count):
     return result
 
 
-def exercise(workers, block=False, stop_active=False):
+def exercise(workers, block=False, stop_active=False, source_block=False):
     stop = threading.Event()
     failures = []
     queries = []
@@ -81,7 +81,7 @@ def exercise(workers, block=False, stop_active=False):
         thread.start()
     args = [str(binary), str(upstream.getsockname()[1]), str(workers)]
     if block:
-        args.append("block")
+        args.append("source-block" if source_block else "block")
     process = subprocess.Popen(args,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
@@ -265,5 +265,8 @@ for count in (1, 2):
     exercise(count)
     stop_pending_dns(count)
 exercise(2, block=True)
+if '--source' in sys.argv:
+    exercise(1, block=True, source_block=True)
+    exercise(2, block=True, source_block=True)
 exercise(2, stop_active=True)
 print("experimental proxy FakeIP routing, loop prevention and pin lifecycle passed")

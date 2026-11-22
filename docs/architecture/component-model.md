@@ -1,6 +1,6 @@
 # 组件模型与生命周期
 
-状态：参考 sing-box 后形成的 Nexus 设计草案。参考依据见[调研记录](../references/sing-box.md)。
+状态：Nexus 组件模型设计规范，核心原则见 [核心架构原则](../design-principles/core-architecture.md)。
 
 ## 组件与装配
 
@@ -10,7 +10,7 @@
 
 构建时裁剪的能力应可查询；使用未编译的能力时报出明确配置错误。注册入口集中装配，避免依赖跨模块静态初始化顺序。重复类型标识应报错，注册完成后尽量只读访问。
 
-入站、出站、endpoint、承载和平台后端分别装配；同一协议的两个方向可共享 codec，但不要求共用一个运行对象。详见[协议解耦](protocols.md)与[平台抽象](../platform/abstraction.md)，源码依据见[sing-box 组件专项](../references/sing-box-components.md)。这些是源码级组件，不承诺动态插件 ABI。
+入站、出站、endpoint、承载和平台后端分别装配；同一协议的两个方向可共享 codec，但不要求共用一个运行对象。详见 [协议解耦](protocols.md)、[平台抽象](../platform/abstraction.md) 与 [核心架构原则](../design-principles/core-architecture.md)。这些是源码级组件，不承诺动态插件 ABI。
 
 接口由 ngcpp/proxy facade 表达。流、数据报、L3 包端口各有能力契约，组件无需通过一个巨型接口提供所有操作。
 
@@ -55,4 +55,4 @@ C++ 析构承担最终资源释放；涉及异步 I/O 的停止过程需先显�
 
 统一记录会话 ID、入站、出口、命中规则、L3/L4 路径、双向字节数及结束原因。拒绝、超时、取消、队列拥塞和协议错误分别统计，便于定位性能瓶颈和行为差异。
 
-参考 shoes，建议协议握手返回有标签的转发计划，显式携带初始数据、成功响应和 flush 要求，由公共转发器处理双向传输。包、字节流和会话数据报保持独立语义，优化后仍保留计数与取消。详见[性能设计](performance.md)与[shoes 源码分析](../references/shoes.md)。
+协议握手返回有标签的转发计划，显式携带初始数据、成功响应和 flush 要求，由公共转发器处理双向传输。包、字节流和会话数据报保持独立语义，优化后仍保留计数与取消。详见 [性能设计](performance.md) 与 [性能与数据面原则](../design-principles/performance-and-datapath.md)。

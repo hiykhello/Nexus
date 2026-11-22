@@ -1,12 +1,13 @@
-export module nexus.tls.finished;
-export import nexus.tls.schedule;
-export import nexus.tls.transcript;
+export module tls.finished;
+export import tls.schedule;
+export import tls.transcript;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     enum class FinishedError { invalid_state, malformed_message, verification_failed, crypto_error };
-    // Construct only after validating the peer certificate and CertificateVerify and hashing them into transcript.
-    // This helper does not validate either; successful Finished alone does not authenticate the peer.
+    // Construct after the certificate/CV flight or an explicitly selected PSK
+    // has authorized these transcript and traffic keys. This helper validates
+    // neither policy; arbitrary caller-supplied keys do not prove peer identity.
     class ClientFinished {
         crypto::Hash hash_;
         Transcript transcript_;
@@ -22,7 +23,7 @@ export namespace nexus::tls {
         // Full handshake message, including header; consumes the state on any failure.
         [[nodiscard]] auto verify_server(std::span<std::uint8_t const> message) -> std::expected<void,FinishedError>;
         // For a handshake without client authentication; returns a complete message and appends it to transcript.
-        [[nodiscard]] auto make_client() -> std::expected<crypto::Bytes,FinishedError>;
+        [[nodiscard]] auto make_client(std::span<std::uint8_t const> preceding={}) -> std::expected<crypto::Bytes,FinishedError>;
         [[nodiscard]] auto transcript_hash() const -> std::expected<crypto::Bytes,FinishedError>;
     };
 }

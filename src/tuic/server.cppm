@@ -1,0 +1,212 @@
+export module tuic.server;
+import std;
+import crypto;
+import tuic.wire;
+import tuic.application;
+import tuic.transport_options;
+import quic.cid_registry;
+import quic.datagram_port;
+import quic.datagram_session;
+import quic.transport_memory;
+import quic.retry_admission;
+import quic.retry_token;
+import quic.tls_server;
+import tls.server_credential;
+import net.datagram_driver;
+import nexus.thirdparty.ngtcp2;
+import nexus.thirdparty.capy;
+import nexus.thirdparty.corosio;
+
+export namespace tuic {
+    // Multi-session QUIC listener for TUIC v5. Mirrors Masque/Hysteria2 listener
+    // architecture: Retry admission + CID registry + typed per-session Application.
+    template<class Hooks, std::size_t Sessions = 32, std::size_t Streams = 64, std::size_t Window = 32768>
+    class Listener {
+        using Clock = std::chrono::steady_clock;
+        using Registry = quic::CidRegistry<Sessions, 8>;
+
+        struct SessionHooks {
+            Listener& listener;
+            Registry& registry;
+            quic::SessionHandle owner;
+            Hooks& app_hooks;
+            std::size_t session_slot = 0;
+
+            auto changed() noexcept -> void { listener.notify(); }
+            auto admit_authenticated(std::size_t user) noexcept -> bool
+                requires requires {app_hooks.admit_authenticated(owner,user);} {
+                return app_hooks.admit_authenticated(owner,user);
+            }
+            auto authenticated(std::size_t user) -> void { app_hooks.authenticated(owner, user); }
+            auto connect_stream(StreamHandle stream, TargetAddress const& target) -> void {
+                app_hooks.connect_stream(owner, stream, target);
+            }
+            auto udp_packet(IncomingUdpPacket pkt) -> void {
+                app_hooks.udp_packet(owner, std::move(pkt));
+            }
+            auto udp_dissociate(std::uint16_t assoc_id) -> void {
+                app_hooks.udp_dissociate(owner, assoc_id);
+            }
+            auto transport_closed() noexcept -> void { app_hooks.transport_closed(owner); }
+            auto add_connection_id(nex::ngtcp2::ngtcp2_cid const& id, nex::ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
+                return registry.insert(owner, {id.data, id.datalen}) ? 0 : nex::ngtcp2::err_callback_failure;
+            }
+            auto remove_connection_id(nex::ngtcp2::ngtcp2_cid const& id) noexcept -> int {
+                (void)registry.remove(owner, {id.data, id.datalen});
+                return 0;
+            }
+        };
+
+    public:
+        using App = Application<quic::TlsServer, SessionHooks, Streams, Window>;
+        using NativeSession = quic::DatagramSession<quic::TlsServer, App>;
+
+    private:
+        struct Bundle {
+            quic::TlsServer tls;
+            SessionHooks hooks;
+            quic::NativeTransportMemory<> memory;
+            App app;
+            NativeSession session;
+            nex::corosio::endpoint initial_peer;
+            Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,nex::corosio::endpoint peer)
+                : tls(parent.credential_, "h3"), hooks{parent, reg, id, parent.hooks_, id.slot},
+                  memory(parent.options_.native_bytes), app(tls, hooks, parent.users_),
+                  session(tls,app,parent.local_),initial_peer(peer) {}
+        };
+
+        struct Factory {
+            using Session = NativeSession;
+            using ControlFailure = quic::RetryFailure;
+            Listener& listener;
+            quic::RetryAdmission<> retry;
+            std::optional<quic::RetryClaims> permit;
+            std::optional<ControlFailure> error;
+            std::array<std::optional<Bundle>, Sessions> bundles;
+
+            explicit Factory(Listener& owner) noexcept : listener(owner) {}
+
+            auto admit(nex::ngtcp2::ngtcp2_pkt_hd const& initial, nex::corosio::endpoint const& peer,
+                       Clock::time_point now, std::size_t bytes) noexcept -> bool {
+                permit.reset();
+                auto res = retry.inspect(initial, peer, now, bytes);
+                if (!res) { if (!error) error = res.error(); return false; }
+                permit = *res;
+                return permit.has_value();
+            }
+            auto control_failure() const noexcept { return error; }
+            auto control_output(std::span<std::uint8_t> out, Clock::time_point now) noexcept
+                -> std::expected<std::optional<net::DatagramOutput>, ControlFailure> {
+                if (error) return std::unexpected(*error);
+                return retry.output(out, now);
+            }
+            auto control_transmitted(std::uint64_t tok, Clock::time_point now) noexcept { return retry.transmitted(tok, now); }
+            auto control_next_expiry() const noexcept { return retry.next_expiry(); }
+            auto control_expire(Clock::time_point now) noexcept { return retry.expire(now); }
+            auto control_request_stop() noexcept -> void { retry.request_stop(); }
+            auto control_stop() noexcept -> void { permit.reset(); retry.stop(); }
+            auto control_drained() const noexcept -> bool { return retry.drained(); }
+
+            auto create(quic::SessionHandle owner, Registry& reg, std::span<std::uint8_t const> source,
+                        nex::ngtcp2::ngtcp2_pkt_hd const& initial, nex::corosio::endpoint const& peer,
+                        Clock::time_point now) noexcept -> std::expected<Session*, int> {
+                namespace n = nex::ngtcp2;
+                try {
+                    if (!permit || !std::ranges::equal(permit->retry.bytes(), std::span(initial.dcid.data).first(initial.dcid.datalen)))
+                        return std::unexpected(n::err_callback_failure);
+                    auto verified = *permit;
+                    permit.reset();
+                    auto& entry = bundles[owner.slot];
+                    if (entry) return std::unexpected(n::err_callback_failure);
+                    entry.emplace(listener,reg,owner,peer);
+                    n::ngtcp2_settings settings{};
+                    n::ngtcp2_transport_params params{};
+                    apply_tuic_quic_config(listener.options_, Streams, Window, settings, params);
+                    n::ngtcp2_cid_init(&params.original_dcid, verified.original.data.data(), verified.original.size);
+                    params.original_dcid_present = 1;
+                    params.retry_scid = initial.dcid;
+                    params.retry_scid_present = 1;
+                    settings.token = initial.token;
+                    settings.tokenlen = initial.tokenlen;
+                    settings.token_type = n::NGTCP2_TOKEN_TYPE_RETRY;
+                    n::ngtcp2_cid cid{};
+                    n::ngtcp2_cid_init(&cid, source.data(), source.size());
+                    auto code = entry->session.start(true, initial.scid, cid, peer, settings, params, entry->memory.transport(), now);
+                    if (code) {
+                        entry->session.stop();
+                        entry->session.drain();
+                        entry.reset();
+                        return std::unexpected(code);
+                    }
+                    return &entry->session;
+                } catch (...) {
+                    bundles[owner.slot].reset();
+                    return std::unexpected(n::err_nomem);
+                }
+            }
+            auto application_drained(quic::SessionHandle owner, Session const&) const noexcept -> bool {
+                return listener.hooks_.session_drained(owner);
+            }
+            auto failed(quic::SessionHandle, int) noexcept -> void {}
+            auto destroy(quic::SessionHandle owner, Session&) noexcept -> void {
+                listener.hooks_.session_destroyed(owner);
+                bundles[owner.slot].reset();
+            }
+        };
+
+    public:
+        using Port = quic::DatagramPort<Factory, Sessions, 8, 8, false>;
+        using Driver = net::DatagramDriver<Port, nex::corosio::udp_socket>;
+
+    private:
+        nex::corosio::udp_socket socket_;
+        nex::corosio::endpoint local_;
+        tls::ServerCredential const& credential_;
+        std::span<UserCredential const> users_;
+        ClientTransportOptions options_;
+        Hooks& hooks_;
+        Factory factory_{*this};
+        Port port_{factory_};
+        Driver driver_{socket_, port_};
+
+    public:
+        Listener(nex::corosio::io_context& ctx, tls::ServerCredential const& cred,
+                 std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks)
+            : socket_(ctx), credential_(cred), users_(users), options_(opts), hooks_(hooks) {}
+
+        auto prepare(nex::corosio::endpoint local) -> std::expected<nex::corosio::endpoint, std::error_code> {
+            if (!factory_.retry.initialize()) return std::unexpected(std::make_error_code(std::errc::io_error));
+            if (auto err = socket_.open(local.address().family())) return std::unexpected(err);
+            if (auto err = socket_.bind(local)) { socket_.close(); return std::unexpected(err); }
+            local_ = socket_.local_endpoint();
+            return local_;
+        }
+
+        auto app(quic::SessionHandle h) noexcept -> App* {
+            if (h.slot >= Sessions || !factory_.bundles[h.slot]) return nullptr;
+            auto& b = *factory_.bundles[h.slot];
+            return b.hooks.owner == h ? &b.app : nullptr;
+        }
+
+        auto initial_peer(quic::SessionHandle h) const noexcept -> std::optional<nex::corosio::endpoint> {
+            if (h.slot>=Sessions) return {};
+            auto const& bundle=factory_.bundles[h.slot];
+            if (!bundle || bundle->hooks.owner!=h) return {};
+            return bundle->initial_peer;
+        }
+
+        auto changed() noexcept -> nex::capy::async_event& { return driver_.changed(); }
+        auto notify() noexcept -> void { driver_.notify(); }
+        auto running() const noexcept -> bool { return driver_.running(); }
+        auto drained() const noexcept -> bool { return port_.drained(); }
+        auto maintain() noexcept -> void { port_.maintain(); }
+        auto start() -> void { driver_.notify(); }
+        auto run() -> auto { return driver_.run(); }
+        auto stop() noexcept -> void {
+            port_.request_stop();
+            port_.stop();
+            socket_.close();
+            notify();
+        }
+    };
+}

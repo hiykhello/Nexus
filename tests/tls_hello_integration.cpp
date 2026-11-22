@@ -1,9 +1,9 @@
 import std;
-import nexus.tls.hello;
-import nexus.tls.key_share;
-import nexus.tls.handshake;
-import nexus.tls.transcript;
-namespace t=nexus::tls; namespace c=nexus::crypto;
+import tls.hello;
+import tls.key_share;
+import tls.handshake;
+import tls.transcript;
+namespace t=tls; namespace c = ::crypto;
 auto hex(std::string_view s) -> std::vector<std::uint8_t> { auto n=[](char x){return x<='9'? x-'0':x-'a'+10;}; std::vector<std::uint8_t> b; for (std::size_t i=0;i<s.size();i+=2) b.push_back(static_cast<std::uint8_t>((n(s[i])<<4)|n(s[i+1]))); return b; }
 int main() {
     auto wire=hex("010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001");

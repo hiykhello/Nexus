@@ -1,0 +1,26 @@
+[package]
+namespace = "nexus"
+name = "policy"
+version = "0.1.0"
+
+# Configuration and rule-file parsing share the rule model and its Glaze
+# adapter; this member owns those modules independently of the proxy runtime.
+[dependencies]
+nexus.glaze-kdl = "=0.1.0"
+nexus.platform = { path = "../platform" }
+
+[features]
+dns-response = { defines = ["NEXUS_DNS_RESPONSE"] }
+srs = { sources = ["srs_file.cppm", "srs_input_enabled.cpp", "!srs_input_disabled.cpp"] }
+
+[feature-deps.srs]
+nexus.zlib-system = { path = "../../3rdparty/mcpp-zlib" }
+
+[build]
+sources = [
+    "../quic/receive_windows.cppm", "../xhttp/config.cppm", "../xhttp/wire.cppm", "../config/xhttp.cpp",
+    "../../3rdparty/modules/glaze.cppm",
+    "../logging/options.cppm", "../config/logging.cpp", "../config/kdl_common.cppm", "../encoding/base64_key.cppm", "../config/config.cppm", "../config/config.cpp", "../config/vless_outbound.cpp", "../config/dns.cpp", "../config/dns_rule.cpp", "../config/dial.cpp", "../config/dependencies.cpp", "../config/trojan.cpp", "../config/anytls.cpp", "../config/hysteria2.cpp", "../config/snell.cpp", "../config/tcp_proxy.cpp", "../config/masque.cpp", "../config/httpupgrade.cpp", "../config/grpc.cpp", "../config/tun.cpp", "../config/wireguard.cpp", "../config/ssh.cpp", "../config/naive.cpp", "../config/protocols_ext.cpp",
+    "rules.cppm", "rule_input.cppm", "rule_input.cpp", "srs_input_disabled.cpp", "srs_payload.cppm", "domain_pattern.cppm", "regex.cppm", "dns_policy.cppm", "validate.cpp", "kdl.cpp", "kdl_predicate.cppm", "references.cpp", "beve.cpp", "beve_profile.cpp", "matcher.cpp", "route_matcher.cpp", "program.cpp",
+    "../rulefile/rulefile.cppm", "../rulefile/posix.cpp",
+]

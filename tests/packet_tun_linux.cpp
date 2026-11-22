@@ -2,9 +2,9 @@
 #include <net/if.h>
 #include <unistd.h>
 import std;
-import nexus.packet.tun_linux;
-import nexus.packet.fd;
-namespace p=nexus::packet;
+import packet.tun_linux;
+import packet.fd;
+namespace p = ::packet;
 int main() {
     for (auto name : {std::string_view("abcdefghijklmnop"),std::string_view("tun%d"),std::string_view("bad\0name",8)}) {
         auto invalid=p::LinuxTun::create(name);

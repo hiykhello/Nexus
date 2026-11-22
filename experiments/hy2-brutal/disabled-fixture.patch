@@ -1,0 +1,20 @@
+--- a/tests/hy2_outbound_disabled.py
++++ b/tests/hy2_outbound_disabled.py
+@@ -19,7 +19,7 @@
+ outbound "edge" type="hysteria2" {{ server host="127.0.0.1" port=443;
+  authentication {{ password-file "{root / 'password'}"; }}
+  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
+- quic {{ max-udp-payload-size 1200; disable-path-mtu-discovery #true; }}
++ quic {{ max-udp-payload-size 1200; disable-path-mtu-discovery #true; send-bps 500000; receive-bps 600000; }}
+ }}
+ routing {{ default-outbound "edge"; }}
+ ''')
+@@ -33,7 +33,7 @@
+ inbound "edge" type="hysteria2" {{ listen host="127.0.0.1" port=12345;
+  authentication {{ user "test" password-file="{root / 'password'}"; }}
+  tls {{ certificate-file "{root / 'cert'}"; private-key-file "{root / 'key'}"; }}
+- quic {{ max-udp-payload-size 1500; disable-path-mtu-discovery #false; }}
++ quic {{ max-udp-payload-size 1500; disable-path-mtu-discovery #false; send-bps 500000; receive-bps 600000; }}
+ }}
+ outbound "direct" type="direct"
+ routing {{ default-outbound "direct"; }}

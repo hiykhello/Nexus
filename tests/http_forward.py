@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise single-request HTTP forwarding and hostile framing on loopback."""
 import pathlib
+import os
 import shutil
 import socket
 import subprocess
@@ -147,11 +148,12 @@ def run(root):
     with listener() as reserved:
         port = reserved.getsockname()[1]
     config = root / 'mixed.kdl'
+    direct = 'outbound "direct" type="direct" { tcp-fast-open #true; }' if os.getenv('NEXUS_TEST_TFO_DIRECT') else 'outbound "direct" type="direct"'
     config.write_text(f'''schema-version 1
 role "client"
 workers {workers}
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
-outbound "direct" type="direct"
+{direct}
 outbound "block" type="block"
 routing {{ rule-set "blocked" path="blocked.kdl" format="kdl"; rule kind="rule-set" value="blocked" outbound="block"; default-outbound "direct"; }}
 ''')

@@ -1,7 +1,7 @@
-module nexus.socks5;
+module socks5;
 import std;
 
-namespace nexus::socks5 {
+namespace socks5 {
     auto parse_greeting(std::span<std::uint8_t const> input, std::uint8_t method) noexcept -> Greeting {
         if (input.empty()) return {};
         if (input[0] != 5) return {Status::invalid_version, 1};
@@ -59,6 +59,59 @@ namespace nexus::socks5 {
         result.port = static_cast<std::uint16_t>((std::uint16_t{input[length - 2]} << 8) | input[length - 1]);
         result.status = Status::accepted;
         result.consumed = length;
+        return result;
+    }
+
+    auto parse_socks4_request(std::span<std::uint8_t const> input) noexcept -> Request {
+        Request result;
+        if (input.empty()) return result;
+        if (input[0] != 4) { result.status = Status::invalid_version; result.consumed = 1; return result; }
+        if (input.size() < 9) return result;
+        if (input[1] != 1) { result.status = Status::unsupported_command; result.consumed = 2; return result; }
+        auto port = static_cast<std::uint16_t>((std::uint16_t{input[2]} << 8) | input[3]);
+        if (!port) { result.status = Status::invalid_address; result.consumed = 4; return result; }
+        std::size_t pos = 8;
+        bool uid_done = false;
+        while (pos < input.size() && pos - 8 <= 255) {
+            if (input[pos] == 0) { uid_done = true; ++pos; break; }
+            ++pos;
+        }
+        if (!uid_done) {
+            if (pos - 8 > 255) { result.status = Status::too_large; result.consumed = pos; }
+            return result;
+        }
+        result.command = 1;
+        result.port = port;
+        bool is_4a = input[4] == 0 && input[5] == 0 && input[6] == 0 && input[7] != 0;
+        if (!is_4a) {
+            result.address_type = 1;
+            result.address_length = 4;
+            std::copy_n(input.begin() + 4, 4, result.address.begin());
+            result.status = Status::accepted;
+            result.consumed = pos;
+            return result;
+        }
+        std::size_t dom_start = pos;
+        bool dom_done = false;
+        while (pos < input.size() && pos - dom_start <= 255) {
+            if (input[pos] == 0) { dom_done = true; ++pos; break; }
+            ++pos;
+        }
+        if (!dom_done) {
+            if (pos - dom_start > 255) { result.status = Status::too_large; result.consumed = pos; }
+            return result;
+        }
+        std::size_t dom_len = (pos - 1) - dom_start;
+        if (!dom_len || dom_len > 255) { result.status = Status::invalid_address; result.consumed = pos; return result; }
+        for (std::size_t i = 0; i < dom_len; ++i) {
+            unsigned char c = input[dom_start + i];
+            if (c <= 32 || c >= 127) { result.status = Status::invalid_address; result.consumed = pos; return result; }
+        }
+        result.address_type = 3;
+        result.address_length = static_cast<std::uint8_t>(dom_len);
+        std::copy_n(input.begin() + dom_start, dom_len, result.address.begin());
+        result.status = Status::accepted;
+        result.consumed = pos;
         return result;
     }
 

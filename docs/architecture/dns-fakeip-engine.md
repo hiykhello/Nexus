@@ -1,6 +1,12 @@
 # Fake-IP 分配池与连接嗅探
 
-状态：设计草案；已有独立 IPv4 内存地址池实验，尚未接 DNS、路由、配置或持久恢复。Fake-IP 是 DNS 给客户端的短期地址令牌，不是目标真实地址或身份认证；它与普通 DNS 缓存、负缓存及乐观缓存分开。已有约束见 [DNS 设计](dns.md)、[状态恢复](state-and-cache.md)和[DNS 状态验证](../planning/dns-state-validation.md)。
+启用 `dns-fakeip` 后，专用 DNS 监听、公用地址池和持久隔离历史由 CLI 共同管理。已接 SOCKS5、Mixed、透明 TCP、Linux UDP TPROXY 和普通 Linux TUN。原生 IPv6 合成地址和 IPv4 地址共用租约及重启保护。Fake-IP 是 DNS 给客户端的短期地址令牌，真实拨号先反查原始域名再通过普通解析器取得候选地址。配置、限制和当前验收见 [配置规范](../configuration/spec.md) 与 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。
+
+DNS 规则重载发布新的策略视图，消息缓存按视图、上游端点和实际问题索引。已接收的 DNS 请求与已建立的流保留当时的视图，同名映射可在不同视图并存。仅切换出站选择时继续使用当前 DNS 视图。普通 routed TUN 支持单独重载 DNS 规则。持久文件保存受保护的范围和最长隔离期，进程重启后在隔离期内拒绝池内旧地址，再按当前策略重新发布。
+
+## 原型与历史验证
+
+以下记录保留各实验阶段的实现边界和验证条件。相关设计见 [DNS 设计](dns.md)、[状态恢复](state-and-cache.md)和[DNS 状态验证](../planning/dns-state-validation.md)。
 
 实验 `nexus.dns.fakeip` 在单执行上下文中管理调用方指定的连续 IPv4 可分配范围（最多 65536 地址），规范化有限 ASCII 域名并按 view 区分，发布时保护 TTL 加缓冲，pin 阻止复用，游标扫描安全候选，池满拒绝。查找和 pin 使用池身份及代次，旧令牌不得跨池或跨池生命周期使用；未知地址以空结果报告，调用方须区分池内未知地址并拒绝。它不自行判断 CIDR、保留地址或跨池冲突，不实现 LRU、IPv6、并发、持久化或重启隔离；范围合法性和异常后保护仍是接入前的要求。GCC 16 测试覆盖大小写、视图、重复发布延长保护、满池、pin、复用、旧令牌、时间倒退与溢出。
 

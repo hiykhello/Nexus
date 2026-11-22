@@ -1,7 +1,7 @@
-export module nexus.shadowsocks.frame;
+export module shadowsocks.frame;
 import std;
-import nexus.shadowsocks.chunk;
-export namespace nexus::shadowsocks {
+import shadowsocks.chunk;
+export namespace shadowsocks {
     enum class FrameError { invalid_length, authentication, crypto, truncated, closed };
     struct FrameStep { std::size_t consumed; std::optional<std::vector<std::uint8_t>> payload; };
     // Each instance owns a cipher already positioned after the stream header.

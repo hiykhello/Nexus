@@ -1,7 +1,7 @@
-export module nexus.http2.headers;
+export module http2.headers;
 import std;
 
-export namespace nexus::http2 {
+export namespace http2 {
     struct Header {
         std::string name;
         std::string value;
@@ -22,26 +22,35 @@ export namespace nexus::http2 {
         HeaderBlock(std::size_t max_fields, std::size_t max_bytes)
             : max_fields_(max_fields), max_bytes_(max_bytes) {}
 
-        void begin(std::int32_t stream) noexcept {
-            discard(); stream_ = stream;
-        }
-        void discard() noexcept { std::vector<Header>{}.swap(fields_); bytes_ = 0; stream_ = 0; }
+        void begin(std::int32_t stream) noexcept;
+        void discard() noexcept;
         auto stream() const noexcept -> std::int32_t { return stream_; }
         auto fields() const noexcept -> std::span<Header const> { return fields_; }
         // Logical charge, not allocator consumption or vector/string capacity.
-        auto memory_charge() const noexcept -> std::size_t { return bytes_ + fields_.size() * sizeof(Header); }
-        auto add(std::int32_t stream, std::string_view name, std::string_view value) noexcept -> HeaderResult {
-            if (stream <= 0 || stream != stream_) return HeaderResult::invalid_state;
-            if (fields_.size() >= max_fields_ || name.size() > max_bytes_ - bytes_ ||
-                value.size() > max_bytes_ - bytes_ - name.size()) return HeaderResult::limit_exceeded;
-            auto remaining=std::numeric_limits<std::size_t>::max()-memory_charge();
-            if (sizeof(Header)>remaining || name.size()>remaining-sizeof(Header) ||
-                value.size()>remaining-sizeof(Header)-name.size()) return HeaderResult::limit_exceeded;
-            try {
-                fields_.push_back({std::string(name), std::string(value)});
-                bytes_ += name.size() + value.size();
-                return HeaderResult::accepted;
-            } catch (...) { return HeaderResult::allocation_failed; }
-        }
+        auto memory_charge() const noexcept -> std::size_t;
+        auto add(std::int32_t stream, std::string_view name, std::string_view value) noexcept -> HeaderResult;
     };
+}
+
+module :private;
+
+namespace http2 {
+    void HeaderBlock::begin(std::int32_t stream) noexcept {
+        discard(); stream_ = stream;
+    }
+    void HeaderBlock::discard() noexcept { std::vector<Header>{}.swap(fields_); bytes_ = 0; stream_ = 0; }
+    auto HeaderBlock::memory_charge() const noexcept -> std::size_t { return bytes_ + fields_.size() * sizeof(Header); }
+    auto HeaderBlock::add(std::int32_t stream, std::string_view name, std::string_view value) noexcept -> HeaderResult {
+        if (stream <= 0 || stream != stream_) return HeaderResult::invalid_state;
+        if (fields_.size() >= max_fields_ || name.size() > max_bytes_ - bytes_ ||
+            value.size() > max_bytes_ - bytes_ - name.size()) return HeaderResult::limit_exceeded;
+        auto remaining=std::numeric_limits<std::size_t>::max()-memory_charge();
+        if (sizeof(Header)>remaining || name.size()>remaining-sizeof(Header) ||
+            value.size()>remaining-sizeof(Header)-name.size()) return HeaderResult::limit_exceeded;
+        try {
+            fields_.push_back({std::string(name), std::string(value)});
+            bytes_ += name.size() + value.size();
+            return HeaderResult::accepted;
+        } catch (...) { return HeaderResult::allocation_failed; }
+    }
 }

@@ -1,6 +1,6 @@
 # Linux 网络集成设计
 
-状态：参考 sing-box 提出的 Nexus 设计草案；尚未决定首期功能清单、库选择或最低内核版本。
+状态：Linux 宿主网络集成设计，核心原则见 [多平台集成与运维原则](../../design-principles/platform-and-operations.md)。
 
 ## 能力边界
 
@@ -52,7 +52,7 @@ flowchart LR
 
 ## 防火墙与容器共存
 
-参考 sing-tun 对 Docker、OpenWrt fw4 的针对性适配，Nexus 对外部防火墙提供独立适配器，不直接假设通用 accept 规则能穿过所有后续链。
+Nexus 对外部防火墙（如 Docker 网桥与 OpenWrt `fw4`）提供独立适配器，不直接假设通用 accept 规则能穿过所有后续链。
 
 需区分 Docker 的后端和实际链结构、Podman、firewalld、OpenWrt fw4 与手写规则。仅对已验证组合声明支持；外部 ruleset 重建时按事件重新核对自身对象，处理事件丢失与 monitor 重连，避免持续重写和事件反馈环。
 
@@ -72,4 +72,4 @@ flowchart LR
 
 系统 FD 上限不替代连接和内存预算，不为追求吞吐自动修改全局 sysctl。需要调整的参数必须与实际队列、conntrack、socket 缓冲及工作负载一起测量。
 
-验收见[Linux 验证计划](../../planning/linux-validation.md)，参考证据见[sing-box Linux 分析](../../references/sing-box-linux.md)。
+验收见 [Linux 验证计划](../../planning/linux-validation.md)，工程要点见 [多平台集成与运维原则](../../design-principles/platform-and-operations.md)。

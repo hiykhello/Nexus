@@ -1,7 +1,7 @@
-module nexus.tls.hello;
+module tls.hello;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     namespace {
         struct Reader {
             std::span<std::uint8_t const> bytes;
@@ -99,6 +99,9 @@ namespace nexus::tls {
             out.insert(out.end(),item.data.begin(),item.data.end());
         }
         return out;
+    }
+    auto ClientHello::encoding_size(std::size_t max_body_size) const -> std::expected<std::size_t,HelloError> {
+        return encoded_size(*this,max_body_size);
     }
     auto ClientHello::validate_encoding(std::size_t max_body_size) const -> std::expected<void,HelloError> {
         auto size=encoded_size(*this,max_body_size); if (!size) return std::unexpected(size.error()); return {};

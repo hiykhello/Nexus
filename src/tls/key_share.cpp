@@ -1,7 +1,7 @@
-module nexus.tls.key_share;
+module tls.key_share;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     namespace {
         auto u16(std::span<std::uint8_t const> b, std::size_t p) -> std::uint16_t { return static_cast<std::uint16_t>(b[p]<<8|b[p+1]); }
         auto add_u16(std::vector<std::uint8_t>& out, std::size_t n) -> bool { if (n>0xffff) return false; out.push_back(static_cast<std::uint8_t>(n>>8)); out.push_back(static_cast<std::uint8_t>(n)); return true; }

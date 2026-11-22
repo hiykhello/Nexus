@@ -1,15 +1,18 @@
 module;
-#include <openssl/x509.h>
-#include <openssl/stack.h>
 #include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+#include <openssl/mem.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
-module nexus.tls.certificate_trust;
+module tls.certificate_trust;
+import crypto.backend_errors;
+import crypto;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     auto parse_trust_bundle(std::string_view pem) -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError> {
         constexpr std::size_t max_bytes=4194304, max_cert=1048576, max_count=1024;
         constexpr std::string_view begin="-----BEGIN CERTIFICATE-----", end="-----END CERTIFICATE-----";
@@ -75,7 +78,7 @@ namespace nexus::tls {
     }
     auto verify_server_certificate_chain(std::span<std::span<std::uint8_t const> const> chain,
         std::span<std::span<std::uint8_t const> const> anchors, PeerNameKind kind,
-        std::span<std::uint8_t const> name, std::int64_t now) -> std::expected<void, CertificateTrustError> {
+        std::span<std::uint8_t const> name, std::int64_t now,std::span<std::array<std::uint8_t,32> const> pins) -> std::expected<void, CertificateTrustError> {
         constexpr std::size_t max_cert = 1048576, max_total = 4194304;
         if (chain.empty() || chain.size() > 16 || anchors.empty() || anchors.size() > 1024 || name.empty())
             return std::unexpected(CertificateTrustError::invalid_input);
@@ -90,17 +93,20 @@ namespace nexus::tls {
                 return std::unexpected(CertificateTrustError::invalid_input);
             total += der.size();
         }
+        crypto::BackendErrors backend_errors;
         using Cert = std::unique_ptr<X509, decltype(&X509_free)>;
         std::vector<Cert> certs;
+        bool parse_allocation_failed=false;
         auto parse = [&](auto der) {
             auto cursor = der.data();
             Cert cert(d2i_X509(nullptr, &cursor, static_cast<long>(der.size())), X509_free);
-            if (!cert || cursor != der.data() + der.size()) return false;
+            parse_allocation_failed=backend_errors.allocation_failed();
+            if (parse_allocation_failed || !cert || cursor != der.data() + der.size()) return false;
             certs.push_back(std::move(cert)); return true;
         };
-        for (auto der : chain) if (!parse(der)) return std::unexpected(CertificateTrustError::invalid_certificate);
+        for (auto der : chain) if (!parse(der)) return std::unexpected(parse_allocation_failed || backend_errors.allocation_failed() ? CertificateTrustError::crypto_error : CertificateTrustError::invalid_certificate);
         auto chain_size = certs.size();
-        for (auto der : anchors) if (!parse(der)) return std::unexpected(CertificateTrustError::invalid_certificate);
+        for (auto der : anchors) if (!parse(der)) return std::unexpected(parse_allocation_failed || backend_errors.allocation_failed() ? CertificateTrustError::crypto_error : CertificateTrustError::invalid_certificate);
         std::unique_ptr<X509_STORE, decltype(&X509_STORE_free)> store(X509_STORE_new(), X509_STORE_free);
         std::unique_ptr<STACK_OF(X509), decltype(&sk_X509_free)> intermediates(sk_X509_new_null(), sk_X509_free);
         std::unique_ptr<X509_STORE_CTX, decltype(&X509_STORE_CTX_free)> ctx(X509_STORE_CTX_new(), X509_STORE_CTX_free);
@@ -119,7 +125,30 @@ namespace nexus::tls {
             (kind == PeerNameKind::dns ? X509_VERIFY_PARAM_set1_host(param, reinterpret_cast<char const*>(name.data()), name.size())
                                        : X509_VERIFY_PARAM_set1_ip(param, name.data(), name.size())) != 1)
             return std::unexpected(CertificateTrustError::crypto_error);
-        if (X509_verify_cert(ctx.get()) != 1) return std::unexpected(CertificateTrustError::verification_failed);
+        if (X509_verify_cert(ctx.get()) != 1) return std::unexpected(
+            X509_STORE_CTX_get_error(ctx.get())==X509_V_ERR_OUT_OF_MEM || backend_errors.allocation_failed() ?
+                CertificateTrustError::crypto_error : CertificateTrustError::verification_failed);
+        if (!pins.empty()) {
+            auto* verified=X509_STORE_CTX_get0_chain(ctx.get());
+            if (!verified) return std::unexpected(CertificateTrustError::crypto_error);
+            bool matched=false;
+            auto match=[&](auto encode,auto* value) -> bool {
+                std::uint8_t* bytes=nullptr;
+                auto size=encode(value,&bytes);
+                std::unique_ptr<std::uint8_t,decltype(&OPENSSL_free)> memory(bytes,OPENSSL_free);
+                if (size<=0 || !bytes) return false;
+                auto hash=crypto::digest(crypto::Hash::sha256,{bytes,static_cast<std::size_t>(size)});
+                if (!hash) return false;
+                for (auto const& pin:pins) matched|=crypto::constant_time_equal(pin,*hash);
+                return true;
+            };
+            for (std::size_t i=0;i<sk_X509_num(verified);++i) {
+                auto* cert=sk_X509_value(verified,i);
+                if (!match(i2d_X509,cert) || !match(i2d_X509_PUBKEY,X509_get_X509_PUBKEY(cert)))
+                    return std::unexpected(CertificateTrustError::crypto_error);
+            }
+            if (!matched) return std::unexpected(CertificateTrustError::verification_failed);
+        }
         return {};
     }
 }

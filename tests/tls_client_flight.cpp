@@ -1,8 +1,8 @@
 import std;
-import nexus.tls.client_flight;
-import nexus.tls.server_hello;
-import nexus.tls.handshake;
-namespace t=nexus::tls; namespace c=nexus::crypto;
+import tls.client_flight;
+import tls.server_hello;
+import tls.handshake;
+namespace t=tls; namespace c = ::crypto;
 using Bytes=std::vector<std::uint8_t>; using View=std::span<std::uint8_t const>;
 auto read(std::string const& file) -> Bytes { std::ifstream f("tests/fixtures/tls-trust/"+file,std::ios::binary); return Bytes(std::istreambuf_iterator<char>(f),{}); }
 auto hex(std::string_view s) -> Bytes { auto n=[](char x){return x<='9'?x-'0':x-'a'+10;}; Bytes b; for (std::size_t i=0;i<s.size();i+=2) b.push_back(static_cast<std::uint8_t>((n(s[i])<<4)|n(s[i+1]))); return b; }

@@ -1,60 +1,51 @@
-module;
-#include <arpa/inet.h>
-#include <cerrno>
-#include <sys/socket.h>
-#include <unistd.h>
-module nexus.socks5.udp_direct;
+module socks5.udp_direct;
 import std;
-import nexus.rules;
+import rules;
 
-namespace nexus::socks5 {
-    namespace {
-        auto error() -> std::error_code { return {errno,std::generic_category()}; }
-        auto address(UdpPeer const& peer) -> sockaddr_in6 {
-            sockaddr_in6 addr{}; addr.sin6_family=AF_INET6; addr.sin6_port=htons(peer.port);
-            if (peer.address_type==1) {
-                addr.sin6_addr.s6_addr[10]=255; addr.sin6_addr.s6_addr[11]=255;
-                std::copy_n(peer.address.begin(),4,addr.sin6_addr.s6_addr+12);
-            } else std::ranges::copy(peer.address,addr.sin6_addr.s6_addr);
-            return addr;
-        }
-        auto peer(sockaddr_in6 const& addr) -> UdpPeer {
-            UdpPeer result{}; result.port=ntohs(addr.sin6_port);
-            if (IN6_IS_ADDR_V4MAPPED(&addr.sin6_addr)) {
-                result.address_type=1; std::copy_n(addr.sin6_addr.s6_addr+12,4,result.address.begin());
-            } else { result.address_type=4; std::copy_n(addr.sin6_addr.s6_addr,16,result.address.begin()); }
-            return result;
-        }
-    }
+namespace socks5 {
     UdpDirect::~UdpDirect() { close(); }
-    auto UdpDirect::close() noexcept -> void {
-        closed_=true;
-        if (fd_>=0) { ::close(fd_); fd_=-1; }
-    }
-    auto UdpDirect::send(UdpDatagram const& packet,UdpPeer candidate) -> std::expected<void,UdpDirectError> {
+    auto UdpDirect::close() noexcept -> void { closed_=true; socket_.close(); }
+    auto UdpDirect::send(UdpDatagram const& packet,UdpPeer candidate,std::chrono::steady_clock::time_point deadline) -> std::expected<void,UdpDirectError> {
         if (closed_ || association_.closed()) {
             close(); return std::unexpected(UdpDirectError{Status::association_closed});
         }
-        auto prepared=udp_prepare_send(association_,policy_,packet,candidate);
+        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline)
+            return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
+        auto prepared=udp_prepare_send(association_,policy_,packet,candidate,auth_user_);
         if (!prepared) return std::unexpected(std::visit([](auto value) -> UdpDirectError { return value; },prepared.error()));
         auto rollback=[&] { (void)association_.finish_send(prepared->token,false); };
-        if (fd_<0) {
-            auto fd=::socket(AF_INET6,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
-            if (fd<0) { auto failure=error(); rollback(); return std::unexpected(UdpDirectError{failure}); }
-            int off=0;
-            if (::setsockopt(fd,IPPROTO_IPV6,IPV6_V6ONLY,&off,sizeof(off))<0) {
-                auto failure=error(); ::close(fd); rollback(); return std::unexpected(UdpDirectError{failure});
-            }
-            fd_=fd;
+        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline) {
+            rollback();return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
         }
-        auto destination=address(prepared->target);
-        auto n=::sendto(fd_,packet.data.data(),packet.data.size(),0,reinterpret_cast<sockaddr*>(&destination),sizeof(destination));
-        if (n<0 || static_cast<std::size_t>(n)!=packet.data.size()) {
-            auto failure=n<0 ? error() : std::make_error_code(std::errc::io_error);
-            rollback(); return std::unexpected(UdpDirectError{failure});
+        auto sent=socket_.send(prepared->target,packet.data,deadline);
+        if (!sent) { rollback(); return std::unexpected(UdpDirectError{sent.error()}); }
+        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline) {
+            rollback();return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
         }
         auto committed=association_.finish_send(prepared->token,true);
         if (!committed) return std::unexpected(UdpDirectError{committed.error()});
+        return {};
+    }
+    auto UdpDirect::send_selected(UdpDatagram const& packet,UdpPeer candidate,std::chrono::steady_clock::time_point deadline) -> std::expected<void,UdpDirectError> {
+        if(closed_ || association_.closed()) {close();return std::unexpected(UdpDirectError{Status::association_closed});}
+        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline)
+            return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
+        if(!association_.client_peer())return std::unexpected(UdpDirectError{Status::unauthorized_source});
+        auto target=net::udp_validate_candidate(udp_target(packet),udp_endpoint(candidate));
+        if(!target)return std::unexpected(UdpDirectError{target.error()});
+        auto peer=udp_peer(*target);
+        auto token=association_.begin_send(peer);
+        if(!token)return std::unexpected(UdpDirectError{token.error()});
+        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline) {
+            (void)association_.finish_send(*token,false);return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
+        }
+        auto sent=socket_.send(peer,packet.data,deadline);
+        if(!sent) {(void)association_.finish_send(*token,false);return std::unexpected(UdpDirectError{sent.error()});}
+        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline) {
+            (void)association_.finish_send(*token,false);return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
+        }
+        auto committed=association_.finish_send(*token,true);
+        if(!committed)return std::unexpected(UdpDirectError{committed.error()});
         return {};
     }
     auto UdpDirect::poll(bool* consumed_packet) -> std::expected<std::optional<UdpDirectReply>,UdpDirectError> {
@@ -62,37 +53,32 @@ namespace nexus::socks5 {
         if (closed_ || association_.closed()) {
             close(); return std::unexpected(UdpDirectError{Status::association_closed});
         }
-        if (fd_<0) return std::optional<UdpDirectReply>{};
-        std::array<std::uint8_t,65536> bytes{}; sockaddr_in6 from{}; socklen_t length=sizeof(from);
-        auto n=::recvfrom(fd_,bytes.data(),bytes.size(),MSG_TRUNC|MSG_PEEK,reinterpret_cast<sockaddr*>(&from),&length);
-        if (n<0) {
-            if (errno==EAGAIN || errno==EWOULDBLOCK || errno==EINTR) return std::optional<UdpDirectReply>{};
-            return std::unexpected(UdpDirectError{error()});
-        }
+        std::array<std::uint8_t,65536> bytes{};
+        auto peeked=socket_.peek(bytes);
+        if (!peeked) return std::unexpected(UdpDirectError{peeked.error()});
+        if (!*peeked) return std::optional<UdpDirectReply>{};
+        auto const& received=**peeked;
         std::optional<UdpDirectReply> result;
         auto client=association_.client_peer();
-        if (length==sizeof(from) && from.sin6_family==AF_INET6 && !from.sin6_scope_id &&
-            static_cast<std::size_t>(n)<=bytes.size() && client) {
-            auto source=peer(from);
+        if (received.valid && client) {
+            auto source=received.source;
             if (association_.accepts_reply(source)) {
                 UdpDatagram packet; packet.address_type=source.address_type;
                 packet.address_length=source.address_type==1 ? 4 : 16; packet.port=source.port;
                 std::copy_n(source.address.begin(),packet.address_length,packet.address.begin());
-                packet.data=std::span(bytes).first(static_cast<std::size_t>(n));
+                packet.data=std::span(bytes).first(received.size);
                 auto client_limit=client->address_type==1 ? std::size_t{65507} : std::size_t{65527};
                 if (packet.data.size()+6+packet.address_length<=client_limit) {
                     auto wire=encode_udp_datagram(packet);
-                    if (wire) result=UdpDirectReply{*client,std::move(*wire)};
+                    if (wire) result=UdpDirectReply{*client,std::move(*wire),packet.data.size()};
                 }
             }
         }
-        auto consumed=::recvfrom(fd_,bytes.data(),bytes.size(),MSG_TRUNC,nullptr,nullptr);
-        if (consumed<0) {
-            if (errno==EAGAIN || errno==EWOULDBLOCK || errno==EINTR) return std::optional<UdpDirectReply>{};
-            return std::unexpected(UdpDirectError{error()});
-        }
+        auto consumed=socket_.consume();
+        if (!consumed) return std::unexpected(UdpDirectError{consumed.error()});
+        if (!*consumed) return std::optional<UdpDirectReply>{};
         if (consumed_packet) *consumed_packet=true;
-        if (consumed!=n) return std::optional<UdpDirectReply>{};
+        if (**consumed!=received.size) return std::optional<UdpDirectReply>{};
         return result;
     }
 }

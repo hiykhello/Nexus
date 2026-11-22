@@ -1,15 +1,16 @@
-export module nexus.shadowsocks.udp_client;
+export module shadowsocks.udp_client;
 import std;
-import nexus.shadowsocks.udp_replay;
-export import nexus.shadowsocks.udp_packet;
+import shadowsocks.udp_replay;
+import shadowsocks.key;
+export import shadowsocks.udp_packet;
 
-export namespace nexus::shadowsocks {
+export namespace shadowsocks {
     enum class UdpClientError { invalid_key, packet, duplicate, too_old, full, exhausted, time_reversed,
                                 missing, random, session_conflict, failed };
 
-    // Experimental serialized owner for one client session. Its creator must
-    // guarantee a unique client ID for this PSK, including all other owners,
-    // server IDs and restarts. The owner does not provide durable state.
+    // Serialized owner for one client ID. Its caller reserves locally emitted
+    // IDs and handles sharing the same key with other processes. A response
+    // using this association's client ID as its server ID is rejected.
     class UdpClientSession {
         using Clock=std::chrono::steady_clock;
         std::array<std::uint8_t,32> key_{};
@@ -23,11 +24,12 @@ export namespace nexus::shadowsocks {
         std::uint64_t anchor_wall_=0;
         std::uint64_t last_wall_=0;
         std::size_t capacity_;
+        CipherMethod method_;
         std::map<std::array<std::uint8_t,8>,UdpReplayWindow> servers_;
         [[nodiscard]] auto advance(Clock::time_point now, std::uint64_t wall) noexcept -> bool;
     public:
         UdpClientSession(std::span<std::uint8_t const> key, std::array<std::uint8_t,8> client,
-                         std::size_t server_capacity);
+                         std::size_t server_capacity,CipherMethod method=CipherMethod::aes);
         ~UdpClientSession();
         UdpClientSession(UdpClientSession const&)=delete;
         auto operator=(UdpClientSession const&) -> UdpClientSession& = delete;
@@ -35,7 +37,8 @@ export namespace nexus::shadowsocks {
         // send must never be retried by reusing its packet ID.
         [[nodiscard]] auto request(std::span<std::uint8_t const> address,
             std::span<std::uint8_t const> payload, std::span<std::uint8_t const> padding,
-            Clock::time_point now, std::uint64_t wall) -> std::expected<std::vector<std::uint8_t>,UdpClientError>;
+            Clock::time_point now,std::uint64_t wall,std::span<std::array<std::uint8_t,32> const> identities={})
+            -> std::expected<std::vector<std::uint8_t>,UdpClientError>;
         // The transport must independently verify the remote endpoint. Auth
         // and semantic validation precede allocation and replay updates.
         [[nodiscard]] auto receive(std::span<std::uint8_t const> wire, Clock::time_point now, std::uint64_t wall)

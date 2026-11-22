@@ -45,9 +45,9 @@ client 与 server 使用相同的处理阶段，具体入站、出口和策略�
 
 建议采用“配置解析与校验 → 组件装配 → 运行 → 停止接入 → 结束会话 → 回收资源”的生命周期。启动失败回滚、停止超时和强制关闭行为需在实现前补充设计。
 
-参考 sing-box 后提出的注册、上下文和分阶段生命周期见[组件模型](component-model.md)，源码依据见[参考分析](../references/sing-box.md)。
+注册、上下文和分阶段生命周期见 [组件模型](component-model.md) 与 [核心架构原则](../design-principles/core-architecture.md)。
 
-结合 sing-box/sing-tun 与 shoes 提取的转发、公平性、批处理、加速路径、规则编译及资源预算见[性能与资源设计](performance.md)。这些优化目前仅为草案，没有 Nexus 性能实验结果。
+转发、公平性、批处理、加速路径、规则编译及资源预算见 [性能与资源设计](performance.md) 与 [性能与数据面原则](../design-principles/performance-and-datapath.md)。
 
 [DNS 设计](dns.md)区分内部地址解析与消息交换，规定解析视图、回环防护、普通/负缓存和乐观刷新边界；[缓存与持久状态](state-and-cache.md)区分可丢弃缓存、用户选择、FakeIP 与宿主恢复记录，尚未选定存储依赖。
 

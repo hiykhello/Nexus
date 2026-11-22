@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include "../src/shadowsocks/probe_close.hpp"
 
-namespace s=nexus::shadowsocks::detail;
+namespace s=shadowsocks::detail;
 auto scenario(bool unread) -> bool {
     int listener=::socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);
     if (listener<0) return false;

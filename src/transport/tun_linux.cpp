@@ -1,10 +1,8 @@
-module;
-#include <cerrno>
-#include <sys/random.h>
-module nexus.transport.tun_linux;
+module transport.tun_linux;
 import std;
+import platform.linux_random;
 
-namespace nexus::transport {
+namespace transport {
     LinuxTunDirect::LinuxTunDirect(packet::LinuxTun&& tun,tcp::ConnectionTable&& table,tcp::ConnectionTable6&& table6,rules::Matcher policy,TunLimits limits)
         : tun_(std::move(tun)),link_(limits.external),table_(std::move(table)),table6_(std::move(table6)),
           engine_(link_,table_,table6_,std::move(policy),limits.tcp_flows,limits.tcp_direct,limits.mapping,limits.filtering,limits.udp,limits.mtu,limits.internal,limits.socket_mark) {}
@@ -33,23 +31,19 @@ namespace nexus::transport {
         if (initialized_ && now<now_) return std::unexpected(TunDriverFailure{TunDriverError::time_reversed});
         std::uint32_t iss{};
         auto bytes=std::as_writable_bytes(std::span(&iss,1));
-        std::size_t offset=0;
-        while (offset<bytes.size()) {
-            auto n=::getrandom(bytes.data()+offset,bytes.size()-offset,GRND_NONBLOCK);
-            if (n<0) {
-                if (errno==EINTR) continue;
-                return std::unexpected(TunDriverFailure{TunRandomFailure{{errno,std::generic_category()}}});
-            }
-            if (!n) return std::unexpected(TunDriverFailure{TunRandomFailure{std::make_error_code(std::errc::io_error)}});
-            offset+=static_cast<std::size_t>(n);
-        }
+        if (auto random=platform::secure_random(bytes); !random)
+            return std::unexpected(TunDriverFailure{TunRandomFailure{random.error()}});
         return step(now,iss);
     }
     auto LinuxTunDirect::step(std::uint64_t now,std::uint32_t iss) -> std::expected<TunStep,TunDriverFailure> {
         if (stopped_) return std::unexpected(TunDriverFailure{TunDriverError::stopped});
         if (initialized_ && now<now_) return std::unexpected(TunDriverFailure{TunDriverError::time_reversed});
         initialized_=true; now_=now;
-        auto device=pump_->step();
+        auto validate=[](void* context,packet::QueuedPacket const& output) noexcept {
+            auto& driver=*static_cast<LinuxTunDirect*>(context);
+            return driver.engine_.valid_output(output);
+        };
+        auto device=pump_->step(validate,this);
         auto transport=engine_.step(now,iss);
         if (!transport) return std::unexpected(TunDriverFailure{transport.error()});
         return TunStep{std::move(device),std::move(*transport)};

@@ -1,82 +1,100 @@
-# 文档导航
+# Nexus 文档导航
 
-本目录保存 Nexus 的项目定义、技术约束与设计规范。
-
-| 分类 | 文档 | 内容 |
-| --- | --- | --- |
-| 项目 | [项目定位](project/overview.md) | 平台目标、client/server 角色与范围 |
-| 架构 | [总体架构](architecture/overview.md) | 分层、数据路径与生命周期草案 |
-| 架构 | [组件模型](architecture/component-model.md) | 注册、路由上下文、生命周期与装配 |
-| 架构 | [入站、出站与协议解耦](architecture/protocols.md) | 协议家族、承载组合、数据面契约和编译裁剪 |
-| 架构 | [Reality 接入](architecture/protocols/reality.md) | 身份验证、客户端与服务端边界、fallback 和互操作 |
-| 架构 | [VLESS / Trojan / SS-2022](architecture/protocols/vless-trojan-ss.md) | 协议边界、流控和抗重放要求 |
-| 架构 | [WireGuard 与 WARP](architecture/protocols/wireguard.md) | Noise、peer 生命周期、标准模式与 WARP profile |
-| 架构 | [Hysteria 2 与 QUIC](architecture/protocols/hysteria2.md) | 无 I/O QUIC 候选、HTTP/3、UDP 和拥塞控制 |
-| 架构 | [SOCKS5 与 Mixed](architecture/protocols/socks5-mixed.md) | 握手、CONNECT、UDP ASSOCIATE 和资源管理 |
-| 架构 | [HTTP/1.1、HTTPS 与 HTTP/2](architecture/http.md) | 自研 HTTP、TLS 组合及后续无 I/O nghttp2 接入 |
-| 架构 | [具名 HTTP 客户端](architecture/http-clients.md) | tag、出口与解析依赖、生命周期和验证草案 |
-| 架构 | [自研 HTTP 代理线规](architecture/http-proxy-spec.md) | 零分配 CONNECT 解析、Handoff 交接与 RFC 9298 MASQUE |
-| 架构 | [C++ Modules](architecture/modules.md) | 模块组织、依赖方向与第三方边界 |
-| 架构 | [源码物理目录规划](architecture/source-tree.md) | 源码工程目录结构、C++26 模块映射与 xmake 构建草案 |
-| 架构 | [自研 TUN 栈](architecture/tun.md) | 设备接入、TCP/IP、L3/L4 路径与资源管理 |
-| 架构 | [自研 TLS 与指纹](architecture/tls.md) | TLS 协议、ClientHello profile 和密码学边界 |
-| 架构 | [uTLS 指纹编排引擎](architecture/utls-engine.md) | 现代浏览器指纹矩阵、GREASE 注入与 ML-KEM/Kyber 布局 |
-| 架构 | [Linux kTLS 零拷贝架构](architecture/ktls.md) | 握手状态下沉、setsockopt 密钥注入与 splice 管道直通 |
-| 评估 | [BoringSSL libcrypto 底座](architecture/boringssl-libcrypto.md) | 密码原语评估、依赖边界与接入注意事项 |
-| 架构 | [并发与多线程架构](architecture/concurrency.md) | worker 所有权、监听分发、共享状态与停机 |
-| 架构 | [性能与资源设计](architecture/performance.md) | 转发、批处理、加速切换、规则索引和资源预算 |
-| 架构 | [DNS 与乐观缓存](architecture/dns.md) | 解析视图、TTL、负缓存、过期应答和后台刷新 |
-| 架构 | [Fake-IP 与嗅探](architecture/dns-fakeip-engine.md) | 双向映射、可安全复用条件、恢复与嗅探限制 |
-| 架构 | [路由匹配与热重载](architecture/routing-engine.md) | 有序规则、索引、借用生命周期和配置代次 |
-| 架构 | [原生控制面与 IPC](architecture/control-api.md) | 自定义 HTTP/JSON、事件流、BEVE 本地 IPC、授权与统计 |
-| 架构 | [缓存与持久状态](architecture/state-and-cache.md) | 状态分类、批写、提交语义、恢复、FakeIP 和版本 |
-| 架构 | [状态数据库](architecture/database.md) | SQLite 候选、异步边界、事务、恢复与验收 |
-| 架构 | [日志系统](architecture/logging.md) | stderr、文件 sink、异步背压与故障处理 |
-| 架构 | [规则集二进制格式](architecture/rule-set-format.md) | BEVE、指定 Glaze 分支、文件封装与索引边界 |
-| 架构 | [BEVE 状态模型](architecture/beve-schemas.md) | 规则与持久状态的逻辑字段、序列化和恢复边界 |
-| 参考 | [sing-box 设计分析](references/sing-box.md) | 固定源码快照、可借鉴设计与采用方式 |
-| 参考 | [sing-box 组件与平台](references/sing-box-components.md) | 注册、监听/拨号、承载、endpoint 与宿主接口 |
-| 参考 | [sing-box 性能分析](references/sing-box-performance.md) | 批处理、引擎、offload、定时器与空闲回收 |
-| 参考 | [sing-box Linux 集成](references/sing-box-linux.md) | nftables、策略路由、Docker/fw4、systemd 与 DNS |
-| 参考 | [shoes 设计分析](references/shoes.md) | 转发公平性、splice、索引、预算和测量方法 |
-| 参考 | [DNS 与持久化分析](references/dns-and-persistence.md) | sing-box 缓存、乐观刷新及 shoes 快照与地址预留 |
-| 技术 | [依赖与选型](technology/dependencies.md) | 指定库职责、BoringSSL 密码底座与接入事项 |
-| 工程 | [xmake 构建](build/xmake.md) | 构建约束和工具链验证计划 |
-| 工程 | [xmake 第三方依赖封装](build/third-party-xmake.md) | 项目内 Lua recipe、锁定、各依赖构建边界与验证 |
-| 工程 | [第三方依赖 Modules 封装](build/third-party-modules.md) | 第三方命名模块、导出接口、链接传播与验收 |
-| 平台 | [Linux 网络集成](platform/linux/networking.md) | 透明接管、mark、NFQUEUE、系统配置与恢复 |
-| 平台 | [平台抽象与宿主集成](platform/abstraction.md) | 窄能力、句柄所有权、事件线程与原生/宿主边界 |
-| 平台 | [跨平台 TUN 接管与防环回](platform/tun-routing-and-loopback.md) | Linux、Windows、macOS 路由保护、失败恢复与验证 |
-| 运维 | [Linux 服务体验](operations/linux-service.md) | systemd、目录、权限、就绪状态与诊断 |
-| 开发 | [C++ 编码规范](development/cpp-guidelines.md) | expected、optional、异常边界、资源与协程错误处理 |
-| 开发 | [代码文件行数规范](development/file-sizes.md) | 300 行目标、500 行上限、例外与自动检查 |
-| 开发 | [C++26 实用数据结构](development/cpp26-data-structures.md) | inplace_vector、hive、flat_map、function_ref 应用规范 |
-| 开发 | [上游问题与待调查现象](development/upstream-issues.md) | 依赖和工具链问题、复现范围、处理及跟踪状态 |
-| 开发 | [本机 GCC 能力](development/gcc-capabilities.md) | C++23/26 特性编译探测、反射与契约边界 |
-| 配置 | [KDL 2.0 配置设计](configuration/kdl.md) | 格式、解析流程与语义草案 |
-| 配置 | [KDL 配置规范草案](configuration/spec.md) | 组件、协议、规则、DNS、TUN、凭据与控制面配置 |
-| 配置 | [KDL/BEVE 规则集互转](configuration/rule-sets.md) | 共享语义模型、两个转换方向、错误与往返验收 |
-| 配置 | [配置示例](configuration/examples/README.md) | client/server KDL 示例及其边界 |
-| 决策 | [初始技术基线](decisions/0001-platform-baseline.md) | 已确定的项目方向与未决事项 |
-| 决策 | [自研网络能力](decisions/0002-self-developed-network-stack.md) | 自研 TUN、TLS/uTLS 类能力及依赖约束 |
-| 决策 | [C++ 错误处理](decisions/0003-cpp-error-handling.md) | 尽量无异常、优先 expected 与 optional |
-| 决策 | [现代 C++ 能力](decisions/0004-modern-cpp.md) | 显式 this、concept、反射、断言与函数包装优先级 |
-| 决策 | [HTTP 实现方向](decisions/0005-http-stack.md) | 自研 HTTP/1.1、HTTPS 与后续 HTTP/2 边界 |
-| 决策 | [规则集格式与互转](decisions/0006-rule-set-formats.md) | KDL/BEVE 已确定及可逆语义要求 |
-| 决策 | [BoringSSL 底座与 kTLS](decisions/0007-boringssl-libcrypto-and-ktls.md) | 正式采纳 libcrypto 密码底座与 Linux kTLS 卸载 |
-| 决策 | [协议优先级与拒绝旧协议](decisions/0008-protocol-priorities-and-vmess-deprecation.md) | TUN、SS-2022、WireGuard 优先级提升，明确拒绝 VMess 与经典 AEAD |
-| 计划 | [实施路线](planning/roadmap.md) | 技术验证顺序与验收条件 |
-| 计划 | [无异常与可恢复分配](planning/fallible-allocation.md) | 内存耗尽错误传播与依赖迁移验收 |
-| 计划 | [网络栈验证](planning/network-validation.md) | 协议正确性、互操作、资源与性能验证 |
-| 计划 | [性能验证](planning/performance-validation.md) | 优化对照实验、指标解释与可复现证据 |
-| 计划 | [Linux 集成验证](planning/linux-validation.md) | 服务生命周期、防火墙共存、DNS、崩溃恢复与优化对照 |
-| 计划 | [DNS 与状态验证](planning/dns-state-validation.md) | TTL/刷新竞态、故障注入、崩溃恢复和缓存性能 |
-| 接手 | [接手记录](handoff.md) | 当前进度、关键决定与下一步 |
+本目录保存 Nexus 的项目定位、工程设计原则、核心架构规范、跨平台方案、配置参考、技术决策与演进规划。
 
 ---
 
-## 文档状态约定
+## 1. 项目定位与当前状态
 
-- **已确定**：用户明确给出的项目定义和技术选择，变更时需要更新决策记录。
-- **设计草案**：为后续讨论提出的结构、命名或行为，不代表已冻结的接口。
-- **待验证**：需要通过指定依赖源码、构建实验或运行实验确认的事项。
+| 文档 | 内容 |
+| --- | --- |
+| [项目定位](project/overview.md) | 平台目标、client/server 角色定义与技术约束 |
+| [项目进度与交付基线](progress.md) | 第 91–146 批最新交付基线、实机验证证据与待推进事项 |
+| [Linux 代理内核支持矩阵](planning/proxy-kernel-support-matrix.md) | 已接入协议、入口、特性开关与适用边界 |
+| [依赖与选型](technology/dependencies.md) | 核心依赖职责、BoringSSL `libcrypto` 底座与边界约束 |
+
+---
+
+## 2. 工程设计原则
+
+| 文档 | 内容 |
+| --- | --- |
+| [核心架构原则](design-principles/core-architecture.md) | 类型注册分离、分阶段生命周期、协议与转发解耦、窄平台 Facade |
+| [性能与数据面原则](design-principles/performance-and-datapath.md) | 转发公平性、可证明加速切换（`splice`/kTLS）、内存回收、UDP 批处理与基准纪律 |
+| [路由、DNS 与状态原则](design-principles/routing-dns-and-state.md) | 首命中与三态逻辑、多维 DNS 缓存键与乐观刷新、原子落盘与 FakeIP 段预留 |
+| [协议与出站策略组原则](design-principles/protocols-and-groups.md) | 协议线规边界、HTTP 连接池租约、EWMA/断路器/滞后选路状态机 |
+| [多平台集成与运维原则](design-principles/platform-and-operations.md) | Linux nftables/systemd、Android 免 Root VPN、macOS 验签、Windows 代理/防火墙与 OpenWrt |
+
+---
+
+## 3. 核心架构与协议设计
+
+| 分类 | 文档 | 内容 |
+| --- | --- | --- |
+| 总体 | [总体架构](architecture/overview.md) | 分层、数据路径与生命周期 |
+| 总体 | [组件模型](architecture/component-model.md) | 注册、路由上下文、生命周期与装配 |
+| 总体 | [C++ Modules](architecture/modules.md) · [源码目录规划](architecture/source-tree.md) | 模块组织、依赖方向与工作区布局 |
+| 总体 | [并发与多线程](architecture/concurrency.md) · [性能与资源设计](architecture/performance.md) | worker 所有权、批处理、加速通道与资源预算 |
+| 协议 | [入站、出站与协议解耦](architecture/protocols.md) | 协议家族、承载组合、数据面契约与编译裁剪 |
+| 协议 | [SOCKS5 / Mixed](architecture/protocols/socks5-mixed.md) · [VLESS / Trojan / SS-2022](architecture/protocols/vless-trojan-ss.md) · [REALITY](architecture/protocols/reality.md) | 经典与现代代理协议边界、流控与抗重放 |
+| 协议 | [SS-2022 重放状态](architecture/protocols/ss2022-replay-state.md) · [WireGuard / WARP](architecture/protocols/wireguard.md) · [Hysteria 2 / QUIC](architecture/protocols/hysteria2.md) | 数据报隧道、抗重放与 QUIC 承载 |
+| TLS/HTTP | [自研 TLS](architecture/tls.md) · [uTLS 指纹引擎](architecture/utls-engine.md) · [TLS/QUIC 恢复](architecture/tls-resumption.md) · [QUIC 1-RTT](architecture/quic-resumption.md) | 握手引擎、现代浏览器指纹、PSK 与 ECH |
+| TLS/HTTP | [BoringSSL libcrypto](architecture/boringssl-libcrypto.md) · [Linux kTLS](architecture/ktls.md) | 密码原语底座与内核 TLS 零拷贝卸载 |
+| TLS/HTTP | [HTTP/HTTPS/H2](architecture/http.md) · [具名 HTTP 客户端](architecture/http-clients.md) · [HTTP 代理线规](architecture/http-proxy-spec.md) | 自研 HTTP/1.1、`nghttp2`/`nghttp3` 与 MASQUE |
+| 网络栈 | [自研 TUN 栈](architecture/tun.md) | 设备接入、用户态 TCP/IP/UDP 与资源配额 |
+| 路由/DNS | [路由匹配与热重载](architecture/routing-engine.md) · [路由元数据与嗅探](architecture/routing-metadata.md) | 有序规则、索引、借用周期、嗅探与反查 |
+| 路由/DNS | [DNS 与乐观缓存](architecture/dns.md) · [Fake-IP 与嗅探](architecture/dns-fakeip-engine.md) | 解析视图、TTL、负缓存、乐观刷新与双向映射 |
+| 存储/运维 | [缓存与持久状态](architecture/state-and-cache.md) · [持久状态清单](architecture/persistence-inventory.md) · [状态数据库](architecture/database.md) | 分层持久存储、WAL、提交语义与恢复 |
+| 存储/运维 | [规则集二进制格式](architecture/rule-set-format.md) · [BEVE 状态模型](architecture/beve-schemas.md) | BEVE 封装、索引边界与逻辑结构 |
+| 存储/运维 | [原生控制面与 IPC](architecture/control-api.md) · [日志系统](architecture/logging.md) | HTTP `/v1/*`、OpenMetrics `/metrics`、本地 UDS 与异步日志 |
+| 专项评估 | [容器评估](container-evaluation.md) · [共享 DNS 缓存评估](dns-shared-cache-evaluation.md) | 容器选型与多核 DNS 缓存架构评估 |
+
+---
+
+## 4. 多平台架构与客户端工程
+
+| 文档 | 内容 |
+| --- | --- |
+| [跨平台 OS 边界矩阵](platform/cross-platform-os-boundaries.md) | Linux / Android / Windows / Apple OS 原语与移植对照 |
+| [跨平台前序解耦路线](platform/cross-platform-prep.md) | POSIX 头文件清理与跨端演进步骤 |
+| [平台抽象与宿主集成](platform/abstraction.md) · [跨平台 TUN 防环回](platform/tun-routing-and-loopback.md) | 窄平台能力、句柄所有权与路由防环策略 |
+| [Linux 网络集成](platform/linux/networking.md) · [Linux 服务运维](operations/linux-service.md) · [发行打包与补全](../packaging/README.md) | nftables、策略路由、systemd 单元、OpenWrt `procd` 与 Shell 补全 |
+| [Android 免 Root 指南](platform/android/non-root-integration-guide.md) · [ARM64 ABI 核查清单](platform/android/kernel-aarch64-checklist.md) | `VpnService`、`DnsResolver`、UDS `SCM_RIGHTS` 与 `aarch64-linux-musl` 适配 |
+| [Windows 与 macOS 架构蓝图](platform/desktop-windows-macos-design.md) | Slint v1.19 C++26 桌面端、Swift 6 / SwiftUI 与 `NetworkExtension` |
+
+---
+
+## 5. 配置、构建与开发规范
+
+| 分类 | 文档 | 内容 |
+| --- | --- | --- |
+| 配置 | [KDL 2.0 设计](configuration/kdl.md) · [配置规范](configuration/spec.md) · [规则集互转](configuration/rule-sets.md) · [配置示例](configuration/examples/README.md) | KDL 语法、完整配置字段、规则集与成对示例 |
+| 构建 | [mcpp 工作区](build/mcpp-workspace.md) · [mcpp 迁移记录](build/mcpp-migration.md) · [第三方模块封装](build/third-party-modules.md) · [QUIC 依赖](build/quic-dependencies.md) · [运行包说明](build/runtime-package.md) | 构建入口、离线锁与运行时打包 |
+| 开发 | [C++ 编码规范](development/cpp-guidelines.md) · [C++26 数据结构](development/cpp26-data-structures.md) · [文件行数规范](development/file-sizes.md) · [模块与特性策略](development/module-feature-policy.md) | 无异常约定、容器选型、300/500 行规范与模块边界 |
+| 开发 | [Socket 绑定](development/socket-binding.md) · [TCP Fast Open](development/tcp-fast-open.md) · [本机 GCC 能力](development/gcc-capabilities.md) · [上游问题跟踪](development/upstream-issues.md) | 底层网络细节与工具链边界 |
+
+---
+
+## 6. 架构决策记录（ADR）
+
+| 编号 | 决策文档 | 核心结论 |
+| --- | --- | --- |
+| 0001 | [初始技术基线](decisions/0001-platform-baseline.md) | 平台定位、C++ Modules、KDL 2.0 与异步栈基线 |
+| 0002 | [自研网络栈与 TLS](decisions/0002-self-developed-network-stack.md) | 自研 TUN TCP/IP 栈与自研 TLS/指纹引擎 |
+| 0003 | [C++ 错误处理](decisions/0003-cpp-error-handling.md) | 尽量无异常，优先 `std::expected` / `std::optional` |
+| 0004 | [现代 C++ 能力](decisions/0004-modern-cpp.md) | 显式 `this`、concepts、尾置返回与静态反射 |
+| 0005 | [HTTP 实现方向](decisions/0005-http-stack.md) | 自研 HTTP/1.1 + 无 I/O `nghttp2`/`nghttp3` |
+| 0006 | [规则集格式与互转](decisions/0006-rule-set-formats.md) | KDL 2.0 与 BEVE 可逆语义转换 |
+| 0007 | [BoringSSL 底座与 kTLS](decisions/0007-boringssl-libcrypto-and-ktls.md) | 静态 `libcrypto` 密码底座（无第三方 `libssl`）与 kTLS 卸载 |
+| 0008 | [协议优先级与旧协议排除](decisions/0008-protocol-priorities-and-vmess-deprecation.md) | 聚焦现代安全协议，明确排除 VMess 与经典 SS AEAD |
+
+---
+
+## 7. 路线图、批次蓝图与验证计划
+
+| 文档 | 内容 |
+| --- | --- |
+| [实施路线](planning/roadmap.md) · [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) · [功能完整度清单](planning/feature-completion.md) · [拨号字段覆盖](planning/dial-field-coverage.md) | 总体演进路径、协议矩阵补齐顺序、内核增强与能力覆盖清单 |
+| [第 91–98 批规划](planning/next-batches-91-96.md)（[92](planning/batch92-state-design.md) / [93](planning/batch93-routing-dns-design.md) / [94](planning/batch94-protocols-xhttp-utls-design.md) / [95](planning/batch95-groups-observability-control-design.md) / [96](planning/batch96-nextgen-perf-design.md) / [97](planning/batch97-torture-interop-suite-design.md)） | Linux 双后端完整内核演进与压测收官蓝图 |
+| [第 99–104 批规划](planning/next-batches-99-104.md) · [第 105–110 批规划](planning/next-batches-105-110.md) · [第 111–116 批规划](planning/next-batches-111-116.md) · [第 117–122 批规划](planning/next-batches-117-122.md) · [第 123–128 批规划](planning/next-batches-123-128.md) · [第 129–134 批规划](planning/next-batches-129-134.md) · [第 135–140 批规划](planning/next-batches-135-140.md) · [第 141–146 批规划](planning/next-batches-141-146.md) · [第 147–152 批规划](planning/next-batches-147-152.md) | 跨平台内核硬化、全端客户端深化、控制面运维、数据面深度加固、多实现协议互通、生产边缘场景深挖、工作区现代化重构与下一阶段协议/内核补齐 |
+| [网络栈验证](planning/network-validation.md) · [性能验证](planning/performance-validation.md) · [Linux 集成验证](planning/linux-validation.md) · [Linux 内核验收](planning/proxy-kernel-linux-validation.md) · [DNS 与状态验证](planning/dns-state-validation.md) · [可恢复分配](planning/fallible-allocation.md) | 各子系统测试策略与实机验收基线 |

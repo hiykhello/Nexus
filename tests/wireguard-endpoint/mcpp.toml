@@ -1,0 +1,145 @@
+[package]
+namespace = "nexus"
+name = "wireguard-endpoint-tests"
+version = "0.1.0"
+
+[dependencies]
+nexus.wireguard-endpoint = { path = "../../src/endpoint" }
+nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[features]
+default = ["io-uring"]
+io-uring = ["nexus.corosio-source/uring"]
+host-dns-resolved = ["nexus.wireguard-endpoint/host-dns-resolved"]
+
+[feature-deps.io-uring]
+nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+
+[build]
+sources = ["../lease_support.cppm"]
+
+[targets.endpoint-owner]
+kind = "bin"
+main = "../endpoint_owner.cpp"
+
+[targets.endpoint-bounds]
+kind = "bin"
+main = "../endpoint_bounds.cpp"
+
+[targets.endpoint-config]
+kind = "bin"
+main = "../endpoint_config.cpp"
+
+[targets.endpoint-bootstrap]
+kind = "bin"
+main = "../endpoint_bootstrap.cpp"
+
+[targets.endpoint-bootstrap-allocation]
+kind = "bin"
+main = "../endpoint_bootstrap_allocation.cpp"
+
+[targets.endpoint-outer-policy]
+kind = "bin"
+main = "../endpoint_outer_policy.cpp"
+
+[targets.endpoint-signal-wake]
+kind = "bin"
+main = "../endpoint_signal_wake.cpp"
+
+[targets.endpoint-startup-cancel]
+kind = "bin"
+main = "../endpoint_startup_cancel.cpp"
+
+[targets.netlink-codec]
+kind = "bin"
+main = "../netlink_codec.cpp"
+
+[targets.netlink-socket]
+kind = "bin"
+main = "../netlink_socket.cpp"
+
+[targets.tun-network-records]
+kind = "bin"
+main = "../tun_network_records.cpp"
+
+[targets.tun-network]
+kind = "bin"
+main = "../tun_network.cpp"
+
+[targets.tun-network-allocation]
+kind = "bin"
+main = "../tun_network_allocation.cpp"
+
+[targets.tun-network-fixture]
+kind = "bin"
+main = "../tun_network_fixture.cpp"
+
+[targets.wireguard-packet-link]
+kind = "bin"
+main = "../wireguard_packet_link.cpp"
+
+[targets.wireguard-tun-allocation]
+kind = "bin"
+main = "../wireguard_tun_allocation.cpp"
+
+[targets.wireguard-tun-fixture]
+kind = "bin"
+main = "../wireguard_tun_fixture.cpp"
+
+[targets.default-rule-codec]
+kind = "bin"
+main = "../default_rule_codec.cpp"
+
+[targets.default-rule-native]
+kind = "bin"
+main = "../default_rule_native.cpp"
+
+[targets.default-policy-native]
+kind = "bin"
+main = "../default_policy_native.cpp"
+
+[targets.default-policy-fault]
+kind = "bin"
+main = "../default_policy_fault.cpp"
+
+[targets.default-policy-allocation]
+kind = "bin"
+main = "../default_policy_allocation.cpp"
+
+[targets.default-endpoint-layout]
+kind = "bin"
+main = "../default_endpoint_layout.cpp"
+
+[targets.wireguard-provider-port]
+kind = "bin"
+main = "../wireguard_provider_port.cpp"
+
+[targets.wireguard-provider-owner]
+kind = "bin"
+main = "../wireguard_provider_owner.cpp"
+
+[targets.host-dns-lease]
+kind = "bin"
+main = "../host_dns_lease.cpp"
+required_features = ["host-dns-resolved"]
+
+[targets.host-dns-new]
+kind = "bin"
+main = "../host_dns_new.cpp"
+required_features = ["host-dns-resolved"]
+
+[targets.resolved-bus-probe]
+kind = "bin"
+main = "../resolved_bus_probe.cpp"
+required_features = ["host-dns-resolved"]
+
+[targets.resolved-client-probe]
+kind = "bin"
+main = "../resolved_client_probe.cpp"
+required_features = ["host-dns-resolved"]
+
+[targets.resolved-owner-epoch]
+kind = "bin"
+main = "../resolved_owner_epoch.cpp"
+required_features = ["host-dns-resolved"]

@@ -1,7 +1,7 @@
-module nexus.packet;
+module packet;
 import std;
 
-namespace nexus::packet {
+namespace packet {
     namespace {
         auto read16(std::span<std::uint8_t const> p, std::size_t i) noexcept -> std::uint16_t {
             return static_cast<std::uint16_t>((std::uint16_t{p[i]} << 8) | p[i + 1]);
@@ -55,6 +55,7 @@ namespace nexus::packet {
         v.flags = static_cast<std::uint16_t>(((p[ip_header+12] & 1) << 8) | p[ip_header+13]);
         v.window = read16(p, ip_header+14); v.urgent = read16(p, ip_header+18);
         v.options = p.subspan(ip_header+20, header - 20); v.payload = p.subspan(ip_header + header);
+        v.dscp=static_cast<std::uint8_t>(p[1] >> 2);
         return v;
     }
     auto make_tcp4(Tcp4View v, std::size_t mtu) -> std::expected<Bytes, PacketError> {

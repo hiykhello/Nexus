@@ -7,16 +7,16 @@
 #include <boost/corosio/local_stream_socket.hpp>
 #include <boost/corosio/local_connect_pair.hpp>
 import std;
-import nexus.shadowsocks.corosio_client;
-import nexus.shadowsocks.key;
-import nexus.shadowsocks.chunk;
-import nexus.shadowsocks.request;
-import nexus.shadowsocks.replay;
-import nexus.shadowsocks.frame;
-import nexus.shadowsocks.response;
+import shadowsocks.corosio_client;
+import shadowsocks.key;
+import shadowsocks.chunk;
+import shadowsocks.request;
+import shadowsocks.replay;
+import shadowsocks.frame;
+import shadowsocks.response;
 namespace capy=boost::capy;
 namespace io=boost::corosio;
-namespace s=nexus::shadowsocks;
+namespace s=shadowsocks;
 using namespace std::chrono_literals;
 struct State {
     std::optional<std::expected<s::detail::StartedRequest,s::detail::StartError>> result;

@@ -1,0 +1,16 @@
+# Candidate standalone member: tests/dns-flight-copy/mcpp.toml.
+# Add this member deliberately when central validation is ready.
+[package]
+namespace = "nexus"
+name = "dns-flight-copy-tests"
+version = "0.1.0"
+[dependencies]
+nexus.dns = { path = "../../src/dns" }
+nexus.protocols = { path = "../../src" }
+[features]
+response = { defines = ["NEXUS_DNS_RESPONSE"] }
+[build]
+sources = []
+[targets.flight-copy]
+kind = "bin"
+main = "flight_copy_test.cpp"

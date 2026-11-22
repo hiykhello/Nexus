@@ -1,7 +1,7 @@
-module nexus.tls.transcript;
+module tls.transcript;
 import std;
 
-namespace nexus::tls {
+namespace tls {
     auto Transcript::create(crypto::Hash hash) -> std::expected<Transcript,TranscriptError> {
         auto digest=crypto::DigestContext::create(hash);
         if (!digest) return std::unexpected(TranscriptError::crypto_error);
@@ -19,6 +19,15 @@ namespace nexus::tls {
     auto Transcript::snapshot() const -> std::expected<crypto::Bytes,TranscriptError> {
         auto digest=digest_.snapshot(); if (!digest) return std::unexpected(TranscriptError::crypto_error);
         return std::move(*digest);
+    }
+    auto Transcript::client_hello_binder_hash(std::span<std::uint8_t const> prefix) && -> std::expected<crypto::Bytes,TranscriptError> {
+        if (prefix.size()<4 || prefix[0]!=1 || (messages_!=0 && !(retry_ && messages_==2)))
+            return std::unexpected(TranscriptError::malformed_message);
+        auto length=(std::size_t{prefix[1]}<<16)|(std::size_t{prefix[2]}<<8)|prefix[3];
+        if (prefix.size()-4>=length) return std::unexpected(TranscriptError::malformed_message);
+        auto digest=std::move(digest_);
+        if (!digest.update(prefix)) return std::unexpected(TranscriptError::crypto_error);
+        auto result=digest.snapshot();if (!result) return std::unexpected(TranscriptError::crypto_error);return std::move(*result);
     }
     auto Transcript::hello_retry_request() -> std::expected<void,TranscriptError> {
         if (retry_ || messages_!=1 || !first_is_client_hello_) return std::unexpected(TranscriptError::invalid_retry_state);

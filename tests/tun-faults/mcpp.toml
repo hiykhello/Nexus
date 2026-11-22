@@ -1,0 +1,107 @@
+[package]
+namespace = "nexus"
+name = "tun-fault-tests"
+version = "0.1.0"
+
+# The tests in this member need linker interposition. Each feature selects
+# binaries that supply the corresponding wrappers. Use its namesake profile
+# so the link flags do not reach ordinary tests or production targets.
+[dependencies]
+nexus.tun = { path = "../../src/transport" }
+
+[features]
+udp-receive = []
+udp-send = []
+tcp-receive = []
+tcp-socket = []
+tcp-timeout = []
+socket-mark = []
+
+[build]
+sources = []
+
+[profile.udp-receive]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=recvfrom"]
+
+[profile.udp-send]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=sendto"]
+
+[profile.tcp-receive]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=recv"]
+
+[profile.tcp-socket]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=socket"]
+
+[profile.tcp-timeout]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=poll", "-Wl,--wrap=socket", "-Wl,--wrap=close"]
+
+[profile.socket-mark]
+opt = 0
+debug = true
+ldflags = ["-Wl,--wrap=setsockopt", "-Wl,--wrap=connect", "-Wl,--wrap=sendto"]
+
+[targets.udp-deferred-allocation]
+kind = "bin"
+main = "udp_deferred_allocation.cpp"
+required_features = ["udp-receive"]
+
+[targets.udp-output-allocation]
+kind = "bin"
+main = "udp_output_allocation.cpp"
+required_features = ["udp-receive"]
+
+[targets.udp-reply-allocation]
+kind = "bin"
+main = "udp_reply_allocation.cpp"
+required_features = ["udp-receive"]
+
+[targets.udp-direct-fault]
+kind = "bin"
+main = "udp_direct_fault.cpp"
+required_features = ["udp-receive"]
+
+[targets.udp-engine-fault]
+kind = "bin"
+main = "udp_engine_fault.cpp"
+required_features = ["udp-receive"]
+
+[targets.udp-send-fault]
+kind = "bin"
+main = "udp_send_fault.cpp"
+required_features = ["udp-send"]
+
+[targets.transport-udp-send-fault]
+kind = "bin"
+main = "../tun/transport_memory.cpp"
+defines = ["NEXUS_TRANSPORT_SEND_FAULT"]
+required_features = ["udp-send"]
+
+[targets.tcp-direct-allocation]
+kind = "bin"
+main = "tcp_direct_allocation.cpp"
+required_features = ["tcp-receive"]
+
+[targets.tcp-stack-allocation]
+kind = "bin"
+main = "tcp_stack_allocation.cpp"
+required_features = ["tcp-socket"]
+
+[targets.tcp-direct-timeout]
+kind = "bin"
+main = "tcp_direct_timeout.cpp"
+required_features = ["tcp-timeout"]
+
+[targets.direct-socket-mark-failure]
+kind = "bin"
+main = "direct_socket_mark_failure.cpp"
+required_features = ["socket-mark"]

@@ -39,7 +39,7 @@ def run(root, mode, workers, scenario="success"):
                 received.set()
                 if query[12:].lower() != b"\x07example\x04test\x00\x00\x01\x00\x01":
                     raise RuntimeError("unexpected DNS query")
-                if scenario == "block":
+                if scenario in ("block", "source-block"):
                     raise RuntimeError("blocked domain reached DNS")
                 if scenario == "stop" and not release.wait(5):
                     raise RuntimeError("pending DNS was not released")
@@ -48,13 +48,13 @@ def run(root, mode, workers, scenario="success"):
                 reply.extend(record + b"\xc6\x12\x00\x01" + record + b"\x7f\x00\x00\x01")
                 dns.sendto(reply, peer)
             except TimeoutError as exc:
-                if scenario != "block": errors.append(exc)
+                if scenario not in ("block", "source-block"): errors.append(exc)
             except Exception as exc:
                 errors.append(exc)
         thread = threading.Thread(target=answer); thread.start()
         args = [str(binary), str(dns.getsockname()[1]), str(workers), mode]
         if mode == "vless": args += [str(root / "cert.der"), str(root / "key.der"), str(root / "uuid")]
-        if scenario == "block": args.append("block")
+        if scenario in ("block", "source-block"): args.append(scenario)
         proxy = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         box = None
         try:
@@ -101,7 +101,7 @@ def run(root, mode, workers, scenario="success"):
                         if client.recv(1): raise RuntimeError("unexpected data after rejection or stop")
                     except (ConnectionResetError, ssl.SSLError):
                         pass
-                    if scenario == "block":
+                    if scenario in ("block", "source-block"):
                         time.sleep(1.2)
                     proxy.stdin.write("probe\n"); proxy.stdin.flush()
                     if proxy.stdout.readline().strip() != "free": raise RuntimeError("connection pin was not released")
@@ -156,4 +156,5 @@ with tempfile.TemporaryDirectory(prefix="nexus-fakeip-inbounds-") as directory:
     for mode in ("vless", "ss"):
         for workers in (1, 2):
             for scenario in ("success", "block", "stop"): run(root, mode, workers, scenario)
+            if '--source' in sys.argv: run(root, mode, workers, 'source-block')
 print("VLESS/TLS and SS-2022 FakeIP routing, blocking, cancellation and pin lifecycle passed")

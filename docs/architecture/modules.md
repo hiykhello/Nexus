@@ -1,6 +1,11 @@
 # C++ Modules 组织
 
-状态：全面使用 C++ Modules 已确定；模块名、目录和边界为设计草案。
+状态：全面使用 C++ Modules 已确定；新模块与命名空间已确定**不再使用 `nexus.` / `nexus::` 前缀**，存量模块按第 91–96 批逐步去前缀迁移。
+
+## 命名与去前缀约定
+
+- **新增模块与命名空间**：直接以领域命名（沿用已落地的 `containers.byte_ring` / `containers.ring_queue` 与 `namespace containers`），例如 `logging.*`（`namespace logging`，避开 `<math.h>` 全局 `::log`）、`state.*`（`namespace state`）、`encoding.base64_key`（`namespace encoding`）。
+- **存量模块迁移**：自底向上分批移除 `nexus.` 模块前缀与 `nexus::` 命名空间前缀，确保每批可独立编译验收，避免与第三方模块（如 `export module proxy.v4;`，其命名空间为 `pro::`）或 C/POSIX 全局符号冲突。迁移批次见[第 91–96 批规划](../planning/next-batches-91-96.md)。
 
 ## 组织原则
 
@@ -54,6 +59,8 @@ HTTP 代理协议适配复用 `http`/`http.h1`，规则下载或其他 HTTP 用�
 
 `platform` 的能力契约与 `contracts` 按领域分工：前者面向 OS/宿主资源，后者面向通用流/数据报等能力，均不得成为所有实现的导入集合。平台后端实现契约，运行时适配负责 Corosio 句柄登记；公共异步类型的位置需实验确认无循环。详见[平台抽象](../platform/abstraction.md)。
 
+当前 Linux 双栈 UDP socket 在 `nexus.net.udp_socket`，提供地址、发送、窥视与单次接收；SOCKS 和 UoT 使用窥视后消费，SS 按会话使用单次接收。策略、目标授权、会话和协议封包仍由各自上层负责。该边界不引入新的系统调用或分配；UoT 的上层路由和授权模型尚依赖 SOCKS 类型。
+
 `packet` 中的包设备契约同时允许内存实现和 TUN 实现，`netstack` 不直接依赖具体平台的 TUN 设备。TLS 核心通过密码原语与证书边界处理协议，`profile` 依赖稳定的握手描述类型，核心不反向依赖具体 profile；装配层组合二者。表中的模块是职责候选，最终拆分粒度仍需编译与依赖图验证。
 
 `dns` 定义协议有效期、解析视图与乐观刷新，`state` 通过窄存储契约提供提交和恢复，不反向依赖 DNS 路由策略。FakeIP 在普通 DNS 缓存之外管理归属；具体归属模块待接口验证，不能为了共用存储制造 `dns`、`routing` 与 `state` 的依赖环。见 [DNS](dns.md)与[持久状态](state-and-cache.md)。
@@ -65,7 +72,7 @@ HTTP 代理协议适配复用 `http`/`http.h1`，规则下载或其他 HTTP 用�
 - ngcpp/proxy 的 facade、模板和宏在模块接口中的可达性与可见性。
 - Corosio 及其协程依赖跨模块使用时的编译、链接和生命周期行为。
 - 配置解析库的头文件与模板在模块中的接入方式。
-- xmake 对模块依赖扫描、跨 target 导入和增量构建的处理。
+- mcpp 对模块依赖扫描、跨工作区成员导入和增量构建的处理。
 - 编译器、标准库、编译参数变化后模块产物的重建行为。
 - 包设备、协议状态机和 TLS profile 的契约是否可独立编译并避免循环依赖。
 - 协议家族能否分别裁剪入站/出站，且路由、公共配置读取器不导入全部协议；平台后端能否由假提供者替换而不改协议核心。

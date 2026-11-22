@@ -1,0 +1,82 @@
+import { Button, LineEdit, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component ConfigPanel inherits VerticalBox {
+    in-out property <string> kdl-text: "";
+    in-out property <string> share-link-input: "";
+    in property <string> config-path: "";
+    in property <string> diagnostic-message: "";
+    in property <bool> diagnostic-ok: true;
+
+    callback validate-kdl(string);
+    callback save-and-reload(string);
+    callback open-external-editor();
+    callback import-share-link(string);
+
+    spacing: 10px;
+
+    HorizontalBox {
+        spacing: 8px;
+        Text {
+            text: "KDL 2.0 配置";
+            font-size: 16px;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Button {
+            text: "外部编辑器打开";
+            clicked => { root.open-external-editor(); }
+        }
+        Button {
+            text: "内核校验";
+            clicked => { root.validate-kdl(root.kdl-text); }
+        }
+        Button {
+            text: "保存并热重载";
+            primary: true;
+            clicked => { root.save-and-reload(root.kdl-text); }
+        }
+    }
+
+    if root.config-path != "" : Text {
+        text: root.config-path;
+        font-size: 12px;
+        opacity: 0.65;
+    }
+
+    if root.diagnostic-message != "" : Rectangle {
+        border-radius: 6px;
+        background: root.diagnostic-ok ? Theme.success-bg : Theme.error-bg;
+        HorizontalBox {
+            padding: 8px;
+            Text {
+                text: root.diagnostic-message;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    HorizontalBox {
+        spacing: 8px;
+        LineEdit {
+            horizontal-stretch: 1;
+            placeholder-text: "粘贴 vless:// / trojan:// / hy2:// / ss:// 分享链接导入节点...";
+            text <=> root.share-link-input;
+        }
+        Button {
+            text: "导入节点";
+            clicked => {
+                root.import-share-link(root.share-link-input);
+                root.share-link-input = "";
+            }
+        }
+    }
+
+    TextEdit {
+        vertical-stretch: 1;
+        text <=> root.kdl-text;
+        font-size: 13px;
+    }
+}

@@ -1,14 +1,15 @@
 module;
 #include <experimental/scope>
-#include <arpa/inet.h>
 #include <cerrno>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-module nexus.udp.direct;
-import nexus.rules;
+module udp.direct;
+import platform.ip_address;
+import rules;
 import std;
 
-namespace nexus::udp {
+namespace udp {
     namespace {
         auto system_error() -> std::error_code { return {errno, std::generic_category()}; }
         auto address(Endpoint4 endpoint) -> sockaddr_in {
@@ -16,14 +17,14 @@ namespace nexus::udp {
             result.sin_family = AF_INET;
             auto const& a = endpoint.address;
             auto n = (std::uint32_t{a[0]} << 24) | (std::uint32_t{a[1]} << 16) | (std::uint32_t{a[2]} << 8) | a[3];
-            result.sin_addr.s_addr = htonl(n);
-            result.sin_port = htons(endpoint.port);
+            result.sin_addr.s_addr = platform::host_to_net32(n);
+            result.sin_port = platform::host_to_net16(endpoint.port);
             return result;
         }
         auto endpoint(sockaddr_in const& address) -> Endpoint4 {
-            auto n = ntohl(address.sin_addr.s_addr);
+            auto n = platform::net_to_host32(address.sin_addr.s_addr);
             return {{static_cast<std::uint8_t>(n >> 24), static_cast<std::uint8_t>(n >> 16),
-                     static_cast<std::uint8_t>(n >> 8), static_cast<std::uint8_t>(n)}, ntohs(address.sin_port)};
+                     static_cast<std::uint8_t>(n >> 8), static_cast<std::uint8_t>(n)}, platform::net_to_host16(address.sin_port)};
         }
     }
     DirectSocket::DirectSocket(FlowId flow, int value) : id(flow), fd(value) {}

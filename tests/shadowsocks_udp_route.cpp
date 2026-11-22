@@ -2,12 +2,12 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.rules;
-import nexus.shadowsocks.udp_route;
-import nexus.shadowsocks.udp_packet;
-namespace s=nexus::shadowsocks;
+import rules;
+import shadowsocks.udp_route;
+import shadowsocks.udp_packet;
+namespace s=shadowsocks;
 int main() {
-    auto policy=nexus::rules::Matcher::compile({{{"ip-cidr","192.0.2.0/24"},{"ip-cidr","2001:db8::/32"},
+    auto policy=::rules::Matcher::compile({{{"ip-cidr","192.0.2.0/24"},{"ip-cidr","2001:db8::/32"},
         {"ip-cidr","::ffff:127.0.0.0/104"},{"domain-suffix","blocked.example"}}});
     if (!policy) return 1;
     s::UdpRoutedServer server(std::move(*policy),4,4);
@@ -55,10 +55,10 @@ int main() {
     if (!accepted || !server.forward(*accepted,ipv4) || server.sockets()!=1) return 9;
     std::array<std::uint8_t,8> data{}; if (recv(fd,data.data(),data.size(),0)!=1 || data[0]!=1) return 10;
     // Ordered policies must preserve first-match semantics across domain/IP.
-    auto ordered_test=[&](std::vector<nexus::rules::RouteRule> rules,std::size_t fallback,
+    auto ordered_test=[&](std::vector<::rules::RouteRule> rules,std::size_t fallback,
                           std::optional<s::UdpRouteError> preflight_error,
                           std::optional<s::UdpRouteError> forward_error) {
-        auto compiled=nexus::rules::RouteMatcher::compile(rules,fallback,3);
+        auto compiled=::rules::RouteMatcher::compile(rules,fallback,3);
         if (!compiled) return false;
         s::UdpRoutedServer routed(std::move(*compiled),4,4);
         s::UdpPacket query{{9},0,1000,{}, {3,7,'o','k','.','t','e','s','t',static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)}, {7}};
@@ -72,13 +72,41 @@ int main() {
         if (forward_error) return is_error(result,*forward_error) && routed.sockets()==0;
         return result && recv(fd,data.data(),data.size(),0)==1 && data[0]==7;
     };
-    nexus::rules::RuleSet domain{{{"domain-suffix","ok.test"}}};
-    nexus::rules::RuleSet loopback{{{"ip-cidr","127.0.0.0/8"}}};
+    ::rules::RuleSet domain{{{"domain-suffix","ok.test"}}};
+    ::rules::RuleSet loopback{{{"ip-cidr","127.0.0.0/8"}}};
     if (!ordered_test({{domain,0},{loopback,1}},1,{},{})) return 12;
     if (!ordered_test({{loopback,1},{domain,0}},0,{},s::UdpRouteError::blocked)) return 13;
     if (!ordered_test({{domain,2}},0,s::UdpRouteError::unsupported,{})) return 14;
     if (!ordered_test({{loopback,2}},0,{},s::UdpRouteError::unsupported)) return 15;
     if (!ordered_test({{domain,1}},0,s::UdpRouteError::blocked,{})) return 16;
+    // IPv4-mapped addresses must satisfy mixed-family expressions together,
+    // including when a numeric mapped target resolves to a canonical IPv4 peer.
+    ::rules::Rule both{"and","",{{"ip-cidr","127.0.0.0/8"},{"ip-cidr","::ffff:0:0/96"}}};
+    auto mixed=::rules::Matcher::compile({{both},2});
+    if (!mixed) return 19;
+    s::UdpRoutedServer mapped_server(std::move(*mixed),4,4);
+    s::UdpPacket mapped_query{{10},0,1000,{},
+        {4,0,0,0,0,0,0,0,0,0,0,255,255,127,0,0,1,static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)}, {8}};
+    auto mapped_wire=*s::encode_udp_packet(key,s::UdpDirection::client,mapped_query,{});
+    auto mapped_request=mapped_server.receive(key,mapped_wire,client,t,1000);
+    if (!mapped_request || !is_error(mapped_server.forward(*mapped_request,ipv4),s::UdpRouteError::blocked) ||
+        mapped_server.sockets()!=0) return 20;
+    ::rules::RuleSet source_rules{{{"source-port","1000",{}}},2};
+    auto source_policy=::rules::RouteMatcher::compile(std::array{::rules::RouteRule{source_rules,1}},0,2,
+        ::rules::SourceMetadata::provided);
+    if (!source_policy) return 21;
+    s::UdpRoutedServer source_server(std::move(*source_policy),4,4);
+    s::UdpPacket source_query{{11},0,1000,{}, {3,7,'o','k','.','t','e','s','t',
+        static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)}, {9}};
+    auto source_wire=*s::encode_udp_packet(key,s::UdpDirection::client,source_query,{});
+    auto old_request=source_server.receive(key,source_wire,client,t,1000);
+    source_query.packet_id++;
+    source_wire=*s::encode_udp_packet(key,s::UdpDirection::client,source_query,{});
+    auto rebound=client; rebound.port=1001;
+    auto new_request=source_server.receive(key,source_wire,rebound,t,1000);
+    if (!old_request || !new_request || source_server.preflight(*old_request).error()!=s::UdpRouteError::blocked ||
+        !source_server.preflight(*new_request) || !is_error(source_server.forward(*old_request,ipv4),s::UdpRouteError::blocked) ||
+        !source_server.forward(*new_request,ipv4) || recv(fd,data.data(),data.size(),0)!=1 || data[0]!=9) return 22;
     ::close(fd);
     std::println("SS-2022 UDP route policy passed");
 }

@@ -1,7 +1,7 @@
 import std;
-import nexus.tls.record_stream;
-import nexus.tls.record;
-import nexus.tls.handshake;
+import tls.record_stream;
+import tls.record;
+import tls.handshake;
 static thread_local int fail_after=-1;
 static bool watch_pending=false, pending_released=false;
 static void* watched_pending=nullptr;
@@ -15,7 +15,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { if (p && p==watched_pending) { watched_pending=nullptr; pending_released=true; } std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { ::operator delete(p); }
-namespace t=nexus::tls; namespace c=nexus::crypto;
+namespace t=tls; namespace c = ::crypto;
 int main() {
     c::Bytes key(16,7), iv(12,9), msg{1,0,0,3,'a','b','c'};
     auto sender=t::RecordLayer::create(t::RecordDirection::send,c::Aead::aes_128_gcm,key,iv);

@@ -1,7 +1,7 @@
-module nexus.tcp.engine;
+module tcp.engine;
 import std;
 
-namespace nexus::tcp {
+namespace tcp {
     auto MemoryEngine::reset(ConnectionId id, std::uint64_t now) -> std::expected<ReadResult, EngineError> {
         if (initialized_ && now < now_) return std::unexpected(EngineError::time_reversed);
         initialized_ = true; now_ = now;

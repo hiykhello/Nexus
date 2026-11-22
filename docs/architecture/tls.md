@@ -2,7 +2,7 @@
 
 状态：自研 TLS 与指纹、BoringSSL libcrypto 密码底座已确定；协议范围、具体接口和所需验证仍为草案或待决定项。
 
-[决策 0007](../decisions/0007-boringssl-libcrypto-and-ktls.md)修订了最初完全排除 BoringSSL 的约束。具体版本与接入尚未验证，详见[底座评估](boringssl-libcrypto.md)和[第三方依赖封装](../build/third-party-xmake.md)。
+[决策 0007](../decisions/0007-boringssl-libcrypto-and-ktls.md)修订了最初完全排除 BoringSSL 的约束。具体版本与接入尚未验证，详见[底座评估](boringssl-libcrypto.md)和[工作区构建](../build/mcpp-workspace.md)。
 
 ## 目标与参考边界
 
@@ -10,7 +10,7 @@ Nexus 计划自行实现 TLS 协议处理及 uTLS 类 ClientHello 定制能力�
 
 HTTP/1.1 已确定自研，HTTPS 由自研 HTTP 与本 TLS 层组合；HTTP/2 若后续启用可使用 nghttp2 的无 I/O 核心。ALPN 仅通告实际可驱动的应用协议，具体连接与隧道边界见[HTTP 设计](http.md)。
 
-“uTLS 类能力”在本文指可配置的握手表现与指纹 profile，不代表直接依赖 Go uTLS 库。sing-box 在已调研快照中依赖 Go `crypto/tls`、`crypto/x509` 和外部 uTLS；Nexus 借鉴它的配置与集成设计，自研范围由本项目独立定义。详见[参考分析](../references/sing-box.md)。
+“uTLS 类能力”在本文指可配置的握手表现与现代浏览器指纹 profile，由 Nexus 自研实现，不引入外部第三方 TLS 协议栈；配置与连接隔离原则见 [核心架构原则](../design-principles/core-architecture.md)。
 
 ## 依赖边界
 
@@ -30,6 +30,8 @@ Nexus 的 TLS 协议引擎自研，密码原语使用静态 BoringSSL libcrypto�
 | ClientHello profile | 有序扩展、套件与组列表、GREASE、padding 和编码策略 |
 | 会话配置 | 身份、ALPN、版本策略、profile 选择与恢复策略 |
 | 异步连接适配 | 握手、读写、超时、取消与连接状态导出 |
+
+首次 ClientHello 的自定义认证通过编译期适配执行：适配器借用精确的握手字节和首个 X25519 share 的私钥，只能替换 session ID，并必须提供证书验证器。重试复用认证后的 session ID 与验证器；此路径不会回退到 PKI，仍须验证 CertificateVerify 和 Finished。Reality 的封装和验证器位于 `nexus.reality.client`，TLS 记录处理无需了解该协议。服务端默认只选择客户端提供的签名算法；已认证身份如需使用未提供的 Ed25519，调用方必须明确启用该策略。独立 TLS 的适配、签名策略、握手测试及 REALITY 双向互通测试均已通过。
 
 TLS 核心应可由输入字节和显式事件驱动，输出待发送字节或所需操作，避免状态机直接依赖某种 socket。每条连接持有自己的状态、密钥和缓冲区，配置模板在连接间共享时保持不可变。
 

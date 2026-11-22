@@ -6,9 +6,18 @@
 #include <unistd.h>
 
 import std;
-import nexus.proxy;
-import nexus.rules;
-import nexus.rulefile;
+import proxy;
+import rules;
+import rulefile;
+import platform.stream_peer;
+
+static_assert(sizeof(::platform::stream_peer_abi::Descriptor)==sizeof(pollfd));
+static_assert(alignof(::platform::stream_peer_abi::Descriptor)==alignof(pollfd));
+static_assert(__builtin_offsetof(::platform::stream_peer_abi::Descriptor,events)==__builtin_offsetof(pollfd,events));
+static_assert(__builtin_offsetof(::platform::stream_peer_abi::Descriptor,revents)==__builtin_offsetof(pollfd,revents));
+static_assert(std::is_same_v<::platform::stream_peer_abi::Count,nfds_t>);
+static_assert(::platform::stream_peer_abi::read_hangup==POLLRDHUP && ::platform::stream_peer_abi::hangup==POLLHUP &&
+    ::platform::stream_peer_abi::error==POLLERR && ::platform::stream_peer_abi::invalid==POLLNVAL);
 
 using namespace std::chrono_literals;
 
@@ -196,7 +205,7 @@ static auto transfer_ipv6(std::uint16_t proxy_port) -> bool {
     return target_ok;
 }
 
-static auto policy_test(nexus::proxy::RuleFormat format) -> bool {
+static auto policy_test(proxy::RuleFormat format) -> bool {
     constexpr std::string_view kdl = R"(schema-version 1
 kind "predicate"
 rule type="ip-cidr" value="127.0.0.0/8"
@@ -204,22 +213,22 @@ rule type="ip-cidr" value="::1/128"
 rule type="domain-suffix" value="blocked.test"
 )";
     std::string data(kdl);
-    if (format == nexus::proxy::RuleFormat::beve) {
-        auto rules = nexus::rules::parse_kdl(kdl);
+    if (format == proxy::RuleFormat::beve) {
+        auto rules = ::rules::parse_kdl(kdl);
         if (!rules) return false;
-        auto encoded = nexus::rules::write_beve(*rules);
+        auto encoded = ::rules::write_beve(*rules);
         if (!encoded) return false;
         data = std::move(*encoded);
     }
     auto path = std::filesystem::temp_directory_path() /
                 ("nexus-policy-" + std::to_string(::getpid()) +
-                 (format == nexus::proxy::RuleFormat::kdl ? ".kdl" : ".beve"));
-    auto published = nexus::rulefile::publish_new_file(path.string(), data);
+                 (format == proxy::RuleFormat::kdl ? ".kdl" : ".beve"));
+    auto published = ::rulefile::publish_new_file(path.string(), data);
     if (!published) return false;
-    auto input = nexus::rulefile::read_regular_file(path.string());
+    auto input = ::rulefile::read_regular_file(path.string());
     std::filesystem::remove(path);
     if (!input) return false;
-    nexus::proxy::Server server;
+    proxy::Server server;
     if (!server.set_block_rules(*input, format)) return false;
     if (server.set_block_rules("invalid", format)) return false;
     auto port = server.start(0);
@@ -246,17 +255,42 @@ rule type="domain-suffix" value="blocked.test"
     return ok && replaced.has_value() && restarted.has_value();
 }
 
+#ifdef NEXUS_TEST_SOURCE_ROUTE
+static auto source_policy_test() -> bool {
+    namespace r = ::rules;
+    r::RuleSet source{{{"and","",{{"source-ip-cidr","127.0.0.0/8",{}},
+        {"source-port-range","1-65535",{}},{"network","tcp",{}}}}},2};
+    auto policy=r::RouteMatcher::compile(std::array{r::RouteRule{source,1}},0,2,r::SourceMetadata::provided);
+    if (!policy || !policy->needs_source()) return false;
+    proxy::Server server;
+    if (!server.set_source_policy_for_test(std::move(*policy))) return false;
+    auto port=server.start(0);
+    if (!port) return false;
+    std::atomic_bool stop{false};
+    std::jthread loop([&] { while (!stop) server.poll(20ms); server.stop(); });
+    Fd ip_client(connect_to(*port));
+    std::array<std::uint8_t,10> ip{5,1,0,1,127,0,0,1,0,80};
+    Fd domain_client(connect_to(*port));
+    std::array<std::uint8_t,16> domain{5,1,0,3,9,'l','o','c','a','l','h','o','s','t',0,80};
+    bool ok=ip_client.fd>=0 && greet(ip_client.fd) && request(ip_client.fd,ip,2) &&
+        domain_client.fd>=0 && greet(domain_client.fd) && request(domain_client.fd,domain,2);
+    stop=true;
+    loop.join();
+    return ok;
+}
+#endif
+
 static auto credential_lifecycle() -> bool {
-    nexus::proxy::Server server;
+    proxy::Server server;
     if (server.set_socks5_credentials("", "password") || server.set_socks5_credentials("user", "") ||
         server.set_socks5_credentials(std::string(256, 'x'), "password")) return false;
     if (!server.set_socks5_credentials("user", "password")) return false;
-    if (server.start(0, nexus::proxy::Inbound::mixed)) return false;
+    if (server.start(0, proxy::Inbound::mixed)) return false;
     auto port = server.start(0);
     if (!port || server.clear_socks5_credentials() || server.set_socks5_credentials("user", "other")) return false;
     server.stop();
     if (!server.clear_socks5_credentials()) return false;
-    auto mixed = server.start(0, nexus::proxy::Inbound::mixed);
+    auto mixed = server.start(0, proxy::Inbound::mixed);
     if (!mixed) return false;
     server.stop();
     return true;
@@ -270,8 +304,8 @@ static auto active_relay_stop(unsigned workers) -> bool {
     socklen_t size=sizeof(address);
     if (::getsockname(listener.fd,reinterpret_cast<sockaddr*>(&address),&size)) return false;
     auto target=ntohs(address.sin_port);
-    nexus::proxy::Server server;
-    auto port=server.start(0,nexus::proxy::Inbound::socks5,workers);
+    proxy::Server server;
+    auto port=server.start(0,proxy::Inbound::socks5,workers);
     if (!port) return false;
     std::atomic_bool stop{false};
     std::jthread loop([&] { while (!stop) server.poll(20ms); server.stop(); });
@@ -291,7 +325,7 @@ static auto active_relay_stop(unsigned workers) -> bool {
     if (!ok || client_end!=0 || peer_end!=0)
         std::cerr << "active relay stop: transfer=" << ok << " client=" << client_end << " peer=" << peer_end << '\n';
     ok=ok && client_end==0 && peer_end==0;
-    auto restarted=server.start(0,nexus::proxy::Inbound::socks5,workers);
+    auto restarted=server.start(0,proxy::Inbound::socks5,workers);
     if (restarted) server.stop();
     else std::cerr << "active relay restart failed: " << restarted.error().message() << '\n';
     return ok && restarted.has_value();
@@ -308,8 +342,8 @@ static auto slow_resolver_test(unsigned workers) -> bool {
     auto gate = std::to_string(gate_read.fd);
     if (::setenv("NEXUS_TEST_RESOLVER_READY_FD", ready.c_str(), 1) != 0 ||
         ::setenv("NEXUS_TEST_RESOLVER_GATE_FD", gate.c_str(), 1) != 0) return false;
-    nexus::proxy::Server server;
-    auto port = server.start(0,nexus::proxy::Inbound::socks5,workers);
+    proxy::Server server;
+    auto port = server.start(0,proxy::Inbound::socks5,workers);
     if (!port) return false;
     std::atomic_bool stop{false}, stopped{false};
     std::jthread loop([&] { while (!stop) server.poll(20ms); server.stop(); stopped = true; });
@@ -350,7 +384,7 @@ static auto slow_resolver_test(unsigned workers) -> bool {
 
 int main(int argc, char** argv) {
     unsigned workers=argc==2 ? static_cast<unsigned>(std::stoul(argv[1])) : 1;
-    nexus::proxy::Server server;
+    proxy::Server server;
     auto port = server.start(0);
     if (!port) { std::cerr << "proxy start failed: " << port.error() << '\n'; return 1; }
     std::atomic_bool stop{false};
@@ -367,9 +401,12 @@ int main(int argc, char** argv) {
         auto n = ::recv(stalled.fd, &byte, 1, 0);
         ok = ok && check(n == 0, "stalled close");
     }
-    ok = ok && check(policy_test(nexus::proxy::RuleFormat::kdl), "KDL policy") && check(policy_test(nexus::proxy::RuleFormat::beve), "BEVE policy") &&
+    ok = ok && check(policy_test(proxy::RuleFormat::kdl), "KDL policy") && check(policy_test(proxy::RuleFormat::beve), "BEVE policy") &&
          check(slow_resolver_test(workers), "slow resolver") && check(credential_lifecycle(), "credential lifecycle") &&
          check(active_relay_stop(workers), "active relay stop");
+#ifdef NEXUS_TEST_SOURCE_ROUTE
+    ok = ok && check(source_policy_test(), "source policy");
+#endif
     if (!ok) { std::cerr << "proxy end-to-end test failed\n"; return 1; }
     std::cout << "SOCKS5 direct TCP, DNS, block rules, pipelining, half-close and stop passed\n";
 }

@@ -1,6 +1,6 @@
-export module nexus.shadowsocks.header;
+export module shadowsocks.header;
 import std;
-export namespace nexus::shadowsocks {
+export namespace shadowsocks {
     enum class HeaderError { invalid_length, invalid_type, invalid_timestamp, invalid_salt, invalid_address, invalid_padding };
     struct FixedHeader { std::uint64_t timestamp; std::uint16_t length; };
     struct RequestHeader { std::vector<std::uint8_t> address; std::vector<std::uint8_t> payload; };

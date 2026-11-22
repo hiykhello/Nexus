@@ -1,8 +1,8 @@
-module nexus.udp.route;
-import nexus.rules;
+module udp.route;
+import rules;
 import std;
 
-namespace nexus::udp {
+namespace udp {
     auto RoutedBridge4::prepare(std::span<std::uint8_t const> input, std::uint64_t now)
         -> std::expected<OutboundDatagram, RoutedError> {
         auto parsed = packet::parse_udp4(input);
@@ -11,7 +11,7 @@ namespace nexus::udp {
         if (!parsed->destination_port || std::ranges::all_of(address,[](auto b) { return b==0; }))
             return std::unexpected(RoutedError{RouteError::invalid_target});
         auto text = std::format("{}.{}.{}.{}", address[0], address[1], address[2], address[3]);
-        auto matched = policy_.match({.ip = text});
+        auto matched = policy_.match({.ip = text,.source_port=parsed->source_port,.source_ip_bytes=std::span(parsed->source)});
         if (!matched) return std::unexpected(RoutedError{RouteError::policy_error});
         if (matched->has_value()) return std::unexpected(RoutedError{RouteError::blocked});
         auto result = bridge_.prepare(input, now);
@@ -31,12 +31,12 @@ namespace nexus::udp {
         auto word = [&](std::size_t i) { return (static_cast<unsigned>(a[i]) << 8) | a[i + 1]; };
         auto text = std::format("{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
                                 word(0), word(2), word(4), word(6), word(8), word(10), word(12), word(14));
-        auto matched = policy_.match({.ip = text});
+        auto matched = policy_.match({.ip = text,.source_port=parsed->source_port,.source_ip_bytes=std::span(parsed->source)});
         if (!matched) return std::unexpected(RoutedError{RouteError::policy_error});
         if (matched->has_value()) return std::unexpected(RoutedError{RouteError::blocked});
         if (mapped) {
             auto ipv4 = std::format("{}.{}.{}.{}", a[12], a[13], a[14], a[15]);
-            auto match4 = policy_.match({.ip = ipv4});
+            auto match4 = policy_.match({.ip = ipv4,.source_port=parsed->source_port,.source_ip_bytes=std::span(parsed->source)});
             if (!match4) return std::unexpected(RoutedError{RouteError::policy_error});
             if (match4->has_value()) return std::unexpected(RoutedError{RouteError::blocked});
         }

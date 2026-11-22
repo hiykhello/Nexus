@@ -16,7 +16,7 @@ payload 对象必须恰好包含 `schema_version`（BEVE u32，值 `1`）、`kin
 
 ## 已核对的 Glaze 来源
 
-本地 `/home/yk/Code/glaze-kdl2.0-` 当前分支为用户指定的 `feature/kdl2.0`，提交 `fc646588635c42cca142562d7b3d0484cc4493b7`（2026-10-27），调研时工作区干净。项目 recipe 已固定该提交；已读取相关格式文档和 BEVE 实现，验证当前规则集子集，但未验证完整 KDL 能力。
+项目 recipe 固定 `glaze-kdl2.0-` 的 `feature/kdl2.0` 分支提交 `fc646588635c42cca142562d7b3d0484cc4493b7`（2026-10-27）；已核对相关格式文档和 BEVE 实现，验证当前规则集子集，但未验证完整 KDL 能力。
 
 README 列出二进制格式 BEVE、CBOR、MessagePack、BSON、SQLite JSONB 和 EETF，并有对应头文件。下文区分格式适用性与 Nexus 性能判断，不将上游吞吐宣传作为项目实测。
 

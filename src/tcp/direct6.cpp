@@ -1,14 +1,15 @@
 module;
 #include <experimental/scope>
-#include <arpa/inet.h>
 #include <cerrno>
+#include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
-module nexus.tcp.direct;
+module tcp.direct;
 import std;
+import platform.ip_address;
 
-namespace nexus::tcp {
+namespace tcp {
     namespace {
         auto system_error() -> std::error_code { return {errno, std::generic_category()}; }
     }
@@ -32,8 +33,9 @@ namespace nexus::tcp {
         if (std::ranges::find(s.flows, id, &Flow::id) != s.flows.end()) return std::unexpected(DirectFailure{DirectError::duplicate});
         if (s.flows.size() >= s.limit) return std::unexpected(DirectFailure{DirectError::full});
         auto* flow = s.table.get(id);
-        auto target = s.table.target(id);
-        if (!flow || !target) return std::unexpected(DirectFailure{DirectError::not_found});
+        auto endpoints = s.table.endpoints(id);
+        if (!flow || !endpoints) return std::unexpected(DirectFailure{DirectError::not_found});
+        auto target = &endpoints->target;
         if (flow->state() != ConnectionState::established && flow->state() != ConnectionState::peer_closed)
             return std::unexpected(DirectFailure{DirectError::not_established});
         auto const& a = target->address;
@@ -45,12 +47,12 @@ namespace nexus::tcp {
         auto word=[&](std::size_t i) { return (static_cast<unsigned>(a[i])<<8)|a[i+1]; };
         auto text=std::format("{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
                               word(0),word(2),word(4),word(6),word(8),word(10),word(12),word(14));
-        auto match = s.policy.match({.ip=text});
+        auto match = s.policy.match({.ip=text,.source_port=endpoints->source.port,.source_ip_bytes=std::span(endpoints->source.address)});
         if (!match) return std::unexpected(DirectFailure{DirectError::policy_error});
         if (match->has_value()) return std::unexpected(DirectFailure{DirectError::blocked});
         if (mapped) {
             auto ipv4=std::format("{}.{}.{}.{}",a[12],a[13],a[14],a[15]);
-            auto match4=s.policy.match({.ip=ipv4});
+            auto match4=s.policy.match({.ip=ipv4,.source_port=endpoints->source.port,.source_ip_bytes=std::span(endpoints->source.address)});
             if (!match4) return std::unexpected(DirectFailure{DirectError::policy_error});
             if (match4->has_value()) return std::unexpected(DirectFailure{DirectError::blocked});
         }
@@ -65,7 +67,7 @@ namespace nexus::tcp {
             s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
             return std::unexpected(error);
         }
-        sockaddr_in6 address{}; address.sin6_family = AF_INET6; address.sin6_port = htons(target->port);
+        sockaddr_in6 address{}; address.sin6_family = AF_INET6; address.sin6_port = platform::host_to_net16(target->port);
         std::ranges::copy(a,address.sin6_addr.s6_addr);
         auto status = ::connect(fd, reinterpret_cast<sockaddr const*>(&address), sizeof(address));
         if (status < 0 && errno != EINPROGRESS) {

@@ -2,11 +2,11 @@
 #include <sys/socket.h>
 #include <errno.h>
 import std;
-import nexus.tls.application_io;
+import tls.application_io;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-import nexus.tls.corosio_application;
-namespace capy=nex::capy; namespace io=nex::corosio; namespace t=nexus::tls; namespace c=nexus::crypto;
+import tls.corosio_application;
+namespace capy=nex::capy; namespace io=nex::corosio; namespace t=tls; namespace c = ::crypto;
 using Bytes=c::Bytes; using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection dir,int n) -> t::RecordLayer { auto s=secret(n); auto key=t::expand_label(c::Hash::sha256,s.view(),"key",{},16), iv=t::expand_label(c::Hash::sha256,s.view(),"iv",{},12); if (!key || !iv) std::abort(); auto l=t::RecordLayer::create(dir,c::Aead::aes_128_gcm,key->view(),iv->view()); if (!l) std::abort(); return std::move(*l); }

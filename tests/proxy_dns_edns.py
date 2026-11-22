@@ -204,7 +204,12 @@ routing {{ default-outbound "direct"; }}
                             continue
                         if mode == "fallback-timeout" and not 8 <= time.monotonic() - started <= 12:
                             raise RuntimeError("fallback did not share the original deadline")
-                        assert reply[:4] == (b"\x05\x00\x00\x01" if success else b"\x05\x04\x00\x01")
+                        # A DNS deadline maps to SOCKS TTL expired; other DNS
+                        # failures map to host unreachable.
+                        code = 0 if success else 6 if mode == "fallback-timeout" else 4
+                        expected_reply = bytes((5, code, 0, 1))
+                        if reply[:4] != expected_reply:
+                            raise RuntimeError(f"{mode} tcp={tcp} workers={workers}: unexpected SOCKS reply {reply.hex()}")
                         if success:
                             assert exact(client, 2) == b"ok"
                 protocol = "tcp" if tcp else "udp"

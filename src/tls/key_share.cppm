@@ -1,7 +1,7 @@
-export module nexus.tls.key_share;
+export module tls.key_share;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     enum class KeyShareError { truncated, invalid_length, empty, duplicate_group, too_many, message_too_large };
     struct KeyShareEntry {
         std::uint16_t group = 0;

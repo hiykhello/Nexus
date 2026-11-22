@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-server-credential-") as directory
         print(f"{algorithm} credential and OpenSSL signature verification passed")
 
     for algorithm, options in [("RSA", ["-pkeyopt", "rsa_keygen_bits:1024"]),
-                               ("EC", ["-pkeyopt", "ec_paramgen_curve:P-384"])]:
+                               ("EC", ["-pkeyopt", "ec_paramgen_curve:P-224"])]:
         key = root / "unsupported.pem"; der = root / "unsupported.der"; cert = root / "unsupported-cert.der"
         run("openssl", "genpkey", "-algorithm", algorithm, *options, "-out", str(key))
         run("openssl", "pkey", "-in", str(key), "-outform", "DER", "-out", str(der))

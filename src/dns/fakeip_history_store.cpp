@@ -5,12 +5,13 @@ module;
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdio.h>
-module nexus.dns.fakeip_history_store;
+module dns.fakeip_history_store;
 import std;
-import nexus.dns.fakeip_history;
-import nexus.dns.fakeip_recovery;
-import nexus.crypto;
-namespace nexus::dns {
+import dns.fakeip;
+import dns.fakeip_history;
+import dns.fakeip_recovery;
+import crypto;
+namespace dns {
     namespace {
         auto regular(int fd,off_t size) -> bool {
             struct stat st{};
@@ -86,10 +87,11 @@ namespace nexus::dns {
     }
     auto FakeIpHistoryStore::open(std::string_view path,std::span<std::uint8_t const,16> instance,
         std::span<std::uint8_t const,32> key,FakeIpHistoryStoreMode mode) -> std::expected<FakeIpHistoryStore,FakeIpHistoryStoreError> {
-        return open_impl(path,mode,instance,key,false);
+        return open_impl(path,mode,instance,key,false,{});
     }
     auto FakeIpHistoryStore::open_impl(std::string_view path,FakeIpHistoryStoreMode mode,
-        std::span<std::uint8_t const,16> instance,std::span<std::uint8_t const,32> key,bool from_files)
+        std::span<std::uint8_t const,16> instance,std::span<std::uint8_t const,32> key,bool from_files,
+        std::optional<FakeIpIpv6Range> ipv6)
         -> std::expected<FakeIpHistoryStore,FakeIpHistoryStoreError> {
         if (path.empty() || path.front()!='/' || path.find('\0')!=path.npos) return std::unexpected(FakeIpHistoryStoreError::invalid);
         int directory=::open(std::string(path).c_str(),O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
@@ -120,7 +122,22 @@ namespace nexus::dns {
             auto loaded_key=read_credential(directory,"history.key",store.key_);
             if (!loaded_key) return std::unexpected(loaded_key.error());
         }
-        auto history=store.read_history(); if (!history) return std::unexpected(history.error());
+        auto base=store.instance_;
+        if (ipv6) {
+            // Bind the existing authenticated history format to the alias
+            // range without discarding any recorded IPv4 reservations.
+            for (std::size_t i=0;i<ipv6->network.size();++i) store.instance_[i]^=ipv6->network[i];
+            store.instance_[12]^=ipv6->length;
+        }
+        auto history=store.read_history();
+        if (!history && ipv6 && history.error()==FakeIpHistoryStoreError::authentication) {
+            // A legacy IPv4-only history can add the range. Once published,
+            // only the bound prefix can authenticate the IPv6 history.
+            std::swap(store.instance_,base);
+            history=store.read_history();
+            std::swap(store.instance_,base);
+        }
+        if (!history) return std::unexpected(history.error());
         auto high=store.read_highwater(); if (!high) return std::unexpected(high.error());
         if (mode==FakeIpHistoryStoreMode::create_new) {
             if (history->has_value() || high->has_value()) return std::unexpected(FakeIpHistoryStoreError::rollback);
@@ -135,11 +152,12 @@ namespace nexus::dns {
         } else if (high->has_value()) return std::unexpected(FakeIpHistoryStoreError::rollback);
         return store;
     }
-    auto FakeIpHistoryStore::open_with_credentials(std::string_view path,FakeIpHistoryStoreMode mode)
+    auto FakeIpHistoryStore::open_with_credentials(std::string_view path,FakeIpHistoryStoreMode mode,
+        std::optional<FakeIpIpv6Range> ipv6)
         -> std::expected<FakeIpHistoryStore,FakeIpHistoryStoreError> {
         std::array<std::uint8_t,16> instance{};
         std::array<std::uint8_t,32> key{};
-        return open_impl(path,mode,instance,key,true);
+        return open_impl(path,mode,instance,key,true,ipv6);
     }
     auto FakeIpHistoryStore::write_file(std::string_view temporary,std::string_view final,std::span<std::uint8_t const> bytes)
         -> std::expected<void,FakeIpHistoryStoreError> {

@@ -1,6 +1,6 @@
 # 缓存与持久状态
 
-状态：设计草案，尚无实现；存储引擎、磁盘格式、配置字段及默认限额待验证。依据见[参考分析](../references/dns-and-persistence.md)。本设计不改变既有 C++、xmake、KDL、Corosio 与自研网络/TLS 技术方向。
+Linux CLI 已接入四层持久化存储（selector、FakeIP 段预留 + WAL、多视图 DNS 缓存与规则集内容寻址缓存）。见 [配置规范](../configuration/spec.md)、[原生控制面](control-api.md) 与 [路由、DNS 与状态原则](../design-principles/routing-dns-and-state.md)。
 
 具体对象、丢失后果、当前实现状态和选型次序见[持久化对象清单](persistence-inventory.md)。SS-2022 跨重启防重放是额外安全承诺，不是通用缓存的代表性负载。
 

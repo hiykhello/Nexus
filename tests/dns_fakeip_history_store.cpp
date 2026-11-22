@@ -5,11 +5,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 import std;
-import nexus.dns.fakeip_history_store;
-import nexus.dns.fakeip_recovery;
-import nexus.dns.fakeip_shared;
-import nexus.dns.message;
-namespace d=nexus::dns;
+import dns.fakeip_history_store;
+import dns.fakeip_recovery;
+import dns.fakeip_shared;
+import dns.message;
+namespace d=dns;
 using namespace std::chrono_literals;
 auto put_file(std::string const& path,std::span<std::uint8_t const> bytes,mode_t mode=0600) -> bool {
     int fd=::open(path.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,mode); if(fd<0) return false;

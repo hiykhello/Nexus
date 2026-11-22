@@ -84,7 +84,8 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-async-inbound-") as directo
                     client.shutdown(socket.SHUT_WR)
                 except Exception as exc: errors.append(exc)
             sender=threading.Thread(target=upload); sender.start()
-            if not origin_ready.wait(5): raise RuntimeError("origin did not accept")
+            if not origin_ready.wait(5):
+                raise RuntimeError(f"origin did not accept: fixture exit={peer.poll()}, origin errors={errors}")
             sender.join(timeout=.3)
             if not sender.is_alive(): raise RuntimeError(f"upload did not encounter backpressure: {errors}")
             release_origin.set()
@@ -96,10 +97,15 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-async-inbound-") as directo
         thread.join(timeout=6)
         if thread.is_alive() or errors: raise RuntimeError(f"origin failure: {errors}")
     finally:
+        failed = sys.exc_info()[0] is not None
+        fixture_exit = peer.poll()
         release_origin.set()
         if peer.poll() is None: peer.kill(); peer.wait()
         box.terminate()
-        try: box.communicate(timeout=5)
-        except subprocess.TimeoutExpired: box.kill(); box.communicate()
+        try: _, box_stderr = box.communicate(timeout=5)
+        except subprocess.TimeoutExpired: box.kill(); _, box_stderr = box.communicate()
         thread.join(timeout=6)
+        if failed:
+            print(f"fixture exit before cleanup: {fixture_exit}; origin errors: {errors}; "
+                  f"sing-box stderr: {box_stderr.decode(errors='replace')}", file=sys.stderr)
 print("Corosio VLESS/TLS inbound local transfer, backpressure and half-close passed")

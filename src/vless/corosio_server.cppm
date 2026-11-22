@@ -1,10 +1,10 @@
-export module nexus.vless.corosio_server;
+export module vless.corosio_server;
 import std;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-import nexus.vless;
+import vless;
 
-export namespace nexus::vless::detail {
+export namespace vless::detail {
     enum class ServerError { state, rejected, io };
     // Stream is an already established transport. Its owner must cancel and
     // drain all operations before destroying this adapter or the stream.
@@ -73,7 +73,7 @@ export namespace nexus::vless::detail {
     };
 }
 
-export namespace nexus::vless::detail {
+export namespace vless::detail {
     // Both directions run on one executor. The owner retains the relay and
     // both sockets until both tasks have completed, including after cancel().
     template<class Incoming, class Target>

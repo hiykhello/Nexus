@@ -1,6 +1,24 @@
 # ClientHello 指纹编排设计
 
-状态：**设计草案，未实现**。自研 TLS 将 ClientHello 的协议内容与可选 profile 分开：profile 可以选择已实现且经验证的扩展、顺序、GREASE 和填充，但不能宣称浏览器身份、关闭证书验证或通告实际不支持的能力。浏览器、版本、平台与网络行为不断变化，固定扩展列表不是所有 Chrome/Firefox/Safari 的真实指纹。
+状态：**第 94C 批的浏览器 TCP/QUIC 形状、同连接版本协商和 TCP 1-RTT 恢复已通过双后端定向验收**。自研 TLS 将 ClientHello 的协议内容与可选 profile 分开。profile 控制扩展、顺序、GREASE 和填充，证书验证独立执行。真实浏览器的指纹随版本、平台与网络条件变化。
+
+## 当前实现与证据
+
+`tls.hello_config` 单一提供原有 `make_client_hello`，旧模块继续重导出原API；`tls.fingerprint` 提供同步 `FingerprintConfig` 与 `make_fingerprint_hello`。Nexus 提供 `native`、`tls13-grease`、`tls13-randomized` 及具名浏览器 TLS 1.3 形状，具体配置见 [KDL 规范](../configuration/spec.md)。实现允许已支持套件顺序、CSPRNG GREASE、拒绝采样的扩展排列、TCP session ID 和有界padding；ALPN由实际协议调用方提供。普通TLS ClientProfile通过显式handshake overload使用策略，默认profile不新增存储字段。
+
+TCP、QUIC和Reality共用同一编排与密钥交换算法。单/双真实X25519与MLKEM share保存在原两个key owner中，按服务端选择取用；HRR保留随机/顺序并按新share重新计算padding。QUIC保持空session ID，替换真实local transport parameters后重新计算最终wire大小；QUIC 包保护支持 AES-128-GCM、AES-256-GCM 和 ChaCha20-Poly1305。生产 Hy2 出站使用 Firefox 形状，分别在 OpenSSL 4.1 强制这三种套件时完成认证握手。epoll 与 io_uring 均覆盖 IPv4 和 IPv6，记录在 `target/batch73/quic-suites`。Reality的新groups span overload与旧scalar factory共享同一首Hello认证，不改变证书/Finished校验；固定参考端的强制cover HRR仍为明确拒绝边界。
+
+独立冻结基础包 `/tmp/nexus-utls-engine-S6BV5P/frozen-v1` 已按21file SHA纳工作区：108个OpenSSL认证/错名/错CA场景逐次观察实际1600B ClientHello，48个真实Go UDP QUIC场景及校准wrapper下另48个均通过（TCP RecordLayer构造0）。另有2738逐次普通/array/aligned C++分配失败及恢复、24密钥调度、64随机shape和3旧TLS单元。共享 Reality addon 独立 auth 48 与实际对端 12（8 正向 + 4 强制 cover HRR 拒绝）通过。正式构建与运行状态见 [项目进度](../progress.md)，不把独立结果当当前正式图通过。
+
+同编译参数下原/新对象尺寸均为Hello136、Exchange8232、Driver8432、Session9856、ClientProfile88、QUIC TlsClient9064字节。新增编排不含任务或协程、虚派发、额外heap owner或隐藏实现存储；算法产生的配置/编码/密钥分配是必要协议工作，不能据此声称指令等价、网络握手零分配或nativecrypto OOM全覆盖。具名浏览器原始样本、更广 TLS 版本和 PSK/0-RTT 验证仍在推进。
+
+`tls-certificate-compression` 构建特性为 TLS 1.3 客户端添加 zlib、Brotli 和 Zstandard 解压。Chrome 和 Edge 通告 Brotli，Safari 通告 zlib，`tls13-randomized` 通告三种算法。压缩消息的编码仍进入 transcript，解压后的证书链走既有信任、主机名和 CertificateVerify 校验。解压结果必须精确等于声明长度，并受各承载的证书限制。epoll 和 io_uring 分别对 OpenSSL 4.1 验证了 TCP 与 QUIC 的三种压缩认证握手，TCP 同时覆盖无压缩回落和错名拒绝。关闭特性的 epoll 组合产物无需 Brotli 或 Zstandard，SRS 仍使用 zlib。日志见 `target/batch73`。[RFC 8879](https://www.rfc-editor.org/rfc/rfc8879.html)
+
+Trojan 和 AnyTLS TCP 出站的显式 `tls12` 形状使用完全握手、扩展主密钥和 AES-GCM。epoll 与 io_uring 对 OpenSSL 4.1 及 TLS 1.2-only AnyTLS 对端验证了 X25519、RSA-PSS、RSA PKCS#1、P-256/P-384/P-521 ECDHE/ECDSA、跨记录转发和逻辑 FIN。日志见 `target/batch73/tls12-*`。[RFC 8422](https://www.rfc-editor.org/rfc/rfc8422.html)
+
+第 94C 批提供 `chrome-133`、`firefox-135` 和 `safari-18`，沿用家族短名。普通浏览器 TCP 握手由同一 ClientHello 的 ServerHello 选择 TLS 1.3 或 TLS 1.2。1.2 路径使用四个 ECDHE AES-GCM 和两个 ECDHE ChaCha20-Poly1305 套件。QUIC 浏览器形状只协商 TLS 1.3，使用实际 transport parameters。Chrome、Edge 和 Firefox 的 GREASE ECH 在显式 ECH 握手中让位。Chrome 和 Edge 的 TCP h2 ALPS 以 EncryptedExtensions 进入 Finished transcript。Firefox 委托凭据当前覆盖 ClientHello 声明，服务器选用委托凭据时仍缺验证实现。OCSP 与 SCT 的 TLS 报文解析沿用现有 PKI 认证策略。
+
+普通物理 TCP 出站的 TLS 1.3 恢复缓存容量为 32 张票据，按实际目的端点、验证身份、信任锚及 ALPN 隔离，取出即消费，按期清理。普通 VLESS 按配置目的绑定恢复。通用 Fast Open 和 layered 拨号未启用该共享缓存，Vision 与 REALITY 保留专用握手路径。TCP 应用数据在 Finished 后发送。实网和字节快照见 [第 94C 批](../planning/batch94-protocols-xhttp-utls-design.md#94c--utls-高保真现代浏览器指纹补强)。
 
 ## Profile 与握手语义
 

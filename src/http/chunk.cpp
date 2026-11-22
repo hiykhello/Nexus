@@ -1,12 +1,9 @@
-module nexus.http.connect;
+module http.connect;
 import std;
+import http.header;
 
-namespace nexus::http {
+namespace http {
     namespace {
-        auto token(char c) -> bool {
-            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                   std::string_view("!#$%&'*+-.^_`|~").find(c) != std::string_view::npos;
-        }
         auto whitespace(std::string_view s, std::size_t& i) -> void {
             while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
         }
@@ -22,7 +19,7 @@ namespace nexus::http {
                 if (i == s.size() || s[i++] != ';') return false;
                 whitespace(s, i);
                 auto begin = i;
-                while (i < s.size() && token(s[i])) ++i;
+                while (i < s.size() && header_token(s[i])) ++i;
                 if (begin == i) return false;
                 auto after_name = i;
                 whitespace(s, i);
@@ -43,7 +40,7 @@ namespace nexus::http {
                         if (!closed) return false;
                     } else {
                         begin = i;
-                        while (i < s.size() && token(s[i])) ++i;
+                        while (i < s.size() && header_token(s[i])) ++i;
                         if (begin == i) return false;
                     }
                 } else i = after_name;
@@ -51,17 +48,16 @@ namespace nexus::http {
             return true;
         }
         auto trailer_field(std::string_view s) -> bool {
-            auto colon = s.find(':');
-            if (colon == s.npos || colon == 0 || !std::all_of(s.begin(), s.begin() + colon, token)) return false;
-            std::string name(s.substr(0, colon));
+            auto field = split_header_field(s);
+            if (!field) return false;
+            std::string name(field->name);
             std::ranges::transform(name, name.begin(), [](char c) {
                 return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
             });
             if (name == "transfer-encoding" || name == "content-length" || name == "host" ||
                 name == "connection" || name == "keep-alive" || name == "proxy-authenticate" ||
                 name == "proxy-authorization" || name == "trailer" || name == "upgrade") return false;
-            for (unsigned char c : s.substr(colon + 1)) if ((c < 32 && c != '\t') || c == 127) return false;
-            return true;
+            return valid_header_field_value(field->value);
         }
     }
 
@@ -79,7 +75,7 @@ namespace nexus::http {
                 if (input.front() != expected) { state = State::failed; break; }
                 input.remove_prefix(1);
                 if (state == State::data_cr) state = State::data_lf;
-                else { output += "\r\n"; state = State::size; }
+                else { if (output_mode_==ChunkOutput::framed) output += "\r\n"; state = State::size; }
             } else {
                 char c = input.front(); input.remove_prefix(1);
                 if (state == State::trailer && ++trailer_bytes > max_connect_header_bytes) { state = State::failed; break; }
@@ -89,9 +85,12 @@ namespace nexus::http {
                     if (state == State::size) {
                         if (!chunk_size(line, remaining)) { state = State::failed; break; }
                         if (remaining == 0) state = State::trailer;
-                        else { output += std::format("{:x}\r\n", remaining); state = State::data; }
+                        else {
+                            if (output_mode_==ChunkOutput::framed) output += std::format("{:x}\r\n", remaining);
+                            state = State::data;
+                        }
                     } else if (line.empty()) {
-                        output += "0\r\n\r\n";
+                        if (output_mode_==ChunkOutput::framed) output += "0\r\n\r\n";
                         state = State::complete;
                     } else if (++trailer_fields > max_connect_fields || !trailer_field(line)) {
                         state = State::failed; break;

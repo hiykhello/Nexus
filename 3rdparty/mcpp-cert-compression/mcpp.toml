@@ -1,0 +1,12 @@
+[package]
+namespace = "nexus"
+name = "tls-cert-compression-system"
+version = "1.0.0"
+standard = "c++26"
+
+[build]
+sources = ["src/check.cpp"]
+ldflags = ["-lbrotlidec", "-lzstd"]
+
+[targets.tls-cert-compression-system]
+kind = "lib"

@@ -1,7 +1,10 @@
-export module nexus.tls.hello;
+export module tls.hello;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
+    [[nodiscard]] constexpr auto is_grease(std::uint16_t value) noexcept -> bool {
+        return (value&0x0f0f)==0x0a0a && (value>>8)==(value&255);
+    }
     enum class HelloError { truncated, invalid_length, invalid_version, invalid_random, invalid_session_id,
                              invalid_cipher_suites, invalid_compression, invalid_extensions, duplicate_extension,
                              unsupported, message_too_large };
@@ -24,10 +27,15 @@ export namespace nexus::tls {
             -> std::expected<ClientHello, HelloError>;
         [[nodiscard]] auto encode(std::size_t max_body_size = 1u << 20) const
             -> std::expected<std::vector<std::uint8_t>, HelloError>;
+        [[nodiscard]] auto encoding_size(std::size_t max_body_size = 1u << 20) const -> std::expected<std::size_t,HelloError>;
         // Applies the same size and structural checks as encode without allocating.
         [[nodiscard]] auto validate_encoding(std::size_t max_body_size = 1u << 20) const -> std::expected<void, HelloError>;
         // Checks the TLS 1.3 ClientHello invariants this layer owns; it does not negotiate policy.
         [[nodiscard]] auto validate_tls13() const -> std::expected<void, HelloError>;
         [[nodiscard]] auto extension(std::uint16_t type) const noexcept -> Extension const*;
     };
+    // Complete the public parse-result specialization in its owning module;
+    // template consumers must not instantiate a second pending std::expected.
+    using ParsedClientHello=std::expected<ClientHello,HelloError>;
+    static_assert(sizeof(ParsedClientHello)>=sizeof(ClientHello));
 }

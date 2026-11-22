@@ -1,0 +1,56 @@
+pre-entry index rules=16 repeat=0 indexed_ns=243 linear_ns=236
+pre-entry index rules=16 repeat=1 indexed_ns=242 linear_ns=237
+pre-entry index rules=16 repeat=2 indexed_ns=242 linear_ns=236
+pre-entry index rules=512 repeat=0 indexed_ns=375 linear_ns=3574
+pre-entry index rules=512 repeat=1 indexed_ns=377 linear_ns=3558
+pre-entry index rules=512 repeat=2 indexed_ns=373 linear_ns=3563
+pre-entry index rules=4000 repeat=0 indexed_ns=450 linear_ns=21238
+pre-entry index rules=4000 repeat=1 indexed_ns=272 linear_ns=16418
+pre-entry index rules=4000 repeat=2 indexed_ns=266 linear_ns=16125
+pre-entry index checksum=241078932
+pre-entry program rules=16 ns=197
+pre-entry program rules=512 ns=3050
+pre-entry program rules=4000 ns=18632
+pre-entry program checksum=9918619
+arena index rules=16 repeat=0 indexed_ns=151 linear_ns=144
+arena index rules=16 repeat=1 indexed_ns=150 linear_ns=146
+arena index rules=16 repeat=2 indexed_ns=149 linear_ns=145
+arena index rules=512 repeat=0 indexed_ns=236 linear_ns=2227
+arena index rules=512 repeat=1 indexed_ns=236 linear_ns=2213
+arena index rules=512 repeat=2 indexed_ns=234 linear_ns=2215
+arena index rules=4000 repeat=0 indexed_ns=266 linear_ns=15079
+arena index rules=4000 repeat=1 indexed_ns=291 linear_ns=15161
+arena index rules=4000 repeat=2 indexed_ns=283 linear_ns=15317
+arena index checksum=241078932
+arena program rules=16 ns=206
+arena program rules=512 ns=3307
+arena program rules=4000 ns=20435
+arena program checksum=9918619
+arena index rules=16 repeat=0 indexed_ns=161 linear_ns=154
+arena index rules=16 repeat=1 indexed_ns=163 linear_ns=155
+arena index rules=16 repeat=2 indexed_ns=161 linear_ns=154
+arena index rules=512 repeat=0 indexed_ns=253 linear_ns=2210
+arena index rules=512 repeat=1 indexed_ns=257 linear_ns=2249
+arena index rules=512 repeat=2 indexed_ns=253 linear_ns=2263
+arena index rules=4000 repeat=0 indexed_ns=295 linear_ns=15348
+arena index rules=4000 repeat=1 indexed_ns=287 linear_ns=15088
+arena index rules=4000 repeat=2 indexed_ns=281 linear_ns=15023
+arena index checksum=241078932
+arena program rules=16 ns=197
+arena program rules=512 ns=3079
+arena program rules=4000 ns=18656
+arena program checksum=9918619
+pre-entry index rules=16 repeat=0 indexed_ns=163 linear_ns=158
+pre-entry index rules=16 repeat=1 indexed_ns=161 linear_ns=158
+pre-entry index rules=16 repeat=2 indexed_ns=164 linear_ns=157
+pre-entry index rules=512 repeat=0 indexed_ns=247 linear_ns=2268
+pre-entry index rules=512 repeat=1 indexed_ns=241 linear_ns=2231
+pre-entry index rules=512 repeat=2 indexed_ns=318 linear_ns=3001
+pre-entry index rules=4000 repeat=0 indexed_ns=364 linear_ns=25258
+pre-entry index rules=4000 repeat=1 indexed_ns=326 linear_ns=24601
+pre-entry index rules=4000 repeat=2 indexed_ns=322 linear_ns=16793
+pre-entry index checksum=241078932
+pre-entry program rules=16 ns=202
+pre-entry program rules=512 ns=3234
+pre-entry program rules=4000 ns=19835
+pre-entry program checksum=9918619

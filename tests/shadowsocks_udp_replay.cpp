@@ -1,6 +1,6 @@
 import std;
-import nexus.shadowsocks.udp_replay;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_replay;
+namespace s=shadowsocks;
 using R=s::UdpReplayResult;
 
 int main() {

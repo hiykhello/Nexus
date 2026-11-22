@@ -1,8 +1,8 @@
 import std;
-import nexus.shadowsocks.udp_packet;
-import nexus.shadowsocks.udp_cipher;
-import nexus.shadowsocks.udp_replay;
-namespace s = nexus::shadowsocks;
+import shadowsocks.udp_packet;
+import shadowsocks.udp_cipher;
+import shadowsocks.udp_replay;
+namespace s = shadowsocks;
 
 int main() {
     std::array<std::uint8_t,32> key{};

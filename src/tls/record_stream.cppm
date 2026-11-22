@@ -1,9 +1,9 @@
-export module nexus.tls.record_stream;
+export module tls.record_stream;
 import std;
 
-export namespace nexus::tls {
+export namespace tls {
     enum class RecordStreamError { invalid_header, record_too_large, truncated, invalid_state };
-    enum class RecordFraming { plaintext, ciphertext, handshake_ciphertext };
+    enum class RecordFraming { plaintext, ciphertext, handshake_ciphertext, tls12_gcm };
     struct FramedRecord {
         std::vector<std::uint8_t> bytes;
     };

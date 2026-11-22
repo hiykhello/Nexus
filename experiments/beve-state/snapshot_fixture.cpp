@@ -4,13 +4,13 @@
 #include "../state-owner/owner_lock.hpp"
 import std;
 import nexus.thirdparty.glaze;
-import nexus.shadowsocks.udp_replay;
-import nexus.shadowsocks.udp_sessions;
-import nexus.shadowsocks.udp_packet;
-import nexus.shadowsocks.udp_id_reservation;
-import nexus.crypto;
+import shadowsocks.udp_replay;
+import shadowsocks.udp_sessions;
+import shadowsocks.udp_packet;
+import shadowsocks.udp_id_reservation;
+import crypto;
 namespace g=nex::glaze;
-namespace s=nexus::shadowsocks;
+namespace s=shadowsocks;
 #include "profile.hpp"
 
 // Experimental snapshot; the caller owns a stable private directory. This is
@@ -24,7 +24,7 @@ struct Limits : g::Context { std::size_t max_array_size=256; std::size_t max_str
 std::array<std::uint8_t,32> mac_key{};
 std::array<std::uint8_t,32> client_key{};
 std::size_t client_key_size=0;
-struct KeyCleanup { ~KeyCleanup() { nexus::crypto::cleanse(mac_key); nexus::crypto::cleanse(client_key); } };
+struct KeyCleanup { ~KeyCleanup() { ::crypto::cleanse(mac_key); ::crypto::cleanse(client_key); } };
 bool read_private(int dir,char const* name,std::span<std::uint8_t> output,std::size_t* variable_size=nullptr) {
     int fd=::openat(dir,name,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);
     if (fd<0) return false;
@@ -53,22 +53,22 @@ bool derive_key(int dir) {
     std::array<std::uint8_t,16> instance{};
     bool ok=read_private(dir,"auth.key",secret) && read_private(dir,"instance.id",instance) &&
             read_private(dir,"proxy.key",client_key,&client_key_size);
-    if (!ok) { nexus::crypto::cleanse(secret); return false; }
+    if (!ok) { ::crypto::cleanse(secret); return false; }
     constexpr std::string_view domain="nexus/beve-snapshot/v1";
     auto salt=std::span{reinterpret_cast<std::uint8_t const*>(domain.data()),domain.size()};
-    auto prk=nexus::crypto::hkdf_extract(nexus::crypto::Hash::sha256,salt,secret);
-    nexus::crypto::cleanse(secret);
+    auto prk=::crypto::hkdf_extract(::crypto::Hash::sha256,salt,secret);
+    ::crypto::cleanse(secret);
     if (!prk) return false;
     std::array<std::uint8_t,49> context{};
     std::ranges::copy(instance,context.begin());
     context[instance.size()]=static_cast<std::uint8_t>(client_key_size);
     std::ranges::copy(std::span{client_key}.first(client_key_size),context.begin()+instance.size()+1);
-    auto derived=nexus::crypto::hkdf_expand(nexus::crypto::Hash::sha256,*prk,
+    auto derived=::crypto::hkdf_expand(::crypto::Hash::sha256,*prk,
         std::span{context}.first(instance.size()+1+client_key_size),mac_key.size());
-    nexus::crypto::cleanse(context);
-    nexus::crypto::cleanse(*prk);
+    ::crypto::cleanse(context);
+    ::crypto::cleanse(*prk);
     if (!derived || derived->size()!=mac_key.size()) return false;
-    std::ranges::copy(*derived,mac_key.begin()); nexus::crypto::cleanse(*derived);
+    std::ranges::copy(*derived,mac_key.begin()); ::crypto::cleanse(*derived);
     return true;
 }
 
@@ -87,7 +87,7 @@ bool save(int dir,Snapshot const& state,int point) {
     if (g::write_beve(state,payload) || payload.size()>4096-36) return false;
     std::string frame="NXB1"; frame+=payload;
     auto bytes=std::span{reinterpret_cast<std::uint8_t const*>(frame.data()),frame.size()};
-    auto mac=nexus::crypto::hmac(nexus::crypto::Hash::sha256,mac_key,bytes);
+    auto mac=::crypto::hmac(::crypto::Hash::sha256,mac_key,bytes);
     if (!mac || mac->size()!=32) return false;
     frame.append(reinterpret_cast<char const*>(mac->data()),mac->size());
     // Under the exclusive owner, discard an orphan from a prior failed write.
@@ -125,8 +125,8 @@ std::optional<Snapshot> load(int dir) {
     if (!bytes.starts_with("NXB1")) return {};
     auto content=std::span{reinterpret_cast<std::uint8_t const*>(bytes.data()),bytes.size()-32};
     auto tag=std::span{reinterpret_cast<std::uint8_t const*>(bytes.data()+bytes.size()-32),std::size_t{32}};
-    auto mac=nexus::crypto::hmac(nexus::crypto::Hash::sha256,mac_key,content);
-    if (!mac || !nexus::crypto::constant_time_equal(*mac,tag)) return {};
+    auto mac=::crypto::hmac(::crypto::Hash::sha256,mac_key,content);
+    if (!mac || !::crypto::constant_time_equal(*mac,tag)) return {};
     auto payload=std::string_view{bytes}.substr(4,bytes.size()-36);
     if (!SnapshotProfile(payload).valid()) return {};
     Snapshot snapshot;

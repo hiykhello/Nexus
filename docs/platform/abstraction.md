@@ -1,6 +1,6 @@
 # 平台抽象与宿主集成
 
-状态：Nexus 平台层设计草案。参考 [sing-box 平台边界](../references/sing-box-components.md)，Linux 专项已见[网络集成](linux/networking.md)。平台接口、模块粒度、支持矩阵和最低系统版本均未实现或冻结。
+状态：Nexus 平台层设计规范，核心原则见 [核心架构原则](../design-principles/core-architecture.md)，Linux 专项见 [Linux 网络集成](linux/networking.md)，四端 OS 原语边界见 [跨平台 OS 边界矩阵](cross-platform-os-boundaries.md)。
 
 ## 三种不同边界
 

@@ -1,49 +1,334 @@
-export module nexus.config;
+export module config;
 import std;
-
-export namespace nexus::config {
-    enum class Inbound { socks5, mixed, vless, shadowsocks };
-    enum class RuleFormat { kdl, beve };
+import logging.options;
+import platform.socket_options;
+import platform.ip_address;
+import rules;
+export import dns.policy;
+export import quic.receive_windows;
+export import xhttp.config;
+export namespace config {
+    using TcpSocketOptions=platform::TcpSocketOptions;
+#include "extra_types.hpp"
+    enum class Inbound { socks5, mixed, vless, shadowsocks, trojan, anytls, hysteria2, snell, masque, shadowtls, tuic, tun, redirect, tproxy, http, naive, fixed_tcp, fixed_udp };
+    enum class RuleFormat { kdl, beve, srs };
     enum class RouteAction { direct, block, vless };
     struct BlockRules {
         std::string path;
-        RuleFormat format;
+        RuleFormat format = RuleFormat::kdl;
+        bool ip_cidr_match_source = false;
+        std::optional<rules::RuleSet> inline_rules{};
+        std::string inline_kdl{}, url{}, http_client{}, sha256{};
+        std::uint32_t update_interval_ms = 0;
     };
-    struct RouteRule { BlockRules file; RouteAction action; std::size_t outbound = 0; };
+    struct RouteRule { BlockRules file; RouteAction action; std::size_t outbound = 0; std::string outbound_name{}; };
+    enum class OrderedTcpAction { sniff,resolve,route,reject,route_options,hijack_dns,bypass };
+    enum class OrderedTcpDomain { explicit_target,fakeip,reverse_dns,sniffed };
+    struct OrderedTcpRule { std::optional<BlockRules> file; OrderedTcpAction action; OrderedTcpDomain domain; std::size_t outbound=0; std::uint32_t connect_timeout_ms=0; std::optional<std::string> outbound_name{}; bool route_only=false; rules::RuleSet predicates{}; std::optional<std::string> set_tag{}; rules::RejectMethod reject_method=rules::RejectMethod::default_rst; bool reject_no_drop=false, tls_record_fragment=false; std::uint16_t tls_fragment_min=0, tls_fragment_max=0; std::array<std::uint8_t,64> tcp_prefix{}; std::uint8_t tcp_prefix_len=0; std::uint32_t udp_timeout_ms=0; bool udp_adaptive_timeout=false; };
+    struct OrderedTcpConfig { std::uint32_t sniff_timeout_ms; bool skip_unknown; bool udp; std::vector<OrderedTcpRule> rules; std::vector<std::pair<std::string,BlockRules>> sets; };
     struct PasswordAuth {
         std::string username;
         std::string password_file;
     };
     struct VlessUser { std::string name; std::string uuid_file; };
-    struct VlessInbound { std::vector<VlessUser> users; std::string certificate_file, private_key_file; };
-    struct ShadowsocksInbound { std::string method, key_file; };
+    struct HttpUpgradeTransport {
+        struct Header { std::string name,value; };
+        std::string host,path="/";
+        std::vector<Header> headers;
+        bool websocket=false;
+    };
+    struct GrpcTransport {
+        enum class ResponsePolicy {standard,sing_box_lite};
+        std::string service_name,authority;
+        ResponsePolicy response_policy=ResponsePolicy::standard;
+        std::size_t input_window=2*1024*1024,message_bytes=1024*1024+64,hunk_bytes=1024*1024;
+        std::size_t output_bytes=2*1024*1024,output_messages=64,library_bytes=4*1024*1024,max_sessions=64;
+        bool tcp_fast_open=false;
+    };
+    struct VlessInbound {
+        struct Reality {
+            std::string private_key_file, certificate_file, signing_key_file, fallback_host;
+            std::uint16_t fallback_port=0;
+            std::vector<std::string> server_names;
+            std::vector<std::array<std::uint8_t,8>> short_ids;
+            std::uint64_t max_time_difference_seconds=60;
+            std::optional<std::string> fallback_resolver; std::optional<std::size_t> fallback_resolver_index;
+        };
+        std::vector<VlessUser> users; std::string certificate_file, private_key_file; bool vision = false;
+        std::optional<Reality> reality;
+        std::optional<HttpUpgradeTransport> transport;
+        std::optional<GrpcTransport> grpc; std::optional<xhttp::Profile> xhttp;
+    };
+    struct ShadowsocksUser { std::string name,key_file; };
+    struct ShadowsocksInbound {
+        std::string method,key_file;
+        std::vector<ShadowsocksUser> users;
+    };
+    struct PasswordTlsUser { std::string name,password_file; };
+    struct PasswordTlsInbound { std::vector<PasswordTlsUser> users; std::string certificate_file,private_key_file; std::optional<HttpUpgradeTransport> transport; std::optional<GrpcTransport> grpc; };
+    using TrojanUser=PasswordTlsUser; using TrojanInbound=PasswordTlsInbound;
+    using AnyTlsInbound=PasswordTlsInbound;
+    struct SnellInbound { std::string psk_file; bool http_obfs=false; std::optional<std::string> user_file; std::uint32_t replay_window_seconds=0; std::string listen_host; std::array<std::uint8_t,16> listen_address{}; };
+    struct Hysteria2Transport {
+        std::uint32_t handshake_timeout_ms=10000,idle_timeout_ms=300000;
+        std::size_t native_bytes=8*1024*1024;
+        bool udp=true;
+        std::optional<std::string> salamander_password_file;
+        std::optional<std::size_t> max_udp_payload_size;
+        bool disable_path_mtu_discovery=false;
+        std::uint64_t send_bps=0,receive_bps=0;
+        bool ignore_client_bandwidth=false,disable_compensation=false,lazy_tcp_response=false;
+        quic::ReceiveWindows receive_windows;
+        std::vector<PortRange> port_ranges; std::uint32_t hop_interval_ms=0;
+    };
+    struct Hysteria2Inbound {
+        PasswordTlsInbound connection;
+        Hysteria2Transport transport;
+        std::string listen_host;
+        std::array<std::uint8_t,16> listen_address{};
+    };
+    struct MasqueDestination {std::array<std::uint8_t,16> network{};std::uint8_t family=0,prefix=0;std::uint16_t first_port=0,last_port=0;};
+    struct MasqueIpInbound {
+        std::string interface;
+        std::vector<std::string> local_addresses, client_addresses, allowed_routes;
+    };
+    struct MasqueInbound {
+        std::string listen_host,authority,certificate_file,private_key_file,bearer_file;
+        std::array<std::uint8_t,16> listen_address{};
+        std::vector<MasqueDestination> destinations;
+        std::uint32_t dns_timeout_ms=5000;
+        std::size_t native_bytes=8*1024*1024;
+        std::optional<MasqueIpInbound> ip;
+    };
+    struct ShadowTlsInbound {
+        std::string handshake_host;
+        std::uint16_t handshake_port=0;
+        std::string target_host;
+        std::uint16_t target_port=0;
+        std::vector<PasswordAuth> users;
+        bool strict_tls13=true;
+        std::array<std::uint8_t,16> listen_address{};
+    };
+    struct TuicUser { std::string name,uuid_file,password_file; };
+    struct TuicInbound {
+        std::string listen_host,certificate_file,private_key_file;
+        std::array<std::uint8_t,16> listen_address{};
+        std::vector<TuicUser> users;
+        std::string congestion_control="cubic";
+        std::uint32_t handshake_timeout_ms=10000,idle_timeout_ms=60000;
+        std::size_t native_bytes=8*1024*1024;
+        bool udp=true;
+    };
+    enum class TunUdpFiltering { address_port_dependent, address_dependent, endpoint_independent };
+    struct TunInbound {
+        struct DeviceFd {
+            int number;
+            bool adopt;
+        };
+        std::string interface_name = "nexus0";
+        std::optional<DeviceFd> device_fd;
+        std::optional<std::string> connect_ip_outbound;
+        std::vector<std::string> connect_ip_routes;
+        std::vector<std::string> route_excludes;
+        std::optional<platform::RoutingMarkFilter> include_routing_mark, exclude_routing_mark;
+        bool route_exclude_private=false;
+        std::optional<std::string> inet4_address, inet6_address;
+        std::uint16_t mtu = 1500;
+        bool auto_route = false, strict_route = false, auto_redirect=false;
+        bool host_dns_resolved=false;
+        std::string host_dns_server;
+        std::string stack = "system";
+        std::size_t tcp_flows = 256, tcp_buffer = 262144;
+        std::uint32_t udp_idle_ms = 60000;
+        std::optional<std::uint32_t> socket_mark;
+        bool endpoint_independent_nat = true;
+        TunUdpFiltering udp_filtering=TunUdpFiltering::address_port_dependent;
+        bool udp_reject_icmp=false,dns_hijack_tcp=false,udp_reply_fragment=false,exclude_mptcp=false,multi_queue=false;
+        std::vector<std::string> exclude_packages;
+    };
+    struct UserLimits {
+        std::string name;
+        std::optional<std::size_t> connections, streams;
+        std::optional<std::uint64_t> byte_quota;
+        std::optional<std::uint32_t> bytes_per_second, burst_bytes;
+    };
+    struct FixedTcpTarget { std::string host; std::uint16_t port; std::string unix_path; };
     struct InboundConfig {
         std::string name;
         std::uint16_t port;
         Inbound type;
         std::optional<PasswordAuth> password_auth;
         std::optional<VlessInbound> vless;
-        std::optional<ShadowsocksInbound> shadowsocks;
-        bool listen_ipv6 = false;
+        std::optional<ShadowsocksInbound> shadowsocks; bool listen_ipv6 = false;
+        std::optional<TrojanInbound> trojan;
+        std::optional<AnyTlsInbound> anytls;
+        std::optional<Hysteria2Inbound> hysteria2;
+        std::optional<SnellInbound> snell;
+        std::optional<MasqueInbound> masque;
+        std::optional<ShadowTlsInbound> shadowtls;
+        std::optional<TuicInbound> tuic;
+        std::optional<TunInbound> tun;
+        std::optional<std::array<std::uint8_t,16>> redirect_address{};
+        std::string redirect_host{};
+        bool transparent_udp=false; std::vector<UserLimits> user_limits;
+        std::optional<FixedTcpTarget> fixed_tcp; std::optional<FixedUdpInbound> fixed_udp; std::string unix_path;
+        std::optional<platform::IpAddress> udp_advertise_ip;
+        std::optional<NaiveInbound> naive; std::optional<HttpInbound> http;
     };
-    enum class TlsKeyExchange { x25519, x25519_mlkem768, x25519_mlkem768_only };
     struct VlessOutbound {
+        struct Reality { std::array<std::uint8_t,32> public_key{}; std::array<std::uint8_t,8> short_id{}; };
         std::string host;
         std::uint16_t port = 0;
         std::string uuid_file;
         std::string server_name;
-        std::string ca_file;
+        std::string ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256;
         TlsKeyExchange key_exchange = TlsKeyExchange::x25519;
+        std::optional<Reality> reality;
+        bool vision = false;
+        std::uint32_t connect_timeout_ms = 10000;
         std::optional<std::string> bootstrap_resolver;
         std::optional<std::size_t> bootstrap_index;
+        std::optional<std::string> detour;
+        std::optional<std::size_t> detour_index;
+        TcpSocketOptions tcp_options;
+        std::optional<HttpUpgradeTransport> transport;
+        std::optional<GrpcTransport> grpc; std::optional<xhttp::Profile> xhttp;
+        std::optional<bool> tcp_fast_open;
+        TlsFingerprint fingerprint=TlsFingerprint::native;
+        std::optional<std::uint16_t> record_size_limit;
+        bool packetaddr=false,fixed_udp=false;
     };
     struct NamedVlessOutbound { std::string name; VlessOutbound config; };
     struct ShadowsocksOutbound {
         std::string host; std::uint16_t port = 0; std::string method, key_file;
+        bool udp_over_tcp = false,udp_native = false;
+        std::uint32_t connect_timeout_ms = 10000;
         std::optional<std::string> bootstrap_resolver;
         std::optional<std::size_t> bootstrap_index;
+        std::optional<std::string> detour;
+        std::optional<std::size_t> detour_index;
+        TcpSocketOptions tcp_options;
+        std::optional<bool> tcp_fast_open;
+        std::vector<std::string> identity_key_files;
     };
     struct NamedShadowsocksOutbound { std::string name; ShadowsocksOutbound config; };
+    struct QuicEchOptions {
+        std::string config_file;
+        bool dns = false;
+    };
+    struct PasswordTlsOutbound {
+        std::string host; std::uint16_t port=0;
+        std::string password_file,server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256;
+        TlsKeyExchange key_exchange=TlsKeyExchange::x25519;
+        TlsFingerprint fingerprint=TlsFingerprint::native;
+        std::optional<std::uint16_t> record_size_limit;
+        std::uint32_t connect_timeout_ms=10000;
+        std::optional<std::string> bootstrap_resolver;
+        std::optional<std::size_t> bootstrap_index;
+        std::optional<std::string> detour;
+        std::optional<std::size_t> detour_index;
+        TcpSocketOptions tcp_options;
+        std::optional<bool> tcp_fast_open;
+        QuicEchOptions ech;
+        std::optional<HttpUpgradeTransport> transport; std::optional<GrpcTransport> grpc;
+    };
+    using TrojanOutbound=PasswordTlsOutbound;
+    struct NamedTrojanOutbound { std::string name; TrojanOutbound config; };
+    struct AnyTlsPool {
+        std::size_t max_sessions=64,min_idle=0;
+        std::uint32_t idle_timeout_ms=30000,check_interval_ms=30000;
+    };
+    struct AnyTlsOutbound { PasswordTlsOutbound connection; AnyTlsPool pool; };
+    struct NamedAnyTlsOutbound { std::string name; AnyTlsOutbound config; };
+    struct SnellOutbound {
+        std::string host,psk_file;std::uint16_t port=0;std::uint8_t version=4;std::optional<std::string> user_file,bootstrap_resolver,detour;
+        std::optional<std::size_t> bootstrap_index,detour_index;std::uint32_t connect_timeout_ms=10000;TcpSocketOptions tcp_options;
+        std::optional<bool> tcp_fast_open;bool http_obfs=false,reuse=false;std::string obfs_host,obfs_uri;
+    };
+    struct NamedSnellOutbound {std::string name;SnellOutbound config;};
+    struct Hysteria2Outbound {PasswordTlsOutbound connection;Hysteria2Transport transport;};
+    struct NamedHysteria2Outbound {std::string name;Hysteria2Outbound config;};
+    struct ShadowTlsOutbound {
+        PasswordTlsOutbound connection;
+        bool strict_tls13=true;
+    };
+    struct NamedShadowTlsOutbound {std::string name;ShadowTlsOutbound config;};
+    struct TuicOutbound {
+        std::string host; std::uint16_t port=0;
+        std::string uuid_file,password_file,server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256;
+        TlsKeyExchange key_exchange=TlsKeyExchange::x25519;
+        TlsFingerprint fingerprint=TlsFingerprint::native;
+        std::string congestion_control="cubic";
+        bool udp_over_stream=false;
+        std::uint32_t heartbeat_ms=10000,handshake_timeout_ms=10000,idle_timeout_ms=60000,connect_timeout_ms=10000;
+        std::size_t native_bytes=8*1024*1024;
+        std::optional<std::string> bootstrap_resolver,detour;
+        std::optional<std::size_t> bootstrap_index,detour_index;
+        TcpSocketOptions tcp_options;
+        QuicEchOptions ech;
+    };
+    struct NamedTuicOutbound {std::string name;TuicOutbound config;};
+    struct MasqueOutbound {
+        std::string host; std::uint16_t port=0;
+        std::string authority,bearer_file,server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256;
+        TlsKeyExchange key_exchange=TlsKeyExchange::x25519;
+        TlsFingerprint fingerprint=TlsFingerprint::native;
+        std::uint32_t handshake_timeout_ms=10000,idle_timeout_ms=300000,connect_timeout_ms=10000;
+        std::size_t native_bytes=8*1024*1024;
+        bool connect_ip=false;
+        std::string path="/.well-known/masque/ip/*/*/",protocol="connect-ip";
+        std::vector<std::pair<std::string,std::string>> connect_headers;
+        std::uint16_t mtu=1280;
+        std::optional<std::array<std::uint8_t,4>> local_v4;
+        std::optional<std::array<std::uint8_t,16>> local_v6;
+        std::optional<std::string> bootstrap_resolver,detour;
+        std::optional<std::size_t> bootstrap_index,detour_index;
+        TcpSocketOptions tcp_options;
+        QuicEchOptions ech;
+    };
+    struct NamedMasqueOutbound {std::string name;MasqueOutbound config;};
+    struct WireGuardOutbound {
+        std::string host; std::uint16_t port=51820;
+        std::string private_key_file,peer_public_key_file;
+        std::optional<std::string> preshared_key_file;
+        std::array<std::uint8_t,4> local_v4{10,0,0,2}; bool has_v4=true;
+        std::array<std::uint8_t,16> local_v6{}; bool has_v6=false;
+        std::array<std::uint8_t,3> reserved{};
+        bool warp=false;
+        std::uint16_t mtu=1420,keepalive_s=0;
+        std::uint32_t connect_timeout_ms=10000;
+        std::optional<std::string> bootstrap_resolver,detour;
+        std::optional<std::size_t> bootstrap_index,detour_index;
+        TcpSocketOptions tcp_options;
+    };
+    struct NamedWireGuardOutbound {std::string name;WireGuardOutbound config;};
+    struct NamedTailscaleOutbound { std::string name, endpoint_file; };
+    enum class TcpProxyProtocol { socks5, http_connect, socks4, socks4a };
+    struct TcpProxyTls { std::string server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256; TlsFingerprint fingerprint = TlsFingerprint::native; };
+    struct TcpProxyOutbound {
+        TcpProxyProtocol protocol=TcpProxyProtocol::socks5;
+        bool udp=false;
+        HttpProxyVersion http_version=HttpProxyVersion::h1;
+        std::size_t max_sessions=16;
+        std::uint32_t handshake_timeout_ms=10000,idle_timeout_ms=60000;
+        std::size_t native_bytes=8*1024*1024;
+        std::optional<TcpProxyTls> tls;
+        std::string host,username,password_file;
+        std::uint16_t port=0;
+        std::uint32_t connect_timeout_ms=10000;
+        std::optional<std::string> bootstrap_resolver,detour;
+        std::optional<std::size_t> bootstrap_index,detour_index;
+        TcpSocketOptions tcp_options;
+    };
+    struct NamedTcpProxyOutbound { std::string name; TcpProxyOutbound config; };
+    enum class DnsSecurity { tls, https, quic, https3 };
+    struct DnsTls {
+        std::string server_name, ca_file;
+        DnsSecurity transport=DnsSecurity::tls;
+        std::string path;
+        bool early_data=false;
+        auto operator==(DnsTls const&) const -> bool = default;
+    };
     struct DnsUpstream {
         std::array<std::uint8_t,16> address{};
         bool ipv6 = false;
@@ -51,38 +336,165 @@ export namespace nexus::config {
         bool tcp = false;
         std::string host;
         std::optional<std::size_t> resolver;
+        std::optional<DnsTls> tls{};
+        std::optional<std::string> detour{};
+        std::optional<std::size_t> detour_index{};
+        bool detour_group=false;
+        platform::SocketBinding binding{};
+        auto operator==(DnsUpstream const&) const -> bool = default;
     };
-    struct DnsServer { std::string name; std::optional<DnsUpstream> upstream; };
-    struct DnsRule { std::string domain; bool suffix; std::size_t server; };
+    struct DnsServer {
+        std::string name;
+        std::optional<DnsUpstream> upstream;
+        auto operator==(DnsServer const&) const -> bool = default;
+    };
+    using DnsRule=policy::DnsRule;
     enum class DnsStrategy { automatic, prefer_ipv4, prefer_ipv6, ipv4_only, ipv6_only };
+    struct DnsListen {std::array<std::uint8_t,16> address{};bool ipv6=false;std::uint16_t port=0;};
+    struct DnsRuleFile {std::size_t rule;BlockRules file;};
+    struct DnsFakeIp {
+        std::uint32_t first, last, ttl_seconds;
+        std::string state_directory;
+        std::size_t upstream;
+        bool initialize;
+        bool unified=false, per_mapping=false;
+        std::optional<std::pair<std::array<std::uint8_t,12>,std::uint8_t>> ipv6{};
+    };
+    struct DnsPolicyView { std::string name; std::size_t final; };
     struct DnsRouting {
+        std::optional<DnsListen> listen;
+        std::optional<DnsFakeIp> fakeip;
         std::vector<DnsServer> servers;
         std::vector<DnsRule> rules;
+        std::vector<DnsRuleFile> rule_files;
         std::size_t final;
         DnsStrategy strategy = DnsStrategy::automatic;
         bool disable_cache = false;
         bool edns = false;
+        bool reverse_mapping = false;
+        std::uint32_t cache_flush_interval_ms = 60000;
+        std::string message_cache_directory, message_cache_policy, unified_cache_root;
+        std::size_t unified_cache_bytes=0;
+        std::string cache_rule_fingerprints;
+        std::uint32_t optimistic_cache_seconds=0;
+        std::vector<DnsPolicyView> views;
+        [[nodiscard]] auto resolver_index(std::string_view name) const -> std::optional<std::size_t> {
+            auto server=std::ranges::find(servers,name,&DnsServer::name);
+            if (server!=servers.end()) return server-servers.begin();
+            auto view=std::ranges::find(views,name,&DnsPolicyView::name);
+            if (view!=views.end()) return servers.size()+(view-views.begin());
+            return {};
+        }
+    };
+    enum class HttpProtocol { http1, http2, http3, automatic };
+    struct NamedHttpClient {
+        std::string name, outbound, resolver, ca_file;
+        std::uint32_t timeout_ms=10000;
+        std::size_t max_bytes=1024*1024;
+        std::size_t resolver_index=0, outbound_index=0;
+        HttpProtocol protocol=HttpProtocol::http1;
+        std::string ech_config_file;
+        std::optional<std::size_t> max_udp_payload;
+        std::vector<std::pair<std::string,std::string>> headers;
+        TlsFingerprint fingerprint=TlsFingerprint::native;
+        TlsKeyExchange key_exchange=TlsKeyExchange::x25519;
+        std::optional<std::uint16_t> record_size_limit;
+        std::optional<bool> disable_path_mtu_discovery;
+        unsigned max_redirects=0;
+    };
+#include "group_types.hpp"
+    struct StateOptions {
+        std::string directory, cache_directory;
+        std::size_t dns_cache_max_bytes=4*1024*1024, ruleset_cache_max_bytes=64*1024*1024;
+        bool fakeip_per_mapping=false;
     };
     struct Config {
+        std::optional<StateOptions> state;
+        std::optional<logging::Config> log;
+        std::vector<std::string> log_protected_paths;
+        std::vector<NamedHttpClient> http_clients;
+        std::string default_http_client;
         std::uint16_t port = 0;
         bool listen_ipv6 = false;
         std::vector<InboundConfig> inbounds;
         unsigned workers = 1;
+        std::optional<std::uint32_t> sessions_per_listener;
+        std::optional<std::uint32_t> tcp_splice_pipes;
+        std::optional<std::uint32_t> shutdown_grace_ms;
+        std::string control_socket;
+        std::optional<std::uint32_t> control_read_uid;
+        std::string selector_state_directory;
+        std::optional<ControlHttpConfig> control_http;
         Inbound inbound = Inbound::socks5;
         std::optional<BlockRules> block_rules;
         std::vector<RouteRule> routes;
+        std::optional<OrderedTcpConfig> ordered_tcp;
         RouteAction rule_action = RouteAction::block;
         RouteAction default_action = RouteAction::direct;
         std::size_t default_outbound = 0;
+        std::string default_outbound_name, direct_outbound_name;
+        std::optional<std::string> block_outbound_name;
+        std::uint32_t direct_connect_timeout_ms = 10000;
+        TcpSocketOptions direct_tcp_options;
+        std::optional<platform::network::Policy> direct_network;
         std::optional<PasswordAuth> password_auth;
         std::optional<VlessInbound> vless_inbound;
         std::optional<ShadowsocksInbound> shadowsocks_inbound;
+        std::optional<TrojanInbound> trojan_inbound;
+        std::optional<AnyTlsInbound> anytls_inbound;
+        std::optional<Hysteria2Inbound> hysteria2_inbound;
+        std::optional<SnellInbound> snell_inbound;
+        std::optional<MasqueInbound> masque_inbound;
+        std::optional<ShadowTlsInbound> shadowtls_inbound;
+        std::optional<TuicInbound> tuic_inbound;
+        std::optional<TunInbound> tun_inbound;
+        std::optional<NaiveInbound> naive_inbound;
+        std::optional<HttpInbound> http_inbound;
+        bool transparent_udp=false;
+        std::optional<std::array<std::uint8_t,16>> redirect_inbound;
+        std::string redirect_host;
+        std::optional<FixedTcpTarget> fixed_tcp_inbound; std::optional<FixedUdpInbound> fixed_udp_inbound; std::string unix_path;
+        std::optional<platform::IpAddress> udp_advertise_ip;
         std::optional<VlessOutbound> vless;
         std::vector<NamedVlessOutbound> vless_outbounds;
         std::vector<NamedShadowsocksOutbound> shadowsocks_outbounds;
+        std::vector<NamedTrojanOutbound> trojan_outbounds;
+        std::vector<NamedAnyTlsOutbound> anytls_outbounds;
+        std::vector<NamedHysteria2Outbound> hysteria2_outbounds;
+        std::vector<NamedSnellOutbound> snell_outbounds;
+        std::vector<NamedShadowTlsOutbound> shadowtls_outbounds;
+        std::vector<NamedTuicOutbound> tuic_outbounds;
+        std::vector<NamedMasqueOutbound> masque_outbounds;
+        std::vector<NamedWireGuardOutbound> wireguard_outbounds; std::vector<NamedSshOutbound> ssh_outbounds;
+        std::vector<NamedNaiveOutbound> naive_outbounds;
+        std::vector<NamedTailscaleOutbound> tailscale_outbounds;
+        std::vector<NamedTcpProxyOutbound> tcp_proxy_outbounds;
+        std::vector<OutboundSelector> selectors;
+        [[nodiscard]] auto tunnel_count() const noexcept -> std::size_t {
+            return vless_outbounds.size()+shadowsocks_outbounds.size()+trojan_outbounds.size()+
+                anytls_outbounds.size()+hysteria2_outbounds.size()+snell_outbounds.size()+
+                shadowtls_outbounds.size()+tuic_outbounds.size()+masque_outbounds.size()+
+                wireguard_outbounds.size()+ssh_outbounds.size()+naive_outbounds.size()+
+                tailscale_outbounds.size()+tcp_proxy_outbounds.size();
+        }
         std::optional<DnsUpstream> dns_upstream;
         std::optional<DnsRouting> dns;
+        std::optional<CertificateConfig> certificate; std::optional<NtpConfig> ntp;
     };
+    [[nodiscard]] auto reselect_outbounds(Config const& running,Config const& requested)
+        -> std::expected<Config,std::string>;
+    [[nodiscard]] auto configured_outbound_index(Config const&,std::string_view) -> std::optional<std::size_t>;
+    [[nodiscard]] auto distributed_outbound_index(Config const&,std::string_view) -> std::optional<std::size_t>;
+    [[nodiscard]] auto outbound_distribution(Config const&) -> std::shared_ptr<rules::OutboundDistribution const>;
+    [[nodiscard]] auto selected_outbound(Config const&,std::string_view) noexcept -> std::string_view;
     inline constexpr std::size_t max_config_bytes = 1048576;
+    enum class ReloadIdentity { full, dns_policy, process };
+    [[nodiscard]] auto reload_identity(std::string_view input,ReloadIdentity scope=ReloadIdentity::full)
+        -> std::expected<std::string,std::string>;
     [[nodiscard]] auto parse_kdl(std::string_view input) -> std::expected<Config, std::string>;
+}
+namespace config {
+    auto outbound_index(Config const&,std::string_view,std::optional<std::string> const&,std::string_view) -> std::optional<std::size_t>;
+    auto bind_outbound_selectors(Config&,std::string_view,std::optional<std::string> const&) -> std::expected<void,std::string>;
+    auto bind_outbound_dependencies(Config&,std::string_view,std::optional<std::string> const&) -> std::expected<void,std::string>;
 }

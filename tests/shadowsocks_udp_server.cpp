@@ -2,9 +2,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.shadowsocks.udp_server;
-import nexus.shadowsocks.udp_packet;
-namespace s=nexus::shadowsocks;
+import shadowsocks.udp_server;
+import shadowsocks.udp_packet;
+namespace s=shadowsocks;
 using namespace std::chrono_literals;
 int main() {
     int fd=socket(AF_INET,SOCK_DGRAM|SOCK_CLOEXEC,0);

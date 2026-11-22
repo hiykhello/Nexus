@@ -1,22 +1,14 @@
-module nexus.http.connect;
+module http.connect;
 import std;
+import http.header;
 
-namespace nexus::http {
+namespace http {
     namespace {
         auto lower(char c) -> char { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c; }
         auto lower_copy(std::string_view s) -> std::string {
             std::string result(s);
             std::ranges::transform(result, result.begin(), lower);
             return result;
-        }
-        auto token(char c) -> bool {
-            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                   std::string_view("!#$%&'*+-.^_`|~").find(c) != std::string_view::npos;
-        }
-        auto trim(std::string_view s) -> std::string_view {
-            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
-            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.remove_suffix(1);
-            return s;
         }
         struct Field { std::string name; std::string_view value; };
         struct Header {
@@ -28,38 +20,27 @@ namespace nexus::http {
         };
         auto parse_header(std::string_view input) -> Header {
             Header result;
-            auto end = input.find("\r\n\r\n");
-            if (end == input.npos) {
-                if (input.size() >= max_connect_header_bytes) result.status = ConnectStatus::too_large;
+            auto view = inspect_header(input);
+            if (view.status != HeaderStatus::complete) {
+                result.status = view.status == HeaderStatus::too_large ? ConnectStatus::too_large :
+                                view.status == HeaderStatus::malformed ? ConnectStatus::malformed : ConnectStatus::incomplete;
                 return result;
             }
-            result.consumed = end + 4;
-            if (result.consumed > max_connect_header_bytes) { result.status = ConnectStatus::too_large; return result; }
-            auto first_end = input.find("\r\n");
-            if (first_end > 8192) { result.status = ConnectStatus::malformed; return result; }
-            result.first = input.substr(0, first_end);
-            auto pos = first_end + 2;
-            while (pos < end + 2) {
-                auto next = input.find("\r\n", pos);
-                if (next == input.npos || next > end || next - pos > 8192 || result.fields.size() >= max_connect_fields) {
-                    result.status = ConnectStatus::malformed; return result;
-                }
-                auto line = input.substr(pos, next - pos);
-                auto colon = line.find(':');
-                if (colon == line.npos || colon == 0 || !std::all_of(line.begin(), line.begin() + colon, token)) {
-                    result.status = ConnectStatus::malformed; return result;
-                }
-                auto value = trim(line.substr(colon + 1));
-                for (unsigned char c : value) if ((c < 32 && c != '\t') || c == 127) {
-                    result.status = ConnectStatus::malformed; return result;
-                }
-                auto name = lower_copy(line.substr(0, colon));
+            result.consumed = view.consumed;
+            result.first = view.first;
+            HeaderFieldCursor fields(view.field_lines);
+            while (true) {
+                auto step = fields.next();
+                if (step.status == HeaderFieldStatus::end) break;
+                if (step.status == HeaderFieldStatus::malformed) { result.status = ConnectStatus::malformed; return result; }
+                auto value = step.field.value;
+                auto name = lower_copy(step.field.name);
                 if (name == "connection") {
                     auto rest = value;
                     do {
                         auto comma = rest.find(',');
-                        auto option = trim(rest.substr(0, comma));
-                        if (option.empty() || !std::all_of(option.begin(), option.end(), token)) {
+                        auto option = trim_header_ows(rest.substr(0, comma));
+                        if (option.empty() || !std::all_of(option.begin(), option.end(), header_token)) {
                             result.status = ConnectStatus::malformed; return result;
                         }
                         result.connection.push_back(lower_copy(option));
@@ -68,7 +49,6 @@ namespace nexus::http {
                     } while (true);
                 }
                 result.fields.push_back({std::move(name), value});
-                pos = next + 2;
             }
             result.status = ConnectStatus::accepted;
             return result;
@@ -125,7 +105,7 @@ namespace nexus::http {
         auto first = header.first.find(' '), second = first == header.first.npos ? first : header.first.find(' ', first + 1);
         if (first == header.first.npos || second == header.first.npos || header.first.substr(second + 1) != "HTTP/1.1") return result;
         auto method = header.first.substr(0, first);
-        if (method.empty() || !std::all_of(method.begin(), method.end(), token) || method == "CONNECT") return result;
+        if (method.empty() || !std::all_of(method.begin(), method.end(), header_token) || method == "CONNECT") return result;
         auto uri = header.first.substr(first + 1, second - first - 1);
         if (!uri.starts_with("http://")) return result;
         uri.remove_prefix(7);
@@ -183,6 +163,8 @@ namespace nexus::http {
         std::uint64_t length = 0;
         for (auto const& field : header.fields) {
             if (field.name == "upgrade") return result;
+            if (field.name == "content-encoding" && lower_copy(field.value)!="identity")
+                result.identity_encoding=false;
             if (field.name == "transfer-encoding") {
                 if (has_transfer || lower_copy(field.value) != "chunked" || line.starts_with("HTTP/1.0 ")) return result;
                 has_transfer = true;
@@ -195,6 +177,7 @@ namespace nexus::http {
             }
         }
         auto code = (line[9] - '0') * 100 + (line[10] - '0') * 10 + line[11] - '0';
+        result.status_code=static_cast<unsigned>(code);
         result.informational = code < 200;
         if ((result.informational && (code == 101 || line.starts_with("HTTP/1.0 ") || has_length || has_transfer)) ||
             (has_transfer && has_length) ||
@@ -205,6 +188,8 @@ namespace nexus::http {
         result.body_length = result.informational || head || code == 204 || code == 205 || code == 304 ? std::optional<std::uint64_t>(0) :
                              has_length ? std::optional<std::uint64_t>(length) : std::nullopt;
         result.consumed = header.consumed;
+        result.persistent=line.starts_with("HTTP/1.1 ") &&
+            std::ranges::find(header.connection,std::string_view("close"))==header.connection.end();
         result.wire = std::string(line) + "\r\n";
         append_fields(result.wire, header, false, !result.informational);
         result.status = ConnectStatus::accepted;

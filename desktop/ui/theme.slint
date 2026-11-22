@@ -1,0 +1,20 @@
+import { Palette } from "std-widgets.slint";
+
+export enum ThemePreference { system, light, dark }
+
+export global Theme {
+    in-out property <ThemePreference> preference: ThemePreference.system;
+    out property <bool> dark:
+        preference == ThemePreference.dark ? true
+        : preference == ThemePreference.light ? false
+        : Palette.color-scheme == ColorScheme.dark;
+
+    out property <brush> sidebar-bg: dark ? #17191f : #eef1f6;
+    out property <brush> card-bg: dark ? #222630 : #ffffff;
+    out property <brush> card-border: dark ? #3a4152 : #d4dbe6;
+    out property <brush> row-bg: dark ? #1e222b : #f7f9fc;
+    out property <brush> selected-bg: dark ? #3b82f62a : #3b82f618;
+    out property <brush> selected-border: #3b82f6;
+    out property <brush> success-bg: dark ? #16a34a2e : #16a34a1c;
+    out property <brush> error-bg: dark ? #dc26262e : #dc26261c;
+}

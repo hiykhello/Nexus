@@ -1,0 +1,56 @@
+[package]
+namespace = "nexus"
+name = "dns-tests"
+version = "0.1.0"
+
+# The network fixtures exercise the same DNS and transport members as the
+# server, without pulling the proxy into each standalone test executable.
+[dependencies]
+nexus.dns = { path = "../../src/dns" }
+nexus.protocols = { path = "../../src" }
+nexus.platform-tests = { path = "../platform" }
+nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[features]
+default = ["io-uring"]
+io-uring = ["nexus.corosio-source/uring"]
+test-fakeip = { implies = ["nexus.dns/test-fakeip"], defines = ["NEXUS_TEST_FAKEIP"] }
+test-random = { implies = ["nexus.platform-tests/test-random"], defines = ["NEXUS_TEST_LINUX_RANDOM"] }
+
+[feature-deps.io-uring]
+nexus.uring-system.workspace = true
+
+[build]
+sources = ["query_hooks.cpp"]
+
+[targets.dns-tcp-fixture]
+kind = "bin"
+main = "tcp.cpp"
+
+[targets.dns-resolve-fixture]
+kind = "bin"
+main = "resolve.cpp"
+
+[targets.dns-cache-fixture]
+kind = "bin"
+main = "cached_resolve.cpp"
+
+[targets.dns-dual-fixture]
+kind = "bin"
+main = "dual_resolve.cpp"
+
+[targets.dns-local-fixture]
+kind = "bin"
+main = "local_resolve.cpp"
+
+[targets.dns-answer-fixture]
+kind = "bin"
+main = "answer.cpp"
+
+[targets.dns-dnsmasq-fixture]
+kind = "bin"
+main = "dnsmasq.cpp"
+
+[test]
+discover = ["udp.cpp", "random_id.cpp"]

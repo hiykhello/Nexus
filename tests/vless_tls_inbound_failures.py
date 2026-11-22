@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise VLESS/TLS inbound rejection with an independent TLS client."""
+import os
 import pathlib
 import socket
 import ssl
@@ -33,8 +34,9 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-inbound-failures-") as dire
             port = target.getsockname()[1]
             if scenario != "dial-failure":
                 target.listen(1); target.settimeout(0.3)
+            env = {**os.environ, "NEXUS_TEST_VLESS_TRACE": "1"}
             peer = subprocess.Popen([fixture, str(listener.fileno()), str(cert_der), str(key_der), str(uuid)],
-                                    pass_fds=(listener.fileno(),))
+                                    pass_fds=(listener.fileno(),), stderr=subprocess.PIPE, env=env)
             try:
                 with socket.create_connection(listener.getsockname(), timeout=5) as raw:
                     with context.wrap_socket(raw, server_hostname="localhost") as client:
@@ -49,6 +51,11 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-inbound-failures-") as dire
                                 pass
                 if peer.wait(timeout=5) != 6:
                     raise RuntimeError(f"{scenario}: fixture exit {peer.returncode}")
+                trace = peer.stderr.read().decode(errors="replace")
+                expected = {"wrong-user": "VLESS request rejected", "truncated": "VLESS request io",
+                            "dial-failure": "dial or VLESS response"}[scenario]
+                if expected not in trace:
+                    raise RuntimeError(f"{scenario}: fixture did not reach expected rejection: {trace!r}")
                 if scenario != "dial-failure":
                     try:
                         conn, _ = target.accept()

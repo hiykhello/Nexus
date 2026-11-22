@@ -1,27 +1,28 @@
 module;
 #include <experimental/scope>
-#include <arpa/inet.h>
 #include <cerrno>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-module nexus.udp.direct;
-import nexus.rules;
+module udp.direct;
+import platform.ip_address;
+import rules;
 import std;
 
-namespace nexus::udp {
+namespace udp {
     namespace {
         auto system_error() -> std::error_code { return {errno, std::generic_category()}; }
         auto address(Endpoint6 endpoint) -> sockaddr_in6 {
             sockaddr_in6 result{};
             result.sin6_family = AF_INET6;
             std::ranges::copy(endpoint.address, result.sin6_addr.s6_addr);
-            result.sin6_port = htons(endpoint.port);
+            result.sin6_port = platform::host_to_net16(endpoint.port);
             return result;
         }
         auto endpoint(sockaddr_in6 const& address) -> Endpoint6 {
             Endpoint6 result{};
             std::ranges::copy(address.sin6_addr.s6_addr, result.address.begin());
-            result.port = ntohs(address.sin6_port);
+            result.port = platform::net_to_host16(address.sin6_port);
             return result;
         }
 

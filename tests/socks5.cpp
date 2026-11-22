@@ -1,7 +1,7 @@
 import std;
-import nexus.socks5;
+import socks5;
 
-namespace s = nexus::socks5;
+namespace s = socks5;
 
 static auto check(bool condition, char const* message) -> bool {
     if (!condition) std::cerr << message << '\n';

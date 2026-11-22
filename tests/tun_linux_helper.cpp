@@ -1,11 +1,11 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.packet.tun_linux;
+import packet.tun_linux;
 int main(int argc,char** argv) {
     if (argc!=2) return 1;
     int control=std::atoi(argv[1]);
-    auto tun=nexus::packet::LinuxTun::create("nx-test");
+    auto tun=::packet::LinuxTun::create("nx-test");
     if (!tun) return 2;
     char byte='T'; iovec data{&byte,1};
     alignas(cmsghdr) std::array<std::byte,CMSG_SPACE(sizeof(int))> buffer{};

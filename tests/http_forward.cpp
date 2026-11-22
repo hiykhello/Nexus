@@ -1,7 +1,7 @@
 import std;
-import nexus.http.connect;
+import http.connect;
 
-namespace h = nexus::http;
+namespace h = http;
 
 int main() {
     std::string request = "GET http://example.com:8080/x?q=1 HTTP/1.1\r\nHost: wrong.example\r\nConnection: x-private\r\nX-Private: secret\r\nX-Keep: value\r\n\r\n";

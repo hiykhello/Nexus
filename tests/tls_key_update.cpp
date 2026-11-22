@@ -1,5 +1,5 @@
 import std;
-import nexus.tls.client_flight;
+import tls.client_flight;
 static thread_local int fail_after=-1;
 void* operator new(std::size_t size) {
     if (fail_after==0) { fail_after=-1; throw std::bad_alloc{}; }
@@ -9,7 +9,7 @@ void* operator new(std::size_t size) {
 }
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete(void* p,std::size_t) noexcept { std::free(p); }
-namespace t=nexus::tls; namespace c=nexus::crypto; using Bytes=c::Bytes;
+namespace t=tls; namespace c = ::crypto; using Bytes=c::Bytes;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction, int value, std::uint64_t limit=1u << 24) -> t::RecordLayer {
     auto s=secret(value); auto k=t::expand_label(c::Hash::sha256,s.view(),"key",{},16), iv=t::expand_label(c::Hash::sha256,s.view(),"iv",{},12);

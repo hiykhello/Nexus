@@ -1,8 +1,8 @@
-// Private adapter; import nexus.proxy and the UDP listener dependencies first.
+// Private adapter; import proxy and the UDP listener dependencies first.
 #pragma once
 #include "../shadowsocks/corosio_udp_listener.hpp"
 
-namespace nexus::proxy::detail {
+namespace proxy::detail {
     struct UdpDnsConfig {
         shadowsocks::detail::UdpDnsRouting routing;
         shadowsocks::detail::UdpResolveOptions options;
@@ -22,17 +22,22 @@ namespace nexus::proxy::detail {
         result.options.disable_cache=source.disable_cache; result.options.edns=source.edns;
         result.routing.fallback=source.final;
         for (auto const& server:source.servers) {
-            boost::corosio::endpoint endpoint;
-            if (server.ipv6) endpoint={boost::corosio::ipv6_address(server.address),server.port};
+            shadowsocks::detail::udp_io::endpoint endpoint;
+            if (server.ipv6) endpoint={shadowsocks::detail::udp_io::ipv6_address(server.address),server.port};
             else {
-                boost::corosio::ipv4_address::bytes_type bytes{};
+                shadowsocks::detail::udp_io::ipv4_address::bytes_type bytes{};
                 std::copy_n(server.address.begin(),4,bytes.begin());
-                endpoint={boost::corosio::ipv4_address(bytes),server.port};
+                endpoint={shadowsocks::detail::udp_io::ipv4_address(bytes),server.port};
             }
             // System resolution ignores transport settings in the TCP path too.
             result.routing.servers.push_back({endpoint,server.port!=0 && server.tcp,server.host,server.resolver});
         }
-        for (auto const& rule:source.rules) result.routing.rules.push_back({rule.domain,rule.suffix,rule.server});
+        for (auto const& rule:source.rules) {
+            // Historical header fixtures do not execute question rules.
+            if (rule.query_type || rule.pattern!=policy::DnsPattern::name || rule.action!=policy::DnsAction::route || rule.match_all || rule.disable_cache || rule.invert || rule.match_response)
+                return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
+            result.routing.rules.push_back({rule.domain,rule.suffix,rule.server});
+        }
         return result;
     }
 }

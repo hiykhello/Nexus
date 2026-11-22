@@ -1,14 +1,24 @@
-module nexus.rules;
+module rules;
 import std;
 import nexus.thirdparty.glaze;
 
-namespace nexus::rules {
+namespace rules {
     namespace g = nex::glaze;
 
-    auto valid_beve_profile(std::string_view payload) -> bool;
+    auto valid_beve_profile(std::string_view payload,bool nested) -> bool;
+    auto normalize_set(RuleSet set) -> std::expected<RuleSet, Error>;
 
     // Glaze's reflection requires the mapped type to have linkage on Clang.
-    struct WireSet {
+    struct WireRuleV1 {
+        std::string type;
+        std::string value;
+    };
+    struct WireSetV1 {
+        std::uint32_t schema_version{};
+        std::string kind;
+        std::vector<WireRuleV1> rules;
+    };
+    struct WireSetV2 {
         std::uint32_t schema_version{};
         std::string kind;
         std::vector<Rule> rules;
@@ -33,17 +43,6 @@ namespace nexus::rules {
                    (std::uint32_t(byte(14)) << 8) | byte(15);
         }
 
-        auto validated(std::vector<Rule> const& entries) -> std::expected<RuleSet, Error> {
-            if (entries.size() > max_rules) return std::unexpected(Error{ErrorCode::limit, "too many rules"});
-            RuleSet result;
-            result.rules.reserve(entries.size());
-            for (auto const& entry : entries) {
-                auto rule = normalize_rule(entry);
-                if (!rule) return std::unexpected(std::move(rule.error()));
-                result.rules.push_back(std::move(*rule));
-            }
-            return result;
-        }
     }
 
     auto parse_beve(std::string_view input) -> std::expected<RuleSet, Error> {
@@ -54,22 +53,41 @@ namespace nexus::rules {
         auto size = payload_size(input);
         if (size == 0 || size != input.size() - header_size) return invalid("invalid payload length");
         auto payload = input.substr(header_size);
-        if (!valid_beve_profile(payload)) return invalid("invalid BEVE profile or duplicate field");
-        WireSet wire;
-        LimitedContext context;
         constexpr g::opts options{.error_on_unknown_keys = true, .error_on_missing_keys = true};
-        auto consumed = g::read_beve_at<options>(wire, payload, 0, context);
-        if (!consumed || *consumed != payload.size()) return invalid("invalid or trailing BEVE payload");
-        if (wire.schema_version != 1 || wire.kind != "predicate") return invalid("unsupported rule schema or kind");
-        return validated(wire.rules);
+        if (valid_beve_profile(payload,false)) {
+            WireSetV1 wire;
+            LimitedContext context;
+            auto consumed=g::read_beve_at<options>(wire,payload,0,context);
+            if (consumed && *consumed==payload.size() && wire.schema_version==1 && wire.kind=="predicate") {
+                RuleSet result;
+                result.rules.reserve(wire.rules.size());
+                for (auto& rule:wire.rules) result.rules.push_back({std::move(rule.type),std::move(rule.value),{}});
+                return normalize_set(std::move(result));
+            }
+        }
+        if (!valid_beve_profile(payload,true)) return invalid("invalid BEVE profile or duplicate field");
+        WireSetV2 wire;
+        LimitedContext context;
+        context.max_string_length=255;
+        auto consumed=g::read_beve_at<options>(wire,payload,0,context);
+        if (!consumed || *consumed!=payload.size() || wire.schema_version!=2 || wire.kind!="predicate")
+            return invalid("unsupported rule schema or kind");
+        return normalize_set(RuleSet{std::move(wire.rules),2});
     }
 
     auto write_beve(RuleSet const& set) -> std::expected<std::string, Error> {
-        auto normalized = validated(set.rules);
+        auto normalized = normalize_set(set);
         if (!normalized) return std::unexpected(std::move(normalized.error()));
-        WireSet wire{1, "predicate", std::move(normalized->rules)};
         std::string payload;
-        if (auto error = g::write_beve(wire, payload); error) return invalid("cannot encode BEVE payload");
+        if (normalized->version==1) {
+            WireSetV1 wire{1,"predicate",{}};
+            wire.rules.reserve(normalized->rules.size());
+            for (auto& rule:normalized->rules) wire.rules.push_back({std::move(rule.type),std::move(rule.value)});
+            if (auto error=g::write_beve(wire,payload); error) return invalid("cannot encode BEVE payload");
+        } else {
+            WireSetV2 wire{2,"predicate",std::move(normalized->rules)};
+            if (auto error=g::write_beve(wire,payload); error) return invalid("cannot encode BEVE payload");
+        }
         if (payload.empty() || payload.size() > max_input_bytes - header_size)
             return std::unexpected(Error{ErrorCode::limit, "BEVE output exceeds 1 MiB"});
         auto length = static_cast<std::uint32_t>(payload.size());

@@ -1,24 +1,19 @@
-#include <boost/corosio/backend.hpp>
 import std;
-import nexus.vless;
-import nexus.config;
-import nexus.rulefile;
-import nexus.tls.client_handshake_io;
-import nexus.tls.application_io;
+import vless;
+import config;
+import rulefile;
+import tls.client_handshake_io;
+import tls.application_io;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-import nexus.tls.corosio_client;
-import nexus.tls.corosio_application;
-import nexus.vless.corosio_client;
-#include "../src/vless/client_profile.hpp"
-namespace io=nex::corosio; namespace t=nexus::tls; namespace v=nexus::vless; namespace capy=nex::capy;
+import tls.corosio_client;
+import tls.corosio_application;
+import vless.corosio_client;
+import vless.client_profile;
+namespace io=nex::corosio; namespace t=tls; namespace v=vless; namespace capy=nex::capy;
 using Bytes=std::vector<std::uint8_t>; using namespace std::chrono_literals;
 struct Fixture {
-#if BOOST_COROSIO_HAVE_LIBURING
-    io::io_context context{io::uring};
-#else
-    io::io_context context;
-#endif
+    io::io_context context=io::make_io_context(std::getenv("NEXUS_TEST_URING")!=nullptr);
     std::optional<t::ClientHandshakeIo> handshake; std::array<std::uint8_t,16> user{}; std::uint16_t port, destination_port=443; bool invalid=false, bad_user=false, relay=false, relay_cancel=false, numeric_destination=false,done=false,success=false;
     ~Fixture() { context.restart(); (void)context.run_for(1s); if (!context.stopped()) std::_Exit(90); }
 };
@@ -92,7 +87,7 @@ auto run(Fixture& f) -> capy::task<> {
 }
 int main(int argc,char** argv) {
     if (argc!=5 && argc!=6) return 1; auto port=std::strtoul(argv[1],nullptr,10); if (!port || port>65535) return 2;
-    nexus::config::VlessOutbound config{"127.0.0.1",static_cast<std::uint16_t>(port),argv[3],"server.example",argv[2]};
+    config::VlessOutbound config{"127.0.0.1",static_cast<std::uint16_t>(port),argv[3],"server.example",argv[2]};
     auto profile=v::detail::ClientProfile::load(config); if (!profile) return 3;
     auto invalid_name=config; invalid_name.server_name="bad/name";
     if (v::detail::ClientProfile::load(invalid_name)) return 4;

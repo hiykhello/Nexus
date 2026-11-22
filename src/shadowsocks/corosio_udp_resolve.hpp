@@ -2,82 +2,146 @@
 // nexus.shadowsocks.udp_dispatch before including. Owner, dispatcher, context
 // and cache must live until the task completes, including cancellation.
 #pragma once
-#include "../dns/corosio_dual_resolve.hpp"
+#ifndef NEXUS_DNS_USE_MODULES
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/ipv6_address.hpp>
-#include <boost/corosio/resolver.hpp>
+#endif
 
-namespace nexus::shadowsocks::detail {
+namespace shadowsocks::detail {
+#ifdef NEXUS_DNS_USE_MODULES
+    namespace udp_io=nex::corosio;
+    namespace udp_capy=nex::capy;
+#else
+    namespace udp_io=boost::corosio;
+    namespace udp_capy=boost::capy;
+#endif
+#ifdef NEXUS_TEST_DNS_GROUP
+    using UdpDnsCache=dns_hp_experiment::GroupBinding;
+#else
+    using UdpDnsCache=dns::AddressCache;
+#endif
+    using UdpDnsResolver=dns::detail::BasicDualAddressResolver<UdpDnsCache>;
+#ifdef NEXUS_TEST_DNS_GROUP_REFRESH
+    using UdpDnsRefresh=dns::detail::BasicRefreshOwner<UdpDnsCache>;
+#endif
+#ifdef NEXUS_TEST_DNS_COORDINATOR
+    inline auto udp_coordinated_strategy(dns::detail::AddressStrategy value) -> dns_hp_experiment::CoordinatedStrategy {
+        using Source=dns::detail::AddressStrategy;
+        using Target=dns_hp_experiment::CoordinatedStrategy;
+        switch (value) {
+        case Source::prefer_ipv4: return Target::prefer_ipv4;
+        case Source::prefer_ipv6: return Target::prefer_ipv6;
+        case Source::ipv4_only: return Target::ipv4_only;
+        case Source::ipv6_only: return Target::ipv6_only;
+        }
+        std::terminate();
+    }
+#endif
     struct UdpResolveHop { std::string host; std::uint16_t port; std::uint64_t view; bool tcp_only; };
     enum class UdpResolveError { state, invalid_target, dns, dispatch, canceled };
     class UdpResolveOperation {
         UdpDispatcher& dispatcher_;
-        boost::corosio::io_context& context_;
-        dns::AddressCache& cache_;
-        std::unique_ptr<dns::detail::DualAddressResolver> resolver_;
-        std::unique_ptr<boost::corosio::resolver> system_resolver_;
+        udp_io::io_context& context_;
+        UdpDnsCache& cache_;
+        UdpDnsCache::Reader* reader_;
+#ifdef NEXUS_TEST_DNS_GROUP_REFRESH
+        UdpDnsRefresh* refresh_;
+#endif
+#ifdef NEXUS_TEST_DNS_COORDINATOR
+        dns_hp_experiment::CoordinatorOwner* coordinator_;
+        dns_hp_experiment::ViewBinding* views_;
+        bool optimistic_;
+        std::optional<dns_hp_experiment::CoordinatorQuery> resolver_;
+#else
+        std::unique_ptr<UdpDnsResolver> resolver_;
+#endif
+        std::unique_ptr<dns::detail::LocalAddressResolver> local_resolver_;
+        std::shared_ptr<dns::LocalSnapshot const> local_snapshot_;
+        std::size_t* local_rotation_;
         UdpPending pending_;
         std::vector<UdpResolveHop> hops_;
         dns::detail::AddressStrategy strategy_;
         bool tcp_only_,disable_cache_,edns_;
         bool started_=false, canceled_=false, finished_=false;
     public:
-        UdpResolveOperation(UdpDispatcher& dispatcher, boost::corosio::io_context& context,
-            dns::AddressCache& cache,UdpPending pending,bool tcp_only=false,
+        UdpResolveOperation(UdpDispatcher& dispatcher, udp_io::io_context& context,
+            UdpDnsCache& cache,UdpPending pending,bool tcp_only=false,
             dns::detail::AddressStrategy strategy=dns::detail::AddressStrategy::prefer_ipv4,
-            bool disable_cache=false,bool edns=false,std::vector<UdpResolveHop> hops={})
-            : dispatcher_(dispatcher),context_(context),cache_(cache),pending_(std::move(pending)),hops_(std::move(hops)),
-              strategy_(strategy),tcp_only_(tcp_only),disable_cache_(disable_cache),edns_(edns) {}
+            bool disable_cache=false,bool edns=false,std::vector<UdpResolveHop> hops={},
+            std::shared_ptr<dns::LocalSnapshot const> local_snapshot={},std::size_t* local_rotation=nullptr,
+            UdpDnsCache::Reader* reader=nullptr
+#ifdef NEXUS_TEST_DNS_GROUP_REFRESH
+            ,UdpDnsRefresh* refresh=nullptr
+#endif
+#ifdef NEXUS_TEST_DNS_COORDINATOR
+            ,dns_hp_experiment::CoordinatorOwner* coordinator=nullptr,dns_hp_experiment::ViewBinding* views=nullptr,bool optimistic=false
+#endif
+            )
+            : dispatcher_(dispatcher),context_(context),cache_(cache),reader_(reader),
+#ifdef NEXUS_TEST_DNS_GROUP_REFRESH
+              refresh_(refresh),
+#endif
+#ifdef NEXUS_TEST_DNS_COORDINATOR
+              coordinator_(coordinator),views_(views),optimistic_(optimistic),
+#endif
+              pending_(std::move(pending)),hops_(std::move(hops)),
+              strategy_(strategy),tcp_only_(tcp_only),disable_cache_(disable_cache),edns_(edns),
+              local_snapshot_(std::move(local_snapshot)),local_rotation_(local_rotation) {}
         UdpResolveOperation(UdpResolveOperation const&)=delete;
         auto operator=(UdpResolveOperation const&) -> UdpResolveOperation& = delete;
         ~UdpResolveOperation() { if (!finished_) cancel(); }
         // Serialized on the same executor as run(); cancellation removes the
         // token immediately but the object remains alive until completion.
         auto cancel() noexcept -> void {
-            canceled_=true; if (resolver_) resolver_->cancel(); if (system_resolver_) system_resolver_->cancel(); (void)dispatcher_.cancel(pending_.token);
+            canceled_=true; if (resolver_) resolver_->cancel(); if (local_resolver_) local_resolver_->cancel(); (void)dispatcher_.cancel(pending_.token);
         }
-        auto query(std::vector<boost::corosio::endpoint> const& upstreams,std::uint64_t view,bool tcp,
+        auto query(std::vector<udp_io::endpoint> const& upstreams,std::uint64_t view,bool tcp,
                    std::string const& name,std::chrono::steady_clock::time_point deadline)
-            -> boost::capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>> {
+            -> udp_capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>> {
             if (upstreams.size()==1 && upstreams.front().port()==0) {
                 if (canceled_) co_return std::unexpected(dns::detail::ResolveError::canceled);
                 if (std::chrono::steady_clock::now()>=deadline) co_return std::unexpected(dns::detail::ResolveError::timeout);
-                system_resolver_=std::make_unique<boost::corosio::resolver>(context_);
-                auto [error,ips]=co_await system_resolver_->resolve(name);
-                system_resolver_.reset();
+                if (!local_snapshot_) co_return std::unexpected(dns::detail::ResolveError::state);
+                auto rotation=local_snapshot_->config.rotate && local_rotation_ ? (*local_rotation_)++ : 0;
+                local_resolver_=std::make_unique<dns::detail::LocalAddressResolver>(context_,local_snapshot_->config,local_snapshot_->hosts,strategy_,rotation);
+                auto addresses=co_await local_resolver_->resolve(name,deadline);
+                local_resolver_.reset();
                 if (canceled_) co_return std::unexpected(dns::detail::ResolveError::canceled);
-                if (std::chrono::steady_clock::now()>=deadline) co_return std::unexpected(dns::detail::ResolveError::timeout);
-                if (error || ips.empty()) co_return std::unexpected(dns::detail::ResolveError::transport);
-                if (ips.size()>64) co_return std::unexpected(dns::detail::ResolveError::limit);
-                std::vector<dns::Address> addresses;
-                for (auto const& ip:ips) {
-                    dns::Address address{};
-                    if (ip.is_v4()) {
-                        if (strategy_==dns::detail::AddressStrategy::ipv6_only) continue;
-                        auto bytes=ip.to_v4().to_bytes(); std::ranges::copy(bytes,address.bytes.begin()); address.size=4;
-                    } else if (ip.is_v6()) {
-                        if (strategy_==dns::detail::AddressStrategy::ipv4_only || ip.to_v6().scope_id()!=0) continue;
-                        auto bytes=ip.to_v6().to_bytes(); std::ranges::copy(bytes,address.bytes.begin()); address.size=16;
-                    } else continue;
-                    addresses.push_back(address);
-                }
-                if (addresses.empty()) co_return std::unexpected(dns::detail::ResolveError::no_data);
-                auto preferred=strategy_==dns::detail::AddressStrategy::prefer_ipv6 ? 16u : 4u;
-                std::stable_partition(addresses.begin(),addresses.end(),[preferred](auto const& a) { return a.size==preferred; });
                 co_return addresses;
             }
             for (auto const& upstream:upstreams) {
                 if (canceled_) co_return std::unexpected(dns::detail::ResolveError::canceled);
-                resolver_=std::make_unique<dns::detail::DualAddressResolver>(context_,cache_,tcp,strategy_,disable_cache_,edns_);
+#ifdef NEXUS_TEST_DNS_COORDINATOR
+                if (!coordinator_ || !views_ || !reader_ || !view)
+                    co_return std::unexpected(dns::detail::ResolveError::state);
+                auto bound=views_->view(static_cast<std::size_t>(view-1),upstream);
+                if (!bound) co_return std::unexpected(bound.error()==dns_hp_experiment::ViewRegistry::Error::limit ||
+                    bound.error()==dns_hp_experiment::ViewRegistry::Error::allocation ? dns::detail::ResolveError::limit : dns::detail::ResolveError::state);
+                resolver_.emplace(*coordinator_,reader_,udp_coordinated_strategy(strategy_),tcp,disable_cache_,edns_,optimistic_);
+                auto result=co_await resolver_->resolve(upstream,*bound,name,deadline);
+                resolver_.reset();
+                if (canceled_) co_return std::unexpected(dns::detail::ResolveError::canceled);
+                if (result) co_return std::move(*result);
+                if (result.error()!=dns_hp_experiment::CoordinatedError::transport)
+                    co_return std::unexpected(dns::detail::ResolveError::state);
+#else
+                resolver_=std::make_unique<UdpDnsResolver>(context_,cache_,tcp,strategy_,disable_cache_,edns_,
+#ifdef NEXUS_TEST_DNS_GROUP_REFRESH
+                    refresh_,
+#else
+                    nullptr,
+#endif
+                    reader_);
                 auto result=co_await resolver_->resolve(upstream,view,name,deadline);
                 resolver_.reset();
                 if (canceled_) co_return std::unexpected(dns::detail::ResolveError::canceled);
                 if (result || result.error()!=dns::detail::ResolveError::transport) co_return result;
+#endif
             }
             co_return std::unexpected(dns::detail::ResolveError::transport);
         }
-        auto run(boost::corosio::endpoint upstream,std::uint64_t view,std::chrono::steady_clock::time_point deadline)
-            -> boost::capy::task<std::expected<void,UdpResolveError>> {
+        auto run(udp_io::endpoint upstream,std::uint64_t view,std::chrono::steady_clock::time_point deadline)
+            -> udp_capy::task<std::expected<void,UdpResolveError>> {
             if (started_) co_return std::unexpected(UdpResolveError::state);
             started_=true;
             if (canceled_) { finished_=true; co_return std::unexpected(UdpResolveError::canceled); }
@@ -88,7 +152,7 @@ namespace nexus::shadowsocks::detail {
             }
             std::string name(a.begin()+2,a.end()-2);
             auto port=static_cast<std::uint16_t>((static_cast<unsigned>(a[a.size()-2])<<8)|a.back());
-            std::vector<boost::corosio::endpoint> upstreams{upstream};
+            std::vector<udp_io::endpoint> upstreams{upstream};
             auto tcp=tcp_only_;
             for (auto const& hop:hops_) {
                 auto resolved=co_await query(upstreams,view,tcp,hop.host,deadline);
@@ -97,11 +161,11 @@ namespace nexus::shadowsocks::detail {
                 upstreams.clear();
                 for (auto const& address:*resolved) {
                     if (address.size==4) {
-                        boost::corosio::ipv4_address::bytes_type bytes{}; std::copy_n(address.bytes.begin(),4,bytes.begin());
-                        upstreams.emplace_back(boost::corosio::ipv4_address(bytes),hop.port);
+                        udp_io::ipv4_address::bytes_type bytes{}; std::copy_n(address.bytes.begin(),4,bytes.begin());
+                        upstreams.emplace_back(udp_io::ipv4_address(bytes),hop.port);
                     } else if (address.size==16) {
-                        boost::corosio::ipv6_address::bytes_type bytes{}; std::ranges::copy(address.bytes,bytes.begin());
-                        upstreams.emplace_back(boost::corosio::ipv6_address(bytes),hop.port);
+                        udp_io::ipv6_address::bytes_type bytes{}; std::ranges::copy(address.bytes,bytes.begin());
+                        upstreams.emplace_back(udp_io::ipv6_address(bytes),hop.port);
                     } else { (void)dispatcher_.cancel(pending_.token); finished_=true; co_return std::unexpected(UdpResolveError::dns); }
                 }
                 view=hop.view; tcp=hop.tcp_only;

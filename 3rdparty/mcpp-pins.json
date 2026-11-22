@@ -1,0 +1,151 @@
+{
+  "capy": {
+    "version": "0.2.8",
+    "revision": "6a9569060f999453e1f7b59cc9ae31c808c0778b",
+    "archive": "6a9569060f999453e1f7b59cc9ae31c808c0778b.tar.gz",
+    "sha256": "e08c47c3c91c1a6f5f37d3af450695a8e4fd8e573b1b53276e07643171db6f35",
+    "url": "https://github.com/cppalliance/capy/archive/6a9569060f999453e1f7b59cc9ae31c808c0778b.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.capy-source.lua",
+    "patches": [
+      {
+        "path": "3rdparty/patches/capy/cpo_modules.patch",
+        "sha256": "3eecc81aa0a3834f1ab5b838f555e506e51fa8f7402f8ac2a73ef4d03c39f3cc"
+      }
+    ],
+    "source_root": "capy-6a9569060f999453e1f7b59cc9ae31c808c0778b",
+    "mcpp_patch": {
+      "path": "3rdparty/patches/capy/mcpp-exact.patch",
+      "sha256": "ec43086d7f3b3e35fc9f802312a7b0d31440ead82f7aceec0b9358e1b3cfba8b"
+    }
+  },
+  "corosio": {
+    "version": "0.3.12",
+    "revision": "2d246de82c62a62d0da9c1e4c81a1865be7f9321",
+    "archive": "2d246de82c62a62d0da9c1e4c81a1865be7f9321.tar.gz",
+    "sha256": "84dc5a40d7bb9ced5bd9533652fe233cf6d4b574fe66d2333f58b2f6d4002336",
+    "url": "https://github.com/cppalliance/corosio/archive/2d246de82c62a62d0da9c1e4c81a1865be7f9321.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.corosio-source.lua",
+    "patches": [
+      {
+        "path": "3rdparty/patches/corosio/thread_local_modules.patch",
+        "sha256": "b1d7a479d8e34c9e7701f54dfa9e62ec425efc300a58cdcfbefa3f2b5f8fbdbf"
+      },
+      {
+        "path": "3rdparty/patches/corosio/empty_datagram.patch",
+        "sha256": "5e3f1a7a86169a45273759cde0ec8b48d22aef53b167a5ace0d6a19937b8901d"
+      }
+    ],
+    "source_root": "corosio-2d246de82c62a62d0da9c1e4c81a1865be7f9321",
+    "mcpp_patch": {
+      "path": "3rdparty/patches/corosio/mcpp-exact.patch",
+      "sha256": "b71384c36fadd705202dc82ac5b925e1b9fbae37ef7fe0d48ecc68181f03da94"
+    }
+  },
+  "proxy": {
+    "version": "0.1.0",
+    "revision": "9d9749d63766cdd9affb5ea7953237e38ce5ab63",
+    "archive": "9d9749d63766cdd9affb5ea7953237e38ce5ab63.tar.gz",
+    "sha256": "21eecb3fef4d36055e030600c939465c4239516f8629051e7ea9ee68dd42dd3b",
+    "url": "https://github.com/ngcpp/proxy/archive/9d9749d63766cdd9affb5ea7953237e38ce5ab63.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.ngcpp-proxy.lua",
+    "source_root": "proxy-9d9749d63766cdd9affb5ea7953237e38ce5ab63"
+  },
+  "glaze": {
+    "version": "0.1.0",
+    "revision": "fc646588635c42cca142562d7b3d0484cc4493b7",
+    "archive": "fc646588635c42cca142562d7b3d0484cc4493b7.tar.gz",
+    "sha256": "f238db70dee9ef25d0898a0da062209453225832d0d82f10d1fb11037c81ef3b",
+    "url": "https://github.com/hiykhello/glaze-kdl2.0-/archive/fc646588635c42cca142562d7b3d0484cc4493b7.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.glaze-kdl.lua",
+    "source_root": "glaze-kdl2.0--fc646588635c42cca142562d7b3d0484cc4493b7"
+  },
+  "boringssl": {
+    "version": "0.1.2",
+    "revision": "e651545da6e26e1f4420723a3b69a78ed1b9c51d",
+    "archive": "e651545da6e26e1f4420723a3b69a78ed1b9c51d.tar.gz",
+    "sha256": "8df889167a2ca2237073cfed3147ac7b2f548f7dbf3daf4928a0ae6504d2013f",
+    "url": "https://github.com/google/boringssl/archive/e651545da6e26e1f4420723a3b69a78ed1b9c51d.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.boringssl-crypto-source.lua",
+    "source_root": "boringssl-e651545da6e26e1f4420723a3b69a78ed1b9c51d",
+    "patches": [
+      {
+        "path": "3rdparty/patches/boringssl/x509_name_allocation.patch",
+        "sha256": "59a5895158eacd1ef56303d5b8264851db4be798f42bcbd3a55f0dc8caa4040f"
+      },
+      {
+        "path": "3rdparty/patches/boringssl/x509_pubkey_allocation_error.patch",
+        "sha256": "422ed3fb7607312cee9190200eebbec3f6c6b8f9e03db0771a21b1f2fc28e926"
+      }
+    ],
+    "mcpp_patch": {
+      "path": "3rdparty/patches/boringssl/mcpp-exact.patch",
+      "sha256": "d24d02c07946278ed0a81fd601f8596c7db9de1721b58f03fbf4d4cc9330174c"
+    }
+  },
+  "blake3": {
+    "version": "1.8.7",
+    "revision": "f3149ec5bb5449af877ba20377a11008ff499fa2",
+    "archive": "f3149ec5bb5449af877ba20377a11008ff499fa2.tar.gz",
+    "sha256": "92acc8eaef2623ee54bf527454fcc56255cd0a9bfe153ca3e722d367c74b1c4a",
+    "url": "https://github.com/BLAKE3-team/BLAKE3/archive/f3149ec5bb5449af877ba20377a11008ff499fa2.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.blake3-source.lua",
+    "source_root": "BLAKE3-f3149ec5bb5449af877ba20377a11008ff499fa2"
+  },
+  "nghttp2": {
+    "version": "1.71.0",
+    "revision": "1.71.0",
+    "archive": "nghttp2-1.71.0.tar.xz",
+    "sha256": "c0f55121d88650e4b9227aec28cebaf664d2417ca60fe70be0f8d38829f52116",
+    "url": "https://github.com/nghttp2/nghttp2/releases/download/v1.71.0/nghttp2-1.71.0.tar.xz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.nghttp2-source.lua",
+    "source_root": "nghttp2-1.71.0"
+  },
+  "ngtcp2": {
+    "version": "1.26.0-nexus.1",
+    "revision": "1.26.0",
+    "commit": "6a22a4d7a111f6b52391910e40ad3681a09cfb9c",
+    "archive": "ngtcp2-1.26.0.tar.xz",
+    "sha256": "7804aa0fa1c39942ba322a90805824c37231f7675b08d0c3cc4332858a7b085e",
+    "url": "https://github.com/ngtcp2/ngtcp2/releases/download/v1.26.0/ngtcp2-1.26.0.tar.xz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.ngtcp2-source.lua",
+    "source_root": "ngtcp2-1.26.0",
+    "mcpp_patches": [
+      {
+        "path": "3rdparty/patches/ngtcp2/pmtud-restart.patch",
+        "sha256": "440f7dd492f418338509f453e49f4656a0d649900e4ee7e209d7581d3b1594cf"
+      },
+      {
+        "path": "3rdparty/patches/ngtcp2/brutal.patch",
+        "sha256": "bdc896c2aa22538ae649595d0802e38fd09cfa75301b1e6466b9c8cca532a697"
+      }
+    ]
+  },
+  "nghttp3": {
+    "version": "1.19.0-nexus.1",
+    "revision": "1.19.0",
+    "commit": "dc83309ca5fd2beb91cc5c030a2d30525e9f2a00",
+    "archive": "nghttp3-1.19.0.tar.xz",
+    "sha256": "228e17f5cc3d4de7bfced9912bd09de30e7f45741cc47503cf88d3fa9209e155",
+    "url": "https://github.com/ngtcp2/nghttp3/releases/download/v1.19.0/nghttp3-1.19.0.tar.xz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.nghttp3-source.lua",
+    "source_root": "nghttp3-1.19.0",
+    "bundled_sources": [
+      {
+        "revision": "4b313cfd2e1b389ae632b36dcd50402307289af2",
+        "files": {
+          "lib/sfparse/sfparse.c": "90c8f4627a0cf41d421bf2b186d9c9061f5087b23c8015021853788fc529d4c7",
+          "lib/sfparse/sfparse.h": "fa99f26ea080137b0f79c3f8799e7513aa1a97fb4c9a4fb1cc42869c17bfac5d"
+        }
+      }
+    ]
+  },
+  "argon2": {
+    "version": "20190702-nexus.2",
+    "revision": "62358ba2123abd17fccf2a108a301d4b52c01a7c",
+    "archive": "62358ba2123abd17fccf2a108a301d4b52c01a7c.tar.gz",
+    "sha256": "d177732879114c07a5ab7e6533e61d2c9dff204044335537c89ed16e7d3e4e2f",
+    "url": "https://github.com/P-H-C/phc-winner-argon2/archive/62358ba2123abd17fccf2a108a301d4b52c01a7c.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.argon2-source.lua",
+    "source_root": "phc-winner-argon2-62358ba2123abd17fccf2a108a301d4b52c01a7c"
+  }
+}
