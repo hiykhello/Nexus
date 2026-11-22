@@ -12,7 +12,7 @@ namespace discovery {
     struct Peer {
         Key node, key;
         box::SharedKey secret;
-        std::inplace_vector<Address, control_messages::max_endpoints> candidates;
+        nexus::inplace_vector<Address, control_messages::max_endpoints> candidates;
         std::optional<Address> verified, pending;
         Transaction transaction{};
         Clock::time_point next{}, expires{}, sent{}, last_ping{};
@@ -69,7 +69,7 @@ namespace discovery {
                    std::ranges::count(state.peers(),remote.discovery,&snapshot::Peer::discovery)!=1)continue;
                 Key node;
                 std::ranges::copy(remote.key.view(),node.begin());
-                std::inplace_vector<Address,control_messages::max_endpoints> addresses;
+                nexus::inplace_vector<Address,control_messages::max_endpoints> addresses;
                 for(auto const& endpoint:remote.endpoints)
                     addresses.push_back({endpoint.family,endpoint.address,endpoint.port});
                 auto same=std::ranges::find_if(peers_,[&](auto const& previous) {

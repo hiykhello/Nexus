@@ -1,11 +1,12 @@
 export module tls.client_auth;
 export import tls.finished;
 export import tls.certificate_trust;
+export import nexus.compat;
 import std;
 
 export namespace tls {
     enum class ClientAuthError { invalid_state, malformed_certificate, untrusted_certificate, invalid_signature, invalid_finished, crypto_error };
-    using CertificateVerifier = std::move_only_function<bool(std::span<std::span<std::uint8_t const> const>) const>;
+    using CertificateVerifier = nexus::move_only_function<bool(std::span<std::span<std::uint8_t const> const>) const>;
     // Starts after the caller validates and appends EncryptedExtensions. The caller must validate
     // all preceding messages and must not deliver application data until the full handshake is complete.
     // Server certificates may include previously requested OCSP and SCT data.

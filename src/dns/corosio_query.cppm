@@ -1,5 +1,6 @@
 export module dns.corosio_query;
 import std;
+export import nexus.compat;
 // Query signatures expose these types and the remaining resolver adapters use
 // the exported namespace aliases, so their declarations must be reachable.
 export import dns.message;
@@ -26,7 +27,7 @@ export namespace dns::detail {
     namespace dns_capy=nex::capy;
     namespace dns_io=nex::corosio;
     enum class UdpError { state, invalid_query, transport, timeout, canceled, truncated, response_limit, protocol, budget_exhausted };
-    using ProtectedQuery=std::move_only_function<dns_capy::task<std::expected<Response,UdpError>>(
+    using ProtectedQuery=nexus::move_only_function<dns_capy::task<std::expected<Response,UdpError>>(
         dns_io::io_context&,dns_io::endpoint,QueryMessage const&,std::uint16_t,std::chrono::steady_clock::time_point,
         InputBudget&,std::stop_token) const>;
 

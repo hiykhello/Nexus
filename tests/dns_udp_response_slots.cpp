@@ -9,7 +9,6 @@ import dns.local_config;
 import dns.corosio_resolver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;
 namespace ss=shadowsocks;
 namespace io=nex::corosio;
 namespace capy=nex::capy;

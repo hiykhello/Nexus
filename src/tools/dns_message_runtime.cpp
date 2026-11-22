@@ -9,6 +9,7 @@ module;
 
 module cli.dns_message_runtime;
 import std;
+import nexus.compat;
 import logging;
 import logging.cli;
 import config;
@@ -191,7 +192,7 @@ namespace cli {
 
         // Transfer exclusive use of the context to the control thread for a
         // lifecycle mutation. stop() interrupts the backend's blocking wait.
-        auto synchronize(std::function_ref<void()> action) -> void {
+        auto synchronize(nexus::function_ref<void()> action) -> void {
             std::unique_lock lock(worker_mutex_);
             paused_=true;
             if (polling_) {

@@ -1,5 +1,6 @@
 export module platform.network_selection;
 import std;
+import nexus.compat;
 import platform.netlink_abi;
 import platform.network_state;
 import platform.socket_options;
@@ -12,7 +13,7 @@ export namespace platform::network {
         namespace abi=netlink_abi;
         auto family=ipv6 ? abi::AF_INET6 : abi::AF_INET;
         using Candidate=std::tuple<unsigned,std::uint32_t,std::size_t,std::uint32_t>;
-        std::inplace_vector<Candidate,16> ranked;
+        nexus::inplace_vector<Candidate,16> ranked;
         for (std::size_t i=0;i<policy.interfaces.size();++i) {
             auto const& allowed=policy.interfaces[i];
             unsigned tier=0;

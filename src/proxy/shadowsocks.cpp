@@ -17,6 +17,7 @@ module;
 module proxy;
 import proxy.v4;
 import std;
+import nexus.compat;
 import crypto;
 import shadowsocks.corosio_client;
 import shadowsocks.key;
@@ -41,7 +42,7 @@ namespace proxy {
             std::string host; std::uint16_t port; std::vector<std::uint8_t> key; bool udp_over_tcp,udp_native;
             std::optional<std::size_t> bootstrap; std::uint32_t timeout_ms;
             TcpSocketOptions tcp_options;
-            std::inplace_vector<std::array<std::uint8_t,32>,8> identities;
+            nexus::inplace_vector<std::array<std::uint8_t,32>,8> identities;
             shadowsocks::CipherMethod method;
             Profile(std::string_view host_,std::uint16_t port_,std::span<std::uint8_t const> key_,bool uot,
                     std::optional<std::size_t> bootstrap_,std::uint32_t timeout,TcpSocketOptions options={},

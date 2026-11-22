@@ -25,6 +25,7 @@ module;
 
 module proxy;
 import std;
+import nexus.compat;
 import proxy.dns_backend;
 import proxy.dns_state;
 import nexus.thirdparty.corosio;
@@ -40,7 +41,7 @@ extern "C" std::pmr::memory_resource* nexus_test_root_resource();
 namespace proxy {
     using namespace std::chrono_literals;
 
-    auto TcpAdmission::publish(std::uint64_t next,std::function_ref<void() noexcept> prepare) -> bool {
+    auto TcpAdmission::publish(std::uint64_t next,nexus::function_ref<void() noexcept> prepare) -> bool {
         std::lock_guard lock(mutex);
         if (next<=generation.load(std::memory_order_relaxed)) return false;
         prepare();

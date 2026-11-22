@@ -14,7 +14,6 @@ import dns.input_budget;
 import dns.address_sequence;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;
 namespace ss=shadowsocks;
 namespace io=nex::corosio;
 namespace capy=nex::capy;

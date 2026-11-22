@@ -1,4 +1,5 @@
 import std;
+import nexus.compat;
 import tls.resuming_client;
 import tls.resuming_server;
 import tls.hello_config;
@@ -58,7 +59,7 @@ auto exchange(t::ServerCredential const& credential,std::span<View const> anchor
  auto hello=t::make_client_hello("server.example",protocols,groups);if(!hello)return {false,false,Error::crypto};hello->cipher_suites={cipher};
  View name(reinterpret_cast<std::uint8_t const*>("server.example"),14),alpn(reinterpret_cast<std::uint8_t const*>("h2"),2);
  auto binding=t::make_ticket_binding(*hello,anchors,t::PeerNameKind::dns,name,alpn);if(!binding)return {false,false,binding.error()==t::PskError::crypto_error?Error::crypto:Error::protocol};
- std::inplace_vector<t::ResumptionTicket,8> offered;if(auto value=cache.take(*binding,hello->cipher_suites,Clock::now()))offered.push_back(std::move(*value));
+ nexus::inplace_vector<t::ResumptionTicket,8> offered;if(auto value=cache.take(*binding,hello->cipher_suites,Clock::now()))offered.push_back(std::move(*value));
  bool resume=!offered.empty();auto policy=ClientPolicy::create(std::move(*binding),std::move(offered));if(!policy)return {};
  auto wall=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
  auto client=Client::create(std::move(*hello),retry?std::span<std::uint16_t const>{}:std::span<std::uint16_t const>(groups),anchors,t::PeerNameKind::dns,name,wall,std::move(*policy));

@@ -1,5 +1,6 @@
 module tailscale.wireguard_tun;
 import std;
+import nexus.compat;
 import crypto;
 import net.udp_socket;
 import packet.fd;
@@ -89,7 +90,7 @@ namespace tailscale::wireguard_tun {
         std::optional<Lease> lease_;
         std::optional<packet::TunNetworkOptions> userspace_network_;
         std::uint64_t userspace_revision_ = 0;
-        std::inplace_vector<ActivePeer,64> peers_;
+        nexus::inplace_vector<ActivePeer,64> peers_;
         map_session::State const* state_ = nullptr;
         std::optional<std::chrono::sys_seconds> expires_;
         std::array<Reply,512> replies_{};

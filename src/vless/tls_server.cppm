@@ -1,5 +1,6 @@
 export module vless.tls_server;
 import std;
+export import nexus.compat;
 import vless;
 import httpupgrade;
 import httpupgrade.stream;
@@ -220,10 +221,10 @@ export namespace vless::detail {
     class TlsRelay {
         TlsInbound<Incoming,false,PlainStream>& inbound_;
         Target& target_;
-        std::move_only_function<void()> touch_;
+        nexus::move_only_function<void()> touch_;
         bool canceled_=false,uploading_=false,downloading_=false;
     public:
-        TlsRelay(TlsInbound<Incoming,false,PlainStream>& inbound,Target& target,std::move_only_function<void()> touch={})
+        TlsRelay(TlsInbound<Incoming,false,PlainStream>& inbound,Target& target,nexus::move_only_function<void()> touch={})
             : inbound_(inbound),target_(target),touch_(std::move(touch)) {}
         TlsRelay(TlsRelay const&)=delete;
         auto operator=(TlsRelay const&) -> TlsRelay& = delete;

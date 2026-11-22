@@ -22,7 +22,6 @@ nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 defines = ["DNS_GROUP_SHARED_CAPACITY_EXPERIMENT", "NEXUS_DNS_USE_MODULES"]
-flags = [{ glob = "group_coordinator.cppm", cxxflags = ["-fno-module-lazy"] }]
 sources = ["group_experiment.cppm", "group_coordinator.cppm", "group_coordinator.cpp"]
 
 [targets.dns-group-core]

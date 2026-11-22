@@ -1,5 +1,6 @@
 export module state.fakeip_disk;
 import std;
+export import state.file;
 import state.fakeip;
 import state.snapshot;
 
@@ -19,11 +20,11 @@ export namespace state {
     auto fakeip_meta(InstanceLock const&, FakeIpScope const&) -> std::expected<FakeIpMeta,StateError>;
     auto save_fakeip_meta(InstanceLock const&, FakeIpScope const&, FakeIpMeta const&)
         -> std::expected<void,StateError>;
-    auto replay_fakeip(InstanceLock const&, FakeIpScope const&, FakeIpMeta const&, int wal)
+    auto replay_fakeip(InstanceLock const&, FakeIpScope const&, FakeIpMeta const&, NativeHandle wal)
         -> std::expected<FakeIpReplay,StateError>;
-    auto append_fakeip(int wal, FakeIpMeta const&, std::uint64_t sequence, FakeIpRow const&)
+    auto append_fakeip(NativeHandle wal, FakeIpMeta const&, std::uint64_t sequence, FakeIpRow const&)
         -> std::expected<std::size_t,StateError>;
-    auto compact_fakeip(InstanceLock const&, FakeIpMeta const&, int wal, std::span<FakeIpRow const>)
+    auto compact_fakeip(InstanceLock const&, FakeIpMeta const&, NativeHandle wal, std::span<FakeIpRow const>)
         -> std::expected<void,StateError>;
     auto valid_fakeip_name(std::string_view value) noexcept -> bool;
 }

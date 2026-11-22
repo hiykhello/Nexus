@@ -64,7 +64,7 @@ namespace {
 
 #include "support/logging_sinks.hpp"
 
-namespace {
+namespace logging_unit_detail {
     struct JsonLine {
         std::int64_t monotonic_ns = 0, wall_epoch_ns = 0;
         std::string level, domain;
@@ -73,6 +73,10 @@ namespace {
         bool truncated = false;
         std::string timestamp, message;
     };
+}
+
+namespace {
+    using logging_unit_detail::JsonLine;
 
     auto filter_format_and_json(Temporary const& temporary) -> void {
         auto path = temporary / "events.jsonl";

@@ -21,5 +21,5 @@ nexus.systemd-system = { path = "../../3rdparty/mcpp-systemd" }
 [build]
 sources = [
     "config.cppm", "config.cpp", "config_addresses.cpp", "credentials.cppm",
-    "route_probe.cppm", "host_dns_types.cppm", "resolved_dns.cppm", "owner.cppm", "process_signals.cppm", "bootstrap.cppm", "bootstrap.cpp",
+    "route_probe.cppm", "host_dns_types.cppm", "resolved_dns.cppm", "owner.cppm", "process_signals.cppm", "on_demand.cppm", "on_demand.cpp", "bootstrap.cppm", "bootstrap.cpp",
 ]

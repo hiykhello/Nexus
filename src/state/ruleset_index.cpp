@@ -1,6 +1,3 @@
-module;
-#include <cerrno>
-#include <unistd.h>
 module state.ruleset_storage;
 import std;
 import crypto;
@@ -65,7 +62,7 @@ namespace state {
 
         auto fresh_epoch() noexcept -> std::expected<std::uint64_t, StateError> {
             std::array<std::uint8_t, 8> raw{};
-            if (!crypto::random_bytes(raw)) return failure(Stage::read, EIO);
+            if (!crypto::random_bytes(raw)) return std::unexpected(StateError{Stage::read, std::make_error_code(std::errc::io_error)});
             std::uint64_t value = 0;
             for (auto b : raw) value = (value << 8) | b;
             return (value & (std::numeric_limits<std::uint64_t>::max() >> 1)) | 1;
@@ -136,7 +133,7 @@ namespace state {
         return {};
     }
 
-    auto inspect_rulesets(int directory) -> std::expected<std::optional<std::size_t>,StateError> {
+    auto inspect_rulesets(NativeHandle directory) -> std::expected<std::optional<std::size_t>,StateError> {
         auto loaded=inspect_snapshot(directory,index_file);
         if (!loaded) return std::unexpected(loaded.error());
         if (!*loaded) return std::nullopt;
@@ -160,11 +157,13 @@ namespace state {
                 return std::unexpected(error);
             damaged = error;
         }
-        if (damaged && ::unlinkat(directory.directory(), index_file.name.c_str(), 0) < 0 && errno != ENOENT) {
-            auto error = failure(Stage::remove_index, errno).error();
-            error.preceding = damaged->stage;
-            error.preceding_os = damaged->os;
-            return std::unexpected(error);
+        if (damaged) {
+            if (auto removed = unlink_dir_file(directory.directory(), index_file.name, Stage::remove_index); !removed) {
+                auto error = removed.error();
+                error.preceding = damaged->stage;
+                error.preceding_os = damaged->os;
+                return std::unexpected(error);
+            }
         }
         auto epoch = fresh_epoch();
         if (!epoch) return std::unexpected(epoch.error());

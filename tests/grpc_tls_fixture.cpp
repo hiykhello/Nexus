@@ -16,7 +16,6 @@ import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 namespace g=grpc;
 namespace v=vless;
-namespace tls=tls;
 namespace capy=nex::capy;
 namespace io=nex::corosio;
 using namespace std::chrono_literals;

@@ -3,8 +3,6 @@ import net.tcp_connect;
 import nexus.thirdparty.corosio;
 
 namespace io=nex::corosio;
-namespace net=net;
-namespace platform = ::platform;
 
 namespace {
     template<int Name,int Level=platform::linux_socket_abi::tcp_level>

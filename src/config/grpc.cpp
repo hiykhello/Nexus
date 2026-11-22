@@ -1,5 +1,6 @@
 module config;
 import std;
+import nexus.compat;
 import nexus.thirdparty.glaze;
 import config.kdl_common;
 
@@ -22,7 +23,7 @@ namespace config {
         }
         if (type!="grpc") return std::unexpected("transport must be httpupgrade, websocket, grpc or xhttp");
         GrpcTransport result;
-        std::inplace_vector<std::string_view,10> seen;
+        nexus::inplace_vector<std::string_view,10> seen;
         for (auto const& field:node.children) {
             if (field.tag || !field.properties.empty() || !field.children.empty() || field.arguments.size()!=1 || field.arguments[0].tag ||
                 std::ranges::find(seen,field.name)!=seen.end() || seen.size()==seen.capacity()) return std::unexpected("invalid or duplicate gRPC field");

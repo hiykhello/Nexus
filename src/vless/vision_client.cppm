@@ -1,5 +1,6 @@
 export module vless.vision_client;
 import std;
+export import nexus.compat;
 import vless;
 import vless.corosio_client;
 import vision;
@@ -92,11 +93,11 @@ export namespace vless::detail {
     class VisionRelay {
         LocalSocket& local_;
         VisionClient<RemoteSocket>& client_;
-        std::move_only_function<void()> touch_;
+        nexus::move_only_function<void()> touch_;
         bool canceled_=false, uploading_=false, downloading_=false;
         bool cancel_local_=true;
     public:
-        VisionRelay(LocalSocket& local,VisionClient<RemoteSocket>& client,std::move_only_function<void()> touch={},bool cancel_local=true)
+        VisionRelay(LocalSocket& local,VisionClient<RemoteSocket>& client,nexus::move_only_function<void()> touch={},bool cancel_local=true)
             : local_(local),client_(client),touch_(std::move(touch)),cancel_local_(cancel_local) {}
         VisionRelay(VisionRelay const&)=delete;
         auto operator=(VisionRelay const&) -> VisionRelay& = delete;

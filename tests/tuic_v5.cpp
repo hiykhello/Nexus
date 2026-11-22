@@ -5,7 +5,6 @@ import tuic.wire;
 
 namespace t = tuic;
 namespace c = ::crypto;
-namespace tls = tls;
 
 int main() {
     // 1. RFC 8446 Exporter + TUIC v5 32-byte auth token derivation & roundtrip.

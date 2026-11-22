@@ -1,5 +1,6 @@
 export module platform.network_state;
 import std;
+import nexus.compat;
 import platform.netlink_abi;
 import platform.netlink_codec;
 import platform.netlink_socket;
@@ -65,7 +66,7 @@ export namespace platform::network {
     class Monitor {
         netlink::Socket<> query_;
         netlink::Watch watch_;
-        std::atomic<std::shared_ptr<Snapshot const>> live_;
+        nexus::atomic_shared_ptr<Snapshot const> live_;
         std::uint64_t generation_=0;
         bool include_neighbors_;
 

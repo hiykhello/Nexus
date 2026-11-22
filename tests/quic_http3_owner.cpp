@@ -14,15 +14,15 @@ namespace references {
     std::size_t acquired=0,released=0,expected_acquired=0,expected_released=0;
     struct Scope { bool previous=std::exchange(measure,true); ~Scope() { measure=previous; } };
 }
-extern "C" auto __real_nghttp3_rcbuf_incref(n::nghttp3_rcbuf*) -> void __attribute__((weak));
-extern "C" auto __real_nghttp3_rcbuf_decref(n::nghttp3_rcbuf*) -> void __attribute__((weak));
+extern "C" __attribute__((weak)) void __real_nghttp3_rcbuf_incref(n::nghttp3_rcbuf*);
+extern "C" __attribute__((weak)) void __real_nghttp3_rcbuf_decref(n::nghttp3_rcbuf*);
 extern "C" auto __wrap_nghttp3_rcbuf_incref(n::nghttp3_rcbuf* buffer) -> void {
     if (references::measure) ++references::acquired;
-    __real_nghttp3_rcbuf_incref(buffer);
+    if (__real_nghttp3_rcbuf_incref) __real_nghttp3_rcbuf_incref(buffer);
 }
 extern "C" auto __wrap_nghttp3_rcbuf_decref(n::nghttp3_rcbuf* buffer) -> void {
     if (references::measure) ++references::released;
-    __real_nghttp3_rcbuf_decref(buffer);
+    if (__real_nghttp3_rcbuf_decref) __real_nghttp3_rcbuf_decref(buffer);
 }
 namespace allocation {
     std::size_t live=0,calls=0; bool enabled=false,denied=false; std::ptrdiff_t allowance=-1;

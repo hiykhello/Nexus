@@ -1,5 +1,6 @@
 export module shadowsocks.udp_sessions;
 import std;
+import nexus.compat;
 import shadowsocks.key;
 import shadowsocks.udp_packet;
 import shadowsocks.udp_replay;
@@ -92,10 +93,10 @@ export namespace shadowsocks {
         bool committing_=false;
         std::uint64_t durable_wall_=0;
         std::unique_ptr<UdpIdReservation> durable_ids_;
-        using Commit = std::function_ref<bool(std::array<std::uint8_t,8> const&, UdpReplaySnapshot const&, std::uint64_t) noexcept>;
-        using IdCommit = std::function_ref<bool(UdpIdWatermark) noexcept>;
-        using WallCommit = std::function_ref<bool(std::uint64_t) noexcept>;
-        using SampleClock = std::function_ref<std::optional<UdpClockSample>() noexcept>;
+        using Commit = nexus::function_ref<bool(std::array<std::uint8_t,8> const&, UdpReplaySnapshot const&, std::uint64_t) noexcept>;
+        using IdCommit = nexus::function_ref<bool(UdpIdWatermark) noexcept>;
+        using WallCommit = nexus::function_ref<bool(std::uint64_t) noexcept>;
+        using SampleClock = nexus::function_ref<std::optional<UdpClockSample>() noexcept>;
         auto allocate_server_id(std::array<std::uint8_t,8> client) -> std::expected<std::array<std::uint8_t,8>,UdpSessionError>;
         auto advance(Clock::time_point now, std::uint64_t wall) -> bool;
         auto receive_impl(std::span<std::uint8_t const> psk, std::span<std::uint8_t const> wire,

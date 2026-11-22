@@ -16,6 +16,7 @@ set(NEXUS_BRIDGE_IMPLS
     src/firewall_helper.cpp
     src/http_control.cpp
     src/profile_store.cpp
+    src/service_installer.cpp
     src/share_link.cpp
     src/single_instance.cpp
     src/system_proxy.cpp
@@ -37,6 +38,7 @@ target_sources(nexus-desktop-bridge
             src/http_control.cppm
             src/ipc_client.cppm
             src/profile_store.cppm
+            src/service_installer.cppm
             src/share_link.cppm
             src/single_instance.cppm
             src/system_proxy.cppm

@@ -87,7 +87,6 @@ static h::nghttp3_mem const h3_memory{nullptr,
     [](std::size_t n,std::size_t s,void*) -> void* {return std::calloc(n,s);},
     [](void* p,std::size_t size,void*) -> void* {return std::realloc(p,size);}};
 
-namespace net=net;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;
 auto clock_now() noexcept -> std::uint64_t {return std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();}

@@ -3,7 +3,6 @@ import dns.corosio_local;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 
-namespace dns=dns;
 namespace io=nex::corosio;
 namespace capy=nex::capy;
 using Clock=std::chrono::steady_clock;

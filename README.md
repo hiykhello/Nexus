@@ -8,16 +8,16 @@ Nexus 是采用 **C++26 Modules** 从零打造的现代通用代理平台（同�
 
 | 领域 | 选型与实现 |
 | --- | --- |
-| 语言与模块 | C++26 Modules（显式 `this`、concepts、尾置返回类型、原生静态反射 `-freflection`），尽量无异常（`std::expected` / `std::optional`） |
+| 语言与模块 | Clang + C++26 Modules（显式 `this`、concepts、尾置返回类型、零 `-freflection` 静态表分发与 `nexus.compat` 零开销兼容性包装，`libc++` 静态链接），尽量无异常（`std::expected` / `std::optional`） |
 | 异步与 I/O 引擎 | [cppalliance/corosio](https://github.com/cppalliance/corosio) + [ngcpp/proxy](https://github.com/ngcpp/proxy)，支持 Linux `epoll` 与 `io_uring`（含 Provided Buffer Ring + Multishot Recv）及 `splice(2)` / Linux kTLS 快速路径 |
-| 协议与承载 | Direct / Block、SOCKS5 / Mixed、HTTP/HTTPS CONNECT、SS-2022（TCP / 原生 UDP / UoT）、VLESS（TLS 1.2/1.3 / REALITY `X25519MLKEM768` / Vision / WS / HTTPUpgrade / gRPC / XHTTP / XUDP / packetaddr）、Trojan、AnyTLS、Hysteria 2、TUIC v5、MASQUE（`CONNECT-UDP` / `CONNECT-IP`）、WireGuard / WARP、Tailscale、Snell、ShadowTLS v3 |
+| 协议与承载 | Direct / Block、SOCKS4/4a/5 / Mixed、HTTP/HTTPS CONNECT（H1/H2/H3）、NaiveProxy（H2/H3 + padding）、SSHv2 隧道、SS-2022（TCP / 原生 UDP / UoT + `ssmapi`）、VLESS（TLS 1.2/1.3 / REALITY `X25519MLKEM768` / Vision / WS / HTTPUpgrade / gRPC / XHTTP / XUDP / packetaddr）、Trojan、AnyTLS、Hysteria 2、TUIC v5、MASQUE（`CONNECT-UDP` / `CONNECT-IP`）、WireGuard / WARP（含 `on-demand`）、Tailscale（+ 独立 DERP 中继）、Snell v5、ShadowTLS v3、OpenVPN、OpenConnect、反向穿透、`bridge` 与外接 Tor 桥接 |
 | 网络栈与透明代理 | 自研用户态 TUN（TCP/IP/UDP 栈、RFC 6298/7323、SACK/PMTU、`IFF_VNET_HDR` / 多队列）、原生 nftables `auto-redirect`、Linux REDIRECT / TPROXY TCP & UDP |
 | TLS 与密码学 | 自研 TLS 1.2/1.3 与现代浏览器指纹编排（含 1-RTT PSK 恢复与 ECH）；密码原语统一采用静态 BoringSSL `libcrypto`，不引入第三方 `libssl` |
-| HTTP 与 DNS | 自研 HTTP/1.1 + `nghttp2`（HTTP/2）+ `ngtcp2`/`nghttp3`（HTTP/3）具名客户端；多视图 DNS（UDP/TCP/DoT/DoH/DoQ/DoH3）、乐观缓存、FakeIP 与嗅探 |
-| 配置与规则集 | KDL 2.0（[glaze-kdl2.0-](https://github.com/hiykhello/glaze-kdl2.0-/tree/feature/kdl2.0)），支持 KDL/BEVE 双向转换、SRS 子集导入与远程热更新 |
-| 持久化与日志 | 四层崩溃安全状态存储（selector、FakeIP 段预留 + WAL、DNS 与规则集内容寻址缓存）；无锁异步日志管线（text/JSONL/轮转/journald） |
-| 控制面与观测 | 本地 `NEXUS/1` UDS、Loopback HTTP `/v1/*`（Bearer 常量时间鉴权、策略组切换/`--auto`、断流、切网重探、日志级别、热重载、清缓存）与低基数 OpenMetrics `/metrics` |
-| 全平台与运维 | **Android**（Kotlin 2.x + Jetpack Compose + `:bg` `VpnService`）、**Desktop**（Slint v1.19 + C++26 `import std;`）、**Apple**（Swift 6 + SwiftUI + `NEPacketTunnelProvider`），附 `packaging/` systemd / OpenWrt / Shell 补全 |
+| HTTP 与 DNS | 自研 HTTP/1.1 + `nghttp2`（HTTP/2）+ `ngtcp2`/`nghttp3`（HTTP/3）具名客户端；多视图 DNS（UDP/TCP/DoT/DoH/DoQ/DoH3/`dhcp`/`mdns`）、乐观缓存、FakeIP 与嗅探 |
+| 配置与规则集 | KDL 2.0（[glaze-kdl2.0-](https://github.com/hiykhello/glaze-kdl2.0-/tree/feature/kdl2.0)，`GLZ_REFLECTION26 = 0` 标准反射路径），支持 KDL/BEVE 双向转换、SRS 子集导入与远程热更新 |
+| 持久化与日志 | 四层崩溃安全状态存储（selector、FakeIP 段预留 + WAL、DNS 与规则集内容寻址缓存）；无锁异步日志管线（text/JSONL/轮转/journald）与低内存看门狗 |
+| 控制面与观测 | 本地 `NEXUS/1` UDS / Windows Named Pipe、Loopback HTTP `/v1/*`（Bearer 常量时间鉴权、策略组切换/`--auto`、断流、切网重探、日志级别、热重载、清缓存、`acme`、L4 SNI 分流、`ssmapi`）与低基数 OpenMetrics `/metrics` |
+| 全平台与运维 | **Android**（Kotlin 2.x + Jetpack Compose + `:bg` `VpnService`）、**Desktop**（Slint v1.19 + C++26 `import std;`）、**Apple**（Swift 6 + SwiftUI + `NEPacketTunnelProvider`）、**Web**（Vite 8 + Lit），附 `packaging/` systemd / OpenWrt / Shell 补全 |
 
 > 同机压测基线（Linux x86-64）：`epoll + splice` 吞吐 **19.2–19.6 Gbps**、CPU **46.7 ms/GiB**、**13.2 MiB RSS**、`io_uring + splice` 吞吐 **19.4–20.2 Gbps**。
 

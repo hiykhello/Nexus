@@ -10,7 +10,6 @@ import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 extern "C" int fcntl(int,int,...);
 extern "C" int getsockopt(int,int,int,void*,unsigned int*);
-namespace dns=dns;
 namespace io=nex::corosio;
 namespace capy=nex::capy;
 using namespace std::chrono_literals;

@@ -11,8 +11,6 @@ import dns.corosio_resolver;
 import dns.input_budget;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;
-namespace proxy=proxy;
 namespace io=nex::corosio;
 namespace capy=nex::capy;
 using Clock=std::chrono::steady_clock;

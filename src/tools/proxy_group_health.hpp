@@ -202,7 +202,7 @@ namespace cli::run_detail {
 
         // A round measures the effective physical leaf of each named member.
         // A concurrent config change invalidates a sample only for the changed leaf.
-        [[nodiscard]] auto poll(std::function_ref<bool(std::shared_ptr<proxy::OutboundProbe>)> enqueue,
+        [[nodiscard]] auto poll(nexus::function_ref<bool(std::shared_ptr<proxy::OutboundProbe>)> enqueue,
             config::Config const& config,std::optional<std::uint64_t> network_generation) -> std::optional<Selection> {
             if (jobs_.empty()) return {};
             auto now=Clock::now();
@@ -321,7 +321,7 @@ namespace cli::run_detail {
 
     auto publish_group_routes(auto const& listeners,proxy::RouteSnapshots& snapshots,
         config::Config const& config,RouteFiles const& files,bool replace_dns_policy=false,
-        std::optional<std::function_ref<std::expected<void,std::string>()>> before_publish={})
+        std::optional<nexus::function_ref<std::expected<void,std::string>()>> before_publish={})
         -> std::expected<void,std::string> {
         auto routes=project_routes(config,files);
         auto next=std::make_shared<std::vector<proxy::RouteSnapshot>>();

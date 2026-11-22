@@ -1,5 +1,6 @@
 module tls.client_handshake_io;
 import std;
+import nexus.compat;
 import tls.psk_client_policy;
 import tls.server_hello;
 
@@ -47,7 +48,7 @@ namespace tls {
             if (auto* alpn=hello.extension(16)) scope.append_range(alpn->data);
             auto binding=make_ticket_binding(hello,trust,kind,peer_name,{},scope);
             if (!binding) return std::unexpected(Error::invalid_argument);
-            std::inplace_vector<ResumptionTicket,8> offers;
+            nexus::inplace_vector<ResumptionTicket,8> offers;
             {
                 auto& store=tickets();
                 std::lock_guard lock(store.mutex);

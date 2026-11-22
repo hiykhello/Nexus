@@ -1,5 +1,6 @@
 export module ss_udp.ordered_sniff;
 import std;
+import nexus.compat;
 import shadowsocks.udp_dispatch;
 import ss_udp.ordered_route;
 import sniff.udp_quic;
@@ -118,7 +119,7 @@ export namespace shadowsocks::detail {
         // A completed DNS callback may have transferred its token here before
         // the resolver removes its operation. Do not restart that token until
         // busy reports false. Only one decision per flow can be active.
-        [[nodiscard]] auto pop(Clock::time_point now,std::function_ref<bool(std::uint64_t)> busy) -> std::optional<Ready> {
+        [[nodiscard]] auto pop(Clock::time_point now,nexus::function_ref<bool(std::uint64_t)> busy) -> std::optional<Ready> {
             if(stopped_)return {};
             tick(now);
             for(auto& flow:flows_)if(flow.state==State::ready && !busy(flow.members.front().item.token)) {

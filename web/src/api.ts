@@ -73,6 +73,34 @@ export interface DiagnosticsResponse {
   active_connections: number;
 }
 
+export interface AcmeCertItem {
+  domain: string;
+  issuer: string;
+  not_after_epoch: number;
+  days_remaining: number;
+  challenge: string;
+}
+
+export interface AcmeStatusResponse {
+  certificates: AcmeCertItem[];
+}
+
+export interface SsmapiUserItem {
+  username: string;
+  enabled: boolean;
+  uplinkBytes: number;
+  downlinkBytes: number;
+  byteQuota: number;
+  tcpSessions: number;
+  udpSessions: number;
+}
+
+export interface SsmapiStatsResponse {
+  userCount: number;
+  totalUplinkBytes: number;
+  totalDownlinkBytes: number;
+}
+
 const TOKEN_STORAGE_KEY = 'nexus_control_bearer_token';
 
 export function getBearerToken(): string {
@@ -164,4 +192,7 @@ export const nexusApi = {
       method: 'POST',
       body: JSON.stringify({ target }),
     }),
+  acmeStatus: () => requestJson<AcmeStatusResponse>('/v1/acme/status'),
+  ssmapiUsers: () => requestJson<{ users: SsmapiUserItem[] }>('/v1/ssmapi/users'),
+  ssmapiStats: () => requestJson<SsmapiStatsResponse>('/v1/ssmapi/stats'),
 };

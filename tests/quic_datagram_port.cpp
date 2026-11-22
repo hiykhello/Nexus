@@ -7,7 +7,6 @@ import nexus.thirdparty.corosio;
 namespace q=quic;
 namespace n=nex::ngtcp2;
 namespace io=nex::corosio;
-namespace net=net;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;
 struct Factory;

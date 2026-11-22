@@ -9,6 +9,7 @@ namespace tls {
     }
     HybridClient::HybridClient(crypto::Mlkem768Private&& kem,crypto::X25519Private&& x25519) noexcept
         : kem_(std::move(kem)), x25519_(std::move(x25519)) {}
+    HybridClient::~HybridClient() = default;
     HybridClient::HybridClient(HybridClient&& other) noexcept : kem_(std::move(other.kem_)), x25519_(std::move(other.x25519_)) {
         other.kem_.reset(); other.x25519_.reset();
     }

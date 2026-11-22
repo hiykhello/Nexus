@@ -1,7 +1,6 @@
-module;
-#include <experimental/scope>
 module udp;
 import std;
+import nexus.compat;
 
 namespace udp {
     template <typename Endpoint>
@@ -74,7 +73,7 @@ namespace udp {
         auto id = open(local, remote, now);
         if (!id) return std::unexpected(id.error());
         bool created = flows_.size() != previous;
-        std::experimental::scope_exit rollback([&] {
+        nexus::scope_exit rollback([&] {
             if (created) (void)close(*id, now);
         });
         auto token = begin_send(*id, remote, now);
@@ -119,10 +118,10 @@ namespace udp {
     }
     template <typename Endpoint>
     auto BasicFlowTable<Endpoint>::transmit(FlowId id, Endpoint remote, std::uint64_t now,
-                             std::function_ref<bool()> sender) -> std::expected<void, Error> {
+                             nexus::function_ref<bool()> sender) -> std::expected<void, Error> {
         auto token = begin_send(id, remote, now);
         if (!token) return std::unexpected(token.error());
-        std::experimental::scope_exit rollback([&] { (void)finish_send(id, *token, false, now); });
+        nexus::scope_exit rollback([&] { (void)finish_send(id, *token, false, now); });
         auto sent = sender();
         auto result = finish_send(id, *token, sent, now);
         rollback.release();

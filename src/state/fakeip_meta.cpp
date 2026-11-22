@@ -1,7 +1,3 @@
-module;
-#include <cerrno>
-#include <sys/stat.h>
-#include <fcntl.h>
 module state.fakeip_disk;
 import std;
 import crypto;
@@ -48,13 +44,13 @@ namespace state {
             // Orphan data without its reservation record cannot prove which
             // addresses were published. A new owner requires an empty store.
             for (auto name:{"fakeip.wal","fakeip.ckpt"}) {
-                struct stat info{};
-                if (::fstatat(directory.directory(),name,&info,AT_SYMLINK_NOFOLLOW)==0)
-                    return std::unexpected(StateError{Stage::format});
-                if (errno!=ENOENT) return failure(Stage::open,errno);
+                auto exists = dir_entry_exists(directory.directory(), name, Stage::open);
+                if (!exists) return std::unexpected(exists.error());
+                if (*exists) return std::unexpected(StateError{Stage::format});
             }
             auto raw = std::span(reinterpret_cast<std::uint8_t*>(meta.owner.data()), meta.owner.size());
-            if (!crypto::random_bytes(raw)) return failure(Stage::read, EIO);
+            if (!crypto::random_bytes(raw))
+                return std::unexpected(StateError{Stage::read, std::make_error_code(std::errc::io_error)});
             auto saved=save_fakeip_meta(directory,scope,meta);
             if (!saved) return std::unexpected(saved.error());
             return meta;

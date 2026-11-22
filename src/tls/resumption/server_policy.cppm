@@ -3,6 +3,7 @@ export import tls.psk;
 import tls.server_credential;
 import tls.hello;
 import std;
+import nexus.compat;
 
 export namespace tls {
     struct ServerTicketBinding {
@@ -40,7 +41,7 @@ export namespace tls {
     template<std::size_t Capacity=64>
     class ServerTicketStore {
         static_assert(Capacity>0 && Capacity<=1024);
-        std::inplace_vector<ServerTicketEntry,Capacity> entries_;
+        nexus::inplace_vector<ServerTicketEntry,Capacity> entries_;
     public:
         [[nodiscard]] auto size() const noexcept -> std::size_t {return entries_.size();}
         auto clear() noexcept -> void {entries_.clear();}
@@ -49,13 +50,13 @@ export namespace tls {
         }
         [[nodiscard]] auto find(std::span<std::uint8_t const> identity,ServerTicketBinding const& binding,crypto::Hash hash,std::uint64_t now)
             -> std::optional<PskOfferView> {
-            std::erase_if(entries_,[&](auto const& entry){return !entry.usable(now);});
+            nexus::erase_if(entries_,[&](auto const& entry){return !entry.usable(now);});
             for(auto const& entry:entries_)if (entry.hash==hash && entry.binding==binding && std::ranges::equal(identity,entry.identity))
                 return PskOfferView{entry.identity,entry.secret.view(),entry.hash,PskKind::resumption,0};
             return {};
         }
         [[nodiscard]] auto publish(ServerTicketEntry&& entry,std::uint64_t now) -> bool {
-            std::erase_if(entries_,[&](auto const& value){return !value.usable(now);});
+            nexus::erase_if(entries_,[&](auto const& value){return !value.usable(now);});
             if (!entry.usable(now) || contains(entry.identity)) return false;
             if (entries_.size()==Capacity)entries_.erase(entries_.begin());
             entries_.push_back(std::move(entry));return true;

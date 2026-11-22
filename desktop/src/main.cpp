@@ -150,10 +150,7 @@ auto main(int argc, char** argv) -> int {
                 std::filesystem::remove(tmp, ec);
             }
             slint::invoke_from_event_loop([weak_ui, ok = res.ok, msg = std::move(res.message)] {
-                if (auto strong = weak_ui.lock()) {
-                    strong->set_diagnostic_ok(ok);
-                    strong->set_diagnostic_message(slint::SharedString(msg));
-                }
+                if (auto s = weak_ui.lock()) { s->set_diagnostic_ok(ok); s->set_diagnostic_message(slint::SharedString(msg)); }
             });
         });
     });
@@ -165,10 +162,7 @@ auto main(int argc, char** argv) -> int {
             auto tmp = cfg_dir / ".validate-draft.kdl";
             if (!write_file_atomic(tmp, payload)) {
                 slint::invoke_from_event_loop([weak_ui] {
-                    if (auto strong = weak_ui.lock()) {
-                        strong->set_diagnostic_ok(false);
-                        strong->set_diagnostic_message("保存临时文件失败");
-                    }
+                    if (auto s = weak_ui.lock()) { s->set_diagnostic_ok(false); s->set_diagnostic_message("保存临时文件失败"); }
                 });
                 return;
             }
@@ -177,10 +171,7 @@ auto main(int argc, char** argv) -> int {
             std::filesystem::remove(tmp, ec);
             if (!res.ok) {
                 slint::invoke_from_event_loop([weak_ui, msg = "拒绝下发无效配置: " + res.message] {
-                    if (auto strong = weak_ui.lock()) {
-                        strong->set_diagnostic_ok(false);
-                        strong->set_diagnostic_message(slint::SharedString(msg));
-                    }
+                    if (auto s = weak_ui.lock()) { s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(msg)); }
                 });
                 return;
             }
@@ -471,6 +462,19 @@ auto main(int argc, char** argv) -> int {
                 }
             });
         });
+    });
+    auto append_kdl_snippet = [&](std::string const& snippet, std::string_view label) {
+        std::string merged(ui->get_kdl_text());
+        if (!merged.empty() && merged.back() != '\n') merged.push_back('\n');
+        ui->set_kdl_text(slint::SharedString(merged + "\n" + snippet));
+        ui->set_diagnostic_ok(true);
+        ui->set_diagnostic_message(slint::SharedString(std::string("已追加规则片段到配置: ") + std::string(label)));
+    };
+    ui->on_append_rule_snippet([&](slint::SharedString k, slint::SharedString v, slint::SharedString out) {
+        append_kdl_snippet(desktop_ui_helpers::format_route_rule_kdl(k, v, out), "route");
+    });
+    ui->on_append_dns_rule_snippet([&](slint::SharedString k, slint::SharedString v, slint::SharedString srv) {
+        append_kdl_snippet(desktop_ui_helpers::format_dns_rule_kdl(k, v, srv), "dns");
     });
 
     ui->on_quit_requested([&] {

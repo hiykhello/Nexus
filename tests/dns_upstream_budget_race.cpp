@@ -8,7 +8,7 @@ import dns.policy;
 import dns.corosio_resolver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;namespace io=nex::corosio;namespace capy=nex::capy;
+namespace io=nex::corosio;namespace capy=nex::capy;
 using namespace std::chrono_literals;
 auto work(io::io_context& context,std::uint16_t port,bool& ok) -> capy::task<> {
     auto& budget=dns::default_upstream_receive_budget();auto all=budget.acquire(budget.limit());if(!all)co_return;

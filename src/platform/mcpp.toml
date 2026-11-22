@@ -16,19 +16,22 @@ test-random = { defines = ["NEXUS_TEST_LINUX_RANDOM"] }
 nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
-sources = ["linux_random.cppm", "platform_defaults.cppm", "socket_options.cppm", "ip_address.cppm", "stream_peer.cppm", "os_fs.cppm", "netlink_abi.cppm", "sd_bus_abi.cppm", "resolved_bus.cppm", "resolved_types.cppm", "resolved_codec.cppm", "resolved_client.cppm"]
+sources = ["compat.cppm", "compat_callable.cppm", "process_owner.cppm", "neighbor_mac.cppm", "netns_config.cppm", "netns_config.cpp", "linux_random.cppm", "platform_defaults.cppm", "socket_options.cppm", "ip_address.cppm", "stream_peer.cppm", "os_fs.cppm", "netlink_abi.cppm", "sd_bus_abi.cppm", "resolved_bus.cppm", "resolved_types.cppm", "resolved_codec.cppm", "resolved_client.cppm"]
 
 [target.'cfg(not(os = "windows"))'.build]
 sources = ["os_fs_posix.cpp", "udp_batch_posix.cppm"]
 
 [target.'cfg(os = "linux")'.build]
-sources = ["socket_namespace_linux.cpp", "udp_batch_linux.cpp"]
+sources = ["process_owner_linux.cpp", "neighbor_mac_linux.cpp", "socket_namespace_linux.cpp", "udp_batch_linux.cpp"]
+
+[target.'cfg(not(os = "linux"))'.build]
+sources = ["neighbor_mac_stub.cpp"]
 
 [target.'cfg(any(os = "macos", os = "ios"))'.build]
-sources = ["socket_namespace_darwin.cpp"]
+sources = ["process_owner_darwin.cpp", "socket_namespace_darwin.cpp"]
 
 [target.'cfg(all(not(os = "linux"), not(os = "windows")))'.build]
 sources = ["udp_batch_posix.cpp"]
 
 [target.'cfg(os = "windows")'.build]
-sources = ["socket_namespace_windows.cpp", "os_fs_windows.cpp", "udp_batch_windows.cppm", "udp_batch_windows.cpp"]
+sources = ["process_owner_windows.cpp", "socket_namespace_windows.cpp", "os_fs_windows.cpp", "udp_batch_windows.cppm", "udp_batch_windows.cpp"]

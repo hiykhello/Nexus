@@ -43,7 +43,6 @@ import nexus.thirdparty.ngtcp2;
 namespace io = nex::corosio;
 namespace capy = nex::capy;
 namespace m = masque;
-namespace tls = tls;
 using Clock = std::chrono::steady_clock;
 
 namespace {

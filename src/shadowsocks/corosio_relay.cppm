@@ -1,5 +1,6 @@
 export module shadowsocks.corosio_relay;
 import std;
+export import nexus.compat;
 import crypto;
 import shadowsocks.frame;
 import shadowsocks.key;
@@ -17,12 +18,12 @@ export namespace shadowsocks::detail {
         FrameEncoder encoder_;
         std::unique_ptr<FrameReader<RemoteSocket>> reader_;
         nex::capy::async_mutex writer_;
-        std::move_only_function<void()> touch_;
+        nexus::move_only_function<void()> touch_;
         bool canceled_=false, upload_started_=false, download_started_=false, output_closed_=false, reading_=false;
         bool cancel_local_=true;
     public:
         DuplexRelay(LocalSocket& local,RemoteSocket& remote,std::span<std::uint8_t const> psk,
-                    StartedRequest started,std::move_only_function<void()> touch={},bool cancel_local=true)
+                    StartedRequest started,nexus::move_only_function<void()> touch={},bool cancel_local=true)
             : local_(local),remote_(remote),psk_(psk.begin(),psk.end()),salt_(std::move(started.salt)),
               method_(started.cipher.method()),encoder_(std::move(started.cipher)),touch_(std::move(touch)),cancel_local_(cancel_local) {}
         ~DuplexRelay() { crypto::cleanse(psk_); }

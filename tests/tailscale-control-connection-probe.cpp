@@ -13,7 +13,6 @@ import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 namespace noise=tailscale::control;
 namespace cc=tailscale::control_connection;
-namespace tls=tls;
 namespace capy=nex::capy;
 namespace io=nex::corosio;
 using namespace std::chrono_literals;

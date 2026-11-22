@@ -1,12 +1,13 @@
 export module control_api;
 
 import std;
+import nexus.compat;
 import config;
 import control_api.types;
 
 export namespace control_api {
-    using CommandHandler = std::function_ref<std::expected<std::string, std::string>(std::span<std::string_view const>)>;
-    using SnapshotBuilder = std::function_ref<ControlSnapshot()>;
+    using CommandHandler = nexus::function_ref<std::expected<std::string, std::string>(std::span<std::string_view const>)>;
+    using SnapshotBuilder = nexus::function_ref<ControlSnapshot()>;
 
     // Non-blocking bounded HTTP/1.1 /v1 control plane & optional OpenMetrics /metrics server.
     // Runs on the host control poll loop with strict connection/memory/deadline caps so slow

@@ -6,6 +6,7 @@ export import tls.psk_server_policy;
 export import tls.server_credential;
 export import tls.certificate_trust;
 import std;
+import nexus.compat;
 import nexus.thirdparty.corosio;
 import nexus.thirdparty.ngtcp2;
 import quic.ech_config;
@@ -92,7 +93,7 @@ export namespace quic {
             ResumptionPki identity(anchors,kind,name,verification_time,*scope);
             auto binding=identity.resumption_binding(hello,std::span(reinterpret_cast<std::uint8_t const*>(alpn.data()),alpn.size()));
             if (!binding)return std::unexpected(binding.error());
-            std::inplace_vector<typename Cache::Ticket,8> offers;
+            nexus::inplace_vector<typename Cache::Ticket,8> offers;
             if (auto ticket=cache.take(*binding,hello.cipher_suites,Clock::now()))offers.push_back(std::move(*ticket));
             auto policy=Policy::create(std::move(*binding),std::move(offers),cache);if (!policy)return std::unexpected(policy.error());
             if constexpr(tls::EarlyDataPolicy<Policy>) {

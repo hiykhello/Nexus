@@ -43,7 +43,7 @@ namespace cli::run_detail {
     template<class Listeners>
     auto control_request(Listeners& listeners,std::optional<config::Config>& running,unsigned workers,
         std::span<std::string const> outbound_names,std::span<std::string_view const> args,
-        std::function_ref<std::expected<bool,std::string>(config::Config const&,std::string_view,std::string_view,bool)> publish,
+        nexus::function_ref<std::expected<bool,std::string>(config::Config const&,std::string_view,std::string_view,bool)> publish,
         std::optional<std::uint64_t> listener_generation,platform::network::Snapshot const* network,
         OutboundGroupHealth* health,ControlRole role,ControlOperations& operations,LocalControl const& control,
         dns::ReverseCache* reverse_cache=nullptr)

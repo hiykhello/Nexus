@@ -1,5 +1,6 @@
 export module rules;
 import std;
+import nexus.compat;
 import rules.regex;
 
 export namespace rules {
@@ -374,7 +375,7 @@ export namespace rules {
     inline constexpr unsigned max_input_bytes = 1048576;
 
     // The lookup borrows the loaded sets for compilation only.
-    using RuleSetLookup=std::function_ref<RuleSet const*(std::string_view)>;
+    using RuleSetLookup=nexus::function_ref<RuleSet const*(std::string_view)>;
     [[nodiscard]] auto expand_rule_sets(RuleSet const&,RuleSetLookup,std::size_t& remaining) -> std::expected<RuleSet,Error>;
     [[nodiscard]] auto normalize_rule(Rule rule) -> std::expected<Rule, Error>;
     [[nodiscard]] auto normalize_set(RuleSet set) -> std::expected<RuleSet, Error>;

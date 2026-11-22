@@ -1,20 +1,21 @@
+module;
 #if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__)
 #error "The static descriptor boundary is verified for Linux x86-64 / aarch64 LP64 only"
 #endif
-
-export module packet.fd;
-export import packet;
-import std;
+#include <cstddef>
 
 // The existing system headers in fd.cpp verify these exact glibc declarations
 // and constants. Static pumps call the same C symbols without I/O forwarding.
-namespace packet::fd_detail::abi {
+namespace packet::fd_detail::raw_abi {
     extern "C" std::ptrdiff_t read(int,void*,std::size_t);
     extern "C" std::ptrdiff_t write(int,void const*,std::size_t);
     extern "C" int fcntl(int,int,...);
     extern "C" int* __errno_location() noexcept;
-    inline constexpr int get_flags=3,nonblocking=2048;
 }
+
+export module packet.fd;
+export import packet;
+import std;
 
 export namespace packet {
     enum class FdError { invalid_fd, blocking_fd, invalid_limit, end_of_file, packet_too_large, partial_write };
@@ -27,6 +28,13 @@ export namespace packet {
     using FdFailure=FdFailureFor<DeviceError>;
     using FdStep=FdStepFor<DeviceError>;
     namespace fd_detail {
+        namespace abi {
+            using raw_abi::read;
+            using raw_abi::write;
+            using raw_abi::fcntl;
+            using raw_abi::__errno_location;
+            inline constexpr int get_flags=3,nonblocking=2048;
+        }
         using SetupFailure=std::variant<FdError,std::error_code>;
         inline auto system_error() noexcept -> std::error_code { return {*abi::__errno_location(),std::generic_category()}; }
         inline auto temporary(std::error_code error) noexcept -> bool {

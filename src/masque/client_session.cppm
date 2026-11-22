@@ -1,5 +1,6 @@
 export module masque.client_session;
 import std;
+import nexus.compat;
 import crypto;
 import http.header;
 import masque.capsule;
@@ -32,8 +33,8 @@ export namespace masque {
         std::string body;
     };
 
-    using HttpHeaderSink=std::function_ref<void(std::string_view,std::string_view)>;
-    using HttpBodySink=std::function_ref<nex::capy::task<bool>(std::string_view,std::chrono::steady_clock::time_point)>;
+    using HttpHeaderSink=nexus::function_ref<void(std::string_view,std::string_view)>;
+    using HttpBodySink=nexus::function_ref<nex::capy::task<bool>(std::string_view,std::chrono::steady_clock::time_point)>;
 
     enum class HttpError { transport, response };
 

@@ -6,6 +6,7 @@ export import tls.raw_client_flight;
 export import memory.budget;
 import tls.traffic_records;
 import tls.post_handshake;
+import nexus.compat;
 import std;
 
 export namespace tls {
@@ -25,7 +26,7 @@ export namespace tls {
         crypto::Aead algorithm_=crypto::Aead::aes_128_gcm;
         std::size_t key_size_=0;
         crypto::Bytes handshake_pending_;
-        using TicketSink=std::move_only_function<std::expected<void,RecordError>(std::span<std::uint8_t const>)>;
+        using TicketSink=nexus::move_only_function<std::expected<void,RecordError>(std::span<std::uint8_t const>)>;
         TicketSink ticket_sink_;
 
         std::array<std::uint8_t,5> server_handshake_pending_{};

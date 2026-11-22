@@ -8,6 +8,7 @@ import { ProfilesPanel } from "components/profiles_panel.slint";
 import { ConfigPanel } from "components/config_panel.slint";
 import { LogsPanel } from "components/logs_panel.slint";
 import { RuleExplainPanel } from "components/rule_explain_panel.slint";
+import { RuleDnsEditorPanel } from "components/rule_dns_editor.slint";
 
 export component AppWindow inherits Window {
     title: "Nexus";
@@ -74,6 +75,8 @@ export component AppWindow inherits Window {
     callback export-logs();
     callback clear-logs();
     callback run-rule-explain(string, string, string, string);
+    callback append-rule-snippet(string, string, string);
+    callback append-dns-rule-snippet(string, string, string);
     callback quit-requested();
 
     FocusScope {
@@ -88,6 +91,7 @@ export component AppWindow inherits Window {
                 if (event.text == "5") { root.active-tab = 2; return accept; }
                 if (event.text == "6") { root.active-tab = 7; return accept; }
                 if (event.text == "7") { root.active-tab = 3; root.refresh-logs(); return accept; }
+                if (event.text == "8") { root.active-tab = 8; return accept; }
             }
             reject
         }
@@ -114,6 +118,7 @@ export component AppWindow inherits Window {
                 Button { text: "档案"; primary: active-tab == 6; clicked => { active-tab = 6; root.refresh-profiles(); } }
                 Button { text: "配置"; primary: active-tab == 2; clicked => { active-tab = 2; } }
                 Button { text: "规则测试"; primary: active-tab == 7; clicked => { active-tab = 7; } }
+                Button { text: "规则编辑"; primary: active-tab == 8; clicked => { active-tab = 8; } }
                 Button { text: "日志"; primary: active-tab == 3; clicked => { active-tab = 3; root.refresh-logs(); } }
                 Button { text: "关于"; primary: active-tab == 4; clicked => { active-tab = 4; } }
                 Rectangle { vertical-stretch: 1; }
@@ -192,6 +197,13 @@ export component AppWindow inherits Window {
                 explain-result: root.explain-result;
                 explain-ok: root.explain-ok;
                 run-explain(inb, net, tgt, extra) => { root.run-rule-explain(inb, net, tgt, extra); }
+            }
+
+            if active-tab == 8 : RuleDnsEditorPanel {
+                vertical-stretch: 1;
+                editor-status: root.diagnostic-message;
+                append-rule-snippet(k, v, out) => { root.append-rule-snippet(k, v, out); }
+                append-dns-rule-snippet(k, v, srv) => { root.append-dns-rule-snippet(k, v, srv); }
             }
 
             if active-tab == 5 : ConnectionsPanel {

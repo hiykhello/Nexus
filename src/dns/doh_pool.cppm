@@ -3,6 +3,7 @@ module;
 
 export module dns.doh_pool;
 import std;
+export import nexus.compat;
 import proxy.v4;
 import dns.corosio_query;
 import dns.doh_exchange;
@@ -77,7 +78,7 @@ export namespace dns::doh_detail {
     };
 
     using NewStream=std::expected<Stream,Error>;
-    using StreamFactory=std::move_only_function<NewStream(Io&,Endpoint) const>;
+    using StreamFactory=nexus::move_only_function<NewStream(Io&,Endpoint) const>;
     auto pooled_query(StreamFactory,std::string authority,std::string path,
         std::optional<std::chrono::milliseconds>) -> dns::detail::ProtectedQuery;
 

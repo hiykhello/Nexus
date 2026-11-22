@@ -10,8 +10,9 @@ export namespace http2::detail {
     enum class Role { client,server };
     struct CoreLimits {
         std::size_t connection_window=65535,stream_window=65535,header_fields=100,header_bytes=8192;
-        std::uint32_t concurrent_streams=1,decoder_table=4096,max_frame_size=16384;
+        std::uint32_t concurrent_streams=1,decoder_table=4096;
         std::size_t encoder_table=4096,outbound_ack=64,outbound_queue_limit=5000;
+        std::uint32_t max_frame_size=16384;
     };
     class LocalAccounting {
         std::size_t limit_,used_=0,peak_=0;

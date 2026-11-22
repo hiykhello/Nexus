@@ -1,9 +1,14 @@
 export module state.file;
 import std;
+import nexus.compat;
 import state.core;
 import platform.os_fs;
 
 export namespace state {
+    using NativeHandle = void*;
+    inline constexpr NativeHandle invalid_handle = nullptr;
+    [[nodiscard]] constexpr auto valid_handle(NativeHandle handle) noexcept -> bool { return handle != nullptr; }
+
     class File {
         void* handle_;
     public:
@@ -22,14 +27,41 @@ export namespace state {
     auto open_private_directory(std::filesystem::path const& path) -> std::expected<File, StateError>;
     auto ensure_private_directory(std::filesystem::path const& path) -> std::expected<void, StateError>;
     struct DirectoryEntry { std::string name; std::uint64_t size; bool private_file; };
-    auto directory_entries(void* directory, std::function_ref<bool(std::string_view)> accept)
+    auto directory_entries(NativeHandle directory, nexus::function_ref<bool(std::string_view)> accept)
         -> std::expected<std::vector<DirectoryEntry>, StateError>;
+
+    auto open_dir_read(NativeHandle dir, std::string_view name, bool require_private, Stage stage)
+        -> std::expected<File, StateError>;
+    auto open_dir_append(NativeHandle dir, std::string_view name, Stage stage)
+        -> std::expected<File, StateError>;
+    auto open_dir_stage(NativeHandle dir, std::string_view name, Stage stage)
+        -> std::expected<File, StateError>;
+    auto dir_entry_exists(NativeHandle dir, std::string_view name, Stage stage)
+        -> std::expected<bool, StateError>;
+    auto handle_size(NativeHandle handle, Stage stage) -> std::expected<std::uint64_t, StateError>;
+    auto read_handle(NativeHandle handle, std::span<std::byte> out, Stage stage) -> std::expected<std::size_t, StateError>;
+    auto read_handle_at(NativeHandle handle, std::uint64_t offset, std::span<std::byte> out, Stage stage)
+        -> std::expected<std::size_t, StateError>;
+    auto write_handle_all(NativeHandle handle, std::span<std::byte const> data, Stage stage)
+        -> std::expected<void, StateError>;
+    auto truncate_handle(NativeHandle handle, std::uint64_t size, Stage stage) -> std::expected<void, StateError>;
+    auto close_file(File& file, Stage stage) -> std::expected<void, StateError>;
+    auto unlink_dir_file(NativeHandle dir, std::string_view name, Stage stage) -> std::expected<void, StateError>;
+    auto rename_dir_file(NativeHandle dir, std::string_view from, std::string_view to, bool noreplace, Stage stage)
+        -> std::expected<void, StateError>;
+    auto same_directory_entry(NativeHandle held_dir, NativeHandle parent_dir, std::string_view name)
+        -> std::expected<bool, StateError>;
+    auto read_dir_file(NativeHandle dir, std::string_view name, std::size_t max_bytes, bool require_private)
+        -> std::expected<std::vector<std::byte>, StateError>;
+    auto write_dir_file_atomic(NativeHandle dir, std::string_view name, std::string_view tmp_prefix,
+                               std::span<std::byte const> data, Stage stage) -> std::expected<void, StateError>;
 
     auto failure(Stage stage, int number, bool replaced = false) noexcept -> std::unexpected<StateError> {
         return std::unexpected(StateError{stage, {number, std::system_category()}, replaced});
     }
 
-    auto sync_file(void* handle) noexcept -> int {
+    auto sync_file(NativeHandle handle) noexcept -> int {
         return platform::sync_native_handle(reinterpret_cast<std::uintptr_t>(handle));
     }
+    auto sync_handle(NativeHandle handle, Stage stage, bool replaced = false) noexcept -> std::expected<void, StateError>;
 }

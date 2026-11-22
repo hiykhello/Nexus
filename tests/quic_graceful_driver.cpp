@@ -5,7 +5,7 @@ import nexus.thirdparty.ngtcp2;
 import net.datagram_driver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace q=quic;namespace net=net;namespace capy=nex::capy;namespace io=nex::corosio;
+namespace q=quic;namespace capy=nex::capy;namespace io=nex::corosio;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 struct Socket {
  io::io_context& ctx;capy::async_event read,write;bool closed=false,held=false,fail=false;unsigned sends=0;

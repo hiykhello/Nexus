@@ -1,5 +1,6 @@
 export module dns.local_config;
 import std;
+import nexus.compat;
 import dns.message;
 
 export namespace dns {
@@ -32,7 +33,7 @@ export namespace dns {
     class LocalSnapshotSource {
         std::string resolv_path_, hosts_path_;
         std::chrono::milliseconds interval_;
-        std::atomic<std::shared_ptr<LocalSnapshot const>> current_;
+        nexus::atomic_shared_ptr<LocalSnapshot const> current_;
         std::mutex mutex_;
         std::condition_variable_any wake_;
         std::jthread thread_;

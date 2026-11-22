@@ -1,9 +1,3 @@
-module;
-#include <cerrno>
-#include <fcntl.h>
-#include <stdio.h>
-#include <sys/stat.h>
-#include <unistd.h>
 module state.snapshot;
 import std;
 import state.file;
@@ -12,7 +6,7 @@ namespace state {
     namespace {
         auto name_valid(std::string_view name) noexcept -> bool {
             return !name.empty() && name.size() <= 210 && name != "." && name != ".." &&
-                name != "instance.lock" && !name.contains('/') && !name.contains('\0');
+                name != "instance.lock" && !name.contains('/') && !name.contains('\\') && !name.contains('\0');
         }
 
         auto matches(std::span<std::byte const> bytes, Magic const& magic) noexcept -> bool {
@@ -20,64 +14,58 @@ namespace state {
                 std::ranges::equal(bytes.first(magic.size()), std::as_bytes(std::span(magic)));
         }
 
-        auto read_exact(int fd, std::span<std::byte> bytes) -> std::expected<void, StateError> {
-            while (!bytes.empty()) {
-                auto count = ::read(fd, bytes.data(), bytes.size());
-                if (count < 0 && errno == EINTR) continue;
-                if (count < 0) return failure(Stage::read, errno);
-                if (count == 0) return std::unexpected(StateError{Stage::format});
-                bytes = bytes.subspan(static_cast<std::size_t>(count));
-            }
+        auto read_exact(NativeHandle fd, std::span<std::byte> bytes) -> std::expected<void, StateError> {
+            auto got = read_handle(fd, bytes, Stage::read);
+            if (!got) return std::unexpected(got.error());
+            if (*got != bytes.size()) return std::unexpected(StateError{Stage::format});
             return {};
         }
 
-        auto expect_eof(int fd) -> std::expected<void, StateError> {
-            char probe;
-            ssize_t count;
-            do { count = ::read(fd, &probe, 1); } while (count < 0 && errno == EINTR);
-            if (count < 0) return failure(Stage::read, errno);
-            if (count != 0) return std::unexpected(StateError{Stage::format});
+        auto expect_eof(NativeHandle fd) -> std::expected<void, StateError> {
+            std::byte probe{};
+            auto got = read_handle(fd, std::span(&probe, 1), Stage::read);
+            if (!got) return std::unexpected(got.error());
+            if (*got != 0) return std::unexpected(StateError{Stage::format});
             return {};
         }
 
-        auto read_snapshot(int dir, SnapshotSpec const& spec)
+        auto read_snapshot(NativeHandle dir, SnapshotSpec const& spec)
             -> std::expected<std::optional<SnapshotData>, StateError> {
-            File fd(::openat(dir, spec.name.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
-            if (fd.get() < 0) {
-                if (errno == ENOENT) return std::nullopt;
-                return failure(Stage::open, errno);
+            auto fd = open_dir_read(dir, spec.name, true, Stage::open);
+            if (!fd) {
+                if (fd.error().os == std::errc::no_such_file_or_directory) return std::nullopt;
+                return std::unexpected(fd.error());
             }
-            struct stat info{};
-            if (::fstat(fd.get(), &info) < 0) return failure(Stage::open, errno);
-            if (!private_regular(info)) return failure(Stage::open, EACCES);
-            auto size = static_cast<std::uint64_t>(info.st_size);
+            auto size_opt = handle_size(fd->get(), Stage::open);
+            if (!size_opt) return std::unexpected(size_opt.error());
+            auto size = *size_opt;
             if (size < spec.envelope.magic.size() || size > std::uint64_t(spec.envelope.max_payload) + header_bytes)
                 return std::unexpected(StateError{Stage::format});
 
             EncodedHeader prefix{};
             auto initial = std::span(prefix).first<6>();
-            auto begun = read_exact(fd.get(), initial);
+            auto begun = read_exact(fd->get(), initial);
             if (!begun) return std::unexpected(begun.error());
             if (spec.legacy_magic && matches(initial, *spec.legacy_magic)) {
                 if (size > spec.envelope.max_payload) return std::unexpected(StateError{Stage::format});
                 Bytes legacy(static_cast<std::size_t>(size));
                 std::ranges::copy(initial, legacy.begin());
-                auto read = read_exact(fd.get(), std::span(legacy).subspan(initial.size()));
+                auto read = read_exact(fd->get(), std::span(legacy).subspan(initial.size()));
                 if (!read) return std::unexpected(read.error());
-                auto end = expect_eof(fd.get());
+                auto end = expect_eof(fd->get());
                 if (!end) return std::unexpected(end.error());
                 return SnapshotData{{}, std::move(legacy), true};
             }
-            auto rest = read_exact(fd.get(), std::span(prefix).subspan(initial.size()));
+            auto rest = read_exact(fd->get(), std::span(prefix).subspan(initial.size()));
             if (!rest) return std::unexpected(rest.error());
             auto header = decode_header(prefix, spec.envelope);
             if (!header) return std::unexpected(header.error());
             if (size != std::uint64_t(header->payload_bytes) + header_bytes)
                 return std::unexpected(StateError{Stage::format});
             Bytes payload(header->payload_bytes);
-            auto read = read_exact(fd.get(), payload);
+            auto read = read_exact(fd->get(), payload);
             if (!read) return std::unexpected(read.error());
-            auto end = expect_eof(fd.get());
+            auto end = expect_eof(fd->get());
             if (!end) return std::unexpected(end.error());
             auto checked = verify_payload(prefix, *header, payload, spec.envelope.fingerprint);
             if (!checked) return std::unexpected(checked.error());
@@ -90,31 +78,13 @@ namespace state {
             return std::unexpected(error);
         }
 
-        auto remove_stage(int dir, std::string const& name) -> std::expected<void, StateError> {
-            if (::unlinkat(dir, name.c_str(), 0) < 0 && errno != ENOENT)
-                return failure(Stage::remove_stage, errno);
-            return {};
-        }
-
-        auto write_all(int fd, std::span<std::byte const> bytes) noexcept -> std::expected<void, StateError> {
-            while (!bytes.empty()) {
-                auto count = ::write(fd, bytes.data(), bytes.size());
-                if (count < 0 && errno == EINTR) continue;
-                if (count <= 0) return failure(Stage::write, count == 0 ? EIO : errno);
-                bytes = bytes.subspan(static_cast<std::size_t>(count));
-            }
-            return {};
-        }
-
-        auto write_stage(int fd, EncodedHeader const& header, std::span<std::byte const> payload)
+        auto write_stage(NativeHandle fd, EncodedHeader const& header, std::span<std::byte const> payload)
             -> std::expected<void, StateError> {
-            if (::fchmod(fd, 0600) < 0) return failure(Stage::create_stage, errno);
-            auto prefix = write_all(fd, header);
+            auto prefix = write_handle_all(fd, header, Stage::write);
             if (!prefix) return prefix;
-            auto body = write_all(fd, payload);
+            auto body = write_handle_all(fd, payload, Stage::write);
             if (!body) return body;
-            if (sync_file(fd) < 0) return failure(Stage::sync_stage, errno);
-            return {};
+            return sync_handle(fd, Stage::sync_stage);
         }
     }
 
@@ -126,11 +96,11 @@ namespace state {
         return {};
     }
 
-    auto inspect_snapshot(int directory, SnapshotSpec const& spec)
+    auto inspect_snapshot(NativeHandle directory, SnapshotSpec const& spec)
         -> std::expected<std::optional<SnapshotData>, StateError> {
-        auto valid=validate_snapshot(spec);
+        auto valid = validate_snapshot(spec);
         if (!valid) return std::unexpected(valid.error());
-        return read_snapshot(directory,spec);
+        return read_snapshot(directory, spec);
     }
 
     auto load_snapshot(InstanceLock const& instance, SnapshotSpec const& spec, DamagePolicy policy)
@@ -147,11 +117,11 @@ namespace state {
         auto now = std::chrono::system_clock::now().time_since_epoch();
         auto suffix = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
         auto destination = std::format("{}.corrupt.{}", spec.name, suffix);
-        if (::renameat2(dir, spec.name.c_str(), dir, destination.c_str(), RENAME_NOREPLACE) < 0)
-            return with_context(failure(Stage::isolate, errno).error(), error);
+        if (auto moved = rename_dir_file(dir, spec.name, destination, true, Stage::isolate); !moved)
+            return with_context(moved.error(), error);
         error.replaced = true;
-        if (sync_file(dir) < 0)
-            return with_context(failure(Stage::sync_directory, errno, true).error(), error);
+        if (auto synced = sync_handle(dir, Stage::sync_directory, true); !synced)
+            return with_context(synced.error(), error);
         return std::unexpected(error);
     }
 
@@ -178,32 +148,29 @@ namespace state {
             0, static_cast<std::uint32_t>(payload.size()), revision, epoch}, payload, spec.envelope.fingerprint);
         if (!prefix) return std::unexpected(prefix.error());
 
-        auto cleared = remove_stage(dir, spec.staging_name);
+        auto cleared = unlink_dir_file(dir, spec.staging_name, Stage::remove_stage);
         if (!cleared) return std::unexpected(cleared.error());
-        File stage(::openat(dir, spec.staging_name.c_str(),
-            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-        if (stage.get() < 0) return failure(Stage::create_stage, errno);
+        auto stage = open_dir_stage(dir, spec.staging_name, Stage::create_stage);
+        if (!stage) return std::unexpected(stage.error());
 
         auto abort = [&](StateError error) -> std::unexpected<StateError> {
-            auto cleanup = remove_stage(dir, spec.staging_name);
+            auto cleanup = unlink_dir_file(dir, spec.staging_name, Stage::remove_stage);
             if (!cleanup) return with_context(cleanup.error(), error);
             return std::unexpected(error);
         };
-        auto written = write_stage(stage.get(), *prefix, payload);
-        auto closed = ::close(stage.release());
+        auto written = write_stage(stage->get(), *prefix, payload);
+        auto closed = close_file(*stage, Stage::close_stage);
         if (!written) return abort(written.error());
-        if (closed < 0) return abort(failure(Stage::close_stage, errno).error());
+        if (!closed) return abort(closed.error());
 
         auto publish = [&]() -> std::expected<void, StateError> {
-            if (::renameat(dir, spec.staging_name.c_str(), dir, spec.name.c_str()) < 0)
-                return failure(Stage::replace, errno);
-            return {};
+            return rename_dir_file(dir, spec.staging_name, spec.name, false, Stage::replace);
         };
         auto published = barrier ? barrier->publish(epoch, publish) : publish();
         if (!published) return abort(published.error());
         if (visible) (*visible)();
-        if (sync_file(dir) < 0)
-            return CommitReceipt{CommitState::uncertain, failure(Stage::sync_directory, errno, true).error()};
+        if (auto synced = sync_handle(dir, Stage::sync_directory, true); !synced)
+            return CommitReceipt{CommitState::uncertain, synced.error()};
         return CommitReceipt{CommitState::committed, {}};
     }
 }

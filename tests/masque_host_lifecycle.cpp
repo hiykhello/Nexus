@@ -127,7 +127,6 @@ auto field(std::string_view name,std::string_view value) -> h::nghttp3_nv {
     return {reinterpret_cast<std::uint8_t const*>(name.data()),reinterpret_cast<std::uint8_t const*>(value.data()),name.size(),value.size(),h::nv_flag_none};
 }
 
-namespace net=net;
 struct Wake {unsigned count=0;auto operator()() noexcept -> void {++count;}};
 template<class Tls> struct HostPeer {
     io::io_context& context;support::Memory memory;support::Path path{true};Wake wake;

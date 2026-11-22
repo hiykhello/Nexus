@@ -2,7 +2,6 @@ import std;
 import net.datagram_driver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace net=net;
 namespace capy=nex::capy;
 namespace io=nex::corosio;
 using namespace std::chrono_literals;

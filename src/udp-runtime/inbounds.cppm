@@ -1,5 +1,6 @@
 export module ss_udp.inbounds;
 import std;
+import nexus.compat;
 import platform.socket_options;
 import config;
 import dns.tls_query;
@@ -98,9 +99,9 @@ export namespace proxy::udp_runtime {
         using Listener=shadowsocks::detail::BasicUdpListener<Lookup>;
         struct Group {
             State* state;
-            std::inplace_vector<udp_io::endpoint,16> endpoints;
+            nexus::inplace_vector<udp_io::endpoint,16> endpoints;
             std::vector<rules::RouteMatcher> policies;
-            std::inplace_vector<Server*,16> traffic_listeners;
+            nexus::inplace_vector<Server*,16> traffic_listeners;
             std::vector<std::optional<shadowsocks::detail::UdpIdentityRoute>> identities;
         };
         std::unique_ptr<udp_io::io_context> owned_context_;

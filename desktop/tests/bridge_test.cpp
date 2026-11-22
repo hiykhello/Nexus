@@ -14,6 +14,7 @@ import desktop.firewall_helper;
 import desktop.http_control;
 import desktop.ipc_client;
 import desktop.profile_store;
+import desktop.service_installer;
 import desktop.share_link;
 import desktop.single_instance;
 import desktop.system_proxy;
@@ -287,6 +288,31 @@ namespace {
         std::filesystem::remove_all(tmp, ec);
     }
 
+    auto test_service_installer() -> void {
+        auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-svc-test";
+        std::error_code ec;
+        std::filesystem::remove_all(tmp, ec);
+        std::filesystem::create_directories(tmp, ec);
+        {
+            std::ofstream w(tmp / "wintun.dll", std::ios::binary);
+            w << "stub";
+        }
+        expect(desktop::detect_wintun_dll(tmp).has_value(), "detect wintun.dll when present");
+        desktop::ServiceSpec spec{
+            .service_name = "nexus-user",
+            .description = "Nexus User Proxy",
+            .binary_path = "/usr/local/bin/nexus",
+            .config_path = tmp / "config.kdl",
+            .data_dir = tmp / "data",
+        };
+        auto unit_path = desktop::install_systemd_user_unit(spec, tmp / "systemd");
+        expect(unit_path.has_value() && std::filesystem::is_regular_file(*unit_path), "install systemd user unit");
+        auto args = desktop::build_windows_sc_create_args(spec);
+        expect(args.has_value() && args->size() >= 6 && (*args)[0] == "sc.exe" && (*args)[2] == "nexus-user",
+            "build sc.exe create arguments");
+        std::filesystem::remove_all(tmp, ec);
+    }
+
 #ifndef _WIN32
     auto reserve_loopback_port() -> std::uint16_t {
         int s = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -412,6 +438,7 @@ auto main() -> int {
         test_http_control_parsers();
         test_firewall_and_diagnostic_guard();
         test_profile_store();
+        test_service_installer();
 #ifndef _WIN32
         test_live_nexus_control_plane();
 #endif

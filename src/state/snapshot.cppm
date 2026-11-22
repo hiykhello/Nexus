@@ -1,6 +1,8 @@
 export module state.snapshot;
 import std;
+import nexus.compat;
 export import state.core;
+export import state.file;
 export import state.lock;
 
 export namespace state {
@@ -21,7 +23,7 @@ export namespace state {
 
     [[nodiscard]] auto validate_snapshot(SnapshotSpec const& spec) noexcept -> std::expected<void, StateError>;
 
-    auto inspect_snapshot(int directory, SnapshotSpec const& spec)
+    auto inspect_snapshot(NativeHandle directory, SnapshotSpec const& spec)
         -> std::expected<std::optional<SnapshotData>, StateError>;
 
     // Missing files return an empty optional. A damaged file remains an error
@@ -32,7 +34,7 @@ export namespace state {
 
     // Callers serialize snapshot access within their instance lock. The
     // publication callback runs after rename and before directory fsync.
-    using OnVisible = std::function_ref<void() noexcept>;
+    using OnVisible = nexus::function_ref<void() noexcept>;
     [[nodiscard]] auto commit_snapshot(InstanceLock const& instance, SnapshotSpec const& spec,
                                        std::uint64_t revision, std::uint64_t epoch,
                                        std::span<std::byte const> payload, ClearEpoch* barrier = nullptr,

@@ -22,8 +22,9 @@ log-journald = { implies = ["logging"], sources = ["logging/journald_enabled.cpp
 byte-ring = { sources = ["containers/byte_ring.cppm"] }
 blake3 = { sources = ["../3rdparty/modules/blake3.cppm"] }
 state = { implies = ["blake3"], sources = ["state/*.cpp", "state/*.cppm"] }
-memory-budget = { sources = ["memory/budget.cppm"] }
+memory-budget = { sources = ["memory/budget.cppm", "memory/watchdog.cppm", "memory/watchdog.cpp"] }
 ntp = { sources = ["ntp/sntp.cppm", "ntp/sntp.cpp"] }
+acme = { implies = ["tls"], sources = ["acme/types.cppm", "acme/jws.cppm", "acme/jws.cpp", "acme/store.cppm", "acme/store.cpp", "acme/client.cppm", "acme/client.cpp"] }
 tls = { implies = ["memory-budget"], sources = [
     "tls/*.cpp", "tls/*.cppm", "tls/ktls/ktls_disabled.cppm", "tls/resumption/psk.cpp", "tls/resumption/psk.cppm", "tls/resumption/client_policy.cppm",
 ] }
@@ -105,6 +106,12 @@ tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "byte-ring"], sources
     "quic/optional_client_resumption_disabled.cppm"] }
 masque-client = { implies = ["masque-session", "quic-tls", "quic-shared-port", "hysteria2-support"], sources = ["masque/client_profile.cppm", "masque/client_profile.cpp", "masque/client_session.cppm", "quic/optional_client_resumption_disabled.cppm"] }
 naive = { implies = ["http2", "masque-client", "masque-server", "quic-retry", "packet-stream-socket"], sources = ["naive/*.cpp", "naive/*.cppm"] }
+derp-server = { implies = ["tailscale"], sources = ["tailscale/derp_server.cppm", "tailscale/derp_server.cpp"] }
+openvpn = { implies = ["tls"], sources = ["openvpn/types.cppm", "openvpn/wire.cppm", "openvpn/wire.cpp", "openvpn/session.cppm", "openvpn/session.cpp"] }
+openconnect = { implies = ["tls"], sources = ["openconnect/types.cppm", "openconnect/auth.cppm", "openconnect/auth.cpp", "openconnect/cstp.cppm", "openconnect/cstp.cpp"] }
+
+[feature-deps.acme]
+nexus.crypto = { path = "crypto" }
 
 [feature-deps.shadowtls]
 nexus.crypto = { path = "crypto" }
@@ -163,21 +170,6 @@ nexus.crypto = { path = "crypto" }
 nexus.blake3-source = { version = "=1.8.7", embed = true }
 
 [build]
-flags = [
-    { glob = "snell/http_obfs.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "shadowtls/stream.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tuic/client.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tuic/server.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "masque/client_profile.cpp*", cxxflags = ["-fno-module-lazy"] },
-    { glob = "hysteria2/client_profile.cpp*", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tuic/client*.cpp*", cxxflags = ["-fno-module-lazy"] },
-    { glob = "hysteria2/client.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "masque/client_session.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tls/tls12_client.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tls/ktls/ktls.cpp*", cxxflags = ["-fno-module-lazy"] },
-    { glob = "ssh/*.cpp*", cxxflags = ["-fno-module-lazy"] },
-    { glob = "naive/*.cpp*", cxxflags = ["-fno-module-lazy"] },
-]
 c_standard = "gnu23"
 ldflags = ["-lpthread"]
 defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",

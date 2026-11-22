@@ -14,7 +14,6 @@ namespace noise=tailscale::control;
 namespace cc=tailscale::control_connection;
 namespace messages=tailscale::control_messages;
 namespace h2=http2;
-namespace tls=tls;
 namespace capy=nex::capy;
 namespace io=nex::corosio;
 using namespace std::chrono_literals;

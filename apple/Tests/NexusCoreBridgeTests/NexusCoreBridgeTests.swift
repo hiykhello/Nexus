@@ -171,4 +171,29 @@ final class NexusCoreBridgeTests: XCTestCase {
         XCTAssertEqual(TunnelMemoryMonitor.pressureLevel(residentMiB: 38.0, budgetMiB: 36), .warning)
         XCTAssertEqual(TunnelMemoryMonitor.pressureLevel(residentMiB: 48.0, budgetMiB: 36), .critical)
     }
+
+    func testUtunPassthroughFramingAndLoginItemManager() {
+        let adapter = UtunPassthroughAdapter()
+        var ipv4 = Data(repeating: 0, count: 28)
+        ipv4[0] = 0x45
+        let framedV4 = adapter.framePacket(ipv4)
+        XCTAssertNotNil(framedV4)
+        XCTAssertEqual(framedV4?.prefix(4), Data([0, 0, 0, 2]))
+        let unframedV4 = framedV4.flatMap { adapter.unframePacket($0) }
+        XCTAssertEqual(unframedV4?.family, .ipv4)
+        XCTAssertEqual(unframedV4?.payload, ipv4)
+
+        var ipv6 = Data(repeating: 0, count: 48)
+        ipv6[0] = 0x60
+        let framedV6 = adapter.framePacket(ipv6)
+        XCTAssertEqual(framedV6?.prefix(4), Data([0, 0, 0, 30]))
+        XCTAssertEqual(framedV6.flatMap { adapter.unframePacket($0) }?.family, .ipv6)
+
+        let oversized = Data([0x45] + Array(repeating: UInt8(0), count: AppleTunnelProfile.maxSafeMtu))
+        XCTAssertNil(adapter.framePacket(oversized))
+        XCTAssertNil(adapter.unframePacket(Data([0, 0, 0, 99, 0x45])))
+
+        let loginStatus = LoginItemManager.currentStatus()
+        XCTAssertFalse(loginStatus.summaryText.isEmpty)
+    }
 }

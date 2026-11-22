@@ -10,7 +10,6 @@ import tls.server_credential;
 import nexus.test.quic_tls_link;
 import nexus.test.http3_link;
 
-namespace net=net;
 namespace q=quic;
 namespace t=tls;
 namespace n=nex::ngtcp2;

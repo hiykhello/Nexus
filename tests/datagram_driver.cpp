@@ -3,7 +3,6 @@ import net.datagram_driver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 
-namespace net=net;
 namespace capy=nex::capy;
 namespace io=nex::corosio;
 using Clock=std::chrono::steady_clock;

@@ -1,5 +1,6 @@
 export module platform.ipv4_reverse_path;
 import std;
+import nexus.compat;
 import platform.netlink_abi;
 import platform.netlink_codec;
 import platform.netlink_socket;
@@ -51,7 +52,7 @@ export namespace platform::routing {
     // Only specified interfaces whose effective setting is strict change.
     class IPv4ReversePathLease {
         using Entry=reverse_path_detail::Entry;
-        std::inplace_vector<Entry,65> entries_;
+        nexus::inplace_vector<Entry,65> entries_;
         std::optional<std::int32_t> all_;
         std::int32_t pending_=0,expected_=0;
         bool seen_=false,drift_=false,uncertain_=false;

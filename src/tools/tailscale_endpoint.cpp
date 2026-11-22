@@ -1,5 +1,6 @@
 module cli.tailscale_endpoint;
 import std;
+import nexus.compat;
 import cli.tailscale_identity;
 import crypto;
 import endpoint.process_signals;
@@ -145,8 +146,8 @@ namespace cli::tailscale_endpoint {
                 return shutdown.stop_requested() || (!userspace && ::endpoint::process::StopRequested{}());
             }
 
-            auto advertised(std::optional<net::UdpEndpoint> mapping) const -> std::inplace_vector<cm::Endpoint,2> {
-                std::inplace_vector<cm::Endpoint,2> endpoints;
+            auto advertised(std::optional<net::UdpEndpoint> mapping) const -> nexus::inplace_vector<cm::Endpoint,2> {
+                nexus::inplace_vector<cm::Endpoint,2> endpoints;
                 endpoints.push_back({bound.address,bound.family,bound.port});
                 if (mapping && *mapping != bound) endpoints.push_back({mapping->address,mapping->family,mapping->port});
                 return endpoints;

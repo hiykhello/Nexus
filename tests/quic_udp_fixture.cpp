@@ -16,7 +16,6 @@ namespace q=quic;
 namespace n=nex::ngtcp2;
 namespace t=tls;
 namespace c = ::crypto;
-namespace net=net;
 using View=std::span<std::uint8_t const>;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;

@@ -1,5 +1,6 @@
 export module dns.message_program;
 import std;
+export import nexus.compat;
 import dns.message;
 import dns.reverse;
 import dns.message_fakeip;
@@ -39,7 +40,7 @@ export namespace dns {
         MessageRuleSnapshot(std::shared_ptr<std::vector<policy::DnsRule> const> values,
             std::optional<std::uint64_t> policy_view={}) noexcept : rules(std::move(values)),view(policy_view) {}
     };
-    using MessageRuleSource=std::copyable_function<MessageRuleSnapshot() const>;
+    using MessageRuleSource=nexus::copyable_function<MessageRuleSnapshot() const>;
     // One owner per client query; cancellation and run share an executor.
     // Upstream, rules, optional concurrent modes and context remain borrowed
     // until the task returns, including cancellation and task drain.

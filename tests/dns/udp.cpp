@@ -6,7 +6,6 @@ import nexus.thirdparty.corosio;
 
 namespace capy = nex::capy;
 namespace io = nex::corosio;
-namespace dns = dns;
 using namespace std::chrono_literals;
 
 #ifdef NEXUS_TEST_FAKEIP

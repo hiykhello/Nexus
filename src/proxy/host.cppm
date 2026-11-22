@@ -1,17 +1,18 @@
 export module proxy.host;
 import std;
+export import nexus.compat;
 import proxy;
 
 export namespace proxy {
     // Register services in dependency order. Hooks run on the host's control
     // thread and any objects they borrow outlive the Host.
     struct HostService {
-        std::move_only_function<std::expected<void,std::string>()> start;
-        std::move_only_function<void() noexcept> stop;
-        std::move_only_function<bool() const> healthy{};
-        std::move_only_function<void()> begin_drain{};
-        std::move_only_function<bool()> poll_drain{};
-        std::move_only_function<void(std::chrono::milliseconds)> poll{};
+        nexus::move_only_function<std::expected<void,std::string>()> start;
+        nexus::move_only_function<void() noexcept> stop;
+        nexus::move_only_function<bool() const> healthy{};
+        nexus::move_only_function<void()> begin_drain{};
+        nexus::move_only_function<bool()> poll_drain{};
+        nexus::move_only_function<void(std::chrono::milliseconds)> poll{};
     };
 
     struct HostTcpListener {
@@ -70,7 +71,7 @@ export namespace proxy {
             });
         }
 
-        [[nodiscard]] auto start(std::function_ref<bool()> canceled) -> std::expected<void,std::string> {
+        [[nodiscard]] auto start(nexus::function_ref<bool()> canceled) -> std::expected<void,std::string> {
             if (std::exchange(sealed_,true)) return std::unexpected("host startup already attempted");
             struct Rollback {
                 Host& host;

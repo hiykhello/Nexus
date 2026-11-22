@@ -3,10 +3,13 @@ import std;
 import nexus.thirdparty.glaze;
 
 namespace tailscale::derp {
-    namespace {
+    namespace detail {
         struct JsonServerInfo {
             std::int64_t version=0,TokenBucketBytesPerSecond=0,TokenBucketBytesBurst=0;
         };
+    }
+    namespace {
+        using detail::JsonServerInfo;
         struct ReadOptions : nex::glaze::opts {
             bool validate_trailing_whitespace=true;
             bool validate_skipped=true;

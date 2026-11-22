@@ -10,8 +10,6 @@ import dns.local_response;
 import dns.corosio_resolver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;
-namespace proxy=proxy;
 namespace io=nex::corosio;
 namespace capy=nex::capy;
 using Clock=std::chrono::steady_clock;

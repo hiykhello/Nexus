@@ -5,7 +5,7 @@ import xudp;
 import uot;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace net=net;namespace capy=nex::capy;namespace io=nex::corosio;namespace x=xudp;
+namespace capy=nex::capy;namespace io=nex::corosio;namespace x=xudp;
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
 struct Stream {

@@ -21,10 +21,10 @@ MANIFEST_HEADER = '''[package]
 name = "{name}"
 version = "0.1.0"
 standard = "c++26"
-mcpp = ">=2026.10.30.1"
+mcpp = ">=2026.11.21.1"
 
 [toolchain]
-default = {{ path = "/usr", family = "gcc", tools = {{ cc = "/usr/bin/gcc", cxx = "/usr/bin/g++" }} }}
+default = "llvm@23.1.3"
 
 [target.x86_64-linux-gnu]
 sysroot = "glibc@system"
@@ -91,7 +91,6 @@ def main() -> None:
         consumer.mkdir()
         (library / "mcpp.toml").write_text(MANIFEST_HEADER.format(name="incremental-model") + '''
 [build]
-dialect_cxxflags = ["-freflection"]
 sources = ["layout.cppm", "model.cppm", "model.cpp"]
 
 [targets.model]
@@ -102,7 +101,6 @@ kind = "lib"
 incremental-model = { path = "../library" }
 
 [build]
-dialect_cxxflags = ["-freflection"]
 sources = []
 
 [targets.client]
@@ -111,10 +109,13 @@ main = "client.cpp"
 ''')
         interface, layout = library / "model.cppm", library / "layout.cppm"
         implementation, client = library / "model.cpp", consumer / "client.cpp"
-        interface.write_text('export module model;\nimport std;\nexport import model.layout;\nexport auto value() -> Value;\n')
+        interface.write_text(
+            "export module model;\nimport std;\nexport import model.layout;\n"
+            "export inline constexpr int expected = 42;\nexport auto value() -> Value;\n"
+        )
         layout.write_text("export module model.layout;\nexport struct Value { int a; };\n")
         implementation.write_text("module model;\nauto value() -> Value { return {42}; }\n")
-        client.write_text("import std;\nimport model;\nauto main() -> int { return value().a == 42 ? 0 : 1; }\n")
+        client.write_text("import std;\nimport model;\nauto main() -> int { return value().a == expected ? 0 : 1; }\n")
 
         def build_consumer() -> tuple[dict[Path, Path], Path]:
             run(consumer, command, env)
@@ -137,24 +138,28 @@ main = "client.cpp"
         run(library, command, env)
         paths, binary = build_consumer()
         before = stamps(paths)
-        interface.write_text(interface.read_text() + "export inline constexpr int revision = 2;\n")
+        interface.write_text(
+            "export module model;\nimport std;\nexport import model.layout;\n"
+            "export inline constexpr int expected = 43;\nexport auto value() -> Value;\n"
+        )
+        implementation.write_text("module model;\nauto value() -> Value { return {43}; }\n")
         run(library, command, env)
         paths, binary = build_consumer()
-        changed(before, paths, interface, client)
+        changed(before, paths, interface, implementation, client)
 
         before = stamps(paths)
         layout.write_text("export module model.layout;\nexport struct Value { int padding; int a; };\n")
-        implementation.write_text("module model;\nauto value() -> Value { return {7,42}; }\n")
+        implementation.write_text("module model;\nauto value() -> Value { return {7, 43}; }\n")
         run(library, command, env)
         paths, binary = build_consumer()
-        changed(before, paths, layout, interface, implementation, client)
+        changed(before, paths, layout, implementation, client)
 
         before = stamps(paths)
         layout.write_text("export module model.layout;\nexport struct Value { int a; };\n")
-        implementation.write_text("module model;\nauto value() -> Value { return {42}; }\n")
+        implementation.write_text("module model;\nauto value() -> Value { return {43}; }\n")
         run(library, command, env)
         paths, binary = build_consumer()
-        changed(before, paths, layout, interface, implementation, client)
+        changed(before, paths, layout, implementation, client)
         before, binary_stamp = stamps(paths), binary.stat().st_mtime_ns
         paths, binary = build_consumer()
         if stamps(paths) != before or binary.stat().st_mtime_ns != binary_stamp:

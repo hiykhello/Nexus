@@ -25,6 +25,7 @@
  * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
+module;
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
 #error "This generated C ABI is verified for Linux x86-64 glibc only"
 #endif

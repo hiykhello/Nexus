@@ -144,6 +144,29 @@ namespace cli::run_detail {
         -> std::expected<std::shared_ptr<int>, std::string> { return std::make_shared<int>(0); }
 }
 
+namespace nexus {
+#if defined(__cpp_lib_function_ref) && __cpp_lib_function_ref >= 202306L
+    template<class... S>
+    using function_ref = std::function_ref<S...>;
+#else
+    template<class Sig> class function_ref;
+    template<class R, class... Args>
+    class function_ref<R(Args...)> {
+        void* obj_ = nullptr;
+        R(*invoke_)(void*, Args...) = nullptr;
+    public:
+        template<class F>
+            requires (!std::same_as<std::remove_cvref_t<F>, function_ref> && std::is_invocable_r_v<R, F&, Args...>)
+        function_ref(F&& f) noexcept
+            : obj_(const_cast<void*>(static_cast<void const*>(std::addressof(f))))
+            , invoke_([](void* p, Args... a) -> R {
+                return std::invoke(*static_cast<std::remove_reference_t<F>*>(p), std::forward<Args>(a)...);
+            }) {}
+        auto operator()(Args... a) const -> R { return invoke_(obj_, std::forward<Args>(a)...); }
+    };
+#endif
+}
+
 #include "../src/tools/proxy_group_health.hpp"
 
 namespace {

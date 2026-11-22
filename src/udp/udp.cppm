@@ -1,6 +1,7 @@
 export module udp;
 export import packet;
 import std;
+import nexus.compat;
 
 export namespace udp {
     struct Endpoint4 {
@@ -82,7 +83,7 @@ export namespace udp {
         // reenter this table. Its target must remain alive until transmit returns.
         // Peer capacity is reserved before it runs; failure grants no new permission.
         [[nodiscard]] auto transmit(FlowId id, Endpoint remote, std::uint64_t now,
-            std::function_ref<bool()> sender) -> std::expected<void, Error>;
+            nexus::function_ref<bool()> sender) -> std::expected<void, Error>;
         [[nodiscard]] auto accept_reply(FlowId id, Endpoint remote, std::uint64_t now) -> std::expected<Endpoint, Error>;
         [[nodiscard]] auto close(FlowId id, std::uint64_t now) -> std::expected<void, Error>;
         // Retire every flow, including in-flight sends, and notify the owner.

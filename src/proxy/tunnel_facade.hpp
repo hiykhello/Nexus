@@ -61,18 +61,18 @@
         ::add_convention<TunnelCloseOutput, capy::task<bool>()>
         ::add_convention<TunnelCancel, void() noexcept>::build {};
     struct TunnelFactory {
-        std::move_only_function<pro::proxy<TunnelFacade>(Session&,io::io_context&,bool,TcpSocketOptions const*) const> create;
+        nexus::move_only_function<pro::proxy<TunnelFacade>(Session&,io::io_context&,bool,TcpSocketOptions const*) const> create;
         std::uint32_t timeout_ms;
         // Both constructors borrow the immutable profile owned by create.
-        std::move_only_function<pro::proxy<TunnelFacade>(Session&,io::io_context&,TunnelFactory const&,bool) const> through;
+        nexus::move_only_function<pro::proxy<TunnelFacade>(Session&,io::io_context&,TunnelFactory const&,bool) const> through;
         std::optional<std::size_t> detour;
         bool requires_direct_socket=false;
         bool detour_direct=false;
-        std::move_only_function<bool(OutboundContext const&,TunnelFactory const*,bool) const> start_context;
-        std::move_only_function<void(io::io_context&) const noexcept> stop_context,finish_context;
+        nexus::move_only_function<bool(OutboundContext const&,TunnelFactory const*,bool) const> start_context;
+        nexus::move_only_function<void(io::io_context&) const noexcept> stop_context,finish_context;
         // Optional shutdown barrier for a consumer whose final packets use
         // a lower factory. Evaluated only while stopping, on this executor.
-        std::move_only_function<bool(io::io_context&) const noexcept> quiesced_context;
+        nexus::move_only_function<bool(io::io_context&) const noexcept> quiesced_context;
         // This packet carrier accepts targets from both address families on
         // the same association.
         bool packet_dual_family=false;

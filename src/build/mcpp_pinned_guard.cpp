@@ -363,7 +363,7 @@ consteval unsigned long long pinned_input_25() {
     }
     return hash;
 }
-static_assert(pinned_input_25() == 7679648641326137478ull,
+static_assert(pinned_input_25() == 5947688197512287260ull,
               "scripts/mcpp-generate-pinned-guard.py changed: verify pinned archives and regenerate the mcpp guard");
 consteval unsigned long long pinned_input_26() {
     constexpr unsigned char bytes[] = {
@@ -391,7 +391,7 @@ consteval unsigned long long pinned_input_27() {
     }
     return hash;
 }
-static_assert(pinned_input_27() == 6642450405798888352ull,
+static_assert(pinned_input_27() == 17033539027018631295ull,
               "scripts/mcpp-quic-modules.py changed: verify pinned archives and regenerate the mcpp guard");
 consteval unsigned long long pinned_input_28() {
     constexpr unsigned char bytes[] = {
@@ -433,7 +433,7 @@ consteval unsigned long long pinned_input_30() {
     }
     return hash;
 }
-static_assert(pinned_input_30() == 12934524324072215024ull,
+static_assert(pinned_input_30() == 13944552377403560583ull,
               "src/mcpp.toml changed: verify pinned archives and regenerate the mcpp guard");
 consteval unsigned long long pinned_input_31() {
     constexpr unsigned char bytes[] = {
@@ -461,7 +461,7 @@ consteval unsigned long long pinned_input_32() {
     }
     return hash;
 }
-static_assert(pinned_input_32() == 11541206897366514950ull,
+static_assert(pinned_input_32() == 12605024192349654103ull,
               "3rdparty/modules/ngtcp2.cppm changed: verify pinned archives and regenerate the mcpp guard");
 consteval unsigned long long pinned_input_33() {
     constexpr unsigned char bytes[] = {
@@ -475,6 +475,6 @@ consteval unsigned long long pinned_input_33() {
     }
     return hash;
 }
-static_assert(pinned_input_33() == 6012744768318683732ull,
+static_assert(pinned_input_33() == 15158729015560736129ull,
               "3rdparty/modules/nghttp3.cppm changed: verify pinned archives and regenerate the mcpp guard");
 }

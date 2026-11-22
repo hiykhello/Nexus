@@ -31,7 +31,7 @@ namespace {
     class UdpInbounds {
         using State=shadowsocks::detail::UdpListenerState;
         using Listener=shadowsocks::detail::UdpListener;
-        struct Group { State* state; std::inplace_vector<udp_io::endpoint,16> endpoints; };
+        struct Group { State* state; nexus::inplace_vector<udp_io::endpoint,16> endpoints; };
 #ifdef NEXUS_DNS_USE_MODULES
         udp_io::io_context context_{udp_io::make_io_context(udp_io::has_uring)};
 #elif BOOST_COROSIO_HAVE_LIBURING

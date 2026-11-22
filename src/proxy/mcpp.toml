@@ -71,6 +71,9 @@ test-vless-profile-lifetime = { implies = ["vless"], defines = ["NEXUS_TEST_VLES
 test-start-throw = { defines = ["NEXUS_TEST_START_THROW"] }
 test-session-throw = { defines = ["NEXUS_TEST_SESSION_THROW"] }
 test-source-route = { defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
+sni-demux = { sources = ["sni_demux.cppm", "sni_demux.cpp"] }
+reverse-tunnel = { sources = ["reverse_tunnel.cppm", "reverse_tunnel.cpp"] }
+tor = { sources = ["tor_outbound.cppm", "tor_outbound.cpp"] }
 
 [feature-deps.io-uring]
 nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
@@ -88,7 +91,6 @@ nexus.tun = { path = "../transport", default-features = false }
 nexus.tun = { path = "../transport", default-features = false }
 
 [build]
-flags = [{ glob = "masque_outbound.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "hysteria2_outbound.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "tuic.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "ssh.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "naive.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "naive_inbound.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "http_modern_inbound.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "tcp_proxy_tls.cpp", cxxflags = ["-fno-module-lazy"] }]
 defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",
            "BOOST_COROSIO_NO_LIB", "BOOST_COROSIO_STATIC_LINK",
            "NEXUS_ENABLE_SOCKS_UDP"]

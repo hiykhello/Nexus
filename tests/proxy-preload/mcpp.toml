@@ -72,7 +72,6 @@ main = "../../src/tools/main.cpp"
 [targets.hy2-udp-budget-production]
 kind = "bin"
 main = "../hy2_udp_budget_production.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hy2-budget-fixture"]
 
 [targets.detour-factory-fault]

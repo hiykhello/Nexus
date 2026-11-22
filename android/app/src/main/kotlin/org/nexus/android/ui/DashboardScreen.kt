@@ -178,6 +178,8 @@ private fun OverviewPane(
             controlClient = controlClient,
             enabled = status.state == VpnState.RUNNING,
         )
+
+        OfflineRulesetCard(metered = status.metered)
     }
 }
 

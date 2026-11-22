@@ -9,7 +9,6 @@ import dns.input_budget;
 import dns.corosio_resolver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;
 namespace capy=nex::capy;
 namespace io=nex::corosio;
 using Clock=std::chrono::steady_clock;

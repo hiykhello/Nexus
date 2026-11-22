@@ -15,7 +15,7 @@ namespace {
     auto fields(std::span<http::HeaderField const> source) -> std::vector<n::nghttp3_nv> {
         std::vector<n::nghttp3_nv> result; result.reserve(source.size());
         for (auto const& field:source) {
-            auto flags=field.name=="hysteria-auth" ? n::nv_flag_never_index : n::nv_flag_none;
+            auto flags=static_cast<std::uint8_t>(field.name=="hysteria-auth" ? n::nv_flag_never_index : n::nv_flag_none);
             result.push_back({reinterpret_cast<std::uint8_t*>(const_cast<char*>(field.name.data())),
                 reinterpret_cast<std::uint8_t*>(const_cast<char*>(field.value.data())),field.name.size(),field.value.size(),flags});
         }

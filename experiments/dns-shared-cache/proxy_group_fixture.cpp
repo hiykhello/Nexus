@@ -20,6 +20,7 @@
 #endif
 #endif
 import std;
+import nexus.compat;
 import dns.corosio_local;
 import dns.message;
 import dns.corosio_query;

@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [dependencies]
 nexus.protocols = { path = "../../src", features = ["tls"] }
+nexus.platform = { path = "../../src/platform" }
 nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
@@ -27,32 +28,26 @@ discover = ["byte_stream_adapter.cpp", "hello_auth.cpp", "pending_verifier.cpp",
 [targets.tls-server-flight]
 kind = "bin"
 main = "../tls_server_flight.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-server-handshake-io]
 kind = "bin"
 main = "../tls_server_handshake_io.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-server-credential]
 kind = "bin"
 main = "../tls_server_credential.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-openssl-client]
 kind = "bin"
 main = "../tls_openssl_client.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-signature-interop]
 kind = "bin"
 main = "../tls_signature_interop.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-corosio-server]
 kind = "bin"
 main = "../tls_corosio_server.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.nexus-tls-corosio-openssl-test]
 kind = "bin"
@@ -61,202 +56,163 @@ required_features = ["https"]
 
 # mcpp discovers tests only within this package root. Keep legacy sources in
 # place and run these no-argument bins alongside the five discovered tests.
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-record]
 kind = "bin"
 main = "../protocol/tls_record.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-schedule]
 kind = "bin"
 main = "../protocol/tls_schedule.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-transcript]
 kind = "bin"
 main = "../protocol/tls_transcript.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-client-auth]
 kind = "bin"
 main = "../tls_client_auth.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-application-io]
 kind = "bin"
 main = "../tls_application_io.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-corosio-connection]
 kind = "bin"
 main = "../tls_corosio_connection.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-application-close]
 kind = "bin"
 main = "../tls_application_close.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-certificate-trust]
 kind = "bin"
 main = "../tls_certificate_trust.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-certificate-verify]
 kind = "bin"
 main = "../tls_certificate_verify.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-client-flight]
 kind = "bin"
 main = "../tls_client_flight.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-client-hello-stream]
 kind = "bin"
 main = "../tls_client_hello_stream.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-client-keys]
 kind = "bin"
 main = "../tls_client_keys.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-corosio-application]
 kind = "bin"
 main = "../tls_corosio_application.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-corosio-application-input]
 kind = "bin"
 main = "../tls_corosio_application_input.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-corosio-handshake]
 kind = "bin"
 main = "../tls_corosio_handshake.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-encrypted-extensions]
 kind = "bin"
 main = "../tls_encrypted_extensions.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-finished]
 kind = "bin"
 main = "../tls_finished.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-handshake]
 kind = "bin"
 main = "../tls_handshake.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-hello]
 kind = "bin"
 main = "../protocol/tls_hello.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-hello-integration]
 kind = "bin"
 main = "../tls_hello_integration.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-hybrid]
 kind = "bin"
 main = "../protocol/tls_hybrid.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-hybrid-client-keys]
 kind = "bin"
 main = "../tls_hybrid_client_keys.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-key-share]
 kind = "bin"
 main = "../tls_key_share.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-key-update]
 kind = "bin"
 main = "../tls_key_update.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-record-stream]
 kind = "bin"
 main = "../tls_record_stream.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-server-hello]
 kind = "bin"
 main = "../tls_server_hello.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-server-hello-stream]
 kind = "bin"
 main = "../tls_server_hello_stream.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-server-keys]
 kind = "bin"
 main = "../tls_server_keys.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-ticket]
 kind = "bin"
 main = "../tls_ticket.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-owned-prefix]
 kind = "bin"
 main = "../tls_owned_prefix.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-psk-core]
 kind = "bin"
 main = "../tls_psk_core.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["resumption"]
 
 [targets.tls-psk-policy]
 kind = "bin"
 main = "../tls_psk_policy.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["resumption"]
 
 [targets.tls-psk-lifecycle]
 kind = "bin"
 main = "../tls_psk_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["resumption"]
 
 [targets.tls-psk-client]
 kind = "bin"
 main = "../tls_psk_client.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["resumption"]
 
 [targets.tls-psk-server]
 kind = "bin"
 main = "../tls_psk_server.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["resumption"]
 
 [targets.tls-psk-quic]
 kind = "bin"
 main = "../tls_psk_quic.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-resumption"]
 
 [targets.tls-psk-quic-fault]
 kind = "bin"
 main = "../tls_psk_quic_fault.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-resumption"]
 
 [targets.tls-psk-quic-udp]
 kind = "bin"
 main = "../tls_psk_quic_udp.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-resumption"]

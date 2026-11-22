@@ -1,5 +1,6 @@
 module tailscale.control_early;
 import std;
+import nexus.compat;
 import tailscale.control;
 import tailscale.control_http;
 import nexus.thirdparty.glaze;
@@ -19,7 +20,7 @@ namespace tailscale::control_early {
         auto space=[](char c) {return c==' ' || c=='\t' || c=='\r' || c=='\n';};
         while (!json.empty() && space(json.front())) json.remove_prefix(1);
         if (json.empty() || json.front()!='{') return std::unexpected(Error::json);
-        std::inplace_vector<std::pair<std::string_view,std::string_view>,1> fields;
+        nexus::inplace_vector<std::pair<std::string_view,std::string_view>,1> fields;
         if (nex::glaze::read<detail::options>(fields,json)) return std::unexpected(Error::json);
         Info result;
         if (fields.empty()) return result;

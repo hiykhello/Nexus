@@ -1,10 +1,6 @@
-module;
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
 module state.fakeip;
 import std;
+import nexus.compat;
 import state.fakeip_disk;
 import state.lock;
 import state.file;
@@ -54,7 +50,7 @@ namespace state {
                 wal_bytes+=*result;
                 disk_rows.push_back(std::move(row));
             }
-            if (sync_file(wal.get())<0) return failure(Stage::sync_stage,errno);
+            if (auto synced=sync_handle(wal.get(),Stage::sync_stage); !synced) return std::unexpected(synced.error());
             if (wal_bytes<fakeip_wal_limit) return {};
             auto compacted=compact_fakeip(directory,wal_identity,wal.get(),disk_rows);
             if (compacted) wal_bytes=0;
@@ -99,27 +95,16 @@ namespace state {
         if (!lock) return std::unexpected(lock.error());
         auto meta=fakeip_meta(*lock,scope);
         if (!meta) return std::unexpected(meta.error());
-        constexpr auto flags=O_RDWR|O_APPEND|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC;
-        File wal(::openat(lock->directory(),"fakeip.wal",flags));
-        if (wal.get()<0 && errno==ENOENT) {
-            // On creation persist the entry before any mapping can be published.
-            wal=File(::openat(lock->directory(),"fakeip.wal",flags|O_CREAT|O_EXCL,0600));
-            if (wal.get()<0) return failure(Stage::open,errno);
-            if (::fchmod(wal.get(),0600)<0 || sync_file(wal.get())<0 || sync_file(lock->directory())<0)
-                return failure(Stage::sync_directory,errno);
-        }
-        if (wal.get()<0) return failure(Stage::open,errno);
-        struct stat info{};
-        if (::fstat(wal.get(),&info)<0) return failure(Stage::open,errno);
-        if (!private_regular(info)) return failure(Stage::open,EACCES);
-        auto replay=replay_fakeip(*lock,scope,*meta,wal.get());
+        auto wal=open_dir_append(lock->directory(),"fakeip.wal",Stage::open);
+        if (!wal) return std::unexpected(wal.error());
+        auto replay=replay_fakeip(*lock,scope,*meta,wal->get());
         if (!replay) return std::unexpected(replay.error());
 
-        auto owner=std::make_unique<Impl>(std::move(*lock),std::move(scope),*meta,mode,std::move(wal),std::move(*replay));
+        auto owner=std::make_unique<Impl>(std::move(*lock),std::move(scope),*meta,mode,std::move(*wal),std::move(*replay));
         return std::unique_ptr<FakeIpStore>(new FakeIpStore(std::move(owner)));
     }
 
-    auto FakeIpStore::visit_recovered(std::function_ref<bool(FakeIpRow const&)> visit) const -> bool {
+    auto FakeIpStore::visit_recovered(nexus::function_ref<bool(FakeIpRow const&)> visit) const -> bool {
         std::lock_guard lock(owner_->mutex);
         return !owner_->started && std::ranges::all_of(owner_->disk_rows,visit);
     }

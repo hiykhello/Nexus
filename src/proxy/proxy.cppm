@@ -12,6 +12,7 @@ module;
 #include <boost/corosio/endpoint.hpp>
 export module proxy;
 import std;
+export import nexus.compat;
 import proxy.v4;
 import proxy.request_backend;
 import rules;
@@ -72,7 +73,7 @@ namespace proxy {
                     bytes[10]==255 && bytes[11]==255;
         return !mapped || std::ranges::any_of(std::span(bytes).last<4>(),[](auto b) { return b!=0; });
     }
-    struct Session; struct OutboundContext;
+    struct OutboundContext;
     export class Server;
 #include "tunnel_facade.hpp"
 
@@ -343,7 +344,7 @@ export namespace proxy {
         std::mutex mutex;
         std::atomic<std::uint64_t> generation{0};
     public:
-        [[nodiscard]] auto publish(std::uint64_t next,std::function_ref<void() noexcept> prepare) -> bool;
+        [[nodiscard]] auto publish(std::uint64_t next,nexus::function_ref<void() noexcept> prepare) -> bool;
         [[nodiscard]] auto publish(std::uint64_t next) -> bool {return publish(next,[]() noexcept {});}
     };
 

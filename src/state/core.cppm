@@ -1,5 +1,6 @@
 export module state.core;
 import std;
+import nexus.compat;
 
 export namespace state {
     enum class Tier : std::uint8_t { authority = 1, lease, cache, secret };
@@ -73,6 +74,6 @@ export namespace state {
         // can be queued for the returned epoch after this call.
         [[nodiscard]] auto advance(this ClearEpoch& self) -> std::expected<std::uint64_t, StateError>;
         auto publish(this ClearEpoch& self, std::uint64_t expected,
-                     std::function_ref<std::expected<void, StateError>()> action) -> std::expected<void, StateError>;
+                     nexus::function_ref<std::expected<void, StateError>()> action) -> std::expected<void, StateError>;
     };
 }

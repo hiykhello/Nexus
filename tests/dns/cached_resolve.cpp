@@ -10,7 +10,6 @@ import dns.cache;
 import dns.corosio_cached;
 namespace capy=boost::capy;
 namespace io=nex::corosio;
-namespace dns=dns;
 using namespace std::chrono_literals;
 struct Fixture {
 #if BOOST_COROSIO_HAVE_LIBURING

@@ -72,8 +72,7 @@ namespace state {
     auto StateOwner::start(InstanceLock instance, SnapshotSpec spec, OwnerLimits limits, std::uint64_t initial_epoch)
         -> std::expected<std::unique_ptr<StateOwner>, StateError> {
         auto valid = validate_snapshot(spec);
-        if (!valid) return std::unexpected(valid.error());
-        if (!limits.bytes || !limits.requests || instance.directory() < 0)
+        if (!valid || !limits.bytes || !limits.requests || !valid_handle(instance.directory()))
             return std::unexpected(StateError{Stage::validate});
         // Workers may read one existing snapshot as scratch outside the
         // accepted request budget. Bound that scratch by the same byte limit.

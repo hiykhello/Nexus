@@ -1,11 +1,11 @@
 module;
-#include <experimental/scope>
 #include <cerrno>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 module tcp.direct;
+import nexus.compat;
 import std;
 import platform.ip_address;
 
@@ -75,7 +75,7 @@ namespace tcp {
             s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
             return std::unexpected(error);
         }
-        std::experimental::scope_exit guard([fd] { ::close(fd); });
+        nexus::scope_exit guard([fd] { ::close(fd); });
         s.flows.emplace_back(id, now, fd, status < 0);
         guard.release();
         return {};

@@ -1,5 +1,6 @@
 export module platform.socket_options;
 import std;
+export import nexus.compat;
 import platform.platform_defaults;
 
 export namespace platform {
@@ -56,7 +57,7 @@ export namespace platform {
         };
 
         struct InterfaceCandidates {
-            std::inplace_vector<std::uint32_t, 16> indices;
+            nexus::inplace_vector<std::uint32_t, 16> indices;
             std::chrono::milliseconds fallback_delay{};
             bool parallel_fallback = false;
             std::shared_ptr<FallbackMemory> fallback_memory;
@@ -65,7 +66,7 @@ export namespace platform {
             }
         };
 
-        using InterfaceSelection = std::copyable_function<InterfaceCandidates(bool) const noexcept>;
+        using InterfaceSelection = nexus::copyable_function<InterfaceCandidates(bool) const noexcept>;
 
         [[nodiscard]] auto retry_interface_error(std::error_code error) noexcept -> bool {
             return error == std::errc::network_unreachable || error == std::errc::host_unreachable ||

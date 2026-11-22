@@ -5,12 +5,7 @@ members = ["tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", 
 
 [workspace.package]
 standard = "c++26"
-mcpp = ">=2026.11.20.1"
-
-[workspace.build]
-# Reflection changes standard-library declarations, so every member and the
-# shared std BMI must use the same dialect.
-dialect_cxxflags = ["-freflection"]
+mcpp = ">=2026.11.21.1"
 
 [workspace.dependencies]
 nexus.glaze-kdl = "=0.1.0"
@@ -31,9 +26,8 @@ name = "nexus"
 version = "0.1.0"
 
 [workspace.toolchain]
-# The requested host toolchain. Explicit family and drivers matter because
-# /usr/bin also contains Clang, which mcpp otherwise prefers for path:/usr.
-default = { path = "/usr", family = "gcc", tools = { cc = "/usr/bin/gcc", cxx = "/usr/bin/g++" } }
+# Managed LLVM 23 toolchain bundles libc++, std.cppm, and static C++ runtime archives.
+default = "llvm@23.1.3"
 
 [workspace.target.x86_64-linux-gnu]
 sysroot = "glibc@system"
@@ -175,6 +169,18 @@ test-dns-resource = []
 test-rules-bench = []
 test-dns-reverse = ["nexus.dns/reverse"]
 test-source-route = { implies = ["nexus.proxy-runtime/test-source-route"], defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
+memory-budget = ["nexus.protocols/memory-budget"]
+acme = { implies = ["tls", "nexus.protocols/acme"], defines = ["NEXUS_ENABLE_ACME"] }
+sni-demux = { implies = ["nexus.proxy-runtime/sni-demux"], defines = ["NEXUS_ENABLE_SNI_DEMUX"] }
+dns-dhcp = ["nexus.dns/dhcp"]
+dns-mdns = ["nexus.dns/mdns"]
+derp-server = { implies = ["crypto", "nexus.protocols/derp-server"], defines = ["NEXUS_ENABLE_DERP_SERVER"] }
+ssmapi = { sources = ["src/control_api/ssmapi.cppm", "src/control_api/ssmapi.cpp"], defines = ["NEXUS_ENABLE_SSMAPI"] }
+openvpn = { implies = ["tls", "nexus.protocols/openvpn"], defines = ["NEXUS_ENABLE_OPENVPN"] }
+openconnect = { implies = ["tls", "nexus.protocols/openconnect"], defines = ["NEXUS_ENABLE_OPENCONNECT"] }
+reverse-tunnel = { implies = ["nexus.proxy-runtime/reverse-tunnel"], defines = ["NEXUS_ENABLE_REVERSE_TUNNEL"] }
+bridge = { defines = ["NEXUS_ENABLE_BRIDGE"] }
+tor = { implies = ["nexus.proxy-runtime/tor"], defines = ["NEXUS_ENABLE_TOR"] }
 
 [feature-deps.wireguard-endpoint]
 nexus.wireguard-endpoint = { path = "src/endpoint" }
@@ -204,37 +210,16 @@ nexus.tun = { path = "src/transport", default-features = false }
 [feature-deps.masque-ip-server]
 nexus.tun = { path = "src/transport", default-features = false, features = ["network"] }
 
+[feature-deps.bridge]
+nexus.tun = { path = "src/transport", default-features = false, features = ["bridge"] }
+
 [build]
 target_budget = "24GiB"
+memory_threshold = "2GiB"
 # Match the static-link interface of the original Capy/Corosio recipes.
 defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",
            "BOOST_COROSIO_NO_LIB", "BOOST_COROSIO_STATIC_LINK",
            "NEXUS_ENABLE_SOCKS_UDP"]
-flags = [
-    { glob = "src/tools/dns_message_runtime.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/rule_fetch_response.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/rule_fetch_h2.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/rule_fetch_h2.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/rule_fetch_h3.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/rule_fetch_h3.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/masque_tun.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/dns_proxy_https.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/dns_proxy_quic.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/dns_https3.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/dns_proxy_stream.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/dns_proxy_tls.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/tailscale_endpoint.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "src/tools/udp_cli_enabled.cpp", cxxflags = ["-fno-module-lazy"] },
-    # GCC 16 can recursively lazy-load std::vector in this test-only module
-    # when TLS resumption and the shared QUIC port are enabled together.
-    { glob = "tests/support/hy2_port_link.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tests/support/hy2_retry_port_link.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tests/support/hysteria2_application_link.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tests/support/hy2_retry_resource_link.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tests/support/hy2_resource_link.cpp", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tests/support/hy2_production_resource_link.cppm", cxxflags = ["-fno-module-lazy"] },
-    { glob = "tests/support/hy2_production_resource_link.cpp", cxxflags = ["-fno-module-lazy"] },
-]
 sources = [
     # Verify pinned network dependency snapshots before building the app.
     "src/build/mcpp_pinned_guard.cpp",
@@ -274,59 +259,49 @@ required_features = ["routing-batch93a-unit"]
 [targets.state-ruleset-cache-unit]
 kind = "bin"
 main = "tests/state_ruleset_cache_unit.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["ruleset-cache-unit"]
 
 [targets.state-fakeip-dns-unit]
 kind = "bin"
 main = "tests/state_fakeip_dns_unit.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["state-fakeip-dns-unit"]
 
 [targets.state-unit]
 kind = "bin"
 main = "tests/state_unit.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["state-unit"]
 
 [targets.logging-unit]
 kind = "bin"
 main = "tests/logging_unit.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["logging"]
 
 [targets.tcp-fast-open-fixture]
 kind = "bin"
 main = "tests/tcp_fast_open.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tcp-fast-open-stream-fixture]
 kind = "bin"
 main = "tests/tcp_fast_open_stream.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.vision-reality-fixture]
 kind = "bin"
 main = "tests/vision_reality_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["vless"]
 
 [targets.crypto-vectors]
 kind = "bin"
 main = "tests/protocol/crypto.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["crypto-primitives"]
 
 [targets.hy2-client-start-fault]
 kind = "bin"
 main = "tests/hy2_client_start_fault.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hy2-client"]
 
 [targets.hy2-udp-budget-production]
 kind = "bin"
 main = "tests/hy2_udp_budget_production.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hy2-cli"]
 
 [targets.hysteria2-salamander-test]
@@ -337,25 +312,21 @@ required_features = ["hy2-cli"]
 [targets.crypto-mlkem-vectors]
 kind = "bin"
 main = "tests/protocol/crypto_mlkem.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["crypto-primitives"]
 
 [targets.poly1305-vectors]
 kind = "bin"
 main = "tests/poly1305.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["crypto-primitives"]
 
 [targets.aead-context-vectors]
 kind = "bin"
 main = "tests/aead_context.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["crypto-primitives"]
 
 [targets.tls-owned-prefix]
 kind = "bin"
 main = "tests/tls_owned_prefix.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["http2-tls"]
 
 
@@ -363,955 +334,794 @@ required_features = ["http2-tls"]
 [targets.crypto-ecdh-errors]
 kind = "bin"
 main = "tests/crypto_ecdh_errors.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-typed-verifier]
 kind = "bin"
 main = "tests/tls_typed_verifier.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-spki-error]
 kind = "bin"
 main = "tests/tls_spki_error.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-crypto-fault]
 kind = "bin"
 main = "tests/tls_crypto_fault.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-crypto-tcp-fault]
 kind = "bin"
 main = "tests/tls_crypto_tcp_fault.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-fingerprint]
 kind = "bin"
 main = "tests/tls_fingerprint.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.crypto-ecdh]
 kind = "bin"
 main = "tests/crypto_ecdh.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.crypto-ecdh-fault]
 kind = "bin"
 main = "tests/crypto_ecdh_fault.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-ecdh-boundary]
 kind = "bin"
 main = "tests/tls_ecdh_boundary.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-ecdh-allocation]
 kind = "bin"
 main = "tests/tls_ecdh_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-ecdh]
 kind = "bin"
 main = "tests/tls_ecdh.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-ecdh-openssl]
 kind = "bin"
 main = "tests/tls_ecdh_openssl.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-ip-profile]
 kind = "bin"
 main = "tests/tls_ip_profile.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.vless-tls-ip-profile]
 kind = "bin"
 main = "tests/vless_tls_ip_profile.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["vless"]
 
 [targets.ss-ordered-dispatch-test]
 kind = "bin"
 main = "tests/shadowsocks_udp_dispatch.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["ss2022"]
 
 [targets.shadowsocks-response-test]
 kind = "bin"
 main = "tests/shadowsocks_response.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["ss2022"]
 
 [targets.ss-preserve-read]
 kind = "bin"
 main = "tests/ss_preserve_read.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["ss2022"]
 
 [targets.ordered-tcp-fixture]
 kind = "bin"
 main = "tests/ordered_tcp_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tcp-sniff-io-test]
 kind = "bin"
 main = "tests/tcp_sniff_io.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.tls-ecdh-quic]
 kind = "bin"
 main = "tests/tls_ecdh_quic.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-tls"]
 
 [targets.tls-ecdh-quic-udp]
 kind = "bin"
 main = "tests/tls_ecdh_quic_udp.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-tls"]
 
 [targets.tls-signature]
 kind = "bin"
 main = "tests/tls_signature.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-signature-openssl]
 kind = "bin"
 main = "tests/tls_signature_openssl.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-signature-layout]
 kind = "bin"
 main = "tests/tls_signature_layout.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-tls"]
 
 # The entropy oracle must be relinked with tls_fingerprint_random_relink.py.
 [targets.tls-fingerprint-random]
 kind = "bin"
 main = "tests/tls_fingerprint_random.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.packet-stream-socket]
 kind = "bin"
 main = "tests/packet_stream_socket.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["packet-stream-socket"]
 
 [targets.datagram-driver-empty]
 kind = "bin"
 main = "tests/datagram_driver_empty.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["datagram-driver"]
 
 [targets.quic-chacha]
 kind = "bin"
 main = "tests/quic_chacha.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-transport"]
 
 [targets.quic-chacha-layout]
 kind = "bin"
 main = "tests/quic_chacha_layout.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-transport"]
 
 [targets.tls-fingerprint-allocation]
 kind = "bin"
 main = "tests/tls_fingerprint_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-fingerprint-layout]
 kind = "bin"
 main = "tests/tls_fingerprint_layout.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-tls"]
 
 # Network drivers supply certificates/role arguments to these fixtures.
 [targets.tls-fingerprint-openssl]
 kind = "bin"
 main = "tests/tls_fingerprint_openssl.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.tls-fingerprint-quic-udp]
 kind = "bin"
 main = "tests/tls_fingerprint_quic_udp.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-tls"]
 
 [targets.tls-fingerprint-reality]
 kind = "bin"
 main = "tests/tls_fingerprint_reality.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["vless"]
 
 [targets.tls-fingerprint-reality-fixture]
 kind = "bin"
 main = "tests/tls_fingerprint_reality_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["vless"]
 
 [targets.trojan-auth-vectors]
 kind = "bin"
 main = "tests/trojan_auth.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["trojan"]
 
 [targets.anytls-auth-vectors]
 kind = "bin"
 main = "tests/anytls_auth.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["anytls"]
 
 [targets.anytls-io]
 kind = "bin"
 main = "tests/anytls_io.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["anytls"]
 
 [targets.anytls-network-fixture]
 kind = "bin"
 main = "tests/anytls_network_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["anytls"]
 
 [targets.anytls-pool-fixture]
 kind = "bin"
 main = "tests/anytls_pool_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["anytls"]
 
 [targets.anytls-proxy-fixture]
 kind = "bin"
 main = "tests/anytls_proxy_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["anytls"]
 
 [targets.anytls-watchdog]
 kind = "bin"
 main = "tests/anytls_watchdog.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["anytls"]
 
 [targets.httpupgrade-fixture]
 kind = "bin"
 main = "tests/httpupgrade_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-httpupgrade-fixture"]
 
 [targets.httpupgrade-tls-fixture]
 kind = "bin"
 main = "tests/httpupgrade_tls_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-httpupgrade-fixture", "http2-tls"]
 
 [targets.httpupgrade-tls-stress]
 kind = "bin"
 main = "tests/httpupgrade_tls_stress.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-httpupgrade-fixture", "http2-tls"]
 
 [targets.wireguard-noise-vectors]
 kind = "bin"
 main = "tests/wireguard_noise.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-network-fixture]
 kind = "bin"
 main = "tests/wireguard_network_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-endpoint-test]
 kind = "bin"
 main = "tests/wireguard_endpoint.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-endpoint-network-fixture]
 kind = "bin"
 main = "tests/wireguard_endpoint_network_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-endpoint-cookie-test]
 kind = "bin"
 main = "tests/wireguard_endpoint_cookie.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-registry-test]
 kind = "bin"
 main = "tests/wireguard_registry.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-host-test]
 kind = "bin"
 main = "tests/wireguard_host.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-routing-test]
 kind = "bin"
 main = "tests/wireguard_routing.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-source-policy-test]
 kind = "bin"
 main = "tests/wireguard_source_policy.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-identity-test]
 kind = "bin"
 main = "tests/wireguard_identity.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-identity-handshake-test]
 kind = "bin"
 main = "tests/wireguard_identity_handshake.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-routing-cost]
 kind = "bin"
 main = "tests/wireguard_routing_cost.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-port-test]
 kind = "bin"
 main = "tests/wireguard_port.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-port-allocation-test]
 kind = "bin"
 main = "tests/wireguard_port_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.wireguard-port-network-fixture]
 kind = "bin"
 main = "tests/wireguard_port_network_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["wireguard"]
 
 [targets.socket-binding-tcp]
 kind = "bin"
 main = "tests/socket_binding_tcp.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.socket-binding-udp]
 kind = "bin"
 main = "tests/socket_binding_udp.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 # Uses an isolated network namespace and explicit family/policy arguments.
 [targets.udp-fragment-fixture]
 kind = "bin"
 main = "tests/udp_fragment.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.httpupgrade-vless-fixture]
 kind = "bin"
 main = "tests/httpupgrade_vless_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["vless"]
 
 [targets.httpupgrade-vless-layout]
 kind = "bin"
 main = "tests/httpupgrade_vless_layout.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["vless"]
 
 [targets.httpupgrade-vless-io]
 kind = "bin"
 main = "tests/httpupgrade_vless_io.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["vless"]
 
 [targets.quic-native-test]
 kind = "bin"
 main = "tests/quic_native.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-native"]
 
 [targets.datagram-driver]
 kind = "bin"
 main = "tests/datagram_driver.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["datagram-driver"]
 
 [targets.datagram-driver-allocation]
 kind = "bin"
 main = "tests/datagram_driver_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["datagram-driver"]
 
 [targets.datagram-driver-abandon]
 kind = "bin"
 main = "tests/datagram_driver_abandon.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["datagram-driver"]
 
 [targets.quic-http3-datagram-fixture]
 kind = "bin"
 main = "tests/quic_http3_datagram_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-datagram-fixture"]
 
 [targets.quic-datagram-lifecycle]
 kind = "bin"
 main = "tests/quic_datagram_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-datagram-fixture"]
 
 [targets.quic-datagram-pending]
 kind = "bin"
 main = "tests/quic_datagram_pending.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-datagram-fixture"]
 
 [targets.quic-datagram-abandon]
 kind = "bin"
 main = "tests/quic_datagram_abandon.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-datagram-fixture"]
 
 [targets.quic-connection]
 kind = "bin"
 main = "tests/quic_connection.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-transport"]
 
 [targets.quic-transport-parameters]
 kind = "bin"
 main = "tests/quic_transport_parameters.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-transport"]
 
 # Certificate/role arguments are supplied by the raw TLS and UDP drivers.
 [targets.tls-raw-flights]
 kind = "bin"
 main = "tests/raw_flights.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tls"]
 
 [targets.quic-tls]
 kind = "bin"
 main = "tests/quic_tls.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-tls"]
 
 [targets.quic-udp-fixture]
 kind = "bin"
 main = "tests/quic_udp_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-tls"]
 
 [targets.tailscale-control-connection-fault]
 kind = "bin"
 main = "tests/tailscale-control-connection-fault.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-connection-fixture]
 kind = "bin"
 main = "tests/tailscale-control-connection-fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-connection-layered]
 kind = "bin"
 main = "tests/tailscale-control-connection-layered.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-connection-lifecycle]
 kind = "bin"
 main = "tests/tailscale-control-connection-lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-connection-probe]
 kind = "bin"
 main = "tests/tailscale-control-connection-probe.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-connection-resources]
 kind = "bin"
 main = "tests/tailscale-control-connection-resources.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-early-unit]
 kind = "bin"
 main = "tests/tailscale-control-early-unit.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-startup-fixture]
 kind = "bin"
 main = "tests/tailscale-control-startup-fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-framed-early]
 kind = "bin"
 main = "tests/tailscale-framed-early.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-framed-frame-probe]
 kind = "bin"
 main = "tests/tailscale-framed-frame-probe.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-framed-network-fixture]
 kind = "bin"
 main = "tests/tailscale-framed-network-fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-framed-unit]
 kind = "bin"
 main = "tests/tailscale-framed-unit.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-http]
 kind = "bin"
 main = "tests/tailscale_control_http.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-messages]
 kind = "bin"
 main = "tests/tailscale_control_messages.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-control"]
 
 [targets.tailscale-control-test]
 kind = "bin"
 main = "tests/tailscale_control.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-control-allocation]
 kind = "bin"
 main = "tests/tailscale_control_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-control-network-fixture]
 kind = "bin"
 main = "tests/tailscale_control_network_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.quic-http3-dispatch]
 kind = "bin"
 main = "tests/quic_http3_dispatch.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["http3-core", "hysteria2-core"]
 
 [targets.quic-http3-owner]
 kind = "bin"
 main = "tests/quic_http3_owner.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["http3-core", "hysteria2-core"]
 
 [targets.quic-http3-lifecycle]
 kind = "bin"
 main = "tests/quic_http3_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-http3-fixture"]
 
 [targets.quic-http3-udp-fixture]
 kind = "bin"
 main = "tests/quic_http3_udp_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-http3-fixture"]
 
 [targets.tailscale-derp-test]
 kind = "bin"
 main = "tests/tailscale_derp.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-stun-test]
 kind = "bin"
 main = "tests/tailscale_stun.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-stun-network-fixture]
 kind = "bin"
 main = "tests/tailscale_stun_network_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-box-test]
 kind = "bin"
 main = "tests/tailscale_box.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-box-allocation]
 kind = "bin"
 main = "tests/tailscale_box_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-derp-handshake-test]
 kind = "bin"
 main = "tests/tailscale_derp_handshake.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.tailscale-derp-network-fixture]
 kind = "bin"
 main = "tests/tailscale_derp_network_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale"]
 
 [targets.masque-http3-test]
 kind = "bin"
 main = "tests/masque_http3.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-core", "http3-core"]
 
 [targets.masque-codec-test]
 kind = "bin"
 main = "tests/masque_codec.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-core"]
 
 [targets.masque-ip-packet-test]
 kind = "bin"
 main = "tests/masque_ip_packet.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-core"]
 
 [targets.masque-connect-ip-test]
 kind = "bin"
 main = "tests/masque_connect_ip.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-core"]
 
 [targets.quic-varint-test]
 kind = "bin"
 main = "tests/quic_varint.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hysteria2-core"]
 
 [targets.quic-packet-keys]
 kind = "bin"
 main = "tests/quic_packet_keys.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-crypto"]
 
 [targets.quic-sniff]
 kind = "bin"
 main = "tests/quic_sniff.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-sniff"]
 
 [targets.quic-ss-cursor]
 kind = "bin"
 main = "tests/quic_ss_cursor.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["quic-sniff", "ss2022"]
 
 [targets.stream-datagram-deadline]
 kind = "bin"
 main = "tests/stream_datagram_deadline.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["ss2022"]
 
 [targets.lazy-readers]
 kind = "bin"
 main = "tests/lazy_readers.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.srs-payload]
 kind = "bin"
 main = "tests/srs_payload.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-upstream-budget-race]
 kind = "bin"
 main = "tests/dns_upstream_budget_race.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-upstream-budget]
 kind = "bin"
 main = "tests/dns_upstream_budget.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-transport-allocation]
 kind = "bin"
 main = "tests/dns_transport_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-override-budget]
 kind = "bin"
 main = "tests/dns_override_budget.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-message-race-start-fault]
 kind = "bin"
 main = "tests/dns_message_race_start_fault.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-race-start-failure]
 kind = "bin"
 main = "tests/dns_race_start_failure.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-query-allocation]
 kind = "bin"
 main = "tests/dns_query_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-listener-query-budget]
 kind = "bin"
 main = "tests/dns_listener_query_budget.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-input-budget-network]
 kind = "bin"
 main = "tests/dns_input_budget_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-evaluate-owner]
 kind = "bin"
 main = "tests/dns_evaluate_owner.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-evaluate-race]
 kind = "bin"
 main = "tests/dns_evaluate_race.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-response-race-walk]
 kind = "bin"
 main = "tests/dns_response_race_walk.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-message-race-network]
 kind = "bin"
 main = "tests/dns_message_race_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-udp-response-slots]
 kind = "bin"
 main = "tests/dns_udp_response_slots.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response-ss"]
 
 [targets.dns-tcp-response-slots]
 kind = "bin"
 main = "tests/dns_tcp_response_slots.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-address-race-network]
 kind = "bin"
 main = "tests/dns_address_race_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-udp-address-race-network]
 kind = "bin"
 main = "tests/dns_udp_address_race_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response-ss"]
 
 [targets.dns-proxy-address-race-network]
 kind = "bin"
 main = "tests/dns_proxy_address_race_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-udp-production-race-network]
 kind = "bin"
 main = "tests/dns_udp_production_race_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response-ss"]
 
 [targets.dns-address-race-local]
 kind = "bin"
 main = "tests/dns_address_race_local.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-address-race-local-production]
 kind = "bin"
 main = "tests/dns_address_race_local_production.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response-ss"]
 
 [targets.dns-race-admission]
 kind = "bin"
 main = "tests/dns_race_admission.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-evaluate-race-network]
 kind = "bin"
 main = "tests/dns_evaluate_race_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["dns-response"]
 
 [targets.dns-evaluate-owner-network]
 kind = "bin"
 main = "tests/dns_evaluate_owner_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.dns-message-exchange-owner]
 kind = "bin"
 main = "tests/dns_message_exchange_owner.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.srs-file]
 kind = "bin"
 main = "tests/srs_file.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["srs"]
 
 [targets.hysteria2-wire-test]
 kind = "bin"
 main = "tests/hysteria2_wire.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hysteria2-core"]
 
 [targets.hysteria2-auth-test]
 kind = "bin"
 main = "tests/hysteria2_auth.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hysteria2-core"]
 
 [targets.hysteria2-udp-test]
 kind = "bin"
 main = "tests/hysteria2_udp.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hysteria2-core"]
 
 [targets.hysteria2-fragment-allocation-test]
 kind = "bin"
 main = "tests/hysteria2_fragment_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hysteria2-core"]
 
 [targets.hysteria2-vectors]
 kind = "bin"
 main = "tests/hysteria2_vectors.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["hysteria2-core"]
 
 [targets.grpc-session-test]
 kind = "bin"
 main = "tests/grpc_session.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc"]
 
 [targets.grpc-stream-test]
 kind = "bin"
 main = "tests/grpc_stream.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc"]
 
 [targets.grpc-fixture]
 kind = "bin"
 main = "tests/grpc_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc"]
 
 [targets.grpc-tls-fixture]
 kind = "bin"
 main = "tests/grpc_tls_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc", "http2-tls"]
 
 [targets.grpc-tls-stress]
 kind = "bin"
 main = "tests/grpc_tls_stress.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc", "http2-tls"]
 
 [targets.grpc-handshake-lifecycle]
 kind = "bin"
 main = "tests/grpc_handshake_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc", "http2-tls"]
 
 [targets.grpc-writer-deadline]
 kind = "bin"
 main = "tests/grpc_writer_deadline.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc", "http2-tls"]
 
 [targets.grpc-terminal-test]
 kind = "bin"
 main = "tests/grpc_terminal.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc"]
 
 [targets.http2-window-test]
 kind = "bin"
 main = "tests/http2/window.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["http2"]
 
 [targets.nexus-shadowsocks-udp-rebind-test]
 kind = "bin"
 main = "tests/shadowsocks_udp_rebind.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["ss2022"]
 
 [targets.dns-reverse-test]
 kind = "bin"
 main = "tests/dns_reverse.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-dns-reverse"]
 
 [targets.dns-reverse-allocation-test]
 kind = "bin"
 main = "tests/dns_reverse_allocation.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-dns-reverse"]
 
 [targets.dns-reverse-bench]
@@ -1337,25 +1147,21 @@ required_features = ["test-rules-bench"]
 [targets.rules-private-fixture]
 kind = "bin"
 main = "tests/rules_private_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-rules-bench"]
 
 [targets.dns-shared-reader-capacity]
 kind = "bin"
 main = "tests/dns_shared_reader_capacity.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-dns-resource"]
 
 [targets.dns-shared-production-memory]
 kind = "bin"
 main = "tests/dns_shared_production_memory.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-dns-resource"]
 
 [targets.http-header-compat-fixture]
 kind = "bin"
 main = "tests/http_header_compat_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-http-header-fixture"]
 
 [test]
@@ -1401,343 +1207,286 @@ debug = "lines"
 [targets.grpc-vless-runtime]
 kind = "bin"
 main = "tests/grpc_runtime.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-grpc-runtime"]
 
 [targets.grpc-vless-lifecycle]
 kind = "bin"
 main = "tests/grpc_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-grpc-lifecycle"]
 
 [targets.grpc-vless-static]
 kind = "bin"
 main = "tests/grpc_vless_static.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc-vless"]
 
 [targets.grpc-retire]
 kind = "bin"
 main = "tests/grpc_retire.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc"]
 
 [targets.hy2-application-fixture]
 kind = "bin"
 main = "tests/hy2_application_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-application-lifecycle]
 kind = "bin"
 main = "tests/hy2_application_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-shared-client-fixture]
 kind = "bin"
 main = "tests/hy2_shared_client_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-shared-port-abandon]
 kind = "bin"
 main = "tests/hy2_shared_port_abandon.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-shared-port-cpp-cold]
 kind = "bin"
 main = "tests/hy2_shared_port_cpp_cold.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-resource"]
 
 [targets.hy2-shared-port-fixture]
 kind = "bin"
 main = "tests/hy2_shared_port_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-shared-port-resources]
 kind = "bin"
 main = "tests/hy2_shared_port_resources.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-resource"]
 
 [targets.hy2-stream-buffer]
 kind = "bin"
 main = "tests/hy2_stream_buffer.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-udp-fixture]
 kind = "bin"
 main = "tests/hy2_udp_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-udp-owners]
 kind = "bin"
 main = "tests/hy2_udp_owners.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.quic-cid-registry]
 kind = "bin"
 main = "tests/quic_cid_registry.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.quic-datagram-port]
 kind = "bin"
 main = "tests/quic_datagram_port.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-fixture"]
 
 [targets.hy2-retry-abandon]
 kind = "bin"
 main = "tests/hy2_retry_abandon.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-fixture"]
 
 [targets.hy2-retry-cpp-cold]
 kind = "bin"
 main = "tests/hy2_retry_cpp_cold.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-resource"]
 
 [targets.hy2-retry-resources]
 kind = "bin"
 main = "tests/hy2_retry_resources.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-resource"]
 
 [targets.hy2-retry-shared-port-fixture]
 kind = "bin"
 main = "tests/hy2_retry_shared_port_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-fixture"]
 
 [targets.quic-retry-admission]
 kind = "bin"
 main = "tests/quic_retry_admission.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-fixture"]
 
 [targets.quic-retry-control-lifecycle]
 kind = "bin"
 main = "tests/quic_retry_control_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-fixture"]
 
 [targets.quic-retry-packet]
 kind = "bin"
 main = "tests/quic_retry_packet.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-fixture"]
 
 [targets.quic-retry-port]
 kind = "bin"
 main = "tests/quic_retry_port.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-fixture"]
 
 [targets.quic-retry-token]
 kind = "bin"
 main = "tests/quic_retry_token.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-retry-fixture"]
 
 [targets.grpc-multiplex]
 kind = "bin"
 main = "tests/multiplex.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc"]
 
 [targets.grpc-multiplex-async]
 kind = "bin"
 main = "tests/multiplex_async.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc"]
 
 [targets.grpc-operation-token]
 kind = "bin"
 main = "tests/operation_token.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["grpc-vless"]
 
 [targets.shared-connection-pool]
 kind = "bin"
 main = "tests/shared_pool.cpp"
-cxxflags = ["-fno-module-lazy"]
 
 [targets.grpc-vless-startup]
 kind = "bin"
 main = "tests/grpc_startup.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-grpc-startup"]
 
 
 [targets.http-destination-authority]
 kind = "bin"
 main = "tests/http_destination_authority.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.hy2-production-listener-abandon]
 kind = "bin"
 main = "tests/hy2_production_listener_abandon.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.hy2-production-listener-cpp-cold]
 kind = "bin"
 main = "tests/hy2_production_listener_cpp_cold.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.hy2-production-listener-fixture]
 kind = "bin"
 main = "tests/hy2_production_listener_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.hy2-production-listener-resources]
 kind = "bin"
 main = "tests/hy2_production_listener_resources.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.hy2-production-profiles]
 kind = "bin"
 main = "tests/hy2_production_profiles.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.quic-native-memory]
 kind = "bin"
 main = "tests/quic_native_memory.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.quic-graceful-port]
 kind = "bin"
 main = "tests/quic_graceful_port.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.quic-graceful-driver]
 kind = "bin"
 main = "tests/quic_graceful_driver.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.hy2-graceful-start]
 kind = "bin"
 main = "tests/hy2_graceful_start.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-hy2-production"]
 
 [targets.tailscale-packet-filter-test]
 kind = "bin"
 main = "tests/tailscale_packet_filter.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-policy"]
 
 [targets.snell-http-obfs-test]
 kind = "bin"
 main = "tests/snell_http_obfs.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["snell"]
 
 [targets.tailscale-map-policy-test]
 kind = "bin"
 main = "tests/tailscale_map_policy.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-map-projection"]
 
 [targets.tailscale-map-policy-network]
 kind = "bin"
 main = "tests/tailscale_map_policy_network.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["tailscale-map-projection"]
 
 [targets.snell-client-reuse-fixture]
 kind = "bin"
 main = "tests/snell_client_reuse_fixture.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["snell"]
 
 [targets.snell-client-pool-test]
 kind = "bin"
 main = "tests/snell_client_pool.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["snell"]
 
 [targets.snell-client-reuse-lifetime]
 kind = "bin"
 main = "tests/snell_client_reuse_lifetime.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["snell"]
 
 [targets.masque-udp-session-test]
 kind = "bin"
 main = "tests/masque_udp_session.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-session"]
 
 [targets.masque-quic-session-test]
 kind = "bin"
 main = "tests/masque_quic_session.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-session", "test-http3-fixture"]
 
 [targets.masque-quic-udp-fixture]
 kind = "bin"
 main = "tests/masque_quic_udp.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-session", "test-http3-fixture"]
 
 [targets.masque-connect-udp-test]
 kind = "bin"
 main = "tests/masque_connect_udp.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-server"]
 
 [targets.masque-udp-owner-test]
 kind = "bin"
 main = "tests/masque_udp_owner.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-server"]
 
 [targets.masque-server-session-test]
 kind = "bin"
 main = "tests/masque_server_session.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-server", "test-http3-fixture"]
 
 [targets.masque-listener-fixture]
 kind = "bin"
 main = "tests/masque_listener.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-host", "test-http3-fixture"]
 
 [targets.masque-client-fixture]
 kind = "bin"
 main = "tests/masque_client.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["masque-host", "test-http3-fixture"]
 
 [targets.masque-listener-start-test]
 kind = "bin"
 main = "tests/masque_listener_start.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-masque-listener-start", "test-http3-fixture"]
 
 [targets.masque-host-lifecycle-test]
 kind = "bin"
 main = "tests/masque_host_lifecycle.cpp"
-cxxflags = ["-fno-module-lazy"]
 required_features = ["test-masque-host-lifetime", "test-http3-fixture"]
 
 [targets.masque-config-test]
@@ -1753,7 +1502,6 @@ required_features = ["shadowtls"]
 kind = "bin"
 main = "tests/tuic_v5.cpp"
 required_features = ["tuic-core"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.config-protocols-ext-test]
 kind = "bin"
@@ -1768,43 +1516,36 @@ required_features = ["shadowtls-proxy"]
 kind = "bin"
 main = "tests/tuic_loopback.cpp"
 required_features = ["tuic"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.masque-outbound-loopback-test]
 kind = "bin"
 main = "tests/masque_outbound_loopback.cpp"
 required_features = ["masque-host", "masque-outbound"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch94a-unit]
 kind = "bin"
 main = "tests/batch94a_unit.cpp"
 required_features = ["vless", "hy2-cli"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch94b-xhttp-unit]
 kind = "bin"
 main = "tests/batch94b_xhttp_unit.cpp"
 required_features = ["vless", "http2"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch94c-utls-unit]
 kind = "bin"
 main = "tests/batch94c_utls.cpp"
 required_features = ["tls"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch96b-ktls-unit]
 kind = "bin"
 main = "tests/batch96b_ktls.cpp"
 required_features = ["ktls"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch135-138-unit]
 kind = "bin"
 main = "tests/batch135_138_cross_platform_edge_cases_unit.cpp"
 required_features = ["ktls", "quic-sniff"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch147-unit]
 kind = "bin"
@@ -1815,7 +1556,6 @@ required_features = ["dns-response"]
 kind = "bin"
 main = "tests/batch148_unit.cpp"
 required_features = ["ntp", "tun-inbound"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch149-unit]
 kind = "bin"
@@ -1826,15 +1566,51 @@ required_features = ["hy2-cli", "trojan", "anytls", "snell", "tun-inbound"]
 kind = "bin"
 main = "tests/batch150_unit.cpp"
 required_features = ["ssh", "control-http"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch151-unit]
 kind = "bin"
 main = "tests/batch151_unit.cpp"
 required_features = ["naive", "http-connect-tls"]
-cxxflags = ["-fno-module-lazy"]
 
 [targets.batch123-tcp-udp-datapath-unit]
 kind = "bin"
 main = "tests/batch123_tcp_udp_datapath_unit.cpp"
-cxxflags = ["-fno-module-lazy"]
+
+[targets.batch153-phase-b-unit]
+kind = "bin"
+main = "tests/batch153_phase_b_unit.cpp"
+
+[targets.acme-unit]
+kind = "bin"
+main = "tests/acme_unit.cpp"
+required_features = ["acme"]
+
+[targets.sni-demux-unit]
+kind = "bin"
+main = "tests/sni_demux_unit.cpp"
+required_features = ["sni-demux"]
+
+[targets.lan-dns-unit]
+kind = "bin"
+main = "tests/lan_dns_unit.cpp"
+required_features = ["dns-dhcp", "dns-mdns"]
+
+[targets.batch155-unit]
+kind = "bin"
+main = "tests/batch155_unit.cpp"
+required_features = ["derp-server", "ssmapi", "memory-budget"]
+
+[targets.batch156-unit]
+kind = "bin"
+main = "tests/batch156_unit.cpp"
+required_features = ["wireguard-endpoint"]
+
+[targets.batch157-unit]
+kind = "bin"
+main = "tests/batch157_unit.cpp"
+required_features = ["openvpn", "openconnect", "reverse-tunnel", "bridge"]
+
+[targets.batch158-unit]
+kind = "bin"
+main = "tests/batch158_unit.cpp"
+required_features = ["tor"]

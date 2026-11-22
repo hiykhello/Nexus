@@ -1,5 +1,6 @@
 export module anytls.writer;
 import std;
+import nexus.compat;
 import anytls;
 import anytls.auth;
 import anytls.settings;
@@ -39,7 +40,7 @@ export namespace anytls {
             }
             // A padding update can arrive while a send is suspended. Retain
             // this write's bounded plan, never a span into mutable settings.
-            std::inplace_vector<PaddingStep,256> plan;
+            nexus::inplace_vector<PaddingStep,256> plan;
             for (auto step:scheme_.steps(packet_)) plan.push_back(step);
             for (auto step:plan) {
                 if (step.check) { if (bytes.empty()) co_return true; continue; }

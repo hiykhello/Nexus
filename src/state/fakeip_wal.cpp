@@ -1,7 +1,3 @@
-module;
-#include <cerrno>
-#include <unistd.h>
-#include <sys/stat.h>
 module state.fakeip_disk;
 import std;
 import state.serde;
@@ -41,30 +37,26 @@ namespace state {
                 {.magic=magic,.tier=Tier::lease,.max_payload=max_rows*max_record+4,.fingerprint=identity(meta)}};
         }
 
-        auto read_wal(int wal) -> std::expected<Bytes,StateError> {
-            struct stat info{};
-            if (::fstat(wal,&info)<0) return failure(Stage::read,errno);
-            if (info.st_size>static_cast<off_t>(fakeip_wal_limit+128*(max_record+header_bytes)))
+        auto read_wal(NativeHandle wal) -> std::expected<Bytes,StateError> {
+            auto sz=handle_size(wal,Stage::read);
+            if (!sz) return std::unexpected(sz.error());
+            if (*sz>static_cast<std::uint64_t>(fakeip_wal_limit+128*(max_record+header_bytes)))
                 return std::unexpected(StateError{Stage::capacity});
-            Bytes bytes(static_cast<std::size_t>(info.st_size));
-            auto rest=std::span(bytes);
-            while (!rest.empty()) {
-                auto count=::read(wal,rest.data(),rest.size());
-                if (count<0 && errno==EINTR) continue;
-                if (count<=0) return failure(Stage::read,count<0 ? errno : EIO);
-                rest=rest.subspan(static_cast<std::size_t>(count));
-            }
+            Bytes bytes(static_cast<std::size_t>(*sz));
+            auto got=read_handle(wal,bytes,Stage::read);
+            if (!got) return std::unexpected(got.error());
+            if (*got!=bytes.size())
+                return std::unexpected(StateError{Stage::read,std::make_error_code(std::errc::io_error)});
             return bytes;
         }
     }
 
-    auto replay_fakeip(InstanceLock const& directory, FakeIpScope const& scope, FakeIpMeta const& meta, int wal)
+    auto replay_fakeip(InstanceLock const& directory, FakeIpScope const& scope, FakeIpMeta const& meta, NativeHandle wal)
         -> std::expected<FakeIpReplay,StateError> {
         auto saved=load_snapshot(directory,checkpoint(meta));
         if (!saved) return std::unexpected(saved.error());
         FakeIpReplay result;
         std::set<std::pair<std::uint64_t,std::string_view>> keys;
-        // Reserve at most the pool's capacity so recorded string views stay valid.
         result.rows.reserve(std::uint64_t(scope.alloc_last)-scope.alloc_first+1);
         auto add=[&](FakeIpRow row) {
             if (row.address<scope.alloc_first || row.address>scope.alloc_last ||
@@ -114,12 +106,14 @@ namespace state {
             result.wal_bytes+=consumed;
             rest=rest.subspan(consumed);
         }
-        if (!rest.empty() && (::ftruncate(wal,static_cast<off_t>(result.wal_bytes))<0 || sync_file(wal)<0))
-            return failure(Stage::sync_stage,errno);
+        if (!rest.empty()) {
+            if (auto trunc=truncate_handle(wal,result.wal_bytes,Stage::sync_stage); !trunc)
+                return std::unexpected(trunc.error());
+        }
         return result;
     }
 
-    auto append_fakeip(int wal, FakeIpMeta const& meta, std::uint64_t sequence, FakeIpRow const& row)
+    auto append_fakeip(NativeHandle wal, FakeIpMeta const& meta, std::uint64_t sequence, FakeIpRow const& row)
         -> std::expected<std::size_t,StateError> {
         Bytes payload;
         encode_row(payload,row);
@@ -127,27 +121,20 @@ namespace state {
                                   payload,identity(meta));
         if (!prefix) return std::unexpected(prefix.error());
         for (auto bytes:{std::span<std::byte const>(*prefix),std::span<std::byte const>(payload)}) {
-            while (!bytes.empty()) {
-                auto count=::write(wal,bytes.data(),bytes.size());
-                if (count<0 && errno==EINTR) continue;
-                if (count<=0) return failure(Stage::write,count<0 ? errno : EIO);
-                bytes=bytes.subspan(static_cast<std::size_t>(count));
-            }
+            if (auto w=write_handle_all(wal,bytes,Stage::write); !w) return std::unexpected(w.error());
         }
         return header_bytes+payload.size();
     }
 
-    auto compact_fakeip(InstanceLock const& directory, FakeIpMeta const& meta, int wal,
+    auto compact_fakeip(InstanceLock const& directory, FakeIpMeta const& meta, NativeHandle wal,
                         std::span<FakeIpRow const> rows) -> std::expected<void,StateError> {
         Bytes payload;
         append_le(payload,rows.size(),4);
         for (auto const& row:rows) encode_row(payload,row);
         auto result=commit_snapshot(directory,checkpoint(meta),rows.size(),0,payload);
         if (!result) {
-            // A crash can leave the complete WAL after a durable checkpoint.
             if (result.error().stage!=Stage::revision) return std::unexpected(result.error());
         } else if (result->error) return std::unexpected(*result->error);
-        if (::ftruncate(wal,0)<0 || sync_file(wal)<0) return failure(Stage::sync_stage,errno);
-        return {};
+        return truncate_handle(wal,0,Stage::sync_stage);
     }
 }

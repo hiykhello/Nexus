@@ -87,7 +87,7 @@ export namespace http2 {
         std::array<std::unique_ptr<std::uint8_t[]>,Capacity> bodies_;
         static auto settings(ClientLimits const& limits) noexcept -> detail::CoreLimits {
             return {limits.stream_window*Capacity,limits.stream_window,limits.header_fields,limits.header_bytes,
-                Capacity,limits.decoder_table,limits.encoder_table,limits.outbound_ack,limits.outbound_queue_limit};
+                static_cast<std::uint32_t>(Capacity),limits.decoder_table,limits.encoder_table,limits.outbound_ack,limits.outbound_queue_limit};
         }
         explicit ServerStreams(ClientLimits limits,std::shared_ptr<memory::Budget> budget)
             :core_(settings(limits),detail::SharedAccounting(limits.library_bytes,std::move(budget)),limits) {}

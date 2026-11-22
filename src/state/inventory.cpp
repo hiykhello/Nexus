@@ -1,10 +1,6 @@
-module;
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
 module state.maintenance;
 import std;
+import nexus.compat;
 import state.dns_cache;
 import state.file;
 import state.ruleset_storage;
@@ -27,7 +23,7 @@ namespace state {
             return {result,std::optional<File>(std::move(*directory))};
         }
 
-        auto stat_files(int directory,Inventory& info,std::function_ref<bool(std::string_view)> match) -> bool {
+        auto stat_files(NativeHandle directory,Inventory& info,nexus::function_ref<bool(std::string_view)> match) -> bool {
             auto files=directory_entries(directory,match);
             if (!files) {info.health="unreadable";return false;}
             if (files->empty()) return false;
@@ -39,15 +35,16 @@ namespace state {
             return info.health=="ok";
         }
 
-        auto read_number(int directory,char const* name,off_t offset,std::size_t width,bool big=false)
+        auto read_number(NativeHandle directory,std::string_view name,std::uint64_t offset,std::size_t width,bool big=false)
             -> std::optional<std::uint64_t> {
-            File fd(::openat(directory,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC));
-            struct stat status{};
-            if (fd.get()<0 || ::fstat(fd.get(),&status)<0 || !private_regular(status)) return {};
-            std::array<unsigned char,8> bytes{};
-            if (::pread(fd.get(),bytes.data(),width,offset)!=static_cast<ssize_t>(width)) return {};
+            auto fd=open_dir_read(directory,name,true,Stage::open);
+            if (!fd) return {};
+            std::array<std::byte,8> bytes{};
+            auto got=read_handle_at(fd->get(),offset,std::span(bytes).first(width),Stage::read);
+            if (!got || *got!=width) return {};
             std::uint64_t result=0;
-            for (std::size_t i=0;i<width;++i) result=(result<<8)|bytes[big ? i : width-i-1];
+            for (std::size_t i=0;i<width;++i)
+                result=(result<<8)|std::to_integer<unsigned>(bytes[big ? i : width-i-1]);
             return result;
         }
 
@@ -74,7 +71,7 @@ namespace state {
                 auto policy=read_number(dir,"messages.cache",6,4,true);
                 if (!policy || *policy>1024*1024 || servers>256) info.health="damaged";
                 else {
-                    auto count=read_number(dir,"messages.cache",18+static_cast<off_t>(*policy+servers*4),2,true);
+                    auto count=read_number(dir,"messages.cache",18+*policy+servers*4,2,true);
                     if (!count || *count>256) info.health="damaged";
                     else {info.entries=*count;info.health="legacy";}
                 }
@@ -125,23 +122,25 @@ namespace state {
         if (!checkpoint) {info.health="damaged";return info;}
         if (*checkpoint) info.entries=(**checkpoint).header.revision;
 
-        File wal(::openat(dir,"fakeip.wal",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC));
-        if (wal.get()<0) {if (errno!=ENOENT) info.health="unreadable";return info;}
-        struct stat status{};
-        if (::fstat(wal.get(),&status)<0 || !private_regular(status)) {info.health="damaged";return info;}
+        auto wal=open_dir_read(dir,"fakeip.wal",true,Stage::open);
+        if (!wal) {if (wal.error().os!=std::errc::no_such_file_or_directory) info.health=wal.error().os==std::errc::permission_denied ? "damaged" : "unreadable";return info;}
+        auto wal_sz=handle_size(wal->get(),Stage::read);
+        if (!wal_sz) {info.health="unreadable";return info;}
         auto spec=EnvelopeSpec{.magic=fake_magic,.tier=Tier::lease,.max_payload=267,.fingerprint=fingerprint(owner)};
-        for (off_t offset=0;offset+static_cast<off_t>(header_bytes)<=status.st_size;) {
+        for (std::uint64_t offset=0;offset+header_bytes<=*wal_sz;) {
             EncodedHeader header;
-            if (::pread(wal.get(),header.data(),header.size(),offset)!=static_cast<ssize_t>(header.size())) {
+            auto got_h=read_handle_at(wal->get(),offset,header,Stage::read);
+            if (!got_h || *got_h!=header.size()) {
                 info.health="unreadable";break;
             }
             auto decoded=decode_header(header,spec);
             if (!decoded) {info.health="damaged";break;}
             offset+=header.size();
-            if (offset+decoded->payload_bytes>status.st_size) break;
+            if (offset+decoded->payload_bytes>*wal_sz) break;
             std::array<std::byte,267> bytes;
             auto payload=std::span(bytes).first(decoded->payload_bytes);
-            if (::pread(wal.get(),payload.data(),payload.size(),offset)!=static_cast<ssize_t>(payload.size()) ||
+            auto got_p=read_handle_at(wal->get(),offset,payload,Stage::read);
+            if (!got_p || *got_p!=payload.size() ||
                 !verify_payload(header,*decoded,payload,spec.fingerprint)) {info.health="damaged";break;}
             info.entries=std::max(info.entries,decoded->revision);
             offset+=decoded->payload_bytes;

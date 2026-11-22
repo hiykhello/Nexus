@@ -11,7 +11,6 @@ import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
 namespace t=tailscale::control;
 namespace h=tailscale::control_http;
-namespace net=net;
 namespace capy=nex::capy;
 namespace io=nex::corosio;
 using namespace std::chrono_literals;

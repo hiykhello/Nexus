@@ -4,8 +4,6 @@ import dns.response_program;
 import dns.response_race_walk;
 import dns.policy;
 
-namespace dns=dns;
-namespace policy = ::policy;
 using Walk=dns::ResponseRaceWalk;
 auto evaluate(std::optional<std::string> tag={}) -> policy::DnsRule {
     policy::DnsRule rule;rule.match_all=true;rule.action=policy::DnsAction::evaluate;rule.evaluate_tag=std::move(tag);return rule;

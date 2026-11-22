@@ -1,6 +1,3 @@
-module;
-#include <cerrno>
-#include <unistd.h>
 module state.dns_cache;
 import std;
 import state.file;
@@ -21,11 +18,6 @@ namespace state {
             }
             return {name+".state","."+name+".next",
                 {.magic=dns_cache_magic,.tier=Tier::cache,.max_payload=dns_shard_payload,.fingerprint=view}};
-        }
-
-        auto remove(int directory,std::string const& name) -> std::expected<void,StateError> {
-            if (::unlinkat(directory,name.c_str(),0)<0 && errno!=ENOENT) return failure(Stage::remove_blob,errno);
-            return {};
         }
 
         auto read_epoch(InstanceLock const& directory) -> std::expected<std::uint64_t,StateError> {
@@ -77,7 +69,7 @@ namespace state {
         auto loaded=load_snapshot(*lock,spec);
         if (!loaded && !discardable(loaded.error().stage)) return std::unexpected(loaded.error());
         if (!loaded || (*loaded && (**loaded).header.clear_epoch!=*current)) {
-            auto deleted=remove(lock->directory(),spec.name);
+            auto deleted=unlink_dir_file(lock->directory(),spec.name,Stage::remove_blob);
             if (!deleted) return std::unexpected(deleted.error());
             return DnsCacheShard{*current,{}};
         }
@@ -99,7 +91,7 @@ namespace state {
         auto prior=load_snapshot(*lock,spec);
         if (!prior) {
             if (!discardable(prior.error().stage)) return std::unexpected(prior.error());
-            auto deleted=remove(lock->directory(),spec.name);
+            auto deleted=unlink_dir_file(lock->directory(),spec.name,Stage::remove_blob);
             if (!deleted) return deleted;
         }
         auto entries=directory_entries(lock->directory(),owned);
@@ -108,7 +100,7 @@ namespace state {
         for (auto const& item:*entries) {
             if (item.name==spec.name) continue;
             if (item.private_file && dns_shard_fingerprint(item.name) && item.size<=budget_-total) total+=item.size;
-            else if (auto deleted=remove(lock->directory(),item.name); !deleted) return deleted;
+            else if (auto deleted=unlink_dir_file(lock->directory(),item.name,Stage::remove_blob); !deleted) return deleted;
         }
         auto revision=prior && *prior ? (**prior).header.revision+1 : 1;
         auto saved=commit_snapshot(*lock,spec,revision,*current,payload);
@@ -131,8 +123,7 @@ namespace state {
         auto entries=directory_entries(lock->directory(),owned);
         if (!entries) return std::unexpected(entries.error());
         for (auto const& item:*entries)
-            if (auto deleted=remove(lock->directory(),item.name); !deleted) return deleted;
-        if (sync_file(lock->directory())<0) return failure(Stage::sync_directory,errno);
-        return {};
+            if (auto deleted=unlink_dir_file(lock->directory(),item.name,Stage::remove_blob); !deleted) return deleted;
+        return sync_handle(lock->directory(),Stage::sync_directory);
     }
 }

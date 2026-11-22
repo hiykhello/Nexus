@@ -22,8 +22,8 @@
         auto cancel() noexcept -> void;
     };
     // The immutable factory and its profile must outlive every layer it creates.
-    using TunnelLayerFactory=std::move_only_function<pro::proxy<TunnelFacade>(Session&,pro::proxy<TunnelFacade>&&) const>;
-    using InboundFactory = std::move_only_function<capy::task<>(Session&,io::io_context&,rules::RouteMatcher const&) const>;
+    using TunnelLayerFactory=nexus::move_only_function<pro::proxy<TunnelFacade>(Session&,pro::proxy<TunnelFacade>&&) const>;
+    using InboundFactory = nexus::move_only_function<capy::task<>(Session&,io::io_context&,rules::RouteMatcher const&) const>;
     // The snapshot source is process-wide; rotation remains worker-local.
     export struct LocalDnsState {
         dns::LocalSnapshotSource& source=dns::system_local_snapshots();
@@ -83,7 +83,7 @@
         std::optional<std::uint32_t> tunnel_references{};
         std::shared_ptr<dns::detail::TransportSnapshot const> dns_transports;
     };
-    export using RouteSnapshots = std::atomic<std::shared_ptr<std::vector<RouteSnapshot> const>>;
+    export using RouteSnapshots = nexus::atomic_shared_ptr<std::vector<RouteSnapshot> const>;
     export struct OrderedRuleInput {
         std::span<rules::ProgramRule const> rules;
         std::uint32_t sniff_timeout_ms;

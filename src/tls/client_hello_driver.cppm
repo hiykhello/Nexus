@@ -2,13 +2,14 @@ export module tls.client_hello_driver;
 export import tls.client_handshake;
 export import tls.server_hello_stream;
 export import tls.client_hello_exchange;
+import nexus.compat;
 import std;
 export namespace tls {
     struct ClientHelloDriverFeed { std::size_t consumed=0; std::optional<crypto::Bytes> outbound; bool server_hello=false; };
     namespace detail {
         template<class> inline constexpr bool nullable_callable=false;
-        template<class Signature> inline constexpr bool nullable_callable<std::move_only_function<Signature>> = true;
-        template<class Signature> inline constexpr bool nullable_callable<std::copyable_function<Signature>> = true;
+        template<class Signature> inline constexpr bool nullable_callable<nexus::move_only_function<Signature>> = true;
+        template<class Signature> inline constexpr bool nullable_callable<nexus::copyable_function<Signature>> = true;
     }
     // Holds a small, nothrow movable policy until ServerHello. Releasing it
     // creates the usual CertificateVerifier at the original handshake stage;

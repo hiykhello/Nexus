@@ -40,9 +40,9 @@ def main() -> None:
 name = "nexus-pinned-guard-test"
 version = "0.1.0"
 standard = "c++26"
-mcpp = ">=2026.10.30.1"
+mcpp = ">=2026.11.21.1"
 [toolchain]
-default = { path = "/usr", family = "gcc", tools = { cc = "/usr/bin/gcc", cxx = "/usr/bin/g++" } }
+default = "llvm@23.1.3"
 [target.x86_64-linux-gnu]
 sysroot = "glibc@system"
 [build]

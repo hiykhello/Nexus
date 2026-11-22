@@ -5,6 +5,7 @@ import './pages/overview-page.ts';
 import './pages/outbounds-page.ts';
 import './pages/connections-page.ts';
 import './pages/logs-page.ts';
+import './pages/rules-services-page.ts';
 import './pages/diagnostics-page.ts';
 
 const routes = [
@@ -12,6 +13,7 @@ const routes = [
   { path: '/outbounds', title: '策略组 · Nexus', component: 'nexus-outbounds-page' },
   { path: '/connections', title: '活跃连接 · Nexus', component: 'nexus-connections-page' },
   { path: '/logs', title: '运行日志 · Nexus', component: 'nexus-logs-page' },
+  { path: '/services', title: '规则与服务 · Nexus', component: 'nexus-rules-services-page' },
   { path: '/diagnostics', title: '诊断与鉴权 · Nexus', component: 'nexus-diagnostics-page' },
 ];
 
@@ -131,6 +133,7 @@ export class NexusApp extends LitElement {
             <a ${routerLink(this.router, '/outbounds', { activeClass: 'active' })}>策略组</a>
             <a ${routerLink(this.router, '/connections', { activeClass: 'active' })}>活跃连接</a>
             <a ${routerLink(this.router, '/logs', { activeClass: 'active' })}>运行日志</a>
+            <a ${routerLink(this.router, '/services', { activeClass: 'active' })}>规则与服务</a>
             <a ${routerLink(this.router, '/diagnostics', { activeClass: 'active' })}>诊断与鉴权</a>
           </nav>
           <div class="foot">控制面只读 Web 控制台 · Vite 8 + Lit</div>

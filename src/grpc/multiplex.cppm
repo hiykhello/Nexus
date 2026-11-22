@@ -140,7 +140,7 @@ export namespace grpc {
         using Core=http2::detail::SessionCore<Policy>;
         Core core_;
         static auto settings(Limits limits) noexcept -> http2::detail::CoreLimits {
-            return {std::min(limits.input_window*Capacity,std::size_t(std::numeric_limits<std::int32_t>::max())),limits.input_window,100,8192,Capacity,4096,4096,64};
+            return {std::min(limits.input_window*Capacity,std::size_t(std::numeric_limits<std::int32_t>::max())),limits.input_window,100,8192,static_cast<std::uint32_t>(Capacity),4096,4096,64};
         }
         MultiplexSession(Role role,RequestProfile const& profile,ResponsePolicy policy,Limits limits)
             :core_(settings(limits),http2::detail::LocalAccounting(limits.library_bytes),role,profile,policy,limits) {}

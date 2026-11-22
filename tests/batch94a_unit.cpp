@@ -62,14 +62,14 @@ routing {{ default-outbound "hy"; }}
         check(config_windows("init-stream-receive-window 67108864; max-stream-receive-window 67108864; "
             "init-conn-receive-window 67108864; max-conn-receive-window 67108864; native-bytes 134217728").has_value(),"64 MiB windows");
 
-        quic::NativeMemory memory(40000);
+        quic::NativeMemory<> memory(40000);
         hysteria2::ReceiveBuffer buffer(memory.http3(),20000);
         std::vector<std::uint8_t> sent(20000),got(20000);
         for (std::size_t i=0;i<sent.size();++i) sent[i]=i%251;
         check(buffer.append(sent) && !buffer.append(std::span(sent).first(1)) && memory.used()!=0,"receive storage cap");
         check(buffer.pull(std::span(got).first(19000))==19000 &&
               buffer.pull(std::span(got).subspan(19000))==1000 && sent==got && !memory.used(),"receive storage release");
-        quic::NativeMemory small(16384);
+        quic::NativeMemory<> small(16384);
         hysteria2::ReceiveBuffer denied(small.http3(),65536);
         check(!denied.append(sent) && !small.used(),"native budget rejection");
         std::println("Hy2 KDL range and budget checks, ngtcp2 initial/max settings, and bounded receive storage passed");

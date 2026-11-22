@@ -130,7 +130,7 @@ namespace cli::run_detail {
         std::unique_ptr<proxy::SharedDnsGeneration> dns;
         std::vector<Listener> listeners;
         std::unique_ptr<DnsMessageRuntime> messages;
-        std::move_only_function<bool()> poll_udp;
+        nexus::move_only_function<bool()> poll_udp;
         std::chrono::steady_clock::time_point deadline;
 
         auto poll() -> bool {
@@ -149,7 +149,7 @@ namespace cli::run_detail {
     auto configure_listener(proxy::Server& server,config::Config const& config,config::InboundConfig const& entry,
         std::vector<DnsProtection> const& dns_transports,RouteFiles const& route_files,auto const& indexed_routes,
         std::shared_ptr<proxy::SnellReplayRegistry>& snell_replay,
-        std::function_ref<void(std::span<std::uint8_t const>,std::span<proxy::ShadowsocksUserKey const>)> remember_ss,
+        nexus::function_ref<void(std::span<std::uint8_t const>,std::span<proxy::ShadowsocksUserKey const>)> remember_ss,
         proxy::PrincipalRegistry& principals) -> std::expected<void,std::string> {
         if (!entry.user_limits.empty()) {
             constexpr auto unlimited=std::numeric_limits<std::size_t>::max();

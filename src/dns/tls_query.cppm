@@ -3,6 +3,7 @@ module;
 
 export module dns.tls_query;
 import std;
+export import nexus.compat;
 import proxy.v4;
 import dns.corosio_query;
 import dns.https_query;
@@ -21,7 +22,7 @@ export namespace dns {
             std::span<std::uint8_t const>,std::chrono::steady_clock::time_point)>
         ::add_convention<DnsStreamCancel,void() noexcept>::build {};
     using TlsDnsStream=pro::proxy<TlsDnsStreamFacade>;
-    using TlsDnsStreamFactory=std::move_only_function<TlsDnsStream(
+    using TlsDnsStreamFactory=nexus::move_only_function<TlsDnsStream(
         detail::dns_io::io_context&,detail::dns_io::endpoint) const>;
 
     [[nodiscard]] auto make_routed_tls_query(TlsDnsStreamFactory,std::chrono::milliseconds connect_timeout)

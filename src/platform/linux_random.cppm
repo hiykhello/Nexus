@@ -1,12 +1,9 @@
+module;
 #if !defined(__linux__) || (!defined(__x86_64__) && !defined(__aarch64__)) || !defined(__LP64__)
 #error "The Linux entropy boundary is verified for Linux x86-64 / aarch64 LP64 only"
 #endif
+#include <cstddef>
 
-export module platform.linux_random;
-import std;
-
-// This boundary is checked against the system declarations and flag in the
-// existing TUN entropy fault fixture. It targets the workspace's glibc ABI.
 namespace platform::linux_abi {
     extern "C" std::ptrdiff_t getrandom(void*,std::size_t,unsigned int);
     extern "C" int* __errno_location() noexcept;
@@ -14,6 +11,9 @@ namespace platform::linux_abi {
 #ifdef NEXUS_TEST_LINUX_RANDOM
 extern "C" bool nexus_test_linux_random(void*,std::size_t,unsigned int,std::ptrdiff_t*) noexcept;
 #endif
+
+export module platform.linux_random;
+import std;
 
 export namespace platform {
     namespace linux_random_abi {

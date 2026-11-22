@@ -79,8 +79,11 @@ def main() -> None:
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE,
                         help="directory containing all pinned upstream archives")
     parser.add_argument("--check", action="store_true", help="check the generated guard without writing it")
+    parser.add_argument("--guard-only", action="store_true",
+                        help="check or regenerate the guard without requiring cached upstream tarballs")
     args = parser.parse_args()
-    verify_pins(args.cache)
+    if not args.guard_only:
+        verify_pins(args.cache)
     expected = generate()
     if args.check:
         if not OUTPUT.is_file() or OUTPUT.read_text(encoding="utf-8") != expected:

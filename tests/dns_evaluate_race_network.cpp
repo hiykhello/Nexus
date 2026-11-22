@@ -13,7 +13,6 @@ import nexus.thirdparty.corosio;
 
 namespace capy=nex::capy;
 namespace io=nex::corosio;
-namespace dns=dns;
 using Result=std::expected<dns::EvaluatedMessage,dns::detail::ResolveError>;
 using Owner=dns::EvaluateOwner<dns::EvaluatedMessageExchange,Result,2>;
 using Walk=dns::ResponseRaceWalk;

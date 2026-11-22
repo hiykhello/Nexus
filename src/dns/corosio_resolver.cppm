@@ -1,5 +1,6 @@
 export module dns.corosio_resolver;
 import std;
+import nexus.compat;
 export import dns.corosio_query;
 import platform.linux_random;
 
@@ -48,7 +49,7 @@ export namespace dns::detail {
         template<class... Initial> requires (sizeof...(Initial)<=1 && (std::same_as<Initial,std::optional<Response>*> && ...))
         auto resolve(dns_io::endpoint upstream, Question question,
                      std::chrono::steady_clock::time_point deadline,
-                     std::function_ref<std::expected<std::uint16_t,ResolveError>()> next_id,Initial... initial)
+                     nexus::function_ref<std::expected<std::uint16_t,ResolveError>()> next_id,Initial... initial)
             -> dns_capy::task<std::expected<AddressAnswer,ResolveError>> {
             using Clock=std::chrono::steady_clock;
             if (started_) co_return std::unexpected(ResolveError::state);

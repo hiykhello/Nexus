@@ -1,5 +1,6 @@
 module tls.tls12_client;
 import std;
+import nexus.compat;
 import crypto.ecdh;
 import tls.hello_config;
 import tls.server_hello;
@@ -120,7 +121,7 @@ namespace tls {
 
     auto Tls12Client::certificate(std::span<std::uint8_t const> body) -> std::expected<void,Tls12ClientError> {
         if (body.size()<7 || u24(body,0)!=body.size()-3) return std::unexpected(Error::protocol);
-        std::inplace_vector<std::span<std::uint8_t const>,16> chain;
+        nexus::inplace_vector<std::span<std::uint8_t const>,16> chain;
         for (std::size_t offset=3;offset<body.size();) {
             if (body.size()-offset<3 || chain.size()==chain.capacity()) return std::unexpected(Error::protocol);
             auto length=u24(body,offset);

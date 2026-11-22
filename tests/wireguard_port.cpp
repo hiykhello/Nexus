@@ -27,6 +27,7 @@ namespace {
         }
     };
     using Port=UdpPort<2,2,256,4,BlockWrites>;
+    auto shift_wall(std::chrono::system_clock::time_point wall,Clock::duration delta) { return wall+std::chrono::duration_cast<std::chrono::system_clock::duration>(delta); }
     auto bytes(unsigned first) -> Key { Key result; for (std::size_t i=0;i<32;++i) result[i]=static_cast<std::uint8_t>(first+i); return result; }
     auto public_key(unsigned first) -> Key {
         auto local=::crypto::X25519Private::from_bytes(bytes(first)); if (!local) std::terminate();
@@ -141,7 +142,7 @@ namespace {
         auto receive_packet=[&](Clock::time_point at) -> bool {
             auto previous=port->status().metrics.received;
             for(unsigned retry=0;retry<100;++retry) {
-                if(!port->poll(at,wall+(at-now)))return false;
+                if(!port->poll(at,shift_wall(wall,at-now)))return false;
                 if(port->status().metrics.received>previous)return true;
                 std::this_thread::sleep_for(1ms);
             }
@@ -185,7 +186,7 @@ namespace {
         if(!failed || failed->write_blocked || !failed->send_error || BlockCookie::calls!=1 || port->status().pending_sends || port->status().metrics.send_errors!=1)return false;
         auto near=now+cookie_refresh_time-1s;
         if(!generator->apply(wire,near) || !first.send(*target,wire))return false;
-        BlockCookie::blocked=true;auto held=port->poll(near,wall+(near-now));
+        BlockCookie::blocked=true;auto held=port->poll(near,shift_wall(wall,near-now));
         if(!held || !held->write_blocked || port->status().pending_sends!=1)return false;
         auto calls=BlockCookie::calls;
         auto rotated=port->poll(now+cookie_refresh_time,wall+cookie_refresh_time);
@@ -233,7 +234,7 @@ namespace {
         auto at=expire ? now+5s : now;
         auto expected_sent=expire ? 1u : 2u;
         for(unsigned i=0;i<100 && port->status().metrics.sent<expected_sent;++i) {
-            if(!port->poll(at,wall+(at-now)))return false;
+            if(!port->poll(at,shift_wall(wall,at-now)))return false;
             std::this_thread::sleep_for(1ms);
         }
         if(port->status().metrics.received!=(block_first ? 3u : 2u) || port->status().metrics.sent!=expected_sent || port->status().pending_sends)return false;
@@ -352,7 +353,7 @@ namespace {
         auto send_and_poll=[&](std::span<std::uint8_t const> wire,Clock::time_point at) -> bool {
             auto previous=port->status().metrics.received;if(!sender.send(*destination,wire))return false;
             for(unsigned retry=0;retry<100;++retry) {
-                if(!port->poll(at,wall+(at-now)))return false;
+                if(!port->poll(at,shift_wall(wall,at-now)))return false;
                 if(port->status().metrics.received>previous)return true;
                 std::this_thread::sleep_for(1ms);
             }

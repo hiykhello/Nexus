@@ -6,8 +6,6 @@ import masque.udp_session;
 import net.udp_socket;
 import http.header;
 namespace m=masque;
-namespace net=net;
-namespace http=http;
 using namespace std::chrono_literals;
 struct Policy {
     using Identity=std::uint32_t;

@@ -22,7 +22,7 @@ namespace cli::tun_enabled {
         struct Set {
             Key key;
             Clock::time_point expires;
-            std::inplace_vector<Range,64> ranges;
+            nexus::inplace_vector<Range,64> ranges;
             packet::Bytes header,bytes;
             std::size_t next_header_field=0;
             std::uint8_t next_header=0;
@@ -37,7 +37,7 @@ namespace cli::tun_enabled {
             }
         };
 
-        std::inplace_vector<Set,32> sets_;
+        nexus::inplace_vector<Set,32> sets_;
 
         static auto read16(std::span<std::uint8_t const> bytes,std::size_t offset) noexcept -> std::uint16_t {
             return (std::uint16_t(bytes[offset])<<8)|bytes[offset+1];
@@ -83,7 +83,7 @@ namespace cli::tun_enabled {
     public:
         auto expire(Clock::time_point now) noexcept -> void {
             if (!sets_.empty() && sets_.front().expires<=now)
-                std::erase_if(sets_,[&](Set const& set) {return set.expires<=now;});
+                nexus::erase_if(sets_,[&](Set const& set) {return set.expires<=now;});
         }
 
         [[nodiscard]] static auto fragmented(std::span<std::uint8_t const> bytes) noexcept -> bool {

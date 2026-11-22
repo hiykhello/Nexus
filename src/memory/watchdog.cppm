@@ -1,0 +1,51 @@
+export module memory.watchdog;
+import std;
+import nexus.compat;
+
+export namespace memory {
+    enum class PressureLevel : std::uint8_t { normal, soft, hard, emergency };
+
+    struct WatchdogPolicy {
+        std::uint64_t soft_bytes = 36ull * 1024 * 1024;
+        std::uint64_t hard_bytes = 44ull * 1024 * 1024;
+        std::uint64_t emergency_bytes = 48ull * 1024 * 1024;
+        std::uint32_t cooldown_ms = 5000;
+
+        static constexpr auto ios_ne_50mib() noexcept -> WatchdogPolicy {
+            return {36ull * 1024 * 1024, 44ull * 1024 * 1024, 48ull * 1024 * 1024, 2000};
+        }
+        static constexpr auto router_128mib() noexcept -> WatchdogPolicy {
+            return {64ull * 1024 * 1024, 88ull * 1024 * 1024, 104ull * 1024 * 1024, 5000};
+        }
+    };
+
+    struct WatchdogStats {
+        std::uint64_t evaluations = 0;
+        std::uint64_t soft_reclaims = 0;
+        std::uint64_t hard_reclaims = 0;
+        std::uint64_t emergency_sheds = 0;
+        std::uint64_t last_rss_bytes = 0;
+        std::uint64_t peak_rss_bytes = 0;
+        PressureLevel level = PressureLevel::normal;
+    };
+
+    [[nodiscard]] auto sample_process_rss_bytes() noexcept -> std::uint64_t;
+
+    class MemoryWatchdog {
+        WatchdogPolicy policy_;
+        WatchdogStats stats_{};
+        std::uint64_t last_action_ms_ = 0;
+        bool has_acted_ = false;
+    public:
+        explicit MemoryWatchdog(WatchdogPolicy policy = WatchdogPolicy::ios_ne_50mib()) noexcept : policy_(policy) {}
+        auto evaluate(std::uint64_t rss_bytes, std::uint64_t now_ms,
+                      nexus::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel;
+        auto sample_and_evaluate(std::uint64_t now_ms,
+                                 nexus::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel;
+        [[nodiscard]] auto should_admit_new_session() const noexcept -> bool {
+            return stats_.level != PressureLevel::emergency;
+        }
+        [[nodiscard]] auto stats() const noexcept -> WatchdogStats const& { return stats_; }
+        [[nodiscard]] auto policy() const noexcept -> WatchdogPolicy const& { return policy_; }
+    };
+}

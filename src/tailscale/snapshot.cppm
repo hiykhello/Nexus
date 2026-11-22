@@ -1,5 +1,6 @@
 export module tailscale.snapshot;
 import std;
+import nexus.compat;
 import tailscale.control;
 import tailscale.control_messages;
 
@@ -9,20 +10,20 @@ export namespace tailscale::snapshot {
     struct Peer {
         std::int64_t id=0,home_derp=0;
         control::NodePublic key;
-        std::inplace_vector<cm::Prefix,cm::max_prefixes> addresses,allowed_ips;
-        std::inplace_vector<cm::Endpoint,cm::max_endpoints> endpoints;
+        nexus::inplace_vector<cm::Prefix,cm::max_prefixes> addresses,allowed_ips;
+        nexus::inplace_vector<cm::Endpoint,cm::max_endpoints> endpoints;
         bool machine_authorized=false,expired=false;
         std::optional<std::chrono::sys_seconds> not_after;
         std::optional<cm::DiscoKey> discovery;
     };
     // Caller-owned staging makes the temporary 64-peer capacity explicit and
     // keeps it off coroutine/native stacks. Do not share scratch concurrently.
-    struct Scratch { std::inplace_vector<Peer,cm::max_peers> peers; };
+    struct Scratch { nexus::inplace_vector<Peer,cm::max_peers> peers; };
     // Non-installable peer projection. No JsonField or borrowed Map frame survives.
     // Caller must separately validate policy, TKA, identity and routes before use.
     class Snapshot {
         cm::DecodeOrigin origin_{};
-        std::inplace_vector<Peer,cm::max_peers> peers_;
+        nexus::inplace_vector<Peer,cm::max_peers> peers_;
         std::optional<Peer> self_;
         std::uint64_t last_frame_=0;
         std::int64_t self_id_=0;
@@ -30,7 +31,7 @@ export namespace tailscale::snapshot {
         static auto own(cm::PeerCandidate const& p) noexcept -> Peer {
             return {p.id,p.home_derp,p.key,p.addresses,p.allowed_ips,p.endpoints,p.machine_authorized,p.expired,p.not_after,p.discovery};
         }
-        static auto valid(std::inplace_vector<Peer,cm::max_peers> const& peers,control::NodePublic const& self,std::int64_t self_id) noexcept -> bool {
+        static auto valid(nexus::inplace_vector<Peer,cm::max_peers> const& peers,control::NodePublic const& self,std::int64_t self_id) noexcept -> bool {
             for (std::size_t i=0;i<peers.size();++i) {
                 if (peers[i].id<=0 || peers[i].id==self_id || peers[i].key==self) return false;
                 for (std::size_t j=0;j<i;++j)

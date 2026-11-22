@@ -8,6 +8,7 @@ module;
 #include <boost/corosio/ipv6_address.hpp>
 module cli.tun_host;
 import std;
+import nexus.compat;
 import config;
 import cli.dns_fakeip_backend;
 import cli.tun_network_owner;
@@ -482,19 +483,13 @@ namespace cli::tun_enabled {
         }
     };
 
-    TunHost::TunHost(proxy::Server& src, config::TunInbound opts,bool supervised,packet::TunRedirectOptions redirect)
-        : impl_(std::make_unique<Impl>(src,std::move(opts),supervised)) {impl_->redirect=redirect;}
+    TunHost::TunHost(proxy::Server& src, config::TunInbound opts, bool supervised, packet::TunRedirectOptions redirect)
+        : impl_(std::make_unique<Impl>(src, std::move(opts), supervised)) { impl_->redirect = redirect; }
     TunHost::~TunHost() { stop(); }
     auto TunHost::start() -> std::expected<std::string, std::string> { return impl_->start(); }
-    auto TunHost::start(packet::LinuxTun device) -> std::expected<std::string,std::string> {
-        return impl_->start(std::move(device));
-    }
+    auto TunHost::start(packet::LinuxTun device) -> std::expected<std::string, std::string> { return impl_->start(std::move(device)); }
     auto TunHost::healthy() const noexcept -> bool { return !impl_->failed_flag.load(std::memory_order_acquire); }
-    auto TunHost::queue_outbound_probe(std::shared_ptr<proxy::OutboundProbe> probe) -> bool {
-        return impl_->routing.queue_outbound_probe(std::move(probe));
-    }
-    auto TunHost::failure() const -> std::optional<std::string> {
-        std::lock_guard lock(impl_->failure_mutex); return impl_->failure_msg;
-    }
+    auto TunHost::queue_outbound_probe(std::shared_ptr<proxy::OutboundProbe> probe) -> bool { return impl_->routing.queue_outbound_probe(std::move(probe)); }
+    auto TunHost::failure() const -> std::optional<std::string> { std::lock_guard lock(impl_->failure_mutex); return impl_->failure_msg; }
     auto TunHost::stop() noexcept -> void { if (impl_) impl_->stop(); }
 }

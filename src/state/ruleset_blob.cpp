@@ -1,10 +1,3 @@
-module;
-#include <cerrno>
-#include <dirent.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <sys/stat.h>
-#include <unistd.h>
 module state.ruleset_storage;
 import std;
 import state.file;
@@ -13,7 +6,7 @@ import nexus.thirdparty.blake3;
 
 namespace state {
     namespace {
-        constexpr char staging[] = ".blob.next";
+        constexpr std::string_view staging = ".blob.next";
 
         auto blob_name(Fingerprint const& hash) -> std::string {
             std::string name;
@@ -33,23 +26,6 @@ namespace state {
                 std::ranges::all_of(name.substr(0, 64), [](char ch) {
                     return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
                 });
-        }
-
-        auto remove(int directory, char const* name, Stage stage) -> std::expected<void, StateError> {
-            if (::unlinkat(directory, name, 0) < 0 && errno != ENOENT) return failure(stage, errno);
-            return {};
-        }
-
-        auto write_blob(int fd, std::string_view body) -> std::expected<void, StateError> {
-            if (::fchmod(fd, 0600) < 0) return failure(Stage::create_stage, errno);
-            while (!body.empty()) {
-                auto count = ::write(fd, body.data(), body.size());
-                if (count < 0 && errno == EINTR) continue;
-                if (count <= 0) return failure(Stage::write, count < 0 ? errno : EIO);
-                body.remove_prefix(static_cast<std::size_t>(count));
-            }
-            if (sync_file(fd) < 0) return failure(Stage::sync_stage, errno);
-            return {};
         }
     }
 
@@ -71,28 +47,22 @@ namespace state {
         return result;
     }
 
-    auto read_rule_blob(int directory, RulesetMetadata const& metadata) -> std::expected<std::string, StateError> {
+    auto read_rule_blob(NativeHandle directory, RulesetMetadata const& metadata)
+        -> std::expected<std::string, StateError> {
         auto name = blob_name(metadata.content_blake3);
-        File fd(::openat(directory, name.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
-        if (fd.get() < 0) return failure(Stage::open, errno);
-        struct stat info{};
-        if (::fstat(fd.get(), &info) < 0) return failure(Stage::read, errno);
-        if (!private_regular(info) || info.st_size != metadata.size_bytes)
-            return std::unexpected(StateError{Stage::format});
+        auto fd = open_dir_read(directory, name, true, Stage::open);
+        if (!fd) return std::unexpected(fd.error());
+        auto sz = handle_size(fd->get(), Stage::read);
+        if (!sz) return std::unexpected(sz.error());
+        if (*sz != metadata.size_bytes) return std::unexpected(StateError{Stage::format});
         std::string body(metadata.size_bytes, '\0');
-        auto unread = std::span(body);
-        while (!unread.empty()) {
-            auto count = ::read(fd.get(), unread.data(), unread.size());
-            if (count < 0 && errno == EINTR) continue;
-            if (count < 0) return failure(Stage::read, errno);
-            if (count == 0) return std::unexpected(StateError{Stage::format});
-            unread = unread.subspan(static_cast<std::size_t>(count));
-        }
-        char extra;
-        ssize_t count;
-        do { count = ::read(fd.get(), &extra, 1); } while (count < 0 && errno == EINTR);
-        if (count < 0) return failure(Stage::read, errno);
-        if (count != 0 || rule_blake3(body) != metadata.content_blake3)
+        auto got = read_handle(fd->get(), std::as_writable_bytes(std::span(body)), Stage::read);
+        if (!got) return std::unexpected(got.error());
+        if (*got != body.size()) return std::unexpected(StateError{Stage::format});
+        std::byte extra{};
+        auto probe = read_handle(fd->get(), std::span(&extra, 1), Stage::read);
+        if (!probe) return std::unexpected(probe.error());
+        if (*probe != 0 || rule_blake3(body) != metadata.content_blake3)
             return std::unexpected(StateError{Stage::checksum});
         auto sha = rule_sha256(body);
         if (!sha) return std::unexpected(sha.error());
@@ -100,59 +70,50 @@ namespace state {
         return body;
     }
 
-    auto remove_rule_blob(int directory, Fingerprint const& hash) -> std::expected<void, StateError> {
-        return remove(directory, blob_name(hash).c_str(), Stage::remove_blob);
+    auto remove_rule_blob(NativeHandle directory, Fingerprint const& hash) -> std::expected<void, StateError> {
+        return unlink_dir_file(directory, blob_name(hash), Stage::remove_blob);
     }
 
-    auto write_rule_blob(int directory, Fingerprint const& hash, std::string_view body) -> std::expected<void, StateError> {
+    auto write_rule_blob(NativeHandle directory, Fingerprint const& hash, std::string_view body)
+        -> std::expected<void, StateError> {
         auto name = blob_name(hash);
-        auto cleared = remove(directory, staging, Stage::remove_stage);
+        auto cleared = unlink_dir_file(directory, staging, Stage::remove_stage);
         if (!cleared) return cleared;
-        File file(::openat(directory, staging, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-        if (file.get() < 0) return failure(Stage::create_stage, errno);
+        auto file = open_dir_stage(directory, staging, Stage::create_stage);
+        if (!file) return std::unexpected(file.error());
         auto abort = [&](StateError error) -> std::unexpected<StateError> {
-            auto deleted = remove(directory, staging, Stage::remove_stage);
+            auto deleted = unlink_dir_file(directory, staging, Stage::remove_stage);
             if (deleted) return std::unexpected(error);
-            auto failure = deleted.error();
-            failure.preceding = error.stage;
-            failure.preceding_os = error.os;
-            return std::unexpected(failure);
+            auto fail = deleted.error();
+            fail.preceding = error.stage;
+            fail.preceding_os = error.os;
+            return std::unexpected(fail);
         };
-        auto written = write_blob(file.get(), body);
-        auto closed = ::close(file.release());
+        auto written = write_handle_all(file->get(), std::as_bytes(std::span(body)), Stage::write);
+        if (written) written = sync_handle(file->get(), Stage::sync_stage);
+        auto closed = close_file(*file, Stage::close_stage);
         if (!written) return abort(written.error());
-        if (closed < 0) return abort(failure(Stage::close_stage, errno).error());
-        if (::renameat(directory, staging, directory, name.c_str()) < 0)
-            return abort(failure(Stage::replace, errno).error());
-        if (sync_file(directory) < 0) return failure(Stage::sync_directory, errno, true);
-        return {};
+        if (!closed) return abort(closed.error());
+        if (auto moved = rename_dir_file(directory, staging, name, false, Stage::replace); !moved)
+            return abort(moved.error());
+        return sync_handle(directory, Stage::sync_directory, true);
     }
 
-    auto sweep_rule_blobs(int directory, std::span<RulesetRow const> rows) -> std::expected<void, StateError> {
-        File fd(::openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-        if (fd.get() < 0) return failure(Stage::scan, errno);
-        auto* stream = ::fdopendir(fd.get());
-        if (!stream) return failure(Stage::scan, errno);
-        (void)fd.release();
-        std::unique_ptr<DIR, decltype(&::closedir)> entries(stream, ::closedir);
+    auto sweep_rule_blobs(NativeHandle directory, std::span<RulesetRow const> rows) -> std::expected<void, StateError> {
         std::vector<std::string> retained;
+        retained.reserve(rows.size());
         for (auto const& row : rows) retained.push_back(blob_name(row.metadata.content_blake3));
+        auto candidates = directory_entries(directory, [&](std::string_view name) {
+            return name == staging || (blob_filename(name) && std::ranges::find(retained, name) == retained.end());
+        });
+        if (!candidates) return std::unexpected(candidates.error());
         bool changed = false;
-        for (;;) {
-            errno = 0;
-            auto* entry = ::readdir(stream);
-            if (!entry) {
-                if (errno != 0) return failure(Stage::scan, errno);
-                break;
-            }
-            std::string_view name(entry->d_name);
-            if (name != staging && (!blob_filename(name) || std::ranges::find(retained, name) != retained.end()))
-                continue;
-            auto deleted = remove(directory, entry->d_name, Stage::remove_blob);
+        for (auto const& item : *candidates) {
+            auto deleted = unlink_dir_file(directory, item.name, Stage::remove_blob);
             if (!deleted) return deleted;
             changed = true;
         }
-        if (changed && sync_file(directory) < 0) return failure(Stage::sync_directory, errno, true);
+        if (changed) return sync_handle(directory, Stage::sync_directory, true);
         return {};
     }
 }

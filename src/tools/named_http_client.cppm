@@ -1,5 +1,6 @@
 export module http.named_client;
 import std;
+import nexus.compat;
 import config;
 import http.header;
 import nexus.thirdparty.capy;
@@ -7,8 +8,8 @@ import nexus.thirdparty.corosio;
 
 export namespace http {
     using HttpDeadline=std::chrono::steady_clock::time_point;
-    using HttpBodyConsumer=std::function_ref<nex::capy::task<bool>(std::string_view,HttpDeadline)>;
-    using HttpHeaderConsumer=std::function_ref<void(std::string_view,std::string_view)>;
+    using HttpBodyConsumer=nexus::function_ref<nex::capy::task<bool>(std::string_view,HttpDeadline)>;
+    using HttpHeaderConsumer=nexus::function_ref<void(std::string_view,std::string_view)>;
 
     struct NamedHttpRequest {
         std::string_view target;

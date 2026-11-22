@@ -5,6 +5,7 @@ module;
 
 export module cli.proxy_run;
 import std;
+import nexus.compat;
 import nexus.thirdparty.corosio;
 import rulefile;
 import state.core;
@@ -407,7 +408,7 @@ auto nexus_run_proxy(int argc, char** argv) -> int {
                 return {};
             };
             auto published=publish_group_routes(listeners,*route_snapshots,candidate,*group_route_files,false,
-                std::function_ref<std::expected<void,std::string>()>{save});
+                nexus::function_ref<std::expected<void,std::string>()>{save});
             if (!published) return std::unexpected(std::move(published.error()));
             return durable;
         }

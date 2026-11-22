@@ -1,5 +1,6 @@
 export module dns.message_cache;
 import std;
+import nexus.compat;
 import containers.cache_index;
 import dns.message;
 import dns.input_budget;
@@ -132,7 +133,7 @@ export namespace dns {
         }
 
         auto checkpoint(this MessageCache const& self,Clock::time_point now,std::size_t bytes_left,
-            std::size_t overhead,std::function_ref<bool(View const&)> include) -> std::vector<SavedAnswer> {
+            std::size_t overhead,nexus::function_ref<bool(View const&)> include) -> std::vector<SavedAnswer> {
             std::vector<SavedAnswer> result;
             self.entries_.for_each([&](Entry const& entry) {
                 if (!include(entry.key.view) || now>=entry.expires) return;

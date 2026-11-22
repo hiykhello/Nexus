@@ -150,6 +150,16 @@ namespace desktop_ui_helpers {
             c.duration_ms, c.process_path.empty() ? "-" : c.process_path);
     }
 
+    inline auto format_route_rule_kdl(std::string_view kind, std::string_view value, std::string_view outbound) -> std::string {
+        return std::format("# appended by rule-dns-editor\nroute {{\n    rule {} \"{}\" outbound=\"{}\"\n}}\n",
+            kind, value, outbound);
+    }
+
+    inline auto format_dns_rule_kdl(std::string_view kind, std::string_view value, std::string_view server) -> std::string {
+        return std::format("# appended by dns-rule-editor\ndns {{\n    rule {} \"{}\" server=\"{}\"\n}}\n",
+            kind, value, server);
+    }
+
     inline auto build_ui_connection_items(std::vector<desktop::ActiveConnectionSnapshot> const& parsed, std::string filter)
         -> std::vector<nexus_ui::ActiveConnectionItem> {
         for (char& ch : filter) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));

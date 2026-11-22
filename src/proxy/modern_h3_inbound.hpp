@@ -271,7 +271,7 @@ namespace proxy {
                             [finished](std::exception_ptr) noexcept { finished(); })(run_bundle());
         }
 
-        auto start(Endpoint ep, std::move_only_function<void() const> failure) -> std::expected<Endpoint, std::error_code> {
+        auto start(Endpoint ep, nexus::move_only_function<void() const> failure) -> std::expected<Endpoint, std::error_code> {
             used_ = true;
             if (!factory_.retry.initialize()) return std::unexpected(std::make_error_code(std::errc::io_error));
             if (auto ec = socket_.open(ep.address().family())) return std::unexpected(ec);

@@ -1,10 +1,26 @@
 # 项目进度与交付基线
 
-更新：2026-11-22。本文记录 Nexus 当前已验证交付基线（第 91–152 批）与后续工作约束。功能目标以 [功能完整度清单](planning/feature-completion.md)、[支持矩阵](planning/proxy-kernel-support-matrix.md) 和 [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) 为准，编码与工程规范遵循 [C++ 编码规范](development/cpp-guidelines.md) 与 [文件行数规范](development/file-sizes.md)。
+更新：2026-11-22。本文记录 Nexus 当前已验证交付基线（第 91–158 批）与后续工作约束。功能目标以 [功能完整度清单](planning/feature-completion.md)、[支持矩阵](planning/proxy-kernel-support-matrix.md) 和 [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) 为准，编码与工程规范遵循 [C++ 编码规范](development/cpp-guidelines.md) 与 [文件行数规范](development/file-sizes.md)。
 
 ---
 
-## 当前交付状态（第 91–152 批全部已完成并验收）
+## 当前交付状态（第 91–158 批全部已完成并验收）
+
+### 0. 第 153–158 批 · Clang 23 C++26 零反射迁移、跨平台 OS 原语 Phase B、生产服务能力、P3/P4 协议与 CI 现代化
+详细规划见 [next-batches-153-158.md](planning/next-batches-153-158.md)。
+
+- **Batch 153（Clang `llvm@23.1.3` + 静态 `libc++` C++26 零反射迁移、Phase B OS 原语与 CI 现代化）**：
+  - 移除 `-freflection`/`<meta>`/`-fno-module-lazy`，统一默认工具链为 `llvm@23.1.3` 与静态链接 `libc++.a`/`libc++abi.a`/`libunwind.a`（`ldd` 零 `libstdc++.so.6` 依赖）；在独立零依赖基础包 [compat.cppm](../src/platform/compat.cppm) 与 [compat_callable.cppm](../src/platform/compat_callable.cppm) 落地独立实现的 zero-overhead `nexus::inplace_vector`、`nexus::scope_exit`、`nexus::function_ref`、`nexus::atomic_shared_ptr` 及 32B SBO `nexus::move_only_function`/`nexus::copyable_function`，清理全仓 `<experimental/scope>`、`FILE*`/`system_clock` 等 `libc++` 差异，修复 Glaze 无反射外链接结构体、`http2::detail::CoreLimits::max_frame_size` 字段对齐、`SshProfile::~SshProfile()` 与 QUIC ABI 模块 `module;` GMF；`batch153-phase-b-unit`、`state-{unit,fakeip-dns-unit,ruleset-cache-unit}` 全绿。
+  - 补齐 `src/state/file_{posix,windows}`、`src/rulefile/windows.cpp`、`src/packet/{fd_stub,tun_darwin,tun_windows}` 与 `src/platform/process_owner.{cppm,_linux,_darwin,_windows}`；升级 `.github/workflows/ci-cross-platform.yml` 至 `ubuntu-latest` / `windows-latest` / `macos-latest` 与新版 Actions。
+- **Batch 154（`acme` 自动证书与 `sni-demux` 四层 SNI 分流）**：
+  - 实现 `src/acme/{types,jws,store,client}`（RFC 8555 HTTP-01/TLS-ALPN-01/DNS-01、ES256 JWS、P-256 CSR/校验自签、原子落盘与动态热切换）与 `src/proxy/sni_demux`（L4 TLS ClientHello SNI/ALPN 零缓冲嗅探与策略分流）；`acme-unit` 与 `sni-demux-unit` 全绿。
+- **Batch 155（局域网 DNS、独立 DERP Relay、`ssmapi` 多用户与内存看门狗）**：
+  - 交付 `src/dns/{dhcp_upstream,mdns}`（DHCP Option 6 + mDNS RFC 6762）、`src/tailscale/derp_server`（独立 DERP Relay）、`src/control_api/ssmapi`（多用户 uPSK/配额 CRUD + HTTP 路由）及 `src/memory/watchdog`（soft/hard/emergency 冷却水位回调）；`lan-dns-unit` 与 `batch155-unit` 全绿。
+- **Batch 156（K12 `on-demand` / `source-mac` / `netns` 与四端 GUI/打包收口）**：
+  - 新增 `src/endpoint/on_demand`、`src/platform/neighbor_mac`、`src/platform/netns_config`；补齐 Desktop 服务安装器（Slint `/services`、Win32/POSIX）、`packaging/desktop/package-desktop.sh`、Android `CoreArtifactVerifier` + `OfflineRulesetCard`、Apple `UtunPassthroughAdapter` + `LoginItemManager` 及 Web `/services` 页面；`batch156-unit` 全绿。
+- **Batch 157 & 158（P3 企业 VPN、反向隧道、L3 `bridge`、外部 `tor` 与基准测试）**：
+  - 新增 `src/openvpn`（P2 MP 解帧/AES-256-GCM/ChaCha20-Poly1305 数据面）、`src/openconnect`（XML+JSON 认证与 CSTP 帧收发）、`src/proxy/reverse_tunnel`、`src/packet/bridge`（`batch157-unit` 全绿）及 `src/proxy/tor_outbound`（`batch158-unit` 全绿）；补齐 `tests/bench_protocols.py`、`scripts/release-offline-bundle.sh` 与 `mcpp_sidecar_isolation.py` 扩展隔离校验。
+- **Clang 23 工作区验收**：12 组核心单元测试、`profile-linux-uring` 全量 CLI 构建（42.61s）、`low-memory-client.kdl` 配置校验、`batch151_live_integration.py`（5/5 套件）、`bench_protocols.py --quick`（`VmRSS 23.19 -> 25.61 MiB`、`FDs 16 -> 16 (Δ0)`、`socks5-direct 1247.27 Mbps`、`http-connect-direct 2052.86 Mbps`、`mixed-socks5-direct 2033.72 Mbps`）、Desktop 实机 CTest（0.56s）、`web`（Vite 8.3.8 / 46ms）及全部 5 项 `mcpp` 守护测试均已通过。
 
 ### 1. 第 147–152 批 · 生产配置闭环、P1 协议、Capy/Corosio 升级收敛、OS 模块拆分与四端 GUI 联动
 详细规划见 [next-batches-147-152.md](planning/next-batches-147-152.md)。

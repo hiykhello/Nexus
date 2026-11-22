@@ -1,5 +1,6 @@
 export module tuic.client;
 import std;
+import nexus.compat;
 import crypto;
 import tuic.wire;
 export import tuic.transport_options;
@@ -90,7 +91,7 @@ export namespace tuic {
             quic::SessionHandle owner;
             nex::capy::async_event& changed_event;
             std::deque<IncomingUdpPacket> udp_rx;
-            std::inplace_vector<std::uint16_t,256> udp_associations;
+            nexus::inplace_vector<std::uint16_t,256> udp_associations;
             std::uint32_t next_association=1;
             Hooks(Registry& r, quic::SessionHandle h, nex::capy::async_event& ev) noexcept
                 : registry(r), owner(h), changed_event(ev) {}
@@ -300,7 +301,7 @@ export namespace tuic {
         auto dissociate(std::uint16_t assoc_id) -> bool {
             if (!factory_.bundle) return false;
             auto& bundle=*factory_.bundle;
-            std::erase(bundle.hooks.udp_associations,assoc_id);
+            nexus::erase(bundle.hooks.udp_associations,assoc_id);
             std::erase_if(bundle.hooks.udp_rx,[assoc_id](auto const& packet){return packet.assoc_id==assoc_id;});
             bundle.hooks.changed();
             auto queued=bundle.app.send_dissociate(assoc_id);

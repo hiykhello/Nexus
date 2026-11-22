@@ -21,8 +21,6 @@ import nexus.thirdparty.corosio;
 
 namespace io = nex::corosio;
 namespace capy = nex::capy;
-namespace tuic = tuic;
-namespace tls = tls;
 using Clock = std::chrono::steady_clock;
 
 namespace {

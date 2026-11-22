@@ -4,6 +4,7 @@ export import tls.server_hello;
 import tls.handshake;
 import tls.hello_config;
 import std;
+import nexus.compat;
 
 export namespace tls {
     enum class ClientHelloDriverError { invalid_state, invalid_hello, invalid_record, invalid_retry, crypto_error };
@@ -17,7 +18,7 @@ export namespace tls {
         crypto::Bytes first_wire_,current_wire_,retry_wire_,server_wire_;
         std::optional<crypto::X25519Private> x_;
         std::optional<HybridClient> hybrid_;
-        std::inplace_vector<crypto::EcPrivate,2> ec_;
+        nexus::inplace_vector<crypto::EcPrivate,2> ec_;
         ClientHelloExchange(ClientHello&& hello,crypto::Bytes&& wire,HandshakeTransport transport);
         static auto frame(ClientHello const& hello) -> std::expected<crypto::Bytes,ClientHelloDriverError> {
             auto body=hello.encode();if (!body)return std::unexpected(ClientHelloDriverError::invalid_hello);

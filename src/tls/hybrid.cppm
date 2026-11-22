@@ -26,6 +26,7 @@ export namespace tls {
         std::optional<crypto::X25519Private> x25519_;
         HybridClient(crypto::Mlkem768Private&& kem, crypto::X25519Private&& x25519) noexcept;
     public:
+        ~HybridClient();
         HybridClient(HybridClient const&) = delete;
         auto operator=(HybridClient const&) -> HybridClient& = delete;
         HybridClient(HybridClient&& other) noexcept;

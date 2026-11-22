@@ -3,6 +3,7 @@ export import tls.psk;
 import tls.server_hello;
 import tls.certificate_trust;
 import std;
+import nexus.compat;
 
 export namespace tls {
     // Compute once for an immutable trust/profile snapshot. Application scope
@@ -58,7 +59,7 @@ export namespace tls {
     class PskClientPolicy {
         enum class State { initial,offered,keys,master,derived,complete,taken,failed } state_=State::initial;
         TicketBinding binding_;
-        std::inplace_vector<Offer,8> offered_;
+        nexus::inplace_vector<Offer,8> offered_;
         std::optional<Secret> master_,resumption_;
         crypto::Hash hash_=crypto::Hash::sha256;
         std::uint64_t offered_ms_=0;
@@ -73,14 +74,14 @@ export namespace tls {
         };
         [[no_unique_address]] std::conditional_t<early_capable,EarlyState,NoPsk> early_;
         [[no_unique_address]] TicketCache cache_;
-        PskClientPolicy(TicketBinding&& binding,std::inplace_vector<Offer,8>&& offers) noexcept
+        PskClientPolicy(TicketBinding&& binding,nexus::inplace_vector<Offer,8>&& offers) noexcept
             requires std::same_as<TicketCache,NoTicketCache>
             : binding_(std::move(binding)),offered_(std::move(offers)) {}
-        PskClientPolicy(TicketBinding&& binding,std::inplace_vector<Offer,8>&& offers,TicketCache cache) noexcept
+        PskClientPolicy(TicketBinding&& binding,nexus::inplace_vector<Offer,8>&& offers,TicketCache cache) noexcept
             requires (!std::same_as<TicketCache,NoTicketCache>)
             : binding_(std::move(binding)),offered_(std::move(offers)),cache_(cache) {}
-        auto views() const -> std::expected<std::inplace_vector<PskOfferView,8>,PskError> {
-            std::inplace_vector<PskOfferView,8> result;
+        auto views() const -> std::expected<nexus::inplace_vector<PskOfferView,8>,PskError> {
+            nexus::inplace_vector<PskOfferView,8> result;
             for (auto const& value:offered_) {
                 auto view=value.offer(offered_ms_);if (!view) return std::unexpected(view.error());result.push_back(*view);
             }
@@ -103,7 +104,7 @@ export namespace tls {
             return *this;
         }
         template<class... CacheArgument>
-        [[nodiscard]] static auto create(TicketBinding binding,std::inplace_vector<Offer,8> offers={},CacheArgument&... cache) -> std::expected<PskClientPolicy,PskError> {
+        [[nodiscard]] static auto create(TicketBinding binding,nexus::inplace_vector<Offer,8> offers={},CacheArgument&... cache) -> std::expected<PskClientPolicy,PskError> {
             if (binding.server_name.empty() || binding.server_name.size()>253 || binding.alpn.size()>255) return std::unexpected(PskError::invalid_input);
             for (auto const& offer:offers) if (offer.binding()!=binding) return std::unexpected(PskError::identity_mismatch);
             return PskClientPolicy(std::move(binding),std::move(offers),cache...);
@@ -133,7 +134,7 @@ export namespace tls {
         auto prepare(ClientHello& hello) -> std::expected<void,PskError> {
             if (state_!=State::initial) return std::unexpected(PskError::invalid_state);
             offered_ms_=Clock::now();
-            std::erase_if(offered_,[&](auto const& value) {return !value.usable(offered_ms_) ||
+            nexus::erase_if(offered_,[&](auto const& value) {return !value.usable(offered_ms_) ||
                 !std::ranges::any_of(hello.cipher_suites,[&](auto suite){return psk_cipher_hash(suite)==value.hash();});});
             auto values=views();if (!values) return std::unexpected(values.error());
             bool early=false;
@@ -156,7 +157,7 @@ export namespace tls {
             if (state_!=State::offered) return std::unexpected(PskError::invalid_state);
             auto hash=psk_cipher_hash(suite);if (!hash) return std::unexpected(PskError::invalid_selection);
             offered_ms_=Clock::now();
-            std::erase_if(offered_,[&](auto const& value) {return value.hash()!=*hash || !value.usable(offered_ms_);});
+            nexus::erase_if(offered_,[&](auto const& value) {return value.hash()!=*hash || !value.usable(offered_ms_);});
             std::erase_if(hello.extensions,[](auto const& extension) {return extension.type==41;});
             auto values=views();if (!values) return std::unexpected(values.error());return prepare_psk_hello(hello,*values);
         }

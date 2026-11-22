@@ -3,7 +3,7 @@ import dns.input_budget;
 import dns.corosio_query;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;namespace io=nex::corosio;namespace capy=nex::capy;
+namespace io=nex::corosio;namespace capy=nex::capy;
 using namespace std::chrono_literals;
 auto work(io::io_context& context,std::uint16_t port,bool tcp,bool& ok) -> capy::task<> {
     auto capacity=tcp ? std::size_t{60000} : std::size_t{1233};

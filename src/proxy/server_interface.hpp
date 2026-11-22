@@ -142,7 +142,7 @@
         std::optional<socks5::Request> fixed_tcp_target;
         io::endpoint udp_advertise;
         std::string fixed_unix_target;
-        std::move_only_function<void() noexcept> unix_listener_cleanup;
+        nexus::move_only_function<void() noexcept> unix_listener_cleanup;
         std::atomic_bool drain_requested{false}, drain_complete{false};
         Inbound inbound_type = Inbound::socks5;
         std::vector<std::unique_ptr<Server>> workers;
@@ -160,7 +160,7 @@
         std::optional<RuntimeFailure> failure_state;
         auto record_failure(RuntimeFailure value) -> void;
         auto get_failure() const -> std::optional<RuntimeFailure>;
-        std::atomic<std::shared_ptr<OutboundProbe>> pending_probe;
+        nexus::atomic_shared_ptr<OutboundProbe> pending_probe;
         dns::TlsQueryMaintenance dns_tls_maintenance;
         bool probe_running=false;
         auto close_listener() noexcept -> void;

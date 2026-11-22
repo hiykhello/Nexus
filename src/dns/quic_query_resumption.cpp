@@ -1,5 +1,6 @@
 module dns.quic_query;
 import std;
+import nexus.compat;
 import crypto;
 import dns.corosio_query;
 import dns.input_budget;
@@ -22,7 +23,7 @@ import quic.resumption;
 namespace dns::doq_detail {
     constexpr bool supports_early_data=true;
     class TransportTicket : public tls::ResumptionTicket {
-        std::inplace_vector<std::uint8_t,256> parameters_;
+        nexus::inplace_vector<std::uint8_t,256> parameters_;
         std::uint16_t suite_;
 
         TransportTicket(tls::ResumptionTicket&& ticket,std::uint16_t suite,std::span<std::uint8_t const> parameters)

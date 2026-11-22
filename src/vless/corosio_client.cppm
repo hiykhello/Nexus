@@ -1,5 +1,6 @@
 export module vless.corosio_client;
 import std;
+export import nexus.compat;
 import vless;
 import httpupgrade;
 import httpupgrade.stream;
@@ -183,7 +184,7 @@ export namespace vless::detail {
         using ReadTask=nex::capy::task<std::expected<std::size_t,tls::detail::ByteStreamError>>;
         LocalSocket& local_;
         Client& client_;
-        std::move_only_function<void()> touch_;
+        nexus::move_only_function<void()> touch_;
         bool canceled_=false,upload_started_=false,download_started_=false,response_ready_=false,cancel_local_=true;
         template<class Operation,bool Read>
         class Result {
@@ -234,9 +235,9 @@ export namespace vless::detail {
         }
     public:
         DuplexRelay(LocalSocket& local,tls::detail::ApplicationConnection<RemoteSocket>&,Client& client,
-                    std::move_only_function<void()> touch={},bool cancel_local=true)
+                    nexus::move_only_function<void()> touch={},bool cancel_local=true)
             : local_(local),client_(client),touch_(std::move(touch)),cancel_local_(cancel_local) {}
-        DuplexRelay(LocalSocket& local,Client& client,std::move_only_function<void()> touch={},bool cancel_local=true)
+        DuplexRelay(LocalSocket& local,Client& client,nexus::move_only_function<void()> touch={},bool cancel_local=true)
             : local_(local),client_(client),touch_(std::move(touch)),cancel_local_(cancel_local) {}
         DuplexRelay(DuplexRelay const&)=delete;
         auto operator=(DuplexRelay const&) -> DuplexRelay& = delete;

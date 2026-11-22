@@ -31,12 +31,13 @@ fakeip-history = { implies = ["fakeip"], sources = [
 # requesting either hook must supply its matching external function.
 test-dns-lifetime = { defines = ["NEXUS_TEST_DNS_RECEIVE"] }
 test-fakeip = { defines = ["NEXUS_TEST_FAKEIP"] }
+dhcp = { sources = ["dhcp_upstream.cppm", "dhcp_upstream.cpp"] }
+mdns = { sources = ["mdns.cppm", "mdns.cpp"] }
 
 [feature-deps.fakeip-history]
 nexus.crypto = { path = "../crypto" }
 
 [build]
-flags = [{ glob = "doh3_pool.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "quic_query.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "quic_query_resumption.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "https_query.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "doh_exchange.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "doh_pool.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "tls_query.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "address_race_program.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_program.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_exchange.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "message_exchange.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_tcp.cppm", cxxflags = ["-fno-module-lazy"] }, { glob = "message_tcp_listener.cpp", cxxflags = ["-fno-module-lazy"] }, { glob = "message_udp_listener.cpp", cxxflags = ["-fno-module-lazy"] }]
 sources = [
     "message.cppm", "message.cpp", "message_addresses.cpp", "message_ecs.cpp", "message_encode.cpp", "message_parse.cpp", "input_budget.cppm", "response_match.cppm", "response_addresses.cppm", "response_program.cppm", "evaluate_owner.cppm", "evaluate_race.cppm", "response_race_walk.cppm", "race_admission.cppm", "address_race_program.cppm", "message_cache.cppm", "message_exchange.cppm", "message_exchange.cpp", "message_synthetic.cppm", "message_race_program.cppm", "message_program.cppm", "message_fakeip_disabled.cppm", "message_tcp.cppm", "message_tcp_listener.cppm", "message_tcp_listener.cpp", "message_udp_listener.cppm", "message_udp_listener.cpp", "response_cache.cppm", "response_query.cppm", "local_response.cppm", "predefined.cppm", "cache.cppm", "cache.cpp", "reverse.cppm",
     "local_config.cppm", "local_config.cpp", "corosio_query.cppm", "corosio_query.cpp", "tls_query.cppm", "tls_query_disabled.cpp", "https_query.cppm", "https_query_disabled.cpp", "doh3_pool.cppm", "quic_query.cppm", "quic_query_disabled.cpp",

@@ -1,5 +1,6 @@
 module masque.ip_server;
 import std;
+import nexus.compat;
 import masque.capsule;
 import masque.connect_ip;
 import masque.ip_control;
@@ -8,7 +9,7 @@ import masque.ip_receiver;
 
 namespace masque {
     struct IpServerStream::Impl {
-        using Packet = std::inplace_vector<std::uint8_t, IpServerPort::mtu>;
+        using Packet = nexus::inplace_vector<std::uint8_t, IpServerPort::mtu>;
         IpServerPort& port_;
         ConnectIpScope scope_;
         IpReceiver<Impl, IpServerPort::mtu + 16, 2, 16, 8> incoming_{*this};
@@ -16,7 +17,7 @@ namespace masque {
         std::size_t assignment_count_ = 0;
         std::array<RouteEntry, 16> routes_{};
         std::size_t route_count_ = 0;
-        std::inplace_vector<Packet, 8> ingress_;
+        nexus::inplace_vector<Packet, 8> ingress_;
         bool open_ = false, failed_ = false, assignments_pending_ = false, routes_pending_ = false, withdrawing_ = false;
 
         auto permits(std::span<std::uint8_t const> bytes, bool client_to_tun) const noexcept -> bool {

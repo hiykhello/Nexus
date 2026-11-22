@@ -8,7 +8,6 @@ import nexus.thirdparty.corosio;
 
 namespace capy=nex::capy;
 namespace io=nex::corosio;
-namespace dns=dns;
 using Result=std::expected<dns::Bytes,dns::detail::ResolveError>;
 struct Operation {
     dns::detail::MessageQuery query;

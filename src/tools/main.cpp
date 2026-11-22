@@ -1,5 +1,3 @@
-#include <meta>
-
 import std;
 import cli.endpoint;
 import cli.control;
@@ -19,17 +17,48 @@ namespace {
     enum class RuleCommand { convert, explain, fetch, watch };
 
     template<class T>
+    struct CommandEntry {
+        std::string_view name;
+        T value;
+    };
+
+    template<class T>
+    struct CommandTable;
+
+    template<>
+    struct CommandTable<Command> {
+        static constexpr auto entries = std::to_array<CommandEntry<Command>>({
+            {"run", Command::run},
+            {"check", Command::check},
+            {"rule", Command::rule},
+            {"endpoint", Command::endpoint},
+            {"control", Command::control},
+            {"state", Command::state},
+        });
+    };
+
+    template<>
+    struct CommandTable<RuleCommand> {
+        static constexpr auto entries = std::to_array<CommandEntry<RuleCommand>>({
+            {"convert", RuleCommand::convert},
+            {"explain", RuleCommand::explain},
+            {"fetch", RuleCommand::fetch},
+            {"watch", RuleCommand::watch},
+        });
+    };
+
+    template<class T>
     auto command(std::string_view text) -> std::optional<T> {
-        template for (constexpr auto item : std::define_static_array(std::meta::enumerators_of(^^T))) {
-            if (text == std::meta::identifier_of(item)) return [:item:];
+        for (const auto& entry : CommandTable<T>::entries) {
+            if (text == entry.name) return entry.value;
         }
         return {};
     }
 
     template<class T>
     auto list_commands(std::ostream& out) -> void {
-        template for (constexpr auto item : std::define_static_array(std::meta::enumerators_of(^^T))) {
-            out << "  " << std::meta::identifier_of(item) << '\n';
+        for (const auto& entry : CommandTable<T>::entries) {
+            out << "  " << entry.name << '\n';
         }
     }
 

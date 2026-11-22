@@ -1,12 +1,37 @@
 module tailscale.control_messages;
 import std;
+import nexus.compat;
 import crypto;
 import nexus.thirdparty.glaze;
 import nexus.thirdparty.corosio;
 
 namespace tailscale::control_messages {
-    namespace {
+    namespace detail {
         using Raw=nex::glaze::raw_json_view;
+        struct EmptyObject {};
+        struct RegisterJson {Raw User,Login,NodeKeyExpired,MachineAuthorized,AuthURL,NodeKeySignature,Error;};
+        struct NodeJson {
+            Raw ID,StableID,Name,User,Key,KeyExpiry,Machine,DiscoKey,Addresses,AllowedIPs,Endpoints,HomeDERP;
+            Raw Hostinfo,Created,Cap,Tags,PrimaryRoutes,LastSeen,Online,MachineAuthorized,Expired;
+            Raw KeySignature,Capabilities,CapMap,UnsignedPeerAPIOnly,SelfNodeV4MasqAddrForThisPeer,SelfNodeV6MasqAddrForThisPeer;
+        };
+        struct MapJson {
+            Raw MapSessionHandle,Seq,KeepAlive,Node,DERPMap,Peers,PeersChanged,PeersRemoved,DNSConfig,Domain,ControlTime;
+            Raw PacketFilter,PacketFilters,TKAInfo,PeersChangedPatch,PeerSeenChange,OnlineChange;
+        };
+        struct DerpMapJson {Raw HomeParams,Regions,omitDefaultRegions;};
+        struct DerpRegionJson {Raw RegionID,RegionCode,RegionName,Latitude,Longitude,Avoid,NoMeasureNoHome,Nodes;};
+        struct DerpNodeJson {Raw Name,RegionID,HostName,CertName,IPv4,IPv6,STUNPort,STUNOnly,DERPPort,InsecureForTests,STUNTestIP,CanPort80;};
+    }
+    namespace {
+        using detail::Raw;
+        using detail::EmptyObject;
+        using detail::RegisterJson;
+        using detail::NodeJson;
+        using detail::MapJson;
+        using detail::DerpMapJson;
+        using detail::DerpRegionJson;
+        using detail::DerpNodeJson;
         struct Options : nex::glaze::opts {bool validate_trailing_whitespace=true,validate_skipped=true;};
         inline constexpr auto options=[] {Options value;value.null_terminated=false;value.error_on_unknown_keys=true;return value;}();
         auto failure(Error error,unsigned status=0) noexcept -> std::unexpected<Failure> {return std::unexpected(Failure{error,status});}
@@ -22,7 +47,7 @@ namespace tailscale::control_messages {
         auto unique_object(std::string_view json) -> std::expected<void,Failure> {
             // Go merges repeated map/object fields. Reject repeats rather
             // than lose an earlier security capability in a last raw slice.
-            std::inplace_vector<std::pair<std::string_view,Raw>,64> fields;
+            nexus::inplace_vector<std::pair<std::string_view,Raw>,64> fields;
             if (!read(fields,json)) return failure(Error::json);
             for (std::size_t i=0;i<fields.size();++i) {
                 if (fields[i].first.contains('\\')) return failure(Error::schema);
@@ -46,15 +71,13 @@ namespace tailscale::control_messages {
             if (!nonzero(value)) return failure(Error::identity);
             auto key=Key::from_bytes(value);if (!key) return failure(Error::identity);return *key;
         }
-        struct EmptyObject {};
         auto active(Raw const& raw,std::string_view empty) -> bool {
             auto f=field(raw);if (f.presence!=Presence::value) return false;
-            if (empty=="[]") {std::inplace_vector<Raw,1> values;return !read(values,f.json) || !values.empty();}
+            if (empty=="[]") {nexus::inplace_vector<Raw,1> values;return !read(values,f.json) || !values.empty();}
             if (empty=="{}") {EmptyObject value;return !read(value,f.json);}
             if (empty=="\"\"") {std::string_view value;return !read(value,f.json) || !value.empty();}
             return true;
         }
-        struct RegisterJson {Raw User,Login,NodeKeyExpired,MachineAuthorized,AuthURL,NodeKeySignature,Error;};
         struct EraseOutput {std::span<std::uint8_t> output;bool success=false;~EraseOutput() {if (!success) crypto::cleanse(output);}};
         auto safe_text(std::string_view text,std::size_t maximum,bool required=true) noexcept -> bool {
             return (!required || !text.empty()) && text.size()<=maximum && std::ranges::none_of(text,[](unsigned char c) {return c<32 || c==127;});
@@ -64,18 +87,6 @@ namespace tailscale::control_messages {
             auto one=reinterpret_cast<std::uintptr_t>(output.data()),two=reinterpret_cast<std::uintptr_t>(input.data());
             return one<=two ? two-one<output.size() : one-two<input.size();
         }
-        struct NodeJson {
-            Raw ID,StableID,Name,User,Key,KeyExpiry,Machine,DiscoKey,Addresses,AllowedIPs,Endpoints,HomeDERP;
-            Raw Hostinfo,Created,Cap,Tags,PrimaryRoutes,LastSeen,Online,MachineAuthorized,Expired;
-            Raw KeySignature,Capabilities,CapMap,UnsignedPeerAPIOnly,SelfNodeV4MasqAddrForThisPeer,SelfNodeV6MasqAddrForThisPeer;
-        };
-        struct MapJson {
-            Raw MapSessionHandle,Seq,KeepAlive,Node,DERPMap,Peers,PeersChanged,PeersRemoved,DNSConfig,Domain,ControlTime;
-            Raw PacketFilter,PacketFilters,TKAInfo,PeersChangedPatch,PeerSeenChange,OnlineChange;
-        };
-        struct DerpMapJson {Raw HomeParams,Regions,omitDefaultRegions;};
-        struct DerpRegionJson {Raw RegionID,RegionCode,RegionName,Latitude,Longitude,Avoid,NoMeasureNoHome,Nodes;};
-        struct DerpNodeJson {Raw Name,RegionID,HostName,CertName,IPv4,IPv6,STUNPort,STUNOnly,DERPPort,InsecureForTests,STUNTestIP,CanPort80;};
         auto endpoint_address(nex::corosio::endpoint const& source) -> Endpoint {
             Endpoint result;result.family=source.is_v4() ? 4 : 6;result.port=source.port();
             if (source.is_v4()) {auto address=source.address().to_v4().to_bytes();std::ranges::copy(address,result.address.begin());}
@@ -131,9 +142,9 @@ namespace tailscale::control_messages {
             return std::optional<sys_seconds>{sys_days(date) + hours(h) + minutes(m) + seconds(s)};
         }
         template<std::size_t N,class T,class Parse>
-        auto list(Raw const& raw,std::inplace_vector<T,N>& output,Parse parse) -> std::expected<void,Failure> {
+        auto list(Raw const& raw,nexus::inplace_vector<T,N>& output,Parse parse) -> std::expected<void,Failure> {
             if (field(raw).presence!=Presence::value) return {};
-            std::inplace_vector<Raw,N> input;if (!read(input,raw.str)) return failure(Error::schema);
+            nexus::inplace_vector<Raw,N> input;if (!read(input,raw.str)) return failure(Error::schema);
             for (auto const& item:input) {
                 auto value=parse(item);if (!value) return std::unexpected(value.error());
                 if (std::ranges::find(output,*value)!=output.end()) return failure(Error::duplicate);
@@ -180,9 +191,9 @@ namespace tailscale::control_messages {
             if (auto parsed=list(wire.Endpoints,result.endpoints,endpoint);!parsed) return std::unexpected(parsed.error());
             return result;
         }
-        auto nodes(Raw const& raw,std::inplace_vector<PeerCandidate,max_peers>& output,control::NodePublic const& self) -> std::expected<void,Failure> {
+        auto nodes(Raw const& raw,nexus::inplace_vector<PeerCandidate,max_peers>& output,control::NodePublic const& self) -> std::expected<void,Failure> {
             if (field(raw).presence!=Presence::value) return {};
-            std::inplace_vector<Raw,max_peers> items;if (!read(items,raw.str)) return failure(Error::schema);
+            nexus::inplace_vector<Raw,max_peers> items;if (!read(items,raw.str)) return failure(Error::schema);
             for (auto const& item:items) {
                 auto peer=node(item);if (!peer) return std::unexpected(peer.error());if (peer->key==self) return failure(Error::identity);
                 for (auto const& existing:output) if (existing.id==peer->id || existing.key==peer->key) return failure(Error::duplicate);
@@ -350,7 +361,7 @@ namespace tailscale::control_messages {
             if(!unique_object(input.json) || !read(map,input.json))return failure(Error::schema);
             auto regions_field=field(map.Regions);
             if(regions_field.presence!=Presence::value)return std::nullopt;
-            std::inplace_vector<std::pair<std::string_view,Raw>,64> regions;
+            nexus::inplace_vector<std::pair<std::string_view,Raw>,64> regions;
             if(!unique_object(regions_field.json) || !read(regions,regions_field.json))return failure(Error::schema);
             DerpNodes output;
             for(auto const& [key,value]:regions) {
@@ -364,7 +375,7 @@ namespace tailscale::control_messages {
                    !read(region_id,field(region.RegionID).json) || region_id!=id) return failure(Error::schema);
                 auto nodes_field=field(region.Nodes);
                 if(nodes_field.presence!=Presence::value)continue;
-                std::inplace_vector<Raw,16> nodes;
+                nexus::inplace_vector<Raw,16> nodes;
                 if(!read(nodes,nodes_field.json))return failure(Error::schema);
                 for(auto const& raw:nodes) {
                     auto node_field=field(raw);

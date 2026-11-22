@@ -1,5 +1,6 @@
 export module cli.rule_fetch_h3;
 import std;
+export import nexus.compat;
 import cli.rule_fetch_response;
 import platform.socket_options;
 import proxy;
@@ -9,7 +10,7 @@ import nexus.thirdparty.corosio;
 
 export namespace cli::rule_fetch {
     inline constexpr bool http3_enabled=true;
-    using Http3Resolver=std::move_only_function<
+    using Http3Resolver=nexus::move_only_function<
         nex::capy::task<std::expected<std::vector<nex::corosio::endpoint>,int>>(std::chrono::steady_clock::time_point)>;
 
     struct Http3Tunnel {
@@ -21,7 +22,7 @@ export namespace cli::rule_fetch {
             if (session) session->close();
         }
     };
-    using Http3TunnelFactory=std::move_only_function<std::unique_ptr<Http3Tunnel>() const>;
+    using Http3TunnelFactory=nexus::move_only_function<std::unique_ptr<Http3Tunnel>() const>;
 
     struct Http3Dial {
         nex::corosio::io_context& context;

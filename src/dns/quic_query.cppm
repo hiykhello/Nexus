@@ -3,6 +3,7 @@ module;
 
 export module dns.quic_query;
 import std;
+export import nexus.compat;
 import proxy.v4;
 import dns.corosio_query;
 import platform.socket_options;
@@ -24,7 +25,7 @@ export namespace dns {
         ::add_convention<DnsDatagramReceive,detail::dns_capy::task<detail::dns_capy::results<std::size_t>>(
             detail::dns_capy::mutable_buffer,detail::dns_io::endpoint&)>::build {};
     using QuicDnsDatagram=pro::proxy<QuicDnsDatagramFacade>;
-    using QuicDnsDatagramFactory=std::move_only_function<QuicDnsDatagram(detail::dns_io::io_context&) const>;
+    using QuicDnsDatagramFactory=nexus::move_only_function<QuicDnsDatagram(detail::dns_io::io_context&) const>;
 
     [[nodiscard]] auto make_quic_query(std::string_view server_name,std::string_view ca_file,platform::SocketBinding, std::chrono::milliseconds connect_timeout=std::chrono::seconds(5),bool early_data=false,QuicDnsDatagramFactory={})
         -> std::expected<detail::ProtectedQuery,std::string>;

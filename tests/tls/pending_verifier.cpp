@@ -1,4 +1,5 @@
 import std;
+import nexus.compat;
 import tls.client_hello_driver;
 
 static bool deny_allocations=false;
@@ -117,8 +118,8 @@ int main() {
     using Function=bool (*)(Chain);
     Function null_function=nullptr;
     t::CertificateVerifier empty;
-    std::copyable_function<bool(Chain) const> empty_copy;
-    std::move_only_function<int(Chain) const> empty_other;
+    nexus::copyable_function<bool(Chain) const> empty_copy;
+    nexus::move_only_function<int(Chain) const> empty_other;
     t::PendingCertificateVerifier a{null_function},b{std::move(empty)},c{nullptr},d{empty_copy},e{std::move(empty_other)};
     if (a || b || c || d || e || a.release() || b.release() || c.release() || d.release() || e.release()) return 15;
     return 0;

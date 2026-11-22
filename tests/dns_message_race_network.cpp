@@ -7,7 +7,6 @@ import dns.policy;
 import dns.corosio_resolver;
 import nexus.thirdparty.capy;
 import nexus.thirdparty.corosio;
-namespace dns=dns;
 namespace io=nex::corosio;
 namespace capy=nex::capy;
 auto main(int argc,char** argv) -> int {

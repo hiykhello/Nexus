@@ -39,12 +39,6 @@ namespace proxy {
             ~SshProfile();
         };
 
-        SshProfile::~SshProfile() {
-            if (auth.password)
-                crypto::cleanse(std::span<std::uint8_t>(
-                    reinterpret_cast<std::uint8_t*>(auth.password->data()), auth.password->size()));
-        }
-
         struct SshLower {
             using Candidates = LowerConnector::Candidates;
             Session& session;
@@ -174,6 +168,12 @@ namespace proxy {
                 co_return std::move(*accepted);
             }
         };
+
+        SshProfile::~SshProfile() {
+            if (auth.password)
+                crypto::cleanse(std::span<std::uint8_t>(
+                    reinterpret_cast<std::uint8_t*>(auth.password->data()), auth.password->size()));
+        }
 
         template<int Mode>
         auto ssh_slots(SshProfile& profile) noexcept -> auto& {

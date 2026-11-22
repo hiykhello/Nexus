@@ -1,5 +1,6 @@
 module state.core;
 import std;
+import nexus.compat;
 import nexus.thirdparty.blake3;
 
 namespace state {
@@ -109,7 +110,7 @@ namespace state {
     }
 
     auto ClearEpoch::publish(this ClearEpoch& self, std::uint64_t expected,
-                             std::function_ref<std::expected<void, StateError>()> action)
+                             nexus::function_ref<std::expected<void, StateError>()> action)
         -> std::expected<void, StateError> {
         std::lock_guard lock(self.gate_);
         if (expected != self.current()) return std::unexpected(StateError{Stage::stale_epoch});

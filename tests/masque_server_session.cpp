@@ -121,7 +121,6 @@ auto field(std::string_view name,std::string_view value) -> h::nghttp3_nv {
     return {reinterpret_cast<std::uint8_t const*>(name.data()),reinterpret_cast<std::uint8_t const*>(value.data()),name.size(),value.size(),h::nv_flag_none};
 }
 
-namespace net=net;
 struct TargetPolicy {
     unsigned wakes=0;
     auto changed() noexcept -> void {++wakes;}

@@ -16,6 +16,7 @@
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/ipv6_address.hpp>
 import std;
+import nexus.compat;
 import dns.corosio_local;
 import dns.message;
 import dns.corosio_query;

@@ -1,10 +1,11 @@
 export module cli.control;
 import std;
+import nexus.compat;
 import state.lock;
 
 export namespace cli {
     enum class ControlRole { administrator, reader };
-    using ControlHandler=std::function_ref<std::expected<std::string,std::string>(
+    using ControlHandler=nexus::function_ref<std::expected<std::string,std::string>(
         ControlRole,std::span<std::string_view const>)>;
 
     struct ControlDiagnostics {

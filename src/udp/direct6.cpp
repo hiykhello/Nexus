@@ -1,10 +1,10 @@
 module;
-#include <experimental/scope>
 #include <cerrno>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 module udp.direct;
+import nexus.compat;
 import platform.ip_address;
 import rules;
 import std;
@@ -70,7 +70,7 @@ namespace udp {
                 (void)this->bridge.close(outgoing->flow, now);
                 return std::unexpected(DirectError{error});
             }
-            std::experimental::scope_exit rollback([&] {
+            nexus::scope_exit rollback([&] {
                 (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
                 (void)this->bridge.close(outgoing->flow, now);
             });

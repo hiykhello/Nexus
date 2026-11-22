@@ -3,6 +3,7 @@ module;
 
 export module cli.rule_fetch_response;
 import std;
+import nexus.compat;
 import http.header;
 import tls.byte_stream;
 import proxy.v4;
@@ -11,9 +12,9 @@ import nexus.thirdparty.capy;
 export namespace cli::rule_fetch {
     // A consumer may suspend while processing a chunk. Its view stays valid
     // until it returns, and false aborts the response.
-    using BodySink=std::function_ref<nex::capy::task<bool>(std::string_view,std::chrono::steady_clock::time_point)>;
+    using BodySink=nexus::function_ref<nex::capy::task<bool>(std::string_view,std::chrono::steady_clock::time_point)>;
     using TransferResult=std::expected<unsigned,std::string>;
-    using ResponseHeaders=std::function_ref<void(std::string_view,std::string_view)>;
+    using ResponseHeaders=nexus::function_ref<void(std::string_view,std::string_view)>;
     struct ResponsePolicy {
         bool conditional=false;
         bool redirect=false;
