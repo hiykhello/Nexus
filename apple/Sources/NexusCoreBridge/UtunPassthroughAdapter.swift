@@ -1,6 +1,6 @@
 import Foundation
 
-public enum class UtunAddressFamily: UInt32, Sendable, Equatable {
+public enum UtunAddressFamily: UInt32, Sendable, Equatable {
     case ipv4 = 2   // AF_INET
     case ipv6 = 30  // AF_INET6 on Darwin
 }

@@ -72,11 +72,15 @@ dependencies {
 tasks.register("syncNexusCore") {
     group = "build"
     description = "Validates AArch64 ELF header and syncs nexus sidecar binary into jniLibs + SHA-256 asset."
+    val coreBinProvider = providers.gradleProperty("nexusCoreBin")
+        .orElse(providers.environmentVariable("NEXUS_CORE_BIN"))
+    val baseDir = layout.projectDirectory.asFile
+    val outLib = layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/libnexus.so").asFile
+    val shaFile = layout.projectDirectory.file("src/main/assets/nexus-core.sha256").asFile
     doLast {
-        val rawPath = (project.findProperty("nexusCoreBin") as String?)
-            ?: System.getenv("NEXUS_CORE_BIN")
-            ?: return@doLast
-        val src = file(rawPath)
+        val rawPath = coreBinProvider.orNull ?: return@doLast
+        val candidate = java.io.File(rawPath)
+        val src = if (candidate.isAbsolute) candidate else java.io.File(baseDir, rawPath)
         require(src.isFile) { "NEXUS_CORE_BIN not found: ${src.absolutePath}" }
         val bytes = src.readBytes()
         require(bytes.size >= 20) { "ELF binary too small: ${bytes.size}" }
@@ -92,13 +96,11 @@ tasks.register("syncNexusCore") {
         val machine = (bytes[18].toInt() and 0xFF) or ((bytes[19].toInt() and 0xFF) shl 8)
         require(machine == 183) { "Expected e_machine=183 (AArch64), got $machine" }
 
-        val outLib = file("src/main/jniLibs/arm64-v8a/libnexus.so")
         outLib.parentFile.mkdirs()
         src.copyTo(outLib, overwrite = true)
 
         val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it) }
-        val shaFile = file("src/main/assets/nexus-core.sha256")
         shaFile.parentFile.mkdirs()
         shaFile.writeText("$digest  libnexus.so\n")
         logger.lifecycle("Synced nexus arm64-v8a core (${bytes.size} bytes, sha256=$digest)")

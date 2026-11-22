@@ -20,11 +20,14 @@ tasks.register("syncNexusCore") {
     val sourcePath = providers.gradleProperty("nexusCoreBinary")
         .orElse("../target/android-arm64/nexus-cli")
     val expectedSha256 = providers.gradleProperty("nexusCoreSha256").orNull
+    val baseDir = layout.projectDirectory.asFile
     val destFile = layout.projectDirectory.file("app/src/main/jniLibs/arm64-v8a/libnexus.so").asFile
     val digestFile = layout.projectDirectory.file("app/src/main/assets/libnexus.sha256").asFile
 
     doLast {
-        val src = file(sourcePath.get())
+        val raw = sourcePath.get()
+        val candidate = java.io.File(raw)
+        val src = if (candidate.isAbsolute) candidate else java.io.File(baseDir, raw)
         require(src.isFile) { "Nexus core binary not found at: ${src.absolutePath}" }
 
         val bytes = src.readBytes()

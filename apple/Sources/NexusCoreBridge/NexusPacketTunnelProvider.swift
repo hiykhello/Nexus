@@ -101,7 +101,21 @@ open class NexusPacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendabl
     private var activeLaunchConfig = PacketTunnelLaunchConfig()
     private let generationCounter = GenerationCounter()
 
-    open override func startTunnel(options: [String: NSObject]? = nil) async throws {
+    open override func startTunnel(
+        options: [String: NSObject]? = nil,
+        completionHandler: @escaping @Sendable ((any Error)?) -> Void
+    ) {
+        Task { [self, completionHandler] in
+            do {
+                try await startTunnelSession()
+                completionHandler(nil)
+            } catch {
+                completionHandler(error)
+            }
+        }
+    }
+
+    private func startTunnelSession() async throws {
         let launch = decodeLaunchConfig()
         activeLaunchConfig = launch
         let profile = AppleTunnelProfile(mtu: AppleTunnelProfile.maxSafeMtu)
