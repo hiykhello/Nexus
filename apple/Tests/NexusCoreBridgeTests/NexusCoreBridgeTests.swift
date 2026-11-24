@@ -164,6 +164,19 @@ final class NexusCoreBridgeTests: XCTestCase {
         XCTAssertTrue(h3Kdl.contains("udp #true"))
         XCTAssertTrue(h3Kdl.contains("verify #true"))
 
+        let slashPort = try ShareLinkParser.parse("vless://11111111-2222-3333-4444-555555555555@edge.example.com:443/?security=tls&sni=edge.example.com#SlashPort")
+        XCTAssertEqual(slashPort.host, "edge.example.com")
+        XCTAssertEqual(slashPort.port, 443)
+        let slashV6 = try ShareLinkParser.parse("vless://11111111-2222-3333-4444-555555555555@[2001:db8::1]:443/?security=tls&sni=edge.example.com#SlashV6")
+        XCTAssertEqual(slashV6.host, "2001:db8::1")
+        XCTAssertEqual(slashV6.port, 443)
+        let ssSlash = try ShareLinkParser.parse("ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206YT8/@1.2.3.4:8388/?plugin=none#SlashB64")
+        XCTAssertEqual(ssSlash.method, "2022-blake3-aes-128-gcm")
+        XCTAssertEqual(ssSlash.secret, "a??")
+        XCTAssertEqual(ssSlash.host, "1.2.3.4")
+        XCTAssertEqual(ssSlash.port, 8388)
+        XCTAssertThrowsError(try ShareLinkParser.parse("snell://pskvalue@sn.example.com:6160?version=3#Snell3"))
+
         let launchCfg = PacketTunnelLaunchConfig(memoryBudgetMiB: 36)
         XCTAssertNotNil(launchCfg.coreLaunchArguments())
         XCTAssertTrue(launchCfg.coreLaunchArguments()?.contains("-D") == true)
@@ -195,5 +208,57 @@ final class NexusCoreBridgeTests: XCTestCase {
 
         let loginStatus = LoginItemManager.currentStatus()
         XCTAssertFalse(loginStatus.summaryText.isEmpty)
+    }
+
+    func testEmbeddedCoreBridgeLifecycleAndCheckConfig() async throws {
+        final class HookState: @unchecked Sendable {
+            private let lock = NSLock()
+            var running = false
+            var stopRequested = false
+            var reloadCount = 0
+            var launchedArgv: [String] = []
+        }
+
+        let state = HookState()
+        let hooks = EmbeddedCoreHooks(
+            version: { "0.1.0" },
+            runArgs: { argv in
+                state.launchedArgv = argv
+                state.running = true
+                while !state.stopRequested {
+                    Thread.sleep(forTimeInterval: 0.005)
+                }
+                state.running = false
+                return 0
+            },
+            checkConfig: { path in
+                path.hasSuffix(".kdl") ? 0 : 1
+            },
+            requestStop: { state.stopRequested = true },
+            requestReload: { state.reloadCount += 1 },
+            isRunning: { state.running }
+        )
+
+        let bridge = EmbeddedCoreBridge(hooks: hooks)
+        let ver = await bridge.coreVersion()
+        XCTAssertEqual(ver, "0.1.0")
+        try await bridge.validateConfiguration(at: "/tmp/valid.kdl")
+        do {
+            try await bridge.validateConfiguration(at: "/tmp/invalid.txt")
+            XCTFail("Expected validationFailed")
+        } catch EmbeddedCoreError.validationFailed(let code) {
+            XCTAssertEqual(code, 1)
+        }
+
+        let launchCfg = PacketTunnelLaunchConfig(configRelativePath: "config.kdl")
+        try await bridge.start(launchConfig: launchCfg)
+        let runningState = await bridge.currentState()
+        XCTAssertEqual(runningState, .running)
+        try await bridge.requestReload()
+        XCTAssertEqual(state.reloadCount, 1)
+        let exitCode = await bridge.stop()
+        XCTAssertEqual(exitCode, 0)
+        let stoppedState = await bridge.currentState()
+        XCTAssertEqual(stoppedState, .idle)
     }
 }

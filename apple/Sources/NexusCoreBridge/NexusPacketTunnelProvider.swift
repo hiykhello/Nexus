@@ -98,8 +98,13 @@ open class NexusPacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendabl
     private let pathWatcher = NetworkPathWatcher()
     private var watchTask: Task<Void, Never>?
     private var activeControlClient: HttpControlClient?
+    private var embeddedCore: EmbeddedCoreBridge?
     private var activeLaunchConfig = PacketTunnelLaunchConfig()
     private let generationCounter = GenerationCounter()
+
+    public func attachEmbeddedCore(_ bridge: EmbeddedCoreBridge) {
+        embeddedCore = bridge
+    }
 
     open override func startTunnel(
         options: [String: NSObject]? = nil,
@@ -149,6 +154,9 @@ open class NexusPacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendabl
         watchTask?.cancel()
         watchTask = nil
         pathWatcher.stop()
+        if let embedded = embeddedCore {
+            await embedded.stop()
+        }
         activeControlClient = nil
     }
 
@@ -162,9 +170,16 @@ open class NexusPacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendabl
     }
 
     open override func handleAppMessage(_ messageData: Data) async -> Data? {
-        guard let client = activeControlClient,
-              let command = String(data: messageData, encoding: .utf8)
-        else { return nil }
+        guard let command = String(data: messageData, encoding: .utf8) else { return nil }
+        if command == "reload", let embedded = embeddedCore {
+            do {
+                try await embedded.requestReload()
+                return Data("ok".utf8)
+            } catch {
+                return Data("error".utf8)
+            }
+        }
+        guard let client = activeControlClient else { return nil }
         switch command {
         case "status":
             let text = (try? await client.status()) ?? ""

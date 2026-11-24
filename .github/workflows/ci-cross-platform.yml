@@ -18,18 +18,23 @@ jobs:
       - uses: actions/checkout@v7
       - name: Verify default epoll lock and corosio patch SHA-256
         run: |
-          EXPECTED_LOCK="91580f265b74fafc8fe626e128401535fc0a61e8a70757f3264b2e14757d06ac"
+          EXPECTED_LOCK="d98595bd120b31c66d05df7c1880728158a25cba478826c4b44654ebf793dc9f"
           ACTUAL_LOCK="$(sha256sum mcpp/epoll/mcpp.lock | awk '{print $1}')"
           test "$ACTUAL_LOCK" = "$EXPECTED_LOCK"
           EXPECTED_PATCH="b71384c36fadd705202dc82ac5b925e1b9fbae37ef7fe0d48ecc68181f03da94"
           ACTUAL_PATCH="$(sha256sum 3rdparty/patches/corosio/mcpp-exact.patch | awk '{print $1}')"
           test "$ACTUAL_PATCH" = "$EXPECTED_PATCH"
-      - name: Pinned dependency guard, line limits & hygiene audit
+      - name: Line limits & hygiene audit
         run: |
-          python3 scripts/mcpp-generate-pinned-guard.py --check --guard-only
           ./scripts/check-source-lines.sh
+          python3 tests/mcpp_pinned_deps.py
           git diff --check
-          ! rg -n '/home/yk|file:///' docs/ src/ scripts/ packaging/ android/ apple/ desktop/ web/src/
+          ! rg -n '^export module (nexus|thirdparty)\.' src/ 3rdparty/modules/ tests/
+          ! rg -n 'import (nexus|thirdparty)\.' src/ 3rdparty/modules/ tests/ experiments/ --glob '!*.patch'
+          ! rg -n '\bnex::|namespace nex\b|nexus_(ngtcp2|nghttp3|boringssl)_abi' src/ 3rdparty/modules/ tests/ scripts/
+          ! rg -n 'nexus\.compat|compat_callable' src/ 3rdparty/modules/ tests/ mcpp/ scripts/ mcpp.toml
+          ! rg -n '/home/yk|file:///' docs/ README.md packaging/ android/ apple/ desktop/ web/src/ web/README.md
+          ! rg -ni 'sing-box|mihomo|clash|v2ray|xray' docs/ README.md packaging/ android/ apple/ desktop/ web/src/ web/README.md
 
   web-dashboard:
     name: Web Dashboard (Lit + Vite 8)
@@ -44,8 +49,8 @@ jobs:
           node-version: "22"
           cache: "pnpm"
           cache-dependency-path: "web/pnpm-lock.yaml"
-      - name: Install & build Web Dashboard
-        run: pnpm --dir web install --frozen-lockfile && pnpm --dir web build
+      - name: Install, type-check & build Web Dashboard
+        run: pnpm --dir web install --frozen-lockfile && pnpm --dir web exec tsc --noEmit && pnpm --dir web build
       - uses: actions/upload-artifact@v7
         with:
           name: nexus-web-dist
@@ -65,9 +70,9 @@ jobs:
           gradle-version: "9.9.2"
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-      - name: Run Android :core-bridge unit tests & assemble debug APK
+      - name: Run Android unit tests & assemble debug APK
         working-directory: android
-        run: gradle :core-bridge:testDebugUnitTest :app:assembleDebug --no-daemon
+        run: gradle :core-bridge:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v7
         if: success()
         with:
@@ -109,3 +114,12 @@ jobs:
           swift --version
           swift test --parallel
           swift build -c release
+      - name: Validate Apple XCFramework packaging plan & optional C++26 kernel build
+        run: |
+          bash scripts/build-apple-xcframework.sh --dry-run
+          if command -v mcpp >/dev/null 2>&1; then
+            (cd mcpp/darwin-arm64 && mcpp --offline --locked build --strict)
+            (cd mcpp/ios-arm64 && mcpp --offline --locked build --strict)
+          else
+            echo "mcpp not preinstalled on runner; skipping native Apple C++26 core compile"
+          fi

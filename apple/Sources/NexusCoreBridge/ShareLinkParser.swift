@@ -46,6 +46,7 @@ public struct ParsedOutbound: Sendable, Equatable {
 public enum ShareLinkError: Error, LocalizedError, Sendable {
     case missingScheme
     case unsupportedScheme(String)
+    case unsupportedVersion(String)
     case invalidAuthority
     case invalidCredential
 
@@ -53,6 +54,7 @@ public enum ShareLinkError: Error, LocalizedError, Sendable {
         switch self {
         case .missingScheme: "Missing URI scheme"
         case .unsupportedScheme(let s): "Unsupported URI scheme: \(s)"
+        case .unsupportedVersion(let v): "Unsupported protocol version: \(v)"
         case .invalidAuthority: "Invalid userinfo@host:port"
         case .invalidCredential: "Invalid or empty credential"
         }
@@ -106,9 +108,6 @@ public enum ShareLinkParser {
                 }
             }
         }
-        if let slash = rest.firstIndex(of: "/") {
-            rest = String(rest[..<slash])
-        }
 
         let userinfo: String
         let host: String
@@ -116,10 +115,14 @@ public enum ShareLinkParser {
         if let at = rest.lastIndex(of: "@") {
             let rawUser = String(rest[..<at])
             userinfo = rawUser.removingPercentEncoding ?? rawUser
-            (host, port) = try splitHostPort(String(rest[rest.index(after: at)...]))
+            var hpSlice = rest[rest.index(after: at)...]
+            if let slash = hpSlice.firstIndex(of: "/") { hpSlice = hpSlice[..<slash] }
+            (host, port) = try splitHostPort(String(hpSlice))
         } else if scheme == .httpConnect {
             userinfo = ""
-            (host, port) = try splitHostPort(rest)
+            var hpSlice = rest[...]
+            if let slash = hpSlice.firstIndex(of: "/") { hpSlice = hpSlice[..<slash] }
+            (host, port) = try splitHostPort(String(hpSlice))
         } else {
             throw ShareLinkError.invalidAuthority
         }
@@ -184,7 +187,19 @@ public enum ShareLinkParser {
         }
         let certPin = query["host-key-sha256"] ?? query["host_key_sha256"]
             ?? query["certificate-sha256"] ?? query["pinSHA256"] ?? query["pcs"] ?? ""
-        let snellVer = Int(query["version"] ?? query["v"] ?? "") ?? 5
+        let snellVer: Int
+        if scheme == .snell {
+            let rawVer = query["version"] ?? query["v"] ?? ""
+            if rawVer.isEmpty || rawVer == "5" {
+                snellVer = 5
+            } else if rawVer == "4" {
+                snellVer = 4
+            } else {
+                throw ShareLinkError.unsupportedVersion(rawVer)
+            }
+        } else {
+            snellVer = 0
+        }
         let privKeyFile = scheme == .ssh
             ? (query["private-key-file"] ?? query["private_key_file"] ?? query["private-key"] ?? query["key"] ?? "")
             : ""
