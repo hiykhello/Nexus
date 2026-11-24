@@ -114,39 +114,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Configure & test Desktop C++26 Bridge (MSVC + CMake)
-        shell: pwsh
+        shell: cmd
         run: |
-          $ErrorActionPreference = 'Stop'
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          if (-not (Test-Path $vswhere)) {
-            Write-Error "vswhere.exe not found at $vswhere"
-            exit 1
-          }
-          $vsPath = (& $vswhere -latest -prerelease -products * `
-            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-            -property installationPath | Select-Object -First 1)
-          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsPath)) {
-            Write-Error 'Visual Studio with VC x86/x64 tools not found'
-            exit 1
-          }
-          $vsPath = $vsPath.Trim()
-          $devShell = Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
-          if (-not (Test-Path $devShell)) {
-            Write-Error "Microsoft.VisualStudio.DevShell.dll not found at $devShell"
-            exit 1
-          }
-          Import-Module $devShell
-          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-          cmake -S desktop -B target/desktop-win -G Ninja `
-            -DCMAKE_CXX_COMPILER=cl `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DNEXUS_DESKTOP_BUILD_UI=OFF `
-            -DNEXUS_DESKTOP_BUILD_TESTS=ON
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build target/desktop-win --parallel
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ctest --test-dir target/desktop-win --output-on-failure
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          set "VSWHERE_DIR=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer"
+          if not exist "%VSWHERE_DIR%\vswhere.exe" (
+            echo ERROR: vswhere.exe not found in "%VSWHERE_DIR%" >&2
+            exit /b 1
+          )
+          set "PATH=%VSWHERE_DIR%;%PATH%"
+          for /f "usebackq delims=" %%i in (`vswhere.exe -latest -prerelease -products * -find VC\Auxiliary\Build\vcvarsall.bat`) do set "VCVARS=%%i"
+          if not defined VCVARS (
+            echo ERROR: vcvarsall.bat not found via vswhere.exe >&2
+            exit /b 1
+          )
+          echo Using MSVC environment: %VCVARS%
+          call "%VCVARS%" x64 || exit /b 1
+          cmake -S desktop -B target/desktop-win -G Ninja -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DNEXUS_DESKTOP_BUILD_UI=OFF -DNEXUS_DESKTOP_BUILD_TESTS=ON || exit /b 1
+          cmake --build target/desktop-win --parallel || exit /b 1
+          ctest --test-dir target/desktop-win --output-on-failure || exit /b 1
 
   apple-swift6:
     name: Apple Swift 6 Package & Tests (macOS arm64)
