@@ -4,7 +4,7 @@ package = {
   spec = "1", namespace = "nexus", name = "argon2-source",
   description = "Pinned Argon2 reference C core", licenses = { "Apache-2.0" },
   repo = "https://github.com/P-H-C/phc-winner-argon2", type = "package",
-  archs = { "x86_64" },
+  archs = { "x86_64", "arm64", "aarch64" },
   xpm = { linux = { ["20190702-nexus.2"] = {
     url = "https://github.com/P-H-C/phc-winner-argon2/archive/62358ba2123abd17fccf2a108a301d4b52c01a7c.tar.gz",
     sha256 = "d177732879114c07a5ab7e6533e61d2c9dff204044335537c89ed16e7d3e4e2f",

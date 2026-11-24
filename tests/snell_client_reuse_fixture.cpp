@@ -5,9 +5,9 @@ import snell.owner;
 import snell.client_owner;
 import snell.client_stream;
 import snell.async_record;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace s=snell;namespace io=nex::corosio;namespace capy=nex::capy;using namespace std::chrono_literals;
+import capy;
+import corosio;
+namespace s=snell;namespace io = ::corosio;using namespace std::chrono_literals;
 struct State{io::io_context context;io::tcp_socket socket{context};bool done=false,ok=false;explicit State(bool u):context(io::make_io_context(u)){} };
 using Stream=s::ClientStream<io::tcp_socket>;
 auto upload(Stream& stream,s::Deadline deadline,bool& ok)->capy::task<capy::results<>> {

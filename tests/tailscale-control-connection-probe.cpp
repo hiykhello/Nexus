@@ -9,12 +9,11 @@ import platform.socket_options;
 import http2.client_channel;
 import memory.budget;
 import crypto;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace noise=tailscale::control;
 namespace cc=tailscale::control_connection;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 std::size_t ordinary=0,aligned=0;
 auto operator new(std::size_t n) -> void* {++ordinary;if (auto p=std::malloc(n ? n : 1)) return p;throw std::bad_alloc();}

@@ -3,10 +3,10 @@ import crypto;
 import quic.connection;
 import quic.resumption;
 import quic.varint;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 import tls.hello_config;
 import tls.handshake;
-namespace q=quic;namespace n=nex::ngtcp2;namespace t=tls;namespace c = ::crypto;
+namespace q=quic;namespace n = ::ngtcp2;namespace t=tls;namespace c = ::crypto;
 namespace {
     template<std::size_t Size> auto hex(std::string_view input) -> std::array<std::uint8_t,Size> {
         if (input.size()!=2*Size) throw std::invalid_argument("hex length");

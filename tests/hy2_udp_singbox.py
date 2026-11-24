@@ -10,7 +10,7 @@ import sys
 import tempfile
 import threading
 import time
-sys.path.insert(0,"/home/yk/Code/Nexus/tests")
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential,ready
 from dns_rule_support import proxy_client,udp_client
 from tcp_keepalive_network import reserve

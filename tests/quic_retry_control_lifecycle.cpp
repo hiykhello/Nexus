@@ -2,11 +2,11 @@ import std;
 import crypto;
 import net.datagram_driver;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hy2_retry_port_link;
-namespace io=nex::corosio;namespace capy=nex::capy;namespace portlink=nexus::test::hy2_retry_port;namespace support=nexus::test::quic_tls;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hy2_retry_port_link;
+namespace io = ::corosio;namespace portlink=test::hy2_retry_port;namespace support=test::quic_tls;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 auto hash(std::span<std::uint8_t const> bytes)noexcept->std::uint64_t{std::uint64_t value=1469598103934665603ull;for(auto byte:bytes)value=(value^byte)*1099511628211ull;return value;}
 struct HoldSocket {

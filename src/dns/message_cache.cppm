@@ -1,15 +1,15 @@
 export module dns.message_cache;
 import std;
-import nexus.compat;
+import functional;
 import containers.cache_index;
 import dns.message;
 import dns.input_budget;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
+import capy;
 import dns.response_cache;
 import dns.response_match;
 import dns.local_config;
-import nexus.thirdparty.corosio;
+import corosio;
 
 export namespace dns {
     // Executor-owned. The encoded query includes flags, class, case, EDNS
@@ -20,17 +20,18 @@ export namespace dns {
         struct View {
             std::size_t upstream;std::array<std::uint8_t,16> address{};
             std::uint64_t policy_view;
+            std::uint32_t scope=0;
             std::uint16_t port;bool ipv6,tcp,local;
             std::weak_ptr<LocalSnapshot const> snapshot;
-            View(std::size_t index,nex::corosio::endpoint endpoint,bool use_tcp,
-                std::shared_ptr<LocalSnapshot const> const& source,std::uint64_t generation=0)
-                :upstream(index),policy_view(generation),port(endpoint.port()),ipv6(endpoint.address().is_v6()),tcp(use_tcp),local(bool(source)),snapshot(source) {
+            View(std::size_t index,corosio::endpoint endpoint,bool use_tcp,
+                std::shared_ptr<LocalSnapshot const> const& source,std::uint64_t generation=0,std::uint32_t cache_scope=0)
+                :upstream(index),policy_view(generation),scope(cache_scope),port(endpoint.port()),ipv6(endpoint.address().is_v6()),tcp(use_tcp),local(bool(source)),snapshot(source) {
                 if(ipv6)address=endpoint.address().to_v6().to_bytes();
                 else {auto bytes=endpoint.address().to_v4().to_bytes();std::ranges::copy(bytes,address.begin());}
             }
             auto matches(View const& other) const noexcept -> bool {
-                return upstream==other.upstream && policy_view==other.policy_view && address==other.address &&
-                    port==other.port && ipv6==other.ipv6 && tcp==other.tcp && local==other.local &&
+                return upstream==other.upstream && policy_view==other.policy_view && scope==other.scope &&
+                    address==other.address && port==other.port && ipv6==other.ipv6 && tcp==other.tcp && local==other.local &&
                     (!local || (!snapshot.expired() && !other.snapshot.expired() &&
                         !snapshot.owner_before(other.snapshot) && !other.snapshot.owner_before(snapshot)));
             }
@@ -42,7 +43,7 @@ export namespace dns {
             using Result=std::expected<Bytes,detail::ResolveError>;
             Ticket ticket{};
             Clock::time_point deadline;
-            nex::capy::async_event changed;
+            capy::async_event changed;
             std::stop_source stop;
             std::optional<InputBudget::Lease> retained;
             std::optional<Result> result;
@@ -87,6 +88,7 @@ export namespace dns {
             auto mix=[&](std::uint64_t v) noexcept { h^=v; h*=1099511628211ull; };
             mix(k.view.upstream);
             mix(k.view.policy_view);
+            mix(k.view.scope);
             mix((std::uint64_t(k.view.port)<<3) | (std::uint64_t(k.view.ipv6)<<2) | (std::uint64_t(k.view.tcp)<<1) | std::uint64_t(k.view.local));
             for (auto b : k.view.address) mix(b);
             for (auto b : k.query) mix(b);
@@ -116,6 +118,8 @@ export namespace dns {
              stale_window_(std::clamp(stale_window,std::chrono::seconds::zero(),std::chrono::seconds(3600))),
              refresh_stop_(stale_window_.count()>0 ? std::stop_source{} : std::stop_source{std::nostopstate}) {}
         auto optimistic() const noexcept -> bool {return stale_window_.count()>0 && !refresh_stop_.stop_requested();}
+        [[nodiscard]] auto entry_count() const noexcept -> std::size_t { return entries_.size(); }
+        auto clear_entries() noexcept -> void { while (auto idx = entries_.lru()) erase_idx(*idx); }
         auto refresh_token() const noexcept -> std::stop_token {return refresh_stop_.get_token();}
         auto stop_refreshes() noexcept -> void {refresh_stop_.request_stop();}
         struct SavedAnswer {
@@ -133,7 +137,7 @@ export namespace dns {
         }
 
         auto checkpoint(this MessageCache const& self,Clock::time_point now,std::size_t bytes_left,
-            std::size_t overhead,nexus::function_ref<bool(View const&)> include) -> std::vector<SavedAnswer> {
+            std::size_t overhead,functional::function_ref<bool(View const&)> include) -> std::vector<SavedAnswer> {
             std::vector<SavedAnswer> result;
             self.entries_.for_each([&](Entry const& entry) {
                 if (!include(entry.key.view) || now>=entry.expires) return;

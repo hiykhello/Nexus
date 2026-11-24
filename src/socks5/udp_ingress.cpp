@@ -9,8 +9,8 @@ import net.principal_bytes;
 import platform.ip_address;
 import std;
 import rules;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace socks5 {
     namespace {
         auto error() -> std::error_code { return {errno,std::generic_category()}; }
@@ -42,13 +42,30 @@ namespace socks5 {
             }
             return {};
         }
+        auto open_dgram_fd(bool ipv6) noexcept -> int {
+#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+            return ::socket(ipv6 ? AF_INET6 : AF_INET,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
+#else
+            int fd=::socket(ipv6 ? AF_INET6 : AF_INET,SOCK_DGRAM,0);
+            if (fd<0) return -1;
+            int fl=::fcntl(fd,F_GETFL,0), fdfl=::fcntl(fd,F_GETFD,0);
+            if (fl<0 || ::fcntl(fd,F_SETFL,fl|O_NONBLOCK)<0 || fdfl<0 || ::fcntl(fd,F_SETFD,fdfl|FD_CLOEXEC)<0) {
+                int err=errno; ::close(fd); errno=err; return -1;
+            }
+#ifdef SO_NOSIGPIPE
+            int one=1; (void)::setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&one,sizeof(one));
+#endif
+            return fd;
+#endif
+        }
     }
     UdpIngress::~UdpIngress() { close(); }
     auto UdpIngress::close() noexcept -> void {
-        closed_=true; wake(); pending_.reset(); tunnel_.reset(); input_pending_=false; domain_pending_=false; route_pending_=false; input_size_=0; direct_.close();
+        closed_=true; backpressured_family_=0; wake(); pending_.reset(); tunnel_.reset(); input_pending_=false; domain_pending_=false; route_pending_=false; input_size_=0; direct_.close();
         tunnel_alias_.reset();
         deferred_.clear(); deferred_bytes_=0;parked_=replaying_=collecting_=false;input_metadata_={};parked_metadata_={};std::vector<std::uint8_t>{}.swap(parked_bytes_);
         aliases_.clear();
+        if (!waiting_) watches_.clear();
         if (fd_>=0) { ::close(fd_); fd_=-1; }
     }
     auto UdpIngress::open(UdpPeer local) -> std::expected<UdpPeer,UdpDirectError> {
@@ -60,7 +77,7 @@ namespace socks5 {
             (local.address_type==4 && std::ranges::all_of(std::span(local.address).first<10>(),[](auto b){return b==0;}) &&
              local.address[10]==255 && local.address[11]==255))
             return std::unexpected(UdpDirectError{Status::invalid_address});
-        int fd=::socket(local.address_type==1 ? AF_INET : AF_INET6,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);
+        int fd=open_dgram_fd(local.address_type==4);
         if (fd<0) return std::unexpected(UdpDirectError{error()});
         if (local.address_type==4) {
             int on=1;
@@ -97,7 +114,7 @@ namespace socks5 {
     auto UdpIngress::step() -> std::expected<UdpIngressStep,UdpDirectError> {
         if (closed_ || association_.closed()) { close(); return std::unexpected(UdpDirectError{Status::association_closed}); }
         if (fd_<0) return std::unexpected(UdpDirectError{std::make_error_code(std::errc::bad_file_descriptor)});
-        work_.clear();
+        work_.clear(); backpressured_family_=0;
         UdpIngressStep report;
         auto now=std::chrono::steady_clock::now();
         std::erase_if(aliases_,[&](auto const& relay) {
@@ -167,7 +184,7 @@ namespace socks5 {
                         }
                         else if (auto error=std::get_if<std::error_code>(&sent.error()); error &&
                                  (*error==std::errc::resource_unavailable_try_again || *error==std::errc::interrupted))
-                            report.input_backpressured=true;
+                            { report.input_backpressured=true; backpressured_family_=selected->target.address_type; }
                         else report.input_error=sent.error();
                     }
                 }
@@ -214,23 +231,26 @@ namespace socks5 {
         return report;
     }
 
-    auto UdpIngress::wait(nex::corosio::io_context& context,UdpIngressStep const& report,
-        std::chrono::steady_clock::time_point deadline) -> nex::capy::task<bool> {
-        namespace capy=nex::capy;
-        namespace io=nex::corosio;
+    auto UdpIngress::wait(corosio::io_context& context,UdpIngressStep const& report,
+        std::chrono::steady_clock::time_point deadline) -> capy::task<bool> {
+        namespace capy = ::capy;
+        namespace io = ::corosio;
         using Wait=capy::task<capy::results<std::error_code>>;
         using Direction=io::wait_type;
-        if (closed_) co_return false;
+        if (closed_) { watches_.clear(); co_return false; }
         if (work_.is_set()) co_return true;
+        struct WaitGuard { UdpIngress& s; ~WaitGuard() { s.waiting_=false; if (s.closed_) s.watches_.clear(); } };
+        waiting_=true; WaitGuard guard{*this};
 
         std::vector<std::pair<int,Direction>> ready;
         if (report.backpressured) ready.emplace_back(fd_,Direction::write);
-        else if ((!input_pending_ && !replaying_) || (collecting_ && !route_lookahead_full()))
+        else if ((!input_pending_ && !replaying_) || (collecting_ && route_pending_ && !route_lookahead_full()))
             ready.emplace_back(fd_,Direction::read);
 
         auto direct=direct_.native_handles();
-        for (int fd:direct) if (fd>=0 && (!pending_ || report.input_backpressured))
-            ready.emplace_back(fd,report.input_backpressured ? Direction::write : Direction::read);
+        std::size_t blocked_idx=(direct[1]>=0 && backpressured_family_==4) ? 1u : 0u;
+        for (std::size_t i=0;i<direct.size();++i) if (direct[i]>=0 && (!pending_ || (report.input_backpressured && i==blocked_idx)))
+            ready.emplace_back(direct[i],(report.input_backpressured && i==blocked_idx) ? Direction::write : Direction::read);
         for (auto const& relay:aliases_) {
             deadline=std::min(deadline,relay.touched+std::chrono::seconds(60));
             if (!pending_) for (int fd:relay.socket->native_handles())
@@ -361,11 +381,11 @@ namespace socks5 {
         if(!packet)return std::unexpected(UdpDirectError{std::make_error_code(std::errc::operation_not_permitted)});
         if(std::chrono::steady_clock::now()>=input_metadata_.deadline)
             return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
-        if (allow_target_ && !allow_target_(filter_context_,candidate))
-            return std::unexpected(UdpDirectError{UdpRouteError::blocked});
         auto checked=net::udp_validate_candidate(udp_target(*packet),udp_endpoint(candidate));
         if(!checked)return std::unexpected(UdpDirectError{checked.error()});
         auto target=udp_peer(*checked);
+        if (allow_target_ && !allow_target_(filter_context_,target))
+            return std::unexpected(UdpDirectError{UdpRouteError::blocked});
         if(outbound==1)return std::unexpected(UdpDirectError{UdpRouteError::blocked});
         if(outbound>=2) {
             if(!allow_tunnels_)return std::unexpected(UdpDirectError{UdpRouteError::unsupported});
@@ -379,7 +399,6 @@ namespace socks5 {
         }
         return sent;
     }
-#include "udp_alias_relay.hpp"
 
     auto UdpIngress::discard_route() noexcept -> void {
         if(route_pending_) {route_pending_=false;input_pending_=false;input_size_=0;input_metadata_={};wake();}
@@ -425,25 +444,16 @@ namespace socks5 {
         if (closed_ || association_.closed()) { close(); return std::unexpected(UdpDirectError{Status::association_closed}); }
         auto packet=pending_domain();
         if (!packet) return std::unexpected(UdpDirectError{std::make_error_code(std::errc::operation_not_permitted)});
-        if(std::chrono::steady_clock::now()>=input_metadata_.deadline)
-            return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
-        if (allow_target_ && !allow_target_(filter_context_,candidate))
-            return std::unexpected(UdpDirectError{UdpRouteError::blocked});
+        if(std::chrono::steady_clock::now()>=input_metadata_.deadline) return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
         auto selected=udp_select(policy_,*packet,candidate,&input_source_,auth_user_);
         if (!selected) return std::unexpected(UdpDirectError{selected.error()});
+        if (allow_target_ && !allow_target_(filter_context_,selected->target)) return std::unexpected(UdpDirectError{UdpRouteError::blocked});
         if (selected->outbound>=2) {
             if (!allow_tunnels_) return std::unexpected(UdpDirectError{UdpRouteError::unsupported});
-            tunnel_=*selected;
-            domain_pending_=false;
-            wake();
-            return {};
+            tunnel_=*selected; domain_pending_=false; wake(); return {};
         }
         auto sent=send_target(*packet,selected->target,input_metadata_.deadline);
-        if (sent) {
-            route_delivery_(false,*selected);
-            delivery_(true,packet->data.size());
-            discard_domain();
-        }
+        if (sent) { route_delivery_(false,*selected); delivery_(true,packet->data.size()); discard_domain(); }
         return sent;
     }
     auto UdpIngress::discard_domain() noexcept -> void {
@@ -458,23 +468,14 @@ namespace socks5 {
     auto UdpIngress::complete_tunnel(bool delivered) noexcept -> void {
         if (!tunnel_) return;
         if (delivered) route_delivery_(external_route_,*tunnel_);
-        tunnel_.reset();
-        tunnel_alias_.reset();
-        input_pending_=false;
-        input_size_=0;
-        input_metadata_={};
-        wake();
+        tunnel_.reset(); tunnel_alias_.reset(); input_pending_=false; input_size_=0; input_metadata_={}; wake();
     }
-
     auto UdpIngress::reply_route(std::span<std::uint8_t const> payload) -> std::expected<UdpReplyStatus,UdpDirectError> {
         auto packet=pending_route();
         if(!packet)return std::unexpected(UdpDirectError{std::make_error_code(std::errc::operation_not_permitted)});
-        packet->data=payload;
-        return queue_reply(*packet);
+        packet->data=payload; return queue_reply(*packet);
     }
-
-    auto UdpIngress::queue_tunnel_reply(UdpPeer source, std::span<std::uint8_t const> payload)
-        -> std::expected<UdpReplyStatus,UdpDirectError> {
+    auto UdpIngress::queue_tunnel_reply(UdpPeer source, std::span<std::uint8_t const> payload) -> std::expected<UdpReplyStatus,UdpDirectError> {
         if ((source.address_type!=1 && source.address_type!=4) || !source.port ||
             (source.address_type==1 && std::ranges::any_of(std::span(source.address).subspan(4),[](auto b){ return b!=0; })))
             return std::unexpected(UdpDirectError{Status::invalid_address});
@@ -492,9 +493,6 @@ namespace socks5 {
         if (packet.data.size()+6+packet.address_length+(packet.address_type==3)>limit) return UdpReplyStatus::dropped;
         auto wire=encode_udp_datagram(packet);
         if (!wire) return std::unexpected(UdpDirectError{wire.error()});
-        pending_=UdpDirectReply{*client,std::move(*wire),packet.data.size()};
-        work_.set();
-        return UdpReplyStatus::queued;
+        pending_=UdpDirectReply{*client,std::move(*wire),packet.data.size()}; work_.set(); return UdpReplyStatus::queued;
     }
-
 }

@@ -1,6 +1,6 @@
 export module state.file;
 import std;
-import nexus.compat;
+import functional;
 import state.core;
 import platform.os_fs;
 
@@ -27,7 +27,7 @@ export namespace state {
     auto open_private_directory(std::filesystem::path const& path) -> std::expected<File, StateError>;
     auto ensure_private_directory(std::filesystem::path const& path) -> std::expected<void, StateError>;
     struct DirectoryEntry { std::string name; std::uint64_t size; bool private_file; };
-    auto directory_entries(NativeHandle directory, nexus::function_ref<bool(std::string_view)> accept)
+    auto directory_entries(NativeHandle directory, functional::function_ref<bool(std::string_view)> accept)
         -> std::expected<std::vector<DirectoryEntry>, StateError>;
 
     auto open_dir_read(NativeHandle dir, std::string_view name, bool require_private, Stage stage)

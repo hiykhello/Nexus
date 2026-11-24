@@ -6,7 +6,7 @@ import http2.headers;
 import http2.client_types;
 import http2.server_streams;
 import http2.driver;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace naive {
     struct H2ServerDriverPolicy {
@@ -42,8 +42,10 @@ export namespace naive {
         http2::StreamTicket ticket_;
         PaddingEncoder encoder_{false};
         PaddingDecoder decoder_{false};
+        static constexpr std::size_t kScratchSize = 16384;
         std::vector<std::uint8_t> encoded_;
         std::vector<std::uint8_t> decoded_;
+        std::unique_ptr<std::uint8_t[]> scratch_;
         std::size_t decoded_offset_ = 0;
         bool responded_ = false;
         bool released_ = false;
@@ -65,6 +67,7 @@ export namespace naive {
         auto arm_padding(bool enabled) noexcept -> void {
             encoder_ = PaddingEncoder{enabled};
             decoder_ = PaddingDecoder{enabled};
+            if (!enabled) scratch_.reset();
         }
 
         auto inspect() noexcept { return driver_.protocol().inspect(ticket_); }
@@ -83,7 +86,7 @@ export namespace naive {
             return true;
         }
 
-        auto send_raw_chunk(std::span<std::uint8_t const> bytes, bool end_stream, Deadline until = {}) -> nex::capy::task<bool> {
+        auto send_raw_chunk(std::span<std::uint8_t const> bytes, bool end_stream, Deadline until = {}) -> capy::task<bool> {
             if (!responded_) co_return false;
             for (;;) {
                 auto res = driver_.protocol().provide(ticket_, {bytes, end_stream});
@@ -91,11 +94,16 @@ export namespace naive {
                 if (*res) break;
                 if (!co_await driver_.wait_change(until)) co_return false;
             }
+            struct BorrowGuard {
+                H2ServerStream& self;
+                bool consumed = false;
+                ~BorrowGuard() { if (!consumed) self.release(); }
+            } guard{*this};
             driver_.wake();
             for (;;) {
                 auto sent = driver_.protocol().tx_consumed(ticket_);
                 if (!sent) co_return false;
-                if (*sent) break;
+                if (*sent) { guard.consumed = true; break; }
                 if (!co_await driver_.wait_change(until)) co_return false;
             }
             if (end_stream) {
@@ -109,7 +117,7 @@ export namespace naive {
             co_return true;
         }
 
-        auto respond_decoy(std::uint16_t status, Deadline until = {}) -> nex::capy::task<bool> {
+        auto respond_decoy(std::uint16_t status, Deadline until = {}) -> capy::task<bool> {
             auto status_str = std::to_string(status);
             auto body = decoy_html_body(status);
             auto len_str = std::to_string(body.size());
@@ -124,7 +132,7 @@ export namespace naive {
                 {reinterpret_cast<std::uint8_t const*>(body.data()), body.size()}, true, until);
         }
 
-        auto respond_407(Deadline until = {}) -> nex::capy::task<bool> {
+        auto respond_407(Deadline until = {}) -> capy::task<bool> {
             std::array<http2::FieldView, 3> hdrs{
                 http2::FieldView{":status", "407"},
                 http2::FieldView{"proxy-authenticate", "Basic realm=\"Nexus\""},
@@ -140,9 +148,8 @@ export namespace naive {
         }
 
         auto read(std::span<std::uint8_t> out, Deadline until = {})
-            -> nex::capy::task<std::expected<std::size_t, std::string>> {
+            -> capy::task<std::expected<std::size_t, std::string>> {
             if (out.empty()) co_return std::size_t{0};
-            std::array<std::uint8_t, 16384> scratch{};
             for (;;) {
                 if (decoded_offset_ < decoded_.size()) {
                     auto count = std::min(out.size(), decoded_.size() - decoded_offset_);
@@ -151,19 +158,28 @@ export namespace naive {
                     if (decoded_offset_ == decoded_.size()) {
                         decoded_.clear();
                         decoded_offset_ = 0;
+                        if (decoder_.in_passthrough()) std::vector<std::uint8_t>{}.swap(decoded_);
                     }
                     co_return count;
                 }
-                auto res = driver_.protocol().pull(ticket_, decoder_.in_passthrough() ? out : std::span(scratch));
+                bool passthrough = decoder_.in_passthrough();
+                if (passthrough && scratch_) scratch_.reset();
+                std::span<std::uint8_t> target = out;
+                if (!passthrough) {
+                    if (!scratch_) scratch_ = std::make_unique_for_overwrite<std::uint8_t[]>(kScratchSize);
+                    target = {scratch_.get(), kScratchSize};
+                }
+                auto res = driver_.protocol().pull(ticket_, target);
                 if (!res) co_return std::unexpected("HTTP/2 server pull failed");
                 if (*res) {
                     driver_.wake();
                     if (!**res) co_return std::size_t{0};
-                    if (decoder_.in_passthrough()) co_return **res;
+                    if (passthrough) co_return **res;
                     decoded_.clear();
                     decoded_offset_ = 0;
-                    if (!decoder_.feed(std::span(scratch).first(**res), decoded_))
+                    if (!decoder_.feed(target.first(**res), decoded_))
                         co_return std::unexpected("NaiveProxy padding decode failed");
+                    if (decoder_.in_passthrough()) scratch_.reset();
                     continue;
                 }
                 if (!co_await driver_.wait_change(until))
@@ -171,7 +187,7 @@ export namespace naive {
             }
         }
 
-        auto send(std::span<std::uint8_t const> in, Deadline until = {}) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> in, Deadline until = {}) -> capy::task<bool> {
             if (in.empty()) co_return true;
             std::span<std::uint8_t const> wire = in;
             if (!encoder_.in_passthrough()) {
@@ -187,7 +203,7 @@ export namespace naive {
             co_return true;
         }
 
-        auto close_output(Deadline until = {}) -> nex::capy::task<bool> {
+        auto close_output(Deadline until = {}) -> capy::task<bool> {
             co_return co_await send_raw_chunk({}, true, until);
         }
 

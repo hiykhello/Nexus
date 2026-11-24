@@ -5,12 +5,44 @@ import tls.hello;
 import tls.key_share;
 
 export namespace reality {
+    class ReplayCache {
+        struct Entry { std::array<std::uint8_t, 32> id; std::uint64_t expires_at; };
+        std::mutex mutex_;
+        std::deque<Entry> queue_;
+        std::set<std::array<std::uint8_t, 32>> index_;
+        std::size_t capacity_;
+    public:
+        explicit ReplayCache(std::size_t capacity = 65536) noexcept : capacity_(capacity) {}
+        [[nodiscard]] auto admit(std::span<std::uint8_t const> session_id, std::uint64_t now, std::uint64_t window_seconds) -> bool {
+            if (session_id.size() != 32 || !capacity_) return session_id.size() == 32;
+            std::array<std::uint8_t, 32> key{};
+            std::ranges::copy(session_id, key.begin());
+            std::lock_guard lock(mutex_);
+            while (!queue_.empty() && queue_.front().expires_at <= now) {
+                index_.erase(queue_.front().id);
+                queue_.pop_front();
+            }
+            if (index_.contains(key)) return false;
+            if (queue_.size() >= capacity_) {
+                index_.erase(queue_.front().id);
+                queue_.pop_front();
+            }
+            auto exp = now > std::numeric_limits<std::uint64_t>::max() - window_seconds
+                ? std::numeric_limits<std::uint64_t>::max() : now + window_seconds;
+            auto [it, inserted] = index_.insert(key);
+            try { queue_.push_back({key, exp}); }
+            catch (...) { if (inserted) index_.erase(it); throw; }
+            return true;
+        }
+    };
+
     struct ServerPolicy {
         std::span<std::string const> server_names;
         std::span<std::array<std::uint8_t,8> const> short_ids;
         std::optional<std::array<std::uint8_t,3>> min_version,max_version;
         // Zero disables the clock-skew check, as in the pinned Xray server.
         std::uint64_t max_time_difference_seconds=0;
+        ReplayCache* replay_cache = nullptr;
     };
     // The caller owns all policy storage and private key. Authentication failure
     // means fallback; it does not itself send data or prove a TLS handshake.
@@ -61,6 +93,12 @@ namespace reality {
         bool match=false;
         for (auto const& candidate:policy.short_ids) match |= crypto::constant_time_equal(id.short_id,candidate);
         if (!match) return {};
+        if (policy.replay_cache) {
+            auto const window = policy.max_time_difference_seconds
+                ? std::max<std::uint64_t>(policy.max_time_difference_seconds * 2, 120)
+                : std::uint64_t{120};
+            if (!policy.replay_cache->admit(hello->session_id, now, window)) return {};
+        }
         return std::move(*opened);
     }
 }

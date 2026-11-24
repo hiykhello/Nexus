@@ -5,7 +5,7 @@ import tls.application_io;
 import crypto;
 import tls.corosio_client;
 import tls.corosio_application;
-import nexus.thirdparty.capy;
+import capy;
 
 
 export namespace http::detail {
@@ -19,7 +19,7 @@ export namespace http::detail {
     auto https_exchange(Client& client, std::string_view request,
         bool head, Output& output, tls::detail::ApplicationDeadline deadline = {}, bool allow_missing_alpn = false,
         ChunkOutput chunk_output=ChunkOutput::framed,bool* reusable=nullptr)
-        -> nex::capy::task<std::expected<void,HttpsError>> {
+        -> capy::task<std::expected<void,HttpsError>> {
         if (reusable) *reusable=false;
         auto* connection=client.application(); auto* negotiated=client.negotiated();
         if (!connection || !negotiated) co_return std::unexpected(HttpsError::tls);

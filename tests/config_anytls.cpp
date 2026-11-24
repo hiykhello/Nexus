@@ -57,8 +57,10 @@ dns { server "dns" type="udp" host="127.0.0.1"; })");
         "pool { max-sessions 1; min-idle 2; }","pool { min-idle 0; min-idle 1; }","pool { unknown 1; }",
         "pool value=1","pool {}\npool {}","pool { max-sessions #true; }","pool { min-idle 1 { unexpected 0; } }",
         "detour \"edge\"","detour \"missing\"","bootstrap-resolver \"missing\"","password \"inline\"",
-        "fallback \"other\"","transport \"grpc\"","tls { verify #false; }"})
+        "fallback \"other\"","transport \"xhttp\"","tls { verify #false; }"})
         if (document(bad)) { std::cerr<<"accepted invalid AnyTLS field: "<<bad<<'\n'; return 5; }
+    auto grpc_ok=document(R"(transport "grpc" { service-name "svc"; authority "remote.test"; };)");
+    if (!grpc_ok || !grpc_ok->anytls_outbounds[0].config.connection.grpc) return 5;
     for (auto bad:{R"(anytls "in" { listen host="127.0.0.1" port=8443; authentication "none"; })",
         R"(anytls "in" { listen host="127.0.0.1" port=8443; authentication { user "x" password-file="relative"; } tls { certificate-file "/tmp/cert"; private-key-file "/tmp/key"; } })",
         R"(anytls "in" { listen host="127.0.0.1" port=8443; authentication { user "x" password-file="/tmp/a"; user "x" password-file="/tmp/b"; } tls { certificate-file "/tmp/cert"; private-key-file "/tmp/key"; } })"})

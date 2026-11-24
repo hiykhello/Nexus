@@ -1,8 +1,8 @@
 module cli.tuic_enabled;
 import std;
 import config;
-import proxy;
-import proxy.tuic_host;
+import relay;
+import relay.tuic_host;
 import tuic.wire;
 import tuic.application;
 import tuic.transport_options;
@@ -10,7 +10,7 @@ import tls.server_credential;
 import tls.profiles;
 import rulefile;
 import crypto;
-import nexus.thirdparty.corosio;
+import corosio;
 
 namespace cli::tuic_enabled {
     Runtime::~Runtime() { stop(); }
@@ -44,25 +44,25 @@ namespace cli::tuic_enabled {
         return {};
     }
 
-    auto Runtime::start(std::size_t index, proxy::Server& server, std::uint16_t port, bool ipv6, unsigned workers)
+    auto Runtime::start(std::size_t index, relay::Server& server, std::uint16_t port, bool ipv6, unsigned workers)
         -> std::expected<std::uint16_t, std::string> {
         if (index >= profiles_.size() || !profiles_[index]) return std::unexpected("TUIC inbound not configured");
         auto& p = *profiles_[index];
-        p.host = std::make_unique<proxy::TuicHost>(server, p.credential, p.users, p.options);
-        nex::corosio::endpoint ep;
+        p.host = std::make_unique<relay::TuicHost>(server, p.credential, p.users, p.options);
+        corosio::endpoint ep;
         if (ipv6) {
-            ep = {nex::corosio::ipv6_address(p.listen_address), port};
+            ep = {corosio::ipv6_address(p.listen_address), port};
         } else {
-            nex::corosio::ipv4_address::bytes_type b{};
+            corosio::ipv4_address::bytes_type b{};
             std::copy_n(p.listen_address.begin(), 4, b.begin());
-            ep = {nex::corosio::ipv4_address(b), port};
+            ep = {corosio::ipv4_address(b), port};
         }
         auto bound = p.host->start(ep, workers);
         if (!bound) { failure_ = bound.error(); p.host.reset(); return std::unexpected(bound.error()); }
         return *bound;
     }
 
-    auto Runtime::queue_outbound_probe(std::size_t index,std::shared_ptr<proxy::OutboundProbe> probe) -> bool {
+    auto Runtime::queue_outbound_probe(std::size_t index,std::shared_ptr<relay::OutboundProbe> probe) -> bool {
         return index<profiles_.size() && profiles_[index] && profiles_[index]->host &&
             profiles_[index]->host->queue_outbound_probe(std::move(probe));
     }

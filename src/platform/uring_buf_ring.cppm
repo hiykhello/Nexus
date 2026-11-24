@@ -53,6 +53,9 @@ export namespace platform {
 
         [[nodiscard]] auto arm_recv_multishot(int fd, std::uint64_t tag) noexcept
             -> std::expected<void, int>;
+        [[nodiscard]] auto arm_read_multishot(int fd, std::uint64_t tag) noexcept
+            -> std::expected<void, int>;
+        [[nodiscard]] auto submit() noexcept -> std::expected<void, int>;
         [[nodiscard]] auto cancel_fd(int fd) noexcept -> std::expected<void, int>;
 
         // Submits pending SQEs and harvests up to out.size() CQEs without heap allocation.
@@ -68,6 +71,7 @@ export namespace platform {
         // Returns a leased buffer back to the kernel buffer ring immediately.
         [[nodiscard]] auto recycle(std::uint16_t bid) noexcept -> bool;
 
+        [[nodiscard]] auto ring_fd() const noexcept -> int;
         [[nodiscard]] auto ring_entries() const noexcept -> std::uint32_t;
         [[nodiscard]] auto buffer_size() const noexcept -> std::uint32_t;
         [[nodiscard]] auto leased_count() const noexcept -> std::uint32_t;

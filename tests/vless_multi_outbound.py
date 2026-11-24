@@ -11,7 +11,7 @@ def multi_outbound(directory, upstream_port):
         reserve.bind(("127.0.0.1", 0))
         closed_port = reserve.getsockname()[1]
     (directory / "multi-rules.kdl").write_text(
-        'schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
+        'schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
     for first, fallback in (("good", "closed"), ("closed", "good")):
         with socket.socket() as origin, socket.socket() as reservation:
             origin.bind(("0.0.0.0", 0))

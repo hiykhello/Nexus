@@ -7,16 +7,16 @@ import platform.socket_options;
 import tls.byte_stream;
 import tls.connector;
 import tls.profiles;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace dns {
     namespace dot_detail {
         using Clock=std::chrono::steady_clock;
         using Error=detail::UdpError;
-        using Io=nex::corosio::io_context;
-        using Endpoint=nex::corosio::endpoint;
-        namespace capy=nex::capy;
+        using Io=corosio::io_context;
+        using Endpoint=corosio::endpoint;
+        namespace capy = ::capy;
         using namespace std::chrono_literals;
 
         struct FixedResolver {
@@ -311,7 +311,7 @@ namespace dns {
                     } registration{*connection,request};
                     std::stop_callback cancellation(stop,[&request]() noexcept {request->wake.set();});
                     connection->start(context,connection);
-                    auto [error]=co_await nex::corosio::timeout(request->wake.wait(),deadline);
+                    auto [error]=co_await corosio::timeout(request->wake.wait(),deadline);
                     if (stop.stop_requested()) co_return std::unexpected(Error::canceled);
                     if (Clock::now()>=deadline || capy::is_timeout(error)) co_return std::unexpected(Error::timeout);
                     if (error) co_return std::unexpected(Error::canceled);
@@ -337,14 +337,14 @@ namespace dns {
         };
     }
 
-    auto stop_tls_queries(nex::corosio::io_context& context) noexcept -> void {
+    auto stop_tls_queries(corosio::io_context& context) noexcept -> void {
         if (auto* pool=context.find_service<dot_detail::TlsPool>()) pool->stop();
     }
-    auto resume_tls_queries(nex::corosio::io_context& context) noexcept -> void {
+    auto resume_tls_queries(corosio::io_context& context) noexcept -> void {
         if (auto* pool=context.find_service<dot_detail::TlsPool>()) pool->resume();
     }
 
-    auto reap_idle_tls_queries(nex::corosio::io_context& context,std::chrono::steady_clock::time_point now) noexcept -> void {
+    auto reap_idle_tls_queries(corosio::io_context& context,std::chrono::steady_clock::time_point now) noexcept -> void {
         if (auto* pool=context.find_service<dot_detail::TlsPool>()) pool->reap(now);
     }
 

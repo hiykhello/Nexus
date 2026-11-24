@@ -1,13 +1,13 @@
 module config;
 import std;
-import nexus.compat;
-import nexus.thirdparty.glaze;
+import containers.inplace_vector;
+import glaze;
 import config.kdl_common;
 
 namespace config {
-    auto parse_httpupgrade_transport(nex::glaze::KdlNode const&) -> std::expected<HttpUpgradeTransport,std::string>;
-    auto parse_xhttp(nex::glaze::KdlNode const&,bool) -> std::expected<xhttp::Profile,std::string>;
-    auto parse_vless_transport(nex::glaze::KdlNode const& node,bool outbound)
+    auto parse_httpupgrade_transport(glaze::KdlNode const&) -> std::expected<HttpUpgradeTransport,std::string>;
+    auto parse_xhttp(glaze::KdlNode const&,bool) -> std::expected<xhttp::Profile,std::string>;
+    auto parse_vless_transport(glaze::KdlNode const& node,bool outbound)
         -> std::expected<std::variant<HttpUpgradeTransport,GrpcTransport,xhttp::Profile>,std::string> {
         if (node.tag || node.arguments.size()!=1 || !node.properties.empty() || !kdl::string(node.arguments[0]))
             return std::unexpected("transport requires exactly one untagged type");
@@ -23,7 +23,7 @@ namespace config {
         }
         if (type!="grpc") return std::unexpected("transport must be httpupgrade, websocket, grpc or xhttp");
         GrpcTransport result;
-        nexus::inplace_vector<std::string_view,10> seen;
+        containers::inplace_vector<std::string_view,10> seen;
         for (auto const& field:node.children) {
             if (field.tag || !field.properties.empty() || !field.children.empty() || field.arguments.size()!=1 || field.arguments[0].tag ||
                 std::ranges::find(seen,field.name)!=seen.end() || seen.size()==seen.capacity()) return std::unexpected("invalid or duplicate gRPC field");

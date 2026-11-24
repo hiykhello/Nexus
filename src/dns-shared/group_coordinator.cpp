@@ -8,8 +8,8 @@ import dns.message;
 import dns.cache;
 import dns.shared_cache;
 import dns.reverse;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace dns_hp_experiment {
     namespace d=dns;
     Coordinator::Coordinator(std::size_t flights,std::size_t waiters) : group_(flights,waiters) {}

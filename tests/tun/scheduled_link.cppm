@@ -1,4 +1,4 @@
-export module nexus.tests.scheduled_link;
+export module test.scheduled_link;
 import std;
 import packet;
 

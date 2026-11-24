@@ -4,8 +4,8 @@ import vision;
 import vision.corosio_writer;
 import tls.corosio_application;
 import tls.application_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace vision::detail {
     enum class ReadError { state, transport, protocol };
@@ -41,61 +41,66 @@ export namespace vision::detail {
         // Zero means EOF; on direct switch, already-decrypted suffix precedes
         // the previously read raw suffix, followed by subsequent socket data.
         auto read(std::span<std::uint8_t> output,tls::detail::ApplicationDeadline deadline={})
-            -> nex::capy::task<std::expected<std::size_t,ReadError>> {
+            -> capy::task<std::expected<std::size_t,ReadError>> {
             if (reading_ || canceled_ || !valid_ || output.empty()) co_return std::unexpected(ReadError::state);
             reading_=true;
+            struct ReadGuard { bool& r; ~ReadGuard() { r=false; } } rg{reading_};
             try {
                 for (;;) {
+                    if (canceled_) co_return fail(ReadError::transport);
                     if (decoded_begin_<decoded_end_) {
                         auto n=drain(output,std::span(decoded_).subspan(decoded_begin_,decoded_end_-decoded_begin_));
-                        decoded_begin_+=n; reading_=false; co_return n;
+                        decoded_begin_+=n; co_return n;
                     }
                     decoded_begin_=decoded_end_=0;
                     if (direct_) {
-                        if (begin_<end_) { auto n=drain(output,std::span(input_).subspan(begin_,end_-begin_)); begin_+=n; reading_=false; co_return n; }
+                        if (begin_<end_) { auto n=drain(output,std::span(input_).subspan(begin_,end_-begin_)); begin_+=n; co_return n; }
                         if (detached_offset_<detached_.plaintext.size()) {
-                            auto n=drain(output,std::span(detached_.plaintext).subspan(detached_offset_)); detached_offset_+=n; reading_=false; co_return n;
+                            auto n=drain(output,std::span(detached_.plaintext).subspan(detached_offset_)); detached_offset_+=n; co_return n;
                         }
                         detached_offset_-=detached_.plaintext.size(); detached_.plaintext.clear();
                         if (detached_offset_<detached_.transport.size()) {
-                            auto n=drain(output,std::span(detached_.transport).subspan(detached_offset_)); detached_offset_+=n; reading_=false; co_return n;
+                            auto n=drain(output,std::span(detached_.transport).subspan(detached_offset_)); detached_offset_+=n; co_return n;
                         }
                         detached_.transport.clear(); detached_offset_=0;
-                        auto op=socket_.read_some(nex::capy::mutable_buffer(output.data(),output.size()));
-                        auto [error,n]=deadline ? co_await nex::corosio::timeout(std::move(op),*deadline) : co_await std::move(op);
-                        reading_=false;
-                        if (nex::capy::is_eof(error) || (!error && !n)) co_return 0;
-                        if (error || n>output.size() || canceled_) co_return fail(ReadError::transport);
+                        if (canceled_) co_return fail(ReadError::transport);
+                        auto op=socket_.read_some(capy::mutable_buffer(output.data(),output.size()));
+                        auto [error,n]=deadline ? co_await corosio::timeout(std::move(op),*deadline) : co_await std::move(op);
+                        if (canceled_) co_return fail(ReadError::transport);
+                        if (capy::is_eof(error) || (!error && !n)) co_return 0;
+                        if (error || n>output.size()) co_return fail(ReadError::transport);
                         co_return n;
                     }
                     auto step=receiver_.feed(std::span(input_).subspan(begin_,end_-begin_),decoded_); begin_+=step.consumed;
-                    if (step.status==ReceiveStatus::invalid || step.status==ReceiveStatus::truncated) { reading_=false; co_return fail(ReadError::protocol); }
+                    if (step.status==ReceiveStatus::invalid || step.status==ReceiveStatus::truncated) co_return fail(ReadError::protocol);
                     if (step.status==ReceiveStatus::direct) {
                         auto suffix=tls_reader_.detach_input();
-                        if (!suffix) { reading_=false; co_return fail(ReadError::protocol); }
+                        if (!suffix) co_return fail(ReadError::protocol);
                         detached_=std::move(*suffix); direct_=true;
                     }
                     if (step.written) { decoded_end_=step.written; filter_.observe(std::span(decoded_).first(decoded_end_)); continue; }
                     if (direct_) continue;
-                    if (step.status==ReceiveStatus::closed) { reading_=false; co_return 0; }
-                    if (eof_) { reading_=false; co_return fail(ReadError::protocol); }
-                    if (begin_!=end_) { reading_=false; co_return fail(ReadError::protocol); }
+                    if (step.status==ReceiveStatus::closed) co_return 0;
+                    if (eof_ || begin_!=end_) co_return fail(ReadError::protocol);
                     begin_=end_=0;
                     auto result=co_await tls_reader_.read_some(input_,deadline);
-                    if (!result || canceled_) { reading_=false; co_return fail(ReadError::transport); }
-                    if (result->kind==tls::detail::AsyncStreamReadKind::data) { end_=result->size; continue; }
+                    if (!result || canceled_) co_return fail(ReadError::transport);
+                    if (result->kind==tls::detail::AsyncStreamReadKind::data) {
+                        if (result->size>input_.size()) co_return fail(ReadError::transport);
+                        end_=result->size; continue;
+                    }
                     if (result->kind==tls::detail::AsyncStreamReadKind::backpressure || (result->event && result->event->kind==tls::ApplicationEventKind::key_update_requested)) {
-                        if (!co_await writer_.flush_control(deadline)) { reading_=false; co_return fail(ReadError::transport); }
+                        if (!co_await writer_.flush_control(deadline) || canceled_) co_return fail(ReadError::transport);
                         continue;
                     }
                     if (result->kind==tls::detail::AsyncStreamReadKind::eof || (result->event && result->event->kind==tls::ApplicationEventKind::close_notify)) {
                         eof_=true; auto state=receiver_.finish();
-                        if (state==ReceiveStatus::truncated || state==ReceiveStatus::invalid) { reading_=false; co_return fail(ReadError::protocol); }
+                        if (state==ReceiveStatus::truncated || state==ReceiveStatus::invalid) co_return fail(ReadError::protocol);
                         continue;
                     }
-                    if (result->event && (result->event->kind==tls::ApplicationEventKind::fatal_alert || result->event->kind==tls::ApplicationEventKind::user_canceled)) { reading_=false; co_return fail(ReadError::protocol); }
+                    if (result->event && (result->event->kind==tls::ApplicationEventKind::fatal_alert || result->event->kind==tls::ApplicationEventKind::user_canceled)) co_return fail(ReadError::protocol);
                 }
-            } catch (...) { reading_=false; cancel(); throw; }
+            } catch (...) { cancel(); throw; }
         }
     };
 }

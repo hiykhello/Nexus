@@ -4,6 +4,7 @@
 # for all isolated profiles and workspace members.
 /mcpp/**/.mcpp
 /mcpp/**/target/
+/tests/**/target/
 /compile_commands.json
 
 __pycache__/

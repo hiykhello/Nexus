@@ -2,7 +2,7 @@ module config;
 import std;
 import config.kdl_common;
 import platform.socket_options;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
@@ -31,6 +31,26 @@ namespace config {
             if (ipv6) return dns_ipv6(ip).has_value() && bits >= 1 && bits <= 128;
             return dns_ipv4(ip).has_value() && bits >= 1 && bits <= 32;
         }
+
+        auto parse_uid_range(Value const& value) -> std::optional<TunUidRange> {
+            if (auto u = integer(value)) {
+                if (*u > 0xffffffffULL) return std::nullopt;
+                auto v = static_cast<std::uint32_t>(*u);
+                return TunUidRange{v, v};
+            }
+            auto text = string(value);
+            if (!text || text->empty()) return std::nullopt;
+            auto sep = text->find(':');
+            if (sep == std::string::npos) sep = text->find('-');
+            if (sep == std::string::npos || sep == 0 || sep + 1 >= text->size()) return std::nullopt;
+            std::uint32_t lo = 0, hi = 0;
+            auto a = std::string_view(*text).substr(0, sep), b = std::string_view(*text).substr(sep + 1);
+            auto [e1, c1] = std::from_chars(a.data(), a.data() + a.size(), lo);
+            auto [e2, c2] = std::from_chars(b.data(), b.data() + b.size(), hi);
+            if (c1 != std::errc{} || e1 != a.data() + a.size() || c2 != std::errc{} || e2 != b.data() + b.size() || lo > hi)
+                return std::nullopt;
+            return TunUidRange{lo, hi};
+        }
     }
 
     auto parse_tun_inbound(Node const& node) -> std::expected<InboundConfig, std::string> {
@@ -44,22 +64,32 @@ namespace config {
         bool auto_seen = false, strict_seen = false, stack_seen = false;
         bool flows_seen = false, buf_seen = false, udp_seen = false, mark_seen = false, nat_seen = false;
         bool filter_seen=false,reject_seen=false,dns_tcp_seen=false,reply_fragment_seen=false;
-        bool private_seen=false, redirect_seen=false, mptcp_seen=false, mq_seen=false;
+        bool private_seen=false, redirect_seen=false, mptcp_seen=false, mq_seen=false, mode_seen=false;
 
         for (auto const& child : node.children) {
             if (child.name == "interface-name") {
                 auto v = scalar(child);
                 if (if_seen || !v || !valid_interface_name(*v)) return error("invalid TUN interface-name");
                 cfg.interface_name = *v; if_seen = true;
+            } else if (child.name == "device-mode") {
+                auto v = scalar(child);
+                if (mode_seen || !v || (*v != "system" && *v != "bridge"))
+                    return error("TUN device-mode must be system or bridge");
+                cfg.extra.bridge_mode = (*v == "bridge");
+                mode_seen = true;
             } else if (child.name == "device-fd") {
                 auto value = child.arguments.size() == 1 ? integer(child.arguments.front()) : std::nullopt;
                 auto ownership = text_property(child, "ownership");
+                auto skip_ioctl = property(child, "skip-ioctl");
+                std::size_t expected_props = std::size_t{ownership != nullptr} + std::size_t{skip_ioctl != nullptr};
                 if (cfg.device_fd || child.tag || !child.children.empty() || !value ||
                     *value < 3 || *value > std::numeric_limits<int>::max() ||
-                    (!child.properties.empty() && (child.properties.size() != 1 || !ownership ||
-                        (*ownership != "borrow" && *ownership != "adopt"))))
+                    child.properties.size() != expected_props ||
+                    (ownership && *ownership != "borrow" && *ownership != "adopt") ||
+                    (skip_ioctl && (skip_ioctl->tag || !std::holds_alternative<bool>(skip_ioctl->data))))
                     return error("TUN device-fd requires an fd >= 3 and optional borrow or adopt ownership");
                 cfg.device_fd = TunInbound::DeviceFd{static_cast<int>(*value), ownership && *ownership == "adopt"};
+                cfg.extra.device_fd_skip_ioctl = skip_ioctl && std::get<bool>(skip_ioctl->data);
             } else if (child.name == "connect-ip-outbound") {
                 auto v = scalar(child);
                 if (cfg.connect_ip_outbound || !v || !valid_name(*v)) return error("invalid TUN connect-ip-outbound");
@@ -86,10 +116,16 @@ namespace config {
                 private_seen=true;
             } else if (child.name=="route-exclude") {
                 auto value=scalar(child);
-                if (!value || cfg.route_excludes.size()==16 ||
+                if (!value || cfg.route_excludes.size()==64 ||
                     !valid_cidr(*value,value->find(':')!=std::string::npos))
                     return error("invalid TUN route-exclude");
                 cfg.route_excludes.push_back(*value);
+            } else if (child.name=="route-address-set" || child.name=="route-exclude-address-set") {
+                auto& dst = child.name=="route-address-set" ? cfg.route_address_sets : cfg.route_exclude_address_sets;
+                auto value=scalar(child);
+                if (!value || !valid_name(*value) || dst.size()==16 || std::ranges::contains(dst,*value))
+                    return error("invalid or duplicate TUN "+child.name);
+                dst.push_back(*value);
             } else if (child.name == "inet4-address") {
                 auto v = scalar(child);
                 if (v4_seen || !v || !valid_cidr(*v, false)) return error("invalid TUN inet4-address");
@@ -197,10 +233,49 @@ namespace config {
                     std::ranges::contains(cfg.exclude_packages,*value))
                     return error("invalid or duplicate TUN exclude-package");
                 cfg.exclude_packages.push_back(*value);
+            } else if (child.name == "auto-redirect-input-mark" || child.name == "auto-redirect-output-mark" ||
+                       child.name == "auto-redirect-reset-mark") {
+                auto& dst = child.name == "auto-redirect-input-mark" ? cfg.extra.auto_redirect_input_mark
+                    : child.name == "auto-redirect-output-mark" ? cfg.extra.auto_redirect_output_mark
+                    : cfg.extra.auto_redirect_reset_mark;
+                auto v = child.arguments.size() == 1 ? integer(child.arguments.front()) : std::nullopt;
+                if (dst || child.tag || !child.properties.empty() || !child.children.empty() || !v || *v > 0xffffffffULL)
+                    return error("invalid TUN " + child.name);
+                dst = static_cast<std::uint32_t>(*v);
+            } else if (child.name == "include-uid" || child.name == "exclude-uid") {
+                auto& dst = child.name == "include-uid" ? cfg.extra.include_uids : cfg.extra.exclude_uids;
+                if (child.tag || !child.properties.empty() || !child.children.empty() || child.arguments.size() != 1 || dst.size() >= 16)
+                    return error("invalid TUN " + child.name);
+                auto parsed = parse_uid_range(child.arguments.front());
+                if (!parsed || std::ranges::contains(dst, *parsed)) return error("invalid or duplicate TUN " + child.name);
+                dst.push_back(*parsed);
+            } else if (child.name == "include-android-user") {
+                auto v = child.arguments.size() == 1 ? integer(child.arguments.front()) : std::nullopt;
+                if (child.tag || !child.properties.empty() || !child.children.empty() || !v || *v > 999 ||
+                    cfg.extra.include_android_users.size() >= 8 ||
+                    std::ranges::contains(cfg.extra.include_android_users, static_cast<std::uint32_t>(*v)))
+                    return error("invalid or duplicate TUN include-android-user");
+                cfg.extra.include_android_users.push_back(static_cast<std::uint32_t>(*v));
+            } else if (child.name == "include-interface" || child.name == "exclude-interface") {
+                auto& dst = child.name == "include-interface" ? cfg.extra.include_interfaces : cfg.extra.exclude_interfaces;
+                auto v = scalar(child);
+                if (!v || !valid_interface_name(*v) || dst.size() >= 8 || std::ranges::contains(dst, *v))
+                    return error("invalid or duplicate TUN " + child.name);
+                dst.push_back(*v);
             } else {
                 return error("unsupported TUN inbound field: " + child.name);
             }
         }
+        if (cfg.extra.bridge_mode && (cfg.strict_route || cfg.auto_route || cfg.connect_ip_outbound || cfg.device_fd || cfg.auto_redirect))
+            return error("TUN device-mode bridge cannot be combined with system routing or device-fd");
+        if ((cfg.extra.auto_redirect_input_mark || cfg.extra.auto_redirect_output_mark || cfg.extra.auto_redirect_reset_mark) && !cfg.auto_redirect)
+            return error("TUN auto-redirect marks require auto-redirect");
+        if ((!cfg.extra.include_uids.empty() || !cfg.extra.exclude_uids.empty() ||
+             !cfg.extra.include_android_users.empty() || !cfg.extra.include_interfaces.empty() ||
+             !cfg.extra.exclude_interfaces.empty()) && !cfg.auto_redirect && !cfg.strict_route)
+            return error("TUN UID and interface filters require auto-redirect or strict-route");
+        if (cfg.extra.include_uids.size() + cfg.extra.include_android_users.size() > 16)
+            return error("TUN include-uid + include-android-user exceeds 16 entries");
         if (cfg.exclude_mptcp && !cfg.auto_redirect)
             return error("TUN exclude-mptcp requires auto-redirect");
         if (!cfg.exclude_packages.empty() && cfg.strict_route)
@@ -231,16 +306,34 @@ namespace config {
             return error("TUN strict-route requires auto-route");
         if (cfg.host_dns_resolved && !cfg.strict_route)
             return error("TUN host-dns requires strict-route");
+#if defined(__linux__)
         if (!cfg.route_excludes.empty() && (!cfg.strict_route || cfg.connect_ip_outbound))
             return error("TUN route-exclude requires routed TUN strict-route");
+        if (!cfg.route_exclude_address_sets.empty() && (!cfg.strict_route || cfg.connect_ip_outbound))
+            return error("TUN route-exclude-address-set requires routed TUN strict-route");
+        if (!cfg.route_address_sets.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
+            return error("TUN route-address-set requires routed TUN auto-route");
         if ((private_seen || cfg.include_routing_mark || cfg.exclude_routing_mark) &&
             (!cfg.strict_route || cfg.connect_ip_outbound))
             return error("TUN mark filters and route-exclude-private require routed TUN strict-route");
+#else
+        if (!cfg.route_excludes.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
+            return error("TUN route-exclude requires routed TUN auto-route");
+        if (!cfg.route_exclude_address_sets.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
+            return error("TUN route-exclude-address-set requires routed TUN auto-route");
+        if (!cfg.route_address_sets.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
+            return error("TUN route-address-set requires routed TUN auto-route");
+        if ((private_seen || cfg.include_routing_mark || cfg.exclude_routing_mark) &&
+            (!cfg.auto_route || cfg.connect_ip_outbound))
+            return error("TUN route-exclude-private requires routed TUN auto-route");
+#endif
         for (auto const& prefix : cfg.route_excludes)
             if (!(prefix.contains(':') ? cfg.inet6_address : cfg.inet4_address))
                 return error("TUN route-exclude requires an address in the same family");
         if (cfg.auto_route && !cfg.inet4_address && !cfg.inet6_address)
             return error("TUN auto-route requires inet4-address or inet6-address");
+        if (cfg.inet6_address && cfg.mtu < 88)
+            return error("TUN IPv6 mtu must be 88..65535");
         result.tun = std::move(cfg);
         return result;
     }
@@ -294,8 +387,6 @@ namespace config {
         };
         if (!apply_mark(config.direct_tcp_options.binding))
             return std::unexpected("TUN strict-route and direct outbound require the same routing mark");
-        if (config.dns_upstream && !apply_mark(config.dns_upstream->binding))
-            return std::unexpected("TUN strict-route and DNS upstream require the same routing mark");
         if (config.dns)
             for (auto& server : config.dns->servers)
                 if (server.upstream && !apply_mark(server.upstream->binding))
@@ -318,11 +409,35 @@ namespace config {
         auto apply = [&](auto&... outbounds) { return ((result = mark_outbounds(outbounds)).has_value() && ...); };
         if (!apply(config.vless_outbounds, config.shadowsocks_outbounds, config.trojan_outbounds,
                 config.anytls_outbounds, config.hysteria2_outbounds, config.snell_outbounds,
-                config.shadowtls_outbounds, config.tuic_outbounds, config.masque_outbounds, config.wireguard_outbounds, config.tcp_proxy_outbounds))
+                config.shadowtls_outbounds, config.tuic_outbounds, config.masque_outbounds,
+                config.wireguard_outbounds, config.ssh_outbounds, config.naive_outbounds,
+                config.openvpn_outbounds, config.openconnect_outbounds, config.tcp_proxy_outbounds))
             return result;
         if (auto host_dns=configure_tun_host_dns(config,tun); !host_dns) return host_dns;
         tun.socket_mark = mark;
         config.tun_inbound = tun;
+        return {};
+    }
+
+    auto validate_tun_rule_set_refs(Config const& config, std::span<std::string const> available,
+        bool check_unused, std::span<std::string const> used_by_rules) -> std::expected<void, std::string> {
+        for (auto const& entry : config.inbounds) {
+            if (!entry.tun) continue;
+            for (auto const* sets : {&entry.tun->route_address_sets, &entry.tun->route_exclude_address_sets}) {
+                for (auto const& tag : *sets) {
+                    if (!std::ranges::contains(available, tag))
+                        return std::unexpected("TUN rule-set reference not found: " + tag);
+                }
+            }
+        }
+        if (check_unused) for (auto const& name : available) {
+            bool used = std::ranges::contains(used_by_rules, name) ||
+                std::ranges::any_of(config.inbounds, [&](auto const& in) {
+                    return in.tun && (std::ranges::contains(in.tun->route_address_sets, name) ||
+                        std::ranges::contains(in.tun->route_exclude_address_sets, name));
+                });
+            if (!used) return std::unexpected("unreferenced rule-set");
+        }
         return {};
     }
 }

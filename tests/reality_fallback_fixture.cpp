@@ -1,10 +1,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import reality.fallback;
-namespace capy=nex::capy; namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Fixture { io::io_context context{io::epoll}; io::local_stream_socket client{context},cover{context}; bool done=false,ok=false; };
 auto run(Fixture& f,std::span<std::uint8_t const> prefix) -> capy::task<> {

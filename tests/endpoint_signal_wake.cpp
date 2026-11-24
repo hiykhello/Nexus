@@ -1,11 +1,11 @@
 import std;
 import endpoint.process_signals;
 import platform.netlink_abi;
-import nexus.thirdparty.corosio;
+import corosio;
 namespace {
     namespace p=endpoint::process;
     namespace a = ::platform::netlink_abi;
-    namespace io=nex::corosio;
+    namespace io = ::corosio;
     auto require(bool value,unsigned line) -> void {if(!value){std::println("signal wake assertion {}",line);throw 1;}}
     auto empty(int fd) -> bool {
         std::array<char,1024> bytes{};auto count=a::recvfrom(fd,bytes.data(),bytes.size(),0,nullptr,nullptr);

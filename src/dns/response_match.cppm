@@ -3,6 +3,7 @@ import std;
 import dns.message;
 import dns.policy;
 import rules;
+import rules.domain_pattern;
 
 export namespace dns {
     // A missing response yields an unknown match.
@@ -10,7 +11,11 @@ export namespace dns {
     enum class ResponseTruth : std::uint8_t { no, yes, unknown };
     using ResponseCondition=policy::ResponseCondition;
     [[nodiscard]] inline auto valid_response_condition(ResponseCondition const& value) noexcept -> bool {
-        if (!value.authenticated_data && !value.rcode && !value.section && !value.record_type && !value.address && !value.address_private && !value.address_any && !value.record_name && !value.record_class && !value.record_ttl_min && !value.record_ttl_max && !value.record_data) return false;
+        if (!value.authenticated_data && !value.rcode && !value.section && !value.record_type && !value.address && !value.address_private && !value.address_any && !value.record_name && !value.record_class && !value.record_ttl_min && !value.record_ttl_max && !value.record_data && value.cname.empty()) return false;
+        for (auto const& c : value.cname) {
+            if (c.pattern.empty()) return false;
+            if (c.kind==policy::DnsPattern::regex && (!c.compiled_regex || c.suffix)) return false;
+        }
         if (value.rcode && *value.rcode>4095) return false;
         if (value.record_type && !*value.record_type) return false;
         if (value.record_class && !*value.record_class) return false;
@@ -99,6 +104,23 @@ export namespace dns {
                 for (unsigned i=0;i<whole;++i) if (bytes[i]!=prefix.address[i]) return false;
                 return !remaining || ((bytes[whole]^prefix.address[whole]) & (0xffu << (8-remaining)))==0;
             });
+        }
+        if (matched && !condition.cname.empty()) {
+            for (auto const& c : condition.cname) {
+                bool hit=std::ranges::any_of(response->records,[&](Record const& record) {
+                    if (record.section!=Section::answer || record.type!=5 || !record.cname) return false;
+                    std::string_view target=*record.cname;
+                    if (target.size()>1 && target.ends_with('.')) target.remove_suffix(1);
+                    if (c.kind==policy::DnsPattern::regex)
+                        return c.compiled_regex && c.compiled_regex->search(target,true);
+                    auto kind=c.kind==policy::DnsPattern::keyword ? rules::DomainPattern::keyword :
+                        c.kind==policy::DnsPattern::wildcard ? rules::DomainPattern::wildcard :
+                        c.suffix ? rules::DomainPattern::suffix : rules::DomainPattern::exact;
+                    return rules::domain_pattern_matches(kind,target,c.pattern);
+                });
+                if (c.invert) hit=!hit;
+                if (!hit) { matched=false; break; }
+            }
         }
         if (condition.invert) matched=!matched;
         return matched ? ResponseTruth::yes : ResponseTruth::no;

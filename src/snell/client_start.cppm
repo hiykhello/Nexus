@@ -5,14 +5,14 @@ import snell.record;
 import snell.kdf;
 import snell.cipher;
 import snell.async_record;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 export namespace snell {
     struct ClientReply {Record<Cipher> reader;Bytes early;ClientReply(Record<Cipher> r,Bytes e):reader(std::move(r)),early(std::move(e)){}ClientReply(ClientReply&&)=default;auto operator=(ClientReply&&)->ClientReply& =default;};
     struct RemoteError {std::uint8_t code;std::string message;};
     using ReplyError=std::variant<IoError,RemoteError>;
     template<class Socket> auto client_start(Socket& socket,View psk,Request const& request,View early,Deadline deadline)
-      ->nex::capy::task<std::expected<Record<Cipher>,IoError>> {
+      ->capy::task<std::expected<Record<Cipher>,IoError>> {
         struct Guard{Socket& s;bool done=false;~Guard(){if(!done)s.cancel();}} guard{socket};
         if(std::chrono::steady_clock::now()>=deadline)co_return std::unexpected(IoError::timeout);
         auto plain=encode_request(request);if(!plain)co_return std::unexpected(IoError::record);
@@ -30,19 +30,19 @@ export namespace snell {
         auto frame=writer.encode(*plain,padding);if(!frame)co_return std::unexpected(IoError::record);Bytes wire(salt.begin(),salt.end());wire.insert(wire.end(),frame->begin(),frame->end());
         std::size_t offset=0;while(offset<wire.size()){
             if(std::chrono::steady_clock::now()>=deadline)co_return std::unexpected(IoError::timeout);
-            auto op=socket.write_some(nex::capy::const_buffer(wire.data()+offset,wire.size()-offset));auto [ec,n]=co_await nex::corosio::timeout(std::move(op),deadline);
-            if(nex::capy::is_timeout(ec)||(!ec&&std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(IoError::timeout);
+            auto op=socket.write_some(capy::const_buffer(wire.data()+offset,wire.size()-offset));auto [ec,n]=co_await corosio::timeout(std::move(op),deadline);
+            if(capy::is_timeout(ec)||(!ec&&std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(IoError::timeout);
             if(ec||!n||n>wire.size()-offset)co_return std::unexpected(IoError::transport);offset+=n;
         }guard.done=true;co_return std::move(writer);
     }
-    template<class Socket> auto client_reply(Socket& socket,View psk,Deadline deadline)->nex::capy::task<std::expected<ClientReply,ReplyError>> {
+    template<class Socket> auto client_reply(Socket& socket,View psk,Deadline deadline)->capy::task<std::expected<ClientReply,ReplyError>> {
         struct Guard{Socket& s;bool done=false;~Guard(){if(!done)s.cancel();}} guard{socket};
-        auto read=[&](std::span<std::uint8_t> out)->nex::capy::task<std::expected<void,IoError>> {
+        auto read=[&](std::span<std::uint8_t> out)->capy::task<std::expected<void,IoError>> {
             std::size_t off=0;while(off<out.size()){
                 if(std::chrono::steady_clock::now()>=deadline)co_return std::unexpected(IoError::timeout);
-                auto op=socket.read_some(nex::capy::mutable_buffer(out.data()+off,out.size()-off));auto [ec,n]=co_await nex::corosio::timeout(std::move(op),deadline);
-                if(nex::capy::is_timeout(ec)||(!ec&&std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(IoError::timeout);
-                if(nex::capy::is_eof(ec)||(!ec&&!n))co_return std::unexpected(IoError::truncated);
+                auto op=socket.read_some(capy::mutable_buffer(out.data()+off,out.size()-off));auto [ec,n]=co_await corosio::timeout(std::move(op),deadline);
+                if(capy::is_timeout(ec)||(!ec&&std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(IoError::timeout);
+                if(capy::is_eof(ec)||(!ec&&!n))co_return std::unexpected(IoError::truncated);
                 if(ec||n>out.size()-off)co_return std::unexpected(IoError::transport);off+=n;
             }co_return std::expected<void,IoError>{};
         };

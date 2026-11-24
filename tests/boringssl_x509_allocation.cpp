@@ -1,5 +1,5 @@
 import std;
-import nexus.thirdparty.boringssl;
+import boringssl;
 extern "C" void* __real_malloc(std::size_t);
 extern "C" void* __real_calloc(std::size_t,std::size_t);
 extern "C" void* __real_realloc(void*,std::size_t);
@@ -77,12 +77,12 @@ auto main(int argc,char** argv) -> int {
     bool recovered=false,valid=false;
     std::thread worker([&] {
         native_audit::audit_thread=true;native_audit::enabled=true;native_audit::fail_at=point;
-        std::uint8_t const* cursor=der.data();auto* parsed=nex::boringssl::d2i_X509(nullptr,&cursor,static_cast<long>(der.size()));
-        valid=parsed && cursor==der.data()+der.size();nex::boringssl::X509_free(parsed);
+        std::uint8_t const* cursor=der.data();auto* parsed=boringssl::d2i_X509(nullptr,&cursor,static_cast<long>(der.size()));
+        valid=parsed && cursor==der.data()+der.size();boringssl::X509_free(parsed);
         native_audit::enabled=false;
         if (native_audit::fired) {
-            nex::boringssl::ERR_clear_error();cursor=der.data();parsed=nex::boringssl::d2i_X509(nullptr,&cursor,static_cast<long>(der.size()));
-            recovered=parsed && cursor==der.data()+der.size();nex::boringssl::X509_free(parsed);
+            boringssl::ERR_clear_error();cursor=der.data();parsed=boringssl::d2i_X509(nullptr,&cursor,static_cast<long>(der.size()));
+            recovered=parsed && cursor==der.data()+der.size();boringssl::X509_free(parsed);
         }
     });worker.join();
     std::println("audit calls={} malloc={} calloc={} realloc={} fired={} parsed={} recovered={} native-live={} bytes={}",native_audit::calls,native_audit::mallocs,native_audit::callocs,native_audit::reallocs,native_audit::fired,valid,recovered,native_audit::live,native_audit::bytes);

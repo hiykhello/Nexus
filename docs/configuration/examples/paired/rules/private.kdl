@@ -1,6 +1,6 @@
 /- kdl-version 2
 // 独立的谓词规则集草案；按本机真实网络调整。
-schema-version 1
+schema-version 2
 kind "predicate"
 rule type="domain-suffix" value="internal.example"
 rule type="ip-cidr" value="10.0.0.0/8"

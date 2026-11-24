@@ -3,7 +3,7 @@ import crypto.backend_errors;
 import std;
 
 namespace crypto {
-    using namespace nex::boringssl;
+    using namespace boringssl;
     EcSecret::~EcSecret() { cleanse(bytes_); }
     EcSecret::EcSecret(EcSecret&& other) noexcept : bytes_(other.bytes_),size_(other.size_) { cleanse(other.bytes_); other.size_=0; }
     auto EcSecret::operator=(EcSecret&& other) noexcept -> EcSecret& {

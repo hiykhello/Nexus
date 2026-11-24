@@ -1,6 +1,6 @@
 export module hysteria2.receive_buffer;
 import std;
-import nexus.thirdparty.nghttp3;
+import nghttp3;
 
 export namespace hysteria2 {
     // Receive bytes have no borrowed readers. Free consumed blocks promptly,
@@ -10,7 +10,7 @@ export namespace hysteria2 {
             Block* next;
             std::array<std::uint8_t,16384> data;
         };
-        nex::nghttp3::nghttp3_mem memory_;
+        nghttp3::nghttp3_mem memory_;
         Block* head_=nullptr;
         Block* tail_=nullptr;
         std::size_t limit_,size_=0,read_=0,written_=0;
@@ -24,7 +24,7 @@ export namespace hysteria2 {
             if (!head_) {tail_=nullptr;written_=0;}
         }
     public:
-        explicit ReceiveBuffer(nex::nghttp3::nghttp3_mem memory,std::size_t limit) noexcept
+        explicit ReceiveBuffer(nghttp3::nghttp3_mem memory,std::size_t limit) noexcept
             :memory_(memory),limit_(limit) {}
         ReceiveBuffer(ReceiveBuffer const&)=delete;
         auto operator=(ReceiveBuffer const&) -> ReceiveBuffer& = delete;

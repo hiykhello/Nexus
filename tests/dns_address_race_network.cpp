@@ -1,6 +1,6 @@
 import std;
-import proxy;
-import proxy.dns_state;
+import relay;
+import relay.dns_state;
 import dns.address_race_program;
 import dns.response_race_walk;
 import dns.response_program;
@@ -8,17 +8,16 @@ import dns.shared_coordinator;
 import dns.response_cache;
 import dns.local_response;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 struct Operation {
-    proxy::Session& session;io::io_context& context;dns::ResponseStep step;Clock::time_point deadline;
-    proxy::DnsSlot slot;std::optional<dns::detail::AddressResolver> resolver;bool canceled=false;
+    relay::Session& session;io::io_context& context;dns::ResponseStep step;Clock::time_point deadline;
+    relay::DnsSlot slot;std::optional<dns::detail::AddressResolver> resolver;bool canceled=false;
     auto cancel() noexcept -> void {canceled=true;slot.cancel();if(resolver)resolver->cancel();}
     auto run() -> capy::task<dns::AddressRaceResult> {
-        auto response=co_await proxy::resolve_response_owned(session,context,slot,step.server,"alias.test",1,deadline,{},true);
+        auto response=co_await relay::resolve_response_owned(session,context,slot,step.server,"alias.test",1,deadline,{},true);
         if(!response)co_return std::unexpected(response.error());
         if(step.action==::policy::DnsAction::evaluate)co_return dns::AddressRaceValue{std::move(*response)};
         auto first=std::optional<dns::Response>{std::move(response->response)};
@@ -41,11 +40,11 @@ auto main(int argc,char** argv) -> int {
 #endif
     std::array<std::size_t,1> capacities{1};dns_hp_experiment::GroupSnapshot group(capacities,dns_hp_experiment::GroupSnapshot::SharedCapacity{32},1);
     dns_hp_experiment::Coordinator coordinator(16,64);dns_hp_experiment::ViewRegistry views(4,65536,32);dns::ResponseCache cache(32);
-    proxy::DnsRouting routing;proxy::DnsServer a;a.address[0]=127;a.address[3]=1;a.port=port(argv[1]);auto b=a;b.port=port(argv[2]);routing.servers={a,b};
+    relay::DnsRouting routing;relay::DnsServer a;a.address[0]=127;a.address[3]=1;a.port=port(argv[1]);auto b=a;b.port=port(argv[2]);routing.servers={a,b};
     auto pa=views.register_profile(routing,0),pb=views.register_profile(routing,1);if(!pa || !pb)return 3;
-    views.seal();std::array profiles{*pa,*pb};proxy::DnsState state(std::move(routing),group,0,0);
+    views.seal();std::array profiles{*pa,*pb};relay::DnsState state(std::move(routing),group,0,0);
     state.views.emplace(views,profiles);state.coordinator.emplace(context,state.cache,coordinator);state.response_coordinator.emplace(context,cache,coordinator);
-    proxy::Session session(context);session.dns=&state;
+    relay::Session session(context);session.dns=&state;
     ::policy::DnsRule evaluate;evaluate.match_all=true;evaluate.action=::policy::DnsAction::evaluate;evaluate.evaluate_tag="slow";
     ::policy::DnsRule match;match.match_all=true;match.match_response=true;match.match_response_tag="slow";match.response=::policy::ResponseCondition{.rcode=0};match.action=::policy::DnsAction::respond;
     auto fast=evaluate;fast.server=1;fast.evaluate_tag="fast";auto fast_match=match;fast_match.match_response_tag="fast";

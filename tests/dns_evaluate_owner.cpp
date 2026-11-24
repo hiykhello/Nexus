@@ -1,10 +1,9 @@
 import std;
 import dns.evaluate_owner;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 struct State {capy::async_event event;bool canceled=false;unsigned destroyed=0;};
 struct Operation {
     State& state;int value;bool fail=false;

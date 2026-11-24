@@ -6,12 +6,13 @@ export import tls.raw_client_flight;
 export import memory.budget;
 import tls.traffic_records;
 import tls.post_handshake;
-import nexus.compat;
+import functional;
 import std;
 
 export namespace tls {
     enum class ApplicationEventKind { data, close_notify, user_canceled, fatal_alert, handshake_fragment, ticket_discarded, key_update, key_update_requested, ticket_received };
     struct ApplicationEvent { ApplicationEventKind kind; crypto::Bytes data; std::uint8_t alert_description=0; };
+    struct OpenedApplicationData { std::size_t data_size = 0; std::optional<ApplicationEvent> event; };
     enum class ApplicationRole { client, server };
     // Owns one set of application traffic keys. Limits include the TLSInnerPlaintext type and padding.
     class ApplicationRecords {
@@ -26,7 +27,7 @@ export namespace tls {
         crypto::Aead algorithm_=crypto::Aead::aes_128_gcm;
         std::size_t key_size_=0;
         crypto::Bytes handshake_pending_;
-        using TicketSink=nexus::move_only_function<std::expected<void,RecordError>(std::span<std::uint8_t const>)>;
+        using TicketSink=functional::move_only_function<std::expected<void,RecordError>(std::span<std::uint8_t const>)>;
         TicketSink ticket_sink_;
 
         std::array<std::uint8_t,5> server_handshake_pending_{};
@@ -54,6 +55,12 @@ export namespace tls {
         [[nodiscard]] auto max_write_size() const noexcept -> std::size_t {
             return active_ && !write_closed_ && write_limit_ > 1 ? std::min(write_limit_ - 1, std::size_t{16384}) : 0;
         }
+        [[nodiscard]] auto sealed_record_size(std::size_t payload_size) const noexcept -> std::size_t {
+            return payload_size + (write_.tls12() ? write_.tls12_overhead() : 22u);
+        }
+        [[nodiscard]] auto read_overhead() const noexcept -> std::size_t {
+            return read_.tls12() ? read_.tls12_overhead() : 21u;
+        }
         ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t write_limit, std::size_t read_limit, ApplicationRole role) noexcept;
         ApplicationRecords(RecordLayer&& write, RecordLayer&& read, std::size_t write_limit, std::size_t read_limit,
             crypto::Hash hash, crypto::Aead algorithm, std::size_t key_size, Secret&& write_secret, Secret&& read_secret, ApplicationRole role) noexcept;
@@ -61,7 +68,9 @@ export namespace tls {
         auto operator=(ApplicationRecords const&) -> ApplicationRecords& = delete;
         ApplicationRecords(ApplicationRecords&& other) noexcept;
         auto operator=(ApplicationRecords&& other) noexcept -> ApplicationRecords&;
+        ~ApplicationRecords() noexcept;
         [[nodiscard]] auto seal(std::span<std::uint8_t const> data) -> std::expected<crypto::Bytes,RecordError>;
+        [[nodiscard]] auto seal_into(std::span<std::uint8_t const> data, std::span<std::uint8_t> out) -> std::expected<std::size_t,RecordError>;
         // Only after a size violation; the caller must first complete any
         // already encoded output on the transport, then write this record.
         [[nodiscard]] auto take_overflow_alert() -> std::expected<crypto::Bytes,RecordError>;
@@ -70,76 +79,104 @@ export namespace tls {
             if (!active_ || read_closed_) return false;
             active_=false;overflow_alert_pending_=true;return true;
         }
+    private:
+        [[nodiscard]] auto check_open_bounds(std::span<std::uint8_t const> record) noexcept -> std::expected<void,RecordError> {
+            if (!active_ || read_closed_) return std::unexpected(RecordError::invalid_state);
+            auto overhead=read_.tls12() ? read_.tls12_overhead() : 21;
+            if (record.size()<overhead+(read_.tls12() ? 0 : 1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+            if (record.size()-overhead>read_limit_) { (void)signal_overflow(); return std::unexpected(RecordError::record_overflow); }
+            return {};
+        }
+        template<class... Recovery>
+        inline auto process_non_data_record(ContentType content_type, std::span<std::uint8_t const> content, Recovery&... recovery)
+            -> std::expected<ApplicationEvent,RecordError> {
+            using Sink=RecoveryPolicy<Recovery...>;
+            if (content_type==ContentType::handshake) {
+                // A server only accepts a single five-byte KeyUpdate. Keep its
+                // fragments inline so they cannot retain an uncharged allocation.
+                if (role_==ApplicationRole::server) {
+                    if (!read_secret_ || content.empty() || content.size()>server_handshake_pending_.size()-server_handshake_size_) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                    std::ranges::copy(content,server_handshake_pending_.begin()+static_cast<std::ptrdiff_t>(server_handshake_size_));
+                    server_handshake_size_+=content.size();
+                    if (server_handshake_size_>=4 && (server_handshake_pending_[0]!=24 || server_handshake_pending_[1]!=0 || server_handshake_pending_[2]!=0 || server_handshake_pending_[3]!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                    if (server_handshake_size_<5) return ApplicationEvent{ApplicationEventKind::handshake_fragment,{},0};
+                    auto request=server_handshake_pending_[4];
+                    if (request>1 || !rotate(false)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                    server_handshake_size_=0;
+                    if (request==1) update_response_=true;
+                    return ApplicationEvent{request ? ApplicationEventKind::key_update_requested : ApplicationEventKind::key_update,{},0};
+                }
+                constexpr std::size_t max_ticket=max_new_session_ticket;
+                constexpr std::size_t max_pending=4+max_ticket+16384-1;
+                if (!read_secret_ || content.empty() || content.size()>max_pending-handshake_pending_.size()) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                handshake_pending_.insert(handshake_pending_.end(),content.begin(),content.end());
+                std::size_t offset=0;
+                while (handshake_pending_.size()-offset>=4) {
+                    auto type=handshake_pending_[offset];
+                    auto size=(std::size_t{handshake_pending_[offset+1]}<<16)|(std::size_t{handshake_pending_[offset+2]}<<8)|handshake_pending_[offset+3];
+                    if ((type!=4 && type!=24) || (type==4 && (role_!=ApplicationRole::client || size>max_ticket)) || (type==24 && size!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                    if (size>handshake_pending_.size()-offset-4) break;
+                    auto body=std::span{handshake_pending_}.subspan(offset+4,size);
+                    offset+=4+size;
+                    if (type==4) {
+                        if constexpr(Sink::enabled) {
+                            auto delivered=recovery_policy(recovery...).ticket(body);if (!delivered) {active_=false;return std::unexpected(delivered.error());}
+                        } else if (ticket_sink_) {
+                            auto delivered=ticket_sink_(body);
+                            if (!delivered) {active_=false;return std::unexpected(delivered.error());}
+                        } else if (!valid_new_session_ticket(body)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                        continue;
+                    }
+                    auto request=body[0];
+                    if (offset!=handshake_pending_.size() || request>1 || !rotate(false)) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                    crypto::cleanse(handshake_pending_);
+                    crypto::Bytes{}.swap(handshake_pending_);
+                    if (request==1) update_response_=true;
+                    return ApplicationEvent{request ? ApplicationEventKind::key_update_requested : ApplicationEventKind::key_update,{},0};
+                }
+                handshake_pending_.erase(handshake_pending_.begin(),handshake_pending_.begin()+static_cast<std::ptrdiff_t>(offset));
+                if (handshake_pending_.empty()) { crypto::cleanse(handshake_pending_); crypto::Bytes{}.swap(handshake_pending_); }
+                return ApplicationEvent{offset ? ((Sink::enabled || ticket_sink_) ? ApplicationEventKind::ticket_received : ApplicationEventKind::ticket_discarded) : ApplicationEventKind::handshake_fragment,{},0};
+            }
+            if (content_type!=ContentType::alert || content.size()!=2) {
+                active_=false; return std::unexpected(RecordError::invalid_record);
+            }
+            auto description=content[1];
+            if (description==0) { read_closed_=true; return ApplicationEvent{ApplicationEventKind::close_notify,{},0}; }
+            if (description==90) return ApplicationEvent{ApplicationEventKind::user_canceled,{},description};
+            active_=false; return ApplicationEvent{ApplicationEventKind::fatal_alert,{},description};
+        }
+    public:
         // Authenticated close_notify closes only the peer's sending direction.
         template<class... Recovery>
         inline auto open_event(std::span<std::uint8_t const> record,Recovery&... recovery) -> std::expected<ApplicationEvent,RecordError>{
-        using Sink=RecoveryPolicy<Recovery...>;
-        if (!active_ || read_closed_) return std::unexpected(RecordError::invalid_state);
-        auto overhead=read_.tls12() ? read_.tls12_overhead() : 21;
-        if (record.size()<overhead+(read_.tls12() ? 0 : 1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
-        if (record.size()-overhead>read_limit_) { (void)signal_overflow(); return std::unexpected(RecordError::record_overflow); }
-        try {
-        auto plain=read_.open(record); if (!plain) { active_=false; return std::unexpected(plain.error()); }
-        if ((!handshake_pending_.empty() || server_handshake_size_) && plain->type!=ContentType::handshake) { active_=false; return std::unexpected(RecordError::invalid_record); }
-        if (plain->type==ContentType::handshake) {
-            // A server only accepts a single five-byte KeyUpdate. Keep its
-            // fragments inline so they cannot retain an uncharged allocation.
-            if (role_==ApplicationRole::server) {
-                if (!read_secret_ || plain->content.empty() || plain->content.size()>server_handshake_pending_.size()-server_handshake_size_) { active_=false; return std::unexpected(RecordError::invalid_record); }
-                std::ranges::copy(plain->content,server_handshake_pending_.begin()+static_cast<std::ptrdiff_t>(server_handshake_size_));
-                server_handshake_size_+=plain->content.size();
-                if (server_handshake_size_>=4 && (server_handshake_pending_[0]!=24 || server_handshake_pending_[1]!=0 || server_handshake_pending_[2]!=0 || server_handshake_pending_[3]!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
-                if (server_handshake_size_<5) return ApplicationEvent{ApplicationEventKind::handshake_fragment,{},0};
-                auto request=server_handshake_pending_[4];
-                if (request>1 || !rotate(false)) { active_=false; return std::unexpected(RecordError::invalid_record); }
-                server_handshake_size_=0;
-                if (request==1) update_response_=true;
-                return ApplicationEvent{request ? ApplicationEventKind::key_update_requested : ApplicationEventKind::key_update,{},0};
-            }
-            // NewSessionTicket: two uint32s, uint8 nonce length and nonce,
-            // uint16 ticket and extensions lengths and their contents. Allow
-            // one extra record for bytes following a nearly complete message.
-            constexpr std::size_t max_ticket=max_new_session_ticket;
-            constexpr std::size_t max_pending=4+max_ticket+16384-1;
-            if (!read_secret_ || plain->content.empty() || plain->content.size()>max_pending-handshake_pending_.size()) { active_=false; return std::unexpected(RecordError::invalid_record); }
-            handshake_pending_.insert(handshake_pending_.end(),plain->content.begin(),plain->content.end());
-            std::size_t offset=0;
-            while (handshake_pending_.size()-offset>=4) {
-                auto type=handshake_pending_[offset];
-                auto size=(std::size_t{handshake_pending_[offset+1]}<<16)|(std::size_t{handshake_pending_[offset+2]}<<8)|handshake_pending_[offset+3];
-                if ((type!=4 && type!=24) || (type==4 && (role_!=ApplicationRole::client || size>max_ticket)) || (type==24 && size!=1)) { active_=false; return std::unexpected(RecordError::invalid_record); }
-                if (size>handshake_pending_.size()-offset-4) break;
-                auto body=std::span{handshake_pending_}.subspan(offset+4,size);
-                offset+=4+size;
-                if (type==4) {
-                    if constexpr(Sink::enabled) {
-                        auto delivered=recovery_policy(recovery...).ticket(body);if (!delivered) {active_=false;return std::unexpected(delivered.error());}
-                    } else if (ticket_sink_) {
-                        auto delivered=ticket_sink_(body);
-                        if (!delivered) {active_=false;return std::unexpected(delivered.error());}
-                    } else if (!valid_new_session_ticket(body)) { active_=false; return std::unexpected(RecordError::invalid_record); }
-                    continue;
+            if (auto checked=check_open_bounds(record); !checked) return std::unexpected(checked.error());
+            try {
+                auto plain=read_.open(record); if (!plain) { active_=false; return std::unexpected(plain.error()); }
+                if ((!handshake_pending_.empty() || server_handshake_size_) && plain->type!=ContentType::handshake) { active_=false; return std::unexpected(RecordError::invalid_record); }
+                if (plain->type==ContentType::application_data) return ApplicationEvent{ApplicationEventKind::data,std::move(plain->content),0};
+                return process_non_data_record(plain->type,plain->content,recovery...);
+            } catch (...) { active_=false; throw; }
+        }
+        [[nodiscard]] auto open_data_into(std::span<std::uint8_t const> record, std::span<std::uint8_t> out)
+            -> std::expected<OpenedApplicationData,RecordError> {
+            if (auto checked=check_open_bounds(record); !checked) return std::unexpected(checked.error());
+            try {
+                auto opened=read_.open_into(record,out);
+                if (!opened) {
+                    if (opened.error()!=RecordError::invalid_input) active_=false;
+                    return std::unexpected(opened.error());
                 }
-                auto request=body[0];
-                if (offset!=handshake_pending_.size() || request>1 || !rotate(false)) { active_=false; return std::unexpected(RecordError::invalid_record); }
-                crypto::Bytes{}.swap(handshake_pending_);
-                if (request==1) update_response_=true;
-                return ApplicationEvent{request ? ApplicationEventKind::key_update_requested : ApplicationEventKind::key_update,{},0};
-            }
-            handshake_pending_.erase(handshake_pending_.begin(),handshake_pending_.begin()+static_cast<std::ptrdiff_t>(offset));
-            if (handshake_pending_.empty()) crypto::Bytes{}.swap(handshake_pending_);
-            return ApplicationEvent{offset ? ((Sink::enabled || ticket_sink_) ? ApplicationEventKind::ticket_received : ApplicationEventKind::ticket_discarded) : ApplicationEventKind::handshake_fragment,{},0};
-        }
-        if (plain->type==ContentType::application_data) return ApplicationEvent{ApplicationEventKind::data,std::move(plain->content),0};
-        if (plain->type!=ContentType::alert || plain->content.size()!=2) {
-            active_=false; return std::unexpected(RecordError::invalid_record);
-        }
-        auto description=plain->content[1];
-        if (description==0) { read_closed_=true; return ApplicationEvent{ApplicationEventKind::close_notify,{},0}; }
-        if (description==90) return ApplicationEvent{ApplicationEventKind::user_canceled,{},description};
-        // TLS 1.3 error alerts are fatal regardless of the legacy level.
-        active_=false; return ApplicationEvent{ApplicationEventKind::fatal_alert,{},description};
-        } catch (...) { active_=false; throw; }
+                if ((!handshake_pending_.empty() || server_handshake_size_) && opened->type!=ContentType::handshake) {
+                    crypto::cleanse(out.first(opened->size));
+                    active_=false; return std::unexpected(RecordError::invalid_record);
+                }
+                if (opened->type==ContentType::application_data) return OpenedApplicationData{opened->size,std::nullopt};
+                auto ev=process_non_data_record(opened->type,out.first(opened->size));
+                crypto::cleanse(out.first(opened->size));
+                if (!ev) return std::unexpected(ev.error());
+                return OpenedApplicationData{0,std::move(*ev)};
+            } catch (...) { crypto::cleanse(out); active_=false; throw; }
         }
         // Enqueue this returned record before any record generated with the new key.
         [[nodiscard]] auto key_update(bool request_peer_update) -> std::expected<crypto::Bytes,RecordError>;

@@ -1,7 +1,7 @@
 module crypto;
-import nexus.thirdparty.boringssl;
+import boringssl;
 import std;
-using namespace nex::boringssl;
+using namespace boringssl;
 
 namespace crypto {
     namespace {
@@ -148,14 +148,16 @@ namespace crypto {
         return *this;
     }
     auto HmacSha1Context::create(std::span<std::uint8_t const> key) -> std::expected<HmacSha1Context, Error> {
+        static constexpr std::uint8_t dummy = 0;
         std::unique_ptr<HMAC_CTX,decltype(&HMAC_CTX_free)> context(HMAC_CTX_new(),HMAC_CTX_free);
-        if (!context || !HMAC_Init_ex(context.get(),key.data(),key.size(),EVP_sha1(),nullptr))
+        if (!context || !HMAC_Init_ex(context.get(),key.empty() ? &dummy : key.data(),key.size(),EVP_sha1(),nullptr))
             return std::unexpected(Error::backend_failure);
         return HmacSha1Context(context.release());
     }
     auto HmacSha1Context::reset(std::span<std::uint8_t const> key) -> std::expected<void, Error> {
+        static constexpr std::uint8_t dummy = 0;
         if (!context_) return std::unexpected(Error::invalid_state);
-        if (!HMAC_Init_ex(context_,key.data(),key.size(),EVP_sha1(),nullptr)) {
+        if (!HMAC_Init_ex(context_,key.empty() ? &dummy : key.data(),key.size(),EVP_sha1(),nullptr)) {
             failed_=true; return std::unexpected(Error::backend_failure);
         }
         failed_=false;
@@ -184,9 +186,10 @@ namespace crypto {
         return HmacSha1Context(copy.release());
     }
     auto hmac(Hash hash, std::span<std::uint8_t const> key, std::span<std::uint8_t const> input) -> std::expected<Bytes, Error> {
+        static constexpr std::uint8_t dummy = 0;
         auto* type=md(hash); if (!type) return std::unexpected(Error::unsupported_algorithm);
         Bytes result(EVP_MD_size(type)); unsigned int length=0;
-        if (!HMAC(type,key.data(),key.size(),input.data(),input.size(),result.data(),&length) || length!=result.size()) {
+        if (!HMAC(type,key.empty() ? &dummy : key.data(),key.size(),input.empty() ? &dummy : input.data(),input.size(),result.data(),&length) || length!=result.size()) {
             cleanse(result); return std::unexpected(Error::backend_failure);
         }
         return result;

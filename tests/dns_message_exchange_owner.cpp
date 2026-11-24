@@ -4,11 +4,10 @@ import dns.message_exchange;
 import dns.message;
 import dns.response_program;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using Result=std::expected<dns::Bytes,dns::detail::ResolveError>;
 using Owner=dns::EvaluateOwner<dns::MessageExchange,Result,2>;
 auto check(Owner& owner,Owner::Handle first,Owner::Handle second,bool& ok) -> capy::task<> {

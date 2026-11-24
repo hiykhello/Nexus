@@ -19,9 +19,6 @@ namespace socks5 {
         }
         auto sent=socket_.send(prepared->target,packet.data,deadline);
         if (!sent) { rollback(); return std::unexpected(UdpDirectError{sent.error()}); }
-        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline) {
-            rollback();return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
-        }
         auto committed=association_.finish_send(prepared->token,true);
         if (!committed) return std::unexpected(UdpDirectError{committed.error()});
         return {};
@@ -41,9 +38,6 @@ namespace socks5 {
         }
         auto sent=socket_.send(peer,packet.data,deadline);
         if(!sent) {(void)association_.finish_send(*token,false);return std::unexpected(UdpDirectError{sent.error()});}
-        if(deadline!=std::chrono::steady_clock::time_point::max() && std::chrono::steady_clock::now()>=deadline) {
-            (void)association_.finish_send(*token,false);return std::unexpected(UdpDirectError{std::make_error_code(std::errc::timed_out)});
-        }
         auto committed=association_.finish_send(*token,true);
         if(!committed)return std::unexpected(UdpDirectError{committed.error()});
         return {};

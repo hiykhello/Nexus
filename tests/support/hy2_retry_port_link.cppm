@@ -1,4 +1,4 @@
-export module nexus.test.hy2_retry_port_link;
+export module test.hy2_retry_port_link;
 import std;
 import crypto;
 import net.datagram_driver;
@@ -7,12 +7,12 @@ import quic.cid_registry;
 import quic.retry_admission;
 import quic.retry_token;
 import tls.server_credential;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hy2_port_link;
-export namespace nexus::test::hy2_retry_port {
-namespace base=nexus::test::hy2_port;namespace q=quic;namespace n=nex::ngtcp2;namespace io=nex::corosio;namespace support=nexus::test::quic_tls;
+import ngtcp2;
+import corosio;
+import test.quic_tls_link;
+import test.hy2_port_link;
+export namespace test::hy2_retry_port {
+namespace base=test::hy2_port;namespace q=quic;namespace n = ::ngtcp2;namespace io = ::corosio;namespace support=test::quic_tls;
 using Clock=std::chrono::steady_clock;
 using Registry=base::Registry;using Session=base::Session;using Bundle=base::Bundle;using BusinessRoot=base::BusinessRoot;
 struct Factory:base::Factory {

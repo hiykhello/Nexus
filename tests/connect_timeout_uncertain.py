@@ -20,7 +20,7 @@ def exact(sock,n):
 with tempfile.TemporaryDirectory(prefix='nexus-timeout-route-') as directory, socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns, socket.socket() as upstream:
     root=pathlib.Path(directory); key=root/'key'
     key.write_text(base64.b64encode(bytes(range(16))).decode()); key.chmod(0o600)
-    (root/'rules.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
+    (root/'rules.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
     dns.bind(('127.0.0.1',0)); dns.settimeout(4)
     upstream.bind(('127.0.0.1',0)); upstream.listen(); upstream.settimeout(4)
     with socket.socket() as reserved:
@@ -32,7 +32,7 @@ dns {{ server "dns" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; str
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct" {{ connect-timeout-ms 800; }}
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={upstream.getsockname()[1]}; connect-timeout-ms 2200; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
-routing {{ rule-set "by-ip" path="rules.kdl" format="kdl"; rule kind="rule-set" value="by-ip" outbound="edge"; default-outbound "direct"; }}
+routing {{ rule-set "by-ip" path="rules.kdl" format="kdl"; rules {{ - kind="rule-set" value="by-ip" outbound="edge"; }}; default-outbound "direct"; }}
 ''')
     process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:

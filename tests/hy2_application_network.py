@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0,"/home/yk/Code/Nexus/tests")
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential,ready
 
 def pair(binary,cert,key,scheme,family,backend,total):

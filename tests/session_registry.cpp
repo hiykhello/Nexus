@@ -1,8 +1,8 @@
 import std;
-import proxy;
-import proxy.session_quota;
+import relay;
+import relay.session_quota;
 
-namespace p=proxy;
+namespace p = relay;
 using namespace std::chrono_literals;
 using Owners=std::vector<std::unique_ptr<p::Session>>;
 

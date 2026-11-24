@@ -9,15 +9,15 @@ import http.header;
 import http2.client_channel;
 import tls.byte_stream;
 import tls.encrypted_extensions;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns::doh_detail {
     using Clock=std::chrono::steady_clock;
     using Error=dns::detail::UdpError;
-    using Io=nex::corosio::io_context;
-    using Endpoint=nex::corosio::endpoint;
-    namespace capy=nex::capy;
+    using Io=corosio::io_context;
+    using Endpoint=corosio::endpoint;
+    namespace capy = ::capy;
     constexpr std::string_view media_type="application/dns-message";
     constexpr std::size_t max_message=65535;
 

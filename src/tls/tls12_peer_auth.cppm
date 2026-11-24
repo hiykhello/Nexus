@@ -4,7 +4,7 @@ module;
 export module tls.tls12_peer_auth;
 import std;
 import tls.signature;
-import nexus.thirdparty.boringssl;
+import boringssl;
 import tls.certificate_trust;
 
 export namespace tls {
@@ -19,7 +19,7 @@ namespace tls {
     auto verify_tls12_key_signature(std::span<std::uint8_t const> leaf,
         std::uint16_t scheme,bool ecdsa,std::span<std::uint8_t const> signature,std::span<std::uint8_t const> input)
         -> std::expected<void, CertificateTrustError> {
-        using namespace nex::boringssl;
+        using namespace boringssl;
         auto parameters=signature_parameters(scheme);
         if (scheme==0x0401) parameters=SignatureParameters{EVP_sha256(),evp_pkey_rsa};
         if (scheme==0x0501) parameters=SignatureParameters{EVP_sha384(),evp_pkey_rsa};

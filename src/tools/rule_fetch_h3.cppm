@@ -1,31 +1,31 @@
 export module cli.rule_fetch_h3;
 import std;
-export import nexus.compat;
+export import functional;
 import cli.rule_fetch_response;
 import platform.socket_options;
-import proxy;
+import relay;
 import tls.profiles;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace cli::rule_fetch {
     inline constexpr bool http3_enabled=true;
-    using Http3Resolver=nexus::move_only_function<
-        nex::capy::task<std::expected<std::vector<nex::corosio::endpoint>,int>>(std::chrono::steady_clock::time_point)>;
+    using Http3Resolver=functional::move_only_function<
+        capy::task<std::expected<std::vector<corosio::endpoint>,int>>(std::chrono::steady_clock::time_point)>;
 
     struct Http3Tunnel {
-        std::unique_ptr<proxy::Session> session;
-        std::unique_ptr<proxy::PacketTunnel> tunnel;
+        std::unique_ptr<relay::Session> session;
+        std::unique_ptr<relay::PacketTunnel> tunnel;
 
         ~Http3Tunnel() {
             if (tunnel) tunnel->cancel();
             if (session) session->close();
         }
     };
-    using Http3TunnelFactory=nexus::move_only_function<std::unique_ptr<Http3Tunnel>() const>;
+    using Http3TunnelFactory=functional::move_only_function<std::unique_ptr<Http3Tunnel>() const>;
 
     struct Http3Dial {
-        nex::corosio::io_context& context;
+        corosio::io_context& context;
         tls::ShapedClientProfile const& tls;
         platform::SocketBinding const& binding;
         std::string_view ech_file;
@@ -45,6 +45,6 @@ export namespace cli::rule_fetch {
         Http3Pool(Http3Pool const&)=delete;
         auto operator=(Http3Pool const&) -> Http3Pool& = delete;
         auto stop() noexcept -> void;
-        auto request(Http3Resolver,Http3Dial,Http3TunnelFactory,Transfer) -> nex::capy::task<TransferResult>;
+        auto request(Http3Resolver,Http3Dial,Http3TunnelFactory,Transfer) -> capy::task<TransferResult>;
     };
 }

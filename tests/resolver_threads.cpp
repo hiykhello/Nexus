@@ -1,8 +1,7 @@
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 
 auto query(io::io_context& context, std::atomic<unsigned>& completed) -> capy::task<> {
     io::resolver resolver{context};

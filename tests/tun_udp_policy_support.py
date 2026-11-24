@@ -40,7 +40,7 @@ thread.start()
 serve(v6)
 """
     (root / "udp-reject.kdl").write_text(
-        'schema-version 1\nkind "predicate"\n'
+        'schema-version 2\nkind "predicate"\n'
         'rule type="ip-cidr" value="198.51.100.85/32"\n'
         'rule type="ip-cidr" value="2001:db8:3::85/128"\n')
     routing = '''routing {

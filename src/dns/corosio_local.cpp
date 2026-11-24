@@ -1,7 +1,7 @@
 module dns.corosio_local;
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace dns::detail {
     auto LocalDefaultLookup::resolve(dns_io::endpoint endpoint,bool tcp,AddressStrategy strategy,std::string const& name,

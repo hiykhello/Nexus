@@ -6,9 +6,9 @@ export import tls.psk_server_policy;
 export import tls.server_credential;
 export import tls.certificate_trust;
 import std;
-import nexus.compat;
-import nexus.thirdparty.corosio;
-import nexus.thirdparty.ngtcp2;
+import containers.inplace_vector;
+import corosio;
+import ngtcp2;
 import quic.ech_config;
 
 export namespace quic {
@@ -28,7 +28,7 @@ export namespace quic {
     // and ticket binding. Anchors and name bytes outlive the QUIC owner.
     // Includes the IPv6 zone so link-local peers on different interfaces
     // cannot share tickets. Trust, TLS identity and ALPN are bound separately.
-    inline auto ticket_peer_scope(nex::corosio::endpoint const& peer) noexcept -> std::array<std::uint8_t,23> {
+    inline auto ticket_peer_scope(corosio::endpoint const& peer) noexcept -> std::array<std::uint8_t,23> {
         std::array<std::uint8_t,23> scope{};
         auto address=peer.address();
         scope[0]=address.is_v4() ? 4 : 6;
@@ -93,7 +93,7 @@ export namespace quic {
             ResumptionPki identity(anchors,kind,name,verification_time,*scope);
             auto binding=identity.resumption_binding(hello,std::span(reinterpret_cast<std::uint8_t const*>(alpn.data()),alpn.size()));
             if (!binding)return std::unexpected(binding.error());
-            nexus::inplace_vector<typename Cache::Ticket,8> offers;
+            containers::inplace_vector<typename Cache::Ticket,8> offers;
             if (auto ticket=cache.take(*binding,hello.cipher_suites,Clock::now()))offers.push_back(std::move(*ticket));
             auto policy=Policy::create(std::move(*binding),std::move(offers),cache);if (!policy)return std::unexpected(policy.error());
             if constexpr(tls::EarlyDataPolicy<Policy>) {
@@ -180,7 +180,7 @@ export namespace quic {
             },self.tls_);
         }
         template<class Connection>
-        auto receive(this SelectableTlsClient& self,Connection& connection,nex::ngtcp2::ngtcp2_encryption_level level,
+        auto receive(this SelectableTlsClient& self,Connection& connection,ngtcp2::ngtcp2_encryption_level level,
             std::uint64_t offset,std::span<std::uint8_t const> bytes) -> int {
             return std::visit([&](auto& tls) {
                 if constexpr (requires {tls.resumption_policy();})

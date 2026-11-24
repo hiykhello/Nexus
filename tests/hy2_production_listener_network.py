@@ -1,6 +1,6 @@
 import argparse,hashlib,json,socket,subprocess,sys,tempfile,threading,time
 from pathlib import Path
-sys.path.insert(0,'/home/yk/Code/Nexus/tests')
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential,ready
 class Origin:
     def __init__(self,total,count,request_first=True):

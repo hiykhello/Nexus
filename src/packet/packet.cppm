@@ -147,6 +147,8 @@ export namespace packet {
         explicit MemoryLink(DeviceLimits limits = {}) : limits_(limits) {}
         [[nodiscard]] auto send(Side from, std::span<std::uint8_t const> packet, PacketKind kind = PacketKind::ordinary,
                                 std::uint64_t flow_id = 0, std::shared_ptr<TcpGeneration> generation = {}) -> std::expected<void, DeviceError>;
+        [[nodiscard]] auto send_owned(Side from, Bytes&& packet, PacketKind kind = PacketKind::ordinary,
+                                      std::uint64_t flow_id = 0, std::shared_ptr<TcpGeneration> generation = {}) -> std::expected<void, DeviceError>;
         // The whole datagram is admitted or the queue is left unchanged.
         [[nodiscard]] auto send_packets(Side from,std::vector<Bytes> packets) -> std::expected<void,DeviceError>;
         // receive discards metadata; forwarding consumers must use receive_packet.

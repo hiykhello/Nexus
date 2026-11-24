@@ -22,6 +22,8 @@ export namespace dns {
         std::optional<std::optional<ClientSubnet>> subnet;
         // Set for tagged evaluate and for respond of that tagged response.
         std::optional<std::string_view> response_tag;
+        std::optional<rules::DnsRuleStrategy> strategy{};
+        std::optional<std::uint8_t> reject_rcode{};
     };
     [[nodiscard]] inline auto normalize_response_rule(ResponseRule& rule,std::size_t servers) -> bool {
         return policy::normalize_dns_rule(rule,servers);
@@ -104,6 +106,7 @@ export namespace dns {
         std::optional<std::uint32_t> timeout_ms_;
         std::optional<std::uint32_t> rewrite_ttl_;
         std::optional<std::optional<ClientSubnet>> subnet_;
+        std::optional<rules::DnsRuleStrategy> strategy_;
         struct SavedResponse {
             std::optional<std::string_view> tag;
             InputBudget::Lease lease;
@@ -162,6 +165,7 @@ export namespace dns {
                     }
                     if (rule.client_subnet) subnet_.emplace(ClientSubnet{static_cast<std::uint16_t>(rule.client_subnet->size==4 ? 1 : 2),rule.client_subnet->bits,rule.client_subnet->address});
                     if (rule.remove_client_subnet) subnet_.emplace(std::nullopt);
+                    if (rule.strategy) strategy_=rule.strategy;
                     continue;
                 case ResponseAction::evaluate:
                     waiting_=true;pending_tag_=view(rule.evaluate_tag);
@@ -179,10 +183,11 @@ export namespace dns {
                 if(rule.client_subnet) subnet.emplace(ClientSubnet{static_cast<std::uint16_t>(rule.client_subnet->size==4 ? 1 : 2),rule.client_subnet->bits,rule.client_subnet->address});
                 if(rule.remove_client_subnet) subnet.emplace(std::nullopt);
                 auto tag=rule.action==ResponseAction::evaluate ? pending_tag_ : rule.action==ResponseAction::respond ? selected_tag_ : std::nullopt;
-                return ResponseStep{rule.action,rule.server,rule.disable_cache.value_or(disable_cache_),index,rule.timeout_ms ? rule.timeout_ms : timeout_ms_,ttl,subnet,tag};
+                auto eff_strategy=rule.strategy ? rule.strategy : strategy_;
+                return ResponseStep{rule.action,rule.server,rule.disable_cache.value_or(disable_cache_),index,rule.timeout_ms ? rule.timeout_ms : timeout_ms_,ttl,subnet,tag,eff_strategy,rule.reject_rcode};
             }
             terminal_=true;
-            return ResponseStep{ResponseAction::route,fallback_,disable_cache_,rules_.size(),timeout_ms_,rewrite_ttl_,subnet_,{}};
+            return ResponseStep{ResponseAction::route,fallback_,disable_cache_,rules_.size(),timeout_ms_,rewrite_ttl_,subnet_,{},strategy_,{}};
         }
         auto evaluated(Response response) noexcept -> std::expected<void,ResponseProgramError> {
             if (!waiting_) return std::unexpected(ResponseProgramError::invalid_state);

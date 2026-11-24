@@ -111,7 +111,7 @@ def reference_binary():
         (root / "go.mod").write_text("module nexus-tailscale-control-http-reference\n\ngo 1.27.1\n\nrequire tailscale.com v1.104.1\n")
         (root / "main.go").write_text(SOURCE)
         env = dict(os.environ, GOTOOLCHAIN="local", GOMODCACHE=str(root / "modules"), GOCACHE=str(root / "cache"),
-                   GOPROXY="file:///home/yk/go/pkg/mod/cache/download,https://proxy.golang.org")
+                   GOPROXY=os.environ.get("GOPROXY", f"file://{pathlib.Path.home() / 'go/pkg/mod/cache/download'},https://proxy.golang.org"))
         checked = subprocess.run(["go", "build", "-p", "1", "-mod=mod", "-o", binary, "."], cwd=root, env=env,
                                  capture_output=True, text=True, timeout=240)
         if checked.returncode:

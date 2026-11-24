@@ -15,6 +15,7 @@ export namespace reality {
         std::vector<std::string> names_;
         std::vector<std::array<std::uint8_t,8>> ids_;
         std::uint64_t max_time_difference_;
+        std::shared_ptr<ReplayCache> replay_cache_{std::make_shared<ReplayCache>()};
         ServerProfile(crypto::X25519Private&& private_key,tls::ServerCredential&& credential,
                       std::vector<std::string>&& names,
                       std::vector<std::array<std::uint8_t,8>>&& ids,std::uint64_t skew)
@@ -76,7 +77,7 @@ export namespace reality {
                                  std::vector<std::array<std::uint8_t,8>>(ids.begin(),ids.end()),max_time_difference);
         }
         [[nodiscard]] auto private_key() const noexcept -> crypto::X25519Private const& { return private_key_; }
-        [[nodiscard]] auto policy() const noexcept -> ServerPolicy { return {names_,ids_,{},{},max_time_difference_}; }
+        [[nodiscard]] auto policy() const noexcept -> ServerPolicy { return {names_,ids_,{},{},max_time_difference_,replay_cache_.get()}; }
         // Only call after authenticating the exact ClientHello. The additional
         // reservation covers logical certificate copies during credential creation;
         // allocator capacity and crypto internals are not included.

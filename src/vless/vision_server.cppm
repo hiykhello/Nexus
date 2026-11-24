@@ -6,7 +6,7 @@ import vision;
 import vision.corosio_reader;
 import vision.corosio_writer;
 import tls.corosio_application;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace vless::detail {
     // Vision-only authenticated inbound. The same executor owns the socket,
@@ -28,9 +28,9 @@ export namespace vless::detail {
         auto operator=(VisionInbound const&) -> VisionInbound& = delete;
         [[nodiscard]] auto send_status() const noexcept -> std::optional<vision::SendStatus> { return writer_ ? std::optional{writer_->status()} : std::nullopt; }
         [[nodiscard]] auto receive_direct() const noexcept -> bool { return reader_ && reader_->direct(); }
-        auto cancel() noexcept -> void { failed_=true; inbound_.cancel(); if (writer_) writer_->cancel(); }
+        auto cancel() noexcept -> void { failed_=true; inbound_.cancel(); if (writer_) writer_->cancel(); if (reader_) reader_->cancel(); }
         [[nodiscard]] auto allow_mux() noexcept -> bool { return !failed_ && inbound_.allow_mux(); }
-        auto read_header() -> nex::capy::task<std::expected<InboundRequest,TlsInboundError>> {
+        auto read_header() -> capy::task<std::expected<InboundRequest,TlsInboundError>> {
             if (failed_ || user_ || !inbound_.vision_enabled()) co_return std::unexpected(TlsInboundError::state);
             auto result=co_await inbound_.read_header();
             if (!result || failed_) { cancel(); co_return std::unexpected(TlsInboundError::rejected); }
@@ -38,13 +38,13 @@ export namespace vless::detail {
             else user_=std::get<UserId>(*result);
             co_return std::move(*result);
         }
-        auto read_request() -> nex::capy::task<std::expected<TcpRequest,TlsInboundError>> {
+        auto read_request() -> capy::task<std::expected<TcpRequest,TlsInboundError>> {
             auto result=co_await read_header();
             if (!result) co_return std::unexpected(result.error());
             if (auto request=std::get_if<TcpRequest>(&*result)) co_return std::move(*request);
             cancel(); co_return std::unexpected(TlsInboundError::rejected);
         }
-        auto complete_dial(bool connected) -> nex::capy::task<std::expected<void,TlsInboundError>> {
+        auto complete_dial(bool connected) -> capy::task<std::expected<void,TlsInboundError>> {
             if (failed_ || !user_ || writer_) co_return std::unexpected(TlsInboundError::state);
             auto result=co_await inbound_.complete_dial(connected);
             if (!result || failed_) { cancel(); co_return std::unexpected(TlsInboundError::io); }
@@ -54,18 +54,18 @@ export namespace vless::detail {
             reader_.emplace(socket_,*handoff->reader,*writer_,filter_,*user_,handoff->initial);
             co_return std::expected<void,TlsInboundError>{};
         }
-        auto read(std::span<std::uint8_t> bytes) -> nex::capy::task<std::expected<std::size_t,TlsInboundError>> {
+        auto read(std::span<std::uint8_t> bytes) -> capy::task<std::expected<std::size_t,TlsInboundError>> {
             if (failed_ || !reader_) co_return std::unexpected(TlsInboundError::state);
             auto result=co_await reader_->read(bytes);
             if (!result || failed_) { cancel(); co_return std::unexpected(TlsInboundError::io); }
             co_return *result;
         }
-        auto send(std::span<std::uint8_t const> bytes) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> bytes) -> capy::task<bool> {
             if (failed_ || !writer_) co_return false;
             if (!co_await writer_->write(bytes) || failed_) { cancel(); co_return false; }
             co_return true;
         }
-        auto close_output() -> nex::capy::task<bool> {
+        auto close_output() -> capy::task<bool> {
             if (failed_ || !writer_) co_return false;
             if (!co_await writer_->close_output() || failed_) { cancel(); co_return false; }
             co_return true;

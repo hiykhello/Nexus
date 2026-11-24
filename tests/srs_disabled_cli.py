@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-srs-disabled-') as directory:
     for ordered in (False, True):
         config = root / 'config.kdl'
         rule = ('tcp-program sniff-timeout-ms=100 unknown="skip" { rule action="reject" rule-set="deny" ip-cidr-match-source=#true; }'
-                if ordered else 'rule kind="rule-set" value="deny" outbound="reject" ip-cidr-match-source=#true')
+                if ordered else 'rules { - kind="rule-set" value="deny" outbound="reject" ip-cidr-match-source=#true; }')
         config.write_text(f'''schema-version 1
 role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={free_port()}; authentication "none"; }}

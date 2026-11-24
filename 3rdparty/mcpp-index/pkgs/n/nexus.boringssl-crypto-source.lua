@@ -4,7 +4,7 @@ package = {
   spec = "1", namespace = "nexus", name = "boringssl-crypto-source",
   description = "Pinned BoringSSL non-FIPS libcrypto sources", licenses = { "Apache-2.0" },
   repo = "https://boringssl.googlesource.com/boringssl/", type = "package",
-  archs = { "x86_64" },
+  archs = { "x86_64", "arm64", "aarch64" },
   xpm = { linux = { ["0.1.2"] = {
     url = "https://github.com/google/boringssl/archive/e651545da6e26e1f4420723a3b69a78ed1b9c51d.tar.gz",
     sha256 = "8df889167a2ca2237073cfed3147ac7b2f548f7dbf3daf4928a0ae6504d2013f",
@@ -14,7 +14,6 @@ package = {
     private_include_dirs = { "*/crypto/x509" },
     defines = { "BORINGSSL_IMPLEMENTATION" },
     cxxflags = { "-fno-modules", "-fno-exceptions", "-fno-rtti" },
-    flags = { { glob = "**/*.S", asmflags = { "-Wa,--noexecstack" } } },
     ldflags = { "-lpthread" },
     sources = {
       "*/crypto/fipsmodule/bcm.cc",

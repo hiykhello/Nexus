@@ -15,29 +15,14 @@ module;
 
 module cli.control;
 import std;
+import platform.unique_fd;
 
 namespace cli {
     namespace {
         constexpr std::string_view version="NEXUS/1";
         constexpr std::size_t max_request=1024,max_reply=65536;
 
-        class ControlFd {
-            int fd_;
-        public:
-            explicit ControlFd(int fd=-1) noexcept : fd_(fd) {}
-            ~ControlFd() { if (fd_>=0) ::close(fd_); }
-            ControlFd(ControlFd const&)=delete;
-            ControlFd(ControlFd&& other) noexcept : fd_(std::exchange(other.fd_,-1)) {}
-            auto operator=(ControlFd&& other) noexcept -> ControlFd& {
-                if (this!=&other) {
-                    if (fd_>=0) ::close(fd_);
-                    fd_=std::exchange(other.fd_,-1);
-                }
-                return *this;
-            }
-            [[nodiscard]] auto get() const noexcept -> int { return fd_; }
-            explicit operator bool() const noexcept { return fd_>=0; }
-        };
+        using ControlFd = platform::UniqueFd;
 
         auto socket_address(std::string_view path) -> std::optional<sockaddr_un> {
             sockaddr_un address{};
@@ -117,6 +102,11 @@ namespace cli {
             ControlFd fd;
             Clock::time_point expiry;
             ControlRole role;
+#if !defined(__linux__)
+            std::string in, out;
+            std::size_t out_offset=0;
+            bool writing=false;
+#endif
         };
         ControlFd listener, directory;
         std::string entry, instance;
@@ -174,7 +164,8 @@ namespace cli {
 #else
             listener=ControlFd(::socket(AF_UNIX,SOCK_STREAM,0));
             if (listener) {
-                (void)::fcntl(listener.get(),F_SETFL,O_NONBLOCK);
+                int fl=::fcntl(listener.get(),F_GETFL,0);
+                if (fl>=0) (void)::fcntl(listener.get(),F_SETFL,fl|O_NONBLOCK);
                 (void)::fcntl(listener.get(),F_SETFD,FD_CLOEXEC);
             }
 #endif
@@ -199,7 +190,8 @@ namespace cli {
 #else
                 ControlFd socket(::accept(listener.get(),nullptr,nullptr));
                 if (socket) {
-                    (void)::fcntl(socket.get(),F_SETFL,O_NONBLOCK);
+                    int fl=::fcntl(socket.get(),F_GETFL,0);
+                    if (fl>=0) (void)::fcntl(socket.get(),F_SETFL,fl|O_NONBLOCK);
                     (void)::fcntl(socket.get(),F_SETFD,FD_CLOEXEC);
 #ifdef SO_NOSIGPIPE
                     int one=1;
@@ -223,32 +215,69 @@ namespace cli {
                     ++diagnostics.expired;
                     return true;
                 }
+                auto build_response=[&](std::string_view req,bool oversized) -> std::string {
+                    try {
+                        auto parsed=oversized ?
+                            std::expected<std::string,std::string>(std::unexpected("request-too-large")) :
+                            dispatch(req,peer.role,handler);
+                        auto response=parsed ? std::format("{} OK\n{}",version,*parsed) :
+                            std::format("{} ERROR\n{}\n",version,parsed.error());
+                        return response.size()>max_reply ? std::string("NEXUS/1 ERROR\nreply-too-large\n") : response;
+                    } catch (std::bad_alloc const&) {
+                        return "NEXUS/1 ERROR\nresource-exhausted\n";
+                    } catch (std::system_error const&) {
+                        return "NEXUS/1 ERROR\noperation-failed\n";
+                    }
+                };
+#if defined(__linux__)
                 auto size=::recv(peer.fd.get(),buffer.data(),buffer.size(),MSG_TRUNC);
                 if (size<0 && (errno==EAGAIN || errno==EINTR)) return false;
                 if (size<=0) return true;
-                auto send_reply=[&](std::string_view response) {
-#ifdef MSG_NOSIGNAL
-                    constexpr int kFlags=MSG_NOSIGNAL;
+                auto response=build_response(
+                    std::string_view(buffer.data(),std::min(static_cast<std::size_t>(size),buffer.size())),
+                    static_cast<std::size_t>(size)>buffer.size());
+                if (::send(peer.fd.get(),response.data(),response.size(),MSG_NOSIGNAL)!=
+                    static_cast<ssize_t>(response.size())) ++diagnostics.reply_failed;
+                return true;
 #else
-                    constexpr int kFlags=0;
+                if (!peer.writing) {
+                    for (;;) {
+                        auto n=::recv(peer.fd.get(),buffer.data(),buffer.size(),0);
+                        if (n<0) {
+                            if (errno==EINTR) continue;
+                            if (errno==EAGAIN || errno==EWOULDBLOCK) return false;
+                            return true;
+                        }
+                        if (n==0) {
+                            if (peer.in.empty()) return true;
+                            peer.out=build_response(peer.in,peer.in.size()>max_request);
+                            peer.writing=true;
+                            break;
+                        }
+                        auto take=std::min<std::size_t>(static_cast<std::size_t>(n),(max_request+1)-peer.in.size());
+                        peer.in.append(buffer.data(),take);
+                        if (peer.in.size()>max_request) {
+                            peer.out=build_response({},true);
+                            peer.writing=true;
+                            break;
+                        }
+                    }
+                }
+#ifdef MSG_NOSIGNAL
+                constexpr int kFlags=MSG_NOSIGNAL;
+#else
+                constexpr int kFlags=0;
 #endif
-                    if (::send(peer.fd.get(),response.data(),response.size(),kFlags)!=
-                        static_cast<ssize_t>(response.size())) ++diagnostics.reply_failed;
-                };
-                try {
-                    auto parsed=static_cast<std::size_t>(size)>buffer.size() ?
-                        std::expected<std::string,std::string>(std::unexpected("request-too-large")) :
-                        dispatch(std::string_view(buffer.data(),static_cast<std::size_t>(size)),peer.role,handler);
-                    auto response=parsed ? std::format("{} OK\n{}",version,*parsed) :
-                        std::format("{} ERROR\n{}\n",version,parsed.error());
-                    if (response.size()>max_reply) send_reply("NEXUS/1 ERROR\nreply-too-large\n");
-                    else send_reply(response);
-                } catch (std::bad_alloc const&) {
-                    send_reply("NEXUS/1 ERROR\nresource-exhausted\n");
-                } catch (std::system_error const&) {
-                    send_reply("NEXUS/1 ERROR\noperation-failed\n");
+                while (peer.out_offset<peer.out.size()) {
+                    auto w=::send(peer.fd.get(),peer.out.data()+peer.out_offset,peer.out.size()-peer.out_offset,kFlags);
+                    if (w>0) { peer.out_offset+=static_cast<std::size_t>(w); continue; }
+                    if (w<0 && errno==EINTR) continue;
+                    if (w<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) return false;
+                    ++diagnostics.reply_failed;
+                    return true;
                 }
                 return true;
+#endif
             });
         }
     };
@@ -266,6 +295,12 @@ namespace cli {
     auto LocalControl::poll(ControlHandler handler) -> void { if (impl_) impl_->poll(handler); }
     auto LocalControl::stop() noexcept -> void { impl_.reset(); }
     auto LocalControl::active() const noexcept -> bool { return bool(impl_); }
+    auto LocalControl::listen_native_fd() const noexcept -> int {
+        return impl_ && impl_->listener ? impl_->listener.get() : -1;
+    }
+    auto LocalControl::next_poll_delay() const noexcept -> std::optional<std::chrono::milliseconds> {
+        return (impl_ && !impl_->peers.empty()) ? std::optional(std::chrono::milliseconds(5)) : std::nullopt;
+    }
     auto LocalControl::instance() const noexcept -> std::string_view {
         return impl_ ? std::string_view(impl_->instance) : std::string_view{};
     }
@@ -305,6 +340,7 @@ namespace cli {
                 return std::unexpected(std::pair{1,system_error("connect control socket")});
             if (peer_uid(socket.get())!=owner)
                 return std::unexpected(std::pair{1,std::string("unexpected control server UID")});
+#if defined(__linux__)
             if (::send(socket.get(),request.data(),request.size(),kSendFlags)!=static_cast<ssize_t>(request.size()))
                 return std::unexpected(std::pair{1,system_error("send control request")});
             std::array<char,max_reply> bytes;
@@ -312,6 +348,35 @@ namespace cli {
             if (received<=0 || static_cast<std::size_t>(received)>bytes.size())
                 return std::unexpected(std::pair{1,std::string("missing or oversized control reply")});
             std::string_view wire(bytes.data(),static_cast<std::size_t>(received));
+#else
+            std::size_t sent_total=0;
+            while (sent_total<request.size()) {
+                auto w=::send(socket.get(),request.data()+sent_total,request.size()-sent_total,kSendFlags);
+                if (w<0) {
+                    if (errno==EINTR) continue;
+                    return std::unexpected(std::pair{1,system_error("send control request")});
+                }
+                if (w==0) return std::unexpected(std::pair{1,std::string("send control request: short write")});
+                sent_total+=static_cast<std::size_t>(w);
+            }
+            (void)::shutdown(socket.get(),SHUT_WR);
+            std::string reply;
+            std::array<char,4096> chunk;
+            for (;;) {
+                auto r=::recv(socket.get(),chunk.data(),chunk.size(),0);
+                if (r<0) {
+                    if (errno==EINTR) continue;
+                    return std::unexpected(std::pair{1,std::string("missing or oversized control reply")});
+                }
+                if (r==0) break;
+                if (static_cast<std::size_t>(r)>max_reply-reply.size())
+                    return std::unexpected(std::pair{1,std::string("missing or oversized control reply")});
+                reply.append(chunk.data(),static_cast<std::size_t>(r));
+            }
+            if (reply.empty())
+                return std::unexpected(std::pair{1,std::string("missing or oversized control reply")});
+            std::string_view wire(reply);
+#endif
             if (wire.starts_with("NEXUS/1 OK\n")) return std::string(wire.substr(11));
             if (wire.starts_with("NEXUS/1 ERROR\n")) return std::unexpected(std::pair{1,std::string(wire.substr(14))});
             return std::unexpected(std::pair{1,std::string("unsupported control reply")});
@@ -320,7 +385,7 @@ namespace cli {
 
     auto run_control(int argc,char** argv) -> int {
         if (argc<3 || (argc==2 && std::string_view(argv[1])=="--help")) {
-            std::cerr << "usage: nexus control <socket> [--server-uid UID] status|connections|connection show <id>|close|close-any|close-all|select|probe|group-health|user-usage|reload|clear-cache|network-change|operation|events|diagnostics|log-level|logs [arguments]\n";
+            std::cerr << "usage: nexus control <socket> [--server-uid UID] status|mode|connections|connection show <id>|close|close-any|close-all|select|probe|group-health|user-usage|reload|clear-cache|network-change|operation|events|diagnostics|log-level|logs [arguments]\n";
             return argc==2 && std::string_view(argv[1])=="--help" ? 0 : 2;
         }
         auto address=socket_address(argv[1]);

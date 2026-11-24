@@ -10,14 +10,16 @@ import uot;
 import xudp;
 import xudp.client_sessions;
 import xudp.client_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import sniff.udp_quic;
+export import net.stream_datagram_quic;
+export import net.stream_datagram_reply;
 
 export namespace net::stream_datagrams {
     using Clock=std::chrono::steady_clock;
-    namespace capy=nex::capy;
-    namespace io=nex::corosio;
+    namespace capy = ::capy;
+    namespace io = ::corosio;
     struct NoHooks {};
 
     inline auto peer_address(UdpEndpoint const& peer) -> ProxyAddress {
@@ -65,7 +67,7 @@ export namespace net::stream_datagrams {
             std::unique_ptr<xudp::ClientIo<MultiplexStream<Tunnel>>> client;
             std::uint16_t id=0;
             bool ready=false,rotating=false,reader_active=false;
-            capy::async_event readiness;
+            capy::async_event readiness,reader_done,auth_wake;
             std::optional<Clock::time_point> active_deadline;
         };
         Session& session; io::io_context& context; Stream& incoming;
@@ -73,11 +75,12 @@ export namespace net::stream_datagrams {
         Resolver resolver;
         OrderedRouter ordered;
         UdpDirect direct;
+        DirectSocketWait direct_wake;
         std::optional<UdpEndpoint> source;
         DatagramFraming framing;
         ProxyAddress destination;
-        static constexpr std::size_t ordinary_slots=32, fixed_slots=16;
-        std::array<Slot,ordinary_slots> slots;
+        static constexpr std::size_t ordinary_slots=128, fixed_slots=16;
+        std::array<std::unique_ptr<Slot>,ordinary_slots> slots;
         FixedDatagramSlots<Slot,UdpEndpoint,fixed_slots> fixed;
         LazyReaders<ordinary_slots+fixed_slots> readers;
         std::deque<Packet> pending;
@@ -85,24 +88,31 @@ export namespace net::stream_datagrams {
         bool resolving=false,canceled=false;
         Clock::time_point deadline{};
         Slot* forwarding=nullptr;
+        capy::async_event pending_wake,space_wake,timeout_wake;
         Server(Session& owner,io::io_context& executor,Stream& stream,rules::RouteMatcher const& rules,Resolver resolve,
             DatagramFraming format,ProxyAddress target={},std::optional<UdpEndpoint> peer={},OrderedRouter router={})
-            : session(owner),context(executor),incoming(stream),policy(rules),resolver(std::move(resolve)),ordered(std::move(router)),direct(rules,owner.direct_tcp_options ? &owner.direct_tcp_options->binding : nullptr),source(peer),framing(format),destination(target) {}
-        auto slot_at(std::size_t index) noexcept -> Slot& {
-            return index<ordinary_slots ? slots[index] : fixed.slot(index-ordinary_slots);
+            : session(owner),context(executor),incoming(stream),policy(rules),resolver(std::move(resolve)),ordered(std::move(router)),direct(rules,owner.direct_tcp_options ? &owner.direct_tcp_options->binding : nullptr),direct_wake(executor),source(peer),framing(format),destination(target) {}
+        auto slot_at(std::size_t index) -> Slot& {
+            if (index<ordinary_slots) { if (!slots[index]) slots[index]=std::make_unique<Slot>(); return *slots[index]; }
+            return fixed.slot(index-ordinary_slots);
+        }
+        auto notify_pending() noexcept -> void { pending_wake.set(); timeout_wake.set(); }
+        auto wake_all() noexcept -> void {
+            pending_wake.set(); space_wake.set(); timeout_wake.set(); direct_wake.notify();
+            auto w=[](Slot& s) noexcept { s.readiness.set(); s.reader_done.set(); s.auth_wake.set(); };
+            for (auto const& s : slots) if (s) w(*s); fixed.for_each(w);
         }
         auto cancel() noexcept -> void {
-            readers.stop();
+            readers.stop(); direct_wake.stop(); wake_all();
             auto close=[](Slot& slot) noexcept {
                 if (slot.client) slot.client->cancel(); else if (slot.tunnel) slot.tunnel->cancel();
                 slot.readiness.set();
             };
-            std::ranges::for_each(slots,close);
+            for (auto const& s : slots) if (s) close(*s);
             fixed.for_each(close);
         }
         ~Server() { cancel(); direct.close(); }
     };
-#include "stream_datagram_quic.hpp"
 
     template<class State>
     auto forward(State& state,std::size_t outbound,UdpEndpoint target,std::span<std::uint8_t const> payload,
@@ -117,7 +127,7 @@ export namespace net::stream_datagrams {
             index=State::ordinary_slots+*fixed;
         }
         auto& slot=state.slot_at(index);
-        slot.active_deadline=deadline;state.forwarding=&slot;
+        slot.active_deadline=deadline;state.forwarding=&slot;state.timeout_wake.set();
         slot.stream.tunnel=&slot.tunnel;slot.stream.deadline=&slot.active_deadline;slot.stream.closed=&state.session.closed;
         struct Guard {
             State& state; typename State::Slot& slot;
@@ -129,6 +139,7 @@ export namespace net::stream_datagrams {
             if(expired()) {state.session.close();state.cancel();co_return false;}
             if (!slot.tunnel) {
                 slot.active_deadline=std::min(*slot.active_deadline,Clock::now()+std::chrono::milliseconds(factory.timeout_ms));
+                state.timeout_wake.set();
                 slot.tunnel=factory(state.session,state.context);
                 if (!slot.tunnel) co_return false;
                 auto transport=slot.tunnel->packet_transport();
@@ -168,7 +179,10 @@ export namespace net::stream_datagrams {
                     if (!opened && opened.error()==xudp::ClientIoError::exhausted) {
                         slot.rotating=true; slot.ready=false; slot.readiness.clear(); slot.client->cancel();
                         while (!state.session.closed && !expired() && slot.reader_active) {
-                            auto [error]=co_await io::delay(std::chrono::milliseconds(1)); if (error) state.session.close();
+                            slot.reader_done.clear();
+                            if (!slot.reader_active) break;
+                            auto [error]=co_await io::timeout(slot.reader_done.wait(),*slot.active_deadline);
+                            if (error && state.session.closed) break;
                         }
                         if (state.session.closed || expired()) {
                             state.session.close();state.cancel();co_return false;
@@ -188,22 +202,11 @@ export namespace net::stream_datagrams {
             if constexpr (requires { State::hooks::after_send(state,sent); }) sent=co_await State::hooks::after_send(state,sent);
             sent=sent && !state.session.closed && !expired();
             (void)slot.authorization.finish(*token,sent);
+            slot.auth_wake.set();
             if (!sent) {state.session.close();state.cancel();}
             co_return sent && !state.session.closed;
         }
     }
-    struct UnmeteredDatagram {
-        auto submit() noexcept -> void {}
-        auto complete(std::size_t) noexcept -> void {}
-    };
-    template<class Session>
-    auto reserve_datagram_bytes(Session& session,bool upstream,std::size_t size) {
-        if constexpr (requires {session.reserve_principal_datagram(upstream,size);})
-            return session.reserve_principal_datagram(upstream,size);
-        else return std::optional<UnmeteredDatagram>(std::in_place);
-    }
-
-#include "stream_datagram_reply.hpp"
 
     template<class State>
     auto send(State& state,typename State::Packet& packet) -> capy::task<> {
@@ -229,7 +232,7 @@ export namespace net::stream_datagrams {
         if(state.ordered) {
             if constexpr (requires { state.incoming.native_packets; })
                 state.session.ingress=packet.ingress;
-            state.resolving=true;state.canceled=false;state.deadline=deadline;
+            state.resolving=true;state.canceled=false;state.deadline=deadline;state.timeout_wake.set();
             OrderedSniffer inspect=[&](Clock::time_point until) {return inspect_quic(state,packet,until);};
             auto choice=co_await state.ordered(address,frame.payload,packet.received,state.deadline,inspect);
             deadline=state.deadline;
@@ -252,6 +255,7 @@ export namespace net::stream_datagrams {
                     co_return;
                 }
                 auto sent=state.direct.send_selected(target,*checked,frame.payload,deadline);
+                state.direct_wake.watch(state.direct.native_handles()); state.direct_wake.notify();
                 if (sent) {
                     delivered(*credit,true,selected);
                     co_return;
@@ -265,7 +269,7 @@ export namespace net::stream_datagrams {
         if (!udp_select_preflight(state.policy,target,source,state.session.auth_user,state.session.source_interface,packet.ingress)) co_return;
         std::vector<UdpEndpoint> candidates;
         if (kind==UdpTargetKind::domain) {
-            state.resolving=true; state.canceled=false; state.deadline=deadline;
+            state.resolving=true; state.canceled=false; state.deadline=deadline; state.timeout_wake.set();
             auto endpoints=co_await state.resolver(std::string(reinterpret_cast<char const*>(target.address.data()),target.address.size()),target.port,deadline);
             state.resolving=false;
             if (!endpoints || state.canceled || state.session.closed || Clock::now()>=deadline) co_return;
@@ -292,6 +296,7 @@ export namespace net::stream_datagrams {
                 co_return;
             }
             auto sent=state.direct.send_selected(target,selected->target,frame.payload,deadline);
+            state.direct_wake.watch(state.direct.native_handles()); state.direct_wake.notify();
             if (sent) {
                 delivered(*credit,false,*selected);
                 co_return;
@@ -331,12 +336,14 @@ export namespace net::stream_datagrams {
                         if constexpr (requires { state.incoming.peer_closed(); }) closed=state.incoming.peer_closed();
                         else closed=platform::stream_peer_closed(state.session.client.native_handle());
                         if (closed) { state.session.close(); break; }
-                        auto [error]=co_await io::delay(5ms); if (error) state.session.close();
+                        state.space_wake.clear();
+                        if (state.pending.size()<64 && state.pending_bytes+packet.payload.size()<=1024*1024) break;
+                        (void)co_await io::timeout(state.space_wake.wait(),std::min(deadline,Clock::now()+250ms));
                     }
                     if (state.session.closed) break;
                     if(Clock::now()>=deadline) {(void)decoder.consume();continue;}
                     state.pending.push_back({packet.destination,{packet.payload.begin(),packet.payload.end()},received});
-                    state.pending_bytes+=packet.payload.size(); (void)decoder.consume();
+                    state.pending_bytes+=packet.payload.size(); state.notify_pending(); (void)decoder.consume();
                 }
             }
         } catch (...) { state.session.close(); state.cancel(); throw; }
@@ -347,8 +354,10 @@ export namespace net::stream_datagrams {
         using namespace std::chrono_literals;
         try {
             while (!state.session.closed) {
-                if (state.pending.empty()) { auto [error]=co_await io::delay(5ms); if (error) state.session.close(); continue; }
+                state.pending_wake.clear();
+                if (state.pending.empty()) { auto [error]=co_await state.pending_wake.wait(); if (error) state.session.close(); continue; }
                 auto packet=std::move(state.pending.front()); state.pending.pop_front(); state.pending_bytes-=packet.payload.size();
+                state.space_wake.set();
                 co_await send(state,packet);
             }
         } catch (...) { state.session.close(); state.cancel(); throw; }
@@ -370,7 +379,8 @@ export namespace net::stream_datagrams {
                     }
                     continue;
                 }
-                auto [error]=co_await io::delay(dropped ? 1ms : 5ms); if (error) state.session.close();
+                state.direct_wake.watch(state.direct.native_handles());
+                if (!co_await state.direct_wake.wait(dropped)) { state.session.close(); break; }
             }
         } catch (...) { state.session.close(); state.cancel(); throw; }
         state.session.close(); state.cancel(); co_return capy::results<>{};
@@ -399,7 +409,7 @@ export namespace net::stream_datagrams {
                         state.session.close(); break;
                     }
                 }
-                slot.reader_active=false;
+                slot.reader_active=false; slot.reader_done.set();
                 if (!slot.rotating || state.session.closed) { state.cancel(); co_return capy::results<>{}; }
             }
             auto peer=index<State::ordinary_slots ? ProxyAddress{} : peer_address(state.fixed.peer(index-State::ordinary_slots));
@@ -420,7 +430,12 @@ export namespace net::stream_datagrams {
                         if constexpr (requires { State::hooks::reply_pending(state); }) {
                             if (!reported) { State::hooks::reply_pending(state); reported=true; }
                         }
-                        auto [error]=co_await io::delay(1ms); if (error) state.session.close();
+                        slot.auth_wake.clear();
+                        if (slot.authorization.classify(source)!=UdpReplyAuthorization::pending) break;
+                        auto [error]=slot.active_deadline
+                            ? co_await io::timeout(slot.auth_wake.wait(),*slot.active_deadline)
+                            : co_await slot.auth_wake.wait();
+                        if (error && state.session.closed) break;
                     }
                     if (!state.session.closed && slot.authorization.accepts(source)) {
                         if (!co_await send_reply(state,packet->destination,packet->payload)) {
@@ -436,17 +451,37 @@ export namespace net::stream_datagrams {
     template<class State>
     auto timeout(State& state) -> capy::task<capy::results<>> {
         using namespace std::chrono_literals;
-        while (!state.session.closed) {
-            if (state.forwarding && state.forwarding->active_deadline && Clock::now()>=*state.forwarding->active_deadline) {
-                // Cancel borrowed I/O, but leave the packet and slot alive until
-                // process/readers return through the association's existing join.
-                state.session.close();state.cancel();break;
+        if constexpr (requires { state.timeout_wake; }) {
+            auto hook = [&]() noexcept { if constexpr (requires { state.wake_all(); }) state.wake_all(); };
+            std::optional<std::stop_callback<decltype(hook)>> stop_cb;
+            if constexpr (requires { state.session.stop; }) stop_cb.emplace(state.session.stop.get_token(), hook);
+            while (!state.session.closed) {
+                state.timeout_wake.clear();
+                if (state.session.closed) break;
+                auto now=Clock::now(); std::optional<Clock::time_point> next;
+                auto clamp=[&](Clock::time_point tp) {if (!next || tp<*next) next=tp;};
+                if (state.forwarding && state.forwarding->active_deadline) {
+                    if (now>=*state.forwarding->active_deadline) { state.session.close(); state.cancel(); break; }
+                    clamp(*state.forwarding->active_deadline);
+                }
+                if (state.resolving && !state.canceled) {
+                    if (now>=state.deadline) { state.canceled=true; if (state.session.cancel_dns) state.session.cancel_dns(state.session.dns_operation); }
+                    else clamp(state.deadline);
+                }
+                if (next) (void)co_await io::timeout(state.timeout_wake.wait(),*next);
+                else if (auto [error]=co_await state.timeout_wake.wait(); error) break;
             }
-            if (state.resolving && !state.canceled && Clock::now()>=state.deadline) {
-                state.canceled=true;
-                if (state.session.cancel_dns) state.session.cancel_dns(state.session.dns_operation);
+        } else {
+            while (!state.session.closed) {
+                if (state.forwarding && state.forwarding->active_deadline && Clock::now()>=*state.forwarding->active_deadline) {
+                    state.session.close();state.cancel();break;
+                }
+                if (state.resolving && !state.canceled && Clock::now()>=state.deadline) {
+                    state.canceled=true;
+                    if (state.session.cancel_dns) state.session.cancel_dns(state.session.dns_operation);
+                }
+                auto [error]=co_await io::delay(5ms); if (error) state.session.close();
             }
-            auto [error]=co_await io::delay(5ms); if (error) state.session.close();
         }
         state.cancel(); co_return capy::results<>{};
     }

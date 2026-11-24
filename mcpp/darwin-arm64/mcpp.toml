@@ -6,6 +6,9 @@ version = "0.1.0"
 standard = "c++26"
 mcpp = ">=2026.11.21.1"
 
+[toolchain]
+default = "llvm@23.1.6"
+
 [target.aarch64-macos]
 sysroot = "darwin@system"
 
@@ -17,6 +20,24 @@ nexus = { path = "../..", default-features = false, features = ["profile-sidecar
 
 [build]
 sources = []
+
+[profile.release]
+opt = "z"
+lto = true
+strip = true
+
+[profile.size]
+opt = "z"
+lto = true
+strip = true
+
+[profile.speed]
+opt = 3
+lto = true
+strip = true
+
+[targets.nexus-core-apple]
+kind = "lib"
 
 [targets.nexus]
 kind = "bin"

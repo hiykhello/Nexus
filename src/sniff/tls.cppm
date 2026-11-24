@@ -11,6 +11,7 @@ export namespace sniff {
         // An ECH extension may be real or GREASE. The visible name, if any,
         // is from the outer ClientHello and need not be the inner name.
         bool ech_offered=false;
+        std::optional<std::string_view> client{};
     };
 
     // Reads one plaintext ClientHello, including handshakes split across TLS
@@ -27,6 +28,7 @@ export namespace sniff {
         bool scratch_bound_=false, body_known_=false, saw_record_=false, ech_offered_=false;
         TlsStatus state_=TlsStatus::need_more;
         std::optional<std::string_view> server_name_;
+        std::optional<std::string_view> client_;
 
         static auto valid_name(std::string_view name) noexcept -> bool;
         auto parse() noexcept -> TlsStatus;
@@ -68,7 +70,17 @@ namespace sniff {
         if (version.size()!=2 || version[0]!=3 || version[1]>3 || take(32).size()!=32) return TlsStatus::malformed;
         std::size_t n=0;
         if (!u8(n) || n>32 || take(n).size()!=n) return TlsStatus::malformed;
-        if (!u16(n) || n<2 || n%2 || take(n).size()!=n) return TlsStatus::malformed;
+        if (!u16(n) || n<2 || n%2) return TlsStatus::malformed;
+        auto ciphers=take(n);
+        if (ciphers.size()!=n) return TlsStatus::malformed;
+        auto is_grease=[](std::size_t v) noexcept -> bool {
+            return (v&0x0f0fu)==0x0a0au && ((v>>8)==(v&0xffu));
+        };
+        bool has_grease=false,has_alps_or_cert_compress=false,has_firefox_hint=false;
+        for (std::size_t i=0;i<ciphers.size();i+=2) {
+            auto cs=(std::size_t(ciphers[i])<<8)|ciphers[i+1];
+            if (is_grease(cs)) has_grease=true;
+        }
         if (!u8(n) || !n || take(n).size()!=n) return TlsStatus::malformed;
         // Older ClientHello messages may omit extensions altogether.
         if (pos==body.size()) return TlsStatus::matched;
@@ -78,6 +90,9 @@ namespace sniff {
             std::size_t type=0,len=0;
             if (!u16(type) || !u16(len) || len>body.size()-pos || seen.test(type)) return TlsStatus::malformed;
             seen.set(type);
+            if (is_grease(type)) has_grease=true;
+            if (type==0x4469u || type==0x44cdu || type==0x001bu) has_alps_or_cert_compress=true;
+            if (type==0x0022u || type==0x001cu) has_firefox_hint=true;
             auto extension=take(len);
             if (type==0xfe0d) ech_offered_=true;
             if (type!=0) continue;
@@ -101,10 +116,12 @@ namespace sniff {
                 off+=size;
             }
         }
+        if (has_grease) client_=has_alps_or_cert_compress ? std::string_view("chromium") : std::string_view("safari");
+        else if (has_firefox_hint) client_="firefox";
         return TlsStatus::matched;
     }
     auto TlsSniffer::feed(std::span<std::uint8_t const> input,std::span<std::uint8_t> scratch) noexcept -> TlsStep {
-        if (state_!=TlsStatus::need_more) return {state_,0,server_name_,ech_offered_};
+        if (state_!=TlsStatus::need_more) return {state_,0,server_name_,ech_offered_,client_};
         if (!scratch_bound_) { scratch_data_=scratch.data(); scratch_size_=scratch.size(); scratch_bound_=true; }
         else if (scratch.data()!=scratch_data_ || scratch.size()!=scratch_size_) {
             state_=TlsStatus::malformed; return {state_,0,{}};
@@ -135,11 +152,11 @@ namespace sniff {
             pos+=count; body_written_+=count; record_remaining_-=count;
             if (body_written_==body_size_) {
                 state_=parse();
-                if (state_!=TlsStatus::matched) {server_name_.reset();ech_offered_=false;}
+                if (state_!=TlsStatus::matched) {server_name_.reset();ech_offered_=false;client_.reset();}
                 break;
             }
         }
-        return {state_,pos,server_name_,ech_offered_};
+        return {state_,pos,server_name_,ech_offered_,client_};
     }
     auto TlsSniffer::finish() noexcept -> TlsStatus {
         if (state_==TlsStatus::need_more) state_=TlsStatus::truncated;

@@ -27,12 +27,12 @@ namespace logging {
 
     struct ProducerState {
         containers::SpscRingQueue<queue_capacity> queue;
-        std::array<LogSlot, queue_capacity> slots;
+        std::unique_ptr<LogSlot[]> slots{std::make_unique_for_overwrite<LogSlot[]>(queue_capacity)};
         std::atomic<std::uint8_t> gate{0};
         std::atomic<std::size_t> outstanding{0};
         std::atomic<std::size_t> high_water{0};
         AtomicDrops dropped{};
-        Wake* wake;
+        Wake* wake = nullptr;
     };
 
     auto Producer::reserve(this Producer const& self, Domain domain, Level level) noexcept
@@ -70,7 +70,10 @@ namespace logging {
         Sink sink;
         Settings settings;
         std::size_t count;
-        std::unique_ptr<ProducerState[]> producers;
+        bool active_queues = false;
+        std::mutex producer_mutex;
+        std::array<std::unique_ptr<ProducerState>, max_producers> owned_producers{};
+        std::array<std::atomic<ProducerState*>, max_producers> producers{};
         Wake wake;
         std::thread writer;
         std::mutex control;
@@ -90,14 +93,26 @@ namespace logging {
 
         Impl(Sink selected, std::size_t size, Settings options)
             : sink(std::move(selected)), settings(options), count(size),
-              producers((sink || options.ring_capacity) ? std::make_unique<ProducerState[]>(size) : nullptr),
-              finished(!sink && !options.ring_capacity) {
-            if (producers)
-                for (auto& producer : std::span(producers.get(), count)) producer.wake = &wake;
-        }
+              active_queues(static_cast<bool>(sink) || options.ring_capacity != 0),
+              finished(!active_queues) {}
 
-        auto states(this Impl const& self) noexcept -> std::span<ProducerState> {
-            return {self.producers.get(), self.producers ? self.count : 0};
+        auto get_or_create_producer(this Impl& self, std::size_t index) noexcept -> ProducerState* {
+            if (!self.active_queues || index >= self.count) return nullptr;
+            if (auto* existing = self.producers[index].load(std::memory_order_acquire)) return existing;
+            std::lock_guard lock(self.producer_mutex);
+            if (auto* existing = self.producers[index].load(std::memory_order_relaxed)) return existing;
+            try {
+                auto created = std::make_unique<ProducerState>();
+                created->wake = &self.wake;
+                if (self.stopping.load(std::memory_order_acquire))
+                    created->gate.store(closed, std::memory_order_relaxed);
+                auto* raw = created.get();
+                self.owned_producers[index] = std::move(created);
+                self.producers[index].store(raw, std::memory_order_release);
+                return raw;
+            } catch (...) {
+                return nullptr;
+            }
         }
 
         auto diagnostics(this Impl const& self) noexcept -> Diagnostics {
@@ -106,13 +121,15 @@ namespace logging {
             result.sink_errors = self.sink_errors.load(std::memory_order_relaxed);
             auto last = self.last_success_ns.load(std::memory_order_relaxed);
             if (last != 0) result.last_success_ns = last;
-            std::size_t index = 0;
-            for (auto const& producer : self.states()) {
-                result.undrained += producer.outstanding.load(std::memory_order_relaxed);
-                result.queue_high_water[index++] = producer.high_water.load(std::memory_order_relaxed);
+            if (!self.active_queues) return result;
+            for (std::size_t index = 0; index < self.count; ++index) {
+                auto* producer = self.producers[index].load(std::memory_order_acquire);
+                if (!producer) continue;
+                result.undrained += producer->outstanding.load(std::memory_order_relaxed);
+                result.queue_high_water[index] = producer->high_water.load(std::memory_order_relaxed);
                 for (std::size_t domain = 0; domain < domain_count; ++domain)
                     for (std::size_t level = 0; level < level_count; ++level)
-                        result.dropped[domain][level] += producer.dropped[domain][level].load(std::memory_order_relaxed);
+                        result.dropped[domain][level] += producer->dropped[domain][level].load(std::memory_order_relaxed);
             }
             return result;
         }
@@ -180,24 +197,24 @@ namespace logging {
             std::size_t taken = 0;
             std::size_t used = 0;
             std::size_t empty = 0;
-            auto states = self.states();
-            while (taken < batch_capacity && empty < states.size()) {
+            auto n = self.active_queues ? self.count : 0;
+            while (taken < batch_capacity && empty < n) {
                 auto index = self.next_producer;
-                self.next_producer = (index + 1) % states.size();
-                if (remaining[index] == 0) {
+                self.next_producer = (index + 1) % n;
+                auto* producer = self.producers[index].load(std::memory_order_acquire);
+                if (!producer || remaining[index] == 0) {
                     ++empty;
                     continue;
                 }
                 empty = 0;
-                auto& producer = states[index];
-                auto const& slot = producer.slots[producer.queue.front()];
+                auto const& slot = producer->slots[producer->queue.front()];
                 self.record_ring(slot);
                 if (self.sink && enabled(slot.domain, slot.level)) {
                     lines[used] = {encode_line(slot, self.settings.output, bytes[used]), slot.level, slot.domain, slot.event_code, slot.context};
                     ++used;
                 }
-                owners[taken++] = &producer;
-                producer.queue.consume();
+                owners[taken++] = producer;
+                producer->queue.consume();
                 --remaining[index];
             }
             if (taken == 0) return false;
@@ -209,15 +226,20 @@ namespace logging {
 
         auto limits(this Impl const& self) noexcept -> QueueLimits {
             QueueLimits result{};
-            std::size_t index = 0;
-            for (auto const& producer : self.states()) result[index++] = producer.queue.readable();
+            if (!self.active_queues) return result;
+            for (std::size_t index = 0; index < self.count; ++index)
+                if (auto* producer = self.producers[index].load(std::memory_order_acquire))
+                    result[index] = producer->queue.readable();
             return result;
         }
 
         auto settled(this Impl const& self) noexcept -> bool {
-            for (auto const& producer : self.states()) {
-                if ((producer.gate.load(std::memory_order_acquire) & active) ||
-                    producer.outstanding.load(std::memory_order_relaxed) != 0) return false;
+            if (!self.active_queues) return true;
+            for (std::size_t index = 0; index < self.count; ++index) {
+                auto* producer = self.producers[index].load(std::memory_order_acquire);
+                if (!producer) continue;
+                if ((producer->gate.load(std::memory_order_acquire) & active) ||
+                    producer->outstanding.load(std::memory_order_relaxed) != 0) return false;
             }
             return true;
         }
@@ -255,8 +277,13 @@ namespace logging {
         }
 
         auto stop(this Impl& self) noexcept -> void {
-            for (auto& producer : self.states()) producer.gate.fetch_or(closed, std::memory_order_release);
-            self.stopping.store(true, std::memory_order_release);
+            {
+                std::lock_guard lock(self.producer_mutex);
+                self.stopping.store(true, std::memory_order_release);
+                for (std::size_t index = 0; index < self.count; ++index)
+                    if (auto* producer = self.producers[index].load(std::memory_order_acquire))
+                        producer->gate.fetch_or(closed, std::memory_order_release);
+            }
             self.wake.signal();
         }
     };
@@ -269,7 +296,7 @@ namespace logging {
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         auto logger = std::unique_ptr<Logger>(new Logger(std::make_unique<Impl>(std::move(sink), producers, settings)));
         auto& impl = *logger->impl_;
-        if (impl.producers) {
+        if (impl.active_queues) {
             try { impl.writer = std::thread([&impl] { impl.run(); }); }
             catch (std::system_error const& error) { return std::unexpected(error.code()); }
         }
@@ -286,7 +313,10 @@ namespace logging {
     auto Logger::producer(this Logger const& self, std::size_t index) noexcept -> std::optional<Producer> {
         auto& impl = *self.impl_;
         if (index >= impl.count) return std::nullopt;
-        return Producer(impl.producers ? &impl.producers[index] : nullptr, impl.settings.privacy);
+        if (!impl.active_queues) return Producer(nullptr, impl.settings.privacy);
+        auto* state = impl.get_or_create_producer(index);
+        if (!state) return std::nullopt;
+        return Producer(state, impl.settings.privacy);
     }
 
     auto Logger::diagnostics(this Logger const& self) noexcept -> Diagnostics {
@@ -295,7 +325,7 @@ namespace logging {
 
     auto Logger::reopen(this Logger& self) -> SinkResult {
         auto& impl = *self.impl_;
-        if (!impl.producers) return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
+        if (!impl.active_queues) return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
         std::unique_lock lock(impl.control);
         if (impl.stopping.load(std::memory_order_acquire))
             return std::unexpected(std::make_error_code(std::errc::operation_canceled));

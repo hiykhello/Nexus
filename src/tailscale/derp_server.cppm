@@ -8,6 +8,7 @@ export namespace tailscale::derp {
     struct OutboundFrame {
         std::uint64_t connection_id = 0;
         std::vector<std::uint8_t> frame;
+        bool close_after = false;
     };
 
     struct RelayStats {
@@ -22,7 +23,9 @@ export namespace tailscale::derp {
             std::uint64_t connection_id = 0;
             Key node{};
             bool preferred = false;
+            bool watcher = false;
             std::uint64_t last_seen_ms = 0;
+            std::vector<std::uint64_t> senders;
         };
         crypto::X25519Private server_key_;
         Key server_public_{};

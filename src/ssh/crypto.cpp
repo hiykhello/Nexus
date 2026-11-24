@@ -1,22 +1,17 @@
 module ssh.crypto;
 import std;
 import crypto;
+import encoding.endian;
 import ssh.wire;
-import nexus.thirdparty.boringssl;
+import boringssl;
+
+extern "C" void BN_clear_free(boringssl::BIGNUM*);
 
 namespace ssh {
-    namespace b = nex::boringssl;
+    namespace b = ::boringssl;
     namespace {
-        auto read_be32(std::span<std::uint8_t const, 4> in) noexcept -> std::uint32_t {
-            return (std::uint32_t(in[0]) << 24) | (std::uint32_t(in[1]) << 16) |
-                   (std::uint32_t(in[2]) << 8) | std::uint32_t(in[3]);
-        }
-        auto write_be32(std::span<std::uint8_t, 4> out, std::uint32_t v) noexcept -> void {
-            out[0] = static_cast<std::uint8_t>((v >> 24) & 0xffu);
-            out[1] = static_cast<std::uint8_t>((v >> 16) & 0xffu);
-            out[2] = static_cast<std::uint8_t>((v >> 8) & 0xffu);
-            out[3] = static_cast<std::uint8_t>(v & 0xffu);
-        }
+        using encoding::read_be32;
+        using encoding::write_be32;
         auto chacha_nonce(std::uint32_t seqno) noexcept -> std::array<std::uint8_t, 12> {
             std::array<std::uint8_t, 12> n{};
             write_be32(std::span<std::uint8_t, 4>(n.data() + 8, 4), seqno);
@@ -36,8 +31,8 @@ namespace ssh {
                                  std::unique_ptr<b::EC_KEY, decltype(&b::EC_KEY_free)>& out) -> bool {
             out.reset(b::EC_KEY_new_by_curve_name(b::nid_x9_62_prime256v1));
             if (!out) return false;
-            std::unique_ptr<b::BIGNUM, decltype(&b::BN_free)> d(
-                b::BN_bin2bn(priv.data(), priv.size(), nullptr), b::BN_free);
+            std::unique_ptr<b::BIGNUM, decltype(&::BN_clear_free)> d(
+                b::BN_bin2bn(priv.data(), priv.size(), nullptr), ::BN_clear_free);
             if (!d || b::EC_KEY_set_private_key(out.get(), d.get()) != 1) return false;
             auto const* grp = b::EC_KEY_get0_group(out.get());
             std::unique_ptr<b::EC_POINT, decltype(&b::EC_POINT_free)> pt(b::EC_POINT_new(grp), b::EC_POINT_free);
@@ -80,6 +75,7 @@ namespace ssh {
 
     auto PrivateKey::parse(std::string_view pem) -> std::expected<PrivateKey, std::string> {
         if (auto der = decode_pem_body(pem, "OPENSSH PRIVATE KEY")) {
+            struct Wipe { std::vector<std::uint8_t>& d; ~Wipe() { crypto::cleanse(d); } } wipe{*der};
             static constexpr std::string_view kMagic{"openssh-key-v1\0", 15};
             Reader r{*der};
             auto magic = r.bytes(kMagic.size());
@@ -95,7 +91,6 @@ namespace ssh {
             if (*cipher != "none" || *kdf != "none")
                 return std::unexpected("encrypted OpenSSH private keys are unsupported");
             Reader pr{*priv};
-            struct Wipe { std::vector<std::uint8_t>& d; ~Wipe() { crypto::cleanse(d); } } wipe{*der};
             auto c1 = pr.u32(), c2 = pr.u32();
             auto ktype = pr.text();
             if (!c1 || !c2 || *c1 != *c2 || !ktype) return std::unexpected("corrupt OpenSSH private key block");
@@ -235,8 +230,8 @@ namespace ssh {
             auto r_b = ir.mpint(), s_b = ir.mpint();
             if (!r_b || !s_b || !ir.empty()) return std::unexpected("malformed ECDSA P-256 signature");
             std::unique_ptr<b::ECDSA_SIG, decltype(&b::ECDSA_SIG_free)> sig(b::ECDSA_SIG_new(), b::ECDSA_SIG_free);
-            std::unique_ptr<b::BIGNUM, decltype(&b::BN_free)> r_bn(b::BN_bin2bn(r_b->data(), r_b->size(), nullptr), b::BN_free);
-            std::unique_ptr<b::BIGNUM, decltype(&b::BN_free)> s_bn(b::BN_bin2bn(s_b->data(), s_b->size(), nullptr), b::BN_free);
+            std::unique_ptr<b::BIGNUM, decltype(&::BN_clear_free)> r_bn(b::BN_bin2bn(r_b->data(), r_b->size(), nullptr), ::BN_clear_free);
+            std::unique_ptr<b::BIGNUM, decltype(&::BN_clear_free)> s_bn(b::BN_bin2bn(s_b->data(), s_b->size(), nullptr), ::BN_clear_free);
             if (!sig || !r_bn || !s_bn || b::ECDSA_SIG_set0(sig.get(), r_bn.get(), s_bn.get()) != 1)
                 return std::unexpected("invalid ECDSA signature components");
             (void)r_bn.release();
@@ -288,6 +283,7 @@ namespace ssh {
             next.buf.resize(k_enc_sz);
             if (!dn) { crypto::cleanse(next.buf); crypto::cleanse(out); return std::unexpected("SSH KDF expand failed"); }
             out.insert(out.end(), dn->begin(), dn->end());
+            crypto::cleanse(*dn);
         }
         crypto::cleanse(next.buf);
         out.resize(out_len);
@@ -312,21 +308,30 @@ namespace ssh {
 
     auto PacketCipher::encrypt(std::uint32_t seqno, std::span<std::uint8_t const> payload)
         -> std::expected<std::vector<std::uint8_t>, std::string> {
+        if (kind_ != CipherKind::none && seqno >= (1u << 30))
+            return std::unexpected("SSH packet sequence ceiling reached; rekey required");
         std::size_t block = (kind_ == CipherKind::aes128_gcm || kind_ == CipherKind::aes256_gcm) ? 16u : 8u;
+        if (payload.size() > kMaxPacketBytes) return std::unexpected("SSH outbound packet too large");
         std::size_t unpadded = (kind_ == CipherKind::none ? 4u : 0u) + 1u + payload.size();
         std::size_t rem = unpadded % block;
         std::size_t pad_len = rem == 0 ? block : (block - rem);
         if (pad_len < 4) pad_len += block;
-        std::uint32_t pkt_len = static_cast<std::uint32_t>(1u + payload.size() + pad_len);
-        if (pkt_len > kMaxPacketBytes) return std::unexpected("SSH outbound packet too large");
+        std::size_t raw_pkt_len = 1u + payload.size() + pad_len;
+        if (raw_pkt_len > kMaxPacketBytes) return std::unexpected("SSH outbound packet too large");
+        std::uint32_t pkt_len = static_cast<std::uint32_t>(raw_pkt_len);
 
         std::vector<std::uint8_t> plain(4u + pkt_len);
         write_be32(std::span<std::uint8_t, 4>(plain.data(), 4), pkt_len);
         plain[4] = static_cast<std::uint8_t>(pad_len);
         std::ranges::copy(payload, plain.begin() + 5);
         std::vector<std::uint8_t> pad_rnd(pad_len);
-        if (!crypto::random_bytes(pad_rnd)) return std::unexpected("RNG failed");
+        if (!crypto::random_bytes(pad_rnd)) {
+            crypto::cleanse(pad_rnd);
+            crypto::cleanse(plain);
+            return std::unexpected("RNG failed");
+        }
         std::ranges::copy(pad_rnd, plain.begin() + 5 + payload.size());
+        crypto::cleanse(pad_rnd);
 
         if (kind_ == CipherKind::none) return plain;
 
@@ -335,9 +340,9 @@ namespace ssh {
             auto kspan = std::span<std::uint8_t const>(key_).first(cipher_key_bytes(kind_));
             auto sealed = crypto::seal(algo, kspan, iv_,
                 std::span(plain).subspan(4), std::span(plain).first(4));
-            increment_iv();
             crypto::cleanse(plain);
             if (!sealed) return std::unexpected("SSH AES-GCM encrypt failed");
+            increment_iv();
             std::vector<std::uint8_t> out(4 + sealed->size());
             write_be32(std::span<std::uint8_t, 4>(out.data(), 4), pkt_len);
             std::ranges::copy(*sealed, out.begin() + 4);

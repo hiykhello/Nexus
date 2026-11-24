@@ -1,45 +1,20 @@
 module config;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
-    auto parse_tcp_dial_option(nex::glaze::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
+    auto parse_tcp_dial_option(glaze::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
     auto dns_ipv6(std::string_view) -> std::optional<std::array<std::uint8_t,16>>;
     auto dns_hostname(std::string_view) -> bool;
-    auto parse_quic_ech_field(nex::glaze::KdlNode const&, QuicEchOptions&) -> bool;
-    auto parse_vless_transport(nex::glaze::KdlNode const&,bool)
+    auto parse_quic_ech_field(glaze::KdlNode const&, QuicEchOptions&) -> bool;
+    auto parse_vless_transport(glaze::KdlNode const&,bool)
         -> std::expected<std::variant<HttpUpgradeTransport,GrpcTransport,xhttp::Profile>,std::string>;
+    auto parse_outbound_multiplex(glaze::KdlNode const&) -> std::expected<MultiplexConfig,std::string>;
+    auto parse_inbound_multiplex(glaze::KdlNode const&) -> std::expected<InboundMultiplexConfig,std::string>;
     namespace {
-        struct FingerprintEntry { std::string_view name; TlsFingerprint value; };
-        constexpr auto fingerprint_table=std::to_array<FingerprintEntry>({
-            {"native", TlsFingerprint::native},
-            {"tls13-grease", TlsFingerprint::tls13_grease},
-            {"tls13-randomized", TlsFingerprint::tls13_randomized},
-            {"chrome", TlsFingerprint::chrome},
-            {"chrome-133", TlsFingerprint::chrome},
-            {"firefox", TlsFingerprint::firefox},
-            {"firefox-135", TlsFingerprint::firefox},
-            {"safari", TlsFingerprint::safari},
-            {"safari-18", TlsFingerprint::safari},
-            {"ios", TlsFingerprint::ios},
-            {"android", TlsFingerprint::android},
-            {"edge", TlsFingerprint::edge},
-            {"random", TlsFingerprint::random},
-            {"tls12", TlsFingerprint::tls12},
-        });
-    }
-    auto parse_tls_fingerprint(std::string_view value) noexcept -> std::optional<TlsFingerprint> {
-        for (auto const& entry : fingerprint_table) if (entry.name==value) return entry.value;
-        return std::nullopt;
-    }
-    auto tls_fingerprint_name(TlsFingerprint value) noexcept -> std::string_view {
-        for (auto const& entry : fingerprint_table) if (entry.value==value) return entry.name;
-        return {};
-    }
-    namespace {
-        using Node=nex::glaze::KdlNode;
-        using Value=nex::glaze::KdlValue;
+        using Node=glaze::KdlNode;
+        using Value=glaze::KdlValue;
         auto error(std::string value) -> std::unexpected<std::string> { return std::unexpected(std::move(value)); }
         auto text(Value const& value) -> std::string const* { return value.tag ? nullptr : std::get_if<std::string>(&value.data); }
         auto argument(Node const& node) -> std::string const* { return !node.tag && node.arguments.size()==1 ? text(node.arguments[0]) : nullptr; }
@@ -115,6 +90,11 @@ namespace config {
                 if (auto* gr=std::get_if<GrpcTransport>(&*parsed)) config.grpc=std::move(*gr);
                 else if (auto* hu=std::get_if<HttpUpgradeTransport>(&*parsed)) config.transport=std::move(*hu);
                 else return error(label+" transport supports websocket, httpupgrade or grpc");
+            } else if (child.name=="multiplex" && mode==Inbound::trojan) {
+                if (config.multiplex) return error("duplicate "+label+" multiplex");
+                auto parsed=parse_inbound_multiplex(child);
+                if (!parsed) return std::unexpected(parsed.error());
+                config.multiplex=std::move(*parsed);
             } else return error("unsupported "+label+" inbound field: "+child.name);
         }
         if (!listen || !auth || !tls) return error(label+" inbound requires listen, authentication and TLS");
@@ -212,6 +192,11 @@ namespace config {
                     child.arguments.size()!=1 || child.arguments[0].tag || !std::holds_alternative<bool>(child.arguments[0].data))
                     return error("tcp-fast-open requires one boolean and cannot repeat");
                 result.tcp_fast_open=std::get<bool>(child.arguments[0].data);
+            } else if (child.name=="multiplex" && kind=="Trojan") {
+                if (result.multiplex) return error("duplicate "+label+" multiplex");
+                auto parsed=parse_outbound_multiplex(child);
+                if (!parsed) return std::unexpected(parsed.error());
+                result.multiplex=std::move(*parsed);
             } else {
                 auto option=parse_tcp_dial_option(child,result.tcp_options);
                 if (!option) return std::unexpected(option.error());

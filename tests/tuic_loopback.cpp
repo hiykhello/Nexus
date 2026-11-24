@@ -16,11 +16,10 @@ import quic.cid_registry;
 import quic.datagram_port;
 import tls.fingerprint;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace io = nex::corosio;
-namespace capy = nex::capy;
+namespace io = ::corosio;
 using Clock = std::chrono::steady_clock;
 
 namespace {
@@ -217,12 +216,14 @@ auto main() -> int {
                 struct Fin { tuic::Client<>& c; ~Fin() { c.finish(); } } fin{client};
                 if (!co_await client.ready(deadline)) { result = 23; co_return capy::results<>{}; }
                 tuic::TargetAddress tgt{tuic::AddressType::domain, "echo.local", {}, 9001};
-                std::string_view uos_msg = "hello-tuic-uos";
-                if (!client.send_udp(9, tgt, as_u8(uos_msg))) { result = 24; co_return capy::results<>{}; }
-                auto pkt = co_await client.wait_udp(deadline);
-                if (!pkt || pkt->assoc_id != 9 ||
-                    std::string_view(reinterpret_cast<char const*>(pkt->payload.data()), pkt->payload.size()) != uos_msg) {
-                    result = 25; co_return capy::results<>{};
+                for (int round = 0; round < 70; ++round) {
+                    std::string uos_msg = "hello-tuic-uos-" + std::to_string(round);
+                    if (!client.send_udp(9, tgt, as_u8(uos_msg))) { result = 24; co_return capy::results<>{}; }
+                    auto pkt = co_await client.wait_udp(deadline);
+                    if (!pkt || pkt->assoc_id != 9 ||
+                        std::string_view(reinterpret_cast<char const*>(pkt->payload.data()), pkt->payload.size()) != uos_msg) {
+                        result = 25; co_return capy::results<>{};
+                    }
                 }
                 co_return capy::results<>{};
             };

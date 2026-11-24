@@ -1,7 +1,7 @@
 export module snell.client_pool;
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace snell {
     // One pool per executor, credential profile, dial options and detour.
@@ -14,7 +14,7 @@ export namespace snell {
     template<class Node> class ClientPool {
         using Clock=std::chrono::steady_clock;
         struct Idle {std::shared_ptr<Node> node;Clock::time_point since;};
-        nex::corosio::io_context& context_;std::vector<Idle> idle_;std::vector<std::shared_ptr<Node>> active_;
+        corosio::io_context& context_;std::vector<Idle> idle_;std::vector<std::shared_ptr<Node>> active_;
         std::stop_source stop_;bool stopped_=false,monitor_running_=false;
         static constexpr std::size_t max_idle=10;
         static constexpr auto max_age=std::chrono::seconds(180),interval=std::chrono::seconds(20);
@@ -25,9 +25,9 @@ export namespace snell {
             Monitor(Monitor&& other) noexcept:owner(std::exchange(other.owner,nullptr)){}
             ~Monitor(){if(owner){owner->stop();owner->monitor_running_=false;}}
         };
-        static auto monitor(Monitor lifetime)->nex::capy::task<> {
+        static auto monitor(Monitor lifetime)->capy::task<> {
             auto& owner=*lifetime.owner;
-            while(!owner.stopped_){owner.reap(Clock::now());auto [error]=co_await nex::corosio::delay(interval);if(error)break;}
+            while(!owner.stopped_){owner.reap(Clock::now());auto [error]=co_await corosio::delay(interval);if(error)break;}
         }
         auto release(std::shared_ptr<Node> node) noexcept ->void {
             auto found=std::ranges::find(active_,node);if(found==active_.end())std::terminate();active_.erase(found);
@@ -51,12 +51,12 @@ export namespace snell {
             auto node() const noexcept ->Node& {return *node_;}
             auto hold() const noexcept ->std::shared_ptr<Node> {return node_;}
         };
-        explicit ClientPool(nex::corosio::io_context& context):context_(context){idle_.reserve(max_idle);}
+        explicit ClientPool(corosio::io_context& context):context_(context){idle_.reserve(max_idle);}
         ClientPool(ClientPool const&)=delete;auto operator=(ClientPool const&)->ClientPool& =delete;
         ~ClientPool(){stop();if(!drained())std::terminate();}
         auto start()->void {
             if(stopped_||monitor_running_)throw std::logic_error("Snell pool cannot start");monitor_running_=true;
-            try{nex::capy::run_async(context_.get_executor(),stop_.get_token(),[] {},
+            try{capy::run_async(context_.get_executor(),stop_.get_token(),[] {},
                 [this](std::exception_ptr) noexcept {stop();})(monitor(Monitor(*this)));}
             catch(...){monitor_running_=false;stop();throw;}
         }

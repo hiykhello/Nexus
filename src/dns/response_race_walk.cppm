@@ -31,6 +31,7 @@ export namespace dns {
         bool disabled_,terminal_=false;
         std::optional<std::uint32_t> timeout_,ttl_;
         std::optional<std::optional<ClientSubnet>> subnet_;
+        std::optional<rules::DnsRuleStrategy> strategy_;
         std::array<Slot,32> slots_{};
         std::array<std::optional<Armed>,64> armed_{};
         std::optional<Ticket> anonymous_;
@@ -56,7 +57,7 @@ export namespace dns {
             if(rule.remove_client_subnet)subnet.emplace(std::nullopt);
             auto ttl=rule.action==ResponseAction::respond && (!selected || !selected->ttl_changed) ? std::optional<std::uint32_t>{} : rule.rewrite_ttl ? rule.rewrite_ttl : ttl_;
             auto tag=rule.action==ResponseAction::evaluate ? view(rule.evaluate_tag) : rule.action==ResponseAction::respond ? view(rule.match_response_tag) : std::nullopt;
-            return {rule.action,rule.server,rule.disable_cache.value_or(disabled_),index,rule.timeout_ms ? rule.timeout_ms : timeout_,ttl,subnet,tag};
+            return {rule.action,rule.server,rule.disable_cache.value_or(disabled_),index,rule.timeout_ms ? rule.timeout_ms : timeout_,ttl,subnet,tag,rule.strategy ? rule.strategy : strategy_,rule.reject_rcode};
         }
         auto options(ResponseRule const& rule) noexcept -> void {
             if(rule.disable_cache)disabled_=*rule.disable_cache;
@@ -64,6 +65,7 @@ export namespace dns {
             if(rule.rewrite_ttl) {ttl_=rule.rewrite_ttl;for(auto& item:slots_)if(item.ticket)item.ttl_changed=true;}
             if(rule.client_subnet)subnet_.emplace(ClientSubnet{static_cast<std::uint16_t>(rule.client_subnet->size==4 ? 1 : 2),rule.client_subnet->bits,rule.client_subnet->address});
             if(rule.remove_client_subnet)subnet_.emplace(std::nullopt);
+            if(rule.strategy)strategy_=rule.strategy;
         }
         auto start(ResponseStep step,bool bind) noexcept -> std::expected<Event,ResponseProgramError> {
             auto ticket=race_.start();if(!ticket)return std::unexpected(ResponseProgramError::resource_limit);
@@ -111,7 +113,7 @@ export namespace dns {
             }
             return result;
         }
-        static auto dummy() noexcept -> ResponseStep {return {ResponseAction::route,0,false,0,{},{},{},{}};}
+        static auto dummy() noexcept -> ResponseStep {return {ResponseAction::route,0,false,0,{},{},{},{},{},{}};}
     public:
         ResponseRaceWalk(std::span<ResponseRule const> rules,std::span<ResponseRaceMode const> modes,
             std::size_t fallback,bool disabled=false) noexcept :rules_(rules),modes_(modes),fallback_(fallback),disabled_(disabled) {}
@@ -173,7 +175,7 @@ export namespace dns {
                     terminal_=true;return Event{Kind::commit,step,selected};
                 }
                 if(cursor_==rules_.size()) {
-                    held_=ResponseStep{ResponseAction::route,fallback_,disabled_,cursor_,timeout_,ttl_,subnet_,{}};
+                    held_=ResponseStep{ResponseAction::route,fallback_,disabled_,cursor_,timeout_,ttl_,subnet_,{},strategy_,{}};
                     if(!race_.hold(cursor_))return std::unexpected(ResponseProgramError::invalid_state);
                     continue;
                 }

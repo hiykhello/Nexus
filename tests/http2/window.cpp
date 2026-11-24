@@ -1,7 +1,7 @@
 import std;
 import http2.server;
-import nexus.thirdparty.nghttp2;
-namespace h2=nex::nghttp2;
+import nghttp2;
+namespace h2 = ::nghttp2;
 namespace http=http2;
 struct Input { std::size_t received=0; bool ended=false,valid=true; };
 struct Body { std::size_t sent=0; bool enabled=false; };

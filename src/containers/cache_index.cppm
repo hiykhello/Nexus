@@ -12,6 +12,7 @@ export namespace containers {
         struct Slot {
             std::optional<Entry> value;
             std::size_t hash = 0;
+            std::uint32_t next_free = kEmpty;
         };
 
         std::size_t capacity_ = 0;
@@ -20,9 +21,9 @@ export namespace containers {
         std::size_t hand_ = 0;
         std::size_t tombstones_ = 0;
         std::size_t bucket_mask_ = 0;
+        std::uint32_t free_head_ = kEmpty;
         std::vector<Slot> slots_;
         std::unique_ptr<std::atomic<std::uint8_t>[]> accessed_;
-        std::vector<std::uint32_t> free_list_;
         std::vector<std::uint32_t> buckets_;
 
         static auto next_pow2(std::size_t n) noexcept -> std::size_t {
@@ -112,9 +113,10 @@ export namespace containers {
             if (idx >= next_alloc_ || !slots_[idx].value) return;
             remove_bucket(slots_[idx].hash, idx);
             slots_[idx].value.reset();
+            slots_[idx].next_free = free_head_;
+            free_head_ = idx;
             accessed_[idx].store(0, std::memory_order_relaxed);
             --size_;
-            free_list_.push_back(idx);
             rehash_if_needed();
         }
 
@@ -127,9 +129,10 @@ export namespace containers {
             }
             if (size_ < capacity_) {
                 std::uint32_t idx = 0;
-                if (!free_list_.empty()) {
-                    idx = free_list_.back();
-                    free_list_.pop_back();
+                if (free_head_ != kEmpty) {
+                    idx = free_head_;
+                    free_head_ = slots_[idx].next_free;
+                    slots_[idx].next_free = kEmpty;
                 } else {
                     idx = static_cast<std::uint32_t>(next_alloc_++);
                 }
@@ -168,11 +171,13 @@ export namespace containers {
             if (!size_) return;
             for (std::size_t i = 0; i < next_alloc_; ++i) {
                 if (slots_[i].value && pred(*slots_[i].value)) {
-                    remove_bucket(slots_[i].hash, static_cast<std::uint32_t>(i));
+                    auto idx = static_cast<std::uint32_t>(i);
+                    remove_bucket(slots_[i].hash, idx);
                     slots_[i].value.reset();
+                    slots_[i].next_free = free_head_;
+                    free_head_ = idx;
                     accessed_[i].store(0, std::memory_order_relaxed);
                     --size_;
-                    free_list_.push_back(static_cast<std::uint32_t>(i));
                 }
             }
             rehash_if_needed();
@@ -188,10 +193,11 @@ export namespace containers {
         auto clear() noexcept -> void {
             for (std::size_t i = 0; i < next_alloc_; ++i) {
                 slots_[i].value.reset();
+                slots_[i].next_free = kEmpty;
                 accessed_[i].store(0, std::memory_order_relaxed);
             }
             if (!buckets_.empty()) std::ranges::fill(buckets_, kEmpty);
-            free_list_.clear();
+            free_head_ = kEmpty;
             size_ = 0;
             next_alloc_ = 0;
             hand_ = 0;

@@ -1,16 +1,33 @@
 # 项目进度与交付基线
 
-更新：2026-11-22。本文记录 Nexus 当前已验证交付基线（第 91–158 批）与后续工作约束。功能目标以 [功能完整度清单](planning/feature-completion.md)、[支持矩阵](planning/proxy-kernel-support-matrix.md) 和 [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) 为准，编码与工程规范遵循 [C++ 编码规范](development/cpp-guidelines.md) 与 [文件行数规范](development/file-sizes.md)。
+更新：2026-11-22。本文记录 Nexus 当前已验证交付基线（第 91–162 批）与后续工作约束。功能目标以 [功能完整度清单](planning/feature-completion.md)、[支持矩阵](planning/proxy-kernel-support-matrix.md) 和 [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) 为准，编码与工程规范遵循 [C++ 编码规范](development/cpp-guidelines.md) 与 [文件行数规范](development/file-sizes.md)。
 
 ---
 
-## 当前交付状态（第 91–158 批全部已完成并验收）
+## 当前交付状态（第 91–162 批全部已完成并验收）
+
+### 0a. 第 159–162 批：跨内核缺口修复与全仓模块去前缀收拢（已完成并验收）
+
+- **规划文档**：[next-batches-159-162.md](planning/next-batches-159-162.md)
+- **第 159 批（跨内核缺口修复与三端分享链接修正）**：
+  - XHTTP H1/H2/H3 HTTP 状态检查与拒绝透传：在 [xhttp_http3_streams.hpp](../src/proxy/xhttp_http3_streams.hpp) 解析客户端响应 `:status`，在 [xhttp_http3_channel.hpp](../src/proxy/xhttp_http3_channel.hpp) 对 `stream-up` 非 `200` 返回失败，并在 [xhttp_http3_client.hpp](../src/proxy/xhttp_http3_client.hpp)、[xhttp_http2_client.hpp](../src/proxy/xhttp_http2_client.hpp)、[xhttp_http1.hpp](../src/proxy/xhttp_http1.hpp)、[xhttp_http1_client.hpp](../src/proxy/xhttp_http1_client.hpp)、[xhttp_carrier.hpp](../src/proxy/xhttp_carrier.hpp)、[xhttp_stream_client.hpp](../src/proxy/xhttp_stream_client.hpp) 与 [xhttp_vless.cpp](../src/proxy/xhttp_vless.cpp) 记录并透传 `"VLESS XHTTP rejected with HTTP {}"`；
+  - MASQUE `CONNECT-IP` TUN 证书指纹透传：在 [masque_tun.cpp](../src/tools/masque_tun.cpp) 向 `masque::ClientProfile::load` 传递 `outbound.certificate_sha256`；
+  - 三端分享链接解析修正：在 [share_link.cpp](../desktop/src/share_link.cpp)、[ShareLinkParser.swift](../apple/Sources/NexusCoreBridge/ShareLinkParser.swift) 与 [ShareLinkParser.kt](../android/core-bridge/src/main/kotlin/org/nexus/android/bridge/model/ShareLinkParser.kt) 将 `/` 路径截断移至 `@` userinfo 拆分之后，并拒绝 `4`/`5` 之外的无效 Snell 版本（补充三端回归测试）；Desktop C++ 回归测试经 `nexus-desktop-tests`（`1/1 Passed`）实机通过，Apple/Android 桥接测试尚未在当前 Linux 宿主环境执行。
+- **第 160–162 批（去 `nexus.*` / `nexus::` 前缀、历史包袱清理与模块化收拢）**：
+  - 新增工作区基础叶子包 `nexus.utility`（[src/utility/utility.cppm](../src/utility/utility.cppm)，导出 `utility::{atomic_shared_ptr, scope_exit}`）并拆除 `src/platform/compat.cppm`（`nexus.compat`）；全仓 `src/`、`tests/` 迁至 `containers.*`/`containers::`、`functional`/`functional::` 与 `utility`/`utility::`，并在 [batch153_phase_b_unit.cpp](../tests/batch153_phase_b_unit.cpp) 补充 `utility` 单测；
+  - 更新 [scripts/mcpp-quic-modules.py](../scripts/mcpp-quic-modules.py) 与 `3rdparty/modules/*` 统一导出 `thirdparty.*`，将 `tests/` 下导出测试模块迁为 `test.*` 与 `test::`；
+  - 删除空目录 `src/app/`，提升 `nexus.encoding` 为工作区叶子包（[src/encoding/base64.cppm](../src/encoding/base64.cppm) 替代 `base64_decode.hpp` 并消除 `src/rules/mcpp.toml` 跨目录源码直含），将 `src/platform/unix_socket*.hpp` 模块化为 [src/platform/unix_socket.cppm](../src/platform/unix_socket.cppm)；重新生成 [src/build/mcpp_pinned_guard.cpp](../src/build/mcpp_pinned_guard.cpp) 并同步 [source-tree.md](architecture/source-tree.md) 与 [mcpp-workspace.md](build/mcpp-workspace.md)。
+- **统一实测与审计证据（2026-11-22）**：
+  - `mcpp --offline --locked run` 全绿通过 `batch153-phase-b-unit`、`state-unit`、`logging-unit`、`acme-unit`、`batch155-unit`、`batch156-unit`、`batch157-unit` 与 `batch158-unit`；
+  - `mcpp --offline --locked build --strict --features profile-linux-uring` 编译通过且 `ldd` 检查零 `libstdc++` 动态依赖；`mcpp/epoll` 与 `mcpp/host-consumer` 严格离线构建均通过；
+  - `ctest --test-dir target/desktop-build --output-on-failure` 通过 `nexus-desktop-tests`（`1/1`）；
+  - `mcpp/epoll/mcpp.lock` 与 `3rdparty/patches/corosio/mcpp-exact.patch` SHA-256 校验通过；`tests/mcpp_sidecar_isolation.py`（`61` 个传递侧车特性）、`tests/mcpp_pinned_deps.py`（`10` 个跨平台索引包）、`scripts/mcpp-generate-pinned-guard.py --check --guard-only`、`scripts/check-source-lines.sh`（`2662` 个手写源文件）、负向残留 grep 与 `git diff --check` 全绿。
 
 ### 0. 第 153–158 批 · Clang 23 C++26 零反射迁移、跨平台 OS 原语 Phase B、生产服务能力、P3/P4 协议与 CI 现代化
 详细规划见 [next-batches-153-158.md](planning/next-batches-153-158.md)。
 
 - **Batch 153（Clang `llvm@23.1.3` + 静态 `libc++` C++26 零反射迁移、Phase B OS 原语与 CI 现代化）**：
-  - 移除 `-freflection`/`<meta>`/`-fno-module-lazy`，统一默认工具链为 `llvm@23.1.3` 与静态链接 `libc++.a`/`libc++abi.a`/`libunwind.a`（`ldd` 零 `libstdc++.so.6` 依赖）；在独立零依赖基础包 [compat.cppm](../src/platform/compat.cppm) 与 [compat_callable.cppm](../src/platform/compat_callable.cppm) 落地独立实现的 zero-overhead `nexus::inplace_vector`、`nexus::scope_exit`、`nexus::function_ref`、`nexus::atomic_shared_ptr` 及 32B SBO `nexus::move_only_function`/`nexus::copyable_function`，清理全仓 `<experimental/scope>`、`FILE*`/`system_clock` 等 `libc++` 差异，修复 Glaze 无反射外链接结构体、`http2::detail::CoreLimits::max_frame_size` 字段对齐、`SshProfile::~SshProfile()` 与 QUIC ABI 模块 `module;` GMF；`batch153-phase-b-unit`、`state-{unit,fakeip-dns-unit,ruleset-cache-unit}` 全绿。
+  - 移除 `-freflection`/`<meta>`/`-fno-module-lazy`，统一默认工具链为 `llvm@23.1.3` 与静态链接 `libc++.a`/`libc++abi.a`/`libunwind.a`（`ldd` 零 `libstdc++.so.6` 依赖）；将自研固定容量 `inplace_vector` 收拢至 [src/containers/inplace_vector.cppm](../src/containers/inplace_vector.cppm)（工作区基础包 `nexus.containers` / 模块 `containers.inplace_vector`），并将基于 `ngcpp/proxy`（`proxy.v4`）实现的 `functional::{function_ref, move_only_function, copyable_function}`（后两者 32B SBO）收拢至 [src/functional/functional.cppm](../src/functional/functional.cppm)（工作区基础包 `nexus.functional` / 模块 `functional`），先以 `nexus.compat` 过渡重导出 `nexus::*`（已于第 160 批拆除并独立出 `nexus.utility`）；清理全仓 `<experimental/scope>`、`FILE*`/`system_clock` 等 `libc++` 差异，修复 Glaze 无反射外链接结构体、`http2::detail::CoreLimits::max_frame_size` 字段对齐、`SshProfile::~SshProfile()` 与 QUIC ABI 模块 `module;` GMF；`batch153-phase-b-unit`、`state-{unit,fakeip-dns-unit,ruleset-cache-unit}` 全绿。
   - 补齐 `src/state/file_{posix,windows}`、`src/rulefile/windows.cpp`、`src/packet/{fd_stub,tun_darwin,tun_windows}` 与 `src/platform/process_owner.{cppm,_linux,_darwin,_windows}`；升级 `.github/workflows/ci-cross-platform.yml` 至 `ubuntu-latest` / `windows-latest` / `macos-latest` 与新版 Actions。
 - **Batch 154（`acme` 自动证书与 `sni-demux` 四层 SNI 分流）**：
   - 实现 `src/acme/{types,jws,store,client}`（RFC 8555 HTTP-01/TLS-ALPN-01/DNS-01、ES256 JWS、P-256 CSR/校验自签、原子落盘与动态热切换）与 `src/proxy/sni_demux`（L4 TLS ClientHello SNI/ALPN 零缓冲嗅探与策略分流）；`acme-unit` 与 `sni-demux-unit` 全绿。

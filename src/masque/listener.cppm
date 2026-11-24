@@ -4,8 +4,8 @@ extern "C" void nexus_test_masque_listener_start(unsigned);
 #endif
 export module masque.listener;
 import std;
-import proxy;
-import proxy.session_quota;
+import relay;
+import relay.session_quota;
 import net.udp_socket;
 import masque.host;
 import masque.config;
@@ -21,9 +21,9 @@ import quic.tls_server;
 import hysteria2.transport_options;
 import dns.local_config;
 import tls.server_credential;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import capy;
+import corosio;
 
 export namespace masque {
     // Concrete per-executor production listener. A shared QUIC port handles
@@ -38,14 +38,14 @@ export namespace masque {
             Listener& listener;Registry& registry;quic::SessionHandle owner;
             struct Flow {
                 std::int64_t stream;
-                proxy::SessionQuota::Lease quota;
-                proxy::TrafficRegistration traffic;
+                relay::SessionQuota::Lease quota;
+                relay::TrafficRegistration traffic;
             };
             net::UdpEndpoint source;
             std::array<std::optional<Flow>,Streams> flows;
             quic::TlsServer tls;quic::NativeMemory<> memory;Host host;NativeSession session;
 
-            static auto source_endpoint(nex::corosio::endpoint const& endpoint) -> net::UdpEndpoint {
+            static auto source_endpoint(corosio::endpoint const& endpoint) -> net::UdpEndpoint {
                 auto address=endpoint.address();
                 net::UdpEndpoint peer{address.is_v4() ? std::uint8_t{4} : std::uint8_t{6},{},endpoint.port()};
                 if (address.is_v4()) {
@@ -61,12 +61,12 @@ export namespace masque {
                 auto slot=std::ranges::find_if(flows,[](auto const& item) {return !item;});
                 auto lease=listener.accounting_->acquire_session();
                 if (slot==flows.end() || !lease) return false;
-                auto protocol=ip ? proxy::TrafficProtocol::masque_ip : proxy::TrafficProtocol::masque_udp;
-                auto traffic=listener.accounting_->track_traffic(protocol,proxy::ConnectPath::datagrams,source,port,true);
+                auto protocol=ip ? relay::TrafficProtocol::masque_ip : relay::TrafficProtocol::masque_udp;
+                auto traffic=listener.accounting_->track_traffic(protocol,relay::ConnectPath::datagrams,source,port,true);
                 slot->emplace(Flow{stream,std::move(*lease),std::move(traffic)});
                 return true;
             }
-            Bundle(Listener& parent,Registry& table,quic::SessionHandle id,nex::corosio::endpoint const& peer)
+            Bundle(Listener& parent,Registry& table,quic::SessionHandle id,corosio::endpoint const& peer)
                 :listener(parent),registry(table),owner(id),source(source_endpoint(peer)),tls(parent.credential_,"h3"),memory(parent.config_.native_bytes),
                  host(parent.context_,tls,parent.config_,parent.snapshots_,memory.http3(),[&parent]() {parent.notify();},parent.ip_port_),
                  session(tls,host.server().application(),parent.local_) {
@@ -97,7 +97,7 @@ export namespace masque {
             std::array<std::optional<Bundle>,Sessions> bundles;
             std::array<bool,Sessions> orphan{};
             explicit Factory(Listener& owner) noexcept:listener(owner) {}
-            auto admit(nex::ngtcp2::ngtcp2_pkt_hd const& initial,nex::corosio::endpoint const& peer,Clock::time_point now,std::size_t bytes) noexcept -> bool {
+            auto admit(ngtcp2::ngtcp2_pkt_hd const& initial,corosio::endpoint const& peer,Clock::time_point now,std::size_t bytes) noexcept -> bool {
                 permit.reset();auto result=retry.inspect(initial,peer,now,bytes);if(!result){if(!error)error=result.error();return false;}permit=*result;return permit.has_value();
             }
             auto control_failure() const noexcept {return error;}
@@ -108,9 +108,9 @@ export namespace masque {
             auto control_request_stop() noexcept -> void {retry.request_stop();}
             auto control_stop() noexcept -> void {permit.reset();retry.stop();}
             auto control_drained() const noexcept -> bool {return retry.drained();}
-            auto create(quic::SessionHandle owner,Registry& registry,std::span<std::uint8_t const> source,nex::ngtcp2::ngtcp2_pkt_hd const& initial,
-                nex::corosio::endpoint const& peer,Clock::time_point now) noexcept -> std::expected<Session*,int> {
-                namespace n=nex::ngtcp2;
+            auto create(quic::SessionHandle owner,Registry& registry,std::span<std::uint8_t const> source,ngtcp2::ngtcp2_pkt_hd const& initial,
+                corosio::endpoint const& peer,Clock::time_point now) noexcept -> std::expected<Session*,int> {
+                namespace n = ::ngtcp2;
                 try {
                     if(!permit || !std::ranges::equal(permit->retry.bytes(),std::span(initial.dcid.data).first(initial.dcid.datalen)))return std::unexpected(n::err_callback_failure);
                     auto verified=*permit;permit.reset();auto& entry=bundles[owner.slot];if(entry)return std::unexpected(n::err_callback_failure);
@@ -146,13 +146,13 @@ export namespace masque {
         };
         using Port=quic::DatagramPort<Factory,Sessions,8,8,true>;
         using Driver=net::DatagramDriver<Port>;
-        nex::corosio::io_context& context_;HostConfig const& config_;tls::ServerCredential const& credential_;dns::LocalSnapshotSource& snapshots_;
+        corosio::io_context& context_;HostConfig const& config_;tls::ServerCredential const& credential_;dns::LocalSnapshotSource& snapshots_;
         IpServerPort* ip_port_;
-        proxy::Server* accounting_;
+        relay::Server* accounting_;
         bool ip_withdrawing_=false;
-        nex::corosio::udp_socket socket_;nex::corosio::endpoint local_;Factory factory_;Port port_;Driver driver_;nex::capy::async_event changed_;
+        corosio::udp_socket socket_;corosio::endpoint local_;Factory factory_;Port port_;Driver driver_;capy::async_event changed_;
         std::stop_source stop_;bool prepared_=false,started_=false,stopped_=false,root_=false,monitor_=false,failed_=false,clean_=true;
-        auto monitor() -> nex::capy::task<> {
+        auto monitor() -> capy::task<> {
             while(true) {
                 changed_.clear();
                 for(auto& entry:factory_.bundles)if(entry && entry->session.stopping())entry->host.stop();
@@ -167,27 +167,34 @@ export namespace masque {
             ~Root(){if(owner){owner->stop();owner->root_=false;owner->port_.stop();owner->port_.drain();owner->changed_.set();}}
         };
     public:
-        Listener(nex::corosio::io_context& context,HostConfig const& config,tls::ServerCredential const& credential,dns::LocalSnapshotSource& snapshots,IpServerPort* ip_port=nullptr,proxy::Server* accounting=nullptr)
+        Listener(corosio::io_context& context,HostConfig const& config,tls::ServerCredential const& credential,dns::LocalSnapshotSource& snapshots,IpServerPort* ip_port=nullptr,relay::Server* accounting=nullptr)
             :context_(context),config_(config),credential_(credential),snapshots_(snapshots),ip_port_(ip_port),accounting_(accounting),socket_(context),factory_(*this),port_(factory_),driver_(socket_,port_) {
             if(!config.valid(ip_port!=nullptr))throw std::invalid_argument("invalid MASQUE listener config");
         }
         Listener(Listener const&)=delete;auto operator=(Listener const&) -> Listener& = delete;
         ~Listener(){stop();port_.drain();if(!drained())std::terminate();}
         auto process_traffic_closes() -> bool {
-            for (auto& entry : factory_.bundles) if (entry) {
+            if (stopped_) return true;
+            for (std::size_t i = 0; i < Sessions; ++i) {
+                if (factory_.orphan[i]) continue;
+                auto& entry = factory_.bundles[i];
+                if (!entry || entry->session.stopping()) continue;
                 for (auto& flow : entry->flows) if (flow && flow->traffic.close_requested()) {
-                    auto id=flow->stream;
-                    if (!entry->host.server().close_stream(id)) return false;
+                    auto id = flow->stream;
+                    if (!entry->host.server().close_stream(id)) {
+                        entry->session.request_stop();
+                        break;
+                    }
                 }
             }
             return true;
         }
-        auto prepare(nex::corosio::endpoint local,bool reuse=false) -> std::expected<nex::corosio::endpoint,std::error_code> {
+        auto prepare(corosio::endpoint local,bool reuse=false) -> std::expected<corosio::endpoint,std::error_code> {
             if(prepared_ || stopped_)return std::unexpected(std::make_error_code(std::errc::operation_not_permitted));
             if(!factory_.retry.initialize()) {stop();return std::unexpected(std::make_error_code(std::errc::io_error));}
             if(auto error=socket_.open(local.address().family()))return std::unexpected(error);
-            if(local.address().is_v6())if(auto error=socket_.set_option(nex::corosio::socket_option::v6_only(true)))return std::unexpected(error);
-            if(reuse)if(auto error=socket_.set_option(nex::corosio::socket_option::reuse_port(true)))return std::unexpected(error);
+            if(local.address().is_v6())if(auto error=socket_.set_option(corosio::socket_option::v6_only(true)))return std::unexpected(error);
+            if(reuse)if(auto error=socket_.set_option(corosio::socket_option::reuse_port(true)))return std::unexpected(error);
             if(auto error=socket_.bind(local))return std::unexpected(error);local_=socket_.local_endpoint();prepared_=true;return local_;
         }
         auto notify() noexcept -> void {driver_.notify();changed_.set();}
@@ -199,13 +206,13 @@ export namespace masque {
 #ifdef NEXUS_TEST_MASQUE_LISTENER_START
                 nexus_test_masque_listener_start(0);
 #endif
-                nex::capy::run_async(context_.get_executor(),[this]() noexcept {monitor_=false;changed_.set();},
+                capy::run_async(context_.get_executor(),[this]() noexcept {monitor_=false;changed_.set();},
                     [this](std::exception_ptr) noexcept {monitor_=false;failed_=true;stop();})(monitor());
                 monitor_launched=true;
 #ifdef NEXUS_TEST_MASQUE_LISTENER_START
                 nexus_test_masque_listener_start(1);
 #endif
-                nex::capy::run_async(context_.get_executor(),stop_.get_token(),[guard=Root(*this)](auto) noexcept {},
+                capy::run_async(context_.get_executor(),stop_.get_token(),[guard=Root(*this)](auto) noexcept {},
                     [this](std::exception_ptr) noexcept {failed_=true;stop();})(driver_.run());
             }catch(...) {if(!monitor_launched)monitor_=false;stop();if(!root_)port_.stop();changed_.set();throw;}
         }
@@ -217,7 +224,8 @@ export namespace masque {
         auto maintain() noexcept -> void {port_.maintain();}
         auto poll_ip() -> void {
             if(!ip_port_ || stopped_)return;
-            for(auto& entry:factory_.bundles)if(entry && !entry->session.stopping()) {
+            for(std::size_t i=0;i<Sessions;++i)if(!factory_.orphan[i] && factory_.bundles[i] && !factory_.bundles[i]->session.stopping()) {
+                auto& entry=factory_.bundles[i];
                 if(ip_withdrawing_)entry->host.server().withdraw_ip();
                 if(!entry->host.server().poll_ip())entry->session.request_stop();
             }
@@ -225,7 +233,7 @@ export namespace masque {
         auto withdraw_ip() noexcept -> void {ip_withdrawing_=true;}
         auto drained() const noexcept -> bool {return stopped_ && !root_ && !monitor_ && port_.drained() && !factory_.has_orphans();}
         auto clean() const noexcept -> bool {return clean_;}
-        auto failed() const noexcept -> bool {return failed_ || driver_.failure().has_value() || (ip_port_ && !ip_port_->healthy());}
+        auto failed() const noexcept -> bool {return failed_ || driver_.failure().has_value() || (ip_port_ && *ip_port_ && !(*ip_port_)->healthy());}
         auto sessions() const noexcept -> std::size_t {return port_.size();}
     };
 }

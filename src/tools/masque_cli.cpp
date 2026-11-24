@@ -1,6 +1,6 @@
 module cli.masque_enabled;
 import std;
-import proxy;
+import relay;
 import crypto;
 import masque.bearer;
 import masque.ip_server;
@@ -8,7 +8,7 @@ import cli.masque_ip_server;
 import rulefile;
 import tls.profiles;
 import dns.local_config;
-import nexus.thirdparty.corosio;
+import corosio;
 namespace cli::masque_enabled {
     auto Runtime::configure(std::size_t index,config::InboundConfig const& entry) -> std::expected<void,std::string> {
         if(!entry.masque)return {};
@@ -64,16 +64,16 @@ namespace cli::masque_enabled {
             catch(...) {std::terminate();}
         }
     }
-    auto Runtime::start(std::size_t index,proxy::Server& accounting,std::uint16_t port,unsigned count) -> std::expected<std::uint16_t,std::string> {
+    auto Runtime::start(std::size_t index,relay::Server& accounting,std::uint16_t port,unsigned count) -> std::expected<std::uint16_t,std::string> {
         if(count!=1)return std::unexpected("MASQUE requires exactly one worker until connection ID steering is implemented");
         if(index>=profiles_.size() || !profiles_[index] || !profiles_[index]->workers.empty())return std::unexpected("invalid MASQUE worker start");
         auto& profile=*profiles_[index];std::uint16_t bound=port;profile.stopped=false;profile.failed=false;
         try {
             for(unsigned i=0;i<count;++i) {
-                auto worker=std::make_unique<Worker>(uring_,profile.config,profile.credential,profile.ip.get(),accounting);
-                nex::corosio::endpoint local;
-                if(profile.ipv6)local={nex::corosio::ipv6_address(profile.address),bound};
-                else {nex::corosio::ipv4_address::bytes_type bytes{};std::ranges::copy(std::span(profile.address).first<4>(),bytes.begin());local={nex::corosio::ipv4_address(bytes),bound};}
+                auto worker=std::make_unique<Worker>(uring_,profile.config,profile.credential,profile.ip ? &profile.ip : nullptr,accounting);
+                corosio::endpoint local;
+                if(profile.ipv6)local={corosio::ipv6_address(profile.address),bound};
+                else {corosio::ipv4_address::bytes_type bytes{};std::ranges::copy(std::span(profile.address).first<4>(),bytes.begin());local={corosio::ipv4_address(bytes),bound};}
                 auto prepared=worker->listener.prepare(local,count>1);
                 if(!prepared) {auto error=prepared.error().message();worker->listener.stop();worker->context.restart();while(!worker->listener.drained())worker->context.run_for(std::chrono::milliseconds(20));stop_profile(profile);return std::unexpected(error);}
                 bound=prepared->port();profile.workers.push_back(std::move(worker));

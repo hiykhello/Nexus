@@ -4,18 +4,18 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
+import functional;
 import dns.message;
 import dns.cache;
 import dns.corosio_resolver;
 import dns.reverse;
 import dns.shared_cache;
 import dns.shared_coordinator;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace hp=dns_hp_experiment;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;
 namespace {
@@ -111,11 +111,11 @@ class Worker {
     std::unique_ptr<Local> local_;
     std::mutex mutex_;
     std::condition_variable condition_;
-    std::deque<std::move_only_function<void()>> commands_;
+    std::deque<functional::move_only_function<void()>> commands_;
     std::thread thread_;
     unsigned next_=0;
     bool quitting_=false;
-    auto enqueue(std::move_only_function<void()> command) -> void {
+    auto enqueue(functional::move_only_function<void()> command) -> void {
         { std::lock_guard lock(mutex_); commands_.push_back(std::move(command)); }
         condition_.notify_one();
     }
@@ -123,7 +123,7 @@ class Worker {
         try { local_=std::make_unique<Local>(uring_,cache_,coordinator_,group_); ready.set_value(); }
         catch (...) { ready.set_exception(std::current_exception()); return; }
         for (;;) {
-            std::deque<std::move_only_function<void()>> commands;
+            std::deque<functional::move_only_function<void()>> commands;
             {
                 std::unique_lock lock(mutex_);
                 condition_.wait_for(lock,2ms,[&] { return !commands_.empty(); });

@@ -4,12 +4,12 @@ import dns.message;
 import dns.cache;
 import dns.shared_cache;
 import dns.shared_coordinator;
-import proxy;
+import relay;
 
 extern "C" void nexus_test_dns_shared_access(void const*) noexcept {}
 
 int main(int argc,char** argv) {
-    namespace p=proxy;
+    namespace p = relay;
     namespace hp=dns_hp_experiment;
     if (argc!=3) return 2;
     try {

@@ -1,6 +1,6 @@
 export module vless.corosio_client;
 import std;
-export import nexus.compat;
+export import functional;
 import vless;
 import httpupgrade;
 import httpupgrade.stream;
@@ -9,8 +9,8 @@ import tls.application_io;
 import tls.corosio_application;
 import tls.byte_stream;
 import net.stream_relay;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace vless::detail {
     enum class ClientError { state,invalid_request,tls,response,backpressure };
@@ -39,8 +39,8 @@ export namespace vless::detail {
             if constexpr (Vision) return &connection; else return {};
         }
         auto fail(ClientError error) noexcept -> std::unexpected<ClientError> { cancel(); return std::unexpected(error); }
-        static auto reject_send() -> nex::capy::task<bool> { co_return false; }
-        static auto reject_read() -> nex::capy::task<std::expected<std::size_t,tls::detail::ByteStreamError>> {
+        static auto reject_send() -> capy::task<bool> { co_return false; }
+        static auto reject_read() -> capy::task<std::expected<std::size_t,tls::detail::ByteStreamError>> {
             co_return std::unexpected(tls::detail::ByteStreamError::state);
         }
         // Production relay factories return the actual TLS task. No VLESS
@@ -58,7 +58,7 @@ export namespace vless::detail {
             return stream_.close_output(deadline);
         }
         auto start_impl(TcpRequest const& request,tls::detail::ApplicationDeadline deadline)
-            -> nex::capy::task<std::expected<void,ClientError>> {
+            -> capy::task<std::expected<void,ClientError>> {
             if ((state_!=State::initial && state_!=State::transport_ready) || writing_) co_return std::unexpected(ClientError::state);
             auto header=Vision ? encode_vision_tcp_request(request) :
                 request.command==TargetCommand::udp ? encode_udp_request(request) : encode_tcp_request(request);
@@ -90,7 +90,7 @@ export namespace vless::detail {
             else return nullptr;
         }
         auto upgrade(httpupgrade::Profile const& profile,std::chrono::steady_clock::time_point deadline)
-            -> nex::capy::task<std::expected<std::size_t,httpupgrade::Failure>> {
+            -> capy::task<std::expected<std::size_t,httpupgrade::Failure>> {
             if constexpr (Vision || !requires(Stream& stream) {stream.prepend_owned(std::vector<std::uint8_t>{});}) co_return std::unexpected(httpupgrade::Failure{httpupgrade::Error::state});
             else {
                 if (state_!=State::initial || reading_ || writing_) co_return std::unexpected(httpupgrade::Failure{httpupgrade::Error::state});
@@ -99,6 +99,7 @@ export namespace vless::detail {
                     if constexpr (requires {stream_.activate_websocket(profile,deadline);}) {
                         auto ready=co_await stream_.activate_websocket(profile,deadline);
                         if (!ready) co_return std::unexpected(httpupgrade::Failure{httpupgrade::Error::rejected,ready.error()});
+                        if (state_==State::failed) co_return std::unexpected(httpupgrade::Failure{httpupgrade::Error::state});
                         state_=State::transport_ready;
                         guard.released=true;
                         co_return *ready;
@@ -106,29 +107,30 @@ export namespace vless::detail {
                 }
                 auto ready=co_await httpupgrade::connect(stream_,profile,deadline);
                 if (!ready) co_return std::unexpected(ready.error());
+                if (state_==State::failed) co_return std::unexpected(httpupgrade::Failure{httpupgrade::Error::state});
                 auto prefetched=ready->unread.size();
                 if (!stream_.prepend_owned(std::move(ready->unread))) co_return std::unexpected(httpupgrade::Failure{httpupgrade::Error::state});
                 state_=State::transport_ready; guard.released=true; co_return prefetched;
             }
         }
         // The response may be deferred until application data arrives.
-        auto start(TcpRequest const& request,tls::detail::ApplicationDeadline deadline={}) -> nex::capy::task<std::expected<void,ClientError>> {
+        auto start(TcpRequest const& request,tls::detail::ApplicationDeadline deadline={}) -> capy::task<std::expected<void,ClientError>> {
             if constexpr (Vision) co_return std::unexpected(ClientError::state);
             else co_return co_await start_impl(request,deadline);
         }
         auto start_datagrams(UserId const& user,bool packetaddr,tls::detail::ApplicationDeadline deadline)
-            -> nex::capy::task<std::expected<void,ClientError>> requires (!Vision) {
+            -> capy::task<std::expected<void,ClientError>> requires (!Vision) {
             if (!packetaddr) co_return co_await start_mux(user,false,deadline);
             TcpRequest request{.user=user,.kind=AddressKind::domain,
                 .address={packetaddr_domain.begin(),packetaddr_domain.end()},.command=TargetCommand::udp};
             co_return co_await start_impl(request,deadline);
         }
-        auto start_vision(TcpRequest const& request,tls::detail::ApplicationDeadline deadline={}) -> nex::capy::task<std::expected<void,ClientError>> {
+        auto start_vision(TcpRequest const& request,tls::detail::ApplicationDeadline deadline={}) -> capy::task<std::expected<void,ClientError>> {
             if constexpr (!Vision) co_return std::unexpected(ClientError::state);
             else co_return co_await start_impl(request,deadline);
         }
         auto start_mux(UserId const& user,bool vision=false,tls::detail::ApplicationDeadline deadline={})
-            -> nex::capy::task<std::expected<void,ClientError>> {
+            -> capy::task<std::expected<void,ClientError>> {
             if (vision!=Vision || (state_!=State::initial && state_!=State::transport_ready) || writing_) co_return std::unexpected(ClientError::state);
             auto header=encode_mux_request(user,Vision);
             state_=State::sending_header; writing_=true; OperationGuard guard{*this,writing_};
@@ -139,7 +141,7 @@ export namespace vless::detail {
             state_=State::awaiting_response; guard.released=true; co_return std::expected<void,ClientError>{};
         }
         auto send(std::span<std::uint8_t const> bytes,tls::detail::ApplicationDeadline deadline={})
-            -> nex::capy::task<std::expected<void,ClientError>> {
+            -> capy::task<std::expected<void,ClientError>> {
             if ((state_!=State::awaiting_response && state_!=State::ready) || writing_) co_return std::unexpected(ClientError::state);
             writing_=true; OperationGuard guard{*this,writing_};
             if constexpr (Vision) {
@@ -148,7 +150,7 @@ export namespace vless::detail {
             if (state_==State::failed) co_return fail(ClientError::tls);
             guard.released=true; co_return std::expected<void,ClientError>{};
         }
-        auto receive_response(tls::detail::ApplicationDeadline deadline={}) -> nex::capy::task<std::expected<void,ClientError>> {
+        auto receive_response(tls::detail::ApplicationDeadline deadline={}) -> capy::task<std::expected<void,ClientError>> {
             if (state_!=State::awaiting_response || reading_) co_return std::unexpected(ClientError::state);
             reading_=true; OperationGuard guard{*this,reading_};
             while (received_<response_.size()) {
@@ -181,10 +183,10 @@ export namespace vless::detail {
     template<class LocalSocket,class RemoteSocket,class PlainStream=websocket::VlessByteStream<RemoteSocket>>
     class DuplexRelay {
         using Client=TcpClient<RemoteSocket,false,PlainStream>;
-        using ReadTask=nex::capy::task<std::expected<std::size_t,tls::detail::ByteStreamError>>;
+        using ReadTask=capy::task<std::expected<std::size_t,tls::detail::ByteStreamError>>;
         LocalSocket& local_;
         Client& client_;
-        nexus::move_only_function<void()> touch_;
+        functional::move_only_function<void()> touch_;
         bool canceled_=false,upload_started_=false,download_started_=false,response_ready_=false,cancel_local_=true;
         template<class Operation,bool Read>
         class Result {
@@ -228,17 +230,19 @@ export namespace vless::detail {
             response_ready_=true; co_return co_await client_.read_bytes(bytes,deadline);
         }
         auto write_result(std::span<std::uint8_t const> bytes,tls::detail::ApplicationDeadline deadline,bool touch) {
-            std::optional<nex::capy::task<bool>> operation;
+            std::optional<capy::task<bool>> operation;
             try { if (!canceled_) operation.emplace(client_.send_bytes(bytes,deadline)); }
             catch (...) { cancel(); throw; }
-            return Result<nex::capy::task<bool>,false>{*this,std::move(operation),touch && !bytes.empty()};
+            return Result<capy::task<bool>,false>{*this,std::move(operation),touch && !bytes.empty()};
         }
     public:
         DuplexRelay(LocalSocket& local,tls::detail::ApplicationConnection<RemoteSocket>&,Client& client,
-                    nexus::move_only_function<void()> touch={},bool cancel_local=true)
-            : local_(local),client_(client),touch_(std::move(touch)),cancel_local_(cancel_local) {}
-        DuplexRelay(LocalSocket& local,Client& client,nexus::move_only_function<void()> touch={},bool cancel_local=true)
-            : local_(local),client_(client),touch_(std::move(touch)),cancel_local_(cancel_local) {}
+                    functional::move_only_function<void()> touch={},bool cancel_local=true)
+            : local_(local),client_(client),touch_(std::move(touch)),
+              response_ready_(client_.state_==Client::State::ready),cancel_local_(cancel_local) {}
+        DuplexRelay(LocalSocket& local,Client& client,functional::move_only_function<void()> touch={},bool cancel_local=true)
+            : local_(local),client_(client),touch_(std::move(touch)),
+              response_ready_(client_.state_==Client::State::ready),cancel_local_(cancel_local) {}
         DuplexRelay(DuplexRelay const&)=delete;
         auto operator=(DuplexRelay const&) -> DuplexRelay& = delete;
         auto cancel() noexcept -> void {
@@ -257,10 +261,10 @@ export namespace vless::detail {
             return Result<ReadTask,true>{*this,std::move(operation),true};
         }
         auto close_output(tls::detail::ApplicationDeadline deadline={}) {
-            std::optional<nex::capy::task<bool>> operation;
+            std::optional<capy::task<bool>> operation;
             try { if (!canceled_) operation.emplace(client_.close_bytes(deadline)); }
             catch (...) { cancel(); throw; }
-            return Result<nex::capy::task<bool>,false>{*this,std::move(operation),false};
+            return Result<capy::task<bool>,false>{*this,std::move(operation),false};
         }
     private:
         struct RelayAdapter {
@@ -270,7 +274,7 @@ export namespace vless::detail {
             auto local() const -> LocalSocket& { return relay.local_; }
             auto start_upload() -> bool { if (relay.upload_started_ || relay.canceled_) return false; relay.upload_started_=true; return true; }
             auto start_download() -> bool { if (relay.download_started_ || relay.canceled_) return false; relay.download_started_=true; return true; }
-            template<class Error> auto upload_eof(Error const& error,std::size_t) const -> bool { return nex::capy::is_eof(error); }
+            template<class Error> auto upload_eof(Error const& error,std::size_t) const -> bool { return capy::is_eof(error); }
             template<class Error> auto invalid_upload(Error const& error,std::size_t n,std::size_t size) const -> bool { return error || !n || n>size || relay.canceled_; }
             template<class Error> auto invalid_download(Error const& error,std::size_t n,std::size_t size) const -> bool { return error || !n || n>size || relay.canceled_; }
             auto after_local_read() const -> void { if (relay.touch_) relay.touch_(); }
@@ -279,10 +283,10 @@ export namespace vless::detail {
             auto close_upload() const { return relay.close_output(deadline); }
             auto send_upload(std::span<std::uint8_t const> bytes) const { return relay.write_result(bytes,deadline,false); }
             auto receive(std::span<std::uint8_t> bytes) const { return relay.read(bytes,deadline); }
-            auto shutdown_local() const -> bool { if (relay.local_.shutdown(nex::corosio::shutdown_send)) { relay.cancel(); return false; } return true; }
+            auto shutdown_local() const -> bool { if (relay.local_.shutdown(corosio::shutdown_send)) { relay.cancel(); return false; } return true; }
         };
     public:
-        auto upload(tls::detail::ApplicationDeadline deadline={},net::stream_relay::Delivery delivery={}) -> nex::capy::task<bool> { return net::stream_relay::upload(RelayAdapter{*this,deadline,delivery}); }
-        auto download(tls::detail::ApplicationDeadline deadline={},net::stream_relay::Delivery delivery={}) -> nex::capy::task<bool> { return net::stream_relay::download(RelayAdapter{*this,deadline,delivery}); }
+        auto upload(tls::detail::ApplicationDeadline deadline={},net::stream_relay::Delivery delivery={}) -> capy::task<bool> { return net::stream_relay::upload(RelayAdapter{*this,deadline,delivery}); }
+        auto download(tls::detail::ApplicationDeadline deadline={},net::stream_relay::Delivery delivery={}) -> capy::task<bool> { return net::stream_relay::download(RelayAdapter{*this,deadline,delivery}); }
     };
 }

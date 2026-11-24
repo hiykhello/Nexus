@@ -7,16 +7,16 @@ import dns.message_cache;
 import dns.response_race_walk;
 import dns.policy;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns {
     // The accepted socket and fallback policy outlive this connection. Each
     // request has one deadline and is completed before the next is admitted.
     class MessageTcpConnection {
         using Clock=std::chrono::steady_clock;
-        nex::corosio::tcp_socket& socket_;
-        nex::corosio::io_context& context_;
+        corosio::tcp_socket& socket_;
+        corosio::io_context& context_;
         std::span<policy::DnsRule const> rules_;
         std::span<MessageUpstream const> upstreams_;
         std::size_t fallback_;
@@ -25,25 +25,25 @@ export namespace dns {
         std::optional<MessageProgram> operation_;
         MessageRuleSource const* source_;
         bool started_=false,canceled_=false;
-        auto transfer(std::span<std::uint8_t> bytes,bool write,Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto transfer(std::span<std::uint8_t> bytes,bool write,Clock::time_point deadline) -> capy::task<bool> {
             while(!bytes.empty() && !canceled_) {
                 if(Clock::now()>=deadline) co_return false;
-                auto [error,size]=write ? co_await nex::corosio::timeout(socket_.write_some(nex::capy::const_buffer(bytes.data(),bytes.size())),deadline) :
-                    co_await nex::corosio::timeout(socket_.read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size())),deadline);
+                auto [error,size]=write ? co_await corosio::timeout(socket_.write_some(capy::const_buffer(bytes.data(),bytes.size())),deadline) :
+                    co_await corosio::timeout(socket_.read_some(capy::mutable_buffer(bytes.data(),bytes.size())),deadline);
                 if(error || !size || size>bytes.size()) co_return false;
                 bytes=bytes.subspan(size);
             }
             co_return !canceled_;
         }
     public:
-        MessageTcpConnection(nex::corosio::tcp_socket& socket,nex::corosio::io_context& context,
+        MessageTcpConnection(corosio::tcp_socket& socket,corosio::io_context& context,
             std::span<policy::DnsRule const> rules,std::span<MessageUpstream const> upstreams,std::size_t fallback,MessageCache* cache=nullptr,bool disable_cache=false,InputBudget* input_budget=nullptr,InputBudget* query_budget=nullptr,MessageRuleSource const* source=nullptr) noexcept
             :socket_(socket),context_(context),rules_(rules),upstreams_(upstreams),fallback_(fallback),cache_(cache),disable_cache_(disable_cache),input_budget_(input_budget ? *input_budget : default_input_budget()),query_budget_(query_budget ? *query_budget : default_listener_query_budget()),source_(source) {}
         MessageTcpConnection(MessageTcpConnection const&)=delete;
         auto operator=(MessageTcpConnection const&) -> MessageTcpConnection& = delete;
         auto cancel() noexcept -> void {canceled_=true;if(operation_)operation_->cancel();socket_.cancel();}
         auto run(policy::DnsContext context,std::chrono::milliseconds timeout,std::size_t max_requests)
-            -> nex::capy::task<std::expected<void,detail::ResolveError>> {
+            -> capy::task<std::expected<void,detail::ResolveError>> {
             using Error=detail::ResolveError;
             if(std::exchange(started_,true) || timeout<=std::chrono::milliseconds::zero() || !max_requests || max_requests>1024)
                 co_return std::unexpected(Error::state);

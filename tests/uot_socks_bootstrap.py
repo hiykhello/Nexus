@@ -26,8 +26,8 @@ def exact(sock,n):
 with tempfile.TemporaryDirectory(prefix="nexus-uot-policy-") as directory:
     root=pathlib.Path(directory); front=free_port(); listen=free_port(); stop=threading.Event(); queries=[]; packets=[]; errors=[]; events=[]
     key=base64.b64encode(bytes(range(16))).decode(); (root/"key").write_text(key); (root/"key").chmod(0o600)
-    (root/"block.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="127.0.0.3/32"\n')
-    (root/"disabled.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.4/32"\n')
+    (root/"block.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="127.0.0.3/32"\n')
+    (root/"disabled.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.4/32"\n')
     dns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); dns.bind(("127.0.0.1",0)); dns.settimeout(.1)
     origins=[]
     for ip in ("127.0.0.2","127.0.0.3","127.0.0.4"):
@@ -66,7 +66,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "edge" type="shadowsocks" {{ server host="edge.test" port={front}; bootstrap-resolver "dns"; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
 outbound "off" type="shadowsocks" {{ server host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
-routing {{ rule-set "block" path="block.kdl" format="kdl"; rule-set "off" path="disabled.kdl" format="kdl"; rule kind="rule-set" value="block" outbound="reject"; rule kind="rule-set" value="off" outbound="off"; default-outbound "edge"; }}
+routing {{ rule-set "block" path="block.kdl" format="kdl"; rule-set "off" path="disabled.kdl" format="kdl"; rules {{ - kind="rule-set" value="block" outbound="reject"; - kind="rule-set" value="off" outbound="off"; }}; default-outbound "edge"; }}
 ''')
     subprocess.run(["sing-box","check","-c",root/"box.json"],capture_output=True,check=True)
     box=subprocess.Popen(["sing-box","run","-c",root/"box.json"],stderr=subprocess.PIPE); proxy=None

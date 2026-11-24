@@ -1,5 +1,5 @@
 import std;
-import nexus.thirdparty.nghttp3;
+import nghttp3;
 import http.header;
 import quic.varint;
 import hysteria2.auth;
@@ -8,7 +8,7 @@ import hysteria2.wire;
 
 namespace h=hysteria2;
 namespace q=quic;
-namespace n=nex::nghttp3;
+namespace n = ::nghttp3;
 namespace {
     struct Frame { std::int64_t stream; std::vector<std::uint8_t> bytes; bool fin; };
     auto check(int error) -> void { if (error) throw std::runtime_error(n::nghttp3_strerror(error)); }

@@ -1,6 +1,6 @@
 export module shadowsocks.udp_sessions;
 import std;
-import nexus.compat;
+import functional;
 import shadowsocks.key;
 import shadowsocks.udp_packet;
 import shadowsocks.udp_replay;
@@ -83,6 +83,7 @@ export namespace shadowsocks {
         Clock::time_point anchor_mono_{};
         std::uint64_t anchor_wall_=0;
         std::uint64_t last_wall_=0;
+        std::optional<std::pair<Clock::time_point,std::uint64_t>> recovery_anchor_;
         std::optional<std::uint64_t> next_server_id_;
         bool server_ids_exhausted_=false;
         std::uint64_t next_generation_=1;
@@ -93,10 +94,10 @@ export namespace shadowsocks {
         bool committing_=false;
         std::uint64_t durable_wall_=0;
         std::unique_ptr<UdpIdReservation> durable_ids_;
-        using Commit = nexus::function_ref<bool(std::array<std::uint8_t,8> const&, UdpReplaySnapshot const&, std::uint64_t) noexcept>;
-        using IdCommit = nexus::function_ref<bool(UdpIdWatermark) noexcept>;
-        using WallCommit = nexus::function_ref<bool(std::uint64_t) noexcept>;
-        using SampleClock = nexus::function_ref<std::optional<UdpClockSample>() noexcept>;
+        using Commit = functional::function_ref<bool(std::array<std::uint8_t,8> const&, UdpReplaySnapshot const&, std::uint64_t) noexcept>;
+        using IdCommit = functional::function_ref<bool(UdpIdWatermark) noexcept>;
+        using WallCommit = functional::function_ref<bool(std::uint64_t) noexcept>;
+        using SampleClock = functional::function_ref<std::optional<UdpClockSample>() noexcept>;
         auto allocate_server_id(std::array<std::uint8_t,8> client) -> std::expected<std::array<std::uint8_t,8>,UdpSessionError>;
         auto advance(Clock::time_point now, std::uint64_t wall) -> bool;
         auto receive_impl(std::span<std::uint8_t const> psk, std::span<std::uint8_t const> wire,

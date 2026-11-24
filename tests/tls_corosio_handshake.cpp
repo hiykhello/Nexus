@@ -6,10 +6,10 @@
 import std;
 import tls.client_handshake_io;
 import tls.application_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.corosio_client;
-namespace capy=nex::capy; namespace io=nex::corosio; namespace t=tls;
+namespace io = ::corosio; namespace t=tls;
 using namespace std::chrono_literals;
 struct Fixture {
     #if BOOST_COROSIO_HAVE_LIBURING

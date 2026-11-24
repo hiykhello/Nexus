@@ -1,11 +1,10 @@
 import std;
 import dns.message;
 import dns.corosio_query;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy = nex::capy;
-namespace io = nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 #ifdef NEXUS_TEST_FAKEIP

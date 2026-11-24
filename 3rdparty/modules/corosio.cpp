@@ -4,10 +4,10 @@ module;
 #include <utility>
 #include <vector>
 
-module nexus.thirdparty.corosio;
-import nexus.thirdparty.capy;
+module corosio;
+import capy;
 
-namespace nex::corosio {
+namespace corosio {
     auto connect_candidates(tcp_socket& socket, std::vector<endpoint> endpoints)
         -> connect_task {
         auto result = co_await connect(socket, std::move(endpoints));

@@ -1,18 +1,18 @@
 import std;
-import nexus.compat;
+import functional;
 import tls.client_hello_driver;
 
-static bool deny_allocations=false;
-static std::size_t allocations=0;
+static volatile bool deny_allocations=false;
+static volatile std::size_t allocations=0;
 void* operator new(std::size_t size) {
     if (deny_allocations) throw std::bad_alloc{};
-    if (auto p=std::malloc(size ? size : 1)) { ++allocations; return p; }
+    if (auto p=std::malloc(size ? size : 1)) { allocations = allocations + 1; return p; }
     throw std::bad_alloc{};
 }
 void* operator new(std::size_t size,std::align_val_t alignment) {
     if (deny_allocations) throw std::bad_alloc{};
     auto a=static_cast<std::size_t>(alignment);
-    if (auto p=std::aligned_alloc(a,((size ? size : 1)+a-1)/a*a)) { ++allocations; return p; }
+    if (auto p=std::aligned_alloc(a,((size ? size : 1)+a-1)/a*a)) { allocations = allocations + 1; return p; }
     throw std::bad_alloc{};
 }
 void operator delete(void* p) noexcept { std::free(p); }
@@ -51,6 +51,18 @@ static_assert(!t::PendingCertificateVerifier::stores_inline<Aligned>);
 static_assert(!t::PendingCertificateVerifier::stores_inline<ThrowMove>);
 static_assert(std::is_nothrow_move_constructible_v<t::PendingCertificateVerifier>);
 
+[[gnu::noinline]] static auto observe_verifier(t::CertificateVerifier const& v, Chain chain) -> bool {
+    static t::CertificateVerifier const* volatile sink = nullptr;
+    sink = &v;
+    return static_cast<bool>(v) && v(chain);
+}
+
+[[gnu::noinline]] static auto observe_pending(t::PendingCertificateVerifier const& p) -> bool {
+    static t::PendingCertificateVerifier const* volatile sink = nullptr;
+    sink = &p;
+    return static_cast<bool>(p);
+}
+
 int main() {
     std::array<std::uint8_t,1> data{1};
     std::array<std::span<std::uint8_t const>,1> chain{data};
@@ -82,28 +94,29 @@ int main() {
     before=allocations;
     {
         t::CertificateVerifier baseline{Large{}};
-        if (!baseline || !baseline(chain)) return 7;
+        if (!observe_verifier(baseline,chain)) return 7;
     }
     auto large_allocations=allocations-before;
+    if (!large_allocations) return 15;
     before=allocations;
     {
         t::PendingCertificateVerifier pending{Large{}};
-        if (!pending || allocations-before!=large_allocations) return 8;
+        if (!observe_pending(pending) || allocations-before!=large_allocations) return 8;
         auto verifier=pending.release();
-        if (pending || !verifier || !verifier(chain) || allocations-before!=large_allocations) return 9;
+        if (pending || !observe_verifier(verifier,chain) || allocations-before!=large_allocations) return 9;
     }
     before=allocations;
     {
         t::PendingCertificateVerifier pending{Aligned{}};
         auto verifier=pending.release();
-        if (!verifier || !verifier(chain) || allocations!=before+1) return 10;
+        if (!observe_verifier(verifier,chain) || allocations!=before+1) return 10;
     }
     ThrowMove throwing_move;
     before=allocations;
     {
         t::PendingCertificateVerifier pending{throwing_move};
         auto verifier=pending.release();
-        if (!verifier || !verifier(chain) || allocations!=before+1) return 11;
+        if (!observe_verifier(verifier,chain) || allocations!=before+1) return 11;
     }
     {
         Counts stable;
@@ -118,8 +131,8 @@ int main() {
     using Function=bool (*)(Chain);
     Function null_function=nullptr;
     t::CertificateVerifier empty;
-    nexus::copyable_function<bool(Chain) const> empty_copy;
-    nexus::move_only_function<int(Chain) const> empty_other;
+    functional::copyable_function<bool(Chain) const> empty_copy;
+    functional::move_only_function<int(Chain) const> empty_other;
     t::PendingCertificateVerifier a{null_function},b{std::move(empty)},c{nullptr},d{empty_copy},e{std::move(empty_other)};
     if (a || b || c || d || e || a.release() || b.release() || c.release() || d.release() || e.release()) return 15;
     return 0;

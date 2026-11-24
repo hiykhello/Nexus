@@ -1,10 +1,10 @@
-export module nexus.test.hy2_native_memory;
+export module test.hy2_native_memory;
 import std;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
-import nexus.test.quic_tls_link;
+import ngtcp2;
+import nghttp3;
+import test.quic_tls_link;
 
-export namespace nexus::test::hy2_native_memory {
+export namespace test::hy2_native_memory {
     enum class Kind {transport,http3};
     struct Fault {
         Kind kind=Kind::transport;
@@ -36,7 +36,7 @@ export namespace nexus::test::hy2_native_memory {
             auto* out=allocate(bytes,owner);if(!out)return nullptr;auto old=(static_cast<quic_tls::Memory::Header*>(pointer)-1)->bytes-sizeof(quic_tls::Memory::Header);
             std::memcpy(out,pointer,std::min(old,bytes));release(pointer,owner);return out;
         }
-        auto transport() noexcept -> nex::ngtcp2::ngtcp2_mem {return {this,allocate,release,zero,resize};}
-        auto http3() noexcept -> nex::nghttp3::nghttp3_mem {return {this,allocate,release,zero,resize};}
+        auto transport() noexcept -> ngtcp2::ngtcp2_mem {return {this,allocate,release,zero,resize};}
+        auto http3() noexcept -> nghttp3::nghttp3_mem {return {this,allocate,release,zero,resize};}
     };
 }

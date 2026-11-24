@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "proxy-fault-tests"
 version = "0.1.0"
 
@@ -7,44 +6,44 @@ version = "0.1.0"
 # dedicated graph. Different fault modes must be built separately.
 [dependencies]
 "nexus" = { path = "../..", features = ["vless"] }
-"nexus.proxy-runtime" = { path = "../../src/proxy" }
+"relay-runtime" = { path = "../../src/relay" }
 
 [features]
-relay-throw = { implies = ["nexus.protocols/vless", "nexus.proxy-runtime/test-vless-relay-throw"], sources = ["../vless_relay_throw.cpp"] }
-relay-abandon = ["nexus.protocols/vless", "nexus.proxy-runtime/test-vless-abandon"]
-root-launch = ["nexus.protocols/vless", "nexus.proxy-runtime/test-root-launch"]
-vless-accept = ["nexus.protocols/vless", "nexus.proxy-runtime/test-root-launch", "nexus.proxy-runtime/test-vless-profile-lifetime"]
-vless-reconfigure = ["nexus.protocols/vless"]
-ss-abandon = ["nexus.protocols/ss2022", "nexus.proxy-runtime/test-ss-abandon"]
-tunnel-abandon = ["nexus.protocols/ss2022", "nexus.proxy-runtime/test-tunnel-profile"]
-ss-tunnel-profile = ["nexus.protocols/ss2022", "nexus.proxy-runtime/test-ss-tunnel-profile"]
+relay-throw = { implies = ["protocols/vless", "relay-runtime/test-vless-relay-throw"], sources = ["../vless_relay_throw.cpp"] }
+relay-abandon = ["protocols/vless", "relay-runtime/test-vless-abandon"]
+root-launch = ["protocols/vless", "relay-runtime/test-root-launch"]
+vless-accept = ["protocols/vless", "relay-runtime/test-root-launch", "relay-runtime/test-vless-profile-lifetime"]
+vless-reconfigure = ["protocols/vless"]
+ss-abandon = ["protocols/ss2022", "relay-runtime/test-ss-abandon"]
+tunnel-abandon = ["protocols/ss2022", "relay-runtime/test-tunnel-profile"]
+ss-tunnel-profile = ["protocols/ss2022", "relay-runtime/test-ss-tunnel-profile"]
 
 [build]
 sources = []
 
 [feature-deps.relay-throw]
-nexus.protocols = { path = "../../src", features = ["vless"] }
+protocols = { path = "../../src", features = ["vless"] }
 
 [feature-deps.relay-abandon]
-nexus.protocols = { path = "../../src", features = ["vless"] }
+protocols = { path = "../../src", features = ["vless"] }
 
 [feature-deps.root-launch]
-nexus.protocols = { path = "../../src", features = ["vless"] }
+protocols = { path = "../../src", features = ["vless"] }
 
 [feature-deps.vless-accept]
-nexus.protocols = { path = "../../src", features = ["vless"] }
+protocols = { path = "../../src", features = ["vless"] }
 
 [feature-deps.vless-reconfigure]
-nexus.protocols = { path = "../../src", features = ["vless"] }
+protocols = { path = "../../src", features = ["vless"] }
 
 [feature-deps.ss-abandon]
-nexus.protocols = { path = "../../src", features = ["vless", "ss2022"] }
+protocols = { path = "../../src", features = ["vless", "ss2022"] }
 
 [feature-deps.tunnel-abandon]
-nexus.protocols = { path = "../../src", features = ["vless", "ss2022"] }
+protocols = { path = "../../src", features = ["vless", "ss2022"] }
 
 [feature-deps.ss-tunnel-profile]
-nexus.protocols = { path = "../../src", features = ["vless", "ss2022"] }
+protocols = { path = "../../src", features = ["vless", "ss2022"] }
 
 [targets.nexus-vless-relay-throw-fixture]
 kind = "bin"

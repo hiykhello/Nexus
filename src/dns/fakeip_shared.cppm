@@ -11,6 +11,7 @@ export namespace dns {
         struct State {
             // Destroyed after the registry, including while handles retain State.
             std::shared_ptr<void> lifetime;
+            std::function<void()> on_flush, on_stop;
             std::mutex mutex;
             FakeIpRegistry registry;
             std::optional<FakeIpIpv6Range> ipv6;
@@ -117,6 +118,21 @@ export namespace dns {
         }
         [[nodiscard]] auto sealed() const -> bool {
             std::lock_guard guard(state_->mutex); return state_->sealed;
+        }
+        auto set_store_hooks(std::function<void()> flush_fn, std::function<void()> stop_fn) -> void {
+            std::lock_guard guard(state_->mutex);
+            state_->on_flush = std::move(flush_fn);
+            state_->on_stop = std::move(stop_fn);
+        }
+        auto flush_store() noexcept -> void {
+            std::function<void()> fn;
+            { std::lock_guard guard(state_->mutex); fn = state_->on_flush; }
+            if (fn) try { fn(); } catch (...) {}
+        }
+        auto stop_store() noexcept -> void {
+            std::function<void()> fn;
+            { std::lock_guard guard(state_->mutex); fn = std::exchange(state_->on_stop, {}); }
+            if (fn) try { fn(); } catch (...) {}
         }
         [[nodiscard]] auto retire(std::uint32_t first) -> std::expected<void,FakeIpRegistryError> {
             std::lock_guard guard(state_->mutex); return state_->registry.retire(first);

@@ -33,7 +33,7 @@ def run(workers, occupied=False, bad_credentials=False):
         password = pathlib.Path(tmp) / "password"
         password.write_text("secret\n")
         password.chmod(0o644 if bad_credentials else 0o600)
-        (pathlib.Path(tmp) / "blocked.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
+        (pathlib.Path(tmp) / "blocked.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
         target.bind(("127.0.0.1", 0))
         target.listen(8)
         target.settimeout(3)

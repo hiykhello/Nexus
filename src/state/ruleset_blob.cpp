@@ -2,7 +2,7 @@ module state.ruleset_storage;
 import std;
 import state.file;
 import crypto;
-import nexus.thirdparty.blake3;
+import blake3;
 
 namespace state {
     namespace {
@@ -30,11 +30,11 @@ namespace state {
     }
 
     auto rule_blake3(std::string_view body) noexcept -> Fingerprint {
-        nex::blake3::blake3_hasher state;
-        nex::blake3::blake3_hasher_init(&state);
-        nex::blake3::blake3_hasher_update(&state, body.data(), body.size());
+        blake3::blake3_hasher state;
+        blake3::blake3_hasher_init(&state);
+        blake3::blake3_hasher_update(&state, body.data(), body.size());
         Fingerprint hash;
-        nex::blake3::blake3_hasher_finalize(&state, reinterpret_cast<std::uint8_t*>(hash.data()), hash.size());
+        blake3::blake3_hasher_finalize(&state, reinterpret_cast<std::uint8_t*>(hash.data()), hash.size());
         return hash;
     }
 

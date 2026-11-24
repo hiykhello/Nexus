@@ -8,15 +8,15 @@ import dns.message_cache;
 import dns.response_query;
 import dns.local_config;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns {
     struct MessageLocalSource {
         LocalSnapshotSource& snapshots;
         std::atomic<std::uint64_t> rotation{0};
     };
-    struct MessageUpstream { nex::corosio::endpoint endpoint;bool tcp;MessageLocalSource* local;std::string host;std::uint16_t port=0;std::optional<std::size_t> resolver; std::shared_ptr<detail::ProtectedQuery const> protection{};
+    struct MessageUpstream { corosio::endpoint endpoint;bool tcp;MessageLocalSource* local;std::string host;std::uint16_t port=0;std::optional<std::size_t> resolver; std::shared_ptr<detail::ProtectedQuery const> protection{};
 #ifdef NEXUS_DNS_FAKEIP
         FakeIpPublisher const* fakeip = nullptr;
 #endif
@@ -25,7 +25,7 @@ export namespace dns {
     // immutable client query, upstreams and cache outlive it through drain.
     class MessageExchange {
         using Clock=std::chrono::steady_clock;
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         std::span<MessageUpstream const> upstreams_;
         MessageCache* cache_;
         QueryMessage const& query_;
@@ -38,39 +38,39 @@ export namespace dns {
         std::optional<detail::MessageQuery> active_;
         std::optional<detail::AddressResolver> bootstrap_;
         MessageCache::QueryFlight* flight_=nullptr;
-        bool started_=false,canceled_=false,local_synthetic_=false;
+        bool started_=false,canceled_=false,local_synthetic_=false,independent_cache_=false;
         // A refresh owns its cache generation and transport. Retiring the
         // listener cancels that generation before the executor is drained.
-        static auto refresh(nex::corosio::io_context& context,std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,
-            nex::corosio::endpoint endpoint,QueryMessage query,Clock::time_point until,bool tcp,
+        static auto refresh(corosio::io_context& context,std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,
+            corosio::endpoint endpoint,QueryMessage query,Clock::time_point until,bool tcp,
             std::shared_ptr<detail::ProtectedQuery const> protection,InputBudget::Lease reservation)
-            -> nex::capy::task<>;
+            -> capy::task<>;
 
-        auto start_refresh(std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,nex::corosio::endpoint endpoint,
+        auto start_refresh(std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,corosio::endpoint endpoint,
             QueryMessage const& query,Clock::time_point until,std::size_t server,bool tcp) -> void;
 
-        static auto run_flight(nex::corosio::io_context& context,std::shared_ptr<MessageCache::QueryFlight> flight,
-            nex::corosio::endpoint endpoint,QueryMessage query,bool tcp,
+        static auto run_flight(corosio::io_context& context,std::shared_ptr<MessageCache::QueryFlight> flight,
+            corosio::endpoint endpoint,QueryMessage query,bool tcp,
             std::shared_ptr<detail::ProtectedQuery const> protection,InputBudget::Lease reservation)
-            -> nex::capy::task<MessageCache::QueryFlight::Result>;
+            -> capy::task<MessageCache::QueryFlight::Result>;
 
-        auto coalesced(MessageCache::JoinedQuery joined,nex::corosio::endpoint endpoint,QueryMessage const& query,
-            Clock::time_point until,std::size_t server,bool tcp) -> nex::capy::task<MessageCache::QueryFlight::Result>;
+        auto coalesced(MessageCache::JoinedQuery joined,corosio::endpoint endpoint,QueryMessage const& query,
+            Clock::time_point until,std::size_t server,bool tcp) -> capy::task<MessageCache::QueryFlight::Result>;
 
-        auto exchange(nex::corosio::endpoint endpoint,QueryMessage const& query,Clock::time_point until,
+        auto exchange(corosio::endpoint endpoint,QueryMessage const& query,Clock::time_point until,
             std::size_t server,bool tcp,bool disabled,std::shared_ptr<LocalSnapshot const> snapshot={})
-            -> nex::capy::task<std::expected<Bytes,detail::ResolveError>>;
+            -> capy::task<std::expected<Bytes,detail::ResolveError>>;
     public:
-        MessageExchange(nex::corosio::io_context& context,std::span<MessageUpstream const> upstreams,
+        MessageExchange(corosio::io_context& context,std::span<MessageUpstream const> upstreams,
             MessageCache* cache,QueryMessage const& query,ResponseStep step,Clock::time_point until,
-            InputBudget* override_budget=nullptr,std::uint64_t policy_view=0)
+            InputBudget* override_budget=nullptr,std::uint64_t policy_view=0,bool independent_cache=false)
             :context_(context),upstreams_(upstreams),cache_(cache),query_(query),
              override_budget_(override_budget ? *override_budget : default_message_override_budget()),
-             step_(step),until_(until),policy_view_(policy_view) {}
-        MessageExchange(nex::corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage&&,
-            ResponseStep,Clock::time_point,InputBudget* =nullptr,std::uint64_t=0)=delete;
-        MessageExchange(nex::corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage const&&,
-            ResponseStep,Clock::time_point,InputBudget* =nullptr,std::uint64_t=0)=delete;
+             step_(step),until_(until),policy_view_(policy_view),independent_cache_(independent_cache) {}
+        MessageExchange(corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage&&,
+            ResponseStep,Clock::time_point,InputBudget* =nullptr,std::uint64_t=0,bool=false)=delete;
+        MessageExchange(corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage const&&,
+            ResponseStep,Clock::time_point,InputBudget* =nullptr,std::uint64_t=0,bool=false)=delete;
         MessageExchange(MessageExchange const&)=delete;
         auto operator=(MessageExchange const&) -> MessageExchange& = delete;
         auto cancel() noexcept -> void {
@@ -81,7 +81,7 @@ export namespace dns {
         }
         [[nodiscard]] auto upstream_query() const noexcept -> QueryMessage const& {return upstream_query_ ? *upstream_query_ : query_;}
         [[nodiscard]] auto local_synthetic() const noexcept -> bool {return local_synthetic_;}
-        auto run() -> nex::capy::task<std::expected<Bytes,detail::ResolveError>>;
+        auto run() -> capy::task<std::expected<Bytes,detail::ResolveError>>;
     };
     struct EvaluatedMessage {
         std::optional<InputBudget::Lease> lease;
@@ -107,17 +107,17 @@ export namespace dns {
     class EvaluatedMessageExchange {
         MessageExchange exchange_;
     public:
-        EvaluatedMessageExchange(nex::corosio::io_context& context,std::span<MessageUpstream const> upstreams,
+        EvaluatedMessageExchange(corosio::io_context& context,std::span<MessageUpstream const> upstreams,
             MessageCache* cache,QueryMessage const& query,ResponseStep step,std::chrono::steady_clock::time_point until,
-            InputBudget* override_budget=nullptr,std::uint64_t policy_view=0)
-            :exchange_(context,upstreams,cache,query,step,until,override_budget,policy_view) {}
-        EvaluatedMessageExchange(nex::corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage&&,
-            ResponseStep,std::chrono::steady_clock::time_point,InputBudget* =nullptr,std::uint64_t=0)=delete;
-        EvaluatedMessageExchange(nex::corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage const&&,
-            ResponseStep,std::chrono::steady_clock::time_point,InputBudget* =nullptr,std::uint64_t=0)=delete;
+            InputBudget* override_budget=nullptr,std::uint64_t policy_view=0,bool independent_cache=false)
+            :exchange_(context,upstreams,cache,query,step,until,override_budget,policy_view,independent_cache) {}
+        EvaluatedMessageExchange(corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage&&,
+            ResponseStep,std::chrono::steady_clock::time_point,InputBudget* =nullptr,std::uint64_t=0,bool=false)=delete;
+        EvaluatedMessageExchange(corosio::io_context&,std::span<MessageUpstream const>,MessageCache*,QueryMessage const&&,
+            ResponseStep,std::chrono::steady_clock::time_point,InputBudget* =nullptr,std::uint64_t=0,bool=false)=delete;
         EvaluatedMessageExchange(EvaluatedMessageExchange const&)=delete;
         auto operator=(EvaluatedMessageExchange const&) -> EvaluatedMessageExchange& = delete;
         auto cancel() noexcept -> void {exchange_.cancel();}
-        auto run() -> nex::capy::task<std::expected<EvaluatedMessage,detail::ResolveError>>;
+        auto run() -> capy::task<std::expected<EvaluatedMessage,detail::ResolveError>>;
     };
 }

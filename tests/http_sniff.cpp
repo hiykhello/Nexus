@@ -30,7 +30,12 @@ int main() {
     check(inspect("GET https://A.test/path?q=1 HTTP/1.1\r\nHost: a.test\r\n\r\n").domain=="A.test","matching absolute authority");
     check(inspect("CONNECT a.test HTTP/1.1\r\nHost: a.test\r\n\r\n").status==SniffStatus::malformed,"CONNECT requires port");
     check(!inspect("CONNECT a.test:443 HTTP/1.1\r\nHost: a.test:8443\r\n\r\n").domain,"CONNECT conflicting port is unknown");
-    check(!inspect("CONNECT a.test:443 HTTP/1.1\r\nHost: a.test\r\n\r\n").domain,"CONNECT unspecified Host port is unknown");
+    check(inspect("CONNECT a.test:443 HTTP/1.1\r\nHost: a.test\r\n\r\n").domain=="a.test","CONNECT omitted Host port matches");
+    check(inspect("CONNECT 1.2.3.4:443 HTTP/1.1\r\nHost: 1.2.3.4:443\r\n\r\n").name_kind==SniffNameKind::numeric,"matching CONNECT IPv4 is numeric");
+    check(inspect("GET http://1.2.3.4/ HTTP/1.1\r\nHost: 1.2.3.4\r\n\r\n").name_kind==SniffNameKind::numeric,"matching absolute IPv4 is numeric");
+    check(inspect("GET /redirect?next=https://example.com HTTP/1.1\r\nHost: target.example\r\n\r\n").domain=="target.example","origin-form query scheme preserves Host");
+    check(inspect("GET / HTTP/1.1\r\nHost: 0x7f000001\r\n\r\n").status==SniffStatus::malformed,"hex IPv4 rejected");
+    check(inspect("GET / HTTP/1.1\r\nHost: 0x7f.0.0.1\r\n\r\n").status==SniffStatus::malformed,"dotted hex IPv4 rejected");
     check(!inspect("GET https://a.test:8443/ HTTP/1.1\r\nHost: a.test\r\n\r\n").domain,"absolute conflicting port is unknown");
     check(inspect(std::string(16384,'x')).status==SniffStatus::too_large,"header budget");
     if (!failures) std::cout << "HTTP sniff incremental input and authority tests passed\n";

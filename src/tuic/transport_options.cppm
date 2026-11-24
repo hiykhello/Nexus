@@ -1,7 +1,7 @@
 export module tuic.transport_options;
 import std;
 import tuic.wire;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 
 export namespace tuic {
     enum class CongestionControl : std::uint8_t { cubic, reno, bbr };
@@ -25,9 +25,9 @@ export namespace tuic {
         ClientTransportOptions const& opts,
         std::size_t streams,
         std::size_t window,
-        nex::ngtcp2::ngtcp2_settings& settings,
-        nex::ngtcp2::ngtcp2_transport_params& params) noexcept -> void {
-        namespace n = nex::ngtcp2;
+        ngtcp2::ngtcp2_settings& settings,
+        ngtcp2::ngtcp2_transport_params& params) noexcept -> void {
+        namespace n = ::ngtcp2;
         n::ngtcp2_settings_default_versioned(n::settings_version, &settings);
         settings.handshake_timeout = static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(opts.handshake_timeout).count());

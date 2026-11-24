@@ -5,18 +5,18 @@ import hysteria2.credential;
 import hysteria2.listener;
 import hysteria2.wire;
 import net.stream_relay;
-import proxy.session_quota;
+import relay.session_quota;
 import quic.cid_registry;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-namespace h=hysteria2;namespace io=nex::corosio;namespace capy=nex::capy;
+import capy;
+import corosio;
+import test.quic_tls_link;
+namespace h=hysteria2;namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 auto transfer(capy::task<bool> task)->capy::task<capy::results<>>{co_return capy::results<>{co_await std::move(task)?std::error_code{}:std::make_error_code(std::errc::io_error)};}
 struct Hooks {
-    using ConnectionState=proxy::SessionQuota::Lease;
-    io::io_context& context;h::Password const& password;unsigned origin;proxy::SessionQuota& quota;
+    using ConnectionState=relay::SessionQuota::Lease;
+    io::io_context& context;h::Password const& password;unsigned origin;relay::SessionQuota& quota;
     auto admit(quic::SessionHandle,io::endpoint const&)noexcept->std::optional<ConnectionState>{return quota.try_acquire();}
     std::size_t completed=0,closed_count=0,authenticated=0;bool valid=true;
     auto authenticate(h::ClientAuthView request) noexcept->std::optional<std::size_t>{
@@ -39,9 +39,9 @@ struct Hooks {
 };
 auto main(int argc,char** argv)->int {
     if(argc!=8 && argc!=9)return 1;if(argc==9 && std::string_view(argv[8])!="standard")return 1;try{
-        auto certificate=nexus::test::quic_tls::read(argv[1]),key=nexus::test::quic_tls::read(argv[2]);auto credential=tls::ServerCredential::create(certificate,key);::crypto::cleanse(key);if(!credential)return 2;
-        auto password=h::Password::create(nexus::test::quic_tls::bytes("test-password"));if(!password)return 3;
-        io::io_context context=io::make_io_context(std::string_view(argv[4])=="1");proxy::SessionQuota quota(64);Hooks hooks{context,*password,static_cast<unsigned>(std::stoul(argv[7])),quota};
+        auto certificate=test::quic_tls::read(argv[1]),key=test::quic_tls::read(argv[2]);auto credential=tls::ServerCredential::create(certificate,key);::crypto::cleanse(key);if(!credential)return 2;
+        auto password=h::Password::create(test::quic_tls::bytes("test-password"));if(!password)return 3;
+        io::io_context context=io::make_io_context(std::string_view(argv[4])=="1");relay::SessionQuota quota(64);Hooks hooks{context,*password,static_cast<unsigned>(std::stoul(argv[7])),quota};
         h::Listener<Hooks,4,16,16384> listener(context,hooks,*credential);auto prepared=listener.prepare(std::string_view(argv[3])=="6"?io::endpoint(io::ipv6_address::loopback(),0):io::endpoint(io::ipv4_address::loopback(),0));if(!prepared)return 4;
         auto expected=std::stoul(argv[5]);listener.start();std::cout<<"READY "<<prepared->port()<<std::endl;
         auto deadline=Clock::now()+18s;while(Clock::now()<deadline && hooks.valid){context.run_for(10ms);listener.maintain();if(hooks.completed>=expected && (!listener.size() || (argc==9 && !listener.business())))break;}

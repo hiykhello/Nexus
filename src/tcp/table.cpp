@@ -126,6 +126,17 @@ namespace tcp {
         it->second->reset_pending = hold;
         return true;
     }
+    auto ConnectionTable::detach(ConnectionId id) noexcept -> bool {
+        auto it = by_id_.find(id);
+        if (it == by_id_.end()) return false;
+        it->second->app_detached = true;
+        it->second->connection.detach_reader();
+        return true;
+    }
+    auto ConnectionTable::is_detached(ConnectionId id) const noexcept -> bool {
+        auto it = by_id_.find(id);
+        return it != by_id_.end() && it->second->app_detached;
+    }
     auto ConnectionTable::reclaim(ConnectionId id, std::uint64_t now) -> std::expected<bool, TableError> {
         auto found = by_id_.find(id);
         if (found == by_id_.end()) return std::unexpected(TableError::not_found);
@@ -140,7 +151,7 @@ namespace tcp {
         } else if (!ready) {
             auto result = it->connection.reclaimable(now);
             if (!result) return std::unexpected(TableError::time_reversed);
-            ready = *result && it->eof_observed;
+            ready = it->connection.state() == ConnectionState::expired || (*result && (it->eof_observed || it->app_detached));
         }
         if (ready) erase_entry(it);
         return ready;
@@ -272,6 +283,17 @@ namespace tcp {
         it->second->reset_pending = hold;
         return true;
     }
+    auto ConnectionTable6::detach(ConnectionId id) noexcept -> bool {
+        auto it = by_id_.find(id);
+        if (it == by_id_.end()) return false;
+        it->second->app_detached = true;
+        it->second->connection.detach_reader();
+        return true;
+    }
+    auto ConnectionTable6::is_detached(ConnectionId id) const noexcept -> bool {
+        auto it = by_id_.find(id);
+        return it != by_id_.end() && it->second->app_detached;
+    }
     auto ConnectionTable6::reclaim(ConnectionId id, std::uint64_t now) -> std::expected<bool, TableError> {
         auto found = by_id_.find(id);
         if (found == by_id_.end()) return std::unexpected(TableError::not_found);
@@ -286,7 +308,7 @@ namespace tcp {
         } else if (!ready) {
             auto result = it->connection.reclaimable(now);
             if (!result) return std::unexpected(TableError::time_reversed);
-            ready = *result && it->eof_observed;
+            ready = it->connection.state() == ConnectionState::expired || (*result && (it->eof_observed || it->app_detached));
         }
         if (ready) erase_entry(it);
         return ready;

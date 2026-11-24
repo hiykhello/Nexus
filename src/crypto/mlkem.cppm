@@ -1,7 +1,7 @@
 export module crypto.mlkem;
-export import nexus.thirdparty.boringssl;
+export import boringssl;
 import std;
-using namespace nex::boringssl;
+using namespace boringssl;
 
 export namespace crypto {
     enum class MlkemError { invalid_key, invalid_ciphertext, invalid_state, backend_failure };

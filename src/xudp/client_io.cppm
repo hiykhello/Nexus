@@ -2,7 +2,7 @@ export module xudp.client_io;
 import std;
 import xudp;
 import xudp.client_sessions;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace xudp {
     enum class ClientIoError { closed, state, session, exhausted, protocol, transport };
@@ -23,15 +23,25 @@ export namespace xudp {
         Stream& stream_;
         ClientSessions sessions_;
         Decoder decoder_;
-        nex::capy::async_mutex mutex_;
+        capy::async_mutex mutex_;
         std::array<std::uint8_t,16384> input_{};
         std::size_t begin_=0,end_=0;
         bool closed_=false,reading_=false;
         auto fail(ClientIoError error) noexcept -> std::unexpected<ClientIoError> { cancel(); return std::unexpected(error); }
-        auto write_pending(PendingFrame pending) -> nex::capy::task<bool> {
+        struct PendingGuard {
+            ClientIo& self; std::uint64_t token; bool finished = false;
+            ~PendingGuard() { if (!finished) { (void)self.sessions_.finish(token, false); self.cancel(); } }
+        };
+        struct ReadGuard {
+            ClientIo& self; bool done = false;
+            ~ReadGuard() { self.reading_ = false; if (!done) self.cancel(); }
+        };
+        auto write_pending(PendingFrame pending) -> capy::task<bool> {
+            PendingGuard pg{*this, pending.token};
             auto bytes=encode(pending.frame);
-            if (!bytes) { (void)sessions_.finish(pending.token,false); cancel(); co_return false; }
+            if (!bytes) co_return false;
             bool written=co_await stream_.write(*bytes);
+            pg.finished=true;
             auto committed=sessions_.finish(pending.token,written);
             if (!written || !committed || closed_) { cancel(); co_return false; }
             co_return true;
@@ -46,63 +56,67 @@ export namespace xudp {
             closed_=true; sessions_.close(); decoder_.close(); stream_.cancel();
         }
         [[nodiscard]] auto open(Address target,std::span<std::uint8_t const> payload)
-            -> nex::capy::task<std::expected<std::uint16_t,ClientIoError>> {
+            -> capy::task<std::expected<std::uint16_t,ClientIoError>> {
             auto [error,guard]=co_await mutex_.scoped_lock();
             if (error || closed_) co_return std::unexpected(ClientIoError::closed);
             auto pending=sessions_.open(target,payload); if (!pending) co_return std::unexpected(pending.error()==SessionError::exhausted ? ClientIoError::exhausted : ClientIoError::session);
+            PendingGuard pg{*this, pending->token};
             auto id=pending->frame.session;
-            try { if (!co_await write_pending(*pending)) co_return std::unexpected(ClientIoError::transport); }
-            catch (...) { cancel(); throw; }
+            auto task=write_pending(*pending);
+            pg.finished=true;
+            if (!co_await std::move(task)) co_return std::unexpected(ClientIoError::transport);
             co_return id;
         }
         [[nodiscard]] auto send(std::uint16_t id,std::optional<Address> target,std::span<std::uint8_t const> payload)
-            -> nex::capy::task<std::expected<void,ClientIoError>> {
+            -> capy::task<std::expected<void,ClientIoError>> {
             auto [error,guard]=co_await mutex_.scoped_lock();
             if (error || closed_) co_return std::unexpected(ClientIoError::closed);
             auto pending=sessions_.send(id,target,payload); if (!pending) co_return std::unexpected(ClientIoError::session);
-            try { if (!co_await write_pending(*pending)) co_return std::unexpected(ClientIoError::transport); }
-            catch (...) { cancel(); throw; }
+            PendingGuard pg{*this, pending->token};
+            auto task=write_pending(*pending);
+            pg.finished=true;
+            if (!co_await std::move(task)) co_return std::unexpected(ClientIoError::transport);
             co_return std::expected<void,ClientIoError>{};
         }
-        [[nodiscard]] auto end(std::uint16_t id) -> nex::capy::task<std::expected<void,ClientIoError>> {
+        [[nodiscard]] auto end(std::uint16_t id) -> capy::task<std::expected<void,ClientIoError>> {
             auto [error,guard]=co_await mutex_.scoped_lock();
             if (error || closed_) co_return std::unexpected(ClientIoError::closed);
             auto pending=sessions_.end(id); if (!pending) co_return std::unexpected(ClientIoError::session);
-            try { if (!co_await write_pending(*pending)) co_return std::unexpected(ClientIoError::transport); }
-            catch (...) { cancel(); throw; }
+            PendingGuard pg{*this, pending->token};
+            auto task=write_pending(*pending);
+            pg.finished=true;
+            if (!co_await std::move(task)) co_return std::unexpected(ClientIoError::transport);
             co_return std::expected<void,ClientIoError>{};
         }
         // One event per call; frame bytes after it remain buffered. Payload is
         // copied so the decoder can accept the next frame immediately.
-        [[nodiscard]] auto read() -> nex::capy::task<std::expected<ClientEvent,ClientIoError>> {
+        [[nodiscard]] auto read() -> capy::task<std::expected<ClientEvent,ClientIoError>> {
             if (closed_) co_return std::unexpected(ClientIoError::closed);
             if (reading_) co_return std::unexpected(ClientIoError::state);
-            reading_=true;
-            try {
-                for (;;) {
-                    if (begin_==end_) {
-                        auto result=co_await stream_.read(input_);
-                        if (!result || !*result || *result>input_.size() || closed_) { reading_=false; co_return fail(ClientIoError::transport); }
-                        begin_=0; end_=*result;
-                    }
-                    auto parsed=decoder_.feed(std::span(input_).subspan(begin_,end_-begin_)); begin_+=parsed.consumed;
-                    if (parsed.status==Status::incomplete && parsed.consumed) continue;
-                    if (parsed.status!=Status::ready) { reading_=false; co_return fail(ClientIoError::protocol); }
-                    auto [error,guard]=co_await mutex_.scoped_lock();
-                    if (error || closed_) { reading_=false; co_return fail(ClientIoError::closed); }
-                    auto frame=decoder_.frame(); if (!frame) { reading_=false; co_return fail(ClientIoError::protocol); }
-                    auto event=sessions_.receive(*frame);
-                    if (event.action==Incoming::unknown && frame->kind==Kind::data && frame->has_data) {
-                        auto close_frame=encode(Frame{frame->session,Kind::end});
-                        if (!close_frame || !co_await stream_.write(*close_frame)) { reading_=false; co_return fail(ClientIoError::transport); }
-                    }
-                    ClientEvent out{event.action,event.session,event.address,{},event.error};
-                    if (event.action==Incoming::datagram) out.payload.assign(event.payload.begin(),event.payload.end());
-                    if (!decoder_.consume()) { reading_=false; co_return fail(ClientIoError::protocol); }
-                    if (event.action==Incoming::invalid) { reading_=false; co_return fail(ClientIoError::protocol); }
-                    if (event.action==Incoming::datagram || event.action==Incoming::ended) { reading_=false; co_return out; }
+            reading_=true; ReadGuard rg{*this};
+            for (;;) {
+                if (begin_==end_) {
+                    auto result=co_await stream_.read(input_);
+                    if (!result || !*result || *result>input_.size() || closed_) co_return fail(ClientIoError::transport);
+                    begin_=0; end_=*result;
                 }
-            } catch (...) { reading_=false; cancel(); throw; }
+                auto parsed=decoder_.feed(std::span(input_).subspan(begin_,end_-begin_)); begin_+=parsed.consumed;
+                if (parsed.status==Status::incomplete && parsed.consumed) continue;
+                if (parsed.status!=Status::ready) co_return fail(ClientIoError::protocol);
+                auto [error,guard]=co_await mutex_.scoped_lock();
+                if (error || closed_) co_return fail(ClientIoError::closed);
+                auto frame=decoder_.frame(); if (!frame) co_return fail(ClientIoError::protocol);
+                auto event=sessions_.receive(*frame);
+                if (event.action==Incoming::unknown && frame->kind==Kind::data && frame->has_data) {
+                    auto close_frame=encode(Frame{frame->session,Kind::end});
+                    if (!close_frame || !co_await stream_.write(*close_frame)) co_return fail(ClientIoError::transport);
+                }
+                ClientEvent out{event.action,event.session,event.address,{},event.error};
+                if (event.action==Incoming::datagram) out.payload.assign(event.payload.begin(),event.payload.end());
+                if (!decoder_.consume()) co_return fail(ClientIoError::protocol);
+                if (event.action==Incoming::invalid) co_return fail(ClientIoError::protocol);
+                if (event.action==Incoming::datagram || event.action==Incoming::ended) { rg.done=true; co_return out; }
+            }
         }
     };
 }

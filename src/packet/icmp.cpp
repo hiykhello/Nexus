@@ -106,8 +106,15 @@ namespace packet {
         if ((p[0]>>4)!=4) return std::unexpected(PacketError::invalid_version);
         auto off=static_cast<std::size_t>(p[0]&15)*4;
         if (off<20 || off>p.size() || p.size()-off<8 || read16(p,2)!=p.size()) return std::unexpected(PacketError::invalid_length);
-        if (internet_checksum(p.first(off)) || internet_checksum(p.subspan(off))) return std::unexpected(PacketError::invalid_checksum);
+        if (internet_checksum(p.first(off))) return std::unexpected(PacketError::invalid_checksum);
+        for (std::size_t i=20;i<off;++i) {
+            if (p[i]==1) continue;
+            if (p[i]==0 && std::ranges::all_of(p.subspan(i,off-i),[](auto byte) { return byte==0; })) break;
+            return std::unexpected(PacketError::unsupported_header);
+        }
+        if (read16(p,6)&0xbfff) return std::unexpected(PacketError::unsupported_fragment);
         if (p[9]!=1 || p[off]!=3 || p[off+1]!=4) return std::unexpected(PacketError::unsupported_protocol);
+        if (internet_checksum(p.subspan(off))) return std::unexpected(PacketError::invalid_checksum);
         IcmpPtb4View v;
         std::copy_n(p.begin()+12,4,v.source.begin()); std::copy_n(p.begin()+16,4,v.destination.begin());
         v.next_hop_mtu=read16(p,off+6);

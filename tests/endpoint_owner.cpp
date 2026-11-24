@@ -6,11 +6,11 @@ import wireguard;
 import wireguard.crypto;
 import wireguard.port;
 import wireguard.tun;
-import nexus.test.lease_support;
+import test.lease_support;
 namespace a = ::platform::netlink_abi;
 namespace p = ::packet;
 namespace w=wireguard;
-namespace t=nexus::test::lease;
+namespace t=test::lease;
 auto main(int argc,char**argv) -> int {
     try {
         t::isolation(argc,argv);

@@ -5,15 +5,15 @@ import hysteria2.wire;
 import net.datagram_driver;
 import quic.tls_client;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hysteria2_application_link;
-import nexus.test.hy2_port_link;
-import nexus.test.hy2_native_memory;
-import nexus.test.hy2_resource_link;
-namespace io=nex::corosio;namespace support=nexus::test::quic_tls;namespace mem=nexus::test::hy2_native_memory;
-using nexus::test::hy2_resource::phase;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hysteria2_application_link;
+import test.hy2_port_link;
+import test.hy2_native_memory;
+import test.hy2_resource_link;
+namespace io = ::corosio;namespace support=test::quic_tls;namespace mem=test::hy2_native_memory;
+using test::hy2_resource::phase;
 auto main(int argc,char** argv) -> int {
     if(argc!=3)return 1;auto cert=support::read(argv[1]),key=support::read(argv[2]);auto credential=tls::ServerCredential::create(cert,key);::crypto::cleanse(key);if(!credential)return 2;
     for(bool uring:{false,true})for(auto kind:{mem::Kind::transport,mem::Kind::http3}){

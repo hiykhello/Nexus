@@ -1,7 +1,6 @@
 module dns.message;
 import std;
-
-#include "message_wire.hpp"
+import dns.message_wire;
 
 namespace dns {
     using namespace message_wire;

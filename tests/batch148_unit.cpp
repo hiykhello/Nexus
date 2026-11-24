@@ -7,7 +7,7 @@ import platform.network_selection;
 import platform.network_state;
 import platform.nftables;
 import platform.socket_options;
-import proxy;
+import relay;
 import rules;
 import sniff.tls;
 import tls.record_fragment;
@@ -207,7 +207,7 @@ routing { default-outbound "direct" }
             expect(with_mptcp->bytes.size() > base->bytes.size(), "148C: exclude_mptcp must emit extra netlink rule");
         }
 
-        proxy::RejectStormGuard guard;
+        relay::RejectStormGuard guard;
         auto t0 = std::chrono::steady_clock::now();
         expect(guard.should_drop(rules::RejectMethod::drop, false, t0), "148C: method=drop always drops");
         for (int i = 0; i < 60; ++i) {

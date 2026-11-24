@@ -15,13 +15,17 @@ namespace platform::nftables {
         auto error() noexcept -> std::error_code {return {errno,std::generic_category()};}
     }
 
+    auto Table::close_socket() noexcept -> void {
+        if (socket_>=0) { (void)::close(socket_); socket_=-1; }
+    }
+
     auto Table::exchange(Transaction const& request,Clock::time_point deadline) -> std::error_code {
         sockaddr_nl kernel{.nl_family=AF_NETLINK};
         auto sent=::sendto(socket_,request.bytes.data(),request.bytes.size(),0,
             reinterpret_cast<sockaddr const*>(&kernel),sizeof kernel);
         if (sent<0) return error();
         if (static_cast<std::size_t>(sent)!=request.bytes.size()) return std::make_error_code(std::errc::io_error);
-        std::bitset<128> acknowledgements;
+        std::bitset<512> acknowledgements;
         auto first=sequence_;
         sequence_=request.end;
         auto remaining=sequence_-first-2;
@@ -71,9 +75,7 @@ namespace platform::nftables {
         return std::make_error_code(std::errc::timed_out);
     }
 
-    Table::~Table() {
-        if (socket_>=0) (void)::close(socket_);
-    }
+    Table::~Table() { close_socket(); }
     auto Table::start(Redirect const& redirect,Clock::time_point deadline) -> std::error_code {
         if (socket_>=0) return std::make_error_code(std::errc::operation_in_progress);
         std::array<std::uint64_t,2> token{};
@@ -84,21 +86,22 @@ namespace platform::nftables {
         socket_=::socket(AF_NETLINK,SOCK_RAW|SOCK_NONBLOCK|SOCK_CLOEXEC,NETLINK_NETFILTER);
         if (socket_<0) return error();
         sockaddr_nl local{.nl_family=AF_NETLINK};
-        if (::bind(socket_,reinterpret_cast<sockaddr*>(&local),sizeof local)<0) return error();
+        if (::bind(socket_,reinterpret_cast<sockaddr*>(&local),sizeof local)<0) {
+            auto ec=error(); close_socket(); return ec;
+        }
         auto result=exchange(*messages,deadline);
-        owned_=!result;
-        return result;
+        if (result) { close_socket(); owned_=false; return result; }
+        owned_=true;
+        return {};
     }
 
     auto Table::stop(Clock::time_point deadline) -> std::error_code {
-        if (!owned_) return {};
+        if (!owned_) { close_socket(); return {}; }
         auto messages=encode(name_,nullptr,sequence_);
-        if (!messages) return messages.error();
-        auto result=exchange(*messages,deadline);
-        if (!result || result==std::errc::no_such_file_or_directory) {
-            owned_=false;
-            return {};
-        }
+        auto result=messages ? exchange(*messages,deadline) : messages.error();
+        close_socket();
+        owned_=false;
+        if (!result || result==std::errc::no_such_file_or_directory) return {};
         return result;
     }
 }

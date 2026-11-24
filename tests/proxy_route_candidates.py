@@ -46,10 +46,10 @@ def scenario(root, workers, rules, expected, queries, direct_first=None):
                 dns.sendto(response, peer)
         worker = threading.Thread(target=answer)
         worker.start()
-        (root / "rules.kdl").write_text('schema-version 1\nkind "predicate"\n' + rules)
-        (root / "direct.kdl").write_text(f'schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.{direct_first or 1}/32"\n')
-        direct_route = ('rule-set "allow" path="direct.kdl" format="kdl"; '
-                        'rule kind="rule-set" value="allow" outbound="direct"; ') if direct_first else ''
+        (root / "rules.kdl").write_text('schema-version 2\nkind "predicate"\n' + rules)
+        (root / "direct.kdl").write_text(f'schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.{direct_first or 1}/32"\n')
+        direct_set = 'rule-set "allow" path="direct.kdl" format="kdl"; ' if direct_first else ''
+        direct_rule = '- kind="rule-set" value="allow" outbound="direct"; ' if direct_first else ''
         config = root / "config.kdl"
         config.write_text(f'''schema-version 1
 role "client"
@@ -57,7 +57,7 @@ workers {workers}
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }} }}
 outbounds {{ direct "direct"; block "reject"; }}
 dns {{ servers {{ udp "local" host="127.0.0.1" port={dns.getsockname()[1]}; }}; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ {direct_route} rule-set "blocked" path="rules.kdl" format="kdl"; rule kind="rule-set" value="blocked" outbound="reject"; default-outbound "direct"; }}
+routing {{ {direct_set} rule-set "blocked" path="rules.kdl" format="kdl"; rules {{ {direct_rule} - kind="rule-set" value="blocked" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
         proc = subprocess.Popen([binary, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:

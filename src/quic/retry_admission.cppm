@@ -4,8 +4,8 @@ import crypto;
 import net.datagram_driver;
 import quic.retry_token;
 import quic.retry_packet;
-import nexus.thirdparty.corosio;
-import nexus.thirdparty.ngtcp2;
+import corosio;
+import ngtcp2;
 
 export namespace quic {
     struct RetryFailure {
@@ -24,7 +24,7 @@ export namespace quic {
         static_assert(Capacity && Capacity<=1024 && RetryCidBytes>=8 && RetryCidBytes<=20);
         struct Entry {
             RetryCid original,destination;
-            nex::corosio::endpoint peer;
+            corosio::endpoint peer;
             net::DatagramClock::time_point expires;
             std::uint64_t token;
         };
@@ -45,7 +45,7 @@ export namespace quic {
             if(elapsed<20)return;
             auto credit=static_cast<std::size_t>(std::min<std::int64_t>(Capacity,elapsed/20));quota_=std::min(Capacity,quota_+credit);refill_=now;
         }
-        static auto cid(nex::ngtcp2::ngtcp2_cid const& input) noexcept -> RetryCid {
+        static auto cid(ngtcp2::ngtcp2_cid const& input) noexcept -> RetryCid {
             RetryCid out;out.size=static_cast<std::uint8_t>(input.datalen);std::ranges::copy(std::span(input.data).first(input.datalen),out.data.begin());return out;
         }
     public:
@@ -67,9 +67,9 @@ export namespace quic {
         // The original datagram length is supplied by the sole port parser.
         // Only valid minimum-size v1 Initials can cause any response. Even the
         // maximal local Retry is146B, so its amplification ratio stays below1.
-        auto inspect(nex::ngtcp2::ngtcp2_pkt_hd const& initial,nex::corosio::endpoint const& peer,net::DatagramClock::time_point now,std::size_t received_bytes)
+        auto inspect(ngtcp2::ngtcp2_pkt_hd const& initial,corosio::endpoint const& peer,net::DatagramClock::time_point now,std::size_t received_bytes)
             noexcept -> std::expected<std::optional<RetryClaims>,RetryFailure> {
-            namespace n=nex::ngtcp2;
+            namespace n = ::ngtcp2;
             if(!initialized_ || stopped_)return std::unexpected(RetryFailure{});
             if(now.time_since_epoch()<net::DatagramClock::duration::zero() || now>net::DatagramClock::time_point::max()-std::chrono::milliseconds(250))
                 return std::unexpected(failure(RetryTokenError::argument));

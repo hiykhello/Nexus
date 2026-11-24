@@ -1,5 +1,6 @@
 export module ssh.wire;
 import std;
+import encoding.base64;
 
 export namespace ssh {
     inline constexpr std::uint8_t kMsgDisconnect = 1;
@@ -190,45 +191,11 @@ export namespace ssh {
     }
 
     inline auto decode_base64(std::string_view text) -> std::optional<std::vector<std::uint8_t>> {
-        static constexpr std::string_view kTbl =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::vector<std::uint8_t> out;
-        std::uint32_t acc = 0;
-        int bits = 0;
-        bool pad_seen = false;
-        for (unsigned char c : text) {
-            if (c == '\r' || c == '\n' || c == ' ' || c == '\t') continue;
-            if (c == '=') { pad_seen = true; continue; }
-            if (pad_seen) return {};
-            auto pos = kTbl.find(static_cast<char>(c));
-            if (pos == std::string_view::npos) return {};
-            acc = (acc << 6) | static_cast<std::uint32_t>(pos);
-            bits += 6;
-            if (bits >= 8) {
-                bits -= 8;
-                out.push_back(static_cast<std::uint8_t>((acc >> bits) & 0xffu));
-            }
-        }
-        if (bits >= 6 || (bits > 0 && (acc & ((1u << bits) - 1u)) != 0)) return {};
-        return out;
+        return encoding::decode_base64_pem(text);
     }
 
     inline auto encode_base64(std::span<std::uint8_t const> bytes, bool pad = false) -> std::string {
-        static constexpr std::string_view kTbl =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        std::string out;
-        out.reserve(((bytes.size() + 2) / 3) * 4);
-        for (std::size_t i = 0; i < bytes.size(); i += 3) {
-            std::uint32_t v = std::uint32_t(bytes[i]) << 16;
-            if (i + 1 < bytes.size()) v |= std::uint32_t(bytes[i + 1]) << 8;
-            if (i + 2 < bytes.size()) v |= std::uint32_t(bytes[i + 2]);
-            out.push_back(kTbl[(v >> 18) & 0x3fu]);
-            out.push_back(kTbl[(v >> 12) & 0x3fu]);
-            out.push_back(i + 1 < bytes.size() ? kTbl[(v >> 6) & 0x3fu] : (pad ? '=' : '\0'));
-            out.push_back(i + 2 < bytes.size() ? kTbl[v & 0x3fu] : (pad ? '=' : '\0'));
-            while (!out.empty() && out.back() == '\0') out.pop_back();
-        }
-        return out;
+        return encoding::encode_base64(bytes, false, pad);
     }
 
     inline auto parse_host_key_sha256(std::string_view text) -> std::optional<std::array<std::uint8_t, 32>> {

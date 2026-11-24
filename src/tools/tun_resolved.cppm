@@ -1,18 +1,25 @@
+module;
+#include <proxy/proxy_macros.h>
+
 export module cli.tun_resolved;
 import std;
+import proxy.v4;
 import packet.tun_network;
 
 export namespace cli::tun_enabled {
-    class TunResolvedLease {
-    public:
-        using Clock=std::chrono::steady_clock;
-        virtual ~TunResolvedLease()=default;
-        virtual auto poll(Clock::time_point now,Clock::time_point deadline) -> bool=0;
-        virtual auto stop(Clock::time_point deadline) noexcept -> bool=0;
-    };
+    using TunResolvedClock=std::chrono::steady_clock;
+    PRO_DEF_MEM_DISPATCH(TunResolvedPoll,poll);
+    PRO_DEF_MEM_DISPATCH(TunResolvedStop,stop);
+
+    struct TunResolvedFacade : pro::facade_builder
+        ::add_convention<TunResolvedPoll,bool(TunResolvedClock::time_point,TunResolvedClock::time_point)>
+        ::add_convention<TunResolvedStop,bool(TunResolvedClock::time_point) noexcept>
+        ::build {};
+
+    using TunResolvedLease=pro::proxy<TunResolvedFacade>;
 
     enum class TunResolvedError { rejected, cleanup_failed };
     auto start_tun_resolved(packet::TunNetworkLease<>& network,std::string_view address,
-        TunResolvedLease::Clock::time_point deadline,TunResolvedLease::Clock::time_point rollback_deadline)
-        -> std::expected<std::unique_ptr<TunResolvedLease>,TunResolvedError>;
+        TunResolvedClock::time_point deadline,TunResolvedClock::time_point rollback_deadline)
+        -> std::expected<TunResolvedLease,TunResolvedError>;
 }

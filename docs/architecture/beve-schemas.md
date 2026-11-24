@@ -15,7 +15,7 @@ struct OrderedRule { RuleId id; Condition condition; Action action; };
 
 解析后校验地址范围、前缀、域名、引用、版本和预算，再编译独立的匹配索引；首命中语义由[路由引擎](routing-engine.md)保证。内存布局、平台端序、对齐、指针或 padding 均不是 BEVE 协议。若优化为数值 typed array，还须定义端序、各列对应关系及异常输入语义，并验证转换前后完整语义保持一致。
 
-不能假设 `std::vector<结构体>` 自动序列化为单块 `memcpy` 或可直接 mmap 为 C++ 对象。所读 Glaze 本地提交 `fc646588635c42cca142562d7b3d0484cc4493b7` 的 `include/glaze/beve/write.hpp` 有数值连续数组的批量写入分支，这不证明任意 POD 结构体数组走同一路径。尚无 Nexus 吞吐、启动时间或内存占用基准；按[规则集格式](rule-set-format.md)分别测量解析、索引构建、查询与峰值内存。
+不能假设 `std::vector<结构体>` 自动序列化为单块 `memcpy` 或可直接 mmap 为 C++ 对象。所读 `hiykhello/glaze-kdl` 固定提交 `4e3230a6c1a3e665a6d81ca18e804291f894e876` 的 `include/glaze/beve/write.hpp` 有数值连续数组的批量写入分支，这不证明任意 POD 结构体数组走同一路径。尚无 Nexus 吞吐、启动时间或内存占用基准；按[规则集格式](rule-set-format.md)分别测量解析、索引构建、查询与峰值内存。
 
 ## 状态的逻辑字段
 

@@ -111,9 +111,9 @@ def main():
                     if args.socks:
                         proxy_port=free_port(); flow=' flow "xtls-rprx-vision"' if mode=='vision' else ''
                         config_path=root/'nexus.kdl'
-                        (root/'block.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+                        (root/'block.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
                         tls = f'server-name "cover.example"; ca-file "{root/"cert"}"; verify #true;' if args.tls else f'server-name "cover.example"; reality {{ public-key "{public.hex()}"; short-id "0123456789abcdef"; }};'
-                        policy = f'rule-set "blocked" path="{root/"block.kdl"}" format="kdl"; rule kind="rule-set" value="blocked" outbound="reject";' if args.policy else ''
+                        policy = f'rule-set "blocked" path="{root/"block.kdl"}" format="kdl"; rules {{ - kind="rule-set" value="blocked" outbound="reject"; }};' if args.policy else ''
                         config_path.write_text(f'''schema-version 1
 role "client"
 workers 2

@@ -1,16 +1,15 @@
 import std;
 import net.datagram_driver;
 import quic.tls_client;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.quic_datagram_link;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.quic_datagram_link;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 namespace q=quic;
-namespace app=nexus::test::quic_datagram_link;
-namespace support=nexus::test::quic_tls;
+namespace app=test::quic_datagram_link;
+namespace support=test::quic_tls;
 using namespace std::chrono_literals;
 namespace {
     auto hash(std::span<std::uint8_t const> bytes) noexcept -> std::uint64_t {

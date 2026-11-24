@@ -8,12 +8,11 @@ import tls.byte_stream;
 import tls.corosio_client;
 import tls.corosio_application;
 import tls.corosio_server_handshake;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace g=grpc;
 namespace t=tls;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct State;
 struct Socket {

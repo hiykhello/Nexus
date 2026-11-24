@@ -1,14 +1,26 @@
 module control_api.ssmapi;
 import std;
-import nexus.thirdparty.glaze;
+import crypto;
+import encoding.json;
+import glaze;
 
 namespace control_api::ssmapi {
+    namespace {
+        auto cleanse_string(std::string& s) noexcept -> void {
+            if (!s.empty()) {
+                crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(s.data()), s.size()));
+                s.clear();
+            }
+        }
+    }
+
     namespace detail {
         struct UserWire {
             std::string username;
             std::string uPSK;
             bool enabled = true;
             std::uint64_t byteQuota = 0;
+            ~UserWire() { cleanse_string(uPSK); }
         };
     }
 
@@ -20,23 +32,17 @@ namespace control_api::ssmapi {
                 std::ranges::all_of(name, [](unsigned char c) { return c >= 0x21 && c <= 0x7e && c != '/'; });
         }
 
-        auto escape_json(std::string_view s) -> std::string {
-            std::string out = "\"";
-            for (unsigned char c : s) {
-                if (c == '"') out += "\\\"";
-                else if (c == '\\') out += "\\\\";
-                else if (c >= 0x20) out.push_back(static_cast<char>(c));
-            }
-            out.push_back('"');
-            return out;
-        }
-
         auto format_user(UserRecord const& u) -> std::string {
             return std::format(
                 "{{\"username\":{},\"enabled\":{},\"uplinkBytes\":{},\"downlinkBytes\":{},\"uplinkPackets\":{},\"downlinkPackets\":{},\"byteQuota\":{},\"tcpSessions\":{},\"udpSessions\":{}}}",
-                escape_json(u.username), u.enabled ? "true" : "false", u.uplink_bytes, u.downlink_bytes,
+                encoding::json_quote(u.username), u.enabled ? "true" : "false", u.uplink_bytes, u.downlink_bytes,
                 u.uplink_packets, u.downlink_packets, u.byte_quota, u.tcp_sessions, u.udp_sessions);
         }
+    }
+
+    UserStore::~UserStore() {
+        std::lock_guard lock(mutex_);
+        for (auto& u : users_) cleanse_string(u.u_psk);
     }
 
     auto UserStore::find_mut(std::string_view name) noexcept -> UserRecord* {
@@ -47,16 +53,22 @@ namespace control_api::ssmapi {
     }
 
     auto UserStore::upsert_user(UserRecord user) -> std::expected<void, std::string> {
-        if (!valid_username(user.username) || user.u_psk.empty())
+        if (!valid_username(user.username) || user.u_psk.empty()) {
+            cleanse_string(user.u_psk);
             return std::unexpected("invalid ssmapi username or uPSK");
+        }
         std::lock_guard lock(mutex_);
         if (auto* existing = find_mut(user.username)) {
+            cleanse_string(existing->u_psk);
             existing->u_psk = std::move(user.u_psk);
             existing->enabled = user.enabled;
             existing->byte_quota = user.byte_quota;
             return {};
         }
-        if (users_.size() >= max_users) return std::unexpected("ssmapi user capacity reached");
+        if (users_.size() >= max_users) {
+            cleanse_string(user.u_psk);
+            return std::unexpected("ssmapi user capacity reached");
+        }
         users_.push_back(std::move(user));
         return {};
     }
@@ -65,6 +77,7 @@ namespace control_api::ssmapi {
         std::lock_guard lock(mutex_);
         auto it = std::ranges::find(users_, username, &UserRecord::username);
         if (it == users_.end()) return false;
+        cleanse_string(it->u_psk);
         users_.erase(it);
         return true;
     }
@@ -152,7 +165,7 @@ namespace control_api::ssmapi {
         constexpr std::string_view prefix = "/v1/ssmapi/users/";
         auto parse_wire = [&](std::string_view forced_name) -> std::expected<UserRecord, std::string> {
             UserWire wire{};
-            if (nex::glaze::read<nex::glaze::opts{.error_on_unknown_keys = false}>(wire, body))
+            if (glaze::read<glaze::opts{.error_on_unknown_keys = false}>(wire, body))
                 return std::unexpected("invalid JSON body");
             if (!forced_name.empty()) wire.username = std::string(forced_name);
             return UserRecord{.username = std::move(wire.username), .u_psk = std::move(wire.uPSK),
@@ -161,10 +174,10 @@ namespace control_api::ssmapi {
 
         if (method == "POST" && path == "/v1/ssmapi/users") {
             auto rec = parse_wire({});
-            if (!rec) return {400, std::format("{{\"error\":{}}}", escape_json(rec.error()))};
+            if (!rec) return {400, std::format("{{\"error\":{}}}", encoding::json_quote(rec.error()))};
             auto username = rec->username;
             if (auto r = store.upsert_user(std::move(*rec)); !r)
-                return {400, std::format("{{\"error\":{}}}", escape_json(r.error()))};
+                return {400, std::format("{{\"error\":{}}}", encoding::json_quote(r.error()))};
             return {201, store.render_user_json(username).value_or("{}")};
         }
         if (path.starts_with(prefix) && path.size() > prefix.size()) {
@@ -175,9 +188,9 @@ namespace control_api::ssmapi {
             }
             if (method == "PUT") {
                 auto rec = parse_wire(name);
-                if (!rec) return {400, std::format("{{\"error\":{}}}", escape_json(rec.error()))};
+                if (!rec) return {400, std::format("{{\"error\":{}}}", encoding::json_quote(rec.error()))};
                 if (auto r = store.upsert_user(std::move(*rec)); !r)
-                    return {400, std::format("{{\"error\":{}}}", escape_json(r.error()))};
+                    return {400, std::format("{{\"error\":{}}}", encoding::json_quote(r.error()))};
                 return {200, store.render_user_json(name).value_or("{}")};
             }
             if (method == "DELETE") {

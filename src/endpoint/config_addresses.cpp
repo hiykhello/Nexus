@@ -121,8 +121,9 @@ namespace endpoint {
         if (peer.family==6 && std::ranges::all_of(std::span(peer.address).first(10),[](auto byte) { return !byte; }) && peer.address[10]==255 && peer.address[11]==255) return false;
         bool any_listen=std::ranges::all_of(config.listen.address,[](auto byte) { return byte==0; });
         if (peer.family!=config.listen.family && (config.listen.family!=6 || !any_listen)) return false;
+        packet::TunAddress target{peer.family,peer.address,static_cast<std::uint8_t>(packet::tun_network_detail::ip_bytes(peer.family)*8)};
         for (std::size_t i=0;i<config.network.address_count;++i) {
-            auto const& local=config.network.addresses[i]; if (local.family==peer.family && local.bytes==peer.address) return false;
+            if (packet::tun_network_detail::contains(config.network.addresses[i],target)) return false;
         }
         for (std::size_t i=0;i<config.network.route_count;++i) {
             auto const& route=config.network.routes[i];

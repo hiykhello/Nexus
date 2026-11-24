@@ -19,4 +19,22 @@ namespace cli {
         }
         std::unreachable();
     }
+
+    auto prepare_extra_dns_transport(config::DnsServer const& server)
+        -> std::expected<dns::detail::ProtectedQuery,std::string> {
+        switch (server.kind) {
+        case config::DnsServerKind::dhcp: return prepare_dhcp_dns_transport(server);
+        case config::DnsServerKind::mdns: return prepare_mdns_transport(server);
+        case config::DnsServerKind::hosts:
+            return std::unexpected("DNS hosts transport requires dns-tls build feature");
+        case config::DnsServerKind::standard:
+            return std::unexpected("invalid extra DNS server kind");
+        }
+        std::unreachable();
+    }
+
+    auto prepare_proxy_plain_dns(bool,std::size_t,dns::detail::TransportSnapshotRef)
+        -> std::expected<dns::detail::ProtectedQuery,std::string> {
+        return std::unexpected("detoured DNS transport requires dns-tls");
+    }
 }

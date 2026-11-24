@@ -8,7 +8,7 @@ import masque.connect_ip;
 import masque.ip_packet;
 import net.packet_stream_socket;
 import net.udp_socket;
-import proxy;
+import relay;
 import quic.ech_config;
 import packet.fd;
 import packet.tun_linux;
@@ -17,13 +17,13 @@ import packet.tun_network_types;
 import platform.ip_address;
 import platform.socket_options;
 import tls.fingerprint;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace cli::tun_enabled {
     namespace {
-        namespace io = nex::corosio;
-        namespace capy = nex::capy;
+        namespace io = ::corosio;
+        namespace capy = ::capy;
         using Clock = std::chrono::steady_clock;
         using Lease = packet::TunNetworkLease<>;
 
@@ -33,7 +33,7 @@ namespace cli::tun_enabled {
             using Failure = packet::DeviceError;
             Client& client;
             masque::ConnectIpScope const& scope;
-            proxy::TrafficRegistration& traffic;
+            relay::TrafficRegistration& traffic;
             packet::TunNetworkOptions const* network = nullptr;
             Clock::time_point next_mtu_report{};
             std::array<std::uint8_t,1280> mtu_report;
@@ -162,18 +162,19 @@ namespace cli::tun_enabled {
             transport.max_udp_payload_size = std::min<std::size_t>(1452, options.mtu + 64);
             auto group = outbound.key_exchange == config::TlsKeyExchange::x25519 ? 0x001d : 0x11ec;
             auto loaded = masque::ClientProfile::load(outbound.server_name, outbound.ca_file, outbound.authority,
-                outbound.bearer_file, group, outbound.key_exchange == config::TlsKeyExchange::x25519_mlkem768_only, transport, *fp);
+                outbound.bearer_file, group, outbound.key_exchange == config::TlsKeyExchange::x25519_mlkem768_only,
+                transport, *fp, outbound.certificate_sha256);
             if (!loaded) return std::unexpected(loaded.error());
             profile = std::move(*loaded);
             return {};
         }
 
         template<class Client>
-        auto bridge(Client& client,proxy::Server& server,Clock::time_point deadline) -> capy::task<capy::results<>> {
+        auto bridge(Client& client,relay::Server& server,Clock::time_point deadline) -> capy::task<capy::results<>> {
             using Pump = packet::StaticFdPump<Link<Client>, 1500>;
             std::optional<packet::LinuxTun> device;
             std::optional<Lease> lease;
-            proxy::TrafficRegistration traffic;
+            relay::TrafficRegistration traffic;
             Link link{client,scope,traffic};
             std::optional<Pump> pump;
             struct Cleanup {
@@ -192,7 +193,7 @@ namespace cli::tun_enabled {
             } cleanup{*this, client, lease, pump};
             if (!co_await client.connect_ip(outbound.path,deadline,options.mtu+16,outbound.protocol,outbound.connect_headers))
                 co_return capy::results<>{};
-            traffic=server.track_traffic(proxy::TrafficProtocol::masque_ip,proxy::ConnectPath::tunnel,{},outbound.port,true);
+            traffic=server.track_traffic(relay::TrafficProtocol::masque_ip,relay::ConnectPath::tunnel,{},outbound.port,true);
             if (!client.address_epoch()) {
                 auto family = [&](unsigned version) {
                     return std::ranges::any_of(routes, [&](auto const& route) { return route.family == version; });
@@ -255,12 +256,12 @@ namespace cli::tun_enabled {
         }
 
         template<class Client>
-        auto drive(Client& client,proxy::Server& server,Clock::time_point deadline) -> capy::task<> {
+        auto drive(Client& client,relay::Server& server,Clock::time_point deadline) -> capy::task<> {
             struct Finish {Client& client; ~Finish(){client.finish();}} finish{client};
             (void)co_await capy::when_all(client.run(), bridge(client,server,deadline));
         }
 
-        auto drive_direct(io::io_context& context,proxy::Server& server,Clock::time_point deadline) -> capy::task<> {
+        auto drive_direct(io::io_context& context,relay::Server& server,Clock::time_point deadline) -> capy::task<> {
             auto binding=outbound.tcp_options.binding;
             if (!binding.network) {
                 masque::Client<> client(context,*profile);
@@ -298,22 +299,22 @@ namespace cli::tun_enabled {
             }
         }
 
-        auto drive_detour(proxy::Server& server, Clock::time_point deadline) -> capy::task<> {
+        auto drive_detour(relay::Server& server, Clock::time_point deadline) -> capy::task<> {
             auto quota = server.acquire_session();
             if (!quota) co_return;
             auto& context = server.executor_context();
             net::UdpEndpoint transport_peer;
-            proxy::Session session(context);
+            relay::Session session(context);
             session.physical_peer=&transport_peer;
             server.attach_session(session, std::move(*quota));
             auto tunnel = server.open_packet_tunnel(session, *outbound.detour_index);
             if (!tunnel) co_return;
-            struct Cancel {proxy::PacketTunnel& tunnel; ~Cancel(){tunnel.cancel();}} cancel{*tunnel};
+            struct Cancel {relay::PacketTunnel& tunnel; ~Cancel(){tunnel.cancel();}} cancel{*tunnel};
             auto stop = co_await capy::this_coro::stop_token;
             std::stop_callback canceled(stop, [&]() noexcept {tunnel->cancel();});
             if (stop.stop_requested()) co_return;
             auto connected = co_await tunnel->connect_until(net::packet_peer_address(peer),deadline);
-            if (connected != proxy::PacketConnectResult::connected || stop.stop_requested()) co_return;
+            if (connected != relay::PacketConnectResult::connected || stop.stop_requested()) co_return;
             if (!transport_peer.port) {
                 fail("CONNECT-IP TUN could not identify the physical detour peer");
                 co_return;
@@ -332,7 +333,7 @@ namespace cli::tun_enabled {
             }
             outer_hosts[1]=outer;
             outer_count=2;
-            masque::Client<net::PacketStreamSocket<proxy::PacketTunnel>> client(context, *profile);
+            masque::Client<net::PacketStreamSocket<relay::PacketTunnel>> client(context, *profile);
             if (!client.socket().attach(*tunnel, tunnel->transport(), peer)) co_return;
             auto prepared = co_await client.socket().prepare(deadline);
             if (!prepared || stop.stop_requested()) co_return;
@@ -340,7 +341,7 @@ namespace cli::tun_enabled {
                 co_await drive(client,server,deadline);
         }
 
-        auto run(proxy::Server& server) -> void {
+        auto run(relay::Server& server) -> void {
             std::optional<io::io_context> direct;
             if (!lower_host) direct.emplace();
             auto& context = direct ? *direct : server.executor_context();
@@ -368,7 +369,7 @@ namespace cli::tun_enabled {
     MasqueTunHost::MasqueTunHost(config::TunInbound options, config::MasqueOutbound outbound, std::optional<std::string> lower_host)
         : impl_(new Impl{std::move(options), std::move(outbound), std::move(lower_host)}) {}
     MasqueTunHost::~MasqueTunHost() { stop(); }
-    auto MasqueTunHost::start(proxy::Server& server) -> std::expected<std::string, std::string> {
+    auto MasqueTunHost::start(relay::Server& server) -> std::expected<std::string, std::string> {
         auto ready = impl_->prepare();
         if (!ready) return std::unexpected(ready.error());
         if (impl_->lower_host) {

@@ -1,10 +1,10 @@
 export module ss_udp.shared_cache;
 import std;
-import proxy;
+import relay;
 export import dns.shared_cache;
 export import ss_udp.inbounds;
 
-export namespace proxy::udp_runtime {
+export namespace relay::udp_runtime {
     // Executor-local membership in a configuration generation.
     // Group, reader and refresh owner outlive every query, including cancellation.
     template<bool EnableRefresh>

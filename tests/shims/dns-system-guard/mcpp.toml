@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "dns-system-guard-shim"
 version = "0.1.0"
 

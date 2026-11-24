@@ -1,8 +1,8 @@
 module tls.server_credential;
-import nexus.thirdparty.boringssl;
+import boringssl;
 import std;
 import tls.signature;
-using namespace nex::boringssl;
+using namespace boringssl;
 namespace tls {
     ServerCredential::ServerCredential(EVP_PKEY* key, std::uint16_t scheme, Certificates&& certificates) noexcept
         : key_(key), scheme_(scheme), certificates_(std::move(certificates)) {}
@@ -201,5 +201,31 @@ namespace tls {
         message[0]=15; message[1]=static_cast<std::uint8_t>(body_size>>16); message[2]=static_cast<std::uint8_t>(body_size>>8); message[3]=static_cast<std::uint8_t>(body_size);
         message[4]=static_cast<std::uint8_t>(scheme>>8); message[5]=static_cast<std::uint8_t>(scheme); message[6]=static_cast<std::uint8_t>(size>>8); message[7]=static_cast<std::uint8_t>(size);
         return message;
+    }
+
+    auto AtomicServerCredential::update(ServerCredential credential) -> std::uint64_t {
+        auto next = std::make_shared<ServerCredential const>(std::move(credential));
+        std::lock_guard lock(mutex_);
+        current_ = std::move(next);
+        return generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
+
+    auto AtomicServerCredential::update_pem(std::string_view cert_pem, std::string_view key_pem)
+        -> std::expected<std::uint64_t, ServerCredentialError> {
+        auto parsed = ServerCredential::create_file_contents(
+            {reinterpret_cast<std::uint8_t const*>(cert_pem.data()), cert_pem.size()},
+            {reinterpret_cast<std::uint8_t const*>(key_pem.data()), key_pem.size()});
+        if (!parsed) return std::unexpected(parsed.error());
+        return update(std::move(*parsed));
+    }
+
+    auto AtomicServerCredential::clone_current() const -> std::expected<ServerCredential, ServerCredentialError> {
+        std::shared_ptr<ServerCredential const> snap;
+        {
+            std::lock_guard lock(mutex_);
+            snap = current_;
+        }
+        if (!snap) return std::unexpected(ServerCredentialError::invalid_state);
+        return snap->clone();
     }
 }

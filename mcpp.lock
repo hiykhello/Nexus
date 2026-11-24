@@ -5,11 +5,21 @@
 # file must not change depending on which command ran last.
 version = 2
 
+[target."x86_64-linux-gnu"]
+identity = "x86_64-linux-gnu"
+provider = "glibc"
+
 [package."nexus.argon2-source"]
 namespace = "nexus"
 version = "20190702-nexus.2"
 source  = "index+nexus@20190702-nexus.2"
 hash    = "fnv1a:85e980fa0d04608f"
+
+[package."nexus.beman-inplace-vector"]
+namespace = "nexus"
+version = "0.1.0"
+source  = "index+nexus@0.1.0"
+hash    = "fnv1a:5f85af851aa80512"
 
 [package."nexus.blake3-source"]
 namespace = "nexus"
@@ -43,9 +53,9 @@ patches = ["3rdparty/patches/corosio/mcpp-exact.patch#sha256:b71384c36fadd705202
 
 [package."nexus.glaze-kdl"]
 namespace = "nexus"
-version = "0.1.0"
-source  = "index+nexus@0.1.0"
-hash    = "fnv1a:805077be9632c463"
+version = "0.1.1"
+source  = "index+nexus@0.1.1"
+hash    = "fnv1a:805076be9632c2b0"
 
 [package."nexus.ngcpp-proxy"]
 namespace = "nexus"

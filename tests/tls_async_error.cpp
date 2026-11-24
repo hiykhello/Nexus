@@ -5,8 +5,8 @@ import tls.client_handshake_io;
 import tls.server_handshake_io;
 import tls.corosio_client;
 import tls.corosio_server_handshake;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace native {
     struct alignas(std::max_align_t) Header { std::size_t size; };
     bool enabled=false,denied=false,single=false;
@@ -33,7 +33,7 @@ extern "C" auto OPENSSL_memory_get_size(void* pointer) noexcept -> std::size_t {
 }
 
 
-namespace t=tls;namespace c = ::crypto;namespace io=nex::corosio;namespace capy=nex::capy;
+namespace t=tls;namespace c = ::crypto;namespace io = ::corosio;
 using namespace std::chrono_literals;
 auto read(char const* path) -> c::Bytes {std::ifstream input(path,std::ios::binary);return {std::istreambuf_iterator<char>(input),{}};}
 struct FaultSocket {
@@ -75,7 +75,7 @@ auto trial(io::io_context& context,c::Bytes const& cert,c::Bytes const& key,t::C
                 (fail==1 ? result.ce==t::detail::AsyncHandshakeError::crypto : result.se==t::detail::ServerAsyncError::crypto));
         if(!valid)std::println("async failure side={} single={} denied={} client={} server={} ce={} se={} caught={}",fail,single,result.denied,result.client,result.server,result.ce ? int(*result.ce) : -1,result.se ? int(*result.se) : -1,result.caught);
     }
-    nex::boringssl::ERR_clear_error();
+    boringssl::ERR_clear_error();
     return valid&&native::live==before&&native::bytes==bytes;
 }
 int main(int argc,char** argv) {

@@ -6,9 +6,9 @@ import std;
 import http2.tls_server;
 import tls.corosio_server_handshake;
 import tls.server_handshake_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace h=http2; namespace t=tls; namespace io=nex::corosio; namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace h=http2; namespace t=tls; namespace io = ::corosio;
 using namespace std::chrono_literals;
 auto file(char const* path) -> ::crypto::Bytes { std::ifstream in(path,std::ios::binary); return {std::istreambuf_iterator<char>(in),{}}; }
 auto make_context() -> io::io_context {

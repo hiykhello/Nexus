@@ -119,7 +119,7 @@ def parse_probe(output):
         elif kind == 'field':
             tag, field = name.split('.'); layouts[tag]['fields'][field] = list(map(int, rest.split()))
         elif kind == 'constant': constants[name] = int(rest)
-        else: signatures[name] = rest.replace('nexus::platform::netlink_abi::', '').replace('__sigset_t', 'sigset_t')
+        else: signatures[name] = rest.replace('platform::netlink_abi::', '').replace('__sigset_t', 'sigset_t')
     return {'layouts': layouts, 'constants': constants, 'signatures': signatures}
 
 
@@ -140,9 +140,9 @@ def main():
         command([*probe_flags, *includes(('cstdio', 'cstddef', 'cstdint')), *header_flags, str(native), '-o', str(binary)])
         native_result = parse_probe(command([str(binary)]))
         constants = '\n'.join(f'    inline constexpr int {name}={value};' for name, value in native_result['constants'].items())
-        body = 'namespace nexus::platform::netlink_abi {\n' + declarations + '\n' + constants + '\n}\n'
+        body = 'namespace platform::netlink_abi {\n' + declarations + '\n' + constants + '\n}\n'
         generated = directory / 'generated.cpp'; binary = directory / 'generated'
-        generated.write_text(body + printer(fields, 'nexus::platform::netlink_abi::'))
+        generated.write_text(body + printer(fields, 'platform::netlink_abi::'))
         command([*probe_flags, *includes(('cstdio', 'cstddef', 'cstdint')), str(generated), '-o', str(binary)])
         generated_result = parse_probe(command([str(binary)]))
         if generated_result != native_result:
@@ -156,7 +156,7 @@ def main():
               f'// Native profile SHA-256: {digest}\n'
               '#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)\n'
               '#error "This netlink boundary is verified for Linux x86-64 LP64 glibc only"\n#endif\n\n'
-              'export module nexus.platform.netlink_abi;\nimport std;\n\n' + body.replace('namespace nexus::platform::', 'export namespace nexus::platform::', 1))
+              'export module platform.netlink_abi;\nimport std;\n\n' + body.replace('namespace platform::', 'export namespace platform::', 1))
     outputs = {root / 'src/platform/netlink_abi.cppm': module, root / 'scripts/netlink-boundary.json': profile_data}
     for path, value in outputs.items():
         if args.check:

@@ -3,7 +3,7 @@
 import std;
 import platform.linux_random;
 import transport.tun_linux;
-import nexus.tests.random_fault;
+import test.random_fault;
 namespace p = ::packet; namespace tr=transport;
 static_assert(std::same_as<decltype(&::getrandom),::platform::linux_random_abi::GetrandomSignature>);
 static_assert(std::same_as<decltype(&::__errno_location),::platform::linux_random_abi::ErrnoLocationSignature>);
@@ -13,7 +13,7 @@ static_assert(EAGAIN==std::to_underlying(std::errc::resource_unavailable_try_aga
 static_assert(EPERM==std::to_underlying(std::errc::operation_not_permitted));
 static_assert(EIO==std::to_underlying(std::errc::io_error));
 int main() {
-    using namespace nexus::tests;
+    using namespace test;
     auto tun=p::LinuxTun::create("nx-random"); if (!tun) return 1;
     auto driver=tr::LinuxTunDirect::create(std::move(*tun),::rules::Matcher{}); if (!driver) return 2;
     set_random_fault(RandomFault::unavailable); auto failure=(*driver)->step(10);

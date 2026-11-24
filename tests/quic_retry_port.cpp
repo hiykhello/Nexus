@@ -5,9 +5,9 @@ import quic.datagram_port;
 import quic.cid_registry;
 import quic.retry_admission;
 import quic.retry_token;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.corosio;
-namespace q=quic;namespace n=nex::ngtcp2;namespace io=nex::corosio;
+import ngtcp2;
+import corosio;
+namespace q=quic;namespace n = ::ngtcp2;namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 namespace entropy {bool fail=false;auto fill(std::span<std::uint8_t> bytes)->std::expected<void,::crypto::Error>{if(fail)return std::unexpected(::crypto::Error::backend_failure);return ::crypto::random_bytes(bytes);}}
 auto require(bool condition,char const* label)->void{if(!condition){std::println("Retry port failure: {}",label);std::exit(1);}}

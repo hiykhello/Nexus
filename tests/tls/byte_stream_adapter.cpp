@@ -1,12 +1,11 @@
 import std;
 import net.stream_relay;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.client_handshake_io;
 import tls.corosio_client;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 struct Transport {

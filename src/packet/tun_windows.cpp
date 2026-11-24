@@ -22,6 +22,8 @@ namespace packet {
         using ReleaseReceivePacketFn = void (WINAPI*)(SessionHandle, BYTE const*);
         using AllocateSendPacketFn = BYTE* (WINAPI*)(SessionHandle, DWORD);
         using SendPacketFn = void (WINAPI*)(SessionHandle, BYTE const*);
+        using GetAdapterLuidFn = void (WINAPI*)(AdapterHandle, ULONG64*);
+        using GetReadWaitEventFn = HANDLE (WINAPI*)(SessionHandle);
 
         auto to_wide(std::string_view text) -> std::wstring {
             if (text.empty()) return {};
@@ -43,6 +45,8 @@ namespace packet {
         ReleaseReceivePacketFn release_packet = nullptr;
         AllocateSendPacketFn alloc_send = nullptr;
         SendPacketFn send_packet = nullptr;
+        HANDLE read_event = nullptr;
+        std::uint64_t luid = 0;
         std::string name;
 
         ~Impl() { shutdown(); }
@@ -62,7 +66,6 @@ namespace packet {
         if (cfg.name.empty() || cfg.name.size() > 127 || cfg.ring_capacity < 0x20000 || cfg.ring_capacity > 0x4000000)
             return std::unexpected(WintunFailure{WintunError::invalid_name});
         HMODULE dll = ::LoadLibraryExW(L"wintun.dll", nullptr, LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
-        if (!dll) dll = ::LoadLibraryW(L"wintun.dll");
         if (!dll) return std::unexpected(WintunFailure{WintunError::dll_missing});
 
         auto impl = std::make_unique<Impl>();
@@ -88,11 +91,27 @@ namespace packet {
         impl->session = start_session(impl->adapter, cfg.ring_capacity);
         if (!impl->session)
             return std::unexpected(WintunFailure{std::error_code{static_cast<int>(::GetLastError()), std::system_category()}});
+        if (auto get_luid = reinterpret_cast<GetAdapterLuidFn>(::GetProcAddress(dll, "WintunGetAdapterLUID"))) {
+            ULONG64 raw_luid = 0;
+            get_luid(impl->adapter, &raw_luid);
+            impl->luid = static_cast<std::uint64_t>(raw_luid);
+        }
+        if (auto get_ev = reinterpret_cast<GetReadWaitEventFn>(::GetProcAddress(dll, "WintunGetReadWaitEvent")))
+            impl->read_event = get_ev(impl->session);
         return WindowsTun(std::move(impl));
     }
 
     auto WindowsTun::adapter_name() const noexcept -> std::string_view {
         return impl_ ? std::string_view(impl_->name) : std::string_view{};
+    }
+
+    auto WindowsTun::luid() const noexcept -> std::uint64_t {
+        return impl_ ? impl_->luid : 0;
+    }
+
+    auto WindowsTun::wait_read(std::uint32_t timeout_ms) const noexcept -> bool {
+        if (!impl_ || !impl_->read_event) return false;
+        return ::WaitForSingleObject(impl_->read_event, timeout_ms) == WAIT_OBJECT_0;
     }
 
     auto WindowsTun::read_packet(std::span<std::uint8_t> out)
@@ -139,6 +158,8 @@ namespace packet {
         return std::unexpected(WintunFailure{WintunError::unsupported});
     }
     auto WindowsTun::adapter_name() const noexcept -> std::string_view { return {}; }
+    auto WindowsTun::luid() const noexcept -> std::uint64_t { return 0; }
+    auto WindowsTun::wait_read(std::uint32_t) const noexcept -> bool { return false; }
     auto WindowsTun::read_packet(std::span<std::uint8_t>)
         -> std::expected<std::optional<std::size_t>, WintunFailure> {
         return std::unexpected(WintunFailure{WintunError::unsupported});

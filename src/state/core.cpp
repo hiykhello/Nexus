@@ -1,7 +1,7 @@
 module state.core;
 import std;
-import nexus.compat;
-import nexus.thirdparty.blake3;
+import functional;
+import blake3;
 
 namespace state {
     namespace {
@@ -23,13 +23,13 @@ namespace state {
 
         auto digest(std::span<std::byte const> prefix, Fingerprint const& fingerprint,
                     std::span<std::byte const> payload) noexcept -> Fingerprint {
-            nex::blake3::blake3_hasher hash;
-            nex::blake3::blake3_hasher_init(&hash);
-            nex::blake3::blake3_hasher_update(&hash, prefix.data(), prefix.size());
-            nex::blake3::blake3_hasher_update(&hash, fingerprint.data(), fingerprint.size());
-            if (!payload.empty()) nex::blake3::blake3_hasher_update(&hash, payload.data(), payload.size());
+            blake3::blake3_hasher hash;
+            blake3::blake3_hasher_init(&hash);
+            blake3::blake3_hasher_update(&hash, prefix.data(), prefix.size());
+            blake3::blake3_hasher_update(&hash, fingerprint.data(), fingerprint.size());
+            if (!payload.empty()) blake3::blake3_hasher_update(&hash, payload.data(), payload.size());
             Fingerprint result;
-            nex::blake3::blake3_hasher_finalize(&hash, reinterpret_cast<std::uint8_t*>(result.data()), result.size());
+            blake3::blake3_hasher_finalize(&hash, reinterpret_cast<std::uint8_t*>(result.data()), result.size());
             return result;
         }
 
@@ -110,7 +110,7 @@ namespace state {
     }
 
     auto ClearEpoch::publish(this ClearEpoch& self, std::uint64_t expected,
-                             nexus::function_ref<std::expected<void, StateError>()> action)
+                             functional::function_ref<std::expected<void, StateError>()> action)
         -> std::expected<void, StateError> {
         std::lock_guard lock(self.gate_);
         if (expected != self.current()) return std::unexpected(StateError{Stage::stale_epoch});

@@ -8,14 +8,14 @@ module;
 #include <boost/corosio/io_context.hpp>
 #include <boost/corosio/local_connect_pair.hpp>
 #include <boost/corosio/local_stream_socket.hpp>
-module proxy;
+module relay;
 import std;
 import dns.fakeip_shared;
 import dns.fakeip_registry;
 import dns.fakeip_response;
 import dns.message;
 
-namespace proxy {
+namespace relay {
     namespace {
         constexpr std::uint32_t base=0xc6120000;
         struct LifetimeState {
@@ -61,7 +61,7 @@ namespace proxy {
 }
 
 extern "C" int nexus_test_fakeip_lifetime(unsigned backend, unsigned mode) {
-    using namespace proxy;
+    using namespace relay;
     using namespace std::chrono_literals;
     LifetimeState state;
     state.pool=std::make_shared<dns::FakeIpShared>(1);

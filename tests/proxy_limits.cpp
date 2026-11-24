@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 import std;
-import proxy;
+import relay;
 
 using namespace std::chrono_literals;
 
@@ -198,8 +198,8 @@ static auto handshake_deadline(std::uint16_t port) -> bool {
 }
 
 static auto run_test(std::function<bool(std::uint16_t)> const& test, unsigned workers) -> bool {
-    proxy::Server server;
-    auto port = server.start(0,proxy::Inbound::socks5,workers);
+    relay::Server server;
+    auto port = server.start(0,relay::Inbound::socks5,workers);
     if (!port) { std::cerr << "proxy start failed: " << port.error() << '\n'; return false; }
     std::atomic_bool stop{false};
     std::jthread loop([&] { while (!stop) server.poll(20ms); server.stop(); });
@@ -218,10 +218,10 @@ static auto start_rollback() -> bool {
         ::listen(occupied.fd,1)!=0) return false;
     socklen_t size=sizeof(address);
     if (::getsockname(occupied.fd,reinterpret_cast<sockaddr*>(&address),&size)!=0) return false;
-    proxy::Server server;
-    if (server.start(ntohs(address.sin_port),proxy::Inbound::socks5,2)) return false;
+    relay::Server server;
+    if (server.start(ntohs(address.sin_port),relay::Inbound::socks5,2)) return false;
     occupied.close();
-    auto retry=server.start(ntohs(address.sin_port),proxy::Inbound::socks5,2);
+    auto retry=server.start(ntohs(address.sin_port),relay::Inbound::socks5,2);
     if (!retry || !server.healthy()) return false;
     server.stop();
     return !server.healthy();

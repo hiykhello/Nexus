@@ -1,6 +1,6 @@
 #include <sched.h>
 import std;
-import proxy;
+import relay;
 import dns.local_config;
 using namespace std::chrono_literals;
 
@@ -23,7 +23,7 @@ auto main() -> int {
     auto before=threads();
     int result=0;
     {
-        proxy::Server server;
+        relay::Server server;
         auto port=server.start(0);
         if (!port || threads()!=before) result=4;
         else {

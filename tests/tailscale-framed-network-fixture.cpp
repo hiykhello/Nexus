@@ -4,11 +4,10 @@ import tailscale.control_record_codec;
 import net.framed_stream;
 import net.socket_stream;
 import crypto;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace t=tailscale::control;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Lower=net::SocketByteStream<io::tcp_socket>;
 struct Fixture {

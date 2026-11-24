@@ -1,6 +1,6 @@
 #include <cstdio>
 import std;
-import proxy;
+import relay;
 using namespace std::chrono_literals;
 bool profile_alive=false;
 int entered=0, exited=0;
@@ -15,10 +15,10 @@ extern "C" bool nexus_test_skip_server_stop() { return skip_stop; }
 int main(int argc,char** argv) {
     if (argc!=4) return 1;
     {
-        proxy::Server server;
+        relay::Server server;
         std::array<std::string,1> users{argv[3]};
         if (!server.prepare_vless_inbound(argv[1],argv[2],users)) return 2;
-        auto port=server.start(0,proxy::Inbound::vless,1); if (!port) return 3;
+        auto port=server.start(0,relay::Inbound::vless,1); if (!port) return 3;
         std::println("{}",*port); std::fflush(stdout);
         for (int i=0;i<1000 && entered<2;++i) server.poll(10ms);
         if (entered!=2 || exited || parent_exited || !profile_alive) return 4;

@@ -4,7 +4,7 @@
 #include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "../src/shadowsocks/probe_close.hpp"
+import shadowsocks.probe_close;
 
 namespace s=shadowsocks::detail;
 auto scenario(bool unread) -> bool {

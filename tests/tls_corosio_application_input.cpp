@@ -1,10 +1,10 @@
 #include <boost/corosio/backend.hpp>
 import std;
 import tls.application_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.corosio_application;
-namespace capy=nex::capy; namespace io=nex::corosio; namespace t=tls; namespace c = ::crypto; using Bytes=c::Bytes; using namespace std::chrono_literals;
+namespace io = ::corosio; namespace t=tls; namespace c = ::crypto; using Bytes=c::Bytes; using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection dir,int n) -> t::RecordLayer { auto s=secret(n); auto key=t::expand_label(c::Hash::sha256,s.view(),"key",{},16), iv=t::expand_label(c::Hash::sha256,s.view(),"iv",{},12); if (!key || !iv) std::abort(); auto l=t::RecordLayer::create(dir,c::Aead::aes_128_gcm,key->view(),iv->view()); if (!l) std::abort(); return std::move(*l); }
 auto app(int send,int recv) -> t::ApplicationIo { return t::ApplicationIo(t::ApplicationRecords(layer(t::RecordDirection::send,send),layer(t::RecordDirection::receive,recv),16385,16385,c::Hash::sha256,c::Aead::aes_128_gcm,16,secret(send),secret(recv),t::ApplicationRole::client)); }

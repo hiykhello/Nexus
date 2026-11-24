@@ -1,5 +1,5 @@
 import std;
-import proxy;
+import relay;
 
 #ifdef NEXUS_TEST_DNS_SHARED_ACCESS
 extern "C" void nexus_test_dns_shared_access(void const*) noexcept {}
@@ -12,7 +12,7 @@ auto main(int argc,char** argv) -> int {
     if (!ss_port || ss_port>65535 || !vless_port || vless_port>65535 || order>1 || workers<1 || workers>2) return 2;
     std::array<std::uint8_t,16> key{};
     for (std::size_t i=0;i<key.size();++i) key[i]=static_cast<std::uint8_t>(i);
-    auto server=proxy::Server::create();
+    auto server=relay::Server::create();
     if (!server) return 3;
     auto add_ss=[&] { return (*server)->add_shadowsocks("127.0.0.1",static_cast<std::uint16_t>(ss_port),key); };
     auto add_vless=[&] { return (*server)->add_vless("127.0.0.1",static_cast<std::uint16_t>(vless_port),argv[3],"cover.example",argv[4]); };
@@ -25,10 +25,10 @@ auto main(int argc,char** argv) -> int {
         if (std::string_view(argv[7])!="reverse") return 7;
         std::swap(ss_index,vless_index);
     }
-    constexpr auto rule="schema-version 1\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"127.0.0.2/32\"\n";
-    proxy::IndexedRouteRule routes[]{{rule,proxy::RuleFormat::kdl,ss_index}};
+    constexpr auto rule="schema-version 2\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"127.0.0.2/32\"\n";
+    relay::IndexedRouteRule routes[]{{rule,relay::RuleFormat::kdl,ss_index}};
     if (!(*server)->set_indexed_routes(routes,vless_index)) return 5;
-    auto port=(*server)->start(0,proxy::Inbound::socks5,workers);
+    auto port=(*server)->start(0,relay::Inbound::socks5,workers);
     if (!port) return 6;
     std::atomic_bool stopped=false;
     std::jthread control([&] { std::string line; std::getline(std::cin,line); stopped=true; });

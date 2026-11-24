@@ -28,7 +28,7 @@ def exact(sock,size):
 with tempfile.TemporaryDirectory(prefix="nexus-uot-config-") as directory:
     root=pathlib.Path(directory); front=port(); listen=port()
     key=base64.b64encode(bytes(range(16))).decode(); (root/"key").write_text(key); (root/"key").chmod(0o600)
-    (root/"ip.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+    (root/"ip.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
     config={"log":{"level":"error"},"inbounds":[{"type":"shadowsocks","listen":"127.0.0.1","listen_port":front,
             "method":"2022-blake3-aes-128-gcm","password":key}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}
     (root/"box.json").write_text(json.dumps(config))

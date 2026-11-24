@@ -1,7 +1,7 @@
 export module quic.transport_memory;
 import std;
 import memory.budget;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 
 export namespace quic {
     struct NativeHeap {
@@ -62,6 +62,6 @@ export namespace quic {
             release(pointer, owner);
             return memory;
         }
-        auto transport() noexcept -> nex::ngtcp2::ngtcp2_mem { return {this, allocate, release, zero, resize}; }
+        auto transport() noexcept -> ngtcp2::ngtcp2_mem { return {this, allocate, release, zero, resize}; }
     };
 }

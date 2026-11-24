@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "tun-fault-tests"
 version = "0.1.0"
 
@@ -7,7 +6,7 @@ version = "0.1.0"
 # binaries that supply the corresponding wrappers. Use its namesake profile
 # so the link flags do not reach ordinary tests or production targets.
 [dependencies]
-nexus.tun = { path = "../../src/transport" }
+tun = { path = "../../src/tun" }
 
 [features]
 udp-receive = []

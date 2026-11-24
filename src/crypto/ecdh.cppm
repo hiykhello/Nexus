@@ -11,9 +11,9 @@ export namespace crypto {
     };
     [[nodiscard]] constexpr auto nist_curve(std::uint16_t group) noexcept -> std::optional<NistCurve> {
         switch(group) {
-        case 23: return NistCurve{23,nex::boringssl::nid_x9_62_prime256v1,32};
-        case 24: return NistCurve{24,nex::boringssl::nid_secp384r1,48};
-        case 25: return NistCurve{25,nex::boringssl::nid_secp521r1,66};
+        case 23: return NistCurve{23,boringssl::nid_x9_62_prime256v1,32};
+        case 24: return NistCurve{24,boringssl::nid_secp384r1,48};
+        case 25: return NistCurve{25,boringssl::nid_secp521r1,66};
         default: return {};
         }
     }
@@ -37,8 +37,8 @@ export namespace crypto {
     };
     // Direct owner of the native ephemeral key. No heap-allocated C++ wrapper.
     class EcPrivate {
-        nex::boringssl::EC_KEY* key_;
-        explicit EcPrivate(nex::boringssl::EC_KEY* key) noexcept : key_(key) {}
+        boringssl::EC_KEY* key_;
+        explicit EcPrivate(boringssl::EC_KEY* key) noexcept : key_(key) {}
     public:
         ~EcPrivate();
         EcPrivate(EcPrivate const&)=delete;

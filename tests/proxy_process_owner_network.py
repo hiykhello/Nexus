@@ -107,8 +107,10 @@ def check_route(binary, root, first, second, ordered, regex=False, srs_compiler=
             rule action="reject"
         }'''
     else:
-        route = '''rule kind="rule-set" value="first" outbound="direct"
-        rule kind="rule-set" value="other" outbound="deny"'''
+        route = '''rules {
+            - kind="rule-set" value="first" outbound="direct"
+            - kind="rule-set" value="other" outbound="deny"
+        }'''
     config.write_text(f'''schema-version 1
 role "client"
 workers 2
@@ -212,7 +214,7 @@ inbounds {{
 outbounds {{ direct "direct" {{ routing-mark {mark}; }}; block "deny"; }}
 routing {{
     rule-set "other" path="other.kdl" format="kdl"
-    rule kind="rule-set" value="other" outbound="deny"
+    rules {{ - kind="rule-set" value="other" outbound="deny"; }}
     default-outbound "direct"
 }}
 ''')

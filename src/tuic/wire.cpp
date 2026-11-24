@@ -277,7 +277,7 @@ namespace tuic {
         return result;
     }
 
-    auto UdpDefragmenter::feed(PacketView const& packet) -> std::expected<std::optional<Completed>, WireError> {
+    auto UdpDefragmenter::feed(PacketView const& packet, std::uint64_t now_ns) -> std::expected<std::optional<Completed>, WireError> {
         auto const& h = packet.header;
         if (!h.frag_total || h.frag_total > max_defrag_fragments || h.frag_id >= h.frag_total)
             return std::unexpected(WireError::invalid);
@@ -289,8 +289,12 @@ namespace tuic {
         std::optional<Entry>* empty = nullptr;
         std::optional<Entry>* oldest = &slots_[0];
         for (auto& slot : slots_) {
+            if (slot && now_ns && slot->created_ns && now_ns >= slot->created_ns &&
+                now_ns - slot->created_ns >= defrag_entry_ttl_ns) {
+                slot.reset();
+            }
             if (slot) {
-                if (slot->assoc_id == h.assoc_id && slot->packet_id == h.packet_id) { target = &slot; break; }
+                if (!target && slot->assoc_id == h.assoc_id && slot->packet_id == h.packet_id) target = &slot;
                 if (!oldest || !*oldest || slot->stamp < (*oldest)->stamp) oldest = &slot;
             } else if (!empty) {
                 empty = &slot;
@@ -301,14 +305,15 @@ namespace tuic {
             target->emplace();
             (*target)->assoc_id = h.assoc_id;
             (*target)->packet_id = h.packet_id;
+            (*target)->created_ns = now_ns;
             (*target)->frag_total = h.frag_total;
             (*target)->destination = h.destination;
             (*target)->fragments.resize(h.frag_total);
         } else {
-            if ((*target)->frag_total != h.frag_total) return std::unexpected(WireError::conflict);
+            if ((*target)->frag_total != h.frag_total) { target->reset(); return std::unexpected(WireError::conflict); }
             if (h.destination.type != AddressType::none) {
                 if ((*target)->destination.type == AddressType::none) (*target)->destination = h.destination;
-                else if ((*target)->destination != h.destination) return std::unexpected(WireError::conflict);
+                else if ((*target)->destination != h.destination) { target->reset(); return std::unexpected(WireError::conflict); }
             }
             if (((*target)->received_mask >> h.frag_id) & 1u) return std::unexpected(WireError::duplicate);
         }

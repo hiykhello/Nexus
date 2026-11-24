@@ -11,6 +11,7 @@ export namespace tuic {
     inline constexpr std::size_t max_defrag_entries = 64;
     inline constexpr std::size_t max_defrag_packet_bytes = 65535;
     inline constexpr std::size_t max_defrag_fragments = 64;
+    inline constexpr std::uint64_t defrag_entry_ttl_ns = 5'000'000'000ULL;
 
     enum class Command : std::uint8_t {
         authenticate = 0,
@@ -111,6 +112,7 @@ export namespace tuic {
             std::uint16_t assoc_id = 0;
             std::uint16_t packet_id = 0;
             std::uint64_t stamp = 0;
+            std::uint64_t created_ns = 0;
             std::uint8_t frag_total = 0;
             std::uint8_t received_count = 0;
             std::uint64_t received_mask = 0;
@@ -127,7 +129,7 @@ export namespace tuic {
             TargetAddress destination;
             std::vector<std::uint8_t> payload;
         };
-        [[nodiscard]] auto feed(PacketView const& packet) -> std::expected<std::optional<Completed>, WireError>;
+        [[nodiscard]] auto feed(PacketView const& packet, std::uint64_t now_ns = 0) -> std::expected<std::optional<Completed>, WireError>;
         [[nodiscard]] auto active_entries() const noexcept -> std::size_t;
         auto clear_association(std::uint16_t assoc_id) noexcept -> void;
     };

@@ -3,7 +3,7 @@ import std;
 export import state.core;
 
 export namespace state {
-    enum class RuleFormat : std::uint8_t { kdl = 1, beve, srs };
+    enum class RuleFormat : std::uint8_t { kdl = 1, beve, srs, nxmm, json, domain_list, ipcidr_list, classical, adguard };
 
     struct RulesetKey {
         std::string canonical_url;
@@ -31,7 +31,7 @@ export namespace state {
     };
 
     struct RulesetCacheLimits {
-        std::uint64_t max_bytes = 64 * 1024 * 1024;
+        std::uint64_t max_bytes = 128ull * 1024 * 1024;
         std::size_t max_entries = 64;
     };
 

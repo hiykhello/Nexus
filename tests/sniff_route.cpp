@@ -181,5 +181,19 @@ int main() {
     if(!second_unknown || second_unknown->kind!=ProgramPreflightKind::uncertain || second_unknown->rule_index!=2)return 39;
     auto now_known=selective.poll(*skip_program,{.sniffed_domain="second.example"});
     if(!now_known || !now_known->step || now_known->step->action.outbound!=1 || selective.skip_unknown(2))return 40;
+    {
+        RuleSet nx_rs{{{"domain-suffix","nxmm.example"}},2};
+        auto nx_bin=compile_nxmm(nx_rs);
+        if(!nx_bin)return 41;
+        auto nx_mm=MmapMatcher::open_bytes(std::move(*nx_bin));
+        if(!nx_mm)return 42;
+        auto nx_ptr=std::make_shared<MmapMatcher const>(std::move(*nx_mm));
+        std::vector<RouteRule> nx_rules{{RuleSet{{},2},1,{},nx_ptr}};
+        auto nx_prog=LegacyRouteProgram::compile(nx_rules,0,2);
+        if(!nx_prog)return 43;
+        auto hit=nx_prog->match({.domain="api.nxmm.example"});
+        auto miss=nx_prog->match({.domain="other.invalid"});
+        if(!hit || *hit!=1 || !miss || *miss!=0)return 44;
+    }
     std::cout << "HTTP/TLS sniff metadata and ordered rule actions passed\n";
 }

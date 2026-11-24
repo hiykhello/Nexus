@@ -9,8 +9,8 @@ import dns.evaluate_owner;
 import dns.race_admission;
 import dns.policy;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns {
     // One query operation returns a raw response for evaluate, or a complete
@@ -89,7 +89,7 @@ export namespace dns {
             std::optional<detail::EvaluatedResponseMeta> metadata;
             std::optional<AddressRaceResult> route;
         };
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         std::span<policy::DnsRule const> rules_;
         std::span<ResponseRaceMode const> modes_;
         std::size_t fallback_;
@@ -135,7 +135,7 @@ export namespace dns {
         }
         template<class Factory>
         auto execute(Owner& owner,Factory& factory,std::string_view name,std::uint16_t type,policy::DnsContext context,Clock::time_point deadline)
-            -> nex::capy::task<std::expected<AddressRaceDecision,Error>> {
+            -> capy::task<std::expected<AddressRaceDecision,Error>> {
             Walk walk(rules_,modes_,fallback_,disabled_);
             for(;;) {
                 if(canceled_)co_return std::unexpected(Error::canceled);
@@ -155,7 +155,7 @@ export namespace dns {
                     continue;
                 }
                 if(event->kind==Walk::Kind::wait) {
-                    auto [error]=co_await nex::corosio::timeout(owner.wait(epoch),deadline);
+                    auto [error]=co_await corosio::timeout(owner.wait(epoch),deadline);
                     if(error)co_return std::unexpected(canceled_ ? Error::canceled : Clock::now()>=deadline ? Error::timeout : Error::state);
                     continue;
                 }
@@ -184,7 +184,7 @@ export namespace dns {
                                     slot.result_lease=std::move(value->lease);slot.route.emplace(std::move(value->value));
                                     slot.handle.reset();break;
                                 }
-                                auto [error]=co_await nex::corosio::timeout(owner.wait(observed),deadline);
+                                auto [error]=co_await corosio::timeout(owner.wait(observed),deadline);
                                 if(error)co_return std::unexpected(canceled_ ? Error::canceled : Clock::now()>=deadline ? Error::timeout : Error::state);
                             }
                         }
@@ -196,7 +196,7 @@ export namespace dns {
             }
         }
     public:
-        AddressRaceProgram(nex::corosio::io_context& context,std::span<policy::DnsRule const> rules,
+        AddressRaceProgram(corosio::io_context& context,std::span<policy::DnsRule const> rules,
             std::span<ResponseRaceMode const> modes,std::size_t fallback,bool disabled=false) noexcept
             :context_(context),rules_(rules),modes_(modes),fallback_(fallback),disabled_(disabled) {}
         AddressRaceProgram(AddressRaceProgram const&)=delete;
@@ -208,7 +208,7 @@ export namespace dns {
         // returned decision, including asynchronous CNAME continuation.
         template<class Factory>
         auto run(Factory& factory,std::string_view name,std::uint16_t type,policy::DnsContext context,Clock::time_point deadline)
-            -> nex::capy::task<std::expected<AddressRaceDecision,Error>> {
+            -> capy::task<std::expected<AddressRaceDecision,Error>> {
             if(std::exchange(started_,true) || (!modes_.empty() && modes_.size()!=rules_.size()))co_return std::unexpected(Error::state);
             if(canceled_)co_return std::unexpected(Error::canceled);
             RaceAdmission admission;if(!admission.acquired())co_return std::unexpected(Error::limit);

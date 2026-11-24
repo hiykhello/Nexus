@@ -65,7 +65,7 @@ mcpp --offline build --target x86_64-linux-gnu -j 1
 
 | 依赖 | 固定来源 | 边界 |
 | --- | --- | --- |
-| Glaze KDL | `fc646588635c42cca142562d7b3d0484cc4493b7` | 指定 fork 的 KDL/BEVE，头文件经 Nexus 模块导出 |
+| Glaze KDL | `4e3230a6c1a3e665a6d81ca18e804291f894e876`（见 `3rdparty/mcpp-pins.json`） | `hiykhello/glaze-kdl` KDL/BEVE，头文件经 Nexus 模块导出 |
 | ngcpp/proxy | `9d9749d63766cdd9affb5ea7953237e38ce5ab63` | 原生 `proxy.v4` `.ixx` 接口 |
 | Capy | `a8e93ccfec2ace5b3e35029a4b2f1b7e087c7aa2` | 保留 CPO、`when_all`、`run_async` 三个本地补丁与静态库配置 |
 | Corosio | `70adbd5aff90569aac588e78a717fecbd5b7dedc` | 保留 thread-local 补丁和同一 Capy；无 TLS provider，可选系统 liburing |
@@ -96,7 +96,7 @@ Linux 的线程和 liburing 属于系统能力，应明确检测及链接，不�
 
 CLI 使用 C++26 反射。只在入口源加 `-freflection` 时，GCC 拒绝同时导入未使用该方言构建的 `std` BMI；因此在 `[build].dialect_cxxflags` 中指定该选项，使同一构建图中的标准模块和所有编译单元一致。当前五个带条件 import 的服务器源使用只适用于默认配置的 `scan_overrides`，编译器 P1689 扫描会核对声明；启用新增功能或测试宏之前必须提供与该配置一致的模块图，不能将当前声明视为所有配置通用。
 
-项目内 `3rdparty/mcpp-index` 对 Glaze 的固定提交归档指定 SHA-256 `f238db70dee9ef25d0898a0da062209453225832d0d82f10d1fb11037c81ef3b`，以项目已有的命名模块导出接口；试验时先将已校验的归档放进隔离项目缓存，再由 mcpp 安装。项目自身的 `.mcpp/` 是本地索引缓存并已忽略，`mcpp.lock` 保留；锁文件提示 index 依赖仍按版本约束重新解析，因此还须保留精确版本与 descriptor 的内容校验，不能仅靠锁文件断言源码字节固定。
+项目内 `3rdparty/mcpp-index` 对 Glaze 的固定提交归档指定 SHA-256 `d3f83cf958aed10f7e27dc672cb05d755773ce5572eed90c20a463b46b4a66c4`（见 `3rdparty/mcpp-pins.json`），以项目已有的命名模块导出接口；试验时先将已校验的归档放进隔离项目缓存，再由 mcpp 安装。项目自身的 `.mcpp/` 是本地索引缓存并已忽略，`mcpp.lock` 保留；锁文件提示 index 依赖仍按版本约束重新解析，因此还须保留精确版本与 descriptor 的内容校验，不能仅靠锁文件断言源码字节固定。
 
 ### 代理与网络依赖
 

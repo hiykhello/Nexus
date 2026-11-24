@@ -3,11 +3,10 @@ import dns.evaluate_owner;
 import dns.response_query;
 import dns.corosio_resolver;
 import dns.message;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using Result=std::expected<dns::Bytes,dns::detail::ResolveError>;
 struct Operation {
     dns::detail::MessageQuery query;

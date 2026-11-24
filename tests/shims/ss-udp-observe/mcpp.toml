@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "ss-udp-observe-shim"
 version = "0.1.0"
 

@@ -1,11 +1,11 @@
 import std;
 import quic.http3;
 import quic.http3_headers;
-import nexus.thirdparty.nghttp3;
+import nghttp3;
 import hysteria2.auth;
 import http.header;
 
-namespace n=nex::nghttp3;
+namespace n = ::nghttp3;
 namespace q=quic;
 namespace h=hysteria2;
 using View=std::span<std::uint8_t const>;

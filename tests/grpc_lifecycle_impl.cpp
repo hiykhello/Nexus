@@ -1,11 +1,11 @@
-module proxy;
+module relay;
 import std;
 import proxy.v4;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace rtcapy=nex::capy;namespace rtio=nex::corosio;
+import capy;
+import corosio;
+namespace rtcapy = ::capy;namespace rtio = ::corosio;
 namespace {
-    using namespace proxy;
+    using namespace relay;
     using namespace std::chrono_literals;
     struct Result {bool done=false,passed=false;unsigned stage=0;};
     auto application(rtio::io_context& context,TunnelFactory const& factory,unsigned target,Result& result,unsigned mode=0) -> rtcapy::task<> {
@@ -36,7 +36,7 @@ extern "C" int nexus_test_grpc_runtime(char const*,char const*,unsigned,unsigned
     void (*)(bool,std::size_t) noexcept,bool (*)() noexcept);
 extern "C" int nexus_test_grpc_lifecycle(char const* uuid,char const* ca,unsigned remote,unsigned target,unsigned backend,unsigned mode,
     void (*inject)(bool,std::size_t) noexcept,bool (*fired)() noexcept) {
-    using namespace proxy;
+    using namespace relay;
     if (!remote || remote>65535 || !target || target>65535 || backend>1 || mode<1 || mode>4 || (backend && !rtio::has_uring)) return 64;
     auto previous=rtcapy::get_current_frame_allocator();rtcapy::set_current_frame_allocator(std::pmr::new_delete_resource());
     struct Restore {std::pmr::memory_resource* value;~Restore() {rtcapy::set_current_frame_allocator(value);}} restore{previous};

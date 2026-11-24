@@ -1,6 +1,6 @@
 module dns.dhcp_upstream;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import platform.ip_address;
 
 namespace dns {
@@ -11,14 +11,14 @@ namespace dns {
             return s;
         }
 
-        auto append_unique(nexus::inplace_vector<DhcpServerEntry, 8>& out, platform::IpAddress addr, std::uint32_t ttl) -> void {
+        auto append_unique(containers::inplace_vector<DhcpServerEntry, 8>& out, platform::IpAddress addr, std::uint32_t ttl) -> void {
             for (auto const& e : out) {
                 if (e.address.size == addr.size && std::ranges::equal(e.address.view(), addr.view())) return;
             }
             (void)out.try_emplace_back(DhcpServerEntry{addr, ttl});
         }
 
-        auto parse_token_addresses(std::string_view list_text, std::uint32_t ttl, nexus::inplace_vector<DhcpServerEntry, 8>& out) -> void {
+        auto parse_token_addresses(std::string_view list_text, std::uint32_t ttl, containers::inplace_vector<DhcpServerEntry, 8>& out) -> void {
             while (!list_text.empty()) {
                 auto sep = list_text.find_first_of(", \t");
                 auto tok = trim(sep == std::string_view::npos ? list_text : list_text.substr(0, sep));
@@ -33,8 +33,8 @@ namespace dns {
     }
 
     auto parse_dhcp_option6(std::span<std::uint8_t const> bytes, std::uint32_t lease_ttl_seconds)
-        -> nexus::inplace_vector<DhcpServerEntry, 8> {
-        nexus::inplace_vector<DhcpServerEntry, 8> out;
+        -> containers::inplace_vector<DhcpServerEntry, 8> {
+        containers::inplace_vector<DhcpServerEntry, 8> out;
         if (bytes.size() < 4 || (bytes.size() % 4) != 0) return out;
         for (std::size_t off = 0; off < bytes.size(); off += 4) {
             platform::IpAddress ip{.size = 4};
@@ -44,8 +44,8 @@ namespace dns {
         return out;
     }
 
-    auto parse_dhcp_lease_text(std::string_view text) -> nexus::inplace_vector<DhcpServerEntry, 8> {
-        nexus::inplace_vector<DhcpServerEntry, 8> out;
+    auto parse_dhcp_lease_text(std::string_view text) -> containers::inplace_vector<DhcpServerEntry, 8> {
+        containers::inplace_vector<DhcpServerEntry, 8> out;
         std::uint32_t current_ttl = 3600;
         std::size_t pos = 0;
         while (pos < text.size()) {
@@ -71,26 +71,34 @@ namespace dns {
     }
 
     auto discover_dhcp_dns_servers(std::span<std::string_view const> candidate_paths)
-        -> nexus::inplace_vector<DhcpServerEntry, 8> {
+        -> containers::inplace_vector<DhcpServerEntry, 8> {
         static constexpr std::array<std::string_view, 3> kDefaults{
             "/run/systemd/netif/leases",
             "/var/lib/dhcp/dhclient.leases",
             "/etc/resolv.conf",
         };
+        static constexpr std::size_t kMaxLeaseFiles = 64;
+        static constexpr std::size_t kMaxLeaseFileBytes = 1024 * 1024;
         auto paths = candidate_paths.empty() ? std::span<std::string_view const>(kDefaults) : candidate_paths;
-        nexus::inplace_vector<DhcpServerEntry, 8> out;
+        containers::inplace_vector<DhcpServerEntry, 8> out;
         for (auto raw_path : paths) {
             std::filesystem::path p(raw_path);
             std::error_code ec;
             auto merge_file = [&](std::filesystem::path const& file) {
-                std::ifstream in(file);
+                std::ifstream in(file, std::ios::binary);
                 if (!in) return;
-                std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                std::string content(kMaxLeaseFileBytes + 1, '\0');
+                in.read(content.data(), static_cast<std::streamsize>(content.size()));
+                auto got = static_cast<std::size_t>(in.gcount());
+                if (got == 0 || got > kMaxLeaseFileBytes) return;
+                content.resize(got);
                 for (auto const& e : parse_dhcp_lease_text(content)) append_unique(out, e.address, e.lease_ttl_seconds);
             };
             if (std::filesystem::is_directory(p, ec)) {
+                std::size_t scanned = 0;
                 for (auto const& ent : std::filesystem::directory_iterator(p, ec)) {
-                    if (ent.is_regular_file(ec)) merge_file(ent.path());
+                    if (scanned >= kMaxLeaseFiles) break;
+                    if (ent.is_regular_file(ec)) { ++scanned; merge_file(ent.path()); }
                 }
             } else if (std::filesystem::is_regular_file(p, ec)) {
                 merge_file(p);

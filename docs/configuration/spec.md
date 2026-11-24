@@ -4,7 +4,7 @@
 
 ## 文档、名称与加载
 
-主文件包含一个 `schema-version 1`、一个 `role "client"` 或 `role "server"`。`log`、`dns`、`routing`、`control` 最多各一个；`inbounds`、`outbounds` 分别包含可重复的 `inbound`、`outbound`；`endpoint` 可重复，第一位置参数为非空名称，分组内使用类型名作为节点名，例如 `socks5 "local"`、`direct "direct"`；DNS `servers` 同样使用 `udp` 等类型名。规则放在 `rules` 块中，以 `-` 为每条规则的节点名。旧 `inbound`/`outbound`/`server` 加 `type` 和直接 `rule` 写法暂兼容。名称在同一类内唯一；出站与可作为出口使用的 endpoint 在出口引用命名空间内也不得重复。tag 精确匹配，不做环境变量或通配展开。
+主文件包含一个 `schema-version 1`、一个 `role "client"` 或 `role "server"`。`log`、`dns`、`routing`、`control` 最多各一个；`inbounds`、`outbounds` 分别包含可重复的 `inbound`、`outbound`；`endpoint` 可重复，第一位置参数为非空名称，分组内使用类型名作为节点名，例如 `socks5 "local"`、`direct "direct"`（`outbounds` 中 `direct`、`block` 可省略同名参数）；`listen`/`server`/`fallback`/`target` 支持 `"host:port"` 或 IPv6 `"[::1]:port"` 短写；出站组可用 `members "a" "b"` 展开成员；DNS `servers` 同样使用 `udp` 等类型名。规则放在 `rules` 块中，以 `-` 为每条规则的节点名：路由 `rules` 支持可选 `sniff-timeout-ms`、`unknown`、`udp` 属性及有序简写（`- sniff`、`- resolve`、`- hijack-dns`、`- reject`、`- <谓词> <值...> to="出口"`、`- rule-set "集" to="出口"`、`- default "默认出口"`，支持 `routing { default "出口" }`）；DNS `rules` 支持 `- domain-suffix "cn" to="local"` 等属性别名与简写。旧 `inbound`/`outbound`/`server` 加 `type`、传统 `rule kind="rule-set"`、`tcp-program` 和直接 `rule` 写法继续兼容。名称在同一类内唯一；出站与可作为出口使用的 endpoint 在出口引用命名空间内也不得重复。tag 精确匹配，不做环境变量或通配展开。
 
 节点的单值子项只能出现一次，列表项（`address`、`member`、`rule`、`deny-cidr` 等）按文档顺序保留；对必须字段、未知节点/属性、非法类型、重复单值及悬空引用报错。KDL 属性按语言规范后写覆盖，若需要拒绝重复属性须先验证 Glaze 是否保留足够的原始信息，不能声称已能检查。仅下文明确的默认值可省略；其余缺失项的默认值待决定，示例尽量显式写出。
 
@@ -201,7 +201,7 @@ control http-listen="127.0.0.1:9090" bearer-token-file="/etc/nexus/secrets/contr
 
 `control` 可用 `selector-state-directory="/var/lib/nexus/selectors"` 保存手动选择。目录须已创建，由运行账户所有，权限为 `0700`。为每个运行实例使用独立目录，运行中保留稳定的 `instance.lock`。有效的已保存选择覆盖启动和重载配置中的 `selected`。可读取既有 NXSEL1 快照，下一次成功选择会写入带 BLAKE3 校验的 NXST01 封装。损坏或未知版本的选择快照保留在原处并拒绝启动。目录同步失败时，已替换的选择仍会发布，控制端收到 `selector-active-persistence-uncertain`。要改用配置基线，可在进程停止时迁出该目录的 `selectors.state`。
 
-可在 `dns` 中设置 `message-cache-directory "/var/cache/nexus/messages"` 保存独立 DNS 监听器的应答缓存。开启消息缓存时，可以为多个无显式接口绑定的数值 UDP/TCP 上游及内联 DNS 规则保存视图。旧入口与 FakeIP、系统或加密 DNS 上游和外部 DNS 规则集互斥。统一缓存见下一节。目录须已创建，归运行账户所有且为私有。宿主持有目录独占锁，正常关闭前原子替换至多 1 MiB 的 NXDNS2 快照。每条记录保留所属上游，恢复时校验 DNS 策略与快照完整性并扣除停机时间。策略或上游变化、快照损坏时从空缓存开始。原有单个无绑定数值上游且无规则的配置可读取 NXDNS1，并在正常关闭时写为 NXDNS2。
+可在 `dns` 中设置 `message-cache-directory "/var/cache/nexus/messages"` 保存独立 DNS 监听器的应答缓存。开启消息缓存时，可以为多个无显式接口绑定的数值 UDP/TCP 上游及内联 DNS 规则保存视图。旧入口与 FakeIP、系统或加密 DNS 上游和外部 DNS 规则集互斥。统一缓存见下一节。目录须已创建，归运行账户所有且为私有。宿主持有目录独占锁，正常关闭前原子替换至多 1 MiB 的 NXDNS2 快照。每条记录保留所属上游，恢复时校验 DNS 策略与快照完整性并扣除停机时间。策略或上游变化、快照损坏时从空缓存开始。
 
 ## 持久状态与缓存
 
@@ -219,7 +219,7 @@ state {
 
 统一 FakeIP 存储将池范围、保留地址、持久实例身份和分配高水位写入 `fakeip.meta`。默认 `range-reserve` 在应答前同步预留最多 256 个地址，段内新映射由后台批写 `fakeip.wal`，达到约 2 MiB 时发布 `fakeip.ckpt` 并截断 WAL。崩溃后重放完整记录，跳过未落盘的预留地址。该范围内缺少映射的地址会明确拒绝反查。小池可能因预留段用尽而停止分配。需要在每次应答前同步确认映射的实例可设置 `per-mapping`。统一存储在普通运行期间单向推进地址游标，池耗尽时拒绝分配。
 
-`cache-directory/dns/` 保存独立 DNS 监听器的 NXDN03 快照。每份快照最多 1 MiB，默认总预算 4 MiB，按 DNS 策略、上游类型、TLS 身份与信任文件、外部规则集内容分片，正常停机时保存，恢复时扣除停机时间。系统本地视图和经运行期代理 detour 的视图仍使用内存缓存。保留 `message-cache-directory` 并同时配置统一缓存根时，兼容的 NXDNS1 或 NXDNS2 会导入当前 NXDN03 分片。仅使用旧配置时继续读写原格式。远程规则下载使用 `cache-directory/rulesets/`，默认预算 64 MiB，可通过下载命令覆盖。
+`cache-directory/dns/` 保存独立 DNS 监听器的 NXDN03 快照。每份快照最多 1 MiB，默认总预算 4 MiB，按 DNS 策略、上游类型、TLS 身份与信任文件、外部规则集内容分片，正常停机时保存，恢复时扣除停机时间。系统本地视图和经运行期代理 detour 的视图仍使用内存缓存。仅使用旧配置时继续读写原格式。远程规则下载使用 `cache-directory/rulesets/`，默认预算 64 MiB，可通过下载命令覆盖。
 
 - `nexus state inspect --config <文件>` 只读输出各组件的存储版本、条目数、字节数及健康状态。输出仅含固定组件名和统计。
 - `nexus state clear-cache --config <文件> [--dns] [--rulesets]` 清理选定的 Tier 3 缓存，省略开关时清理两者。清除代次在删除前持久化，阻止清除前开始的磁盘写入重新发布旧数据。运行中 DNS 进程的内存条目继续随 TTL 过期。
@@ -513,7 +513,7 @@ Mixed/SOCKS 用户密码认证、AnyTLS、Trojan、VLESS、SS-2022 EIH、ShadowT
 
 TCP 可等待速率恢复，累计配额耗尽时结束受影响的子流。额度不足时丢弃整份 UDP 数据报。控制命令另报告 `upload`、`download`、`unconfirmed` 和 `byte-limit-denials`。已经提交且交付结果未知的字节记入 `unconfirmed` 并占用配额。同名入站和用户在监听器换代时沿用累计用量，旧流与新流同时使用更新后的字节预算。
 
-Linux 顶层 `tcp-splice-pipes 32` 为裸 TCP 直连启用内核转发。各监听器的 worker 共用管道预算，每个启用的转发方向占一条管道和两个 FD。范围为 0 至 256，默认 0。无法分配管道时该方向使用缓冲转发。代理隧道和普通 HTTP 正向代理继续走各自的协议转发。启用时 CLI 忽略 `SIGPIPE`，由转发操作处理写错误。修改配置需重启。
+Linux 顶层 `tcp-splice-pipes 64` 为裸 TCP 直连启用内核转发。各监听器的 worker 共用管道预算，每个启用的转发方向占一条管道和两个 FD。范围为 0 至 256，Linux 默认 64（显式设 0 可禁用）。无法分配管道时该方向使用缓冲转发。代理隧道和普通 HTTP 正向代理继续走各自的协议转发。启用时 CLI 忽略 `SIGPIPE`，由转发操作处理写错误。修改配置需重启。
 
 新接入会话使用发布后的规则。已接入的 TCP 连接和 SOCKS5 UDP 关联保留原有规则代次。包协议监听器及 TUN 设备的绑定修改需要重启。
 
@@ -678,7 +678,7 @@ routing { default-outbound "direct"; }
 
 普通 TUN 入站可用 `device-fd 3 ownership="borrow"` 接入宿主配置好的 Linux TUN。文件描述符须已在当前进程打开，使用非阻塞读写和无额外头部的 IP 包。默认 `borrow` 会复制描述符，停止时关闭副本。`ownership="adopt"` 在接入时接管原描述符，结束或启动回滚时关闭。每次重新启动接管模式须提供有效的新描述符。`interface-name` 可指定预期设备名，省略时从描述符获取。宿主负责设备 MTU、地址、路由和防回环，`mtu` 应与宿主设备一致。这种方式可用于 CLI 继承或宿主进程提供的描述符，不能与 Nexus 管理 TUN 地址、自动路由、严格路由或 CONNECT-IP TUN 同时使用。
 
-普通 TUN 入站可以在 `auto-route #true` 下设置 `strict-route #true`。严格路由独占该配置的入站，按已启用的地址族安装捕获及绕行规则，允许本地流量继续使用内核 local 表。Nexus 为外层 socket 设置 `socket-mark`，省略时使用 `0x6e780001`。具名物理 DNS 上游及旧式 `dns-upstream` 也使用该标记，使这些查询沿物理路由发出。标记流量经验证的物理路由绕行，找不到绕行路由时返回不可达。进程退出时撤回策略及设备，路由表或相应规则发生外部变更时停止。
+普通 TUN 入站可以在 `auto-route #true` 下设置 `strict-route #true`。严格路由独占该配置的入站，按已启用的地址族安装捕获及绕行规则，允许本地流量继续使用内核 local 表。Nexus 为外层 socket 设置 `socket-mark`，省略时使用 `0x6e780001`。具名物理 DNS 上游也使用该标记，使这些查询沿物理路由发出。标记流量经验证的物理路由绕行，找不到绕行路由时返回不可达。进程退出时撤回策略及设备，路由表或相应规则发生外部变更时停止。
 
 代理物理出站使用数字服务器地址。显式 outbound `routing-mark` 必须与 TUN 的 `socket-mark` 相同。启动需要管理目标网络命名空间路由与策略的权限。
 

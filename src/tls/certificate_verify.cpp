@@ -1,9 +1,9 @@
 module tls.certificate_verify;
-import nexus.thirdparty.boringssl;
+import boringssl;
 import tls.signature;
 import crypto.backend_errors;
 import std;
-using namespace nex::boringssl;
+using namespace boringssl;
 
 namespace tls {
     auto ed25519_certificate_fields(std::span<std::uint8_t const> der) -> std::expected<Ed25519CertificateFields,CertificateVerifyError> {

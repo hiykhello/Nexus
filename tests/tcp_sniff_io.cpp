@@ -3,12 +3,12 @@ import sniff.tcp;
 import sniff.tcp_io;
 import sniff.route_tcp;
 import rules;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace s=sniff;
-namespace c=nex::capy;
-namespace io=nex::corosio;
+namespace c = ::capy;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;
 

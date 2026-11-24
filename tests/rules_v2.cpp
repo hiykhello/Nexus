@@ -436,12 +436,10 @@ rule type="not" { rule type="source-ip-is-private" value="true"; }
     for (unsigned i=0;i<24;++i) {
         RuleSet predicates{{},2};
         for (unsigned j=0;j<7;++j) {
-            switch (j%4) {
-            case 0: predicates.rules.push_back({"domain",std::format("host{}.example",(i+j)%9),{}}); break;
-            case 1: predicates.rules.push_back({"domain-suffix",std::format("zone{}.example",(i+j)%7),{}}); break;
-            case 2: predicates.rules.push_back({"ip-cidr",std::format("10.{}.0.0/16",(i+j)%11),{}}); break;
-            default: predicates.rules.push_back({"port",std::to_string(8000+(i+j)%13),{}}); break;
-            }
+            if (j%4==0) predicates.rules.push_back({"domain",std::format("host{}.example",(i+j)%9),{}});
+            else if (j%4==1) predicates.rules.push_back({"domain-suffix",std::format("zone{}.example",(i+j)%7),{}});
+            else if (j%4==2) predicates.rules.push_back({"ip-cidr",std::format("10.{}.0.0/16",(i+j)%11),{}});
+            else predicates.rules.push_back({"port",std::to_string(8000+(i+j)%13),{}});
         }
         auto matcher=Matcher::compile(predicates);
         if (!matcher) { check(false,"compile range reference"); break; }
@@ -474,13 +472,11 @@ rule type="not" { rule type="source-ip-is-private" value="true"; }
     RuleSet indexed{{},2}, linear{{},2};
     for (unsigned i=0;i<120;++i) {
         Rule rule;
-        switch (i%5) {
-        case 0: rule={"domain",std::format("host{}.example",i%23),{}}; break;
-        case 1: rule={"domain-suffix",std::format("zone{}.example",i%17),{}}; break;
-        case 2: rule={"ip-cidr",std::format("10.{}.0.0/{}",i%256,8+i%17),{}}; break;
-        case 3: rule={"ip-cidr",std::format("2001:db8:{:x}::/{}",i,32+i%49),{}}; break;
-        default: rule={"port-range",std::format("{}-{}",1000+i,1200+i),{}}; break;
-        }
+        if (i%5==0) rule={"domain",std::format("host{}.example",i%23),{}};
+        else if (i%5==1) rule={"domain-suffix",std::format("zone{}.example",i%17),{}};
+        else if (i%5==2) rule={"ip-cidr",std::format("10.{}.0.0/{}",i%256,8+i%17),{}};
+        else if (i%5==3) rule={"ip-cidr",std::format("2001:db8:{:x}::/{}",i,32+i%49),{}};
+        else rule={"port-range",std::format("{}-{}",1000+i,1200+i),{}};
         indexed.rules.push_back(rule);
         linear.rules.push_back({"and","",{std::move(rule)}});
     }

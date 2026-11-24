@@ -1,7 +1,7 @@
 export module net.buffered_input;
 import std;
 import net.socket_stream;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace net {
     enum class InputStatus { ready,consumer,eof,state,transport,timeout,capacity };
@@ -32,7 +32,7 @@ export namespace net {
         auto invalidate() noexcept -> void {failed_=true;buffered_detail::erase(bytes_);begin_=end_=0;}
         template<class Lower,class Factory>
         static auto drive(Lower& lower,Factory factory,StreamDeadline deadline={})
-            -> nex::capy::task<typename decltype(factory())::Result> {
+            -> capy::task<typename decltype(factory())::Result> {
             auto state=factory();auto& input=state.input();
             if (input.active_ || input.failed_) {
                 state.abort();lower.cancel();co_return state.finish(InputStatus::state);

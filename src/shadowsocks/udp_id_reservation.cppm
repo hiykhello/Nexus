@@ -1,6 +1,6 @@
 export module shadowsocks.udp_id_reservation;
 import std;
-import nexus.compat;
+import functional;
 
 export namespace shadowsocks {
     // The persistent high-water mark is an exclusive bound. Exhausted means
@@ -15,7 +15,7 @@ export namespace shadowsocks {
     // Experimental single-owner allocator. Recovery starts at the persisted
     // bound and deliberately skips any IDs left unused by the prior process.
     class UdpIdReservation {
-        using Commit=nexus::function_ref<bool(UdpIdWatermark) noexcept>;
+        using Commit=functional::function_ref<bool(UdpIdWatermark) noexcept>;
         UdpIdWatermark watermark_;
         std::uint64_t cursor_=0;
         std::uint64_t remaining_=0;

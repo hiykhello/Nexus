@@ -2,20 +2,19 @@ import std;
 import ss_udp.shared_coordinator;
 import ss_udp.resolve;
 import shadowsocks.udp_dispatch;
-import proxy;
+import relay;
 import rules;
 import dns.address_race_program;
 import dns.response_race_walk;
 import dns.response_program;
 import dns.response_cache;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace ss=shadowsocks;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
-using Setup=proxy::udp_runtime::CoordinatorCacheSetup;
+using Setup=relay::udp_runtime::CoordinatorCacheSetup;
 using Parent=ss::detail::BasicUdpResolveOperation<Setup::Lookup>;
 struct Operation {
     Parent::ResponseOperation operation;io::io_context& context;dns::ResponseStep step;Clock::time_point deadline;
@@ -46,7 +45,7 @@ auto main(int argc,char** argv) -> int {
 #endif
     std::array<std::size_t,1> capacities{1};dns_hp_experiment::GroupSnapshot group(capacities,dns_hp_experiment::GroupSnapshot::SharedCapacity{32},1);
     dns_hp_experiment::Coordinator coordinator(16,64);dns_hp_experiment::ViewRegistry views(4,65536,32);dns::ResponseCache cache(32);
-    proxy::DnsRouting routing;proxy::DnsServer a;a.address[0]=127;a.address[3]=1;a.port=port(argv[1]);auto b=a;b.port=port(argv[2]);routing.servers={a,b};
+    relay::DnsRouting routing;relay::DnsServer a;a.address[0]=127;a.address[3]=1;a.port=port(argv[1]);auto b=a;b.port=port(argv[2]);routing.servers={a,b};
     Setup setup;if(!setup.bind(group,0,0) || !setup.bind_coordinator(coordinator,views,routing) || !setup.bind_response_cache(cache))return 3;
     views.seal();if(setup.start(context,routing))return 4;
     auto policy=::rules::Matcher::compile({});if(!policy)return 5;ss::UdpDispatcher dispatcher(std::move(*policy),4,4,4,4096);

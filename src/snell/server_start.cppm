@@ -6,8 +6,8 @@ import snell.kdf;
 import snell.cipher;
 import snell.replay;
 import snell.async_record;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 export namespace snell {
     enum class StartError { timeout,transport,truncated,crypto,authentication,request,unauthorized,replay,capacity };
     struct ServerStart {
@@ -21,15 +21,15 @@ export namespace snell {
     // atomically and at most one can release request/early application data.
     template<class Socket,std::size_t N,class Authenticate>
     auto server_start(Socket& socket,View psk,ReplayCache<N>& cache,std::chrono::steady_clock::duration replay_window,Deadline deadline,Authenticate authenticate)
-      -> nex::capy::task<std::expected<ServerStart,StartError>> {
+      -> capy::task<std::expected<ServerStart,StartError>> {
         struct Guard {Socket& s;bool done=false;~Guard(){if(!done)s.cancel();}} guard{socket};
-        auto read=[&](std::span<std::uint8_t> out)->nex::capy::task<std::expected<void,StartError>> {
+        auto read=[&](std::span<std::uint8_t> out)->capy::task<std::expected<void,StartError>> {
             std::size_t off=0;while(off<out.size()){
                 if(std::chrono::steady_clock::now()>=deadline)co_return std::unexpected(StartError::timeout);
-                auto op=socket.read_some(nex::capy::mutable_buffer(out.data()+off,out.size()-off));
-                auto [ec,n]=co_await nex::corosio::timeout(std::move(op),deadline);
-                if(nex::capy::is_timeout(ec)||(!ec && std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(StartError::timeout);
-                if(nex::capy::is_eof(ec)||(!ec && !n))co_return std::unexpected(StartError::truncated);
+                auto op=socket.read_some(capy::mutable_buffer(out.data()+off,out.size()-off));
+                auto [ec,n]=co_await corosio::timeout(std::move(op),deadline);
+                if(capy::is_timeout(ec)||(!ec && std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(StartError::timeout);
+                if(capy::is_eof(ec)||(!ec && !n))co_return std::unexpected(StartError::truncated);
                 if(ec || n>out.size()-off)co_return std::unexpected(StartError::transport);off+=n;
             }co_return std::expected<void,StartError>{};
         };

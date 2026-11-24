@@ -2,10 +2,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 
 using namespace std::chrono_literals;
-namespace p=proxy;
+namespace p = relay;
 
 // Exercise the production reader owned by a Server bound to a caller-owned
 // DNS generation. The second server stays alive across the first's restarts.

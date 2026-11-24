@@ -1,6 +1,6 @@
 export module dns.local_config;
 import std;
-import nexus.compat;
+import utility;
 import dns.message;
 
 export namespace dns {
@@ -33,18 +33,26 @@ export namespace dns {
     class LocalSnapshotSource {
         std::string resolv_path_, hosts_path_;
         std::chrono::milliseconds interval_;
-        nexus::atomic_shared_ptr<LocalSnapshot const> current_;
-        std::mutex mutex_;
-        std::condition_variable_any wake_;
-        std::jthread thread_;
-        auto refresh() noexcept -> void;
+        mutable utility::atomic_shared_ptr<LocalSnapshot const> current_;
+        mutable std::mutex mutex_;
+        mutable std::condition_variable_any wake_;
+        mutable std::stop_source stop_;
+        mutable std::jthread thread_;
+        mutable std::atomic<bool> started_{false}, stopped_{false};
+        mutable bool active_ = false;
+        bool eager_ = true;
+        auto refresh() const noexcept -> void;
     public:
-        LocalSnapshotSource(std::string resolv_path,std::string hosts_path,std::chrono::milliseconds interval=std::chrono::seconds(1));
+        LocalSnapshotSource(std::string resolv_path,std::string hosts_path,std::chrono::milliseconds interval=std::chrono::seconds(1),bool eager=true);
         LocalSnapshotSource(LocalSnapshotSource const&)=delete;
         auto operator=(LocalSnapshotSource const&) -> LocalSnapshotSource& = delete;
+        ~LocalSnapshotSource();
+        auto ensure_started() const noexcept -> void;
         [[nodiscard]] auto acquire() const noexcept -> std::shared_ptr<LocalSnapshot const>;
+        auto stop() noexcept -> void;
     };
     [[nodiscard]] auto system_local_snapshots() -> LocalSnapshotSource&;
+    auto stop_system_local_snapshots() noexcept -> void;
 }
 
 namespace dns::detail {

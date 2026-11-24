@@ -1,16 +1,15 @@
 // Instantiate the experimental registry with the actual proxy routing API.
-#include <boost/corosio/endpoint.hpp>
-#include <boost/corosio/ipv4_address.hpp>
+import corosio;
 import std;
 import dns.message;
 import dns.cache;
-import proxy;
-#include "../../src/dns-shared/group_snapshot.hpp"
-#include "../../src/dns-shared/group_view_registry.hpp"
+import relay;
+import dns.group_snapshot;
+import dns.group_view_registry;
 
 int main() {
     using namespace std;
-    namespace p=proxy;
+    namespace p = relay;
     namespace d=dns;
     namespace hp=dns_hp_experiment;
     namespace io=boost::corosio;

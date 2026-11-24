@@ -3,7 +3,7 @@ import hysteria2.salamander;
 import hysteria2.transport_options;
 import quic.datagram_port;
 import net.datagram_driver;
-import nexus.thirdparty.corosio;
+import corosio;
 
 namespace h=hysteria2;
 namespace n=net;
@@ -16,7 +16,7 @@ struct Port {
     auto next_expiry() const noexcept -> n::DatagramDeadline {return {};}
     auto expire(n::DatagramClock::time_point) -> std::expected<void,Failure> {return {};}
     auto transmitted(std::uint64_t,n::DatagramClock::time_point) -> std::expected<void,Failure> {return {};}
-    auto receive(nex::corosio::endpoint const&,std::span<std::uint8_t const> input,n::DatagramClock::time_point)
+    auto receive(corosio::endpoint const&,std::span<std::uint8_t const> input,n::DatagramClock::time_point)
         -> std::expected<void,Failure> {received.assign(input.begin(),input.end());return {};}
     auto output(std::span<std::uint8_t> output,n::DatagramClock::time_point)
         -> std::expected<std::optional<n::DatagramOutput>,Failure> {

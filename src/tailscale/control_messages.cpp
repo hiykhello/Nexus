@@ -1,13 +1,13 @@
 module tailscale.control_messages;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import crypto;
-import nexus.thirdparty.glaze;
-import nexus.thirdparty.corosio;
+import glaze;
+import corosio;
 
 namespace tailscale::control_messages {
     namespace detail {
-        using Raw=nex::glaze::raw_json_view;
+        using Raw=glaze::raw_json_view;
         struct EmptyObject {};
         struct RegisterJson {Raw User,Login,NodeKeyExpired,MachineAuthorized,AuthURL,NodeKeySignature,Error;};
         struct NodeJson {
@@ -32,7 +32,7 @@ namespace tailscale::control_messages {
         using detail::DerpMapJson;
         using detail::DerpRegionJson;
         using detail::DerpNodeJson;
-        struct Options : nex::glaze::opts {bool validate_trailing_whitespace=true,validate_skipped=true;};
+        struct Options : glaze::opts {bool validate_trailing_whitespace=true,validate_skipped=true;};
         inline constexpr auto options=[] {Options value;value.null_terminated=false;value.error_on_unknown_keys=true;return value;}();
         auto failure(Error error,unsigned status=0) noexcept -> std::unexpected<Failure> {return std::unexpected(Failure{error,status});}
         auto bytes(std::span<std::uint8_t const> input) noexcept -> std::string_view {return {reinterpret_cast<char const*>(input.data()),input.size()};}
@@ -43,11 +43,11 @@ namespace tailscale::control_messages {
         auto field(Raw const& raw) noexcept -> JsonField {
             auto value=trim(raw.str);return {value.empty() ? Presence::missing : value=="null" ? Presence::null_value : Presence::value,value};
         }
-        template<class T> auto read(T& value,std::string_view json) -> bool {return !nex::glaze::read<options>(value,json);}
+        template<class T> auto read(T& value,std::string_view json) -> bool {return !glaze::read<options>(value,json);}
         auto unique_object(std::string_view json) -> std::expected<void,Failure> {
             // Go merges repeated map/object fields. Reject repeats rather
             // than lose an earlier security capability in a last raw slice.
-            nexus::inplace_vector<std::pair<std::string_view,Raw>,64> fields;
+            containers::inplace_vector<std::pair<std::string_view,Raw>,64> fields;
             if (!read(fields,json)) return failure(Error::json);
             for (std::size_t i=0;i<fields.size();++i) {
                 if (fields[i].first.contains('\\')) return failure(Error::schema);
@@ -73,7 +73,7 @@ namespace tailscale::control_messages {
         }
         auto active(Raw const& raw,std::string_view empty) -> bool {
             auto f=field(raw);if (f.presence!=Presence::value) return false;
-            if (empty=="[]") {nexus::inplace_vector<Raw,1> values;return !read(values,f.json) || !values.empty();}
+            if (empty=="[]") {containers::inplace_vector<Raw,1> values;return !read(values,f.json) || !values.empty();}
             if (empty=="{}") {EmptyObject value;return !read(value,f.json);}
             if (empty=="\"\"") {std::string_view value;return !read(value,f.json) || !value.empty();}
             return true;
@@ -87,7 +87,7 @@ namespace tailscale::control_messages {
             auto one=reinterpret_cast<std::uintptr_t>(output.data()),two=reinterpret_cast<std::uintptr_t>(input.data());
             return one<=two ? two-one<output.size() : one-two<input.size();
         }
-        auto endpoint_address(nex::corosio::endpoint const& source) -> Endpoint {
+        auto endpoint_address(corosio::endpoint const& source) -> Endpoint {
             Endpoint result;result.family=source.is_v4() ? 4 : 6;result.port=source.port();
             if (source.is_v4()) {auto address=source.address().to_v4().to_bytes();std::ranges::copy(address,result.address.begin());}
             else {auto address=source.address().to_v6().to_bytes();std::ranges::copy(address,result.address.begin());}return result;
@@ -99,9 +99,9 @@ namespace tailscale::control_messages {
             if (address.contains('%') || address.contains('[') || address.contains(']')) return failure(Error::address);
             auto parsed=std::from_chars(suffix.data(),suffix.data()+suffix.size(),bits);
             if (parsed.ec!=std::errc{} || parsed.ptr!=suffix.data()+suffix.size()) return failure(Error::address);
-            auto format=nex::corosio::detect_endpoint_format(address);
-            if (format!=nex::corosio::endpoint_format::ipv4_no_port && format!=nex::corosio::endpoint_format::ipv6_no_port) return failure(Error::address);
-            auto [error,source]=nex::corosio::make_endpoint(address);if (error || bits>(source.is_v4() ? 32u : 128u)) return failure(Error::address);
+            auto format=corosio::detect_endpoint_format(address);
+            if (format!=corosio::endpoint_format::ipv4_no_port && format!=corosio::endpoint_format::ipv6_no_port) return failure(Error::address);
+            auto [error,source]=corosio::make_endpoint(address);if (error || bits>(source.is_v4() ? 32u : 128u)) return failure(Error::address);
             auto decoded=endpoint_address(source);Prefix result{decoded.address,decoded.family,static_cast<std::uint8_t>(bits)};
             auto whole=bits/8,part=bits%8;
             if (part && (result.address[whole]&((1u<<(8-part))-1))) return failure(Error::address);
@@ -110,9 +110,9 @@ namespace tailscale::control_messages {
         }
         auto endpoint(Raw const& raw) -> std::expected<Endpoint,Failure> {
             auto text=string(raw,80);if (!text) return std::unexpected(text.error());if (text->contains('%')) return failure(Error::address);
-            auto format=nex::corosio::detect_endpoint_format(*text);
-            if (format!=nex::corosio::endpoint_format::ipv4_with_port && format!=nex::corosio::endpoint_format::ipv6_bracketed) return failure(Error::address);
-            auto [error,value]=nex::corosio::make_endpoint(*text);
+            auto format=corosio::detect_endpoint_format(*text);
+            if (format!=corosio::endpoint_format::ipv4_with_port && format!=corosio::endpoint_format::ipv6_bracketed) return failure(Error::address);
+            auto [error,value]=corosio::make_endpoint(*text);
             if (error || !value.port() || value.address().is_unspecified() || value.address().is_multicast()) return failure(Error::address);
             return endpoint_address(value);
         }
@@ -142,9 +142,9 @@ namespace tailscale::control_messages {
             return std::optional<sys_seconds>{sys_days(date) + hours(h) + minutes(m) + seconds(s)};
         }
         template<std::size_t N,class T,class Parse>
-        auto list(Raw const& raw,nexus::inplace_vector<T,N>& output,Parse parse) -> std::expected<void,Failure> {
+        auto list(Raw const& raw,containers::inplace_vector<T,N>& output,Parse parse) -> std::expected<void,Failure> {
             if (field(raw).presence!=Presence::value) return {};
-            nexus::inplace_vector<Raw,N> input;if (!read(input,raw.str)) return failure(Error::schema);
+            containers::inplace_vector<Raw,N> input;if (!read(input,raw.str)) return failure(Error::schema);
             for (auto const& item:input) {
                 auto value=parse(item);if (!value) return std::unexpected(value.error());
                 if (std::ranges::find(output,*value)!=output.end()) return failure(Error::duplicate);
@@ -191,9 +191,9 @@ namespace tailscale::control_messages {
             if (auto parsed=list(wire.Endpoints,result.endpoints,endpoint);!parsed) return std::unexpected(parsed.error());
             return result;
         }
-        auto nodes(Raw const& raw,nexus::inplace_vector<PeerCandidate,max_peers>& output,control::NodePublic const& self) -> std::expected<void,Failure> {
+        auto nodes(Raw const& raw,containers::inplace_vector<PeerCandidate,max_peers>& output,control::NodePublic const& self) -> std::expected<void,Failure> {
             if (field(raw).presence!=Presence::value) return {};
-            nexus::inplace_vector<Raw,max_peers> items;if (!read(items,raw.str)) return failure(Error::schema);
+            containers::inplace_vector<Raw,max_peers> items;if (!read(items,raw.str)) return failure(Error::schema);
             for (auto const& item:items) {
                 auto peer=node(item);if (!peer) return std::unexpected(peer.error());if (peer->key==self) return failure(Error::identity);
                 for (auto const& existing:output) if (existing.id==peer->id || existing.key==peer->key) return failure(Error::duplicate);
@@ -231,11 +231,11 @@ namespace tailscale::control_messages {
             if (!width || !endpoint.port || !nonzero(std::span(endpoint.address).first(width))) return failure(Error::address);
             if (index) result += ',';
             if (width == 4) {
-                nex::corosio::ipv4_address::bytes_type ip{};
+                corosio::ipv4_address::bytes_type ip{};
                 std::copy_n(endpoint.address.begin(), ip.size(), ip.begin());
-                result += std::format("\"{}:{}\"", nex::corosio::ipv4_address(ip).to_string(), endpoint.port);
+                result += std::format("\"{}:{}\"", corosio::ipv4_address(ip).to_string(), endpoint.port);
             } else {
-                result += std::format("\"[{}]:{}\"", nex::corosio::ipv6_address(endpoint.address).to_string(), endpoint.port);
+                result += std::format("\"[{}]:{}\"", corosio::ipv6_address(endpoint.address).to_string(), endpoint.port);
             }
         }
         result += R"(],"EndpointTypes":[)";
@@ -334,9 +334,12 @@ namespace tailscale::control_messages {
                     if (!read(output.removed_,wire.PeersRemoved.str)) return failure(Error::schema);
                     for (std::size_t i=0;i<output.removed_.size();++i) {
                         if (output.removed_[i]<=0) return failure(Error::identity);
+                        if (output.self_ && output.removed_[i]==output.self_->id) return failure(Error::duplicate);
                         for (std::size_t j=0;j<i;++j) if (output.removed_[i]==output.removed_[j]) return failure(Error::duplicate);
                     }
                 }
+                // Preserve Peers/PeersChanged/PeersRemoved verbatim for v148 wire
+                // inspection; Snapshot::apply fails closed on mixed full+delta views.
                 output.mode_=!output.peers_.empty() ? MapMode::full : (!output.changed_.empty() || !output.removed_.empty()) ? MapMode::delta : MapMode::unchanged;
             }
             if (output.keep_alive_) {
@@ -361,7 +364,7 @@ namespace tailscale::control_messages {
             if(!unique_object(input.json) || !read(map,input.json))return failure(Error::schema);
             auto regions_field=field(map.Regions);
             if(regions_field.presence!=Presence::value)return std::nullopt;
-            nexus::inplace_vector<std::pair<std::string_view,Raw>,64> regions;
+            containers::inplace_vector<std::pair<std::string_view,Raw>,64> regions;
             if(!unique_object(regions_field.json) || !read(regions,regions_field.json))return failure(Error::schema);
             DerpNodes output;
             for(auto const& [key,value]:regions) {
@@ -375,7 +378,7 @@ namespace tailscale::control_messages {
                    !read(region_id,field(region.RegionID).json) || region_id!=id) return failure(Error::schema);
                 auto nodes_field=field(region.Nodes);
                 if(nodes_field.presence!=Presence::value)continue;
-                nexus::inplace_vector<Raw,16> nodes;
+                containers::inplace_vector<Raw,16> nodes;
                 if(!read(nodes,nodes_field.json))return failure(Error::schema);
                 for(auto const& raw:nodes) {
                     auto node_field=field(raw);

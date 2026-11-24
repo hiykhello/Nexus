@@ -128,20 +128,49 @@ namespace dns {
         auto entries=parse_local_hosts(*hosts); if (!entries) return std::unexpected(entries.error());
         return LocalSnapshot{std::move(*config),std::move(*entries)};
     }
-    LocalSnapshotSource::LocalSnapshotSource(std::string resolv_path,std::string hosts_path,std::chrono::milliseconds interval)
+    LocalSnapshotSource::LocalSnapshotSource(std::string resolv_path,std::string hosts_path,std::chrono::milliseconds interval,bool eager)
         : resolv_path_(std::move(resolv_path)),hosts_path_(std::move(hosts_path)),interval_(std::max(interval,std::chrono::milliseconds(10))),
-          current_(std::make_shared<LocalSnapshot const>()) {
-        refresh();
-        thread_=std::jthread([this](std::stop_token stop) {
-            std::unique_lock lock(mutex_);
-            while (!stop.stop_requested()) {
-                wake_.wait_for(lock,stop,interval_,[] { return false; });
-                if (stop.stop_requested()) break;
-                lock.unlock(); refresh(); lock.lock();
-            }
-        });
+          current_(std::make_shared<LocalSnapshot const>()),eager_(eager) {
+        if (eager_) ensure_started();
     }
-    auto LocalSnapshotSource::refresh() noexcept -> void {
+    LocalSnapshotSource::~LocalSnapshotSource() { stop(); }
+    auto LocalSnapshotSource::ensure_started() const noexcept -> void {
+        if (started_.load(std::memory_order_acquire) || stopped_.load(std::memory_order_acquire)) return;
+        std::lock_guard lock(mutex_);
+        if (active_ || stopped_.load(std::memory_order_acquire)) return;
+        stop_ = std::stop_source{};
+        active_ = true;
+        if (eager_) refresh();
+        try {
+            auto token = stop_.get_token();
+            thread_ = std::jthread([this, token, initial_refresh = !eager_]() {
+                if (initial_refresh && !token.stop_requested()) refresh();
+                std::unique_lock lk(mutex_);
+                while (!token.stop_requested()) {
+                    wake_.wait_for(lk, token, interval_, [] { return false; });
+                    if (token.stop_requested()) break;
+                    lk.unlock(); refresh(); lk.lock();
+                }
+            });
+            started_.store(true, std::memory_order_release);
+        } catch (...) {
+            active_ = false;
+        }
+    }
+    auto LocalSnapshotSource::stop() noexcept -> void {
+        std::jthread joined;
+        {
+            std::lock_guard lock(mutex_);
+            stopped_.store(true, std::memory_order_release);
+            if (!active_ && !thread_.joinable()) return;
+            active_ = false;
+            stop_.request_stop();
+            joined = std::move(thread_);
+        }
+        wake_.notify_all();
+        if (joined.joinable()) joined.join();
+    }
+    auto LocalSnapshotSource::refresh() const noexcept -> void {
         try {
             auto loaded=load_local_snapshot(resolv_path_,hosts_path_);
             LocalSnapshot next=loaded ? std::move(*loaded) : LocalSnapshot{};
@@ -153,10 +182,23 @@ namespace dns {
         }
     }
     auto LocalSnapshotSource::acquire() const noexcept -> std::shared_ptr<LocalSnapshot const> {
+        if (!started_.load(std::memory_order_acquire) && !stopped_.load(std::memory_order_acquire))
+            ensure_started();
         return current_.load(std::memory_order_acquire);
     }
+    namespace {
+        auto snapshot_slot(bool create) noexcept -> LocalSnapshotSource* {
+            static std::atomic<bool> created{false};
+            if (!create && !created.load(std::memory_order_acquire)) return nullptr;
+            static LocalSnapshotSource source("/etc/resolv.conf","/etc/hosts",std::chrono::seconds(1),true);
+            created.store(true, std::memory_order_release);
+            return &source;
+        }
+    }
     auto system_local_snapshots() -> LocalSnapshotSource& {
-        static LocalSnapshotSource source("/etc/resolv.conf","/etc/hosts");
-        return source;
+        return *snapshot_slot(true);
+    }
+    auto stop_system_local_snapshots() noexcept -> void {
+        if (auto* source = snapshot_slot(false)) source->stop();
     }
 }

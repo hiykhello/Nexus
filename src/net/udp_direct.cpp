@@ -52,5 +52,8 @@ namespace net {
         }
         return std::optional{UdpDirectReply{meta.source,meta.size}};
     }
+    auto UdpDirect::native_handles() const noexcept -> std::array<int,2> {
+        return closed_ ? std::array{-1,-1} : socket_.native_handles();
+    }
     auto UdpDirect::close() noexcept -> void { closed_=true; authorization_.close(); socket_.close(); }
 }

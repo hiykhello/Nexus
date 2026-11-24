@@ -8,13 +8,12 @@ import vless.tls_server;
 import tls.client_flight;
 import tls.corosio_application;
 import tls.byte_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace h=httpupgrade;
 namespace v=vless;
 namespace t=tls;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct State {
     std::string_view mode;

@@ -1,5 +1,4 @@
 import std;
-import platform.sd_bus_abi;
 import platform.resolved_bus;
 import platform.resolved_types;
 import platform.resolved_client;

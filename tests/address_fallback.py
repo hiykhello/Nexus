@@ -57,7 +57,7 @@ def run(root, rule, host, socks_code, http_status, tunnel=False):
         reserved.bind(('127.0.0.1', 0))
         port = reserved.getsockname()[1]
         reserved.close()
-        (root / 'rules.kdl').write_text(f'schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="{rule}"\n')
+        (root / 'rules.kdl').write_text(f'schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="{rule}"\n')
         config = root / 'config.kdl'
         extra = ''
         action = 'reject'
@@ -77,7 +77,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 {extra}routing {{
  rule-set "blocked" path="rules.kdl" format="kdl"
- rule kind="rule-set" value="blocked" outbound="{action}"
+ rules {{ - kind="rule-set" value="blocked" outbound="{action}"; }}
  default-outbound "direct"
 }}
 ''')

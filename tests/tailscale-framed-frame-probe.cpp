@@ -4,8 +4,7 @@ import net.socket_stream;
 import net.buffered_input;
 import net.framed_stream;
 import tailscale.control_record_codec;
-import nexus.thirdparty.capy;
-namespace capy=nex::capy;
+import capy;
 using Deadline=net::StreamDeadline;
 std::size_t ordinary=0,aligned=0;
 auto operator new(std::size_t size) -> void* {++ordinary;if (auto p=std::malloc(size ? size : 1)) return p;throw std::bad_alloc();}

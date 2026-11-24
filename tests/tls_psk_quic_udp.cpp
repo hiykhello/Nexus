@@ -5,7 +5,7 @@ import quic.connection;
 import quic.tls_client;
 import quic.resumption;
 import quic.tls_server;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 import tls.certificate_trust;
 import tls.handshake;
 import tls.hello;
@@ -16,7 +16,7 @@ import tls.server_credential;
 import tls.server_hello;
 
 namespace q=quic;
-namespace n=nex::ngtcp2;
+namespace n = ::ngtcp2;
 namespace t=tls;
 namespace c = ::crypto;
 using View=std::span<std::uint8_t const>;

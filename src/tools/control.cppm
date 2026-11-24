@@ -1,11 +1,11 @@
 export module cli.control;
 import std;
-import nexus.compat;
+import functional;
 import state.lock;
 
 export namespace cli {
     enum class ControlRole { administrator, reader };
-    using ControlHandler=nexus::function_ref<std::expected<std::string,std::string>(
+    using ControlHandler=functional::function_ref<std::expected<std::string,std::string>(
         ControlRole,std::span<std::string_view const>)>;
 
     struct ControlDiagnostics {
@@ -27,6 +27,8 @@ export namespace cli {
         auto poll(ControlHandler handler) -> void;
         auto stop() noexcept -> void;
         [[nodiscard]] auto active() const noexcept -> bool;
+        [[nodiscard]] auto listen_native_fd() const noexcept -> int;
+        [[nodiscard]] auto next_poll_delay() const noexcept -> std::optional<std::chrono::milliseconds>;
         [[nodiscard]] auto instance() const noexcept -> std::string_view;
         [[nodiscard]] auto diagnostics() const noexcept -> ControlDiagnostics;
     };

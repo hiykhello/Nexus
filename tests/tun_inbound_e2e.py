@@ -275,15 +275,17 @@ def run_netns_inner(nexus_bin, ordered=False, native_ss=False):
 
         # 1. TUN -> direct TCP/UDP (IPv4 + IPv6) + block CIDR rule
         block_rule = root / "block.kdl"
-        block_rule.write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.99/32"\n')
+        block_rule.write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.99/32"\n')
         (root / "ingress.kdl").write_text(
             'schema-version 2\nkind "predicate"\nrule type="source-interface" value="nx-e2e0"\n')
-        (root / "all.kdl").write_text('schema-version 1\nkind "predicate"\n'
+        (root / "all.kdl").write_text('schema-version 2\nkind "predicate"\n'
             'rule type="ip-cidr" value="0.0.0.0/0"\nrule type="ip-cidr" value="::/0"\n')
         cfg_direct = root / "tun_direct.kdl"
-        ingress = '''rule kind="rule-set" value="blk" outbound="block"
-    rule kind="rule-set" value="ingress" outbound="direct"
-    rule kind="rule-set" value="all" outbound="block"'''
+        ingress = '''rules {
+        - kind="rule-set" value="blk" outbound="block"
+        - kind="rule-set" value="ingress" outbound="direct"
+        - kind="rule-set" value="all" outbound="block"
+    }'''
         extra_sets = 'rule-set "all" format="kdl" path="all.kdl"'
         if ordered:
             (root / "payload.kdl").write_text('schema-version 2\nkind "predicate"\n'

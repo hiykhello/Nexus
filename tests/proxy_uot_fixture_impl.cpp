@@ -4,13 +4,13 @@ module;
 #include <boost/capy/task.hpp>
 #include <boost/corosio/backend.hpp>
 #include <boost/corosio/io_context.hpp>
-module proxy;
+module relay;
 import std;
 import proxy.v4;
 import uot;
 import dns.local_config;
-import proxy.dns_state;
-namespace proxy {
+import relay.dns_state;
+namespace relay {
     namespace {
         // The context may retain a suspended task until destruction, so it
         // must be destroyed before the DNS state borrowed by that task.
@@ -177,7 +177,7 @@ namespace proxy {
     }
 }
 extern "C" int nexus_test_proxy_uot(unsigned server, unsigned target, bool connected) {
-    using namespace proxy;
+    using namespace relay;
     int result=9;
     FixtureState state;
     auto& context=state.context;
@@ -187,7 +187,7 @@ extern "C" int nexus_test_proxy_uot(unsigned server, unsigned target, bool conne
     return result;
 }
 extern "C" int nexus_test_proxy_uot_policy(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9;
     FixtureState state;
     auto& context=state.context;
@@ -197,7 +197,7 @@ extern "C" int nexus_test_proxy_uot_policy(unsigned server, unsigned target) {
     return result;
 }
 extern "C" int nexus_test_proxy_uot_flood(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9;
     FixtureState state;
     auto& context=state.context;
@@ -207,73 +207,73 @@ extern "C" int nexus_test_proxy_uot_flood(unsigned server, unsigned target) {
     return result;
 }
 extern "C" int nexus_test_proxy_uot_empty_echo(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(cross_probe(std::move(session),context,server,target,false,1,result,false,true,true));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;
 }
 extern "C" int nexus_test_proxy_uot_empty(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(cross_probe(std::move(session),context,server,target,false,1,result,false,true));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;
 }
 extern "C" int nexus_test_proxy_uot_rotate(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(cross_probe(std::move(session),context,server,target,false,3,result,true));
     context.restart(); (void)context.run_for(std::chrono::seconds(20)); return result;
 }
 extern "C" int nexus_test_proxy_uot_end(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(cross_probe(std::move(session),context,server,target,false,2,result,true));
     context.restart(); (void)context.run_for(std::chrono::seconds(20)); return result;
 }
 extern "C" int nexus_test_proxy_uot_cross(unsigned server, unsigned target, bool reverse) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(cross_probe(std::move(session),context,server,target,reverse,2,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;
 }
 extern "C" int nexus_test_proxy_uot_one(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(cross_probe(std::move(session),context,server,target,false,1,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;
 }
 extern "C" int nexus_test_proxy_uot_downstream_fault(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(cross_probe(std::move(session),context,server,target,false,0,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;
 }
 extern "C" int nexus_test_proxy_uot_large(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(probe(std::move(session),context,server,target,false,3,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;
 }
 extern "C" int nexus_test_proxy_uot_numeric_flood(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(probe(std::move(session),context,server,target,false,4,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;
 }
 extern "C" int nexus_test_proxy_uot_slow(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(probe(std::move(session),context,server,target,false,5,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(45)); return result;
 }
 extern "C" int nexus_test_proxy_uot_resume(unsigned server, unsigned target) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(probe(std::move(session),context,server,target,false,6,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(45)); return result;
 }
 extern "C" int nexus_test_proxy_uot_invalid(unsigned server, unsigned target, unsigned mode) {
-    using namespace proxy;
+    using namespace relay;
     int result=9; FixtureState state; auto& context=state.context; auto session=state.make_session();
     capy::run_async(context.get_executor())(invalid_probe(std::move(session),context,server,target,mode,result));
     context.restart(); (void)context.run_for(std::chrono::seconds(15)); return result;

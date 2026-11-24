@@ -7,15 +7,15 @@ import dns.corosio_query;
 import dns.cache;
 import dns.shared_cache;
 import dns.shared_coordinator;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import proxy;
+import capy;
+import corosio;
+import relay;
 import rules;
 import ss_udp.shared_coordinator;
 
 namespace {
-    namespace p=proxy;
-    namespace u=proxy::udp_runtime;
+    namespace p = relay;
+    namespace u = relay::udp_runtime;
     using Cache=dns_hp_experiment::GroupSnapshot;
     std::mutex access_mutex;
     struct ThreadAccess { std::size_t epoch=std::numeric_limits<std::size_t>::max(); void const* binding=nullptr; };

@@ -6,7 +6,7 @@
 
 配置使用 UTF-8 编码的 KDL 2.0 文档。节点、参数、属性和子节点的语法以 [KDL 2.0 规范](https://kdl.dev/spec/)为准；布尔值示例采用 `#true`、`#false`。
 
-解析库固定来自 [glaze-kdl2.0- 的 feature/kdl2.0 分支](https://github.com/hiykhello/glaze-kdl2.0-/tree/feature/kdl2.0)。库的解析成功仅说明语法和转换满足其实现要求，Nexus 仍需执行平台配置的语义校验。
+解析库固定来自 [hiykhello/glaze-kdl](https://github.com/hiykhello/glaze-kdl)（当前锁定提交见 `3rdparty/mcpp-pins.json`）。库的解析成功仅说明语法和转换满足其实现要求，Nexus 仍需执行平台配置的语义校验。
 
 ## 加载流程草案
 

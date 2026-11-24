@@ -5,7 +5,7 @@ import http2.client_state;
 import http2.headers;
 import http2.session_core;
 import memory.budget;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 
 export namespace http2 {
     struct IncomingView {
@@ -19,7 +19,7 @@ export namespace http2 {
         struct StreamingServerPolicy : ClientPolicy<Capacity> {
             using Parent=ClientPolicy<Capacity>;
             using Parent::Parent;
-            std::array<bool,Capacity> accepted{},responded{};
+            std::array<bool,Capacity> accepted{},responded{},released{};
             template<class Core>
             auto begin(Core& core,h2::nghttp2_frame const& frame) noexcept -> int {
                 if (frame.headers.cat!=h2::NGHTTP2_HCAT_REQUEST) return 0;
@@ -36,7 +36,7 @@ export namespace http2 {
                 (**entry).id=frame.hd.stream_id;
                 ++this->active_streams;
                 ++this->generations[index];
-                accepted[index]=responded[index]=false;
+                accepted[index]=responded[index]=released[index]=false;
                 return 0;
             }
             template<class Core>
@@ -95,13 +95,32 @@ export namespace http2 {
         auto error(ClientError kind=ClientError::state) const noexcept -> std::unexpected<ClientFailure> {
             return std::unexpected(failure().value_or(ClientFailure{kind}));
         }
+        auto active_stream(StreamTicket ticket) noexcept -> detail::ClientStream* {
+            auto stream=state().ticket(ticket);
+            return stream && !state().released[ticket.slot] ? stream : nullptr;
+        }
+        auto stop_native(ClientFailure reason) noexcept -> void {
+            core_.abort_native();
+            state().local_draining=true;
+            if (!state().connection_failure) state().connection_failure=reason;
+            state().cleanup();
+            state().active_streams=0;
+            state().accepted.fill(false);
+            state().responded.fill(false);
+            state().released.fill(false);
+            for (auto& body:bodies_) body.reset();
+        }
         auto reclaim() noexcept -> void {
             for (std::size_t i=0;i<Capacity;++i) {
                 auto& stream=state().streams[i];
                 if (!stream) continue;
                 if (stream->body.empty()) bodies_[i].reset();
-                if (stream->closed && !state().accepted[i]) {
-                    if (stream->input.size() && !state().discard_input(core_,*stream)) return;
+                if (stream->closed && (!state().accepted[i] || state().released[i])) {
+                    if (stream->input.size() && !state().discard_input(core_,*stream)) {
+                        if (core_.failure()) stop_native(*core_.failure());
+                        return;
+                    }
+                    state().accepted[i]=state().responded[i]=state().released[i]=false;
                     stream.reset();
                 }
             }
@@ -124,20 +143,25 @@ export namespace http2 {
         auto all_closed() const noexcept -> bool {return core_.policy().active_streams==0;}
         auto receive(std::span<std::uint8_t const> input) noexcept -> std::expected<std::size_t,ClientFailure> {
             auto result=core_.receive(input);
-            if (result) reclaim();
+            if (!result && core_.failure()) stop_native(*core_.failure());
+            else if (result) {
+                reclaim();
+                if (core_.failure()) return std::unexpected(*core_.failure());
+            }
             return result;
         }
         auto output(std::span<std::uint8_t> out) noexcept -> std::expected<std::size_t,ClientFailure> {
             auto result=core_.output(out);
-            if (result) reclaim();
+            if (!result && core_.failure()) stop_native(*core_.failure());
+            else if (result) {
+                reclaim();
+                if (core_.failure()) return std::unexpected(*core_.failure());
+            }
             return result;
         }
         auto cancel(ClientFailure reason) noexcept -> void {
             if (core_.active() || failure()) return;
-            core_.abort_native();
-            state().connection_failure=reason;
-            state().cleanup();
-            for (auto& body:bodies_) body.reset();
+            stop_native(reason);
         }
         auto finish_input() noexcept -> std::expected<void,ClientFailure> {
             state().local_draining=true;
@@ -147,37 +171,46 @@ export namespace http2 {
         auto accept() noexcept -> std::optional<StreamTicket> {
             if (!core_.usable()) return {};
             for (std::size_t i=0;i<Capacity;++i)
-                if (auto& stream=state().streams[i];stream && stream->status && !stream->failure && !state().accepted[i]) {
+                if (auto& stream=state().streams[i];stream && stream->status && !stream->failure &&
+                    !state().accepted[i] && !state().released[i]) {
                     state().accepted[i]=true;
                     return StreamTicket{static_cast<std::uint32_t>(i),state().generations[i],stream->id};
                 }
             return {};
         }
         auto inspect(StreamTicket ticket) noexcept -> std::expected<IncomingView,ClientFailure> {
-            auto stream=state().ticket(ticket);
+            auto stream=active_stream(ticket);
             if (!stream || !core_.usable()) return error();
             return IncomingView{stream->headers,stream->local_end,stream->remote_end,stream->closed,stream->failure};
         }
         auto respond(StreamTicket ticket,std::span<FieldView const> fields,bool end=false) noexcept -> std::expected<void,ClientFailure> {
-            auto stream=state().ticket(ticket);
+            auto stream=active_stream(ticket);
             if (!stream || !core_.usable() || stream->closed || stream->failure || state().responded[ticket.slot] ||
                 fields.empty() || fields.size()>state().limits.header_fields) return error();
             std::array<detail::h2::nghttp2_nv,100> wire;
+            auto const limit=state().limits.header_bytes;
             std::size_t charge=0;
             for (auto field:fields) {
+                if (field.name.size()>limit-charge || field.value.size()>limit-charge-field.name.size() ||
+                    32>limit-charge-field.name.size()-field.value.size()) return error(ClientError::limit);
                 charge+=field.name.size()+field.value.size()+32;
-                if (charge>state().limits.header_bytes) return error(ClientError::limit);
             }
             std::ranges::transform(fields,wire.begin(),[](auto field){return Core::nv(field.name,field.value);});
             auto provider=core_.provider(stream);
             auto rc=detail::h2::nghttp2_submit_response2(core_.native(),ticket.id,wire.data(),fields.size(),end ? nullptr : &provider);
-            if (rc) return std::unexpected(ClientFailure{ClientError::http2,rc,ticket.id});
+            if (rc) {
+                if (detail::h2::nghttp2_is_fatal(rc)) {
+                    state().core_fail(detail::CoreError::http2,rc);
+                    stop_native(*core_.failure());
+                }
+                return std::unexpected(ClientFailure{ClientError::http2,rc,ticket.id});
+            }
             state().responded[ticket.slot]=true;
             stream->end_requested=end;
             return {};
         }
         auto provide(StreamTicket ticket,BodyView data) noexcept -> std::expected<bool,ClientFailure> {
-            auto stream=state().ticket(ticket);
+            auto stream=active_stream(ticket);
             if (!stream || !core_.usable() || stream->closed || stream->failure || !state().responded[ticket.slot] ||
                 stream->end_requested) return error();
             if (!stream->body.empty()) return false;
@@ -192,30 +225,42 @@ export namespace http2 {
             stream->end_requested=data.end_stream;
             if (stream->deferred) {
                 auto rc=detail::h2::nghttp2_session_resume_data(core_.native(),ticket.id);
-                if (rc) return std::unexpected(ClientFailure{ClientError::http2,rc,ticket.id});
+                if (rc) {
+                    stream->release_body();
+                    bodies_[ticket.slot].reset();
+                    stream->end_requested=false;
+                    state().core_fail(detail::CoreError::http2,rc);
+                    stop_native(*core_.failure());
+                    return std::unexpected(ClientFailure{ClientError::http2,rc,ticket.id});
+                }
                 stream->deferred=false;
             }
             return true;
         }
         auto tx_consumed(StreamTicket ticket) noexcept -> std::expected<bool,ClientFailure> {
-            auto stream=state().ticket(ticket);
+            auto stream=active_stream(ticket);
             if (!stream || !core_.usable()) return error();
             if (stream->failure) return std::unexpected(*stream->failure);
             return stream->body.empty();
         }
         auto pull(StreamTicket ticket,std::span<std::uint8_t> out) noexcept -> std::expected<std::optional<std::size_t>,ClientFailure> {
-            auto stream=state().ticket(ticket);
+            auto stream=active_stream(ticket);
             if (!stream || !core_.usable()) return error();
             if (stream->failure) return std::unexpected(*stream->failure);
             auto data=stream->input.peek();
             auto count=std::min(out.size(),data.size());
             if (!count) {
                 if (stream->remote_end || out.empty()) return 0;
+                if (stream->closed) return std::unexpected(ClientFailure{ClientError::reset,0,ticket.id});
                 return std::nullopt;
             }
             auto rc=stream->closed ? detail::h2::nghttp2_session_consume_connection(core_.native(),count) :
                 detail::h2::nghttp2_session_consume(core_.native(),ticket.id,count);
-            if (rc) return std::unexpected(ClientFailure{ClientError::http2,rc,ticket.id});
+            if (rc) {
+                state().core_fail(detail::CoreError::http2,rc);
+                stop_native(*core_.failure());
+                return std::unexpected(ClientFailure{ClientError::http2,rc,ticket.id});
+            }
             std::ranges::copy(data.first(count),out.begin());
             stream->input.consume(count);
             return count;
@@ -223,12 +268,15 @@ export namespace http2 {
         // Release the application lease. If necessary, reset the stream while
         // keeping its provider alive until the nghttp2 close callback.
         auto release(StreamTicket ticket,bool reset=true) noexcept -> void {
-            auto stream=state().ticket(ticket);
+            auto stream=active_stream(ticket);
             if (!stream || !core_.usable()) return;
-            if (reset && !stream->closed)
-                (void)state().reject(core_,*stream,ClientError::canceled,detail::h2::NGHTTP2_CANCEL);
+            if (reset && !stream->closed &&
+                state().reject(core_,*stream,ClientError::canceled,detail::h2::NGHTTP2_CANCEL)) {
+                stop_native(*core_.failure());
+                return;
+            }
             state().accepted[ticket.slot]=false;
-            if (!stream->closed) stream->status=0;
+            state().released[ticket.slot]=true;
             reclaim();
         }
     };

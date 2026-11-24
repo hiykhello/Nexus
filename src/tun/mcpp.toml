@@ -1,0 +1,39 @@
+[package]
+name = "tun"
+version = "0.1.0"
+
+# Packet codecs, the userspace TCP/UDP stacks, and their Linux TUN driver
+# share one transport lifecycle. Policy is owned by the common rules member.
+[dependencies]
+policy = { path = "../rules" }
+containers = { path = "../containers" }
+functional = { path = "../functional" }
+utility = { path = "../utility" }
+platform = { path = "../platform" }
+
+[features]
+network = { implies = ["platform/netlink"], sources = [
+    "../packet/tun_network_types.cppm", "../packet/tun_network_records.cppm",
+    "../packet/tun_network_requests.cppm", "../packet/tun_network_view.cppm", "../packet/tun_network.cppm",
+] }
+
+default-network = { implies = ["network", "platform/netlink-policy"], sources = ["../packet/tun_default_policy.cppm"] }
+bridge = { sources = ["../packet/bridge.cppm", "../packet/bridge.cpp"] }
+
+[build]
+sources = [
+    "../packet/icmp.cpp", "../packet/ipv4.cpp", "../packet/ipv6.cpp", "../packet/memory.cpp", "../packet/packet.cppm", "../packet/switch.cpp", "../packet/switch.cppm", "../packet/tcp4.cpp", "../packet/tcp6.cpp", "../packet/tun_pump.cppm",
+    "../packet/tun_network_plan.cppm", "../packet/tun_network_darwin.cppm", "../packet/tun_network_darwin.cpp", "../packet/tun_network_windows.cppm", "../packet/tun_network_windows.cpp",
+    "../tcp/*.cppm", "../tcp/*.cpp",
+    "../udp/*.cppm", "../udp/*.cpp",
+    "memory.cppm", "memory.cpp",
+]
+
+[target.'cfg(os = "linux")'.build]
+sources = ["../packet/fd.cpp", "../packet/fd.cppm", "../packet/tun_linux.cpp", "../packet/tun_linux.cppm", "../packet/tun_device_linux.cppm", "tun_linux.cpp", "tun_linux.cppm"]
+
+[target.'cfg(any(os = "macos", os = "ios"))'.build]
+sources = ["../packet/fd_posix.cppm", "../packet/fd_posix.cpp", "../packet/tun_darwin.cppm", "../packet/tun_darwin.cpp", "../packet/tun_device_darwin.cppm"]
+
+[target.'cfg(os = "windows")'.build]
+sources = ["../packet/fd_stub.cppm", "../packet/tun_windows.cppm", "../packet/tun_windows.cpp", "../packet/tun_device_windows.cppm"]

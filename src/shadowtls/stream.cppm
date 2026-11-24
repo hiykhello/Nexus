@@ -8,7 +8,7 @@ import tls.client_session_handshake;
 import net.socket_stream;
 import net.stream_relay;
 import platform.ip_address;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace shadowtls {
     using StreamClock = std::chrono::steady_clock;
@@ -22,7 +22,7 @@ export namespace shadowtls {
         std::size_t unread_pos_ = 0;
         std::vector<std::uint8_t> decoded_;
         std::size_t decoded_pos_ = 0;
-        nex::capy::async_mutex write_lock_;
+        capy::async_mutex write_lock_;
         bool alert_sent_ = false;
         bool eof_ = false;
         bool canceled_ = false;
@@ -39,20 +39,26 @@ export namespace shadowtls {
             transport_.cancel();
         }
 
-        auto send(std::span<std::uint8_t const> bytes, net::StreamDeadline deadline = {}) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> bytes, net::StreamDeadline deadline = {}) -> capy::task<bool> {
             if (canceled_) co_return false;
-            auto encoded = crypto_.encode(bytes);
-            if (!encoded) { cancel(); co_return false; }
-            if (encoded->empty()) co_return true;
+            if (bytes.empty()) co_return true;
             auto [ec, guard] = co_await write_lock_.scoped_lock();
-            if (ec || canceled_) co_return false;
+            if (ec || canceled_ || alert_sent_) co_return false;
+            struct SendGuard {
+                VerifiedSocket& self;
+                bool committed = false;
+                ~SendGuard() { if (!committed) self.cancel(); }
+            } send_guard{*this};
+            auto encoded = crypto_.encode(bytes);
+            if (!encoded) co_return false;
+            if (encoded->empty()) { send_guard.committed = true; co_return true; }
             auto ok = co_await transport_.send(*encoded, deadline);
-            if (!ok) cancel();
+            send_guard.committed = ok;
             co_return ok;
         }
 
         auto read(std::span<std::uint8_t> output, net::StreamDeadline deadline = {})
-            -> nex::capy::task<std::expected<std::size_t, std::string>> {
+            -> capy::task<std::expected<std::size_t, std::string>> {
             if (output.empty()) co_return 0;
             for (;;) {
                 if (decoded_pos_ < decoded_.size()) {
@@ -80,18 +86,23 @@ export namespace shadowtls {
                     }
                     if (step.status != RecordStatus::complete) continue;
                     auto dec = crypto_.decode(step.record);
-                    reader_.consume();
-                    if (dec.status == VerifiedStream::DecodeStatus::ignored_handshake) continue;
+                    if (dec.status == VerifiedStream::DecodeStatus::ignored_handshake) {
+                        reader_.consume();
+                        continue;
+                    }
                     if (dec.status == VerifiedStream::DecodeStatus::alert_closed) {
+                        reader_.consume();
                         eof_ = true;
                         co_return 0;
                     }
                     if (dec.status != VerifiedStream::DecodeStatus::payload) {
+                        reader_.consume();
                         cancel();
                         co_return std::unexpected("ShadowTLS record authentication failed");
                     }
                     decoded_.assign(dec.payload.begin(), dec.payload.end());
                     decoded_pos_ = 0;
+                    reader_.consume();
                     break;
                 }
                 if (decoded_pos_ < decoded_.size() || eof_) continue;
@@ -115,17 +126,20 @@ export namespace shadowtls {
             }
         }
 
-        auto close_output(net::StreamDeadline deadline = {}) -> nex::capy::task<bool> {
+        auto close_output(net::StreamDeadline deadline = {}) -> capy::task<bool> {
             if (canceled_) co_return false;
             auto [ec, guard] = co_await write_lock_.scoped_lock();
             if (ec || canceled_) co_return false;
             if (!alert_sent_) {
                 alert_sent_ = true;
+                struct AlertGuard {
+                    VerifiedSocket& self;
+                    bool committed = false;
+                    ~AlertGuard() { if (!committed) self.cancel(); }
+                } alert_guard{*this};
                 auto alert = encode_alert_record();
-                if (!alert || !co_await transport_.send(*alert, deadline)) {
-                    cancel();
-                    co_return false;
-                }
+                if (!alert || !co_await transport_.send(*alert, deadline)) co_return false;
+                alert_guard.committed = true;
             }
             co_return co_await transport_.close_output(deadline);
         }
@@ -144,7 +158,7 @@ export namespace shadowtls {
         std::string_view password,
         StreamClock::time_point deadline,
         std::int64_t verification_time,
-        bool strict_tls13 = true) -> nex::capy::task<std::expected<HandshakeClientResult, std::string>> {
+        bool strict_tls13 = true) -> capy::task<std::expected<HandshakeClientResult, std::string>> {
         if (password.empty()) co_return std::unexpected("ShadowTLS password required");
         if (StreamClock::now() >= deadline) co_return std::unexpected("ShadowTLS handshake deadline exceeded");
         auto ip = platform::parse_ip_address(profile.server_name);
@@ -270,7 +284,7 @@ export namespace shadowtls {
         std::span<std::uint8_t const> first_client_leftover,
         std::size_t matched_user,
         StreamClock::time_point deadline,
-        bool strict_tls13 = true) -> nex::capy::task<std::expected<ServerSession<ClientSocket>, std::string>> {
+        bool strict_tls13 = true) -> capy::task<std::expected<ServerSession<ClientSocket>, std::string>> {
         net::SocketByteStream<ClientSocket> cli(client);
         net::SocketByteStream<HandshakeSocket> hs(handshake_socket);
         if (!co_await hs.send(first_client_record, deadline))
@@ -302,6 +316,8 @@ export namespace shadowtls {
                 if (server_random) break;
             }
         }
+        if (matched_user >= passwords.size())
+            co_return std::unexpected("ShadowTLS user index out of range");
         auto const& pass = passwords[matched_user];
         auto masker = ServerHandshakeMasker::create(pass, *server_random);
         auto stream = VerifiedStream::create(StreamRole::server, pass, *server_random, {}, true);
@@ -312,33 +328,33 @@ export namespace shadowtls {
         std::vector<std::uint8_t> init_payload;
         std::optional<std::string> relay_err;
 
-        auto pump_hs_to_cli = [&]() -> nex::capy::task<nex::capy::results<>> {
+        auto pump_hs_to_cli = [&]() -> capy::task<capy::results<>> {
             std::vector<std::uint8_t> pending = std::move(hs_unread);
             for (;;) {
                 std::span<std::uint8_t const> span = pending;
                 while (!span.empty()) {
                     auto step = hs_reader.feed(span);
                     span = span.subspan(step.consumed);
-                    if (step.status != RecordStatus::complete && step.status != RecordStatus::incomplete) co_return nex::capy::results<>{};
+                    if (step.status != RecordStatus::complete && step.status != RecordStatus::incomplete) co_return capy::results<>{};
                     if (step.status != RecordStatus::complete) continue;
                     auto rec = step.record;
                     if (rec[0] == tls_record_application_data) {
                         auto masked = masker->mask_record(rec);
-                        if (!masked || !co_await cli.send(*masked)) { hs_reader.consume(); co_return nex::capy::results<>{}; }
-                    } else if (!co_await cli.send(rec)) {
+                        if (!masked || !co_await cli.send(*masked, deadline)) { hs_reader.consume(); co_return capy::results<>{}; }
+                    } else if (!co_await cli.send(rec, deadline)) {
                         hs_reader.consume();
-                        co_return nex::capy::results<>{};
+                        co_return capy::results<>{};
                     }
                     hs_reader.consume();
                 }
                 pending.resize(16640);
-                auto n = co_await hs.read(pending);
-                if (!n || !*n) co_return nex::capy::results<>{};
+                auto n = co_await hs.read(pending, deadline);
+                if (!n || !*n) co_return capy::results<>{};
                 pending.resize(*n);
             }
         };
 
-        auto pump_cli_to_hs = [&]() -> nex::capy::task<nex::capy::results<>> {
+        auto pump_cli_to_hs = [&]() -> capy::task<capy::results<>> {
             TlsRecordReader cli_reader;
             std::vector<std::uint8_t> pending(first_client_leftover.begin(), first_client_leftover.end());
             for (;;) {
@@ -349,7 +365,8 @@ export namespace shadowtls {
                     if (step.status != RecordStatus::complete && step.status != RecordStatus::incomplete) {
                         relay_err = "malformed client TLS record";
                         hs.cancel();
-                        co_return nex::capy::results<>{};
+                        cli.cancel();
+                        co_return capy::results<>{};
                     }
                     if (step.status != RecordStatus::complete) continue;
                     auto rec = step.record;
@@ -359,12 +376,12 @@ export namespace shadowtls {
                         cli_unread.assign(span.begin(), span.end());
                         cutover_done = true;
                         hs.cancel();
-                        co_return nex::capy::results<>{};
+                        co_return capy::results<>{};
                     }
                     if (!co_await hs.send(rec, deadline)) {
                         cli_reader.consume();
-                        if (!cutover_done) relay_err = "failed relaying client TLS handshake";
-                        co_return nex::capy::results<>{};
+                        if (!cutover_done) { relay_err = "failed relaying client TLS handshake"; hs.cancel(); cli.cancel(); }
+                        co_return capy::results<>{};
                     }
                     cli_reader.consume();
                 }
@@ -373,13 +390,14 @@ export namespace shadowtls {
                 if (!n || !*n) {
                     relay_err = "client closed before ShadowTLS cutover";
                     hs.cancel();
-                    co_return nex::capy::results<>{};
+                    cli.cancel();
+                    co_return capy::results<>{};
                 }
                 pending.resize(*n);
             }
         };
 
-        (void)co_await nex::capy::when_all(pump_hs_to_cli(), pump_cli_to_hs());
+        (void)co_await capy::when_all(pump_hs_to_cli(), pump_cli_to_hs());
         if (!cutover_done)
             co_return std::unexpected(relay_err.value_or("ShadowTLS server cutover failed"));
         co_return ServerSession<ClientSocket>{
@@ -393,19 +411,19 @@ export namespace shadowtls {
         HandshakeSocket& handshake_socket,
         std::span<std::uint8_t const> first_client_record,
         std::span<std::uint8_t const> first_client_leftover,
-        StreamClock::time_point deadline) -> nex::capy::task<void> {
+        StreamClock::time_point deadline) -> capy::task<void> {
         net::SocketByteStream<ClientSocket> cli(client);
         net::SocketByteStream<HandshakeSocket> hs(handshake_socket);
         if (!co_await hs.send(first_client_record, deadline)) { hs.cancel(); cli.cancel(); co_return; }
         if (!first_client_leftover.empty() && !co_await hs.send(first_client_leftover, deadline)) { hs.cancel(); cli.cancel(); co_return; }
-        auto copy_dir = [&](auto& from, auto& to) -> nex::capy::task<nex::capy::results<>> {
+        auto copy_dir = [&](auto& from, auto& to) -> capy::task<capy::results<>> {
             std::array<std::uint8_t, 16384> buf{};
             for (;;) {
                 auto n = co_await from.read(buf);
-                if (!n || !*n) { (void)co_await to.close_output(); co_return nex::capy::results<>{}; }
-                if (!co_await to.send(std::span(buf).first(*n))) { from.cancel(); to.cancel(); co_return nex::capy::results<>{}; }
+                if (!n || !*n) { (void)co_await to.close_output(); co_return capy::results<>{}; }
+                if (!co_await to.send(std::span(buf).first(*n))) { from.cancel(); to.cancel(); co_return capy::results<>{}; }
             }
         };
-        (void)co_await nex::capy::when_all(copy_dir(cli, hs), copy_dir(hs, cli));
+        (void)co_await capy::when_all(copy_dir(cli, hs), copy_dir(hs, cli));
     }
 }

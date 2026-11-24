@@ -30,21 +30,29 @@ namespace tls {
             return errno;
         }
 
+        std::atomic<bool> g_ktls_ulp_unavailable{false};
+
         auto posix_send_record(int fd, std::uint8_t record_type, std::uint8_t const* data, std::size_t len, int* err_out) noexcept -> std::ptrdiff_t {
+            if (record_type == static_cast<std::uint8_t>(ContentType::application_data)) {
+                ssize_t n = -1;
+                do {
+                    n = ::send(fd, data, len, MSG_DONTWAIT | MSG_NOSIGNAL);
+                } while (n < 0 && errno == EINTR);
+                if (n < 0 && err_out) *err_out = errno;
+                return n;
+            }
             msghdr msg{};
             iovec iov{const_cast<std::uint8_t*>(data), len};
             msg.msg_iov = &iov;
             msg.msg_iovlen = 1;
             alignas(cmsghdr) std::array<char, CMSG_SPACE(sizeof(std::uint8_t))> cbuf{};
-            if (record_type != static_cast<std::uint8_t>(ContentType::application_data)) {
-                msg.msg_control = cbuf.data();
-                msg.msg_controllen = cbuf.size();
-                auto* cm = CMSG_FIRSTHDR(&msg);
-                cm->cmsg_level = SOL_TLS;
-                cm->cmsg_type = TLS_SET_RECORD_TYPE;
-                cm->cmsg_len = CMSG_LEN(sizeof(std::uint8_t));
-                std::memcpy(CMSG_DATA(cm), &record_type, sizeof(std::uint8_t));
-            }
+            msg.msg_control = cbuf.data();
+            msg.msg_controllen = cbuf.size();
+            auto* cm = CMSG_FIRSTHDR(&msg);
+            cm->cmsg_level = SOL_TLS;
+            cm->cmsg_type = TLS_SET_RECORD_TYPE;
+            cm->cmsg_len = CMSG_LEN(sizeof(std::uint8_t));
+            std::memcpy(CMSG_DATA(cm), &record_type, sizeof(std::uint8_t));
             ssize_t n = -1;
             do {
                 n = ::sendmsg(fd, &msg, MSG_DONTWAIT | MSG_NOSIGNAL);
@@ -67,6 +75,10 @@ namespace tls {
             } while (n < 0 && errno == EINTR);
             if (n < 0) {
                 if (err_out) *err_out = errno;
+                return -1;
+            }
+            if ((msg.msg_flags & MSG_CTRUNC) != 0) {
+                if (err_out) *err_out = EBADMSG;
                 return -1;
             }
             std::uint8_t rtype = static_cast<std::uint8_t>(ContentType::application_data);
@@ -177,9 +189,16 @@ namespace tls {
 
     auto probe_ktls_ulp(int fd, KtlsOps ops) noexcept -> KtlsStatus {
         if (fd < 0 || !ops.setsockopt_fn) return KtlsStatus::invalid_state;
+        bool const real_posix = ops.setsockopt_fn == &posix_setsockopt;
+        if (real_posix && g_ktls_ulp_unavailable.load(std::memory_order_relaxed))
+            return KtlsStatus::unavailable;
         int err = ops.setsockopt_fn(fd, SOL_TCP, TCP_ULP, "tls", sizeof("tls"));
         if (err == 0 || err == EEXIST) return KtlsStatus::ok;
-        if (is_unavailable_errno(err)) return KtlsStatus::unavailable;
+        if (is_unavailable_errno(err)) {
+            if (real_posix && (err == ENOENT || err == ENOPROTOOPT || err == EOPNOTSUPP || err == EPROTONOSUPPORT))
+                g_ktls_ulp_unavailable.store(true, std::memory_order_relaxed);
+            return KtlsStatus::unavailable;
+        }
         return KtlsStatus::fatal_error;
     }
 
@@ -210,6 +229,7 @@ namespace tls {
         if (st != KtlsStatus::ok) return st;
         algorithm_ = handoff.keys.algorithm;
         hash_ = handoff.hash;
+        tx_records_ = handoff.keys.sequence;
         tx_secret_.emplace(std::move(handoff.secret));
         tx_active_ = true;
         return KtlsStatus::ok;
@@ -231,6 +251,7 @@ namespace tls {
         if (want_tx && !io.can_handoff_ktls_tx()) return KtlsStatus::invalid_state;
         if (want_rx && !io.can_handoff_ktls_rx()) return KtlsStatus::invalid_state;
         auto const support = ops_.kernel_override.value_or(probe_ktls_kernel_support());
+        key_update_supported_ = support.key_update;
         auto const alg = io.ktls_algorithm();
         if (!alg || !support.supports_cipher(*alg) || (want_rx && !support.rx_tls13))
             return KtlsStatus::unavailable;
@@ -266,8 +287,14 @@ namespace tls {
             if (err_out) *err_out = EINVAL;
             return -1;
         }
-        return ops_.send_record_fn(fd, static_cast<std::uint8_t>(ContentType::application_data),
+        if (tx_records_ >= kMaxTxRecords) {
+            if (err_out) *err_out = EKEYEXPIRED;
+            return -1;
+        }
+        auto n = ops_.send_record_fn(fd, static_cast<std::uint8_t>(ContentType::application_data),
             data.data(), data.size(), err_out);
+        if (n > 0) tx_records_ += (static_cast<std::size_t>(n) + 16383u) / 16384u;
+        return n;
     }
 
     auto KtlsSession::send_close_notify(int fd) noexcept -> KtlsStatus {
@@ -275,12 +302,15 @@ namespace tls {
         constexpr std::array<std::uint8_t, 2> alert{1, 0};
         int err = 0;
         auto n = ops_.send_record_fn(fd, static_cast<std::uint8_t>(ContentType::alert), alert.data(), alert.size(), &err);
+        if (n < 0 && (err == EAGAIN || err == EWOULDBLOCK || err == EINTR)) return KtlsStatus::would_block;
         if (n != 2) { failed_ = true; return KtlsStatus::fatal_error; }
+        ++tx_records_;
         tx_closed_ = true;
         return KtlsStatus::ok;
     }
 
     auto KtlsSession::rotate_direction(int fd, KtlsDirection dir) -> KtlsStatus {
+        if (!key_update_supported_) { failed_ = true; return KtlsStatus::fatal_error; }
         auto& secret = (dir == KtlsDirection::tx) ? tx_secret_ : rx_secret_;
         if (!secret) { failed_ = true; return KtlsStatus::fatal_error; }
         auto hash_len = (hash_ == crypto::Hash::sha256) ? 32u : (hash_ == crypto::Hash::sha384 ? 48u : 0u);
@@ -299,24 +329,30 @@ namespace tls {
         auto st = install_raw(fd, dir, mat);
         if (st != KtlsStatus::ok) return st;
         secret = std::move(*next);
+        if (dir == KtlsDirection::tx) tx_records_ = 0;
         return KtlsStatus::ok;
     }
 
     auto KtlsSession::rekey_tx(int fd, bool request_peer_update) -> KtlsStatus {
         if (!tx_active_ || tx_closed_ || failed_ || !ops_.send_record_fn) return KtlsStatus::invalid_state;
+        if (!key_update_supported_) { failed_ = true; return KtlsStatus::fatal_error; }
         std::array<std::uint8_t, 5> msg{24, 0, 0, 1, static_cast<std::uint8_t>(request_peer_update ? 1 : 0)};
         int err = 0;
         auto n = ops_.send_record_fn(fd, static_cast<std::uint8_t>(ContentType::handshake), msg.data(), msg.size(), &err);
+        if (n < 0 && (err == EAGAIN || err == EWOULDBLOCK || err == EINTR)) return KtlsStatus::would_block;
         if (n != 5) { failed_ = true; return KtlsStatus::fatal_error; }
         return rotate_direction(fd, KtlsDirection::tx);
     }
 
     auto KtlsSession::handle_handshake(int fd, std::span<std::uint8_t const> payload) -> KtlsRecvResult {
         constexpr std::size_t max_pending = 4 + max_new_session_ticket + 16384;
-        if (payload.empty() || payload.size() > max_pending - handshake_pending_.size()) {
+        auto fail_hs = [&]() noexcept -> KtlsRecvResult {
+            crypto::cleanse(handshake_pending_);
+            crypto::Bytes{}.swap(handshake_pending_);
             failed_ = true;
             return {KtlsRecvKind::protocol_error};
-        }
+        };
+        if (payload.empty() || payload.size() > max_pending - handshake_pending_.size()) return fail_hs();
         handshake_pending_.insert(handshake_pending_.end(), payload.begin(), payload.end());
         std::size_t offset = 0;
         while (handshake_pending_.size() - offset >= 4) {
@@ -324,24 +360,25 @@ namespace tls {
             auto mlen = (std::size_t{handshake_pending_[offset + 1]} << 16) |
                 (std::size_t{handshake_pending_[offset + 2]} << 8) | handshake_pending_[offset + 3];
             if ((mtype != 4 && mtype != 24) || (mtype == 4 && (role_ != ApplicationRole::client || mlen > max_new_session_ticket)) ||
-                (mtype == 24 && mlen != 1)) {
-                failed_ = true;
-                return {KtlsRecvKind::protocol_error};
-            }
+                (mtype == 24 && mlen != 1)) return fail_hs();
             if (mlen > handshake_pending_.size() - offset - 4) break;
             auto body = std::span(handshake_pending_).subspan(offset + 4, mlen);
             offset += 4 + mlen;
             if (mtype == 4) {
-                if (!valid_new_session_ticket(body)) { failed_ = true; return {KtlsRecvKind::protocol_error}; }
+                if (!valid_new_session_ticket(body)) return fail_hs();
                 continue;
             }
             auto req = body[0];
-            if (offset != handshake_pending_.size() || req > 1) { failed_ = true; return {KtlsRecvKind::protocol_error}; }
+            if (offset != handshake_pending_.size() || req > 1) return fail_hs();
+            crypto::cleanse(handshake_pending_);
             crypto::Bytes{}.swap(handshake_pending_);
             if (rotate_direction(fd, KtlsDirection::rx) != KtlsStatus::ok) return {KtlsRecvKind::protocol_error};
             return {req ? KtlsRecvKind::key_update_requested : KtlsRecvKind::key_update};
         }
-        handshake_pending_.erase(handshake_pending_.begin(), handshake_pending_.begin() + static_cast<std::ptrdiff_t>(offset));
+        if (offset > 0) {
+            crypto::cleanse(std::span(handshake_pending_).first(offset));
+            handshake_pending_.erase(handshake_pending_.begin(), handshake_pending_.begin() + static_cast<std::ptrdiff_t>(offset));
+        }
         if (handshake_pending_.empty()) crypto::Bytes{}.swap(handshake_pending_);
         return {KtlsRecvKind::ticket_discarded};
     }
@@ -349,32 +386,69 @@ namespace tls {
     auto KtlsSession::recv_record(int fd, std::span<std::uint8_t> out) -> KtlsRecvResult {
         if (!rx_active_ || rx_closed_ || failed_ || !ops_.recv_record_fn || out.empty())
             return {KtlsRecvKind::io_error, 0, 0, EINVAL};
+        if (rx_buf_off_ < rx_buf_len_) {
+            auto take = std::min(out.size(), rx_buf_len_ - rx_buf_off_);
+            std::copy_n(rx_buffered_.begin() + static_cast<std::ptrdiff_t>(rx_buf_off_), take, out.begin());
+            rx_buf_off_ += take;
+            if (rx_buf_off_ == rx_buf_len_) {
+                crypto::cleanse(std::span(rx_buffered_).first(rx_buf_len_));
+                rx_buf_off_ = rx_buf_len_ = 0;
+            }
+            return {KtlsRecvKind::data, take};
+        }
+        bool const use_small = out.size() < rx_buffered_.size();
+        auto dst = use_small ? std::span<std::uint8_t>(rx_buffered_) : out;
         std::uint8_t rtype = 0;
         int err = 0;
-        auto n = ops_.recv_record_fn(fd, out.data(), out.size(), &rtype, &err);
+        auto n = ops_.recv_record_fn(fd, dst.data(), dst.size(), &rtype, &err);
         if (n < 0) {
             if (err == EAGAIN || err == EWOULDBLOCK) return {KtlsRecvKind::would_block, 0, 0, err};
             failed_ = true;
             return {err == EBADMSG ? KtlsRecvKind::protocol_error : KtlsRecvKind::io_error, 0, 0, err};
         }
-        if (n == 0) return {KtlsRecvKind::eof};
+        if (n == 0) {
+            if (!rx_closed_ || !handshake_pending_.empty()) {
+                crypto::cleanse(handshake_pending_);
+                crypto::Bytes{}.swap(handshake_pending_);
+                failed_ = true;
+                return {KtlsRecvKind::protocol_error};
+            }
+            return {KtlsRecvKind::eof};
+        }
         auto len = static_cast<std::size_t>(n);
-        if (!handshake_pending_.empty() && rtype != static_cast<std::uint8_t>(ContentType::handshake)) {
+        if (len > dst.size()) {
             failed_ = true;
             return {KtlsRecvKind::protocol_error};
         }
-        if (rtype == static_cast<std::uint8_t>(ContentType::application_data))
-            return {KtlsRecvKind::data, len};
+        if (!handshake_pending_.empty() && rtype != static_cast<std::uint8_t>(ContentType::handshake)) {
+            crypto::cleanse(dst.first(len));
+            crypto::cleanse(handshake_pending_);
+            crypto::Bytes{}.swap(handshake_pending_);
+            failed_ = true;
+            return {KtlsRecvKind::protocol_error};
+        }
+        if (rtype == static_cast<std::uint8_t>(ContentType::application_data)) {
+            if (!use_small) return {KtlsRecvKind::data, len};
+            auto take = std::min(out.size(), len);
+            std::copy_n(rx_buffered_.begin(), take, out.begin());
+            if (take < len) { rx_buf_off_ = take; rx_buf_len_ = len; }
+            else crypto::cleanse(std::span(rx_buffered_).first(len));
+            return {KtlsRecvKind::data, take};
+        }
+        struct CleanseBuf {
+            std::span<std::uint8_t> buf;
+            ~CleanseBuf() { crypto::cleanse(buf); }
+        } cleanse_non_app{dst.first(len)};
         if (rtype == static_cast<std::uint8_t>(ContentType::alert)) {
             if (len != 2) { failed_ = true; return {KtlsRecvKind::protocol_error}; }
-            auto desc = out[1];
+            auto desc = dst[1];
             if (desc == 0) { rx_closed_ = true; return {KtlsRecvKind::close_notify, 0, 0}; }
             if (desc == 90) return {KtlsRecvKind::user_canceled, 0, desc};
             failed_ = true;
             return {KtlsRecvKind::fatal_alert, 0, desc};
         }
         if (rtype == static_cast<std::uint8_t>(ContentType::handshake))
-            return handle_handshake(fd, out.first(len));
+            return handle_handshake(fd, dst.first(len));
         failed_ = true;
         return {KtlsRecvKind::protocol_error};
     }

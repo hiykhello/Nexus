@@ -1,6 +1,6 @@
 export module dns.message_program;
 import std;
-export import nexus.compat;
+export import functional;
 import dns.message;
 import dns.reverse;
 import dns.message_fakeip;
@@ -8,6 +8,7 @@ import dns.input_budget;
 export import dns.message_exchange;
 import dns.policy;
 import dns.response_program;
+import rules;
 import dns.response_race_walk;
 import dns.message_race_program;
 export import dns.message_synthetic;
@@ -17,8 +18,8 @@ import dns.local_config;
 import dns.predefined;
 import dns.corosio_resolver;
 import dns.corosio_query;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns {
     struct MessageUpstreamSnapshot {
@@ -27,6 +28,7 @@ export namespace dns {
         MessageCache* cache;
         bool disable_cache;
         ReverseCache* reverse_cache = nullptr;
+        bool independent_cache = false;
     };
 
     struct MessageRuleSnapshot {
@@ -40,13 +42,13 @@ export namespace dns {
         MessageRuleSnapshot(std::shared_ptr<std::vector<policy::DnsRule> const> values,
             std::optional<std::uint64_t> policy_view={}) noexcept : rules(std::move(values)),view(policy_view) {}
     };
-    using MessageRuleSource=nexus::copyable_function<MessageRuleSnapshot() const>;
+    using MessageRuleSource=functional::copyable_function<MessageRuleSnapshot() const>;
     // One owner per client query; cancellation and run share an executor.
     // Upstream, rules, optional concurrent modes and context remain borrowed
     // until the task returns, including cancellation and task drain.
     class MessageProgram {
         using Clock=std::chrono::steady_clock;
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         std::span<policy::DnsRule const> rules_;
         std::span<MessageUpstream const> upstreams_;
         std::size_t fallback_;
@@ -54,6 +56,7 @@ export namespace dns {
         InputBudget* override_budget_;
         std::optional<std::uint64_t> view_;
         bool disable_cache_;
+        bool independent_cache_=false;
         ReverseCache* reverse_cache_=nullptr;
         MessageExchange* active_=nullptr;
         MessageRaceProgram* racing_=nullptr;
@@ -72,16 +75,16 @@ export namespace dns {
             (void)reverse.record(view,query.question.name,parsed->addresses,*parsed->ttl,now_ms,reverse.token());
         }
     public:
-        MessageProgram(nex::corosio::io_context& context,std::span<policy::DnsRule const> rules,
+        MessageProgram(corosio::io_context& context,std::span<policy::DnsRule const> rules,
             std::span<MessageUpstream const> upstreams,std::size_t fallback,MessageCache* cache=nullptr,bool disable_cache=false,
             std::span<ResponseRaceMode const> modes={},InputBudget* override_budget=nullptr,
-            std::optional<std::uint64_t> policy_view={},ReverseCache* reverse_cache=nullptr) noexcept
+            std::optional<std::uint64_t> policy_view={},ReverseCache* reverse_cache=nullptr,bool independent_cache=false) noexcept
             :context_(context),rules_(rules),upstreams_(upstreams),fallback_(fallback),cache_(cache),override_budget_(override_budget),
-             view_(policy_view),disable_cache_(disable_cache),reverse_cache_(reverse_cache),modes_(modes) {}
-        MessageProgram(nex::corosio::io_context& context,std::span<policy::DnsRule const> rules,
+             view_(policy_view),disable_cache_(disable_cache),independent_cache_(independent_cache),reverse_cache_(reverse_cache),modes_(modes) {}
+        MessageProgram(corosio::io_context& context,std::span<policy::DnsRule const> rules,
             MessageUpstreamSnapshot const& resolver,std::optional<std::uint64_t> policy_view) noexcept
             :MessageProgram(context,rules,resolver.upstreams,resolver.fallback,resolver.cache,
-                resolver.disable_cache,{},nullptr,policy_view,resolver.reverse_cache) {}
+                resolver.disable_cache,{},nullptr,policy_view,resolver.reverse_cache,resolver.independent_cache) {}
         MessageProgram(MessageProgram const&)=delete;
         auto operator=(MessageProgram const&) -> MessageProgram& = delete;
         auto cancel() noexcept -> void {canceled_=true;if(active_)active_->cancel();if(racing_)racing_->cancel();}
@@ -96,7 +99,7 @@ export namespace dns {
 #endif
         }
         auto run(QueryMessage query,Clock::time_point deadline,policy::DnsContext context)
-            -> nex::capy::task<std::expected<Bytes,detail::ResolveError>> {
+            -> capy::task<std::expected<Bytes,detail::ResolveError>> {
             auto result=co_await run_inner(query,deadline,context);
             if (result && reverse_cache_)
                 record_reverse_answer(*reverse_cache_,view_.value_or(0),query,*result);
@@ -104,7 +107,7 @@ export namespace dns {
         }
     private:
         auto run_inner(QueryMessage query,Clock::time_point deadline,policy::DnsContext context)
-            -> nex::capy::task<std::expected<Bytes,detail::ResolveError>> {
+            -> capy::task<std::expected<Bytes,detail::ResolveError>> {
             using Error=detail::ResolveError;
             if(std::exchange(started_,true) || fallback_>=upstreams_.size()) co_return std::unexpected(Error::state);
             if(!modes_.empty()
@@ -112,7 +115,7 @@ export namespace dns {
                 || policy::dns_has_concurrent_rules(rules_)
 #endif
             ) {
-                MessageRaceProgram operation(context_,rules_,modes_,upstreams_,fallback_,cache_,disable_cache_,override_budget_,view_);
+                MessageRaceProgram operation(context_,rules_,modes_,upstreams_,fallback_,cache_,disable_cache_,override_budget_,view_,independent_cache_);
                 struct Registration {MessageRaceProgram*& active;~Registration(){active=nullptr;}} registration{racing_};
 #ifdef NEXUS_DNS_FAKEIP
                 operation.set_fakeip_publication(publication_);
@@ -135,7 +138,15 @@ export namespace dns {
                 if(Clock::now()>=deadline) co_return std::unexpected(Error::timeout);
                 auto step=walk.next(query.question.name,query.question.type,context);
                 if(!step) co_return std::unexpected(step.error()==ResponseProgramError::resource_limit ? Error::limit : Error::state);
-                if(step->action==policy::DnsAction::reject) co_return std::unexpected(step->rule<rules_.size() && rules_[step->rule].reject_drop ? Error::policy_dropped : Error::policy_rejected);
+                if(step->action==policy::DnsAction::reject) {
+                    if(step->reject_rcode) {
+                        policy::PredefinedResponse reply{.rcode=*step->reject_rcode};
+                        auto wire=synthetic_message(query,reply);
+                        if(!wire)co_return std::unexpected(Error::protocol);
+                        co_return std::move(*wire);
+                    }
+                    co_return std::unexpected(step->rule<rules_.size() && rules_[step->rule].reject_drop ? Error::policy_dropped : Error::policy_rejected);
+                }
                 if(step->action==policy::DnsAction::predefined) {
                     if(step->rule>=rules_.size() || !rules_[step->rule].predefined) co_return std::unexpected(Error::state);
                     auto wire=synthetic_message(query,*rules_[step->rule].predefined);
@@ -168,6 +179,14 @@ export namespace dns {
                 }
                 if(step->action!=policy::DnsAction::route && step->action!=policy::DnsAction::evaluate) co_return std::unexpected(Error::state);
                 if(step->server>=upstreams_.size()) co_return std::unexpected(Error::state);
+                if(step->action==policy::DnsAction::route && query.question.klass==1 &&
+                   ((step->strategy==rules::DnsRuleStrategy::ipv4_only && query.question.type==28) ||
+                    (step->strategy==rules::DnsRuleStrategy::ipv6_only && query.question.type==1))) {
+                    policy::PredefinedResponse empty{.rcode=0};
+                    auto wire=synthetic_message(query,empty);
+                    if(!wire)co_return std::unexpected(Error::protocol);
+                    co_return std::move(*wire);
+                }
 #ifdef NEXUS_DNS_FAKEIP
                 if (auto* publisher=upstreams_[step->server].fakeip; publisher && step->action==policy::DnsAction::route) {
                     if (auto wire=publisher->query_wire(query))
@@ -175,7 +194,7 @@ export namespace dns {
                 }
 #endif
                 auto until=step->timeout_ms ? std::min(deadline,Clock::now()+std::chrono::milliseconds(*step->timeout_ms)) : deadline;
-                MessageExchange operation(context_,upstreams_,cache_,query,*step,until,override_budget_,view_.value_or(0));
+                MessageExchange operation(context_,upstreams_,cache_,query,*step,until,override_budget_,view_.value_or(0),independent_cache_);
                 struct Registration {MessageExchange*& active;~Registration(){active=nullptr;}} registration{active_};
                 active_=&operation;
                 auto wire=co_await operation.run();

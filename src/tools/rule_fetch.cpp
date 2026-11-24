@@ -16,25 +16,25 @@ import http.header;
 import http.named_client;
 import rulefile;
 import rules.rule_input;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import cli.rule_fetch_url;
+import cli.rule_fetch_alternative;
+import cli.rule_watch_client;
+import cli.rule_fetch_cache;
+import cli.proxy_providers;
+import provider;
+import capy;
+import corosio;
 
 namespace {
-    namespace capy=nex::capy;
+    namespace capy = ::capy;
     namespace http=http;
     namespace fetch=cli::rule_fetch;
-    using Clock=std::chrono::steady_clock;
-#include "rule_fetch_url.hpp"
-#include "rule_fetch_alternative.hpp"
-#include "rule_watch_client.hpp"
-
-#include "rule_fetch_cache.hpp"
-
+    using namespace cli::rule_fetch_detail;
 }
 
 static auto fetch_once(int argc,char** argv,WatchState* watch=nullptr) -> int {
     if(argc==2 && std::string_view(argv[1])=="--help") {
-        std::cout << "usage: nexus rule fetch <config> <client> <https-url> <kdl|beve|srs> <output> [--sha256 <hex>] [--cache-dir <dir>] [--ruleset-cache-max-bytes <bytes>] [--offline-cache]\n";
+        std::cout << "usage: nexus rule fetch <config> <client> <https-url> <kdl|beve|srs|nxmm> <output> [--sha256 <hex>] [--cache-dir <dir>] [--ruleset-cache-max-bytes <bytes>] [--offline-cache]\n";
         return 0;
     }
     if(argc<6) {std::cerr << "use nexus rule fetch --help\n";return 2;}
@@ -54,6 +54,7 @@ static auto fetch_once(int argc,char** argv,WatchState* watch=nullptr) -> int {
     if(name=="kdl")format=Format::kdl;
     if(name=="beve")format=Format::beve;
     if(name=="srs")format=Format::srs;
+    if(name=="nxmm")format=Format::nxmm;
     if (!url || !format) {std::cerr << "invalid HTTPS URL or rule format\n";return 1;}
     std::optional<::state::RulesetKey> key;
     ::state::RulesetLookup cached{};
@@ -145,9 +146,9 @@ static auto fetch_once(int argc,char** argv,WatchState* watch=nullptr) -> int {
             done=true;
         },[&](std::exception_ptr) noexcept {done=true;})(std::move(operation));
         while(!done) {
-            if(watch && interrupted)stop.request_stop();
+            if(watch && interrupted) stop.request_stop();
+            if(context.stopped()) context.restart();
             context.run_for(std::chrono::milliseconds(10));
-            if(context.stopped())break;
         }
     };
     bool used_alternative=false;
@@ -307,13 +308,24 @@ auto nexus_rule_watch(int argc,char** argv) -> int {
 }
 
 namespace {
+    auto run_with_stop(corosio::io_context& context, std::stop_source& stop, std::stop_token external_stop,
+        bool const& done) -> void {
+        std::stop_callback cb(external_stop, [&]() noexcept { stop.request_stop(); context.stop(); });
+        if (external_stop.stop_requested()) stop.request_stop();
+        while (!done) {
+            if (external_stop.stop_requested()) stop.request_stop();
+            if (context.stopped()) context.restart();
+            context.run_for(std::chrono::milliseconds(10));
+        }
+    }
+
     auto fetch_managed_ruleset_impl(config::Config const& config,std::string_view config_source,
-        config::BlockRules const& spec,std::string_view previous_etag,bool offline_fallback)
+        config::BlockRules const& spec,std::string_view previous_etag,bool offline_fallback,
+        std::stop_token external_stop, void* client_pool)
         -> std::expected<cli::ManagedRulesetFetchResult,std::string> {
         auto url=parse_url(spec.url);
         using Format=::rules::InputFormat;
-        auto format=spec.format==config::RuleFormat::kdl ? Format::kdl :
-            spec.format==config::RuleFormat::beve ? Format::beve : Format::srs;
+        auto format = cli::rule_input_format(spec.format);
         if (!url) return std::unexpected("invalid remote rule-set HTTPS URL: "+spec.url);
         std::optional<std::array<std::uint8_t,32>> pin;
         if (!spec.sha256.empty()) {
@@ -336,13 +348,13 @@ namespace {
                 }
             }
         }
-        auto created=http::NamedHttpClient::create(config,spec.http_client,url->authority);
+        auto created=acquire_pooled_client(client_pool,config,spec.http_client,url->authority);
         if (!created) {
             if (offline_fallback && cached.hit)
                 return cli::ManagedRulesetFetchResult{cached.hit->body,cached.hit->metadata.etag,true};
             return std::unexpected(created.error());
         }
-        auto& client=**created;
+        auto& client=*created->client;
         auto& context=client.executor();
         auto const& selected=client.settings();
         auto started=Clock::now();
@@ -379,15 +391,14 @@ namespace {
             else result=std::unexpected(std::move(value.error()));
             done=true;
         },[&](std::exception_ptr) noexcept { done=true; })(std::move(op));
-        while (!done) {
-            context.run_for(std::chrono::milliseconds(10));
-            if (context.stopped()) break;
-        }
+        run_with_stop(context, stop, external_stop, done);
+        if (external_stop.stop_requested()) return std::unexpected("HTTPS remote rule-set fetch canceled");
         if (!result) {
             if (offline_fallback && cached.hit && offline_error(result.error()))
                 return cli::ManagedRulesetFetchResult{cached.hit->body,cached.hit->metadata.etag,true};
             return std::unexpected(result.error());
         }
+        release_pooled_client(client_pool,spec.http_client,url->authority,std::move(created->deps),std::move(created->client));
         if (result->status==304) {
             std::string tag=(validator.seen && !validator.invalid) ? validator.value : active_etag;
             if (cached.hit) return cli::ManagedRulesetFetchResult{cached.hit->body,std::move(tag),true};
@@ -404,8 +415,83 @@ namespace {
         return cli::ManagedRulesetFetchResult{std::move(result->body),std::move(tag),false};
     }
 
-    auto const g_managed_ruleset_registered = []() noexcept -> bool {
-        cli::register_managed_ruleset_fetcher(&fetch_managed_ruleset_impl);
-        return true;
-    }();
+    auto fetch_managed_provider_impl(config::Config const& config,
+        config::ProxyProviderConfig const& spec, std::string_view previous_etag, bool offline_fallback,
+        std::stop_token external_stop, void* client_pool)
+        -> std::expected<cli::ManagedProviderFetchResult, std::string> {
+        auto url = parse_url(spec.url);
+        if (!url) return std::unexpected("invalid HTTPS provider URL: " + spec.url);
+        std::filesystem::path cache_root = !spec.cache_dir.empty() ? std::filesystem::path(spec.cache_dir) :
+            (config.state && !config.state->cache_directory.empty() ? std::filesystem::path(config.state->cache_directory) : std::filesystem::path{});
+        std::optional<cli::ManagedProviderFetchResult> cached;
+        if (!cache_root.empty()) cached = cli::read_provider_cache(cache_root, spec.name);
+        auto created = acquire_pooled_client(client_pool, config, spec.http_client, url->authority);
+        if (!created) {
+            if (offline_fallback && cached) return *cached;
+            return std::unexpected(created.error());
+        }
+        auto& client = *created->client;
+        auto& context = client.executor();
+        auto const& selected = client.settings();
+        auto started = Clock::now();
+        auto deadline = started + std::chrono::milliseconds(selected.timeout_ms);
+        std::string active_etag(!previous_etag.empty() ? std::string(previous_etag) :
+            (cached ? cached->etag : std::string{}));
+        auto clean_tag = entity_tag(active_etag);
+        std::vector<http::HeaderField> req_headers;
+        bool conditional = !clean_tag.empty() && std::ranges::none_of(selected.headers, [](auto const& f) {
+            return f.first == "if-none-match" || f.first == "if-modified-since" || f.first == "if-match";
+        });
+        if (conditional) req_headers.push_back({"if-none-match", clean_tag});
+        EntityTag validator;
+        std::optional<provider::SubscriptionUserinfo> userinfo;
+        auto on_header = [&](std::string_view name, std::string_view value) {
+            std::string lname(name);
+            for (auto& ch : lname) if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+            validator.add(lname, value);
+            if (lname == "subscription-userinfo" && value.size() <= 512) {
+                if (auto ui = provider::parse_subscription_userinfo(value)) userinfo = *ui;
+            }
+        };
+        std::optional<http::HttpHeaderConsumer> observe;
+        observe.emplace(on_header);
+        fetch::Result result = std::unexpected("HTTPS proxy-provider fetch did not complete");
+        std::string body;
+        auto consume = [&](std::string_view bytes, Clock::time_point) -> capy::task<bool> {
+            body.append(bytes);
+            co_return true;
+        };
+        auto op = client.get({url->target, req_headers, deadline, {}, started, conditional, false}, consume, observe);
+        bool done = false;
+        std::stop_source stop;
+        context.restart();
+        capy::run_async(context.get_executor(), stop.get_token(), [&](auto value) noexcept {
+            if (value) result = fetch::Response{*value, std::move(body)};
+            else result = std::unexpected(std::move(value.error()));
+            done = true;
+        }, [&](std::exception_ptr) noexcept { done = true; })(std::move(op));
+        run_with_stop(context, stop, external_stop, done);
+        if (external_stop.stop_requested()) return std::unexpected("HTTPS remote rule-set fetch canceled");
+        if (!result) {
+            if (offline_fallback && cached && offline_error(result.error())) return *cached;
+            return std::unexpected(result.error());
+        }
+        release_pooled_client(client_pool, spec.http_client, url->authority, std::move(created->deps), std::move(created->client));
+        std::string tag = (validator.seen && !validator.invalid) ? validator.value : active_etag;
+        if (result->status == 304) {
+            cli::ManagedProviderFetchResult res{cached ? cached->body : std::string{}, std::move(tag),
+                userinfo ? userinfo : (cached ? cached->userinfo : std::nullopt), true};
+            return res;
+        }
+        cli::ManagedProviderFetchResult res{std::move(result->body), std::move(tag), userinfo, false};
+        if (!cache_root.empty()) (void)cli::write_provider_cache(cache_root, spec.name, res);
+        return res;
+    }
+
+}
+
+extern "C" void nexus_register_builtin_http_fetchers() noexcept {
+    cli::register_managed_ruleset_fetcher(&fetch_managed_ruleset_impl);
+    cli::register_managed_provider_fetcher(&fetch_managed_provider_impl);
+    cli::register_managed_http_pool_factory(+[]() -> std::shared_ptr<void> { return std::make_shared<ManagedClientPool>(); });
 }

@@ -1,6 +1,7 @@
 export module platform.socket_options;
 import std;
-export import nexus.compat;
+export import containers.inplace_vector;
+export import functional;
 import platform.platform_defaults;
 
 export namespace platform {
@@ -16,6 +17,13 @@ export namespace platform {
     };
 
     using SocketDeadline = std::chrono::steady_clock::time_point;
+
+    // Global in-process socket protection hook (e.g., Android VpnService.protect / iOS bypass).
+    // C/FFI compatible signature; returning 0 indicates success, non-zero indicates an OS errno.
+    using ProtectFdCallback = int (*)(int fd, void* ctx);
+    auto set_protect_fd_callback(ProtectFdCallback cb, void* ctx = nullptr) noexcept -> void;
+    [[nodiscard]] auto has_protect_fd_callback() noexcept -> bool;
+    [[nodiscard]] auto invoke_protect_fd(int fd) noexcept -> std::error_code;
 
     namespace network {
         enum class Type : std::uint8_t { ethernet, wifi, cellular, vpn, other };
@@ -57,7 +65,7 @@ export namespace platform {
         };
 
         struct InterfaceCandidates {
-            nexus::inplace_vector<std::uint32_t, 16> indices;
+            containers::inplace_vector<std::uint32_t, 16> indices;
             std::chrono::milliseconds fallback_delay{};
             bool parallel_fallback = false;
             std::shared_ptr<FallbackMemory> fallback_memory;
@@ -66,7 +74,7 @@ export namespace platform {
             }
         };
 
-        using InterfaceSelection = nexus::copyable_function<InterfaceCandidates(bool) const noexcept>;
+        using InterfaceSelection = functional::copyable_function<InterfaceCandidates(bool) const noexcept>;
 
         [[nodiscard]] auto retry_interface_error(std::error_code error) noexcept -> bool {
             return error == std::errc::network_unreachable || error == std::errc::host_unreachable ||
@@ -92,7 +100,8 @@ export namespace platform {
         [[nodiscard]] auto configured() const noexcept -> bool {
             return !network_namespace.empty() || !protect_path.empty() || bind_interface.front() || network ||
                 interface_index || inet4_bind_address || inet6_bind_address || routing_mark ||
-                udp_bind_port.has_value() || reuse_addr.has_value() || udp_fragment.has_value();
+                udp_bind_port.has_value() || reuse_addr.has_value() || udp_fragment.has_value() ||
+                has_protect_fd_callback();
         }
         [[nodiscard]] auto separate_families() const noexcept -> bool {
             return network || inet4_bind_address || inet6_bind_address;
@@ -177,4 +186,6 @@ export namespace platform {
         SocketDeadline deadline = SocketDeadline::max()) noexcept -> std::error_code;
     // Best-effort low-latency & dead-peer eviction tuning for interactive TCP sockets.
     auto tune_tcp_low_latency(int fd, std::uint32_t user_timeout_ms = 20000) noexcept -> void;
+    // Best-effort re-arm TCP_QUICKACK on Linux to avoid 40ms delayed-ACK stalls.
+    auto enable_tcp_quickack(int fd) noexcept -> void;
 }

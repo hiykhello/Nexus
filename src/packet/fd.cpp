@@ -41,4 +41,10 @@ namespace packet {
         MemoryDevice device{*link_,validator,context};
         return fd_detail::step(fd_,device,mtu_,buffer_,input_size_,output_);
     }
+    auto FdPump::step_output(OutputValidator validator,void* context) -> FdStep {
+        MemoryDevice device{*link_,validator,context};
+        FdStep result;
+        fd_detail::step_output(fd_,device,mtu_,output_,result);
+        return result;
+    }
 }

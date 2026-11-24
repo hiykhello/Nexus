@@ -24,7 +24,7 @@ BoringSSL 官方明确不保证 API/ABI 稳定，也不推荐将其视为通用�
 
 上游建议在更新时选取新提交并定期更新；其周期性标签不提供长期稳定分支保证。固定提交用于复现，不能演变成长期不更新密码依赖。[集成说明](https://boringssl.googlesource.com/boringssl/+/HEAD/INCORPORATING.md)
 
-建议将 BoringSSL 原始接口的使用限制在 `nexus.thirdparty.boringssl_crypto` 与 `nexus.crypto`/`nexus.pki` 的集成边界；第三方模块按需导出类型和函数以供适配及独立消费，业务公共接口不泄漏裸句柄或宏，见[第三方 Modules 封装](../build/third-party-modules.md)。对象用 RAII 持有，按函数返回值判断成败并立即转换为 expected；不能仅用错误队列判定成败。协程跨线程恢复前先捕获本次错误上下文，避免后续操作混入诊断。[API 约定](https://boringssl.googlesource.com/boringssl/+/HEAD/API-CONVENTIONS.md)
+建议将 BoringSSL 原始接口的使用限制在 `boringssl`（`3rdparty/modules/boringssl.cppm`）与 `crypto` 的集成边界；第三方模块按需导出类型和函数以供适配及独立消费，业务公共接口不泄漏裸句柄或宏，见[第三方 Modules 封装](../build/third-party-modules.md)。对象用 RAII 持有，按函数返回值判断成败并立即转换为 expected；不能仅用错误队列判定成败。协程跨线程恢复前先捕获本次错误上下文，避免后续操作混入诊断。[API 约定](https://boringssl.googlesource.com/boringssl/+/HEAD/API-CONVENTIONS.md)
 
 mcpp 工作区使用固定版本的 libcrypto 源文件清单并保留必要平台及汇编构建逻辑，避免手工挑选若干算法源文件。[构建指南](https://boringssl.googlesource.com/boringssl/+/HEAD/BUILDING.md)
 

@@ -5,8 +5,8 @@ import cli.dns_proxy_stream;
 import dns.corosio_query;
 import dns.doh_exchange;
 import dns.doh_pool;
-import proxy;
-import proxy.session_quota;
+import relay;
+import relay.session_quota;
 import tls.profiles;
 
 namespace cli {
@@ -14,10 +14,10 @@ namespace cli {
         using namespace dns_proxy_detail;
 
         struct Layered {
-            proxy::Session session;
+            relay::Session session;
             Connector connector;
 
-            Layered(Io& context,proxy::Server& server,proxy::SessionQuota::Lease lease,std::size_t outbound,
+            Layered(Io& context,relay::Server& server,relay::SessionQuota::Lease lease,std::size_t outbound,
                 Endpoint peer,tls::ClientProfile const& profile,std::shared_ptr<dns::detail::TransportSnapshot const> snapshot)
                 :session(context),connector(profile,server,session,outbound,peer) {
                 server.attach_session(session,std::move(lease));
@@ -39,7 +39,7 @@ namespace cli {
             -> dns::doh_detail::NewStream {
             auto transport=snapshot ? snapshot->lock() : nullptr;
             if (snapshot && !transport) return std::unexpected(Error::canceled);
-            auto* server=proxy::Server::from_context(context);
+            auto* server=relay::Server::from_context(context);
             if (!server) return std::unexpected(Error::transport);
             auto lease=server->acquire_session();
             if (!lease) return std::unexpected(Error::budget_exhausted);

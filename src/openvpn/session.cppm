@@ -22,6 +22,7 @@ export namespace openvpn {
 
     public:
         DataChannel() = default;
+        ~DataChannel() { crypto::cleanse(tx_iv_); crypto::cleanse(rx_iv_); }
         DataChannel(DataChannel const&) = delete;
         auto operator=(DataChannel const&) -> DataChannel& = delete;
 

@@ -1,6 +1,6 @@
 export module packet.tun_default_policy;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import platform.netlink_abi;
 import platform.netlink_codec;
 import platform.netlink_socket;
@@ -27,7 +27,7 @@ export namespace packet {
         }
         inline auto same_key(r::Rule const& left,r::Rule const& right) noexcept -> bool {return r::same_selector(left,right);}
     }
-    inline constexpr std::size_t max_tun_excludes=23;
+    inline constexpr std::size_t max_tun_excludes=64;
 
     struct TunDefaultOptions {
         std::uint32_t capture_table=60000,bypass_table=60001,priority=10000,mark=0x6e780001;
@@ -46,9 +46,9 @@ export namespace packet {
         Socket socket_;
         platform::netlink::Watch watch_;
         platform::routing::IPv4ReversePathLease reverse_;
-        nexus::inplace_vector<Entry<Route>,66> routes_;
-        nexus::inplace_vector<Entry<Rule>,2*(2+2+2+4)+2*max_tun_excludes> rules_;
-        nexus::inplace_vector<TunAddress,32> local_destinations_;
+        containers::inplace_vector<Entry<Route>,66> routes_;
+        containers::inplace_vector<Entry<Rule>,2*(2+2+2+4)+2*max_tun_excludes> rules_;
+        containers::inplace_vector<TunAddress,32> local_destinations_;
         std::uint32_t capture_priority_=0,last_priority_=0;
         std::int32_t index_=0;
         bool starting_=false,started_=false,stopped_=false,drift_=false,uncertain_=false,watch_local_=false;

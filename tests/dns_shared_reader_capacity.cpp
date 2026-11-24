@@ -2,7 +2,7 @@ import std;
 import config;
 import dns.cache;
 import dns.message;
-import proxy;
+import relay;
 
 namespace {
     auto require(bool condition,std::string_view message) -> void {
@@ -27,7 +27,7 @@ auto main() -> int {
                 "maximum configuration did not retain its resource plan");
         auto workers=listeners*config.workers;
         auto readers=workers+2; // SS UDP lookup and its ordered routing context.
-        proxy::SharedDnsGeneration generation(listeners+1,readers);
+        relay::SharedDnsGeneration generation(listeners+1,readers);
         auto& cache=generation.cache();
         for(std::size_t group=0;group<listeners;++group)
             require(cache.supports_binding(group,group*config.workers,config.workers),"worker binding rejected");
@@ -55,15 +55,15 @@ auto main() -> int {
         catch(std::out_of_range const&) {overflow=true;}
         require(overflow,"out-of-range reader accepted");
         overflow=false;
-        try {proxy::SharedDnsGeneration invalid(listeners+1,readers+1);}
+        try {relay::SharedDnsGeneration invalid(listeners+1,readers+1);}
         catch(std::out_of_range const&) {overflow=true;}
         require(overflow,"reader allocation ceiling not enforced");
 
         // All consumers register the same global DNS plan. Its profiles are
         // deduplicated before the 64-profile bound, independent of reader count.
-        proxy::DnsRouting routing;
+        relay::DnsRouting routing;
         for(unsigned i=0;i<64;++i) {
-            proxy::DnsServer server{};server.address[0]=127;server.address[3]=1;server.port=10000+i;
+            relay::DnsServer server{};server.address[0]=127;server.address[3]=1;server.port=10000+i;
             routing.servers.push_back(std::move(server));
         }
         for(std::size_t consumer=0;consumer<listeners+2;++consumer)

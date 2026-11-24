@@ -6,7 +6,7 @@
 #include <unistd.h>
 
 import std;
-import proxy;
+import relay;
 import rules;
 import rulefile;
 import platform.stream_peer;
@@ -205,15 +205,15 @@ static auto transfer_ipv6(std::uint16_t proxy_port) -> bool {
     return target_ok;
 }
 
-static auto policy_test(proxy::RuleFormat format) -> bool {
-    constexpr std::string_view kdl = R"(schema-version 1
+static auto policy_test(relay::RuleFormat format) -> bool {
+    constexpr std::string_view kdl = R"(schema-version 2
 kind "predicate"
 rule type="ip-cidr" value="127.0.0.0/8"
 rule type="ip-cidr" value="::1/128"
 rule type="domain-suffix" value="blocked.test"
 )";
     std::string data(kdl);
-    if (format == proxy::RuleFormat::beve) {
+    if (format == relay::RuleFormat::beve) {
         auto rules = ::rules::parse_kdl(kdl);
         if (!rules) return false;
         auto encoded = ::rules::write_beve(*rules);
@@ -222,13 +222,13 @@ rule type="domain-suffix" value="blocked.test"
     }
     auto path = std::filesystem::temp_directory_path() /
                 ("nexus-policy-" + std::to_string(::getpid()) +
-                 (format == proxy::RuleFormat::kdl ? ".kdl" : ".beve"));
+                 (format == relay::RuleFormat::kdl ? ".kdl" : ".beve"));
     auto published = ::rulefile::publish_new_file(path.string(), data);
     if (!published) return false;
     auto input = ::rulefile::read_regular_file(path.string());
     std::filesystem::remove(path);
     if (!input) return false;
-    proxy::Server server;
+    relay::Server server;
     if (!server.set_block_rules(*input, format)) return false;
     if (server.set_block_rules("invalid", format)) return false;
     auto port = server.start(0);
@@ -262,7 +262,7 @@ static auto source_policy_test() -> bool {
         {"source-port-range","1-65535",{}},{"network","tcp",{}}}}},2};
     auto policy=r::RouteMatcher::compile(std::array{r::RouteRule{source,1}},0,2,r::SourceMetadata::provided);
     if (!policy || !policy->needs_source()) return false;
-    proxy::Server server;
+    relay::Server server;
     if (!server.set_source_policy_for_test(std::move(*policy))) return false;
     auto port=server.start(0);
     if (!port) return false;
@@ -281,16 +281,21 @@ static auto source_policy_test() -> bool {
 #endif
 
 static auto credential_lifecycle() -> bool {
-    proxy::Server server;
+    relay::Server server;
     if (server.set_socks5_credentials("", "password") || server.set_socks5_credentials("user", "") ||
         server.set_socks5_credentials(std::string(256, 'x'), "password")) return false;
+    if (!server.set_socks5_credentials("user:colon", "password")) return false;
+    if (server.start(0, relay::Inbound::mixed)) return false;
     if (!server.set_socks5_credentials("user", "password")) return false;
-    if (server.start(0, proxy::Inbound::mixed)) return false;
+    if (server.start(0, relay::Inbound::redirect)) return false;
+    auto mixed_auth = server.start(0, relay::Inbound::mixed);
+    if (!mixed_auth) return false;
+    server.stop();
     auto port = server.start(0);
     if (!port || server.clear_socks5_credentials() || server.set_socks5_credentials("user", "other")) return false;
     server.stop();
     if (!server.clear_socks5_credentials()) return false;
-    auto mixed = server.start(0, proxy::Inbound::mixed);
+    auto mixed = server.start(0, relay::Inbound::mixed);
     if (!mixed) return false;
     server.stop();
     return true;
@@ -304,8 +309,8 @@ static auto active_relay_stop(unsigned workers) -> bool {
     socklen_t size=sizeof(address);
     if (::getsockname(listener.fd,reinterpret_cast<sockaddr*>(&address),&size)) return false;
     auto target=ntohs(address.sin_port);
-    proxy::Server server;
-    auto port=server.start(0,proxy::Inbound::socks5,workers);
+    relay::Server server;
+    auto port=server.start(0,relay::Inbound::socks5,workers);
     if (!port) return false;
     std::atomic_bool stop{false};
     std::jthread loop([&] { while (!stop) server.poll(20ms); server.stop(); });
@@ -325,7 +330,7 @@ static auto active_relay_stop(unsigned workers) -> bool {
     if (!ok || client_end!=0 || peer_end!=0)
         std::cerr << "active relay stop: transfer=" << ok << " client=" << client_end << " peer=" << peer_end << '\n';
     ok=ok && client_end==0 && peer_end==0;
-    auto restarted=server.start(0,proxy::Inbound::socks5,workers);
+    auto restarted=server.start(0,relay::Inbound::socks5,workers);
     if (restarted) server.stop();
     else std::cerr << "active relay restart failed: " << restarted.error().message() << '\n';
     return ok && restarted.has_value();
@@ -342,8 +347,8 @@ static auto slow_resolver_test(unsigned workers) -> bool {
     auto gate = std::to_string(gate_read.fd);
     if (::setenv("NEXUS_TEST_RESOLVER_READY_FD", ready.c_str(), 1) != 0 ||
         ::setenv("NEXUS_TEST_RESOLVER_GATE_FD", gate.c_str(), 1) != 0) return false;
-    proxy::Server server;
-    auto port = server.start(0,proxy::Inbound::socks5,workers);
+    relay::Server server;
+    auto port = server.start(0,relay::Inbound::socks5,workers);
     if (!port) return false;
     std::atomic_bool stop{false}, stopped{false};
     std::jthread loop([&] { while (!stop) server.poll(20ms); server.stop(); stopped = true; });
@@ -384,7 +389,7 @@ static auto slow_resolver_test(unsigned workers) -> bool {
 
 int main(int argc, char** argv) {
     unsigned workers=argc==2 ? static_cast<unsigned>(std::stoul(argv[1])) : 1;
-    proxy::Server server;
+    relay::Server server;
     auto port = server.start(0);
     if (!port) { std::cerr << "proxy start failed: " << port.error() << '\n'; return 1; }
     std::atomic_bool stop{false};
@@ -401,7 +406,7 @@ int main(int argc, char** argv) {
         auto n = ::recv(stalled.fd, &byte, 1, 0);
         ok = ok && check(n == 0, "stalled close");
     }
-    ok = ok && check(policy_test(proxy::RuleFormat::kdl), "KDL policy") && check(policy_test(proxy::RuleFormat::beve), "BEVE policy") &&
+    ok = ok && check(policy_test(relay::RuleFormat::kdl), "KDL policy") && check(policy_test(relay::RuleFormat::beve), "BEVE policy") &&
          check(slow_resolver_test(workers), "slow resolver") && check(credential_lifecycle(), "credential lifecycle") &&
          check(active_relay_stop(workers), "active relay stop");
 #ifdef NEXUS_TEST_SOURCE_ROUTE

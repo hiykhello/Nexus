@@ -20,7 +20,7 @@ void* operator new(std::size_t size) {
 void operator delete(void* pointer) noexcept { std::free(pointer); }
 void operator delete(void* pointer,std::size_t) noexcept { std::free(pointer); }
 namespace d=dns;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
 
@@ -45,6 +45,19 @@ int test(bool uring,bool shared_budget) {
 #else
     if (uring) return 77; io::io_context context(io::epoll);
 #endif
+    {
+        d::AddressCache warm_cache(1, 10000);
+        d::Address addr{}; addr.size=4; addr.bytes[0]=127; addr.bytes[3]=1;
+        d::CacheKey warm_key{1, "refresh-warm-trampoline.example.test", 1};
+        d::AddressAnswer warm_ans{warm_key.name, {warm_key.name}, {addr}, 1};
+        auto now=std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+        if (auto tok=warm_cache.begin_query(warm_key); tok && warm_cache.publish(warm_key, std::move(warm_ans), now-1200, *tok)) {
+            d::detail::RefreshOwner warm_owner(context, warm_cache, 1, 1s, 100ms, nullptr);
+            (void)warm_owner.start(warm_key, io::endpoint(io::ipv4_address::loopback(), 9));
+            warm_owner.stop();
+            context.restart(); (void)context.run_for(100ms);
+        }
+    }
     unsigned faults=0;
     for (int position=1;position<=50;++position) {
         d::AddressCache cache(1,10000);

@@ -12,7 +12,9 @@ namespace packet {
     static_assert(IFNAMSIZ==16);
     LinuxTun::LinuxTun(LinuxTun&& other) noexcept
         : fd_(std::exchange(other.fd_,-1)),name_(std::exchange(other.name_,{})),
-          network_claimed_(std::exchange(other.network_claimed_,false)),network_claimable_(other.network_claimable_) {
+          network_claimed_(std::exchange(other.network_claimed_,false)),network_claimable_(other.network_claimable_),
+          restore_blocking_(std::exchange(other.restore_blocking_,false)),
+          orig_status_flags_(std::exchange(other.orig_status_flags_,0)) {
         other.invalidate();
     }
     auto LinuxTun::operator=(LinuxTun&& other) noexcept -> LinuxTun& {
@@ -23,13 +25,22 @@ namespace packet {
             name_=std::exchange(other.name_,{});
             network_claimed_=std::exchange(other.network_claimed_,false);
             network_claimable_=other.network_claimable_;
+            restore_blocking_=std::exchange(other.restore_blocking_,false);
+            orig_status_flags_=std::exchange(other.orig_status_flags_,0);
             other.invalidate();
         }
         return *this;
     }
     LinuxTun::~LinuxTun() { close(); }
     auto LinuxTun::close() noexcept -> void {
-        if (fd_>=0) { ::close(fd_); fd_=-1; invalidate(); }
+        if (fd_>=0) {
+            if (restore_blocking_) {
+                (void)::fcntl(fd_,F_SETFL,orig_status_flags_);
+                restore_blocking_=false;
+                orig_status_flags_=0;
+            }
+            ::close(fd_); fd_=-1; invalidate();
+        }
         name_.fill(0);
     }
     auto LinuxTun::name() const noexcept -> std::string_view { return {name_.data(),std::char_traits<char>::length(name_.data())}; }
@@ -105,24 +116,51 @@ namespace packet {
     }
 
     auto LinuxTun::attach(int fd,TunFdOwnership ownership) -> std::expected<LinuxTun,TunFailure> {
+        return attach_external(fd,ownership,true);
+    }
+
+    auto LinuxTun::attach_external(int fd,TunFdOwnership ownership,bool verify_tun_ioctl)
+        -> std::expected<LinuxTun,TunFailure> {
         auto system_error=[] {return TunFailure{std::error_code(errno,std::generic_category())};};
         int status=::fcntl(fd,F_GETFL);
         if (status<0) return std::unexpected(system_error());
-        if ((status&(O_ACCMODE|O_NONBLOCK))!=(O_RDWR|O_NONBLOCK))
-            return std::unexpected(TunFailure{TunError::invalid_device});
+        bool changed_nonblock=false;
+        if (verify_tun_ioctl) {
+            if ((status&(O_ACCMODE|O_NONBLOCK))!=(O_RDWR|O_NONBLOCK))
+                return std::unexpected(TunFailure{TunError::invalid_device});
+        } else {
+            if ((status&O_ACCMODE)!=O_RDWR)
+                return std::unexpected(TunFailure{TunError::invalid_device});
+            if (!(status&O_NONBLOCK)) {
+                if (::fcntl(fd,F_SETFL,status|O_NONBLOCK)<0) return std::unexpected(system_error());
+                changed_nonblock=true;
+            }
+        }
+        auto restore_flags=[&]() noexcept {
+            if (changed_nonblock) (void)::fcntl(fd,F_SETFL,status);
+        };
+        std::array<char,16> assigned{};
         ifreq request{};
-        if (::ioctl(fd,TUNGETIFF,&request)<0) return std::unexpected(system_error());
-        if ((request.ifr_flags&(IFF_TUN|IFF_TAP|IFF_NO_PI|IFF_VNET_HDR))!=(IFF_TUN|IFF_NO_PI))
-            return std::unexpected(TunFailure{TunError::invalid_device});
+        if (::ioctl(fd,TUNGETIFF,&request)<0) {
+            if (verify_tun_ioctl) { restore_flags(); return std::unexpected(system_error()); }
+            constexpr std::string_view fallback_name="tun-android";
+            std::copy_n(fallback_name.begin(),fallback_name.size(),assigned.begin());
+        } else {
+            if ((request.ifr_flags&(IFF_TUN|IFF_TAP|IFF_NO_PI|IFF_VNET_HDR))!=(IFF_TUN|IFF_NO_PI))
+                { restore_flags(); return std::unexpected(TunFailure{TunError::invalid_device}); }
+            std::copy_n(request.ifr_name,IFNAMSIZ-1,assigned.begin());
+        }
+        int out_fd=fd;
         if (ownership==TunFdOwnership::borrow) {
-            fd=::fcntl(fd,F_DUPFD_CLOEXEC,0);
-            if (fd<0) return std::unexpected(system_error());
+            out_fd=::fcntl(fd,F_DUPFD_CLOEXEC,0);
+            if (out_fd<0) { auto err=system_error(); restore_flags(); return std::unexpected(err); }
         } else {
             int flags=::fcntl(fd,F_GETFD);
-            if (flags<0 || ::fcntl(fd,F_SETFD,flags|FD_CLOEXEC)<0) return std::unexpected(system_error());
+            if (flags<0 || ::fcntl(fd,F_SETFD,flags|FD_CLOEXEC)<0) {
+                auto err=system_error(); restore_flags(); return std::unexpected(err);
+            }
         }
-        std::array<char,16> assigned{};
-        std::copy_n(request.ifr_name,IFNAMSIZ-1,assigned.begin());
-        return LinuxTun(fd,assigned,false);
+        bool restore_on_close=(ownership==TunFdOwnership::borrow && changed_nonblock);
+        return LinuxTun(out_fd,assigned,false,restore_on_close,status);
     }
 }

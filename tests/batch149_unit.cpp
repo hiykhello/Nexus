@@ -6,7 +6,7 @@ import quic.datagram_port;
 import rules;
 import socks5;
 import udp;
-import nexus.thirdparty.corosio;
+import corosio;
 
 namespace {
     int failures = 0;
@@ -107,7 +107,7 @@ namespace {
 
     struct MockPort {
         using Failure = quic::DatagramPortError;
-        nex::corosio::endpoint last_rx{};
+        corosio::endpoint last_rx{};
         std::uint16_t primary = 0;
         bool emit_once = true;
         auto request_stop() noexcept -> void {}
@@ -116,7 +116,7 @@ namespace {
         auto next_expiry() const noexcept -> net::DatagramDeadline { return std::nullopt; }
         auto expire(net::DatagramClock::time_point) -> std::expected<void, Failure> { return {}; }
         auto transmitted(std::uint64_t, net::DatagramClock::time_point) -> std::expected<void, Failure> { return {}; }
-        auto receive(nex::corosio::endpoint const& peer, std::span<std::uint8_t>, net::DatagramClock::time_point)
+        auto receive(corosio::endpoint const& peer, std::span<std::uint8_t>, net::DatagramClock::time_point)
             -> std::expected<void, Failure> {
             last_rx = peer;
             return {};
@@ -126,7 +126,7 @@ namespace {
             if (!emit_once) return std::optional<net::DatagramOutput>{};
             buf[0] = 0x42;
             return std::optional<net::DatagramOutput>{net::DatagramOutput{
-                nex::corosio::endpoint{nex::corosio::ipv4_address::loopback(), primary}, 1, 1}};
+                corosio::endpoint{corosio::ipv4_address::loopback(), primary}, 1, 1}};
         }
     };
 
@@ -207,7 +207,7 @@ namespace {
         auto out2 = port.output(buf, t0 + std::chrono::milliseconds(1000));
         expect(out2 && *out2 && (**out2).peer.port() == p2, "149C: output uses new hopped port");
         std::array<std::uint8_t, 4> rx{1, 2, 3, 4};
-        expect(port.receive(nex::corosio::endpoint{nex::corosio::ipv4_address::loopback(), p2}, rx, t0).has_value(), "149C: receive from hopped port");
+        expect(port.receive(corosio::endpoint{corosio::ipv4_address::loopback(), p2}, rx, t0).has_value(), "149C: receive from hopped port");
         expect(mock.last_rx.port() == 20000, "149C: receive normalizes logical peer port back to primary");
     }
 

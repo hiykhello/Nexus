@@ -3,13 +3,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 import dns.fakeip_shared;
 import dns.message;
 import dns.fakeip_registry;
 import dns.fakeip_response;
 using namespace std::chrono_literals;
-namespace d=dns; namespace p=proxy;
+namespace d=dns; namespace p = relay;
 std::weak_ptr<d::FakeIpShared> owner;
 bool skip=false, destroyed=false, alive=false, pinned_on_release=false; long owners=0;
 extern "C" bool nexus_test_skip_server_stop() { return skip; }

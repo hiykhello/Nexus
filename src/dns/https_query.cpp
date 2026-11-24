@@ -8,8 +8,8 @@ import dns.doh3_pool;
 import platform.socket_options;
 import tls.connector;
 import tls.profiles;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace dns {
     namespace {
@@ -33,19 +33,19 @@ namespace dns {
         using PhysicalFastOpen=Physical<tls::detail::FastOpenPhysicalConnector<FixedResolver,tls::ClientProfile>>;
     }
 
-    auto stop_https_queries(nex::corosio::io_context& context) noexcept -> void {
+    auto stop_https_queries(corosio::io_context& context) noexcept -> void {
         doh_detail::stop_pool(context);
 #ifdef NEXUS_DNS_DOH3
         stop_https3_queries(context);
 #endif
     }
-    auto resume_https_queries(nex::corosio::io_context& context) noexcept -> void {
+    auto resume_https_queries(corosio::io_context& context) noexcept -> void {
         doh_detail::resume_pool(context);
 #ifdef NEXUS_DNS_DOH3
         resume_https3_queries(context);
 #endif
     }
-    auto reap_idle_https_queries(nex::corosio::io_context& context,std::chrono::steady_clock::time_point now) noexcept -> void {
+    auto reap_idle_https_queries(corosio::io_context& context,std::chrono::steady_clock::time_point now) noexcept -> void {
         doh_detail::reap_pool(context,now);
 #ifdef NEXUS_DNS_DOH3
         reap_idle_https3_queries(context,now);

@@ -1,20 +1,20 @@
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import platform.netlink_abi;
 import platform.netlink_codec;
 import platform.netlink_socket;
 import platform.netlink_watch;
 import platform.routing_rule;
-import nexus.test.lease_support;
+import test.lease_support;
 namespace {
     namespace a = ::platform::netlink_abi;
     namespace n = ::platform::netlink;
     namespace r = ::platform::routing;
-    namespace t=nexus::test::lease;
+    namespace t=test::lease;
     using Clock=std::chrono::steady_clock;
     struct Event {std::uint16_t type;std::uint32_t port,sequence;r::Rule rule;};
-    auto events(n::Watch& watch) -> nexus::inplace_vector<Event,16> {
-        nexus::inplace_vector<Event,16> values;
+    auto events(n::Watch& watch) -> containers::inplace_vector<Event,16> {
+        containers::inplace_vector<Event,16> values;
         std::array<std::uint8_t,65536> input;
         auto drained=watch.drain(input,[&](n::Message message) -> std::expected<void,n::Failure> {
             if(message.header.nlmsg_type!=a::RTM_NEWRULE && message.header.nlmsg_type!=a::RTM_DELRULE)return n::fail(n::Error::protocol);

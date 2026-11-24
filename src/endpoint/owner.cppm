@@ -1,3 +1,5 @@
+module;
+#include <sys/eventfd.h>
 export module endpoint.owner;
 import std;
 import endpoint.host_dns_types;
@@ -22,6 +24,132 @@ import wireguard.tun;
 import net.udp_socket;
 
 export namespace endpoint {
+    namespace owner_detail {
+        inline auto open_eventfd() noexcept -> int { return ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC); }
+        inline auto signal_eventfd(int fd) noexcept -> void {
+            if (fd < 0) return;
+            std::uint64_t one = 1;
+            while (platform::netlink_abi::write(fd, &one, sizeof(one)) < 0 &&
+                   *platform::netlink_abi::__errno_location() == std::to_underlying(std::errc::interrupted)) {}
+        }
+        class SignalBlockGuard {
+            platform::netlink_abi::sigset_t previous_{};
+            bool active_ = false;
+        public:
+            SignalBlockGuard() noexcept {
+                namespace a = platform::netlink_abi;
+                a::sigset_t mask{};
+                if (a::sigemptyset(&mask)) return;
+                for (auto sig : {a::SIGINT, a::SIGTERM, a::SIGHUP}) if (a::sigaddset(&mask, sig)) return;
+                active_ = a::pthread_sigmask(a::SIG_BLOCK, &mask, &previous_) == 0;
+            }
+            ~SignalBlockGuard() {
+                if (active_) (void)platform::netlink_abi::pthread_sigmask(platform::netlink_abi::SIG_SETMASK, &previous_, nullptr);
+            }
+            SignalBlockGuard(SignalBlockGuard const&) = delete;
+            auto operator=(SignalBlockGuard const&) -> SignalBlockGuard& = delete;
+        };
+        struct EmptyDnsMonitor {};
+        template<class DnsPolicy> class DnsMonitor {
+            using Clock = std::chrono::steady_clock;
+            using Failure = typename DnsPolicy::Failure;
+            int wake_fd_ = -1;
+            int alert_fd_ = -1;
+            std::atomic_bool stop_{false};
+            std::atomic_bool failed_{false};
+            std::atomic_bool descriptor_failed_{false};
+            std::optional<Failure> error_;
+            std::thread worker_;
+            auto close_fds() noexcept -> void {
+                if (wake_fd_ >= 0) { (void)platform::netlink_abi::close(wake_fd_); wake_fd_ = -1; }
+                if (alert_fd_ >= 0) { (void)platform::netlink_abi::close(alert_fd_); alert_fd_ = -1; }
+            }
+            auto loop(DnsPolicy& dns) noexcept -> void {
+                namespace a = platform::netlink_abi;
+                constexpr auto kPollBudget = std::chrono::milliseconds(500);
+                unsigned timeouts = 0;
+                auto check_once = [&]() noexcept -> bool {
+                    try {
+                        auto now = Clock::now();
+                        auto checked = dns.poll(now, now + kPollBudget);
+                        if (checked) { timeouts = 0; return true; }
+                        if (stop_.load(std::memory_order_acquire)) return false;
+                        if (DnsPolicy::is_timeout(checked.error()) && ++timeouts < 3) return true;
+                        error_ = checked.error();
+                        failed_.store(true, std::memory_order_release);
+                        signal_eventfd(alert_fd_);
+                        return false;
+                    } catch (...) {
+                        descriptor_failed_.store(true, std::memory_order_release);
+                        signal_eventfd(alert_fd_);
+                        return false;
+                    }
+                };
+                if (!check_once()) return;
+                while (!stop_.load(std::memory_order_acquire)) {
+                    auto now = Clock::now();
+                    auto next = dns.next_poll();
+                    auto delay = next <= now ? std::int64_t{0} : std::chrono::ceil<std::chrono::milliseconds>(next - now).count();
+                    if (timeouts && delay < 100) delay = 100;
+                    if (delay > 250) delay = 250;
+                    std::array<a::pollfd, 2> fds{{{dns.native_handle(), a::POLLIN, 0}, {wake_fd_, a::POLLIN, 0}}};
+                    int ready = a::poll(fds.data(), fds.size(), static_cast<int>(delay));
+                    if (stop_.load(std::memory_order_acquire)) break;
+                    if (ready < 0) {
+                        if (*a::__errno_location() == std::to_underlying(std::errc::interrupted)) continue;
+                        descriptor_failed_.store(true, std::memory_order_release);
+                        signal_eventfd(alert_fd_);
+                        return;
+                    }
+                    if (fds[1].revents) break;
+                    if (fds[0].revents & (a::POLLERR | a::POLLHUP | a::POLLNVAL)) {
+                        if (!check_once()) return;
+                        descriptor_failed_.store(true, std::memory_order_release);
+                        signal_eventfd(alert_fd_);
+                        return;
+                    }
+                    if (fds[0].revents || Clock::now() >= dns.next_poll()) {
+                        if (!check_once()) return;
+                    }
+                }
+            }
+        public:
+            DnsMonitor() = default;
+            ~DnsMonitor() { stop(); }
+            DnsMonitor(DnsMonitor const&) = delete;
+            auto operator=(DnsMonitor const&) -> DnsMonitor& = delete;
+            [[nodiscard]] auto start(DnsPolicy& dns) noexcept -> bool {
+                wake_fd_ = open_eventfd();
+                alert_fd_ = open_eventfd();
+                if (wake_fd_ < 0 || alert_fd_ < 0) { close_fds(); return false; }
+                try {
+                    SignalBlockGuard block_signals;
+                    worker_ = std::thread([this, &dns] { loop(dns); });
+                    return true;
+                } catch (...) {
+                    close_fds();
+                    return false;
+                }
+            }
+            auto stop() noexcept -> void {
+                stop_.store(true, std::memory_order_release);
+                signal_eventfd(wake_fd_);
+                if (worker_.joinable()) worker_.join();
+                close_fds();
+            }
+            [[nodiscard]] auto alert_fd() const noexcept -> int { return alert_fd_; }
+            [[nodiscard]] auto has_alert() const noexcept -> bool {
+                return failed_.load(std::memory_order_acquire) || descriptor_failed_.load(std::memory_order_acquire);
+            }
+            [[nodiscard]] auto take_error() const noexcept -> std::optional<Failure> {
+                if (!failed_.load(std::memory_order_acquire)) return std::nullopt;
+                return error_;
+            }
+            [[nodiscard]] auto descriptor_failed() const noexcept -> bool {
+                return descriptor_failed_.load(std::memory_order_acquire);
+            }
+        };
+    }
     struct OuterPolicy {
         Wireguard const* config=nullptr;
         [[nodiscard]] auto allows(net::UdpEndpoint const& peer) const noexcept -> bool { return config && outer_allowed(*config,peer); }
@@ -180,9 +308,10 @@ export namespace endpoint {
             if (!started_ || !tun_ || !port_) return std::unexpected("endpoint is not active");
             static_assert(noexcept(cancel()));
             if constexpr(default_policy)if(!policy_.check())return std::unexpected("endpoint default-route policy changed");
+            std::conditional_t<dns_policy,owner_detail::DnsMonitor<DnsPolicy>,owner_detail::EmptyDnsMonitor> dns_monitor;
             if constexpr(dns_policy) {
-                auto checked=dns_.poll(Clock::now(),Clock::now()+std::chrono::milliseconds(100));
-                if(!checked && !cancel()){std::string message(DnsPolicy::describe(checked.error(),false));if(checked.error().system)message+=": "+checked.error().system.message();return std::unexpected(std::move(message));}
+                if (cancel()) return {};
+                if (!dns_monitor.start(dns_)) return std::unexpected("endpoint DNS monitor setup failed");
             }
             while (!cancel()) {
                 auto now=Clock::now(); auto progress=tun_->step(now,std::chrono::system_clock::now());
@@ -197,8 +326,8 @@ export namespace endpoint {
                 short device=static_cast<short>((progress->device.input_backpressured ? 0 : a::POLLIN)|(progress->device.output_backpressured ? a::POLLOUT : 0));
                 std::array<a::pollfd,2+std::size_t(default_policy)+std::size_t(dns_policy)> descriptors{{{port_->native_handle(),network,0},{tun_->native_handle(),device,0}}};
                 if constexpr(default_policy)descriptors[2]={policy_.native_handle(),a::POLLIN,0};
-                if constexpr(dns_policy)descriptors[2+std::size_t(default_policy)]={dns_.native_handle(),a::POLLIN,0};
-                auto next=progress->network.next_poll;if constexpr(dns_policy)next=std::min(next,dns_.next_poll());now=Clock::now();
+                if constexpr(dns_policy)descriptors[2+std::size_t(default_policy)]={dns_monitor.alert_fd(),a::POLLIN,0};
+                auto next=progress->network.next_poll;now=Clock::now();
                 auto delay=next<=now ? 0 : std::chrono::ceil<std::chrono::milliseconds>(next-now).count();
                 if (cancel()) break;
                 int ready=a::poll(descriptors.data(),descriptors.size(),static_cast<int>(std::min<std::int64_t>(delay,std::numeric_limits<int>::max())));
@@ -207,9 +336,14 @@ export namespace endpoint {
                     return std::unexpected("endpoint readiness wait failed");
                 }
                 if constexpr(default_policy)if(descriptors[2].revents&a::POLLIN)if(!policy_.check())return std::unexpected("endpoint default-route policy changed");
-                if constexpr(dns_policy)if(Clock::now()>=dns_.next_poll() || descriptors[2+std::size_t(default_policy)].revents) {
-                    auto checked=dns_.poll(Clock::now(),Clock::now()+std::chrono::milliseconds(100));
-                    if(!checked){if(cancel())break;std::string message(DnsPolicy::describe(checked.error(),false));if(checked.error().system)message+=": "+checked.error().system.message();return std::unexpected(std::move(message));}
+                if constexpr(dns_policy)if(descriptors[2+std::size_t(default_policy)].revents || dns_monitor.has_alert()) {
+                    if (cancel()) break;
+                    if (auto problem=dns_monitor.take_error()) {
+                        std::string message(DnsPolicy::describe(*problem,false));
+                        if (problem->system) message+=": "+problem->system.message();
+                        return std::unexpected(std::move(message));
+                    }
+                    if (dns_monitor.descriptor_failed()) return std::unexpected("endpoint descriptor became unavailable");
                 }
                 for (auto const& descriptor:descriptors) if (descriptor.revents&(a::POLLERR|a::POLLHUP|a::POLLNVAL)) return std::unexpected("endpoint descriptor became unavailable");
             }

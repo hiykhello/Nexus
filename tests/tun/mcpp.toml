@@ -1,27 +1,22 @@
 [package]
-namespace = "nexus"
 name = "tun-tests"
 version = "0.1.0"
 
 # Tests exercise the real transport and share only the deterministic network
 # fixture; privileged devices and independent Python drivers are explicit bins.
 [dependencies]
-nexus.tun = { path = "../../src/transport" }
-nexus.platform = { path = "../../src/platform" }
-nexus.platform-tests = { path = "../platform" }
+tun = { path = "../../src/tun" }
+platform = { path = "../../src/platform" }
+platform-tests = { path = "../platform" }
 
 [features]
-test-random = { implies = ["nexus.platform/test-random"], defines = ["NEXUS_TEST_LINUX_RANDOM"] }
+test-random = { implies = ["platform/test-random"], defines = ["NEXUS_TEST_LINUX_RANDOM"] }
 
 [build]
 sources = ["scheduled_link.cppm"]
 
 [targets.tun-test-support]
 kind = "lib"
-
-[targets.tcp-watch-bench]
-kind = "bin"
-main = "../../experiments/tcp-watch/bench.cpp"
 
 [targets.packet-tun-linux]
 kind = "bin"

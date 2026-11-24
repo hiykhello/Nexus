@@ -3,14 +3,14 @@ import tls.corosio_application;
 import tls.client_handshake_io;
 import tls.application_io;
 import http.connect;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.corosio_client;
 import tls.connector;
 import platform.socket_options;
 import http.corosio_https;
 import net.stream_relay;
-namespace capy=nex::capy; namespace io=nex::corosio; namespace t=tls;
+namespace io = ::corosio; namespace t=tls;
 using Bytes=std::vector<std::uint8_t>; using namespace std::chrono_literals;
 struct Fixture {
     io::io_context context=io::make_io_context(io::has_uring && !std::getenv("NEXUS_TEST_EPOLL"));

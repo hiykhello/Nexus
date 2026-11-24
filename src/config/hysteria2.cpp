@@ -1,15 +1,15 @@
 module config;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 import config.kdl_common;
 
 namespace config {
-    auto parse_password_tls_inbound(nex::glaze::KdlNode const&,std::string_view,Inbound,std::string_view) -> std::expected<InboundConfig,std::string>;
-    auto parse_password_tls_outbound(nex::glaze::KdlNode const&,std::string_view,std::string_view) -> std::expected<PasswordTlsOutbound,std::string>;
+    auto parse_password_tls_inbound(glaze::KdlNode const&,std::string_view,Inbound,std::string_view) -> std::expected<InboundConfig,std::string>;
+    auto parse_password_tls_outbound(glaze::KdlNode const&,std::string_view,std::string_view) -> std::expected<PasswordTlsOutbound,std::string>;
     auto validate_quic_ech(QuicEchOptions const&, std::string_view, bool) -> std::expected<void, std::string>;
     auto validate_password_tls_outbound(PasswordTlsOutbound&,Config const&,std::string_view) -> std::expected<void,std::string>;
     namespace {
-        auto parse_quic_options(nex::glaze::KdlNode const& node,bool inbound) -> std::expected<Hysteria2Transport,std::string> {
+        auto parse_quic_options(glaze::KdlNode const& node,bool inbound) -> std::expected<Hysteria2Transport,std::string> {
             Hysteria2Transport result;bool block=false;std::array<bool,11> fields{};
             constexpr std::array<std::pair<std::string_view,std::size_t quic::ReceiveWindows::*>,4> windows{{
                 {"init-stream-receive-window",&quic::ReceiveWindows::initial_stream},
@@ -120,12 +120,12 @@ namespace config {
             return result;
         }
     }
-    auto parse_hysteria2_inbound(nex::glaze::KdlNode const& node) -> std::expected<InboundConfig,std::string> {
+    auto parse_hysteria2_inbound(glaze::KdlNode const& node) -> std::expected<InboundConfig,std::string> {
         auto parsed=parse_password_tls_inbound(node,"hysteria2",Inbound::hysteria2,"quic");if(!parsed)return std::unexpected(parsed.error());
         auto options=parse_quic_options(node,true);if(!options)return std::unexpected(options.error());
         parsed->hysteria2->transport=*options;return parsed;
     }
-    auto parse_hysteria2_outbound(nex::glaze::KdlNode const& node) -> std::expected<Hysteria2Outbound,std::string> {
+    auto parse_hysteria2_outbound(glaze::KdlNode const& node) -> std::expected<Hysteria2Outbound,std::string> {
         auto parsed=parse_password_tls_outbound(node,"Hysteria2","quic");if(!parsed)return std::unexpected(parsed.error());
         // Socket binding fields are shared with the existing dial schema.
         // TCP-only settings have no meaning on a physical QUIC UDP socket.

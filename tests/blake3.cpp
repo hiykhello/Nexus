@@ -1,5 +1,5 @@
 import std;
-import nexus.thirdparty.blake3;
+import blake3;
 
 int main() {
     constexpr std::string_view context="BLAKE3 2019-12-27 16:29:52 test vectors context";
@@ -15,18 +15,18 @@ int main() {
         std::pair<std::size_t,std::string_view>{8192,"ad01d7ae4ad059b0d33baa3c01319dcf8088094d0359e5fd45d6aeaa8b2d0c3d"},
     };
     constexpr char hex[]="0123456789abcdef";
-    if (std::string_view(nex::blake3::blake3_version())!="1.8.4") return 1;
+    if (std::string_view(blake3::blake3_version())!="1.8.4") return 1;
     for (auto [size,expected] : vectors) {
         std::vector<std::uint8_t> input(size);
         for (std::size_t i=0;i<size;++i) input[i]=static_cast<std::uint8_t>(i%251);
-        nex::blake3::blake3_hasher hasher{};
-        nex::blake3::blake3_hasher_init_derive_key_raw(&hasher,context.data(),context.size());
+        blake3::blake3_hasher hasher{};
+        blake3::blake3_hasher_init_derive_key_raw(&hasher,context.data(),context.size());
         for (std::size_t offset=0;offset<input.size();) {
             auto count=std::min(std::size_t{37},input.size()-offset);
-            nex::blake3::blake3_hasher_update(&hasher,input.data()+offset,count); offset+=count;
+            blake3::blake3_hasher_update(&hasher,input.data()+offset,count); offset+=count;
         }
         std::array<unsigned char,32> output{};
-        nex::blake3::blake3_hasher_finalize(&hasher,output.data(),output.size());
+        blake3::blake3_hasher_finalize(&hasher,output.data(),output.size());
         std::string actual;
         for (auto byte:output) { actual+=hex[byte>>4]; actual+=hex[byte&15]; }
         if (actual!=expected) return 2;

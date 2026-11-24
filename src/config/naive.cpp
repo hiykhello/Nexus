@@ -3,12 +3,12 @@ import std;
 import http.header;
 import config.kdl_common;
 import platform.ip_address;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t, 4>>;
     auto dns_hostname(std::string_view) -> bool;
-    auto parse_tcp_dial_option(nex::glaze::KdlNode const&, TcpSocketOptions&) -> std::expected<bool, std::string>;
+    auto parse_tcp_dial_option(glaze::KdlNode const&, TcpSocketOptions&) -> std::expected<bool, std::string>;
 
     namespace {
         using namespace config::kdl;
@@ -280,7 +280,8 @@ namespace config {
                    any(config.hysteria2_outbounds) || any(config.snell_outbounds) ||
                    any(config.shadowtls_outbounds) || any(config.tuic_outbounds) ||
                    any(config.masque_outbounds) || any(config.wireguard_outbounds) ||
-                   any(config.ssh_outbounds) || any(config.tailscale_outbounds) ||
+                   any(config.ssh_outbounds) || any(config.openvpn_outbounds) ||
+                   any(config.openconnect_outbounds) || any(config.tailscale_outbounds) ||
                    any(config.tcp_proxy_outbounds);
         };
         for (std::size_t i = 0; i < config.naive_outbounds.size(); ++i) {

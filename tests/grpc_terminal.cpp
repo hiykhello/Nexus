@@ -2,11 +2,10 @@ import std;
 import grpc.headers;
 import grpc.session;
 import grpc.stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace g=grpc;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 // A valid nghttp2 peer supplies complete wire records. The lower driver
 // controls only completion order and transport failures, including a read

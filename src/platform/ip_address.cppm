@@ -1,5 +1,6 @@
 export module platform.ip_address;
 import std;
+import encoding.hex;
 
 export namespace platform {
     struct IpAddress {
@@ -7,6 +8,9 @@ export namespace platform {
         std::uint8_t size = 0;
         [[nodiscard]] constexpr auto view() const noexcept -> std::span<std::uint8_t const> {
             return std::span(bytes).first(size);
+        }
+        [[nodiscard]] constexpr auto operator==(IpAddress const& o) const noexcept -> bool {
+            return size == o.size && std::ranges::equal(view(), o.view());
         }
     };
 
@@ -27,10 +31,7 @@ export namespace platform {
 
     namespace ip_detail {
         [[nodiscard]] constexpr auto hex_digit(char c) noexcept -> int {
-            if (c >= '0' && c <= '9') return c - '0';
-            if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-            if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-            return -1;
+            return encoding::hex_value(c);
         }
 
         [[nodiscard]] constexpr auto parse_ipv4(std::string_view text, std::uint8_t* out) noexcept -> bool {
@@ -224,5 +225,42 @@ export namespace platform {
         if (bytes.size() == 4) return format_ipv4(bytes.first<4>());
         if (bytes.size() == 16) return format_ipv6(bytes.first<16>());
         return {};
+    }
+
+    struct HostPortView {
+        std::string_view host;
+        std::uint16_t port = 0;
+    };
+
+    [[nodiscard]] inline auto split_host_port(std::string_view spec, bool strict = false) noexcept
+        -> std::optional<HostPortView> {
+        if (spec.empty()) return std::nullopt;
+        std::string_view host, port_text;
+        if (spec.front() == '[') {
+            auto close = spec.find(']');
+            if (close == std::string_view::npos || close <= 1 ||
+                close + 1 >= spec.size() || spec[close + 1] != ':')
+                return std::nullopt;
+            host = spec.substr(1, close - 1);
+            if (strict && (!host.contains(':') || host.contains('['))) return std::nullopt;
+            port_text = spec.substr(close + 2);
+        } else {
+            auto colon = spec.rfind(':');
+            if (colon == std::string_view::npos || colon == 0) return std::nullopt;
+            if (strict && (spec.find(':') != colon || spec.contains('[') || spec.contains(']')))
+                return std::nullopt;
+            host = spec.substr(0, colon);
+            port_text = spec.substr(colon + 1);
+        }
+        if (host.empty() || port_text.empty() || port_text.size() > 5 ||
+            (strict && port_text.front() == '0'))
+            return std::nullopt;
+        for (unsigned char c : port_text)
+            if (c < '0' || c > '9') return std::nullopt;
+        unsigned port = 0;
+        auto [end, ec] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+        if (ec != std::errc{} || end != port_text.data() + port_text.size() || !port || port > 65535u)
+            return std::nullopt;
+        return HostPortView{host, static_cast<std::uint16_t>(port)};
     }
 }

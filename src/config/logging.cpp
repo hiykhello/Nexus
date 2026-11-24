@@ -2,7 +2,7 @@ module config;
 import std;
 import logging.options;
 import config.kdl_common;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
     namespace {
@@ -72,7 +72,7 @@ namespace config {
         }
     }
 
-    auto parse_logging(nex::glaze::KdlNode const& node) -> std::expected<logging::Config, std::string> {
+    auto parse_logging(glaze::KdlNode const& node) -> std::expected<logging::Config, std::string> {
         using namespace kdl;
         if (node.tag || !node.arguments.empty() || !node.properties.empty())
             return error("log accepts only child nodes");
@@ -138,7 +138,7 @@ namespace config {
         return config;
     }
 
-    auto logging_paths(nex::glaze::KdlDocument const& document) -> std::vector<std::string> {
+    auto logging_paths(glaze::KdlDocument const& document) -> std::vector<std::string> {
         std::vector<std::string> paths;
         for (auto const& node : document) collect_paths(node, paths);
         return paths;

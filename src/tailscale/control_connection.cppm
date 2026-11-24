@@ -7,7 +7,7 @@ import tls.connector;
 import tls.byte_stream;
 import http2.client_channel;
 import memory.budget;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace tailscale::control_connection {
     using Clock=std::chrono::steady_clock;
@@ -46,7 +46,7 @@ export namespace tailscale::control_connection {
         enum class State {initial,starting,ready,stopped} state_=State::initial;
         struct Guard {Connection& owner;bool released=false;~Guard() {owner.starting_=false;if (!released) owner.cancel();}};
         auto fail(Failure error) noexcept -> std::unexpected<Failure> {if (!failure_) failure_=error;cancel();return std::unexpected(*failure_);}
-        static auto invalid_run() -> nex::capy::task<nex::capy::results<>> {co_return nex::capy::results<>{std::make_error_code(std::errc::operation_not_permitted)};}
+        static auto invalid_run() -> capy::task<capy::results<>> {co_return capy::results<>{std::make_error_code(std::errc::operation_not_permitted)};}
     public:
         // extra_transport_bytes is the caller's explicit admission for TLS
         // owners and task-frame overhead, in addition to this inline owner and
@@ -82,10 +82,10 @@ export namespace tailscale::control_connection {
         // run returns the one shared H2 driver task directly. The application
         // joins it with register/Map consumers, then cancels and drains before
         // any body lease, lower stream or this owner is destroyed.
-        auto run() -> nex::capy::task<nex::capy::results<>> {if (!channel_ || state_!=State::ready) return invalid_run();return channel_->run();}
+        auto run() -> capy::task<capy::results<>> {if (!channel_ || state_!=State::ready) return invalid_run();return channel_->run();}
         auto start(std::string_view authority,std::span<std::uint8_t> early_storage,Clock::time_point deadline,
                    http2::ClientLimits limits={},bool long_lived=false)
-            -> nex::capy::task<std::expected<void,Failure>> {
+            -> capy::task<std::expected<void,Failure>> {
             if (state_!=State::initial) co_return std::unexpected(Failure{Error::state});
             state_=State::starting;starting_=true;Guard guard{*this};auto started=Clock::now();
             if (started>=deadline) co_return fail({Error::timeout});

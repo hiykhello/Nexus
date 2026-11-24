@@ -1,11 +1,13 @@
 module;
 #include <cerrno>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 module udp.direct;
-import nexus.compat;
+import utility;
 import platform.ip_address;
+import platform.socket_options;
 import rules;
 import std;
 
@@ -56,7 +58,17 @@ namespace udp {
         auto& sockets = this->sockets;
         auto it = std::ranges::find(sockets, outgoing->flow, &DirectSocket::id);
         if (it == sockets.end()) {
+#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
             int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+#else
+            int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+            if (fd >= 0) {
+                int fl = ::fcntl(fd, F_GETFL, 0), fdfl = ::fcntl(fd, F_GETFD, 0);
+                if (fl < 0 || ::fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0 || fdfl < 0 || ::fcntl(fd, F_SETFD, fdfl | FD_CLOEXEC) < 0) {
+                    int err = errno; ::close(fd); fd = -1; errno = err;
+                }
+            }
+#endif
             if (fd < 0) {
                 auto error = system_error();
                 (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
@@ -64,13 +76,26 @@ namespace udp {
                 return std::unexpected(DirectError{error});
             }
             DirectSocket guard(outgoing->flow, fd);
-            if (socket_mark && ::setsockopt(fd, SOL_SOCKET, SO_MARK, &*socket_mark, sizeof(*socket_mark)) != 0) {
-                auto error = system_error();
+            if (socket_mark) {
+#if defined(SO_MARK)
+                if (::setsockopt(fd, SOL_SOCKET, SO_MARK, &*socket_mark, sizeof(*socket_mark)) != 0) {
+                    auto error = system_error();
+                    (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
+                    (void)this->bridge.close(outgoing->flow, now);
+                    return std::unexpected(DirectError{error});
+                }
+#else
                 (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
                 (void)this->bridge.close(outgoing->flow, now);
-                return std::unexpected(DirectError{error});
+                return std::unexpected(DirectError{std::make_error_code(std::errc::operation_not_supported)});
+#endif
             }
-            nexus::scope_exit rollback([&] {
+            if (auto perr = platform::invoke_protect_fd(fd); perr) {
+                (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
+                (void)this->bridge.close(outgoing->flow, now);
+                return std::unexpected(DirectError{perr});
+            }
+            utility::scope_exit rollback([&] {
                 (void)this->bridge.complete(outgoing->flow, outgoing->token, false, now);
                 (void)this->bridge.close(outgoing->flow, now);
             });

@@ -1,6 +1,6 @@
 export module state.snapshot;
 import std;
-import nexus.compat;
+import functional;
 export import state.core;
 export import state.file;
 export import state.lock;
@@ -34,7 +34,7 @@ export namespace state {
 
     // Callers serialize snapshot access within their instance lock. The
     // publication callback runs after rename and before directory fsync.
-    using OnVisible = nexus::function_ref<void() noexcept>;
+    using OnVisible = functional::function_ref<void() noexcept>;
     [[nodiscard]] auto commit_snapshot(InstanceLock const& instance, SnapshotSpec const& spec,
                                        std::uint64_t revision, std::uint64_t epoch,
                                        std::span<std::byte const> payload, ClearEpoch* barrier = nullptr,

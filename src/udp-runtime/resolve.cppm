@@ -10,11 +10,9 @@ import dns.response_race_walk;
 import dns.response_query;
 import dns.local_response;
 import dns.predefined;
+export import ss_udp.response_resolve;
 
 export namespace shadowsocks::detail {
-    namespace udp_io=nex::corosio;
-    namespace udp_capy=nex::capy;
-
     // Lookup owns the in-flight resolver. Cache and reader are borrowed until
     // the enclosing operation returns, including after cancel().
     template<class CacheType,bool EnableRefresh=false>
@@ -64,45 +62,11 @@ export namespace shadowsocks::detail {
         static auto map(std::expected<std::vector<dns::Address>,dns::detail::ResolveError> result)
             -> std::expected<std::vector<dns::Address>,dns::detail::ResolveError> { return result; }
     };
-    struct UdpResolveHop { std::string host; std::uint16_t port; std::uint64_t view; bool tcp_only; };
-    struct UdpResolvePlan {
-        udp_io::endpoint upstream;
-        std::uint64_t view=0;
-        bool tcp=false;
-        std::vector<UdpResolveHop> hops;
-    };
-    struct UdpResponseServer {
-        udp_io::endpoint endpoint; bool tcp_only=false;
-        std::string host; std::optional<std::size_t> resolver;
-        std::shared_ptr<dns::detail::ProtectedQuery const> protection{};
-    };
-    struct UdpResponseRouting {
-        std::vector<UdpResponseServer> servers;
-        std::vector<policy::DnsRule> rules;
-        std::size_t fallback=0;
-    };
-    struct UdpResponseContext {
-        std::array<std::uint8_t,16> source{};
-        std::uint8_t size=0;
-        std::uint16_t port=0;
-        std::optional<std::string_view> inbound;
-        std::optional<std::string_view> auth_user{};
-        auto view() const noexcept -> policy::DnsContext {
-            return {.network=rules::Network::udp,.source_port=port,
-                .source_ip_bytes=std::span(source).first(size),.inbound=inbound,.auth_user=auth_user};
-        }
-    };
-    enum class UdpResolveError { state, invalid_target, dns, dispatch, canceled };
-    enum class UdpResolvedAction { complete,resolve_again };
-    // Runs synchronously on the listener executor while the operation owns
-    // the token. A complete result consumes or transfers it; resolve_again
-    // performs another lookup under the same owner budget. The handler may
-    // shorten the deadline for subsequent I/O.
-    // On failure or exception the operation cancels the token.
-    using UdpResolvedHandler=std::function<std::expected<UdpResolvedAction,UdpResolveError>(
-        std::uint64_t,std::span<UdpPeer const>,std::chrono::steady_clock::time_point&)>;
     template<class Lookup>
     class BasicUdpResolveOperation {
+    public:
+        using LookupType = Lookup;
+    private:
         UdpDispatcher& dispatcher_;
         udp_io::io_context& context_;
         Lookup lookup_;
@@ -130,6 +94,9 @@ export namespace shadowsocks::detail {
         bool tcp_only_,disable_cache_,edns_;
         bool started_=false, canceled_=false, finished_=false;
     public:
+#ifdef NEXUS_DNS_RESPONSE
+        using ResponseOperation = ResponseResolveOps::ResponseOperation<BasicUdpResolveOperation, Lookup>;
+#endif
         BasicUdpResolveOperation(UdpDispatcher& dispatcher, udp_io::io_context& context,
             typename Lookup::Cache& cache,UdpPending pending,bool tcp_only=false,
             dns::detail::AddressStrategy strategy=dns::detail::AddressStrategy::prefer_ipv4,
@@ -226,7 +193,14 @@ export namespace shadowsocks::detail {
             -> udp_capy::task<std::expected<dns::detail::AddressResult<Full>,dns::detail::ResolveError>> {
             return query_owned<Full>(lookup_,local_resolver_,canceled_,response_rotation_,upstreams,view,tcp,name,family,deadline,cache_policy,subnet);
         }
-#include "response_resolve.hpp"
+#ifdef NEXUS_DNS_RESPONSE
+        friend struct ResponseResolveOps;
+        auto response_address(std::string const& name, std::uint16_t type,
+            std::chrono::steady_clock::time_point deadline, std::optional<std::string_view> candidate, bool& local)
+            -> udp_capy::task<std::expected<dns::AddressAnswer, dns::detail::ResolveError>> {
+            return ResponseResolveOps::response_address(*this, name, type, deadline, candidate, local);
+        }
+#endif
         auto run(udp_io::endpoint upstream,std::uint64_t view,std::chrono::steady_clock::time_point deadline)
             -> udp_capy::task<std::expected<void,UdpResolveError>> {
             if (started_) co_return std::unexpected(UdpResolveError::state);

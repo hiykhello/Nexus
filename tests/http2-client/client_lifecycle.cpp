@@ -1,12 +1,11 @@
 import std;
 import http2.client_channel;
-import nexus.thirdparty.nghttp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import nghttp2;
+import capy;
+import corosio;
 namespace h=http2;
-namespace c=nex::nghttp2;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace c = ::nghttp2;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
 using Deadline=std::optional<Clock::time_point>;

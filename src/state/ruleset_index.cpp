@@ -70,7 +70,7 @@ namespace state {
     }
 
     auto valid_rule_key(RulesetKey const& key) noexcept -> bool {
-        return key.parser_version != 0 && key.format >= RuleFormat::kdl && key.format <= RuleFormat::srs &&
+        return key.parser_version != 0 && key.format >= RuleFormat::kdl && key.format <= RuleFormat::adguard &&
             key.canonical_url.starts_with("https://") && key.canonical_url.size() <= 2048 && safe_text(key.canonical_url);
     }
 

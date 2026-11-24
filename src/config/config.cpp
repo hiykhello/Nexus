@@ -1,20 +1,22 @@
 module config;
 import std;
 import logging.options;
-import nexus.thirdparty.glaze;
+import glaze;
 import config.kdl_common;
 import http.header;
 import http.connect;
 import platform.ip_address;
 import rules;
 import rules.kdl_predicate;
+import config.routing;
 namespace config {
-    namespace g = nex::glaze;
+    namespace g = ::glaze;
     auto parse_logging(g::KdlNode const&) -> std::expected<logging::Config,std::string>;
+    auto is_extra_top_level(std::string_view) noexcept -> bool;
+    auto parse_extra_top_level(kdl::Node const&,Config&) -> std::expected<void,std::string>;
     auto logging_paths(g::KdlDocument const&) -> std::vector<std::string>;
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
     auto dns_hostname(std::string_view) -> bool;
-    auto parse_dns_address(g::KdlNode const&,bool) -> std::expected<DnsUpstream,std::string>;
     auto parse_dns(g::KdlNode const&) -> std::expected<DnsRouting,std::string>;
     auto parse_tcp_dial_option(g::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
     auto parse_direct_dial(g::KdlNode const&,Config&) -> std::expected<void,std::string>;
@@ -41,45 +43,41 @@ namespace config {
     auto parse_tun_inbound(g::KdlNode const&) -> std::expected<InboundConfig,std::string>;
     auto tun_endpoints_overlap(std::optional<TunInbound> const&,std::optional<TunInbound> const&) noexcept -> bool;
     auto configure_tun_strict_route(Config&) -> std::expected<void,std::string>;
+    auto validate_tun_rule_set_refs(Config const&,std::span<std::string const>,bool,std::span<std::string const>) -> std::expected<void,std::string>;
     auto parse_masque_outbound(g::KdlNode const&) -> std::expected<MasqueOutbound,std::string>;
     auto parse_wireguard_outbound(g::KdlNode const&) -> std::expected<WireGuardOutbound,std::string>;
     auto parse_ssh_outbound(g::KdlNode const&) -> std::expected<SshOutbound,std::string>;
     auto parse_naive_inbound(g::KdlNode const&) -> std::expected<InboundConfig,std::string>;
     auto parse_naive_outbound(g::KdlNode const&) -> std::expected<NaiveOutbound,std::string>;
+    auto parse_openvpn_outbound(g::KdlNode const&) -> std::expected<OpenVpnOutbound,std::string>;
+    auto parse_openconnect_outbound(g::KdlNode const&) -> std::expected<OpenConnectOutbound,std::string>;
     auto validate_naive_outbounds(Config&,std::string_view,std::optional<std::string> const&,
                                   bool (*)(void const*,std::string_view),void const*) -> std::expected<void,std::string>;
     auto validate_extra_outbounds(Config&,std::string_view,std::optional<std::string> const&,
                                   bool (*)(void const*,std::string_view),void const*) -> std::expected<void,std::string>;
-    namespace {
-        using namespace config::kdl;
-        template<class Routing>
-        auto referenced_outbound(Config const& config,Routing const& route,std::string_view name) -> bool {
-            auto through=[&](auto const& entry) { return entry.config.detour && *entry.config.detour==name; };
-            return std::ranges::find(config.http_clients,name,&NamedHttpClient::outbound)!=config.http_clients.end() ||
-                (config.dns && std::ranges::any_of(config.dns->servers,[&](auto const& server) {return server.upstream && server.upstream->detour==name;})) ||
-                route.default_outbound==name || std::ranges::any_of(route.rules,[&](auto const& rule) { return rule.outbound==name; }) ||
-                (route.ordered_tcp && std::ranges::any_of(route.ordered_tcp->rules,[&](auto const& rule){return rule.outbound && *rule.outbound==name;})) ||
-                std::ranges::any_of(config.selectors,[&](auto const& selector) {
-                    return std::ranges::find(selector.members,name)!=selector.members.end();
-                }) ||
-                std::ranges::any_of(config.vless_outbounds,through) || std::ranges::any_of(config.shadowsocks_outbounds,through) || std::ranges::any_of(config.trojan_outbounds,through) ||
-                std::ranges::any_of(config.anytls_outbounds,[&](auto const& entry) { return entry.config.connection.detour && *entry.config.connection.detour==name; }) ||
-                std::ranges::any_of(config.hysteria2_outbounds,[&](auto const& entry) {return entry.config.connection.detour && *entry.config.connection.detour==name;}) || std::ranges::any_of(config.snell_outbounds,through) ||
-                std::ranges::any_of(config.shadowtls_outbounds,[&](auto const& entry) { return entry.config.connection.detour && *entry.config.connection.detour==name; }) ||
-                std::ranges::any_of(config.tuic_outbounds,through) ||
-                std::ranges::any_of(config.masque_outbounds,through) ||
-                std::ranges::any_of(config.wireguard_outbounds,through) || std::ranges::any_of(config.ssh_outbounds,through) || std::ranges::any_of(config.naive_outbounds,through) || std::ranges::any_of(config.tcp_proxy_outbounds,through);
-        }
-#include "shadowsocks.hpp"
-#include "inbound.hpp"
-#include "user_limits.hpp"
-#include "routing.hpp"
-#include "http_clients.hpp"
-#include "state_options.hpp"
-#include "extra_parse.hpp"
-    }
-#include "groups.hpp"
-#include "reload.hpp"
+    using namespace config::kdl;
+    using routing_detail::Route;
+    using routing_detail::NamedRouteFile;
+    using routing_detail::valid_fakeip_routing;
+    using routing_detail::routing;
+    using routing_detail::referenced_outbound;
+    auto shadowsocks_outbound(kdl::Node const&) -> std::expected<ShadowsocksOutbound, std::string>;
+    auto validate_shadowsocks(Config&, std::string const&, std::optional<std::string> const&, Route const&) -> std::expected<void, std::string>;
+    auto inbound(kdl::Node const&, Config&) -> std::expected<std::uint16_t, std::string>;
+    auto fixed_tcp_inbound(kdl::Node const&, Config&) -> std::expected<std::uint16_t, std::string>;
+    auto fixed_udp_inbound(kdl::Node const&, Config&) -> std::expected<std::uint16_t, std::string>;
+    auto inbound_with_limits(kdl::Node const&, Config&, kdl::Node const*&) -> std::expected<std::uint16_t, std::string>;
+    auto parse_user_limits(InboundConfig&, kdl::Node const*) -> std::expected<void, std::string>;
+    auto parse_http_clients(kdl::Node const&) -> std::expected<std::vector<NamedHttpClient>, std::string>;
+    auto parse_state_options(kdl::Node const&) -> std::expected<StateOptions, std::string>;
+    auto apply_state_options(Config&) -> std::expected<void, std::string>;
+    auto parse_certificate_block(kdl::Node const&) -> std::expected<CertificateConfig, std::string>;
+    auto parse_ntp_block(kdl::Node const&) -> std::expected<NtpConfig, std::string>;
+    auto apply_certificate_defaults(Config&) -> std::expected<void, std::string>;
+    auto normalize_groups(g::KdlDocument&) -> std::expected<void, std::string>;
+    auto parse_outbound_selector(g::KdlNode const&, std::string_view, std::string_view) -> std::expected<OutboundSelector, std::string>;
+    auto is_process_option(std::string_view) noexcept -> bool;
+    auto parse_process_option(kdl::Node const&, Config&) -> std::expected<void, std::string>;
     auto parse_kdl(std::string_view input) -> std::expected<Config, std::string> {
         auto document = kdl::read_document(input,max_config_bytes);
         if (!document) return std::unexpected(document.error());
@@ -142,6 +140,8 @@ namespace config {
                 auto parsed=parse_ntp_block(node);
                 if (!parsed) return std::unexpected(parsed.error());
                 result.ntp=std::move(*parsed);
+            } else if (is_extra_top_level(node.name)) {
+                if (auto ok=parse_extra_top_level(node,result); !ok) return std::unexpected(ok.error());
             } else if (node.name == "workers") {
                 auto value=node.arguments.size()==1 ? integer(node.arguments.front()) : std::nullopt;
                 if (workers_seen || node.tag || !node.properties.empty() || !node.children.empty() || !value || *value<1 || *value>16)
@@ -149,12 +149,6 @@ namespace config {
                 result.workers=static_cast<unsigned>(*value); workers_seen=true;
             } else if (is_process_option(node.name)) {
                 if (auto parsed=parse_process_option(node,result); !parsed) return std::unexpected(std::move(parsed.error()));
-            } else if (node.name == "dns-upstream") {
-                auto parsed=parse_dns_address(node,false);
-                if (dns_seen || node.tag || !node.arguments.empty() || !node.children.empty() ||
-                    node.properties.size()!=2 || !parsed)
-                    return error("dns-upstream requires numeric IP host without zone and port 1..65535");
-                result.dns_upstream=*parsed; dns_seen=true;
             } else if (node.name == "dns") {
                 if (dns_seen) return error("only one DNS configuration is supported");
                 auto parsed=parse_dns(node);
@@ -173,8 +167,9 @@ namespace config {
                 Node const* limit=nullptr;
                 auto port=inbound_with_limits(node,parsed_inbound,limit);
                 if (!port) return std::unexpected(port.error());
-                auto listen_address=[](bool ipv6,auto const& hy2,auto const& snell,auto const& masque,auto const& shadowtls,auto const& tuic,auto const& redirect,auto const& fudp,auto const& naive,auto const& http) {
+                auto listen_address=[](bool ipv6,auto const& explicit_addr,auto const& hy2,auto const& snell,auto const& masque,auto const& shadowtls,auto const& tuic,auto const& redirect,auto const& fudp,auto const& naive,auto const& http) {
                     std::array<std::uint8_t,16> address{};
+                    if (explicit_addr) return *explicit_addr;
                     if (hy2) return hy2->listen_address;
                     if (snell) return snell->listen_address;
                     if (masque) return masque->listen_address;
@@ -200,7 +195,7 @@ namespace config {
                     if (kind==Inbound::http) return http && http->has_tls && http->http3;
                     return kind==Inbound::hysteria2 || kind==Inbound::masque || kind==Inbound::tuic || kind==Inbound::fixed_udp;
                 };
-                auto address=listen_address(parsed_inbound.listen_ipv6,parsed_inbound.hysteria2_inbound,parsed_inbound.snell_inbound,parsed_inbound.masque_inbound,parsed_inbound.shadowtls_inbound,parsed_inbound.tuic_inbound,parsed_inbound.redirect_inbound,parsed_inbound.fixed_udp_inbound,parsed_inbound.naive_inbound,parsed_inbound.http_inbound);
+                auto address=listen_address(parsed_inbound.listen_ipv6,parsed_inbound.listen_address,parsed_inbound.hysteria2_inbound,parsed_inbound.snell_inbound,parsed_inbound.masque_inbound,parsed_inbound.shadowtls_inbound,parsed_inbound.tuic_inbound,parsed_inbound.redirect_inbound,parsed_inbound.fixed_udp_inbound,parsed_inbound.naive_inbound,parsed_inbound.http_inbound);
                 auto wildcard=[](auto const& value) {return std::ranges::all_of(value,[](auto byte){return byte==0;});};
                 auto right_tcp=uses_tcp(parsed_inbound.inbound,parsed_inbound.naive_inbound,parsed_inbound.http_inbound,parsed_inbound.transparent_udp);
                 auto right_udp=uses_udp(parsed_inbound.inbound,parsed_inbound.naive_inbound,parsed_inbound.http_inbound,parsed_inbound.transparent_udp);
@@ -213,10 +208,10 @@ namespace config {
                     auto left_tcp=uses_tcp(entry.type,entry.naive,entry.http,entry.transparent_udp);
                     auto left_udp=uses_udp(entry.type,entry.naive,entry.http,entry.transparent_udp);
                     if (!((left_tcp && right_tcp) || (left_udp && right_udp))) return false;
-                    auto existing=listen_address(entry.listen_ipv6,entry.hysteria2,entry.snell,entry.masque,entry.shadowtls,entry.tuic,entry.redirect_address,entry.fixed_udp,entry.naive,entry.http);
+                    auto existing=listen_address(entry.listen_ipv6,entry.listen_address,entry.hysteria2,entry.snell,entry.masque,entry.shadowtls,entry.tuic,entry.redirect_address,entry.fixed_udp,entry.naive,entry.http);
                     return existing==address || wildcard(existing) || wildcard(address);
                 })) return error("inbound listen endpoints overlap");
-                result.inbounds.push_back({*name,*port,parsed_inbound.inbound,std::move(parsed_inbound.password_auth),std::move(parsed_inbound.vless_inbound),std::move(parsed_inbound.shadowsocks_inbound),parsed_inbound.listen_ipv6,std::move(parsed_inbound.trojan_inbound),std::move(parsed_inbound.anytls_inbound),std::move(parsed_inbound.hysteria2_inbound),std::move(parsed_inbound.snell_inbound),std::move(parsed_inbound.masque_inbound),std::move(parsed_inbound.shadowtls_inbound),std::move(parsed_inbound.tuic_inbound),std::move(parsed_inbound.tun_inbound),parsed_inbound.redirect_inbound,std::move(parsed_inbound.redirect_host),parsed_inbound.transparent_udp});
+                result.inbounds.push_back({*name,*port,parsed_inbound.inbound,std::move(parsed_inbound.password_auth),std::move(parsed_inbound.vless_inbound),std::move(parsed_inbound.shadowsocks_inbound),parsed_inbound.listen_ipv6,std::move(parsed_inbound.trojan_inbound),std::move(parsed_inbound.anytls_inbound),std::move(parsed_inbound.hysteria2_inbound),std::move(parsed_inbound.snell_inbound),std::move(parsed_inbound.masque_inbound),std::move(parsed_inbound.shadowtls_inbound),std::move(parsed_inbound.tuic_inbound),std::move(parsed_inbound.tun_inbound),parsed_inbound.redirect_inbound,parsed_inbound.listen_address,std::move(parsed_inbound.redirect_host),std::move(parsed_inbound.listen_host),parsed_inbound.transparent_udp});
                 auto& entry=result.inbounds.back();
                 entry.fixed_tcp=std::move(parsed_inbound.fixed_tcp_inbound);
                 entry.fixed_udp=std::move(parsed_inbound.fixed_udp_inbound);
@@ -242,40 +237,40 @@ namespace config {
                     direct=*name;
                 }
                 else if (*type == "block" && !block && node.children.empty()) block = *name;
-                else if ((*type=="selector" || *type=="fallback" || *type=="url-test" || *type=="load-balance") && result.selectors.size()<16) {
+                else if ((*type=="selector" || *type=="fallback" || *type=="url-test" || *type=="load-balance") && result.selectors.size()<max_tunnel_outbounds) {
                     auto selector=parse_outbound_selector(node,*name,*type);
                     if (!selector) return std::unexpected(selector.error());
                     result.selectors.push_back(std::move(*selector));
                 }
-                else if (*type == "vless" && result.vless_outbounds.size()<16) {
+                else if (*type == "vless" && result.vless_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_vless_outbound(node);
                     if (!parsed) return std::unexpected(parsed.error());
                     result.vless_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if (*type == "shadowsocks" && result.shadowsocks_outbounds.size()<16) {
+                else if (*type == "shadowsocks" && result.shadowsocks_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=shadowsocks_outbound(node);
                     if (!parsed) return std::unexpected(parsed.error());
                     result.shadowsocks_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if (*type=="trojan" && result.trojan_outbounds.size()<16) {
+                else if (*type=="trojan" && result.trojan_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_trojan_outbound(node);
                     if (!parsed) return std::unexpected(parsed.error());
                     result.trojan_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if (*type=="anytls" && result.anytls_outbounds.size()<16) {
+                else if (*type=="anytls" && result.anytls_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_anytls_outbound(node);
                     if (!parsed) return std::unexpected(parsed.error());
                     result.anytls_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if(*type=="hysteria2" && result.hysteria2_outbounds.size()<16){
+                else if(*type=="hysteria2" && result.hysteria2_outbounds.size()<max_tunnel_outbounds){
                     auto parsed=parse_hysteria2_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.hysteria2_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if(*type=="snell" && result.snell_outbounds.size()<16) {
+                else if(*type=="snell" && result.snell_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_snell_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.snell_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if ((*type=="socks5" || *type=="http-connect" || *type=="socks4" || *type=="socks4a") && result.tcp_proxy_outbounds.size()<16) {
+                else if ((*type=="socks5" || *type=="http-connect" || *type=="socks4" || *type=="socks4a") && result.tcp_proxy_outbounds.size()<max_tunnel_outbounds) {
                     auto protocol=*type=="socks5" ? TcpProxyProtocol::socks5 :
                         *type=="socks4" ? TcpProxyProtocol::socks4 :
                         *type=="socks4a" ? TcpProxyProtocol::socks4a : TcpProxyProtocol::http_connect;
@@ -283,28 +278,34 @@ namespace config {
                     if (!parsed) return std::unexpected(parsed.error());
                     result.tcp_proxy_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if(*type=="shadowtls" && result.shadowtls_outbounds.size()<16) {
+                else if(*type=="shadowtls" && result.shadowtls_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_shadowtls_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.shadowtls_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if(*type=="tuic" && result.tuic_outbounds.size()<16) {
+                else if(*type=="tuic" && result.tuic_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_tuic_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.tuic_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if(*type=="masque" && result.masque_outbounds.size()<16) {
+                else if(*type=="masque" && result.masque_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_masque_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.masque_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if(*type=="wireguard" && result.wireguard_outbounds.size()<16) {
+                else if(*type=="wireguard" && result.wireguard_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_wireguard_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.wireguard_outbounds.push_back({*name,std::move(*parsed)});
                 }
-                else if(*type=="ssh" && result.ssh_outbounds.size()<16) {
+                else if(*type=="ssh" && result.ssh_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_ssh_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.ssh_outbounds.push_back({*name,std::move(*parsed)});
-                } else if(*type=="naive" && result.naive_outbounds.size()<16) {
+                } else if(*type=="naive" && result.naive_outbounds.size()<max_tunnel_outbounds) {
                     auto parsed=parse_naive_outbound(node);if(!parsed)return std::unexpected(parsed.error());
                     result.naive_outbounds.push_back({*name,std::move(*parsed)});
+                } else if(*type=="openvpn" && result.openvpn_outbounds.size()<max_tunnel_outbounds) {
+                    auto parsed=parse_openvpn_outbound(node);if(!parsed)return std::unexpected(parsed.error());
+                    result.openvpn_outbounds.push_back({*name,std::move(*parsed)});
+                } else if(*type=="openconnect" && result.openconnect_outbounds.size()<max_tunnel_outbounds) {
+                    auto parsed=parse_openconnect_outbound(node);if(!parsed)return std::unexpected(parsed.error());
+                    result.openconnect_outbounds.push_back({*name,std::move(*parsed)});
                 }
                 else if(*type=="tailscale" && result.tailscale_outbounds.empty()) {
                     if(node.children.size()!=1 || node.children[0].name!="endpoint-file")
@@ -367,7 +368,7 @@ namespace config {
             if (found==result.dns->servers.end()) return error("Reality fallback-resolver not found");
             reality.fallback_resolver_index=static_cast<std::size_t>(found-result.dns->servers.begin());
         }
-        if (result.tunnel_count()>16) return error("too many tunnel outbounds");
+        if (result.tunnel_count()>max_tunnel_outbounds) return error("too many tunnel outbounds");
         for (std::size_t i=0;i<result.vless_outbounds.size();++i) {
             auto& outbound_config=result.vless_outbounds[i].config;
             if (outbound_config.bootstrap_resolver) {
@@ -446,17 +447,18 @@ namespace config {
         });
         if (tun_dns_tcp && (!dns_hijack || !result.dns))
             return error("TUN dns-hijack-tcp requires DNS and an ordered hijack-dns rule");
+        {
+            std::vector<std::string> avail, used_r;
+            avail.reserve(route->files.size()); for (auto const& f : route->files) avail.push_back(f.name);
+            used_r.reserve(route->rules.size()); for (auto const& r : route->rules) used_r.push_back(r.set);
+            if (auto ok=validate_tun_rule_set_refs(result,avail,!route->ordered_tcp,used_r); !ok) return std::unexpected(ok.error());
+        }
         if(route->ordered_tcp) {
-            if(std::ranges::any_of(result.inbounds,[](auto const& entry){return entry.type!=Inbound::socks5 && entry.type!=Inbound::mixed && entry.type!=Inbound::http && entry.type!=Inbound::naive && entry.type!=Inbound::fixed_tcp && entry.type!=Inbound::fixed_udp && entry.type!=Inbound::trojan && entry.type!=Inbound::anytls && entry.type!=Inbound::vless && entry.type!=Inbound::shadowsocks && entry.type!=Inbound::redirect && entry.type!=Inbound::tproxy &&
-                !(entry.tun && !entry.tun->connect_ip_outbound);}))
-                return error("tcp-program requires SOCKS5, Mixed, HTTP, fixed-tcp/udp, Trojan, AnyTLS, Shadowsocks, ordinary VLESS, transparent TCP or routed TUN inbounds");
-            if(std::ranges::any_of(result.inbounds,[](auto const& entry){return entry.vless && (entry.vless->vision || entry.vless->grpc || entry.vless->xhttp);}))
-                return error("tcp-program does not support VLESS Vision, gRPC or XHTTP");
-            auto dns_udp_inbounds=std::ranges::all_of(result.inbounds,[](auto const& entry) {
-                return entry.type==Inbound::socks5 || entry.type==Inbound::mixed || entry.type==Inbound::fixed_udp || entry.type==Inbound::trojan ||
-                    entry.type==Inbound::vless || entry.type==Inbound::anytls ||
-                    (entry.type==Inbound::tproxy && entry.transparent_udp) || (entry.tun && !entry.tun->connect_ip_outbound);
-            });
+            auto bad_in=[](auto const& e){return e.type!=Inbound::socks5&&e.type!=Inbound::mixed&&e.type!=Inbound::http&&e.type!=Inbound::naive&&e.type!=Inbound::fixed_tcp&&e.type!=Inbound::fixed_udp&&e.type!=Inbound::trojan&&e.type!=Inbound::anytls&&e.type!=Inbound::vless&&e.type!=Inbound::shadowsocks&&e.type!=Inbound::redirect&&e.type!=Inbound::tproxy&&!(e.tun&&!e.tun->connect_ip_outbound);};
+            if(std::ranges::any_of(result.inbounds,bad_in)) return error("tcp-program requires SOCKS5, Mixed, HTTP, fixed-tcp/udp, Trojan, AnyTLS, Shadowsocks, ordinary VLESS, transparent TCP or routed TUN inbounds");
+            if(std::ranges::any_of(result.inbounds,[](auto const& e){return e.vless&&(e.vless->vision||e.vless->grpc||e.vless->xhttp);})) return error("tcp-program does not support VLESS Vision, gRPC or XHTTP");
+            auto dns_udp_in=[](auto const& e){return e.type==Inbound::socks5||e.type==Inbound::mixed||e.type==Inbound::fixed_udp||e.type==Inbound::trojan||e.type==Inbound::vless||e.type==Inbound::anytls||(e.type==Inbound::tproxy&&e.transparent_udp)||(e.tun&&!e.tun->connect_ip_outbound);};
+            auto dns_udp_inbounds=std::ranges::all_of(result.inbounds,dns_udp_in);
             if (dns_hijack && (!result.dns || (!route->ordered_tcp->udp && !tun_dns_tcp) ||
                 (route->ordered_tcp->udp && !dns_udp_inbounds)))
                 return error("hijack-dns requires DNS and an enabled interception path");
@@ -467,14 +469,15 @@ namespace config {
                 if(rule.set) {file=std::ranges::find(route->files,*rule.set,&NamedRouteFile::name)->file;file->ip_cidr_match_source=rule.ip_cidr_match_source;}
                 std::size_t index=0;
                 if(rule.outbound) {auto selected=outbound(*rule.outbound);if(!selected)return error("tcp-program outbound not found");index=*selected;}
-                program.rules.push_back({std::move(file),rule.action,rule.domain,index,rule.connect_timeout_ms,rule.outbound,rule.route_only,rule.predicates,rule.set,rule.reject_method,rule.reject_no_drop,rule.tls_record_fragment,rule.tls_fragment_min,rule.tls_fragment_max,rule.tcp_prefix,rule.tcp_prefix_len,rule.udp_timeout_ms,rule.udp_adaptive_timeout});
+                program.rules.push_back({std::move(file),rule.action,rule.domain,index,rule.connect_timeout_ms,rule.outbound,rule.route_only,rule.predicates,rule.set,rule.reject_method,rule.reject_no_drop,rule.tls_record_fragment,rule.tls_fragment_min,rule.tls_fragment_max,rule.tcp_prefix,rule.tcp_prefix_len,rule.udp_timeout_ms,rule.udp_adaptive_timeout,rule.override_address,rule.override_port,rule.tls_fragment_fallback_delay_ms,rule.extra});
             }
             result.ordered_tcp=std::move(program);
+            if (auto bound=routing_detail::bind_ordered_resolve_servers(result); !bound) return error(std::move(bound.error()));
         }
         // This MASQUE slice uses its explicit CIDR allowlist and system local
         // resolver; other routing/DNS programs are not yet wired to it.
         if(std::ranges::any_of(result.inbounds,[](auto const& entry){return entry.masque.has_value();}) &&
-           (result.inbounds.size()!=1 || result.dns || result.dns_upstream || !result.routes.empty() || result.ordered_tcp || result.default_outbound!=0 || result.tunnel_count() || block || result.direct_network || result.direct_tcp_options.configured() || result.direct_connect_timeout_ms!=10000))
+           (result.inbounds.size()!=1 || result.dns || !result.routes.empty() || result.ordered_tcp || result.default_outbound!=0 || result.tunnel_count() || block || result.direct_network || result.direct_tcp_options.configured() || result.direct_connect_timeout_ms!=10000))
             return error("MASQUE currently requires a single inbound, direct default, local DNS and no global routing options");
         if (!result.routes.empty()) {
             result.block_rules=result.routes.front().file;

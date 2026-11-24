@@ -3,7 +3,7 @@ import std;
 import quic.varint;
 import quic.receive_windows;
 import hysteria2.auth;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 
 export namespace hysteria2 {
     struct PortRange {
@@ -40,8 +40,8 @@ export namespace hysteria2 {
     // windows use the same bounded allocator as native QUIC and HTTP/3.
     template<std::size_t Streams,std::size_t Window>struct TransportProfile {
         static_assert(Streams>=4 && Streams<=65535 && Window>=512 && Window<=quic::max_varint/Streams);
-        static auto settings(TransportOptions const& options) noexcept -> std::expected<nex::ngtcp2::ngtcp2_settings,int> {
-            namespace n=nex::ngtcp2;if(!options.valid())return std::unexpected(n::err_invalid_argument);
+        static auto settings(TransportOptions const& options) noexcept -> std::expected<ngtcp2::ngtcp2_settings,int> {
+            namespace n = ::ngtcp2;if(!options.valid())return std::unexpected(n::err_invalid_argument);
             n::ngtcp2_settings result{};n::ngtcp2_settings_default_versioned(n::settings_version,&result);
             result.handshake_timeout=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(options.handshake_timeout).count());
             if(options.max_udp_payload_size)result.max_tx_udp_payload_size=*options.max_udp_payload_size;
@@ -56,8 +56,8 @@ export namespace hysteria2 {
             }
             return result;
         }
-        static auto parameters(TransportOptions const& options) noexcept -> std::expected<nex::ngtcp2::ngtcp2_transport_params,int> {
-            namespace n=nex::ngtcp2;if(!options.valid())return std::unexpected(n::err_invalid_argument);
+        static auto parameters(TransportOptions const& options) noexcept -> std::expected<ngtcp2::ngtcp2_transport_params,int> {
+            namespace n = ::ngtcp2;if(!options.valid())return std::unexpected(n::err_invalid_argument);
             n::ngtcp2_transport_params result{};n::ngtcp2_transport_params_default_versioned(n::transport_params_version,&result);
             auto const& windows=options.receive_windows;
             result.initial_max_stream_data_bidi_local=result.initial_max_stream_data_bidi_remote=

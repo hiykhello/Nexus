@@ -7,8 +7,8 @@ import dns.response_cache;
 import dns.response_match;
 import dns.corosio_query;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns::detail {
     // A complete client query has option-dependent semantics. Until a

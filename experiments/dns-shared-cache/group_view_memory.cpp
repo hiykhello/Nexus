@@ -1,10 +1,9 @@
 // Independent-process memory sample for the experimental view registry.
 #include <malloc.h>
-#include <boost/corosio/endpoint.hpp>
-#include <boost/corosio/ipv4_address.hpp>
+import corosio;
 import std;
 import dns.message;
-#include "../../src/dns-shared/group_view_registry.hpp"
+import dns.group_view_registry;
 
 namespace hp=dns_hp_experiment;
 namespace io=boost::corosio;

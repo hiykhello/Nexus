@@ -58,7 +58,7 @@ inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={ss_port}; metho
 {second_inbound}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "rules" path="rules.kdl" format="kdl"; rule kind="rule-set" value="rules" outbound="reject"; default-outbound "direct"; }}
+routing {{ rule-set "rules" path="rules.kdl" format="kdl"; rules {{ - kind="rule-set" value="rules" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
             server=subprocess.Popen(['stdbuf','-oL',binary,'run','--config',config],stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
             if b'listening' not in line(server): raise RuntimeError('server startup')

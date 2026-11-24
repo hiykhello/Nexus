@@ -1,8 +1,8 @@
 export module tuic.stream;
 import std;
 import tuic.application;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace tuic {
     template<class App, class Driver>
@@ -10,8 +10,9 @@ export namespace tuic {
         App& app_;
         Driver& driver_;
         StreamHandle handle_;
-        nex::capy::async_mutex write_lock_;
+        capy::async_mutex write_lock_;
         bool canceled_ = false;
+        bool output_closed_ = false;
     public:
         TcpStream(App& app, Driver& driver, StreamHandle handle) noexcept
             : app_(app), driver_(driver), handle_(handle) {}
@@ -21,25 +22,26 @@ export namespace tuic {
 
         auto cancel() noexcept -> void { canceled_ = true; driver_.notify(); }
 
-        auto send(std::span<std::uint8_t const> data) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> data) -> capy::task<bool> {
             auto [ec, guard] = co_await write_lock_.scoped_lock();
-            if (ec || canceled_) co_return false;
+            if (ec || canceled_ || output_closed_) co_return false;
             std::size_t off = 0;
             while (off < data.size()) {
-                if (canceled_ || app_.stopping() || !driver_.running()) co_return false;
+                if (canceled_ || output_closed_ || app_.stopping() || app_.stream_failed(handle_) || !driver_.running()) co_return false;
                 auto chunk = std::min<std::size_t>(data.size() - off, 16384);
                 if (app_.writable(handle_, chunk) && app_.send_stream(handle_, data.subspan(off, chunk))) {
+                    driver_.notify();
                     off += chunk;
                     continue;
                 }
                 driver_.changed().clear();
-                auto [werr] = co_await nex::corosio::timeout(driver_.changed().wait(), std::chrono::steady_clock::now() + std::chrono::seconds(300));
+                auto [werr] = co_await corosio::timeout(driver_.changed().wait(), std::chrono::steady_clock::now() + std::chrono::seconds(300));
                 if (werr) co_return false;
             }
             co_return true;
         }
 
-        auto read(std::span<std::uint8_t> out) -> nex::capy::task<std::expected<std::size_t, std::string>> {
+        auto read(std::span<std::uint8_t> out) -> capy::task<std::expected<std::size_t, std::string>> {
             for (;;) {
                 if (canceled_) co_return std::unexpected("TUIC stream canceled");
                 auto n = app_.read_stream(handle_, out);
@@ -49,15 +51,17 @@ export namespace tuic {
                 if (app_.stream_failed(handle_) || app_.stopping() || !driver_.running())
                     co_return std::unexpected("TUIC stream closed");
                 driver_.changed().clear();
-                auto [werr] = co_await nex::corosio::timeout(driver_.changed().wait(), std::chrono::steady_clock::now() + std::chrono::seconds(300));
+                auto [werr] = co_await corosio::timeout(driver_.changed().wait(), std::chrono::steady_clock::now() + std::chrono::seconds(300));
                 if (werr) co_return std::unexpected("TUIC stream read timeout");
             }
         }
 
-        auto close_output() -> nex::capy::task<bool> {
+        auto close_output() -> capy::task<bool> {
             auto [ec, guard] = co_await write_lock_.scoped_lock();
             if (ec || canceled_) co_return false;
-            co_return app_.close_stream_write(handle_);
+            bool ok = app_.close_stream_write(handle_);
+            if (ok) { output_closed_ = true; driver_.notify(); }
+            co_return ok;
         }
     };
 }

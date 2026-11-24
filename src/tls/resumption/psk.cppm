@@ -5,7 +5,7 @@ import tls.hello;
 import tls.transcript;
 import tls.post_handshake;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 
 export namespace tls {
     enum class PskError { invalid_state,invalid_input,invalid_offer,invalid_selection,expired,identity_mismatch,crypto_error,protocol_violation };
@@ -21,7 +21,7 @@ export namespace tls {
         std::uint32_t obfuscated_age=0;
     };
     struct ClientPskWireOffers {
-        nexus::inplace_vector<ClientPskWireOffer,8> entries;
+        containers::inplace_vector<ClientPskWireOffer,8> entries;
         std::size_t prefix_size=0;
     };
     // All spans borrow one complete pre_shared_key extension. This parser is
@@ -111,13 +111,13 @@ export namespace tls {
     template<std::size_t Capacity=8,class Entry=ResumptionTicket>
     class ResumptionCache {
         static_assert(Capacity>0 && Capacity<=64);
-        nexus::inplace_vector<Entry,Capacity> tickets_;
+        containers::inplace_vector<Entry,Capacity> tickets_;
     public:
         using Ticket=Entry;
         [[nodiscard]] auto size() const noexcept -> std::size_t { return tickets_.size(); }
         auto clear() noexcept -> void { tickets_.clear(); }
         auto insert(Entry&& ticket,std::uint64_t now_ms) -> void {
-            nexus::erase_if(tickets_,[&](auto const& entry) { return !entry.usable(now_ms); });
+            containers::erase_if(tickets_,[&](auto const& entry) { return !entry.usable(now_ms); });
             if (!ticket.usable(now_ms)) return;
             if (tickets_.size()==Capacity) tickets_.erase(tickets_.begin());
             tickets_.push_back(std::move(ticket));
@@ -137,7 +137,7 @@ export namespace tls {
         }
         [[nodiscard]] auto take(TicketBinding const& binding,std::span<std::uint16_t const> offered_suites,std::uint64_t now_ms)
             -> std::optional<Entry> {
-            nexus::erase_if(tickets_,[&](auto const& entry) { return !entry.usable(now_ms); });
+            containers::erase_if(tickets_,[&](auto const& entry) { return !entry.usable(now_ms); });
             for (std::size_t i=tickets_.size();i>0;--i) {
                 auto& entry=tickets_[i-1];
                 if (entry.binding()!=binding || !std::ranges::any_of(offered_suites,[&](auto suite) { return psk_cipher_hash(suite)==entry.hash(); })) continue;

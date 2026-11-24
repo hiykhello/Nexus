@@ -76,6 +76,6 @@ int main() {
     traced_count=0; trace_allocations=true;
     auto traced_wire=traced->seal(t::ContentType::application_data,max);
     trace_allocations=false;
-    if (!traced_wire || traced_count!=3 || traced_sizes[0]!=16385 || traced_sizes[1]!=16401 || traced_sizes[2]!=16406) return 22;
+    if (!traced_wire || traced_count!=2 || traced_sizes[0]!=16385 || traced_sizes[1]!=16406) return 22;
     std::cout << "TLS record RFC 8448 and boundaries passed\n";
 }

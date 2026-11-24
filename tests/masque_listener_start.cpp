@@ -5,11 +5,11 @@ import masque.bearer;
 import crypto;
 import dns.local_config;
 import tls.server_credential;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
+import corosio;
+import test.quic_tls_link;
 namespace m=masque;
-namespace io=nex::corosio;
-namespace support=nexus::test::quic_tls;
+namespace io = ::corosio;
+namespace support=test::quic_tls;
 using namespace std::chrono_literals;
 unsigned selected=99;
 extern "C" void nexus_test_masque_listener_start(unsigned stage) {if(stage==selected)throw std::bad_alloc();}

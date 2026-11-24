@@ -9,12 +9,27 @@ namespace shadowsocks {
         if (last_ && now<*last_) return false;
         if (last_) {
             auto elapsed=std::chrono::duration_cast<std::chrono::seconds>(now-anchor_mono_).count();
-            if (wall<last_wall_) return false;
-            auto delta=wall-anchor_wall_;
-            auto seconds=static_cast<std::uint64_t>(elapsed);
-            if (seconds>delta && seconds-delta>1) return false;
-            if (delta>seconds) { anchor_mono_=now; anchor_wall_=wall; }
-        } else { anchor_mono_=now; anchor_wall_=wall; }
+            bool regressed = wall < anchor_wall_;
+            std::uint64_t delta = regressed ? 0 : (wall - anchor_wall_);
+            auto seconds = static_cast<std::uint64_t>(elapsed);
+            regressed = regressed || (seconds > delta && seconds - delta > 1);
+            if (durable_) {
+                if (wall < last_wall_ || regressed) return false;
+                if (delta > seconds) { anchor_mono_ = now; anchor_wall_ = wall; }
+            } else if (regressed || wall < last_wall_) {
+                if (!recovery_anchor_) { recovery_anchor_ = {now, wall}; return false; }
+                auto rec_mono = std::chrono::duration_cast<std::chrono::seconds>(now - recovery_anchor_->first).count();
+                if (rec_mono < 0 || wall < recovery_anchor_->second) { recovery_anchor_ = {now, wall}; return false; }
+                auto rec_mono_u = static_cast<std::uint64_t>(rec_mono);
+                auto rec_wall = wall - recovery_anchor_->second;
+                if (rec_mono_u > rec_wall && rec_mono_u - rec_wall > 1) { recovery_anchor_ = {now, wall}; return false; }
+                if (rec_mono_u < 62 || rec_wall < 62 || wall < last_wall_ || wall - last_wall_ < 62) return false;
+                anchor_mono_ = now; anchor_wall_ = wall; recovery_anchor_.reset();
+            } else {
+                recovery_anchor_.reset();
+                if (delta > seconds) { anchor_mono_ = now; anchor_wall_ = wall; }
+            }
+        } else { anchor_mono_=now; anchor_wall_=wall; recovery_anchor_.reset(); }
         last_=now; last_wall_=wall;
         return true;
     }

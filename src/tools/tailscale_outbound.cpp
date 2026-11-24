@@ -1,12 +1,12 @@
 module cli.tailscale_outbound;
 import std;
 import config;
-import proxy;
+import relay;
 import cli.tailscale_endpoint;
 import rulefile;
 
 namespace cli::tailscale_outbound {
-    auto prepare(proxy::Server& server,std::span<config::NamedTailscaleOutbound const> routes) -> std::expected<void,std::string> {
+    auto prepare(relay::Server& server,std::span<config::NamedTailscaleOutbound const> routes) -> std::expected<void,std::string> {
         for(auto const& route:routes) {
             auto text=rulefile::read_regular_file(route.endpoint_file);
             if(!text)return std::unexpected(text.error());

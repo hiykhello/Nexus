@@ -1,17 +1,16 @@
 [package]
-namespace = "nexus"
 name = "udp-fault-tests"
 version = "0.1.0"
 
 # Exercise real SOCKS and UoT modules with process-local socket faults.
 [dependencies]
-nexus.protocols = { path = "../../src" }
-nexus.policy = { path = "../../src/rules" }
+protocols = { path = "../../src" }
+policy = { path = "../../src/rules" }
 
 [features]
-send = ["nexus.protocols/uot-direct"]
+send = ["protocols/uot-direct"]
 ingress = []
-ss-relay = ["nexus.protocols/ss2022"]
+ss-relay = ["protocols/ss2022"]
 
 [build]
 sources = []

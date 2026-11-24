@@ -1,23 +1,14 @@
 module rules;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace rules {
-    namespace g = nex::glaze;
+    namespace g = ::glaze;
 
-    auto valid_beve_profile(std::string_view payload,bool nested) -> bool;
+    auto valid_beve_profile(std::string_view payload) -> bool;
     auto normalize_set(RuleSet set) -> std::expected<RuleSet, Error>;
 
     // Glaze's reflection requires the mapped type to have linkage on Clang.
-    struct WireRuleV1 {
-        std::string type;
-        std::string value;
-    };
-    struct WireSetV1 {
-        std::uint32_t schema_version{};
-        std::string kind;
-        std::vector<WireRuleV1> rules;
-    };
     struct WireSetV2 {
         std::uint32_t schema_version{};
         std::string kind;
@@ -29,7 +20,7 @@ namespace rules {
         constexpr std::size_t header_size = 16;
 
         struct LimitedContext : g::Context {
-            std::size_t max_string_length = 253;
+            std::size_t max_string_length = 255;
             std::size_t max_array_size = max_rules;
         };
 
@@ -46,7 +37,7 @@ namespace rules {
     }
 
     auto parse_beve(std::string_view input) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "BEVE input exceeds 1 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "BEVE input exceeds 32 MiB"});
         if (input.size() < header_size || input.substr(0, magic.size()) != magic) return invalid("invalid rule-set header");
         if (input[8] != '\0' || input[9] != '\1' || input[10] != '\0' || input[11] != '\0')
             return invalid("unsupported container version or flags");
@@ -54,21 +45,9 @@ namespace rules {
         if (size == 0 || size != input.size() - header_size) return invalid("invalid payload length");
         auto payload = input.substr(header_size);
         constexpr g::opts options{.error_on_unknown_keys = true, .error_on_missing_keys = true};
-        if (valid_beve_profile(payload,false)) {
-            WireSetV1 wire;
-            LimitedContext context;
-            auto consumed=g::read_beve_at<options>(wire,payload,0,context);
-            if (consumed && *consumed==payload.size() && wire.schema_version==1 && wire.kind=="predicate") {
-                RuleSet result;
-                result.rules.reserve(wire.rules.size());
-                for (auto& rule:wire.rules) result.rules.push_back({std::move(rule.type),std::move(rule.value),{}});
-                return normalize_set(std::move(result));
-            }
-        }
-        if (!valid_beve_profile(payload,true)) return invalid("invalid BEVE profile or duplicate field");
+        if (!valid_beve_profile(payload)) return invalid("invalid BEVE profile or duplicate field");
         WireSetV2 wire;
         LimitedContext context;
-        context.max_string_length=255;
         auto consumed=g::read_beve_at<options>(wire,payload,0,context);
         if (!consumed || *consumed!=payload.size() || wire.schema_version!=2 || wire.kind!="predicate")
             return invalid("unsupported rule schema or kind");
@@ -79,17 +58,10 @@ namespace rules {
         auto normalized = normalize_set(set);
         if (!normalized) return std::unexpected(std::move(normalized.error()));
         std::string payload;
-        if (normalized->version==1) {
-            WireSetV1 wire{1,"predicate",{}};
-            wire.rules.reserve(normalized->rules.size());
-            for (auto& rule:normalized->rules) wire.rules.push_back({std::move(rule.type),std::move(rule.value)});
-            if (auto error=g::write_beve(wire,payload); error) return invalid("cannot encode BEVE payload");
-        } else {
-            WireSetV2 wire{2,"predicate",std::move(normalized->rules)};
-            if (auto error=g::write_beve(wire,payload); error) return invalid("cannot encode BEVE payload");
-        }
+        WireSetV2 wire{2,"predicate",std::move(normalized->rules)};
+        if (auto error=g::write_beve(wire,payload); error) return invalid("cannot encode BEVE payload");
         if (payload.empty() || payload.size() > max_input_bytes - header_size)
-            return std::unexpected(Error{ErrorCode::limit, "BEVE output exceeds 1 MiB"});
+            return std::unexpected(Error{ErrorCode::limit, "BEVE output exceeds 32 MiB"});
         auto length = static_cast<std::uint32_t>(payload.size());
         std::string output(magic);
         output.push_back('\0'); output.push_back('\1');

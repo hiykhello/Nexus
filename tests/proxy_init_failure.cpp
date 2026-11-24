@@ -1,5 +1,5 @@
 import std;
-import proxy;
+import relay;
 import dns.local_config;
 
 auto count(std::string_view path) -> std::size_t {
@@ -9,7 +9,7 @@ auto main(int argc, char** argv) -> int {
     // The process-wide DNS refresh thread outlives each server.
     (void)dns::system_local_snapshots();
     auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
-    auto first=proxy::Server::create();
+    auto first=relay::Server::create();
     if (argc==2 && std::string_view(argv[1])=="fallback") {
         if (!first) return 6;
         auto port=(*first)->start(0);
@@ -22,7 +22,7 @@ auto main(int argc, char** argv) -> int {
     if (argc!=1) return 9;
     if (first || first.error()!=std::errc::operation_not_permitted) return 1;
     if (count("/proc/self/fd")!=fds || count("/proc/self/task")!=threads) return 2;
-    auto second=proxy::Server::create();
+    auto second=relay::Server::create();
     if (!second) return 3;
     auto port=(*second)->start(0);
     if (!port || !(*second)->healthy()) return 4;

@@ -7,12 +7,11 @@ import tls.byte_stream;
 import vless;
 import vless.corosio_client;
 import vless.tls_server;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace g=grpc;
 namespace v=vless;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct ReadPolicy {
     using Error=tls::detail::ByteStreamError;

@@ -6,12 +6,12 @@
 
 import std;
 import config;
-import proxy;
-import proxy.host;
+import relay;
+import relay.host;
 import cli.tun_host;
 
 namespace {
-    namespace proxy=proxy;
+    namespace relay = ::relay;
     namespace packet = ::packet;
 
     template<class Condition>
@@ -35,18 +35,18 @@ namespace {
                 ::listen(blocker.value,1)==0,"cannot bind and listen on the occupied port");
         socklen_t size=sizeof(address);
         require(::getsockname(blocker.value,reinterpret_cast<sockaddr*>(&address),&size)==0,"cannot query occupied port");
-        auto first=proxy::Server::create().value();
-        auto second=proxy::Server::create().value();
-        proxy::HostTcpListener available;
-        proxy::HostTcpListener occupied{.port=ntohs(address.sin_port)};
-        proxy::Host failed;
+        auto first=relay::Server::create().value();
+        auto second=relay::Server::create().value();
+        relay::HostTcpListener available;
+        relay::HostTcpListener occupied{.port=ntohs(address.sin_port)};
+        relay::Host failed;
         require(failed.add_tcp(*first,available) && failed.add_tcp(*second,occupied),"cannot register TCP services");
         require(!failed.start() && available.port && !failed.healthy(),"failure did not roll back the started listener");
         failed.stop();
         require(!failed.add_tcp(*second,occupied),"a stopped host still accepts registrations");
 
-        auto retry=proxy::Server::create().value();
-        proxy::Host running;
+        auto retry=relay::Server::create().value();
+        relay::Host running;
         require(running.add_tcp(*retry,available) && running.start() && running.healthy(),"rolled-back port stayed bound");
         Fd client(::socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0));
         require(client.value>=0,"cannot create client socket");
@@ -78,13 +78,13 @@ namespace {
         auto external=packet::LinuxTun::create("nx-embed").value();
         auto original=external.native_handle();
         auto options=config::TunInbound{.interface_name=std::string(external.name()),.tcp_flows=4};
-        auto route=proxy::Server::create().value();
+        auto route=relay::Server::create().value();
         for (unsigned cycle=0;cycle<2;++cycle) {
             auto borrowed=packet::LinuxTun::attach(original,TunFdOwnership::borrow).value();
             auto duplicate=borrowed.native_handle();
             require(duplicate!=original && !borrowed.claim_network(),"borrowed TUN descriptor claimed the link");
             TunHost tun(*route,options);
-            proxy::Host host;
+            relay::Host host;
             require(host.add({
                 [&]() -> std::expected<void,std::string> {
                     auto started=tun.start(std::move(borrowed));

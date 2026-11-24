@@ -38,7 +38,7 @@ workers 2
 inbound "vless" type="vless" {{ listen host="127.0.0.1" port={port}; authentication {{ user "alice" uuid-file="{root/'uuid0'}"; user "bob" uuid-file="{root/'uuid1'}"; }}; tls {{ certificate-file "{root/'cert'}"; private-key-file "{root/'key'}"; }}; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "users" path="rules.kdl" format="kdl"; rule kind="rule-set" value="users" outbound="reject"; default-outbound "direct"; }}
+routing {{ rule-set "users" path="rules.kdl" format="kdl"; rules {{ - kind="rule-set" value="users" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
     server=subprocess.Popen([binary,'run','--config',root/'config.kdl'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:

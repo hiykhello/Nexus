@@ -11,12 +11,11 @@ import net.datagram_frame;
 import tls.profiles;
 import tls.connector;
 import platform.socket_options;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace a=anytls;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Counters {
     capy::async_event gate;

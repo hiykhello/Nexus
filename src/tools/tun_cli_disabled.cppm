@@ -1,7 +1,7 @@
 export module cli.tun_disabled;
 import std;
 import config;
-import proxy;
+import relay;
 
 export namespace cli::tun_disabled {
     class Runtime {
@@ -11,13 +11,15 @@ export namespace cli::tun_disabled {
             if (entry.tun) return std::unexpected("TUN inbound is unavailable in this build");
             return {};
         }
-        auto start(std::size_t, proxy::Server&) -> std::expected<std::string, std::string> {
+        auto start(std::size_t, relay::Server&) -> std::expected<std::string, std::string> {
             return std::unexpected("TUN inbound is unavailable in this build");
         }
         auto owns_host_dns() const noexcept -> bool {return false;}
         auto healthy() const noexcept -> bool { return true; }
-        [[nodiscard]] auto queue_outbound_probe(std::size_t,std::shared_ptr<proxy::OutboundProbe>) noexcept -> bool {return false;}
+        [[nodiscard]] auto queue_outbound_probe(std::size_t,std::shared_ptr<relay::OutboundProbe>) noexcept -> bool {return false;}
         auto failure() const -> std::optional<std::string> { return {}; }
+        auto begin_drain() noexcept -> void {}
+        [[nodiscard]] auto drained() const noexcept -> bool { return true; }
         auto stop() noexcept -> void {}
     };
 }

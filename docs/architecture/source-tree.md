@@ -1,84 +1,69 @@
-# 源码工程目录规划与 C++26 模块映射
+# Nexus 源码结构与包边界说明
 
-状态：设计规范。定义 Nexus 源码物理布局与 mcpp 工作区映射。
-
-目前真实源码包括 Glaze 模块、规则集、规则文件工具、SOCKS5 解析器及 Linux 实验代理；Capy 和 Corosio 由代理私有实现使用。下图其余内容是未来布局草案，不表示对应文件已经创建。实际 target 及测试见 [mcpp 工作区](../build/mcpp-workspace.md)。
+本文描述 Nexus 仓库当前的目录组织、mcpp 工作区划分与 C++26 模块依赖约束。
 
 ---
 
-## 一、物理目录规划 (Source Tree Layout)
-
-Nexus 全面采用 **C++26 命名模块（Named Modules）** 架构。源码按功能域严格划分，每个模块由接口文件（`.ixx` 或 `.cppm`）与实现单元（`.cpp`）组成：
+## 一、顶层目录结构
 
 ```text
-nexus/
-├── mcpp.toml                     # 根工作区及应用包
-├── mcpp.lock                     # 已解析依赖
-├── 3rdparty/mcpp-index/          # 固定第三方依赖描述符
-├── docs/                         # 完备的技术架构与设计规范文档
-├── src/
-│   ├── thirdparty/               # Glaze 已实现，其余模块规划中
-│   │   ├── glaze.cppm           # nexus.thirdparty.glaze
-│   │   ├── proxy.cppm           # nexus.thirdparty.proxy
-│   │   ├── boringssl_crypto.cppm # nexus.thirdparty.boringssl_crypto
-│   │   └── nghttp2.cppm         # nexus.thirdparty.nghttp2（可选）
-│   ├── app/                      # 应用程序入口与拓扑装配
-│   │   ├── main.cpp              # CLI 启动与服务装配
-│   │   └── nexus.app.ixx         # nexus.app 模块接口
-│   ├── core/                     # 核心通用类型与错误处理
-│   │   ├── nexus.core.ixx        # 基本错误码、数据缓冲、状态定义
-│   │   └── error.cpp
-│   ├── config/                   # KDL 配置加载与解析
-│   │   ├── nexus.config.ixx      # 基于 glaze-kdl2.0- 的配置映射
-│   │   └── loader.cpp
-│   ├── crypto/                   # 密码学算力底座适配层
-│   │   ├── nexus.crypto.ixx      # 导出对 BoringSSL libcrypto 的 RAII 封装
-│   │   ├── aead.cpp              # AES-GCM / ChaCha20-Poly1305 适配
-│   │   ├── ecdh.cpp              # X25519 与 ML-KEM-768 后量子计算
-│   │   └── x509.cpp              # 证书解析与验签
-│   ├── tls/                      # 自研 TLS 1.3 协议与指纹引擎
-│   │   ├── nexus.tls.ixx         # TLS 1.3 状态机与 Record Layer
-│   │   ├── utls_builder.cpp      # ClientHello 浏览器指纹编排 (utls26)
-│   │   ├── ktls_linux.cpp        # Linux kTLS setsockopt 密钥注入
-│   │   └── reality.cpp           # Reality 握手劫持与 Fallback 反代
-│   ├── http/                     # 自研轻量级微型 HTTP/1.1 代理
-│   │   ├── nexus.http.ixx        # HTTP 零分配解析与 CONNECT 隧道
-│   │   ├── parser.cpp            # 状态机解析器
-│   │   └── masque.cpp            # RFC 9298 CONNECT-UDP 胶囊协议
-│   ├── protocols/                # 主力代理协议实现
-│   │   ├── vless/                # VLESS 协议与 Vision 流控
-│   │   ├── trojan/               # Trojan 协议与 Web 回退
-│   │   ├── shadowsocks/          # Shadowsocks 2022 AEAD
-│   │   └── mixed/                # SOCKS5 / HTTP 混合入站
-│   ├── routing/                  # 高性能路由与分流匹配
-│   │   ├── nexus.routing.ixx     # 规则分流执行器
-│   │   └── matcher.cpp           # 基于 BEVE 缓存的 GeoIP/GeoSite 匹配
-│   ├── dns/                      # DNS 解析引擎
-│   │   ├── nexus.dns.ixx         # 异步解析视图与乐观缓存
-│   │   └── fakeip.cpp            # FakeIP 分配池与持久化
-│   ├── tun/                      # 自研 TUN 设备驱动与 TCP/IP 栈
-│   │   ├── nexus.tun.ixx         # L3 包设备与平台网络适配
-│   │   └── netstack.cpp          # 状态机转发器
-│   └── platform/linux/           # Linux 平台专属高速通道
-│       ├── splice_pipe.cpp       # Linux splice 零拷贝管道数据泵
-│       └── nftables.cpp          # 自动化 nftables 透明分流规则管理
+Nexus/
+├── mcpp.toml                 # mcpp 根工作区与根二进制/核心库包（nexus）配置
+├── include/nexus/core_c_api.h # 面向 Apple Extension / 嵌入式宿主 Thin C ABI 头文件
+├── 3rdparty/
+│   ├── modules/              # 第三方 C++26 无前缀模块封装（capy/corosio/glaze/boringssl/blake3/nghttp2/ngtcp2/nghttp3）
+│   ├── patches/              # 固定上游补丁（如 corosio 精确补丁）
+│   ├── mcpp-index/           # 本地 mcpp xpkg 包索引覆盖（Linux / macOS / Windows 多平台元数据）
+│   └── mcpp-pins.json        # 固定第三方依赖归档与校验清单
+├── src/                      # 内核工作区源码与叶子基础包（均无 namespace = "nexus" 前缀）
+│   ├── containers/           # containers（containers.*：inplace_vector/byte_ring/ring_queue/cache_index）
+│   ├── functional/           # functional（functional：function_ref/move_only_function/copyable_function）
+│   ├── utility/              # utility（utility：atomic_shared_ptr/scope_exit/secure_zero）
+│   ├── encoding/             # encoding（encoding.base64 / encoding.base64_key）
+│   ├── platform/             # platform（OS 文件、IP、进程归属、Unix Socket、Netlink/resolved 等）
+│   ├── crypto/               # crypto（BoringSSL libcrypto 原语封装）
+│   ├── rules/                # policy（配置映射与路由规则）
+│   ├── dns/                  # dns（DNS 视图、UDP/TCP/DoH 查询与 FakeIP 支持）
+│   ├── dns-shared/           # dns-group-core（共享 DNS 缓存实验复用内核）
+│   ├── transport/            # tun（包栈、TCP/UDP 与 TUN 驱动）
+│   ├── proxy/                # proxy-runtime（入站/出站分发、会话接管与服务端运行时）
+│   ├── udp-runtime/          # ss-udp-runtime（SS-2022 UDP 入站生命周期管理）
+│   ├── udp-shared/           # dns-group-udp（UDP 运行时共享实验组件）
+│   ├── endpoint/             # wireguard-endpoint（WireGuard / Tailscale 等端点装配）
+│   └── ...                   # 各协议、状态、日志、TLS/QUIC 与 CLI/C ABI 工具子目录
+├── tests/                    # 核心单元/夹具源码、test.* 测试模块、deps-tests（tests/deps/）及验证脚本
+├── mcpp/                     # 独立构建视图与多平台消费者包（epoll/host-consumer/android-arm64/darwin-arm64/ios-arm64/windows-x64）
+├── experiments/              # 实验性工作区成员（如 DNS 共享缓存实验）
+├── scripts/                  # 代码行数检查、QUIC/BoringSSL/nghttp2 生成、XCFramework 与 pinned-guard 脚本
+├── desktop/                  # Linux/macOS/Windows 桌面端与 Slint UI、C++ 桥接及 Desktop CTest
+├── android/                  # Android App 与 Kotlin CoreBridge
+├── apple/                    # macOS/iOS Swift Package（NexusCoreBridge，含 EmbeddedCoreBridge）及测试
+├── web/                      # Web 控制台前端工程
+└── docs/                     # 架构、构建、开发规范、交付进度与批次规划文档
 ```
 
 ---
 
-## 二、工作区与模块边界
+## 二、工作区基础包与模块层次
 
-实际构建清单及功能组合见[mcpp 工作区](../build/mcpp-workspace.md)。源码按真实职责归属工作区成员；每个命名模块都由构建图中的唯一提供者提供。模块与功能选择约定见[开发规范](../development/module-feature-policy.md)。
+工作区成员按叶子包到上层运行时逐级单向依赖：
 
-### 自实现容器与数据结构
-
-`src/containers/` 存放自实现通用容器和数据结构。基础模块使用 `containers.*`，由代理、DNS、路由和协议组件单向依赖。`containers.byte_ring` 提供地址稳定的定长字节存储，Hysteria 2 和 TUIC 分别决定偏移、ACK 和释放区间。`containers.ring_queue` 维护 FIFO 槽序，Shadowsocks 原生 UDP 发送队列和 Hysteria 2 重组输出继续拥有槽对象、内存和过期。槽表和独立索引按实际复用场景继续迁移。
-
-逐项迁移时核对容量、满载行为、分配次数、地址与视图稳定性、迭代顺序以及对象销毁时机。优先保留使用方接口和现有模块入口，让调用点按实际需求迁移。验收批次与支持状态见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [项目进度](../progress.md)。
+1. **第三方封装模块（`3rdparty/modules/`）**：`blake3.cppm`、`boringssl.cppm`、`capy.cppm`、`corosio.cppm`、`glaze.cppm`、`nghttp2.cppm` 与由 `scripts/mcpp-quic-modules.py` 生成的 `ngtcp2.cppm` / `nghttp3.cppm` 直接导出同名无前缀命名模块及命名空间（`blake3`、`boringssl`、`capy`、`corosio`、`glaze`、`nghttp2`、`ngtcp2`、`nghttp3`）；C++ 测试辅助模块导出 `test.*`。
+2. **通用容器、函数对象与工具叶子包**：
+   - `containers`（`src/containers/`）：提供 `containers.inplace_vector`（定长内联顺序容器与 `containers::erase`/`erase_if`）、`containers.byte_ring`、`containers.ring_queue` 与 `containers.cache_index`。
+   - `functional`（`src/functional/`）：基于 `proxy.v4` 提供 `functional::{function_ref, move_only_function, copyable_function}`（后两者为 32B SBO）。
+   - `utility`（`src/utility/`）：提供 `utility::atomic_shared_ptr`、`utility::scope_exit` 与跨平台常量栅栏擦除原语 `utility::secure_zero`。
+   - `encoding`（`src/encoding/`）：提供 `encoding.base64` 与 `encoding.base64_key`，供规则、WebSocket 与代理会话统一导入。
+3. **平台抽象包（`platform`，`src/platform/`）**：提供 `platform.ip_address`、`platform.os_fs`、`platform.process_owner`、`platform.unix_socket`（非 Windows 条件编译）、Netlink/resolved（`platform.netlink_abi` / `platform.sd_bus_abi`）与各平台 TUN/批量 UDP 后端适配。
+4. **核心运行时与协议目录**：
+   - 协议与基础设施模块（归属 `src/`，`protocols` 包）：`acme/`、`anytls/`、`build/`（含 `mcpp_pinned_guard.cpp`）、`config/`、`control_api/`、`coro/`、`grpc/`、`http/`、`http2/`、`httpupgrade/`、`hysteria2/`、`logging/`、`masque/`、`memory/`、`naive/`、`net/`、`ntp/`、`openconnect/`、`openvpn/`、`packet/`、`quic/`、`reality/`、`rulefile/`、`shadowsocks/`、`shadowtls/`、`snell/`、`sniff/`、`socks5/`、`ssh/`、`state/`、`tailscale/`、`tcp/`、`tls/`、`tools/`、`trojan/`、`tuic/`、`udp/`、`uot/`、`vision/`、`vless/`、`websocket/`、`wireguard/`、`xhttp/`、`xudp/`。
+   - 上层引擎与装配：`crypto`、`policy`、`dns`、`tun`、`proxy-runtime`、`ss-udp-runtime`、`wireguard-endpoint` 与 `src/tools/`（含 `core_c_api.cpp`）。
 
 ---
 
 ## 三、模块解耦保障
 
-1. **依赖单向化**：`nexus.crypto` 仅被 `nexus.tls` 和协议内部依赖，严禁向上泄漏任何 OpenSSL/BoringSSL 原生宏定义或裸指针；
-2. **零循环依赖**：`nexus.routing` 只依赖出站抽象能力（Facade），不反向 `import` 任何具体协议实现；具体协议由 `nexus.app` 在启动时进行依赖注入（Dependency Injection）。
+1. **依赖单向化**：叶子基础包（`containers`、`functional`、`utility`、`encoding`）仅向 `platform`、核心域包与测试单向输出；`crypto` 仅被 `tls` 和协议内部依赖，不向上泄漏底层头文件或宏定义。
+2. **禁止跨包直含内部源码**：各子包通过各自 `mcpp.toml` 声明的命名模块接口交互，禁止通过相对路径直接将其他目录的 `.cppm`/`.hpp` 加入 `sources` 或使用 `#include`。
+3. **平台条件编译隔离**：Windows/Darwin/iOS/Linux 专属实现通过 `[target.'cfg(...)'.build]` 在 `src/platform/mcpp.toml`、`src/dns/mcpp.toml`、`src/transport/mcpp.toml`、`src/crypto/mcpp.toml` 与根 `mcpp.toml` 中分拆，避免平台 API 与链接选项污染其他端。
+4. **构建与依赖锁定守卫**：依赖变更后通过 `scripts/mcpp-generate-pinned-guard.py`、`tests/mcpp_pinned_deps.py` 与 `tests/mcpp_sidecar_isolation.py` 验证固定归档、模块接口、生成源码列表与 `profile-sidecar`/`profile-embedded` 特性隔离边界。

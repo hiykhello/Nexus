@@ -10,12 +10,11 @@ import tls.corosio_client;
 import tls.corosio_application;
 import tls.corosio_server_handshake;
 import vless;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace h=httpupgrade;
 namespace v=vless;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Lower=tls::detail::ByteStream<io::tcp_socket>;
 struct Fixture {

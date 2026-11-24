@@ -3,10 +3,10 @@
 #include <sys/socket.h>
 import std;
 import tls.application_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.corosio_application;
-namespace capy=nex::capy; namespace io=nex::corosio; namespace t=tls; namespace c = ::crypto;
+namespace io = ::corosio; namespace t=tls; namespace c = ::crypto;
 using Bytes=c::Bytes; using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction,int n,std::uint64_t limit=1u << 24) -> t::RecordLayer {
@@ -310,14 +310,99 @@ template<class Backend> auto protocol_failure(Backend backend, bool fatal=false)
     f.context.restart(); (void)f.context.run_for(1s);
     return f.context.stopped() && f.connection.idle() && f.read_done && f.write_done && (fatal ? f.fatal : f.read_failed) && f.write_failed && !f.connection.pending_output();
 }
+auto send_wire(io::local_stream_socket& s, Bytes wire, bool shutdown_wr) -> capy::task<> {
+    std::size_t off = 0;
+    while (off < wire.size()) {
+        auto [ec, n] = co_await s.write_some(capy::const_buffer(wire.data() + off, wire.size() - off));
+        if (ec || !n) co_return;
+        off += n;
+    }
+    if (shutdown_wr) (void)s.shutdown(io::shutdown_send);
+}
+template<class Backend> auto bulk_padded_and_alert_test(Backend backend) -> bool {
+    // Subcase 1: max-padded record + multi-record bulk read_into (65536 B & 16624 B)
+    auto peer = layer(t::RecordDirection::send, 2);
+    Bytes p1(100, 0x11), p2(16384, 0x22), p3(100, 0x33), wire;
+    for (auto const& part : {peer.seal(t::ContentType::application_data, p1, 16284),
+            peer.seal(t::ContentType::application_data, p2),
+            peer.seal(t::ContentType::application_data, p3),
+            peer.seal(t::ContentType::alert, Bytes{1, 0})}) {
+        if (!part) return false;
+        wire.insert(wire.end(), part->begin(), part->end());
+    }
+    Fixture f(backend); if (io::connect_pair(f.a, f.b)) return false;
+    bool ok = false;
+    auto run_bulk = [&]() -> capy::task<> {
+        t::detail::ApplicationStreamReader reader(f.connection);
+        Bytes buf(65536, 0), got;
+        while (true) {
+            auto r = co_await reader.read_some(buf);
+            if (!r) co_return;
+            if (r->kind == t::detail::AsyncStreamReadKind::data) got.insert(got.end(), buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(r->size));
+            else if (r->kind == t::detail::AsyncStreamReadKind::event && r->event && r->event->kind == t::ApplicationEventKind::close_notify) break;
+            else co_return;
+        }
+        auto eof = co_await reader.read_some(std::span{buf}.first(t::detail::ApplicationInput::kMinDirectReadBuffer));
+        Bytes expected = p1; expected.insert(expected.end(), p2.begin(), p2.end()); expected.insert(expected.end(), p3.begin(), p3.end());
+        ok = got == expected && eof && eof->kind == t::detail::AsyncStreamReadKind::eof;
+    };
+    capy::run_async(f.context.get_executor())(send_wire(f.b, std::move(wire), true));
+    capy::run_async(f.context.get_executor())(run_bulk());
+    f.context.restart(); (void)f.context.run_for(2s);
+    if (!ok || !f.context.stopped()) return false;
+
+    // Subcase 2: coalesced data + fatal_alert delivers data then fatal_alert
+    auto p_alert = layer(t::RecordDirection::send, 2);
+    auto d = p_alert.seal(t::ContentType::application_data, Bytes(64, 0x44));
+    auto a = p_alert.seal(t::ContentType::alert, Bytes{2, 40});
+    if (!d || !a) return false;
+    d->insert(d->end(), a->begin(), a->end());
+    Fixture f2(backend); if (io::connect_pair(f2.a, f2.b)) return false;
+    bool ok2 = false;
+    auto run_alert = [&]() -> capy::task<> {
+        t::detail::ApplicationStreamReader reader(f2.connection);
+        Bytes buf(65536, 0);
+        auto r1 = co_await reader.read_some(buf);
+        if (!r1 || r1->kind != t::detail::AsyncStreamReadKind::data || r1->size != 64 || !std::ranges::equal(std::span{buf}.first(64), Bytes(64, 0x44))) co_return;
+        auto r2 = co_await reader.read_some(buf);
+        if (!r2 || r2->kind != t::detail::AsyncStreamReadKind::event || !r2->event || r2->event->kind != t::ApplicationEventKind::fatal_alert) co_return;
+        auto r3 = co_await reader.read_some(buf);
+        ok2 = !r3 && r3.error() == t::detail::AsyncApplicationError::state;
+    };
+    capy::run_async(f2.context.get_executor())(send_wire(f2.b, std::move(*d), false));
+    capy::run_async(f2.context.get_executor())(run_alert());
+    f2.context.restart(); (void)f2.context.run_for(2s);
+    if (!ok2 || !f2.context.stopped()) return false;
+
+    // Subcase 3: trailing garbage bytes after close_notify fail with truncated on read_into EOF
+    auto p_eof = layer(t::RecordDirection::send, 2);
+    auto cn = p_eof.seal(t::ContentType::alert, Bytes{1, 0});
+    if (!cn) return false;
+    cn->insert(cn->end(), {1, 2, 3});
+    Fixture f3(backend); if (io::connect_pair(f3.a, f3.b)) return false;
+    bool ok3 = false;
+    auto run_trunc = [&]() -> capy::task<> {
+        Bytes buf(65536, 0);
+        auto r1 = co_await f3.connection.read_into(buf);
+        if (!r1 || !r1->event || r1->event->kind != t::ApplicationEventKind::close_notify) co_return;
+        auto r2 = co_await f3.connection.read_into(buf);
+        ok3 = !r2 && r2.error() == t::detail::AsyncApplicationError::truncated;
+    };
+    capy::run_async(f3.context.get_executor())(send_wire(f3.b, std::move(*cn), true));
+    capy::run_async(f3.context.get_executor())(run_trunc());
+    f3.context.restart(); (void)f3.context.run_for(2s);
+    return ok3 && f3.context.stopped() && f3.connection.idle();
+}
 int main() {
     if (!exception_overlap(io::epoll,false) || !exception_overlap(io::epoll,true)) return 7;
     for (int mode=0;mode<5;++mode) if (!exception_test(io::epoll,mode)) return 5;
     if (!unread_boundary_test(io::epoll) || !detach_test(io::epoll) || !detach_writer_test(io::epoll)) return 3;
+    if (!bulk_padded_and_alert_test(io::epoll)) return 9;
 #if BOOST_COROSIO_HAVE_LIBURING
     if (!exception_overlap(io::uring,false) || !exception_overlap(io::uring,true)) return 8;
     for (int mode=0;mode<5;++mode) if (!exception_test(io::uring,mode)) return 6;
     if (!unread_boundary_test(io::uring) || !detach_test(io::uring) || !detach_writer_test(io::uring)) return 4;
+    if (!bulk_padded_and_alert_test(io::uring)) return 10;
 #endif
     for (int i=0;i<10;++i) {
         if (!preserve_timeout_test(io::epoll) || !stream_read_test(io::epoll) || !stream_test(io::epoll) || !blocked_update_test(io::epoll) || !budget_test(io::epoll) || !expired_test(io::epoll) || !deadline_test(io::epoll,true) || !deadline_test(io::epoll,false) || !exercise(io::epoll) || !protocol_failure(io::epoll) || !protocol_failure(io::epoll,true)) { std::cerr << "epoll connection cancellation failed at " << i << '\n'; return 1; }

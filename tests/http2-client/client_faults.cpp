@@ -1,10 +1,10 @@
 import std;
 import http2.client;
 import memory.budget;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 namespace h=http2;
 namespace m=::memory;
-namespace c=nex::nghttp2;
+namespace c = ::nghttp2;
 using Client=h::Client<4>;
 extern "C" auto meter_begin(std::size_t,std::size_t) -> void;
 extern "C" auto meter_end() -> std::size_t;

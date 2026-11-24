@@ -5,8 +5,8 @@ import shadowsocks.frame;
 import shadowsocks.key;
 import shadowsocks.corosio_client;
 import shadowsocks.corosio_server;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace shadowsocks::detail {
     // Single executor; owner drains pending operations before destroying this object.
@@ -17,7 +17,7 @@ export namespace shadowsocks::detail {
         CipherMethod method_;
         FrameReader<Socket> reader_;
         std::optional<FrameEncoder> writer_;
-        nex::capy::async_mutex mutex_;
+        capy::async_mutex mutex_;
         bool canceled_=false,output_closed_=false;
     public:
         InboundStream(Socket& socket,std::span<std::uint8_t const> psk,AcceptedRequest request)
@@ -33,7 +33,7 @@ export namespace shadowsocks::detail {
             canceled_=true; if (writer_) writer_->close(); reader_.cancel();
         }
         auto read(std::span<std::uint8_t> output,std::chrono::steady_clock::time_point deadline)
-            -> nex::capy::task<std::expected<std::size_t,ReadError>> {
+            -> capy::task<std::expected<std::size_t,ReadError>> {
             if (canceled_) co_return std::unexpected(ReadError::state);
             struct Guard { InboundStream& self; bool done=false; ~Guard() { if (!done) self.cancel(); } } guard{*this};
             auto result=co_await reader_.read(output,deadline);
@@ -43,7 +43,7 @@ export namespace shadowsocks::detail {
         }
         // A sniff timeout leaves frame and cipher state available for relay.
         auto read_sniff(std::span<std::uint8_t> output,std::chrono::steady_clock::time_point deadline)
-            -> nex::capy::task<std::expected<std::size_t,ReadError>> {
+            -> capy::task<std::expected<std::size_t,ReadError>> {
             if(canceled_)co_return std::unexpected(ReadError::state);
             struct Guard {InboundStream& self;bool done=false;~Guard(){if(!done)self.cancel();}} guard{*this};
             auto result=co_await reader_.read(output,deadline,true);
@@ -54,7 +54,7 @@ export namespace shadowsocks::detail {
             if(canceled_)co_return std::unexpected(ReadError::state);
             guard.done=true;co_return *result;
         }
-        auto send(std::span<std::uint8_t const> input,std::chrono::steady_clock::time_point deadline) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> input,std::chrono::steady_clock::time_point deadline) -> capy::task<bool> {
             auto [error,lock]=co_await mutex_.scoped_lock();
             if (error || canceled_ || output_closed_) co_return false;
             struct Guard { InboundStream& self; bool done=false; ~Guard() { if (!done) self.cancel(); } } guard{*this};
@@ -72,11 +72,11 @@ export namespace shadowsocks::detail {
             }
             guard.done=true; co_return true;
         }
-        auto close_output() -> nex::capy::task<bool> {
+        auto close_output() -> capy::task<bool> {
             auto [error,lock]=co_await mutex_.scoped_lock();
             if (error || canceled_ || output_closed_) co_return false;
             output_closed_=true;
-            if (socket_.shutdown(nex::corosio::shutdown_send)) { cancel(); co_return false; }
+            if (socket_.shutdown(corosio::shutdown_send)) { cancel(); co_return false; }
             co_return true;
         }
     };

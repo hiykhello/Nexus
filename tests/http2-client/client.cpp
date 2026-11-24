@@ -1,9 +1,9 @@
 import std;
 import http2.client;
 import http2.server;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 namespace h=http2;
-namespace c=nex::nghttp2;
+namespace c = ::nghttp2;
 struct Peer {
     std::vector<std::int32_t> opened,ended,closed;
     std::map<std::int32_t,std::vector<std::uint8_t>> request;

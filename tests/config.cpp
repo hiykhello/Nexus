@@ -19,7 +19,9 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {
     rule-set "blocked" path="rules/blocked.kdl" format="kdl"
-    rule kind="rule-set" value="blocked" outbound="reject"
+    rules {
+        - kind="rule-set" value="blocked" outbound="reject"
+    }
     default-outbound "direct"
 }
 )";
@@ -77,7 +79,7 @@ outbound "edge" type="hysteria2" { server host="127.0.0.1" port=443; authenticat
 routing { default-outbound "edge"; }
 )";
     auto unsupported_detour=config::parse_kdl(hy2);
-    if(unsupported_detour || unsupported_detour.error().find("UDP-over-TCP")==std::string::npos) {std::cerr<<"Hysteria detour: "<<(unsupported_detour ? "unexpected success" : unsupported_detour.error())<<'\n';return 1;}
+    if(unsupported_detour || unsupported_detour.error().find("Shadowsocks datagram transport")==std::string::npos) {std::cerr<<"Hysteria detour: "<<(unsupported_detour ? "unexpected success" : unsupported_detour.error())<<'\n';return 1;}
     auto layered=config::parse_kdl(replace(hy2,"key-file \"/tmp/key\";", "key-file \"/tmp/key\"; udp-over-tcp \"v2\";"));
     if(!layered || layered->hysteria2_outbounds[0].config.connection.detour_index!=2) return 1;
     auto direct_config=replace(hy2,"detour \"lower\"","detour \"direct\"");
@@ -162,7 +164,7 @@ routing { default-outbound "edge"; }
         if (config::parse_kdl(replace(direct_timeout,"12500",value))) return 1;
     auto ipv6=config::parse_kdl(replace(complete,"listen host=\"127.0.0.1\"","listen host=\"::1\""));
     if (!ipv6 || !ipv6->listen_ipv6 || ipv6->inbounds.size()!=1 || !ipv6->inbounds[0].listen_ipv6) return 1;
-    for (auto host : {"::", "::2", "::1%lo", "::ffff:127.0.0.1"})
+    for (auto host : {"::1%lo", "[::1]", "not-an-ip", "256.0.0.1"})
         if (config::parse_kdl(replace(complete,"127.0.0.1",host))) return 1;
     auto ss=replace(complete,"outbound \"direct\" type=\"direct\"", R"(outbound "direct" type="direct"
 outbound "ss" type="shadowsocks" { server host="127.0.0.1" port=8388; method "2022-blake3-aes-128-gcm"; key-file "/secret"; })");
@@ -261,7 +263,6 @@ outbounds {)");
                      replace(ss_in,"key-file \"/secret\"","key-file \"/secret\"; key-file \"/secret\""),
                      replace(ss_in,"key-file \"/secret\"","authentication \"none\"; key-file \"/secret\"")})
         if (config::parse_kdl(bad)) return 1;
-    typed=replace(typed,"rule kind=\"rule-set\" value=\"blocked\" outbound=\"reject\"", "rules { - kind=\"rule-set\" value=\"blocked\" outbound=\"reject\"; }");
     auto new_style=config::parse_kdl("dns { servers { local \"system\"; udp \"up\" host=\"127.0.0.1\"; }; rules { - domain=\"example.test\" server=\"up\"; }; }\n"+typed);
     if (!new_style || new_style->inbounds.size()!=1 || !new_style->dns || new_style->dns->rules.size()!=1 ||
         new_style->dns->rules[0].server!=1) return 1;
@@ -331,17 +332,9 @@ outbounds {)");
                      replace(reality_in_config,"reality {", "certificate-file \"/extra\"; reality {")})
         if (config::parse_kdl(bad)) return 1;
     if (config->workers!=1) return 1;
-    auto dns=config::parse_kdl("dns-upstream host=\"127.0.0.1\" port=5353\n"+complete);
-    if (!dns || !dns->dns_upstream || dns->dns_upstream->ipv6 || dns->dns_upstream->address[0]!=127 || dns->dns_upstream->address[3]!=1 ||
-        dns->dns_upstream->port!=5353) return 1;
-    auto dns6=config::parse_kdl("dns-upstream host=\"::1\" port=5353\n"+complete);
-    if (!dns6 || !dns6->dns_upstream || !dns6->dns_upstream->ipv6 || dns6->dns_upstream->address[15]!=1) return 1;
-    for (auto bad : {"dns-upstream host=\"localhost\" port=53\n", "dns-upstream host=\"127.00.0.1\" port=53\n",
-                     "dns-upstream host=\"127.0.0.1\" port=0\n", "dns-upstream host=\"127.0.0.1\" port=65536\n",
-                     "dns-upstream host=\"127.0.0.1\" port=53 extra=1\n", "dns-upstream host=\"::1%lo\" port=53\n",
-                     "dns-upstream host=\"::1\\u{0}x\" port=53\n", "dns-upstream host=\"[::1]\" port=53\n"})
-        if (config::parse_kdl(std::string(bad)+complete)) return 1;
-    if (config::parse_kdl("dns-upstream host=\"127.0.0.1\" port=53\ndns-upstream host=\"127.0.0.1\" port=53\n"+complete)) return 1;
+    // Legacy top-level dns-upstream is removed; configurations must use the dns { ... } block.
+    if (config::parse_kdl("dns-upstream host=\"127.0.0.1\" port=5353\n"+complete) ||
+        config::parse_kdl("dns-upstream host=\"::1\" port=5353\n"+complete)) return 1;
     auto servers=config::parse_kdl(R"(dns {
         server "system" type="local"
         server "remote" type="udp" host="::1" port=5353
@@ -411,6 +404,8 @@ outbounds {)");
     auto auth = config::parse_kdl(authenticated);
     if (!auth || !auth->password_auth || auth->password_auth->username != "alice" ||
         auth->password_auth->password_file != "/tmp/password") return 1;
+    auto auth_mixed = config::parse_kdl(replace(authenticated, "type=\"socks5\"", "type=\"mixed\""));
+    if (!auth_mixed || !auth_mixed->password_auth) return 1;
     auto binary = config::parse_kdl(replace(complete, "format=\"kdl\"", "format=\"beve\""));
     if (!binary || !binary->block_rules || binary->block_rules->format != config::RuleFormat::beve) return 1;
     std::string const direct = R"(schema-version 1
@@ -525,15 +520,43 @@ routing {)");
         multiple_vless->routes.size()!=1 || multiple_vless->routes[0].outbound!=3) return 1;
     if (config::parse_kdl(replace(multi_vless,"outbound \"edge2\"","outbound \"edge\""))) return 1;
     auto many=vless_config;
-    for (int i=2;i<=16;++i) {
+    for (int i=2;i<=17;++i) {
         auto name="edge"+std::to_string(i);
         auto node=replace(vless_node,"\"edge\"","\""+name+"\"");
-        many=replace(many,"routing {",node+"routing {\n rule kind=\"rule-set\" value=\"blocked\" outbound=\""+name+"\"");
+        many=replace(many,"routing {",node+"routing {");
+        many=replace(many,"rules {","rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\""+name+"\"");
     }
-    if (auto parsed=config::parse_kdl(many); !parsed || parsed->vless_outbounds.size()!=16) return 1;
-    auto too_many=replace(many,"routing {",replace(vless_node,"\"edge\"","\"edge17\"")+"routing {");
+    if (auto parsed=config::parse_kdl(many); !parsed || parsed->vless_outbounds.size()!=17) return 1;
+    auto too_many=vless_config;
+    for (int i=2;i<=257;++i) {
+        auto name="edge"+std::to_string(i);
+        auto node=replace(vless_node,"\"edge\"","\""+name+"\"");
+        too_many=replace(too_many,"routing {",node+"routing {");
+        too_many=replace(too_many,"rules {","rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\""+name+"\"");
+    }
     if (config::parse_kdl(too_many)) return 1;
-    auto ordered=replace(complete,"routing {", "routing {\n    rule-set \"other\" path=\"other.beve\" format=\"beve\"\n    rule kind=\"rule-set\" value=\"other\" outbound=\"direct\"");
+    // Batch 164: LAN listen on socks5/mixed/http, https:// HTTP probe, optional probe on load-balance
+    for (auto lan : {"0.0.0.0", "::", "192.168.1.10"}) {
+        for (auto kind : {"socks5", "mixed", "http"}) {
+            auto c = replace(replace(complete, "host=\"127.0.0.1\"", std::string("host=\"")+lan+"\""), "type=\"socks5\"", std::string("type=\"")+kind+"\"");
+            auto p = config::parse_kdl(c);
+            if (!p || p->inbounds.empty() || p->inbounds[0].listen_host != lan || !p->inbounds[0].listen_address) return 1;
+        }
+    }
+    if (!config::parse_kdl(R"(schema-version 1
+role "client"
+inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "g" type="url-test" { member "direct"; probe-mode "http"; probe-url "https://127.0.0.1:443/h"; probe-ca-file "/tmp/ca.pem"; probe-server-name "h.example"; }
+routing { default-outbound "g"; })")) return 1;
+    if (!config::parse_kdl(R"(schema-version 1
+role "client"
+inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "lb" type="load-balance" { member "direct"; }
+routing { default-outbound "lb"; })")) return 1;
+    auto ordered=replace(replace(complete,"routing {", "routing {\n    rule-set \"other\" path=\"other.beve\" format=\"beve\""),
+        "rules {", "rules {\n        - kind=\"rule-set\" value=\"other\" outbound=\"direct\"");
     auto ordered_config=config::parse_kdl(ordered);
     if (!ordered_config || ordered_config->routes.size()!=2 ||
         ordered_config->routes[0].file.path!="other.beve" || ordered_config->routes[0].file.format!=config::RuleFormat::beve ||
@@ -555,14 +578,14 @@ routing {)");
         {replace(complete, "schema-version 1", "schema-version 2"), "wrong version"},
         {complete + "schema-version 1\n", "duplicate version"},
         {replace(complete, "role \"client\"", "role \"router\""), "wrong role"},
-        {replace(complete, "type=\"socks5\"", "type=\"http\""), "unsupported inbound"},
-        {replace(complete, "host=\"127.0.0.1\"", "host=\"0.0.0.0\""), "untrusted listener"},
+        {replace(complete, "type=\"socks5\"", "type=\"unknown\""), "unsupported inbound"},
+        {replace(complete, "host=\"127.0.0.1\"", "host=\"not-an-ip\""), "untrusted listener"},
         {replace(complete, "port=1080", "port=0"), "zero port"},
         {replace(complete, "port=1080", "port=65536"), "oversized port"},
         {replace(complete, "port=1080", "port=-1"), "negative port"},
         {replace(complete, "port=1080", "port=\"1080\""), "string port"},
         {replace(complete, "authentication \"none\"", "authentication \"password\""), "unsupported authentication"},
-        {replace(authenticated, "type=\"socks5\"", "type=\"mixed\""), "mixed authentication bypass"},
+        {replace(replace(authenticated, "type=\"socks5\"", "type=\"mixed\""), "username=\"alice\"", "username=\"alice:bob\""), "mixed colon username"},
         {replace(authenticated, "password-file=\"/tmp/password\"", "password-file=\"relative\""), "relative password"},
         {replace(authenticated, "username=\"alice\"", "username=\"\""), "empty username"},
         {replace(authenticated, "username=\"alice\"", "username=\"a\\u{0}b\""), "NUL username"},
@@ -574,12 +597,13 @@ routing {)");
         {replace(complete, "default-outbound \"direct\"", "default-outbound \"reject\""), "unsupported default"},
         {replace(complete, "value=\"blocked\"", "value=\"missing\""), "missing rule set"},
         {replace(complete, "outbound=\"reject\"", "outbound=\"missing\""), "unknown rule action"},
-        {replace(complete, "format=\"kdl\"", "format=\"json\""), "unsupported format"},
+        {replace(complete, "format=\"kdl\"", "format=\"yaml\""), "unsupported format"},
         {replace(complete, "path=\"rules/blocked.kdl\"", "path=\"\""), "empty path"},
         {replace(complete, "path=\"rules/blocked.kdl\"", "path=\"rules\\u{0}x\""), "NUL path"},
         {replace(complete, "routing {", "routing {\n    rule-set \"blocked\" path=\"other.kdl\" format=\"kdl\""), "duplicate rule-set"},
         {replace(complete, "routing {", "routing {\n    rule-set \"unused\" path=\"other.kdl\" format=\"kdl\""), "unreferenced rule-set"},
         {replace(complete, "routing {", "routing {\n    sniff #true"), "unknown routing node"},
+        {replace(complete, "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"reject\"\n    }", "rule kind=\"rule-set\" value=\"blocked\" outbound=\"reject\""), "legacy bare routing rule"},
         {complete + "dns {}\n", "unsupported top-level node"},
         {replace(complete, "role \"client\"", "role (x)\"client\""), "tagged role"},
         {std::string(config::max_config_bytes + 1, ' '), "oversized input"},

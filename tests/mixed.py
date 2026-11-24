@@ -61,11 +61,11 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
     rule-set "blocked" path="blocked.kdl" format="kdl"
-    rule kind="rule-set" value="blocked" outbound="reject"
+    rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}
     default-outbound "direct"
 }}
 ''')
-    (root / 'blocked.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
+    (root / 'blocked.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
     proc = subprocess.Popen([server, 'run', '--config', config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 5
@@ -221,7 +221,7 @@ routing {{
         proc.terminate()
         proc.wait(timeout=5)
         assert proc.returncode == 0, proc.stderr.read().decode()
-    (root / 'blocked.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\nrule type="ip-cidr" value="::1/128"\n')
+    (root / 'blocked.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\nrule type="ip-cidr" value="::1/128"\n')
     with listener() as reserved:
         next_port = reserved.getsockname()[1]
     config.write_text(config.read_text().replace(f'port={port}', f'port={next_port}'))

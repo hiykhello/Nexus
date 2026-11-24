@@ -6,10 +6,10 @@
 #include <unistd.h>
 
 import std;
-import nexus.thirdparty.corosio;
+import corosio;
 
 namespace capy = boost::capy;
-namespace io = nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 static auto make_context(bool use_uring) -> io::io_context {

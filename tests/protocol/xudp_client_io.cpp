@@ -5,9 +5,9 @@ import std;
 import xudp;
 import xudp.client_sessions;
 import xudp.client_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace x=xudp; namespace capy=nex::capy; namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace x=xudp; namespace io = ::corosio;
 using Bytes=std::vector<std::uint8_t>; using namespace std::chrono_literals;
 struct Stream {
     Bytes input,output; std::size_t offset=0,chunk=1; bool canceled=false,fail_write=false;

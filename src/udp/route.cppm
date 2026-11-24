@@ -16,6 +16,8 @@ export namespace udp {
             : policy_(std::move(policy)), bridge_(mapping, filtering, limits, mtu, retirement) {}
         [[nodiscard]] auto prepare(std::span<std::uint8_t const> input, std::uint64_t now)
             -> std::expected<OutboundDatagram, RoutedError>;
+        [[nodiscard]] auto prepare_parsed(packet::Udp4View const& parsed, std::uint64_t now)
+            -> std::expected<OutboundDatagram, RoutedError>;
         [[nodiscard]] auto complete(FlowId id, std::uint64_t token, bool success, std::uint64_t now)
             -> std::expected<void, Error> { return bridge_.complete(id, token, success, now); }
         [[nodiscard]] auto reply(FlowId id, Endpoint4 remote, std::span<std::uint8_t const> payload, std::uint64_t now)
@@ -34,6 +36,8 @@ export namespace udp {
                       RetirementHandler retirement = {})
             : policy_(std::move(policy)), bridge_(mapping, filtering, limits, mtu, retirement) {}
         [[nodiscard]] auto prepare(std::span<std::uint8_t const> input, std::uint64_t now)
+            -> std::expected<OutboundDatagram6, RoutedError>;
+        [[nodiscard]] auto prepare_parsed(packet::Udp6View const& parsed, std::uint64_t now)
             -> std::expected<OutboundDatagram6, RoutedError>;
         [[nodiscard]] auto complete(FlowId id, std::uint64_t token, bool success, std::uint64_t now)
             -> std::expected<void, Error> { return bridge_.complete(id, token, success, now); }

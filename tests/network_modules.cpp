@@ -1,10 +1,9 @@
 #include <boost/corosio/backend.hpp>
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 auto exchange(io::local_stream_socket& first, io::local_stream_socket& second, bool& done) -> capy::task<> {

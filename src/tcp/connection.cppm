@@ -22,16 +22,20 @@ export namespace tcp {
         mutable std::array<std::uint8_t, 28> ack_opts_{};
         mutable std::size_t ack_opts_len_ = 0;
         bool close_requested_ = false, fin_sent_ = false, fin_acked_ = false;
-        bool active_close_ = false, retired_ = false;
-        std::optional<std::uint64_t> time_wait_deadline_;
+        bool active_close_ = false, retired_ = false, reader_detached_ = false;
+        std::optional<std::uint64_t> time_wait_deadline_, detach_deadline_;
         std::uint64_t time_wait_time_ = 0;
         std::uint32_t fin_sequence_ = 0;
         std::uint64_t fin_time_ = 0, fin_deadline_ = 0, fin_rto_ = 1000;
         std::optional<std::uint64_t> probe_deadline_;
         std::uint64_t probe_time_ = 0, probe_rto_ = 1000;
+        unsigned probe_retries_ = 0, fin_retries_ = 0;
         ConnectionState state_ = ConnectionState::handshake;
+        static constexpr unsigned kMaxProbeRetries = 8, kMaxFinRetries = 8;
+        static constexpr std::uint64_t kFinWait2TimeoutMs = 60000;
         PassiveConnection(PassiveHandshake handshake, ReceiveBuffer receive, TimedSend send, std::uint64_t now);
         auto advance(std::uint64_t now) const noexcept -> bool;
+        auto drain_receive() noexcept -> void;
         auto update_close(std::uint64_t now, bool duplicate_fin) noexcept -> void;
     public:
         [[nodiscard]] static auto accept(packet::Tcp4View syn, std::uint32_t iss, std::size_t capacity, std::uint64_t now,
@@ -42,12 +46,22 @@ export namespace tcp {
         [[nodiscard]] auto input(packet::Tcp4View segment, std::uint64_t now = 0) -> std::expected<bool, ConnectionError>;
         [[nodiscard]] auto poll(std::uint64_t now) -> std::expected<HandshakeTimerEvent, ConnectionError>;
         [[nodiscard]] auto retransmitted(std::uint64_t now) -> std::expected<void, ConnectionError>;
-        [[nodiscard]] auto read(std::span<std::uint8_t> output) noexcept -> std::size_t { return state_ == ConnectionState::reset ? 0 : receive_.read(output); }
+        [[nodiscard]] auto read(std::span<std::uint8_t> output) noexcept -> std::size_t {
+            if (state_ == ConnectionState::reset) return 0;
+            auto n = receive_.read(output);
+            if (time_wait_deadline_ && receive_.ready() == 0 && send_.queued() == 0) {
+                receive_.release_storage();
+                send_.release_storage();
+            }
+            return n;
+        }
+        auto detach_reader() noexcept -> void;
+        [[nodiscard]] auto reader_detached() const noexcept -> bool { return reader_detached_; }
         [[nodiscard]] auto eof() const noexcept -> bool { return state_ != ConnectionState::reset && receive_.finished() && receive_.ready() == 0; }
-        [[nodiscard]] auto ack() const -> packet::Tcp4View;
+        [[nodiscard]] auto ack(std::size_t max_options = 28) const -> packet::Tcp4View;
         // Preview the window after reading up to maximum bytes; no data is consumed.
-        [[nodiscard]] auto ack_after_read(std::size_t maximum) const -> packet::Tcp4View {
-            auto result = ack();
+        [[nodiscard]] auto ack_after_read(std::size_t maximum, std::size_t max_options = 28) const -> packet::Tcp4View {
+            auto result = ack(max_options);
             if (state_ != ConnectionState::reset && !receive_.finished()) {
                 auto win = receive_.window() + std::min(maximum, receive_.ready());
                 auto shift = handshake_.local_window_scale();
@@ -74,7 +88,7 @@ export namespace tcp {
         [[nodiscard]] auto probe_sent(std::uint64_t now) -> std::expected<void, ConnectionError>;
         [[nodiscard]] auto close_send() noexcept -> std::expected<void, ConnectionError>;
         [[nodiscard]] auto fin_ready() const noexcept -> bool;
-        [[nodiscard]] auto fin() const -> packet::Tcp4View;
+        [[nodiscard]] auto fin(std::size_t max_options = 28) const -> packet::Tcp4View;
         [[nodiscard]] auto fin_sent(std::uint64_t now) noexcept -> std::expected<void, ConnectionError>;
         [[nodiscard]] auto fin_due(std::uint64_t now) const noexcept -> std::expected<bool, ConnectionError>;
         [[nodiscard]] auto fin_retransmitted(std::uint64_t now) noexcept -> std::expected<void, ConnectionError>;
@@ -101,12 +115,14 @@ export namespace tcp {
         [[nodiscard]] auto input(packet::Tcp6View segment, std::uint64_t now = 0) -> std::expected<bool, ConnectionError>;
         [[nodiscard]] auto initial_dscp() const noexcept -> std::uint8_t { return core_.initial_dscp(); }
         [[nodiscard]] auto syn_ack() const -> packet::Tcp6View { return as_ipv6(core_.syn_ack()); }
-        [[nodiscard]] auto ack() const -> packet::Tcp6View { return as_ipv6(core_.ack()); }
-        [[nodiscard]] auto ack_after_read(std::size_t n) const -> packet::Tcp6View { return as_ipv6(core_.ack_after_read(n)); }
-        [[nodiscard]] auto fin() const -> packet::Tcp6View { return as_ipv6(core_.fin()); }
+        [[nodiscard]] auto ack(std::size_t max_options = 28) const -> packet::Tcp6View { return as_ipv6(core_.ack(max_options)); }
+        [[nodiscard]] auto ack_after_read(std::size_t n, std::size_t max_options = 28) const -> packet::Tcp6View { return as_ipv6(core_.ack_after_read(n, max_options)); }
+        [[nodiscard]] auto fin(std::size_t max_options = 28) const -> packet::Tcp6View { return as_ipv6(core_.fin(max_options)); }
         [[nodiscard]] auto poll(std::uint64_t now) { return core_.poll(now); }
         [[nodiscard]] auto retransmitted(std::uint64_t now) { return core_.retransmitted(now); }
         [[nodiscard]] auto read(std::span<std::uint8_t> output) noexcept -> std::size_t { return core_.read(output); }
+        auto detach_reader() noexcept -> void { core_.detach_reader(); }
+        [[nodiscard]] auto reader_detached() const noexcept -> bool { return core_.reader_detached(); }
         [[nodiscard]] auto eof() const noexcept -> bool { return core_.eof(); }
         [[nodiscard]] auto enqueue(std::span<std::uint8_t const> data) { return core_.enqueue(data); }
         [[nodiscard]] auto send_capacity() const noexcept -> std::size_t { return core_.send_capacity(); }

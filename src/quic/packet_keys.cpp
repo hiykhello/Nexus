@@ -2,7 +2,7 @@ module quic.packet_keys;
 import std;
 import crypto;
 import crypto.aead_context;
-import nexus.thirdparty.boringssl;
+import boringssl;
 import quic.varint;
 
 namespace quic {
@@ -91,7 +91,7 @@ namespace quic {
             std::ranges::copy(*hp,header_.chacha.begin());
         } else {
             std::construct_at(&header_.aes);
-            if (nex::boringssl::AES_set_encrypt_key(hp->data(),static_cast<int>(key_bytes*8),&header_.aes)!=0)
+            if (boringssl::AES_set_encrypt_key(hp->data(),static_cast<int>(key_bytes*8),&header_.aes)!=0)
                 { clear(); return std::unexpected(crypto::Error::backend_failure); }
         }
         auto algorithm=chacha ? crypto::Aead::chacha20_poly1305 : aes128 ? crypto::Aead::aes_128_gcm : crypto::Aead::aes_256_gcm;
@@ -108,8 +108,8 @@ namespace quic {
             // following 12 bytes. Generate the mask from a zero plaintext.
             auto counter=std::uint32_t{input[0]}|(std::uint32_t{input[1]}<<8)|(std::uint32_t{input[2]}<<16)|(std::uint32_t{input[3]}<<24);
             constexpr std::array<std::uint8_t,16> zero{};
-            nex::boringssl::CRYPTO_chacha_20(output.data(),zero.data(),output.size(),header_.chacha.data(),input.data()+4,counter);
-        } else nex::boringssl::AES_encrypt(input.data(),output.data(),&header_.aes);
+            boringssl::CRYPTO_chacha_20(output.data(),zero.data(),output.size(),header_.chacha.data(),input.data()+4,counter);
+        } else boringssl::AES_encrypt(input.data(),output.data(),&header_.aes);
         return {};
     }
     auto PacketKeys::seal_to(std::span<std::uint8_t> output,std::span<std::uint8_t const> nonce,

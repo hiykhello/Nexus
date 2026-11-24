@@ -5,13 +5,13 @@ import snell.record;
 import snell.kdf;
 import snell.cipher;
 import snell.async_record;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 export namespace snell {
     // Invoke only after destination/UDP association has been admitted. Returned
     // writer retains nonce state after the acknowledgement record.
     template<class Socket>
-    auto server_reply(Socket& socket,View psk,Deadline deadline)->nex::capy::task<std::expected<Record<Cipher>,IoError>> {
+    auto server_reply(Socket& socket,View psk,Deadline deadline)->capy::task<std::expected<Record<Cipher>,IoError>> {
         struct Guard {Socket& s;bool done=false;~Guard(){if(!done)s.cancel();}} guard{socket};
         if(std::chrono::steady_clock::now()>=deadline)co_return std::unexpected(IoError::timeout);
         std::array<std::uint8_t,16> salt{};std::array<std::uint8_t,1> choice{};
@@ -23,9 +23,9 @@ export namespace snell {
         Bytes wire(salt.begin(),salt.end());wire.insert(wire.end(),frame->begin(),frame->end());std::size_t off=0;
         while(off<wire.size()){
             if(std::chrono::steady_clock::now()>=deadline)co_return std::unexpected(IoError::timeout);
-            auto op=socket.write_some(nex::capy::const_buffer(wire.data()+off,wire.size()-off));
-            auto [ec,n]=co_await nex::corosio::timeout(std::move(op),deadline);
-            if(nex::capy::is_timeout(ec)||(!ec && std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(IoError::timeout);
+            auto op=socket.write_some(capy::const_buffer(wire.data()+off,wire.size()-off));
+            auto [ec,n]=co_await corosio::timeout(std::move(op),deadline);
+            if(capy::is_timeout(ec)||(!ec && std::chrono::steady_clock::now()>=deadline))co_return std::unexpected(IoError::timeout);
             if(ec||!n||n>wire.size()-off)co_return std::unexpected(IoError::transport);off+=n;
         }
         guard.done=true;co_return std::move(writer);

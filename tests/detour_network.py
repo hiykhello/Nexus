@@ -12,12 +12,10 @@ import tempfile
 import threading
 import time
 
-
 def reserve():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
 
 def exact(sock, count):
     result = bytearray()
@@ -27,7 +25,6 @@ def exact(sock, count):
             raise RuntimeError(f"unexpected EOF after {len(result)}/{count} bytes")
         result.extend(part)
     return bytes(result)
-
 
 def socks(port, command, target):
     client = socket.create_connection(("127.0.0.1", port), timeout=6)
@@ -39,7 +36,6 @@ def socks(port, command, target):
     if reply[:4] != b"\x05\x00\x00\x01":
         raise RuntimeError(f"SOCKS command failed: {reply!r}")
     return client, (socket.inet_ntoa(reply[4:8]), int.from_bytes(reply[8:10], "big"))
-
 
 @contextlib.contextmanager
 def running(command, port, log):
@@ -262,10 +258,8 @@ inbound "in" type="mixed" {{ listen host="127.0.0.1" port={port}; authentication
         text += "}\n"
     return text + f'routing {{ default-outbound "n{len(chain) - 1}"; }}\n'
 
-
 def protocol(kind):
     return "shadowsocks" if kind.startswith("ss") else "trojan" if kind.startswith("trojan") else "vless"
-
 
 def stop_active(port, process):
     with socket.socket() as origin, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as target, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
@@ -299,7 +293,6 @@ def stop_active(port, process):
                                 raise RuntimeError("unexpected bytes after stopping")
                         except ConnectionResetError:
                             pass
-
 
 def tls_failure_cases(binary, root, ports, workers, node="vless"):
     for mode in ("tls-timeout", "tls-stop"):
@@ -356,7 +349,6 @@ def tls_failure_cases(binary, root, ports, workers, node="vless"):
             finally:
                 dns.close()
                 thread.join(5)
-
 
 def deadline_cases(binary, root, ports, trojan=False):
     for workers in (1, 2):

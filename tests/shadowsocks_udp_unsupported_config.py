@@ -12,7 +12,7 @@ nexus = pathlib.Path(sys.argv[1]).resolve()
 client = nexus.with_name("nexus-shadowsocks-udp-rebind-test")
 with tempfile.TemporaryDirectory(prefix="nexus-udp-outbound-") as directory:
     root = pathlib.Path(directory)
-    (root / "direct.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
+    (root / "direct.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
     for size in (16, 32):
         key = root / "key"
         key.write_text(base64.b64encode(bytes(range(size))).decode() + "\n")
@@ -29,7 +29,7 @@ inbound "ss-in" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; metho
 outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "ss-out" type="shadowsocks" {{ server host="127.0.0.1" port={outbound.getsockname()[1]}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
-routing {{ rule-set "allow" path="direct.kdl" format="kdl"; rule kind="rule-set" value="allow" outbound="direct"; default-outbound "ss-out"; }}
+routing {{ rule-set "allow" path="direct.kdl" format="kdl"; rules {{ - kind="rule-set" value="allow" outbound="direct"; }}; default-outbound "ss-out"; }}
 ''')
             server = subprocess.Popen(["stdbuf", "-oL", nexus, "run", "--config", config],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)

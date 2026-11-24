@@ -34,6 +34,10 @@ namespace config {
         if(ssh!=config.ssh_outbounds.end())return static_cast<std::size_t>(ssh-config.ssh_outbounds.begin())+base+config.shadowtls_outbounds.size()+config.tuic_outbounds.size()+config.masque_outbounds.size()+config.wireguard_outbounds.size();
         auto naive=std::ranges::find(config.naive_outbounds,name,&NamedNaiveOutbound::name);
         if(naive!=config.naive_outbounds.end())return static_cast<std::size_t>(naive-config.naive_outbounds.begin())+base+config.shadowtls_outbounds.size()+config.tuic_outbounds.size()+config.masque_outbounds.size()+config.wireguard_outbounds.size()+config.ssh_outbounds.size();
+        auto ovpn=std::ranges::find(config.openvpn_outbounds,name,&NamedOpenVpnOutbound::name);
+        if(ovpn!=config.openvpn_outbounds.end())return static_cast<std::size_t>(ovpn-config.openvpn_outbounds.begin())+base+config.shadowtls_outbounds.size()+config.tuic_outbounds.size()+config.masque_outbounds.size()+config.wireguard_outbounds.size()+config.ssh_outbounds.size()+config.naive_outbounds.size();
+        auto oc=std::ranges::find(config.openconnect_outbounds,name,&NamedOpenConnectOutbound::name);
+        if(oc!=config.openconnect_outbounds.end())return static_cast<std::size_t>(oc-config.openconnect_outbounds.begin())+base+config.shadowtls_outbounds.size()+config.tuic_outbounds.size()+config.masque_outbounds.size()+config.wireguard_outbounds.size()+config.ssh_outbounds.size()+config.naive_outbounds.size()+config.openvpn_outbounds.size();
         auto tailscale=std::ranges::find(config.tailscale_outbounds,name,&NamedTailscaleOutbound::name);
         auto tcp_base=config.tunnel_count()+2-config.tcp_proxy_outbounds.size();
         if (tailscale!=config.tailscale_outbounds.end())
@@ -113,7 +117,7 @@ namespace config {
         if (!order) return std::unexpected("outbound selector cycle");
         for (auto index : *order) {
             auto& selector=config.selectors[index];
-            selector.selected_leaf=selected_outbound(config,selector.selected);
+            selector.selected_leaf=selector.selected.empty() ? std::string_view{} : selected_outbound(config,selector.selected);
             auto has_member=[&](bool OutboundSelector::*flag) {
                 return std::ranges::any_of(selector.members,[&](auto const& name) {
                     auto member=std::ranges::find(config.selectors,name,&OutboundSelector::name);
@@ -157,7 +161,7 @@ namespace config {
         };
         if (!stable_detours(next.vless_outbounds,next.shadowsocks_outbounds,next.trojan_outbounds,
             next.anytls_outbounds,next.hysteria2_outbounds,next.snell_outbounds,next.shadowtls_outbounds,
-            next.tuic_outbounds,next.masque_outbounds,next.wireguard_outbounds,next.ssh_outbounds,next.naive_outbounds,next.tcp_proxy_outbounds))
+            next.tuic_outbounds,next.masque_outbounds,next.wireguard_outbounds,next.ssh_outbounds,next.naive_outbounds,next.openvpn_outbounds,next.openconnect_outbounds,next.tcp_proxy_outbounds))
             return std::unexpected("selector change alters a running detour and requires restart");
 
         auto lookup=[&](std::string_view name) {return *outbound_index(next,direct,block,name);};
@@ -240,6 +244,13 @@ namespace config {
         for(std::size_t i=0;i<config.naive_outbounds.size();++i)
             if(!bind(config.naive_outbounds[i].config,i+extra_base+config.shadowtls_outbounds.size()+config.tuic_outbounds.size()+config.masque_outbounds.size()+config.wireguard_outbounds.size()+config.ssh_outbounds.size()))
                 return std::unexpected("invalid NaiveProxy detour or socket settings on a layered node");
+        auto vpn_base=extra_base+config.shadowtls_outbounds.size()+config.tuic_outbounds.size()+config.masque_outbounds.size()+config.wireguard_outbounds.size()+config.ssh_outbounds.size()+config.naive_outbounds.size();
+        for(std::size_t i=0;i<config.openvpn_outbounds.size();++i)
+            if(!bind(config.openvpn_outbounds[i].config,i+vpn_base))
+                return std::unexpected("invalid OpenVPN detour or socket settings on a layered node");
+        for(std::size_t i=0;i<config.openconnect_outbounds.size();++i)
+            if(!bind(config.openconnect_outbounds[i].config,i+vpn_base+config.openvpn_outbounds.size()))
+                return std::unexpected("invalid OpenConnect detour or socket settings on a layered node");
         auto tcp_base=group_base-config.tcp_proxy_outbounds.size();
         for (std::size_t index=0;index<config.tcp_proxy_outbounds.size();++index) {
             auto& outbound=config.tcp_proxy_outbounds[index].config;
@@ -285,14 +296,15 @@ namespace config {
                 if (!upstream->detour) continue;
                 auto group=std::ranges::find(config.selectors,*upstream->detour,&OutboundSelector::name);
                 upstream->detour_group=group!=config.selectors.end();
-                auto transport=upstream->tls->transport;
-                auto packets=transport==DnsSecurity::quic || transport==DnsSecurity::https3;
+                bool packets=upstream->tls ?
+                    (upstream->tls->transport==DnsSecurity::quic || upstream->tls->transport==DnsSecurity::https3) :
+                    !upstream->tcp;
                 auto validate=[&](std::string_view name) -> std::expected<std::size_t,std::string> {
                     auto target=outbound_index(config,direct,block,name);
                     if (!target || *target==1)
                         return std::unexpected("encrypted DNS detour must name a direct or proxy outbound");
                     if (packets && !packet_capable(name))
-                        return std::unexpected("DNS over QUIC requires a datagram-capable outbound");
+                        return std::unexpected("DNS over QUIC/UDP detour requires a datagram-capable outbound");
                     return *target;
                 };
                 auto target=validate(*upstream->detour);

@@ -12,19 +12,19 @@ import quic.datagram_session;
 import net.datagram_driver;
 import hysteria2.transport_options;
 import crypto;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import nghttp3;
+import capy;
+import corosio;
 
 export namespace naive {
-    template<class Connector, bool EnableDatagrams>
+    template<class Connector>
     class OwnedH3ConnectClient {
     public:
         using Registry = quic::CidRegistry<1, 8>;
         using Tls = masque::ClientProfile::Tls;
-        using Hooks = H3ConnectHooks<Registry, false, kH3StreamCapacity, EnableDatagrams>;
-        using App = masque::Session<Tls, Hooks, EnableDatagrams>;
+        using Hooks = H3ConnectHooks<Registry, false, kH3StreamCapacity, true>;
+        using App = masque::Session<Tls, Hooks, true>;
         using QuicSession = quic::DatagramSession<Tls, App>;
 
         struct Bundle {
@@ -34,10 +34,10 @@ export namespace naive {
             App app;
             QuicSession session;
 
-            Bundle(std::unique_ptr<Tls> t, Registry& reg, quic::SessionHandle id, nex::capy::async_event& ev,
-                   nex::corosio::endpoint const& local, std::size_t native_bytes)
+            Bundle(std::unique_ptr<Tls> t, Registry& reg, quic::SessionHandle id, capy::async_event& ev,
+                   corosio::endpoint const& local, std::size_t native_bytes, bool enable_datagrams)
                 : tls(std::move(t)), hooks(reg, id, ev), memory(native_bytes),
-                  app(*tls, hooks, false, memory.http3()), session(*tls, app, local) {}
+                  app(*tls, hooks, false, memory.http3(), enable_datagrams), session(*tls, app, local) {}
         };
 
     private:
@@ -46,11 +46,11 @@ export namespace naive {
             std::unique_ptr<Bundle> bundle;
             bool joined = false;
             int failure = 0;
-            auto admit(q::ngtcp2_pkt_hd const&, nex::corosio::endpoint const&, H3Clock::time_point) const noexcept -> bool {
+            auto admit(q::ngtcp2_pkt_hd const&, corosio::endpoint const&, H3Clock::time_point) const noexcept -> bool {
                 return false;
             }
             auto create(quic::SessionHandle, Registry&, std::span<std::uint8_t const>, q::ngtcp2_pkt_hd const&,
-                        nex::corosio::endpoint const&, H3Clock::time_point) noexcept -> std::expected<Session*, int> {
+                        corosio::endpoint const&, H3Clock::time_point) noexcept -> std::expected<Session*, int> {
                 return std::unexpected(q::err_callback_failure);
             }
             auto application_drained(quic::SessionHandle, Session const&) const noexcept -> bool { return joined; }
@@ -67,8 +67,9 @@ export namespace naive {
     private:
         Connector connector_;
         masque::ClientProfile const& profile_;
+        bool enable_datagrams_ = false;
         Socket socket_;
-        nex::corosio::endpoint local_;
+        corosio::endpoint local_;
         Factory factory_;
         Port port_{factory_};
         Driver driver_{socket_, port_};
@@ -79,6 +80,10 @@ export namespace naive {
         auto clear() noexcept -> void {
             if (active_calls_ > 1 || starting_ || running_ || leased_ || !canceled_) return;
             driver_.finish();
+            factory_.joined = true;
+            port_.request_stop();
+            port_.stop();
+            port_.drain();
             factory_.bundle.reset();
         }
         struct Call {
@@ -94,14 +99,13 @@ export namespace naive {
             ~RootGuard() {
                 if (owner) {
                     Call call(*owner);
-                    owner->factory_.joined = true;
                     owner->stop();
                     owner->running_ = false;
                     owner->driver_.changed().set();
                 }
             }
         };
-        static auto root(RootGuard guard) -> nex::capy::task<> {
+        static auto root(RootGuard guard) -> capy::task<> {
             (void)co_await guard.owner->driver_.run();
         }
 
@@ -119,8 +123,8 @@ export namespace naive {
 
     public:
         template<class... Args>
-        OwnedH3ConnectClient(masque::ClientProfile const& profile, nex::corosio::io_context& ctx, Args&&... args)
-            : connector_(ctx, std::forward<Args>(args)...), profile_(profile), socket_(ctx) {}
+        OwnedH3ConnectClient(masque::ClientProfile const& profile, bool enable_datagrams, corosio::io_context& ctx, Args&&... args)
+            : connector_(ctx, std::forward<Args>(args)...), profile_(profile), enable_datagrams_(enable_datagrams), socket_(ctx) {}
 
         ~OwnedH3ConnectClient() {
             if (starting_ || running_ || leased_ || active_calls_) std::terminate();
@@ -153,22 +157,23 @@ export namespace naive {
             return usable() && leased_ < kH3StreamCapacity;
         }
         auto drained() const noexcept -> bool {
-            return !starting_ && !running_ && !leased_ && !active_calls_;
+            return !starting_ && !running_ && !leased_ && !active_calls_ && !port_.size();
         }
 
         enum class StartResult { connected, failed, timeout };
 
-        auto start(nex::corosio::io_context& ctx, H3Clock::time_point deadline) -> nex::capy::task<StartResult> {
+        auto start(corosio::io_context& ctx, H3Clock::time_point deadline) -> capy::task<StartResult> {
             if (H3Clock::now() >= deadline) co_return StartResult::timeout;
             if (starting_ || running_ || canceled_) co_return StartResult::failed;
             starting_ = true;
-            auto cleanup_unstarted = [&]() -> nex::capy::task<> {
+            auto cleanup_unstarted = [&]() -> capy::task<> {
                 stop();
                 while (running_) {
                     driver_.changed().clear();
                     co_await driver_.changed().wait();
                 }
                 starting_ = false;
+                clear();
             };
             auto peer = co_await connector_.prepare(socket_, deadline);
             if (!peer || canceled_) {
@@ -201,7 +206,7 @@ export namespace naive {
             auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now).count();
             settings->handshake_timeout = std::min(settings->handshake_timeout, static_cast<std::uint64_t>(remaining));
             factory_.bundle = std::make_unique<Bundle>(
-                std::move(*tls), port_.registry(), *reserved, driver_.changed(), local_, profile_.transport().native_bytes);
+                std::move(*tls), port_.registry(), *reserved, driver_.changed(), local_, profile_.transport().native_bytes, enable_datagrams_);
             q::ngtcp2_cid src{}, dst{};
             q::ngtcp2_cid_init(&src, src_bytes.data(), src_bytes.size());
             q::ngtcp2_cid_init(&dst, dst_bytes.data(), dst_bytes.size());
@@ -215,7 +220,7 @@ export namespace naive {
             running_ = true;
             bool launch_failed = false;
             try {
-                nex::capy::run_async(ctx.get_executor(), [] {}, [this](std::exception_ptr) noexcept { stop(); })(
+                capy::run_async(ctx.get_executor(), [] {}, [this](std::exception_ptr) noexcept { stop(); })(
                     root(RootGuard(*this)));
             } catch (...) {
                 running_ = false;
@@ -228,36 +233,62 @@ export namespace naive {
             driver_.notify();
             for (;;) {
                 if (factory_.bundle && factory_.bundle->app.can_request() &&
-                    (!EnableDatagrams || factory_.bundle->app.can_open())) {
+                    (!enable_datagrams_ || factory_.bundle->app.can_open())) {
                     starting_ = false;
                     co_return StartResult::connected;
                 }
                 if (canceled_ || !driver_.running()) break;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err) break;
             }
             co_await cleanup_unstarted();
             co_return H3Clock::now() >= deadline ? StartResult::timeout : StartResult::failed;
         }
 
+    private:
+        auto open_stream_handle(bool datagram_stream, H3Clock::time_point deadline)
+            -> capy::task<std::unique_ptr<StreamHandle>> {
+            std::int64_t id = -1;
+            for (;;) {
+                if (!usable() || (datagram_stream && (!enable_datagrams_ || !factory_.bundle->app.can_open())))
+                    co_return nullptr;
+                if (factory_.bundle->hooks.streams.size() < kH3StreamCapacity) {
+                    auto rc = q::ngtcp2_conn_open_bidi_stream(factory_.bundle->session.transport().native(), &id, nullptr);
+                    if (!rc) break;
+                    if (rc != q::err_stream_id_blocked) co_return nullptr;
+                } else if (std::ranges::none_of(factory_.bundle->hooks.streams, [](auto const& kv) { return kv.second.retired; })) {
+                    co_return nullptr;
+                }
+                driver_.changed().clear();
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
+                if (err) co_return nullptr;
+            }
+            try {
+                if (!factory_.bundle->hooks.open(id, datagram_stream)) {
+                    if (factory_.bundle->session.transport().active())
+                        (void)q::ngtcp2_conn_shutdown_stream(factory_.bundle->session.transport().native(), 0, id, h3::h3_request_cancelled);
+                    driver_.notify();
+                    co_return nullptr;
+                }
+                co_return std::make_unique<StreamHandle>(*factory_.bundle, driver_, id, false);
+            } catch (...) {
+                factory_.bundle->hooks.streams.erase(id);
+                if (factory_.bundle->session.transport().active())
+                    (void)q::ngtcp2_conn_shutdown_stream(factory_.bundle->session.transport().native(), 0, id, h3::h3_request_cancelled);
+                driver_.notify();
+                throw;
+            }
+        }
+
+    public:
         auto open_connect(std::string_view authority, std::string_view auth_header,
                           std::span<std::pair<std::string, std::string> const> extra_headers,
                           bool request_padding, H3Clock::time_point deadline)
-            -> nex::capy::task<std::optional<std::unique_ptr<StreamHandle>>> {
-            if (!usable()) co_return std::nullopt;
-            std::int64_t id = -1;
-            for (;;) {
-                if (!usable() || factory_.bundle->hooks.streams.size() >= kH3StreamCapacity) co_return std::nullopt;
-                auto rc = q::ngtcp2_conn_open_bidi_stream(factory_.bundle->session.transport().native(), &id, nullptr);
-                if (!rc) break;
-                if (rc != q::err_stream_id_blocked) co_return std::nullopt;
-                driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
-                if (err) co_return std::nullopt;
-            }
-            auto* s = factory_.bundle->hooks.open(id, false);
-            if (!s) co_return std::nullopt;
+            -> capy::task<std::optional<std::unique_ptr<StreamHandle>>> {
+            auto handle = co_await open_stream_handle(false, deadline);
+            if (!handle) co_return std::nullopt;
+            auto id = handle->id();
             std::string pad_val;
             std::vector<h3::nghttp3_nv> fields;
             fields.reserve(4 + extra_headers.size());
@@ -271,7 +302,7 @@ export namespace naive {
             }
             for (auto const& [k, v] : extra_headers) fields.push_back(h3_nv(k, v));
             if (factory_.bundle->app.h3().request(id, fields, true)) {
-                factory_.bundle->hooks.streams.erase(id);
+                if (factory_.bundle->app.h3().terminal_error()) factory_.bundle->app.request_stop();
                 co_return std::nullopt;
             }
             driver_.notify();
@@ -280,16 +311,13 @@ export namespace naive {
                 if (!cur || cur->failed || cur->retired) co_return std::nullopt;
                 if (cur->complete) {
                     auto pad = check_response_headers(*cur, request_padding);
-                    if (!pad) {
-                        StreamHandle discard(*factory_.bundle, driver_, id, false);
-                        (void)discard;
-                        co_return std::nullopt;
-                    }
-                    co_return std::make_unique<StreamHandle>(*factory_.bundle, driver_, id, *pad);
+                    if (!pad) co_return std::nullopt;
+                    handle->arm_padding(*pad);
+                    co_return std::move(handle);
                 }
                 if (cur->closed) co_return std::nullopt;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err) break;
             }
             co_return std::nullopt;
@@ -298,13 +326,10 @@ export namespace naive {
         auto open_connect_udp(std::string_view proxy_authority, std::string_view target_host,
                               std::uint16_t target_port, std::string_view auth_header,
                               H3Clock::time_point deadline)
-            -> nex::capy::task<std::optional<std::unique_ptr<StreamHandle>>> requires (EnableDatagrams) {
-            if (!usable() || !factory_.bundle->app.can_open()) co_return std::nullopt;
-            std::int64_t id = -1;
-            if (q::ngtcp2_conn_open_bidi_stream(factory_.bundle->session.transport().native(), &id, nullptr))
-                co_return std::nullopt;
-            auto* s = factory_.bundle->hooks.open(id, true);
-            if (!s) co_return std::nullopt;
+            -> capy::task<std::optional<std::unique_ptr<StreamHandle>>> {
+            auto handle = co_await open_stream_handle(true, deadline);
+            if (!handle) co_return std::nullopt;
+            auto id = handle->id();
             auto path = build_connect_udp_path(target_host, target_port);
             std::vector<h3::nghttp3_nv> fields{
                 h3_nv(":method", "CONNECT"),
@@ -316,7 +341,7 @@ export namespace naive {
             };
             if (!auth_header.empty()) fields.push_back(h3_nv("proxy-authorization", auth_header));
             if (factory_.bundle->app.h3().request(id, fields, true)) {
-                factory_.bundle->hooks.streams.erase(id);
+                if (factory_.bundle->app.h3().terminal_error()) factory_.bundle->app.request_stop();
                 co_return std::nullopt;
             }
             driver_.notify();
@@ -324,16 +349,12 @@ export namespace naive {
                 auto* cur = factory_.bundle->hooks.find(id);
                 if (!cur || cur->failed || cur->retired) co_return std::nullopt;
                 if (cur->complete) {
-                    if (!check_response_headers(*cur, false)) {
-                        StreamHandle discard(*factory_.bundle, driver_, id, false);
-                        (void)discard;
-                        co_return std::nullopt;
-                    }
-                    co_return std::make_unique<StreamHandle>(*factory_.bundle, driver_, id, false);
+                    if (!check_response_headers(*cur, false)) co_return std::nullopt;
+                    co_return std::move(handle);
                 }
                 if (cur->closed) co_return std::nullopt;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err) break;
             }
             co_return std::nullopt;

@@ -1,6 +1,6 @@
 export module quic.http3;
 import std;
-import nexus.thirdparty.nghttp3;
+import nghttp3;
 
 export namespace quic {
     struct Http3Write { std::int64_t stream=-1; std::size_t vectors=0; bool fin=false; };
@@ -10,31 +10,35 @@ export namespace quic {
     // DATA payload credit is returned only when Hooks consumes that payload.
     template<class Hooks>
     class Http3 {
-        using Native=nex::nghttp3::nghttp3_conn;
+        using Native=nghttp3::nghttp3_conn;
         Hooks& hooks_;
         Native* connection_=nullptr;
-        nex::nghttp3::nghttp3_mem memory_{};
+        nghttp3::nghttp3_mem memory_{};
         std::uint64_t last_time_=0;
         int terminal_=0;
         bool started_=false,busy_=false,stop_requested_=false,closing_=false;
         struct Call { Http3& self; ~Call() { self.busy_=false; if (self.stop_requested_) self.stop(); } };
         template<class Function> auto callback(Function&& function) noexcept -> int {
-            if (stop_requested_) return nex::nghttp3::err_callback_failure;
+            if (stop_requested_) return nghttp3::err_callback_failure;
             try { return std::forward<Function>(function)(); }
-            catch (std::bad_alloc const&) { terminal_=nex::nghttp3::err_nomem; }
-            catch (...) { terminal_=nex::nghttp3::err_callback_failure; }
-            return nex::nghttp3::err_callback_failure;
+            catch (std::bad_alloc const&) { terminal_=nghttp3::err_nomem; }
+            catch (...) { terminal_=nghttp3::err_callback_failure; }
+            return nghttp3::err_callback_failure;
         }
         auto result(int error) noexcept -> int {
             if (error && !terminal_) terminal_=error;
+            return terminal_ ? terminal_ : error;
+        }
+        auto stream_result(int error) noexcept -> int {
+            if (error && nghttp3_abi::nghttp3_err_is_fatal(error) && !terminal_) terminal_=error;
             return terminal_ ? terminal_ : error;
         }
         auto begin() noexcept -> bool {
             if (!connection_ || busy_ || terminal_ || stop_requested_) return false;
             busy_=true; return true;
         }
-        static auto callbacks() noexcept -> nex::nghttp3::nghttp3_callbacks {
-            using namespace nex::nghttp3;
+        static auto callbacks() noexcept -> nghttp3::nghttp3_callbacks {
+            using namespace nghttp3;
             nghttp3_callbacks callbacks{};
             callbacks.begin_headers=[](Native*,std::int64_t stream,void* owner,void* state) noexcept -> int {
                 auto& self=*static_cast<Http3*>(owner);
@@ -98,8 +102,8 @@ export namespace quic {
             };
             return callbacks;
         }
-        static auto reader() noexcept -> nex::nghttp3::nghttp3_data_reader {
-            using namespace nex::nghttp3;
+        static auto reader() noexcept -> nghttp3::nghttp3_data_reader {
+            using namespace nghttp3;
             return {[](Native*,std::int64_t stream,nghttp3_vec* output,std::size_t count,std::uint32_t* flags,void* owner,void* state) noexcept -> nghttp3_ssize {
                 auto& self=*static_cast<Http3*>(owner);
                 if (self.stop_requested_) return err_callback_failure;
@@ -127,8 +131,8 @@ export namespace quic {
         auto terminal_error() const noexcept -> int { return terminal_; }
         // The allocator context and Hooks outlive stop. Native owns a copied
         // nghttp3_mem pointing to this stable direct member.
-        auto start(bool server,nex::nghttp3::nghttp3_settings const& settings,nex::nghttp3::nghttp3_mem const& memory) -> int {
-            using namespace nex::nghttp3;
+        auto start(bool server,nghttp3::nghttp3_settings const& settings,nghttp3::nghttp3_mem const& memory) -> int {
+            using namespace nghttp3;
             if (started_ || !memory.malloc || !memory.free || !memory.calloc || !memory.realloc) return err_callback_failure;
             started_=true; memory_=memory; auto events=callbacks();
             auto create=server ? nghttp3_conn_server_new_versioned : nghttp3_conn_client_new_versioned;
@@ -150,13 +154,13 @@ export namespace quic {
             if (!drained) return;
             stop_requested_=false;
             if (auto* native=std::exchange(connection_,nullptr)) {
-                nex::nghttp3::nghttp3_conn_del(native);
+                nghttp3::nghttp3_conn_del(native);
                 static_assert(noexcept(hooks_.connection_closed(*this,terminal_)));
                 hooks_.connection_closed(*this,terminal_);
             }
         }
         auto bind(std::int64_t control,std::int64_t encoder,std::int64_t decoder) -> int {
-            using namespace nex::nghttp3;
+            using namespace nghttp3;
             if (!begin()) return err_callback_failure;
             Call call{*this};
             auto error=nghttp3_conn_bind_control_stream(connection_,control);
@@ -164,7 +168,7 @@ export namespace quic {
             return result(error);
         }
         auto read(std::int64_t stream,std::span<std::uint8_t const> bytes,bool fin,std::uint64_t time) -> std::expected<std::size_t,int> {
-            using namespace nex::nghttp3;
+            using namespace nghttp3;
             if (time<last_time_ || !begin()) return std::unexpected(err_callback_failure);
             Call call{*this}; last_time_=time;
             auto consumed=nghttp3_conn_read_stream2(connection_,stream,bytes.data(),bytes.size(),fin,time);
@@ -174,8 +178,8 @@ export namespace quic {
         // Vectors borrow native frame storage or the caller's body storage.
         // Do not advance accepted bytes until QUIC has actually accepted them;
         // native/body storage remains live until acknowledged or stream close.
-        auto write(std::span<nex::nghttp3::nghttp3_vec> output) -> std::expected<Http3Write,int> {
-            using namespace nex::nghttp3;
+        auto write(std::span<nghttp3::nghttp3_vec> output) -> std::expected<Http3Write,int> {
+            using namespace nghttp3;
             if (!begin()) return std::unexpected(err_callback_failure);
             Call call{*this}; std::int64_t stream=-1; int fin=0;
             auto count=nghttp3_conn_writev_stream(connection_,&stream,&fin,output.data(),output.size());
@@ -183,41 +187,43 @@ export namespace quic {
             return Http3Write{stream,static_cast<std::size_t>(count),bool(fin)};
         }
         auto accepted(std::int64_t stream,std::size_t bytes) -> int {
-            if (!begin()) return nex::nghttp3::err_callback_failure;
-            Call call{*this}; return result(nex::nghttp3::nghttp3_conn_add_write_offset(connection_,stream,bytes));
+            if (!begin()) return nghttp3::err_callback_failure;
+            Call call{*this}; return result(nghttp3::nghttp3_conn_add_write_offset(connection_,stream,bytes));
         }
         auto acknowledged(std::int64_t stream,std::uint64_t bytes) -> int {
-            if (!begin()) return nex::nghttp3::err_callback_failure;
-            Call call{*this}; return result(nex::nghttp3::nghttp3_conn_add_ack_offset(connection_,stream,bytes));
+            if (!begin()) return nghttp3::err_callback_failure;
+            Call call{*this}; return result(nghttp3::nghttp3_conn_add_ack_offset(connection_,stream,bytes));
         }
-        auto block(std::int64_t stream) noexcept -> void { if (connection_) nex::nghttp3::nghttp3_conn_block_stream(connection_,stream); }
+        auto block(std::int64_t stream) noexcept -> void { if (connection_) nghttp3::nghttp3_conn_block_stream(connection_,stream); }
         auto unblock(std::int64_t stream) -> int {
-            if (!begin()) return nex::nghttp3::err_callback_failure;
-            Call call{*this}; return result(nex::nghttp3::nghttp3_conn_unblock_stream(connection_,stream));
+            if (!begin()) return nghttp3::err_callback_failure;
+            Call call{*this}; return result(nghttp3::nghttp3_conn_unblock_stream(connection_,stream));
         }
         auto close_stream(std::uint32_t flags,std::int64_t stream,std::uint64_t rx,std::uint64_t tx) -> int {
-            if (!begin()) return nex::nghttp3::err_callback_failure;
-            Call call{*this}; return result(nex::nghttp3::nghttp3_conn_close_stream2(connection_,flags,stream,rx,tx));
+            if (!begin()) return nghttp3::err_callback_failure;
+            Call call{*this};
+            auto error=nghttp3::nghttp3_conn_close_stream2(connection_,flags,stream,rx,tx);
+            return error==-110 ? 0 : result(error); // -110 = NGHTTP3_ERR_STREAM_NOT_FOUND
         }
         auto shutdown_read(std::int64_t stream) -> int {
-            if (!connection_) return nex::nghttp3::err_callback_failure;
-            return result(nex::nghttp3::nghttp3_conn_shutdown_stream_read(connection_,stream));
+            if (!connection_ || terminal_ || stop_requested_) return nghttp3::err_callback_failure;
+            return stream_result(nghttp3::nghttp3_conn_shutdown_stream_read(connection_,stream));
         }
-        auto shutdown_write(std::int64_t stream) noexcept -> void { if (connection_) nex::nghttp3::nghttp3_conn_shutdown_stream_write(connection_,stream); }
+        auto shutdown_write(std::int64_t stream) noexcept -> void { if (connection_) nghttp3::nghttp3_conn_shutdown_stream_write(connection_,stream); }
         auto resume(std::int64_t stream) -> int {
-            if (!connection_) return nex::nghttp3::err_callback_failure;
-            return result(nex::nghttp3::nghttp3_conn_resume_stream(connection_,stream));
+            if (!connection_ || terminal_ || stop_requested_) return nghttp3::err_callback_failure;
+            return stream_result(nghttp3::nghttp3_conn_resume_stream(connection_,stream));
         }
         // Submission is allowed from end_headers callbacks. nghttp3 copies
         // ordinary fields before return; callers must not set NO_COPY flags
         // without retaining the corresponding storage through stream close.
-        auto request(std::int64_t stream,std::span<nex::nghttp3::nghttp3_nv const> fields,bool body=false,void* state=nullptr) -> int {
-            if (!connection_ || terminal_ || stop_requested_) return nex::nghttp3::err_callback_failure;
-            auto data=reader(); return result(nex::nghttp3::nghttp3_conn_submit_request(connection_,stream,fields.data(),fields.size(),body ? &data : nullptr,state));
+        auto request(std::int64_t stream,std::span<nghttp3::nghttp3_nv const> fields,bool body=false,void* state=nullptr) -> int {
+            if (!connection_ || terminal_ || stop_requested_) return nghttp3::err_callback_failure;
+            auto data=reader(); return stream_result(nghttp3::nghttp3_conn_submit_request(connection_,stream,fields.data(),fields.size(),body ? &data : nullptr,state));
         }
-        auto response(std::int64_t stream,std::span<nex::nghttp3::nghttp3_nv const> fields,bool body=false) -> int {
-            if (!connection_ || terminal_ || stop_requested_) return nex::nghttp3::err_callback_failure;
-            auto data=reader(); return result(nex::nghttp3::nghttp3_conn_submit_response(connection_,stream,fields.data(),fields.size(),body ? &data : nullptr));
+        auto response(std::int64_t stream,std::span<nghttp3::nghttp3_nv const> fields,bool body=false) -> int {
+            if (!connection_ || terminal_ || stop_requested_) return nghttp3::err_callback_failure;
+            auto data=reader(); return stream_result(nghttp3::nghttp3_conn_submit_response(connection_,stream,fields.data(),fields.size(),body ? &data : nullptr));
         }
     };
 }

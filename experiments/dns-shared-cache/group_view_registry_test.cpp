@@ -1,13 +1,10 @@
 // Isolated view identity tests; no production path uses the registry.
-#include <boost/corosio/endpoint.hpp>
-#include <boost/corosio/ipv4_address.hpp>
-#include <boost/corosio/ipv6_address.hpp>
+import corosio;
 import std;
 import dns.message;
 import dns.cache;
-namespace nex { namespace corosio=boost::corosio; }
-#include "../../src/dns-shared/group_snapshot.hpp"
-#include "../../src/dns-shared/group_view_registry.hpp"
+import dns.group_snapshot;
+import dns.group_view_registry;
 
 namespace hp=dns_hp_experiment;
 namespace d=dns;

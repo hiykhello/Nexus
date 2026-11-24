@@ -1,6 +1,6 @@
 export module tailscale.control_messages;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import tailscale.control;
 
 export namespace tailscale::control_messages {
@@ -61,8 +61,8 @@ export namespace tailscale::control_messages {
         std::int64_t id=0,home_derp=0;
         control::NodePublic key;
         JsonField original_node,name,stable_id,key_expiry,disco_key,tags;
-        nexus::inplace_vector<Prefix,max_prefixes> addresses,allowed_ips;
-        nexus::inplace_vector<Endpoint,max_endpoints> endpoints;
+        containers::inplace_vector<Prefix,max_prefixes> addresses,allowed_ips;
+        containers::inplace_vector<Endpoint,max_endpoints> endpoints;
         Presence allowed_ips_presence=Presence::missing;
         bool machine_authorized=false,expired=false;
         std::optional<std::chrono::sys_seconds> not_after;
@@ -105,8 +105,8 @@ export namespace tailscale::control_messages {
         JsonField original_map_,session_handle_,sequence_,derp_map_,dns_config_,domain_,control_time_;
         Presence self_presence_=Presence::missing,peers_presence_=Presence::missing,changed_presence_=Presence::missing,removed_presence_=Presence::missing;
         std::optional<PeerCandidate> self_;
-        nexus::inplace_vector<PeerCandidate,max_peers> peers_,changed_;
-        nexus::inplace_vector<std::int64_t,max_peers> removed_;
+        containers::inplace_vector<PeerCandidate,max_peers> peers_,changed_;
+        containers::inplace_vector<std::int64_t,max_peers> removed_;
         auto parse(std::span<std::uint8_t const>,DecodeOrigin const&,FilterFields*) noexcept -> std::expected<void,Failure>;
         friend auto parse_map(std::span<std::uint8_t const>,DecodeOrigin const&,MapCandidate&) noexcept -> std::expected<void,Failure>;
         friend auto parse_map_projection(std::span<std::uint8_t const>,DecodeOrigin const&,MapCandidate&,FilterFields&) noexcept -> std::expected<void,Failure>;

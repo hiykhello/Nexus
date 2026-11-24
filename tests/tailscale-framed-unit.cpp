@@ -6,12 +6,11 @@ import tailscale.control;
 import tailscale.control_record_codec;
 import tailscale.control_http;
 import crypto;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace t=tailscale::control;
 namespace h=tailscale::control_http;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Deadline=net::StreamDeadline;
 struct Memory {

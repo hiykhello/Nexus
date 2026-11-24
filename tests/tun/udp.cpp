@@ -1,6 +1,6 @@
 import std;
 import udp;
-import nexus.tests.scheduled_link;
+import test.scheduled_link;
 
 namespace u = udp;
 namespace p = ::packet;

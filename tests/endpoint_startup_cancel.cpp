@@ -10,11 +10,11 @@ import platform.netlink_socket;
 import wireguard;
 import wireguard.routing;
 import crypto;
-import nexus.test.lease_support;
+import test.lease_support;
 namespace {
     namespace e=endpoint;
     namespace n = ::platform::netlink;
-    namespace t=nexus::test::lease;
+    namespace t=test::lease;
     using Clock=std::chrono::steady_clock;
     struct Cancel : n::NoHooks {
         static inline unsigned calls=0,target=0;

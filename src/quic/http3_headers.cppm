@@ -1,7 +1,7 @@
 export module quic.http3_headers;
 import std;
 import http.header;
-import nexus.thirdparty.nghttp3;
+import nghttp3;
 
 export namespace quic {
     enum class Http3HeaderError { count_limit,byte_limit,invalid_reference };
@@ -10,7 +10,7 @@ export namespace quic {
     // context must remain alive through that release, including after H3 stop.
     template<std::size_t Fields=64,std::size_t Bytes=16384>
     class Http3Headers {
-        struct References { nex::nghttp3::nghttp3_rcbuf* name=nullptr; nex::nghttp3::nghttp3_rcbuf* value=nullptr; };
+        struct References { nghttp3::nghttp3_rcbuf* name=nullptr; nghttp3::nghttp3_rcbuf* value=nullptr; };
         std::array<References,Fields> references_{};
         std::array<http::HeaderField,Fields> views_{};
         std::size_t count_=0,bytes_=0;
@@ -23,14 +23,14 @@ export namespace quic {
         auto operator=(Http3Headers&&) -> Http3Headers& = delete;
         auto clear() noexcept -> void {
             for (std::size_t i=0;i<count_;++i) {
-                nex::nghttp3::nghttp3_rcbuf_decref(references_[i].name);
-                nex::nghttp3::nghttp3_rcbuf_decref(references_[i].value);
+                nghttp3::nghttp3_rcbuf_decref(references_[i].name);
+                nghttp3::nghttp3_rcbuf_decref(references_[i].value);
                 references_[i]={}; views_[i]={};
             }
             count_=bytes_=0;
         }
-        auto append(nex::nghttp3::nghttp3_rcbuf* name,nex::nghttp3::nghttp3_rcbuf* value) noexcept -> std::expected<void,Http3HeaderError> {
-            using namespace nex::nghttp3;
+        auto append(nghttp3::nghttp3_rcbuf* name,nghttp3::nghttp3_rcbuf* value) noexcept -> std::expected<void,Http3HeaderError> {
+            using namespace nghttp3;
             if (!name || !value) return std::unexpected(Http3HeaderError::invalid_reference);
             if (count_==Fields) return std::unexpected(Http3HeaderError::count_limit);
             auto key=nghttp3_rcbuf_get_buf(name),text=nghttp3_rcbuf_get_buf(value);

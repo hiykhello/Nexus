@@ -52,10 +52,9 @@ export namespace packet {
             return std::visit([](auto value) -> Failure { return Failure{value}; },error);
         }
         // One algorithm for MemoryLink and compile-time packet devices.
-        template<class Device> auto step(int fd,Device& device,std::size_t mtu,std::span<std::uint8_t> buffer,std::size_t& input_size,
-            std::optional<typename Device::Packet>& output) -> FdStepFor<typename Device::Failure> {
+        template<class Device> auto step_output(int fd,Device& device,std::size_t mtu,
+            std::optional<typename Device::Packet>& output,FdStepFor<typename Device::Failure>& result) -> void {
             using Failure=FdFailureFor<typename Device::Failure>;
-            FdStepFor<typename Device::Failure> result;
             if (!output) {
                 auto packet=device.receive_packet();
                 if (!packet) result.output_error=Failure{packet.error()};
@@ -70,7 +69,7 @@ export namespace packet {
                     if (count<0) {
                         auto error=system_error();
                         if (temporary(error)) result.output_backpressured=true;
-                        else result.output_error=Failure{error};
+                        else { result.output_error=Failure{error}; output.reset(); }
                     } else if (static_cast<std::size_t>(count)!=bytes.size()) { result.output_error=Failure{FdError::partial_write}; output.reset(); }
                     else {
                         if constexpr (requires {device.output_delivered(bytes);}) device.output_delivered(bytes);
@@ -79,6 +78,12 @@ export namespace packet {
                     }
                 }
             }
+        }
+        template<class Device> auto step(int fd,Device& device,std::size_t mtu,std::span<std::uint8_t> buffer,std::size_t& input_size,
+            std::optional<typename Device::Packet>& output) -> FdStepFor<typename Device::Failure> {
+            using Failure=FdFailureFor<typename Device::Failure>;
+            FdStepFor<typename Device::Failure> result;
+            step_output(fd,device,mtu,output,result);
             if (!input_size) {
                 auto count=abi::read(fd,buffer.data(),buffer.size());
                 if (count<0) {
@@ -116,6 +121,7 @@ export namespace packet {
         [[nodiscard]] static auto create(int fd,MemoryLink& link,std::size_t mtu) -> std::expected<FdPump,FdFailure>;
         using OutputValidator=bool (*)(void*,QueuedPacket const&) noexcept;
         [[nodiscard]] auto step(OutputValidator validator=nullptr,void* context=nullptr) -> FdStep;
+        [[nodiscard]] auto step_output(OutputValidator validator=nullptr,void* context=nullptr) -> FdStep;
     };
     // Device statically supplies Packet/Failure, send/receive_packet,
     // packet_bytes, retryable and valid_output. No extra queue or heap.

@@ -5,12 +5,11 @@ import tailscale.derp_handshake;
 import tailscale.derp_info;
 import net.socket_stream;
 import crypto;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace d=tailscale::derp;
 namespace c = ::crypto;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Lower=net::SocketByteStream<io::tcp_socket>;
 struct Fixture {
@@ -23,7 +22,7 @@ struct Fixture {
 struct Cancel { Lower& stream; ~Cancel() {stream.cancel();} };
 struct Frames {
     Lower& lower;
-    d::Decoder decoder;
+    d::Decoder decoder{};
     std::array<std::uint8_t,4096> input{};
     std::size_t begin=0,end=0;
     auto next(d::HandshakeClock::time_point deadline) -> capy::task<std::optional<d::Frame>> {

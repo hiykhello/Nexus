@@ -13,8 +13,9 @@ namespace sniff {
         switch(result.status) {
         case QuicSniffStatus::need_more:return {QuicProbeStatus::waiting,{}};
         case QuicSniffStatus::matched:
-            if(result.server_name && !result.ech_offered)return {QuicProbeStatus::matched,std::string(*result.server_name)};
-            return {QuicProbeStatus::matched,{}};
+            return {QuicProbeStatus::matched,
+                (result.server_name && !result.ech_offered) ? std::optional<std::string>(std::string(*result.server_name)) : std::nullopt,
+                result.client ? std::optional<std::string>(std::string(*result.client)) : std::nullopt};
         case QuicSniffStatus::not_initial:
         case QuicSniffStatus::authentication_failed:
         case QuicSniffStatus::unsupported:return {QuicProbeStatus::unrelated,{}};

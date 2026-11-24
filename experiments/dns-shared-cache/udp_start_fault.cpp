@@ -1,7 +1,7 @@
 import std;
 import ss_udp.shared_coordinator;
 import rules;
-import proxy;
+import relay;
 
 namespace {
     thread_local int fail_after=-1;
@@ -20,9 +20,9 @@ auto udp_reset_attached() noexcept -> void;
 auto udp_attached_count() noexcept -> std::size_t;
 
 namespace {
-    namespace p=proxy;
-    namespace u=proxy::udp_runtime;
-    namespace io=nex::corosio;
+    namespace p = relay;
+    namespace u = relay::udp_runtime;
+    namespace io = ::corosio;
     using Cache=dns_hp_experiment::GroupSnapshot;
     using Budget=dns::detail::RefreshBudget;
 

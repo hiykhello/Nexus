@@ -2,7 +2,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 using namespace std::chrono_literals;
 bool profile_alive=false;
 bool entered=false, exited=false, skip_stop=false;
@@ -18,10 +18,10 @@ extern "C" void nexus_test_tunnel_profile_destroy() {}
 int main() {
     int fd=-1;
     {
-        proxy::Server server;
+        relay::Server server;
         std::array<std::uint8_t,16> key{};
         if (!server.prepare_shadowsocks_inbound(key) || static_cast<int>(profile_alive)!=1) return 1;
-        auto port=server.start(0,proxy::Inbound::shadowsocks,1); if (!port) return 2;
+        auto port=server.start(0,relay::Inbound::shadowsocks,1); if (!port) return 2;
         fd=socket(AF_INET,SOCK_STREAM,0); if (fd<0) return 3;
         sockaddr_in address{}; address.sin_family=AF_INET; address.sin_addr.s_addr=htonl(INADDR_LOOPBACK); address.sin_port=htons(*port);
         if (connect(fd,reinterpret_cast<sockaddr*>(&address),sizeof(address))) { close(fd); return 4; }

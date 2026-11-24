@@ -10,9 +10,9 @@ import xudp.server_direct;
 import xudp.server_sessions;
 import net.udp_socket;
 import rules;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace x=xudp; namespace capy=nex::capy; namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace x=xudp; namespace io = ::corosio;
 using Bytes=std::vector<std::uint8_t>; using namespace std::chrono_literals;
 struct Stream {
     Bytes input,output; std::size_t offset=0,chunk=1; bool canceled=false,wait_write=false,write_entered=false; capy::async_event write_gate;

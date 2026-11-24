@@ -1,6 +1,5 @@
 import argparse,hashlib,json,re,socket,subprocess,sys,tempfile,threading
 from pathlib import Path
-sys.path.insert(0,'/home/yk/Code/Nexus/tests')
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential,ready
 from dns_rule_support import proxy_client

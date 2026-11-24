@@ -12,7 +12,7 @@ import tls.certificate_trust;
 import tls.hello_config;
 import tls.fingerprint;
 import platform.ip_address;
-import nexus.thirdparty.corosio;
+import corosio;
 
 namespace hysteria2 {
     ClientProfile::ClientProfile(tls::ClientProfile tls,Password password,std::optional<SalamanderKey> salamander,TransportOptions options,
@@ -67,7 +67,7 @@ namespace hysteria2 {
         }
         return std::unique_ptr<ClientProfile>(new ClientProfile(std::move(*tls),std::move(*password),std::move(salamander),options,fingerprint));
     }
-    auto ClientProfile::tls_client(nex::corosio::endpoint const& peer,quic::EchConfig const* ech,
+    auto ClientProfile::tls_client(corosio::endpoint const& peer,quic::EchConfig const* ech,
         Tickets* tickets) const -> std::expected<std::unique_ptr<Tls>,std::string> {
         constexpr std::array<std::string_view,1> alpn{"h3"};
         auto make = [&](tls::ClientHello hello, std::span<const std::uint16_t> groups)

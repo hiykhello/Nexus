@@ -9,7 +9,7 @@ import dns.corosio_query;
 import dns.cache;
 import dns.local_config;
 import dns.corosio_local;
-namespace capy=boost::capy; namespace io=nex::corosio;
+namespace capy=boost::capy; namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Fixture {
 #if BOOST_COROSIO_HAVE_LIBURING

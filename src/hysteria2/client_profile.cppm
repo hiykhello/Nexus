@@ -8,7 +8,7 @@ import quic.ech_config;
 import tls.profiles;
 import tls.certificate_trust;
 import tls.fingerprint;
-import nexus.thirdparty.corosio;
+import corosio;
 
 export namespace hysteria2 {
     // A profile outlives its active QUIC sessions. The authentication headers
@@ -48,11 +48,11 @@ export namespace hysteria2 {
             std::span<std::array<std::uint8_t,32> const> pins={})
             -> std::expected<std::unique_ptr<ClientProfile>,std::string>;
 
-        [[nodiscard]] auto tls_client(nex::corosio::endpoint const& peer,quic::EchConfig const* ech=nullptr,
+        [[nodiscard]] auto tls_client(corosio::endpoint const& peer,quic::EchConfig const* ech=nullptr,
             Tickets* tickets=nullptr) const -> std::expected<std::unique_ptr<Tls>,std::string>;
 
         [[nodiscard]] auto tls_client(quic::EchConfig const* ech = nullptr) const -> std::expected<std::unique_ptr<Tls>,std::string> {
-            return tls_client(nex::corosio::endpoint{},ech);
+            return tls_client(corosio::endpoint{},ech);
         }
         [[nodiscard]] auto credential() const noexcept -> std::string_view {return password_.view();}
         [[nodiscard]] auto transport() const noexcept -> TransportOptions const& {return options_;}

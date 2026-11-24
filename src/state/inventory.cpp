@@ -1,6 +1,6 @@
 module state.maintenance;
 import std;
-import nexus.compat;
+import functional;
 import state.dns_cache;
 import state.file;
 import state.ruleset_storage;
@@ -23,7 +23,7 @@ namespace state {
             return {result,std::optional<File>(std::move(*directory))};
         }
 
-        auto stat_files(NativeHandle directory,Inventory& info,nexus::function_ref<bool(std::string_view)> match) -> bool {
+        auto stat_files(NativeHandle directory,Inventory& info,functional::function_ref<bool(std::string_view)> match) -> bool {
             auto files=directory_entries(directory,match);
             if (!files) {info.health="unreadable";return false;}
             if (files->empty()) return false;
@@ -49,7 +49,7 @@ namespace state {
         }
 
         auto dns_legacy(std::filesystem::path const& path,std::size_t servers) -> Inventory {
-            auto [info,folder]=begin(path,"NXDNS1/2");
+            auto [info,folder]=begin(path,"NXDNS2");
             if (!folder || !stat_files(folder->get(),info,[](auto name){return name=="messages.cache";})) return info;
             auto dir=folder->get();
             constexpr auto signature=[](std::string_view value) {
@@ -58,15 +58,7 @@ namespace state {
                 return number;
             };
             auto magic=read_number(dir,"messages.cache",0,6,true);
-            if (magic==signature("NXDNS1")) {
-                info.version="NXDNS1";
-                auto family=read_number(dir,"messages.cache",6,1);
-                if (family==4 || family==6) {
-                    auto count=read_number(dir,"messages.cache",18+(family==4 ? 4 : 16),2,true);
-                    if (count && *count<=256) {info.entries=*count;return info;}
-                }
-                info.health="damaged";
-            } else if (magic==signature("NXDNS2")) {
+            if (magic==signature("NXDNS2")) {
                 info.version="NXDNS2";
                 auto policy=read_number(dir,"messages.cache",6,4,true);
                 if (!policy || *policy>1024*1024 || servers>256) info.health="damaged";

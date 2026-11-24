@@ -1,10 +1,9 @@
 import std;
 import dns.corosio_local;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 using Error=dns::detail::ResolveError;
 

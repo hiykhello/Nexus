@@ -4,18 +4,17 @@ import net.datagram_driver;
 import quic.tls_client;
 import quic.tls_server;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.thirdparty.ngtcp2;
-import nexus.test.quic_tls_link;
-import nexus.test.quic_datagram_link;
+import capy;
+import corosio;
+import ngtcp2;
+import test.quic_tls_link;
+import test.quic_datagram_link;
 
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace io = ::corosio;
 namespace q=quic;
 namespace t=tls;
-namespace support=nexus::test::quic_tls;
-namespace app=nexus::test::quic_datagram_link;
+namespace support=test::quic_tls;
+namespace app=test::quic_datagram_link;
 using namespace std::chrono_literals;
 namespace {
     template<class Driver,class Condition> auto wait(Driver& driver,Condition condition) -> capy::task<bool> {

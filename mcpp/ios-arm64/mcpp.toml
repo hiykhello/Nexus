@@ -1,0 +1,41 @@
+# Apple iOS ARM64 NetworkExtension static library profile (`XCFramework`).
+# Uses `profile-embedded` (slim cross-platform client core without external compression or server/niche features).
+[package]
+name = "nexus-ios-arm64"
+version = "0.1.0"
+standard = "c++26"
+mcpp = ">=2026.11.21.1"
+
+[toolchain]
+default = "llvm@23.1.6"
+
+[target.aarch64-ios]
+sysroot = "ios@system"
+
+[indices]
+nexus = { path = "../../3rdparty/mcpp-index" }
+
+[dependencies]
+nexus = { path = "../..", default-features = false, features = ["profile-embedded"] }
+
+[build]
+cxxflags = ["-fvisibility=hidden", "-fmerge-all-constants"]
+sources = []
+
+[profile.release]
+opt = "z"
+lto = true
+strip = true
+
+[profile.size]
+opt = "z"
+lto = true
+strip = true
+
+[profile.speed]
+opt = 3
+lto = true
+strip = true
+
+[targets.nexus-core-ios]
+kind = "lib"

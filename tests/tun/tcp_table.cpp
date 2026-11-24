@@ -51,7 +51,7 @@ int main() {
     auto fresh6=table6->open(syn6,70,120002);
     if (!fresh6 || *fresh6==*id6 || !table6->abort(*fresh6) || !table6->abort(*id6b) || table6->size()) return 1;
     if (t::ConnectionTable::create(0, 8) || t::ConnectionTable::create(1, 0) ||
-        t::ConnectionTable::create(1, 65536)) return 1;
+        !t::ConnectionTable::create(1, 65536) || t::ConnectionTable::create(1, 4u * 1024u * 1024u + 1)) return 1;
     auto table = t::ConnectionTable::create(2, 8);
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
                     .destination_port=80, .sequence=99, .flags=2};

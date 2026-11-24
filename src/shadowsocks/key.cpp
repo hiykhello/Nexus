@@ -1,13 +1,13 @@
 module shadowsocks.key;
 import std;
 import crypto;
-import nexus.thirdparty.blake3;
-import nexus.thirdparty.boringssl;
+import blake3;
+import boringssl;
 namespace shadowsocks {
     auto transform_aes_block(std::span<std::uint8_t const> key,
         std::span<std::uint8_t const,16> block,bool encrypt) noexcept -> std::optional<std::array<std::uint8_t,16>> {
         if (key.size()!=16 && key.size()!=32) return {};
-        using namespace nex::boringssl;
+        using namespace boringssl;
         struct Schedule {
             AES_KEY value{};
             ~Schedule() {crypto::cleanse(std::span{reinterpret_cast<std::uint8_t*>(&value),sizeof(value)});}
@@ -44,12 +44,12 @@ namespace shadowsocks {
     auto SessionKey::derive_material(std::span<std::uint8_t const> key, std::span<std::uint8_t const> salt,CipherMethod method)
         -> std::expected<SessionKey,KeyError> {
         constexpr std::string_view context="shadowsocks 2022 session subkey";
-        nex::blake3::blake3_hasher hasher{};
-        nex::blake3::blake3_hasher_init_derive_key_raw(&hasher,context.data(),context.size());
-        nex::blake3::blake3_hasher_update(&hasher,key.data(),key.size());
-        nex::blake3::blake3_hasher_update(&hasher,salt.data(),salt.size());
+        blake3::blake3_hasher hasher{};
+        blake3::blake3_hasher_init_derive_key_raw(&hasher,context.data(),context.size());
+        blake3::blake3_hasher_update(&hasher,key.data(),key.size());
+        blake3::blake3_hasher_update(&hasher,salt.data(),salt.size());
         SessionKey result; result.size_=key.size(); result.method_=method;
-        nex::blake3::blake3_hasher_finalize(&hasher,result.bytes_.data(),result.size_);
+        blake3::blake3_hasher_finalize(&hasher,result.bytes_.data(),result.size_);
         crypto::cleanse(std::span{reinterpret_cast<std::uint8_t*>(&hasher),sizeof(hasher)});
         return result;
     }

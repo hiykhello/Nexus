@@ -1,8 +1,8 @@
 import std;
 import http2.client;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 namespace h=http2;
-namespace c=nex::nghttp2;
+namespace c = ::nghttp2;
 using Client=h::Client<4>;
 extern "C" auto client_native(Client*) -> c::nghttp2_session*;
 extern "C" auto client_connection_credit(Client*) -> std::size_t;

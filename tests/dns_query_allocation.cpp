@@ -8,7 +8,7 @@ import dns.response_addresses;
 import dns.input_budget;
 import dns.policy;
 import rules;
-import nexus.thirdparty.corosio;
+import corosio;
 
 static bool observing=false;
 static std::size_t large_allocations=0;
@@ -46,15 +46,15 @@ auto main() -> int {
     // One large allocation is the retained option, not a second temporary
     // compression table sized to the whole request.
     if(large_allocations!=1)return 3;
-    nex::corosio::io_context context;
-    std::array<dns::MessageUpstream,1> upstreams{{{{nex::corosio::ipv4_address::loopback(),53},false,nullptr}}};
+    corosio::io_context context;
+    std::array<dns::MessageUpstream,1> upstreams{{{{corosio::ipv4_address::loopback(),53},false,nullptr}}};
     dns::ResponseStep step{.action=dns::ResponseAction::route,.server=0};
     large_allocations=0;observing=true;
     dns::MessageExchange exchange(context,upstreams,nullptr,*parsed,step,std::chrono::steady_clock::now()+std::chrono::seconds(1));
     observing=false;
     if(large_allocations || &exchange.upstream_query()!=&*parsed || !exchange.upstream_query().edns || exchange.upstream_query().edns->options[0].data.size()!=60000)return 4;
     dns::MessageCache cache;
-    dns::MessageCache::View view(0,{nex::corosio::ipv4_address::loopback(),53},false,{});
+    dns::MessageCache::View view(0,{corosio::ipv4_address::loopback(),53},false,{});
     large_allocations=0;observing=true;
     auto hit=cache.lookup(view,*parsed,std::chrono::steady_clock::now());
     auto ticket=cache.begin(view,*parsed);
@@ -99,7 +99,7 @@ auto main() -> int {
     if(!count || *count!=15000 || large_allocations)return 13;
     ::policy::DnsRule evaluate;evaluate.match_all=true;evaluate.action=::policy::DnsAction::evaluate;
     ::policy::DnsRule match;match.has_rule_set=true;match.match_response=true;match.action=::policy::DnsAction::respond;
-    ::rules::RuleSet set{{{"ip-cidr","127.0.0.0/8",{}}},1};
+    ::rules::RuleSet set{{{"ip-cidr","127.0.0.0/8",{}}},2};
     if(!::policy::bind_dns_rule_set(match,std::move(set)))return 14;
     std::array rules{evaluate,match};std::size_t held;
     {

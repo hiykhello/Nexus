@@ -47,7 +47,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
   rule-set "blocked" path="rules/blocked.{rule_format}" format="{rule_format}"
-  rule kind="rule-set" value="blocked" outbound="reject"
+  rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}
   default-outbound "direct"
 }}
 '''
@@ -175,7 +175,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-config-test-") as tmp:
     root = pathlib.Path(tmp)
     (root / "rules").mkdir()
     rule = root / "rules/blocked.kdl"
-    rule.write_text('schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
+    rule.write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
     subprocess.run([converter, "rule", "convert", "kdl", "beve", rule, root / "rules/blocked.beve"], check=True)
     # A parsed VLESS inbound must never silently start as an unauthenticated SOCKS listener.
     port = unused_port()

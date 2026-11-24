@@ -1,9 +1,10 @@
 export module sniff.udp_quic;
 import std;
 export import sniff.stun;
+export import sniff.extra;
 export namespace sniff {
     enum class QuicProbeStatus { waiting,matched,unknown,unrelated };
-    struct QuicProbeResult {QuicProbeStatus status=QuicProbeStatus::unknown;std::optional<std::string> domain;};
+    struct QuicProbeResult {QuicProbeStatus status=QuicProbeStatus::unknown;std::optional<std::string> domain;std::optional<std::string> client{};};
     class QuicProbe {
         struct Impl;
         std::unique_ptr<Impl> impl_;

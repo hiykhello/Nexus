@@ -9,13 +9,13 @@ module;
 
 module cli.dns_message_runtime;
 import std;
-import nexus.compat;
+import functional;
 import logging;
 import logging.cli;
 import config;
 import cli.dns_transports;
 import cli.outbounds;
-import proxy;
+import relay;
 import dns.local_config;
 import dns.corosio_query;
 import cli.dns_fakeip_backend;
@@ -26,18 +26,19 @@ import dns.message_tcp_listener;
 import dns.message_udp_listener;
 import dns.tls_query;
 import dns.https_query;
-import nexus.thirdparty.corosio;
+import dns.quic_query;
+import corosio;
 import state.fakeip;
 import rulefile;
 import state.dns_cache;
 import state.serde;
-
-#include "dns_cache_state.hpp"
-#include "dns_cache_unified.hpp"
+import cli.dns_cache_state;
+import cli.dns_cache_unified;
 
 namespace cli {
 #ifdef NEXUS_ENABLE_FAKEIP
-#include "fakeip_state.hpp"
+    auto unified_fakeip(config::DnsFakeIp const&, std::optional<dns::FakeIpIpv6Range>)
+        -> std::expected<std::shared_ptr<dns::FakeIpShared>, std::string>;
 #endif
     struct DnsMessageRuntime::Impl {
         logging::Runtime const& logs_;
@@ -128,8 +129,8 @@ namespace cli {
             }
         };
         mutable std::shared_ptr<ResolverView const> resolver_view_;
-        std::optional<nex::corosio::io_context> context_;
-        std::unique_ptr<proxy::Server> routes_;
+        std::optional<corosio::io_context> context_;
+        std::unique_ptr<relay::Server> routes_;
         dns::TlsQueryMaintenance dns_tls_maintenance_;
         std::shared_ptr<Program> program_;
         bool admitted_=false;
@@ -140,8 +141,10 @@ namespace cli {
         std::condition_variable worker_changed_;
         bool polling_=false, paused_=false, stopping_=false, draining_=false;
         std::atomic<bool> healthy_{true},drained_{false};
+        std::atomic<std::uint8_t> reclaim_requested_{0};
+        AsyncDnsCheckpointer checkpointer_;
 
-        auto executor() noexcept -> nex::corosio::io_context& {
+        auto executor() noexcept -> corosio::io_context& {
             return routes_ ? routes_->executor_context() : *context_;
         }
 
@@ -162,6 +165,11 @@ namespace cli {
                 try {
                     (void)io.run_one_until(next_maintenance);
                     auto now=std::chrono::steady_clock::now();
+                    if (auto rl = reclaim_requested_.exchange(0, std::memory_order_acq_rel)) {
+                        dns::reap_idle_tls_queries(io, std::chrono::steady_clock::time_point::max());
+                        dns::reap_idle_https_queries(io, std::chrono::steady_clock::time_point::max());
+                        if (rl >= 2 && program_ && program_->cache) program_->cache->clear_entries();
+                    }
                     if (now>=next_maintenance) {
                         dns_tls_maintenance_.poll(io,now);
                         next_maintenance=now+std::chrono::seconds(1);
@@ -192,7 +200,7 @@ namespace cli {
 
         // Transfer exclusive use of the context to the control thread for a
         // lifecycle mutation. stop() interrupts the backend's blocking wait.
-        auto synchronize(nexus::function_ref<void()> action) -> void {
+        auto synchronize(functional::function_ref<void()> action) -> void {
             std::unique_lock lock(worker_mutex_);
             paused_=true;
             if (polling_) {
@@ -204,11 +212,11 @@ namespace cli {
             worker_changed_.notify_all();
         }
 
-        static auto endpoint(config::DnsListen const& listen) -> nex::corosio::endpoint {
-            if (listen.ipv6) return {nex::corosio::ipv6_address(listen.address),listen.port};
-            nex::corosio::ipv4_address::bytes_type bytes{};
+        static auto endpoint(config::DnsListen const& listen) -> corosio::endpoint {
+            if (listen.ipv6) return {corosio::ipv6_address(listen.address),listen.port};
+            corosio::ipv4_address::bytes_type bytes{};
             std::copy_n(listen.address.begin(),bytes.size(),bytes.begin());
-            return {nex::corosio::ipv4_address(bytes),listen.port};
+            return {corosio::ipv4_address(bytes),listen.port};
         }
 
         auto snapshot() const -> dns::MessageRuleSnapshot {
@@ -271,7 +279,7 @@ namespace cli {
                     routing.optimistic_cache_seconds!=running.routing.optimistic_cache_seconds))
                     return std::unexpected("changing upstreams of a layered DNS listener requires restart");
             } else if (program->proxy_routes) {
-                auto created=proxy::Server::create();
+                auto created=relay::Server::create();
                 if (!created) return std::unexpected(created.error().message());
                 if (auto outbounds=configure_outbounds(**created,config,protection); !outbounds)
                     return std::unexpected("cannot prepare DNS listener outbounds: "+outbounds.error());
@@ -280,7 +288,10 @@ namespace cli {
             program->upstreams.reserve(routing.servers.size());
             for (auto const& entry : routing.servers) {
                 dns::MessageUpstream upstream{};
-                if (!entry.upstream) upstream.local=&program->local;
+                if (entry.kind!=config::DnsServerKind::standard) {
+                    upstream.port=53;
+                    upstream.endpoint=endpoint({{127,0,0,1},false,53});
+                } else if (!entry.upstream) upstream.local=&program->local;
                 else {
                     auto const& value=*entry.upstream;
                     upstream.tcp=value.tcp;
@@ -320,7 +331,7 @@ namespace cli {
                 }
             }
             program->reverse_cache=std::move(reverse);
-            program->resolver={program->upstreams,routing.final,program->cache.get(),routing.disable_cache,program->reverse_cache.get()};
+            program->resolver={program->upstreams,routing.final,program->cache.get(),routing.disable_cache,program->reverse_cache.get(),routing.independent_cache};
             program_=std::move(program);
             return {};
         }
@@ -344,7 +355,7 @@ namespace cli {
                 if (!activated) return std::unexpected(activated.error().message());
             } else {
 #if BOOST_COROSIO_HAVE_LIBURING
-                context_.emplace(nex::corosio::uring);
+                context_.emplace(corosio::uring);
 #else
                 context_.emplace();
 #endif
@@ -396,66 +407,58 @@ namespace cli {
         auto save_checkpoint() noexcept -> void {
             if (!program_ || (!program_->cache_state && !program_->observed_view)) return;
             try {
-                auto saved=program_->unified_cache ?
-                    program_->unified_cache->save(*program_->cache,*program_->observed_view) :
-                    program_->cache_state->save(*program_->cache,*program_->cache_scope);
-                if (!saved) logs_.emit(logging::Level::warn,logging::Domain::dns,121,{},
-                    "DNS message cache checkpoint failed: {}",logs_.private_text(saved.error()));
+                auto log_err = [this](std::string const& e) {
+                    logs_.emit(logging::Level::warn, logging::Domain::dns, 121, {}, "DNS message cache checkpoint failed: {}", logs_.private_text(e));
+                };
+                if (program_->unified_cache) {
+                    if (auto p = program_->unified_cache->prepare_save(*program_->cache, *program_->observed_view))
+                        checkpointer_.submit([pr = program_, item = std::move(*p), log_err] { if (auto s = pr->unified_cache->commit_save(item); !s) log_err(s.error()); });
+                } else if (auto wire = program_->cache_state->prepare_save(*program_->cache, *program_->cache_scope); !wire) {
+                    log_err(wire.error());
+                } else {
+                    checkpointer_.submit([pr = program_, data = std::move(*wire), log_err] { if (auto s = pr->cache_state->commit_save(data); !s) log_err(s.error()); });
+                }
             } catch (std::bad_alloc const&) {
-                logs_.emit(logging::Level::error,logging::Domain::dns,121,{},
-                    "DNS message cache checkpoint: out of memory");
+                logs_.emit(logging::Level::error, logging::Domain::dns, 121, {}, "DNS message cache checkpoint: out of memory");
             }
         }
-
-        auto checkpoint() noexcept -> void {synchronize([this] {save_checkpoint();});}
-
-        auto healthy() const noexcept -> bool {
-            return healthy_.load(std::memory_order_acquire);
+        auto checkpoint() noexcept -> void {
+            synchronize([this] { save_checkpoint(); });
+            checkpointer_.flush();
+#ifdef NEXUS_ENABLE_FAKEIP
+            if (program_ && program_->fakeip) program_->fakeip->flush_store();
+#endif
         }
-
+        auto healthy() const noexcept -> bool { return healthy_.load(std::memory_order_acquire); }
         auto begin_drain() noexcept -> void {
-            if (!tcp_) return;
-            synchronize([this] {
-                draining_=true;
-                tcp_->begin_drain();
-                if (udp_) udp_->begin_drain();
-            });
+            if (tcp_) synchronize([this] { draining_=true; tcp_->begin_drain(); if (udp_) udp_->begin_drain(); });
         }
-
-        auto drained() const noexcept -> bool {
-            return !tcp_ || drained_.load(std::memory_order_acquire);
+        auto drained() const noexcept -> bool { return !tcp_ || drained_.load(std::memory_order_acquire); }
+        auto reclaim_memory(bool hard) noexcept -> void {
+            std::uint8_t want = hard ? 2 : 1, cur = reclaim_requested_.load(std::memory_order_relaxed);
+            while (cur < want && !reclaim_requested_.compare_exchange_weak(cur, want, std::memory_order_release)) {}
+            std::lock_guard lock(worker_mutex_);
+            if (polling_) executor().stop();
         }
 
         auto stop() noexcept -> void {
             if (worker_.joinable()) {
-                {
-                    std::lock_guard lock(worker_mutex_);
-                    stopping_=true;
-                    if (polling_) executor().stop();
-                    worker_changed_.notify_all();
-                }
+                { std::lock_guard lock(worker_mutex_); stopping_=true; if (polling_) executor().stop(); worker_changed_.notify_all(); }
                 worker_.join();
             }
             if (program_ && (tcp_ || udp_)) program_->cache->stop_refreshes();
-            if (tcp_) tcp_->stop();
-            if (udp_) udp_->stop();
-            if (routes_) {
-                routes_->stop();
-            } else if (tcp_ || udp_) {
-                dns::stop_https_queries(*context_);
-                context_->restart();
-                (void)context_->run();
+            if (tcp_) tcp_->stop(); if (udp_) udp_->stop();
+            checkpointer_.stop();
+            if (routes_) routes_->stop();
+            else if (tcp_ || udp_) {
+                dns::stop_tls_queries(*context_); dns::stop_https_queries(*context_); dns::stop_quic_queries(*context_);
+                context_->restart(); (void)context_->run();
             }
-            tcp_.reset();
-            udp_.reset();
-            routes_.reset();
-            context_.reset();
-            resolver_view_.reset();
-            program_.reset();
-            stopping_=false;
-            draining_=false;
-            drained_.store(false,std::memory_order_relaxed);
-            healthy_.store(true,std::memory_order_relaxed);
+#ifdef NEXUS_ENABLE_FAKEIP
+            if (program_ && program_->fakeip) program_->fakeip->stop_store();
+#endif
+            tcp_.reset(); udp_.reset(); routes_.reset(); context_.reset(); resolver_view_.reset(); program_.reset();
+            stopping_=false; draining_=false; drained_.store(false,std::memory_order_relaxed); healthy_.store(true,std::memory_order_relaxed);
         }
     };
 
@@ -463,6 +466,7 @@ namespace cli {
         :impl_(std::make_unique<Impl>(logs)) {}
     DnsMessageRuntime::~DnsMessageRuntime()=default;
     auto DnsMessageRuntime::checkpoint() noexcept -> void {impl_->checkpoint();}
+    auto DnsMessageRuntime::reclaim_memory(bool hard) noexcept -> void {impl_->reclaim_memory(hard);}
 
     auto DnsMessageRuntime::prepare(config::Config const& value,std::span<DnsProtection const> protection,
         dns::MessageRuleSource source,DnsMessageRuntime const* previous,std::shared_ptr<dns::ReverseCache> reverse) -> std::expected<void,std::string> {

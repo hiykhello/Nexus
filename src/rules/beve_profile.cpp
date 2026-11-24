@@ -14,7 +14,6 @@ namespace rules {
             std::string_view input_;
             std::size_t offset_ = 0;
             std::size_t nodes_ = 0;
-            bool nested_;
 
             auto byte() -> std::uint8_t {
                 return static_cast<std::uint8_t>(input_[offset_++]);
@@ -36,7 +35,7 @@ namespace rules {
 
             auto raw_string(std::string_view& value) -> bool {
                 std::uint64_t length = 0;
-                if (!count(length) || length > (nested_ ? 255U : 253U) || length > input_.size() - offset_) return false;
+                if (!count(length) || length > 255U || length > input_.size() - offset_) return false;
                 value = input_.substr(offset_, static_cast<std::size_t>(length));
                 offset_ += static_cast<std::size_t>(length);
                 return true;
@@ -50,17 +49,17 @@ namespace rules {
             auto rule(unsigned depth) -> bool {
                 if (depth>max_rule_depth || ++nodes_>max_rules) return false;
                 std::uint64_t fields = 0;
-                if (!tag(object_tag) || !count(fields) || fields != (nested_ ? 3 : 2)) return false;
+                if (!tag(object_tag) || !count(fields) || fields != 3) return false;
                 unsigned seen = 0;
                 for (unsigned i = 0; i < fields; ++i) {
                     std::string_view key;
                     if (!raw_string(key)) return false;
-                    unsigned bit = key == "type" ? 1U : key == "value" ? 2U : key == "children" && nested_ ? 4U : 0U;
+                    unsigned bit = key == "type" ? 1U : key == "value" ? 2U : key == "children" ? 4U : 0U;
                     if (bit == 0 || (seen & bit)) return false;
                     if (bit==4 ? !rules(depth+1) : !string_value()) return false;
                     seen |= bit;
                 }
-                return seen == (nested_ ? 7U : 3U);
+                return seen == 7U;
             }
 
             auto rules(unsigned depth) -> bool {
@@ -77,7 +76,7 @@ namespace rules {
             }
 
         public:
-            explicit ProfileReader(std::string_view input,bool nested) : input_(input),nested_(nested) {}
+            explicit ProfileReader(std::string_view input) : input_(input) {}
 
             auto valid() -> bool {
                 std::uint64_t fields = 0;
@@ -98,7 +97,7 @@ namespace rules {
         };
     }
 
-    auto valid_beve_profile(std::string_view payload,bool nested) -> bool {
-        return ProfileReader(payload,nested).valid();
+    auto valid_beve_profile(std::string_view payload) -> bool {
+        return ProfileReader(payload).valid();
     }
 }

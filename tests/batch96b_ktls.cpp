@@ -73,7 +73,7 @@ namespace {
     }
 
     auto mock_ops() noexcept -> tls::KtlsOps {
-        return {&mock_setsockopt, &mock_send, &mock_recv};
+        return {&mock_setsockopt, &mock_send, &mock_recv, tls::parse_linux_kernel_release("6.14.0")};
     }
 
     auto make_app_io(crypto::Aead aead) -> tls::ApplicationIo {
@@ -191,6 +191,12 @@ namespace {
         auto r3 = ktls.recv_record(99, buf);
         if (r3.kind != tls::KtlsRecvKind::close_notify) return 34;
         if (ktls.send_close_notify(99) != tls::KtlsStatus::ok || g_mock.last_sent_type != 21) return 35;
+
+        // Control-message truncation (EBADMSG returned by posix_recv_record on MSG_CTRUNC)
+        g_mock.next_recv_errno = EBADMSG;
+        auto r4 = ktls.recv_record(99, buf);
+        if (r4.kind == tls::KtlsRecvKind::data) return 36;
+        g_mock.next_recv_errno = 0;
         return 0;
     }
 

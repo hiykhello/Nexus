@@ -18,6 +18,19 @@ namespace state {
     }
 
     namespace {
+        auto flock_with_backoff(int fd) noexcept -> bool {
+            for (int attempt = 0; attempt < 20; ++attempt) {
+                if (::flock(fd, LOCK_EX | LOCK_NB) == 0) return true;
+                int err = errno;
+                if (err != EWOULDBLOCK && err != EAGAIN) return false;
+                if (attempt + 1 < 20) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    errno = err;
+                }
+            }
+            return false;
+        }
+
         auto lock_directory(File directory, bool readonly_cache = false) -> std::expected<std::pair<int, int>, StateError> {
             struct stat info{};
             if (::fstat(directory.get(), &info) < 0) return failure(Stage::directory, errno);
@@ -25,7 +38,7 @@ namespace state {
                 !(readonly_cache && (info.st_mode & 07777) == 0500)))
                 return failure(Stage::directory, EACCES);
             // Older selector processes lock the directory inode.
-            if (::flock(directory.get(), LOCK_EX | LOCK_NB) < 0) return failure(Stage::lock, errno);
+            if (!flock_with_backoff(directory.get())) return failure(Stage::lock, errno);
 
             constexpr char name[] = "instance.lock";
             constexpr auto flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC;
@@ -40,7 +53,7 @@ namespace state {
             if (created && ::fchmod(lock.get(), 0600) < 0) return failure(Stage::lock_file, errno);
             if (::fstat(lock.get(), &info) < 0) return failure(Stage::lock_file, errno);
             if (!private_regular(info)) return failure(Stage::lock_file, EACCES);
-            if (::flock(lock.get(), LOCK_EX | LOCK_NB) < 0) return failure(Stage::lock, errno);
+            if (!flock_with_backoff(lock.get())) return failure(Stage::lock, errno);
             return std::pair(directory.release(), lock.release());
         }
     }

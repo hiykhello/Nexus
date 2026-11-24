@@ -3,8 +3,8 @@ import std;
 import tls.corosio_application;
 import tls.application_io;
 import tls.ktls;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace tls::detail {
     enum class ByteStreamError { state,io,protocol,timeout };
@@ -15,7 +15,7 @@ export namespace tls::detail {
     class ByteStream {
         ApplicationConnection<Socket>& connection_;
         ApplicationStreamReader<Socket> reader_;
-        nex::capy::async_mutex writer_;
+        capy::async_mutex writer_;
         std::span<std::uint8_t const> prefetched_;
         bool failed_=false,reading_=false,eof_=false,released_read_=false;
         auto fail(ByteStreamError error) -> std::unexpected<ByteStreamError> {
@@ -52,7 +52,7 @@ export namespace tls::detail {
 #endif
         }
         auto read(std::span<std::uint8_t> output,ApplicationDeadline deadline={},ReadTimeoutPolicy policy=ReadTimeoutPolicy::cancel_connection)
-            -> nex::capy::task<std::expected<std::size_t,ByteStreamError>> {
+            -> capy::task<std::expected<std::size_t,ByteStreamError>> {
             if (failed_ || reading_ || released_read_) co_return std::unexpected(ByteStreamError::state);
             if (output.empty() || eof_) co_return 0;
             if (!prefetched_.empty()) {
@@ -74,14 +74,14 @@ export namespace tls::detail {
                     co_return fail(ByteStreamError::protocol);
                 if (result->kind==AsyncStreamReadKind::backpressure || (result->event && result->event->kind==ApplicationEventKind::key_update_requested)) {
                     auto operation=writer_.scoped_lock();
-                    auto [error,lock]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+                    auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
                     if (error || failed_ || !co_await connection_.flush(deadline)) co_return fail(ByteStreamError::io);
                 }
             }
         }
-        auto send(std::span<std::uint8_t const> input,ApplicationDeadline deadline={}) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> input,ApplicationDeadline deadline={}) -> capy::task<bool> {
             auto operation=writer_.scoped_lock();
-            auto [error,lock]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
             if (error || failed_) co_return false;
             while (connection_.pending_output()) {
                 if (!co_await connection_.flush(deadline) || failed_) { (void)fail(ByteStreamError::io); co_return false; }
@@ -90,9 +90,9 @@ export namespace tls::detail {
             if (!sent || failed_) { (void)fail(ByteStreamError::io); co_return false; }
             co_return true;
         }
-        auto key_update(bool request,ApplicationDeadline deadline={}) -> nex::capy::task<bool> {
+        auto key_update(bool request,ApplicationDeadline deadline={}) -> capy::task<bool> {
             auto operation=writer_.scoped_lock();
-            auto [error,lock]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
             if (error || failed_) co_return false;
             while (connection_.pending_output()) {
                 if (!co_await connection_.flush(deadline) || failed_) { (void)fail(ByteStreamError::io); co_return false; }
@@ -101,9 +101,9 @@ export namespace tls::detail {
             if (!updated || failed_) { (void)fail(ByteStreamError::io); co_return false; }
             co_return true;
         }
-        auto close_output(ApplicationDeadline deadline={}) -> nex::capy::task<bool> {
+        auto close_output(ApplicationDeadline deadline={}) -> capy::task<bool> {
             auto operation=writer_.scoped_lock();
-            auto [error,lock]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
             if (error || failed_) co_return false;
             while (connection_.pending_output()) {
                 if (!co_await connection_.flush(deadline) || failed_) { (void)fail(ByteStreamError::io); co_return false; }

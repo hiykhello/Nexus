@@ -20,6 +20,7 @@ export namespace tcp {
         [[nodiscard]] auto retransmit(std::size_t maximum) const -> SendSlice;
         [[nodiscard]] auto mark_sent(std::size_t count) noexcept -> std::expected<void, SendError>;
         [[nodiscard]] auto acknowledge(std::uint32_t acknowledgement) noexcept -> std::expected<std::size_t, SendError>;
+        auto release_storage() noexcept -> void { std::vector<std::uint8_t>{}.swap(ring_); capacity_ = 0; }
         [[nodiscard]] auto una() const noexcept -> std::uint32_t { return una_; }
         [[nodiscard]] auto next() const noexcept -> std::uint32_t { return una_ + static_cast<std::uint32_t>(sent_); }
         [[nodiscard]] auto queued() const noexcept -> std::size_t { return count_; }
@@ -33,7 +34,7 @@ export namespace tcp {
         std::uint64_t srtt_ms_ = 0, rttvar_ms_ = 0;
         std::uint32_t rtt_seq_ = 0;
         std::uint64_t rtt_sent_at_ = 0;
-        unsigned dup_acks_ = 0;
+        unsigned dup_acks_ = 0, rto_retries_ = 0;
         bool initialized_ = false, rtt_valid_ = false, rtt_tracking_ = false, fast_retransmit_ = false;
         std::optional<std::uint64_t> deadline_;
         explicit TimedSend(SendBuffer buffer) : buffer_(std::move(buffer)) {}
@@ -41,6 +42,7 @@ export namespace tcp {
         auto arm(std::uint64_t now) noexcept -> void;
         auto observe_rtt(std::uint64_t sample_ms) noexcept -> void;
     public:
+        static constexpr unsigned kMaxRetries = 8;
         [[nodiscard]] static auto create(std::uint32_t initial, std::size_t capacity) -> std::expected<TimedSend, SendError>;
         [[nodiscard]] auto enqueue(std::span<std::uint8_t const> bytes) -> std::expected<void, SendError> { return buffer_.enqueue(bytes); }
         [[nodiscard]] auto unsent(std::size_t maximum) const -> SendSlice { return buffer_.unsent(maximum); }
@@ -49,8 +51,13 @@ export namespace tcp {
         [[nodiscard]] auto acknowledge(std::uint32_t ack, std::uint64_t now) noexcept -> std::expected<std::size_t, SendError>;
         [[nodiscard]] auto due(std::uint64_t now, std::size_t maximum) -> std::expected<std::optional<SendSlice>, SendError>;
         [[nodiscard]] auto retransmitted(std::uint64_t now) noexcept -> std::expected<void, SendError>;
+        auto release_storage() noexcept -> void { buffer_.release_storage(); }
         [[nodiscard]] auto deadline() const noexcept -> std::optional<std::uint64_t> { return deadline_; }
         [[nodiscard]] auto rto() const noexcept -> std::uint64_t { return rto_; }
+        [[nodiscard]] auto retries() const noexcept -> unsigned { return rto_retries_; }
+        [[nodiscard]] auto expired(std::uint64_t now) const noexcept -> bool {
+            return rto_retries_ >= kMaxRetries && deadline_ && now >= *deadline_;
+        }
         [[nodiscard]] auto srtt_ms() const noexcept -> std::optional<std::uint64_t> { return rtt_valid_ ? std::optional{srtt_ms_} : std::nullopt; }
         [[nodiscard]] auto fast_retransmit_pending() const noexcept -> bool { return fast_retransmit_; }
         [[nodiscard]] auto next() const noexcept -> std::uint32_t { return buffer_.next(); }

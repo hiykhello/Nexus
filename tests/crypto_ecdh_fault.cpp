@@ -43,7 +43,7 @@ int main() {
         for(std::size_t failure=0;failure<=count;++failure) {
             native::calls=0;native::denied=false;native::allowance=failure;native::enabled=true;
             bool complete=attempt(group);native::enabled=false;
-            nex::boringssl::ERR_clear_error();
+            boringssl::ERR_clear_error();
             if(native::live!=before||native::bytes!=bytes||(failure<count&&(!native::denied||complete))||(failure==count&&(!complete||native::denied)))return 4;
             if(!attempt(group)||native::live!=before||native::bytes!=bytes)return 5;
             if(failure<count)++failures;

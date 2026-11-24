@@ -23,14 +23,14 @@ import net.udp_connect;
 import hysteria2.transport_options;
 import platform.socket_options;
 import crypto;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import nghttp3;
+import capy;
+import corosio;
 
 export namespace naive {
-    namespace h3 = nex::nghttp3;
-    namespace q = nex::ngtcp2;
+    namespace h3 = ::nghttp3;
+    namespace q = ::ngtcp2;
     using H3Clock = std::chrono::steady_clock;
     using H3Deadline = std::optional<H3Clock::time_point>;
 
@@ -62,7 +62,7 @@ export namespace naive {
     class H3ConnectHooks {
         Registry& registry_;
         quic::SessionHandle owner_;
-        nex::capy::async_event& event_;
+        capy::async_event& event_;
 
     public:
         struct OutboundPacket {
@@ -88,7 +88,7 @@ export namespace naive {
         std::deque<OutboundPacket> tx_dgrams;
         bool dead = false, goaway = false;
 
-        H3ConnectHooks(Registry& registry, quic::SessionHandle owner, nex::capy::async_event& event) noexcept
+        H3ConnectHooks(Registry& registry, quic::SessionHandle owner, capy::async_event& event) noexcept
             : registry_(registry), owner_(owner), event_(event) {}
         static constexpr auto stream_capacity() noexcept -> std::size_t { return Streams; }
         auto changed() noexcept -> void { event_.set(); }
@@ -246,18 +246,33 @@ export namespace naive {
             if (auto* stream = find(id); stream && !stream->retired) fail(*stream);
         }
         auto send_closed(std::int64_t id, std::uint64_t code) noexcept -> void { receive_closed(id, code); }
-        auto closed(std::int64_t id, std::uint64_t, std::uint64_t) noexcept -> void {
+        auto closed_reclaimed(std::int64_t id, std::uint64_t, std::uint64_t, std::size_t& discard_bytes) noexcept -> bool {
             auto it = streams.find(id);
-            if (it == streams.end()) return;
-            if (it->second.retired) streams.erase(it);
-            else {
-                auto& s = it->second;
-                s.closed = true;
-                s.failed |= !s.remote_end;
-                s.abort = false;
-                s.output.clear();
+            if (it == streams.end()) return true;
+            if (it->second.retired) {
+                streams.erase(it);
+                changed();
+                return true;
             }
+            if constexpr (ServerSide) {
+                if (!it->second.accepted) {
+                    discard_bytes = it->second.input.size();
+                    streams.erase(it);
+                    changed();
+                    return true;
+                }
+            }
+            auto& s = it->second;
+            s.closed = true;
+            s.failed |= !s.remote_end || !s.complete;
+            s.abort = false;
+            s.output.clear();
             changed();
+            return false;
+        }
+        auto closed(std::int64_t id, std::uint64_t rx, std::uint64_t tx) noexcept -> void {
+            std::size_t discard = 0;
+            (void)closed_reclaimed(id, rx, tx, discard);
         }
         auto shutdown(std::int64_t first_unprocessed) noexcept -> int {
             goaway = true;
@@ -297,23 +312,27 @@ export namespace naive {
 
         auto state() noexcept { return bundle_.hooks.find(id_); }
 
-        auto wait(H3Deadline deadline = {}) -> nex::capy::task<bool> {
+        auto wait(H3Deadline deadline = {}) -> capy::task<bool> {
             if (bundle_.hooks.dead) co_return false;
             auto& event = driver_.changed();
             event.clear();
-            auto [error] = deadline ? co_await nex::corosio::timeout(event.wait(), *deadline) : co_await event.wait();
+            auto [error] = deadline ? co_await corosio::timeout(event.wait(), *deadline) : co_await event.wait();
             co_return !error && !bundle_.hooks.dead;
         }
 
         auto respond(std::span<h3::nghttp3_nv const> fields, bool body) -> bool {
             auto* s = state();
-            if (!s || s->failed || s->closed || bundle_.app.h3().response(id_, fields, body)) return false;
+            if (!s || s->failed || s->closed) return false;
+            if (bundle_.app.h3().response(id_, fields, body)) {
+                if (bundle_.app.h3().terminal_error()) { bundle_.app.request_stop(); driver_.notify(); }
+                return false;
+            }
             s->fin_requested = !body;
             driver_.notify();
             return true;
         }
 
-        auto send_raw(std::span<std::uint8_t const> bytes, bool fin, H3Deadline until = {}) -> nex::capy::task<bool> {
+        auto send_raw(std::span<std::uint8_t const> bytes, bool fin, H3Deadline until = {}) -> capy::task<bool> {
             auto* s = state();
             if (!s || s->failed || s->closed || s->retired || bundle_.hooks.dead) co_return false;
             while (!s->output.empty()) {
@@ -325,6 +344,7 @@ export namespace naive {
             s->output.assign(bytes.begin(), bytes.end());
             s->fin_requested = fin;
             if (bundle_.app.h3().resume(id_)) {
+                if (bundle_.app.h3().terminal_error()) bundle_.app.request_stop();
                 release();
                 co_return false;
             }
@@ -337,7 +357,7 @@ export namespace naive {
             }
         }
 
-        auto send(std::span<std::uint8_t const> bytes, H3Deadline until = {}) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> bytes, H3Deadline until = {}) -> capy::task<bool> {
             if (bytes.empty()) co_return true;
             std::span<std::uint8_t const> wire = bytes;
             if (!encoder_.in_passthrough()) {
@@ -354,9 +374,8 @@ export namespace naive {
         }
 
         auto read(std::span<std::uint8_t> output, H3Deadline until = {})
-            -> nex::capy::task<std::expected<std::size_t, std::string>> {
+            -> capy::task<std::expected<std::size_t, std::string>> {
             if (output.empty()) co_return std::size_t{0};
-            std::array<std::uint8_t, 16384> scratch{};
             for (;;) {
                 if (decoded_offset_ < decoded_.size()) {
                     auto count = std::min(output.size(), decoded_.size() - decoded_offset_);
@@ -365,6 +384,7 @@ export namespace naive {
                     if (decoded_offset_ == decoded_.size()) {
                         decoded_.clear();
                         decoded_offset_ = 0;
+                        if (decoder_.in_passthrough()) std::vector<std::uint8_t>{}.swap(decoded_);
                     }
                     co_return count;
                 }
@@ -373,19 +393,26 @@ export namespace naive {
                     co_return std::unexpected("HTTP/3 stream failed");
                 auto data = s->input.peek();
                 if (!data.empty()) {
-                    auto target = decoder_.in_passthrough() ? output : std::span(scratch);
-                    auto size = std::min(target.size(), data.size());
+                    if (decoder_.in_passthrough()) {
+                        auto size = std::min(output.size(), data.size());
+                        if (s->closed) bundle_.app.discard_body(size);
+                        else if (!bundle_.app.consume_body(id_, size))
+                            co_return std::unexpected("HTTP/3 flow control failure");
+                        std::copy_n(data.begin(), size, output.begin());
+                        s->input.consume(size);
+                        driver_.notify();
+                        co_return size;
+                    }
+                    auto size = std::min<std::size_t>(16384, data.size());
+                    decoded_.clear();
+                    decoded_offset_ = 0;
+                    if (!decoder_.feed(data.first(size), decoded_))
+                        co_return std::unexpected("NaiveProxy H3 padding decode failed");
                     if (s->closed) bundle_.app.discard_body(size);
                     else if (!bundle_.app.consume_body(id_, size))
                         co_return std::unexpected("HTTP/3 flow control failure");
-                    std::copy_n(data.begin(), size, target.begin());
                     s->input.consume(size);
                     driver_.notify();
-                    if (decoder_.in_passthrough()) co_return size;
-                    decoded_.clear();
-                    decoded_offset_ = 0;
-                    if (!decoder_.feed(target.first(size), decoded_))
-                        co_return std::unexpected("NaiveProxy H3 padding decode failed");
                     continue;
                 }
                 if (s->remote_end) co_return std::size_t{0};
@@ -400,6 +427,8 @@ export namespace naive {
                 return false;
             if (bundle_.hooks.tx_dgrams.size() >= kH3MaxDatagramQueue || payload.size() > masque::max_udp_payload)
                 return false;
+            if (1 + payload.size() > bundle_.hooks.datagram_budget())
+                return true;
             std::vector<std::uint8_t> prefixed;
             prefixed.reserve(1 + payload.size());
             prefixed.push_back(0x00); // RFC 9298 context-id = 0
@@ -409,7 +438,7 @@ export namespace naive {
             return true;
         }
 
-        auto recv_datagram(H3Deadline until = {}) -> nex::capy::task<std::optional<std::vector<std::uint8_t>>> {
+        auto recv_datagram(H3Deadline until = {}) -> capy::task<std::optional<std::vector<std::uint8_t>>> {
             for (;;) {
                 auto* s = state();
                 if (!s || !s->is_datagram || s->failed || s->retired || bundle_.hooks.dead)
@@ -424,7 +453,7 @@ export namespace naive {
             }
         }
 
-        auto close_output(H3Deadline until = {}) -> nex::capy::task<bool> {
+        auto close_output(H3Deadline until = {}) -> capy::task<bool> {
             co_return co_await send_raw({}, true, until);
         }
 
@@ -436,8 +465,11 @@ export namespace naive {
             if (!s || s->retired) return;
             bundle_.app.discard_body(s->input.size());
             s->input.discard();
-            if (s->closed) bundle_.hooks.streams.erase(id_);
-            else {
+            std::erase_if(bundle_.hooks.tx_dgrams, [id = id_](auto const& p) { return p.stream == id; });
+            if (s->closed) {
+                bundle_.hooks.streams.erase(id_);
+                if ((id_ & 3) == 0) bundle_.app.extend_client_streams(1);
+            } else {
                 s->retired = true;
                 if (!s->remote_end || !s->fin_written) {
                     bundle_.hooks.fail(*s);

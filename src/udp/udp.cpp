@@ -1,10 +1,12 @@
 module udp;
 import std;
-import nexus.compat;
+import functional;
+import utility;
 
 namespace udp {
     template <typename Endpoint>
     auto BasicFlowTable<Endpoint>::erase_flow(typename List::iterator it) noexcept -> void {
+        if (it->idle_override_ms) --custom_idle_count_;
         by_id_.erase(it->id);
         if (auto lit = by_local_.find(it->local); lit != by_local_.end()) {
             std::erase(lit->second, it);
@@ -19,6 +21,15 @@ namespace udp {
         initialized_ = true;
         now_ = now;
         std::size_t removed = 0;
+        if (custom_idle_count_ == 0) {
+            while (!flows_.empty() && now - flows_.front().touched >= limits_.idle_ms) {
+                auto cur = flows_.begin();
+                if (retirement_.notify) retirement_.notify(retirement_.context, cur->id);
+                erase_flow(cur);
+                ++removed;
+            }
+            return removed;
+        }
         for (auto it = flows_.begin(); it != flows_.end(); ) {
             auto idle = it->idle_override_ms ? it->idle_override_ms : limits_.idle_ms;
             if (now - it->touched < idle) { ++it; continue; }
@@ -34,6 +45,7 @@ namespace udp {
         if (!idle_ms) return false;
         auto found = by_id_.find(id);
         if (found == by_id_.end()) return false;
+        if (found->second->idle_override_ms == 0) ++custom_idle_count_;
         found->second->idle_override_ms = idle_ms;
         return true;
     }
@@ -73,7 +85,7 @@ namespace udp {
         auto id = open(local, remote, now);
         if (!id) return std::unexpected(id.error());
         bool created = flows_.size() != previous;
-        nexus::scope_exit rollback([&] {
+        utility::scope_exit rollback([&] {
             if (created) (void)close(*id, now);
         });
         auto token = begin_send(*id, remote, now);
@@ -114,14 +126,15 @@ namespace udp {
             it->peers.push_back(key);
         it->sent = true;
         it->touched = now;
+        flows_.splice(flows_.end(), flows_, it);
         return {};
     }
     template <typename Endpoint>
     auto BasicFlowTable<Endpoint>::transmit(FlowId id, Endpoint remote, std::uint64_t now,
-                             nexus::function_ref<bool()> sender) -> std::expected<void, Error> {
+                             functional::function_ref<bool()> sender) -> std::expected<void, Error> {
         auto token = begin_send(id, remote, now);
         if (!token) return std::unexpected(token.error());
-        nexus::scope_exit rollback([&] { (void)finish_send(id, *token, false, now); });
+        utility::scope_exit rollback([&] { (void)finish_send(id, *token, false, now); });
         auto sent = sender();
         auto result = finish_send(id, *token, sent, now);
         rollback.release();
@@ -148,6 +161,7 @@ namespace udp {
         flows_.clear();
         by_id_.clear();
         by_local_.clear();
+        custom_idle_count_ = 0;
         return count;
     }
     template <typename Endpoint>
@@ -161,6 +175,7 @@ namespace udp {
         if (!it->sent || (filtering_ != Filtering::endpoint_independent &&
                           std::ranges::find(it->peers, key) == it->peers.end())) return std::unexpected(Error::forbidden);
         it->touched = now;
+        flows_.splice(flows_.end(), flows_, it);
         return it->local;
     }
     template class BasicFlowTable<Endpoint4>;

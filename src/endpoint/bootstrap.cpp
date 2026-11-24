@@ -7,14 +7,14 @@ import endpoint.credentials;
 import endpoint.process_signals;
 import dns.local_config;
 import dns.corosio_local;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace endpoint {
     namespace {
         using Clock=std::chrono::steady_clock;
-        namespace io=nex::corosio;
-        namespace capy=nex::capy;
+        namespace io = ::corosio;
+        namespace capy = ::capy;
         namespace local=dns::detail;
         auto strategy(AddressStrategy input) noexcept -> local::AddressStrategy {
             switch(input) {

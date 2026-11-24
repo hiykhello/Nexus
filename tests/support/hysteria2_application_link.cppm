@@ -1,4 +1,4 @@
-export module nexus.test.hysteria2_application_link;
+export module test.hysteria2_application_link;
 import std;
 import crypto;
 import hysteria2.application;
@@ -11,21 +11,21 @@ import quic.connection;
 import quic.tls_client;
 import quic.tls_server;
 import tls.server_credential;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.quic_datagram_link;
+import ngtcp2;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.quic_datagram_link;
 
 
-export namespace nexus::test::hysteria2_application_link {
-namespace n=nex::ngtcp2;
+export namespace test::hysteria2_application_link {
+namespace n = ::ngtcp2;
 namespace q=quic;
 namespace h=hysteria2;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
-namespace support=nexus::test::quic_tls;
-namespace udp=nexus::test::quic_datagram_link;
+namespace io = ::corosio;
+namespace capy = ::capy;
+namespace support=test::quic_tls;
+namespace udp=test::quic_datagram_link;
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
 

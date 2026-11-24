@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-xudp-policy-") as directory:
     root=pathlib.Path(directory); front=free_port(); listen=free_port(); stop=threading.Event(); queries=[]; packets=[]; errors=[]
     (root/"uuid").write_text("00010203-0405-0607-0809-0a0b0c0d0e0f\n"); (root/"uuid").chmod(0o600)
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(root/"key"), "-out", str(root/"cert"), "-subj", "/CN=cover.example", "-addext", "subjectAltName=DNS:cover.example", "-days", "1"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    (root/"block.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="' + ('::2/128' if ipv6 else '127.0.0.3/32') + '"\n')
+    (root/"block.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="' + ('::2/128' if ipv6 else '127.0.0.3/32') + '"\n')
     dns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); dns.bind(("127.0.0.1",0)); dns.settimeout(.1)
     origins=[]
     for ip in (("::1", "::1") if ipv6 else ("127.0.0.2", "127.0.0.3")):
@@ -74,7 +74,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={listen}; authenti
 outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={front};{flow} authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "cover.example"; ca-file "{root/'cert'}"; verify #true; }} }}
-routing {{ rule-set "block" path="block.kdl" format="kdl"; rule kind="rule-set" value="block" outbound="reject"; default-outbound "edge"; }}
+routing {{ rule-set "block" path="block.kdl" format="kdl"; rules {{ - kind="rule-set" value="block" outbound="reject"; }}; default-outbound "edge"; }}
 ''')
     subprocess.run(["sing-box","check","-c",root/"box.json"],capture_output=True,check=True)
     box=subprocess.Popen(["sing-box","run","-c",root/"box.json"],stderr=subprocess.PIPE); proxy=None

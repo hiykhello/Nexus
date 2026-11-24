@@ -2,10 +2,10 @@ export module http2.session_core;
 import std;
 import http2.headers;
 import memory.budget;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 
 export namespace http2::detail {
-    namespace h2=nex::nghttp2;
+    namespace h2 = ::nghttp2;
     enum class CoreError { state,limit,allocation,http2,headers };
     enum class Role { client,server };
     struct CoreLimits {

@@ -231,7 +231,7 @@ def vless_block(directory, upstream_port):
     reserve.bind(("127.0.0.1", 0))
     port = reserve.getsockname()[1]
     reserve.close()
-    (directory / "deny.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
+    (directory / "deny.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
     config = directory / "blocked-vless.kdl"
     config.write_text(f'''schema-version 1
 role "client"
@@ -244,7 +244,7 @@ outbound "edge" type="vless" {{
   authentication {{ uuid-file "{directory / 'user.uuid'}"; }}
   tls {{ server-name "server.example"; ca-file "{directory / 'root.pem'}"; verify #true; }}
 }}
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" value="deny" outbound="reject"; default-outbound "edge"; }}
+routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "edge"; }}
 ''')
     process = subprocess.Popen([NEXUS, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

@@ -1,5 +1,6 @@
 export module wireguard;
 import std;
+import encoding.endian;
 
 export namespace wireguard {
     using Key=std::array<std::uint8_t,32>;
@@ -15,16 +16,16 @@ export namespace wireguard {
     inline constexpr auto rekey_after_time=std::chrono::seconds(120),reject_after_time=std::chrono::seconds(180);
     inline constexpr auto cookie_refresh_time=std::chrono::seconds(120);
     inline auto load_le32(std::span<std::uint8_t const,4> bytes) noexcept -> std::uint32_t {
-        return bytes[0]|(std::uint32_t(bytes[1])<<8)|(std::uint32_t(bytes[2])<<16)|(std::uint32_t(bytes[3])<<24);
+        return encoding::read_le32(bytes);
     }
     inline auto load_le64(std::span<std::uint8_t const,8> bytes) noexcept -> std::uint64_t {
-        std::uint64_t value=0; for (std::size_t i=0;i<8;++i) value|=std::uint64_t(bytes[i])<<(8*i); return value;
+        return encoding::read_le64(bytes);
     }
     inline auto store_le32(std::span<std::uint8_t,4> bytes,std::uint32_t value) noexcept -> void {
-        for (std::size_t i=0;i<4;++i) bytes[i]=static_cast<std::uint8_t>(value>>(8*i));
+        encoding::write_le32(bytes, value);
     }
     inline auto store_le64(std::span<std::uint8_t,8> bytes,std::uint64_t value) noexcept -> void {
-        for (std::size_t i=0;i<8;++i) bytes[i]=static_cast<std::uint8_t>(value>>(8*i));
+        encoding::write_le64(bytes, value);
     }
     inline auto message_type(std::span<std::uint8_t const> wire) noexcept -> std::expected<MessageType,Error> {
         if (wire.size()<4) return std::unexpected(Error::invalid_length);

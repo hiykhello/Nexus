@@ -10,9 +10,9 @@ import masque.udp_session;
 import net.udp_socket;
 import dns.local_config;
 import dns.corosio_local;
-import nexus.thirdparty.nghttp3;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import nghttp3;
+import capy;
+import corosio;
 
 export namespace masque {
     // One HTTP/3 connection and all DNS/readiness roots share one executor.
@@ -23,10 +23,11 @@ export namespace masque {
         using Server=UdpServer<Tls,ConfigPolicy,Streams,Mtu>;
         struct Watch {
             UdpHandle handle;int original=-1;
-            nex::corosio::udp_socket socket;
+            corosio::udp_socket socket;
+            capy::async_event resume;
             std::stop_source stop;
-            bool done=false,canceled=false;
-            Watch(nex::corosio::io_context& context,UdpHandle id,int fd):handle(id),original(fd),socket(context) {}
+            bool done=false,canceled=false,paused=false;
+            Watch(corosio::io_context& context,UdpHandle id,int fd):handle(id),original(fd),socket(context) {}
         };
         struct Lookup {
             typename Server::Route route;
@@ -35,11 +36,11 @@ export namespace masque {
             bool done=false,canceled=false;
             explicit Lookup(typename Server::Route value):route(std::move(value)) {}
         };
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         HostConfig const& config_;
         dns::LocalSnapshotSource& snapshots_;
         std::function<void()> notify_transport_;
-        nex::capy::async_event work_;
+        capy::async_event work_;
         ConfigPolicy policy_;
         Server server_;
         std::array<std::unique_ptr<Watch>,Streams> watches_{};
@@ -49,21 +50,38 @@ export namespace masque {
         bool started_=false,stopped_=false,monitor_=false,failed_=false;
 #ifdef NEXUS_TEST_MASQUE_HOST_LIFETIME
         bool hold_lookup_=false,lookup_waiting_=false;
-        nex::capy::async_event lookup_gate_;
+        capy::async_event lookup_gate_;
 #endif
-        auto changed() noexcept -> void {work_.set();try {notify_transport_();}catch(...) {failed_=true;stop();}}
+        auto wake_watches() noexcept -> void {
+            for(auto& w:watches_)if(w && !w->done && !w->canceled && w->paused &&
+                server_.socket_watch_state(w->handle,w->original)!=SocketWatchState::paused) {
+                w->paused=false;
+                w->resume.set();
+            }
+        }
+        auto changed() noexcept -> void {wake_watches();work_.set();try {notify_transport_();}catch(...) {failed_=true;stop();}}
         auto complete() noexcept -> void {if(!active_)std::terminate();--active_;changed();}
         auto fail() noexcept -> void {failed_=true;stop();}
-        auto watch(Watch& watch) -> nex::capy::task<> {
+        auto watch(Watch& watch) -> capy::task<> {
             while(!stopped_ && !watch.canceled) {
-                auto [error]=co_await watch.socket.wait(nex::corosio::wait_type::read);
+                auto state=server_.socket_watch_state(watch.handle,watch.original);
+                if(state==SocketWatchState::inactive)break;
+                if(state==SocketWatchState::paused) {
+                    watch.resume.clear();
+                    watch.paused=true;
+                    auto [error]=co_await watch.resume.wait();
+                    watch.paused=false;
+                    if(error || stopped_ || watch.canceled)break;
+                    continue;
+                }
+                auto [error]=co_await watch.socket.wait(corosio::wait_type::read);
                 if(stopped_ || watch.canceled)break;
                 if(error) {if(!server_.socket_failed(watch.handle,watch.original))fail();else changed();break;}
                 if(!server_.ready_socket(watch.handle,watch.original)) {fail();break;}
                 changed();
             }
         }
-        auto resolve(Lookup& lookup) -> nex::capy::task<> {
+        auto resolve(Lookup& lookup) -> capy::task<> {
 #ifdef NEXUS_TEST_MASQUE_HOST_LIFETIME
             if(hold_lookup_) {lookup_waiting_=true;auto [ignored]=co_await lookup_gate_.wait();(void)ignored;lookup_waiting_=false;}
             if(stopped_ || lookup.canceled)co_return;
@@ -90,7 +108,7 @@ export namespace masque {
             if(watch->socket.assign(duplicate)) {::close(duplicate);return false;}
             auto* raw=watch.get();watches_[handle.slot]=std::move(watch);++active_;
             try {
-                nex::capy::run_async(context_.get_executor(),raw->stop.get_token(),[this,raw]() noexcept {raw->socket.close();raw->done=true;complete();},
+                capy::run_async(context_.get_executor(),raw->stop.get_token(),[this,raw]() noexcept {raw->socket.close();raw->done=true;complete();},
                     [this,raw](std::exception_ptr) noexcept {raw->socket.close();raw->done=true;complete();fail();})(this->watch(*raw));
             }catch(...) {--active_;watches_[handle.slot].reset();return false;}
             return true;
@@ -99,19 +117,19 @@ export namespace masque {
             auto index=route.handle.slot;if(index>=Streams || lookups_[index])return false;
             auto lookup=std::make_unique<Lookup>(std::move(route));auto* raw=lookup.get();lookups_[index]=std::move(lookup);++active_;
             try {
-                nex::capy::run_async(context_.get_executor(),stop_.get_token(),[this,raw]() noexcept {raw->done=true;complete();},
+                capy::run_async(context_.get_executor(),stop_.get_token(),[this,raw]() noexcept {raw->done=true;complete();},
                     [this,raw](std::exception_ptr) noexcept {raw->done=true;complete();fail();})(resolve(*raw));
             }catch(...) {--active_;lookups_[index].reset();return false;}
             return true;
         }
-        auto maintain() -> nex::capy::task<> {
+        auto maintain() -> capy::task<> {
             while(!stopped_) {
                 work_.clear();
                 auto current=server_.sockets();
                 for(std::size_t i=0;i<Streams;++i) {
                     auto& watch=watches_[i];
                     if(watch && !watch->done && (!current[i] || current[i]->first!=watch->handle || current[i]->second!=watch->original)) {
-                        watch->canceled=true;watch->stop.request_stop();watch->socket.cancel();
+                        watch->canceled=true;watch->stop.request_stop();watch->socket.cancel();watch->resume.set();
                     }
                     if(watch && watch->done)watch.reset();
                     if(!watch && current[i] && !launch_watch(current[i]->first,current[i]->second)) {fail();break;}
@@ -132,8 +150,8 @@ export namespace masque {
     public:
         using ServerType=Server;
         using Transport=typename Server::Transport;
-        ServerHost(nex::corosio::io_context& context,Tls& tls,HostConfig const& config,dns::LocalSnapshotSource& snapshots,
-            nex::nghttp3::nghttp3_mem const& memory,std::function<void()> notify_transport,IpServerPort* ip_port=nullptr)
+        ServerHost(corosio::io_context& context,Tls& tls,HostConfig const& config,dns::LocalSnapshotSource& snapshots,
+            nghttp3::nghttp3_mem const& memory,std::function<void()> notify_transport,IpServerPort* ip_port=nullptr)
             :context_(context),config_(config),snapshots_(snapshots),notify_transport_(std::move(notify_transport)),
              policy_(config_,this,[](void* owner) noexcept {static_cast<ServerHost*>(owner)->changed();}),server_(tls,policy_,config.authority,memory,ip_port) {
             if(!config_.valid(ip_port!=nullptr) || !notify_transport_)throw std::invalid_argument("invalid MASQUE host configuration");
@@ -148,7 +166,7 @@ export namespace masque {
             if(started_ || stopped_)throw std::logic_error("MASQUE host cannot start");
             started_=monitor_=true;
             try {
-                nex::capy::run_async(context_.get_executor(),stop_.get_token(),[this]() noexcept {monitor_=false;changed();},
+                capy::run_async(context_.get_executor(),stop_.get_token(),[this]() noexcept {monitor_=false;changed();},
                     [this](std::exception_ptr) noexcept {monitor_=false;fail();})(maintain());
             }catch(...) {monitor_=false;stop();throw;}
             changed();
@@ -156,7 +174,7 @@ export namespace masque {
         auto stop() noexcept -> void {
             if(std::exchange(stopped_,true))return;
             server_.stop();stop_.request_stop();
-            for(auto& w:watches_)if(w && !w->done){w->canceled=true;w->stop.request_stop();w->socket.cancel();}
+            for(auto& w:watches_)if(w && !w->done){w->canceled=true;w->stop.request_stop();w->socket.cancel();w->resume.set();}
             for(auto& l:lookups_)if(l && !l->done){l->canceled=true;if(l->resolver)l->resolver->cancel();}
             work_.set();
 #ifdef NEXUS_TEST_MASQUE_HOST_LIFETIME

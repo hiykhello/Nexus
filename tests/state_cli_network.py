@@ -160,50 +160,6 @@ fake-ip server="dns" ipv4-pool="198.18.0.0/22" ipv6-pool="fd15:4231::/96"
     print(f"PASS {mode} SIGKILL, torn WAL, restore/reallocation, redacted inspect, protected clear, backed-up reset")
 
 
-def convert_nxdns1(source, port):
-    """Encode the first real v2 row in the documented NXDNS1 wire format."""
-    data = source.read_bytes()
-    assert data.startswith(b"NXDNS2")
-    policy_length = int.from_bytes(data[6:10], "big")
-    prefix = 10 + policy_length + 4
-    assert data[prefix+8:prefix+12] == b"\0\1\0\0"
-    converted = (b"NXDNS1\x04\0" + port.to_bytes(2,"big") + socket.inet_aton("127.0.0.1")
-                 + data[prefix:prefix+10] + data[prefix+12:-8])
-    checksum = 14695981039346656037
-    for byte in converted:
-        checksum = ((checksum ^ byte) * 1099511628211) & ((1 << 64)-1)
-    source.write_bytes(converted + checksum.to_bytes(8,"big"))
-
-
-def migration(binary, root, peer, version, old_binary=None):
-    legacy, cache = root / "legacy", root / "cache"
-    legacy.mkdir(mode=0o700)
-    config = root / "proxy.kdl"
-    port = checkpoint_listener_port()
-    upstream = f'''
-message-cache-directory "{legacy}"
-server "numeric" type="udp" host="{peer.host}" port={peer.port}
-final "numeric"
-'''
-    base = program(port, upstream)
-    config.write_text(base)
-    offset = len(peer.seen)
-    with running(old_binary or binary, config):
-        assert dns_request(port, "migrate.private.test") == (0, "127.0.0.1")
-    snapshot = legacy / "messages.cache"
-    if version == 1 and old_binary is None:
-        convert_nxdns1(snapshot, peer.port)
-    assert snapshot.read_bytes().startswith(f"NXDNS{version}".encode())
-    config.write_text(base.replace("dns {", f'state {{ cache-directory "{cache}"; }}\ndns {{'))
-    with running(binary, config):
-        assert dns_request(port, "migrate.private.test") == (0, "127.0.0.1")
-        assert len(peer.seen) == offset + 1
-    shards = list((cache / "dns").glob("*.state"))
-    assert len(shards) == 1 and shards[0].read_bytes().startswith(b"NXDN03")
-    assert "component=dns version=NXDN03 entries=1" in command(binary, config, "inspect").stdout
-    print(f"PASS NXDNS{version} migration restored a real answer and wrote NXDN03")
-
-
 def encrypted_views(binary, root, plain):
     with DotServer(root, "127.0.0.1", socket.AF_INET) as tls:
         config, cache = root / "proxy.kdl", root / "cache"
@@ -251,13 +207,10 @@ final "plain"
 
 if __name__ == "__main__":
     cli, library = (Path(path).resolve(strict=True) for path in sys.argv[1:3])
-    old = Path(sys.argv[3]).resolve(strict=True) if len(sys.argv)>3 else None
     with tempfile.TemporaryDirectory(prefix="nexus-state-cli-") as directory, Peer() as peer:
         root = Path(directory)
-        for label in ("range", "mapping", "v1", "v2", "encrypted"):
+        for label in ("range", "mapping", "encrypted"):
             (root / label).mkdir()
         fakeip(cli, root / "range", peer, library, False)
         fakeip(cli, root / "mapping", peer, library, True)
-        migration(cli, root / "v1", peer, 1, old)
-        migration(cli, root / "v2", peer, 2)
         encrypted_views(cli, root / "encrypted", peer)

@@ -1,16 +1,23 @@
 module rules.rule_input;
 import std;
 import rules;
+import rules.convert_external;
 
 namespace rules {
-    auto parse_srs_input(std::string_view data,bool ip_cidr_match_source) -> std::expected<RuleSet,Error>;
-    auto parse_rule_input(std::string_view data,InputFormat format,bool ip_cidr_match_source) -> std::expected<RuleSet,Error> {
-        if(ip_cidr_match_source && format!=InputFormat::srs)
-            return std::unexpected(Error{ErrorCode::schema,"IP CIDR source matching requires SRS format"});
+    auto parse_srs_input(std::string_view data,bool ip_cidr_match_source,bool lenient) -> std::expected<RuleSet,Error>;
+    auto parse_rule_input(std::string_view data,InputFormat format,bool ip_cidr_match_source,bool lenient) -> std::expected<RuleSet,Error> {
+        if(ip_cidr_match_source && format!=InputFormat::srs && format!=InputFormat::nxmm)
+            return std::unexpected(Error{ErrorCode::schema,"IP CIDR source matching requires SRS or NXMM format"});
         switch(format) {
         case InputFormat::kdl: return parse_kdl(data);
         case InputFormat::beve: return parse_beve(data);
-        case InputFormat::srs: return parse_srs_input(data,ip_cidr_match_source);
+        case InputFormat::srs: return parse_srs_input(data,ip_cidr_match_source,lenient);
+        case InputFormat::nxmm: return parse_nxmm(data);
+        case InputFormat::json: return parse_json_ruleset(data,lenient);
+        case InputFormat::domain_list: return parse_domain_list(data,lenient);
+        case InputFormat::ipcidr_list: return parse_ipcidr_list(data,lenient);
+        case InputFormat::classical: return parse_classical_list(data,lenient);
+        case InputFormat::adguard: return parse_adguard_list(data,lenient);
         }
         return std::unexpected(Error{ErrorCode::schema,"invalid rule format"});
     }

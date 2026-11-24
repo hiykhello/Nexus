@@ -1,8 +1,8 @@
 export module tls.server_credential;
-export import nexus.thirdparty.boringssl;
+export import boringssl;
 export import crypto;
 import std;
-using namespace nex::boringssl;
+using namespace boringssl;
 export namespace tls {
     enum class ServerCredentialError { invalid_certificate, invalid_private_key, key_mismatch, unsupported_key,
         invalid_transcript, invalid_state, crypto_error };
@@ -48,5 +48,22 @@ export namespace tls {
             -> std::expected<crypto::Bytes,ServerCredentialError>;
         [[nodiscard]] auto sign(std::uint16_t signature_scheme,crypto::Hash hash, std::span<std::uint8_t const> transcript_hash) const
             -> std::expected<crypto::Bytes,ServerCredentialError>;
+    };
+
+    // Thread-safe hot-swappable holder for ACME and dynamic TLS ServerCredential updates.
+    class AtomicServerCredential {
+        mutable std::mutex mutex_;
+        std::shared_ptr<ServerCredential const> current_;
+        std::atomic<std::uint64_t> generation_{0};
+    public:
+        AtomicServerCredential() = default;
+        auto update(ServerCredential credential) -> std::uint64_t;
+        [[nodiscard]] auto update_pem(std::string_view cert_pem, std::string_view key_pem)
+            -> std::expected<std::uint64_t, ServerCredentialError>;
+        [[nodiscard]] auto clone_current() const -> std::expected<ServerCredential, ServerCredentialError>;
+        [[nodiscard]] auto generation() const noexcept -> std::uint64_t {
+            return generation_.load(std::memory_order_acquire);
+        }
+        [[nodiscard]] auto empty() const noexcept -> bool { return generation() == 0; }
     };
 }

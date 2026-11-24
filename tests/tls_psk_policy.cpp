@@ -1,5 +1,5 @@
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import tls.psk_client_policy;
 import tls.psk_server_policy;
 import tls.hello_config;
@@ -11,7 +11,7 @@ using CP=t::PskClientPolicy<t::ResumptionTicket,Clock>;using Store=t::ServerTick
 auto body(unsigned tag=1)->Bytes {Bytes out{0,0,0,1,0xff,0xff,0xff,0xf0,1,3,0,32};for(unsigned i=0;i<32;++i)out.push_back(static_cast<std::uint8_t>(i+tag));out.insert(out.end(),{0,0});return out;}
 auto binding()->t::TicketBinding {return {"server.example",{'h','2'},{},{}};}
 auto material(unsigned tag=1)->t::ResumptionTicket {auto value=t::ResumptionTicket::from_message(body(tag),c::Hash::sha256,Bytes(32,0xa5),binding(),1000);if(!value)std::abort();return std::move(*value);}
-auto client()->CP {nexus::inplace_vector<t::ResumptionTicket,8> offers;offers.push_back(material());auto policy=CP::create(binding(),std::move(offers));if(!policy)std::abort();return std::move(*policy);}
+auto client()->CP {containers::inplace_vector<t::ResumptionTicket,8> offers;offers.push_back(material());auto policy=CP::create(binding(),std::move(offers));if(!policy)std::abort();return std::move(*policy);}
 auto hello()->t::ClientHello {std::array<std::uint16_t,1> groups{29};std::array<std::string_view,1> alpn{"h2"};auto value=t::make_client_hello({},alpn,groups);if(!value)std::abort();return std::move(*value);}
 auto frame(t::ClientHello const& hello)->Bytes {auto b=hello.encode();if(!b)std::abort();auto n=b->size();Bytes out{1,static_cast<std::uint8_t>(n>>16),static_cast<std::uint8_t>(n>>8),static_cast<std::uint8_t>(n)};out.insert(out.end(),b->begin(),b->end());return out;}
 auto server_binding()->t::ServerTicketBinding {t::ServerTicketBinding b{{},{'h','2'},{}};b.credential_context[0]=9;return b;}
@@ -43,7 +43,7 @@ int main() {
  {auto changed=server_binding();changed.alpn={'h','3'};SP policy(store,changed);auto accepted=policy.select(ch,wire,0x1301);if(!accepted||*accepted)return 22;}
  {auto changed=server_binding();changed.credential_context[1]^=1;SP policy(store,changed);auto accepted=policy.select(ch,wire,0x1301);if(!accepted||*accepted)return 23;}
  {auto h=ch;h.extensions.push_back({21,{}});SP policy(store,server_binding());if(policy.select(h,frame(h),0x1301).error()!=t::PskError::invalid_offer)return 24;}
- {auto value=material();auto b=binding();b.authentication_context[0]=1;nexus::inplace_vector<t::ResumptionTicket,8> offers;offers.push_back(std::move(value));if(CP::create(b,std::move(offers)).error()!=t::PskError::identity_mismatch)return 25;}
+ {auto value=material();auto b=binding();b.authentication_context[0]=1;containers::inplace_vector<t::ResumptionTicket,8> offers;offers.push_back(std::move(value));if(CP::create(b,std::move(offers)).error()!=t::PskError::identity_mismatch)return 25;}
  Clock::value=2000;
  {SP policy(store,server_binding());auto accepted=policy.select(ch,wire,0x1301);if(!accepted||*accepted)return 26;}
  {auto expired=client();auto h=hello();if(!expired.prepare(h)||h.extension(41))return 27;}

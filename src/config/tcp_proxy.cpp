@@ -1,7 +1,7 @@
 module config;
 import std;
 import config.kdl_common;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
     auto parse_tcp_dial_option(kdl::Node const&,TcpSocketOptions&) -> std::expected<bool,std::string>;

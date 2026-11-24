@@ -1,6 +1,6 @@
 import std;
-import proxy.session_quota;
-using proxy::SessionQuota;
+import relay.session_quota;
+using relay::SessionQuota;
 
 auto main() -> int {
     SessionQuota quota(7);

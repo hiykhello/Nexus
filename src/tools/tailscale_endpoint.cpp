@@ -1,7 +1,16 @@
+module;
+#if defined(__linux__)
+#include <fcntl.h>
+#include <sys/epoll.h>
+#include <unistd.h>
+#include <boost/corosio/posix_stream_descriptor.hpp>
+#include <boost/corosio/wait_type.hpp>
+#endif
 module cli.tailscale_endpoint;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import cli.tailscale_identity;
+import cli.tailscale_mesh_link;
 import crypto;
 import endpoint.process_signals;
 import http2.client_channel;
@@ -19,14 +28,15 @@ import platform.ip_address;
 import platform.socket_options;
 import platform.netlink_abi;
 import rulefile;
-import proxy;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import relay;
+import proxy.v4;
+import capy;
+import corosio;
 
 namespace cli::tailscale_endpoint {
     namespace {
-        namespace io = nex::corosio;
-        namespace capy = nex::capy;
+        namespace io = ::corosio;
+        namespace capy = ::capy;
         namespace app = tailscale::control_application;
         namespace cm = tailscale::control_messages;
         namespace noise = tailscale::control;
@@ -52,7 +62,6 @@ namespace cli::tailscale_endpoint {
         using Connection = tailscale::control_connection::Connection<Connector,4>;
         using Relay = tailscale::derp::Connection<Connector>;
         using Device = tailscale::wireguard_tun::Device;
-#include "tailscale_mesh_link.hpp"
 
         struct PreparedRelay {
             RelayConfig const* config;
@@ -67,6 +76,7 @@ namespace cli::tailscale_endpoint {
             PreparedRelay const*& selected;
             Relay*& active_relay;
             UserspaceLink* userspace;
+            capy::async_event* relay_sel_wake = nullptr;
             bool ready = false;
 
             auto select(tailscale::map_session::State const& state) const -> PreparedRelay const* {
@@ -100,6 +110,7 @@ namespace cli::tailscale_endpoint {
                 if (active_relay) active_relay->cancel();
                 device.relay_ready(false);
                 device.select_relay(selected ? selected->config->region : 0);
+                if (relay_sel_wake) relay_sel_wake->set();
             }
             auto install(tailscale::map_session::State const& state) -> bool {
                 if (!state.self()) return false;
@@ -142,12 +153,55 @@ namespace cli::tailscale_endpoint {
             Relay* active_relay = nullptr;
             PreparedRelay const* selected_relay = nullptr;
             bool registered = false, done = false, fatal = false;
+            capy::async_event relay_tx_wake, relay_sel_wake;
+#if defined(__linux__)
+            int pkt_ep_ = -1, pkt_wake_rd_ = -1, pkt_wake_wr_ = -1;
+            std::array<int, 2> pkt_watched_{-1, -1};
+            std::optional<io::posix_stream_descriptor> pkt_desc_;
+            auto init_pkt_wait() noexcept -> void {
+                if (pkt_ep_ >= 0) return;
+                pkt_ep_ = ::epoll_create1(EPOLL_CLOEXEC);
+                int pfds[2]{-1, -1};
+                if (pkt_ep_ >= 0 && ::pipe2(pfds, O_NONBLOCK | O_CLOEXEC) == 0) {
+                    pkt_wake_rd_ = pfds[0]; pkt_wake_wr_ = pfds[1];
+                    epoll_event ev{.events = EPOLLIN, .data = {.fd = pkt_wake_rd_}};
+                    if (::epoll_ctl(pkt_ep_, EPOLL_CTL_ADD, pkt_wake_rd_, &ev) != 0) { ::close(pkt_wake_rd_); ::close(pkt_wake_wr_); pkt_wake_rd_ = pkt_wake_wr_ = -1; }
+                }
+                if (pkt_ep_ >= 0) { pkt_desc_.emplace(context); if (pkt_desc_->assign(pkt_ep_)) { pkt_desc_.reset(); ::close(pkt_ep_); pkt_ep_ = -1; } }
+            }
+            auto notify_pkt() const noexcept -> void {
+                if (pkt_wake_wr_ >= 0) { char b = 1; (void)::write(pkt_wake_wr_, &b, 1); }
+            }
+            auto wait_pkt(std::array<int, 2> fds, Clock::time_point until) -> capy::task<bool> {
+                init_pkt_wait();
+                if (!pkt_desc_) { auto [e] = co_await io::delay(std::chrono::milliseconds(5)); co_return !e; }
+                for (std::size_t i = 0; i < 2; ++i) {
+                    if (fds[i] != pkt_watched_[i]) {
+                        if (pkt_watched_[i] >= 0) (void)::epoll_ctl(pkt_ep_, EPOLL_CTL_DEL, pkt_watched_[i], nullptr);
+                        pkt_watched_[i] = -1;
+                        if (fds[i] >= 0) {
+                            epoll_event ev{.events = EPOLLIN, .data = {.fd = fds[i]}};
+                            if (::epoll_ctl(pkt_ep_, EPOLL_CTL_ADD, fds[i], &ev) == 0) pkt_watched_[i] = fds[i];
+                        }
+                    }
+                }
+                (void)co_await io::timeout(pkt_desc_->wait(io::wait_type::read), until);
+                if (pkt_wake_rd_ >= 0) { char buf[64]; while (::read(pkt_wake_rd_, buf, sizeof(buf)) > 0) {} }
+                co_return true;
+            }
+            ~Runtime() {
+                if (userspace) userspace->set_wake(nullptr, nullptr);
+                if (pkt_desc_) { pkt_desc_->close(); pkt_desc_.reset(); }
+                if (pkt_wake_rd_ >= 0) ::close(pkt_wake_rd_);
+                if (pkt_wake_wr_ >= 0) ::close(pkt_wake_wr_);
+            }
+#endif
             auto stopping() const noexcept -> bool {
                 return shutdown.stop_requested() || (!userspace && ::endpoint::process::StopRequested{}());
             }
 
-            auto advertised(std::optional<net::UdpEndpoint> mapping) const -> nexus::inplace_vector<cm::Endpoint,2> {
-                nexus::inplace_vector<cm::Endpoint,2> endpoints;
+            auto advertised(std::optional<net::UdpEndpoint> mapping) const -> containers::inplace_vector<cm::Endpoint,2> {
+                containers::inplace_vector<cm::Endpoint,2> endpoints;
                 endpoints.push_back({bound.address,bound.family,bound.port});
                 if (mapping && *mapping != bound) endpoints.push_back({mapping->address,mapping->family,mapping->port});
                 return endpoints;
@@ -160,7 +214,7 @@ namespace cli::tailscale_endpoint {
                     bool& flag;
                     ~Done() { flag = true; if (runtime.active_relay) runtime.active_relay->cancel(); }
                 } completion{*this, finished};
-                Sink sink{device, config, bound.port, relays, selected_relay, active_relay, userspace};
+                Sink sink{device, config, bound.port, relays, selected_relay, active_relay, userspace, &relay_sel_wake};
                 auto endpoints=advertised(device.mapping());
                 app::Options options{config.authority, {node,auth_key,config.name,"linux","Nexus",config.ephemeral},
                                      endpoints,generation};
@@ -185,7 +239,18 @@ namespace cli::tailscale_endpoint {
 
             auto packets(Connection& connection, bool& finished) -> capy::task<capy::results<>> {
                 auto published=device.mapping();
-                if (userspace) userspace->synchronize(device);
+                struct ClearWake {
+                    UserspaceLink* link = nullptr;
+                    ~ClearWake() { if (link) link->set_wake(nullptr, nullptr); }
+                } clear_wake;
+                if (userspace) {
+                    userspace->synchronize(device);
+#if defined(__linux__)
+                    init_pkt_wait();
+                    clear_wake.link = userspace;
+                    userspace->set_wake([](void* c) noexcept { static_cast<Runtime*>(c)->notify_pkt(); }, this);
+#endif
+                }
                 while (!finished && !stopping()) {
                     if (!device.poll()) { fatal = true; connection.cancel(); break; }
                     if (userspace) userspace->synchronize(device);
@@ -198,8 +263,13 @@ namespace cli::tailscale_endpoint {
                         }
                         published=mapping;
                     }
-                    auto [error] = co_await io::delay(std::chrono::milliseconds(5));
+                    auto wait_for = device.has_active_peers() ? std::chrono::milliseconds(50) : std::chrono::milliseconds(250);
+#if defined(__linux__)
+                    if (!co_await wait_pkt(device.watch_fds(), Clock::now() + wait_for)) break;
+#else
+                    auto [error] = co_await io::delay(wait_for);
                     if (error) break;
+#endif
                 }
                 co_return capy::results<>{};
             }
@@ -209,6 +279,7 @@ namespace cli::tailscale_endpoint {
                     if (!device.deliver_relay(packet->peer,packet->bytes)) { fatal = true; break; }
                 }
                 relay.cancel();
+                relay_tx_wake.set();
                 co_return capy::results<>{};
             }
 
@@ -219,7 +290,9 @@ namespace cli::tailscale_endpoint {
                 double tokens = burst;
                 auto last = Clock::now();
                 std::optional<Device::RelayPacket> pending;
+                device.set_relay_wake([](void* c) noexcept { static_cast<capy::async_event*>(c)->set(); }, &relay_tx_wake);
                 while (relay.settings()) {
+                    relay_tx_wake.clear();
                     if (pending && !device.valid_relay_packet(*pending)) pending.reset();
                     if (!pending) pending = device.next_relay_packet();
                     auto now = Clock::now();
@@ -235,11 +308,17 @@ namespace cli::tailscale_endpoint {
                             pending.reset();
                             continue;
                         }
-                        if (size > burst) pending.reset();
+                        if (size > burst) { pending.reset(); continue; }
+                        auto wait_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::duration<double>((size - tokens) / limits->bytes_per_second));
+                        auto [error] = co_await io::delay(std::max(wait_ns, std::chrono::nanoseconds(100000)));
+                        if (error) break;
+                        continue;
                     }
-                    auto [error] = co_await io::delay(std::chrono::milliseconds(5));
+                    auto [error] = co_await relay_tx_wake.wait();
                     if (error) break;
                 }
+                device.set_relay_wake(nullptr, nullptr);
                 relay.cancel();
                 co_return capy::results<>{};
             }
@@ -247,10 +326,11 @@ namespace cli::tailscale_endpoint {
             auto relay_task(bool& finished) -> capy::task<capy::results<>> {
                 if (relays.empty() || !node_identity) co_return capy::results<>{};
                 while (!finished && !fatal && !stopping()) {
+                    relay_sel_wake.clear();
                     auto selected = selected_relay;
                     if (!selected) {
-                        auto [error] = co_await io::delay(std::chrono::milliseconds(30));
-                        if (error) break;
+                        auto [error] = co_await io::timeout(relay_sel_wake.wait(), Clock::now() + std::chrono::milliseconds(250));
+                        if (stopping() || (error && finished)) break;
                         continue;
                     }
                     auto const& options = *selected->config;
@@ -270,8 +350,8 @@ namespace cli::tailscale_endpoint {
                     auto retry = Clock::now() + std::chrono::seconds(1);
                     while (!finished && !fatal && selected == selected_relay &&
                            !stopping() && Clock::now() < retry) {
-                        auto [error] = co_await io::delay(std::chrono::milliseconds(50));
-                        if (error) break;
+                        relay_sel_wake.clear();
+                        (void)co_await io::timeout(relay_sel_wake.wait(), retry);
                     }
                 }
                 co_return capy::results<>{};
@@ -313,15 +393,20 @@ namespace cli::tailscale_endpoint {
                         if (stopping()) {
                             if (active) active->cancel();
                             if (active_relay) active_relay->cancel();
+                            relay_sel_wake.set(); relay_tx_wake.set();
+#if defined(__linux__)
+                            notify_pkt();
+                            if (pkt_desc_) pkt_desc_->cancel();
+#endif
                         }
                         context.restart();
-                        context.run_for(std::chrono::milliseconds(10));
+                        context.run_for(std::chrono::milliseconds(100));
                     }
                     device.revoke();
                     if (userspace) userspace->synchronize(device);
                     auto next = Clock::now() + retry;
                     while (Clock::now() < next && !fatal && !stopping())
-                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        std::this_thread::sleep_for(std::min<Clock::duration>(std::chrono::milliseconds(50), next - Clock::now()));
                     retry = std::min(retry * 2,std::chrono::milliseconds(3000));
                 }
                 return !fatal && device.healthy();
@@ -391,9 +476,10 @@ namespace cli::tailscale_endpoint {
         return run_impl(config,check,{},nullptr);
     }
 
-    auto make_userspace(Config config) -> std::shared_ptr<proxy::MeshLink> {
-        return std::make_shared<OutboundLink>([config=std::move(config)](std::stop_token stop, UserspaceLink& link) {
-            return run_impl(config,false,stop,&link);
-        });
+    auto make_userspace(Config config) -> relay::MeshLink {
+        return pro::make_proxy_shared<relay::MeshLinkFacade, OutboundLink>(
+            [config=std::move(config)](std::stop_token stop, UserspaceLink& link) {
+                return run_impl(config,false,stop,&link);
+            });
     }
 }

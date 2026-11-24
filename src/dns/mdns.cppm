@@ -24,6 +24,18 @@ export namespace dns::mdns {
     };
 
     [[nodiscard]] auto is_mdns_name(std::string_view name) noexcept -> bool;
+    [[nodiscard]] inline auto same_name(std::string_view a, std::string_view b) noexcept -> bool {
+        if (a.ends_with('.')) a.remove_suffix(1);
+        if (b.ends_with('.')) b.remove_suffix(1);
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            unsigned char ca = static_cast<unsigned char>(a[i]), cb = static_cast<unsigned char>(b[i]);
+            if (ca >= 'A' && ca <= 'Z') ca = static_cast<unsigned char>(ca + ('a' - 'A'));
+            if (cb >= 'A' && cb <= 'Z') cb = static_cast<unsigned char>(cb + ('a' - 'A'));
+            if (ca != cb) return false;
+        }
+        return !a.empty();
+    }
     [[nodiscard]] auto make_mdns_query(std::string_view name, RecordType type = RecordType::any,
                                        bool unicast_response = false) -> std::expected<std::vector<std::uint8_t>, std::string>;
     [[nodiscard]] auto parse_mdns_response(std::span<std::uint8_t const> wire)
@@ -38,7 +50,8 @@ export namespace dns::mdns {
         std::vector<Entry> entries_;
         std::size_t max_entries_;
     public:
-        explicit MdnsCache(std::size_t max_entries = 512) noexcept : max_entries_(max_entries) {}
+        explicit MdnsCache(std::size_t max_entries = 512) noexcept
+            : max_entries_(std::max<std::size_t>(max_entries, 1)) {}
         auto ingest(std::span<MdnsRecord const> records, std::uint64_t now_sec) -> void;
         [[nodiscard]] auto lookup(std::string_view name, std::uint16_t type, std::uint64_t now_sec) const
             -> std::vector<MdnsRecord>;

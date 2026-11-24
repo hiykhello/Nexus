@@ -7,10 +7,9 @@ import dns.response_program;
 import dns.response_race_walk;
 import dns.policy;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 class FailingFrames final : public std::pmr::memory_resource {

@@ -2,9 +2,9 @@ import std;
 import crypto;
 import net.datagram_driver;
 import quic.retry_admission;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.corosio;
-namespace q=quic;namespace n=nex::ngtcp2;namespace io=nex::corosio;
+import ngtcp2;
+import corosio;
+namespace q=quic;namespace n = ::ngtcp2;namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 namespace allocation {bool observe=false;unsigned calls=0;}
 auto operator new(std::size_t size)->void*{if(allocation::observe)++allocation::calls;if(auto* p=std::malloc(size?size:1))return p;throw std::bad_alloc();}

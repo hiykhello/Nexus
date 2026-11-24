@@ -60,7 +60,7 @@ auto attempt(c::Bytes const& cert,c::Bytes const& key,t::ClientProfile const& pr
         }
         result.complete=client->complete()&&server->complete();result.denied=native::denied;result.calls=native::calls;native::enabled=false;
     }
-    nex::boringssl::ERR_clear_error();result.clean=native::live==before&&native::bytes==bytes;return result;
+    boringssl::ERR_clear_error();result.clean=native::live==before&&native::bytes==bytes;return result;
 }
 int main(int argc,char** argv) {
     if(argc!=6)return 1;

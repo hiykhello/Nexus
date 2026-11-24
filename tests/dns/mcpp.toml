@@ -1,25 +1,24 @@
 [package]
-namespace = "nexus"
 name = "dns-tests"
 version = "0.1.0"
 
 # The network fixtures exercise the same DNS and transport members as the
 # server, without pulling the proxy into each standalone test executable.
 [dependencies]
-nexus.dns = { path = "../../src/dns" }
-nexus.protocols = { path = "../../src" }
-nexus.platform-tests = { path = "../platform" }
+dns = { path = "../../src/dns" }
+protocols = { path = "../../src" }
+platform-tests = { path = "../platform" }
 nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring"]
 io-uring = ["nexus.corosio-source/uring"]
-test-fakeip = { implies = ["nexus.dns/test-fakeip"], defines = ["NEXUS_TEST_FAKEIP"] }
-test-random = { implies = ["nexus.platform-tests/test-random"], defines = ["NEXUS_TEST_LINUX_RANDOM"] }
+test-fakeip = { implies = ["dns/test-fakeip"], defines = ["NEXUS_TEST_FAKEIP"] }
+test-random = { implies = ["platform-tests/test-random"], defines = ["NEXUS_TEST_LINUX_RANDOM"] }
 
 [feature-deps.io-uring]
-nexus.uring-system.workspace = true
+uring-system.workspace = true
 
 [build]
 sources = ["query_hooks.cpp"]

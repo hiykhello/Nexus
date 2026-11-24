@@ -15,12 +15,11 @@ import tls.corosio_application;
 import tls.corosio_server_handshake;
 import tls.connector;
 import platform.socket_options;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace a=anytls;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Lower=tls::detail::ByteStream<io::tcp_socket>;
 using Session=a::Session<Lower>;

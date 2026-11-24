@@ -7,24 +7,24 @@ import quic.tls_client;
 import quic.tls_server;
 import hysteria2.auth;
 import http.header;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
+import ngtcp2;
+import nghttp3;
 import tls.server_credential;
-import nexus.test.quic_tls_link;
-import nexus.test.http3_link;
+import test.quic_tls_link;
+import test.http3_link;
 
-namespace n=nex::ngtcp2;
-namespace h3=nex::nghttp3;
+namespace n = ::ngtcp2;
+namespace h3 = ::nghttp3;
 namespace q=quic;
 namespace h=hysteria2;
 namespace t=tls;
-namespace support=nexus::test::quic_tls;
+namespace support=test::quic_tls;
 using View=std::span<std::uint8_t const>;
 namespace {
-    using nexus::test::http3_link::Application;
-    using nexus::test::http3_link::Written;
-    using nexus::test::http3_link::write;
-    using nexus::test::http3_link::request;
+    using test::http3_link::Application;
+    using test::http3_link::Written;
+    using test::http3_link::write;
+    using test::http3_link::request;
     template<class Tls> struct Peer {
         support::Memory memory;
         support::Path path;

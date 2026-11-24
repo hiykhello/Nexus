@@ -1,8 +1,8 @@
 import std;
 import dns.message;
 import dns.cache;
-#include "../../src/dns-shared/group_snapshot.hpp"
-#include "../../src/dns-shared/group_cache_binding.hpp"
+import dns.group_snapshot;
+import dns.group_cache_binding;
 
 namespace d=dns;
 using Cache=dns_hp_experiment::GroupSnapshot;

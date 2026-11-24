@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "proxy-preload-tests"
 version = "0.1.0"
 
@@ -18,19 +17,19 @@ anytls = ["nexus/anytls"]
 hy2-budget-fixture = ["nexus/hy2-cli"]
 
 [feature-deps.factory-fault]
-"nexus.proxy-runtime" = { path = "../../src/proxy", features = ["test-detour-factory"] }
+"relay-runtime" = { path = "../../src/relay", features = ["test-detour-factory"] }
 
 [feature-deps.ss2022]
-nexus.protocols = { path = "../../src", features = ["ss2022"] }
+protocols = { path = "../../src", features = ["ss2022"] }
 
 [feature-deps.vless]
-nexus.protocols = { path = "../../src", features = ["vless"] }
+protocols = { path = "../../src", features = ["vless"] }
 
 [feature-deps.trojan]
-nexus.protocols = { path = "../../src", features = ["trojan"] }
+protocols = { path = "../../src", features = ["trojan"] }
 
 [feature-deps.anytls]
-nexus.protocols = { path = "../../src", features = ["anytls"] }
+protocols = { path = "../../src", features = ["anytls"] }
 
 [build]
 sources = []

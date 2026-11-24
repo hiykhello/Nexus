@@ -1,6 +1,6 @@
 export module masque.client_session;
 import std;
-import nexus.compat;
+import functional;
 import crypto;
 import http.header;
 import masque.capsule;
@@ -12,6 +12,8 @@ import masque.ip_control;
 import masque.ip_receiver;
 import masque.udp_session;
 export import masque.client_profile;
+export import masque.client_hooks;
+import masque.client_http;
 import quic.ech_config;
 import quic.native_memory;
 import quic.cid_registry;
@@ -21,35 +23,19 @@ import net.datagram_driver;
 import net.udp_connect;
 import hysteria2.transport_options;
 import platform.socket_options;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import nghttp3;
+import capy;
+import corosio;
 
 export namespace masque {
-    struct HttpResponse {
-        unsigned status=0;
-        std::vector<std::pair<std::string,std::string>> fields;
-        std::string body;
-    };
-
-    using HttpHeaderSink=nexus::function_ref<void(std::string_view,std::string_view)>;
-    using HttpBodySink=nexus::function_ref<nex::capy::task<bool>(std::string_view,std::chrono::steady_clock::time_point)>;
-
-    enum class HttpError { transport, response };
-
-    struct HttpPost {
-        std::string_view media_type;
-        std::span<std::uint8_t const> bytes;
-    };
-
-    template<class Socket = nex::corosio::udp_socket>
+    template<class Socket = corosio::udp_socket>
     class Client {
+        friend struct detail::ClientHttpOps;
         using Clock = std::chrono::steady_clock;
         using Registry = quic::CidRegistry<1, 8>;
-        static constexpr std::size_t stream_window=16*1024;
-
-#include "client_hooks.hpp"
+        static constexpr std::size_t stream_window = detail::client_stream_window;
+        using Hooks = detail::ClientHooks;
 
     public:
         using MasqueSession = Session<ClientProfile::Tls, Hooks>;
@@ -63,7 +49,7 @@ export namespace masque {
             MasqueSession app;
             QuicSession session;
             Bundle(std::unique_ptr<ClientProfile::Tls> t, Registry& reg, quic::SessionHandle owner,
-                   nex::capy::async_event& ev, nex::corosio::endpoint const& local, ClientProfile const& p)
+                   capy::async_event& ev, corosio::endpoint const& local, ClientProfile const& p)
                 : tls(std::move(t)), hooks(reg, owner, ev), memory(p.transport().native_bytes),
                   app(*tls, hooks, false, memory.http3()), session(*tls, app, local) {}
         };
@@ -72,10 +58,10 @@ export namespace masque {
             std::unique_ptr<Bundle> bundle;
             bool joined = false;
             int failure = 0;
-            auto admit(nex::ngtcp2::ngtcp2_pkt_hd const&, nex::corosio::endpoint const&, Clock::time_point) const noexcept -> bool { return false; }
-            auto create(quic::SessionHandle, Registry&, std::span<std::uint8_t const>, nex::ngtcp2::ngtcp2_pkt_hd const&,
-                        nex::corosio::endpoint const&, Clock::time_point) noexcept -> std::expected<Session*, int> {
-                return std::unexpected(nex::ngtcp2::err_callback_failure);
+            auto admit(ngtcp2::ngtcp2_pkt_hd const&, corosio::endpoint const&, Clock::time_point) const noexcept -> bool { return false; }
+            auto create(quic::SessionHandle, Registry&, std::span<std::uint8_t const>, ngtcp2::ngtcp2_pkt_hd const&,
+                        corosio::endpoint const&, Clock::time_point) noexcept -> std::expected<Session*, int> {
+                return std::unexpected(ngtcp2::err_callback_failure);
             }
             auto application_drained(quic::SessionHandle, Session const&) const noexcept -> bool { return joined; }
             auto failed(quic::SessionHandle, int err) noexcept -> void { failure = err; }
@@ -89,33 +75,42 @@ export namespace masque {
     private:
         ClientProfile const& profile_;
         Socket socket_;
-        nex::corosio::endpoint local_;
+        corosio::endpoint local_;
         Factory factory_;
         Port port_{factory_};
         Driver driver_{socket_, port_};
         std::optional<quic::SessionHandle> owner_;
         bool started_ = false;
 
-        static auto field(std::string_view k, std::string_view v) noexcept -> nex::nghttp3::nghttp3_nv {
+        static auto field(std::string_view k, std::string_view v) noexcept -> nghttp3::nghttp3_nv {
             return {reinterpret_cast<std::uint8_t const*>(k.data()), reinterpret_cast<std::uint8_t const*>(v.data()),
-                    k.size(), v.size(), nex::nghttp3::nv_flag_none};
+                    k.size(), v.size(), nghttp3::nv_flag_none};
         }
 
     public:
-        Client(nex::corosio::io_context& ctx, ClientProfile const& p) : profile_(p), socket_(ctx) {}
+        Client(corosio::io_context& ctx, ClientProfile const& p) : profile_(p), socket_(ctx) {}
         Client(Client const&) = delete;
         auto operator=(Client const&) -> Client& = delete;
         auto socket() noexcept -> Socket& { return socket_; }
 
-        auto start(nex::corosio::endpoint peer, platform::SocketBinding const* binding = nullptr,
+        auto start(corosio::endpoint peer, platform::SocketBinding const* binding = nullptr,
                    quic::EchConfig const* ech = nullptr, std::chrono::nanoseconds keep_alive = {},
                    platform::SocketDeadline deadline = platform::SocketDeadline::max(),std::error_code* socket_error=nullptr)
             -> std::expected<void, std::string> {
             if (started_) return std::unexpected("MASQUE client already started");
-            if constexpr (std::same_as<Socket,nex::corosio::udp_socket>) {
+            if constexpr (std::same_as<Socket,corosio::udp_socket>) {
                 if (auto error=net::prepare_udp_socket(socket_,peer,binding,deadline)) {
                     if (socket_error) *socket_error=error;
                     return std::unexpected(error.message());
+                }
+            } else if constexpr (requires { socket_.is_layered(); }) {
+                if (!socket_.is_layered()) {
+                    if (auto error=socket_.prepare_physical(peer,binding,deadline)) {
+                        if (socket_error) *socket_error=error;
+                        return std::unexpected(error.message());
+                    }
+                } else if (binding) {
+                    return std::unexpected("socket binding belongs to the lower datagram transport");
                 }
             } else if (binding) {
                 return std::unexpected("socket binding belongs to the lower datagram transport");
@@ -151,14 +146,14 @@ export namespace masque {
                 settings->handshake_timeout=std::min(settings->handshake_timeout,static_cast<std::uint64_t>(remaining));
             }
             factory_.bundle = std::make_unique<Bundle>(std::move(*tls), port_.registry(), *reserved, driver_.changed(), local_, profile_);
-            nex::ngtcp2::ngtcp2_cid src{}, dst{};
-            nex::ngtcp2::ngtcp2_cid_init(&src, src_bytes.data(), src_bytes.size());
-            nex::ngtcp2::ngtcp2_cid_init(&dst, dst_bytes.data(), dst_bytes.size());
+            ngtcp2::ngtcp2_cid src{}, dst{};
+            ngtcp2::ngtcp2_cid_init(&src, src_bytes.data(), src_bytes.size());
+            ngtcp2::ngtcp2_cid_init(&dst, dst_bytes.data(), dst_bytes.size());
             auto err = factory_.bundle->session.start(false, dst, src, peer, *settings, *params, factory_.bundle->memory.transport(), Clock::now());
             if (err || !port_.attach(*reserved, factory_.bundle->session))
                 return std::unexpected("cannot start MASQUE QUIC connection");
             if (keep_alive.count() > 0)
-                nexus_ngtcp2_abi::ngtcp2_conn_set_keep_alive_timeout(factory_.bundle->session.transport().native(),
+                ngtcp2_abi::ngtcp2_conn_set_keep_alive_timeout(factory_.bundle->session.transport().native(),
                     static_cast<std::uint64_t>(keep_alive.count()));
             owner_ = *reserved;
             started_ = true;
@@ -167,9 +162,35 @@ export namespace masque {
             return {};
         }
 
-        auto run() -> nex::capy::task<nex::capy::results<>> { return driver_.run(); }
+        auto run() -> capy::task<capy::results<>> { return driver_.run(); }
 
-#include "client_http.hpp"
+    public:
+        auto wait_http_ready(Clock::time_point deadline, std::stop_token external = {}) -> capy::task<bool> {
+            return detail::ClientHttpOps::wait_http_ready(*this, deadline, external);
+        }
+        [[nodiscard]] auto retryable_http_handshake(Clock::time_point deadline) const noexcept -> bool {
+            return detail::ClientHttpOps::retryable_http_handshake(*this, deadline);
+        }
+        [[nodiscard]] auto reusable_http() const noexcept -> bool {
+            return detail::ClientHttpOps::reusable_http(*this);
+        }
+        [[nodiscard]] auto can_submit_http() const noexcept -> bool {
+            return detail::ClientHttpOps::can_submit_http(*this);
+        }
+        auto get_response(std::string_view path, std::size_t limit, Clock::time_point deadline,
+            std::span<http::HeaderField const> headers, bool allow_not_modified, bool allow_redirect = false,
+            std::optional<HttpBodySink> sink = {}, std::optional<HttpHeaderSink> observe = {})
+            -> capy::task<std::optional<HttpResponse>> {
+            return detail::ClientHttpOps::get_response(*this, path, limit, deadline, headers, allow_not_modified, allow_redirect, sink, observe);
+        }
+        auto get(std::string_view path, std::size_t limit, Clock::time_point deadline)
+            -> capy::task<std::optional<std::string>> {
+            return detail::ClientHttpOps::get(*this, path, limit, deadline);
+        }
+        auto post(std::string_view path, HttpPost body, std::size_t limit, Clock::time_point deadline,
+            std::stop_token stop = {}) -> capy::task<std::expected<HttpResponse, HttpError>> {
+            return detail::ClientHttpOps::post(*this, path, body, limit, deadline, stop);
+        }
 
         auto request_stop() noexcept -> void {
             if (factory_.bundle) {
@@ -181,16 +202,18 @@ export namespace masque {
             driver_.finish();
         }
 
-        auto connect_udp(std::string_view target_host, std::uint16_t target_port, Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto connect_udp(std::string_view target_host, std::uint16_t target_port, Clock::time_point deadline) -> capy::task<bool> {
             while (factory_.bundle && !factory_.bundle->app.stopping()) {
+                if (factory_.bundle->hooks.http_goaway || factory_.bundle->hooks.conn_closed) co_return false;
                 if (factory_.bundle->app.can_open()) break;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err || !driver_.running()) co_return false;
             }
-            if (!factory_.bundle || !factory_.bundle->app.can_open()) co_return false;
+            if (!factory_.bundle || !factory_.bundle->app.can_open() ||
+                factory_.bundle->hooks.http_goaway || factory_.bundle->hooks.conn_closed) co_return false;
             std::int64_t id = -1;
-            if (nex::ngtcp2::ngtcp2_conn_open_bidi_stream(factory_.bundle->session.transport().native(), &id, nullptr))
+            if (ngtcp2::ngtcp2_conn_open_bidi_stream(factory_.bundle->session.transport().native(), &id, nullptr))
                 co_return false;
             factory_.bundle->hooks.stream = id;
             std::string encoded_host;
@@ -215,23 +238,25 @@ export namespace masque {
                 if (factory_.bundle->hooks.ready) co_return true;
                 if (factory_.bundle->hooks.rejected || factory_.bundle->hooks.conn_closed) co_return false;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err || !driver_.running()) co_return false;
             }
             co_return false;
         }
 
         auto connect_ip(std::string_view path, Clock::time_point deadline, std::size_t budget = 1350,
-            std::string_view protocol="connect-ip",std::span<std::pair<std::string,std::string> const> headers={}) -> nex::capy::task<bool> {
+            std::string_view protocol="connect-ip",std::span<std::pair<std::string,std::string> const> headers={}) -> capy::task<bool> {
             while (factory_.bundle && !factory_.bundle->app.stopping()) {
+                if (factory_.bundle->hooks.http_goaway || factory_.bundle->hooks.conn_closed) co_return false;
                 if (factory_.bundle->app.can_open()) break;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err || !driver_.running()) co_return false;
             }
-            if (!factory_.bundle || !factory_.bundle->app.can_open()) co_return false;
+            if (!factory_.bundle || !factory_.bundle->app.can_open() ||
+                factory_.bundle->hooks.http_goaway || factory_.bundle->hooks.conn_closed) co_return false;
             std::int64_t id = -1;
-            if (nex::ngtcp2::ngtcp2_conn_open_bidi_stream(factory_.bundle->session.transport().native(), &id, nullptr))
+            if (ngtcp2::ngtcp2_conn_open_bidi_stream(factory_.bundle->session.transport().native(), &id, nullptr))
                 co_return false;
             factory_.bundle->hooks.stream = id;
             factory_.bundle->hooks.ip_mode = true;
@@ -245,14 +270,14 @@ export namespace masque {
                 field("proxy-authorization", profile_.authorization()),
                 field("capsule-protocol", "?1")
             };
-            std::vector<nex::nghttp3::nghttp3_nv> extended;
-            std::span<nex::nghttp3::nghttp3_nv const> fields=req;
+            std::vector<nghttp3::nghttp3_nv> extended;
+            std::span<nghttp3::nghttp3_nv const> fields=req;
             if (!headers.empty()) {
                 extended.reserve(req.size()+headers.size());
                 extended.append_range(req);
                 for (auto const& [name,value]:headers) {
                     auto header=field(name,value);
-                    header.flags=nex::nghttp3::nv_flag_never_index;
+                    header.flags=nghttp3::nv_flag_never_index;
                     extended.push_back(header);
                 }
                 fields=extended;
@@ -263,7 +288,7 @@ export namespace masque {
                 if (factory_.bundle->hooks.ready) co_return true;
                 if (factory_.bundle->hooks.rejected || factory_.bundle->hooks.conn_closed) co_return false;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err || !driver_.running()) co_return false;
             }
             co_return false;
@@ -298,7 +323,7 @@ export namespace masque {
             factory_.bundle->hooks.rx_dgrams.pop_front();
             return pkt;
         }
-        auto rx_event() noexcept -> nex::capy::async_event& { return driver_.changed(); }
+        auto rx_event() noexcept -> capy::async_event& { return driver_.changed(); }
         auto ready() const noexcept -> bool {
             return factory_.bundle && factory_.bundle->hooks.ready && !factory_.bundle->app.stopping() && driver_.running();
         }
@@ -366,7 +391,7 @@ export namespace masque {
             return true;
         }
 
-        auto receive(Clock::time_point deadline) -> nex::capy::task<std::optional<std::vector<std::uint8_t>>> {
+        auto receive(Clock::time_point deadline) -> capy::task<std::optional<std::vector<std::uint8_t>>> {
             while (factory_.bundle && !factory_.bundle->app.stopping()) {
                 if (!factory_.bundle->hooks.rx_dgrams.empty()) {
                     auto pkt = std::move(factory_.bundle->hooks.rx_dgrams.front());
@@ -375,7 +400,7 @@ export namespace masque {
                 }
                 if (!factory_.bundle->hooks.ready) co_return std::nullopt;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err || !driver_.running()) co_return std::nullopt;
             }
             co_return std::nullopt;

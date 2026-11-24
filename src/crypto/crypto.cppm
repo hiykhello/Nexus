@@ -1,7 +1,7 @@
 export module crypto;
-export import nexus.thirdparty.boringssl;
+export import boringssl;
 import std;
-using namespace nex::boringssl;
+using namespace boringssl;
 
 export namespace crypto {
     using Bytes = std::vector<std::uint8_t>;

@@ -11,6 +11,7 @@ export namespace sniff {
         // A visible outer SNI with ECH is not an authenticated inner name.
         std::optional<std::string_view> server_name;
         bool ech_offered=false;
+        std::optional<std::string_view> client{};
     };
     // One client Initial packet-number space. Callers bound the number and
     // lifetime of these objects and retain any datagrams needed for replay.
@@ -24,7 +25,7 @@ export namespace sniff {
         std::size_t dcid_size_=0,contiguous_=0;
         std::uint32_t version_=0;
         std::optional<std::uint64_t> largest_;
-        std::optional<std::string> name_;
+        std::optional<std::string> name_,client_;
         bool ech_=false,finished_=false,conflicted_=false;
         struct Fragment {std::size_t offset;std::span<std::uint8_t const> data;};
         struct Extent {std::size_t size;bool initial;};
@@ -70,8 +71,10 @@ namespace sniff {
         TlsSniffer parser;auto result=parser.feed(std::span(record).first(length+5),scratch);
         if(result.status!=TlsStatus::matched)return {QuicSniffStatus::malformed};
         if(result.server_name)name_=std::string(*result.server_name);
+        if(result.client)client_=std::string(*result.client);
         ech_=result.ech_offered;finished_=true;
-        return {QuicSniffStatus::matched,name_ ? std::optional<std::string_view>{*name_} : std::nullopt,ech_};
+        return {QuicSniffStatus::matched,name_ ? std::optional<std::string_view>{*name_} : std::nullopt,ech_,
+            client_ ? std::optional<std::string_view>{*client_} : std::nullopt};
     }
 
     auto QuicSniffer::feed_initial(std::span<std::uint8_t const> datagram) -> QuicSniffResult {
@@ -212,7 +215,8 @@ namespace sniff {
 
     auto QuicSniffer::feed(std::span<std::uint8_t const> datagram) -> QuicSniffResult {
         if(conflicted_)return {QuicSniffStatus::malformed};
-        if(finished_)return {QuicSniffStatus::matched,name_ ? std::optional<std::string_view>{*name_} : std::nullopt,ech_};
+        if(finished_)return {QuicSniffStatus::matched,name_ ? std::optional<std::string_view>{*name_} : std::nullopt,ech_,
+            client_ ? std::optional<std::string_view>{*client_} : std::nullopt};
         if(datagram.size()>65535)return {QuicSniffStatus::too_large};
         QuicSniffResult result{QuicSniffStatus::not_initial};
         std::size_t offset=0,count=0;

@@ -146,7 +146,34 @@ namespace platform::nftables {
             };
             auto bypass=[&](auto&& match) {rule(match,[&] {writer.leave();});};
             auto tcp=[&] {writer.meta(NFT_META_L4PROTO);writer.compare(std::array{std::uint8_t(IPPROTO_TCP)});};
-            auto divert=[&] {writer.redirect(options.port);};
+            auto u32_bytes = [](std::uint32_t const& value) {
+                return std::span(reinterpret_cast<std::uint8_t const*>(&value), sizeof value);
+            };
+            auto set_mark = [&](std::uint32_t mark) {
+                writer.expr("immediate",[&] {
+                    writer.u32(NFTA_IMMEDIATE_DREG,reg);
+                    writer.nest(NFTA_IMMEDIATE_DATA,[&] {writer.raw(NFTA_DATA_VALUE,u32_bytes(mark));});
+                });
+                writer.expr("meta",[&] {
+                    writer.u32(NFTA_META_KEY,NFT_META_MARK);
+                    writer.u32(NFTA_META_SREG,reg);
+                });
+            };
+            auto uid_range = [&](UidRange const& range) {
+                writer.meta(NFT_META_SKUID);
+                if (range.min == range.max) {
+                    writer.compare(u32_bytes(range.min), NFT_CMP_EQ);
+                } else {
+                    writer.compare(u32_bytes(range.min), NFT_CMP_GTE);
+                    writer.meta(NFT_META_SKUID);
+                    writer.compare(u32_bytes(range.max), NFT_CMP_LTE);
+                }
+            };
+            auto active_mark = output ? options.output_mark : options.input_mark;
+            auto divert=[&] {
+                if (active_mark) set_mark(active_mark);
+                writer.redirect(options.port);
+            };
             bypass([&] {writer.meta(NFT_META_L4PROTO);writer.compare(std::array{std::uint8_t(IPPROTO_TCP)},NFT_CMP_NEQ);});
             if (options.exclude_mptcp) bypass([&] {
                 writer.expr("exthdr",[&] {
@@ -164,15 +191,28 @@ namespace platform::nftables {
                 writer.compare(std::array{std::uint8_t(options.ipv4 ? NFPROTO_IPV6 : NFPROTO_IPV4)});
             });
             bypass([&] {writer.matches_mark({options.socket_mark});});
+            if (options.reset_mark) bypass([&] {writer.matches_mark({options.reset_mark});});
             bypass([&] {
                 constexpr std::array<std::uint8_t,16> loopback{'l','o'};
                 writer.meta(output ? NFT_META_OIFNAME : NFT_META_IIFNAME);
                 writer.compare(loopback);
             });
+            for (auto const& iface : options.exclude_interfaces) bypass([&] {
+                writer.meta(output ? NFT_META_OIFNAME : NFT_META_IIFNAME);
+                writer.compare(std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(iface.data()), iface.size()));
+            });
+            if (!options.include_interfaces.empty()) bypass([&] {
+                for (auto const& iface : options.include_interfaces) {
+                    writer.meta(output ? NFT_META_OIFNAME : NFT_META_IIFNAME);
+                    writer.compare(std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(iface.data()), iface.size()), NFT_CMP_NEQ);
+                }
+            });
             if (!output) for (auto const& prefix:options.local_destinations)
                 bypass([&] {writer.destination(prefix);});
             if (options.exclude_mark) bypass([&] {writer.matches_mark(*options.exclude_mark);});
             if (options.include_mark) bypass([&] {writer.matches_mark(*options.include_mark,NFT_CMP_NEQ);});
+            if (output) for (auto const& range : options.exclude_uids)
+                bypass([&] {uid_range(range);});
             for (auto const& prefix:options.protected_destinations)
                 rule([&] {tcp();writer.destination(prefix);},divert);
             if (options.intercept_dns) rule([&] {
@@ -180,7 +220,12 @@ namespace platform::nftables {
                 writer.compare(std::array<std::uint8_t,2>{0,53});
             },divert);
             for (auto const& prefix:options.excludes) bypass([&] {writer.destination(prefix);});
-            rule(tcp,divert);
+            if (output && !options.include_uids.empty()) {
+                for (auto const& range : options.include_uids)
+                    rule([&] {tcp();uid_range(range);},divert);
+            } else {
+                rule(tcp,divert);
+            }
         }
     }
 
@@ -193,17 +238,30 @@ namespace platform::nftables {
                 if (prefix.address[bit/8]&(128u>>(bit%8))) return false;
             return true;
         };
+        auto valid_ifname = [](std::array<char, 16> const& name) {
+            auto nul = std::ranges::find(name, '\0');
+            return name[0] != '\0' && nul != name.end() &&
+                std::ranges::all_of(std::span(name).subspan(static_cast<std::size_t>(nul - name.begin())),
+                    [](char c) { return c == '\0'; });
+        };
+        auto valid_uid_range = [](UidRange const& range) { return range.min <= range.max; };
         if (!table.starts_with("nexus_auto_redirect_") || table.size()>63 ||
             !std::ranges::all_of(table,[](char c) {return c=='_' || (c>='0' && c<='9') || (c>='a' && c<='z');}) ||
-            !first || first>std::numeric_limits<std::uint32_t>::max()-128 ||
+            !first || first>std::numeric_limits<std::uint32_t>::max()-512 ||
             (redirect && (!redirect->port || !redirect->socket_mark || (!redirect->ipv4 && !redirect->ipv6) ||
                 (redirect->include_mark && !redirect->include_mark->valid()) ||
                 (redirect->exclude_mark && !redirect->exclude_mark->valid()) ||
-                redirect->excludes.size()>32 || redirect->protected_destinations.size()>2 ||
+                redirect->excludes.size()>64 || redirect->protected_destinations.size()>2 ||
                 redirect->local_destinations.size()>32 ||
+                redirect->include_uids.size()>16 || redirect->exclude_uids.size()>16 ||
+                redirect->include_interfaces.size()>8 || redirect->exclude_interfaces.size()>8 ||
                 !std::ranges::all_of(redirect->excludes,valid_prefix) ||
                 !std::ranges::all_of(redirect->local_destinations,valid_prefix) ||
-                !std::ranges::all_of(redirect->protected_destinations,valid_prefix))))
+                !std::ranges::all_of(redirect->protected_destinations,valid_prefix) ||
+                !std::ranges::all_of(redirect->include_uids,valid_uid_range) ||
+                !std::ranges::all_of(redirect->exclude_uids,valid_uid_range) ||
+                !std::ranges::all_of(redirect->include_interfaces,valid_ifname) ||
+                !std::ranges::all_of(redirect->exclude_interfaces,valid_ifname))))
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         Writer writer(first);
         writer.fence(NFNL_MSG_BATCH_BEGIN);

@@ -1,9 +1,9 @@
 export module config.kdl_common;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 
 export namespace config::kdl {
-    namespace g=nex::glaze;
+    namespace g = ::glaze;
     using Node = g::KdlNode;
     using Value = g::KdlValue;
     inline auto error(std::string text) -> std::unexpected<std::string> { return std::unexpected(std::move(text)); }
@@ -61,10 +61,10 @@ export namespace config::kdl {
     inline auto deployment_role(Node const& node) -> std::optional<std::string_view> {
         auto role=scalar(node); if (!role || (*role!="client" && *role!="server")) return {}; return *role;
     }
-    inline auto read_document(std::string_view input,std::size_t limit=1024*1024) -> std::expected<nex::glaze::KdlDocument,std::string> {
+    inline auto read_document(std::string_view input,std::size_t limit=1024*1024) -> std::expected<glaze::KdlDocument,std::string> {
         if (input.size()>limit) return error("configuration exceeds 1 MiB");
-        auto document=nex::glaze::read_kdl<nex::glaze::KdlDocument>(input);
-        if (!document) return error(nex::glaze::format_error(document.error(),input));
+        auto document=glaze::read_kdl<glaze::KdlDocument>(input);
+        if (!document) return error(glaze::format_error(document.error(),input));
         return std::move(*document);
     }
     inline auto parse_certificate_sha256(Node const& field,std::vector<std::array<std::uint8_t,32>>& out)

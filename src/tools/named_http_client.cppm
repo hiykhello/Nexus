@@ -1,15 +1,15 @@
 export module http.named_client;
 import std;
-import nexus.compat;
+import functional;
 import config;
 import http.header;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace http {
     using HttpDeadline=std::chrono::steady_clock::time_point;
-    using HttpBodyConsumer=nexus::function_ref<nex::capy::task<bool>(std::string_view,HttpDeadline)>;
-    using HttpHeaderConsumer=nexus::function_ref<void(std::string_view,std::string_view)>;
+    using HttpBodyConsumer=functional::function_ref<capy::task<bool>(std::string_view,HttpDeadline)>;
+    using HttpHeaderConsumer=functional::function_ref<void(std::string_view,std::string_view)>;
 
     struct NamedHttpRequest {
         std::string_view target;
@@ -36,11 +36,11 @@ export namespace http {
         [[nodiscard]] static auto create(config::Config config,std::string_view name,std::string_view authority)
             -> std::expected<std::unique_ptr<NamedHttpClient>,std::string>;
 
-        [[nodiscard]] auto executor() noexcept -> nex::corosio::io_context&;
+        [[nodiscard]] auto executor() noexcept -> corosio::io_context&;
         [[nodiscard]] auto settings() const noexcept -> config::NamedHttpClient const&;
         [[nodiscard]] auto allows_http3_alternative() const noexcept -> bool;
 
         auto get(NamedHttpRequest request,HttpBodyConsumer body,std::optional<HttpHeaderConsumer> headers={})
-            -> nex::capy::task<std::expected<unsigned,std::string>>;
+            -> capy::task<std::expected<unsigned,std::string>>;
     };
 }

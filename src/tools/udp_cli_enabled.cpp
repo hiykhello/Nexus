@@ -30,13 +30,14 @@ using SelectedTunRuntime=tun_disabled::Runtime;
 #endif
 }
 import std;
+import cli.route_files;
 import config;
 import cli.dns_transports;
 import rules;
 import rules.rule_input;
 import crypto;
-import proxy;
-import proxy.principal_limits;
+import relay;
+import relay.principal_limits;
 import shadowsocks.key;
 import shadowsocks.identity;
 import ss_udp.shared_coordinator;
@@ -46,7 +47,7 @@ namespace cli {
     class ShadowsocksUdpRuntime {
         std::shared_ptr<shadowsocks::detail::UdpListenerIngress> ingress_;
         std::uint64_t generation_=0;
-        std::optional<proxy::DnsRouting> dns_;
+        std::optional<relay::DnsRouting> dns_;
         struct SecretKey {
             std::array<std::uint8_t,32> bytes{};
             ~SecretKey() { crypto::cleanse(bytes); }
@@ -57,11 +58,15 @@ namespace cli {
             std::vector<User> users;
         };
         std::vector<std::unique_ptr<ListenerKeys>> keys_;
-        std::unique_ptr<proxy::Server> routing_;
-        std::optional<proxy::udp_runtime::CoordinatorUdpInbounds> inbounds_;
+        std::shared_ptr<relay::ShadowsocksUserDirectory> dynamic_users_;
+        std::unique_ptr<relay::Server> routing_;
+        std::optional<relay::udp_runtime::CoordinatorUdpInbounds> inbounds_;
         bool routing_active_=false;
     public:
         ~ShadowsocksUdpRuntime() {stop();}
+        auto set_dynamic_users(std::shared_ptr<relay::ShadowsocksUserDirectory> users) noexcept -> void {
+            dynamic_users_=std::move(users);
+        }
         auto stage_admission(ShadowsocksUdpRuntime const* previous,std::uint64_t generation) -> void {
             ingress_=previous && previous->ingress_ ? previous->ingress_ :
                 std::make_shared<shadowsocks::detail::UdpListenerIngress>();
@@ -73,10 +78,10 @@ namespace cli {
         [[nodiscard]] auto has_listeners() const noexcept -> bool {return inbounds_.has_value();}
         [[nodiscard]] auto idle() const noexcept -> bool {return !inbounds_ || inbounds_->idle();}
         auto resize(std::size_t count,bool has_shadowsocks) -> void;
-        auto remember(std::size_t index,std::span<std::uint8_t const> bytes,std::span<proxy::ShadowsocksUserKey const> users) -> void;
+        auto remember(std::size_t index,std::span<std::uint8_t const> bytes,std::span<relay::ShadowsocksUserKey const> users) -> void;
         [[nodiscard]] auto configure(config::Config const&,std::span<std::string const>,std::span<std::size_t const>,
-            std::span<rules::ProgramRule const>,proxy::Server*,std::span<proxy::Server* const>,std::span<DnsProtection const>) -> std::expected<void,std::string>;
-        [[nodiscard]] auto bind_shared_dns(proxy::SharedDnsGeneration&,std::size_t,std::size_t) -> bool;
+            std::span<rules::ProgramRule const>,relay::Server*,std::span<relay::Server* const>,std::span<DnsProtection const>) -> std::expected<void,std::string>;
+        [[nodiscard]] auto bind_shared_dns(relay::SharedDnsGeneration&,std::size_t,std::size_t) -> bool;
         [[nodiscard]] auto start() -> std::expected<void,std::string>;
         [[nodiscard]] auto healthy() const noexcept -> bool;
         [[nodiscard]] auto failed() const noexcept -> bool;
@@ -88,7 +93,7 @@ namespace cli {
         if (has_shadowsocks) keys_.resize(count);
     }
     auto ShadowsocksUdpRuntime::remember(std::size_t index,std::span<std::uint8_t const> bytes,
-        std::span<proxy::ShadowsocksUserKey const> users) -> void {
+        std::span<relay::ShadowsocksUserKey const> users) -> void {
         auto keys=std::make_unique<ListenerKeys>();
         std::ranges::copy(bytes,keys->primary.bytes.begin());
         keys->users.reserve(users.size());
@@ -101,18 +106,18 @@ namespace cli {
     }
     auto ShadowsocksUdpRuntime::configure(config::Config const& config,std::span<std::string const> rules_data,
                                std::span<std::size_t const> rule_data_index,std::span<rules::ProgramRule const> ordered_rules,
-                               proxy::Server* parent,std::span<proxy::Server* const> traffic,std::span<DnsProtection const> protection) -> std::expected<void,std::string> {
+                               relay::Server* parent,std::span<relay::Server* const> traffic,std::span<DnsProtection const> protection) -> std::expected<void,std::string> {
         if(config.ordered_tcp && !config.ordered_tcp->udp) {decltype(keys_){}.swap(keys_);return {};}
         if (!std::ranges::any_of(config.inbounds,[](auto const& item) { return item.shadowsocks.has_value(); })) {
             return {};
         }
-        if (!ingress_ && std::ranges::any_of(keys_,[](auto const& keys) {return keys && !keys->users.empty();}))
+        if (!ingress_ && (dynamic_users_ || std::ranges::any_of(keys_,[](auto const& keys) {return keys && !keys->users.empty();})))
             stage_admission(nullptr,1);
         std::vector<rules::RouteRule> routes;
         for (std::size_t i=0;i<config.routes.size();++i) {
             auto const& route=config.routes[i];
             auto const& bytes=rules_data[rule_data_index[i]];
-            auto format=route.file.format==config::RuleFormat::kdl ? rules::InputFormat::kdl : route.file.format==config::RuleFormat::beve ? rules::InputFormat::beve : rules::InputFormat::srs;
+            auto format=cli::rule_input_format(route.file.format);
             auto parsed=rules::parse_rule_input(bytes,format,route.file.ip_cidr_match_source);
             if (!parsed) { return std::unexpected("UDP routing: "+parsed.error().message); }
             routes.push_back({std::move(*parsed),route.outbound});
@@ -120,7 +125,7 @@ namespace cli {
         auto native_outbound=std::ranges::any_of(config.shadowsocks_outbounds,[](auto const& entry) {return entry.config.udp_native;});
         if (config.ordered_tcp || native_outbound || uses_proxy_dns(config.dns)) {
             if (!parent) return std::unexpected("UDP routing parent is unavailable");
-            routing_=std::make_unique<proxy::Server>(proxy::RoutingOnly{});
+            routing_=std::make_unique<relay::Server>(relay::RoutingOnly{});
             routing_->inherit_routing(*parent,0,1);
             inbounds_.emplace(routing_->executor_context());
         } else inbounds_.emplace();
@@ -132,7 +137,7 @@ namespace cli {
                 policy=std::make_shared<rules::RouteProgram const>(std::move(*program));
             }
             auto* ordered=config.ordered_tcp ? &*config.ordered_tcp : nullptr;
-            if (!inbounds_->set_ordered(proxy::udp_runtime::make_ordered_udp_sender(*routing_,std::move(policy),
+            if (!inbounds_->set_ordered(relay::udp_runtime::make_ordered_udp_sender(*routing_,std::move(policy),
                 config.default_outbound,ordered && ordered->skip_unknown,
                 std::chrono::milliseconds(ordered ? ordered->sniff_timeout_ms : 200))))
                 return std::unexpected("cannot configure ordered UDP routing");
@@ -140,7 +145,7 @@ namespace cli {
         if (ingress_) inbounds_->set_ingress(*ingress_,generation_);
         if (!inbounds_->set_socket_binding(config.direct_tcp_options.binding))
             return std::unexpected("cannot configure UDP socket binding");
-        dns_=proxy::udp_runtime::udp_dns_config(config);
+        dns_=relay::udp_runtime::udp_dns_config(config);
         for (std::size_t index=0;index<protection.size();++index)
             dns_->servers[index].protection=protection[index];
         for (std::size_t i=0;i<config.inbounds.size();++i) {
@@ -157,9 +162,18 @@ namespace cli {
             auto primary=std::span(keys.primary.bytes).first(size);
             auto* traffic_listener=traffic.empty() ? nullptr : traffic[i];
             if (keys.users.empty()) {
+                if (method==shadowsocks::CipherMethod::aes && dynamic_users_) {
+                    auto added=inbounds_->add_dynamic_base(primary,entry.port,*policy,traffic_listener,dynamic_users_);
+                    if (!added) { return std::unexpected("shadowsocks UDP: "+added.error()); }
+                    continue;
+                }
                 auto added=inbounds_->add(primary,entry.port,*policy,traffic_listener,method);
                 if (!added) { return std::unexpected("shadowsocks UDP: "+added.error()); }
                 continue;
+            }
+            if (method==shadowsocks::CipherMethod::aes && dynamic_users_) {
+                auto added=inbounds_->add_dynamic_base(primary,entry.port,*policy,traffic_listener,dynamic_users_);
+                if (!added) { return std::unexpected("shadowsocks UDP: "+added.error()); }
             }
             auto identity=std::make_shared<shadowsocks::detail::UdpIdentitySecret const>(primary);
             auto* principals=traffic_listener ? traffic_listener->principal_policy() : nullptr;
@@ -174,7 +188,7 @@ namespace cli {
         decltype(keys_){}.swap(keys_);
         return {};
     }
-    auto ShadowsocksUdpRuntime::bind_shared_dns(proxy::SharedDnsGeneration& generation,std::size_t group,std::size_t reader) -> bool {
+    auto ShadowsocksUdpRuntime::bind_shared_dns(relay::SharedDnsGeneration& generation,std::size_t group,std::size_t reader) -> bool {
         if (!inbounds_) return true;
         if (routing_ && !routing_->bind_shared_dns(generation,group,reader+1)) return false;
         auto& setup=inbounds_->setup();
@@ -214,5 +228,8 @@ namespace cli {
 }
 
 auto nexus_run(int argc, char** argv) -> int {
-    return nexus_run_proxy<cli::ShadowsocksUdpRuntime,cli::SelectedHy2Runtime,cli::SelectedMasqueRuntime,cli::SelectedTuicRuntime,cli::SelectedTunRuntime>(argc,argv);
+    return nexus_run_proxy<cli::ShadowsocksUdpRuntime,cli::SelectedHy2Runtime,cli::SelectedMasqueRuntime,cli::SelectedTuicRuntime,cli::SelectedTunRuntime>(argc,argv,true);
+}
+auto nexus_run_embedded(int argc, char** argv) -> int {
+    return nexus_run_proxy<cli::ShadowsocksUdpRuntime,cli::SelectedHy2Runtime,cli::SelectedMasqueRuntime,cli::SelectedTuicRuntime,cli::SelectedTunRuntime>(argc,argv,false);
 }

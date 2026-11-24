@@ -2,7 +2,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 using namespace std::chrono_literals;
 bool profile_alive=false;
 bool entered=false, exited=false, alive_on_exit=false, skip_stop=false;
@@ -18,9 +18,9 @@ int main(int argc,char** argv) {
     std::array<std::string,1> users{argv[3]};
     int fd=-1;
     {
-        proxy::Server server;
+        relay::Server server;
         if (!server.prepare_vless_inbound(argv[1],argv[2],users) || !profile_alive) return 2;
-        auto port=server.start(0,proxy::Inbound::vless,1); if (!port) return 3;
+        auto port=server.start(0,relay::Inbound::vless,1); if (!port) return 3;
         fd=socket(AF_INET,SOCK_STREAM,0); if (fd<0) return 4;
         sockaddr_in address{}; address.sin_family=AF_INET; address.sin_addr.s_addr=htonl(INADDR_LOOPBACK); address.sin_port=htons(*port);
         if (connect(fd,reinterpret_cast<sockaddr*>(&address),sizeof(address))) { close(fd); return 5; }

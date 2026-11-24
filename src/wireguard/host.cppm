@@ -38,6 +38,7 @@ export namespace wireguard {
         }
         auto discard(Slot& slot) noexcept -> void { --queued_.packets; queued_.bytes-=slot.packet.size; slot={}; }
         auto prune() noexcept -> void {
+            if (!queued_.packets) return;
             for (auto& slot:packets_) if (slot.used && !valid(slot.packet)) discard(slot);
         }
         auto enqueue(PeerHandle peer,std::optional<ReceiverBinding> binding,std::span<std::uint8_t const> wire,EndpointAddress source,bool allowed) noexcept
@@ -45,12 +46,22 @@ export namespace wireguard {
             if (!allowed || !valid_source(source)) return host_detail::failure(HostError::source);
             if (!registry_.valid(peer)) return host_detail::failure(HostError::stale_peer);
             if (wire.size()>PacketBytes) return host_detail::failure(HostError::packet_too_large);
-            prune();
-            std::size_t owned=0;
-            for (auto const& slot:packets_) owned+=slot.used && slot.packet.peer==peer;
-            if (owned>=PeerPacketLimit) return host_detail::failure(HostError::peer_queue_full);
-            auto slot=std::ranges::find(packets_,false,&Slot::used);
-            if (slot==packets_.end()) return host_detail::failure(HostError::queue_full);
+            auto scan=[&] {
+                std::size_t owned=0;
+                Slot* free_slot=nullptr;
+                for (auto& slot:packets_) {
+                    if (slot.used) owned+=slot.packet.peer==peer;
+                    else if (!free_slot) free_slot=&slot;
+                }
+                return std::pair{owned,free_slot};
+            };
+            auto [owned,slot]=scan();
+            if (owned>=PeerPacketLimit || !slot) {
+                prune();
+                std::tie(owned,slot)=scan();
+                if (owned>=PeerPacketLimit) return host_detail::failure(HostError::peer_queue_full);
+                if (!slot) return host_detail::failure(HostError::queue_full);
+            }
             if (packet_serial_==std::numeric_limits<std::uint64_t>::max()) return host_detail::failure(HostError::exhausted);
             slot->used=true; auto& packet=slot->packet;
             packet.peer=peer; packet.source=source; packet.binding=binding; packet.serial=++packet_serial_; packet.size=wire.size();
@@ -79,16 +90,24 @@ export namespace wireguard {
             return enqueue(peer,{},wire,source,source_allowed);
         }
         [[nodiscard]] auto take() noexcept -> std::optional<CandidateDatagram<PacketBytes>> {
-            prune();
-            for (std::size_t i=0;i<PeerCapacity;++i) {
-                auto peer=(next_peer_+i)%PeerCapacity; Slot* oldest=nullptr;
-                for (auto& slot:packets_) if (slot.used && slot.packet.peer.slot==peer && (!oldest || slot.packet.serial<oldest->packet.serial)) oldest=&slot;
-                if (!oldest) continue;
-                auto result=oldest->packet; discard(*oldest); next_peer_=(peer+1)%PeerCapacity; return result;
+            if (!queued_.packets) return {};
+            Slot* chosen=nullptr;
+            std::size_t best_distance=PeerCapacity;
+            for (auto& slot:packets_) {
+                if (!slot.used) continue;
+                if (!valid(slot.packet)) { discard(slot); continue; }
+                auto peer=std::size_t{slot.packet.peer.slot};
+                auto distance=peer>=next_peer_ ? peer-next_peer_ : PeerCapacity-next_peer_+peer;
+                if (distance<best_distance || (distance==best_distance && slot.packet.serial<chosen->packet.serial)) {
+                    best_distance=distance; chosen=&slot;
+                }
             }
-            return {};
+            if (!chosen) return {};
+            auto result=chosen->packet; auto peer=std::size_t{result.peer.slot};
+            discard(*chosen); next_peer_=(peer+1)%PeerCapacity; return result;
         }
+        [[nodiscard]] auto queued_packets() const noexcept -> std::size_t { return queued_.packets; }
         [[nodiscard]] auto status() noexcept -> HostQueueStatus { prune(); return queued_; }
-        auto clear() noexcept -> void { for (auto& slot:packets_) if (slot.used) discard(slot); }
+        auto clear() noexcept -> void { if (!queued_.packets) return; for (auto& slot:packets_) if (slot.used) discard(slot); }
     };
 }

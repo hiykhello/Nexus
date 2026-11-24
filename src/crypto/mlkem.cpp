@@ -1,7 +1,7 @@
 module crypto.mlkem;
-import nexus.thirdparty.boringssl;
+import boringssl;
 import std;
-using namespace nex::boringssl;
+using namespace boringssl;
 
 namespace crypto {
     MlkemSecret::~MlkemSecret() { OPENSSL_cleanse(bytes_.data(),bytes_.size()); }

@@ -2,9 +2,9 @@ import std;
 import hysteria2.client;
 import hysteria2.client_profile;
 import platform.socket_options;
-import nexus.thirdparty.corosio;
+import corosio;
 
-namespace io=nex::corosio;
+namespace io = ::corosio;
 namespace h=hysteria2;
 namespace allocation {
     bool armed=false,denied=false;

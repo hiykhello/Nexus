@@ -1,10 +1,10 @@
 module rules;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 import rules.kdl_predicate;
 
 namespace rules {
-    namespace g = nex::glaze;
+    namespace g = ::glaze;
     auto normalize_set(RuleSet set) -> std::expected<RuleSet, Error>;
 
     namespace {
@@ -26,8 +26,8 @@ namespace rules {
             if (node.tag || !node.properties.empty() || !node.children.empty() || node.arguments.size() != 1) return {};
             auto const& value = node.arguments.front();
             if (value.tag) return {};
-            if (auto p = std::get_if<std::int64_t>(&value.data); p && (*p==1 || *p==2)) return static_cast<unsigned>(*p);
-            if (auto p = std::get_if<std::uint64_t>(&value.data); p && (*p==1 || *p==2)) return static_cast<unsigned>(*p);
+            if (auto p = std::get_if<std::int64_t>(&value.data); p && *p==2) return static_cast<unsigned>(*p);
+            if (auto p = std::get_if<std::uint64_t>(&value.data); p && *p==2) return static_cast<unsigned>(*p);
             return {};
         }
 
@@ -35,7 +35,7 @@ namespace rules {
     }
 
     auto parse_kdl(std::string_view input) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL input exceeds 1 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL input exceeds 32 MiB"});
         auto document = g::read_kdl<g::KdlDocument>(input);
         if (!document) return std::unexpected(Error{ErrorCode::syntax, g::format_error(document.error(), input)});
         bool version_seen = false, kind_seen = false;
@@ -81,7 +81,7 @@ namespace rules {
         for (auto const& entry:normalized->rules) document.push_back(encode_rule(encode_rule,entry));
         auto encoded = g::write_kdl(document);
         if (!encoded) return std::unexpected(Error{ErrorCode::syntax, "could not encode KDL"});
-        if (encoded->size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL output exceeds 1 MiB"});
+        if (encoded->size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL output exceeds 32 MiB"});
         return *std::move(encoded);
     }
 }

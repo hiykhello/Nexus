@@ -2,7 +2,7 @@
 import std;
 import dns.cache;
 import dns.shared_cache;
-import proxy;
+import relay;
 
 namespace {
     enum class Stage { none, refresh, launch };
@@ -19,7 +19,7 @@ extern "C" void nexus_test_group_refresh_construct() { inject(Stage::refresh); }
 extern "C" void nexus_test_start_throw() { inject(Stage::launch); }
 
 namespace {
-    namespace p=proxy;
+    namespace p = relay;
     using Cache=dns_hp_experiment::GroupSnapshot;
     using Budget=dns::detail::RefreshBudget;
 

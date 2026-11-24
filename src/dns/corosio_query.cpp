@@ -3,8 +3,8 @@ import std;
 import net.tcp_connect;
 import net.udp_connect;
 import dns.input_budget;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace dns::detail {
     auto prepare_dns_udp(dns_io::udp_socket& socket,dns_io::endpoint const& endpoint,

@@ -4,8 +4,8 @@ import proxy.v4;
 import cli.dns_proxy_stream;
 import dns.corosio_query;
 import dns.tls_query;
-import proxy;
-import proxy.session_quota;
+import relay;
+import relay.session_quota;
 import tls.byte_stream;
 import tls.profiles;
 
@@ -14,12 +14,12 @@ namespace cli {
         using namespace dns_proxy_detail;
 
         class RoutedTlsStream {
-            proxy::Session session_;
+            relay::Session session_;
             Connector connector_;
             std::optional<tls::detail::ByteStream<Connector::Socket>> stream_;
 
         public:
-            RoutedTlsStream(Io& context,proxy::Server& server,proxy::SessionQuota::Lease lease,std::size_t outbound,
+            RoutedTlsStream(Io& context,relay::Server& server,relay::SessionQuota::Lease lease,std::size_t outbound,
                 Endpoint peer,tls::ClientProfile const& profile,std::shared_ptr<dns::detail::TransportSnapshot const> snapshot)
                 :session_(context),connector_(profile,server,session_,outbound,peer) {
                 server.attach_session(session_,std::move(lease));
@@ -52,7 +52,7 @@ namespace cli {
         auto create=[profile=std::move(*profile),outbound,snapshot=std::move(snapshot)](Io& context,Endpoint peer) -> dns::TlsDnsStream {
             auto transport=snapshot ? snapshot->lock() : nullptr;
             if (snapshot && !transport) return {};
-            auto* server=proxy::Server::from_context(context);
+            auto* server=relay::Server::from_context(context);
             if (!server) return {};
             auto lease=server->acquire_session();
             if (!lease) return {};

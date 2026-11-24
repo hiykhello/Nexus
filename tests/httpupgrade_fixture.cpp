@@ -3,13 +3,12 @@ import httpupgrade;
 import httpupgrade.stream;
 import net.stream_relay;
 import vless;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace h=httpupgrade;
 namespace v=vless;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Fixture {
     io::io_context context;

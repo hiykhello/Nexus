@@ -4,11 +4,11 @@
 import std;
 import crypto;
 import hysteria2.credential;
-import proxy;
-import proxy.hysteria2_host;
+import relay;
+import relay.hysteria2_host;
 import tls.server_credential;
 
-namespace p=proxy;namespace h=hysteria2;
+namespace p = relay;namespace h=hysteria2;
 auto read(std::string_view name) -> std::vector<std::uint8_t> {
     std::ifstream file(std::string(name),std::ios::binary);
     if(!file)throw std::runtime_error("cannot open credential");

@@ -3,10 +3,10 @@ import endpoint.config;
 import endpoint.credentials;
 import endpoint.process_signals;
 import endpoint.bootstrap;
-import nexus.thirdparty.corosio;
+import corosio;
 import endpoint.owner;
 import wireguard.port;
-import nexus.thirdparty.capy;
+import capy;
 namespace allocation {
     struct Header { void* raw; std::size_t size; bool tracked; };
     std::size_t calls=0,live=0,bytes=0,total=0,peak=0;
@@ -48,7 +48,7 @@ auto operator delete[](void* pointer,std::size_t,std::align_val_t) noexcept -> v
 
 auto main(int argc,char**argv) -> int {
     if(argc!=4)return 2;
-    if(std::string_view(argv[2])=="uring" && !nex::corosio::has_uring)return 77;
+    if(std::string_view(argv[2])=="uring" && !corosio::has_uring)return 77;
     auto input=std::ifstream(argv[1]);std::string text((std::istreambuf_iterator<char>(input)),{});
     auto config=endpoint::parse_kdl(text);if(!config)return 1;
     endpoint::process::Signals signals;if(!signals.install())return 1;
@@ -56,14 +56,14 @@ auto main(int argc,char**argv) -> int {
     auto material=endpoint::prepare_credentials(config->wireguard,deadline);if(!material)return 1;
     auto descriptors=[] {std::size_t count=0;for(auto const& entry:std::filesystem::directory_iterator("/proc/self/fd")){(void)entry;++count;}return count;};
     auto original_fds=descriptors();
-    auto before=nex::capy::get_current_frame_allocator();
+    auto before=capy::get_current_frame_allocator();
     allocation::allowance=std::stoll(argv[3]);allocation::enabled=true;allocation::verify_exit=true;
     bool success=false,caught=false;
     try { auto resolved=endpoint::bootstrap(config->wireguard,*material,deadline,signals,std::string_view(argv[2])=="uring");success=resolved.has_value(); }
     catch(std::bad_alloc const&) {caught=true;}
     allocation::enabled=false;allocation::allowance=-1;
     auto calls=allocation::calls;auto denied=allocation::denied;
-    if(nex::capy::get_current_frame_allocator()!=before)return 5;
+    if(capy::get_current_frame_allocator()!=before)return 5;
     if(!denied && (!success || caught))return 6;
     std::raise(15);if(!signals.requested())return 7;
     // Recovery uses a fresh local owner with the same process signal globals,

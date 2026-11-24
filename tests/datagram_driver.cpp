@@ -1,10 +1,9 @@
 import std;
 import net.datagram_driver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;
 namespace {

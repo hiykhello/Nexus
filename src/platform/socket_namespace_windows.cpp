@@ -80,6 +80,7 @@ namespace platform {
             bool ipv6 = options.inet6_bind_address.has_value() && !options.inet4_bind_address.has_value();
             if (auto error = bind_interface_non_linux(fd, name, options.interface_index, ipv6)) return error;
         }
+        if (auto error = invoke_protect_fd(fd)) return error;
         return options.protect_path.empty() ? std::error_code{} : std::make_error_code(std::errc::operation_not_supported);
     }
 
@@ -92,4 +93,5 @@ namespace platform {
     }
 
     auto tune_tcp_low_latency(int, std::uint32_t) noexcept -> void {}
+    auto enable_tcp_quickack(int) noexcept -> void {}
 }

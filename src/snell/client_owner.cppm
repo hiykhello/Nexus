@@ -7,7 +7,7 @@ import snell.cipher;
 import snell.client_start;
 import snell.async_record;
 import snell.owner;
-import nexus.thirdparty.capy;
+import capy;
 export namespace snell {
     class ClientOwner;
     template<class Socket> class ClientStream;
@@ -56,7 +56,7 @@ export namespace snell {
         // Split startup permits TCP callers to write application bytes before
         // awaiting a server that delays its acknowledgement until first data.
         template<class Socket> auto start(Socket& socket,Request request,View early,Deadline deadline) const
-          ->nex::capy::task<std::expected<Record<Cipher>,IoError>> {
+          ->capy::task<std::expected<Record<Cipher>,IoError>> {
             struct Clear {Request& request;~Clear(){crypto::cleanse(request.client_id);}} clear{request};
             if(!request.client_id.empty())co_return std::unexpected(IoError::state);
             if(auto user=credential_.user())request.client_id.assign(user->begin(),user->end());
@@ -67,7 +67,7 @@ export namespace snell {
         // authenticated EOF. The coroutine owns the token through completion
         // or abandonment, so suspended I/O cannot observe a moved token.
         template<class Socket> auto resume_start(Socket& socket,ClientReuse<Socket> reuse,Request request,Deadline deadline) const
-          ->nex::capy::task<std::expected<ClientReuse<Socket>,IoError>> {
+          ->capy::task<std::expected<ClientReuse<Socket>,IoError>> {
             struct Clear {Request& request;~Clear(){crypto::cleanse(request.client_id);}} clear{request};
             if(reuse.socket_!=&socket||reuse.owner_!=this||reuse.phase_||!request.client_id.empty()||request.command!=5)co_return std::unexpected(IoError::state);
             reuse.phase_=1;
@@ -79,7 +79,7 @@ export namespace snell {
             reuse.phase_=2;guard.done=true;co_return std::move(reuse);
         }
         template<class Socket> auto connect(Socket& socket,Request request,View early,Deadline deadline) const
-          ->nex::capy::task<std::expected<ClientConnected,ReplyError>> {
+          ->capy::task<std::expected<ClientConnected,ReplyError>> {
             if((request.command==1||request.command==5) && early.empty())co_return std::unexpected(ReplyError(IoError::state));
             struct Guard{Socket& socket;bool done=false;~Guard(){if(!done)socket.cancel();}} guard{socket};
             auto writer=co_await start(socket,std::move(request),early,deadline);
@@ -94,7 +94,7 @@ export namespace snell {
     // One reader and serialized writers; cancel then drain before destruction.
     template<class Socket> class ClientStream {
         Socket& socket_;ClientOwner const& owner_;Record<Cipher> writer_;std::optional<Record<Cipher>> reader_;
-        nex::capy::async_mutex write_lock_;Bytes cache_;std::size_t offset_=0,writers_=0;bool active_=true,reading_=false,input_eof_=false,output_eof_=false,reused_reply_=false;
+        capy::async_mutex write_lock_;Bytes cache_;std::size_t offset_=0,writers_=0;bool active_=true,reading_=false,input_eof_=false,output_eof_=false,reused_reply_=false;
         std::optional<ReplyError> reply_error_;
     public:
         ClientStream(Socket& socket,ClientOwner const& owner,Record<Cipher> writer):socket_(socket),owner_(owner),writer_(std::move(writer)){}
@@ -116,20 +116,20 @@ export namespace snell {
             active_=false;return ClientReuse<Socket>(socket_,owner_,std::move(*reader_),std::move(writer_));
         }
         [[nodiscard]] auto reply_error() const noexcept ->std::optional<ReplyError> const& {return reply_error_;}
-        auto send(View bytes,Deadline deadline)->nex::capy::task<bool> {
+        auto send(View bytes,Deadline deadline)->capy::task<bool> {
             ++writers_;struct Waiting{ClientStream& s;~Waiting(){--s.writers_;}} waiting{*this};
             auto [ec,lock]=co_await write_lock_.scoped_lock();if(ec||!active_||output_eof_)co_return false;
             struct Guard{ClientStream& s;bool done=false;~Guard(){if(!done)s.cancel();}} guard{*this};
             while(!bytes.empty()){auto part=bytes.first(std::min(bytes.size(),max_payload));if(!co_await send_record(socket_,writer_,part,{},deadline))co_return false;bytes=bytes.subspan(part.size());}
             guard.done=true;co_return true;
         }
-        auto close_output(Deadline deadline)->nex::capy::task<bool> {
+        auto close_output(Deadline deadline)->capy::task<bool> {
             ++writers_;struct Waiting{ClientStream& s;~Waiting(){--s.writers_;}} waiting{*this};
             auto [ec,lock]=co_await write_lock_.scoped_lock();if(ec||!active_||output_eof_)co_return false;
             struct Guard{ClientStream& s;bool done=false;~Guard(){if(!done)s.cancel();}} guard{*this};
             if(!co_await send_record(socket_,writer_,{}, {},deadline))co_return false;output_eof_=true;guard.done=true;co_return true;
         }
-        auto read(std::span<std::uint8_t> output,Deadline deadline)->nex::capy::task<std::expected<std::size_t,IoError>> {
+        auto read(std::span<std::uint8_t> output,Deadline deadline)->capy::task<std::expected<std::size_t,IoError>> {
             if(!active_||reading_||output.empty())co_return std::unexpected(IoError::state);
             reading_=true;struct Guard{ClientStream& s;bool done=false;~Guard(){s.reading_=false;if(!done)s.cancel();}} guard{*this};
             if(!reader_){auto response=co_await owner_.reply(socket_,deadline);if(!response){reply_error_=std::move(response.error());co_return std::unexpected(IoError::record);}

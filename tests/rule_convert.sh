@@ -48,13 +48,13 @@ expect_failure "$binary" rule convert kdl beve "$temporary/input one.kdl" "$temp
 [[ -L "$temporary/symlink" ]] || fail 'output symlink changed'
 cmp -s "$temporary/input one.kdl" "$temporary/source-copy" || fail 'symlink target changed'
 
-printf 'schema-version 2\nkind "predicate"\n' >"$temporary/invalid.kdl"
+printf 'schema-version 3\nkind "predicate"\n' >"$temporary/invalid.kdl"
 expect_failure "$binary" rule convert kdl beve "$temporary/invalid.kdl" "$temporary/invalid-output"
 [[ ! -e "$temporary/invalid-output" ]] || fail 'invalid input produced output'
 head -c 20 "$temporary/one.beve" >"$temporary/truncated.beve"
 expect_failure "$binary" rule convert beve kdl "$temporary/truncated.beve" "$temporary/truncated-output"
 [[ ! -e "$temporary/truncated-output" ]] || fail 'truncated input produced output'
-truncate -s 1048577 "$temporary/oversize.kdl"
+truncate -s 33554433 "$temporary/oversize.kdl"
 expect_failure "$binary" rule convert kdl beve "$temporary/oversize.kdl" "$temporary/oversize-output"
 [[ ! -e "$temporary/oversize-output" ]] || fail 'oversize input produced output'
 mkfifo "$temporary/fifo"

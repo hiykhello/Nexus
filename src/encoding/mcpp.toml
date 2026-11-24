@@ -1,0 +1,6 @@
+[package]
+name = "encoding"
+version = "0.1.0"
+
+[build]
+sources = ["base64.cppm", "base64_key.cppm", "endian.cppm", "hex.cppm", "json.cppm"]

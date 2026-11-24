@@ -1,7 +1,7 @@
 export module shadowsocks.identity;
 import std;
 import crypto;
-import nexus.thirdparty.blake3;
+import blake3;
 import shadowsocks.key;
 
 export namespace shadowsocks {
@@ -25,17 +25,17 @@ export namespace shadowsocks {
 namespace shadowsocks {
     namespace {
         struct Hasher {
-            nex::blake3::blake3_hasher value{};
+            blake3::blake3_hasher value{};
             ~Hasher() { crypto::cleanse(std::span{reinterpret_cast<std::uint8_t*>(&value),sizeof(value)}); }
         };
     }
 
     auto identity_hash(std::span<std::uint8_t const> psk) noexcept -> IdentityBlock {
         Hasher hash;
-        nex::blake3::blake3_hasher_init(&hash.value);
-        nex::blake3::blake3_hasher_update(&hash.value,psk.data(),psk.size());
+        blake3::blake3_hasher_init(&hash.value);
+        blake3::blake3_hasher_update(&hash.value,psk.data(),psk.size());
         IdentityBlock result;
-        nex::blake3::blake3_hasher_finalize(&hash.value,result.data(),result.size());
+        blake3::blake3_hasher_finalize(&hash.value,result.data(),result.size());
         return result;
     }
 
@@ -45,15 +45,15 @@ namespace shadowsocks {
         if ((identity_key.size()!=16 && identity_key.size()!=32) || salt.size()!=identity_key.size()) return {};
         constexpr std::string_view context="shadowsocks 2022 identity subkey";
         Hasher hash;
-        nex::blake3::blake3_hasher_init_derive_key_raw(&hash.value,context.data(),context.size());
-        nex::blake3::blake3_hasher_update(&hash.value,identity_key.data(),identity_key.size());
-        nex::blake3::blake3_hasher_update(&hash.value,salt.data(),salt.size());
+        blake3::blake3_hasher_init_derive_key_raw(&hash.value,context.data(),context.size());
+        blake3::blake3_hasher_update(&hash.value,identity_key.data(),identity_key.size());
+        blake3::blake3_hasher_update(&hash.value,salt.data(),salt.size());
         struct Secret {
             std::array<std::uint8_t,32> value{};
             ~Secret() { crypto::cleanse(value); }
         } key;
         auto subkey=std::span(key.value).first(identity_key.size());
-        nex::blake3::blake3_hasher_finalize(&hash.value,subkey.data(),subkey.size());
+        blake3::blake3_hasher_finalize(&hash.value,subkey.data(),subkey.size());
         return transform_aes_block(subkey,block,encrypt);
     }
 

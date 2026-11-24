@@ -1,13 +1,13 @@
-export module nexus.test.quic_tls_link;
+export module test.quic_tls_link;
 import std;
 import crypto;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
+import ngtcp2;
+import nghttp3;
 import tls.certificate_trust;
 import tls.hello;
 import tls.hybrid;
 
-export namespace nexus::test::quic_tls {
+export namespace test::quic_tls {
     using View=std::span<std::uint8_t const>;
     inline auto bytes(std::string_view value) noexcept -> View { return {reinterpret_cast<std::uint8_t const*>(value.data()),value.size()}; }
     inline auto read(std::string_view path) -> crypto::Bytes { std::ifstream input(std::string(path),std::ios::binary); return {std::istreambuf_iterator<char>(input),{}}; }
@@ -35,14 +35,14 @@ export namespace nexus::test::quic_tls {
             auto* out=allocate(size,owner); if (!out) return nullptr;
             auto old=(static_cast<Header*>(pointer)-1)->bytes-sizeof(Header); std::memcpy(out,pointer,std::min(old,size)); release(pointer,owner); return out;
         }
-        auto transport() noexcept -> nex::ngtcp2::ngtcp2_mem { return {this,allocate,release,zero,resize}; }
-        auto http3() noexcept -> nex::nghttp3::nghttp3_mem { return {this,allocate,release,zero,resize}; }
+        auto transport() noexcept -> ngtcp2::ngtcp2_mem { return {this,allocate,release,zero,resize}; }
+        auto http3() noexcept -> nghttp3::nghttp3_mem { return {this,allocate,release,zero,resize}; }
     };
     struct Path {
-        nex::ngtcp2::ngtcp2_sockaddr_in local{},remote{};
-        nex::ngtcp2::ngtcp2_path value{};
+        ngtcp2::ngtcp2_sockaddr_in local{},remote{};
+        ngtcp2::ngtcp2_path value{};
         explicit Path(bool server) {
-            namespace n=nex::ngtcp2;
+            namespace n = ::ngtcp2;
             auto port=[](unsigned value) { return std::bit_cast<std::uint16_t>(std::array<std::uint8_t,2>{static_cast<std::uint8_t>(value>>8),static_cast<std::uint8_t>(value)}); };
             local.sin_family=remote.sin_family=n::af_inet;
             local.sin_port=port(server ? 443 : 12345); remote.sin_port=port(server ? 12345 : 443);
@@ -50,17 +50,17 @@ export namespace nexus::test::quic_tls {
             value={{reinterpret_cast<n::ngtcp2_sockaddr*>(&local),sizeof(local)},{reinterpret_cast<n::ngtcp2_sockaddr*>(&remote),sizeof(remote)},nullptr};
         }
     };
-    inline auto cid(std::uint8_t seed) -> nex::ngtcp2::ngtcp2_cid {
+    inline auto cid(std::uint8_t seed) -> ngtcp2::ngtcp2_cid {
         std::array<std::uint8_t,8> bytes{}; for (auto& byte:bytes) byte=seed++;
-        nex::ngtcp2::ngtcp2_cid out{}; nex::ngtcp2::ngtcp2_cid_init(&out,bytes.data(),bytes.size()); return out;
+        ngtcp2::ngtcp2_cid out{}; ngtcp2::ngtcp2_cid_init(&out,bytes.data(),bytes.size()); return out;
     }
-    inline auto settings() -> nex::ngtcp2::ngtcp2_settings {
-        namespace n=nex::ngtcp2;
+    inline auto settings() -> ngtcp2::ngtcp2_settings {
+        namespace n = ::ngtcp2;
         n::ngtcp2_settings out{}; n::ngtcp2_settings_default_versioned(n::settings_version,&out);
         out.initial_ts=1; out.handshake_timeout=10*n::seconds; return out;
     }
-    inline auto parameters(bool server) -> nex::ngtcp2::ngtcp2_transport_params {
-        namespace n=nex::ngtcp2;
+    inline auto parameters(bool server) -> ngtcp2::ngtcp2_transport_params {
+        namespace n = ::ngtcp2;
         n::ngtcp2_transport_params out{}; n::ngtcp2_transport_params_default_versioned(n::transport_params_version,&out);
         out.initial_max_data=65536; out.initial_max_stream_data_bidi_local=out.initial_max_stream_data_bidi_remote=out.initial_max_stream_data_uni=4096;
         out.initial_max_streams_bidi=16; out.initial_max_streams_uni=3; out.disable_active_migration=1;

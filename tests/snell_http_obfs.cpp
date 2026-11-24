@@ -1,10 +1,9 @@
 import std;
 import snell.http_obfs;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 // A bounded fake socket exposes partial writes and fragmented reads while the

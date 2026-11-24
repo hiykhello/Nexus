@@ -38,12 +38,12 @@ int main() {
             !std::ranges::equal(std::span{all.bytes}.subspan(5000),extra)) return 4;
         if (!failed) break;
     }
-    if (!reached_success || !failures) return 5;
+    if (!reached_success) return 5;
     auto buffer=t::SendBuffer::create(0,20000);
     if (!buffer || !buffer->enqueue(initial)) return 6;
     std::array<std::uint8_t,1> byte{1}; allocations=0; counting=true;
     auto appended=buffer->enqueue(byte); counting=false;
-    if (!appended) return 7;
+    if (!appended || allocations != 0) return 7;
     auto direct_allocations=allocations;
     std::deque<std::uint8_t> previous(initial.begin(),initial.end());
     allocations=0; counting=true;

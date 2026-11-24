@@ -1,7 +1,7 @@
 export module cli.tun_enabled;
 import std;
 import config;
-import proxy;
+import relay;
 import cli.tun_host;
 import cli.masque_tun;
 import packet.tun_network_types;
@@ -25,13 +25,15 @@ export namespace cli::tun_enabled {
         ~Runtime();
         auto resize(std::size_t) -> void;
         auto configure(std::size_t, config::InboundConfig const&, config::Config const&) -> std::expected<void, std::string>;
-        auto start(std::size_t, proxy::Server&) -> std::expected<std::string, std::string>;
-        [[nodiscard]] auto queue_outbound_probe(std::size_t,std::shared_ptr<proxy::OutboundProbe>) -> bool;
+        auto start(std::size_t, relay::Server&) -> std::expected<std::string, std::string>;
+        [[nodiscard]] auto queue_outbound_probe(std::size_t,std::shared_ptr<relay::OutboundProbe>) -> bool;
         auto healthy() const noexcept -> bool;
         auto owns_host_dns() const noexcept -> bool {
             return std::ranges::any_of(entries_,[](auto const& entry) {return entry && entry->config.host_dns_resolved;});
         }
         auto failure() const -> std::optional<std::string>;
+        auto begin_drain() noexcept -> void;
+        [[nodiscard]] auto drained() const noexcept -> bool;
         auto stop() noexcept -> void;
     };
 }

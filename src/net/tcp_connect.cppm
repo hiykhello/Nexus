@@ -2,8 +2,8 @@ export module net.tcp_connect;
 import std;
 export import net.happy_eyeballs;
 export import platform.socket_options;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace net {
     // The source and deadline stay with the caller. Preparation opens only a
@@ -23,9 +23,9 @@ export namespace net {
         if (auto error=platform::apply_tcp_options(socket.native_handle(),options,deadline)) return error;
         platform::tune_tcp_low_latency(socket.native_handle());
         if (endpoint.is_v4() && options.binding.inet4_bind_address)
-            return socket.bind(Endpoint(nex::corosio::ipv4_address(*options.binding.inet4_bind_address),0));
+            return socket.bind(Endpoint(corosio::ipv4_address(*options.binding.inet4_bind_address),0));
         if (endpoint.is_v6() && options.binding.inet6_bind_address)
-            return socket.bind(Endpoint(nex::corosio::ipv6_address(*options.binding.inet6_bind_address),0));
+            return socket.bind(Endpoint(corosio::ipv6_address(*options.binding.inet6_bind_address),0));
         return {};
     }
 
@@ -62,7 +62,7 @@ export namespace net {
         auto connect_prepared(Socket& socket,Range endpoints,Condition condition,
             platform::TcpSocketOptions const& options,bool& preparation_failed,platform::SocketDeadline deadline,
             std::uint32_t* connected_interface)
-            -> nex::capy::task<nex::capy::results<typename Socket::endpoint_type>> {
+            -> capy::task<capy::results<typename Socket::endpoint_type>> {
             using Endpoint=typename Socket::endpoint_type;
             std::vector<Endpoint> ordered;
             for (auto&& item:endpoints) ordered.emplace_back(item);
@@ -101,14 +101,15 @@ export namespace net {
                     if (dual_stack && ep_idx+1<ordered.size() && interfaces.indices.size()==1)
                         stop=std::min(stop,std::chrono::steady_clock::now()+kHappyEyeballsFallbackDelay);
                     auto [error]=stop==deadline ? co_await socket.connect(endpoint) :
-                        co_await nex::corosio::timeout(socket.connect(endpoint),stop);
+                        co_await corosio::timeout(socket.connect(endpoint),stop);
                     if (!error) {
+                        if (!settings.configured()) platform::tune_tcp_low_latency(socket.native_handle());
                         if (interfaces.fallback_memory && index==0)
                             interfaces.fallback_memory->mark_healthy(interfaces.indices[0]);
                         if (connected_interface) *connected_interface=settings.binding.interface_index;
                         co_return {std::error_code{},std::move(endpoint)};
                     }
-                    if (error==nex::capy::cond::canceled) co_return {error,Endpoint{}};
+                    if (error==capy::cond::canceled) co_return {error,Endpoint{}};
                     if (interfaces.parallel_fallback && interfaces.fallback_memory && index==0 &&
                         interfaces.indices.size()>1) {
                         auto now_ms=std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -128,7 +129,7 @@ export namespace net {
     auto connect_tcp_candidates(Socket& socket,Range endpoints,Condition condition,
         platform::TcpSocketOptions const& options,bool& preparation_failed,
         platform::SocketDeadline deadline=platform::SocketDeadline::max(),std::uint32_t* connected_interface=nullptr)
-        -> nex::capy::task<nex::capy::results<typename Socket::endpoint_type>> {
+        -> capy::task<capy::results<typename Socket::endpoint_type>> {
         if (connected_interface) *connected_interface=0;
         if (!options.configured()) {
             bool dual_stack=false;
@@ -139,7 +140,7 @@ export namespace net {
                     if (v4 && v6) { dual_stack=true; break; }
                 }
             }
-            if (!dual_stack) return nex::corosio::connect(socket,std::move(endpoints),std::move(condition));
+            if (!dual_stack) return corosio::connect(socket,std::move(endpoints),std::move(condition));
         }
         return detail::connect_prepared(socket,std::move(endpoints),std::move(condition),options,preparation_failed,deadline,connected_interface);
     }

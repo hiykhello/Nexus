@@ -120,6 +120,11 @@ export namespace xudp {
             }
             return std::optional<ServerDirectReply>{};
         }
+        [[nodiscard]] auto empty() const noexcept -> bool { return slots_.empty(); }
+        template<class Fn>
+        auto for_each_fd(Fn&& fn) const noexcept -> void {
+            for (auto const& slot : slots_) for (int fd : slot->socket.native_handles()) if (fd >= 0) fn(fd);
+        }
         auto close() noexcept -> void { if (closed_) return; closed_=true; slots_.clear(); sessions_.close(); }
     };
 }

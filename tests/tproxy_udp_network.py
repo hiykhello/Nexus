@@ -125,8 +125,10 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
                 rule action="route" outbound="edge"
             }'''
         else:
-            route='''rule kind="rule-set" value="uid" outbound="deny"
-                rule kind="rule-set" value="process" outbound="deny"'''
+            route_items = [
+                '- kind="rule-set" value="uid" outbound="deny"',
+                '- kind="rule-set" value="process" outbound="deny"',
+            ]
         alias_rule=""
         if fakeip:
             (root/"alias.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="domain" value="origin.test"\n')
@@ -135,7 +137,7 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
                 route=route.replace('rule action="route" outbound="edge"',
                     'rule action="route" rule-set="alias" domain-source="fakeip" outbound="edge"\n                rule action="reject"')
             else:
-                route+='\n    rule kind="rule-set" value="alias" outbound="direct"'
+                route_items.append('- kind="rule-set" value="alias" outbound="direct"')
         ingress_rule=""
         if check_interface:
             ingress='rule type="source-interface" value="nxclienthost"'
@@ -151,13 +153,15 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
                     'rule action="route" rule-set="ingress" outbound="edge"\n                rule action="reject"')
             else:
                 if fakeip:
-                    route=route.replace('value="alias" outbound="direct"', 'value="ingress" outbound="direct"')
+                    route_items=[item.replace('value="alias" outbound="direct"', 'value="ingress" outbound="direct"') for item in route_items]
                 else:
-                    route+='\n    rule kind="rule-set" value="ingress" outbound="direct"'
+                    route_items.append('- kind="rule-set" value="ingress" outbound="direct"')
                 ingress_rule+='\n    rule-set "all" path="all.kdl" format="kdl"'
                 (root/"all.kdl").write_text(
                     'schema-version 2\nkind "predicate"\nrule type="network" value="udp"\n')
-                route+='\n    rule kind="rule-set" value="all" outbound="deny"'
+                route_items.append('- kind="rule-set" value="all" outbound="deny"')
+        if not tunneled:
+            route = "rules {\n        " + "\n        ".join(route_items) + "\n    }"
         config.write_text(f'''schema-version 1
 role "client"
 workers 2

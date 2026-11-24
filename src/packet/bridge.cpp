@@ -73,6 +73,8 @@ namespace packet::bridge {
                 return std::unexpected(ForwardError::protocol_disabled);
             }
             if (pkt.size() < 40) return std::unexpected(ForwardError::truncated);
+            std::size_t const payload_len = (static_cast<std::size_t>(pkt[4]) << 8) | pkt[5];
+            if (payload_len > pkt.size() - 40) return std::unexpected(ForwardError::truncated);
             if (config_.drop_link_local && is_link_local_v6(pkt)) {
                 ++stats_.dropped_filtered;
                 return std::unexpected(ForwardError::link_local_blocked);
@@ -81,7 +83,7 @@ namespace packet::bridge {
                 ++stats_.dropped_ttl;
                 return std::unexpected(ForwardError::ttl_expired);
             }
-            packet::Bytes out(pkt.begin(), pkt.end());
+            packet::Bytes out(pkt.begin(), pkt.begin() + static_cast<std::ptrdiff_t>(40 + payload_len));
             out[7] = static_cast<std::uint8_t>(out[7] - 1);
             ++stats_.forwarded_v6;
             return out;

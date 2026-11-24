@@ -8,9 +8,9 @@ import http2.client_channel;
 import tls.corosio_application;
 import tls.byte_stream;
 import net.stream_relay;
-import nexus.thirdparty.nghttp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import nghttp2;
+import capy;
+import corosio;
 
 export namespace naive {
     using Clock = std::chrono::steady_clock;
@@ -32,10 +32,13 @@ export namespace naive {
     class H2ClientStream {
     public:
         using Channel = http2::ClientChannel<Lower, kH2StreamCapacity>;
+        using RetireCallback = void (*)(void*, http2::StreamTicket) noexcept;
 
     private:
         Channel* channel_ = nullptr;
         http2::StreamTicket ticket_{};
+        void* retire_ctx_ = nullptr;
+        RetireCallback retire_fn_ = nullptr;
         PaddingEncoder encoder_{false};
         PaddingDecoder decoder_{false};
         std::vector<std::uint8_t> encoded_;
@@ -44,19 +47,22 @@ export namespace naive {
         bool canceled_ = false;
         bool output_closed_ = false;
 
-        auto wait_tx(Deadline deadline) -> nex::capy::task<bool> {
+        auto wait_tx(Deadline deadline) -> capy::task<bool> {
             for (;;) {
+                if (!channel_ || canceled_) co_return false;
                 auto tx = channel_->tx_consumed(ticket_);
                 if (!tx) co_return false;
                 if (*tx) co_return true;
-                if (canceled_ || !co_await channel_->wait_change(deadline)) co_return false;
+                if (!co_await channel_->wait_change(deadline) || !channel_ || canceled_) co_return false;
             }
         }
 
     public:
         H2ClientStream() = default;
-        H2ClientStream(Channel& channel, http2::StreamTicket ticket, bool use_padding) noexcept
-            : channel_(&channel), ticket_(ticket), encoder_(use_padding), decoder_(use_padding) {}
+        H2ClientStream(Channel& channel, http2::StreamTicket ticket, bool use_padding,
+                       void* retire_ctx = nullptr, RetireCallback retire_fn = nullptr) noexcept
+            : channel_(&channel), ticket_(ticket), retire_ctx_(retire_ctx), retire_fn_(retire_fn),
+              encoder_(use_padding), decoder_(use_padding) {}
         H2ClientStream(H2ClientStream const&) = delete;
         auto operator=(H2ClientStream const&) -> H2ClientStream& = delete;
         ~H2ClientStream() { release(); }
@@ -64,8 +70,13 @@ export namespace naive {
         auto release() noexcept -> void {
             if (!channel_) return;
             canceled_ = true;
-            (void)channel_->release(ticket_);
+            auto state = channel_->response(ticket_);
+            if (state && !state->closed && !channel_->failure()) (void)channel_->reset(ticket_);
+            auto released = channel_->release(ticket_);
+            if (released && !*released && retire_fn_) retire_fn_(retire_ctx_, ticket_);
             channel_ = nullptr;
+            retire_ctx_ = nullptr;
+            retire_fn_ = nullptr;
         }
 
         auto cancel() noexcept -> void {
@@ -73,7 +84,7 @@ export namespace naive {
             if (channel_) (void)channel_->reset(ticket_);
         }
 
-        auto send(std::span<std::uint8_t const> bytes, Deadline deadline = {}) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> bytes, Deadline deadline = {}) -> capy::task<bool> {
             if (!channel_ || canceled_ || output_closed_) co_return false;
             if (bytes.empty()) co_return true;
             if (!co_await wait_tx(deadline)) {
@@ -90,6 +101,7 @@ export namespace naive {
                 wire = encoded_;
             }
             while (!wire.empty()) {
+                if (!channel_ || canceled_) co_return false;
                 auto chunk = wire.first(std::min<std::size_t>(wire.size(), 1024 * 1024));
                 auto accepted = channel_->provide(ticket_, {chunk, false});
                 if (!accepted) {
@@ -113,10 +125,11 @@ export namespace naive {
         }
 
         auto read(std::span<std::uint8_t> out, Deadline deadline = {})
-            -> nex::capy::task<std::expected<std::size_t, std::string>> {
+            -> capy::task<std::expected<std::size_t, std::string>> {
             if (!channel_ || canceled_) co_return std::unexpected("HTTP/2 stream closed");
             if (out.empty()) co_return std::size_t{0};
             for (;;) {
+                if (!channel_ || canceled_) co_return std::unexpected("HTTP/2 stream closed");
                 if (decoded_offset_ < decoded_.size()) {
                     auto count = std::min(out.size(), decoded_.size() - decoded_offset_);
                     std::copy_n(decoded_.begin() + static_cast<std::ptrdiff_t>(decoded_offset_), count, out.begin());
@@ -154,14 +167,15 @@ export namespace naive {
             }
         }
 
-        auto close_output(Deadline deadline = {}) -> nex::capy::task<bool> {
+        auto close_output(Deadline deadline = {}) -> capy::task<bool> {
             if (!channel_ || canceled_) co_return false;
             if (output_closed_) co_return true;
             output_closed_ = true;
-            if (!co_await wait_tx(deadline)) co_return false;
+            if (!co_await wait_tx(deadline) || !channel_ || canceled_) co_return false;
             auto provided = channel_->provide(ticket_, {{}, true});
             if (!provided || !*provided) co_return false;
             for (;;) {
+                if (!channel_ || canceled_) co_return false;
                 auto state = channel_->response(ticket_);
                 if (!state || state->failure) co_return false;
                 if (state->local_end) co_return true;
@@ -188,6 +202,7 @@ export namespace naive {
 
         auto clear() noexcept -> void {
             if (active_calls_ > 1 || starting_ || running_ || leased_ || !canceled_) return;
+            for (auto& ticket : retired_) ticket.reset();
             channel_.reset();
             stream_.reset();
             connector_.reset();
@@ -209,8 +224,15 @@ export namespace naive {
             RootGuard(RootGuard&& o) noexcept : owner(std::exchange(o.owner, nullptr)) {}
             ~RootGuard() { if (owner) { Call call(*owner); owner->stop(); owner->running_ = false; } }
         };
-        static auto root(RootGuard guard) -> nex::capy::task<> {
+        static auto root(RootGuard guard) -> capy::task<> {
             (void)co_await guard.owner->channel_->run();
+        }
+
+        auto retire_ticket(http2::StreamTicket t) noexcept -> void {
+            if (t.slot < retired_.size()) retired_[t.slot] = t;
+        }
+        static auto on_stream_retire(void* ctx, http2::StreamTicket t) noexcept -> void {
+            static_cast<OwnedH2Connection*>(ctx)->retire_ticket(t);
         }
 
         auto reap() noexcept -> void {
@@ -236,7 +258,7 @@ export namespace naive {
         auto operator=(OwnedH2Connection const&) -> OwnedH2Connection& = delete;
 
         auto acquired() noexcept -> void { ++leased_; }
-        auto released() noexcept -> void { Call call(*this); --leased_; }
+        auto released() noexcept -> void { Call call(*this); --leased_; reap(); }
         auto cancel() noexcept -> void { stop(); }
         auto stop() noexcept -> void {
             Call call(*this);
@@ -253,7 +275,7 @@ export namespace naive {
 
         enum class StartResult { connected, non_h2_tls, failed, timeout };
 
-        auto start(Clock::time_point deadline) -> nex::capy::task<StartResult> {
+        auto start(Clock::time_point deadline) -> capy::task<StartResult> {
             if (Clock::now() >= deadline) co_return StartResult::timeout;
             if (starting_ || running_ || channel_ || canceled_ || !connector_) co_return StartResult::failed;
             starting_ = true;
@@ -295,11 +317,11 @@ export namespace naive {
             return std::move(connector_);
         }
 
-        auto run(nex::corosio::io_context& context) -> bool {
+        auto run(corosio::io_context& context) -> bool {
             if (starting_ || running_ || !usable()) return false;
             running_ = true;
             try {
-                nex::capy::run_async(context.get_executor(), [] {}, [this](std::exception_ptr) noexcept { stop(); })(root(RootGuard(*this)));
+                capy::run_async(context.get_executor(), [] {}, [this](std::exception_ptr) noexcept { stop(); })(root(RootGuard(*this)));
             } catch (...) {
                 running_ = false;
                 stop();
@@ -311,7 +333,7 @@ export namespace naive {
         auto open_connect(std::string_view authority, std::string_view auth_header,
                           std::span<std::pair<std::string, std::string> const> extra_headers,
                           bool request_padding, Clock::time_point deadline)
-            -> nex::capy::task<std::optional<std::unique_ptr<H2ClientStream<Stream>>>> {
+            -> capy::task<std::optional<std::unique_ptr<H2ClientStream<Stream>>>> {
             if (!usable()) co_return std::nullopt;
             std::string pad_val;
             std::vector<http2::FieldView> fields;
@@ -339,21 +361,24 @@ export namespace naive {
             }
             if (!ticket) co_return std::nullopt;
 
-            auto retire = [&](http2::StreamTicket t) noexcept {
-                auto released = channel_->release(t);
-                if (released && !*released) retired_[t.slot] = t;
-            };
+            struct TicketGuard {
+                OwnedH2Connection& owner;
+                http2::StreamTicket ticket;
+                bool active = true;
+                ~TicketGuard() {
+                    if (!active || !owner.channel_) return;
+                    auto state = owner.channel_->response(ticket);
+                    if (state && !state->closed && !owner.channel_->failure())
+                        (void)owner.channel_->reset(ticket);
+                    auto released = owner.channel_->release(ticket);
+                    if (released && !*released) owner.retire_ticket(ticket);
+                }
+            } guard{*this, *ticket};
             while (usable()) {
                 auto state = channel_->response(*ticket);
-                if (!state || state->failure || state->closed) {
-                    retire(*ticket);
-                    co_return std::nullopt;
-                }
+                if (!state || state->failure || state->closed) co_return std::nullopt;
                 if (state->status != 0) {
-                    if (state->status != 200) {
-                        retire(*ticket);
-                        co_return std::nullopt;
-                    }
+                    if (state->status != 200) co_return std::nullopt;
                     bool use_padding = false;
                     if (request_padding) {
                         for (auto const& h : state->headers) {
@@ -363,11 +388,12 @@ export namespace naive {
                             }
                         }
                     }
-                    co_return std::make_unique<H2ClientStream<Stream>>(*channel_, *ticket, use_padding);
+                    auto stream = std::make_unique<H2ClientStream<Stream>>(*channel_, *ticket, use_padding, this, &on_stream_retire);
+                    guard.active = false;
+                    co_return stream;
                 }
                 if (!co_await channel_->wait_change(deadline)) break;
             }
-            retire(*ticket);
             co_return std::nullopt;
         }
     };

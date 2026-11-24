@@ -124,3 +124,7 @@ export namespace dns {
     [[nodiscard]] auto parse_owned_response(Bytes message,std::uint16_t id,
         Question const& expected) -> std::expected<Response,MessageError>;
 }
+namespace dns {
+    auto copy_response_wire(Response const&, std::uint16_t, std::optional<std::uint32_t>)
+        -> std::expected<Bytes, MessageError>;
+}

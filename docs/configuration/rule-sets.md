@@ -1,21 +1,21 @@
 # KDL 与 BEVE 规则集互转
 
-状态：v1 和 v2 谓词规则集支持 KDL/BEVE 互转和顺序匹配；主配置可加载规则集并为其指定出口，Linux 提供独立转换命令。v2 的资源、性能和更广泛网络验收仍在进行。格式依据见[规则集格式](../architecture/rule-set-format.md)与[决策 0006](../decisions/0006-rule-set-formats.md)。
+状态：谓词规则集统一使用 `schema-version 2`（v1 已移除），支持 KDL/BEVE 互转和顺序匹配；主配置可加载规则集并为其指定出口，Linux 提供独立转换命令。格式依据见[规则集格式](../architecture/rule-set-format.md)与[决策 0006](../decisions/0006-rule-set-formats.md)。
 
 ## 当前支持的规则
 
-文件需包含一次 `schema-version 1`、一次 `kind "predicate"`，以及零个或多个有序的 `rule` 节点：
+文件需包含一次 `schema-version 2`、一次 `kind "predicate"`，以及零个或多个有序的 `rule` 节点：
 
 ```kdl
-schema-version 1
+schema-version 2
 kind "predicate"
 rule type="domain-suffix" value="example.com"
 rule type="ip-cidr" value="192.0.2.0/24"
 ```
 
-v1 的每条规则有 `type`、`value` 两个字符串属性；未知节点、属性、类型、版本和缺失字段均失败。当前采用 Glaze DOM 的 KDL 语义：同一节点的重复属性以最后一个值为准；这是 KDL 属性处理方式，不适用于 BEVE 对象重复字段，后者会被拒绝。类型和属性应直接写清楚，不依赖重复项。
+每条叶子规则有 `type`、`value` 属性；未知节点、属性、类型、版本和缺失字段均失败。当前采用 Glaze DOM 的 KDL 语义：同一节点的重复属性以最后一个值为准；这是 KDL 属性处理方式，不适用于 BEVE 对象重复字段，后者会被拒绝。类型和属性应直接写清楚，不依赖重复项。
 
-v2 使用 `schema-version 2`，保留 v1 谓词并增加精确 `domain`、`domain-keyword`、`domain-wildcard`、`inbound`、`auth-user`、`ip-version`、`ip-is-private`、`source-ip-cidr`、`source-ip-is-private`、`source-port`、`source-port-range`、目的 `port`、闭区间 `port-range`、`network`（`tcp` 或 `udp`）和 `query-type`。`and`、`or` 和 `not` 的子节点也是 `rule`，前两者至少一个子节点，`not` 恰好一个；逻辑节点没有 `value`。例如：
+v2 规则集支持 `domain-suffix`、`ip-cidr` 以及精确 `domain`、`domain-keyword`、`domain-wildcard`、`inbound`、`auth-user`、`ip-version`、`ip-is-private`、`source-ip-cidr`、`source-ip-is-private`、`source-port`、`source-port-range`、目的 `port`、闭区间 `port-range`、`network`（`tcp` 或 `udp`）和 `query-type`。`and`、`or` 和 `not` 的子节点也是 `rule`，前两者至少一个子节点，`not` 恰好一个；逻辑节点没有 `value`。例如：
 
 ```kdl
 schema-version 2
@@ -118,7 +118,7 @@ KDL 与 BEVE 文件均可作为加载源，通过同一校验后构建执行模�
 
 ## Glaze 接入与 schema
 
-复用用户指定分支的 KDL 与 BEVE 能力，采用返回错误的读写接口，由 Nexus 适配层转换错误。项目已固定 `fc646588635c42cca142562d7b3d0484cc4493b7` 并通过当前子集的模块构建及往返测试；这不表示整个 Glaze 格式能力已经验证，内存分配失败等仍可能抛异常。
+复用用户指定分支的 KDL 与 BEVE 能力，采用返回错误的读写接口，由 Nexus 适配层转换错误。项目已固定 `hiykhello/glaze-kdl` 提交 `4e3230a6c1a3e665a6d81ca18e804291f894e876` 并通过当前子集的模块构建及往返测试；这不表示整个 Glaze 格式能力已经验证，内存分配失败等仍可能抛异常。
 
 共享的是语义类型与稳定标识，不强制两种格式直接反射同一个内存布局。需要时定义各自 wire DTO，尤其是重复 KDL 节点、有序规则与二进制紧凑数组；禁止依赖默认 C++ 类名、成员顺序或 variant 下标作为外部 schema。
 

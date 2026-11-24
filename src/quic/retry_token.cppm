@@ -2,7 +2,7 @@ export module quic.retry_token;
 import std;
 import crypto;
 import crypto.aead_context;
-import nexus.thirdparty.corosio;
+import corosio;
 
 export namespace quic {
     enum class RetryTokenError { state,argument,entropy,crypto,allocation,exhausted,invalid,expired };
@@ -33,7 +33,7 @@ export namespace quic {
             if(now.time_since_epoch()<std::chrono::steady_clock::duration::zero())return {};
             return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count());
         }
-        static auto aad(nex::corosio::endpoint const& peer) noexcept -> std::array<std::uint8_t,36> {
+        static auto aad(corosio::endpoint const& peer) noexcept -> std::array<std::uint8_t,36> {
             std::array<std::uint8_t,36> out{'N','E','X','U','S','-','R','E','T','R','Y',1,1};
             if(peer.address().is_v4()){
                 out[13]=4;auto bytes=peer.address().to_v4().to_bytes();std::ranges::copy(bytes,out.begin()+14);
@@ -62,7 +62,7 @@ export namespace quic {
             std::ranges::copy(std::span(secret).last(4),prefix_.begin());counter_=0;return {};
         }
         auto issue(std::span<std::uint8_t> output,std::span<std::uint8_t const> original,std::span<std::uint8_t const> retry,
-            nex::corosio::endpoint const& peer,std::chrono::steady_clock::time_point now,std::uint32_t version=1) noexcept
+            corosio::endpoint const& peer,std::chrono::steady_clock::time_point now,std::uint32_t version=1) noexcept
             -> std::expected<std::size_t,RetryTokenError> {
             if(!valid())return std::unexpected(RetryTokenError::state);
             auto issued=stamp(now);
@@ -81,7 +81,7 @@ export namespace quic {
             if(!sealed){crypto::cleanse(output.first(token_bytes));return std::unexpected(RetryTokenError::crypto);}
             return token_bytes;
         }
-        auto verify(std::span<std::uint8_t const> token,std::span<std::uint8_t const> destination,nex::corosio::endpoint const& peer,
+        auto verify(std::span<std::uint8_t const> token,std::span<std::uint8_t const> destination,corosio::endpoint const& peer,
             std::chrono::steady_clock::time_point now,std::uint32_t version=1) const noexcept -> std::expected<RetryClaims,RetryTokenError> {
             if(!valid())return std::unexpected(RetryTokenError::state);
             auto current=stamp(now);

@@ -5,12 +5,11 @@ import anytls.padding;
 import anytls.session;
 import anytls.writer;
 import net.socket_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace a=anytls;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Capture {
     std::vector<std::vector<std::uint8_t>> writes;

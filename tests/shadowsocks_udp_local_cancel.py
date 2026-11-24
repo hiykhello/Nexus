@@ -40,12 +40,12 @@ with tempfile.TemporaryDirectory(prefix='nexus-ss-udp-local-') as directory, soc
                 except ConnectionRefusedError:
                     if time.monotonic()>deadline: raise
                     time.sleep(.02)
-            subprocess.run([require_fixture('shadowsocks-udp-rebind-test'),str(port),'16','system-stall'],check=True,timeout=3)
+            subprocess.run([require_fixture('nexus-shadowsocks-udp-rebind-test'),str(port),'16','system-stall'],check=True,timeout=3)
             query,_=dns.recvfrom(4096)
             if query[12:-4]!=b'\x0bnexus-delay\x04test\x00': raise RuntimeError(f'wrong query {query!r}')
             (path/'resolv').write_text('nameserver 127.0.0.3\noptions timeout:5 attempts:1\nsearch .\n')
             time.sleep(1.6)
-            subprocess.run([require_fixture('shadowsocks-udp-rebind-test'),str(port),'16','system-stall-next'],check=True,timeout=3)
+            subprocess.run([require_fixture('nexus-shadowsocks-udp-rebind-test'),str(port),'16','system-stall-next'],check=True,timeout=3)
             query,_=new_dns.recvfrom(4096)
             if query[12:-4]!=b'\x0bnexus-delay\x04test\x00': raise RuntimeError(f'wrong reloaded query {query!r}')
             start=time.monotonic(); proc.terminate(); proc.wait(timeout=4)

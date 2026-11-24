@@ -1,8 +1,8 @@
 export module ssh.connection;
 import std;
 import ssh.session;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace ssh {
     template<class Socket>
@@ -11,7 +11,7 @@ export namespace ssh {
     public:
         explicit SocketStream(Socket& s) noexcept : socket_(s) {}
         auto cancel() noexcept -> void { socket_.cancel(); }
-        auto read(std::span<std::uint8_t> out, Clock::time_point dl) -> nex::capy::task<std::expected<std::size_t, std::string>> {
+        auto read(std::span<std::uint8_t> out, Clock::time_point dl) -> capy::task<std::expected<std::size_t, std::string>> {
             if constexpr (requires { socket_.read(out, dl); }) {
                 auto r = co_await socket_.read(out, dl);
                 if (!r) co_return std::unexpected("SSH socket read failed");
@@ -19,24 +19,24 @@ export namespace ssh {
             } else if constexpr (requires { socket_.read(out); }) {
                 co_return co_await socket_.read(out);
             } else {
-                auto [err, n] = co_await nex::corosio::timeout(
-                    socket_.read_some(nex::capy::mutable_buffer(out.data(), out.size())), dl);
+                auto [err, n] = co_await corosio::timeout(
+                    socket_.read_some(capy::mutable_buffer(out.data(), out.size())), dl);
                 if (err) {
-                    if (nex::capy::is_eof(err)) co_return 0;
+                    if (capy::is_eof(err)) co_return 0;
                     co_return std::unexpected("SSH socket read failed");
                 }
                 co_return n;
             }
         }
-        auto send(std::span<std::uint8_t const> in, Clock::time_point dl) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> in, Clock::time_point dl) -> capy::task<bool> {
             if constexpr (requires { socket_.send(in, dl); }) {
                 co_return co_await socket_.send(in, dl);
             } else if constexpr (requires { socket_.send(in); }) {
                 co_return co_await socket_.send(in);
             } else {
                 while (!in.empty()) {
-                    auto [err, n] = co_await nex::corosio::timeout(
-                        socket_.write_some(nex::capy::const_buffer(in.data(), in.size())), dl);
+                    auto [err, n] = co_await corosio::timeout(
+                        socket_.write_some(capy::const_buffer(in.data(), in.size())), dl);
                     if (err || n == 0) co_return false;
                     in = in.subspan(n);
                 }
@@ -82,7 +82,7 @@ export namespace ssh {
             RootGuard(RootGuard&& o) noexcept : owner(std::exchange(o.owner, nullptr)) {}
             ~RootGuard() { if (owner) { Call call(*owner); owner->stop(); owner->running_ = false; } }
         };
-        static auto root(RootGuard guard) -> nex::capy::task<> {
+        static auto root(RootGuard guard) -> capy::task<> {
             (void)co_await guard.owner->protocol_->run();
         }
     public:
@@ -111,7 +111,7 @@ export namespace ssh {
         auto protocol() noexcept -> Protocol* { return protocol_ ? &*protocol_ : nullptr; }
 
         enum class StartResult { connected, failed, timeout };
-        auto start(ClientAuth const& auth, Clock::time_point dl) -> nex::capy::task<StartResult> {
+        auto start(ClientAuth const& auth, Clock::time_point dl) -> capy::task<StartResult> {
             if (Clock::now() >= dl) co_return StartResult::timeout;
             if (starting_ || running_ || protocol_ || canceled_ || !connector_) co_return StartResult::failed;
             starting_ = true;
@@ -126,11 +126,11 @@ export namespace ssh {
             guard.done = true;
             co_return StartResult::connected;
         }
-        auto run(nex::corosio::io_context& context) -> void {
+        auto run(corosio::io_context& context) -> void {
             if (starting_ || running_ || !usable()) throw std::logic_error("SSH root cannot start");
             running_ = true;
             try {
-                nex::capy::run_async(context.get_executor(), [] {},
+                capy::run_async(context.get_executor(), [] {},
                     [this](std::exception_ptr) noexcept { stop(); })(root(RootGuard(*this)));
             } catch (...) { running_ = false; stop(); throw; }
         }

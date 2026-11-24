@@ -30,6 +30,7 @@ export namespace cli {
         auto begin_drain() noexcept -> void;
         auto drained() noexcept -> bool;
         auto checkpoint() noexcept -> void;
+        auto reclaim_memory(bool hard) noexcept -> void;
         auto stop() noexcept -> void;
     };
 }

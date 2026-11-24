@@ -63,7 +63,7 @@ dns {{
 }}
 routing {{
   rule-set "traffic" path="route.kdl" format="kdl"
-  rule kind="rule-set" value="traffic" outbound="drop"
+  rules {{ - kind="rule-set" value="traffic" outbound="drop"; }}
   default-outbound "direct"
 }}
 """)

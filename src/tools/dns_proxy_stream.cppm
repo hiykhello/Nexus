@@ -1,8 +1,8 @@
 export module cli.dns_proxy_stream;
 import std;
 import dns.corosio_query;
-import proxy;
-import proxy.session_quota;
+import relay;
+import relay.session_quota;
 import tls.connector;
 import tls.profiles;
 
@@ -15,8 +15,8 @@ export namespace cli::dns_proxy_detail {
     namespace capy=dns::detail::dns_capy;
 
     struct Stream {
-        proxy::Server& server;
-        proxy::Session& session;
+        relay::Server& server;
+        relay::Session& session;
         std::size_t outbound;
         Endpoint endpoint;
 
@@ -24,10 +24,10 @@ export namespace cli::dns_proxy_detail {
 
         auto connect(Clock::time_point deadline,Candidates&) -> capy::task<ConnectResult> {
             switch (co_await server.open_stream(session,outbound,endpoint,deadline)) {
-            case proxy::PacketConnectResult::connected: co_return ConnectResult::connected;
-            case proxy::PacketConnectResult::retryable: co_return ConnectResult::retryable;
-            case proxy::PacketConnectResult::timeout: co_return ConnectResult::timeout;
-            case proxy::PacketConnectResult::failed: co_return ConnectResult::failed;
+            case relay::PacketConnectResult::connected: co_return ConnectResult::connected;
+            case relay::PacketConnectResult::retryable: co_return ConnectResult::retryable;
+            case relay::PacketConnectResult::timeout: co_return ConnectResult::timeout;
+            case relay::PacketConnectResult::failed: co_return ConnectResult::failed;
             }
             std::unreachable();
         }
@@ -51,14 +51,14 @@ export namespace cli::dns_proxy_detail {
             -> capy::task<std::expected<dns::Response,Error>> {
             if (stop.stop_requested()) co_return std::unexpected(Error::canceled);
             if (Clock::now()>=deadline) co_return std::unexpected(Error::timeout);
-            auto* server=proxy::Server::from_context(context);
+            auto* server=relay::Server::from_context(context);
             if (!server) co_return std::unexpected(Error::transport);
             auto lease=server->acquire_session();
             if (!lease) co_return std::unexpected(Error::budget_exhausted);
-            proxy::Session session(context);
+            relay::Session session(context);
             server->attach_session(session,std::move(*lease));
             struct Finish {
-                proxy::Session& session;
+                relay::Session& session;
                 ~Finish() { session.close(); }
             } finish{session};
             Connector connector(profile,*server,session,outbound,peer);

@@ -1,16 +1,16 @@
 export module tls.signature;
 import std;
-import nexus.thirdparty.boringssl;
+import boringssl;
 
 export namespace tls {
     struct SignatureParameters {
-        nex::boringssl::EVP_MD const* digest;
+        boringssl::EVP_MD const* digest;
         int key_type,curve=0,pss_salt=0;
     };
     // TLS1.3 CertificateVerify schemes only. Legacy PKCS#1/SHA1 identifiers
     // never become usable for handshake signatures by appearing in a profile.
     [[nodiscard]] inline auto signature_parameters(std::uint16_t scheme) noexcept -> std::optional<SignatureParameters> {
-        using namespace nex::boringssl;
+        using namespace boringssl;
         switch (scheme) {
         case 0x0804:return SignatureParameters{EVP_sha256(),evp_pkey_rsa,0,32};
         case 0x0805:return SignatureParameters{EVP_sha384(),evp_pkey_rsa,0,48};
@@ -22,8 +22,8 @@ export namespace tls {
         default:return {};
         }
     }
-    [[nodiscard]] inline auto signature_key_matches(SignatureParameters const& scheme,nex::boringssl::EVP_PKEY const* key) noexcept -> bool {
-        using namespace nex::boringssl;
+    [[nodiscard]] inline auto signature_key_matches(SignatureParameters const& scheme,boringssl::EVP_PKEY const* key) noexcept -> bool {
+        using namespace boringssl;
         if (!key || EVP_PKEY_id(key)!=scheme.key_type) return false;
         if (!scheme.curve) return true;
         auto* ec=EVP_PKEY_get0_EC_KEY(key);

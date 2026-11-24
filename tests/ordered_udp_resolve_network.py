@@ -11,7 +11,7 @@ def main(binary):
     with tempfile.TemporaryDirectory() as directory, DnsPeer() as dns, Echo() as echo:
         root=Path(directory)
         front=free_port()
-        (root/'loopback.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
+        (root/'loopback.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
         config=root/'config.kdl'
         config.write_text(f'''schema-version 1
 role "client"

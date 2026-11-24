@@ -13,7 +13,7 @@ module;
 
 module memory.watchdog;
 import std;
-import nexus.compat;
+import functional;
 
 namespace memory {
     auto sample_process_rss_bytes() noexcept -> std::uint64_t {
@@ -51,17 +51,25 @@ namespace memory {
     }
 
     auto MemoryWatchdog::evaluate(std::uint64_t rss_bytes, std::uint64_t now_ms,
-                                  nexus::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel {
+                                  functional::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel {
         ++stats_.evaluations;
         stats_.last_rss_bytes = rss_bytes;
         stats_.peak_rss_bytes = std::max(stats_.peak_rss_bytes, rss_bytes);
 
+        auto const prev = stats_.level;
         PressureLevel next = PressureLevel::normal;
         if (rss_bytes >= policy_.emergency_bytes) next = PressureLevel::emergency;
         else if (rss_bytes >= policy_.hard_bytes) next = PressureLevel::hard;
         else if (rss_bytes >= policy_.soft_bytes) next = PressureLevel::soft;
 
-        bool escalating = static_cast<std::uint8_t>(next) > static_cast<std::uint8_t>(stats_.level);
+        if (next == PressureLevel::normal) {
+            stats_.level = PressureLevel::normal;
+            has_acted_ = false;
+            if (prev != PressureLevel::normal) on_pressure(PressureLevel::normal);
+            return next;
+        }
+
+        bool escalating = static_cast<std::uint8_t>(next) > static_cast<std::uint8_t>(prev);
         bool cooldown_elapsed = !has_acted_ || now_ms >= last_action_ms_ + policy_.cooldown_ms;
         stats_.level = next;
 
@@ -77,7 +85,7 @@ namespace memory {
     }
 
     auto MemoryWatchdog::sample_and_evaluate(std::uint64_t now_ms,
-                                             nexus::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel {
+                                             functional::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel {
         return evaluate(sample_process_rss_bytes(), now_ms, on_pressure);
     }
 }

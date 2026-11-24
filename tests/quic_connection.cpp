@@ -5,10 +5,10 @@ import quic.varint;
 import quic.packet_keys;
 import quic.packet_protection;
 import quic.connection;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 
 namespace q=quic;
-namespace n=nex::ngtcp2;
+namespace n = ::ngtcp2;
 namespace {
     // RFC 9001 Appendix A.2, IETF Trust 2021, Simplified BSD code license.
     inline constexpr std::string_view client_payload=

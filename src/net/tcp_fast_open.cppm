@@ -6,8 +6,8 @@ module;
 export module net.tcp_fast_open;
 import std;
 import net.tcp_connect;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace net {
     // The accepted byte count is meaningful even on error: once the kernel
@@ -17,19 +17,19 @@ export namespace net {
     // Single candidate. The caller retains socket and payload until return,
     // closes the socket on error, and sends only the unaccepted suffix on
     // success. An empty first write performs an ordinary connection.
-    [[nodiscard]] inline auto tcp_fast_open_first_write(nex::corosio::tcp_socket& socket,
-        nex::corosio::endpoint endpoint,std::span<std::uint8_t const> payload,
+    [[nodiscard]] inline auto tcp_fast_open_first_write(corosio::tcp_socket& socket,
+        corosio::endpoint endpoint,std::span<std::uint8_t const> payload,
         std::chrono::steady_clock::time_point deadline,platform::TcpSocketOptions const& options={})
-        -> nex::capy::task<FastOpenResult> {
+        -> capy::task<FastOpenResult> {
         using Clock=std::chrono::steady_clock;
-        auto stop=co_await nex::capy::this_coro::stop_token;
+        auto stop=co_await capy::this_coro::stop_token;
         if(stop.stop_requested())co_return FastOpenResult{std::make_error_code(std::errc::operation_canceled)};
         if(Clock::now()>=deadline)co_return FastOpenResult{std::make_error_code(std::errc::timed_out)};
         if(socket.is_open())co_return FastOpenResult{std::make_error_code(std::errc::already_connected)};
         if(auto error=prepare_tcp_socket(socket,endpoint,options,deadline))co_return FastOpenResult{error,0,false,true};
         if(!socket.is_open())if(auto error=socket.open(endpoint.address().family()))co_return FastOpenResult{error,0,false,true};
         if(payload.empty()) {
-            auto [error]=co_await nex::corosio::timeout(socket.connect(endpoint),deadline);
+            auto [error]=co_await corosio::timeout(socket.connect(endpoint),deadline);
             if(!error && Clock::now()>=deadline)error=std::make_error_code(std::errc::timed_out);
             co_return FastOpenResult{error};
         }
@@ -44,6 +44,7 @@ export namespace net {
         }
         if(stop.stop_requested())co_return FastOpenResult{std::make_error_code(std::errc::operation_canceled)};
         if(Clock::now()>=deadline)co_return FastOpenResult{std::make_error_code(std::errc::timed_out)};
+#if defined(__linux__) && defined(MSG_FASTOPEN)
         auto count=::sendto(socket.native_handle(),payload.data(),payload.size(),MSG_FASTOPEN|MSG_DONTWAIT|MSG_NOSIGNAL,
                             reinterpret_cast<sockaddr const*>(&address),length);
         std::size_t accepted=0;
@@ -52,7 +53,7 @@ export namespace net {
             auto error=errno;
             co_return FastOpenResult{{error,std::generic_category()},0,error==EPIPE || error==EOPNOTSUPP};
         }
-        auto [wait_error]=co_await nex::corosio::timeout(socket.wait(nex::corosio::wait_type::write),deadline);
+        auto [wait_error]=co_await corosio::timeout(socket.wait(corosio::wait_type::write),deadline);
         if(wait_error)co_return FastOpenResult{wait_error,accepted};
         if(Clock::now()>=deadline)co_return FastOpenResult{std::make_error_code(std::errc::timed_out),accepted};
         int socket_error=0;socklen_t error_length=sizeof(socket_error);
@@ -60,11 +61,15 @@ export namespace net {
             co_return FastOpenResult{{errno,std::generic_category()},accepted};
         if(error_length!=sizeof(socket_error))co_return FastOpenResult{std::make_error_code(std::errc::protocol_error),accepted};
         co_return FastOpenResult{{socket_error,std::generic_category()},accepted};
+#else
+        (void)address; (void)length;
+        co_return FastOpenResult{std::make_error_code(std::errc::operation_not_supported),0,true};
+#endif
     }
 
     struct FastOpenCandidatesResult {
         FastOpenResult result;
-        nex::corosio::endpoint endpoint;
+        corosio::endpoint endpoint;
         bool preparation_failed=false;
         std::uint32_t interface_index=0;
     };
@@ -72,12 +77,12 @@ export namespace net {
     // Unsupported TFO may use ordinary connect on that same candidate; the
     // caller remains responsible for the complete first-write suffix.
     template<std::ranges::input_range Range,class Condition>
-    [[nodiscard]] auto tcp_fast_open_candidates(nex::corosio::tcp_socket& socket,Range endpoints,Condition condition,
+    [[nodiscard]] auto tcp_fast_open_candidates(corosio::tcp_socket& socket,Range endpoints,Condition condition,
         std::span<std::uint8_t const> payload,std::chrono::steady_clock::time_point deadline,
-        platform::TcpSocketOptions const& options={}) -> nex::capy::task<FastOpenCandidatesResult> {
+        platform::TcpSocketOptions const& options={}) -> capy::task<FastOpenCandidatesResult> {
         std::error_code last;
         for(auto&& item:endpoints) {
-            nex::corosio::endpoint endpoint=item;
+            corosio::endpoint endpoint=item;
             if(!condition(std::as_const(last),std::as_const(endpoint)))continue;
             if(std::chrono::steady_clock::now()>=deadline)
                 co_return FastOpenCandidatesResult{{std::make_error_code(std::errc::timed_out)}, {}};
@@ -103,8 +108,8 @@ export namespace net {
                     last=result.error;
                     continue;
                 }
-                if(result.preparation_failed || result.accepted || result.error==nex::capy::cond::canceled ||
-                    ((nex::capy::is_timeout(result.error) || result.error==std::errc::timed_out) && stop==deadline))
+                if(result.preparation_failed || result.accepted || result.error==capy::cond::canceled ||
+                    ((capy::is_timeout(result.error) || result.error==std::errc::timed_out) && stop==deadline))
                     co_return FastOpenCandidatesResult{result,endpoint,result.preparation_failed};
                 last=result.error;
             }

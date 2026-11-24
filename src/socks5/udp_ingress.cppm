@@ -2,8 +2,8 @@ export module socks5.udp_ingress;
 export import socks5.udp_direct;
 import rules;
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import net.principal_bytes;
 import platform.socket_options;
 import net.stream_relay;
@@ -59,7 +59,8 @@ export namespace socks5 {
         auto send_target(UdpDatagram const&,UdpPeer,std::chrono::steady_clock::time_point)
             -> std::expected<void,UdpDirectError>;
         int fd_=-1;
-        bool closed_=false;
+        bool closed_=false, waiting_=false;
+        std::uint8_t backpressured_family_=0;
         std::array<std::uint8_t,65536> input_bytes_{};
         std::size_t input_size_=0;
         UdpPeer input_source_{};
@@ -94,9 +95,9 @@ export namespace socks5 {
         std::optional<UdpSelection> tunnel_;
         std::optional<UdpTunnelAlias> tunnel_alias_;
         std::optional<UdpDirectReply> pending_;
-        struct Watch { int fd; nex::corosio::udp_socket socket; };
+        struct Watch { int fd; corosio::udp_socket socket; };
         std::vector<Watch> watches_;
-        nex::capy::async_event changed_,work_;
+        capy::async_event changed_,work_;
     public:
         // auth_user is borrowed until this driver and its pending work are destroyed.
         UdpIngress(UdpAssociation& association, rules::RouteMatcher const& policy, bool allow_domains=false, bool allow_tunnels=false,
@@ -123,9 +124,9 @@ export namespace socks5 {
         [[nodiscard]] auto step() -> std::expected<UdpIngressStep,UdpDirectError>;
         // Wait for an ingress or selected direct-reply socket to become ready.
         // This is the only idle wait used by the SOCKS UDP driver.
-        auto wait(nex::corosio::io_context&,UdpIngressStep const&,std::chrono::steady_clock::time_point)
-            -> nex::capy::task<bool>;
-        auto changed() noexcept -> nex::capy::async_event& { return changed_; }
+        auto wait(corosio::io_context&,UdpIngressStep const&,std::chrono::steady_clock::time_point)
+            -> capy::task<bool>;
+        auto changed() noexcept -> capy::async_event& { return changed_; }
         auto wake() noexcept -> void { work_.set(); changed_.set(); }
         // External routing owns the one admitted datagram until selection or
         // discard. This preserves both packet and authenticated source views.

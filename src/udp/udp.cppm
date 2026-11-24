@@ -1,7 +1,7 @@
 export module udp;
 export import packet;
 import std;
-import nexus.compat;
+import functional;
 
 export namespace udp {
     struct Endpoint4 {
@@ -62,6 +62,7 @@ export namespace udp {
         std::unordered_map<FlowId, typename List::iterator> by_id_;
         std::unordered_map<Endpoint, std::vector<typename List::iterator>, EndpointHash> by_local_;
         std::uint64_t now_ = 0, next_id_ = 1, next_send_ = 1;
+        std::size_t custom_idle_count_ = 0;
         bool initialized_ = false;
         RetirementHandler retirement_{};
         auto erase_flow(typename List::iterator it) noexcept -> void;
@@ -83,7 +84,7 @@ export namespace udp {
         // reenter this table. Its target must remain alive until transmit returns.
         // Peer capacity is reserved before it runs; failure grants no new permission.
         [[nodiscard]] auto transmit(FlowId id, Endpoint remote, std::uint64_t now,
-            nexus::function_ref<bool()> sender) -> std::expected<void, Error>;
+            functional::function_ref<bool()> sender) -> std::expected<void, Error>;
         [[nodiscard]] auto accept_reply(FlowId id, Endpoint remote, std::uint64_t now) -> std::expected<Endpoint, Error>;
         [[nodiscard]] auto close(FlowId id, std::uint64_t now) -> std::expected<void, Error>;
         // Retire every flow, including in-flight sends, and notify the owner.
@@ -111,6 +112,8 @@ export namespace udp {
             : flows_(mapping, filtering, limits, retirement), mtu_(mtu) {}
         [[nodiscard]] auto prepare(std::span<std::uint8_t const> input, std::uint64_t now)
             -> std::expected<OutboundDatagram, BridgeError>;
+        [[nodiscard]] auto prepare_parsed(packet::Udp4View const& parsed, std::uint64_t now)
+            -> std::expected<OutboundDatagram, BridgeError>;
         [[nodiscard]] auto complete(FlowId id, std::uint64_t token, bool success, std::uint64_t now)
             -> std::expected<void, Error> { return flows_.finish_send(id, token, success, now); }
         [[nodiscard]] auto reply(FlowId id, Endpoint4 remote, std::span<std::uint8_t const> payload, std::uint64_t now)
@@ -136,6 +139,8 @@ export namespace udp {
                 RetirementHandler retirement = {})
             : flows_(mapping, filtering, limits, retirement), mtu_(mtu) {}
         [[nodiscard]] auto prepare(std::span<std::uint8_t const> input, std::uint64_t now)
+            -> std::expected<OutboundDatagram6, BridgeError>;
+        [[nodiscard]] auto prepare_parsed(packet::Udp6View const& parsed, std::uint64_t now)
             -> std::expected<OutboundDatagram6, BridgeError>;
         [[nodiscard]] auto complete(FlowId id, std::uint64_t token, bool success, std::uint64_t now)
             -> std::expected<void, Error> { return flows_.finish_send(id, token, success, now); }

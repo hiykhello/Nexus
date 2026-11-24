@@ -1,6 +1,6 @@
 module dns.tls_query;
 import std;
-import nexus.thirdparty.corosio;
+import corosio;
 import platform.socket_options;
 import dns.corosio_query;
 
@@ -15,7 +15,7 @@ namespace dns {
         return std::unexpected("DNS over TLS is unavailable in this build");
     }
 
-    auto stop_tls_queries(nex::corosio::io_context&) noexcept -> void {}
-    auto resume_tls_queries(nex::corosio::io_context&) noexcept -> void {}
-    auto reap_idle_tls_queries(nex::corosio::io_context&,std::chrono::steady_clock::time_point) noexcept -> void {}
+    auto stop_tls_queries(corosio::io_context&) noexcept -> void {}
+    auto resume_tls_queries(corosio::io_context&) noexcept -> void {}
+    auto reap_idle_tls_queries(corosio::io_context&,std::chrono::steady_clock::time_point) noexcept -> void {}
 }

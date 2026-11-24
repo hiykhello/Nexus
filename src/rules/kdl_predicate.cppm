@@ -1,17 +1,17 @@
 export module rules.kdl_predicate;
 import std;
 import rules;
-import nexus.thirdparty.glaze;
+import glaze;
 
 export namespace rules {
-    auto decode_kdl_predicate(nex::glaze::KdlNode const& node,unsigned depth,std::size_t& count)
+    auto decode_kdl_predicate(glaze::KdlNode const& node,unsigned depth,std::size_t& count)
         -> std::expected<Rule,Error> {
         if (depth>max_rule_depth || ++count>max_rules)
             return std::unexpected(Error{ErrorCode::limit,"rule nesting or count exceeds limit"});
         auto invalid=[](std::string text) -> std::unexpected<Error> {
             return std::unexpected(Error{ErrorCode::schema,std::move(text)});
         };
-        auto value_string=[](nex::glaze::KdlValue const& value,bool typed) -> std::optional<std::string> {
+        auto value_string=[](glaze::KdlValue const& value,bool typed) -> std::optional<std::string> {
             if (value.tag) return {};
             if (auto text=std::get_if<std::string>(&value.data)) return *text;
             if (typed) {
@@ -37,7 +37,14 @@ export namespace rules {
             }
             if (rule.type.empty()) return invalid("rule requires type");
             if (has_value) for (auto const& [key,value]:node.properties) if (key=="value") {
-                auto text=value_string(value,rule.type=="tls-ech" || rule.type=="dscp");
+                auto allow_typed = rule.type=="tls-ech" || rule.type=="dscp" ||
+                    rule.type=="ip-accept-any" || rule.type=="source-ip-accept-any" ||
+                    rule.type=="ip-is-private" || rule.type=="source-ip-is-private" ||
+                    rule.type=="ip-is-cgnat" || rule.type=="source-ip-is-cgnat" ||
+                    rule.type=="network-is-expensive" || rule.type=="network-is-constrained" ||
+                    rule.type=="source-uid" || rule.type=="source-gid" ||
+                    rule.type=="port" || rule.type=="source-port" || rule.type=="ip-version";
+                auto text=value_string(value, allow_typed);
                 if (!text) return invalid("invalid predicate value");
                 rule.value=std::move(*text);
             }
@@ -46,7 +53,9 @@ export namespace rules {
             rule.type=node.name;
             for (auto const& argument:node.arguments) {
                 auto value=value_string(argument,rule.type!="rule-set" && rule.type!="protocol" &&
-                    rule.type!="source-mac" && rule.type!="gateway-mac");
+                    rule.type!="source-mac" && rule.type!="gateway-mac" && rule.type!="wifi-bssid" &&
+                    rule.type!="wifi-ssid" && rule.type!="source-user" && rule.type!="package-name" &&
+                    rule.type!="client" && rule.type!="network-type" && rule.type!="default-interface-address");
                 if (!value) return invalid("invalid inline predicate value");
                 if (has_value) rule.value.push_back(',');
                 rule.value+=*value;

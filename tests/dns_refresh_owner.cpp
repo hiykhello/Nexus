@@ -12,7 +12,7 @@ import dns.corosio_query;
 import dns.cache;
 import dns.corosio_cached;
 namespace d=dns;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
 auto now_ms() -> std::uint64_t { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count(); }

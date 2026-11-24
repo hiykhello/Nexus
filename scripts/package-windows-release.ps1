@@ -26,6 +26,16 @@ Copy-Item $CoreBinary (Join-Path $StageRoot "nexus.exe")
 if ($DesktopBinary -and (Test-Path $DesktopBinary -PathType Leaf)) {
     Copy-Item $DesktopBinary (Join-Path $StageRoot "nexus-desktop.exe")
 }
+$HeaderFile = Join-Path $RepoRoot "include/nexus/core_c_api.h"
+if (Test-Path $HeaderFile) {
+    $IncDir = Join-Path $StageRoot "include/nexus"
+    New-Item -ItemType Directory -Force -Path $IncDir | Out-Null
+    Copy-Item $HeaderFile (Join-Path $IncDir "core_c_api.h")
+}
+$SvcHelper = Join-Path $RepoRoot "packaging/windows/install-service.ps1"
+if (Test-Path $SvcHelper) {
+    Copy-Item $SvcHelper (Join-Path $StageRoot "install-service.ps1")
+}
 
 $SampleCfg = Join-Path $RepoRoot "docs/configuration/examples/paired/client.kdl"
 if (Test-Path $SampleCfg) {

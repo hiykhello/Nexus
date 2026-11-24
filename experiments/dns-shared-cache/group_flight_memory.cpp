@@ -7,20 +7,18 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <boost/capy/ex/run_async.hpp>
-#include <boost/corosio/backend.hpp>
-#include <boost/corosio/io_context.hpp>
-#include <boost/corosio/ipv4_address.hpp>
+import capy;
+import corosio;
 import std;
 import dns.corosio_cached;
 import dns.message;
 import dns.corosio_query;
 import dns.cache;
-#include "../../src/dns-shared/group_cache_binding.hpp"
-#include "../../src/dns-shared/group_singleflight.hpp"
+import dns.group_cache_binding;
+import dns.group_singleflight;
 
 namespace d=dns;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 namespace capy=boost::capy;
 namespace hp=dns_hp_experiment;
 using Clock=std::chrono::steady_clock;

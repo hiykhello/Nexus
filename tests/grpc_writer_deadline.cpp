@@ -5,12 +5,11 @@ import tls.application_io;
 import tls.corosio_application;
 import tls.byte_stream;
 import net.socket_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace t=tls;
 namespace c = ::crypto;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;
 struct State {

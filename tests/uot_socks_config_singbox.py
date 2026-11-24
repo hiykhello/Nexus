@@ -29,7 +29,7 @@ def exact(sock,size):
 with tempfile.TemporaryDirectory(prefix="nexus-uot-config-") as directory:
     root=pathlib.Path(directory); front=port(); listen=port()
     key=base64.b64encode(bytes(range(16))).decode(); (root/"key").write_text(key); (root/"key").chmod(0o600)
-    (root/"ip.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+    (root/"ip.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
     config={"log":{"level":"error"},"inbounds":[{"type":"shadowsocks","listen":"127.0.0.1","listen_port":front,
             "method":"2022-blake3-aes-128-gcm","password":key}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}
     (root/"box.json").write_text(json.dumps(config))
@@ -41,7 +41,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={listen}; authenti
 outbound "direct" type="direct"
 outbound "first" type="shadowsocks" {{ server host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; {fast_open} }}
 outbound "second" type="shadowsocks" {{ server host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; {fast_open} }}
-routing {{ rule-set "second-ip" path="ip.kdl" format="kdl"; rule kind="rule-set" value="second-ip" outbound="second"; default-outbound "first"; }}
+routing {{ rule-set "second-ip" path="ip.kdl" format="kdl"; rules {{ - kind="rule-set" value="second-ip" outbound="second"; }}; default-outbound "first"; }}
 ''')
     subprocess.run(["sing-box","check","-c",root/"box.json"],check=True,capture_output=True)
     box=subprocess.Popen(["sing-box","run","-c",root/"box.json"],stderr=subprocess.PIPE)

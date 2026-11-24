@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "slow-resolver-shim"
 version = "0.1.0"
 

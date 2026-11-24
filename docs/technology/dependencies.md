@@ -2,16 +2,14 @@
 
 状态：指定基线依赖已确定；候选方案、版本锁定和项目内接入方式待验证。上游信息核查日期：2026-10-27。
 
-## 配置解析：glaze-kdl2.0-
+## 配置解析：glaze-kdl
 
-- 指定仓库：<https://github.com/hiykhello/glaze-kdl2.0->。
-- 指定分支：`feature/kdl2.0`。
-- [完整分支入口](https://github.com/hiykhello/glaze-kdl2.0-/tree/feature/kdl2.0)。
+- 指定仓库：<https://github.com/hiykhello/glaze-kdl>（原 `glaze-kdl2.0-` 已更名）。
 - 项目职责：解析 KDL 2.0 配置，为类型化配置构造提供输入。
 
-最初未能通过网页读取该分支内容；后续已只读核查本地指定分支，但仍不能据此声明完整 KDL 特性覆盖。接入必须以锁定提交的源码验证，不可直接套用其他 Glaze 版本的 API，也不可自动替换为上游默认分支。
+最初未能通过网页读取该分支内容；后续已核查锁定提交的源码，接入必须以锁定提交的源码验证，不可直接套用其他 Glaze 版本的 API，也不可自动替换为上游默认分支。
 
-后续核查确认 `glaze-kdl2.0-` 指定分支固定提交为 `fc646588635c42cca142562d7b3d0484cc4493b7`，项目 recipe 已锁定该提交及 MIT 许可，`nexus.thirdparty.glaze` 导出规则集所需 KDL/BEVE 接口；Linux x86_64 的 C++26 模块构建和规则集往返测试通过。完整 KDL 功能和其他工具链兼容性仍待验证。用户已确定 KDL/BEVE 规则集互转，见[格式设计](../architecture/rule-set-format.md)和[转换边界](../configuration/rule-sets.md)。
+当前项目 recipe 已锁定 `hiykhello/glaze-kdl` 提交 `4e3230a6c1a3e665a6d81ca18e804291f894e876` 及 MIT 许可（摘要见 `3rdparty/mcpp-pins.json`），`nexus.thirdparty.glaze` 导出规则集所需 KDL/BEVE 接口；Linux x86_64 的 C++26 模块构建和规则集往返测试通过。用户已确定 KDL/BEVE 规则集互转，见[格式设计](../architecture/rule-set-format.md)和[转换边界](../configuration/rule-sets.md)。
 
 接入时需要核对：构建要求、许可证、KDL 2.0 语法覆盖、重复节点与属性行为、错误定位、类型转换及资源限制。具体支持能力以验证结果为准。
 

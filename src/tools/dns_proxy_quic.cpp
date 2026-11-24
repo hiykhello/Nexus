@@ -4,8 +4,8 @@ import proxy.v4;
 import dns.corosio_query;
 import dns.quic_query;
 import net.packet_stream_socket;
-import proxy;
-import proxy.session_quota;
+import relay;
+import relay.session_quota;
 
 namespace cli {
     namespace {
@@ -15,9 +15,9 @@ namespace cli {
 
         class ProxyDatagram {
             using Clock=std::chrono::steady_clock;
-            proxy::Session session_;
-            std::unique_ptr<proxy::PacketTunnel> tunnel_;
-            net::PacketStreamSocket<proxy::PacketTunnel> socket_;
+            relay::Session session_;
+            std::unique_ptr<relay::PacketTunnel> tunnel_;
+            net::PacketStreamSocket<relay::PacketTunnel> socket_;
             struct CloseOnStop {
                 ProxyDatagram& owner;
                 auto operator()() const noexcept -> void { owner.close(); }
@@ -25,8 +25,8 @@ namespace cli {
             std::stop_callback<CloseOnStop> stop_;
 
         public:
-            ProxyDatagram(io::io_context& context,proxy::Server& server,
-                proxy::SessionQuota::Lease lease,std::size_t outbound,std::shared_ptr<dns::detail::TransportSnapshot const> snapshot)
+            ProxyDatagram(io::io_context& context,relay::Server& server,
+                relay::SessionQuota::Lease lease,std::size_t outbound,std::shared_ptr<dns::detail::TransportSnapshot const> snapshot)
                 :session_(context),socket_(context),stop_(session_.stop.get_token(),CloseOnStop{*this}) {
                 server.attach_session(session_,std::move(lease));
                 session_.dns_transport_override=std::move(snapshot);
@@ -37,7 +37,7 @@ namespace cli {
             auto prepare(io::endpoint peer,Clock::time_point deadline) -> capy::task<bool> {
                 if (!tunnel_ || session_.closed) co_return false;
                 auto connect_by=tunnel_->connection_deadline(deadline);
-                if (co_await tunnel_->connect_until(net::packet_peer_address(peer),connect_by)!=proxy::PacketConnectResult::connected)
+                if (co_await tunnel_->connect_until(net::packet_peer_address(peer),connect_by)!=relay::PacketConnectResult::connected)
                     co_return false;
                 if (session_.closed || !socket_.attach(*tunnel_,tunnel_->transport(),peer)) co_return false;
                 co_return co_await socket_.prepare(connect_by);
@@ -60,7 +60,7 @@ namespace cli {
         return [outbound,snapshot=std::move(snapshot)](io::io_context& context) -> QuicDnsDatagram {
             auto transport=snapshot ? snapshot->lock() : nullptr;
             if (snapshot && !transport) return {};
-            auto* server=proxy::Server::from_context(context);
+            auto* server=relay::Server::from_context(context);
             if (!server) return {};
             auto lease=server->acquire_session();
             if (!lease) return {};

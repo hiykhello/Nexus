@@ -1,7 +1,7 @@
 export module reality.fallback;
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace reality {
     namespace detail {
@@ -9,14 +9,14 @@ export namespace reality {
         template<class Socket,class Touch,class Reset>
         auto fallback_direction(Socket& source, Socket& destination, std::span<std::uint8_t const> prefix,
             std::span<std::uint8_t const> suffix, Touch& touch,Reset& reset)
-            -> nex::capy::quitter<bool> {
+            -> capy::quitter<bool> {
             auto propagate=[&](std::error_code error,Socket& peer) {
                 if (error==std::errc::connection_reset || error==std::errc::connection_aborted ||
                     error==std::errc::broken_pipe) reset(peer);
             };
-            auto write = [&](std::span<std::uint8_t const> bytes) -> nex::capy::task<bool> {
+            auto write = [&](std::span<std::uint8_t const> bytes) -> capy::task<bool> {
                 while (!bytes.empty()) {
-                    auto [error,n]=co_await destination.write_some(nex::capy::const_buffer(bytes.data(),bytes.size()));
+                    auto [error,n]=co_await destination.write_some(capy::const_buffer(bytes.data(),bytes.size()));
                     if (error || !n || n>bytes.size()) {propagate(error,source);co_return false;}
                     touch(); bytes=bytes.subspan(n);
                 }
@@ -25,20 +25,20 @@ export namespace reality {
             if (!co_await write(prefix) || !co_await write(suffix)) co_return false;
             std::array<std::uint8_t,16384> bytes{};
             for (;;) {
-                auto [error,n]=co_await source.read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size()));
-                if (error==nex::capy::cond::eof) co_return !destination.shutdown(nex::corosio::shutdown_send);
+                auto [error,n]=co_await source.read_some(capy::mutable_buffer(bytes.data(),bytes.size()));
+                if (error==capy::cond::eof) co_return !destination.shutdown(corosio::shutdown_send);
                 if (error || !n || n>bytes.size()) {propagate(error,destination);co_return false;}
                 touch();
                 if (!co_await write(std::span{bytes}.first(n))) co_return false;
             }
         }
         template<class Socket>
-        auto fallback_join_direction(Socket& first,Socket& second, nex::capy::quitter<bool> direction)
-            -> nex::capy::task<nex::capy::results<>> {
+        auto fallback_join_direction(Socket& first,Socket& second, capy::quitter<bool> direction)
+            -> capy::task<capy::results<>> {
             try {
-                if (co_await std::move(direction)) co_return nex::capy::results<>{};
+                if (co_await std::move(direction)) co_return capy::results<>{};
                 first.cancel(); second.cancel();
-                co_return nex::capy::results<>{std::make_error_code(std::errc::io_error)};
+                co_return capy::results<>{std::make_error_code(std::errc::io_error)};
             } catch (...) { first.cancel(); second.cancel(); throw; }
         }
     }
@@ -50,9 +50,9 @@ export namespace reality {
     struct NoReset { void operator()(auto&) const noexcept {} };
     template<class Socket,class Touch=NoTouch,class Reset=NoReset>
     auto fallback(Socket& client,Socket& cover,std::span<std::uint8_t const> prefix,
-                  std::span<std::uint8_t const> suffix = {}, Touch touch = {}, Reset reset = {}) -> nex::capy::task<bool> {
+                  std::span<std::uint8_t const> suffix = {}, Touch touch = {}, Reset reset = {}) -> capy::task<bool> {
         try {
-            auto [error,first,second]=co_await nex::capy::when_all(
+            auto [error,first,second]=co_await capy::when_all(
                 detail::fallback_join_direction(client,cover,detail::fallback_direction(client,cover,prefix,suffix,touch,reset)),
                 detail::fallback_join_direction(client,cover,detail::fallback_direction(cover,client,{},{},touch,reset)));
             co_return !error;

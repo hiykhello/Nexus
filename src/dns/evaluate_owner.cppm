@@ -1,7 +1,7 @@
 export module dns.evaluate_owner;
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns {
     template<class Result>
@@ -29,25 +29,25 @@ export namespace dns {
             std::uint64_t generation=0,completion=0;
             bool active=false,ready=false;
         };
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         std::array<Slot,Capacity> slots_{};
-        nex::capy::async_event changed_;
+        capy::async_event changed_;
         std::uint64_t generation_=0,epoch_=0,completion_=0;
         std::size_t active_=0,waiters_=0;
         bool stopped_=false;
         // Drain must survive cancellation of the enclosing request. Keep the
         // copied environment alive until the event awaiter has been destroyed.
         class DrainWait {
-            std::optional<nex::capy::await_context> environment_;
-            nex::capy::async_event::wait_awaiter operation_;
+            std::optional<capy::await_context> environment_;
+            capy::async_event::wait_awaiter operation_;
         public:
-            explicit DrainWait(nex::capy::async_event& event) noexcept :operation_(event.wait()) {}
+            explicit DrainWait(capy::async_event& event) noexcept :operation_(event.wait()) {}
             DrainWait(DrainWait const&)=delete;
             DrainWait(DrainWait&& other) noexcept :operation_(std::move(other.operation_)) {
                 if(other.environment_)std::terminate();
             }
             auto await_ready() const noexcept -> bool {return operation_.await_ready();}
-            auto await_suspend(std::coroutine_handle<> continuation,nex::capy::await_context const* parent) {
+            auto await_suspend(std::coroutine_handle<> continuation,capy::await_context const* parent) {
                 environment_.emplace(*parent);
                 environment_->stop_token={};
                 return operation_.await_suspend(continuation,&*environment_);
@@ -62,7 +62,7 @@ export namespace dns {
             auto& slot=slots_[handle.index];
             return slot.operation && slot.generation==handle.generation ? &slot : nullptr;
         }
-        auto run(Slot& slot) -> nex::capy::task<> {
+        auto run(Slot& slot) -> capy::task<> {
             auto result=co_await slot.operation->run();
             slot.result.emplace(Transform::apply(std::move(result)));
         }
@@ -73,7 +73,7 @@ export namespace dns {
             slot->completion=++completion_;--active_;notify();
         }
     public:
-        explicit EvaluateOwner(nex::corosio::io_context& context) noexcept :context_(context) {}
+        explicit EvaluateOwner(corosio::io_context& context) noexcept :context_(context) {}
         EvaluateOwner(EvaluateOwner const&)=delete;
         auto operator=(EvaluateOwner const&) -> EvaluateOwner& = delete;
         ~EvaluateOwner(){if(active_ || waiters_)std::terminate();}
@@ -87,7 +87,7 @@ export namespace dns {
             auto handle=Handle{index,++generation_};
             found->operation=std::move(operation);found->generation=handle.generation;found->active=true;++active_;
             try {
-                nex::capy::run_async(context_.get_executor(),[this,handle]() noexcept {finish(handle);},
+                capy::run_async(context_.get_executor(),[this,handle]() noexcept {finish(handle);},
                     [this,handle](std::exception_ptr error) noexcept {finish(handle,std::move(error));})(run(*found));
             } catch(std::bad_alloc const&) {
                 --active_;*found=Slot{};return std::unexpected(StartError::allocation);
@@ -136,18 +136,18 @@ export namespace dns {
         [[nodiscard]] auto epoch() const noexcept -> std::uint64_t {return epoch_;}
         // Clear and recheck on the owner executor before suspending: signals
         // are hints, while epoch and slot states are authoritative.
-        auto wait(std::uint64_t observed) -> nex::capy::task<nex::capy::results<>> {
-            if(epoch_!=observed)co_return nex::capy::results<>{};
+        auto wait(std::uint64_t observed) -> capy::task<capy::results<>> {
+            if(epoch_!=observed)co_return capy::results<>{};
             changed_.clear();
-            if(epoch_!=observed)co_return nex::capy::results<>{};
+            if(epoch_!=observed)co_return capy::results<>{};
             ++waiters_;
             struct Waiter {EvaluateOwner& owner;~Waiter(){--owner.waiters_;}} waiter{*this};
             co_return co_await changed_.wait();
         }
-        auto wait_drain(std::uint64_t observed) -> nex::capy::task<nex::capy::results<>> {
-            if(epoch_!=observed)co_return nex::capy::results<>{};
+        auto wait_drain(std::uint64_t observed) -> capy::task<capy::results<>> {
+            if(epoch_!=observed)co_return capy::results<>{};
             changed_.clear();
-            if(epoch_!=observed)co_return nex::capy::results<>{};
+            if(epoch_!=observed)co_return capy::results<>{};
             ++waiters_;
             struct Waiter {EvaluateOwner& owner;~Waiter(){--owner.waiters_;}} waiter{*this};
             co_return co_await DrainWait(changed_);

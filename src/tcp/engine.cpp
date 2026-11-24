@@ -25,18 +25,18 @@ namespace tcp {
             auto reverse=packet::parse_tcp4(*pending_);
             if (reverse) { std::swap(reverse->source,reverse->destination); std::swap(reverse->source_port,reverse->destination_port); stale=stale || table_.find(*reverse).has_value(); }
         }
-        if (stale) { pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.stale_reply = true; return; }
+        if (stale) { if (pending_id_) report.id = pending_id_; pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.stale_reply = true; return; }
         std::expected<void, packet::DeviceError> sent;
         auto kind = !pending_id_ ? packet::PacketKind::stateless_tcp_reset :
                     (pending_reset_ || pending_reply_reset_) ? packet::PacketKind::stateful_tcp_reset : packet::PacketKind::ordinary;
         try {
             if (!pending_generation_) pending_generation_=watch(*pending_);
-            sent = link_.send(packet::Side::second, *pending_, kind, pending_id_.value_or(0), pending_generation_);
+            sent = link_.send_owned(packet::Side::second, std::move(*pending_), kind, pending_id_.value_or(0), pending_generation_);
         }
         catch (std::bad_alloc const&) { report.backpressured = true; return; }
         if (sent) {
             if (pending_reset_) (void)table_.hold_reset(*pending_id_, false);
-            pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.delivered = true; return;
+            if (pending_id_) report.id = pending_id_; pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.delivered = true; return;
         }
         if (sent.error() == packet::DeviceError::queue_full) { report.backpressured = true; return; }
         report.output_error = sent.error();
@@ -89,7 +89,9 @@ namespace tcp {
         if (pending_) { result.backpressured = true; return result; }
         auto time = flow->send_due(now, 0);
         if (!time) { result.connection_error = time.error(); return result; }
-        auto slice = flow->unsent(std::min<std::size_t>(mtu_ - 40, 65535 - 40));
+        auto max_opts = std::min<std::size_t>(28, mtu_ - 41);
+        auto opt_len = flow->ack(max_opts).options.size();
+        auto slice = flow->unsent(std::min<std::size_t>(mtu_ - 40 - opt_len, 65535 - 40 - opt_len));
         if (slice.bytes.empty()) return result;
         return emit(*flow, slice, now, Action::data);
     }
@@ -101,7 +103,9 @@ namespace tcp {
         if (mtu_ <= 40) return std::unexpected(EngineError::invalid_mtu);
         TransmitResult result;
         if (pending_) { result.backpressured = true; return result; }
-        auto due = flow->send_due(now, std::min<std::size_t>(mtu_ - 40, 65535 - 40));
+        auto max_opts = std::min<std::size_t>(28, mtu_ - 41);
+        auto opt_len = flow->ack(max_opts).options.size();
+        auto due = flow->send_due(now, std::min<std::size_t>(mtu_ - 40 - opt_len, 65535 - 40 - opt_len));
         if (!due) { result.connection_error = due.error(); return result; }
         if (!*due) return result;
         return emit(*flow, **due, now, Action::retransmit);
@@ -141,11 +145,18 @@ namespace tcp {
     auto MemoryEngine::emit(PassiveConnection& flow, SendSlice const& slice, std::uint64_t now, Action action)
         -> std::expected<TransmitResult, EngineError> {
         TransmitResult result;
-        auto view = action == Action::fin || action == Action::fin_retry ? flow.fin() : flow.ack();
-        if (action != Action::fin && action != Action::fin_retry) { view.sequence = slice.sequence; view.payload = slice.bytes; }
+        bool is_fin = action == Action::fin || action == Action::fin_retry;
+        auto payload_len = is_fin ? std::size_t{0} : slice.bytes.size();
+        auto max_opts = mtu_ > 40 + payload_len ? std::min<std::size_t>(28, mtu_ - 40 - payload_len) : 0;
+        auto view = is_fin ? flow.fin(max_opts) : flow.ack(max_opts);
+        if (!is_fin) { view.sequence = slice.sequence; view.payload = slice.bytes; }
         auto bytes = packet::make_tcp4(view, mtu_);
         if (!bytes) return std::unexpected(EngineError::invalid_mtu);
-        auto sent = link_.send(packet::Side::second, *bytes, packet::PacketKind::ordinary, 0, watch(*bytes));
+        auto rev = view;
+        std::swap(rev.source, rev.destination);
+        std::swap(rev.source_port, rev.destination_port);
+        auto gen = table_.watch(rev);
+        auto sent = link_.send_owned(packet::Side::second, std::move(*bytes), packet::PacketKind::ordinary, 0, std::move(gen));
         if (!sent) {
             if (sent.error() == packet::DeviceError::queue_full) result.backpressured = true;
             else result.output_error = sent.error();
@@ -188,18 +199,18 @@ namespace tcp {
             auto reverse=packet::parse_tcp6(*pending_);
             if (reverse) { std::swap(reverse->source,reverse->destination); std::swap(reverse->source_port,reverse->destination_port); stale=stale || table_.find(*reverse).has_value(); }
         }
-        if (stale) { pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.stale_reply = true; return; }
+        if (stale) { if (pending_id_) report.id = pending_id_; pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.stale_reply = true; return; }
         std::expected<void, packet::DeviceError> sent;
         auto kind = !pending_id_ ? packet::PacketKind::stateless_tcp_reset :
                     (pending_reset_ || pending_reply_reset_) ? packet::PacketKind::stateful_tcp_reset : packet::PacketKind::ordinary;
         try {
             if (!pending_generation_) pending_generation_=watch(*pending_);
-            sent = link_.send(packet::Side::second, *pending_, kind, pending_id_.value_or(0), pending_generation_);
+            sent = link_.send_owned(packet::Side::second, std::move(*pending_), kind, pending_id_.value_or(0), pending_generation_);
         }
         catch (std::bad_alloc const&) { report.backpressured = true; return; }
         if (sent) {
             if (pending_reset_) (void)table_.hold_reset(*pending_id_, false);
-            pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.delivered = true; return;
+            if (pending_id_) report.id = pending_id_; pending_.reset(); pending_generation_.reset(); pending_id_.reset(); pending_reset_ = false; pending_reply_reset_ = false; report.delivered = true; return;
         }
         if (sent.error() == packet::DeviceError::queue_full) { report.backpressured = true; return; }
         report.output_error = sent.error();
@@ -252,7 +263,9 @@ namespace tcp {
         if (pending_) { result.backpressured = true; return result; }
         auto time = flow->send_due(now, 0);
         if (!time) { result.connection_error = time.error(); return result; }
-        auto slice = flow->unsent(std::min<std::size_t>(mtu_ - 60, 65535 - 20));
+        auto max_opts = std::min<std::size_t>(28, mtu_ - 61);
+        auto opt_len = flow->ack(max_opts).options.size();
+        auto slice = flow->unsent(std::min<std::size_t>(mtu_ - 60 - opt_len, 65535 - 20 - opt_len));
         if (slice.bytes.empty()) return result;
         return emit(*flow, slice, now, Action::data);
     }
@@ -264,7 +277,9 @@ namespace tcp {
         if (mtu_ <= 60) return std::unexpected(EngineError::invalid_mtu);
         TransmitResult result;
         if (pending_) { result.backpressured = true; return result; }
-        auto due = flow->send_due(now, std::min<std::size_t>(mtu_ - 60, 65535 - 20));
+        auto max_opts = std::min<std::size_t>(28, mtu_ - 61);
+        auto opt_len = flow->ack(max_opts).options.size();
+        auto due = flow->send_due(now, std::min<std::size_t>(mtu_ - 60 - opt_len, 65535 - 20 - opt_len));
         if (!due) { result.connection_error = due.error(); return result; }
         if (!*due) return result;
         return emit(*flow, **due, now, Action::retransmit);
@@ -304,11 +319,18 @@ namespace tcp {
     auto MemoryEngine6::emit(PassiveConnection6& flow, SendSlice const& slice, std::uint64_t now, Action action)
         -> std::expected<TransmitResult, EngineError> {
         TransmitResult result;
-        auto view = action == Action::fin || action == Action::fin_retry ? flow.fin() : flow.ack();
-        if (action != Action::fin && action != Action::fin_retry) { view.sequence = slice.sequence; view.payload = slice.bytes; }
+        bool is_fin = action == Action::fin || action == Action::fin_retry;
+        auto payload_len = is_fin ? std::size_t{0} : slice.bytes.size();
+        auto max_opts = mtu_ > 60 + payload_len ? std::min<std::size_t>(28, mtu_ - 60 - payload_len) : 0;
+        auto view = is_fin ? flow.fin(max_opts) : flow.ack(max_opts);
+        if (!is_fin) { view.sequence = slice.sequence; view.payload = slice.bytes; }
         auto bytes = packet::make_tcp6(view, mtu_);
         if (!bytes) return std::unexpected(EngineError::invalid_mtu);
-        auto sent = link_.send(packet::Side::second, *bytes, packet::PacketKind::ordinary, 0, watch(*bytes));
+        auto rev = view;
+        std::swap(rev.source, rev.destination);
+        std::swap(rev.source_port, rev.destination_port);
+        auto gen = table_.watch(rev);
+        auto sent = link_.send_owned(packet::Side::second, std::move(*bytes), packet::PacketKind::ordinary, 0, std::move(gen));
         if (!sent) {
             if (sent.error() == packet::DeviceError::queue_full) result.backpressured = true;
             else result.output_error = sent.error();

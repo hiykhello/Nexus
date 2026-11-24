@@ -10,6 +10,18 @@ def free_port(udp: bool = False) -> int:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
+def free_dual_port() -> int:
+    while True:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as ts:
+            ts.bind(("127.0.0.1", 0))
+            port = ts.getsockname()[1]
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as us:
+                try:
+                    us.bind(("127.0.0.1", port))
+                    return port
+                except OSError:
+                    continue
+
 def find_nexus_bin(cli_arg: str | None) -> pathlib.Path:
     for p in [cli_arg, os.environ.get("NEXUS_BIN")]:
         if p and pathlib.Path(p).is_file():
@@ -37,9 +49,12 @@ def stop_proc(proc: subprocess.Popen | None) -> None:
         return
     proc.terminate()
     try:
-        proc.wait(timeout=4)
+        rc = proc.wait(timeout=4)
     except subprocess.TimeoutExpired:
         proc.kill(); proc.wait(timeout=2)
+        return
+    if rc < 0:
+        raise RuntimeError(f"process {proc.args} crashed on shutdown with signal {-rc}")
 
 class TcpEchoServer:
     def __init__(self) -> None:
@@ -367,7 +382,7 @@ outbound "direct" type="direct"; routing {{ default-outbound "direct"; }}
 
 def suite_5_naive_h3_and_both(nexus: pathlib.Path, d: pathlib.Path, echo_port: int, cert: pathlib.Path, key: pathlib.Path) -> None:
     pw = write_pw(d / "n3.pw", "h3pass")
-    sp_port, c3_port, c2_port = free_port(udp=True), free_port(), free_port()
+    sp_port, c3_port, c2_port = free_dual_port(), free_port(), free_port()
     sp = start_nexus(nexus, write_kdl(d / "s5s.kdl", f'''schema-version 1; role "server"
 inbound "naive-both" type="naive" {{
     listen host="127.0.0.1" port={sp_port}; protocol "both"

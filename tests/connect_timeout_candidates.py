@@ -27,10 +27,10 @@ def exact(sock,n):
 with tempfile.TemporaryDirectory(prefix='nexus-timeout-candidates-') as directory, socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns, socket.socket() as upstream, socket.socket() as dead:
     root=pathlib.Path(directory); key=root/'key'
     key.write_text(base64.b64encode(bytes(range(16))).decode()); key.chmod(0o600)
-    (root/'rules.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.3/32"\n')
-    (root/'short.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.4/32"\n')
-    (root/'dead.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.5/32"\n')
-    (root/'short2.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.6/32"\n')
+    (root/'rules.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.3/32"\n')
+    (root/'short.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.4/32"\n')
+    (root/'dead.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.5/32"\n')
+    (root/'short2.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="10.88.0.6/32"\n')
     dns.bind(('127.0.0.1',0)); dns.settimeout(3)
     upstream.bind(('127.0.0.1',0)); upstream.listen(); upstream.settimeout(3)
     dead.bind(('127.0.0.1',0))
@@ -46,7 +46,7 @@ outbound "short" type="shadowsocks" {{ server host="short-node.test" port={upstr
 outbound "short2" type="shadowsocks" {{ server host="other-node.test" port={upstream.getsockname()[1]}; bootstrap-resolver "dns"; connect-timeout-ms 400; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={upstream.getsockname()[1]}; connect-timeout-ms 2500; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
 outbound "dead" type="shadowsocks" {{ server host="127.0.0.1" port={dead.getsockname()[1]}; connect-timeout-ms 2500; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
-routing {{ rule-set "short" path="short.kdl" format="kdl"; rule-set "short2" path="short2.kdl" format="kdl"; rule-set "by-ip" path="rules.kdl" format="kdl"; rule-set "dead" path="dead.kdl" format="kdl"; rule kind="rule-set" value="short" outbound="short"; rule kind="rule-set" value="short2" outbound="short2"; rule kind="rule-set" value="by-ip" outbound="edge"; rule kind="rule-set" value="dead" outbound="dead"; default-outbound "direct"; }}
+routing {{ rule-set "short" path="short.kdl" format="kdl"; rule-set "short2" path="short2.kdl" format="kdl"; rule-set "by-ip" path="rules.kdl" format="kdl"; rule-set "dead" path="dead.kdl" format="kdl"; rules {{ - kind="rule-set" value="short" outbound="short"; - kind="rule-set" value="short2" outbound="short2"; - kind="rule-set" value="by-ip" outbound="edge"; - kind="rule-set" value="dead" outbound="dead"; }}; default-outbound "direct"; }}
 ''')
     process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:

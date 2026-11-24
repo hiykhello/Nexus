@@ -1,7 +1,7 @@
 import std;
 import http2.server;
-import nexus.thirdparty.nghttp2;
-namespace h2 = nex::nghttp2;
+import nghttp2;
+namespace h2 = ::nghttp2;
 namespace nh = http2;
 static thread_local bool watch_body=false, body_released_charged=false;
 static thread_local void* body_allocation=nullptr;

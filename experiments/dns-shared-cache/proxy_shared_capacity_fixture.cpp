@@ -2,8 +2,8 @@
 // shared-capacity snapshot; the baseline retains each Server's normal cache.
 import std;
 import dns.message;
-import proxy.dns_backend;
-import proxy;
+import relay.dns_backend;
+import relay;
 
 auto main(int argc,char** argv) -> int {
     if (argc!=5) return 2;
@@ -16,7 +16,7 @@ auto main(int argc,char** argv) -> int {
     auto dns_port=parse(argv[1]),group_count=parse(argv[2]),capacity=parse(argv[3]),workers=parse(argv[4]);
     if (!dns_port || !group_count || !capacity || !workers || !*dns_port || *dns_port>65535 ||
         !*group_count || *group_count>2 || *capacity<*group_count || *capacity>8192 || !*workers || *workers>8) return 2;
-    namespace p=proxy;
+    namespace p = relay;
 #ifdef NEXUS_TEST_DNS_GROUP
     using Cache=dns_hp_experiment::GroupSnapshot;
     std::vector<std::size_t> groups(*group_count,1);

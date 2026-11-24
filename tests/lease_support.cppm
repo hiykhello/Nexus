@@ -1,10 +1,10 @@
-export module nexus.test.lease_support;
+export module test.lease_support;
 import std;
 import platform.netlink_abi;
 import platform.netlink_socket;
 import packet.tun_network_types;
 
-export namespace nexus::test::lease {
+export namespace test::lease {
     namespace abi = ::platform::netlink_abi;
     namespace nl = ::platform::netlink;
     inline auto require(bool condition, std::source_location source = std::source_location::current()) -> void {
@@ -49,4 +49,4 @@ export namespace nexus::test::lease {
         return result;
     }
     inline auto deadline() -> nl::Clock::time_point { return nl::Clock::now() + std::chrono::seconds(4); }
-} // namespace nexus::test::lease
+} // namespace test::lease

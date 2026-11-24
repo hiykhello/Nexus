@@ -80,8 +80,10 @@ def policy(root, source=None, ordered=False):
         rule action="reject"
     }
 ''' if ordered else '''
-    rule kind="rule-set" value="allow" outbound="direct"
-    rule kind="rule-set" value="deny" outbound="block"
+    rules {
+        - kind="rule-set" value="allow" outbound="direct"
+        - kind="rule-set" value="deny" outbound="block"
+    }
 '''
     return f'''
 outbound "direct" type="direct"

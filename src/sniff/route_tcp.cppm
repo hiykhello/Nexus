@@ -3,8 +3,8 @@ import std;
 import rules;
 import sniff.tcp;
 import sniff.tcp_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace sniff {
     // Own the exact DNS candidate order for the lifetime of rule evaluation.
@@ -18,7 +18,7 @@ export namespace sniff {
         RouteCandidates()=default;
         RouteCandidates(RouteCandidates const&)=delete;
         auto operator=(RouteCandidates const&) -> RouteCandidates& = delete;
-        [[nodiscard]] auto assign(std::span<nex::corosio::endpoint const> endpoints,rules::ProgramInput& input) noexcept -> bool {
+        [[nodiscard]] auto assign(std::span<corosio::endpoint const> endpoints,rules::ProgramInput& input) noexcept -> bool {
             if(input.ip || endpoints.size()>addresses_.size())return false;
             std::array<rules::ProgramAddress,256> next{};
             for(std::size_t i=0;i<endpoints.size();++i) {
@@ -59,8 +59,8 @@ export namespace sniff {
     // The caller retains endpoints for dialing and candidates for matching.
     template<class Resolver>
     auto resolve_tcp_action(rules::ProgramCursor& cursor,rules::ProgramStep step,rules::ProgramInput& input,
-        RouteCandidates& candidates,std::vector<nex::corosio::endpoint>& endpoints,Resolver& resolver,
-        std::chrono::steady_clock::time_point deadline) -> nex::capy::task<std::expected<void,RouteResolveError>> {
+        RouteCandidates& candidates,std::vector<corosio::endpoint>& endpoints,Resolver& resolver,
+        std::chrono::steady_clock::time_point deadline) -> capy::task<std::expected<void,RouteResolveError>> {
         auto pending=cursor.pending();
         if(!pending || pending->rule_index!=step.rule_index || pending->next_index!=step.next_index ||
             pending->action.kind!=rules::ProgramActionKind::resolve || step.action.kind!=rules::ProgramActionKind::resolve ||
@@ -88,6 +88,7 @@ export namespace sniff {
         std::optional<rules::Error> rule_error;
         std::error_code system{};
         std::optional<TcpReadResult> sniff;
+        bool override_destination_with_sniff=false;
     };
     // Program, cursor, socket, sniffer and all input views outlive this task.
     // The owner must replay sniffer.wire() and any unaccepted prefetched tail
@@ -99,30 +100,54 @@ export namespace sniff {
         rules::ProgramInput& input,TcpSniffer& sniffer,Reader& reader,
         std::chrono::steady_clock::time_point sniff_deadline,bool wait_unknown=true,
         UnknownRoutePolicy unknown_policy=UnknownRoutePolicy::pause)
-        -> nex::capy::task<RouteTcpResult> {
+        -> capy::task<RouteTcpResult> {
         std::optional<TcpReadResult> last_sniff;
+        bool override_destination=false;
+        auto finish=[&](RouteTcpStop stop,std::optional<rules::ProgramStep> step={},
+            std::optional<rules::Error> rule_error={},std::error_code system={}) -> RouteTcpResult {
+            return {stop,std::move(step),std::move(rule_error),system,last_sniff,
+                override_destination && input.sniffed_domain.has_value()};
+        };
         for (;;) {
             auto result=cursor.poll(program,input,wait_unknown);
-            if(!result)co_return {RouteTcpStop::rule_error,{},std::move(result.error()),{},last_sniff};
+            if(!result)co_return finish(RouteTcpStop::rule_error,{},std::move(result.error()));
             if(result->kind==rules::ProgramPreflightKind::uncertain) {
-                if(unknown_policy==UnknownRoutePolicy::pause)co_return {RouteTcpStop::uncertain,{},{},{},last_sniff};
-                if(!cursor.skip_unknown(result->rule_index))co_return {RouteTcpStop::state_error,{},{},{},last_sniff};
+                if(unknown_policy==UnknownRoutePolicy::pause)co_return finish(RouteTcpStop::uncertain);
+                if(!cursor.skip_unknown(result->rule_index))co_return finish(RouteTcpStop::state_error);
                 continue;
             }
-            if(result->kind==rules::ProgramPreflightKind::exhausted)co_return {RouteTcpStop::exhausted,{},{},{},last_sniff};
+            if(result->kind==rules::ProgramPreflightKind::exhausted)co_return finish(RouteTcpStop::exhausted);
             auto step=*result->step;
-            if(step.terminal())co_return {RouteTcpStop::terminal,step,{},{},last_sniff};
-            if(step.action.kind==rules::ProgramActionKind::resolve)co_return {RouteTcpStop::resolve,step,{},{},last_sniff};
-            if(step.action.kind==rules::ProgramActionKind::route_options)co_return {RouteTcpStop::options,step,{},{},last_sniff};
-            if(step.action.kind!=rules::ProgramActionKind::sniff)co_return {RouteTcpStop::state_error,step,{},{},last_sniff};
-            last_sniff=co_await reader(sniffer,sniff_deadline);
-            if(last_sniff->stop==TcpReadStop::canceled)co_return {RouteTcpStop::canceled,step,{},last_sniff->error,last_sniff};
-            if(last_sniff->stop==TcpReadStop::io_error)co_return {RouteTcpStop::io_error,step,{},last_sniff->error,last_sniff};
+            if(step.terminal())co_return finish(RouteTcpStop::terminal,step);
+            if(step.action.kind==rules::ProgramActionKind::resolve)co_return finish(RouteTcpStop::resolve,step);
+            if(step.action.kind==rules::ProgramActionKind::route_options)co_return finish(RouteTcpStop::options,step);
+            if(step.action.kind!=rules::ProgramActionKind::sniff)co_return finish(RouteTcpStop::state_error,step);
+            if(step.action.sniff_protocols!=0) {
+                std::uint32_t mask=0;
+                auto allow=[&](rules::Protocol rp,TcpProtocol tp) {
+                    if(step.action.sniff_protocols & rules::protocol_mask(rp)) mask|=TcpSniffer::protocol_bit(tp);
+                };
+                allow(rules::Protocol::http,TcpProtocol::http);
+                allow(rules::Protocol::tls,TcpProtocol::tls);
+                allow(rules::Protocol::ssh,TcpProtocol::ssh);
+                allow(rules::Protocol::bittorrent,TcpProtocol::bittorrent);
+                allow(rules::Protocol::rdp,TcpProtocol::rdp);
+                sniffer.set_allowed_protocols(mask);
+            }
+            if(step.action.sniff_override_destination) override_destination=true;
+            auto effective_deadline=sniff_deadline;
+            if(step.action.sniff_timeout_ms>0)
+                effective_deadline=std::min(sniff_deadline,
+                    std::chrono::steady_clock::now()+std::chrono::milliseconds(step.action.sniff_timeout_ms));
+            last_sniff=co_await reader(sniffer,effective_deadline);
+            if(last_sniff->stop==TcpReadStop::canceled)co_return finish(RouteTcpStop::canceled,step,{},last_sniff->error);
+            if(last_sniff->stop==TcpReadStop::io_error)co_return finish(RouteTcpStop::io_error,step,{},last_sniff->error);
             // An offered ECH extension can be GREASE, but the outer name is
             // not proof of the inner destination. Preserve it in the sniffer
             // for explicit policies without treating it as the target name.
             input.sniffed_domain=last_sniff->sniff.status==TcpStatus::matched &&
                 last_sniff->sniff.name_kind!=TcpNameKind::tls_outer_ech ? last_sniff->sniff.domain : std::nullopt;
+            input.client=last_sniff->sniff.status==TcpStatus::matched ? last_sniff->sniff.client : std::nullopt;
             input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)]=
                 last_sniff->sniff.status==TcpStatus::matched && last_sniff->sniff.name_kind==TcpNameKind::numeric;
             input.tls_ech.reset();
@@ -136,16 +161,24 @@ export namespace sniff {
                 input.protocol=rules::Protocol::ssh;
                 input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)]=true;
                 break;
+            case TcpProtocol::bittorrent:
+                input.protocol=rules::Protocol::bittorrent;
+                input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)]=true;
+                break;
+            case TcpProtocol::rdp:
+                input.protocol=rules::Protocol::rdp;
+                input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)]=true;
+                break;
             case TcpProtocol::unknown: input.protocol.reset();break;
             }
-            if(!cursor.complete(step))co_return {RouteTcpStop::state_error,step,{},{},last_sniff};
+            if(!cursor.complete(step))co_return finish(RouteTcpStop::state_error,step);
         }
     }
 
     template<class Socket>
     auto run_tcp_route(rules::RouteProgram const& program,rules::ProgramCursor& cursor,rules::ProgramInput& input,
         Socket& socket,TcpSniffer& sniffer,std::chrono::steady_clock::time_point deadline,bool wait_unknown=true,
-        UnknownRoutePolicy unknown_policy=UnknownRoutePolicy::pause) -> nex::capy::task<RouteTcpResult> {
+        UnknownRoutePolicy unknown_policy=UnknownRoutePolicy::pause) -> capy::task<RouteTcpResult> {
         auto reader=[&](TcpSniffer& target,auto limit) {return read_tcp_sniff(socket,target,limit);};
         co_return co_await run_tcp_route_with_reader(program,cursor,input,sniffer,reader,deadline,wait_unknown,unknown_policy);
     }
@@ -171,7 +204,7 @@ export namespace sniff {
         // The writer consumes an entire segment or reports failure. It may
         // have committed a prefix on failure, so failure poisons this replay.
         template<class Writer>
-        auto send_all(Writer& writer,std::chrono::steady_clock::time_point deadline) -> nex::capy::task<bool> {
+        auto send_all(Writer& writer,std::chrono::steady_clock::time_point deadline) -> capy::task<bool> {
             if(status_!=ReplayStatus::ready)co_return false;
             status_=ReplayStatus::active;
             struct Guard {TcpReplay& replay;~Guard(){if(replay.status_==ReplayStatus::active)replay.status_=ReplayStatus::failed;}} guard{*this};
@@ -179,14 +212,14 @@ export namespace sniff {
                 auto pending=segments_[segment_].subspan(offset_);
                 if(pending.empty()){++segment_;offset_=0;continue;}
                 if(std::chrono::steady_clock::now()>=deadline)co_return false;
-                auto [error]=co_await nex::corosio::timeout(writer(pending),deadline);
+                auto [error]=co_await corosio::timeout(writer(pending),deadline);
                 if(error)co_return false;
                 offset_+=pending.size();
             }
             status_=ReplayStatus::complete;co_return true;
         }
         template<class Socket>
-        auto send(Socket& socket,std::chrono::steady_clock::time_point deadline) -> nex::capy::task<bool> {
+        auto send(Socket& socket,std::chrono::steady_clock::time_point deadline) -> capy::task<bool> {
             if(status_!=ReplayStatus::ready)co_return false;
             status_=ReplayStatus::active;
             struct Guard {TcpReplay& replay;~Guard(){if(replay.status_==ReplayStatus::active)replay.status_=ReplayStatus::failed;}} guard{*this};
@@ -194,8 +227,8 @@ export namespace sniff {
                 auto pending=segments_[segment_].subspan(offset_);
                 if(pending.empty()){++segment_;offset_=0;continue;}
                 if(std::chrono::steady_clock::now()>=deadline)co_return false;
-                auto operation=socket.write_some(nex::capy::const_buffer(pending.data(),pending.size()));
-                auto [error,size]=co_await nex::corosio::timeout(std::move(operation),deadline);
+                auto operation=socket.write_some(capy::const_buffer(pending.data(),pending.size()));
+                auto [error,size]=co_await corosio::timeout(std::move(operation),deadline);
                 if(size>pending.size())co_return false;
                 offset_+=size;
                 if(error || !size)co_return false;

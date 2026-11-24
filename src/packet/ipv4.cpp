@@ -10,17 +10,19 @@ namespace packet {
             p[offset] = static_cast<std::uint8_t>(value >> 8);
             p[offset + 1] = static_cast<std::uint8_t>(value);
         }
-        auto add(std::uint32_t sum, std::span<std::uint8_t const> bytes) noexcept -> std::uint32_t {
+        auto add(std::uint64_t sum, std::span<std::uint8_t const> bytes) noexcept -> std::uint64_t {
             std::size_t i = 0;
-            while (i + 1 < bytes.size()) {
-                sum += (std::uint32_t{bytes[i]} << 8) | bytes[i + 1];
-                sum = (sum & 0xffff) + (sum >> 16);
-                i += 2;
+            for (; i + 8 <= bytes.size(); i += 8) {
+                sum += ((std::uint64_t{bytes[i]} << 8) | bytes[i + 1]) +
+                       ((std::uint64_t{bytes[i + 2]} << 8) | bytes[i + 3]) +
+                       ((std::uint64_t{bytes[i + 4]} << 8) | bytes[i + 5]) +
+                       ((std::uint64_t{bytes[i + 6]} << 8) | bytes[i + 7]);
             }
-            if (i < bytes.size()) sum += std::uint32_t{bytes[i]} << 8;
+            for (; i + 1 < bytes.size(); i += 2) sum += (std::uint64_t{bytes[i]} << 8) | bytes[i + 1];
+            if (i < bytes.size()) sum += std::uint64_t{bytes[i]} << 8;
             return sum;
         }
-        auto finish(std::uint32_t sum) noexcept -> std::uint16_t {
+        auto finish(std::uint64_t sum) noexcept -> std::uint16_t {
             while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
             return static_cast<std::uint16_t>(~sum);
         }

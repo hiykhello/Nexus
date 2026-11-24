@@ -2,53 +2,51 @@
 
 第三方模块封装源文件存放在 `3rdparty/modules`；`src` 只存放项目自有源码。
 
-状态：`nexus.thirdparty.glaze` 已由规则集使用，导出的名称位于 `nex::glaze`。`nexus.thirdparty.capy` 和 `nexus.thirdparty.corosio` 由 `nexus.protocols` 的模块接口导出有限接口；该包分别 embed 固定 Capy/Corosio 源码及精确补丁。Corosio 描述符不隐式引入另一 Capy 变体，需要直接使用源码的工作区成员显式声明一致的两个补丁变体。`nex::capy::quitter` 现导出项目侧 `coro::quitter`，以 Capy 公共协议保留取消时展开契约。其他业务和测试代码仍有直接包含上游头文件，模块接口尚不覆盖全部用法；其他模块仍为**设计草案**。包的获取、固定与构建由[mcpp 工作区](mcpp-workspace.md)管理。
+状态：当前工作区已将 `3rdparty/modules/` 下的第三方模块封装统一去前缀为裸模块名与命名空间：`glaze`（`namespace glaze`）、`capy`（`namespace capy`）、`corosio`（`namespace corosio`）、`boringssl`（`namespace boringssl`）、`blake3`（`namespace blake3`）、`nghttp2`（`namespace nghttp2`）、`ngtcp2`（`namespace ngtcp2`）与 `nghttp3`（`namespace nghttp3`）。`capy`、`corosio`、`ngtcp2` 与 `nghttp3` 同时覆盖 Linux / Apple Darwin / Windows 多平台 ABI。包的获取、固定与构建由[mcpp 工作区](mcpp-workspace.md)管理。
 
-历史实验记录（2026-10-27）：Linux x86_64。GCC 16.2.1 在无补丁、无头文件单元下验证完整构建和私有 I/O 测试。静态 C 库链接传递只通过了模拟库实验。proxy、真实 BoringSSL 和 nghttp2 的模块均未验证，下列相应名称仍是工作方案。
-
-2026-10-28：Capy 和 Corosio 分别由 `nexus-thirdparty-capy`、`nexus-thirdparty-corosio` target 编译，在 `nex::capy`、`nex::corosio` 导出实际使用的任务、缓冲、事件、socket、context 和地址等接口。封装自身不导入 `std`，关闭这两个 target 的自动 `std` 模块生成，避免各自产生不同 BMI；其他目标正常使用 `import std`。Capy 导出 `cond`、`make_error_condition` 和 `std::is_error_condition_enum` 的 using 声明，Corosio 直接导出上游泛型 `connect`。不包含上游头文件的独立消费者在 GCC 16 下通过特化检测、条件比较和连接模板实例化，epoll/io_uring 的重试与取消均通过；其他编译器和未来特化仍须验证可达性。窄接口 `connect_candidates` 暂时保留，因为它还承诺失败或取消时关闭最后一个 socket，上游泛型接口不提供这一保证。GCC 16/io_uring 独立消费者、候选重试和取消回收、TLS 连接及 VLESS/TLS 入站测试通过。消费者仍需配置后端宏；Capy EOF 判断经封装内显式转换，以处理 GCC 模板实例化时的 ADL。导出集合不是完整上游 API，后续按使用需求扩展并验证。
+历史实验记录（2026-10-27 至 2026-10-29）：早期 Linux x86_64 + GCC 16.2.1 阶段验证了在无头文件泄漏下通过模块封装导出 Glaze/Capy/Corosio/BoringSSL/nghttp2 能力；第 153 批起工作区全面切换为 Clang（`llvm@23.1.3`）+ C++26 + 静态 `libc++`，第 161–163 批完成去 `nexus.thirdparty.` / `thirdparty.` / `nex::` 前缀收拢。下文保留早期设计示意图与验收准则说明（历史示例代码中的旧名以当前源码为准）。
 
 ## 层次与依赖方向
 
 ```text
 业务模块                                      第三方模块                 package
-nexus.config / 规则格式适配  ───────────────> nexus.thirdparty.glaze ──> nexus-glaze-kdl
-nexus.contracts              ───────────────> nexus.thirdparty.proxy ──> nexus-proxy
-nexus.runtime（待实现）      ───────────────> 私有实现 -> nexus-corosio -> nexus-capy
-nexus.crypto / nexus.pki     ───────────────> nexus.thirdparty.boringssl_crypto
-                                                                         -> nexus-boringssl-crypto
-nexus.http.h2（可选）        ───────────────> nexus.thirdparty.nghttp2 -> nexus-nghttp2
+config / policy（规则格式适配）  ───────────> glaze     ──> nexus.glaze-kdl
+functional（contracts）          ───────────> proxy.v4  ──> nexus.ngcpp-proxy
+net / proxy / dns                ───────────> capy / corosio
+crypto                           ───────────> boringssl ──> nexus.boringssl-crypto-source
+http2（可选）                    ───────────> nghttp2   ──> nexus.nghttp2-source
+quic（quic-native / http3-core） ───────────> ngtcp2 / nghttp3
 ```
 
 箭头表示依赖方向，不表示所有接口都必须公开重导出。规则语义模型不依赖 Glaze；HTTP 公共语义不依赖 nghttp2。网络接口应导出 Nexus 自有契约，在实现单元中使用 Capy 和 Corosio；其所有权、取消和错误语义须随实际业务验证。
 
-`nexus.thirdparty.ngtcp2` 与 `nexus.thirdparty.nghttp3` 已按固定 release 生成无文本包含的 C ABI 模块，分别由 `quic-native` 和 `http3-core` 选择。来源、布局校验和正式图状态见[QUIC 依赖边界](quic-dependencies.md)；自研 raw TLS 与生产网络仍须独立验收。
+`ngtcp2` 与 `nghttp3` 已按固定 release 生成无文本包含的跨平台 C ABI 模块，分别由 `quic-native` 和 `http3-core` 选择。来源、布局校验和正式图状态见[QUIC 依赖边界](quic-dependencies.md)；自研 raw TLS 与生产网络仍须独立验收。
 
-第三方模块可以导出实际使用的类型、函数和模板，也可以选择由私有实现封装。对已导出的第三方接口，使用 `nex` 作为顶层命名空间并按库分组，例如 `nex::glaze`；模块名与 C++ 命名空间是不同概念。每次增加或移除导出应记录清单和兼容影响。
+第三方模块可以导出实际使用的类型、函数和模板，也可以选择由私有实现封装。对已导出的第三方接口，目前直接采用无前缀同名命名空间（例如 `glaze::`、`capy::`、`corosio::`、`boringssl::`、`blake3::`、`nghttp2::`、`ngtcp2::`、`nghttp3::`）；模块名与 C++ 命名空间是不同概念。每次增加或移除导出应记录清单和兼容影响。
 
-例如 `import nexus.thirdparty.glaze;` 面向集成代码；`import nexus.config;` 面向配置使用者。一个业务模块只有在有意将下层接口纳入自身公共契约时才写 `export import nexus.thirdparty.glaze;`：普通 `import` 不会把导入的名称传递给其消费者。图中独立模块可供直接导入，即使业务模块不重导出。公开了第三方类型或模板的业务接口还要检查其名称可见性、定义可达性和依赖的模块是否对消费者可用；仅能编译模块自身不够。
+例如 `import glaze;` 面向集成代码；`import config;` 面向配置使用者。一个业务模块只有在有意将下层接口纳入自身公共契约时才写 `export import ...;`：普通 `import` 不会把导入的名称传递给其消费者。图中独立模块可供直接导入，即使业务模块不重导出。公开了第三方类型或模板的业务接口还要检查其名称可见性、定义可达性和依赖的模块是否对消费者可用；仅能编译模块自身不够。
 
-## 各模块的首批导出与消费目标
+## 各模块的当前导出与消费边界
 
-| 命名模块草案 | 首批导出目标 | 最小消费与业务边界 |
+| 命名模块 | 核心导出目标 | 消费与业务边界 |
 | --- | --- | --- |
-| `nexus.thirdparty.glaze` | `read_kdl`、`write_kdl`、`read_beve`、`write_beve`；按实际配置模型需要补充错误类型、选项及其他公开模板 | 无 Glaze 头的独立消费者执行 KDL→BEVE→KDL，验证自定义映射、错误和限制；`nexus.config`/规则格式适配负责 Nexus schema 与校验 |
-| `nexus.thirdparty.proxy` | 可用的 facade builder、`pro::proxy`、构造/借用及调用相关公开接口；具体名称以 Git 提交为准 | 在独立消费者中定义或导入 facade，使用拥有和借用两种场景并调用；`nexus.contracts` 负责业务能力与生命周期契约 |
-| 网络运行时（待实现） | Nexus 自有的网络契约；Capy 与 Corosio 在实现单元私有使用 | 验证真实 I/O、关闭、取消和消费者生命周期；不上抛 Corosio 的可选 TLS provider |
-| `nexus.thirdparty.boringssl_crypto` | 随需要导出 BoringSSL libcrypto 的类型和函数，包括 AEAD、摘要/MAC、密钥派生、密钥交换/签名、随机数与证书解析所需能力；逐项确认所选提交 | 独立消费者通过模块调用真实静态 libcrypto 并做已知答案与失败路径测试；`nexus.crypto`/`nexus.pki` 包装资源及策略，不向一般业务公共接口暴露裸句柄 |
-| `nexus.thirdparty.nghttp2`（可选） | 固定 libnghttp2 1.70.0 的 session、callbacks、帧提交及内存收发接口；以锁定版本 API 为准 | `nexus-nghttp2-memory-test` 已驱动 client/server preface、SETTINGS 及逐字节分片的请求/响应头交换；`nexus.http.h2` 转换事件、管理 session 与背压仍待实现，不把 C 对象放进公共 HTTP 模型 |
+| `glaze` | `read_kdl`、`write_kdl`、`read_beve_at`、`write_beve`、`Context` 等 | `policy`（`src/rules/`）负责 Nexus schema 与校验，不泄漏 Glaze 头文件 |
+| `proxy.v4` | `pro::facade_builder`、`pro::proxy`、`make_proxy_inplace` 等 | `functional`（`src/functional/`）与 `relay-runtime` 在内部契约使用 |
+| `capy` / `corosio` | `task`、`when_all`/`when_any`、`quitter`、`io_context`、`tcp_socket`、`udp_socket` 等（含 `epoll`/`uring`/`kqueue`/`iocp` `make_io_context`） | `protocols`、`dns`、`relay-runtime` 等仅通过命名模块交互 |
+| `boringssl` | AEAD、摘要/MAC、HKDF、X25519/ECDSA/Ed25519、ML-KEM、RAND 与 X.509 验证能力 | `crypto` 包装资源及策略，不向业务公共接口暴露裸句柄 |
+| `nghttp2`（可选） | 固定 libnghttp2 1.71.0 的 session、callbacks、帧提交及内存收发接口 | 供 `http2` 适配转换事件，不把 C 对象泄漏到公共 HTTP 模型 |
 
 Capy 的任务与缓冲区、Corosio 的网络对象及两者的关系可参考[Capy 仓库](https://github.com/cppalliance/capy)和[Corosio 仓库](https://github.com/cppalliance/corosio)。这些上游入口会变化，不能替代对固定提交的验证。每个模块的完整公开名称、头文件、宏、链接需求和允许的使用层级，应在真正接入时随锁定提交记录；此表只规定首批能力与验收，不宣称现已满足。
 
 ## 已验证的私有 I/O
 
-直接导出完整 `tcp_socket` 的实验触发 GCC 16 对 TU-local 类型的诊断，因此撤掉了相应模块。实验代理的 `nexus.proxy` 接口只导出 Nexus 自有服务类型，上游头文件位于实现单元；已在 GCC 上通过本地端到端测试。它不是通用网络 facade，支持范围见 [SOCKS5 说明](../architecture/protocols/socks5-mixed.md)。
+直接导出完整 `tcp_socket` 的实验触发 GCC 16 对 TU-local 类型的诊断，因此撤掉了相应模块。实验代理的 `relay` 接口只导出 Nexus 自有服务类型，上游头文件位于实现单元；已在 GCC 上通过本地端到端测试。它不是通用网络 facade，支持范围见 [SOCKS5 说明](../architecture/protocols/socks5-mixed.md)。
 
 [`tests/io.cpp`](../../tests/io.cpp) 直接在测试实现中包含上游头文件，验证数据传输、预取消、读取挂起后取消、停止/恢复、关闭及连接失败，并对每次事件循环设置时间上限。对象关闭后需继续驱动 context，让完成项清理完毕；单纯 `stop()` 不等于取消挂起的工作。两个独立监听器的 accept 和一条本地读取同时挂起时，epoll 与 io_uring 均验证停止不完成操作、关闭各操作 owner 后重启并排空取消；不在同一监听器上并发 accept。若同时关闭读取对端，读取结果也可能是 EOF，不能依赖取消与 EOF 的先后。无补丁版本的测试覆盖 GCC/Linux epoll 和可选系统 liburing 的一小部分路径，尚未覆盖跨线程竞争、UDP、半关闭或其他平台。链接限制见[工作区构建](mcpp-workspace.md)。
 
 ## 已验证的 Glaze 最小示例
 
-临时项目从本地 Git 获取指定分支提交 `fc646588635c42cca142562d7b3d0484cc4493b7`，通过项目内 recipe 安装头文件。下列代码摘取其实验的接口；省略了用于触发增量构建的测试常量。`module;` 后的头文件处于 global module fragment，`using` 显式把选定名称导出到 Nexus 命名空间，并非导出整个 `glz` 命名空间。
+项目从 `hiykhello/glaze-kdl` 固定提交 `4e3230a6c1a3e665a6d81ca18e804291f894e876`（见 `3rdparty/mcpp-pins.json`）通过项目内 recipe 安装头文件。下列代码摘取其实验的接口；省略了用于触发增量构建的测试常量。`module;` 后的头文件处于 global module fragment，`using` 显式把选定名称导出到 Nexus 命名空间，并非导出整个 `glz` 命名空间。
 
 ```cpp
 // 3rdparty/modules/glaze.cppm
@@ -56,9 +54,9 @@ module;
 #include <glaze/kdl.hpp>
 #include <glaze/beve.hpp>
 
-export module nexus.thirdparty.glaze;
+export module glaze;
 
-export namespace nex::glaze {
+export namespace glaze {
     using ::glz::read_kdl;
     using ::glz::write_kdl;
     using ::glz::read_beve;
@@ -66,52 +64,52 @@ export namespace nex::glaze {
 }
 ```
 
-实验特意用一个业务模块测试传递导出；这只展示机制，正式的 `nexus.config` 是否重导出 Glaze 尚未决定：
+实验特意用一个业务模块测试传递导出；这只展示机制：
 
 ```cpp
-// src/config.cppm
-export module nexus.config;
-export import nexus.thirdparty.glaze;
+// 示例转发接口
+export module config.example;
+export import glaze;
 ```
 
 工作区成员需要明确声明模块源和依赖，以便消费者获得实际的模块及链接输入；只导入名称不会自动提供静态库。
 
-独立 consumer 只 `import nexus.config;`，不包含 Glaze 头，也不直接声明包依赖：
+独立 consumer 只 `import config.example;`，不包含 Glaze 头，也不直接声明包依赖：
 
 ```cpp
-// src/consumer.cpp
+// consumer.cpp
 #include <string>
-import nexus.config;
+import config.example;
 
 struct config { int port = 0; };
 
 int main() {
     config original{};
-    if (nex::glaze::read_kdl(original, "port 443")) return 1;
+    if (glaze::read_kdl(original, "port 443")) return 1;
     std::string data;
-    if (nex::glaze::write_beve(original, data)) return 2;
+    if (glaze::write_beve(original, data)) return 2;
     config decoded{};
-    if (nex::glaze::read_beve(decoded, data) || decoded.port != 443) return 3;
-    auto kdl = nex::glaze::write_kdl(decoded);
+    if (glaze::read_beve(decoded, data) || decoded.port != 443) return 3;
+    auto kdl = glaze::write_kdl(decoded);
     if (!kdl) return 4;
     config reparsed{};
-    return nex::glaze::read_kdl(reparsed, *kdl) || reparsed.port != 443 ? 5 : 0;
+    return glaze::read_kdl(reparsed, *kdl) || reparsed.port != 443 ? 5 : 0;
 }
 ```
 
-它读取 `port 443`，写 BEVE、读回、再写并读 KDL，字段值一致。另一个实验直接导入 `nexus.thirdparty.glaze` 也通过。修改模块导出接口后，当时的构建重编了 Glaze 模块、重导出模块和 consumer，重新链接并运行成功。当前工作区的增量构建还应通过 `tests/mcpp_module_incremental.py` 验证。
+它读取 `port 443`，写 BEVE、读回、再写并读 KDL，字段值一致。另一个实验直接导入 `glaze` 也通过。修改模块导出接口后，当时的构建重编了 Glaze 模块、重导出模块和 consumer，重新链接并运行成功。当前工作区的增量构建还应通过 `tests/mcpp_module_incremental.py` 验证。
 
-这个历史实验只覆盖单字段与指定提交/工具链。现在项目已固定同一提交，并在 Linux/GCC 16 的 C++26 模块中验证规则集子集的 KDL/BEVE 读写；复杂元数据、所有模板及其他编译器仍未全面验证。
+这个历史实验只覆盖单字段与指定提交/工具链。现在项目已固定同一提交，并在 Clang（`llvm@23.1.3`）C++26 模块中验证规则集子集的 KDL/BEVE 读写；复杂元数据、所有模板及其他编译器仍未全面验证。
 
 ## 上游模块、头文件与宏
 
-当前锁定的 ngcpp/proxy 提供原生 `proxy.v4`；`nexus-thirdparty-proxy` 直接构建包内上游 `proxy/v4/proxy.ixx`，代理私有实现导入该模块，并在全局模块片段包含仅含宏的 `proxy/proxy_macros.h`。GCC 16 C++26 编译和跨实现单元链接通过。上游接口仍使用 `pro` 名称，未在 Nexus 的公开模块接口中暴露。参见 [Proxy 4 Modules 文档](https://microsoft.github.io/proxy/modules_support/)。
+当前锁定的 ngcpp/proxy 提供原生 `proxy.v4`；`nexus.ngcpp-proxy` 直接构建包内上游 `proxy/v4/proxy.ixx`，`functional` 与代理私有实现导入该模块，并在全局模块片段包含仅含宏的 `proxy/proxy_macros.h`。上游接口使用 `pro` 命名空间，未在公共业务接口中泄漏头文件。参见 [Proxy 4 Modules 文档](https://microsoft.github.io/proxy/modules_support/)。
 
-可验证的重导出接口形态如下；它依赖构建图中另有提供 `proxy.v4` 的上游模块 target，当前未实测：
+可验证的重导出接口形态如下；它依赖构建图中另有提供 `proxy.v4` 的上游模块 target：
 
 ```cpp
-// 3rdparty/modules/proxy.cppm，条件性草案
-export module nexus.thirdparty.proxy;
+// functional 示例转发
+export module functional.example;
 export import proxy.v4;
 ```
 
@@ -123,15 +121,15 @@ export import proxy.v4;
 
 对 BoringSSL 和 nghttp2，模块层可以在 global module fragment 中包含上游 C 兼容头，再用显式 `using` 导出选择的类型和函数；具体表面及错误适配按提交验证。应遵守上游头文件自己的 C linkage 声明，不随意给包含 C++ 内容的整个头文件套一层 `extern "C"`。例如当前 BoringSSL 的 [AEAD 头](https://boringssl.googlesource.com/boringssl/+/HEAD/include/openssl/aead.h)本身声明了相应 C linkage，也包含 C++ 内容；这不是对未来固定提交的构建保证。
 
-下面只是待验证的 BoringSSL 接口形态，展示原始能力如何导出；它不是完整密码接口，也没有在真实 libcrypto 上编译或链接：
+下面只是待验证的 BoringSSL 接口形态，展示原始能力如何导出；它不是完整密码接口：
 
 ```cpp
-// 3rdparty/modules/boringssl_crypto.cppm，草案
+// 3rdparty/modules/boringssl.cppm 示意
 module;
 #include <openssl/aead.h>
 
-export module nexus.thirdparty.boringssl_crypto;
-export namespace nexus::thirdparty::boringssl_crypto {
+export module boringssl;
+export namespace boringssl {
     using ::EVP_AEAD;
     using ::EVP_AEAD_CTX;
     using ::EVP_aead_aes_128_gcm;
@@ -142,7 +140,7 @@ export namespace nexus::thirdparty::boringssl_crypto {
 }
 ```
 
-nghttp2 可以采用同样的选择性导出方式；使用者和 `nexus.http.h2` 所需类型、回调与函数须共同验证，并确保选定版本提供 `mem_recv2`/`mem_send2`。
+nghttp2 可以采用同样的选择性导出方式；使用者和 `http2` 所需类型、回调与函数须共同验证，并确保选定版本提供 `mem_recv2`/`mem_send2`。
 
 业务适配层仍需遵守库的资源及安全语义：释放与创建配对，检查返回值，管理密钥、nonce 和生命周期。对 nghttp2，[`mem_send2` 文档](https://nghttp2.org/documentation/nghttp2_session_mem_send2.html)明确输出指针的有效期受下一次发送调用限制；适配层须在到期前完成处理或复制，并结合背压管理。仅把 C 函数导出并不提供这些约束。
 
@@ -158,4 +156,4 @@ nghttp2 可以采用同样的选择性导出方式；使用者和 `nexus.http.h2
 
 上述为持续验收要求；当前 Glaze、Capy、Corosio 和固定 nghttp2 的有限项目目标已通过对应测试，其余依赖仍需继续验证。依赖的来源、锁定、升级与分发要求仍以[工作区构建](mcpp-workspace.md)为准。
 
-2026-10-29：新增 `nexus.thirdparty.boringssl`，导出当前使用的 libcrypto 类型与函数，项目代码通过模块导入；封装 target 关闭自动 std。项目自有目标经 `nexus-std-module` 共用一个 std BMI，避免不同目标分别生成；GCC 16 debug 下完整 TLS/OpenSSL、HTTPS、VLESS 互通及模块增量重建通过。其他工具链和配置仍需验证。
+2026-10-29（历史里程碑）：新增 BoringSSL libcrypto 封装模块（现已去前缀为 `boringssl`），导出当前使用的 libcrypto 类型与函数，项目代码通过模块导入。当前全仓统一使用 Clang（`llvm@23.1.3`）与静态 `libc++` 构建并共用 `std` BMI。

@@ -1,8 +1,8 @@
 export module http2.driver;
 import std;
 import net.socket_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace http2::detail {
     using DriverClock=std::chrono::steady_clock;
@@ -13,11 +13,11 @@ export namespace http2::detail {
     class Driver {
     public:
         using Failure=typename Policy::Failure;
-        static constexpr std::size_t input_bytes=16384,output_bytes=16384;
+        static constexpr std::size_t input_bytes=16640,output_bytes=16384;
     private:
         Lower& lower_;
         std::unique_ptr<Protocol> protocol_;
-        nex::capy::async_event changed_,work_;
+        capy::async_event changed_,work_;
         DriverDeadline deadline_;
         std::optional<Failure> failure_;
         [[no_unique_address]] Policy policy_;
@@ -31,7 +31,7 @@ export namespace http2::detail {
             ~RunGuard(){owner.running_=false;if(!owner.finished_)owner.cancel();}
         };
         auto input_complete() const noexcept -> bool{return policy_.input_complete(*protocol_);}
-        auto reader() -> nex::capy::task<nex::capy::results<>> {
+        auto reader() -> capy::task<capy::results<>> {
             ReaderGuard guard{*this};std::array<std::uint8_t,input_bytes> input{};std::size_t discarded=0;bool peer_eof=false;
             while(!canceled_&&!finished_){
                 if(input_complete())break;
@@ -63,7 +63,7 @@ export namespace http2::detail {
                     }
                     pending=pending.subspan(*consumed);
                 }
-                policy_.after_receive(*this);changed_.set();wake();
+                if(!canceled_&&!finished_){policy_.after_receive(*this);changed_.set();wake();}
             }
             // Keep the original reader and its array. An already-pending read
             // that completes after terminal state belongs to this same cap.
@@ -83,9 +83,9 @@ export namespace http2::detail {
                 }
             }
             guard.released=true;
-            co_return nex::capy::results<>{canceled_?std::make_error_code(std::errc::io_error):std::error_code{}};
+            co_return capy::results<>{canceled_?std::make_error_code(std::errc::io_error):std::error_code{}};
         }
-        auto flush() -> nex::capy::task<nex::capy::results<>> {
+        auto flush() -> capy::task<capy::results<>> {
             ReaderGuard guard{*this};std::array<std::uint8_t,output_bytes> output{};
             while(!canceled_&&!finished_){
                 if(expired(deadline_)){stop(policy_.transport_failure(true));break;}
@@ -116,7 +116,7 @@ export namespace http2::detail {
                 work_.clear();if(!co_await wait(work_,{}))break;
             }
             guard.released=true;
-            co_return nex::capy::results<>{canceled_?std::make_error_code(std::errc::io_error):std::error_code{}};
+            co_return capy::results<>{canceled_?std::make_error_code(std::errc::io_error):std::error_code{}};
         }
     public:
         Driver(Lower& lower,std::unique_ptr<Protocol> protocol,DriverDeadline deadline={})
@@ -126,7 +126,7 @@ export namespace http2::detail {
         ~Driver(){if constexpr(requires{Policy::host_cancels;}){if constexpr(!Policy::host_cancels)cancel();}else cancel();}
         auto protocol() noexcept -> Protocol&{return *protocol_;}
         auto protocol() const noexcept -> Protocol const&{return *protocol_;}
-        auto changed() noexcept -> nex::capy::async_event&{return changed_;}
+        auto changed() noexcept -> capy::async_event&{return changed_;}
         auto limit(DriverDeadline requested={}) const noexcept -> DriverDeadline {
             if(!deadline_)return requested;if(!requested)return deadline_;return std::min(*deadline_,*requested);
         }
@@ -148,11 +148,11 @@ export namespace http2::detail {
             if(!finished_&&!canceled_)stop(policy_.canceled_failure());
         }
         template<bool Clear=false,bool Local=false>
-        auto wait(nex::capy::async_event& event,DriverDeadline requested) -> nex::capy::task<bool> {
+        auto wait(capy::async_event& event,DriverDeadline requested) -> capy::task<bool> {
             if constexpr(Local)if(canceled_||finished_)co_return false;
             if constexpr(Clear)event.clear();
             auto deadline=limit(requested);auto operation=event.wait();
-            auto [error]=deadline?co_await nex::corosio::timeout(std::move(operation),*deadline):co_await std::move(operation);
+            auto [error]=deadline?co_await corosio::timeout(std::move(operation),*deadline):co_await std::move(operation);
             if(error||expired(deadline)){
                 if constexpr(!Local)stop(expired(deadline)?policy_.transport_failure(true):policy_.canceled_failure());co_return false;
             }co_return !canceled_;
@@ -160,11 +160,11 @@ export namespace http2::detail {
         // A notification waiter owns no stream. Its timeout/stop only ends
         // this wait; its caller resets/releases its own ticket if appropriate.
         auto wait_change(DriverDeadline deadline={}) {return wait<true,true>(changed_,deadline);}
-        auto run() -> nex::capy::task<nex::capy::results<>> {
-            if(started_||canceled_)co_return nex::capy::results<>{std::make_error_code(std::errc::operation_canceled)};
+        auto run() -> capy::task<capy::results<>> {
+            if(started_||canceled_)co_return capy::results<>{std::make_error_code(std::errc::operation_canceled)};
             started_=running_=true;RunGuard guard{*this};
-            auto [error,input,output]=co_await nex::capy::when_all(reader(),flush());(void)input;(void)output;
-            co_return nex::capy::results<>{canceled_&&!error?std::make_error_code(std::errc::io_error):error};
+            auto [error,input,output]=co_await capy::when_all(reader(),flush());(void)input;(void)output;
+            co_return capy::results<>{canceled_&&!error?std::make_error_code(std::errc::io_error):error};
         }
     };
 }

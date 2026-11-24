@@ -1,9 +1,9 @@
 module;
 #include <nghttp2/nghttp2.h>
 
-export module nexus.thirdparty.nghttp2;
+export module nghttp2;
 
-export namespace nex::nghttp2 {
+export namespace nghttp2 {
     using ::nghttp2_data_provider;
     using ::nghttp2_data_provider2;
     using ::nghttp2_ssize;
@@ -86,6 +86,7 @@ export namespace nex::nghttp2 {
     using ::NGHTTP2_GOAWAY;
     using ::nghttp2_session_want_read;
     using ::nghttp2_session_want_write;
+    using ::nghttp2_session_check_request_allowed;
     using ::nghttp2_session_get_remote_settings;
     using ::NGHTTP2_PUSH_PROMISE;
     using ::NGHTTP2_ERR_CANCEL;

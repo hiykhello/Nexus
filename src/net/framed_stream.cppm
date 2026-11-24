@@ -2,7 +2,7 @@ export module net.framed_stream;
 import std;
 import net.buffered_input;
 import net.socket_stream;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace net {
     enum class RecordStreamError { state,transport,timeout,truncated,codec,canceled };
@@ -104,14 +104,14 @@ export namespace net {
         auto failure() const noexcept -> std::optional<Failure> {return failure_;}
         auto input_eof() const noexcept -> bool {return eof_;}
         auto cancel() noexcept -> void {abort();lower_.cancel();}
-        auto read(std::span<std::uint8_t> output,StreamDeadline deadline={}) -> nex::capy::task<std::expected<std::size_t,std::error_code>> {
+        auto read(std::span<std::uint8_t> output,StreamDeadline deadline={}) -> capy::task<std::expected<std::size_t,std::error_code>> {
             return drive_plain([output] {return CopyConsumer{output};},deadline);
         }
         template<class Factory>
         auto drive_plain(Factory factory,StreamDeadline deadline={}) {
             return Window::drive(lower_,[this,factory] {return ReadState<decltype(factory())>{*this,factory()};},deadline);
         }
-        auto send(std::span<std::uint8_t const> input,StreamDeadline deadline={}) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> input,StreamDeadline deadline={}) -> capy::task<bool> {
             if (writing_ || output_closed_ || failure_) {fail(RecordStreamError::state);abort();lower_.cancel();co_return false;}
             writing_=true;WriterGuard guard{*this};
             std::array<std::uint8_t,Codec::max_wire> wire{};
@@ -130,7 +130,7 @@ export namespace net {
             }
             guard.released=true;co_return true;
         }
-        auto close_output(StreamDeadline deadline={}) -> nex::capy::task<bool> {
+        auto close_output(StreamDeadline deadline={}) -> capy::task<bool> {
             if (writing_ || output_closed_ || failure_) {fail(RecordStreamError::state);abort();lower_.cancel();co_return false;}
             writing_=true;WriterGuard guard{*this};
             if (buffered_detail::expired(deadline) || !co_await lower_.close_output(deadline) || failure_ || buffered_detail::expired(deadline)) {

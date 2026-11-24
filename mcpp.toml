@@ -1,14 +1,18 @@
 # The workspace is being organized by responsibility; only declared features
 # and tests are available in the current build graph.
 [workspace]
-members = ["tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", "tests/wireguard-reverse-fault", "src", "src/rules", "src/dns", "src/proxy", "src/crypto", "src/platform", "src/transport", "src/udp-runtime", "tests/protocol", "tests/dns", "tests/fakeip", "tests/http2", "tests/http2-client", "tests/tls", "tests/platform", "tests/thirdparty", "tests/proxy-faults", "tests/proxy-preload", "tests/shims/proxy-start", "tests/shims/slow-resolver", "tests/shims/clock-fault", "tests/shims/dns-system-guard", "tests/shims/ss-udp-observe", "tests/tun", "tests/tun-faults", "tests/udp-faults", "tests/udp-runtime", "tests/udp-owner-faults", "tests/uot-client", "tests/chain-client", "src/dns-shared", "src/udp-shared", "experiments/dns-shared-cache/integration", "experiments/dns-shared-cache"]
+members = ["tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", "tests/wireguard-reverse-fault", "src", "src/rules", "src/dns", "src/relay", "src/crypto", "src/containers", "src/functional", "src/utility", "src/encoding", "src/platform", "src/tun", "src/udp-runtime", "tests/protocol", "tests/dns", "tests/fakeip", "tests/http2", "tests/http2-client", "tests/tls", "tests/platform", "tests/deps", "tests/proxy-faults", "tests/proxy-preload", "tests/shims/proxy-start", "tests/shims/slow-resolver", "tests/shims/clock-fault", "tests/shims/dns-system-guard", "tests/shims/ss-udp-observe", "tests/tun", "tests/tun-faults", "tests/udp-faults", "tests/udp-runtime", "tests/udp-owner-faults", "tests/uot-client", "tests/chain-client", "src/dns-shared", "src/udp-shared", "experiments/dns-shared-cache/integration", "experiments/dns-shared-cache"]
 
 [workspace.package]
 standard = "c++26"
 mcpp = ">=2026.11.21.1"
 
+[workspace.build]
+# Stack protector mode must match between the shared std BMI and every workspace member.
+dialect_cxxflags = ["-fstack-protector-strong"]
+
 [workspace.dependencies]
-nexus.glaze-kdl = "=0.1.0"
+nexus.glaze-kdl = "=0.1.1"
 nexus.ngcpp-proxy = "=0.1.0"
 nexus.capy-source = "=0.2.8"
 nexus.corosio-source = "=0.3.12"
@@ -17,9 +21,8 @@ nexus.blake3-source = "=1.8.7"
 nexus.argon2-source = "=20190702-nexus.2"
 nexus.nghttp2-source = "=1.71.0"
 nexus.nghttp3-source = "=1.19.0-nexus.1"
-nexus.uring-system = { path = "3rdparty/mcpp-uring" }
-nexus.zlib-system = { path = "3rdparty/mcpp-zlib" }
-nexus.systemd-system = { path = "3rdparty/mcpp-systemd" }
+uring-system = { path = "3rdparty/mcpp-uring" }
+zlib-system = { path = "3rdparty/mcpp-zlib" }
 
 [package]
 name = "nexus"
@@ -27,7 +30,7 @@ version = "0.1.0"
 
 [workspace.toolchain]
 # Managed LLVM 23 toolchain bundles libc++, std.cppm, and static C++ runtime archives.
-default = "llvm@23.1.3"
+default = "llvm@23.1.6"
 
 [workspace.target.x86_64-linux-gnu]
 sysroot = "glibc@system"
@@ -36,12 +39,16 @@ sysroot = "glibc@system"
 nexus = { path = "3rdparty/mcpp-index" }
 
 [dependencies]
-nexus.policy = { path = "src/rules" }
-nexus.dns = { path = "src/dns" }
-nexus.protocols = { path = "src", features = ["logging", "state"] }
-nexus.proxy-runtime = { path = "src/proxy" }
-nexus.platform = { path = "src/platform", features = ["network-state"] }
-nexus.glaze-kdl = "=0.1.0"
+policy = { path = "src/rules" }
+dns = { path = "src/dns" }
+protocols = { path = "src", features = ["logging", "state"] }
+relay-runtime = { path = "src/relay" }
+containers = { path = "src/containers" }
+functional = { path = "src/functional" }
+utility = { path = "src/utility" }
+encoding = { path = "src/encoding" }
+platform = { path = "src/platform", features = ["network-state"] }
+nexus.glaze-kdl = "=0.1.1"
 nexus.ngcpp-proxy = "=0.1.0"
 nexus.capy-source = { version = "=0.2.8", patches = ["3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { version = "=0.3.12", patches = ["3rdparty/patches/corosio/mcpp-exact.patch"] }
@@ -49,169 +56,186 @@ nexus.corosio-source = { version = "=0.3.12", patches = ["3rdparty/patches/coros
 [features]
 default = ["io-uring"]
 # Named aggregate release profiles:
-# - profile-sidecar: cross-platform non-root core (Android / macOS / iOS / Windows).
-# - profile-linux-epoll: full Linux epoll profile (adds kTLS, TPROXY, host DNS, journald).
-# - profile-linux-uring: full Linux io_uring profile.
+# - profile-embedded: slim cross-platform client core (iOS NE / OpenWrt / minimal static lib).
+# - profile-sidecar: full cross-platform non-root client core (Android / macOS / Windows / desktop GUI).
+# - profile-linux-epoll: full Linux epoll profile (adds server features, kTLS, TPROXY, host DNS, VPNs, services).
+# - profile-linux-uring: full Linux io_uring flagship profile.
+profile-embedded = [
+    "http-connect-tls", "quic-sniff",
+    "vless", "trojan", "ss2022", "anytls",
+    "hy2-cli", "tuic", "wireguard-outbound",
+    "tls-resumption", "quic-resumption",
+    "dns-https", "dns-quic-resumption", "dns-fakeip", "dns-response-ss",
+    "http-client-h2", "srs",
+]
 profile-sidecar = [
-    "http-connect-tls", "quic-sniff", "dns-https3", "tls-certificate-compression",
-    "vless", "xhttp-vless", "tls-resumption", "http-client-h2", "http-client-h3",
-    "srs", "anytls", "dns-https", "dns-quic-resumption", "hy2-cli", "tuic",
-    "masque-ip-endpoint", "ss2022", "trojan", "dns-fakeip", "dns-response-ss",
-    "quic-resumption", "masque-ip-server", "snell", "shadowtls-proxy",
-    "grpc-vless", "wireguard-outbound", "ssh", "naive", "control-http", "metrics-openmetrics", "ntp",
+    "profile-embedded",
+    "tls-certificate-compression", "dns-https3", "http-client-h3",
+    "xhttp-vless", "grpc-vless", "masque-ip-endpoint",
+    "snell", "shadowtls-proxy", "ssh", "naive",
+    "control-http", "metrics-openmetrics", "ntp",
 ]
 profile-linux-epoll = [
-    "profile-sidecar", "log-journald", "tun-host-dns", "wireguard-host-dns",
-    "tproxy-udp", "ktls",
+    "profile-sidecar", "masque-ip-server", "log-journald", "tun-host-dns", "wireguard-host-dns",
+    "tproxy-udp", "ktls", "memory-budget", "acme", "derp-server", "sni-demux",
+    "ssmapi", "reverse-tunnel", "bridge", "tor", "dns-dhcp", "dns-mdns",
+    "openvpn", "openconnect",
 ]
 profile-linux-uring = ["profile-linux-epoll", "io-uring"]
 state-unit = []
 state-fakeip-dns-unit = []
 ruleset-cache-unit = []
 routing-batch93a-unit = []
-logging = ["nexus.protocols/logging"]
-log-journald = ["nexus.protocols/log-journald"]
-ntp = { implies = ["nexus.protocols/ntp"], defines = ["NEXUS_ENABLE_NTP"], sources = ["src/tools/proxy_ntp_enabled.cpp", "!src/tools/proxy_ntp_disabled.cpp"] }
-control-http = { implies = ["crypto"], defines = ["NEXUS_ENABLE_CONTROL_HTTP"], sources = ["src/control_api/http_socket.cppm", "src/control_api/http_socket_posix.cpp", "src/control_api/http_socket_windows.cpp", "src/control_api/http_server.cppm", "src/control_api/http_server.cpp", "!src/control_api/control_api_disabled.cppm"] }
-metrics-openmetrics = { implies = ["control-http"], defines = ["NEXUS_ENABLE_OPENMETRICS"], sources = ["src/control_api/openmetrics.cppm", "!src/control_api/openmetrics_disabled.cppm"] }
-srs = ["nexus.policy/srs"]
-tproxy-udp = ["nexus.proxy-runtime/tproxy-udp"]
-http-connect-tls = ["tls", "nexus.proxy-runtime/http-connect-tls"]
-io-uring = ["nexus.corosio-source/uring", "nexus.platform/io-uring"]
+test-bins = []
+logging = ["protocols/logging"]
+log-journald = ["protocols/log-journald"]
+ntp = { implies = ["protocols/ntp"], defines = ["NEXUS_ENABLE_NTP"], sources = ["src/tools/proxy_ntp_enabled.cpp", "!src/tools/proxy_ntp_disabled.cpp"] }
+control-http = { implies = ["crypto"], defines = ["NEXUS_ENABLE_CONTROL_HTTP"], sources = ["src/control_api/http_socket.cppm", "src/control_api/http_socket_posix.cpp", "src/control_api/http_socket_windows.cpp", "src/control_api/http_format.cppm", "src/control_api/dashboard_static.cppm", "src/control_api/http_server.cppm", "src/control_api/http_server.cpp", "!src/control_api/control_api_disabled.cppm"] }
+metrics-openmetrics = { implies = ["control-http"], sources = ["src/control_api/openmetrics.cppm", "!src/control_api/openmetrics_disabled.cppm"] }
+srs = ["policy/srs"]
+tproxy-udp = ["relay-runtime/tproxy-udp"]
+http-connect-tls = ["tls", "relay-runtime/http-connect-tls"]
+io-uring = ["nexus.corosio-source/uring", "platform/io-uring"]
 # Crypto can also be selected without the VLESS transport.
 crypto = ["crypto-primitives"]
 crypto-primitives = []
-tls = ["crypto", "nexus.protocols/tls"]
-tls-resumption = ["tls", "nexus.protocols/tls-resumption"]
-tls-certificate-compression = ["tls", "nexus.protocols/tls-certificate-compression"]
-ktls = { implies = ["tls", "nexus.protocols/ktls"], defines = ["NEXUS_ENABLE_KTLS"] }
-dns-fakeip = { implies = ["nexus.dns/fakeip-history", "nexus.proxy-runtime/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources = ["src/tools/dns_fakeip_backend.cppm", "!src/tools/dns_fakeip_backend_disabled.cppm"] }
-dns-tls = { implies = ["tls", "nexus.dns/tls-query"], sources = ["src/tools/dns_transports.cpp", "!src/tools/dns_transports_disabled.cpp", "src/tools/dns_proxy_stream.cppm", "src/tools/dns_proxy_tls.cppm", "src/tools/dns_proxy_tls.cpp"] }
-dns-https = { implies = ["dns-tls", "http2", "nexus.dns/https-query"], sources = ["src/tools/dns_proxy_https.cpp", "!src/tools/dns_proxy_https_disabled.cpp"] }
-dns-quic = { implies = ["dns-tls", "quic-tls", "quic-shared-port", "packet-stream-socket", "nexus.dns/quic-query"], sources = ["src/tools/dns_proxy_quic.cpp", "!src/tools/dns_proxy_quic_disabled.cpp"] }
-dns-quic-resumption = ["dns-quic", "quic-resumption", "nexus.dns/quic-query-resumption"]
-dns-https3 = { implies = ["dns-https", "dns-quic", "nexus.dns/https3-query"], sources = ["src/tools/dns_https3.cpp", "!src/tools/dns_https3_disabled.cpp"] }
-http-client = { implies = ["tls", "nexus.protocols/http1-tls-client"], sources = ["src/tools/rule_fetch.cpp", "src/tools/named_http_client.cppm", "src/tools/named_http_client.cpp", "src/tools/rule_fetch_response.cppm", "src/tools/rule_fetch_h2_disabled.cppm", "src/tools/rule_fetch_h3_disabled.cppm", "!src/tools/rule_fetch_disabled.cpp"] }
+tls = ["crypto", "protocols/tls"]
+tls-resumption = ["tls", "protocols/tls-resumption"]
+tls-certificate-compression = ["tls", "protocols/tls-certificate-compression"]
+ktls = { implies = ["tls", "protocols/ktls"], defines = ["NEXUS_ENABLE_KTLS"] }
+dns-fakeip = { implies = ["dns/fakeip-history", "relay-runtime/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources = ["src/tools/dns_fakeip_backend.cppm", "!src/tools/dns_fakeip_backend_disabled.cppm"] }
+dns-tls = { implies = ["tls", "dns/tls-query"], sources = ["src/tools/dns_transports.cpp", "src/tools/dns_extra_transports.cpp", "!src/tools/dns_transports_disabled.cpp", "src/tools/dns_proxy_stream.cppm", "src/tools/dns_proxy_tls.cppm", "src/tools/dns_proxy_tls.cpp"] }
+dns-https = { implies = ["dns-tls", "http2", "dns/https-query"], sources = ["src/tools/dns_proxy_https.cpp", "!src/tools/dns_proxy_https_disabled.cpp"] }
+dns-quic = { implies = ["dns-tls", "quic-tls", "quic-shared-port", "packet-stream-socket", "dns/quic-query"], sources = ["src/tools/dns_proxy_quic.cpp", "!src/tools/dns_proxy_quic_disabled.cpp"] }
+dns-quic-resumption = ["dns-quic", "quic-resumption", "dns/quic-query-resumption"]
+dns-https3 = { implies = ["dns-https", "dns-quic", "dns/https3-query"], sources = ["src/tools/dns_https3.cpp", "!src/tools/dns_https3_disabled.cpp"] }
+http-client = { implies = ["tls", "protocols/http1-tls-client"], sources = ["src/tools/rule_fetch_url.cppm", "src/tools/rule_fetch_alternative.cppm", "src/tools/rule_fetch_response.cppm", "src/tools/rule_fetch_h2_disabled.cppm", "src/tools/rule_fetch_h3_disabled.cppm", "src/tools/rule_fetch_connection.cppm", "src/tools/named_http1_pool.cppm", "src/tools/named_http_client.cppm", "src/tools/named_http_client.cpp", "src/tools/rule_watch_client.cppm", "src/tools/rule_fetch_cache.cppm", "src/tools/rule_fetch.cpp", "!src/tools/rule_fetch_disabled.cpp"] }
 http-client-h2 = { implies = ["http-client", "http2"], sources = ["src/tools/rule_fetch_h2.cppm", "src/tools/rule_fetch_h2.cpp", "!src/tools/rule_fetch_h2_disabled.cppm"] }
-http-client-h3 = { implies = ["http-client", "quic-tls", "quic-shared-port", "packet-stream-socket", "nexus.protocols/masque-client"], sources = ["src/tools/rule_fetch_h3.cppm", "src/tools/rule_fetch_h3.cpp", "!src/tools/rule_fetch_h3_disabled.cppm"] }
-vless = { implies = ["tls", "nexus.proxy-runtime/vless"], defines = ["NEXUS_ENABLE_VLESS"] }
-trojan = { implies = ["tls", "nexus.proxy-runtime/trojan"], defines = ["NEXUS_ENABLE_TROJAN"] }
-anytls = { implies = ["tls", "nexus.proxy-runtime/anytls"], defines = ["NEXUS_ENABLE_ANYTLS"] }
+http-client-h3 = { implies = ["http-client", "quic-tls", "quic-shared-port", "packet-stream-socket", "protocols/masque-client"], sources = ["src/tools/rule_fetch_h3.cppm", "src/tools/rule_fetch_h3.cpp", "!src/tools/rule_fetch_h3_disabled.cppm"] }
+vless = { implies = ["tls", "relay-runtime/vless"], defines = ["NEXUS_ENABLE_VLESS"] }
+trojan = { implies = ["tls", "relay-runtime/trojan"], defines = ["NEXUS_ENABLE_TROJAN"] }
+anytls = { implies = ["tls", "relay-runtime/anytls"], defines = ["NEXUS_ENABLE_ANYTLS"] }
 wireguard-endpoint = { implies = ["wireguard"], sources = ["src/tools/endpoint.cpp", "src/tools/tailscale_endpoint.cppm", "src/tools/tailscale_endpoint_disabled.cpp"] }
 wireguard-host-dns = { implies = ["wireguard-endpoint"], defines = ["NEXUS_ENDPOINT_HOST_DNS=1"] }
 tun-host-dns = { implies = ["tun-inbound"], defines = ["NEXUS_TUN_HOST_DNS=1"], sources = ["src/tools/tun_resolved.cpp", "!src/tools/tun_resolved_disabled.cpp"] }
-wireguard = ["crypto", "nexus.protocols/wireguard"]
-tailscale = ["crypto", "nexus.protocols/tailscale"]
-tailscale-control = ["tailscale", "tls", "http2", "nexus.protocols/tailscale-control"]
-tailscale-policy = ["nexus.protocols/tailscale-policy"]
-tailscale-map-projection = ["tailscale-control", "tailscale-policy", "nexus.protocols/tailscale-map-projection"]
-tailscale-endpoint = { implies = ["wireguard-endpoint", "tailscale-map-projection", "nexus.protocols/tailscale-wireguard-tun"], sources = ["src/tools/tailscale_endpoint.cpp", "src/tools/tailscale_endpoint_config.cpp", "src/tools/tailscale_identity.cppm", "src/tools/tailscale_identity.cpp", "!src/tools/tailscale_endpoint_disabled.cpp"] }
-tailscale-outbound = { implies = ["tailscale-endpoint", "nexus.proxy-runtime/mesh-outbound"], sources = ["src/tools/tailscale_outbound.cpp", "!src/tools/tailscale_outbound_disabled.cpp"] }
-hysteria2-core = ["nexus.protocols/hysteria2-core"]
-quic-crypto = ["crypto", "nexus.protocols/quic-crypto"]
-quic-sniff = ["quic-crypto", "nexus.protocols/quic-sniff"]
-quic-native = ["nexus.protocols/quic-native"]
-quic-transport = ["crypto", "nexus.protocols/quic-transport"]
-quic-tls = ["tls", "quic-transport", "nexus.protocols/quic-tls"]
-quic-resumption = ["quic-tls", "tls-resumption", "nexus.protocols/quic-resumption"]
-datagram-driver = ["nexus.protocols/datagram-driver"]
-packet-stream-socket = ["nexus.protocols/packet-stream-socket"]
-http3-core = ["nexus.protocols/http3-core"]
-masque-core = ["nexus.protocols/masque-core"]
-masque-session = ["masque-core", "http3-core", "quic-transport", "nexus.protocols/masque-session"]
-masque-server = ["masque-session", "nexus.protocols/masque-server"]
+wireguard = ["crypto", "protocols/wireguard"]
+tailscale = ["crypto", "protocols/tailscale"]
+tailscale-control = ["tailscale", "tls", "http2", "protocols/tailscale-control"]
+tailscale-policy = ["protocols/tailscale-policy"]
+tailscale-map-projection = ["tailscale-control", "tailscale-policy", "protocols/tailscale-map-projection"]
+tailscale-endpoint = { implies = ["wireguard-endpoint", "tailscale-map-projection", "protocols/tailscale-wireguard-tun"], sources = ["src/tools/tailscale_mesh_link.cppm", "src/tools/tailscale_endpoint.cpp", "src/tools/tailscale_endpoint_config.cpp", "src/tools/tailscale_identity.cppm", "src/tools/tailscale_identity.cpp", "!src/tools/tailscale_endpoint_disabled.cpp"] }
+tailscale-outbound = { implies = ["tailscale-endpoint", "relay-runtime/mesh-outbound"], sources = ["src/tools/tailscale_outbound.cpp", "!src/tools/tailscale_outbound_disabled.cpp"] }
+hysteria2-core = ["protocols/hysteria2-core"]
+quic-crypto = ["crypto", "protocols/quic-crypto"]
+quic-sniff = ["quic-crypto", "protocols/quic-sniff"]
+quic-native = ["protocols/quic-native"]
+quic-transport = ["crypto", "protocols/quic-transport"]
+quic-tls = ["tls", "quic-transport", "protocols/quic-tls"]
+quic-resumption = ["quic-tls", "tls-resumption", "protocols/quic-resumption"]
+datagram-driver = ["protocols/datagram-driver"]
+packet-stream-socket = ["protocols/packet-stream-socket"]
+http3-core = ["protocols/http3-core"]
+masque-core = ["protocols/masque-core"]
+masque-session = ["masque-core", "http3-core", "quic-transport", "protocols/masque-session"]
+masque-server = ["masque-session", "protocols/masque-server"]
 masque-cli = { implies = ["masque-host"], defines = ["NEXUS_ENABLE_MASQUE"], sources = ["src/tools/masque_cli.cppm", "src/tools/masque_cli.cpp", "src/tools/masque_ip_server.cppm", "src/tools/masque_ip_server_disabled.cpp", "!src/tools/masque_cli_enabled_disabled.cppm"] }
 masque-ip-server = { implies = ["masque-cli"], sources = ["src/tools/masque_ip_server.cpp", "!src/tools/masque_ip_server_disabled.cpp"] }
-masque-host = { implies = ["masque-server", "quic-shared-port", "quic-tls", "nexus.protocols/hysteria2-support", "hysteria2-core", "nexus.protocols/quic-retry"], sources = ["src/masque/config.cppm", "src/masque/host.cppm", "src/masque/listener.cppm"] }
+masque-host = { implies = ["masque-server", "quic-shared-port", "quic-tls", "protocols/hysteria2-support", "hysteria2-core", "protocols/quic-retry"], sources = ["src/masque/config.cppm", "src/masque/host.cppm", "src/masque/listener.cppm"] }
 test-masque-listener-start = { implies = ["masque-host"], defines = ["NEXUS_TEST_MASQUE_LISTENER_START"] }
-test-masque-host-lifetime = { implies = ["masque-host", "nexus.protocols/test-masque-host-lifetime"], defines = ["NEXUS_TEST_MASQUE_HOST_LIFETIME"] }
-grpc = ["http2", "nexus.protocols/grpc"]
-grpc-vless = { implies = ["grpc", "vless", "nexus.proxy-runtime/grpc-vless"], defines = ["NEXUS_ENABLE_GRPC_VLESS"] }
-xhttp-vless = { implies = ["vless", "nexus.proxy-runtime/xhttp-vless"], defines = ["NEXUS_ENABLE_XHTTP_VLESS"] }
-test-grpc-runtime = ["grpc-vless", "nexus.proxy-runtime/test-grpc-runtime"]
-test-grpc-startup = ["grpc-vless", "nexus.proxy-runtime/test-grpc-startup"]
-test-grpc-lifecycle = ["grpc-vless", "nexus.proxy-runtime/test-grpc-lifecycle"]
+test-masque-host-lifetime = { implies = ["masque-host", "protocols/test-masque-host-lifetime"], defines = ["NEXUS_TEST_MASQUE_HOST_LIFETIME"] }
+grpc = ["http2", "protocols/grpc"]
+grpc-vless = { implies = ["grpc", "vless", "relay-runtime/grpc-vless"], defines = ["NEXUS_ENABLE_GRPC_VLESS"] }
+xhttp-vless = { implies = ["vless", "relay-runtime/xhttp-vless"], defines = ["NEXUS_ENABLE_XHTTP_VLESS"] }
+test-grpc-runtime = ["grpc-vless", "relay-runtime/test-grpc-runtime"]
+test-grpc-startup = ["grpc-vless", "relay-runtime/test-grpc-startup"]
+test-grpc-lifecycle = ["grpc-vless", "relay-runtime/test-grpc-lifecycle"]
 test-httpupgrade-fixture = []
 test-http3-fixture = { implies = ["http3-core", "hysteria2-core", "quic-tls"], sources = ["tests/support/quic_tls_link.cppm", "tests/support/http3_link.cppm"] }
 test-datagram-fixture = { implies = ["datagram-driver", "test-http3-fixture"], sources = ["tests/support/quic_datagram_link.cppm"] }
-quic-retry = ["crypto", "nexus.protocols/quic-retry"]
-hysteria2-listener = ["crypto", "nexus.protocols/hysteria2-listener"]
-snell-core = ["crypto", "nexus.protocols/snell"]
-snell = ["snell-core", "nexus.proxy-runtime/snell-outbound"]
-hy2-client = ["crypto", "nexus.protocols/hysteria2-client", "nexus.proxy-runtime/hy2-outbound"]
+quic-retry = ["crypto", "protocols/quic-retry"]
+hysteria2-listener = ["crypto", "protocols/hysteria2-listener"]
+snell-core = ["crypto", "protocols/snell"]
+snell = ["snell-core", "relay-runtime/snell-outbound"]
+hy2-client = ["crypto", "protocols/hysteria2-client", "relay-runtime/hy2-outbound"]
 test-hy2-production = { implies = ["test-hy2-retry-fixture", "hysteria2-listener"], sources = ["tests/support/hy2_production_resource_link.cppm", "tests/support/hy2_production_resource_link.cpp"] }
 test-hy2-retry-fixture = { implies = ["test-hy2-fixture", "quic-retry"], sources = ["tests/support/hy2_retry_port_link.cppm"] }
 test-hy2-retry-resource = { implies = ["test-hy2-retry-fixture"], sources = ["tests/support/hy2_retry_resource_link.cppm", "tests/support/hy2_retry_resource_link.cpp"] }
-quic-shared-port = ["nexus.protocols/quic-shared-port"]
-hysteria2-application = ["nexus.protocols/hysteria2-application"]
+quic-shared-port = ["protocols/quic-shared-port"]
+hysteria2-application = ["protocols/hysteria2-application"]
 test-hy2-fixture = { implies = ["test-datagram-fixture", "hysteria2-application", "quic-shared-port"], sources = ["tests/support/hysteria2_application_link.cppm", "tests/support/hy2_port_link.cppm", "tests/support/hy2_native_memory.cppm"] }
 test-hy2-resource = { implies = ["test-hy2-fixture"], sources = ["tests/support/hy2_resource_link.cppm", "tests/support/hy2_resource_link.cpp"] }
 
 # HTTP/2 provides bounded sessions/channels; CLI transport integration is separate.
-http2 = ["nexus.protocols/http2"]
-http2-tls = ["http2", "nexus.protocols/http2-tls"]
-hy2-cli = { implies = ["hy2-client", "hysteria2-listener", "nexus.proxy-runtime/hy2-inbound"], defines = ["NEXUS_ENABLE_HY2"], sources = ["src/tools/hy2_cli.cppm", "src/tools/hy2_cli.cpp", "!src/tools/hy2_cli_enabled_disabled.cppm"] }
-dns-response = { implies = ["nexus.proxy-runtime/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
-dns-response-ss = { implies = ["dns-response", "ss2022", "nexus.ss-udp-runtime/dns-response", "nexus.dns-group-udp/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
-ss2022 = { implies = ["crypto", "nexus.protocols/ss2022", "nexus.proxy-runtime/ss2022"], sources = ["src/tools/udp_cli_enabled.cpp"] }
-shadowtls = ["crypto", "nexus.protocols/shadowtls"]
-shadowtls-proxy = { implies = ["tls", "nexus.protocols/shadowtls-runtime", "nexus.proxy-runtime/shadowtls"], defines = ["NEXUS_ENABLE_SHADOWTLS"] }
-tuic-core = ["crypto", "tls", "nexus.protocols/tuic-core"]
-tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "nexus.protocols/tuic", "nexus.proxy-runtime/tuic"], defines = ["NEXUS_ENABLE_TUIC"], sources = ["src/tools/tuic_cli.cppm", "src/tools/tuic_cli.cpp", "!src/tools/tuic_cli_enabled_disabled.cppm"] }
-tun-inbound = { implies = ["nexus.platform/nftables"], defines = ["NEXUS_ENABLE_TUN"], sources = ["src/tools/tun_host.cppm", "src/tools/tun_host.cpp", "src/tools/tun_network_owner.cppm", "src/tools/tun_network_owner.cpp", "src/tools/tun_resolved.cppm", "src/tools/tun_resolved_disabled.cpp", "src/tools/tun_cli.cppm", "src/tools/tun_cli.cpp", "src/tools/masque_tun.cppm", "src/tools/masque_tun_disabled.cpp", "!src/tools/tun_cli_enabled_disabled.cppm"] }
+http2 = ["protocols/http2"]
+http2-tls = ["http2", "protocols/http2-tls"]
+hy2-cli = { implies = ["hy2-client", "hysteria2-listener", "relay-runtime/hy2-inbound"], defines = ["NEXUS_ENABLE_HY2"], sources = ["src/tools/hy2_cli.cppm", "src/tools/hy2_cli.cpp", "!src/tools/hy2_cli_enabled_disabled.cppm"] }
+dns-response = { implies = ["relay-runtime/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
+dns-response-ss = { implies = ["dns-response", "ss2022", "ss-udp-runtime/dns-response", "dns-group-udp/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
+ss2022 = { implies = ["crypto", "protocols/ss2022", "relay-runtime/ss2022"], sources = ["src/tools/udp_cli_enabled.cpp"] }
+shadowtls = ["crypto", "protocols/shadowtls"]
+shadowtls-proxy = { implies = ["tls", "protocols/shadowtls-runtime", "relay-runtime/shadowtls"], defines = ["NEXUS_ENABLE_SHADOWTLS"] }
+tuic-core = ["crypto", "tls", "protocols/tuic-core"]
+tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "protocols/tuic", "relay-runtime/tuic"], defines = ["NEXUS_ENABLE_TUIC"], sources = ["src/tools/tuic_cli.cppm", "src/tools/tuic_cli.cpp", "!src/tools/tuic_cli_enabled_disabled.cppm"] }
+tun-inbound = { implies = ["platform/nftables"], defines = ["NEXUS_ENABLE_TUN"], sources = ["src/tools/tun_udp_fragments.cppm", "src/tools/tun_udp_reply_fragments.cppm", "src/tools/tun_owner_lookup.cppm", "src/tools/tun_tcp_dns.cppm", "src/tools/tun_tcp.cppm", "src/tools/tun_fakeip.cppm", "src/tools/tun_udp_proxy.cppm", "src/tools/tun_udp.cppm", "src/tools/tun_device_runtime.cppm", "src/tools/tun_event_wait.cppm", "src/tools/tun_host.cppm", "src/tools/tun_host.cpp", "src/tools/tun_network_owner.cppm", "src/tools/tun_network_owner.cpp", "src/tools/tun_resolved.cppm", "src/tools/tun_resolved_disabled.cpp", "src/tools/tun_cli.cppm", "src/tools/tun_cli.cpp", "src/tools/masque_tun.cppm", "src/tools/masque_tun_disabled.cpp", "!src/tools/tun_cli_enabled_disabled.cppm"] }
 masque-ip-endpoint = { implies = ["tun-inbound", "masque-outbound", "packet-stream-socket"], sources = ["src/tools/masque_tun.cpp", "src/tools/masque_tun_policy.cppm", "!src/tools/masque_tun_disabled.cpp"] }
-masque-outbound = { implies = ["quic-tls", "quic-shared-port", "nexus.protocols/masque-client", "nexus.proxy-runtime/masque-outbound"], defines = ["NEXUS_ENABLE_MASQUE_OUTBOUND"] }
-wireguard-outbound = { implies = ["wireguard", "nexus.proxy-runtime/wireguard"], defines = ["NEXUS_ENABLE_WIREGUARD"] }
-ssh = { implies = ["crypto", "nexus.protocols/ssh", "nexus.proxy-runtime/ssh"], defines = ["NEXUS_ENABLE_SSH"] }
-naive = { implies = ["tls", "http2", "quic-tls", "quic-retry", "quic-shared-port", "packet-stream-socket", "masque-server", "nexus.protocols/naive", "nexus.proxy-runtime/naive"], defines = ["NEXUS_ENABLE_NAIVE"] }
+masque-outbound = { implies = ["quic-tls", "quic-shared-port", "protocols/masque-client", "relay-runtime/masque-outbound"], defines = ["NEXUS_ENABLE_MASQUE_OUTBOUND"] }
+wireguard-outbound = { implies = ["wireguard", "relay-runtime/wireguard"], defines = ["NEXUS_ENABLE_WIREGUARD"] }
+ssh = { implies = ["crypto", "protocols/ssh", "relay-runtime/ssh"], defines = ["NEXUS_ENABLE_SSH"] }
+naive = { implies = ["tls", "http2", "quic-tls", "quic-retry", "quic-shared-port", "packet-stream-socket", "masque-server", "protocols/naive", "relay-runtime/naive"], defines = ["NEXUS_ENABLE_NAIVE"] }
 test-http-header-fixture = []
 test-dns-resource = []
 test-rules-bench = []
-test-dns-reverse = ["nexus.dns/reverse"]
-test-source-route = { implies = ["nexus.proxy-runtime/test-source-route"], defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
-memory-budget = ["nexus.protocols/memory-budget"]
-acme = { implies = ["tls", "nexus.protocols/acme"], defines = ["NEXUS_ENABLE_ACME"] }
-sni-demux = { implies = ["nexus.proxy-runtime/sni-demux"], defines = ["NEXUS_ENABLE_SNI_DEMUX"] }
-dns-dhcp = ["nexus.dns/dhcp"]
-dns-mdns = ["nexus.dns/mdns"]
-derp-server = { implies = ["crypto", "nexus.protocols/derp-server"], defines = ["NEXUS_ENABLE_DERP_SERVER"] }
-ssmapi = { sources = ["src/control_api/ssmapi.cppm", "src/control_api/ssmapi.cpp"], defines = ["NEXUS_ENABLE_SSMAPI"] }
-openvpn = { implies = ["tls", "nexus.protocols/openvpn"], defines = ["NEXUS_ENABLE_OPENVPN"] }
-openconnect = { implies = ["tls", "nexus.protocols/openconnect"], defines = ["NEXUS_ENABLE_OPENCONNECT"] }
-reverse-tunnel = { implies = ["nexus.proxy-runtime/reverse-tunnel"], defines = ["NEXUS_ENABLE_REVERSE_TUNNEL"] }
-bridge = { defines = ["NEXUS_ENABLE_BRIDGE"] }
-tor = { implies = ["nexus.proxy-runtime/tor"], defines = ["NEXUS_ENABLE_TOR"] }
+test-dns-reverse = ["dns/reverse"]
+test-source-route = { implies = ["relay-runtime/test-source-route"], defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
+memory-budget = { implies = ["protocols/memory-budget"], sources = ["src/tools/svc_watchdog.cpp", "!src/tools/svc_watchdog_disabled.cpp"] }
+acme = { implies = ["tls", "protocols/acme"], sources = ["src/tools/svc_acme.cpp", "!src/tools/svc_acme_disabled.cpp"] }
+sni-demux = { implies = ["relay-runtime/sni-demux"], sources = ["src/tools/svc_sni_demux.cpp", "!src/tools/svc_sni_demux_disabled.cpp"] }
+dns-dhcp = { implies = ["dns/dhcp"], sources = ["src/tools/dns_dhcp_transport.cpp", "!src/tools/dns_dhcp_transport_disabled.cpp"] }
+dns-mdns = { implies = ["dns/mdns"], sources = ["src/tools/dns_mdns_transport.cpp", "!src/tools/dns_mdns_transport_disabled.cpp"] }
+derp-server = { implies = ["crypto", "tls", "protocols/derp-server"], sources = ["src/tools/svc_derp.cpp", "!src/tools/svc_derp_disabled.cpp"] }
+ssmapi = { implies = ["crypto"], sources = ["src/control_api/ssmapi.cppm", "src/control_api/ssmapi.cpp", "src/control_api/ssmapi_bridge.cpp", "!src/control_api/ssmapi_bridge_disabled.cpp"] }
+openvpn = { implies = ["tls", "protocols/openvpn", "relay-runtime/openvpn"], defines = ["NEXUS_ENABLE_OPENVPN"] }
+openconnect = { implies = ["tls", "protocols/openconnect", "relay-runtime/openconnect"], defines = ["NEXUS_ENABLE_OPENCONNECT"] }
+reverse-tunnel = { implies = ["relay-runtime/reverse-tunnel"], sources = ["src/tools/svc_reverse_tunnel.cpp", "!src/tools/svc_reverse_tunnel_disabled.cpp"] }
+bridge = { sources = ["src/tools/svc_bridge.cpp", "!src/tools/svc_bridge_disabled.cpp"] }
+tor = { implies = ["relay-runtime/tor"], defines = ["NEXUS_ENABLE_TOR"], sources = ["src/tools/svc_tor.cpp", "!src/tools/svc_tor_disabled.cpp"] }
 
 [feature-deps.wireguard-endpoint]
-nexus.wireguard-endpoint = { path = "src/endpoint" }
+wireguard-endpoint = { path = "src/endpoint" }
 
 [feature-deps.wireguard-host-dns]
-nexus.wireguard-endpoint = { path = "src/endpoint", features = ["host-dns-resolved"] }
+wireguard-endpoint = { path = "src/endpoint", features = ["host-dns-resolved"] }
 
 [feature-deps.io-uring]
-nexus.uring-system = { path = "3rdparty/mcpp-uring" }
+uring-system = { path = "3rdparty/mcpp-uring" }
 
 [feature-deps.crypto-primitives]
-nexus.crypto = { path = "src/crypto" }
+crypto = { path = "src/crypto" }
 
 [feature-deps.ss2022]
-nexus.ss-udp-runtime = { path = "src/udp-runtime" }
-nexus.dns-group-udp = { path = "src/udp-shared", default-features = false }
+ss-udp-runtime = { path = "src/udp-runtime" }
+dns-group-udp = { path = "src/udp-shared", default-features = false }
 
 [feature-deps.tun-inbound]
-nexus.tun = { path = "src/transport", features = ["default-network"] }
+tun = { path = "src/tun", features = ["default-network"] }
 
 [feature-deps.tun-host-dns]
-nexus.wireguard-endpoint = { path = "src/endpoint", features = ["host-dns-resolved"] }
+wireguard-endpoint = { path = "src/endpoint", features = ["host-dns-resolved"] }
 
 [feature-deps.masque-outbound]
-nexus.tun = { path = "src/transport", default-features = false }
+tun = { path = "src/tun", default-features = false }
 
 [feature-deps.masque-ip-server]
-nexus.tun = { path = "src/transport", default-features = false, features = ["network"] }
+tun = { path = "src/tun", default-features = false, features = ["network"] }
 
 [feature-deps.bridge]
-nexus.tun = { path = "src/transport", default-features = false, features = ["bridge"] }
+tun = { path = "src/tun", default-features = false, features = ["bridge"] }
+
+[feature-deps.openvpn]
+tun = { path = "src/tun", default-features = false }
+
+[feature-deps.openconnect]
+tun = { path = "src/tun", default-features = false }
 
 [build]
 target_budget = "24GiB"
@@ -221,16 +245,18 @@ defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",
            "BOOST_COROSIO_NO_LIB", "BOOST_COROSIO_STATIC_LINK",
            "NEXUS_ENABLE_SOCKS_UDP"]
 sources = [
-    # Verify pinned network dependency snapshots before building the app.
-    "src/build/mcpp_pinned_guard.cpp",
     "src/tools/logging.cppm", "src/tools/logging.cpp",
-    "src/control_api/types.cppm", "src/control_api/openmetrics_disabled.cppm", "src/control_api/control_api_disabled.cppm",
-    "src/tools/dns_transports.cppm", "src/tools/dns_transports_disabled.cpp", "src/tools/dns_fakeip_backend_disabled.cppm",
-    "src/tools/control.cppm", "src/tools/selector_state.cpp", "src/tools/state_cli.cpp", "src/tools/dns_message_runtime.cppm", "src/tools/dns_message_runtime.cpp", "src/tools/dns_proxy_https.cppm", "src/tools/dns_proxy_https_disabled.cpp", "src/tools/dns_proxy_quic.cppm", "src/tools/dns_proxy_quic_disabled.cpp", "src/tools/dns_https3.cppm", "src/tools/dns_https3_disabled.cpp", "src/tools/endpoint.cppm", "src/tools/endpoint_disabled.cpp", "src/tools/hy2_cli_disabled.cppm", "src/tools/hy2_cli_enabled_disabled.cppm", "src/tools/masque_cli_disabled.cppm", "src/tools/masque_cli_enabled_disabled.cppm", "src/tools/tuic_cli_disabled.cppm", "src/tools/tuic_cli_enabled_disabled.cppm", "src/tools/tun_cli_disabled.cppm", "src/tools/tun_cli_enabled_disabled.cppm", "src/tools/udp_cli.cppm", "src/tools/tailscale_outbound.cppm", "src/tools/tailscale_outbound_disabled.cpp", "src/tools/proxy_ntp.cppm", "src/tools/proxy_ntp_disabled.cpp", "src/tools/proxy_run.cppm", "src/tools/route_files.cppm", "src/tools/route_files.cpp", "src/tools/outbound_config.cppm", "src/tools/outbound_config.cpp", "src/tools/proxy_server.cpp", "src/tools/rule_convert.cpp", "src/tools/rule_explain.cpp", "src/tools/rule_fetch_disabled.cpp",
+    "src/control_api/types.cppm", "src/control_api/openmetrics_disabled.cppm", "src/control_api/control_api_disabled.cppm", "src/control_api/ssmapi_bridge.cppm", "src/control_api/ssmapi_bridge_disabled.cpp",
+    "src/tools/dns_transports.cppm", "src/tools/dns_transports_disabled.cpp", "src/tools/dns_dhcp_transport_disabled.cpp", "src/tools/dns_mdns_transport_disabled.cpp", "src/tools/dns_fakeip_backend_disabled.cppm",
+    "src/tools/control.cppm", "src/tools/selector_state.cpp", "src/tools/state_cli.cpp", "src/tools/dns_cache_state.cppm", "src/tools/dns_cache_unified.cppm", "src/tools/dns_message_runtime.cppm", "src/tools/dns_message_runtime.cpp", "src/tools/fakeip_state.cpp", "src/tools/dns_proxy_https.cppm", "src/tools/dns_proxy_https_disabled.cpp", "src/tools/dns_proxy_quic.cppm", "src/tools/dns_proxy_quic_disabled.cpp", "src/tools/dns_https3.cppm", "src/tools/dns_https3_disabled.cpp", "src/tools/endpoint.cppm", "src/tools/endpoint_disabled.cpp", "src/tools/hy2_cli_disabled.cppm", "src/tools/hy2_cli_enabled_disabled.cppm", "src/tools/masque_cli_disabled.cppm", "src/tools/masque_cli_enabled_disabled.cppm", "src/tools/tuic_cli_disabled.cppm", "src/tools/tuic_cli_enabled_disabled.cppm", "src/tools/tun_cli_disabled.cppm", "src/tools/tun_cli_enabled_disabled.cppm", "src/tools/udp_cli.cppm", "src/tools/tailscale_outbound.cppm", "src/tools/tailscale_outbound_disabled.cpp", "src/tools/proxy_ntp.cppm", "src/tools/proxy_ntp_disabled.cpp", "src/tools/proxy_services.cppm", "src/tools/proxy_services.cpp", "src/tools/svc_watchdog_disabled.cpp", "src/tools/svc_sni_demux_disabled.cpp", "src/tools/svc_acme_disabled.cpp", "src/tools/svc_reverse_tunnel_disabled.cpp", "src/tools/svc_bridge_disabled.cpp", "src/tools/svc_tor_disabled.cpp", "src/tools/svc_derp_disabled.cpp", "src/tools/cli_gen_tools.cppm", "src/tools/generate_cli.cpp", "src/tools/tools_cli.cpp", "src/tools/tun_route_sets.cppm", "src/tools/route_files.cppm", "src/tools/route_files.cpp", "src/tools/outbound_config.cppm", "src/tools/outbound_config.cpp", "src/tools/proxy_providers.cppm", "src/tools/proxy_providers.cpp", "src/tools/convert_config.cpp", "src/tools/provider_cli.cpp", "src/tools/system_proxy_cli.cpp", "src/tools/service_cli.cpp", "src/tools/proxy_run_state.cppm", "src/tools/proxy_group_health.cppm", "src/tools/proxy_listener.cppm", "src/tools/proxy_log.cppm", "src/tools/proxy_host.cppm", "src/tools/proxy_control_wake.cppm", "src/tools/proxy_dns_reload.cppm", "src/tools/proxy_selector_state.cppm", "src/tools/proxy_listener_reload.cppm", "src/tools/proxy_control_operations.cppm", "src/tools/proxy_mode.cppm", "src/tools/proxy_control.cppm", "src/tools/proxy_http_control.cppm", "src/tools/proxy_run.cppm", "src/tools/proxy_server.cpp", "src/tools/core_c_api.cpp", "src/tools/rule_convert.cpp", "src/tools/rule_explain_query.cppm", "src/tools/rule_explain.cpp", "src/tools/rule_fetch_disabled.cpp",
 ]
 
 [target.'cfg(not(os = "windows"))'.build]
 sources = ["src/tools/control_posix.cpp", "!src/control_api/http_socket_windows.cpp"]
+
+[target.'cfg(os = "linux")'.build]
+cxxflags = ["-fmerge-all-constants"]
+ldflags = ["-Wl,-z,noexecstack", "-Wl,-z,relro,-z,now", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,--icf=safe"]
 
 [target.'cfg(os = "windows")'.build]
 sources = ["src/tools/control_windows.cpp", "!src/control_api/http_socket_posix.cpp"]
@@ -241,7 +267,7 @@ kind = "lib"
 [targets.tun-auto-redirect-unit]
 kind = "bin"
 main = "tests/tun_auto_redirect_unit.cpp"
-required_features = ["tun-inbound"]
+required_features = ["tun-inbound", "test-bins"]
 
 [targets.nexus-cli]
 kind = "entry"
@@ -279,50 +305,52 @@ required_features = ["logging"]
 [targets.tcp-fast-open-fixture]
 kind = "bin"
 main = "tests/tcp_fast_open.cpp"
+required_features = ["test-bins"]
 
 [targets.tcp-fast-open-stream-fixture]
 kind = "bin"
 main = "tests/tcp_fast_open_stream.cpp"
+required_features = ["test-bins"]
 
 [targets.vision-reality-fixture]
 kind = "bin"
 main = "tests/vision_reality_fixture.cpp"
-required_features = ["vless"]
+required_features = ["vless", "test-bins"]
 
 [targets.crypto-vectors]
 kind = "bin"
 main = "tests/protocol/crypto.cpp"
-required_features = ["crypto-primitives"]
+required_features = ["crypto-primitives", "test-bins"]
 
 [targets.hy2-client-start-fault]
 kind = "bin"
 main = "tests/hy2_client_start_fault.cpp"
-required_features = ["hy2-client"]
+required_features = ["hy2-client", "test-bins"]
 
 [targets.hy2-udp-budget-production]
 kind = "bin"
 main = "tests/hy2_udp_budget_production.cpp"
-required_features = ["hy2-cli"]
+required_features = ["hy2-cli", "test-bins"]
 
 [targets.hysteria2-salamander-test]
 kind = "bin"
 main = "tests/hysteria2_salamander.cpp"
-required_features = ["hy2-cli"]
+required_features = ["hy2-cli", "test-bins"]
 
 [targets.crypto-mlkem-vectors]
 kind = "bin"
 main = "tests/protocol/crypto_mlkem.cpp"
-required_features = ["crypto-primitives"]
+required_features = ["crypto-primitives", "test-bins"]
 
 [targets.poly1305-vectors]
 kind = "bin"
 main = "tests/poly1305.cpp"
-required_features = ["crypto-primitives"]
+required_features = ["crypto-primitives", "test-bins"]
 
 [targets.aead-context-vectors]
 kind = "bin"
 main = "tests/aead_context.cpp"
-required_features = ["crypto-primitives"]
+required_features = ["crypto-primitives", "test-bins"]
 
 [targets.tls-owned-prefix]
 kind = "bin"
@@ -334,131 +362,138 @@ required_features = ["http2-tls"]
 [targets.crypto-ecdh-errors]
 kind = "bin"
 main = "tests/crypto_ecdh_errors.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-typed-verifier]
 kind = "bin"
 main = "tests/tls_typed_verifier.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-spki-error]
 kind = "bin"
 main = "tests/tls_spki_error.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-crypto-fault]
 kind = "bin"
 main = "tests/tls_crypto_fault.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-crypto-tcp-fault]
 kind = "bin"
 main = "tests/tls_crypto_tcp_fault.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-fingerprint]
 kind = "bin"
 main = "tests/tls_fingerprint.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.crypto-ecdh]
 kind = "bin"
 main = "tests/crypto_ecdh.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.crypto-ecdh-fault]
 kind = "bin"
 main = "tests/crypto_ecdh_fault.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-ecdh-boundary]
 kind = "bin"
 main = "tests/tls_ecdh_boundary.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-ecdh-allocation]
 kind = "bin"
 main = "tests/tls_ecdh_allocation.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-ecdh]
 kind = "bin"
 main = "tests/tls_ecdh.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-ecdh-openssl]
 kind = "bin"
 main = "tests/tls_ecdh_openssl.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-ip-profile]
 kind = "bin"
 main = "tests/tls_ip_profile.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.vless-tls-ip-profile]
 kind = "bin"
 main = "tests/vless_tls_ip_profile.cpp"
-required_features = ["vless"]
+required_features = ["vless", "test-bins"]
 
 [targets.ss-ordered-dispatch-test]
 kind = "bin"
 main = "tests/shadowsocks_udp_dispatch.cpp"
-required_features = ["ss2022"]
+required_features = ["ss2022", "test-bins"]
 
 [targets.shadowsocks-response-test]
 kind = "bin"
 main = "tests/shadowsocks_response.cpp"
-required_features = ["ss2022"]
+required_features = ["ss2022", "test-bins"]
+
+[targets.shadowsocks-replay-test]
+kind = "bin"
+main = "tests/shadowsocks_replay.cpp"
+required_features = ["ss2022", "test-bins"]
 
 [targets.ss-preserve-read]
 kind = "bin"
 main = "tests/ss_preserve_read.cpp"
-required_features = ["ss2022"]
+required_features = ["ss2022", "test-bins"]
 
 [targets.ordered-tcp-fixture]
 kind = "bin"
 main = "tests/ordered_tcp_fixture.cpp"
+required_features = ["test-bins"]
 
 [targets.tcp-sniff-io-test]
 kind = "bin"
 main = "tests/tcp_sniff_io.cpp"
+required_features = ["test-bins"]
 
 [targets.tls-ecdh-quic]
 kind = "bin"
 main = "tests/tls_ecdh_quic.cpp"
-required_features = ["quic-tls"]
+required_features = ["quic-tls", "test-bins"]
 
 [targets.tls-ecdh-quic-udp]
 kind = "bin"
 main = "tests/tls_ecdh_quic_udp.cpp"
-required_features = ["quic-tls"]
+required_features = ["quic-tls", "test-bins"]
 
 [targets.tls-signature]
 kind = "bin"
 main = "tests/tls_signature.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-signature-openssl]
 kind = "bin"
 main = "tests/tls_signature_openssl.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-signature-layout]
 kind = "bin"
 main = "tests/tls_signature_layout.cpp"
-required_features = ["quic-tls"]
+required_features = ["quic-tls", "test-bins"]
 
 # The entropy oracle must be relinked with tls_fingerprint_random_relink.py.
 [targets.tls-fingerprint-random]
 kind = "bin"
 main = "tests/tls_fingerprint_random.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.packet-stream-socket]
 kind = "bin"
 main = "tests/packet_stream_socket.cpp"
-required_features = ["packet-stream-socket"]
+required_features = ["packet-stream-socket", "test-bins"]
 
 [targets.datagram-driver-empty]
 kind = "bin"
@@ -468,78 +503,78 @@ required_features = ["datagram-driver"]
 [targets.quic-chacha]
 kind = "bin"
 main = "tests/quic_chacha.cpp"
-required_features = ["quic-transport"]
+required_features = ["quic-transport", "test-bins"]
 
 [targets.quic-chacha-layout]
 kind = "bin"
 main = "tests/quic_chacha_layout.cpp"
-required_features = ["quic-transport"]
+required_features = ["quic-transport", "test-bins"]
 
 [targets.tls-fingerprint-allocation]
 kind = "bin"
 main = "tests/tls_fingerprint_allocation.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-fingerprint-layout]
 kind = "bin"
 main = "tests/tls_fingerprint_layout.cpp"
-required_features = ["quic-tls"]
+required_features = ["quic-tls", "test-bins"]
 
 # Network drivers supply certificates/role arguments to these fixtures.
 [targets.tls-fingerprint-openssl]
 kind = "bin"
 main = "tests/tls_fingerprint_openssl.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.tls-fingerprint-quic-udp]
 kind = "bin"
 main = "tests/tls_fingerprint_quic_udp.cpp"
-required_features = ["quic-tls"]
+required_features = ["quic-tls", "test-bins"]
 
 [targets.tls-fingerprint-reality]
 kind = "bin"
 main = "tests/tls_fingerprint_reality.cpp"
-required_features = ["vless"]
+required_features = ["vless", "test-bins"]
 
 [targets.tls-fingerprint-reality-fixture]
 kind = "bin"
 main = "tests/tls_fingerprint_reality_fixture.cpp"
-required_features = ["vless"]
+required_features = ["vless", "test-bins"]
 
 [targets.trojan-auth-vectors]
 kind = "bin"
 main = "tests/trojan_auth.cpp"
-required_features = ["trojan"]
+required_features = ["trojan", "test-bins"]
 
 [targets.anytls-auth-vectors]
 kind = "bin"
 main = "tests/anytls_auth.cpp"
-required_features = ["anytls"]
+required_features = ["anytls", "test-bins"]
 
 [targets.anytls-io]
 kind = "bin"
 main = "tests/anytls_io.cpp"
-required_features = ["anytls"]
+required_features = ["anytls", "test-bins"]
 
 [targets.anytls-network-fixture]
 kind = "bin"
 main = "tests/anytls_network_fixture.cpp"
-required_features = ["anytls"]
+required_features = ["anytls", "test-bins"]
 
 [targets.anytls-pool-fixture]
 kind = "bin"
 main = "tests/anytls_pool_fixture.cpp"
-required_features = ["anytls"]
+required_features = ["anytls", "test-bins"]
 
 [targets.anytls-proxy-fixture]
 kind = "bin"
 main = "tests/anytls_proxy_fixture.cpp"
-required_features = ["anytls"]
+required_features = ["anytls", "test-bins"]
 
 [targets.anytls-watchdog]
 kind = "bin"
 main = "tests/anytls_watchdog.cpp"
-required_features = ["anytls"]
+required_features = ["anytls", "test-bins"]
 
 [targets.httpupgrade-fixture]
 kind = "bin"
@@ -559,105 +594,108 @@ required_features = ["test-httpupgrade-fixture", "http2-tls"]
 [targets.wireguard-noise-vectors]
 kind = "bin"
 main = "tests/wireguard_noise.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-network-fixture]
 kind = "bin"
 main = "tests/wireguard_network_fixture.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-endpoint-test]
 kind = "bin"
 main = "tests/wireguard_endpoint.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-endpoint-network-fixture]
 kind = "bin"
 main = "tests/wireguard_endpoint_network_fixture.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-endpoint-cookie-test]
 kind = "bin"
 main = "tests/wireguard_endpoint_cookie.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-registry-test]
 kind = "bin"
 main = "tests/wireguard_registry.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-host-test]
 kind = "bin"
 main = "tests/wireguard_host.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-routing-test]
 kind = "bin"
 main = "tests/wireguard_routing.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-source-policy-test]
 kind = "bin"
 main = "tests/wireguard_source_policy.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-identity-test]
 kind = "bin"
 main = "tests/wireguard_identity.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-identity-handshake-test]
 kind = "bin"
 main = "tests/wireguard_identity_handshake.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-routing-cost]
 kind = "bin"
 main = "tests/wireguard_routing_cost.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-port-test]
 kind = "bin"
 main = "tests/wireguard_port.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-port-allocation-test]
 kind = "bin"
 main = "tests/wireguard_port_allocation.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.wireguard-port-network-fixture]
 kind = "bin"
 main = "tests/wireguard_port_network_fixture.cpp"
-required_features = ["wireguard"]
+required_features = ["wireguard", "test-bins"]
 
 [targets.socket-binding-tcp]
 kind = "bin"
 main = "tests/socket_binding_tcp.cpp"
+required_features = ["test-bins"]
 
 [targets.socket-binding-udp]
 kind = "bin"
 main = "tests/socket_binding_udp.cpp"
 
 # Uses an isolated network namespace and explicit family/policy arguments.
+required_features = ["test-bins"]
 [targets.udp-fragment-fixture]
 kind = "bin"
 main = "tests/udp_fragment.cpp"
+required_features = ["test-bins"]
 
 [targets.httpupgrade-vless-fixture]
 kind = "bin"
 main = "tests/httpupgrade_vless_fixture.cpp"
-required_features = ["vless"]
+required_features = ["vless", "test-bins"]
 
 [targets.httpupgrade-vless-layout]
 kind = "bin"
 main = "tests/httpupgrade_vless_layout.cpp"
-required_features = ["vless"]
+required_features = ["vless", "test-bins"]
 
 [targets.httpupgrade-vless-io]
 kind = "bin"
 main = "tests/httpupgrade_vless_io.cpp"
-required_features = ["vless"]
+required_features = ["vless", "test-bins"]
 
 [targets.quic-native-test]
 kind = "bin"
@@ -702,28 +740,28 @@ required_features = ["test-datagram-fixture"]
 [targets.quic-connection]
 kind = "bin"
 main = "tests/quic_connection.cpp"
-required_features = ["quic-transport"]
+required_features = ["quic-transport", "test-bins"]
 
 [targets.quic-transport-parameters]
 kind = "bin"
 main = "tests/quic_transport_parameters.cpp"
-required_features = ["quic-transport"]
+required_features = ["quic-transport", "test-bins"]
 
 # Certificate/role arguments are supplied by the raw TLS and UDP drivers.
 [targets.tls-raw-flights]
 kind = "bin"
 main = "tests/raw_flights.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.quic-tls]
 kind = "bin"
 main = "tests/quic_tls.cpp"
-required_features = ["quic-tls"]
+required_features = ["quic-tls", "test-bins"]
 
 [targets.quic-udp-fixture]
 kind = "bin"
 main = "tests/quic_udp_fixture.cpp"
-required_features = ["quic-tls"]
+required_features = ["quic-tls", "test-bins"]
 
 [targets.tailscale-control-connection-fault]
 kind = "bin"
@@ -813,12 +851,12 @@ required_features = ["tailscale"]
 [targets.quic-http3-dispatch]
 kind = "bin"
 main = "tests/quic_http3_dispatch.cpp"
-required_features = ["http3-core", "hysteria2-core"]
+required_features = ["http3-core", "hysteria2-core", "test-bins"]
 
 [targets.quic-http3-owner]
 kind = "bin"
 main = "tests/quic_http3_owner.cpp"
-required_features = ["http3-core", "hysteria2-core"]
+required_features = ["http3-core", "hysteria2-core", "test-bins"]
 
 [targets.quic-http3-lifecycle]
 kind = "bin"
@@ -868,216 +906,227 @@ required_features = ["tailscale"]
 [targets.masque-http3-test]
 kind = "bin"
 main = "tests/masque_http3.cpp"
-required_features = ["masque-core", "http3-core"]
+required_features = ["masque-core", "http3-core", "test-bins"]
 
 [targets.masque-codec-test]
 kind = "bin"
 main = "tests/masque_codec.cpp"
-required_features = ["masque-core"]
+required_features = ["masque-core", "test-bins"]
 
 [targets.masque-ip-packet-test]
 kind = "bin"
 main = "tests/masque_ip_packet.cpp"
-required_features = ["masque-core"]
+required_features = ["masque-core", "test-bins"]
 
 [targets.masque-connect-ip-test]
 kind = "bin"
 main = "tests/masque_connect_ip.cpp"
-required_features = ["masque-core"]
+required_features = ["masque-core", "test-bins"]
 
 [targets.quic-varint-test]
 kind = "bin"
 main = "tests/quic_varint.cpp"
-required_features = ["hysteria2-core"]
+required_features = ["hysteria2-core", "test-bins"]
 
 [targets.quic-packet-keys]
 kind = "bin"
 main = "tests/quic_packet_keys.cpp"
-required_features = ["quic-crypto"]
+required_features = ["quic-crypto", "test-bins"]
 
 [targets.quic-sniff]
 kind = "bin"
 main = "tests/quic_sniff.cpp"
-required_features = ["quic-sniff"]
+required_features = ["quic-sniff", "test-bins"]
 
 [targets.quic-ss-cursor]
 kind = "bin"
 main = "tests/quic_ss_cursor.cpp"
-required_features = ["quic-sniff", "ss2022"]
+required_features = ["quic-sniff", "ss2022", "test-bins"]
 
 [targets.stream-datagram-deadline]
 kind = "bin"
 main = "tests/stream_datagram_deadline.cpp"
-required_features = ["ss2022"]
+required_features = ["ss2022", "test-bins"]
 
 [targets.lazy-readers]
 kind = "bin"
 main = "tests/lazy_readers.cpp"
+required_features = ["test-bins"]
 
 [targets.srs-payload]
 kind = "bin"
 main = "tests/srs_payload.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-upstream-budget-race]
 kind = "bin"
 main = "tests/dns_upstream_budget_race.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-upstream-budget]
 kind = "bin"
 main = "tests/dns_upstream_budget.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-transport-allocation]
 kind = "bin"
 main = "tests/dns_transport_allocation.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-override-budget]
 kind = "bin"
 main = "tests/dns_override_budget.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-message-race-start-fault]
 kind = "bin"
 main = "tests/dns_message_race_start_fault.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-race-start-failure]
 kind = "bin"
 main = "tests/dns_race_start_failure.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-query-allocation]
 kind = "bin"
 main = "tests/dns_query_allocation.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-listener-query-budget]
 kind = "bin"
 main = "tests/dns_listener_query_budget.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-input-budget-network]
 kind = "bin"
 main = "tests/dns_input_budget_network.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-evaluate-owner]
 kind = "bin"
 main = "tests/dns_evaluate_owner.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-evaluate-race]
 kind = "bin"
 main = "tests/dns_evaluate_race.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-response-race-walk]
 kind = "bin"
 main = "tests/dns_response_race_walk.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-message-race-network]
 kind = "bin"
 main = "tests/dns_message_race_network.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-udp-response-slots]
 kind = "bin"
 main = "tests/dns_udp_response_slots.cpp"
-required_features = ["dns-response-ss"]
+required_features = ["dns-response-ss", "test-bins"]
 
 [targets.dns-tcp-response-slots]
 kind = "bin"
 main = "tests/dns_tcp_response_slots.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-address-race-network]
 kind = "bin"
 main = "tests/dns_address_race_network.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-udp-address-race-network]
 kind = "bin"
 main = "tests/dns_udp_address_race_network.cpp"
-required_features = ["dns-response-ss"]
+required_features = ["dns-response-ss", "test-bins"]
 
 [targets.dns-proxy-address-race-network]
 kind = "bin"
 main = "tests/dns_proxy_address_race_network.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-udp-production-race-network]
 kind = "bin"
 main = "tests/dns_udp_production_race_network.cpp"
-required_features = ["dns-response-ss"]
+required_features = ["dns-response-ss", "test-bins"]
 
 [targets.dns-address-race-local]
 kind = "bin"
 main = "tests/dns_address_race_local.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-address-race-local-production]
 kind = "bin"
 main = "tests/dns_address_race_local_production.cpp"
-required_features = ["dns-response-ss"]
+required_features = ["dns-response-ss", "test-bins"]
 
 [targets.dns-race-admission]
 kind = "bin"
 main = "tests/dns_race_admission.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-evaluate-race-network]
 kind = "bin"
 main = "tests/dns_evaluate_race_network.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.dns-evaluate-owner-network]
 kind = "bin"
 main = "tests/dns_evaluate_owner_network.cpp"
+required_features = ["test-bins"]
 
 [targets.dns-message-exchange-owner]
 kind = "bin"
 main = "tests/dns_message_exchange_owner.cpp"
+required_features = ["test-bins"]
 
 [targets.srs-file]
 kind = "bin"
 main = "tests/srs_file.cpp"
-required_features = ["srs"]
+required_features = ["srs", "test-bins"]
 
 [targets.hysteria2-wire-test]
 kind = "bin"
 main = "tests/hysteria2_wire.cpp"
-required_features = ["hysteria2-core"]
+required_features = ["hysteria2-core", "test-bins"]
 
 [targets.hysteria2-auth-test]
 kind = "bin"
 main = "tests/hysteria2_auth.cpp"
-required_features = ["hysteria2-core"]
+required_features = ["hysteria2-core", "test-bins"]
 
 [targets.hysteria2-udp-test]
 kind = "bin"
 main = "tests/hysteria2_udp.cpp"
-required_features = ["hysteria2-core"]
+required_features = ["hysteria2-core", "test-bins"]
 
 [targets.hysteria2-fragment-allocation-test]
 kind = "bin"
 main = "tests/hysteria2_fragment_allocation.cpp"
-required_features = ["hysteria2-core"]
+required_features = ["hysteria2-core", "test-bins"]
 
 [targets.hysteria2-vectors]
 kind = "bin"
 main = "tests/hysteria2_vectors.cpp"
-required_features = ["hysteria2-core"]
+required_features = ["hysteria2-core", "test-bins"]
 
 [targets.grpc-session-test]
 kind = "bin"
 main = "tests/grpc_session.cpp"
-required_features = ["grpc"]
+required_features = ["grpc", "test-bins"]
 
 [targets.grpc-stream-test]
 kind = "bin"
 main = "tests/grpc_stream.cpp"
-required_features = ["grpc"]
+required_features = ["grpc", "test-bins"]
 
 [targets.grpc-fixture]
 kind = "bin"
 main = "tests/grpc_fixture.cpp"
-required_features = ["grpc"]
+required_features = ["grpc", "test-bins"]
 
 [targets.grpc-tls-fixture]
 kind = "bin"
@@ -1102,17 +1151,17 @@ required_features = ["grpc", "http2-tls"]
 [targets.grpc-terminal-test]
 kind = "bin"
 main = "tests/grpc_terminal.cpp"
-required_features = ["grpc"]
+required_features = ["grpc", "test-bins"]
 
 [targets.http2-window-test]
 kind = "bin"
 main = "tests/http2/window.cpp"
-required_features = ["http2"]
+required_features = ["http2", "test-bins"]
 
 [targets.nexus-shadowsocks-udp-rebind-test]
 kind = "bin"
 main = "tests/shadowsocks_udp_rebind.cpp"
-required_features = ["ss2022"]
+required_features = ["ss2022", "test-bins"]
 
 [targets.dns-reverse-test]
 kind = "bin"
@@ -1196,6 +1245,16 @@ discover = ["!tests/tcp_socket_options.cpp"]
 include = ["docs/**", "packaging/**"]
 
 [workspace.profile.release]
+opt = "z"
+lto = true
+strip = true
+
+[workspace.profile.size]
+opt = "z"
+lto = true
+strip = true
+
+[workspace.profile.speed]
 opt = 3
 lto = true
 strip = true
@@ -1203,6 +1262,12 @@ strip = true
 [workspace.profile.ci]
 opt = 0
 debug = "lines"
+
+[workspace.profile.asan]
+opt = 1
+debug = true
+cxxflags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+ldflags = ["-fsanitize=address,undefined"]
 
 [targets.grpc-vless-runtime]
 kind = "bin"
@@ -1217,12 +1282,12 @@ required_features = ["test-grpc-lifecycle"]
 [targets.grpc-vless-static]
 kind = "bin"
 main = "tests/grpc_vless_static.cpp"
-required_features = ["grpc-vless"]
+required_features = ["grpc-vless", "test-bins"]
 
 [targets.grpc-retire]
 kind = "bin"
 main = "tests/grpc_retire.cpp"
-required_features = ["grpc"]
+required_features = ["grpc", "test-bins"]
 
 [targets.hy2-application-fixture]
 kind = "bin"
@@ -1332,21 +1397,22 @@ required_features = ["test-hy2-retry-fixture"]
 [targets.grpc-multiplex]
 kind = "bin"
 main = "tests/multiplex.cpp"
-required_features = ["grpc"]
+required_features = ["grpc", "test-bins"]
 
 [targets.grpc-multiplex-async]
 kind = "bin"
 main = "tests/multiplex_async.cpp"
-required_features = ["grpc"]
+required_features = ["grpc", "test-bins"]
 
 [targets.grpc-operation-token]
 kind = "bin"
 main = "tests/operation_token.cpp"
-required_features = ["grpc-vless"]
+required_features = ["grpc-vless", "test-bins"]
 
 [targets.shared-connection-pool]
 kind = "bin"
 main = "tests/shared_pool.cpp"
+required_features = ["test-bins"]
 
 [targets.grpc-vless-startup]
 kind = "bin"
@@ -1412,7 +1478,7 @@ required_features = ["tailscale-policy"]
 [targets.snell-http-obfs-test]
 kind = "bin"
 main = "tests/snell_http_obfs.cpp"
-required_features = ["snell"]
+required_features = ["snell", "test-bins"]
 
 [targets.tailscale-map-policy-test]
 kind = "bin"
@@ -1427,22 +1493,22 @@ required_features = ["tailscale-map-projection"]
 [targets.snell-client-reuse-fixture]
 kind = "bin"
 main = "tests/snell_client_reuse_fixture.cpp"
-required_features = ["snell"]
+required_features = ["snell", "test-bins"]
 
 [targets.snell-client-pool-test]
 kind = "bin"
 main = "tests/snell_client_pool.cpp"
-required_features = ["snell"]
+required_features = ["snell", "test-bins"]
 
 [targets.snell-client-reuse-lifetime]
 kind = "bin"
 main = "tests/snell_client_reuse_lifetime.cpp"
-required_features = ["snell"]
+required_features = ["snell", "test-bins"]
 
 [targets.masque-udp-session-test]
 kind = "bin"
 main = "tests/masque_udp_session.cpp"
-required_features = ["masque-session"]
+required_features = ["masque-session", "test-bins"]
 
 [targets.masque-quic-session-test]
 kind = "bin"
@@ -1457,12 +1523,12 @@ required_features = ["masque-session", "test-http3-fixture"]
 [targets.masque-connect-udp-test]
 kind = "bin"
 main = "tests/masque_connect_udp.cpp"
-required_features = ["masque-server"]
+required_features = ["masque-server", "test-bins"]
 
 [targets.masque-udp-owner-test]
 kind = "bin"
 main = "tests/masque_udp_owner.cpp"
-required_features = ["masque-server"]
+required_features = ["masque-server", "test-bins"]
 
 [targets.masque-server-session-test]
 kind = "bin"
@@ -1492,6 +1558,7 @@ required_features = ["test-masque-host-lifetime", "test-http3-fixture"]
 [targets.masque-config-test]
 kind = "bin"
 main = "tests/masque_config.cpp"
+required_features = ["test-bins"]
 
 [targets.shadowtls-v3-test]
 kind = "bin"
@@ -1501,116 +1568,214 @@ required_features = ["shadowtls"]
 [targets.tuic-v5-test]
 kind = "bin"
 main = "tests/tuic_v5.cpp"
-required_features = ["tuic-core"]
+required_features = ["tuic-core", "test-bins"]
 
 [targets.config-protocols-ext-test]
 kind = "bin"
 main = "tests/config_protocols_ext.cpp"
+required_features = ["test-bins"]
 
 [targets.shadowtls-loopback-test]
 kind = "bin"
 main = "tests/shadowtls_loopback.cpp"
-required_features = ["shadowtls-proxy"]
+required_features = ["shadowtls-proxy", "test-bins"]
 
 [targets.tuic-loopback-test]
 kind = "bin"
 main = "tests/tuic_loopback.cpp"
-required_features = ["tuic"]
+required_features = ["tuic", "test-bins"]
 
 [targets.masque-outbound-loopback-test]
 kind = "bin"
 main = "tests/masque_outbound_loopback.cpp"
-required_features = ["masque-host", "masque-outbound"]
+required_features = ["masque-host", "masque-outbound", "test-bins"]
 
 [targets.batch94a-unit]
 kind = "bin"
 main = "tests/batch94a_unit.cpp"
-required_features = ["vless", "hy2-cli"]
+required_features = ["vless", "hy2-cli", "test-bins"]
 
 [targets.batch94b-xhttp-unit]
 kind = "bin"
 main = "tests/batch94b_xhttp_unit.cpp"
-required_features = ["vless", "http2"]
+required_features = ["vless", "http2", "test-bins"]
 
 [targets.batch94c-utls-unit]
 kind = "bin"
 main = "tests/batch94c_utls.cpp"
-required_features = ["tls"]
+required_features = ["tls", "test-bins"]
 
 [targets.batch96b-ktls-unit]
 kind = "bin"
 main = "tests/batch96b_ktls.cpp"
-required_features = ["ktls"]
+required_features = ["ktls", "test-bins"]
 
 [targets.batch135-138-unit]
 kind = "bin"
 main = "tests/batch135_138_cross_platform_edge_cases_unit.cpp"
-required_features = ["ktls", "quic-sniff"]
+required_features = ["ktls", "quic-sniff", "test-bins"]
 
 [targets.batch147-unit]
 kind = "bin"
 main = "tests/batch147_config_reverse_rulesets_unit.cpp"
-required_features = ["dns-response"]
+required_features = ["dns-response", "test-bins"]
 
 [targets.batch148-unit]
 kind = "bin"
 main = "tests/batch148_unit.cpp"
-required_features = ["ntp", "tun-inbound"]
+required_features = ["ntp", "tun-inbound", "test-bins"]
 
 [targets.batch149-unit]
 kind = "bin"
 main = "tests/batch149_unit.cpp"
-required_features = ["hy2-cli", "trojan", "anytls", "snell", "tun-inbound"]
+required_features = ["hy2-cli", "trojan", "anytls", "snell", "tun-inbound", "test-bins"]
 
 [targets.batch150-unit]
 kind = "bin"
 main = "tests/batch150_unit.cpp"
-required_features = ["ssh", "control-http"]
+required_features = ["ssh", "control-http", "test-bins"]
 
 [targets.batch151-unit]
 kind = "bin"
 main = "tests/batch151_unit.cpp"
-required_features = ["naive", "http-connect-tls"]
+required_features = ["naive", "http-connect-tls", "test-bins"]
 
 [targets.batch123-tcp-udp-datapath-unit]
 kind = "bin"
 main = "tests/batch123_tcp_udp_datapath_unit.cpp"
+required_features = ["test-bins"]
 
 [targets.batch153-phase-b-unit]
 kind = "bin"
 main = "tests/batch153_phase_b_unit.cpp"
+required_features = ["test-bins"]
+
+[targets.core-c-api-unit]
+kind = "bin"
+main = "tests/core_c_api_unit.cpp"
+required_features = ["test-bins"]
 
 [targets.acme-unit]
 kind = "bin"
 main = "tests/acme_unit.cpp"
-required_features = ["acme"]
+required_features = ["acme", "test-bins"]
 
 [targets.sni-demux-unit]
 kind = "bin"
 main = "tests/sni_demux_unit.cpp"
-required_features = ["sni-demux"]
+required_features = ["sni-demux", "test-bins"]
 
 [targets.lan-dns-unit]
 kind = "bin"
 main = "tests/lan_dns_unit.cpp"
-required_features = ["dns-dhcp", "dns-mdns"]
+required_features = ["dns-dhcp", "dns-mdns", "test-bins"]
 
 [targets.batch155-unit]
 kind = "bin"
 main = "tests/batch155_unit.cpp"
-required_features = ["derp-server", "ssmapi", "memory-budget"]
+required_features = ["derp-server", "ssmapi", "memory-budget", "test-bins"]
 
 [targets.batch156-unit]
 kind = "bin"
 main = "tests/batch156_unit.cpp"
-required_features = ["wireguard-endpoint"]
+required_features = ["wireguard-endpoint", "test-bins"]
 
 [targets.batch157-unit]
 kind = "bin"
 main = "tests/batch157_unit.cpp"
-required_features = ["openvpn", "openconnect", "reverse-tunnel", "bridge"]
+required_features = ["openvpn", "openconnect", "reverse-tunnel", "bridge", "test-bins"]
 
 [targets.batch158-unit]
 kind = "bin"
 main = "tests/batch158_unit.cpp"
-required_features = ["tor"]
+required_features = ["tor", "test-bins"]
+
+[targets.batch163-ruleset-unit]
+kind = "bin"
+main = "tests/batch163_ruleset_scale_convert_unit.cpp"
+required_features = ["srs", "test-bins"]
+
+[targets.batch165-mode-unit]
+kind = "bin"
+main = "tests/batch165_mode_unit.cpp"
+required_features = ["test-bins"]
+
+[targets.batch167-169-unit]
+kind = "bin"
+main = "tests/batch167_169_unit.cpp"
+required_features = ["masque-outbound", "test-bins"]
+
+[targets.batch166-dns-unit]
+kind = "bin"
+main = "tests/batch166_dns_unit.cpp"
+required_features = ["dns-tls", "dns-https", "dns-quic", "dns-dhcp", "dns-mdns", "test-bins"]
+
+[targets.batch167-sniff-actions-unit]
+kind = "bin"
+main = "tests/batch167_sniff_actions_unit.cpp"
+required_features = ["dns-response", "test-bins"]
+
+[targets.batch168-services-cli-unit]
+kind = "bin"
+main = "tests/batch168_services_cli_unit.cpp"
+required_features = ["control-http", "quic-tls", "memory-budget", "acme", "sni-demux", "reverse-tunnel", "bridge", "tor", "derp-server", "ssmapi", "test-bins"]
+
+[targets.batch170-services-unit]
+kind = "bin"
+main = "tests/batch170_services_unit.cpp"
+required_features = ["control-http", "memory-budget", "ntp", "ssmapi", "ss2022", "vless", "acme", "sni-demux", "reverse-tunnel", "bridge", "tor", "derp-server", "test-bins"]
+
+[targets.batch171-event-loop-unit]
+kind = "bin"
+main = "tests/batch171_event_loop_unit.cpp"
+required_features = ["control-http", "tun-inbound", "dns-fakeip", "ss2022", "vless", "openconnect", "test-bins"]
+
+[targets.batch172-fastpath-unit]
+kind = "bin"
+main = "tests/batch172_fastpath_unit.cpp"
+required_features = ["tun-inbound", "dns-fakeip", "vless", "test-bins"]
+
+[targets.batch173-kdl-ergonomics-unit]
+kind = "bin"
+main = "tests/batch173_kdl_ergonomics_unit.cpp"
+required_features = ["test-bins"]
+
+[targets.batch173-services-e2e-unit]
+kind = "bin"
+main = "tests/batch173_services_e2e_unit.cpp"
+required_features = ["memory-budget", "sni-demux", "reverse-tunnel", "bridge", "tor", "test-bins"]
+
+[targets.batch173-acme-derp-e2e-unit]
+kind = "bin"
+main = "tests/batch173_acme_derp_e2e_unit.cpp"
+required_features = ["acme", "derp-server", "test-bins"]
+
+[targets.mux-unit]
+kind = "bin"
+main = "tests/mux_unit.cpp"
+required_features = ["test-bins"]
+
+[targets.vpn-runtime-unit]
+kind = "bin"
+main = "tests/vpn_runtime_unit.cpp"
+required_features = ["openvpn", "openconnect", "test-bins"]
+
+[targets.batch187-provider-mmap-unit]
+kind = "bin"
+main = "tests/batch187_provider_mmap_unit.cpp"
+required_features = ["http-client", "srs", "test-bins"]
+
+[targets.batch188-rules-dns-unit]
+kind = "bin"
+main = "tests/batch188_rules_dns_unit.cpp"
+required_features = ["dns-response", "dns-tls", "quic-sniff", "test-bins"]
+
+[targets.batch189-tun-cross-platform-unit]
+kind = "bin"
+main = "tests/batch189_tun_cross_platform_unit.cpp"
+required_features = ["tun-inbound", "dns-fakeip", "test-bins"]
+
+[targets.batch190-system-integration-unit]
+kind = "bin"
+main = "tests/batch190_system_integration_unit.cpp"
+required_features = ["test-bins"]

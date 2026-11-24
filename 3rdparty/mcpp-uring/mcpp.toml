@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "uring-system"
 version = "2.5.0"
 provides = ["nexus-system-liburing"]

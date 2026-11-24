@@ -3,8 +3,8 @@ import std;
 import dns.response_query;
 import dns.local_config;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns::detail {
     struct LocalResponseSelection { Response response;dns_io::endpoint upstream;bool tcp;std::string question;bool local=true;std::shared_ptr<ProtectedQuery const> protection{}; };

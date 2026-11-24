@@ -216,7 +216,7 @@ def test_config_validation(binary):
             'probe-url "http://127.0.0.1:80/h"\nprobe-expected-status 99',
             'probe-url "http://127.0.0.1:80/h"\nprobe-expected-status "300..200"',
             'probe-url "http://127.0.0.1:80/h"\nprobe-mode "h2-ping"\nprobe-expected-status 204',
-            'probe-url "https://127.0.0.1:443/h"\nprobe-mode "http"',
+            'probe-url "ftp://127.0.0.1:21/h"\nprobe-mode "http"',
         ]
         for idx, snippet in enumerate(bad_cases):
             cfg = Path(tmp) / f"bad-{idx}.kdl"

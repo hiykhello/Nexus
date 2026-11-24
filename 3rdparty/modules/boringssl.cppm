@@ -23,7 +23,7 @@ module;
 
 // Exact C declarations checked by tests/boringssl_poly1305_boundary.py against
 // the pinned public header, without adding another textual include boundary.
-namespace nexus_boringssl_poly1305_abi {
+namespace boringssl_poly1305_abi {
     using State=uint8_t[512];
     extern "C" void CRYPTO_poly1305_init(State*,uint8_t const[32]);
     extern "C" void CRYPTO_poly1305_update(State*,uint8_t const*,size_t);
@@ -31,22 +31,22 @@ namespace nexus_boringssl_poly1305_abi {
 }
 
 // Exact C ABI checked against the pinned chacha.h by the boundary probe.
-namespace nexus_boringssl_chacha_abi {
+namespace boringssl_chacha_abi {
     extern "C" void CRYPTO_chacha_20(uint8_t*,uint8_t const*,size_t,uint8_t const[32],uint8_t const[12],uint32_t);
 }
 
 // Exact C ABI checked against the pinned ecdh.h by the boundary probe.
-namespace nexus_boringssl_ecdh_abi {
+namespace boringssl_ecdh_abi {
     extern "C" int ECDH_compute_key(void*,size_t,EC_POINT const*,EC_KEY const*,void*(*)(void const*,size_t,void*,size_t*));
 }
 
-export module nexus.thirdparty.boringssl;
-export namespace nex::boringssl {
+export module boringssl;
+export namespace boringssl {
     using ::BLAKE2B_CTX;
     using ::BLAKE2B256_Init;
     using ::BLAKE2B256_Update;
     using ::BLAKE2B256_Final;
-    using nexus_boringssl_chacha_abi::CRYPTO_chacha_20;
+    using boringssl_chacha_abi::CRYPTO_chacha_20;
     using ::X25519;
     using ::AES_KEY;
     using ::AES_decrypt;
@@ -79,10 +79,10 @@ export namespace nex::boringssl {
     using ::ED25519_keypair_from_seed;
     using ::ED25519_sign;
     using ::ED25519_verify;
-    using poly1305_state=::nexus_boringssl_poly1305_abi::State;
-    using ::nexus_boringssl_poly1305_abi::CRYPTO_poly1305_init;
-    using ::nexus_boringssl_poly1305_abi::CRYPTO_poly1305_update;
-    using ::nexus_boringssl_poly1305_abi::CRYPTO_poly1305_finish;
+    using poly1305_state=::boringssl_poly1305_abi::State;
+    using ::boringssl_poly1305_abi::CRYPTO_poly1305_init;
+    using ::boringssl_poly1305_abi::CRYPTO_poly1305_update;
+    using ::boringssl_poly1305_abi::CRYPTO_poly1305_finish;
     using ::ERR_clear_error;
     using ::ERR_get_error;
     inline auto error_is_allocation_failure(uint32_t error) noexcept -> bool { return ERR_GET_REASON(error)==ERR_R_MALLOC_FAILURE || ERR_equals(error,ERR_LIB_BN,BN_R_TOO_MANY_TEMPORARY_VARIABLES); }
@@ -111,7 +111,7 @@ export namespace nex::boringssl {
     using ::ECDSA_SIG_set0;
     using ::ECDSA_do_sign;
     using ::ECDSA_do_verify;
-    using nexus_boringssl_ecdh_abi::ECDH_compute_key;
+    using boringssl_ecdh_abi::ECDH_compute_key;
     inline constexpr auto point_conversion_uncompressed=POINT_CONVERSION_UNCOMPRESSED;
     using ::EC_GROUP_get_curve_name;
     using ::EC_KEY_get0_group;
@@ -123,6 +123,7 @@ export namespace nex::boringssl {
     using ::EVP_AEAD_CTX_cleanup;
     using ::EVP_AEAD_CTX_open;
     using ::EVP_AEAD_CTX_seal;
+    using ::EVP_AEAD_CTX_seal_scatter;
     using ::EVP_AEAD_key_length;
     using ::EVP_AEAD_max_overhead;
     using ::EVP_AEAD_nonce_length;

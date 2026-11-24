@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "clock-fault-shim"
 version = "0.1.0"
 

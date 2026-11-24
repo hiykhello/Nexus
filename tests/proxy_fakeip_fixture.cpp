@@ -1,5 +1,5 @@
 import std;
-import proxy;
+import relay;
 import dns.fakeip_shared;
 import dns.fakeip_registry;
 import dns.fakeip_response;
@@ -7,7 +7,7 @@ import dns.message;
 import rules;
 using namespace std::chrono_literals;
 namespace d=dns;
-namespace p=proxy;
+namespace p = relay;
 std::atomic<unsigned> blocked_candidates=0;
 std::atomic<unsigned> watcher_done=0, pin_release_after_watcher=0, pin_release_before_watcher=0;
 extern "C" auto nexus_test_fakeip_blocked() -> void { ++blocked_candidates; }
@@ -53,7 +53,7 @@ auto main(int argc,char** argv) -> int {
     }
 #endif
     if (block) {
-        if (!server.set_block_rules("schema-version 1\nkind \"predicate\"\nrule type=\"domain-suffix\" value=\"example.test\"\n",p::RuleFormat::kdl)) return 4;
+        if (!server.set_block_rules("schema-version 2\nkind \"predicate\"\nrule type=\"domain-suffix\" value=\"example.test\"\n",p::RuleFormat::kdl)) return 4;
         --argc;
     }
     if (argc==7 && std::string_view(argv[3])=="vless") {

@@ -74,5 +74,20 @@ int main() {
         if (!large.admit(salt_for(0),start+62s,1062) || large.size()!=2) return 26;
         if (large.admit(same_prefix,start+62s,1062).error()!=s::ReplayError::duplicate) return 27;
     }
+    {
+        // Wall-clock rollback must fail closed during cooldown, then recover safely.
+        s::ReplayTable rb(4);
+        if (!rb.admit(a, start, 5000)) return 28;
+        if (rb.admit(b, start + 10s, 4995).error() != s::ReplayError::time_reversed) return 29;
+        if (rb.admit(c, start + 71s, 5061).error() != s::ReplayError::time_reversed) return 30;
+        if (!rb.admit(c, start + 72s, 5062)) return 31;
+
+        s::ReplayTable large_rb(4);
+        if (!large_rb.admit(a, start, 5000)) return 32;
+        if (large_rb.admit(b, start + 10s, 1400).error() != s::ReplayError::time_reversed) return 33;
+        if (large_rb.admit(c, start + 72s, 1462).error() != s::ReplayError::time_reversed) return 34;
+        if (large_rb.admit(c, start + 73s, 5061).error() != s::ReplayError::time_reversed) return 35;
+        if (!large_rb.admit(c, start + 74s, 5062)) return 36;
+    }
     std::cout << "Shadowsocks 2022 replay table passed\n";
 }

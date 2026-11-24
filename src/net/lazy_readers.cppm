@@ -1,6 +1,6 @@
 export module net.lazy_readers;
 import std;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace net {
     // Fixed-target stream slots live with the association. Their indices are
@@ -40,7 +40,7 @@ export namespace net {
     class LazyReaders {
         std::array<bool,Capacity> requested_{};
         std::array<bool,Capacity> started_{};
-        nex::capy::async_event changed_;
+        capy::async_event changed_;
         bool stopped_=false;
     public:
         LazyReaders()=default;
@@ -58,10 +58,10 @@ export namespace net {
         }
         [[nodiscard]] auto stopped(this LazyReaders const& self) noexcept -> bool {return self.stopped_;}
         template<class Factory>
-        auto run(this LazyReaders& self,Factory factory) -> nex::capy::task<nex::capy::results<>> {
-            auto token=co_await nex::capy::this_coro::stop_token;
+        auto run(this LazyReaders& self,Factory factory) -> capy::task<capy::results<>> {
+            auto token=co_await capy::this_coro::stop_token;
             for(;;) {
-                if(self.stopped_ || token.stop_requested())co_return nex::capy::results<>{};
+                if(self.stopped_ || token.stop_requested())co_return capy::results<>{};
                 for(std::size_t index=0;index<Capacity;++index)if(self.requested_[index]) {
                     self.requested_[index]=false;self.started_[index]=true;
                     // Both child frames are made before when_all publishes
@@ -69,12 +69,12 @@ export namespace net {
                     // sibling cancellation, and context abandonment.
                     auto reader=factory(index);
                     auto remaining=self.run(factory);
-                    auto result=co_await nex::capy::when_all(std::move(reader),std::move(remaining));
-                    co_return nex::capy::results<>{std::get<0>(result)};
+                    auto result=co_await capy::when_all(std::move(reader),std::move(remaining));
+                    co_return capy::results<>{std::get<0>(result)};
                 }
                 self.changed_.clear();
                 auto [error]=co_await self.changed_.wait();
-                if(error)co_return nex::capy::results<>{error};
+                if(error)co_return capy::results<>{error};
             }
         }
     };

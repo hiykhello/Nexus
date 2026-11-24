@@ -3,10 +3,13 @@ module;
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <aclapi.h>
+#ifdef _MSC_VER
+#pragma comment(lib, "advapi32.lib")
+#endif
 
 module rulefile;
 import std;
-import rules;
 import platform.os_fs;
 
 namespace rulefile {
@@ -35,6 +38,58 @@ namespace rulefile {
                 (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
         }
 
+        auto is_private_owned_handle(HANDLE h) noexcept -> bool {
+            if (!is_regular_non_reparse(h)) return false;
+            HANDLE raw_tok = nullptr;
+            if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &raw_tok)) return false;
+            WinHandle tok(raw_tok);
+            DWORD need = 0;
+            (void)::GetTokenInformation(tok.value, TokenUser, nullptr, 0, &need);
+            if (!need || need > 65536) return false;
+            std::vector<std::byte> tok_buf;
+            try { tok_buf.resize(need); } catch (...) { return false; }
+            if (!::GetTokenInformation(tok.value, TokenUser, tok_buf.data(), need, &need)) return false;
+            auto* cur_user = reinterpret_cast<TOKEN_USER const*>(tok_buf.data())->User.Sid;
+            if (!cur_user || !::IsValidSid(cur_user)) return false;
+
+            PSID owner_sid = nullptr;
+            PACL dacl = nullptr;
+            PSECURITY_DESCRIPTOR sd = nullptr;
+            if (::GetSecurityInfo(h, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                    &owner_sid, nullptr, &dacl, nullptr, &sd) != ERROR_SUCCESS)
+                return false;
+            struct SdGuard { PSECURITY_DESCRIPTOR p; ~SdGuard() { if (p) ::LocalFree(p); } } guard{sd};
+            if (!owner_sid || !::IsValidSid(owner_sid) || !::EqualSid(owner_sid, cur_user)) return false;
+            if (!dacl) return false;
+
+            std::array<std::byte, SECURITY_MAX_SID_SIZE> sys_sid_buf{}, adm_sid_buf{};
+            DWORD sys_sz = static_cast<DWORD>(sys_sid_buf.size()), adm_sz = static_cast<DWORD>(adm_sid_buf.size());
+            bool has_sys = ::CreateWellKnownSid(WinLocalSystemSid, nullptr, sys_sid_buf.data(), &sys_sz) != 0;
+            bool has_adm = ::CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, adm_sid_buf.data(), &adm_sz) != 0;
+            auto allowed_sid = [&](PSID sid) noexcept -> bool {
+                if (!sid || !::IsValidSid(sid)) return false;
+                if (::EqualSid(sid, cur_user)) return true;
+                if (has_sys && ::EqualSid(sid, sys_sid_buf.data())) return true;
+                if (has_adm && ::EqualSid(sid, adm_sid_buf.data())) return true;
+                return false;
+            };
+            ACL_SIZE_INFORMATION info{};
+            if (!::GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation)) return false;
+            for (DWORD i = 0; i < info.AceCount; ++i) {
+                LPVOID raw_ace = nullptr;
+                if (!::GetAce(dacl, i, &raw_ace) || !raw_ace) return false;
+                auto const* hdr = static_cast<ACE_HEADER const*>(raw_ace);
+                if (hdr->AceType == ACCESS_DENIED_ACE_TYPE || hdr->AceType == ACCESS_DENIED_OBJECT_ACE_TYPE) continue;
+                if (hdr->AceType == ACCESS_ALLOWED_ACE_TYPE) {
+                    auto const* ace = static_cast<ACCESS_ALLOWED_ACE const*>(raw_ace);
+                    if (!allowed_sid(reinterpret_cast<PSID>(const_cast<DWORD*>(&ace->SidStart)))) return false;
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        }
+
         auto is_absolute_win_path(std::string_view path) noexcept -> bool {
             if (path.empty() || path.find('\0') != path.npos) return false;
             std::filesystem::path p{std::string(path)};
@@ -53,18 +108,59 @@ namespace rulefile {
         if (!is_regular_non_reparse(input.value)) return std::unexpected("input must be a regular file");
         LARGE_INTEGER sz{};
         if (!::GetFileSizeEx(input.value, &sz)) return win_error("inspect input");
-        if (sz.QuadPart > static_cast<LONGLONG>(::rules::max_input_bytes))
-            return std::unexpected("input exceeds 1 MiB");
+        if (sz.QuadPart > static_cast<LONGLONG>(max_file_bytes))
+            return std::unexpected("input exceeds 32 MiB");
         std::string data;
         char buffer[8192];
         for (;;) {
             DWORD n = 0;
             if (!::ReadFile(input.value, buffer, sizeof(buffer), &n, nullptr)) return win_error("read input");
             if (n == 0) return data;
-            if (static_cast<std::size_t>(n) > ::rules::max_input_bytes - data.size())
-                return std::unexpected("input exceeds 1 MiB");
+            if (static_cast<std::size_t>(n) > max_file_bytes - data.size())
+                return std::unexpected("input exceeds 32 MiB");
             data.append(buffer, static_cast<std::size_t>(n));
         }
+    }
+
+    MappedFile::MappedFile(void* data, std::size_t size, std::uintptr_t handle) noexcept
+        : data_(data), size_(size), handle_(handle) {}
+    MappedFile::~MappedFile() {
+        if (data_) ::UnmapViewOfFile(data_);
+        if (handle_) ::CloseHandle(reinterpret_cast<HANDLE>(handle_));
+    }
+    MappedFile::MappedFile(MappedFile&& other) noexcept
+        : data_(std::exchange(other.data_, nullptr)), size_(std::exchange(other.size_, 0)),
+          handle_(std::exchange(other.handle_, 0)) {}
+    auto MappedFile::operator=(MappedFile&& other) noexcept -> MappedFile& {
+        if (this != &other) {
+            if (data_) ::UnmapViewOfFile(data_);
+            if (handle_) ::CloseHandle(reinterpret_cast<HANDLE>(handle_));
+            data_ = std::exchange(other.data_, nullptr);
+            size_ = std::exchange(other.size_, 0);
+            handle_ = std::exchange(other.handle_, 0);
+        }
+        return *this;
+    }
+
+    auto map_regular_file(std::string_view path) -> std::expected<MappedFile, std::string> {
+        if (path.find('\0') != std::string_view::npos) return std::unexpected("invalid input path");
+        std::filesystem::path p{std::string(path)};
+        if (auto sym = platform::is_reparse_or_symlink(p); sym && *sym)
+            return std::unexpected("mapped input must be a regular file");
+        WinHandle input(::CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+        if (input.value == INVALID_HANDLE_VALUE) return win_error("open mapped file");
+        if (!is_regular_non_reparse(input.value)) return std::unexpected("mapped input must be a regular file");
+        LARGE_INTEGER sz{};
+        if (!::GetFileSizeEx(input.value, &sz)) return win_error("inspect mapped file");
+        if (sz.QuadPart <= 0 || sz.QuadPart > static_cast<LONGLONG>(max_file_bytes))
+            return std::unexpected("mapped file size must be 1..33554432 bytes");
+        WinHandle mapping(::CreateFileMappingW(input.value, nullptr, PAGE_READONLY, 0, 0, nullptr));
+        if (!mapping.value) return win_error("create file mapping");
+        void* view = ::MapViewOfFile(mapping.value, FILE_MAP_READ, 0, 0, 0);
+        if (!view) return win_error("map view of file");
+        return MappedFile(view, static_cast<std::size_t>(sz.QuadPart),
+            reinterpret_cast<std::uintptr_t>(std::exchange(mapping.value, nullptr)));
     }
 
     PrivateFile::PrivateFile(std::unique_ptr<char[]>&& data, std::size_t size) noexcept
@@ -86,10 +182,10 @@ namespace rulefile {
         std::filesystem::path p{std::string(path)};
         if (auto sym = platform::is_reparse_or_symlink(p); sym && *sym)
             return std::unexpected("private file must be a private regular file owned by the current user");
-        WinHandle input(::CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        WinHandle input(::CreateFileW(p.c_str(), GENERIC_READ | READ_CONTROL, FILE_SHARE_READ,
             nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
         if (input.value == INVALID_HANDLE_VALUE) return win_error("open private file");
-        if (!is_regular_non_reparse(input.value))
+        if (!is_private_owned_handle(input.value))
             return std::unexpected("private file must be a private regular file owned by the current user");
         LARGE_INTEGER sz{};
         if (!::GetFileSizeEx(input.value, &sz)) return win_error("inspect private file");
@@ -111,10 +207,12 @@ namespace rulefile {
     auto read_password_file(std::string_view path) -> std::expected<std::string, std::string> {
         if (!is_absolute_win_path(path)) return std::unexpected("password path must be absolute");
         std::filesystem::path p{std::string(path)};
-        WinHandle input(::CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        if (auto sym = platform::is_reparse_or_symlink(p); sym && *sym)
+            return std::unexpected("password file must be a private regular file owned by the current user");
+        WinHandle input(::CreateFileW(p.c_str(), GENERIC_READ | READ_CONTROL, FILE_SHARE_READ,
             nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
         if (input.value == INVALID_HANDLE_VALUE) return win_error("open password file");
-        if (!is_regular_non_reparse(input.value))
+        if (!is_private_owned_handle(input.value))
             return std::unexpected("password file must be a private regular file owned by the current user");
         std::array<char, 257> data{};
         struct WipeBuffer {

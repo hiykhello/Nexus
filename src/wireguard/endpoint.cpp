@@ -176,6 +176,7 @@ namespace wireguard {
     }
     auto Endpoint::emit_transport(std::span<std::uint8_t const> plaintext,OutboundKind kind,Clock::time_point now)
         -> std::expected<EndpointDatagram,EndpointFailure> {
+        if (sending_) return failure(EndpointError::not_due);
         if (!current_ || (!config_.relay_only && !config_.peer)) return failure(EndpointError::no_key);
         auto bytes=current_->session.seal(plaintext,now,config_.mtu);
         if (!bytes) return failure(EndpointError::protocol,bytes.error());

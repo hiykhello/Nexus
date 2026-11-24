@@ -8,6 +8,14 @@ namespace cli {
         std::optional<std::chrono::milliseconds> connect_timeout,std::optional<std::size_t> proxy_outbound,
         dns::detail::TransportSnapshotRef)
         -> std::expected<dns::detail::ProtectedQuery,std::string>;
+    auto prepare_extra_dns_transport(config::DnsServer const&)
+        -> std::expected<dns::detail::ProtectedQuery,std::string>;
+    auto prepare_dhcp_dns_transport(config::DnsServer const&)
+        -> std::expected<dns::detail::ProtectedQuery,std::string>;
+    auto prepare_mdns_transport(config::DnsServer const&)
+        -> std::expected<dns::detail::ProtectedQuery,std::string>;
+    auto prepare_proxy_plain_dns(bool tcp,std::size_t outbound,dns::detail::TransportSnapshotRef)
+        -> std::expected<dns::detail::ProtectedQuery,std::string>;
 }
 
 export namespace cli {
@@ -30,6 +38,12 @@ export namespace cli {
         if (!config.dns) return result;
         result.reserve(config.dns->servers.size());
         for (auto const& server : config.dns->servers) {
+            if (server.kind != config::DnsServerKind::standard) {
+                auto query=prepare_extra_dns_transport(server);
+                if (!query) return std::unexpected("DNS "+server.name+": "+query.error());
+                result.push_back(std::make_shared<dns::detail::ProtectedQuery const>(std::move(*query)));
+                continue;
+            }
             auto const& upstream=server.upstream;
             if (upstream && upstream->tls) {
                 auto options=config.direct_tcp_options;
@@ -50,6 +64,11 @@ export namespace cli {
                 auto loaded=prepare_encrypted_dns_transport(*upstream->tls,options,connect_timeout,upstream->detour_index,snapshot);
                 if (!loaded) return std::unexpected("DNS "+server.name+": "+loaded.error());
                 result.push_back(std::make_shared<dns::detail::ProtectedQuery const>(std::move(*loaded)));
+            } else if (upstream && (upstream->detour_group || (upstream->detour_index && *upstream->detour_index>=2))) {
+                auto proxy_outbound=upstream->detour_group ? result.size() : *upstream->detour_index;
+                auto query=prepare_proxy_plain_dns(upstream->tcp,proxy_outbound,snapshot);
+                if (!query) return std::unexpected("DNS "+server.name+": "+query.error());
+                result.push_back(std::make_shared<dns::detail::ProtectedQuery const>(std::move(*query)));
             } else if (upstream && upstream->binding.configured()) {
                 auto query=dns::detail::make_bound_query(upstream->binding,upstream->tcp);
                 result.push_back(std::make_shared<dns::detail::ProtectedQuery const>(std::move(query)));

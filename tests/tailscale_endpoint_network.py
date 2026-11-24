@@ -385,7 +385,7 @@ def run_outbound(binary, fixture, root, child_prefix, mode):
 
         config = directory / "proxy.kdl"
         allow = directory / "mesh-routes.kdl"
-        allow.write_text('''schema-version 1
+        allow.write_text('''schema-version 2
 kind "predicate"
 rule type="ip-cidr" value="100.64.21.2/32"
 rule type="ip-cidr" value="fd7a:115c:a1e0::2/128"
@@ -397,7 +397,7 @@ outbound "direct" type="direct"
 outbound "mesh" type="tailscale" {{ endpoint-file "{outbound}"; }}
 routing {{
     rule-set "mesh-hosts" format="kdl" path="mesh-routes.kdl"
-    rule kind="rule-set" value="mesh-hosts" outbound="mesh"
+    rules {{ - kind="rule-set" value="mesh-hosts" outbound="mesh"; }}
     default-outbound "direct"
 }}
 ''')

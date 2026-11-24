@@ -3,78 +3,148 @@ module;
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <openssl/mem.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wincrypt.h>
+#ifdef _MSC_VER
+#pragma comment(lib, "crypt32.lib")
+#endif
+#else
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#endif
 module tls.certificate_trust;
 import crypto.backend_errors;
 import crypto;
 import std;
 
 namespace tls {
-    auto parse_trust_bundle(std::string_view pem) -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError> {
-        constexpr std::size_t max_bytes=4194304, max_cert=1048576, max_count=1024;
-        constexpr std::string_view begin="-----BEGIN CERTIFICATE-----", end="-----END CERTIFICATE-----";
-        if (pem.empty()) return std::unexpected(TrustBundleError::invalid_input);
-        if (pem.size()>max_bytes) return std::unexpected(TrustBundleError::limit_exceeded);
-        auto whitespace=[](char c) { return c==' ' || c=='\t' || c=='\r' || c=='\n'; };
-        std::vector<std::vector<std::uint8_t>> result; std::size_t total=0;
-        while (true) {
+    namespace {
+        auto parse_trust_bundle_impl(std::string_view pem, bool skip_duplicates)
+            -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError> {
+            constexpr std::size_t max_bytes=4194304, max_cert=1048576, max_count=1024;
+            constexpr std::string_view begin="-----BEGIN CERTIFICATE-----", end="-----END CERTIFICATE-----";
+            if (pem.empty()) return std::unexpected(TrustBundleError::invalid_input);
+            if (pem.size()>max_bytes) return std::unexpected(TrustBundleError::limit_exceeded);
+            auto whitespace=[](char c) { return c==' ' || c=='\t' || c=='\r' || c=='\n'; };
+            std::vector<std::vector<std::uint8_t>> result; std::size_t total=0;
             while (true) {
-                while (!pem.empty() && whitespace(pem.front())) pem.remove_prefix(1);
-                if (pem.empty() || pem.front()!='#') break;
-                auto newline=pem.find('\n'); auto comment=pem.substr(0,newline);
-                if (std::ranges::any_of(comment,[](unsigned char c) { return c<0x20 && c!='\t' && c!='\r'; })) return std::unexpected(TrustBundleError::invalid_pem);
-                pem.remove_prefix(newline==std::string_view::npos ? pem.size() : newline+1);
+                while (true) {
+                    while (!pem.empty() && whitespace(pem.front())) pem.remove_prefix(1);
+                    if (pem.empty() || pem.front()!='#') break;
+                    auto newline=pem.find('\n'); auto comment=pem.substr(0,newline);
+                    if (std::ranges::any_of(comment,[](unsigned char c) { return c<0x20 && c!='\t' && c!='\r'; })) return std::unexpected(TrustBundleError::invalid_pem);
+                    pem.remove_prefix(newline==std::string_view::npos ? pem.size() : newline+1);
+                }
+                if (pem.empty()) break;
+                if (!pem.starts_with(begin)) return std::unexpected(TrustBundleError::invalid_pem);
+                auto pos=pem.find(end,begin.size());
+                if (pos==std::string_view::npos) return std::unexpected(TrustBundleError::invalid_pem);
+                auto block=pem.substr(0,pos+end.size());
+                auto body=block.substr(begin.size(),pos-begin.size());
+                if (std::ranges::any_of(body,[&](char c) { return !whitespace(c) && !(c>='A' && c<='Z') && !(c>='a' && c<='z') && !(c>='0' && c<='9') && c!='+' && c!='/' && c!='='; }))
+                    return std::unexpected(TrustBundleError::invalid_pem);
+                if (result.size()==max_count || block.size()>max_cert*2) return std::unexpected(TrustBundleError::limit_exceeded);
+                std::unique_ptr<BIO,decltype(&BIO_free)> bio(BIO_new_mem_buf(block.data(),static_cast<int>(block.size())),BIO_free);
+                if (!bio) return std::unexpected(TrustBundleError::io_error);
+                std::uint8_t* raw=nullptr; long raw_size=0;
+                if (!PEM_bytes_read_bio(&raw,&raw_size,nullptr,PEM_STRING_X509,bio.get(),nullptr,nullptr)) return std::unexpected(TrustBundleError::invalid_certificate);
+                std::unique_ptr<std::uint8_t,decltype(&OPENSSL_free)> decoded(raw,OPENSSL_free);
+                if (raw_size<=0) return std::unexpected(TrustBundleError::invalid_certificate);
+                if (static_cast<std::size_t>(raw_size)>max_cert) return std::unexpected(TrustBundleError::limit_exceeded);
+                auto read_cursor=static_cast<std::uint8_t const*>(decoded.get());
+                std::unique_ptr<X509,decltype(&X509_free)> cert(d2i_X509(nullptr,&read_cursor,raw_size),X509_free);
+                if (!cert || read_cursor!=decoded.get()+raw_size) return std::unexpected(TrustBundleError::invalid_certificate);
+                auto size=i2d_X509(cert.get(),nullptr);
+                if (size<=0) return std::unexpected(TrustBundleError::invalid_certificate);
+                if (static_cast<std::size_t>(size)>max_cert || static_cast<std::size_t>(size)>max_bytes-total) return std::unexpected(TrustBundleError::limit_exceeded);
+                std::vector<std::uint8_t> der(static_cast<std::size_t>(size)); auto cursor=der.data();
+                if (i2d_X509(cert.get(),&cursor)!=size) return std::unexpected(TrustBundleError::invalid_certificate);
+                if (std::ranges::find(result,der)!=result.end()) {
+                    if (!skip_duplicates) return std::unexpected(TrustBundleError::invalid_certificate);
+                } else {
+                    total+=der.size(); result.push_back(std::move(der));
+                }
+                pem.remove_prefix(block.size());
             }
-            if (pem.empty()) break;
-            if (!pem.starts_with(begin)) return std::unexpected(TrustBundleError::invalid_pem);
-            auto pos=pem.find(end,begin.size());
-            if (pos==std::string_view::npos) return std::unexpected(TrustBundleError::invalid_pem);
-            auto block=pem.substr(0,pos+end.size());
-            auto body=block.substr(begin.size(),pos-begin.size());
-            if (std::ranges::any_of(body,[&](char c) { return !whitespace(c) && !(c>='A' && c<='Z') && !(c>='a' && c<='z') && !(c>='0' && c<='9') && c!='+' && c!='/' && c!='='; }))
-                return std::unexpected(TrustBundleError::invalid_pem);
-            if (result.size()==max_count || block.size()>max_cert*2) return std::unexpected(TrustBundleError::limit_exceeded);
-            std::unique_ptr<BIO,decltype(&BIO_free)> bio(BIO_new_mem_buf(block.data(),static_cast<int>(block.size())),BIO_free);
-            if (!bio) return std::unexpected(TrustBundleError::io_error);
-            std::uint8_t* raw=nullptr; long raw_size=0;
-            if (!PEM_bytes_read_bio(&raw,&raw_size,nullptr,PEM_STRING_X509,bio.get(),nullptr,nullptr)) return std::unexpected(TrustBundleError::invalid_certificate);
-            std::unique_ptr<std::uint8_t,decltype(&OPENSSL_free)> decoded(raw,OPENSSL_free);
-            if (raw_size<=0) return std::unexpected(TrustBundleError::invalid_certificate);
-            if (static_cast<std::size_t>(raw_size)>max_cert) return std::unexpected(TrustBundleError::limit_exceeded);
-            auto read_cursor=static_cast<std::uint8_t const*>(decoded.get());
-            std::unique_ptr<X509,decltype(&X509_free)> cert(d2i_X509(nullptr,&read_cursor,raw_size),X509_free);
-            if (!cert || read_cursor!=decoded.get()+raw_size) return std::unexpected(TrustBundleError::invalid_certificate);
-            auto size=i2d_X509(cert.get(),nullptr);
-            if (size<=0) return std::unexpected(TrustBundleError::invalid_certificate);
-            if (static_cast<std::size_t>(size)>max_cert || static_cast<std::size_t>(size)>max_bytes-total) return std::unexpected(TrustBundleError::limit_exceeded);
-            std::vector<std::uint8_t> der(static_cast<std::size_t>(size)); auto cursor=der.data();
-            if (i2d_X509(cert.get(),&cursor)!=size) return std::unexpected(TrustBundleError::invalid_certificate);
-            if (std::ranges::find(result,der)!=result.end()) return std::unexpected(TrustBundleError::invalid_certificate);
-            total+=der.size(); result.push_back(std::move(der)); pem.remove_prefix(block.size());
+            if (result.empty()) return std::unexpected(TrustBundleError::invalid_input);
+            return result;
         }
-        if (result.empty()) return std::unexpected(TrustBundleError::invalid_input);
-        return result;
+
+        auto load_trust_bundle_impl(std::string_view path, bool skip_duplicates)
+            -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError> {
+            constexpr std::size_t max_bytes=4194304;
+            if (path.empty() || path.find('\0')!=std::string_view::npos) return std::unexpected(TrustBundleError::invalid_input);
+#ifdef _WIN32
+            (void)skip_duplicates;
+            (void)max_bytes;
+            return std::unexpected(TrustBundleError::io_error);
+#else
+            std::string name(path); int fd=::open(name.c_str(),O_RDONLY|O_CLOEXEC|O_NONBLOCK);
+            if (fd<0) return std::unexpected(TrustBundleError::io_error);
+            struct Fd { int value; ~Fd() { ::close(value); } } guard{fd};
+            struct stat st{}; if (::fstat(fd,&st)!=0 || !S_ISREG(st.st_mode)) return std::unexpected(TrustBundleError::io_error);
+            std::string bytes; std::array<char,8192> chunk{};
+            while (true) {
+                auto n=::read(fd,chunk.data(),chunk.size());
+                if (n<0 && errno==EINTR) continue;
+                if (n<0) return std::unexpected(TrustBundleError::io_error);
+                if (!n) break;
+                if (static_cast<std::size_t>(n)>max_bytes-bytes.size()) return std::unexpected(TrustBundleError::limit_exceeded);
+                bytes.append(chunk.data(),static_cast<std::size_t>(n));
+            }
+            return parse_trust_bundle_impl(bytes, skip_duplicates);
+#endif
+        }
+    }
+
+    auto parse_trust_bundle(std::string_view pem) -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError> {
+        return parse_trust_bundle_impl(pem, false);
     }
     auto load_trust_bundle(std::string_view path) -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError> {
-        constexpr std::size_t max_bytes=4194304;
-        if (path.empty() || path.find('\0')!=std::string_view::npos) return std::unexpected(TrustBundleError::invalid_input);
-        std::string name(path); int fd=::open(name.c_str(),O_RDONLY|O_CLOEXEC|O_NONBLOCK);
-        if (fd<0) return std::unexpected(TrustBundleError::io_error);
-        struct Fd { int value; ~Fd() { ::close(value); } } guard{fd};
-        struct stat st{}; if (::fstat(fd,&st)!=0 || !S_ISREG(st.st_mode)) return std::unexpected(TrustBundleError::io_error);
-        std::string bytes; std::array<char,8192> chunk{};
-        while (true) {
-            auto n=::read(fd,chunk.data(),chunk.size());
-            if (n<0 && errno==EINTR) continue;
-            if (n<0) return std::unexpected(TrustBundleError::io_error);
-            if (!n) break;
-            if (static_cast<std::size_t>(n)>max_bytes-bytes.size()) return std::unexpected(TrustBundleError::limit_exceeded);
-            bytes.append(chunk.data(),static_cast<std::size_t>(n));
+        return load_trust_bundle_impl(path, false);
+    }
+    auto load_system_trust_bundle() -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError> {
+#ifdef _WIN32
+        constexpr std::size_t max_bytes = 4194304, max_count = 1024;
+        HCERTSTORE store = ::CertOpenSystemStoreW(0, L"ROOT");
+        if (!store) return std::unexpected(TrustBundleError::io_error);
+        std::vector<std::vector<std::uint8_t>> result;
+        std::size_t total = 0;
+        PCCERT_CONTEXT ctx = nullptr;
+        while ((ctx = ::CertEnumCertificatesInStore(store, ctx)) != nullptr) {
+            if (!ctx->pbCertEncoded || !ctx->cbCertEncoded) continue;
+            if (result.size() >= max_count || ctx->cbCertEncoded > max_bytes - total) break;
+            std::vector<std::uint8_t> der(ctx->pbCertEncoded, ctx->pbCertEncoded + ctx->cbCertEncoded);
+            if (std::ranges::find(result, der) == result.end()) {
+                total += der.size();
+                result.push_back(std::move(der));
+            }
         }
-        return parse_trust_bundle(bytes);
+        ::CertCloseStore(store, 0);
+        if (result.empty()) return std::unexpected(TrustBundleError::io_error);
+        return result;
+#else
+        if (char const* env = std::getenv("SSL_CERT_FILE"); env && env[0] == '/') {
+            if (auto loaded = load_trust_bundle_impl(env, true)) return loaded;
+        }
+        constexpr std::array<std::string_view, 5> kCandidates{
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/pki/tls/certs/ca-bundle.crt",
+            "/etc/ssl/ca-bundle.pem",
+            "/etc/ssl/cert.pem",
+            "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+        };
+        for (auto path : kCandidates) {
+            if (auto loaded = load_trust_bundle_impl(path, true); loaded && !loaded->empty()) return loaded;
+        }
+        return std::unexpected(TrustBundleError::io_error);
+#endif
     }
     auto verify_server_certificate_chain(std::span<std::span<std::uint8_t const> const> chain,
         std::span<std::span<std::uint8_t const> const> anchors, PeerNameKind kind,

@@ -9,7 +9,7 @@ import openvpn.session;
 import openconnect.types;
 import openconnect.auth;
 import openconnect.cstp;
-import proxy.reverse_tunnel;
+import relay.reverse_tunnel;
 import packet.bridge;
 
 int main() {
@@ -96,12 +96,12 @@ int main() {
 
     // 3. Reverse tunnel multiplexing + half-close + heartbeat + reconnect
     {
-        proxy::reverse_tunnel::TunnelSession hub("edge-secret-token", 8);
+        relay::reverse_tunnel::TunnelSession hub("edge-secret-token", 8);
         auto bad_ack = hub.handle_register("wrong", 1000);
         assert(bad_ack.payload.size() == 1 && bad_ack.payload[0] == 0 && !hub.registered());
         auto ok_ack = hub.handle_register("edge-secret-token", 1000);
-        auto ack_wire = *proxy::reverse_tunnel::encode_frame(ok_ack);
-        auto [ack_dec, nbytes] = *proxy::reverse_tunnel::decode_frame(ack_wire);
+        auto ack_wire = *relay::reverse_tunnel::encode_frame(ok_ack);
+        auto [ack_dec, nbytes] = *relay::reverse_tunnel::decode_frame(ack_wire);
         assert(nbytes == ack_wire.size() && ack_dec.payload[0] == 1 && hub.registered());
 
         assert(hub.open_stream(1).has_value() && hub.active_streams() == 1);

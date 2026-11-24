@@ -1,25 +1,27 @@
 [package]
-namespace = "nexus"
 name = "ss-udp-runtime"
 version = "0.1.0"
 
 # The SS UDP listener owns its executor, DNS operations and cache lifetime.
 # Protocol codecs and the proxy's routing model remain in their own members.
 [dependencies]
-nexus.policy = { path = "../rules" }
-nexus.dns = { path = "../dns" }
-nexus.protocols = { path = "..", features = ["ss2022", "ring-queue"] }
-nexus.proxy-runtime = { path = "../proxy", default-features = false }
-nexus.crypto = { path = "../crypto" }
+policy = { path = "../rules" }
+dns = { path = "../dns" }
+platform = { path = "../platform", default-features = false }
+protocols = { path = "..", features = ["ss2022", "ring-queue"] }
+relay-runtime = { path = "../relay", default-features = false }
+containers = { path = "../containers" }
+functional = { path = "../functional" }
+crypto = { path = "../crypto" }
 
 [features]
 default = ["shared-proxy"]
-dns-response = { implies = ["nexus.proxy-runtime/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
-shared-proxy = ["nexus.proxy-runtime/dns-shared", "nexus.proxy-runtime/request-standard"]
-standard-proxy = ["nexus.proxy-runtime/dns-standard", "nexus.proxy-runtime/request-standard"]
+dns-response = { implies = ["relay-runtime/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
+shared-proxy = ["relay-runtime/dns-shared", "relay-runtime/request-standard"]
+standard-proxy = ["relay-runtime/dns-standard", "relay-runtime/request-standard"]
 test-udp-pending = { defines = ["NEXUS_TEST_UDP_PENDING"] }
 test-udp-send = { defines = ["NEXUS_TEST_UDP_SEND_DELAY"] }
 test-udp-start = { defines = ["NEXUS_TEST_UDP_START"] }
 
 [build]
-sources = ["resolve.cppm", "ordered_route.cppm", "ordered_sniff.cppm", "listener.cppm", "ordered_sender.cppm", "ordered_sender.cpp", "inbounds.cppm"]
+sources = ["response_resolve.cppm", "resolve.cppm", "ordered_route.cppm", "ordered_sniff.cppm", "listener_state.cppm", "listener_ingress.cppm", "listener_traffic.cppm", "listener_route.cppm", "listener_receive.cppm", "listener.cppm", "ordered_sender.cppm", "ordered_sender.cpp", "inbounds.cppm"]

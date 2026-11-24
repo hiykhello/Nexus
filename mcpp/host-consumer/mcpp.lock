@@ -5,6 +5,12 @@
 # file must not change depending on which command ran last.
 version = 2
 
+[package."nexus.beman-inplace-vector"]
+namespace = "nexus"
+version = "0.1.0"
+source  = "index+nexus@0.1.0"
+hash    = "fnv1a:5f85af851aa80512"
+
 [package."nexus.blake3-source"]
 namespace = "nexus"
 version = "1.8.7"
@@ -37,9 +43,9 @@ patches = ["/home/yk/Code/Nexus/3rdparty/patches/corosio/mcpp-exact.patch#sha256
 
 [package."nexus.glaze-kdl"]
 namespace = "nexus"
-version = "0.1.0"
-source  = "index+nexus@0.1.0"
-hash    = "fnv1a:805077be9632c463"
+version = "0.1.1"
+source  = "index+nexus@0.1.1"
+hash    = "fnv1a:805076be9632c2b0"
 
 [package."nexus.ngcpp-proxy"]
 namespace = "nexus"

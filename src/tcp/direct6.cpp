@@ -1,13 +1,15 @@
 module;
 #include <cerrno>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 module tcp.direct;
-import nexus.compat;
+import utility;
 import std;
 import platform.ip_address;
+import platform.socket_options;
 
 namespace tcp {
     namespace {
@@ -56,14 +58,41 @@ namespace tcp {
             if (!match4) return std::unexpected(DirectFailure{DirectError::policy_error});
             if (match4->has_value()) return std::unexpected(DirectFailure{DirectError::blocked});
         }
+#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
         int fd = ::socket(AF_INET6, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+#else
+        int fd = ::socket(AF_INET6, SOCK_STREAM, 0);
+        if (fd >= 0) {
+            int fl = ::fcntl(fd, F_GETFL, 0), fdfl = ::fcntl(fd, F_GETFD, 0);
+            if (fl < 0 || ::fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0 || fdfl < 0 || ::fcntl(fd, F_SETFD, fdfl | FD_CLOEXEC) < 0) {
+                int err = errno; ::close(fd); fd = -1; errno = err;
+            }
+#ifdef SO_NOSIGPIPE
+            else { int one = 1; (void)::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)); }
+#endif
+        }
+#endif
         if (fd < 0) {
             DirectFailure error{system_error()};
             s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
             return std::unexpected(error);
         }
-        if (s.socket_mark && ::setsockopt(fd, SOL_SOCKET, SO_MARK, &*s.socket_mark, sizeof(*s.socket_mark)) != 0) {
-            DirectFailure error{system_error()}; ::close(fd);
+        if (s.socket_mark) {
+#if defined(SO_MARK)
+            if (::setsockopt(fd, SOL_SOCKET, SO_MARK, &*s.socket_mark, sizeof(*s.socket_mark)) != 0) {
+                DirectFailure error{system_error()}; ::close(fd);
+                s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
+                return std::unexpected(error);
+            }
+#else
+            ::close(fd);
+            DirectFailure error{std::make_error_code(std::errc::operation_not_supported)};
+            s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
+            return std::unexpected(error);
+#endif
+        }
+        if (auto perr = platform::invoke_protect_fd(fd); perr) {
+            DirectFailure error{perr}; ::close(fd);
             s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
             return std::unexpected(error);
         }
@@ -75,7 +104,7 @@ namespace tcp {
             s.flows.emplace_back(id, now, -1, false); s.flows.back().failure = error;
             return std::unexpected(error);
         }
-        nexus::scope_exit guard([fd] { ::close(fd); });
+        utility::scope_exit guard([fd] { ::close(fd); });
         s.flows.emplace_back(id, now, fd, status < 0);
         guard.release();
         return {};
@@ -130,7 +159,12 @@ namespace tcp {
             item.begin = 0; item.end = read->bytes; item.local_eof = read->eof;
         }
         if (item.begin < item.end) {
-            auto n = ::send(item.fd, item.buffer.data() + item.begin, item.end - item.begin, MSG_NOSIGNAL);
+#ifdef MSG_NOSIGNAL
+            constexpr int kTcpSendFlags = MSG_NOSIGNAL;
+#else
+            constexpr int kTcpSendFlags = 0;
+#endif
+            auto n = ::send(item.fd, item.buffer.data() + item.begin, item.end - item.begin, kTcpSendFlags);
             if (n < 0) {
                 if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) { fail(DirectFailure{system_error()}); return report; }
             } else {

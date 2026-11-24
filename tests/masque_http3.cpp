@@ -1,9 +1,9 @@
 import std;
 import masque.http3;
 import quic.http3;
-import nexus.thirdparty.nghttp3;
+import nghttp3;
 namespace m=masque;
-namespace n=nex::nghttp3;
+namespace n = ::nghttp3;
 namespace q=quic;
 using Bytes=std::span<std::uint8_t const>;
 

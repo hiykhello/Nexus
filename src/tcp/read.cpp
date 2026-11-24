@@ -10,7 +10,7 @@ namespace tcp {
         if (mtu_ < 40) return std::unexpected(EngineError::invalid_mtu);
         ReadResult result; result.notification.id = id;
         if (pending_) { result.notification.backpressured = true; return result; }
-        auto view = flow->ack(); view.flags = 0x14;
+        auto view = flow->ack(0); view.flags = 0x14; view.options = {};
         auto packet = packet::make_tcp4(view, mtu_);
         if (!packet) return std::unexpected(EngineError::invalid_mtu);
         auto aborted = flow->abort(now);
@@ -32,8 +32,9 @@ namespace tcp {
         if (pending_) { result.notification.backpressured = true; return result; }
         auto time = flow->send_due(now, 0);
         if (!time) { result.connection_error = time.error(); return result; }
-        auto previous = flow->ack().window;
-        auto after = flow->ack_after_read(output.size());
+        auto max_opts = mtu_ > 40 ? std::min<std::size_t>(28, mtu_ - 40) : 0;
+        auto previous = flow->ack(0).window;
+        auto after = flow->ack_after_read(output.size(), max_opts);
         std::optional<packet::Bytes> update;
         if (after.window > previous) {
             auto packet = packet::make_tcp4(after, mtu_);
@@ -57,7 +58,7 @@ namespace tcp {
         if (mtu_ < 60) return std::unexpected(EngineError::invalid_mtu);
         ReadResult result; result.notification.id = id;
         if (pending_) { result.notification.backpressured = true; return result; }
-        auto view = flow->ack(); view.flags = 0x14;
+        auto view = flow->ack(0); view.flags = 0x14; view.options = {};
         auto packet = packet::make_tcp6(view, mtu_);
         if (!packet) return std::unexpected(EngineError::invalid_mtu);
         auto aborted = flow->abort(now);
@@ -79,8 +80,9 @@ namespace tcp {
         if (pending_) { result.notification.backpressured = true; return result; }
         auto time = flow->send_due(now, 0);
         if (!time) { result.connection_error = time.error(); return result; }
-        auto previous = flow->ack().window;
-        auto after = flow->ack_after_read(output.size());
+        auto max_opts = mtu_ > 60 ? std::min<std::size_t>(28, mtu_ - 60) : 0;
+        auto previous = flow->ack(0).window;
+        auto after = flow->ack_after_read(output.size(), max_opts);
         std::optional<packet::Bytes> update;
         if (after.window > previous) {
             auto packet = packet::make_tcp6(after, mtu_);

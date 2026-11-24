@@ -196,7 +196,7 @@ async def run(args):
                 predicates = (f'rule type="and" {{ rule type="domain-suffix" value="{name}"; '
                               f'rule type="port-range" value="1-65535"; }}\n' for name in names)
             rule_path.write_text('schema-version 2\nkind "predicate"\n' + ''.join(predicates))
-            routing = 'rule-set "bench" path="bench-rules.kdl" format="kdl"; rule kind="rule-set" value="bench" outbound="direct"; ' + routing
+            routing = 'rule-set "bench" path="bench-rules.kdl" format="kdl"; rules { - kind="rule-set" value="bench" outbound="direct"; }; ' + routing
         dns_config = ('server "upstream" type="local";' if args.local_dns else
                       f'server "upstream" type="udp" host="127.0.0.1" port={dns_port};')
         config.write_text(f'''schema-version 1

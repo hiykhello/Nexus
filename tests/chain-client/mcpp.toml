@@ -1,10 +1,9 @@
 [package]
-namespace = "nexus"
 name = "chain-client-tests"
 version = "0.1.0"
 
 [dependencies]
-nexus.proxy-runtime = { path = "../../src/proxy", default-features = false, features = ["dns-standard", "request-standard", "test-chain-deadline", "io-uring"] }
+relay-runtime = { path = "../../src/relay", default-features = false, features = ["dns-standard", "request-standard", "test-chain-deadline", "io-uring"] }
 
 [build]
 sources = []

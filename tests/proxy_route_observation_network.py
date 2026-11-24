@@ -80,7 +80,7 @@ def verify(binary, root, origin, udp, edge, ordered):
     rule = (
         'tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true { '
         'rule action="route" rule-set="target" outbound="primary"; }'
-        if ordered else 'rule kind="rule-set" value="target" outbound="primary"'
+        if ordered else 'rules { - kind="rule-set" value="target" outbound="primary"; }'
     )
     source = f"""schema-version 1
 role "client"

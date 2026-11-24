@@ -8,14 +8,13 @@ import platform.socket_options;
 import http2.client_channel;
 import memory.budget;
 import crypto;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace noise=tailscale::control;
 namespace cc=tailscale::control_connection;
 namespace messages=tailscale::control_messages;
 namespace h2=http2;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct State {
     bool starting=false,started=false,parked=false,done=false,destroyed=false,drained=false,passed=false,borrowed=false,released=false;

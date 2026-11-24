@@ -2,13 +2,14 @@ module config;
 import std;
 import config.kdl_common;
 import platform.socket_options;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
     using namespace config::kdl;
 
     auto parse_tcp_dial_option(Node const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
     auto parse_vless_transport(Node const&,bool) -> std::expected<std::variant<HttpUpgradeTransport,GrpcTransport,xhttp::Profile>,std::string>;
+    auto parse_outbound_multiplex(Node const&) -> std::expected<MultiplexConfig,std::string>;
 
     auto parse_vless_outbound(Node const& node) -> std::expected<VlessOutbound, std::string> {
         VlessOutbound result;
@@ -58,6 +59,11 @@ namespace config {
                     child.arguments[0].tag || !std::holds_alternative<bool>(child.arguments[0].data))
                     return error("tcp-fast-open requires one boolean and cannot repeat");
                 fast_open=std::get<bool>(child.arguments[0].data);
+            } else if (child.name == "multiplex") {
+                if (result.multiplex) return error("duplicate vless multiplex");
+                auto parsed = parse_outbound_multiplex(child);
+                if (!parsed) return std::unexpected(parsed.error());
+                result.multiplex = std::move(*parsed);
             } else if (child.name == "authentication") {
                 if (auth_seen || child.tag || !child.arguments.empty() || !child.properties.empty() || child.children.size()!=1 ||
                     child.children.front().name!="uuid-file") return error("vless requires one uuid-file");
@@ -141,6 +147,8 @@ namespace config {
         if ((result.transport || result.grpc) && (result.vision || result.reality)) return error("HTTPUpgrade/gRPC requires ordinary VLESS TLS");
         if ((result.packetaddr || result.fixed_udp) && (result.vision || result.grpc))
             return error("VLESS packetaddr and fixed UDP require non-Vision TCP or HTTPUpgrade");
+        if (result.multiplex && result.multiplex->enabled && (result.vision || result.xhttp))
+            return error("VLESS multiplex cannot be combined with vision or xhttp");
         if (fast_open) {
             if (result.detour) return error("tcp-fast-open belongs to the physical outbound, not a layered node");
             result.tcp_fast_open=*fast_open;

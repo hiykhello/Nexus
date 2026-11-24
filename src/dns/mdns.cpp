@@ -112,6 +112,7 @@ namespace dns::mdns {
             return std::unexpected("mDNS packet is not a valid response");
         std::uint16_t qd = read16(wire, 4);
         std::uint32_t total_rr = static_cast<std::uint32_t>(read16(wire, 6)) + read16(wire, 8) + read16(wire, 10);
+        if (qd > 64 || total_rr > 256) return std::unexpected("mDNS too many resource records");
         std::size_t pos = 12;
 
         for (std::uint16_t i = 0; i < qd; ++i) {
@@ -148,13 +149,17 @@ namespace dns::mdns {
                 rec.address = ip;
             } else if (rec.type == 12) {
                 std::size_t tmp = pos;
-                if (auto ptr = decode_name(wire, tmp)) rec.target = std::move(*ptr);
+                auto ptr = decode_name(wire, tmp);
+                if (!ptr || tmp > rdata_end) return std::unexpected("mDNS invalid PTR target");
+                rec.target = std::move(*ptr);
             } else if (rec.type == 33 && rdlen >= 6) {
                 rec.srv_priority = read16(wire, pos);
                 rec.srv_weight = read16(wire, pos + 2);
                 rec.srv_port = read16(wire, pos + 4);
                 std::size_t tmp = pos + 6;
-                if (auto tgt = decode_name(wire, tmp)) rec.target = std::move(*tgt);
+                auto tgt = decode_name(wire, tmp);
+                if (!tgt || tmp > rdata_end) return std::unexpected("mDNS invalid SRV target");
+                rec.target = std::move(*tgt);
             } else if (rec.type == 16) {
                 std::size_t cur = pos;
                 while (cur < rdata_end) {
@@ -178,10 +183,7 @@ namespace dns::mdns {
                 std::erase_if(entries_, [&](Entry const& e) {
                     return e.record.type == r.type && ascii_ci_eq(e.record.name, key_name);
                 });
-            }
-            if (r.ttl == 0) continue;
-            std::uint64_t exp = now_sec + r.ttl;
-            if (!r.cache_flush) {
+            } else {
                 std::erase_if(entries_, [&](Entry const& e) {
                     return e.record.type == r.type && ascii_ci_eq(e.record.name, key_name) &&
                            e.record.target == r.target && e.record.address.has_value() == r.address.has_value() &&
@@ -189,7 +191,9 @@ namespace dns::mdns {
                                            std::ranges::equal(e.record.address->view(), r.address->view())));
                 });
             }
-            if (entries_.size() >= max_entries_) entries_.erase(entries_.begin());
+            if (r.ttl == 0) continue;
+            std::uint64_t exp = now_sec + r.ttl;
+            if (entries_.size() >= max_entries_ && !entries_.empty()) entries_.erase(entries_.begin());
             MdnsRecord copy = r;
             copy.name = std::move(key_name);
             entries_.push_back({std::move(copy), exp});

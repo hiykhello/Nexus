@@ -1,10 +1,10 @@
 module config;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 import config.kdl_common;
 
 namespace config {
-    namespace g = nex::glaze;
+    namespace g = ::glaze;
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
     auto dns_ipv6(std::string_view) -> std::optional<std::array<std::uint8_t,16>>;
     auto parse_tcp_dial_option(g::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;

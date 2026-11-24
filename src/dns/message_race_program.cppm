@@ -10,10 +10,11 @@ import dns.response_race_walk;
 import dns.evaluate_owner;
 import dns.race_admission;
 import dns.policy;
+import rules;
 import dns.message_cache;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns {
     // A single executor owns the walk and all concurrent exchanges. Inputs
@@ -31,7 +32,7 @@ export namespace dns {
             std::optional<ResponseEcsView> ecs;
             std::optional<Result> terminal;
         };
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         std::span<policy::DnsRule const> rules_;
         std::span<ResponseRaceMode const> modes_;
         std::span<MessageUpstream const> upstreams_;
@@ -39,7 +40,7 @@ export namespace dns {
         MessageCache* cache_;
         InputBudget* override_budget_;
         std::optional<std::uint64_t> view_;
-        bool disabled_,started_=false,canceled_=false;
+        bool disabled_,started_=false,canceled_=false,independent_cache_=false;
         Owner* owner_=nullptr;
         MessageExchange* active_=nullptr;
         std::array<Slot,32> slots_{};
@@ -51,7 +52,7 @@ export namespace dns {
             if(ticket.index>=slots_.size() || step.server>=upstreams_.size())return std::unexpected(Error::state);
             auto until=step.timeout_ms ? std::min(deadline,Clock::now()+std::chrono::milliseconds(*step.timeout_ms)) : deadline;
             auto operation=std::make_unique<EvaluatedMessageExchange>(context_,upstreams_,cache_,query,step,until,
-                override_budget_,view_.value_or(0));
+                override_budget_,view_.value_or(0),independent_cache_);
             auto handle=owner.start(std::move(operation));if(!handle)return std::unexpected(
                 handle.error()==Owner::StartError::full || handle.error()==Owner::StartError::allocation ? Error::limit : Error::state);
             auto& slot=slots_[ticket.index];slot.ticket=ticket;slot.handle=*handle;slot.step=step;
@@ -101,7 +102,7 @@ export namespace dns {
             return std::move(message.wire);
         }
         auto execute(Owner& owner,QueryMessage const& query,Clock::time_point deadline,policy::DnsContext context)
-            -> nex::capy::task<std::expected<Bytes,Error>> {
+            -> capy::task<std::expected<Bytes,Error>> {
             Walk walk(rules_,modes_,fallback_,disabled_);
             for(;;) {
                 if(canceled_)co_return std::unexpected(Error::canceled);
@@ -125,7 +126,7 @@ export namespace dns {
                     continue;
                 }
                 if(event->kind==Walk::Kind::wait) {
-                    auto [error]=co_await nex::corosio::timeout(owner.wait(epoch),deadline);
+                    auto [error]=co_await corosio::timeout(owner.wait(epoch),deadline);
                     if(error)co_return std::unexpected(canceled_ ? Error::canceled : Clock::now()>=deadline ? Error::timeout : Error::state);
                     continue;
                 }
@@ -156,7 +157,7 @@ export namespace dns {
                                 if(!slot.terminal || !owner.release(*slot.handle))co_return std::unexpected(Error::state);
                                 slot.handle.reset();break;
                             }
-                            auto [error]=co_await nex::corosio::timeout(owner.wait(observed),deadline);
+                            auto [error]=co_await corosio::timeout(owner.wait(observed),deadline);
                             if(error)co_return std::unexpected(canceled_ ? Error::canceled : Clock::now()>=deadline ? Error::timeout : Error::state);
                         }
                     } else owner.stop();
@@ -165,7 +166,15 @@ export namespace dns {
                     co_return output(query,step,std::move(**slot.terminal));
                 }
                 owner.stop();
-                if(step.action==policy::DnsAction::reject)co_return std::unexpected(step.rule<rules_.size() && rules_[step.rule].reject_drop ? Error::policy_dropped : Error::policy_rejected);
+                if(step.action==policy::DnsAction::reject) {
+                    if(step.reject_rcode) {
+                        policy::PredefinedResponse reply{.rcode=*step.reject_rcode};
+                        auto wire=synthetic_message(query,reply);
+                        if(!wire)co_return std::unexpected(Error::protocol);
+                        co_return std::move(*wire);
+                    }
+                    co_return std::unexpected(step.rule<rules_.size() && rules_[step.rule].reject_drop ? Error::policy_dropped : Error::policy_rejected);
+                }
                 if(step.action==policy::DnsAction::predefined) {
                     if(step.rule>=rules_.size() || !rules_[step.rule].predefined)co_return std::unexpected(Error::state);
                     auto wire=synthetic_message(query,*rules_[step.rule].predefined);if(!wire)co_return std::unexpected(Error::protocol);
@@ -189,7 +198,7 @@ export namespace dns {
                 }
                 if(step.action!=policy::DnsAction::route || step.server>=upstreams_.size())co_return std::unexpected(Error::state);
                 auto until=step.timeout_ms ? std::min(deadline,Clock::now()+std::chrono::milliseconds(*step.timeout_ms)) : deadline;
-                MessageExchange operation(context_,upstreams_,cache_,query,step,until,override_budget_,view_.value_or(0));
+                MessageExchange operation(context_,upstreams_,cache_,query,step,until,override_budget_,view_.value_or(0),independent_cache_);
                 struct Guard {MessageExchange*& active;~Guard(){active=nullptr;}} guard{active_};active_=&operation;
                 auto wire=co_await operation.run();
                 if(canceled_)co_return std::unexpected(Error::canceled);
@@ -199,12 +208,12 @@ export namespace dns {
             }
         }
     public:
-        MessageRaceProgram(nex::corosio::io_context& context,std::span<policy::DnsRule const> rules,
+        MessageRaceProgram(corosio::io_context& context,std::span<policy::DnsRule const> rules,
             std::span<ResponseRaceMode const> modes,std::span<MessageUpstream const> upstreams,std::size_t fallback,
             MessageCache* cache=nullptr,bool disabled=false,InputBudget* override_budget=nullptr,
-            std::optional<std::uint64_t> policy_view={}) noexcept
+            std::optional<std::uint64_t> policy_view={},bool independent_cache=false) noexcept
             :context_(context),rules_(rules),modes_(modes),upstreams_(upstreams),fallback_(fallback),cache_(cache),
-             override_budget_(override_budget),view_(policy_view),disabled_(disabled) {}
+             override_budget_(override_budget),view_(policy_view),disabled_(disabled),independent_cache_(independent_cache) {}
         MessageRaceProgram(MessageRaceProgram const&)=delete;
         auto operator=(MessageRaceProgram const&) -> MessageRaceProgram& = delete;
 #ifdef NEXUS_DNS_FAKEIP
@@ -212,7 +221,7 @@ export namespace dns {
 #endif
         auto cancel() noexcept -> void {canceled_=true;if(owner_)owner_->stop();if(active_)active_->cancel();}
         auto run(QueryMessage query,Clock::time_point deadline,policy::DnsContext context)
-            -> nex::capy::task<std::expected<Bytes,Error>> {
+            -> capy::task<std::expected<Bytes,Error>> {
             if(std::exchange(started_,true) || fallback_>=upstreams_.size() || (!modes_.empty() && rules_.size()!=modes_.size()))co_return std::unexpected(Error::state);
             if(canceled_)co_return std::unexpected(Error::canceled);
             if(!encode_query(query))co_return std::unexpected(Error::protocol);

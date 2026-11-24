@@ -7,9 +7,9 @@ import vision.corosio_writer;
 import tls.application_io;
 import tls.corosio_application;
 import net.stream_relay;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace v=vision; namespace t=tls; namespace c = ::crypto; namespace capy=nex::capy; namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace v=vision; namespace t=tls; namespace c = ::crypto; namespace io = ::corosio;
 using Bytes=c::Bytes; using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction,int n) -> t::RecordLayer {

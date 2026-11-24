@@ -22,7 +22,7 @@ with DnsPeer(host="192.0.2.2") as ipv4, DnsPeer(ipv6=True, host="2001:db8:1::2")
         udp_port, tcp_port = map(int, line(upstream).split())
         listen = free_port()
         (root / "strict-dns-targets.kdl").write_text(
-            'schema-version 1\nkind "predicate"\n'
+            'schema-version 2\nkind "predicate"\n'
             'rule type="ip-cidr" value="198.51.100.85/32"\n'
             'rule type="ip-cidr" value="2001:db8:3::85/128"\n')
         dns = root / "strict-dns.kdl"

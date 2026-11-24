@@ -1,11 +1,11 @@
 import std;
 import crypto;
 import tls.server_credential;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hy2_native_memory;
-import nexus.test.hy2_resource_link;
-namespace io=nex::corosio;namespace support=nexus::test::quic_tls;namespace mem=nexus::test::hy2_native_memory;
+import corosio;
+import test.quic_tls_link;
+import test.hy2_native_memory;
+import test.hy2_resource_link;
+namespace io = ::corosio;namespace support=test::quic_tls;namespace mem=test::hy2_native_memory;
 namespace allocations {
     struct Header { void* raw; std::size_t size; };
     std::size_t live=0,bytes=0,calls=0;
@@ -53,13 +53,13 @@ auto main(int argc,char** argv) -> int {
     io::io_context context=io::make_io_context(uring);mem::fault.arm(mem::Kind::transport,0);
     bool passed=false,clean=false,caught=false;
     allocations::enabled=true;allocations::calls=0;allocations::denied=false;allocations::allowance=target?static_cast<std::ptrdiff_t>(target-1):-1;
-    try {passed=nexus::test::hy2_resource::phase(context,*credential,cert,&clean);}
+    try {passed=test::hy2_resource::phase(context,*credential,cert,&clean);}
     catch(std::bad_alloc const&){caught=true;}
     allocations::enabled=false;auto denied=allocations::denied;auto calls=allocations::calls;
     if(!denied && (!passed || !clean))return 3;
     if(mem::oracle.objects || !mem::oracle.valid)return 4;
     mem::cpp_denied=false;
-    if(!nexus::test::hy2_resource::phase(context,*credential,cert) || mem::oracle.objects || !mem::oracle.valid)return 5;
+    if(!test::hy2_resource::phase(context,*credential,cert) || mem::oracle.objects || !mem::oracle.valid)return 5;
     std::printf("Hy2 shared port C++ cold backend=%d target=%llu denied=%s calls=%zu caught=%d phase_clean=%d native_oracle=%d native_objects=%zu same_context_new_owner_recovery=true\n",uring,target,denied?"true":"false",calls,caught,clean,mem::oracle.valid,mem::oracle.objects);
     return target && !denied?6:0;
 }

@@ -2,21 +2,14 @@ module dns.doh_pool;
 import std;
 import dns.corosio_query;
 import dns.doh_exchange;
+import dns.https_pool;
 import dns.input_budget;
 import http2.client_channel;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace dns::doh_detail {
     namespace {
-        struct HttpsProfile {
-            StreamFactory stream;
-            std::optional<std::chrono::milliseconds> connect_timeout;
-            std::string authority,path;
-        };
-
-#include "https_pool.hpp"
-
         struct HttpsQuery {
             std::shared_ptr<HttpsProfile const> profile;
 

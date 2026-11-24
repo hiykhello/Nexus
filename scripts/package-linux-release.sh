@@ -47,11 +47,13 @@ trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p \
     "$STAGE/$PKG_NAME/bin" \
+    "$STAGE/$PKG_NAME/include/nexus" \
     "$STAGE/$PKG_NAME/systemd" \
     "$STAGE/$PKG_NAME/openwrt" \
     "$STAGE/$PKG_NAME/completions"
 
 install -m 0755 "$BIN" "$STAGE/$PKG_NAME/bin/nexus"
+install -m 0644 "$ROOT/include/nexus/core_c_api.h" "$STAGE/$PKG_NAME/include/nexus/core_c_api.h"
 if [ -n "$DESKTOP_BIN" ]; then
     install -m 0755 "$DESKTOP_BIN" "$STAGE/$PKG_NAME/bin/nexus-desktop"
     mkdir -p "$STAGE/$PKG_NAME/share/applications"

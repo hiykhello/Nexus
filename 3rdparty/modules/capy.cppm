@@ -1,10 +1,11 @@
 module;
 #include <boost/capy/buffers.hpp>
 #include <boost/capy/cond.hpp>
+#include <boost/capy/continuation.hpp>
 #include <boost/capy/task.hpp>
-#include "../../src/coro/quitter.hpp"
 #include <boost/capy/when_all.hpp>
 #include <boost/capy/when_any.hpp>
+#include <boost/capy/ex/run.hpp>
 #include <boost/capy/ex/run_async.hpp>
 #include <boost/capy/ex/execution_context.hpp>
 #include <boost/capy/ex/async_waker.hpp>
@@ -12,15 +13,17 @@ module;
 #include <boost/capy/ex/this_coro.hpp>
 #include <boost/capy/ex/async_mutex.hpp>
 
-export module nexus.thirdparty.capy;
+export module capy;
+export import coro.quitter;
 export using std::is_error_condition_enum;
 export namespace boost::capy { using ::boost::capy::make_error_condition; }
-export namespace nex::capy {
+export namespace capy {
     namespace this_coro { using ::boost::capy::this_coro::stop_token; }
     using ::boost::capy::await_context;
     using ::boost::capy::execution_context;
     using ::boost::capy::const_buffer;
     using ::boost::capy::mutable_buffer;
+    using ::boost::capy::continuation;
     using ::boost::capy::task;
     using ::coro::quitter;
     using ::boost::capy::when_all;
@@ -28,6 +31,7 @@ export namespace nex::capy {
     using ::boost::capy::results;
     using ::boost::capy::cond;
     using ::boost::capy::make_error_condition;
+    using ::boost::capy::run;
     using ::boost::capy::run_async;
     using ::boost::capy::async_waker;
     using ::boost::capy::async_event;

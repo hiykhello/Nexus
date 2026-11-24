@@ -58,12 +58,12 @@ final "a";)");
         select("other.test",1)!=0 || select("other.test",28)!=9 ||
         select("notexample.test",28)!=9 || select("example.test.attacker",28)!=9 ||
         select("example.test",1)!=0) return 3;
-    for (auto field:{"query-type=1", "query-type=28", "query-type=65535", "query-type=\"A\"", "query-type=\"AAAA\""})
+    for (auto field:{"query-type=1", "query-type=28", "query-type=65535", "query-type=\"A\"", "query-type=\"AAAA\"", "query-type=\"HTTPS\""})
         if (!parse(std::format("rule {} server=\"b\";",field))) return 4;
     for (auto invalid:{R"(rule server="a";)", R"(rule query-type=0 server="a";)",
         R"(rule query-type=-1 server="a";)", R"(rule query-type=65536 server="a";)",
         R"(rule query-type=#true server="a";)", R"(rule query-type=#null server="a";)",
-        R"(rule query-type="HTTPS" server="a";)", R"(rule query-type="1" server="a";)",
+        R"(rule query-type="BOGUS" server="a";)", R"(rule query-type="1" server="a";)",
         R"(rule query-type=(tag)1 server="a";)", R"(rule query-type=1 server="missing";)",
         R"(rule domain="" query-type=1 server="a";)", R"(rule domain-suffix="" query-type=1 server="a";)",
         R"(rule domain=#true query-type=1 server="a";)", R"(rule domain-suffix=#null query-type=1 server="a";)",

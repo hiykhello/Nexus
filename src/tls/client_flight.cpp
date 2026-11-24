@@ -25,9 +25,17 @@ namespace tls {
         (sending ? write_ : read_)=std::move(*layer); secret=std::move(*next); return true;
     }
     ApplicationRecords::ApplicationRecords(ApplicationRecords&& o) noexcept
-        : key_reservation_(std::move(o.key_reservation_)), write_(std::move(o.write_)), read_(std::move(o.read_)), write_limit_(o.write_limit_), read_limit_(o.read_limit_), role_(o.role_), active_(o.active_), read_closed_(o.read_closed_), write_closed_(o.write_closed_), update_response_(o.update_response_), overflow_alert_pending_(std::exchange(o.overflow_alert_pending_,false)), write_secret_(std::move(o.write_secret_)), read_secret_(std::move(o.read_secret_)), hash_(o.hash_), algorithm_(o.algorithm_), key_size_(o.key_size_), handshake_pending_(std::move(o.handshake_pending_)), ticket_sink_(std::move(o.ticket_sink_)), server_handshake_pending_(o.server_handshake_pending_), server_handshake_size_(std::exchange(o.server_handshake_size_,0)) { o.active_=false; }
+        : key_reservation_(std::move(o.key_reservation_)), write_(std::move(o.write_)), read_(std::move(o.read_)), write_limit_(o.write_limit_), read_limit_(o.read_limit_), role_(o.role_), active_(o.active_), read_closed_(o.read_closed_), write_closed_(o.write_closed_), update_response_(o.update_response_), overflow_alert_pending_(std::exchange(o.overflow_alert_pending_,false)), write_secret_(std::move(o.write_secret_)), read_secret_(std::move(o.read_secret_)), hash_(o.hash_), algorithm_(o.algorithm_), key_size_(o.key_size_), handshake_pending_(std::move(o.handshake_pending_)), ticket_sink_(std::move(o.ticket_sink_)), server_handshake_pending_(o.server_handshake_pending_), server_handshake_size_(std::exchange(o.server_handshake_size_,0)) { crypto::cleanse(o.server_handshake_pending_); o.active_=false; }
+    ApplicationRecords::~ApplicationRecords() noexcept {
+        crypto::cleanse(handshake_pending_);
+        crypto::cleanse(server_handshake_pending_);
+    }
     auto ApplicationRecords::operator=(ApplicationRecords&& o) noexcept -> ApplicationRecords& {
-        if (this!=&o) { write_=std::move(o.write_); read_=std::move(o.read_); write_limit_=o.write_limit_; read_limit_=o.read_limit_; role_=o.role_; active_=o.active_; read_closed_=o.read_closed_; write_closed_=o.write_closed_; update_response_=o.update_response_; overflow_alert_pending_=std::exchange(o.overflow_alert_pending_,false); write_secret_=std::move(o.write_secret_); read_secret_=std::move(o.read_secret_); key_reservation_=std::move(o.key_reservation_); hash_=o.hash_; algorithm_=o.algorithm_; key_size_=o.key_size_; handshake_pending_=std::move(o.handshake_pending_); ticket_sink_=std::move(o.ticket_sink_); server_handshake_pending_=o.server_handshake_pending_; server_handshake_size_=std::exchange(o.server_handshake_size_,0); o.active_=false; } return *this;
+        if (this!=&o) {
+            crypto::cleanse(handshake_pending_); crypto::cleanse(server_handshake_pending_);
+            write_=std::move(o.write_); read_=std::move(o.read_); write_limit_=o.write_limit_; read_limit_=o.read_limit_; role_=o.role_; active_=o.active_; read_closed_=o.read_closed_; write_closed_=o.write_closed_; update_response_=o.update_response_; overflow_alert_pending_=std::exchange(o.overflow_alert_pending_,false); write_secret_=std::move(o.write_secret_); read_secret_=std::move(o.read_secret_); key_reservation_=std::move(o.key_reservation_); hash_=o.hash_; algorithm_=o.algorithm_; key_size_=o.key_size_; handshake_pending_=std::move(o.handshake_pending_); ticket_sink_=std::move(o.ticket_sink_); server_handshake_pending_=o.server_handshake_pending_; server_handshake_size_=std::exchange(o.server_handshake_size_,0); crypto::cleanse(o.server_handshake_pending_); o.active_=false;
+        }
+        return *this;
     }
     auto ApplicationRecords::take_overflow_alert() -> std::expected<crypto::Bytes,RecordError> {
         if (!std::exchange(overflow_alert_pending_,false) || write_closed_) return std::unexpected(RecordError::invalid_state);
@@ -42,6 +50,17 @@ namespace tls {
         try {
             auto out=write_.seal(ContentType::application_data,data); if (!out) { active_=false; return std::unexpected(out.error()); }
             return std::move(*out);
+        } catch (...) { active_=false; throw; }
+    }
+    auto ApplicationRecords::seal_into(std::span<std::uint8_t const> data, std::span<std::uint8_t> dest)
+        -> std::expected<std::size_t,RecordError> {
+        if (!active_ || write_closed_ || update_response_) return std::unexpected(RecordError::invalid_state);
+        if (data.size()>=write_limit_) return std::unexpected(RecordError::invalid_input);
+        if (write_.send_remaining()<=1) return std::unexpected(RecordError::key_usage_limit);
+        try {
+            auto out=write_.seal_into(ContentType::application_data,data,dest);
+            if (!out) { if (out.error()!=RecordError::invalid_input) active_=false; return std::unexpected(out.error()); }
+            return *out;
         } catch (...) { active_=false; throw; }
     }
 

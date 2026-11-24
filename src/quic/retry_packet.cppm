@@ -3,7 +3,7 @@ import std;
 import crypto;
 import crypto.aead_context;
 import quic.packet_protection;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 
 export namespace quic {
     // Native ngtcp2 remains the only QUIC Retry packet serializer. This
@@ -28,7 +28,7 @@ export namespace quic {
         auto valid() const noexcept -> bool {return integrity_.valid();}
         auto write(std::span<std::uint8_t> output,std::span<std::uint8_t const> destination,std::span<std::uint8_t const> source,
             std::span<std::uint8_t const> original,std::span<std::uint8_t const> token,std::uint32_t version=1) noexcept -> std::expected<std::size_t,int> {
-            namespace n=nex::ngtcp2;
+            namespace n = ::ngtcp2;
             // The bounded token keeps even maximal CIDs below the minimum
             // 1200-byte QUIC path size; no Retry output needs UDP fragmentation.
             if(!integrity_.valid() || version!=1 || destination.size()>20 || source.size()<8 || source.size()>20 || original.size()<8 || original.size()>20 ||

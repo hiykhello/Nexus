@@ -31,7 +31,8 @@ export namespace wireguard {
     template<std::size_t PeerCapacity=32> class PeerRegistry {
         static_assert(PeerCapacity>0 && PeerCapacity<=4096);
         static constexpr auto indexes_per_peer=std::tuple_size_v<ReceiverIndexes>;
-        struct Peer { bool live=false; std::uint64_t generation=0,latest=0; };
+        static_assert(indexes_per_peer<=std::numeric_limits<std::uint8_t>::max());
+        struct Peer { bool live=false; std::uint8_t active_indexes=0; std::uint64_t generation=0,latest=0; };
         struct Entry {
             bool used=false,reserved=false;
             ReceiverBinding binding{};
@@ -40,12 +41,24 @@ export namespace wireguard {
         std::array<Peer,PeerCapacity> peers_{};
         std::array<Entry,PeerCapacity*indexes_per_peer> indexes_{};
         std::uint64_t reservation_serial_=0;
+        auto peer_indexes(std::size_t slot) noexcept -> std::span<Entry,indexes_per_peer> {
+            return std::span<Entry,indexes_per_peer>(indexes_.data()+slot*indexes_per_peer,indexes_per_peer);
+        }
+        auto peer_indexes(std::size_t slot) const noexcept -> std::span<Entry const,indexes_per_peer> {
+            return std::span<Entry const,indexes_per_peer>(indexes_.data()+slot*indexes_per_peer,indexes_per_peer);
+        }
         auto find(std::uint32_t value) noexcept -> Entry* {
-            for (auto& entry:indexes_) if (entry.used && entry.binding.index==value) return &entry;
+            for (std::size_t p=0;p<PeerCapacity;++p) {
+                if (!peers_[p].active_indexes) continue;
+                for (auto& entry:peer_indexes(p)) if (entry.used && entry.binding.index==value) return &entry;
+            }
             return nullptr;
         }
         auto find(std::uint32_t value) const noexcept -> Entry const* {
-            for (auto const& entry:indexes_) if (entry.used && entry.binding.index==value) return &entry;
+            for (std::size_t p=0;p<PeerCapacity;++p) {
+                if (!peers_[p].active_indexes) continue;
+                for (auto const& entry:peer_indexes(p)) if (entry.used && entry.binding.index==value) return &entry;
+            }
             return nullptr;
         }
         static auto contains(ReceiverIndexes const& snapshot,ReceiverBinding binding) noexcept -> bool {
@@ -64,15 +77,15 @@ export namespace wireguard {
             for (std::size_t i=0;i<PeerCapacity;++i) {
                 auto& peer=peers_[i];
                 if (peer.live || peer.generation==std::numeric_limits<std::uint64_t>::max()) continue;
-                peer.live=true; ++peer.generation; peer.latest=0;
+                peer.live=true; peer.active_indexes=0; ++peer.generation; peer.latest=0;
                 return PeerHandle{static_cast<std::uint16_t>(i),peer.generation};
             }
             return host_detail::failure(HostError::peers_full);
         }
         [[nodiscard]] auto erase(PeerHandle peer) noexcept -> std::expected<void,HostFailure> {
             if (!valid(peer)) return host_detail::failure(HostError::stale_peer);
-            for (auto& index:indexes_) if (index.used && index.binding.peer==peer) index={};
-            peers_[peer.slot].live=false; peers_[peer.slot].latest=0; return {};
+            for (auto& index:peer_indexes(peer.slot)) index={};
+            peers_[peer.slot].active_indexes=0; peers_[peer.slot].live=false; peers_[peer.slot].latest=0; return {};
         }
         [[nodiscard]] auto latest(PeerHandle peer) const noexcept -> std::expected<std::uint64_t,HostFailure> {
             if (!valid(peer)) return host_detail::failure(HostError::stale_peer);
@@ -94,44 +107,53 @@ export namespace wireguard {
                 if (entry->binding.peer!=peer) return host_detail::failure(HostError::index_conflict);
                 if (entry->binding.ticket!=index.ticket || (entry->reserved && index.ticket!=latest)) return host_detail::failure(HostError::stale_attempt);
             }
-            for (auto& entry:indexes_) if (entry.used && entry.binding.peer==peer) {
+            for (auto& entry:peer_indexes(peer.slot)) if (entry.used) {
                 if (contains(snapshot,entry.binding)) entry.reserved=false;
-                else if (!entry.reserved || entry.binding.ticket!=latest) entry={};
+                else if (!entry.reserved || entry.binding.ticket!=latest) { entry={}; --peers_[peer.slot].active_indexes; }
             }
             peers_[peer.slot].latest=latest; return {};
         }
         [[nodiscard]] auto sync(PeerHandle peer,Endpoint const& endpoint) noexcept -> std::expected<void,HostFailure> {
-            return sync(peer,endpoint.receiver_indexes(),endpoint.status().latest_attempt);
+            return sync(peer,endpoint.receiver_indexes(),endpoint.latest_attempt());
         }
         [[nodiscard]] auto reserve(PeerHandle peer,std::uint64_t ticket,std::uint32_t seed,IndexMode mode=IndexMode::probe) noexcept
             -> std::expected<IndexReservation,HostFailure> {
             if (!valid(peer)) return host_detail::failure(HostError::stale_peer);
             if (!ticket || ticket!=peers_[peer.slot].latest) return host_detail::failure(HostError::stale_attempt);
-            std::size_t owned=0;
-            for (auto const& entry:indexes_) if (entry.used && entry.binding.peer==peer) {
-                ++owned;
-                if (entry.reserved && entry.binding.ticket==ticket) return host_detail::failure(HostError::reservation_exists);
+            Entry* slot=nullptr;
+            for (auto& entry:peer_indexes(peer.slot)) {
+                if (entry.used) {
+                    if (entry.reserved && entry.binding.ticket==ticket) return host_detail::failure(HostError::reservation_exists);
+                } else if (!slot) slot=&entry;
             }
-            if (owned>=indexes_per_peer) return host_detail::failure(HostError::indexes_full);
+            if (!slot) return host_detail::failure(HostError::indexes_full);
             if (reservation_serial_==std::numeric_limits<std::uint64_t>::max()) return host_detail::failure(HostError::exhausted);
-            auto slot=std::ranges::find(indexes_,false,&Entry::used);
-            if (slot==indexes_.end()) return host_detail::failure(HostError::indexes_full);
             auto probes=mode==IndexMode::exact ? std::size_t{1} : indexes_.size()+1;
             for (std::size_t probe=0;probe<probes;++probe) {
                 auto value=seed+static_cast<std::uint32_t>(probe); if (find(value)) continue;
                 auto serial=++reservation_serial_; *slot=Entry{true,true,{peer,value,ticket},serial};
+                ++peers_[peer.slot].active_indexes;
                 return IndexReservation{peer,ticket,serial,value};
             }
             return host_detail::failure(mode==IndexMode::exact ? HostError::index_conflict : HostError::indexes_full);
         }
         [[nodiscard]] auto valid(IndexReservation const& reservation) const noexcept -> bool {
             if (!valid(reservation.peer) || peers_[reservation.peer.slot].latest!=reservation.ticket) return false;
-            auto entry=find(reservation.index);
-            return entry && entry->reserved && entry->binding.peer==reservation.peer && entry->binding.ticket==reservation.ticket && entry->serial==reservation.serial;
+            for (auto const& entry:peer_indexes(reservation.peer.slot))
+                if (entry.used && entry.binding.index==reservation.index)
+                    return entry.reserved && entry.binding.peer==reservation.peer && entry.binding.ticket==reservation.ticket && entry.serial==reservation.serial;
+            return false;
         }
         [[nodiscard]] auto release(IndexReservation const& reservation) noexcept -> std::expected<void,HostFailure> {
-            if (!valid(reservation)) return host_detail::failure(HostError::stale_attempt);
-            *find(reservation.index)={}; return {};
+            if (!valid(reservation.peer) || peers_[reservation.peer.slot].latest!=reservation.ticket) return host_detail::failure(HostError::stale_attempt);
+            for (auto& entry:peer_indexes(reservation.peer.slot)) {
+                if (entry.used && entry.binding.index==reservation.index) {
+                    if (!entry.reserved || entry.binding.peer!=reservation.peer || entry.binding.ticket!=reservation.ticket || entry.serial!=reservation.serial)
+                        return host_detail::failure(HostError::stale_attempt);
+                    entry={}; --peers_[reservation.peer.slot].active_indexes; return {};
+                }
+            }
+            return host_detail::failure(HostError::stale_attempt);
         }
         [[nodiscard]] auto lookup(std::uint32_t index) const noexcept -> std::expected<ReceiverBinding,HostFailure> {
             auto entry=find(index);
@@ -139,7 +161,10 @@ export namespace wireguard {
             return entry->binding;
         }
         [[nodiscard]] auto owns(ReceiverBinding const& binding) const noexcept -> bool {
-            auto found=lookup(binding.index); return found && *found==binding;
+            if (!valid(binding.peer)) return false;
+            for (auto const& entry:peer_indexes(binding.peer.slot))
+                if (entry.used && !entry.reserved && entry.binding==binding) return true;
+            return false;
         }
         [[nodiscard]] auto classify(std::span<std::uint8_t const> wire) const noexcept -> std::expected<ReceiverBinding,HostFailure> {
             auto type=message_type(wire); if (!type) return host_detail::failure(HostError::invalid_packet,type.error());
@@ -149,8 +174,11 @@ export namespace wireguard {
         }
         [[nodiscard]] auto status() const noexcept -> RegistryStatus {
             RegistryStatus result;
-            for (auto const& peer:peers_) result.peers+=peer.live;
-            for (auto const& entry:indexes_) if (entry.used) { ++result.indexes; result.reservations+=entry.reserved; }
+            for (std::size_t p=0;p<PeerCapacity;++p) {
+                result.peers+=peers_[p].live;
+                if (!peers_[p].active_indexes) continue;
+                for (auto const& entry:peer_indexes(p)) if (entry.used) { ++result.indexes; result.reservations+=entry.reserved; }
+            }
             return result;
         }
     };

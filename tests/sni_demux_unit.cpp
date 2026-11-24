@@ -1,7 +1,7 @@
 #include <cassert>
 
 import std;
-import proxy.sni_demux;
+import relay.sni_demux;
 
 namespace {
     auto build_client_hello(std::string_view sni, std::initializer_list<std::string_view> alpns) -> std::vector<std::uint8_t> {
@@ -52,34 +52,34 @@ int main() {
     auto web_hello = build_client_hello("panel.edge.example", {"http/1.1"});
     auto site_hello = build_client_hello("static.other.com", {"h2"});
 
-    proxy::SniDemuxRouter router;
-    router.add_rule({"proxy.edge.example", "h2", proxy::DemuxRole::proxy_inbound, "127.0.0.1:10443"});
-    router.add_rule({"*.edge.example", "", proxy::DemuxRole::web_console, "127.0.0.1:9090"});
-    router.set_fallback(proxy::DemuxRole::https_site, "127.0.0.1:8443");
+    relay::SniDemuxRouter router;
+    router.add_rule({"proxy.edge.example", "h2", relay::DemuxRole::proxy_inbound, "127.0.0.1:10443"});
+    router.add_rule({"*.edge.example", "", relay::DemuxRole::web_console, "127.0.0.1:9090"});
+    router.set_fallback(relay::DemuxRole::https_site, "127.0.0.1:8443");
 
     auto d1 = router.route(proxy_hello);
-    assert(d1.matched_rule && d1.role == proxy::DemuxRole::proxy_inbound && d1.target_upstream == "127.0.0.1:10443");
+    assert(d1.matched_rule && d1.role == relay::DemuxRole::proxy_inbound && d1.target_upstream == "127.0.0.1:10443");
     assert(d1.selected_alpn == "h2" && d1.passthrough_bytes.size() == proxy_hello.size());
 
     auto d2 = router.route(web_hello);
-    assert(d2.matched_rule && d2.role == proxy::DemuxRole::web_console && d2.target_upstream == "127.0.0.1:9090");
+    assert(d2.matched_rule && d2.role == relay::DemuxRole::web_console && d2.target_upstream == "127.0.0.1:9090");
 
     auto d3 = router.route(site_hello);
-    assert(!d3.matched_rule && d3.role == proxy::DemuxRole::https_site && d3.target_upstream == "127.0.0.1:8443");
+    assert(!d3.matched_rule && d3.role == relay::DemuxRole::https_site && d3.target_upstream == "127.0.0.1:8443");
 
     // Partial ClientHello -> incomplete
-    auto partial = proxy::inspect_client_hello(std::span(proxy_hello).first(proxy_hello.size() - 4));
-    assert(partial.status == proxy::SniPeekStatus::incomplete);
+    auto partial = relay::inspect_client_hello(std::span(proxy_hello).first(proxy_hello.size() - 4));
+    assert(partial.status == relay::SniPeekStatus::incomplete);
 
     // Non-TLS HTTP -> non_tls & fallback
     std::vector<std::uint8_t> http_get{'G', 'E', 'T', ' ', '/', ' ', 'H', 'T', 'T', 'P'};
     auto d4 = router.route(http_get);
-    assert(!d4.matched_rule && d4.role == proxy::DemuxRole::https_site && d4.passthrough_bytes.size() == http_get.size());
-    assert(proxy::inspect_client_hello(http_get).status == proxy::SniPeekStatus::non_tls);
+    assert(!d4.matched_rule && d4.role == relay::DemuxRole::https_site && d4.passthrough_bytes.size() == http_get.size());
+    assert(relay::inspect_client_hello(http_get).status == relay::SniPeekStatus::non_tls);
 
     // Malformed TLS record length -> malformed & safe
     std::vector<std::uint8_t> bad{0x16, 0x03, 0x01, 0xff, 0xff, 0x01};
-    assert(proxy::inspect_client_hello(bad).status == proxy::SniPeekStatus::malformed);
+    assert(relay::inspect_client_hello(bad).status == relay::SniPeekStatus::malformed);
 
     std::println("L4 SNI demux unit tests passed");
     return 0;

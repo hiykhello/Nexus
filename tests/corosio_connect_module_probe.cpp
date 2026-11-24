@@ -1,11 +1,10 @@
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy = nex::capy;
 static_assert(std::is_error_condition_enum_v<capy::cond>);
 static_assert(std::is_convertible_v<capy::cond, std::error_condition>);
-namespace io = nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 static auto make_context(bool use_uring) -> io::io_context {

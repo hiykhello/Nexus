@@ -1,5 +1,5 @@
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import tls.resuming_client;
 import tls.resuming_server;
 import tls.hello_config;
@@ -59,7 +59,7 @@ auto exchange(t::ServerCredential const& credential,std::span<View const> anchor
  auto hello=t::make_client_hello("server.example",protocols,groups);if(!hello)return {false,false,Error::crypto};hello->cipher_suites={cipher};
  View name(reinterpret_cast<std::uint8_t const*>("server.example"),14),alpn(reinterpret_cast<std::uint8_t const*>("h2"),2);
  auto binding=t::make_ticket_binding(*hello,anchors,t::PeerNameKind::dns,name,alpn);if(!binding)return {false,false,binding.error()==t::PskError::crypto_error?Error::crypto:Error::protocol};
- nexus::inplace_vector<t::ResumptionTicket,8> offered;if(auto value=cache.take(*binding,hello->cipher_suites,Clock::now()))offered.push_back(std::move(*value));
+ containers::inplace_vector<t::ResumptionTicket,8> offered;if(auto value=cache.take(*binding,hello->cipher_suites,Clock::now()))offered.push_back(std::move(*value));
  bool resume=!offered.empty();auto policy=ClientPolicy::create(std::move(*binding),std::move(offered));if(!policy)return {};
  auto wall=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
  auto client=Client::create(std::move(*hello),retry?std::span<std::uint16_t const>{}:std::span<std::uint16_t const>(groups),anchors,t::PeerNameKind::dns,name,wall,std::move(*policy));
@@ -113,7 +113,7 @@ auto trial(t::ServerCredential const& credential,std::span<View const> anchors,s
   result.denied=fault::denied;result.calls=fault::calls;fault::disable();
   result.recovered=exchange(credential,anchors,store,cache,group,cipher,retry).complete;
  }
- nex::boringssl::ERR_clear_error();result.clean=nl==fault::native_live&&nb==fault::native_bytes&&cl==fault::cpp_live&&cb==fault::cpp_bytes;return result;
+ boringssl::ERR_clear_error();result.clean=nl==fault::native_live&&nb==fault::native_bytes&&cl==fault::cpp_live&&cb==fault::cpp_bytes;return result;
 }
 int main(int argc,char** argv) {
  if(argc<4)return 1;auto cert=read(argv[1]),key=read(argv[2]),root=read(argv[3]);auto credential=t::ServerCredential::create(cert,key);c::cleanse(key);if(!credential)return 2;

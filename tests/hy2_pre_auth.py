@@ -1,6 +1,6 @@
 from pathlib import Path
 import argparse,hashlib,json,subprocess,sys,tempfile
-sys.path.insert(0,'/home/yk/Code/Nexus/tests')
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential,ready
 p=argparse.ArgumentParser();p.add_argument('--quick',action='store_true');p.add_argument('--report',type=Path,required=True);p.add_argument('--server',type=Path);p.add_argument('--peer',type=Path);a=p.parse_args()
 root=Path(__file__).resolve().parent;peer=a.peer.resolve() if a.peer else root/'preauth-peer';server=a.server.resolve() if a.server else root.parent/'frozen-v1/bins/hy2_application_fixture'

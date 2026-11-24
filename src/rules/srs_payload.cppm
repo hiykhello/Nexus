@@ -3,44 +3,19 @@ export module rules.srs_payload;
 import std;
 import platform.ip_address;
 import rules;
+import rules.regex;
+import rules.srs_domain;
 
 export namespace rules {
-    [[nodiscard]] auto decode_srs_payload(std::span<std::uint8_t const> bytes, bool ip_cidr_match_source=false)
-        -> std::expected<RuleSet,Error>;
+    [[nodiscard]] auto decode_srs_payload(std::span<std::uint8_t const> bytes, bool ip_cidr_match_source=false,
+        bool lenient=false) -> std::expected<RuleSet,Error>;
 }
 
 namespace rules {
     namespace {
-        struct Reader {
-            std::span<std::uint8_t const> input;
-            std::size_t offset=0, nodes=0;
-            bool ip_cidr_match_source=false;
-            auto byte() -> std::optional<std::uint8_t> {
-                if(offset==input.size())return {};
-                return input[offset++];
-            }
-            auto varint() -> std::optional<std::uint64_t> {
-                std::uint64_t value=0;
-                for(unsigned shift=0;shift<70;shift+=7) {
-                    auto b=byte();if(!b || (shift==63 && *b>1))return {};
-                    value|=std::uint64_t(*b & 127)<<shift;
-                    if (!(*b&128)) {
-                        if (shift && !*b) return {};
-                        return value;
-                    }
-                }
-                return {};
-            }
-            auto string(std::size_t limit) -> std::optional<std::string> {
-                auto length=varint();if(!length || *length>limit || *length>input.size()-offset)return {};
-                std::string value(reinterpret_cast<char const*>(input.data()+offset),static_cast<std::size_t>(*length));
-                offset+=static_cast<std::size_t>(*length);return value;
-            }
-            auto take_node() -> bool {return ++nodes<=max_rules;}
-        };
-        auto failure(std::string message) -> std::unexpected<Error> {
-            return std::unexpected(Error{ErrorCode::schema,std::move(message)});
-        }
+        using srs_detail::Reader;
+        using srs_detail::failure;
+        using srs_detail::read_domain_set;
         struct Field {
             std::string_view type;
             unsigned group;
@@ -89,7 +64,6 @@ namespace rules {
             if(!reader.take_node())return std::unexpected(Error{ErrorCode::limit,"SRS rule count exceeds limit"});
             return Rule{std::string(op),{},std::move(rules)};
         }
-#include "srs_domain.hpp"
         auto read_ip_set(Reader& reader,std::vector<Rule>& group,bool source) -> std::expected<void,Error> {
             auto version=reader.byte();
             if(!version || *version!=1)return failure("unsupported SRS IP set version");
@@ -134,7 +108,77 @@ namespace rules {
             }
             return {};
         }
-        auto read_rule(Reader& reader,unsigned depth) -> std::expected<Rule,Error> {
+        auto skip_bytes(Reader& reader, std::size_t count) -> bool {
+            if (count > reader.input.size() - reader.offset) return false;
+            reader.offset += count;
+            return true;
+        }
+        auto skip_string_list(Reader& reader) -> bool {
+            auto count = reader.varint();
+            if (!count || *count > max_rules) return false;
+            for (std::uint64_t i = 0; i < *count; ++i) {
+                auto len = reader.varint();
+                if (!len || !skip_bytes(reader, static_cast<std::size_t>(*len))) return false;
+            }
+            return true;
+        }
+        auto skip_prefix(Reader& reader) -> bool {
+            auto len = reader.varint();
+            if (!len || (*len != 4 && *len != 16)) return false;
+            return skip_bytes(reader, static_cast<std::size_t>(*len) + 1);
+        }
+        auto skip_adguard_set(Reader& reader) -> bool {
+            if (!reader.byte()) return false;
+            for (int w = 0; w < 2; ++w) {
+                auto words = reader.varint();
+                if (!words || *words > (reader.input.size() - reader.offset) / 8) return false;
+                if (!skip_bytes(reader, static_cast<std::size_t>(*words) * 8)) return false;
+            }
+            auto labels = reader.varint();
+            if (!labels || !skip_bytes(reader, static_cast<std::size_t>(*labels))) return false;
+            return true;
+        }
+        auto skip_unsupported_item(Reader& reader, std::uint8_t item) -> std::expected<void, Error> {
+            if (!reader.lenient) return failure("unsupported SRS condition " + std::to_string(item));
+            switch (item) {
+            case 13: case 14: case 15: case 23:
+                if (!skip_string_list(reader)) return failure("invalid SRS skipped string condition");
+                return {};
+            case 16:
+                if (!skip_adguard_set(reader)) return failure("invalid SRS AdGuard set");
+                return {};
+            case 18: {
+                auto n = reader.varint();
+                if (!n || !skip_bytes(reader, static_cast<std::size_t>(*n)))
+                    return failure("invalid SRS network_type condition");
+                return {};
+            }
+            case 19: case 20: return {};
+            case 21: {
+                auto map_sz = reader.varint();
+                if (!map_sz || *map_sz > 256) return failure("invalid SRS interface map");
+                for (std::uint64_t i = 0; i < *map_sz; ++i) {
+                    if (!reader.byte()) return failure("truncated SRS interface key");
+                    auto pc = reader.varint();
+                    if (!pc || *pc > max_rules) return failure("invalid SRS prefix count");
+                    for (std::uint64_t j = 0; j < *pc; ++j)
+                        if (!skip_prefix(reader)) return failure("invalid SRS interface prefix");
+                }
+                return {};
+            }
+            case 22: {
+                auto pc = reader.varint();
+                if (!pc || *pc > max_rules) return failure("invalid SRS prefix count");
+                for (std::uint64_t j = 0; j < *pc; ++j)
+                    if (!skip_prefix(reader)) return failure("invalid SRS default interface prefix");
+                return {};
+            }
+            default:
+                return failure("unsupported SRS condition " + std::to_string(item));
+            }
+        }
+
+        auto read_rule(Reader& reader,unsigned depth) -> std::expected<std::optional<Rule>,Error> {
             if(depth>max_rule_depth)return std::unexpected(Error{ErrorCode::limit,"SRS rule nesting exceeds limit"});
             auto type=reader.byte();if(!type)return failure("truncated SRS rule");
             if(*type==1) {
@@ -142,16 +186,20 @@ namespace rules {
                 if(!mode || *mode>1 || !count || !*count || *count>max_rules)return failure("invalid SRS logical rule");
                 std::vector<Rule> children;
                 for(std::uint64_t i=0;i<*count;++i) {
-                    auto child=read_rule(reader,depth+1);if(!child)return child;
-                    children.push_back(std::move(*child));
+                    auto child=read_rule(reader,depth+1);if(!child)return std::unexpected(std::move(child.error()));
+                    if(*child) children.push_back(std::move(**child));
                 }
                 auto invert=reader.byte();if(!invert || *invert>1)return failure("invalid SRS inversion");
-                auto result=grouped(reader,std::move(children),*mode ? "or" : "and");if(!result)return result;
+                if(children.empty()) {
+                    if(reader.lenient) return std::optional<Rule>{};
+                    return failure("SRS condition has no values");
+                }
+                auto result=grouped(reader,std::move(children),*mode ? "or" : "and");if(!result)return std::unexpected(std::move(result.error()));
                 if(*invert) {
                     if(!reader.take_node())return std::unexpected(Error{ErrorCode::limit,"SRS rule count exceeds limit"});
-                    return Rule{"not",{},std::vector<Rule>{std::move(*result)}};
+                    return std::optional<Rule>{Rule{"not",{},std::vector<Rule>{std::move(*result)}}};
                 }
-                return result;
+                return std::optional<Rule>{std::move(*result)};
             }
             if(*type!=0)return failure("unknown SRS rule type");
             std::array<std::vector<Rule>,9> groups;
@@ -172,8 +220,11 @@ namespace rules {
                     continue;
                 }
                 auto field=scalar_field(*item);
-                if (!field)
-                    return failure("unsupported SRS condition " + std::to_string(*item));
+                if (!field) {
+                    if (auto skipped = skip_unsupported_item(reader, *item); !skipped)
+                        return std::unexpected(std::move(skipped.error()));
+                    continue;
+                }
                 auto count=reader.varint();if(!count || !*count || *count>max_rules)return failure("invalid SRS condition count");
                 for(std::uint64_t i=0;i<*count;++i) {
                     if(!reader.take_node())return std::unexpected(Error{ErrorCode::limit,"SRS rule count exceeds limit"});
@@ -191,35 +242,46 @@ namespace rules {
                         if(colon+1==value.size())value.append("65535");
                         value[colon]='-';
                     }
-                    if (*item==17 && !portable_process_regex(value))
+                    if (*item==17 && !portable_process_regex(value)) {
+                        if (reader.lenient) continue;
                         return failure("SRS process regex must consume only ASCII characters");
-                    if(*item==3 && std::ranges::any_of(value,[](char c){return c>='A' && c<='Z';}))
-                        return failure("unsupported SRS uppercase domain keyword");
+                    }
+                    if(*item==3) {
+                        if (reader.lenient) {
+                            for (auto& c : value) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+                        } else if(std::ranges::any_of(value,[](char c){return c>='A' && c<='Z';}))
+                            return failure("unsupported SRS uppercase domain keyword");
+                    }
+                    if ((*item == 4 || *item == 17) && reader.lenient && !BoundedRegex::compile(value)) continue;
                     groups[field->group].push_back({std::string(field->type),std::move(value),{}});
                 }
             }
             auto invert=reader.byte();if(!invert || *invert>1)return failure("invalid SRS inversion");
             std::vector<Rule> parts;
             for(auto& group:groups)if(!group.empty()) {
-                auto part=grouped(reader,std::move(group),"or");if(!part)return part;
+                auto part=grouped(reader,std::move(group),"or");if(!part)return std::unexpected(std::move(part.error()));
                 parts.push_back(std::move(*part));
             }
-            auto result=grouped(reader,std::move(parts),"and");if(!result)return result;
+            if(parts.empty()) {
+                if(reader.lenient) return std::optional<Rule>{};
+                return failure("SRS condition has no values");
+            }
+            auto result=grouped(reader,std::move(parts),"and");if(!result)return std::unexpected(std::move(result.error()));
             if(*invert) {
                 if(!reader.take_node())return std::unexpected(Error{ErrorCode::limit,"SRS rule count exceeds limit"});
-                return Rule{"not",{},std::vector<Rule>{std::move(*result)}};
+                return std::optional<Rule>{Rule{"not",{},std::vector<Rule>{std::move(*result)}}};
             }
-            return result;
+            return std::optional<Rule>{std::move(*result)};
         }
     }
-    auto decode_srs_payload(std::span<std::uint8_t const> bytes, bool ip_cidr_match_source) -> std::expected<RuleSet,Error> {
-        if(bytes.size()>max_input_bytes)return std::unexpected(Error{ErrorCode::limit,"SRS payload exceeds 1 MiB"});
-        Reader reader{bytes,0,0,ip_cidr_match_source};auto count=reader.varint();
+    auto decode_srs_payload(std::span<std::uint8_t const> bytes, bool ip_cidr_match_source, bool lenient) -> std::expected<RuleSet,Error> {
+        if(bytes.size()>max_input_bytes)return std::unexpected(Error{ErrorCode::limit,"SRS payload exceeds 32 MiB"});
+        Reader reader{bytes,0,0,ip_cidr_match_source,lenient};auto count=reader.varint();
         if(!count || !*count || *count>max_rules)return failure("invalid SRS rule count");
         RuleSet result{{},2};
         for(std::uint64_t i=0;i<*count;++i) {
             auto rule=read_rule(reader,1);if(!rule)return std::unexpected(std::move(rule.error()));
-            result.rules.push_back(std::move(*rule));
+            if(*rule) result.rules.push_back(std::move(**rule));
         }
         if(reader.offset!=bytes.size())return failure("trailing SRS payload bytes");
         // Compile validates both the translated predicates and the final tree

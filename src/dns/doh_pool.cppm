@@ -3,7 +3,7 @@ module;
 
 export module dns.doh_pool;
 import std;
-export import nexus.compat;
+export import functional;
 import proxy.v4;
 import dns.corosio_query;
 import dns.doh_exchange;
@@ -11,8 +11,8 @@ import dns.input_budget;
 import tls.byte_stream;
 import tls.connector;
 import tls.encrypted_extensions;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace dns::doh_detail {
     using StreamDeadline=std::optional<Clock::time_point>;
@@ -78,7 +78,7 @@ export namespace dns::doh_detail {
     };
 
     using NewStream=std::expected<Stream,Error>;
-    using StreamFactory=nexus::move_only_function<NewStream(Io&,Endpoint) const>;
+    using StreamFactory=functional::move_only_function<NewStream(Io&,Endpoint) const>;
     auto pooled_query(StreamFactory,std::string authority,std::string path,
         std::optional<std::chrono::milliseconds>) -> dns::detail::ProtectedQuery;
 

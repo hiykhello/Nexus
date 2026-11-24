@@ -1,8 +1,8 @@
-module proxy;
+module relay;
 import std;
 import proxy.v4;
-import nexus.thirdparty.corosio;
-import nexus.thirdparty.capy;
+import corosio;
+import capy;
 import net.datagram_frame;
 
 namespace {
@@ -15,9 +15,9 @@ namespace {
     // The default process-wide frame pool retains freed blocks. Use direct
     // allocation here so each frame is injected and released by this fixture.
     struct FrameAllocator {
-        std::pmr::memory_resource* previous=nex::capy::get_current_frame_allocator();
-        FrameAllocator() { nex::capy::set_current_frame_allocator(std::pmr::new_delete_resource()); }
-        ~FrameAllocator() { nex::capy::set_current_frame_allocator(previous); }
+        std::pmr::memory_resource* previous=capy::get_current_frame_allocator();
+        FrameAllocator() { capy::set_current_frame_allocator(std::pmr::new_delete_resource()); }
+        ~FrameAllocator() { capy::set_current_frame_allocator(previous); }
     };
     // Fail every successive ordinary C++ allocation until construction can
     // finish. Each failure must unwind without retaining a partial profile,
@@ -54,7 +54,7 @@ namespace {
 
 extern "C" int nexus_test_detour_factory(char const* uuid,char const* ca,
     void (*budget)(std::ptrdiff_t) noexcept,std::size_t (*live)() noexcept) {
-    using namespace proxy;
+    using namespace relay;
     Allocation allocation{budget,live};
     std::array<std::uint8_t,16> key{};
     auto ss=[&] { return make_shadowsocks_factory("127.0.0.1",443,key,{},true,10000); };
@@ -95,7 +95,7 @@ extern "C" int nexus_test_detour_factory(char const* uuid,char const* ca,
     auto before=allocation.live();
     {
         FrameAllocator frames;
-        auto context=nex::corosio::make_io_context(false);
+        auto context=corosio::make_io_context(false);
         context.set_frame_allocator(std::pmr::new_delete_resource());
         { Session warm(context); }
         {

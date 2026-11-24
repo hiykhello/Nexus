@@ -1,6 +1,6 @@
 import std;
 import tcp.engine;
-import nexus.tests.scheduled_link;
+import test.scheduled_link;
 namespace p = ::packet;
 namespace t=tcp;
 

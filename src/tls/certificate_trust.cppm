@@ -10,6 +10,8 @@ export namespace tls {
     [[nodiscard]] auto parse_trust_bundle(std::string_view pem) -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError>;
     // Linux regular file, read through one descriptor; symlinks are allowed for system bundles.
     [[nodiscard]] auto load_trust_bundle(std::string_view path) -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError>;
+    // System root trust store (POSIX CA bundle files / SSL_CERT_FILE, Windows ROOT store).
+    [[nodiscard]] auto load_system_trust_bundle() -> std::expected<std::vector<std::vector<std::uint8_t>>, TrustBundleError>;
     // DER leaf followed by untrusted intermediates; trust anchors are explicitly supplied DER.
     // DNS names are ASCII; IP names are binary (4 or 16 bytes). The caller supplies POSIX time.
     // Uses TLS server purpose, SAN-only identity, up to 16 presented certificates and 1024 anchors;

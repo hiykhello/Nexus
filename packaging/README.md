@@ -27,7 +27,13 @@ sudo systemctl reload nexus
 - [nexus.init](openwrt/nexus.init)：基于 `USE_PROCD=1` 的服务脚本，启动与重载前调用 `nexus check --config`；采用 `respawn 3600 5 5` 自动拉起，并将易失状态与缓存隔离至 `/tmp/nexus` 以保护 SquashFS/Flash。
 - [Makefile](openwrt/Makefile)：兼容 OpenWrt 25+（`.apk`）与 OpenWrt 24 及以下（`.ipk`）的打包模板，推荐搭配 `aarch64-linux-musl` / `x86_64-linux-musl` 纯静态内核产物使用。
 
-## 3. Shell 自动补全
+## 3. macOS `launchd` 与 Windows SCM 服务管理
+
+- 内置 `nexus service install|uninstall|start|stop|restart|status` CLI：在 Linux 上生成并管理 `systemd` 单元，在 macOS 上生成并引导 `launchd` `.plist`（见 [io.nexus.proxy.plist](launchd/io.nexus.proxy.plist)），在 Windows 上通过 Win32 SCM 注册/启停服务（见 [install-service.ps1](windows/install-service.ps1)）。
+- 内置 `nexus system-proxy status|on|off [--dry-run] [--shell-env]` CLI：统一管理系统代理（Windows WinINet 注册表、macOS `networksetup`、Linux GNOME `gsettings` / KDE `kwriteconfig` 或 POSIX Shell 环境变量）。
+- 配置转换与 Provider 运维：`nexus convert-config` 与 `nexus provider inspect|sync`。
+
+## 4. Shell 自动补全
 
 - Bash：[completions/nexus.bash](completions/nexus.bash) → `/usr/share/bash-completion/completions/nexus`
 - Zsh：[completions/_nexus](completions/_nexus) → `/usr/share/zsh/site-functions/_nexus`

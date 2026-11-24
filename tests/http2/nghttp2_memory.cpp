@@ -1,8 +1,8 @@
 import std;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 import http2.headers;
 
-namespace h2 = nex::nghttp2;
+namespace h2 = ::nghttp2;
 
 struct Observed {
     std::vector<std::pair<std::string, std::string>> headers;

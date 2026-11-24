@@ -10,11 +10,11 @@ import net.datagram_driver;
 import quic.cid_registry;
 import quic.tls_client;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hysteria2_application_link;
-namespace h=hysteria2;namespace io=nex::corosio;namespace capy=nex::capy;namespace support=nexus::test::quic_tls;namespace link=nexus::test::hysteria2_application_link;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hysteria2_application_link;
+namespace h=hysteria2;namespace io = ::corosio;namespace support=test::quic_tls;namespace link=test::hysteria2_application_link;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 struct Hooks {
     h::Password const& password;unsigned mode;bool entered=false,completed=false,valid=true;

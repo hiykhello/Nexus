@@ -78,13 +78,13 @@ routing {{
 with tempfile.TemporaryDirectory(prefix="nexus-route-order-") as directory:
     root = pathlib.Path(directory)
     for name in ("a", "b"):
-        (root / f"{name}.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
+        (root / f"{name}.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
     run(root, "direct", "reject", True)
     run(root, "reject", "direct", False)
     (root / "b.kdl").write_text("invalid")
     result = subprocess.run([binary, "run", "--config", root / "config.kdl"], capture_output=True, timeout=5)
     assert result.returncode != 0 and b"invalid routing" in result.stderr, result.stderr
-    large = 'schema-version 1\nkind "predicate"\n' + 'rule type="ip-cidr" value="127.0.0.0/8"\n' * 9000
+    large = 'schema-version 2\nkind "predicate"\n' + 'rule type="ip-cidr" value="127.0.0.0/8"\n' * 9000
     (root / "a.kdl").write_text(large)
     (root / "b.kdl").write_text(large)
     result = subprocess.run([binary, "run", "--config", root / "config.kdl"], capture_output=True, timeout=10)

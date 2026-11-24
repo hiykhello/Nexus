@@ -1,0 +1,56 @@
+// Ergonomic client configuration showcasing compact KDL syntax.
+schema-version 1
+role "client"
+workers 2
+
+inbounds {
+    socks5 "socks-in" {
+        listen "127.0.0.1:1080"
+        authentication "none"
+    }
+}
+
+outbounds {
+    direct
+    block
+    vless "edge-a" {
+        server "198.51.100.10:443"
+        authentication { uuid-file "/etc/nexus/edge.uuid"; }
+        tls {
+            server-name "edge-a.example.test"
+            ca-file "/etc/nexus/ca.pem"
+            verify #true
+        }
+    }
+    selector "auto-group" {
+        members "edge-a" "direct"
+        selected "edge-a"
+    }
+}
+
+dns {
+    servers {
+        local "sys"
+        udp "cf" host="1.1.1.1" port=53
+    }
+    rules {
+        - domain-suffix "internal.example" to="sys"
+        - domain "one.one.one.one" to="sys"
+    }
+    final "cf"
+}
+
+routing {
+    rules sniff-timeout-ms=300 unknown="skip" udp=#true {
+        - sniff
+        - resolve
+        - ip-is-private #true to="direct"
+        - domain-suffix "lan" "local" to="direct"
+        - domain "blocked.example" action="reject"
+        - port 53 action="hijack-dns"
+        - to="direct" {
+            source-port 12345
+        }
+        - default "auto-group"
+    }
+}

@@ -6,7 +6,7 @@
 #include <memory_resource>
 #include <new>
 import std;
-import proxy;
+import relay;
 import dns.local_config;
 using namespace std::chrono_literals;
 namespace capy=boost::capy;
@@ -64,10 +64,10 @@ int main() {
     // the resources created by each failed start and restart.
     (void)dns::system_local_snapshots();
     for (unsigned workers : {1u,2u}) for (unsigned point : {1u,2u}) {
-        proxy::Server server;
+        relay::Server server;
         auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
         phase=point; injected=0;
-        auto port=server.start(0,proxy::Inbound::socks5,workers);
+        auto port=server.start(0,relay::Inbound::socks5,workers);
         if (!port) return 1;
         int client=connect_to(*port);
         if (client<0) return 2;
@@ -78,7 +78,7 @@ int main() {
         server.stop();
         if (count("/proc/self/fd")!=fds || count("/proc/self/task")!=threads) return 4;
         phase=0;
-        auto retry=server.start(0,proxy::Inbound::socks5,workers);
+        auto retry=server.start(0,relay::Inbound::socks5,workers);
         if (!retry) return 5;
         auto result=std::async(std::launch::async,greeting,*retry);
         deadline=std::chrono::steady_clock::now()+5s;

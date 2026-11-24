@@ -2,8 +2,8 @@ export module http2.client_channel;
 import std;
 export import http2.client;
 import http2.driver;
-import nexus.thirdparty.nghttp2;
-import nexus.thirdparty.capy;
+import nghttp2;
+import capy;
 
 export namespace http2 {
     using ChannelDeadline=std::optional<std::chrono::steady_clock::time_point>;
@@ -16,8 +16,8 @@ export namespace http2 {
             static auto protocol_failure() noexcept -> Failure{return {ClientError::http2};}
             template<class Error>static auto read_failure(Error const& error,bool timeout) noexcept -> Failure{
                 if(timeout)return {ClientError::timeout};
-                if constexpr(requires{error==nex::capy::make_error_condition(nex::capy::cond::canceled);})
-                    if(error==nex::capy::make_error_condition(nex::capy::cond::canceled))return canceled_failure();
+                if constexpr(requires{error==capy::make_error_condition(capy::cond::canceled);})
+                    if(error==capy::make_error_condition(capy::cond::canceled))return canceled_failure();
                 if constexpr(requires{error==std::errc::operation_canceled;})if(error==std::errc::operation_canceled)return canceled_failure();
                 return {ClientError::transport};
             }
@@ -58,7 +58,7 @@ export namespace http2 {
         }
         auto provide(StreamTicket ticket,BodyView body){auto result=driver_.protocol().provide(ticket,body);if(!result||*result)driver_.wake();return result;}
         auto consume(StreamTicket ticket,std::size_t count){auto result=driver_.protocol().consume(ticket,count);if(count||!result)driver_.wake();return result;}
-        auto reset(StreamTicket ticket,std::uint32_t code=nex::nghttp2::NGHTTP2_CANCEL){return changed(driver_.protocol().reset(ticket,code));}
+        auto reset(StreamTicket ticket,std::uint32_t code=nghttp2::NGHTTP2_CANCEL){return changed(driver_.protocol().reset(ticket,code));}
         auto release(StreamTicket ticket){return changed(driver_.protocol().release(ticket));}
         auto shutdown(){return changed(driver_.protocol().shutdown());}
         auto tx_consumed(StreamTicket ticket){return driver_.protocol().tx_consumed(ticket);}

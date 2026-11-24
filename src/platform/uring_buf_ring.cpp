@@ -116,6 +116,28 @@ namespace platform {
         return {};
     }
 
+    auto UringMultishotLoop::arm_read_multishot(int fd, std::uint64_t tag) noexcept
+        -> std::expected<void, int> {
+        if (!impl_ || fd < 0 || tag == kCancelTag) return std::unexpected(EINVAL);
+        struct io_uring_sqe* sqe = io_uring_get_sqe(&impl_->ring);
+        if (!sqe) {
+            if (int rc = io_uring_submit(&impl_->ring); rc < 0) return std::unexpected(-rc);
+            sqe = io_uring_get_sqe(&impl_->ring);
+            if (!sqe) return std::unexpected(EAGAIN);
+        }
+        io_uring_prep_read_multishot(sqe, fd, 0, 0, impl_->bgid);
+        sqe->buf_group = impl_->bgid;
+        io_uring_sqe_set_data64(sqe, tag);
+        ++impl_->stats.rearms;
+        return {};
+    }
+
+    auto UringMultishotLoop::submit() noexcept -> std::expected<void, int> {
+        if (!impl_ || !impl_->ring_init) return std::unexpected(EINVAL);
+        if (int rc = io_uring_submit(&impl_->ring); rc < 0) return std::unexpected(-rc);
+        return {};
+    }
+
     auto UringMultishotLoop::cancel_fd(int fd) noexcept -> std::expected<void, int> {
         if (!impl_ || fd < 0) return std::unexpected(EINVAL);
         struct io_uring_sqe* sqe = io_uring_get_sqe(&impl_->ring);
@@ -203,6 +225,9 @@ namespace platform {
         return true;
     }
 
+    auto UringMultishotLoop::ring_fd() const noexcept -> int {
+        return (impl_ && impl_->ring_init) ? impl_->ring.ring_fd : -1;
+    }
     auto UringMultishotLoop::ring_entries() const noexcept -> std::uint32_t {
         return impl_ ? impl_->entries : 0u;
     }

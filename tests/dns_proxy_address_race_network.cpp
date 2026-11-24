@@ -1,6 +1,6 @@
 import std;
-import proxy;
-import proxy.dns_state;
+import relay;
+import relay.dns_state;
 import dns.address_race_program;
 import dns.response_race_walk;
 import dns.response_program;
@@ -9,10 +9,9 @@ import dns.response_cache;
 import dns.local_response;
 import dns.corosio_resolver;
 import dns.input_budget;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 auto main(int argc,char** argv) -> int {
     if(argc!=5)return 2;
@@ -33,11 +32,11 @@ auto main(int argc,char** argv) -> int {
 #endif
     std::array<std::size_t,1> capacities{1};dns_hp_experiment::GroupSnapshot group(capacities,dns_hp_experiment::GroupSnapshot::SharedCapacity{32},1);
     dns_hp_experiment::Coordinator coordinator(16,64);dns_hp_experiment::ViewRegistry views(4,65536,32);dns::ResponseCache cache(32);
-    proxy::DnsRouting routing;proxy::DnsServer a;a.address[0]=127;a.address[3]=1;a.port=port(argv[1]);auto b=a;b.port=port(argv[2]);routing.servers={a,b};
+    relay::DnsRouting routing;relay::DnsServer a;a.address[0]=127;a.address[3]=1;a.port=port(argv[1]);auto b=a;b.port=port(argv[2]);routing.servers={a,b};
     auto pa=views.register_profile(routing,0),pb=views.register_profile(routing,1);if(!pa || !pb)return 3;
-    views.seal();std::array profiles{*pa,*pb};proxy::DnsState state(std::move(routing),group,0,0);
+    views.seal();std::array profiles{*pa,*pb};relay::DnsState state(std::move(routing),group,0,0);
     state.views.emplace(views,profiles);state.coordinator.emplace(context,state.cache,coordinator);state.response_coordinator.emplace(context,cache,coordinator);
-    proxy::Session session(context);session.dns=&state;
+    relay::Session session(context);session.dns=&state;
     ::policy::DnsRule evaluate;evaluate.match_all=true;evaluate.action=::policy::DnsAction::evaluate;evaluate.evaluate_tag="slow";
     ::policy::DnsRule match;match.match_all=true;match.match_response=true;match.match_response_tag="slow";match.response=::policy::ResponseCondition{.rcode=0};match.action=::policy::DnsAction::respond;
     auto fast=evaluate;fast.server=1;fast.evaluate_tag="fast";auto fast_match=match;fast_match.match_response_tag="fast";
@@ -50,29 +49,29 @@ auto main(int argc,char** argv) -> int {
     else if(scenario!="timeout" && scenario!="budget" && scenario!="serial-budget" && scenario!="race-result-budget")return 2;
     if(scenario=="ttl")rules[2].timeout_ms=200;
     for(auto& rule:rules)if(!::policy::normalize_dns_rule(rule,2))return 4;
-    state.routing.rules=rules;state.has_response_program=true;state.routing.strategy=scenario.starts_with("dual") ? proxy::DnsStrategy::prefer_ipv4 : proxy::DnsStrategy::ipv4_only;
+    state.routing.rules=rules;state.has_response_program=true;state.routing.strategy=scenario.starts_with("dual") ? relay::DnsStrategy::prefer_ipv4 : relay::DnsStrategy::ipv4_only;
     bool done=false,ok=false,held_at_cancel=false,stop_done=scenario!="cancel" && scenario!="serial-cancel";auto start=Clock::now();
     auto work=[&]() -> capy::task<> {
         if(scenario=="race-result-budget") {
-            auto result=co_await proxy::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},modes);
+            auto result=co_await relay::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},modes);
             if(result || result.error()!=dns::detail::ResolveError::limit){done=true;co_return;}
             exhausted.reset();if(race_result_budget.used()){done=true;co_return;}
-            result=co_await proxy::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},modes);
+            result=co_await relay::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},modes);
             ok=result && result->size()==1 && race_result_budget.used()==0;done=true;co_return;
         }
         if(scenario=="serial-budget") {
-            auto result=co_await proxy::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},{});
+            auto result=co_await relay::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},{});
             if(result || result.error()!=dns::detail::ResolveError::limit){done=true;co_return;}
             exhausted.reset();
             if(response_budget.used()){done=true;co_return;}
-            result=co_await proxy::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},{});
+            result=co_await relay::resolve_destination_race(session,context,"alias.test",443,Clock::now()+std::chrono::seconds(3),{},{});
             ok=result && result->size()==1 && response_budget.used()==0;done=true;co_return;
         }
         if(scenario=="serial-cancel") {
-            auto result=co_await proxy::resolve_destination_race(session,context,"alias.test",443,start+std::chrono::seconds(3),{},{});
+            auto result=co_await relay::resolve_destination_race(session,context,"alias.test",443,start+std::chrono::seconds(3),{},{});
             ok=!result && result.error()==dns::detail::ResolveError::canceled && response_budget.used()==0;done=true;co_return;
         }
-        auto result=co_await proxy::resolve_destination_race(session,context,"alias.test",443,
+        auto result=co_await relay::resolve_destination_race(session,context,"alias.test",443,
             start+std::chrono::milliseconds(scenario=="timeout" ? 200 : 3000),{},modes);
         if(scenario=="cancel")ok=!result && result.error()==dns::detail::ResolveError::canceled;
         else if(scenario=="budget")ok=!result && result.error()==dns::detail::ResolveError::limit;

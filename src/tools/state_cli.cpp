@@ -86,8 +86,7 @@ auto nexus_state(int argc,char** argv) -> int {
     if (command=="inspect") {inventory(*config);return 0;}
     if (command=="clear-cache") return clear(*config,dns || !rules,rules || !dns);
 
-    auto legacy=config->dns && config->dns->fakeip && !config->dns->fakeip->unified;
-    if (target=="fakeip" && (!config->dns || !config->dns->fakeip || legacy)) {
+    if (target=="fakeip" && (!config->dns || !config->dns->fakeip || !config->dns->fakeip->unified || !config->state)) {
         std::cerr << "state reset fakeip requires a configured unified FakeIP store\n";
         return 1;
     }

@@ -55,6 +55,38 @@ namespace cli {
             return PipeHandle(raw);
         }
 
+        auto read_pipe_overlapped(HANDLE pipe, void* dst, DWORD cap, DWORD& got, DWORD timeout_ms) noexcept -> bool {
+            got = 0;
+            PipeHandle ev(::CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            if (!ev) return false;
+            OVERLAPPED ol{};
+            ol.hEvent = ev.handle;
+            if (::ReadFile(pipe, dst, cap, &got, &ol)) return true;
+            if (::GetLastError() != ERROR_IO_PENDING) return false;
+            if (::WaitForSingleObject(ev.handle, timeout_ms) != WAIT_OBJECT_0) {
+                (void)::CancelIoEx(pipe, &ol);
+                (void)::GetOverlappedResult(pipe, &ol, &got, TRUE);
+                return false;
+            }
+            return ::GetOverlappedResult(pipe, &ol, &got, FALSE) != 0;
+        }
+
+        auto write_pipe_overlapped(HANDLE pipe, void const* src, DWORD len, DWORD& wrote, DWORD timeout_ms) noexcept -> bool {
+            wrote = 0;
+            PipeHandle ev(::CreateEventW(nullptr, TRUE, FALSE, nullptr));
+            if (!ev) return false;
+            OVERLAPPED ol{};
+            ol.hEvent = ev.handle;
+            if (::WriteFile(pipe, src, len, &wrote, &ol)) return true;
+            if (::GetLastError() != ERROR_IO_PENDING) return false;
+            if (::WaitForSingleObject(ev.handle, timeout_ms) != WAIT_OBJECT_0) {
+                (void)::CancelIoEx(pipe, &ol);
+                (void)::GetOverlappedResult(pipe, &ol, &wrote, TRUE);
+                return false;
+            }
+            return ::GetOverlappedResult(pipe, &ol, &wrote, FALSE) != 0;
+        }
+
         auto dispatch_wire(std::string_view req, ControlHandler handler) -> std::string {
             auto format = [](std::string_view tag, std::string_view msg) {
                 std::string out("NEXUS/1 ");
@@ -156,12 +188,12 @@ namespace cli {
             }
             std::array<char, kMaxRequest + 1> buf{};
             DWORD got = 0;
-            BOOL read_ok = ::ReadFile(impl_->listener.handle, buf.data(), static_cast<DWORD>(buf.size()), &got, nullptr);
+            bool read_ok = read_pipe_overlapped(impl_->listener.handle, buf.data(), static_cast<DWORD>(buf.size()), got, 2000);
             if (read_ok && got > 0 && got <= kMaxRequest) {
                 ++impl_->diag.authorized;
                 auto reply = dispatch_wire(std::string_view(buf.data(), got), handler);
                 DWORD wrote = 0;
-                if (!::WriteFile(impl_->listener.handle, reply.data(), static_cast<DWORD>(reply.size()), &wrote, nullptr) ||
+                if (!write_pipe_overlapped(impl_->listener.handle, reply.data(), static_cast<DWORD>(reply.size()), wrote, 2000) ||
                     wrote != reply.size())
                     ++impl_->diag.reply_failed;
                 (void)::FlushFileBuffers(impl_->listener.handle);
@@ -182,17 +214,28 @@ namespace cli {
     }
 
     auto LocalControl::stop() noexcept -> void {
-        if (impl_ && impl_->listener) (void)::CancelIoEx(impl_->listener.handle, nullptr);
+        if (impl_ && impl_->listener) {
+            (void)::CancelIoEx(impl_->listener.handle, nullptr);
+            if (impl_->pending_connect) {
+                DWORD dummy = 0;
+                (void)::GetOverlappedResult(impl_->listener.handle, &impl_->ol, &dummy, TRUE);
+                impl_->pending_connect = false;
+            }
+        }
         impl_.reset();
     }
 
     auto LocalControl::active() const noexcept -> bool { return impl_ && impl_->listener; }
+    auto LocalControl::listen_native_fd() const noexcept -> int { return -1; }
+    auto LocalControl::next_poll_delay() const noexcept -> std::optional<std::chrono::milliseconds> {
+        return std::nullopt;
+    }
     auto LocalControl::instance() const noexcept -> std::string_view { return impl_ ? std::string_view(impl_->pipe_utf8) : std::string_view{}; }
     auto LocalControl::diagnostics() const noexcept -> ControlDiagnostics { return impl_ ? impl_->diag : ControlDiagnostics{}; }
 
     auto run_control(int argc, char** argv) -> int {
         if (argc < 3 || (argc == 2 && std::string_view(argv[1]) == "--help")) {
-            std::cerr << "usage: nexus control <pipe> status|connections|connection show <id>|close|close-any|close-all|select|probe|group-health|user-usage|reload|clear-cache|network-change|operation|events|diagnostics|log-level|logs [arguments]\n";
+            std::cerr << "usage: nexus control <pipe> status|mode|connections|connection show <id>|close|close-any|close-all|select|probe|group-health|user-usage|reload|clear-cache|network-change|operation|events|diagnostics|log-level|logs [arguments]\n";
             return argc == 2 && std::string_view(argv[1]) == "--help" ? 0 : 2;
         }
         auto pipe = platform::normalize_windows_pipe_name(argv[1]);

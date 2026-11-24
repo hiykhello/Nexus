@@ -4,15 +4,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.corosio_server_handshake;
 import tls.server_handshake_io;
 import tls.application_io;
 import tls.client_handshake_io;
 import tls.corosio_client;
 import tls.handshake;
-namespace t=tls; namespace io=nex::corosio; namespace capy=nex::capy;
+namespace t=tls; namespace io = ::corosio;
 using namespace std::chrono_literals;
 static void* watched_unread=nullptr;
 static ::memory::Budget* watched_budget=nullptr;

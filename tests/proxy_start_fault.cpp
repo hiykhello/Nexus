@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 import dns.local_config;
 
 auto count(std::string_view path) -> std::size_t {
@@ -34,16 +34,16 @@ auto main() -> int {
     if (::bind(fd,reinterpret_cast<sockaddr*>(&address),size)!=0 ||
         ::getsockname(fd,reinterpret_cast<sockaddr*>(&address),&size)!=0) return 2;
     ::close(fd);
-    proxy::Server server;
+    relay::Server server;
     auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
     auto port=ntohs(address.sin_port);
-    auto failed=server.start(port,proxy::Inbound::socks5,2);
+    auto failed=server.start(port,relay::Inbound::socks5,2);
     if (failed || server.healthy() || count("/proc/self/fd")!=fds || count("/proc/self/task")!=threads) return 3;
     // The failure must occur after one worker was started, so this actually
     // exercises rollback of a partially started server.
     if (attempts && (attempts()!=2 || started()!=1 || rejected()!=1)) return 14;
     if (mode && std::string_view(mode)=="reuse" && failed.error()!=std::errc::permission_denied) return 12;
-    auto retry=server.start(port,proxy::Inbound::socks5,2);
+    auto retry=server.start(port,relay::Inbound::socks5,2);
     if (!retry || *retry!=port || !server.healthy()) return 4;
     fd=::socket(AF_INET,SOCK_STREAM,0);
     if (fd<0) return 6;

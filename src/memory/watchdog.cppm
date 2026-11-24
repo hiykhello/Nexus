@@ -1,6 +1,6 @@
 export module memory.watchdog;
 import std;
-import nexus.compat;
+import functional;
 
 export namespace memory {
     enum class PressureLevel : std::uint8_t { normal, soft, hard, emergency };
@@ -39,9 +39,9 @@ export namespace memory {
     public:
         explicit MemoryWatchdog(WatchdogPolicy policy = WatchdogPolicy::ios_ne_50mib()) noexcept : policy_(policy) {}
         auto evaluate(std::uint64_t rss_bytes, std::uint64_t now_ms,
-                      nexus::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel;
+                      functional::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel;
         auto sample_and_evaluate(std::uint64_t now_ms,
-                                 nexus::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel;
+                                 functional::function_ref<void(PressureLevel)> on_pressure) -> PressureLevel;
         [[nodiscard]] auto should_admit_new_session() const noexcept -> bool {
             return stats_.level != PressureLevel::emergency;
         }

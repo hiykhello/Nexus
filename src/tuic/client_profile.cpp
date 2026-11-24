@@ -10,7 +10,7 @@ import tls.profiles;
 import tls.fingerprint;
 import tls.certificate_trust;
 import platform.ip_address;
-import nexus.thirdparty.corosio;
+import corosio;
 
 namespace tuic {
     ClientProfile::ClientProfile(tls::ClientProfile tls,std::array<std::uint8_t,16> uuid,std::string password,
@@ -59,7 +59,7 @@ namespace tuic {
             std::move(*tls),*uuid,std::move(*password),options,fingerprint));
     }
 
-    auto ClientProfile::tls_client(nex::corosio::endpoint const& peer,quic::EchConfig const* ech) const
+    auto ClientProfile::tls_client(corosio::endpoint const& peer,quic::EchConfig const* ech) const
         -> std::expected<std::unique_ptr<Tls>,std::string> {
         constexpr std::array<std::string_view,1> alpn{"h3"};
         auto ip=platform::parse_ip_address(tls_.server_name);

@@ -2,16 +2,18 @@ module config;
 import std;
 import http.header;
 import config.kdl_common;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
     auto dns_ipv6(std::string_view) -> std::optional<std::array<std::uint8_t,16>>;
     auto dns_hostname(std::string_view) -> bool;
-    auto parse_tcp_dial_option(nex::glaze::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
-    auto parse_password_tls_outbound(nex::glaze::KdlNode const&,std::string_view,std::string_view) -> std::expected<PasswordTlsOutbound,std::string>;
+    auto parse_tcp_dial_option(glaze::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
+    auto parse_password_tls_outbound(glaze::KdlNode const&,std::string_view,std::string_view) -> std::expected<PasswordTlsOutbound,std::string>;
     auto validate_password_tls_outbound(PasswordTlsOutbound&,Config const&,std::string_view) -> std::expected<void,std::string>;
     auto validate_naive_outbounds(Config&,std::string_view,std::optional<std::string> const&,bool (*)(void const*,std::string_view),void const*) -> std::expected<void,std::string>;
+    auto validate_vpn_outbounds(Config&,std::string_view,std::optional<std::string> const&,bool (*)(void const*,std::string_view),void const*) -> std::expected<void,std::string>;
+    auto validate_proxy_providers(Config&) -> std::expected<void,std::string>;
 
     auto parse_quic_ech_field(kdl::Node const& field, QuicEchOptions& options) -> bool {
         if (options.dns || !options.config_file.empty()) return false;
@@ -419,9 +421,12 @@ namespace config {
             return any(config.vless_outbounds) || any(config.shadowsocks_outbounds) ||
                    any(config.trojan_outbounds) || any(config.anytls_outbounds) ||
                    any(config.hysteria2_outbounds) || any(config.snell_outbounds) ||
+                   any(config.tcp_proxy_outbounds) ||
                    any(config.shadowtls_outbounds) || any(config.tuic_outbounds) ||
                    any(config.masque_outbounds) || any(config.wireguard_outbounds) ||
-                   any(config.ssh_outbounds) || any(config.naive_outbounds) || any(config.tailscale_outbounds);
+                   any(config.ssh_outbounds) || any(config.naive_outbounds) ||
+                   any(config.openvpn_outbounds) || any(config.openconnect_outbounds) ||
+                   any(config.tailscale_outbounds);
         };
         for (std::size_t index=0;index<config.tcp_proxy_outbounds.size();++index) {
             auto& entry=config.tcp_proxy_outbounds[index];
@@ -478,6 +483,8 @@ namespace config {
             if (!check_ref(ref_ctx, name)) return error("SSH outbound must be referenced by routing or a detour");
             if (auto ok = check_boot(config.ssh_outbounds[i].config, "SSH"); !ok) return ok;
         }
-        return validate_naive_outbounds(config, direct, block, check_ref, ref_ctx);
+        if (auto ok = validate_naive_outbounds(config, direct, block, check_ref, ref_ctx); !ok) return ok;
+        if (auto ok = validate_proxy_providers(config); !ok) return ok;
+        return validate_vpn_outbounds(config, direct, block, check_ref, ref_ctx);
     }
 }

@@ -12,8 +12,7 @@ import shadowsocks.udp_dispatch;
 import shadowsocks.udp_packet;
 import ss_udp.inbounds;
 namespace s=shadowsocks;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Fixture {
     io::io_context context{io::make_io_context(io::has_uring)};

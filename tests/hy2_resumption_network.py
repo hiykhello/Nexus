@@ -56,12 +56,13 @@ def verify(binary, peer_bin, require_resumption):
             clients = (("ipv4", "127.0.0.1"), ("ipv6", "::1"), ("ipv4", "127.0.0.1"),
                        ("other-port", "127.0.0.1"))
             outbounds = []
-            predicates = []
+            rule_sets = []
+            route_rules = []
             for index, (group, host) in enumerate(clients):
                 (root / f"rule-{index}.kdl").write_text(
                     f'schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.{index + 1}/32"\n')
-                predicates.append(f'rule-set "rule{index}" path="rule-{index}.kdl" format="kdl"\n'
-                                  f'rule kind="rule-set" value="rule{index}" outbound="edge{index}"')
+                rule_sets.append(f'rule-set "rule{index}" path="rule-{index}.kdl" format="kdl"')
+                route_rules.append(f'- kind="rule-set" value="rule{index}" outbound="edge{index}"')
                 outbounds.append(f'''outbound "edge{index}" type="hysteria2" {{
     server host="{host}" port={ports[group]}
     authentication {{ password-file "{password}"; }}
@@ -75,7 +76,10 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentic
 outbound "direct" type="direct"
 {"".join(outbounds)}
 routing {{
-    {chr(10).join(predicates)}
+    {chr(10).join(rule_sets)}
+    rules {{
+        {chr(10).join(route_rules)}
+    }}
     default-outbound "edge0"
 }}
 ''')

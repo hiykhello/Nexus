@@ -1,4 +1,4 @@
-module nexus.test.hy2_resource_link;
+module test.hy2_resource_link;
 import std;
 import crypto;
 import hysteria2.stream_state;
@@ -6,15 +6,15 @@ import hysteria2.wire;
 import net.datagram_driver;
 import quic.tls_client;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hysteria2_application_link;
-import nexus.test.hy2_port_link;
-import nexus.test.hy2_native_memory;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hysteria2_application_link;
+import test.hy2_port_link;
+import test.hy2_native_memory;
 
-namespace nexus::test::hy2_resource {
-namespace io=nex::corosio;namespace capy=nex::capy;namespace h=hysteria2;namespace q=quic;namespace support=nexus::test::quic_tls;namespace clientlink=nexus::test::hysteria2_application_link;namespace portlink=nexus::test::hy2_port;namespace mem=nexus::test::hy2_native_memory;
+namespace test::hy2_resource {
+namespace io = ::corosio;namespace capy = ::capy;namespace h=hysteria2;namespace q=quic;namespace support=test::quic_tls;namespace clientlink=test::hysteria2_application_link;namespace portlink=test::hy2_port;namespace mem=test::hy2_native_memory;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 template<class Driver,class Predicate>auto wait(Driver& driver,Predicate predicate) -> capy::task<bool>{
     auto until=Clock::now()+1s;while(!predicate()){driver.changed().clear();auto [error]=co_await io::timeout(driver.changed().wait(),until);if(error)co_return false;}co_return true;

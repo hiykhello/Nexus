@@ -378,7 +378,7 @@ outbound "direct" type="direct"
 outbound "block" type="block"
 routing {
     rule-set "local" path="rel-rules.kdl" format="kdl"
-    rule kind="rule-set" value="local" outbound="block"
+    rules { - kind="rule-set" value="local" outbound="block"; }
     default-outbound "direct"
 }
 ''')

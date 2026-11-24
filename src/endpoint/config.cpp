@@ -1,7 +1,7 @@
 module endpoint.config;
 import std;
 import config.kdl_common;
-import nexus.thirdparty.glaze;
+import glaze;
 import dns.local_config;
 import net.udp_socket;
 import packet.tun_network_types;
@@ -13,7 +13,7 @@ import endpoint.host_dns_types;
 namespace endpoint {
     namespace {
         namespace k=config::kdl;
-        using Node=nex::glaze::KdlNode;
+        using Node=glaze::KdlNode;
         auto server(Node const& node,bool listen) -> std::expected<Server,std::string> {
             auto host=k::text_property(node,"host"); auto field=k::property(node,"port"); auto port=field ? k::integer(*field) : std::nullopt;
             if (node.tag || !node.arguments.empty() || !node.children.empty() || node.properties.size()!=2 || !host || !port || *port>65535 || (!listen && !*port))

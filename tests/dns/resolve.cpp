@@ -8,7 +8,7 @@ import dns.message;
 import dns.corosio_query;
 import dns.corosio_resolver;
 namespace capy=boost::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Fixture {
 #if BOOST_COROSIO_HAVE_LIBURING

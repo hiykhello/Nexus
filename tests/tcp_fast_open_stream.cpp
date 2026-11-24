@@ -1,8 +1,8 @@
 import std;
 import net.tcp_fast_open_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct AbandonState {bool reader=false,writer=false,reader_destroyed=false,writer_destroyed=false,parent_destroyed=false,children_first=false,returned=false;};
 auto abandon_reader(net::FastOpenStream& stream,AbandonState& state) -> capy::task<capy::results<>> {

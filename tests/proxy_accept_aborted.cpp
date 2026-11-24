@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 import dns.local_config;
 using namespace std::chrono_literals;
 
@@ -49,8 +49,8 @@ auto main(int argc,char** argv) -> int {
     unsigned workers=argv[1][0]-'0';
     auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
     {
-    proxy::Server server;
-    auto port=server.start(0,proxy::Inbound::socks5,workers);
+    relay::Server server;
+    auto port=server.start(0,relay::Inbound::socks5,workers);
     if (!port) return 2;
     auto start=std::chrono::steady_clock::now();
     auto peer=std::async(std::launch::async,client,*port);

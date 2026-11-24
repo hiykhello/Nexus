@@ -4,13 +4,13 @@ import cli.rule_fetch_response;
 import http.header;
 import masque.client_session;
 import net.packet_stream_socket;
-import proxy;
+import relay;
 import quic.ech_config;
 import hysteria2.transport_options;
 import platform.socket_options;
 import tls.profiles;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace cli::rule_fetch {
     namespace {
@@ -33,12 +33,12 @@ namespace cli::rule_fetch {
                      std::move(tickets))),
                  client(dial.context,profile) {}
         };
-        using Direct=Carrier<nex::corosio::udp_socket>;
-        using Routed=Carrier<net::PacketStreamSocket<proxy::PacketTunnel>>;
+        using Direct=Carrier<corosio::udp_socket>;
+        using Routed=Carrier<net::PacketStreamSocket<relay::PacketTunnel>>;
 
         class Connection {
             std::variant<std::unique_ptr<Direct>,std::unique_ptr<Routed>> carrier_;
-            nex::capy::async_event idle_changed_;
+            capy::async_event idle_changed_;
             Clock::time_point idle_since_=Clock::now();
             std::uint16_t port_;
             std::size_t active_=0;
@@ -67,14 +67,14 @@ namespace cli::rule_fetch {
                 ~Registration(){connection.leave();}
             };
 
-            auto drive() -> nex::capy::task<nex::capy::results<>> {
+            auto drive() -> capy::task<capy::results<>> {
                 struct Stop {
                     Connection& owner;
                     ~Stop(){owner.stop();}
                 } stop{*this};
                 co_return co_await visit([](auto& client) {return client.run();});
             }
-            auto reap_idle() -> nex::capy::task<nex::capy::results<>> {
+            auto reap_idle() -> capy::task<capy::results<>> {
                 while (!stopped_) {
                     auto deadline=idle_since_+std::chrono::seconds(15);
                     if (!active_ && Clock::now()>=deadline) {
@@ -84,13 +84,13 @@ namespace cli::rule_fetch {
                     idle_changed_.clear();
                     auto wait=idle_changed_.wait();
                     auto [error]=active_ ? co_await std::move(wait) :
-                        co_await nex::corosio::timeout(std::move(wait),deadline);
-                    if (error && !nex::capy::is_timeout(error)) stop();
+                        co_await corosio::timeout(std::move(wait),deadline);
+                    if (error && !capy::is_timeout(error)) stop();
                 }
-                co_return nex::capy::results<>{};
+                co_return capy::results<>{};
             }
-            auto run() -> nex::capy::task<> {
-                (void)co_await nex::capy::when_all(drive(),reap_idle());
+            auto run() -> capy::task<> {
+                (void)co_await capy::when_all(drive(),reap_idle());
             }
 
         public:
@@ -103,13 +103,13 @@ namespace cli::rule_fetch {
                 if (!std::exchange(finished_,true)) visit([](auto& client) noexcept {client.finish();});
             }
 
-            auto launch(nex::corosio::io_context& io,std::shared_ptr<Connection> owner) -> void {
+            auto launch(corosio::io_context& io,std::shared_ptr<Connection> owner) -> void {
                 auto done=[owner] noexcept {
                     owner->driver_done_=true;
                     owner->stop();
                     owner->finish_if_ready();
                 };
-                nex::capy::run_async(io.get_executor(),done,[done](std::exception_ptr) noexcept {done();})(run());
+                capy::run_async(io.get_executor(),done,[done](std::exception_ptr) noexcept {done();})(run());
             }
             auto stop() noexcept -> void {
                 if (!std::exchange(stopped_,true)) {
@@ -125,7 +125,7 @@ namespace cli::rule_fetch {
                 return port==port_ && !stopped_ && active_<4 &&
                     visit([](auto const& client){return client.can_submit_http();});
             }
-            auto ready(Clock::time_point deadline) -> nex::capy::task<bool> {
+            auto ready(Clock::time_point deadline) -> capy::task<bool> {
                 if (stopped_) co_return false;
                 Registration use(*this);
                 co_return co_await visit([deadline](auto& client){return client.wait_http_ready(deadline);});
@@ -133,7 +133,7 @@ namespace cli::rule_fetch {
             [[nodiscard]] auto retryable(Clock::time_point deadline) const noexcept -> bool {
                 return visit([deadline](auto const& client){return client.retryable_http_handshake(deadline);});
             }
-            auto request(Transfer transfer) -> nex::capy::task<TransferResult> {
+            auto request(Transfer transfer) -> capy::task<TransferResult> {
                 if (stopped_) co_return std::unexpected("HTTP/3 connection closed");
                 Registration use(*this);
                 auto observe=transfer.headers ? std::optional<masque::HttpHeaderSink>{*transfer.headers} : std::nullopt;
@@ -141,7 +141,7 @@ namespace cli::rule_fetch {
                     return client.get_response(transfer.target,transfer.maximum,transfer.deadline,transfer.extra_fields,
                         transfer.policy.conditional,transfer.policy.redirect,masque::HttpBodySink{transfer.sink},observe);
                 });
-                auto stop=co_await nex::capy::this_coro::stop_token;
+                auto stop=co_await capy::this_coro::stop_token;
                 if (!response || stop.stop_requested() || Clock::now()>=transfer.deadline)
                     co_return std::unexpected("HTTP/3 response is incomplete, unsupported or exceeds its limit");
                 co_return response->status;
@@ -178,7 +178,7 @@ namespace cli::rule_fetch {
         }
 
         auto exchange(std::shared_ptr<Connection> owner,Http3Dial dial,Clock::time_point connect_by,Transfer transfer)
-            -> nex::capy::task<Attempt> {
+            -> capy::task<Attempt> {
             owner->launch(dial.context,owner);
             struct Guard {
                 Connection& connection;
@@ -186,7 +186,7 @@ namespace cli::rule_fetch {
                 ~Guard(){if (!retained) connection.stop();}
             } guard{*owner};
             if (!co_await owner->ready(connect_by)) {
-                auto stop=co_await nex::capy::this_coro::stop_token;
+                auto stop=co_await capy::this_coro::stop_token;
                 co_return Attempt{std::unexpected("HTTP/3 handshake failed"),
                     !stop.stop_requested() && owner->retryable(connect_by)};
             }
@@ -200,19 +200,19 @@ namespace cli::rule_fetch {
         }
 
         auto through_proxy(hysteria2::TransportOptions options,Http3Dial dial,std::unique_ptr<Http3Tunnel> route,
-            nex::corosio::endpoint peer,quic::EchConfig const* ech,Clock::time_point connect_by,Transfer transfer)
-            -> nex::capy::task<Attempt> {
+            corosio::endpoint peer,quic::EchConfig const* ech,Clock::time_point connect_by,Transfer transfer)
+            -> capy::task<Attempt> {
             auto& tunnel=*route->tunnel;
-            auto stop=co_await nex::capy::this_coro::stop_token;
+            auto stop=co_await capy::this_coro::stop_token;
             auto until=tunnel.connection_deadline(connect_by);
             auto carrier=std::make_unique<Routed>(dial,transfer.authority,options,tickets,std::move(route));
             {
                 std::stop_callback cancellation(stop,[&tunnel] noexcept {tunnel.cancel();});
                 if (stop.stop_requested()) co_return Attempt{std::unexpected("HTTP/3 outbound canceled")};
                 auto connected=co_await tunnel.connect_until(net::packet_peer_address(peer),until);
-                if (connected!=proxy::PacketConnectResult::connected)
+                if (connected!=relay::PacketConnectResult::connected)
                     co_return Attempt{std::unexpected("HTTP/3 outbound packet connection failed"),
-                        connected==proxy::PacketConnectResult::retryable || connected==proxy::PacketConnectResult::timeout};
+                        connected==relay::PacketConnectResult::retryable || connected==relay::PacketConnectResult::timeout};
                 if (!carrier->client.socket().attach(tunnel,tunnel.transport(),peer))
                     co_return Attempt{std::unexpected("HTTP/3 outbound packet peer is invalid")};
                 if (!co_await carrier->client.socket().prepare(until))
@@ -225,7 +225,7 @@ namespace cli::rule_fetch {
         }
 
         auto request(Http3Resolver resolver,Http3Dial dial,Http3TunnelFactory make_tunnel,Transfer transfer)
-            -> nex::capy::task<TransferResult> {
+            -> capy::task<TransferResult> {
             if (auto owner=find(dial.port)) co_return co_await owner->request(transfer);
             auto initial_tunnel=make_tunnel ? make_tunnel() : nullptr;
             if (make_tunnel && !initial_tunnel)
@@ -240,7 +240,7 @@ namespace cli::rule_fetch {
             }
             auto endpoints=co_await resolver(dial.connect_deadline);
             if (!endpoints || Clock::now()>=dial.connect_deadline) co_return std::unexpected("HTTP/3 resolution failed");
-            auto stop=co_await nex::capy::this_coro::stop_token;
+            auto stop=co_await capy::this_coro::stop_token;
             TransferResult last=std::unexpected("HTTP/3 connection could not start");
             for (std::size_t index=0;index<endpoints->size();++index) {
                 using namespace std::chrono_literals;
@@ -301,7 +301,7 @@ namespace cli::rule_fetch {
     Http3Pool::~Http3Pool(){stop();}
     auto Http3Pool::stop() noexcept -> void {if (impl_) impl_->stop();}
     auto Http3Pool::request(Http3Resolver resolver,Http3Dial dial,Http3TunnelFactory tunnel,Transfer transfer)
-        -> nex::capy::task<TransferResult> {
+        -> capy::task<TransferResult> {
         if (!impl_) impl_=std::make_unique<Impl>();
         co_return co_await impl_->request(std::move(resolver),dial,std::move(tunnel),transfer);
     }

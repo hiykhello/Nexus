@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "tls-cert-compression-system"
 version = "1.0.0"
 standard = "c++26"

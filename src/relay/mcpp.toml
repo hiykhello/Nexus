@@ -1,0 +1,261 @@
+[package]
+name = "relay-runtime"
+version = "0.1.0"
+
+# The proxy owns session and server lifetimes; codecs, policy and DNS models
+# belong to separate members and are shared with non-proxy consumers.
+[dependencies]
+policy = { path = "../rules" }
+dns = { path = "../dns" }
+protocols = { path = ".." }
+containers = { path = "../containers" }
+functional = { path = "../functional" }
+utility = { path = "../utility" }
+encoding = { path = "../encoding" }
+platform = { path = "../platform", features = ["network-state"] }
+nexus.ngcpp-proxy = "=0.1.0"
+nexus.capy-source = { version = "=0.2.8", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { version = "=0.3.12", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+
+[features]
+default = ["dns-shared", "request-standard"]
+hy2-inbound = { implies = ["protocols/hysteria2-listener", "protocols/stream-datagrams"], sources = ["hysteria2_business.cppm", "hysteria2_business.cpp", "hysteria2_host.cppm", "hysteria2_host.cpp"] }
+snell-outbound = { implies = ["protocols/snell"], defines = ["NEXUS_ENABLE_SNELL"], sources = ["snell.cpp", "snell_inbound.cpp"] }
+hy2-outbound = { implies = ["quic-ech", "protocols/hysteria2-client"], defines = ["NEXUS_ENABLE_HY2_CLIENT"], sources = ["hysteria2_outbound.cpp"] }
+shadowtls = { implies = ["protocols/shadowtls-runtime"], defines = ["NEXUS_ENABLE_SHADOWTLS"], sources = ["shadowtls.cpp", "shadowtls_inbound.cpp"] }
+tuic = { implies = ["quic-ech", "protocols/tuic", "protocols/stream-datagrams", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_TUIC"], sources = ["tuic.cpp", "tuic_host.cppm", "tuic_inbound.cpp"] }
+masque-outbound = { implies = ["quic-ech", "l3-mux", "protocols/masque-client", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_MASQUE_OUTBOUND"], sources = ["masque_ip_addresses.cppm", "masque_common.cppm", "masque_ip_tunnel.cppm", "masque_outbound.cpp"] }
+quic-ech = { implies = ["protocols/quic-tls"], sources = ["quic_ech.cppm", "quic_ech.cpp"] }
+transport-helpers = { implies = ["protocols/websocket", "protocols/grpc-tls"], sources = ["transport_helpers.cppm"] }
+grpc-pool = { implies = ["protocols/grpc-tls"], sources = ["grpc_pool.cppm"] }
+l3-mux = { sources = ["l3_mux.cppm"] }
+l3-tunnel = { implies = ["l3-mux"], sources = ["l3_tunnel.cppm"] }
+wireguard = { implies = ["l3-tunnel", "protocols/wireguard", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_WIREGUARD"], sources = ["wireguard_detour.cppm", "wireguard_outbound.cpp"] }
+openvpn = { implies = ["l3-tunnel", "protocols/openvpn", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_OPENVPN"], sources = ["openvpn_transport.cppm", "openvpn_outbound.cpp"] }
+openconnect = { implies = ["l3-tunnel", "protocols/openconnect"], defines = ["NEXUS_ENABLE_OPENCONNECT"], sources = ["openconnect_outbound.cpp"] }
+ssh = { implies = ["protocols/ssh"], defines = ["NEXUS_ENABLE_SSH"], sources = ["ssh.cpp"] }
+naive = { implies = ["protocols/naive"], defines = ["NEXUS_ENABLE_NAIVE"], sources = ["naive_inbound_helpers.cppm", "http_modern_h1.cppm", "modern_h3_connect_udp.cppm", "modern_h3_inbound.cppm", "naive_outbound_h3.cppm", "naive_outbound_h2.cppm", "naive.cpp", "naive_inbound.cpp", "http_modern_inbound.cpp"] }
+mesh-outbound = { implies = ["l3-tunnel", "protocols/wireguard"], sources = ["mesh_outbound.cpp"] }
+dns-response = { implies = ["dns-shared", "dns-group-core/dns-response", "policy/dns-response"], defines = ["NEXUS_DNS_RESPONSE"], sources = ["dns_response_transport.cpp", "dns_response_program.cpp"] }
+dns-shared = { defines = ["NEXUS_DNS_SHARED"], sources = ["dns_backend_group.cppm"] }
+dns-standard = { sources = ["dns_backend_default.cppm"] }
+test-dns-group-base = { defines = ["NEXUS_TEST_DNS_GROUP"], sources = ["dns_backend_group.cppm"] }
+test-dns-shared-access = { defines = ["NEXUS_TEST_DNS_SHARED_ACCESS"] }
+test-dns-group = { implies = ["test-dns-group-base"], defines = ["NEXUS_TEST_DNS_COORDINATOR"] }
+test-dns-group-refresh = { implies = ["test-dns-group-base"], defines = ["NEXUS_TEST_DNS_GROUP_REFRESH"] }
+test-dns-group-start-fault = { implies = ["test-dns-group-refresh"], defines = ["NEXUS_TEST_START_THROW", "NEXUS_TEST_GROUP_REFRESH_CONSTRUCT_FAULT"] }
+tproxy-udp = { implies = ["protocols/stream-datagrams"], defines = ["NEXUS_TPROXY_UDP"], sources = ["tproxy_reply_cache.cppm", "tproxy_udp.cpp"] }
+http-connect-tls = { implies = ["protocols/tls"], sources = ["tcp_proxy_tls.cpp", "!tcp_proxy.cpp", "probe_h2_tls.cpp", "!probe_h2.cpp"] }
+request-standard = { sources = ["request_backend_default.cppm"] }
+fakeip = { implies = ["dns/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources = ["request_backend_fakeip.cppm", "!request_backend_default.cppm"] }
+test-fakeip = { implies = ["fakeip", "dns/test-fakeip"], defines = ["NEXUS_TEST_FAKEIP"] }
+test-fakeip-lifetime = { implies = ["test-fakeip"], sources = ["../../tests/proxy_fakeip_lifetime_impl.cpp"] }
+test-fakeip-abandon = { implies = ["test-fakeip"], defines = ["NEXUS_TEST_FAKEIP_ABANDON"] }
+io-uring = { implies = ["nexus.corosio-source/uring", "platform/io-uring"], defines = ["NEXUS_ENABLE_IO_URING"] }
+mux-inbound = { implies = ["protocols/stream-datagrams"], sources = ["mux_inbound.cppm"] }
+vless = { implies = ["mux-inbound", "protocols/vless", "protocols/stream-datagrams"], defines = ["NEXUS_ENABLE_VLESS"], sources = ["reality_tcp_server.cppm", "vless.cpp", "vless_inbound.cpp", "vless_mux.cppm"] }
+grpc-vless = { implies = ["vless", "grpc-pool", "protocols/grpc-tls"], defines = ["NEXUS_ENABLE_GRPC_VLESS"], sources = ["grpc_vless.cpp", "grpc_vless_inbound.cpp"] }
+xhttp-vless = { implies = ["vless", "protocols/http2", "protocols/masque-client", "protocols/quic-retry"], defines = ["NEXUS_ENABLE_XHTTP_VLESS"], sources = ["xhttp_http1.cppm", "xhttp_http3_streams.cppm", "xhttp_http3_channel.cppm", "xhttp_http1_dial.cppm", "xhttp_http1_client.cppm", "xhttp_http2_client.cppm", "xhttp_http3_client.cppm", "xhttp_carrier.cppm", "xhttp_http2_pool.cppm", "xhttp_stream_client.cppm", "xhttp_inbound_types.cppm", "xhttp_http1_ingress.cppm", "xhttp_http2_server.cppm", "xhttp_http3_server.cppm", "xhttp_http3_listener.cppm", "xhttp_vless.cpp", "xhttp_vless_inbound.cpp"] }
+test-grpc-runtime = { implies = ["grpc-vless"], sources = ["../../tests/grpc_runtime_impl.cpp"] }
+test-grpc-startup = { implies = ["test-grpc-runtime"], sources = ["../../tests/grpc_startup_impl.cpp"] }
+test-grpc-lifecycle = { implies = ["test-grpc-runtime"], sources = ["../../tests/grpc_lifecycle_impl.cpp"] }
+trojan = { implies = ["mux-inbound", "transport-helpers", "grpc-pool", "protocols/trojan"], defines = ["NEXUS_ENABLE_TROJAN"], sources = ["trojan_grpc.cppm", "trojan.cpp", "trojan_inbound_common.cppm", "trojan_inbound_common.cpp", "trojan_inbound_grpc.cpp", "trojan_inbound.cpp"] }
+anytls = { implies = ["transport-helpers", "grpc-pool", "protocols/anytls"], defines = ["NEXUS_ENABLE_ANYTLS"], sources = ["anytls_grpc.cppm", "anytls.cpp", "anytls_inbound.cpp"] }
+ss2022 = { implies = ["mux-inbound", "protocols/ss2022", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_SS2022"], sources = ["shadowsocks_native.cppm", "shadowsocks.cpp", "shadowsocks_inbound.cpp"] }
+test-dns-lifetime = { implies = ["dns/test-dns-lifetime"], defines = ["NEXUS_TEST_DNS_LIFETIME"], sources = ["../../tests/proxy_dns_lifetime_impl.cpp"] }
+test-dns-owner = { defines = ["NEXUS_TEST_DNS_OWNER"] }
+# The low-level client adds an implementation unit to relay. It and the
+# write gate are compiled only in explicitly selected integration test graphs.
+test-uot-fixture = { implies = ["ss2022"], sources = ["../../tests/proxy_uot_fixture_impl.cpp"] }
+test-xudp-fixture = { implies = ["vless"], sources = ["../../tests/proxy_xudp_fixture_impl.cpp"] }
+test-chain-deadline = { implies = ["ss2022", "vless"], sources = ["../../tests/proxy_chain_deadline_impl.cpp", "../../tests/proxy_chain_ss_impl.cpp", "../../tests/proxy_chain_vless_impl.cpp"] }
+test-detour-factory = { implies = ["ss2022", "vless"], sources = ["../../tests/proxy_detour_factory_impl.cpp"] }
+test-uot-write-race = { implies = ["ss2022"], defines = ["NEXUS_TEST_UOT_WRITE_RACE"] }
+test-vless-relay-throw = { implies = ["vless"], defines = ["NEXUS_TEST_VLESS_RELAY_THROW"] }
+test-vless-abandon = { implies = ["vless"], defines = ["NEXUS_TEST_VLESS_ABANDON"] }
+test-ss-abandon = { implies = ["ss2022"], defines = ["NEXUS_TEST_SS_ABANDON"] }
+test-tunnel-profile = { implies = ["vless", "ss2022"], defines = ["NEXUS_TEST_TUNNEL_PROFILE"] }
+test-ss-tunnel-profile = { implies = ["test-tunnel-profile"], sources = ["../../tests/proxy_ss_tunnel_profile_impl.cpp"] }
+test-root-launch = { defines = ["NEXUS_TEST_ROOT_LAUNCH"] }
+test-vless-profile-lifetime = { implies = ["vless"], defines = ["NEXUS_TEST_VLESS_PROFILE_LIFETIME"] }
+test-start-throw = { defines = ["NEXUS_TEST_START_THROW"] }
+test-session-throw = { defines = ["NEXUS_TEST_SESSION_THROW"] }
+test-source-route = { defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
+sni-demux = { sources = ["sni_demux.cppm", "sni_demux.cpp"] }
+reverse-tunnel = { sources = ["reverse_tunnel.cppm", "reverse_tunnel.cpp"] }
+tor = { defines = ["NEXUS_ENABLE_TOR"], sources = ["tor_outbound.cppm", "tor_outbound.cpp", "tor_tunnel.cpp"] }
+
+[feature-deps.io-uring]
+uring-system = { path = "../../3rdparty/mcpp-uring" }
+
+[feature-deps.dns-shared]
+dns-group-core = { path = "../dns-shared" }
+
+[feature-deps.test-dns-group-base]
+dns-group-core = { path = "../dns-shared" }
+
+[feature-deps.wireguard]
+tun = { path = "../tun", default-features = false }
+
+[feature-deps.l3-mux]
+tun = { path = "../tun", default-features = false }
+
+[feature-deps.masque-outbound]
+tun = { path = "../tun", default-features = false }
+
+[build]
+defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",
+           "BOOST_COROSIO_NO_LIB", "BOOST_COROSIO_STATIC_LINK",
+           "NEXUS_ENABLE_SOCKS_UDP"]
+sources = [
+    "dns_routing.cppm", "dns_state.cppm", "dns_state.cpp",
+    "session_quota.cppm", "principal_limits.cppm", "stream_relay.cppm",
+    "types.cppm", "tunnel_facade.cppm", "route_interface.cppm", "traffic_interface.cppm", "relay_pool.cppm", "shadowsocks_users.cppm", "session_interface.cppm", "internal_decls.cppm", "server_interface.cppm", "relay.cppm",
+    "host.cppm", "relay.cpp", "tcp_listener_helpers.cppm", "tcp_listener.cpp", "unix_listener.cpp", "fixed_udp_inbound.cpp", "server_runtime.cpp",
+    "routing_context.cpp",
+    "session_internal.cppm", "session_udp_types.cppm", "session_udp_alias_tunnel.cppm",
+    "session_traffic.cpp", "session.cpp", "session_direct_relay.cpp", "session_socks4.cpp", "session_http.cpp", "session_redirect.cpp",
+    "session_udp_framed.cpp", "session_udp_tunnel.cpp", "session_udp_fakeip.cpp", "session_udp_route.cpp",
+    "dns_internal.cppm", "dns.cpp",
+    "dial.cpp", "route_resolve.cpp", "redirect_tcp_dns.cpp", "route_resolve_udp.cpp", "tunnel_connect.cpp",
+    "probe_h2_wire.cppm", "tcp_proxy_udp.cppm", "tcp_proxy_handshake.cppm", "tcp_proxy_impl.cppm",
+    "probe_h2.cpp", "tcp_proxy.cpp", "http_forward.cpp", "trojan_api.cpp", "anytls_api.cpp", "hysteria2_outbound_api.cpp", "snell_api.cpp", "shadowtls_api.cpp", "tuic_api.cpp", "masque_outbound_api.cpp", "wireguard_api.cpp", "ssh_api.cpp", "naive_api.cpp", "openvpn_api.cpp", "openconnect_api.cpp", "tor_api.cpp", "outbound_context.cpp", "mux_outbound.cpp",
+]
+
+[target.'cfg(os = "linux")'.build]
+sources = ["session_splice_linux.cpp", "socket_uid_linux.cpp", "process_owner_linux.cpp"]
+
+[target.'cfg(not(os = "linux"))'.build]
+sources = ["session_splice_stub.cpp", "socket_uid_platform.cpp", "process_owner_stub.cpp"]
+
+[scan_overrides."relay.cpp"]
+imports = ["relay", "proxy.v4", "std", "socks5", "rules",
+           "rules.rule_input",
+           "http.connect", "dns.message", "relay.dns_backend",
+           "dns.local_config", "corosio", "relay.dns_state"]
+
+[scan_overrides."dial.cpp"]
+imports = ["relay", "proxy.v4", "std", "relay.request_backend", "rules",
+           "http.connect", "dns.message", "capy", "corosio", "net.tcp_connect", "net.tcp_fast_open"]
+
+[targets.relay-runtime]
+kind = "lib"
+
+[[build.flags]]
+glob = "session.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "session_direct_relay.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "session_splice_linux.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "session_http.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "tcp_listener.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "shadowsocks.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "shadowsocks_inbound.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "trojan.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "trojan_inbound.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "vless.cpp"
+cxxflags = ["-O3"]
+
+[[build.flags]]
+glob = "vless_inbound.cpp"
+cxxflags = ["-O3"]
+
+[targets.dns-lifetime-fault]
+kind = "bin"
+main = "../../tests/proxy_dns_lifetime.cpp"
+required_features = ["test-dns-lifetime"]
+
+[targets.dns-owner-fault]
+kind = "bin"
+main = "../../tests/proxy_dns_owner.cpp"
+required_features = ["test-dns-owner"]
+
+[targets.borrowed-state-fault]
+kind = "bin"
+main = "../../tests/proxy_borrowed_state.cpp"
+required_features = ["test-dns-owner"]
+
+[targets.launch-throw-fault]
+kind = "bin"
+main = "../../tests/proxy_launch_throw.cpp"
+required_features = ["test-start-throw"]
+
+[targets.session-throw-fault]
+kind = "bin"
+main = "../../tests/proxy_session_throw.cpp"
+required_features = ["test-session-throw"]
+
+[targets.ss-feature-api]
+kind = "bin"
+main = "../../tests/proxy_feature_api.cpp"
+required_features = ["ss2022"]
+
+[targets.shadowsocks-proxy-fixture]
+kind = "bin"
+main = "../../tests/shadowsocks_proxy_fixture.cpp"
+required_features = ["ss2022"]
+
+[targets.shadowsocks-inbound-fixture]
+kind = "bin"
+main = "../../tests/shadowsocks_inbound_proxy_fixture.cpp"
+required_features = ["ss2022"]
+
+[targets.nexus-shadowsocks-replay-wire]
+kind = "bin"
+main = "../../tests/shadowsocks_replay_wire.cpp"
+required_features = ["ss2022"]
+
+[targets.uot-proxy-fixture]
+kind = "bin"
+main = "../../tests/uot_proxy_server_fixture.cpp"
+required_features = ["ss2022"]
+
+[targets.nexus-proxy-uot-fixture]
+kind = "bin"
+main = "../../tests/proxy_uot_fixture.cpp"
+required_features = ["test-uot-fixture"]
+
+[targets.nexus-uot-fault-server]
+kind = "bin"
+main = "../../tests/uot_fault_server.cpp"
+required_features = ["test-uot-fixture"]
+
+[targets.nexus-proxy-xudp-fixture]
+kind = "bin"
+main = "../../tests/proxy_xudp_fixture.cpp"
+required_features = ["test-xudp-fixture"]
+
+[targets.nexus-proxy-chain-deadline]
+kind = "bin"
+main = "../../tests/proxy_chain_deadline.cpp"
+required_features = ["test-chain-deadline"]
+
+[targets.mixed-outbounds-fixture]
+kind = "bin"
+main = "../../tests/proxy_mixed_outbounds.cpp"
+required_features = ["ss2022", "vless"]

@@ -1,11 +1,11 @@
 import std;
 import crypto;
 import tls.server_credential;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
+import corosio;
+import test.quic_tls_link;
 import hysteria2.credential;
-import nexus.test.hy2_production_resource_link;
-namespace io=nex::corosio;namespace support=nexus::test::quic_tls;namespace mem=nexus::test::hy2_production_resource;
+import test.hy2_production_resource_link;
+namespace io = ::corosio;namespace support=test::quic_tls;namespace mem=test::hy2_production_resource;
 namespace allocations {
     struct Header { void* raw; std::size_t size; };
     std::size_t live=0,bytes=0,calls=0;

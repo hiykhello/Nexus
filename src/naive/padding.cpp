@@ -4,6 +4,7 @@ module;
 module naive.padding;
 import std;
 import crypto;
+import encoding.base64;
 import http.connect;
 import http.header;
 import socks5;
@@ -12,55 +13,6 @@ namespace naive {
     namespace {
         constexpr std::string_view kPaddingChars =
             "!#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-
-        auto b64_encode(std::span<std::uint8_t const> in) -> std::string {
-            static constexpr std::string_view kAlphabet =
-                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            std::string out;
-            out.reserve(((in.size() + 2) / 3) * 4);
-            for (std::size_t i = 0; i < in.size(); i += 3) {
-                std::uint32_t v = static_cast<std::uint32_t>(in[i]) << 16;
-                if (i + 1 < in.size()) v |= static_cast<std::uint32_t>(in[i + 1]) << 8;
-                if (i + 2 < in.size()) v |= static_cast<std::uint32_t>(in[i + 2]);
-                out.push_back(kAlphabet[(v >> 18) & 63]);
-                out.push_back(kAlphabet[(v >> 12) & 63]);
-                out.push_back(i + 1 < in.size() ? kAlphabet[(v >> 6) & 63] : '=');
-                out.push_back(i + 2 < in.size() ? kAlphabet[v & 63] : '=');
-            }
-            return out;
-        }
-
-        auto b64_decode(std::string_view in, std::vector<std::uint8_t>& out) -> bool {
-            if (in.empty() || in.size() % 4 != 0) return false;
-            auto val = [](char c) noexcept -> int {
-                if (c >= 'A' && c <= 'Z') return c - 'A';
-                if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-                if (c >= '0' && c <= '9') return c - '0' + 52;
-                if (c == '+') return 62;
-                if (c == '/') return 63;
-                return -1;
-            };
-            std::size_t pad = 0;
-            if (in.back() == '=') ++pad;
-            if (in.size() >= 2 && in[in.size() - 2] == '=') ++pad;
-            if (pad > 0 && in.back() != '=') return false;
-            out.reserve((in.size() / 4) * 3 - pad);
-            for (std::size_t i = 0; i < in.size(); i += 4) {
-                bool last = (i + 4 == in.size());
-                int a = val(in[i]);
-                int b = val(in[i + 1]);
-                int c = (last && in[i + 2] == '=') ? -2 : val(in[i + 2]);
-                int d = (last && in[i + 3] == '=') ? -2 : val(in[i + 3]);
-                if (a < 0 || b < 0 || c == -1 || d == -1) return false;
-                if (c == -2 && d != -2) return false;
-                if (last && pad == 1 && (val(in[i + 2]) & 3) != 0) return false;
-                if (last && pad == 2 && (b & 15) != 0) return false;
-                out.push_back(static_cast<std::uint8_t>((a << 2) | (b >> 4)));
-                if (c >= 0) out.push_back(static_cast<std::uint8_t>(((b & 15) << 4) | (c >> 2)));
-                if (d >= 0) out.push_back(static_cast<std::uint8_t>(((c & 3) << 6) | d));
-            }
-            return true;
-        }
 
         auto append_frame(std::vector<std::uint8_t>& out, std::span<std::uint8_t const> chunk, std::uint8_t pad_len) -> void {
             auto const old = out.size();
@@ -108,7 +60,7 @@ namespace naive {
         raw.append(user);
         raw.push_back(':');
         raw.append(pass);
-        auto b64 = b64_encode(std::span<std::uint8_t const>(
+        auto b64 = encoding::encode_base64(std::span<std::uint8_t const>(
             reinterpret_cast<std::uint8_t const*>(raw.data()), raw.size()));
         crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(raw.data()), raw.size()));
         return "Basic " + std::move(b64);
@@ -132,7 +84,7 @@ namespace naive {
                 if (!v.empty()) crypto::cleanse(v);
             }
         } clean{decoded};
-        if (!b64_decode(token, decoded)) return std::nullopt;
+        if (!encoding::decode_base64_strict(token, decoded)) return std::nullopt;
         auto colon = std::ranges::find(decoded, static_cast<std::uint8_t>(':'));
         if (colon == decoded.end()) return std::nullopt;
         auto u = std::span<std::uint8_t const>(decoded.data(), static_cast<std::size_t>(colon - decoded.begin()));

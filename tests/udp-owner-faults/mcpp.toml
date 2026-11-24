@@ -1,15 +1,14 @@
 [package]
-namespace = "nexus"
 name = "ss-udp-owner-fault-tests"
 version = "0.1.0"
 
 # Only this graph injects exceptions in DNS receive. The callback lives in
 # the owner fixture and is not linked into ordinary SS UDP tests.
 [dependencies]
-nexus.ss-udp-runtime = { path = "../../src/udp-runtime" }
-nexus.dns = { path = "../../src/dns", features = ["test-dns-lifetime"] }
-nexus.protocols = { path = "../../src", features = ["ss2022"] }
-nexus.policy = { path = "../../src/rules" }
+ss-udp-runtime = { path = "../../src/udp-runtime" }
+dns = { path = "../../src/dns", features = ["test-dns-lifetime"] }
+protocols = { path = "../../src", features = ["ss2022"] }
+policy = { path = "../../src/rules" }
 nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
@@ -18,7 +17,7 @@ default = ["io-uring"]
 io-uring = ["nexus.corosio-source/uring"]
 
 [feature-deps.io-uring]
-nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 sources = []

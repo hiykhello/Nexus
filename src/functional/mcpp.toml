@@ -1,0 +1,9 @@
+[package]
+name = "functional"
+version = "0.1.0"
+
+[dependencies]
+nexus.ngcpp-proxy = "=0.1.0"
+
+[build]
+sources = ["functional.cppm"]

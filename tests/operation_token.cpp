@@ -1,8 +1,8 @@
 import std;
 import net.operation_token;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace capy=nex::capy;namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct State {
     capy::async_mutex mutex;

@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "crypto"
 version = "0.1.0"
 
@@ -17,5 +16,12 @@ sources = [
     "crypto.cppm", "crypto.cpp", "poly1305.cpp", "aead_context.cppm", "mlkem.cppm", "mlkem.cpp",
 ]
 
+[target.'cfg(os = "linux")'.build]
+ldflags = ["-Wl,-z,noexecstack"]
+
 [lib]
 path = "crypto.cppm"
+
+[[build.flags]]
+glob = "**/*"
+cxxflags = ["-O3"]

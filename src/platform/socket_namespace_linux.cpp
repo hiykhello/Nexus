@@ -11,12 +11,13 @@ module;
 #include <unistd.h>
 module platform.socket_options;
 import std;
+import platform.unique_fd;
 
 namespace platform {
     // Compile-time Linux LP64 ABI constant verification across x86_64 & aarch64.
     static_assert(sizeof(long) == 8 && sizeof(void*) == 8, "Linux socket option boundary requires x86-64 / aarch64 LP64");
     static_assert(AF_INET == 2 && AF_INET6 == 10 && SOL_SOCKET == 1);
-    static_assert(IPPROTO_TCP == 6 && TCP_NODELAY == 1 && TCP_USER_TIMEOUT == 18);
+    static_assert(IPPROTO_TCP == 6 && TCP_NODELAY == 1 && TCP_QUICKACK == 12 && TCP_USER_TIMEOUT == 18);
     static_assert(SO_REUSEADDR == 2 && SO_KEEPALIVE == 9 && SO_REUSEPORT == 15);
     static_assert(SO_BINDTODEVICE == 25 && SO_MARK == 36 && SO_DOMAIN == 39);
     static_assert(O_CLOEXEC == 524288 && O_NONBLOCK == 2048);
@@ -30,12 +31,7 @@ namespace platform {
     namespace {
         auto socket_error() noexcept -> std::error_code { return {errno, std::generic_category()}; }
 
-        struct OwnedFd {
-            const int value;
-            explicit OwnedFd(int fd) noexcept : value(fd) {}
-            OwnedFd(OwnedFd const&) = delete;
-            ~OwnedFd() { if (value >= 0) ::close(value); }
-        };
+        using OwnedFd = platform::UniqueFd;
 
         using Clock = std::chrono::steady_clock;
 
@@ -44,9 +40,14 @@ namespace platform {
             for (;;) {
                 auto now = Clock::now();
                 if (now >= deadline) return std::make_error_code(std::errc::timed_out);
-                auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
-                auto result = ::poll(&event, 1, static_cast<int>(remaining.count()));
-                if (result > 0) return {};
+                auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now).count();
+                int wait_ms = static_cast<int>(std::clamp<std::int64_t>(remaining, 1, 50));
+                event.revents = 0;
+                auto result = ::poll(&event, 1, wait_ms);
+                if (result > 0) {
+                    if (event.revents & POLLNVAL) return std::make_error_code(std::errc::bad_file_descriptor);
+                    return {};
+                }
                 if (result < 0 && errno != EINTR) return socket_error();
             }
         }
@@ -60,13 +61,13 @@ namespace platform {
             address.sun_family = AF_UNIX;
             std::ranges::copy(path, address.sun_path);
             OwnedFd control(::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0));
-            if (control.value < 0) return socket_error();
-            if (::connect(control.value, reinterpret_cast<sockaddr const*>(&address), sizeof(address)) < 0) {
-                if (errno != EINPROGRESS) return socket_error();
-                if (auto error = wait_for_socket(control.value, POLLOUT, deadline)) return error;
+            if (!control) return socket_error();
+            if (::connect(control.get(), reinterpret_cast<sockaddr const*>(&address), sizeof(address)) < 0) {
+                if (errno != EINPROGRESS && errno != EINTR) return socket_error();
+                if (auto error = wait_for_socket(control.get(), POLLOUT, deadline)) return error;
                 int status = 0;
                 socklen_t size = sizeof(status);
-                if (::getsockopt(control.value, SOL_SOCKET, SO_ERROR, &status, &size) < 0) return socket_error();
+                if (::getsockopt(control.get(), SOL_SOCKET, SO_ERROR, &status, &size) < 0) return socket_error();
                 if (status) return {status, std::generic_category()};
             }
             char byte = 1;
@@ -83,18 +84,22 @@ namespace platform {
             header->cmsg_len = CMSG_LEN(sizeof(fd));
             std::memcpy(CMSG_DATA(header), &fd, sizeof(fd));
             for (;;) {
-                if (auto error = wait_for_socket(control.value, POLLOUT, deadline)) return error;
-                auto sent = ::sendmsg(control.value, &message, MSG_NOSIGNAL);
+                if (Clock::now() >= deadline) return std::make_error_code(std::errc::timed_out);
+                auto sent = ::sendmsg(control.get(), &message, MSG_NOSIGNAL);
                 if (sent == 1) break;
                 if (sent >= 0) return std::make_error_code(std::errc::io_error);
-                if (errno != EAGAIN && errno != EINTR) return socket_error();
+                if (errno == EINTR) continue;
+                if (errno != EAGAIN && errno != EWOULDBLOCK) return socket_error();
+                if (auto error = wait_for_socket(control.get(), POLLOUT, deadline)) return error;
             }
             for (;;) {
-                if (auto error = wait_for_socket(control.value, POLLIN, deadline)) return error;
-                auto received = ::recv(control.value, &byte, sizeof(byte), 0);
+                if (Clock::now() >= deadline) return std::make_error_code(std::errc::timed_out);
+                auto received = ::recv(control.get(), &byte, sizeof(byte), 0);
                 if (received == 1) return {};
                 if (received == 0) return std::make_error_code(std::errc::permission_denied);
-                if (errno != EAGAIN && errno != EINTR) return socket_error();
+                if (errno == EINTR) continue;
+                if (errno != EAGAIN && errno != EWOULDBLOCK) return socket_error();
+                if (auto error = wait_for_socket(control.get(), POLLIN, deadline)) return error;
             }
         }
     }
@@ -128,14 +133,19 @@ namespace platform {
         };
         if (network_namespace.empty()) return create();
 
-        OwnedFd target(::open(network_namespace.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK));
-        if (target.value < 0) return std::unexpected(socket_error());
-        std::expected<int, std::error_code> result;
+        int ns_fd = -1;
+        for (int tries = 0; tries < 16; ++tries) {
+            ns_fd = ::open(network_namespace.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+            if (ns_fd >= 0 || errno != EINTR) break;
+        }
+        OwnedFd target(ns_fd);
+        if (target.get() < 0) return std::unexpected(socket_error());
+        std::expected<int, std::error_code> result = std::unexpected(std::make_error_code(std::errc::io_error));
         // Only this short-lived thread joins the namespace. The executor and
         // its other sockets keep their original namespace even on failure.
         try {
             std::thread creator([&] {
-                if (::setns(target.value, CLONE_NEWNET) < 0) result = std::unexpected(socket_error());
+                if (::setns(target.get(), CLONE_NEWNET) < 0) result = std::unexpected(socket_error());
                 else result = create();
             });
             creator.join();
@@ -143,6 +153,8 @@ namespace platform {
             return std::unexpected(failure.code());
         } catch (std::bad_alloc const&) {
             return std::unexpected(std::make_error_code(std::errc::not_enough_memory));
+        } catch (...) {
+            return std::unexpected(std::make_error_code(std::errc::io_error));
         }
         return result;
     }
@@ -192,6 +204,7 @@ namespace platform {
                 if (auto error = socket_detail::set(fd, ipv6_level, ipv6_mtu_discover, value)) return error;
             }
         }
+        if (auto error = invoke_protect_fd(fd)) return error;
         return options.protect_path.empty() ? std::error_code{} : protect_socket(fd, options.protect_path, deadline);
     }
 
@@ -226,6 +239,12 @@ namespace platform {
         if (fd < 0) return;
         using namespace linux_socket_abi;
         (void)socket_detail::set(fd, tcp_level, tcp_nodelay, 1);
+        (void)socket_detail::set(fd, tcp_level, TCP_QUICKACK, 1);
         if (user_timeout_ms > 0) (void)socket_detail::set(fd, tcp_level, tcp_user_timeout, user_timeout_ms);
+    }
+
+    auto enable_tcp_quickack(int fd) noexcept -> void {
+        if (fd < 0) return;
+        (void)socket_detail::set(fd, linux_socket_abi::tcp_level, TCP_QUICKACK, 1);
     }
 }

@@ -1,13 +1,13 @@
 export module dns.corosio_query;
 import std;
-export import nexus.compat;
+export import functional;
 // Query signatures expose these types and the remaining resolver adapters use
 // the exported namespace aliases, so their declarations must be reachable.
 export import dns.message;
 import dns.input_budget;
 import platform.socket_options;
-export import nexus.thirdparty.capy;
-export import nexus.thirdparty.corosio;
+export import capy;
+export import corosio;
 
 #ifdef NEXUS_TEST_DNS_RECEIVE
 extern "C" void nexus_test_dns_received();
@@ -17,17 +17,17 @@ extern "C" void nexus_test_fakeip_dns_received();
 #endif
 
 namespace dns::detail {
-    auto prepare_dns_udp(nex::corosio::udp_socket&,nex::corosio::endpoint const&,
+    auto prepare_dns_udp(corosio::udp_socket&,corosio::endpoint const&,
         platform::SocketBinding const&) -> std::error_code;
-    auto prepare_dns_tcp(nex::corosio::tcp_socket&,nex::corosio::endpoint const&,
+    auto prepare_dns_tcp(corosio::tcp_socket&,corosio::endpoint const&,
         platform::SocketBinding const&) -> std::error_code;
 }
 
 export namespace dns::detail {
-    namespace dns_capy=nex::capy;
-    namespace dns_io=nex::corosio;
+    namespace dns_capy = ::capy;
+    namespace dns_io = ::corosio;
     enum class UdpError { state, invalid_query, transport, timeout, canceled, truncated, response_limit, protocol, budget_exhausted };
-    using ProtectedQuery=nexus::move_only_function<dns_capy::task<std::expected<Response,UdpError>>(
+    using ProtectedQuery=functional::move_only_function<dns_capy::task<std::expected<Response,UdpError>>(
         dns_io::io_context&,dns_io::endpoint,QueryMessage const&,std::uint16_t,std::chrono::steady_clock::time_point,
         InputBudget&,std::stop_token) const>;
 

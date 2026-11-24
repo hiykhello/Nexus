@@ -5,11 +5,9 @@ import crypto;
 import tuic.wire;
 export import tuic.transport_options;
 import quic.connection;
-import nexus.thirdparty.ngtcp2;
-
-namespace tuic::detail {
-#include "stream_output.hpp"
-}
+import ngtcp2;
+export import tuic.stream_output;
+import tuic.stream_input;
 
 export namespace tuic {
     struct UserCredential {
@@ -17,8 +15,6 @@ export namespace tuic {
         std::string password;
         std::string name;
     };
-
-
     struct StreamHandle {
         std::uint16_t slot = 0;
         std::uint64_t generation = 0;
@@ -49,7 +45,7 @@ export namespace tuic {
             std::vector<std::uint8_t> rx;
             detail::StreamOutput<Window*2> tx;
             bool local_fin = false, fin_queued = false, peer_fin = false, reset_flag = false;
-            bool accepted_connect = false, pending_connect = false, uni_done = false;
+            bool accepted_connect = false, pending_connect = false, uni_done = false, released = false;
             TargetAddress target{};
         };
 
@@ -71,15 +67,20 @@ export namespace tuic {
         std::int64_t auth_stream_id_ = -1;
         std::deque<std::vector<std::uint8_t>> early_datagrams_{};
         std::optional<std::size_t> auth_user_;
-        std::uint16_t max_udp_payload_ = 1200;
+        std::uint16_t max_udp_payload_ = 0;
         UdpDefragmenter defrag_{};
+        auto datagram_budget(std::size_t out_size) const noexcept -> std::size_t {
+            if (!max_udp_payload_ || !transport_ || !transport_->active()) return 0;
+            auto limit = std::min(out_size, ngtcp2::ngtcp2_conn_get_path_max_tx_udp_payload_size2(transport_->native()));
+            return limit > 64 ? std::min<std::size_t>(max_udp_payload_, limit - 64) : 0;
+        }
 
         auto signal() noexcept -> void { static_assert(noexcept(hooks_.changed())); hooks_.changed(); }
 
         auto credit(std::int64_t id, std::size_t n) -> int {
             if (!transport_ || !transport_->active() || !n) return 0;
-            auto err = nex::ngtcp2::ngtcp2_conn_extend_max_stream_offset(transport_->native(), id, n);
-            if (!err) nex::ngtcp2::ngtcp2_conn_extend_max_offset(transport_->native(), n);
+            auto err = ngtcp2::ngtcp2_conn_extend_max_stream_offset(transport_->native(), id, n);
+            if (!err) ngtcp2::ngtcp2_conn_extend_max_offset(transport_->native(), n);
             return err;
         }
 
@@ -89,10 +90,12 @@ export namespace tuic {
         }
 
         auto get(StreamHandle h) noexcept -> StreamState* {
-            return (h.slot < Streams && streams_[h.slot] && streams_[h.slot]->generation == h.generation) ? &*streams_[h.slot] : nullptr;
+            return (h.slot < Streams && streams_[h.slot] && !streams_[h.slot]->released &&
+                    streams_[h.slot]->generation == h.generation) ? &*streams_[h.slot] : nullptr;
         }
         auto get(StreamHandle h) const noexcept -> StreamState const* {
-            return (h.slot < Streams && streams_[h.slot] && streams_[h.slot]->generation == h.generation) ? &*streams_[h.slot] : nullptr;
+            return (h.slot < Streams && streams_[h.slot] && !streams_[h.slot]->released &&
+                    streams_[h.slot]->generation == h.generation) ? &*streams_[h.slot] : nullptr;
         }
 
         auto allocate_slot(std::int64_t id, bool uni, bool local, Phase phase) noexcept -> std::optional<StreamHandle> {
@@ -107,7 +110,20 @@ export namespace tuic {
             return {};
         }
 
-#include "stream_input.hpp"
+        auto free_slot(std::optional<StreamState>& slot) noexcept -> void {
+            if (!slot) return;
+            bool const peer = !slot->local, uni = slot->uni;
+            slot.reset();
+            if (peer && transport_ && transport_->active()) {
+                if (uni) ngtcp2::ngtcp2_conn_extend_max_streams_uni(transport_->native(), 1);
+                else ngtcp2::ngtcp2_conn_extend_max_streams_bidi(transport_->native(), 1);
+            }
+        }
+
+        friend struct detail::UniInput;
+        auto handle_uni_complete(StreamState& s) -> int {
+            return detail::UniInput::handle_complete(*this, s);
+        }
 
         auto process_packet_wire(std::span<std::uint8_t const> wire, bool over_stream) -> int {
             if (!authenticated_) {
@@ -116,40 +132,42 @@ export namespace tuic {
                 return 0;
             }
             auto parsed = decode_packet(wire);
-            if (!parsed) return nex::ngtcp2::err_callback_failure;
-            auto ready = defrag_.feed(*parsed);
-            if (!ready) return nex::ngtcp2::err_callback_failure;
+            if (!parsed) return ngtcp2::err_callback_failure;
+            auto ready = defrag_.feed(*parsed, time_);
+            if (!ready) {
+                auto e = ready.error();
+                return (e == WireError::duplicate || e == WireError::conflict || e == WireError::too_large) ? 0 : ngtcp2::err_callback_failure;
+            }
             if (*ready) {
-                hooks_.udp_packet(IncomingUdpPacket{
-                    (*ready)->assoc_id, std::move((*ready)->destination), std::move((*ready)->payload), over_stream});
+                hooks_.udp_packet(IncomingUdpPacket{(*ready)->assoc_id, std::move((*ready)->destination), std::move((*ready)->payload), over_stream});
                 signal();
             }
             return 0;
         }
 
-        auto flush_stream(std::span<std::uint8_t> out, std::uint64_t now, nex::ngtcp2::ngtcp2_path* path)
+        auto flush_stream(std::span<std::uint8_t> out, std::uint64_t now, ngtcp2::ngtcp2_path* path)
             -> std::expected<std::size_t, int> {
             for (std::size_t step = 0; step < Streams; ++step) {
                 auto idx = (cursor_ + step) % Streams;
                 auto& opt = streams_[idx];
-                if (!opt) continue;
+                if (!opt || opt->released) continue;
                 auto& s = *opt;
                 auto pending=s.tx.pending();
                 auto need_fin=s.local_fin && !s.fin_queued && !pending;
                 if (!pending && !need_fin) continue;
                 auto segments=s.tx.view();
-                std::array<nex::ngtcp2::ngtcp2_vec,2> vectors{};
+                std::array<ngtcp2::ngtcp2_vec,2> vectors{};
                 std::size_t count=0;
                 for (auto bytes : segments)
                     if (!bytes.empty()) vectors[count++]={const_cast<std::uint8_t*>(bytes.data()),bytes.size()};
                 auto send_fin=s.local_fin;
                 auto nwritten=transport_->write_stream(out,path,nullptr,s.id,std::span(vectors).first(count),send_fin,now);
                 if (!nwritten) {
-                    if (nwritten.error() == nex::ngtcp2::err_stream_data_blocked) continue;
+                    if (nwritten.error() == ngtcp2::err_stream_data_blocked) continue;
                     return std::unexpected(nwritten.error());
                 }
                 if (nwritten->stream_bytes>0) s.tx.submit(static_cast<std::size_t>(nwritten->stream_bytes));
-                if (send_fin && !s.tx.pending() && (nwritten->stream_bytes>=0 || need_fin)) {
+                if (send_fin && !s.tx.pending() && nwritten->stream_bytes>=0) {
                     s.fin_queued = true;
                     if (!server_ && s.id == auth_stream_id_) auth_flushed_ = true;
                 }
@@ -188,23 +206,23 @@ export namespace tuic {
         auto max_udp_payload() const noexcept -> std::uint16_t { return max_udp_payload_; }
 
         auto handshake_complete(Transport& t) -> int {
-            if (stopping_ || &t != transport_ || !tls_.complete()) return nex::ngtcp2::err_callback_failure;
-            auto* peer = nex::ngtcp2::ngtcp2_conn_get_remote_transport_params2(t.native());
-            if (peer && peer->max_datagram_frame_size > 16)
-                max_udp_payload_ = static_cast<std::uint16_t>(std::min<std::uint64_t>(peer->max_datagram_frame_size - 16, 1400));
+            if (stopping_ || &t != transport_ || !tls_.complete()) return ngtcp2::err_callback_failure;
+            auto* peer = ngtcp2::ngtcp2_conn_get_remote_transport_params2(t.native());
+            max_udp_payload_ = (peer && peer->max_datagram_frame_size > 16)
+                ? static_cast<std::uint16_t>(std::min<std::uint64_t>(peer->max_datagram_frame_size - 16, 1136)) : std::uint16_t{0};
             handshake_ = true;
             if (!server_) {
                 auto exp = tls_.exporter_master();
-                if (!exp) return nex::ngtcp2::err_callback_failure;
+                if (!exp) return ngtcp2::err_callback_failure;
                 auto token = derive_auth_token(exp->hash, exp->secret, client_uuid_, client_password_);
-                if (!token) return nex::ngtcp2::err_callback_failure;
+                if (!token) return ngtcp2::err_callback_failure;
                 auto wire = encode_authenticate(Authenticate{client_uuid_, *token});
                 std::int64_t id = -1;
-                if (nex::ngtcp2::ngtcp2_conn_open_uni_stream(t.native(), &id, nullptr)) return nex::ngtcp2::err_callback_failure;
+                if (ngtcp2::ngtcp2_conn_open_uni_stream(t.native(), &id, nullptr)) return ngtcp2::err_callback_failure;
                 auto slot = allocate_slot(id, true, true, Phase::ready);
-                if (!slot) return nex::ngtcp2::err_callback_failure;
+                if (!slot) return ngtcp2::err_callback_failure;
                 auto* s = get(*slot);
-                if (!s->tx.append(wire)) return nex::ngtcp2::err_callback_failure;
+                if (!s->tx.append(wire)) return ngtcp2::err_callback_failure;
                 s->local_fin = true;
                 auth_stream_id_ = id;
                 authenticated_ = true;
@@ -217,21 +235,21 @@ export namespace tuic {
 
         auto open_connect(TargetAddress const& target) -> std::expected<StreamHandle, int> {
             if (server_ || !handshake_ || !authenticated_ || stopping_ || !transport_ || !transport_->active())
-                return std::unexpected(nex::ngtcp2::err_callback_failure);
+                return std::unexpected(ngtcp2::err_callback_failure);
             auto hdr = encode_connect(target);
-            if (!hdr) return std::unexpected(nex::ngtcp2::err_invalid_argument);
+            if (!hdr) return std::unexpected(ngtcp2::err_invalid_argument);
             std::int64_t id = -1;
-            if (auto err = nex::ngtcp2::ngtcp2_conn_open_bidi_stream(transport_->native(), &id, nullptr))
+            if (auto err = ngtcp2::ngtcp2_conn_open_bidi_stream(transport_->native(), &id, nullptr))
                 return std::unexpected(err);
             auto slot = allocate_slot(id, false, true, Phase::ready);
             if (!slot) {
-                nex::ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, id, 0x100);
-                return std::unexpected(nex::ngtcp2::err_nomem);
+                ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, id, 0x100);
+                return std::unexpected(ngtcp2::err_nomem);
             }
             auto* s = get(*slot);
             if (!s->tx.append(*hdr)) {
                 release_stream(*slot);
-                return std::unexpected(nex::ngtcp2::err_invalid_argument);
+                return std::unexpected(ngtcp2::err_invalid_argument);
             }
             signal();
             return *slot;
@@ -259,9 +277,16 @@ export namespace tuic {
 
         auto release_stream(StreamHandle h) noexcept -> void {
             auto* s = get(h); if (!s) return;
-            if (transport_ && transport_->active() && s->phase != Phase::closed)
-                nex::ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, s->id, 0);
-            streams_[h.slot].reset(); signal();
+            s->released = true; s->rx.clear();
+            if (s->phase == Phase::closed || !transport_ || !transport_->active()) {
+                free_slot(streams_[h.slot]); signal(); return;
+            }
+            auto err = ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, s->id, 0);
+            if (streams_[h.slot] && streams_[h.slot]->generation == h.generation) {
+                if (err == 0 && (streams_[h.slot]->phase == Phase::closed || streams_[h.slot]->tx.empty()))
+                    free_slot(streams_[h.slot]);
+            }
+            signal();
         }
         auto read_stream(StreamHandle h, std::span<std::uint8_t> out) -> std::expected<std::size_t, bool> {
             auto* s = get(h); if (!s) return std::unexpected(false);
@@ -277,7 +302,7 @@ export namespace tuic {
         }
 
         auto send_udp(std::uint16_t assoc_id, TargetAddress const& addr, std::span<std::uint8_t const> payload, bool over_stream) -> bool {
-            if (!authenticated_ || stopping_ || !transport_ || !transport_->active()) return false;
+            if (!authenticated_ || stopping_ || !transport_ || !transport_->active() || (!over_stream && !max_udp_payload_)) return false;
             auto pkt_id = next_pkt_id_++;
             auto limit = over_stream ? std::uint16_t{1200} : max_udp_payload_;
             auto frags = fragment_udp_packet(assoc_id, pkt_id, addr, payload, limit);
@@ -285,17 +310,11 @@ export namespace tuic {
             if (over_stream) {
                 for (auto& f : *frags) {
                     std::int64_t id = -1;
-                    if (nex::ngtcp2::ngtcp2_conn_open_uni_stream(transport_->native(), &id, nullptr)) return false;
+                    if (ngtcp2::ngtcp2_conn_open_uni_stream(transport_->native(), &id, nullptr)) return false;
                     auto slot = allocate_slot(id, true, true, Phase::ready);
-                    if (!slot) {
-                        nex::ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, id, 0x100);
-                        return false;
-                    }
+                    if (!slot) { ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, id, 0x100); return false; }
                     auto* s = get(*slot);
-                    if (!s->tx.append(f)) {
-                        release_stream(*slot);
-                        return false;
-                    }
+                    if (!s->tx.append(f)) { release_stream(*slot); return false; }
                     s->local_fin = true;
                 }
             } else {
@@ -309,22 +328,19 @@ export namespace tuic {
         auto send_dissociate(std::uint16_t assoc_id) -> bool {
             if (server_ || !authenticated_ || stopping_ || !transport_ || !transport_->active()) return false;
             std::int64_t id = -1;
-            if (nex::ngtcp2::ngtcp2_conn_open_uni_stream(transport_->native(), &id, nullptr)) return false;
+            if (ngtcp2::ngtcp2_conn_open_uni_stream(transport_->native(), &id, nullptr)) return false;
             auto slot = allocate_slot(id, true, true, Phase::ready);
-            if (!slot) return false;
+            if (!slot) { ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, id, 0x100); return false; }
             auto* s = get(*slot);
             auto wire = encode_dissociate(assoc_id);
-            if (!s->tx.append(wire)) {
-                release_stream(*slot);
-                return false;
-            }
+            if (!s->tx.append(wire)) { release_stream(*slot); return false; }
             s->local_fin = true;
             signal();
             return true;
         }
 
         auto send_heartbeat() -> bool {
-            if (!authenticated_ || stopping_ || datagrams_.size() >= max_datagram_queue) return false;
+            if (!authenticated_ || stopping_ || !max_udp_payload_ || datagrams_.size() >= max_datagram_queue) return false;
             auto hb = encode_heartbeat();
             datagrams_.emplace_back(hb.begin(), hb.end());
             signal();
@@ -332,22 +348,22 @@ export namespace tuic {
         }
 
         auto stream_data(Transport&, std::uint32_t flags, std::int64_t id, std::uint64_t, std::span<std::uint8_t const> bytes, void*) -> int {
-            if (stopping_ || !handshake_ || auth_failed_) return nex::ngtcp2::err_callback_failure;
-            bool fin = (flags & nex::ngtcp2::stream_data_flag_fin) != 0;
+            if (stopping_ || !handshake_ || auth_failed_) return ngtcp2::err_callback_failure;
+            bool fin = (flags & ngtcp2::stream_data_flag_fin) != 0;
             bool uni = (id & 2) != 0;
             auto* s = find(id);
             if (!s) {
                 bool peer_initiated = server_ ? ((id & 1) == 0) : ((id & 1) == 1);
-                if (!peer_initiated) return nex::ngtcp2::err_callback_failure;
+                if (!peer_initiated) return ngtcp2::err_callback_failure;
                 auto h = allocate_slot(id, uni, false, uni ? Phase::ready : Phase::header);
-                if (!h) return nex::ngtcp2::err_callback_failure;
+                if (!h) return ngtcp2::err_callback_failure;
                 s = get(*h);
             }
-            if (s->rx.size() + bytes.size() > Window * 2) return nex::ngtcp2::err_callback_failure;
+            if (s->rx.size() + bytes.size() > Window * 2) return ngtcp2::err_callback_failure;
             if (uni) {
                 if (s->uni_done) {
-                    if (!bytes.empty()) return nex::ngtcp2::err_callback_failure;
-                    if (fin) for (auto& entry : streams_) if (entry && &*entry == s) { entry.reset(); break; }
+                    if (!bytes.empty()) return ngtcp2::err_callback_failure;
+                    if (fin) for (auto& entry : streams_) if (entry && &*entry == s) { free_slot(entry); break; }
                     return 0;
                 }
                 s->rx.insert(s->rx.end(), bytes.begin(), bytes.end());
@@ -358,7 +374,7 @@ export namespace tuic {
                 if (fixed_ready || fin) {
                     auto err = handle_uni_complete(*s);
                     s->uni_done = true;
-                    if (fin) for (auto& entry : streams_) if (entry && &*entry == s) { entry.reset(); break; }
+                    if (fin) for (auto& entry : streams_) if (entry && &*entry == s) { free_slot(entry); break; }
                     return err;
                 }
                 return 0;
@@ -368,7 +384,7 @@ export namespace tuic {
                 auto parsed = decode_connect(s->rx);
                 if (!parsed) {
                     if (parsed.error() == WireError::incomplete && !fin) return 0;
-                    return nex::ngtcp2::err_callback_failure;
+                    return ngtcp2::err_callback_failure;
                 }
                 if (auto err = credit(id, parsed->second)) return err;
                 s->target = std::move(parsed->first);
@@ -391,7 +407,7 @@ export namespace tuic {
         auto stream_acked(Transport&,std::int64_t id,std::uint64_t offset,std::uint64_t size,void*) -> int {
             auto* s=find(id);
             if (!s) return 0;
-            if (!s->tx.acknowledge(offset,size)) return nex::ngtcp2::err_callback_failure;
+            if (!s->tx.acknowledge(offset,size)) return ngtcp2::err_callback_failure;
             if (s->uni && s->local && s->fin_queued && s->tx.empty()) {
                 for (auto& entry : streams_) if (entry && &*entry == s) { entry.reset(); break; }
             }
@@ -400,44 +416,75 @@ export namespace tuic {
         }
 
         auto stream_close(Transport&, std::uint32_t, std::int64_t id, std::uint64_t, std::uint64_t, void*) -> int {
-            if (auto* s = find(id)) { s->peer_fin = true; s->phase = Phase::closed; }
-            signal();
-            return 0;
+            for (auto& entry : streams_) if (entry && entry->id == id) {
+                entry->peer_fin = true; entry->phase = Phase::closed;
+                if (entry->uni || entry->released || (!entry->local && !entry->accepted_connect)) free_slot(entry);
+                break;
+            }
+            signal(); return 0;
         }
         auto stream_reset(Transport&, std::int64_t id, std::uint64_t, std::uint64_t, void*) -> int {
-            if (auto* s = find(id)) s->reset_flag = true; signal(); return 0;
+            for (auto& entry : streams_) if (entry && entry->id == id) {
+                entry->reset_flag = true;
+                if (entry->uni && !entry->local && entry->tx.empty()) { entry->phase = Phase::closed; free_slot(entry); }
+                else if (!entry->local && !entry->uni && !entry->accepted_connect) {
+                    entry->pending_connect = false;
+                    if (transport_ && transport_->active()) (void)ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, id, 0);
+                }
+                break;
+            }
+            signal(); return 0;
         }
         auto stop_sending(Transport&, std::int64_t id, std::uint64_t, void*) -> int {
-            if (auto* s = find(id)) s->reset_flag = true; signal(); return 0;
+            for (std::size_t i = 0; i < Streams; ++i) if (auto& entry = streams_[i]; entry && entry->id == id) {
+                entry->reset_flag = true;
+                if (entry->uni && entry->local) {
+                    auto gen = entry->generation;
+                    if (transport_ && transport_->active()) (void)ngtcp2::ngtcp2_conn_shutdown_stream_write(transport_->native(), 0, id, 0);
+                    if (streams_[i] && streams_[i]->generation == gen && (streams_[i]->phase == Phase::closed || streams_[i]->tx.empty())) streams_[i].reset();
+                } else if (!entry->local && !entry->uni && !entry->accepted_connect) {
+                    entry->pending_connect = false;
+                    if (transport_ && transport_->active()) (void)ngtcp2::ngtcp2_conn_shutdown_stream(transport_->native(), 0, id, 0);
+                }
+                break;
+            }
+            signal(); return 0;
         }
         auto stream_limit(Transport&, std::int64_t, std::uint64_t, void*) -> int { signal(); return 0; }
         auto stream_limit(Transport&, bool, std::uint64_t) -> int { signal(); return 0; }
         auto datagram(Transport&, std::span<std::uint8_t const> bytes) -> int {
-            if (stopping_ || !handshake_ || bytes.size() < 2 || bytes[0] != version) return nex::ngtcp2::err_callback_failure;
-            if (bytes[1] == static_cast<std::uint8_t>(Command::heartbeat))
-                return decode_heartbeat(bytes) ? 0 : nex::ngtcp2::err_callback_failure;
+            if (stopping_ || !handshake_ || bytes.size() < 2 || bytes[0] != version) return ngtcp2::err_callback_failure;
+            if (bytes[1] == static_cast<std::uint8_t>(Command::heartbeat)) return decode_heartbeat(bytes) ? 0 : ngtcp2::err_callback_failure;
             if (bytes[1] == static_cast<std::uint8_t>(Command::packet)) return process_packet_wire(bytes, false);
-            return nex::ngtcp2::err_callback_failure;
+            return ngtcp2::err_callback_failure;
         }
-        auto connection_closed(Transport&, int) noexcept -> void { request_stop(); tls_.cancel(); }
-        auto add_connection_id(Transport&, nex::ngtcp2::ngtcp2_cid const& id, nex::ngtcp2::ngtcp2_stateless_reset_token const& tok) -> int {
+        auto connection_closed(Transport&, int) noexcept -> void {
+            for (auto& entry : streams_) if (entry) {
+                entry->phase = Phase::closed; entry->reset_flag = true;
+                if (entry->uni || entry->released || (!entry->local && !entry->accepted_connect)) entry.reset();
+            }
+            request_stop(); tls_.cancel();
+        }
+        auto add_connection_id(Transport&, ngtcp2::ngtcp2_cid const& id, ngtcp2::ngtcp2_stateless_reset_token const& tok) -> int {
             if constexpr (requires { hooks_.add_connection_id(id, tok); }) return hooks_.add_connection_id(id, tok); else return 0;
         }
-        auto remove_connection_id(Transport&, nex::ngtcp2::ngtcp2_cid const& id) -> int {
+        auto remove_connection_id(Transport&, ngtcp2::ngtcp2_cid const& id) -> int {
             if constexpr (requires { hooks_.remove_connection_id(id); }) return hooks_.remove_connection_id(id); else return 0;
         }
 
-        auto output(std::span<std::uint8_t> out, std::uint64_t now, nex::ngtcp2::ngtcp2_path* path = nullptr)
+        auto output(std::span<std::uint8_t> out, std::uint64_t now, ngtcp2::ngtcp2_path* path = nullptr)
             -> std::expected<std::size_t, int> {
             time_ = now;
-            if (stopping_ || !transport_) return std::unexpected(nex::ngtcp2::err_callback_failure);
+            if (stopping_ || !transport_) return std::unexpected(ngtcp2::err_callback_failure);
             if (!server_ && !auth_flushed_) {
                 auto first_stream = flush_stream(out, now, path);
                 if (!first_stream || *first_stream) return first_stream;
             }
+            auto budget = datagram_budget(out.size());
             while (!datagrams_.empty()) {
                 auto const& d = datagrams_.front();
-                nex::ngtcp2::ngtcp2_vec vec{const_cast<std::uint8_t*>(d.data()), d.size()};
+                if (!budget || d.size() > budget) { datagrams_.pop_front(); continue; }
+                ngtcp2::ngtcp2_vec vec{const_cast<std::uint8_t*>(d.data()), d.size()};
                 auto res = transport_->write_datagram(out, path, nullptr, 0, std::span(&vec, 1), now);
                 if (!res) return std::unexpected(res.error());
                 if (res->accepted) datagrams_.pop_front();

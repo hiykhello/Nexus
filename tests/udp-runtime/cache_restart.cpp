@@ -2,7 +2,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 import std;
-import proxy;
+import relay;
 import rules;
 import ss_udp.inbounds;
 
@@ -45,11 +45,11 @@ int main(int argc,char** argv) {
     if (!policy) return 3;
     std::array<std::uint8_t,16> first{},second{};
     std::iota(first.begin(),first.end(),0); std::iota(second.begin(),second.end(),16);
-    proxy::udp_runtime::UdpInbounds owner;
+    relay::udp_runtime::UdpInbounds owner;
     if (!owner.add(first,ports[0],*policy) || !owner.add(second,ports[1],*policy)) return 4;
-    proxy::DnsRouting routing;
-    routing.strategy=proxy::DnsStrategy::ipv4_only;
-    proxy::DnsServer upstream;
+    relay::DnsRouting routing;
+    routing.strategy=relay::DnsStrategy::ipv4_only;
+    relay::DnsServer upstream;
     upstream.address[0]=127; upstream.address[3]=1; upstream.port=ports[2];
     routing.servers.push_back(std::move(upstream));
     // Fail each allocation during start and prove the same owner can be

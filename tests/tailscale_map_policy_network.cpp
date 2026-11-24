@@ -17,12 +17,11 @@ import tls.corosio_client;
 import tls.corosio_application;
 import tls.byte_stream;
 import crypto;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace noise=tailscale::control;
 namespace startup=tailscale::control_stream;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Fixture {
     io::io_context context;

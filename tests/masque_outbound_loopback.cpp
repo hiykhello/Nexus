@@ -32,16 +32,14 @@ import tcp.receive;
 import tcp.send;
 import tls.fingerprint;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.thirdparty.nghttp3;
-import nexus.thirdparty.ngtcp2;
+import capy;
+import corosio;
+import nghttp3;
+import ngtcp2;
+import relay.l3_mux;
+import relay.masque_ip_addresses;
 
-#include "../src/proxy/l3_mux.hpp"
-#include "../src/proxy/masque_ip_addresses.hpp"
-
-namespace io = nex::corosio;
-namespace capy = nex::capy;
+namespace io = ::corosio;
 namespace m = masque;
 using Clock = std::chrono::steady_clock;
 
@@ -210,8 +208,8 @@ auto main() -> int {
     // 3. CONNECT-IP loopback over real UDP (ADDRESS_ASSIGN + ROUTE_ADVERTISEMENT + IPv4/IPv6 echo + dynamic address rotation)
     {
         namespace q = quic;
-        namespace n = nex::ngtcp2;
-        namespace h = nex::nghttp3;
+        namespace n = ::ngtcp2;
+        namespace h = ::nghttp3;
         using Registry = q::CidRegistry<2, 8>;
 
         struct IpServerHooks {

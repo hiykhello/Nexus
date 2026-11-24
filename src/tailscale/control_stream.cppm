@@ -7,7 +7,7 @@ import net.buffered_input;
 import net.framed_stream;
 import tailscale.control_record_codec;
 import crypto;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace tailscale::control_stream {
     namespace noise=control;
@@ -122,7 +122,7 @@ export namespace tailscale::control_stream {
         // One original absolute budget includes dial/TLS performed by caller.
         // No data-phase read/send forwarding coroutine is introduced here.
         auto start(std::string_view authority,std::span<std::uint8_t> early_storage,Clock::time_point started,Clock::time_point deadline)
-            -> nex::capy::task<std::expected<Ready,Failure>> {
+            -> capy::task<std::expected<Ready,Failure>> {
             if (state_!=State::initial) co_return std::unexpected(Failure{Error::state});
             state_=State::starting;OperationGuard guard{*this};
             if (deadline<=started || Clock::now()>=deadline) co_return fail({Error::timeout});

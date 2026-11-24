@@ -7,9 +7,9 @@ import dns.corosio_query;
 import dns.cache;
 import dns.local_config;
 import shadowsocks.udp_dispatch;
-import proxy;
+import relay;
 import ss_udp.inbounds;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 #ifdef NEXUS_TEST_UDP_SEND_DELAY
 auto configure_udp_send_faults(std::string_view mode) noexcept -> void;
@@ -79,21 +79,21 @@ int main(int argc,char** argv) {
         dns_options.edns=true; dns_options.disable_cache=true;
     }
     if (dns_routing) {
-        proxy::DnsRouting config;
+        relay::DnsRouting config;
         config.final=dns_routing->fallback;
         config.disable_cache=dns_options.disable_cache; config.edns=dns_options.edns;
         for (auto const& server:dns_routing->servers) {
-            proxy::DnsServer entry;
+            relay::DnsServer entry;
             entry.ipv6=server.endpoint.address().is_v6(); entry.port=server.endpoint.port(); entry.tcp=server.tcp_only;
             if (entry.ipv6) entry.address=server.endpoint.address().to_v6().to_bytes();
             else { auto bytes=server.endpoint.address().to_v4().to_bytes(); std::copy(bytes.begin(),bytes.end(),entry.address.begin()); }
             entry.host=server.host; entry.resolver=server.resolver; config.servers.push_back(std::move(entry));
         }
         for (auto const& rule:dns_routing->rules) config.rules.push_back({rule.domain,rule.suffix,rule.server});
-        auto adapted=proxy::detail::udp_dns_config(config);
+        auto adapted=relay::detail::udp_dns_config(config);
         if (!adapted) return 21;
         dns_options=adapted->options; dns_routing=std::move(adapted->routing);
-        using proxy::DnsStrategy;
+        using relay::DnsStrategy;
         using dns::detail::AddressStrategy;
         std::array strategies{std::pair{DnsStrategy::automatic,AddressStrategy::prefer_ipv4},
             std::pair{DnsStrategy::prefer_ipv4,AddressStrategy::prefer_ipv4},
@@ -101,11 +101,11 @@ int main(int argc,char** argv) {
             std::pair{DnsStrategy::ipv4_only,AddressStrategy::ipv4_only},
             std::pair{DnsStrategy::ipv6_only,AddressStrategy::ipv6_only}};
         for (auto [input,expected]:strategies) {
-            config.strategy=input; auto mapped=proxy::detail::udp_dns_config(config);
+            config.strategy=input; auto mapped=relay::detail::udp_dns_config(config);
             if (!mapped || mapped->options.strategy!=expected) return 23;
         }
         config.strategy=static_cast<DnsStrategy>(255);
-        if (proxy::detail::udp_dns_config(config)) return 22;
+        if (relay::detail::udp_dns_config(config)) return 22;
     }
     auto listener=std::make_unique<shadowsocks::detail::UdpListener>(context,**state,upstream,64,slow_timer ? 10s : 5ms,dns_options,std::move(dns_routing));
     auto listen=std::string_view(argv[3])=="ipv6" ? io::endpoint(io::ipv6_address::loopback(),0) :

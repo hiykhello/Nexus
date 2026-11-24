@@ -18,9 +18,22 @@ namespace tcp {
         return segment.source_port && segment.destination_port && usable(segment.source) && usable(segment.destination);
     }
     namespace {
-        auto mss_option(std::size_t mtu, std::size_t overhead) noexcept -> std::array<std::uint8_t,4> {
-            auto mss=static_cast<std::uint16_t>(std::min<std::size_t>(mtu-overhead,65535-overhead));
-            return {2,4,static_cast<std::uint8_t>(mss>>8),static_cast<std::uint8_t>(mss)};
+        struct SynAckOptions {
+            std::array<std::uint8_t, 12> bytes{};
+            std::size_t length = 0;
+            [[nodiscard]] auto span() const noexcept -> std::span<std::uint8_t const> { return {bytes.data(), length}; }
+        };
+        auto build_syn_ack_options(std::size_t mtu, std::size_t overhead, std::span<std::uint8_t const> existing) noexcept -> SynAckOptions {
+            SynAckOptions out;
+            auto mss = static_cast<std::uint16_t>(std::min<std::size_t>(mtu - overhead, 65535 - overhead));
+            out.bytes[0] = 2; out.bytes[1] = 4;
+            out.bytes[2] = static_cast<std::uint8_t>(mss >> 8); out.bytes[3] = static_cast<std::uint8_t>(mss);
+            out.length = 4;
+            auto extra = std::min(existing.size(), out.bytes.size() - out.length);
+            extra -= extra % 4;
+            std::copy_n(existing.data(), extra, out.bytes.data() + out.length);
+            out.length += extra;
+            return out;
         }
     }
     auto dispatch(ConnectionTable& table, std::span<std::uint8_t const> bytes,
@@ -30,7 +43,7 @@ namespace tcp {
         if (!segment) return std::unexpected(DispatchFailure{DispatchError::invalid_packet, segment.error(), {}});
         if (is_initial_syn(segment->flags) && !valid_syn_endpoints(*segment))
             return std::unexpected(DispatchFailure{DispatchError::invalid_target, {}, {}});
-        // ACK and RST require 40 bytes; SYN-ACK also carries an MSS option.
+        // ACK and RST require 40 bytes; SYN-ACK also carries MSS + negotiated options.
         if (mtu < 40) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
         auto id = table.find(*segment);
         if (!id) {
@@ -59,8 +72,9 @@ namespace tcp {
             auto opened = table.open(*segment, iss, now);
             if (!opened) return std::unexpected(DispatchFailure{DispatchError::table_error, {}, opened.error()});
             try {
-                auto option=mss_option(mtu,40);
-                auto view=table.get(*opened)->syn_ack(); view.options=option;
+                auto view = table.get(*opened)->syn_ack();
+                auto options = build_syn_ack_options(mtu, 40, view.options);
+                view.options = options.span();
                 auto reply = packet::make_tcp4(view, mtu);
                 if (!reply) {
                     (void)table.abort(*opened);
@@ -73,12 +87,11 @@ namespace tcp {
             }
         }
         auto* connection = table.get(*id);
-        // Reserve response storage before mutating connection state.
-        auto option=mss_option(std::max<std::size_t>(mtu,40),40);
-        auto reserve_view=connection->ack();
-        if (connection->state()==ConnectionState::handshake && is_initial_syn(segment->flags)) reserve_view.options=option;
-        auto reply_storage = packet::make_tcp4(reserve_view, mtu);
-        if (!reply_storage) return std::unexpected(DispatchFailure{DispatchError::output_error, reply_storage.error(), {}});
+        auto syn_options = build_syn_ack_options(std::max<std::size_t>(mtu, 40), 40, connection->syn_ack().options);
+        auto const min_mtu = 40u + ((connection->state() == ConnectionState::handshake && is_initial_syn(segment->flags)) ? syn_options.length : 0u);
+        if (mtu < min_mtu) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
+        packet::Bytes reply_storage;
+        reply_storage.reserve(68);
         auto previous = connection->state();
         auto result = connection->input(*segment, now);
         DispatchResult outcome{.id=*id};
@@ -93,13 +106,15 @@ namespace tcp {
             bool challenge = !result && (result.error() == ConnectionError::challenge_ack ||
                 (previous != ConnectionState::handshake && result.error() == ConnectionError::invalid_ack));
             if (challenge && !table.claim_challenge_ack(now)) { outcome.challenge_suppressed=true; return outcome; }
-            auto view = previous == ConnectionState::handshake && result && !*result ? connection->syn_ack() : connection->ack();
-            if (previous == ConnectionState::handshake && result && !*result) view.options=option;
+            bool is_syn_ack = previous == ConnectionState::handshake && result && !*result;
+            auto max_ack_opts = mtu > 40 ? std::min<std::size_t>(28, mtu - 40) : 0;
+            auto view = is_syn_ack ? connection->syn_ack() : connection->ack(max_ack_opts);
+            if (is_syn_ack) view.options = syn_options.span();
             if (previous == ConnectionState::handshake && !result && result.error() == ConnectionError::invalid_ack) {
                 view.sequence = segment->acknowledgement; view.acknowledgement = 0;
-                view.flags = 4; view.window = 0; outcome.reply_reset = true;
+                view.flags = 4; view.window = 0; view.options = {}; outcome.reply_reset = true;
             }
-            auto reply = packet::make_tcp4(view, mtu, std::move(*reply_storage));
+            auto reply = packet::make_tcp4(view, mtu, std::move(reply_storage));
             if (!reply) return std::unexpected(DispatchFailure{DispatchError::output_error, reply.error(), {}});
             outcome.reply = std::move(*reply);
         }
@@ -112,7 +127,7 @@ namespace tcp {
         if (!segment) return std::unexpected(DispatchFailure{DispatchError::invalid_packet, segment.error(), {}});
         if (is_initial_syn(segment->flags) && !valid_syn_endpoints(*segment))
             return std::unexpected(DispatchFailure{DispatchError::invalid_target, {}, {}});
-        // ACK and RST require 60 bytes; SYN-ACK also carries an MSS option.
+        // ACK and RST require 60 bytes; SYN-ACK also carries MSS + negotiated options.
         if (mtu < 60) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
         auto id = table.find(*segment);
         if (!id) {
@@ -143,8 +158,9 @@ namespace tcp {
             auto opened = table.open(*segment, iss, now);
             if (!opened) return std::unexpected(DispatchFailure{DispatchError::table_error, {}, opened.error()});
             try {
-                auto option=mss_option(mtu,60);
-                auto view=table.get(*opened)->syn_ack(); view.options=option;
+                auto view = table.get(*opened)->syn_ack();
+                auto options = build_syn_ack_options(mtu, 60, view.options);
+                view.options = options.span();
                 auto reply = packet::make_tcp6(view, mtu);
                 if (!reply) {
                     (void)table.abort(*opened);
@@ -157,12 +173,11 @@ namespace tcp {
             }
         }
         auto* connection = table.get(*id);
-        // Reserve response storage before mutating connection state.
-        auto option=mss_option(std::max<std::size_t>(mtu,60),60);
-        auto reserve_view=connection->ack();
-        if (connection->state()==ConnectionState::handshake && is_initial_syn(segment->flags)) reserve_view.options=option;
-        auto reply_storage = packet::make_tcp6(reserve_view, mtu);
-        if (!reply_storage) return std::unexpected(DispatchFailure{DispatchError::output_error, reply_storage.error(), {}});
+        auto syn_options = build_syn_ack_options(std::max<std::size_t>(mtu, 60), 60, connection->syn_ack().options);
+        auto const min_mtu = 60u + ((connection->state() == ConnectionState::handshake && is_initial_syn(segment->flags)) ? syn_options.length : 0u);
+        if (mtu < min_mtu) return std::unexpected(DispatchFailure{DispatchError::output_error, packet::PacketError::too_large, {}});
+        packet::Bytes reply_storage;
+        reply_storage.reserve(88);
         auto previous = connection->state();
         auto result = connection->input(*segment, now);
         DispatchResult outcome{.id=*id};
@@ -177,13 +192,15 @@ namespace tcp {
             bool challenge = !result && (result.error() == ConnectionError::challenge_ack ||
                 (previous != ConnectionState::handshake && result.error() == ConnectionError::invalid_ack));
             if (challenge && !table.claim_challenge_ack(now)) { outcome.challenge_suppressed=true; return outcome; }
-            auto view = previous == ConnectionState::handshake && result && !*result ? connection->syn_ack() : connection->ack();
-            if (previous == ConnectionState::handshake && result && !*result) view.options=option;
+            bool is_syn_ack = previous == ConnectionState::handshake && result && !*result;
+            auto max_ack_opts = mtu > 60 ? std::min<std::size_t>(28, mtu - 60) : 0;
+            auto view = is_syn_ack ? connection->syn_ack() : connection->ack(max_ack_opts);
+            if (is_syn_ack) view.options = syn_options.span();
             if (previous == ConnectionState::handshake && !result && result.error() == ConnectionError::invalid_ack) {
                 view.sequence = segment->acknowledgement; view.acknowledgement = 0;
-                view.flags = 4; view.window = 0; outcome.reply_reset = true;
+                view.flags = 4; view.window = 0; view.options = {}; outcome.reply_reset = true;
             }
-            auto reply = packet::make_tcp6(view, mtu, std::move(*reply_storage));
+            auto reply = packet::make_tcp6(view, mtu, std::move(reply_storage));
             if (!reply) return std::unexpected(DispatchFailure{DispatchError::output_error, reply.error(), {}});
             outcome.reply = std::move(*reply);
         }

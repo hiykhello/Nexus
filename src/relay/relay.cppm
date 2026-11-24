@@ -1,0 +1,16 @@
+export module relay;
+export import functional;
+export import utility;
+export import relay.dns_routing;
+export import relay.dns_backend;
+export import dns.reverse;
+export import anytls.pool;
+export import :types;
+export import :tunnel_facade;
+export import :route_interface;
+export import :traffic_interface;
+export import :relay_pool;
+export import :shadowsocks_users;
+export import :session_interface;
+export import :internal_decls;
+export import :server_interface;

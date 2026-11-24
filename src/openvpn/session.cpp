@@ -44,8 +44,11 @@ namespace openvpn {
     auto DataChannel::seal_data_v2(std::span<std::uint8_t const> plaintext)
         -> std::expected<std::vector<std::uint8_t>, std::string> {
         if (!ready_) return std::unexpected("OpenVPN data channel not initialized");
+        if (tx_packet_id_ == std::numeric_limits<std::uint32_t>::max()) {
+            ready_ = false;
+            return std::unexpected("OpenVPN packet_id wrapped; rekey required");
+        }
         std::uint32_t const pid = ++tx_packet_id_;
-        if (pid == 0) return std::unexpected("OpenVPN packet_id wrapped; rekey required");
 
         std::vector<std::uint8_t> out(8 + plaintext.size() + 16);
         out[0] = static_cast<std::uint8_t>((static_cast<std::uint8_t>(Opcode::data_v2) << 3) | (key_id_ & 0x07));
@@ -59,8 +62,11 @@ namespace openvpn {
 
         auto nonce = make_nonce(pid, tx_iv_);
         auto aad = std::span(out).first(8);
-        auto written = tx_aead_.seal_to(std::span(out).subspan(8), nonce, plaintext, aad);
-        if (!written) return std::unexpected("OpenVPN AEAD seal failed");
+        auto body = std::span(out).subspan(8);
+        auto written = tx_aead_.seal_to(body, nonce, plaintext, aad);
+        if (!written || *written < 16) return std::unexpected("OpenVPN AEAD seal failed");
+        std::rotate(body.begin(), body.begin() + static_cast<std::ptrdiff_t>(*written - 16),
+                    body.begin() + static_cast<std::ptrdiff_t>(*written));
         out.resize(8 + *written);
         return out;
     }
@@ -83,9 +89,12 @@ namespace openvpn {
                                      static_cast<std::uint32_t>(frame[7]);
         auto nonce = make_nonce(pkt_id, rx_iv_);
         auto aad = frame.first(8);
-        auto ct = frame.subspan(8);
-        std::vector<std::uint8_t> plain(ct.size() - 16);
-        auto n = rx_aead_.open_to(plain, nonce, ct, aad);
+        auto tag_first = frame.subspan(8);
+        std::vector<std::uint8_t> reordered(tag_first.size());
+        std::copy(tag_first.begin() + 16, tag_first.end(), reordered.begin());
+        std::copy_n(tag_first.begin(), 16, reordered.begin() + static_cast<std::ptrdiff_t>(tag_first.size() - 16));
+        std::vector<std::uint8_t> plain(reordered.size() - 16);
+        auto n = rx_aead_.open_to(plain, nonce, reordered, aad);
         if (!n) return std::unexpected("OpenVPN AEAD authentication failed");
         if (!rx_replay_.check_and_accept(pkt_id)) {
             return std::unexpected("OpenVPN replayed packet_id rejected");
@@ -112,6 +121,7 @@ namespace openvpn {
     }
 
     auto SessionStateMachine::on_control_packet(ControlPacket const& pkt) -> std::expected<void, std::string> {
+        if (pkt.session_id == 0) return std::unexpected("invalid zero OpenVPN session_id");
         if (pkt.opcode == Opcode::control_hard_reset_server_v2) {
             if (state_ != SessionState::hard_reset_sent && state_ != SessionState::reconnecting) {
                 return std::unexpected("unexpected server hard reset");
@@ -119,11 +129,20 @@ namespace openvpn {
             remote_session_id_ = pkt.session_id;
             state_ = SessionState::tls_handshake;
         } else if (pkt.opcode == Opcode::control_v1) {
-            if (remote_session_id_ != 0 && pkt.session_id != remote_session_id_) {
+            if ((state_ != SessionState::tls_handshake && state_ != SessionState::established) ||
+                remote_session_id_ == 0 || pkt.session_id != remote_session_id_) {
                 return std::unexpected("remote session_id mismatch");
             }
+        } else if (pkt.opcode == Opcode::ack_v1) {
+            if (remote_session_id_ == 0 || pkt.session_id != remote_session_id_ ||
+                pkt.remote_session_id != local_session_id_) {
+                return std::unexpected("unexpected OpenVPN ACK");
+            }
+        } else {
+            return std::unexpected("unsupported OpenVPN control opcode");
         }
-        if (pkt.packet_id.has_value()) {
+        if (pkt.packet_id.has_value() && !std::ranges::contains(pending_acks_, *pkt.packet_id)) {
+            if (pending_acks_.size() >= 255) pending_acks_.erase(pending_acks_.begin());
             pending_acks_.push_back(*pkt.packet_id);
         }
         return {};

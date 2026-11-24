@@ -32,7 +32,7 @@ namespace packet {
         }
         if (input_) {
             try {
-                auto sent = (input_route_ == 0 ? tcp_ : input_route_ == 1 ? udp_ : *tcp6_).send(Side::first, *input_);
+                auto sent = (input_route_ == 0 ? tcp_ : input_route_ == 1 ? udp_ : *tcp6_).send_owned(Side::first, std::move(*input_));
                 if (sent) { input_.reset(); result.input_delivered = true; }
                 else if (sent.error() == DeviceError::queue_full) result.input_backpressured = true;
                 else { result.input_error = sent.error(); input_.reset(); }
@@ -55,7 +55,7 @@ namespace packet {
         }
         if (output_) {
             try {
-                auto sent = external_.send(Side::second, output_->bytes, output_->kind, output_->flow_id, output_->generation);
+                auto sent = external_.send_owned(Side::second, std::move(output_->bytes), output_->kind, output_->flow_id, output_->generation);
                 if (sent) { output_.reset(); result.output_delivered = true; }
                 else if (sent.error() == DeviceError::queue_full) result.output_backpressured = true;
                 else { result.output_error = sent.error(); if (sent.error() == DeviceError::packet_too_large) output_.reset(); }

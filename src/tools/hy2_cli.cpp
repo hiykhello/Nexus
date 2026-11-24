@@ -1,15 +1,15 @@
 module cli.hy2_enabled;
 import std;
 import config;
-import proxy;
-import proxy.hysteria2_host;
+import relay;
+import relay.hysteria2_host;
 import hysteria2.credential;
 import hysteria2.transport_options;
 import tls.profiles;
 import rulefile;
 import crypto;
 import quic.retry_admission;
-import nexus.thirdparty.corosio;
+import corosio;
 namespace cli::hy2_enabled {
     Runtime::~Runtime(){stop();}
     auto Runtime::resize(std::size_t count)->void {profiles_.resize(count);}
@@ -47,15 +47,15 @@ namespace cli::hy2_enabled {
         if(!profile->options.valid())return std::unexpected("invalid Hysteria2 transport options");
         profiles_[index]=std::move(profile);return {};
     }
-    auto Runtime::start(std::size_t index,proxy::Server& server,std::uint16_t port,bool ipv6,unsigned workers)->std::expected<std::uint16_t,std::string> {
+    auto Runtime::start(std::size_t index,relay::Server& server,std::uint16_t port,bool ipv6,unsigned workers)->std::expected<std::uint16_t,std::string> {
         if(index>=profiles_.size() || !profiles_[index])return std::unexpected("Hysteria2 profile missing");
-        auto& profile=*profiles_[index];profile.host=std::make_unique<proxy::Hysteria2Host>(server,profile.credential,profile.passwords,profile.names,profile.options);
-        nex::corosio::endpoint endpoint;
-        if (ipv6) endpoint={nex::corosio::ipv6_address(profile.listen_address),port};
+        auto& profile=*profiles_[index];profile.host=std::make_unique<relay::Hysteria2Host>(server,profile.credential,profile.passwords,profile.names,profile.options);
+        corosio::endpoint endpoint;
+        if (ipv6) endpoint={corosio::ipv6_address(profile.listen_address),port};
         else {
-            nex::corosio::ipv4_address::bytes_type bytes{};
+            corosio::ipv4_address::bytes_type bytes{};
             std::ranges::copy(std::span(profile.listen_address).first<4>(),bytes.begin());
-            endpoint={nex::corosio::ipv4_address(bytes),port};
+            endpoint={corosio::ipv4_address(bytes),port};
         }
         auto result=profile.host->start(endpoint,workers);if(!result){
             auto text=std::visit([](auto const& error)->std::string {using E=std::decay_t<decltype(error)>;
@@ -65,7 +65,7 @@ namespace cli::hy2_enabled {
             },result.error());profile.host.reset();return std::unexpected(text);
         }return *result;
     }
-    auto Runtime::queue_outbound_probe(std::size_t index,std::shared_ptr<proxy::OutboundProbe> probe) -> bool {
+    auto Runtime::queue_outbound_probe(std::size_t index,std::shared_ptr<relay::OutboundProbe> probe) -> bool {
         return index<profiles_.size() && profiles_[index] && profiles_[index]->host &&
             profiles_[index]->host->queue_outbound_probe(std::move(probe));
     }

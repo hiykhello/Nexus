@@ -25,6 +25,8 @@ export namespace packet {
         [[nodiscard]] static auto open(WintunConfig const& cfg = {})
             -> std::expected<WindowsTun, WintunFailure>;
         [[nodiscard]] auto adapter_name() const noexcept -> std::string_view;
+        [[nodiscard]] auto luid() const noexcept -> std::uint64_t;
+        [[nodiscard]] auto wait_read(std::uint32_t timeout_ms) const noexcept -> bool;
         [[nodiscard]] auto read_packet(std::span<std::uint8_t> out)
             -> std::expected<std::optional<std::size_t>, WintunFailure>;
         [[nodiscard]] auto write_packet(std::span<std::uint8_t const> ip_packet)

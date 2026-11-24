@@ -11,7 +11,7 @@
 | C++ 组织方式 | 全面采用 C++ Modules |
 | 构建 | mcpp 工作区（2026-10-30 修订） |
 | 配置格式 | KDL 2.0 |
-| 配置解析 | [hiykhello/glaze-kdl2.0-，feature/kdl2.0 分支](https://github.com/hiykhello/glaze-kdl2.0-/tree/feature/kdl2.0) |
+| 配置解析 | [hiykhello/glaze-kdl](https://github.com/hiykhello/glaze-kdl)（原 `glaze-kdl2.0-` 已更名） |
 | 抽象接口 | [ngcpp/proxy](https://github.com/ngcpp/proxy) |
 | 协程与 I/O | [cppalliance/corosio](https://github.com/cppalliance/corosio) |
 | 当前阶段 | 文档沉淀 |

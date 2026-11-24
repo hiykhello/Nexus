@@ -26,12 +26,12 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 module;
-#if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
-#error "This generated C ABI is verified for Linux x86-64 glibc only"
+#if !(defined(__linux__) || defined(__APPLE__) || defined(_WIN32)) || !(defined(__LP64__) || defined(_WIN64))
+#error "This generated C ABI requires 64-bit Linux, Apple Darwin, or Windows"
 #endif
-export module nexus.thirdparty.nghttp3;
+export module nghttp3;
 import std;
-export namespace nexus_nghttp3_abi {
+export namespace nghttp3_abi {
 using std::size_t;
 using std::ptrdiff_t;
 using std::va_list;
@@ -489,53 +489,53 @@ inline constexpr auto h3_no_error = 0x0100;
 inline constexpr auto h3_request_cancelled = 0x010C;
 }
 
-export namespace nex::nghttp3 {
-    using nexus_nghttp3_abi::nghttp3_conn;
-    using nexus_nghttp3_abi::nghttp3_mem;
-    using nexus_nghttp3_abi::nghttp3_callbacks;
-    using nexus_nghttp3_abi::nghttp3_settings;
-    using nexus_nghttp3_abi::nghttp3_vec;
-    using nexus_nghttp3_abi::nghttp3_nv;
-    using nexus_nghttp3_abi::nghttp3_rcbuf;
-    using nexus_nghttp3_abi::nghttp3_ssize;
-    using nexus_nghttp3_abi::nghttp3_tstamp;
-    using nexus_nghttp3_abi::nghttp3_data_reader;
-    using nexus_nghttp3_abi::nghttp3_settings_default_versioned;
-    using nexus_nghttp3_abi::nghttp3_conn_client_new_versioned;
-    using nexus_nghttp3_abi::nghttp3_conn_server_new_versioned;
-    using nexus_nghttp3_abi::nghttp3_conn_del;
-    using nexus_nghttp3_abi::nghttp3_conn_bind_control_stream;
-    using nexus_nghttp3_abi::nghttp3_conn_bind_qpack_streams;
-    using nexus_nghttp3_abi::nghttp3_conn_read_stream2;
-    using nexus_nghttp3_abi::nghttp3_conn_writev_stream;
-    using nexus_nghttp3_abi::nghttp3_conn_add_write_offset;
-    using nexus_nghttp3_abi::nghttp3_conn_add_ack_offset;
-    using nexus_nghttp3_abi::nghttp3_conn_submit_request;
-    using nexus_nghttp3_abi::nghttp3_conn_submit_response;
-    using nexus_nghttp3_abi::nghttp3_conn_submit_trailers;
-    using nexus_nghttp3_abi::nghttp3_conn_block_stream;
-    using nexus_nghttp3_abi::nghttp3_conn_unblock_stream;
-    using nexus_nghttp3_abi::nghttp3_conn_shutdown_stream_read;
-    using nexus_nghttp3_abi::nghttp3_conn_shutdown_stream_write;
-    using nexus_nghttp3_abi::nghttp3_conn_close_stream2;
-    using nexus_nghttp3_abi::nghttp3_conn_resume_stream;
-    using nexus_nghttp3_abi::nghttp3_conn_set_stream_user_data;
-    using nexus_nghttp3_abi::nghttp3_rcbuf_get_buf;
-    using nexus_nghttp3_abi::nghttp3_rcbuf_incref;
-    using nexus_nghttp3_abi::nghttp3_rcbuf_decref;
-    using nexus_nghttp3_abi::nghttp3_conn_set_max_client_streams_bidi;
-    using nexus_nghttp3_abi::nghttp3_conn_set_max_concurrent_streams;
-    using nexus_nghttp3_abi::nghttp3_strerror;
-    using nexus_nghttp3_abi::callbacks_version;
-    using nexus_nghttp3_abi::settings_version;
-    using nexus_nghttp3_abi::nv_flag_none;
-    using nexus_nghttp3_abi::nv_flag_never_index;
-    using nexus_nghttp3_abi::data_flag_eof;
-    using nexus_nghttp3_abi::data_flag_none;
-    using nexus_nghttp3_abi::err_callback_failure;
-    using nexus_nghttp3_abi::err_h3_frame_unexpected;
-    using nexus_nghttp3_abi::err_nomem;
-    using nexus_nghttp3_abi::err_wouldblock;
-    using nexus_nghttp3_abi::h3_no_error;
-    using nexus_nghttp3_abi::h3_request_cancelled;
+export namespace nghttp3 {
+    using nghttp3_abi::nghttp3_conn;
+    using nghttp3_abi::nghttp3_mem;
+    using nghttp3_abi::nghttp3_callbacks;
+    using nghttp3_abi::nghttp3_settings;
+    using nghttp3_abi::nghttp3_vec;
+    using nghttp3_abi::nghttp3_nv;
+    using nghttp3_abi::nghttp3_rcbuf;
+    using nghttp3_abi::nghttp3_ssize;
+    using nghttp3_abi::nghttp3_tstamp;
+    using nghttp3_abi::nghttp3_data_reader;
+    using nghttp3_abi::nghttp3_settings_default_versioned;
+    using nghttp3_abi::nghttp3_conn_client_new_versioned;
+    using nghttp3_abi::nghttp3_conn_server_new_versioned;
+    using nghttp3_abi::nghttp3_conn_del;
+    using nghttp3_abi::nghttp3_conn_bind_control_stream;
+    using nghttp3_abi::nghttp3_conn_bind_qpack_streams;
+    using nghttp3_abi::nghttp3_conn_read_stream2;
+    using nghttp3_abi::nghttp3_conn_writev_stream;
+    using nghttp3_abi::nghttp3_conn_add_write_offset;
+    using nghttp3_abi::nghttp3_conn_add_ack_offset;
+    using nghttp3_abi::nghttp3_conn_submit_request;
+    using nghttp3_abi::nghttp3_conn_submit_response;
+    using nghttp3_abi::nghttp3_conn_submit_trailers;
+    using nghttp3_abi::nghttp3_conn_block_stream;
+    using nghttp3_abi::nghttp3_conn_unblock_stream;
+    using nghttp3_abi::nghttp3_conn_shutdown_stream_read;
+    using nghttp3_abi::nghttp3_conn_shutdown_stream_write;
+    using nghttp3_abi::nghttp3_conn_close_stream2;
+    using nghttp3_abi::nghttp3_conn_resume_stream;
+    using nghttp3_abi::nghttp3_conn_set_stream_user_data;
+    using nghttp3_abi::nghttp3_rcbuf_get_buf;
+    using nghttp3_abi::nghttp3_rcbuf_incref;
+    using nghttp3_abi::nghttp3_rcbuf_decref;
+    using nghttp3_abi::nghttp3_conn_set_max_client_streams_bidi;
+    using nghttp3_abi::nghttp3_conn_set_max_concurrent_streams;
+    using nghttp3_abi::nghttp3_strerror;
+    using nghttp3_abi::callbacks_version;
+    using nghttp3_abi::settings_version;
+    using nghttp3_abi::nv_flag_none;
+    using nghttp3_abi::nv_flag_never_index;
+    using nghttp3_abi::data_flag_eof;
+    using nghttp3_abi::data_flag_none;
+    using nghttp3_abi::err_callback_failure;
+    using nghttp3_abi::err_h3_frame_unexpected;
+    using nghttp3_abi::err_nomem;
+    using nghttp3_abi::err_wouldblock;
+    using nghttp3_abi::h3_no_error;
+    using nghttp3_abi::h3_request_cancelled;
 }

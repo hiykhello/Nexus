@@ -1,15 +1,15 @@
 module config;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
-    auto parse_password_tls_inbound(nex::glaze::KdlNode const&,std::string_view,Inbound,std::string_view extra={}) -> std::expected<InboundConfig,std::string>;
-    auto parse_password_tls_outbound(nex::glaze::KdlNode const&,std::string_view,std::string_view) -> std::expected<PasswordTlsOutbound,std::string>;
+    auto parse_password_tls_inbound(glaze::KdlNode const&,std::string_view,Inbound,std::string_view extra={}) -> std::expected<InboundConfig,std::string>;
+    auto parse_password_tls_outbound(glaze::KdlNode const&,std::string_view,std::string_view) -> std::expected<PasswordTlsOutbound,std::string>;
     auto validate_password_tls_outbound(PasswordTlsOutbound&,Config const&,std::string_view) -> std::expected<void,std::string>;
-    auto parse_anytls_inbound(nex::glaze::KdlNode const& node) -> std::expected<InboundConfig,std::string> {
+    auto parse_anytls_inbound(glaze::KdlNode const& node) -> std::expected<InboundConfig,std::string> {
         return parse_password_tls_inbound(node,"anytls",Inbound::anytls);
     }
-    auto parse_anytls_outbound(nex::glaze::KdlNode const& node) -> std::expected<AnyTlsOutbound,std::string> {
+    auto parse_anytls_outbound(glaze::KdlNode const& node) -> std::expected<AnyTlsOutbound,std::string> {
         auto connection=parse_password_tls_outbound(node,"AnyTLS","pool");
         if (!connection) return std::unexpected(connection.error());
         AnyTlsOutbound result{std::move(*connection)};

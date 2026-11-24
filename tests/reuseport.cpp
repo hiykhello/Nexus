@@ -1,8 +1,7 @@
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 auto context(bool uring) -> io::io_context {

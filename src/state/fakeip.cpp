@@ -1,6 +1,6 @@
 module state.fakeip;
 import std;
-import nexus.compat;
+import functional;
 import state.fakeip_disk;
 import state.lock;
 import state.file;
@@ -18,10 +18,10 @@ namespace state {
         std::uint64_t cursor;
         std::map<std::pair<std::uint64_t,std::string>,std::uint32_t> forward;
         std::mutex mutex;
-        std::condition_variable changed;
+        std::condition_variable changed, flushed;
         std::vector<FakeIpRow> pending, batch;
         std::optional<StateError> failed;
-        bool stopping=false, started=false;
+        bool stopping=false, started=false, flushing=false, flush_requested=false;
         std::thread worker;
 
         Impl(InstanceLock locked, FakeIpScope spec, FakeIpMeta header, CrashMode crash, File file, FakeIpReplay replay)
@@ -34,13 +34,20 @@ namespace state {
             batch.reserve(128);
         }
 
-        ~Impl() {
+        ~Impl() { stop_worker(); }
+
+        auto stop_worker() noexcept -> std::optional<StateError> {
+            std::thread to_join;
             {
                 std::lock_guard lock(mutex);
                 stopping=true;
+                to_join=std::move(worker);
             }
-            changed.notify_one();
-            if (worker.joinable()) worker.join();
+            changed.notify_all();
+            flushed.notify_all();
+            if (to_join.joinable()) to_join.join();
+            std::lock_guard lock(mutex);
+            return failed;
         }
 
         auto flush(std::span<FakeIpRow> rows) -> std::expected<void,StateError> {
@@ -60,10 +67,16 @@ namespace state {
         auto drive() -> void {
             std::unique_lock lock(mutex);
             while (!failed) {
-                changed.wait(lock,[&]{return stopping || !pending.empty();});
-                if (pending.empty()) return;
-                changed.wait_for(lock,std::chrono::milliseconds(250),[&]{return stopping || pending.size()>=64;});
+                changed.wait(lock,[&]{return stopping || flush_requested || !pending.empty();});
+                if (pending.empty()) {
+                    flush_requested=false; flushing=false; flushed.notify_all();
+                    if (stopping) return;
+                    continue;
+                }
+                changed.wait_for(lock,std::chrono::milliseconds(250),[&]{return stopping || flush_requested || pending.size()>=64;});
+                flush_requested=false;
                 batch.swap(pending);
+                flushing=true;
                 lock.unlock();
                 std::optional<StateError> error;
                 try {
@@ -72,8 +85,11 @@ namespace state {
                 } catch (std::bad_alloc const&) {error=StateError{Stage::capacity};}
                 batch.clear();
                 lock.lock();
+                flushing=false;
                 if (error) failed=*error;
+                flushed.notify_all();
             }
+            flushed.notify_all();
         }
     };
 
@@ -104,7 +120,7 @@ namespace state {
         return std::unique_ptr<FakeIpStore>(new FakeIpStore(std::move(owner)));
     }
 
-    auto FakeIpStore::visit_recovered(nexus::function_ref<bool(FakeIpRow const&)> visit) const -> bool {
+    auto FakeIpStore::visit_recovered(functional::function_ref<bool(FakeIpRow const&)> visit) const -> bool {
         std::lock_guard lock(owner_->mutex);
         return !owner_->started && std::ranges::all_of(owner_->disk_rows,visit);
     }
@@ -164,5 +180,26 @@ namespace state {
         }
         ++owner.cursor;
         return address;
+    }
+
+    auto FakeIpStore::flush() -> std::expected<void,StateError> {
+        if (!owner_) return {};
+        auto& owner=*owner_;
+        std::unique_lock lock(owner.mutex);
+        if (owner.failed) return std::unexpected(*owner.failed);
+        if ((owner.pending.empty() && !owner.flushing) || !owner.worker.joinable()) return {};
+        owner.flush_requested=true;
+        owner.changed.notify_one();
+        owner.flushed.wait(lock,[&]{
+            return owner.failed.has_value() || (!owner.flushing && owner.pending.empty()) || !owner.worker.joinable();
+        });
+        if (owner.failed) return std::unexpected(*owner.failed);
+        return {};
+    }
+
+    auto FakeIpStore::stop() -> std::expected<void,StateError> {
+        if (!owner_) return {};
+        if (auto err=owner_->stop_worker()) return std::unexpected(*err);
+        return {};
     }
 }

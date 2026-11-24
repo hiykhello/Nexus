@@ -1,7 +1,7 @@
 import std;
 import quic.retry_packet;
-import nexus.thirdparty.ngtcp2;
-namespace q=quic;namespace n=nex::ngtcp2;
+import ngtcp2;
+namespace q=quic;namespace n = ::ngtcp2;
 auto require(bool condition,char const* label) -> void {if(!condition){std::println("Retry packet failure: {}",label);std::exit(1);}}
 auto decode(std::string_view hex) -> std::vector<std::uint8_t> {
     std::vector<std::uint8_t> bytes;

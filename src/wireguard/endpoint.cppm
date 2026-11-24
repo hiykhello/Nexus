@@ -217,6 +217,9 @@ export namespace wireguard {
         [[nodiscard]] auto output_valid(std::uint64_t serial) const noexcept -> bool;
         [[nodiscard]] auto complete_send(std::uint64_t serial,bool success,Clock::time_point) -> std::expected<void,EndpointFailure>;
         [[nodiscard]] auto status() const noexcept -> EndpointStatus;
+        [[nodiscard]] auto queued_packets() const noexcept -> std::size_t { return queue_.size(); }
+        [[nodiscard]] auto queued_bytes() const noexcept -> std::size_t { return queued_bytes_; }
+        [[nodiscard]] auto latest_attempt() const noexcept -> std::uint64_t { return latest_; }
         [[nodiscard]] auto receiver_indexes() const noexcept -> ReceiverIndexes;
     };
 }

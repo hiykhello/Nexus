@@ -7,7 +7,7 @@ module;
 #include <unistd.h>
 module state.file;
 import std;
-import nexus.compat;
+import functional;
 
 namespace state {
     auto open_directory(std::filesystem::path const& path) -> std::expected<File, StateError> {
@@ -49,7 +49,7 @@ namespace state {
         return {};
     }
 
-    auto directory_entries(NativeHandle directory, nexus::function_ref<bool(std::string_view)> accept)
+    auto directory_entries(NativeHandle directory, functional::function_ref<bool(std::string_view)> accept)
         -> std::expected<std::vector<DirectoryEntry>, StateError> {
         File scan(::openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
         if (scan.get() < 0) return failure(Stage::scan, errno);

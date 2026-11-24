@@ -1,6 +1,6 @@
 module config;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 import config.kdl_common;
 import platform.socket_options;
 
@@ -8,8 +8,8 @@ namespace config {
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
     auto dns_ipv6(std::string_view) -> std::optional<std::array<std::uint8_t,16>>;
     namespace {
-        using Node=nex::glaze::KdlNode;
-        auto scalar(Node const& node) -> nex::glaze::KdlValue const* {
+        using Node=glaze::KdlNode;
+        auto scalar(Node const& node) -> glaze::KdlValue const* {
             if (node.tag || node.arguments.size()!=1 || !node.children.empty() || !node.properties.empty() || node.arguments.front().tag)
                 return nullptr;
             return &node.arguments.front();
@@ -22,7 +22,7 @@ namespace config {
             return {};
         }
     }
-    auto parse_tcp_dial_option(nex::glaze::KdlNode const& node,TcpSocketOptions& options) -> std::expected<bool,std::string> {
+    auto parse_tcp_dial_option(glaze::KdlNode const& node,TcpSocketOptions& options) -> std::expected<bool,std::string> {
         if (node.name=="netns" || node.name=="protect-path") {
             auto value=scalar(node); auto path=value ? std::get_if<std::string>(&value->data) : nullptr;
             auto& target=node.name=="netns" ? options.binding.network_namespace : options.binding.protect_path;

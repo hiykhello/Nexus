@@ -1,11 +1,11 @@
 import std;
 import platform.linux_random;
-import nexus.tests.random_fault;
+import test.random_fault;
 
 auto main() -> int {
     std::array<std::byte,4> bytes{};
 #ifdef NEXUS_TEST_LINUX_RANDOM
-    using namespace nexus::tests;
+    using namespace test;
     for (auto [selected,error]:std::array{
             std::pair{RandomFault::unavailable,std::errc::resource_unavailable_try_again},
             std::pair{RandomFault::permission,std::errc::operation_not_permitted},

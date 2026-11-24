@@ -1,6 +1,6 @@
 export module net.operation_token;
 import std;
-import nexus.thirdparty.capy;
+import capy;
 
 export namespace net {
     // Bind one operation to an already-owned stop source while preserving its
@@ -14,7 +14,7 @@ export namespace net {
             auto operator()() const noexcept -> void{source->request_stop();}
         };
         std::stop_source& source_;
-        std::optional<nex::capy::await_context> environment_;
+        std::optional<capy::await_context> environment_;
         std::optional<std::stop_callback<Cancel>> parent_;
         Operation operation_;
     public:
@@ -26,7 +26,7 @@ export namespace net {
             if(other.environment_)std::terminate();
         }
         auto await_ready() noexcept(noexcept(operation_.await_ready())) -> bool{return operation_.await_ready();}
-        auto await_suspend(std::coroutine_handle<> continuation,nex::capy::await_context const* parent){
+        auto await_suspend(std::coroutine_handle<> continuation,capy::await_context const* parent){
             environment_.emplace(*parent);
             environment_->stop_token=source_.get_token();
             parent_.emplace(parent->stop_token,Cancel{&source_});

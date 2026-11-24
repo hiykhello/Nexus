@@ -1,11 +1,11 @@
-module proxy;
+module relay;
 import std;
 import proxy.v4;
-import nexus.thirdparty.corosio;
+import corosio;
 extern "C" bool nexus_test_tunnel_profile_is_alive();
 extern "C" int nexus_test_ss_tunnel_profile() {
-    using namespace proxy;
-    nex::corosio::io_context context;
+    using namespace relay;
+    corosio::io_context context;
     {
         auto factories=std::make_shared<std::vector<TunnelFactory>>();
         std::array<std::uint8_t,16> key{};

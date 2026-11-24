@@ -1,13 +1,13 @@
 [package]
-namespace = "nexus"
 name = "dns-group-core"
 version = "0.1.0"
 
 # The shared snapshot, views and coordinator depend on DNS primitives,
 # not on a proxy or an inbound. Both TCP and UDP adapters can consume them.
 [dependencies]
-nexus.dns = { path = "../dns" }
-nexus.protocols = { path = ".." }
+dns = { path = "../dns" }
+functional = { path = "../functional" }
+protocols = { path = ".." }
 nexus.capy-source = { version = "=0.2.8", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { version = "=0.3.12", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
@@ -15,14 +15,18 @@ nexus.corosio-source = { version = "=0.3.12", patches = ["../../3rdparty/patches
 io-uring = ["nexus.corosio-source/uring"]
 dns-response = { defines = ["NEXUS_DNS_RESPONSE"], sources = ["response_coordinator.cpp"] }
 test-inspect = { defines = ["DNS_GROUP_INSPECT_EXPERIMENT"] }
-test-reverse-observation = { defines = ["NEXUS_TEST_DNS_REVERSE_OBSERVATION"], implies = ["nexus.dns/reverse"] }
+test-reverse-observation = { defines = ["NEXUS_TEST_DNS_REVERSE_OBSERVATION"], implies = ["dns/reverse"] }
 
 [feature-deps.io-uring]
-nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
-defines = ["DNS_GROUP_SHARED_CAPACITY_EXPERIMENT", "NEXUS_DNS_USE_MODULES"]
-sources = ["group_experiment.cppm", "group_coordinator.cppm", "group_coordinator.cpp"]
+sources = [
+    "group_snapshot.cppm", "group_snapshot_lookup.cpp", "group_snapshot_write.cpp", "group_snapshot_publish.cpp",
+    "group_cache_binding.cppm", "group_singleflight.cppm", "group_flight_operation.cppm",
+    "group_coalesced_resolve.cppm", "group_view_registry.cppm",
+    "shared_cache.cppm", "group_coordinator.cppm", "group_coordinator.cpp",
+]
 
 [targets.dns-group-core]
 kind = "lib"

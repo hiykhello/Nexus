@@ -152,13 +152,13 @@ namespace shadowsocks {
     }
     auto UdpDispatcher::expire(Clock::time_point now,std::uint64_t wall) -> std::expected<std::size_t,UdpDispatchError> {
         if (!advance(now)) return std::unexpected(UdpDispatchError::time_reversed);
-        auto sessions=server_.expire(now,wall);
-        if (!sessions) return std::unexpected(UdpDispatchError::session);
         std::size_t count=0;
         for (auto it=pending_.begin();it!=pending_.end();) {
             if (now>=it->second.deadline) { bytes_-=it->second.bytes; it=pending_.erase(it); ++count; }
             else ++it;
         }
+        auto sessions=server_.expire(now,wall);
+        if (!sessions) return std::unexpected(UdpDispatchError::session);
         return count;
     }
 }

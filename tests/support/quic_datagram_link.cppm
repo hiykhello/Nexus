@@ -1,19 +1,19 @@
-export module nexus.test.quic_datagram_link;
+export module test.quic_datagram_link;
 import std;
 import crypto;
 import net.datagram_driver;
 import quic.connection;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.http3_link;
+import ngtcp2;
+import nghttp3;
+import corosio;
+import test.quic_tls_link;
+import test.http3_link;
 
-export namespace nexus::test::quic_datagram_link {
-    namespace n=nex::ngtcp2;
-    namespace io=nex::corosio;
-    namespace support=nexus::test::quic_tls;
-    namespace app=nexus::test::http3_link;
+export namespace test::quic_datagram_link {
+    namespace n = ::ngtcp2;
+    namespace io = ::corosio;
+    namespace support=test::quic_tls;
+    namespace app=test::http3_link;
     using Clock=std::chrono::steady_clock;
     inline auto time(Clock::time_point point) noexcept -> std::uint64_t { return std::chrono::duration_cast<std::chrono::nanoseconds>(point.time_since_epoch()).count(); }
     struct Path {
@@ -104,7 +104,7 @@ export namespace nexus::test::quic_datagram_link {
             std::size_t size=0;
             if (complete() && !wait_peer_close) {
                 passed=true;
-                n::ngtcp2_ccerr error{}; n::ngtcp2_ccerr_default(&error); n::ngtcp2_ccerr_set_application_error(&error,nex::nghttp3::h3_no_error,nullptr,0);
+                n::ngtcp2_ccerr error{}; n::ngtcp2_ccerr_default(&error); n::ngtcp2_ccerr_set_application_error(&error,nghttp3::h3_no_error,nullptr,0);
                 auto written=connection.write_close(bytes,nullptr,nullptr,error,time(now)); if (!written) return std::unexpected(written.error());
                 size=*written; close_pending=bool(size);
             } else {

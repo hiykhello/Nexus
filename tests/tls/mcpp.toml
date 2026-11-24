@@ -1,23 +1,24 @@
 [package]
-namespace = "nexus"
 name = "tls-tests"
 version = "0.1.0"
 
 [dependencies]
-nexus.protocols = { path = "../../src", features = ["tls"] }
-nexus.platform = { path = "../../src/platform" }
+protocols = { path = "../../src", features = ["tls"] }
+containers = { path = "../../src/containers" }
+functional = { path = "../../src/functional" }
+platform = { path = "../../src/platform" }
 nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
-quic-resumption = ["resumption", "nexus.protocols/quic-resumption"]
-resumption = ["nexus.protocols/tls-resumption"]
-quic-tls = ["nexus.protocols/quic-tls"]
+quic-resumption = ["resumption", "protocols/quic-resumption"]
+resumption = ["protocols/tls-resumption"]
+quic-tls = ["protocols/quic-tls"]
 https = { sources = ["../../src/http/corosio_https.cppm"] }
 io-uring = ["nexus.corosio-source/uring"]
 
 [feature-deps.io-uring]
-nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 sources = []

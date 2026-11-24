@@ -7,12 +7,18 @@ export namespace platform::nftables {
         std::uint8_t family=0, length=0;
         std::array<std::uint8_t,16> address{};
     };
+    struct UidRange {
+        std::uint32_t min=0, max=0;
+    };
     struct Redirect {
         std::uint16_t port=0;
         bool ipv4=false, ipv6=false, intercept_dns=false, exclude_mptcp=false;
         std::uint32_t socket_mark=0;
         std::optional<RoutingMarkFilter> include_mark, exclude_mark;
         std::span<Prefix const> excludes, protected_destinations, local_destinations;
+        std::uint32_t input_mark=0, output_mark=0, reset_mark=0;
+        std::span<UidRange const> include_uids{}, exclude_uids{};
+        std::span<std::array<char,16> const> include_interfaces{}, exclude_interfaces{};
     };
     struct Transaction {
         std::vector<std::uint8_t> bytes;
@@ -26,6 +32,7 @@ export namespace platform::nftables {
         std::string name_;
         std::uint32_t sequence_=1;
         bool owned_=false;
+        auto close_socket() noexcept -> void;
         auto exchange(Transaction const&,Clock::time_point) -> std::error_code;
     public:
         Table()=default;

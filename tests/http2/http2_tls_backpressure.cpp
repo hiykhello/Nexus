@@ -4,11 +4,11 @@
 import std;
 import http2.tls_server;
 import tls.application_io;
-import nexus.thirdparty.nghttp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import nghttp2;
+import capy;
+import corosio;
 namespace h=http2; namespace t=tls; namespace c = ::crypto;
-namespace io=nex::corosio; namespace capy=nex::capy;
+namespace io = ::corosio;
 static thread_local std::size_t watched_size=0;
 static thread_local void* watched_allocation=nullptr;
 static thread_local h::ServerSession* watched_session=nullptr;
@@ -499,7 +499,7 @@ template<class Backend> auto abandon_paused(Backend backend,int mode) -> bool {
     if (!context.stopped() || !paused || (**session).paused_stream()!=3 || (**session).input_memory_charge()!=16640) return false;
     if (mode==1) {
         auto available=limits.shared_memory_bytes-(**session).shared_memory_used();
-        if (available<sizeof(nex::nghttp2::nghttp2_nv)) return false;
+        if (available<sizeof(nghttp2::nghttp2_nv)) return false;
         std::vector<std::byte> body(available);
         auto blocked=(**session).respond_body(1,200,body);
         if (blocked || blocked.error().kind!=h::ServerErrorKind::budget_exceeded || (**session).response_memory_used() ||

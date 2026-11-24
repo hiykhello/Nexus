@@ -83,7 +83,7 @@ def configure(root, fronts, upstream, workers):
     key = base64.b64encode(bytes(range(16))).decode()
     (root / 'ss-key').write_text(key); (root / 'ss-key').chmod(0o600)
     (root / 'password').write_text('secret'); (root / 'password').chmod(0o600)
-    (root / 'second.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+    (root / 'second.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
     inbounds = {
         'socks': f'socks5 "socks" {{ listen host="127.0.0.1" port={fronts.get("socks", 1)}; authentication "none"; }}',
         'uot': f'shadowsocks "uot" {{ listen host="127.0.0.1" port={fronts.get("uot", 1)}; method "2022-blake3-aes-128-gcm"; key-file "{root / "ss-key"}"; }}',
@@ -102,7 +102,7 @@ inbounds {{ {'; '.join(inbounds[kind] for kind in fronts)}; }}
 outbound "direct" type="direct"
 {outbounds}
 routing {{ rule-set "second" path="second.kdl" format="kdl";
- rule kind="rule-set" value="second" outbound="second"; default-outbound "first"; }}
+ rules {{ - kind="rule-set" value="second" outbound="second"; }}; default-outbound "first"; }}
 ''')
     box = root / 'upstream.json'
     box.write_text(json.dumps({'log': {'level': 'warn'}, 'inbounds': [{

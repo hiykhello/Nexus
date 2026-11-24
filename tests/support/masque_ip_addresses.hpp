@@ -2,7 +2,7 @@
 
 namespace {
     auto check_address_replacement() -> bool {
-        using namespace proxy;
+        using namespace relay;
         auto send = +[](void*, std::span<std::uint8_t const>) { return true; };
         L3Mux mux(L3Endpoint{}, send, nullptr);
         constexpr std::array addresses{

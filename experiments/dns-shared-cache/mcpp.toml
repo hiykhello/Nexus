@@ -1,26 +1,25 @@
 [package]
-namespace = "nexus"
 name = "dns-group-experiment"
 version = "0.1.0"
 
 # Experimental fixtures exercise the production snapshot and coordination core.
 [dependencies]
-nexus.dns = { path = "../../src/dns" }
-nexus.dns-group-core = { path = "../../src/dns-shared" }
-nexus.dns-group-udp = { path = "../../src/udp-shared", default-features = false }
-nexus.protocols = { path = "../../src", features = ["ss2022"] }
-nexus.ss-udp-runtime = { path = "../../src/udp-runtime", default-features = false }
-nexus.proxy-runtime = { path = "../../src/proxy" }
+dns = { path = "../../src/dns" }
+dns-group-core = { path = "../../src/dns-shared" }
+dns-group-udp = { path = "../../src/udp-shared", default-features = false }
+protocols = { path = "../../src", features = ["ss2022"] }
+ss-udp-runtime = { path = "../../src/udp-runtime", default-features = false }
+relay-runtime = { path = "../../src/relay" }
 nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring"]
 io-uring = ["nexus.corosio-source/uring"]
-test-udp-start = { implies = ["nexus.ss-udp-runtime/test-udp-start"], defines = ["NEXUS_TEST_UDP_START"] }
+test-udp-start = { implies = ["ss-udp-runtime/test-udp-start"], defines = ["NEXUS_TEST_UDP_START"] }
 
 [feature-deps.io-uring]
-nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 sources = ["udp_start_hooks.cpp"]

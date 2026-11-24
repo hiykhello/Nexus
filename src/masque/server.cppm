@@ -12,10 +12,12 @@ import quic.connection;
 import quic.http3;
 import quic.http3_headers;
 import net.udp_socket;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
+import ngtcp2;
+import nghttp3;
 
 export namespace masque {
+    enum class SocketWatchState : std::uint8_t { inactive, ready, paused };
+
     struct StreamAccounting {
         void* owner=nullptr;
         bool (*open)(void*,std::int64_t,std::uint16_t,bool)=nullptr;
@@ -46,7 +48,7 @@ export namespace masque {
             UdpCapsules<Mtu> capsules;
             std::optional<UdpHandle> handle;
             std::unique_ptr<IpServerStream> ip;
-            std::array<std::uint8_t,std::max(Mtu,IpServerPort::mtu)+9> output{};
+            std::array<std::uint8_t,std::max(Mtu,ip_server_mtu)+9> output{};
             std::size_t output_size=0,acked=0,output_payload=0;
             bool route_pending=false,claimed=false,ready=false,closed=false,submitted=false,rx_open=true,tx_open=true;
         };
@@ -83,16 +85,16 @@ export namespace masque {
             if (result && *result==OwnerSend::sent) accounting_.delivered(state.id,true,payload.size());
             return result.has_value();
         }
-        static auto field(std::string_view name,std::string_view value) noexcept -> nex::nghttp3::nghttp3_nv {
-            return {reinterpret_cast<std::uint8_t const*>(name.data()),reinterpret_cast<std::uint8_t const*>(value.data()),name.size(),value.size(),nex::nghttp3::nv_flag_none};
+        static auto field(std::string_view name,std::string_view value) noexcept -> nghttp3::nghttp3_nv {
+            return {reinterpret_cast<std::uint8_t const*>(name.data()),reinterpret_cast<std::uint8_t const*>(value.data()),name.size(),value.size(),nghttp3::nv_flag_none};
         }
         auto response(std::int64_t id,bool accepted) -> int {
-            std::array<nex::nghttp3::nghttp3_nv,2> fields{field(":status",accepted ? "200" : "403"),field("capsule-protocol","?1")};
+            std::array<nghttp3::nghttp3_nv,2> fields{field(":status",accepted ? "200" : "403"),field("capsule-protocol","?1")};
             return application_.h3().response(id,std::span(fields).first(accepted ? 2 : 1),accepted);
         }
         auto begin_ip(State& state, ConnectIpRequest request, bool fin) -> int {
             auto scope=parse_default_ip_path(request.path);
-            if(fin || ip_withdrawing_ || !ip_port_ || request.scheme!="https" || request.authority!=authority_ ||
+            if(fin || ip_withdrawing_ || !ip_port_ || !*ip_port_ || request.scheme!="https" || request.authority!=authority_ ||
                !policy_.authenticate(state.headers.fields()) || !scope) {
                 state.closed=true;return response(state.id,false);
             }
@@ -107,7 +109,7 @@ export namespace masque {
             state.ready=true;changed();return 0;
         }
     public:
-        UdpServer(Tls& tls,Policy& policy,std::string authority,nex::nghttp3::nghttp3_mem const& memory,IpServerPort* ip_port=nullptr)
+        UdpServer(Tls& tls,Policy& policy,std::string authority,nghttp3::nghttp3_mem const& memory,IpServerPort* ip_port=nullptr)
             :policy_(policy),authority_(authority),ip_port_(ip_port),owner_(policy,std::move(authority)),application_(tls,*this,true,memory) {}
         UdpServer(UdpServer const&)=delete;
         auto operator=(UdpServer const&) -> UdpServer& = delete;
@@ -122,13 +124,13 @@ export namespace masque {
         auto request_stop() noexcept -> void {stop();}
         auto stopping() const noexcept -> bool {return stopping_;}
         auto time(std::uint64_t now) noexcept -> void {application_.time(now);}
-        auto output(std::span<std::uint8_t> bytes,std::uint64_t now,nex::ngtcp2::ngtcp2_path* path=nullptr) -> std::expected<std::size_t,int> {return application_.output(bytes,now,path);}
+        auto output(std::span<std::uint8_t> bytes,std::uint64_t now,ngtcp2::ngtcp2_path* path=nullptr) -> std::expected<std::size_t,int> {return application_.output(bytes,now,path);}
         auto application_error() const noexcept -> std::uint64_t {return application_.application_error();}
-        auto add_connection_id(nex::ngtcp2::ngtcp2_cid const& id,nex::ngtcp2::ngtcp2_stateless_reset_token const& token) noexcept -> int {
+        auto add_connection_id(ngtcp2::ngtcp2_cid const& id,ngtcp2::ngtcp2_stateless_reset_token const& token) noexcept -> int {
             if constexpr (requires {policy_.add_connection_id(id,token);}) return policy_.add_connection_id(id,token);
             else return 0;
         }
-        auto remove_connection_id(nex::ngtcp2::ngtcp2_cid const& id) noexcept -> int {
+        auto remove_connection_id(ngtcp2::ngtcp2_cid const& id) noexcept -> int {
             if constexpr (requires {policy_.remove_connection_id(id);}) return policy_.remove_connection_id(id);
             else return 0;
         }
@@ -160,16 +162,35 @@ export namespace masque {
             for(auto& state:states_)if(state && state->handle==handle && state->route_pending && !state->closed) {
                 if(!owner_.permits(handle,endpoint))return false;
                 auto result=owner_.finish_resolve(handle,endpoint);state->route_pending=false;
-                if(!result) {owner_.close(handle);state->closed=true;accounting_.retired(state->id);(void)response(state->id,false);return false;}
-                if(response(state->id,true)) {owner_.close(handle);state->closed=true;accounting_.retired(state->id);return false;}
+                if(!result) {
+                    if(!state->tx_open || response(state->id,false)) {
+                        revoke(*state,0x10c);
+                        if(application_.h3().terminal_error() || application_.flush_pending())stop();
+                    } else {
+                        owner_.close(handle);state->closed=true;accounting_.retired(state->id);
+                    }
+                    return false;
+                }
+                if(!state->tx_open || response(state->id,true)) {
+                    revoke(*state,0x10c);
+                    if(application_.h3().terminal_error() || application_.flush_pending())stop();
+                    return false;
+                }
                 state->ready=true;changed();return true;
             }
             return false;
         }
         auto resolve_failed(UdpHandle handle) -> void {
+            if(stopping_)return;
             for(auto& state:states_)if(state && state->handle==handle && state->route_pending && !state->closed) {
-                state->route_pending=false;state->closed=true;owner_.close(handle);accounting_.retired(state->id);
-                (void)response(state->id,false);return;
+                state->route_pending=false;
+                if(!state->tx_open || response(state->id,false)) {
+                    revoke(*state,0x10c);
+                    if(application_.h3().terminal_error() || application_.flush_pending())stop();
+                } else {
+                    state->closed=true;owner_.close(handle);accounting_.retired(state->id);
+                }
+                return;
             }
         }
         auto stopping() noexcept -> void {
@@ -210,17 +231,18 @@ export namespace masque {
         }
         auto take_abort() noexcept -> std::optional<std::pair<std::int64_t,std::uint64_t>> {for(auto& a:aborts_)if(a)return std::exchange(a,{});return {};}
         auto begin_headers(std::int64_t id,bool trailers) -> int {
-            if(stopping_ || trailers || (id&3) || find(id))return nex::nghttp3::err_callback_failure;
-            return create(id) ? 0 : nex::nghttp3::err_callback_failure;
+            if(stopping_ || trailers || (id&3) || find(id))return nghttp3::err_callback_failure;
+            return create(id) ? 0 : nghttp3::err_callback_failure;
         }
-        auto header(std::int64_t id,nex::nghttp3::nghttp3_rcbuf* name,nex::nghttp3::nghttp3_rcbuf* value,bool trailers) -> int {
-            auto* s=find(id);return !trailers && s && s->headers.append(name,value) ? 0 : nex::nghttp3::err_callback_failure;
+        auto header(std::int64_t id,nghttp3::nghttp3_rcbuf* name,nghttp3::nghttp3_rcbuf* value,bool trailers) -> int {
+            auto* s=find(id);return !trailers && s && s->headers.append(name,value) ? 0 : nghttp3::err_callback_failure;
         }
         auto end_headers(std::int64_t id,bool fin,bool trailers) -> int {
-            auto* s=find(id);if(!s || trailers)return nex::nghttp3::err_callback_failure;
+            auto* s=find(id);if(!s || trailers)return nghttp3::err_callback_failure;
             if(auto ip=parse_connect_ip_request(s->headers.fields())) {
                 auto result=begin_ip(*s,*ip,fin);s->headers.clear();return result;
             }
+            if(fin) {s->headers.clear();s->closed=true;return response(id,false);}
             auto pending=owner_.begin(id,s->headers.fields());s->headers.clear();
             if(!pending) {s->closed=true;return response(id,false);}
             if (!accounting_.opened(id,pending->port)) {
@@ -229,7 +251,7 @@ export namespace masque {
             s->handle=pending->handle;s->route_pending=true;changed();return 0;
         }
         auto data(std::int64_t id,std::span<std::uint8_t const> bytes) -> int {
-            auto* s=find(id);if(!s)return nex::nghttp3::err_callback_failure;
+            auto* s=find(id);if(!s)return nghttp3::err_callback_failure;
             if (s->ip) {
                 auto valid=s->ip->feed(bytes);
                 accounting_.delivered(s->id,true,s->ip->take_uploaded());
@@ -242,7 +264,7 @@ export namespace masque {
         }
         auto end_stream(std::int64_t id) -> int {
             auto* s=find(id);if(!s)return 0;
-            if(s->ip) {revoke(*s,0x10c);return 0;}
+            if(s->ip || s->route_pending || !s->ready) {revoke(*s,0x10c);return 0;}
             auto result=s->capsules.finish([&](auto payload){if(s->ready && s->handle)(void)send_udp(*s,payload);});
             if(result==UdpInput::malformed || result==UdpInput::too_large) {revoke(*s,0x10e);return 0;}
             s->rx_open=false;if(s->handle)owner_.close_receive(*s->handle);
@@ -250,7 +272,7 @@ export namespace masque {
             return 0;
         }
         auto data_acked(std::int64_t id,std::uint64_t size) -> int {
-            auto* s=find(id);if(!s || size>s->output_size-s->acked)return nex::nghttp3::err_callback_failure;
+            auto* s=find(id);if(!s || size>s->output_size-s->acked)return nghttp3::err_callback_failure;
             s->acked+=size;
             if (s->acked==s->output_size) {
                 accounting_.delivered(s->id,false,std::exchange(s->output_payload,0));
@@ -260,9 +282,9 @@ export namespace masque {
             }
             return 0;
         }
-        auto read_data(std::int64_t id,std::span<nex::nghttp3::nghttp3_vec> output,std::uint32_t& flags) -> nex::nghttp3::nghttp3_ssize {
-            auto* s=find(id);if(!s || s->closed || !s->tx_open || s->submitted || !s->output_size || output.empty())return nex::nghttp3::err_wouldblock;
-            output[0]={s->output.data(),s->output_size};s->submitted=true;flags=nex::nghttp3::data_flag_none;return 1;
+        auto read_data(std::int64_t id,std::span<nghttp3::nghttp3_vec> output,std::uint32_t& flags) -> nghttp3::nghttp3_ssize {
+            auto* s=find(id);if(!s || s->closed || !s->tx_open || s->submitted || !s->output_size || output.empty())return nghttp3::err_wouldblock;
+            output[0]={s->output.data(),s->output_size};s->submitted=true;flags=nghttp3::data_flag_none;return 1;
         }
         // Pull only one bounded packet per stream until its DATA is ACKed.
         // This uses reliable DATAGRAM Capsules as a valid fallback even when
@@ -291,11 +313,19 @@ export namespace masque {
             }
             return application_.flush_pending()==0;
         }
+        auto socket_watch_state(UdpHandle handle,int fd) noexcept -> SocketWatchState {
+            if(stopping_)return SocketWatchState::inactive;
+            auto current=owner_.native_handle(handle);
+            if(!current || *current!=fd)return SocketWatchState::inactive;
+            for(auto const& state:states_)if(state && state->handle==handle && state->ready && !state->closed && state->tx_open)
+                return state->output_size ? SocketWatchState::paused : SocketWatchState::ready;
+            return SocketWatchState::inactive;
+        }
         // Registration snapshots own no descriptors. Callers discard these
         // after use and never treat fd numbers as stable association IDs.
         auto sockets() noexcept -> std::array<std::optional<std::pair<UdpHandle,int>>,Streams> {
             std::array<std::optional<std::pair<UdpHandle,int>>,Streams> result{};
-            for(std::size_t i=0;i<Streams;++i)if(states_[i] && states_[i]->ready && !states_[i]->closed && states_[i]->tx_open && states_[i]->handle && !states_[i]->output_size) {
+            for(std::size_t i=0;i<Streams;++i)if(states_[i] && states_[i]->ready && !states_[i]->closed && states_[i]->tx_open && states_[i]->handle) {
                 auto fd=owner_.native_handle(*states_[i]->handle);
                 if(fd)result[states_[i]->handle->slot]=std::pair{*states_[i]->handle,*fd};
             }
@@ -304,7 +334,7 @@ export namespace masque {
         auto datagram_output() noexcept -> std::optional<Packet> {return {};}
         auto datagram_accepted() noexcept -> void {}
         auto datagram_rejected() noexcept -> void {}
-        auto datagram_budget() const noexcept -> std::size_t {return ip_port_ ? IpServerPort::mtu+1 : Mtu;}
+        auto datagram_budget() const noexcept -> std::size_t {return ip_port_ ? ip_server_mtu+1 : Mtu;}
         auto withdraw_ip() noexcept -> void {
             ip_withdrawing_=true;
             for(auto& state:states_)if(state && state->ip && state->ready)state->ip->withdraw();
@@ -329,12 +359,20 @@ export namespace masque {
             for(auto& s:states_)if(s && s->id==id){if(s->handle)owner_.close(*s->handle);accounting_.retired(id);s.reset();changed();return;}
         }
         auto receive_closed(std::int64_t id,std::uint64_t) noexcept -> void {
-            if(auto* s=find(id);s && s->ip){revoke(*s,0x10c);return;}
-            if(auto* s=find(id)){s->rx_open=false;if(s->handle)owner_.close_receive(*s->handle);if(!s->tx_open && s->handle){owner_.close(*s->handle);s->ready=false;accounting_.retired(id);}changed();}
+            auto* s=find(id);if(!s)return;
+            s->rx_open=false;
+            if(s->ip || s->route_pending || !s->ready){revoke(*s,0x10c);return;}
+            if(s->handle)owner_.close_receive(*s->handle);
+            if(!s->tx_open && s->handle){owner_.close(*s->handle);s->ready=false;accounting_.retired(id);}
+            changed();
         }
         auto send_closed(std::int64_t id,std::uint64_t) noexcept -> void {
-            if(auto* s=find(id);s && s->ip){revoke(*s,0x10c);return;}
-            if(auto* s=find(id)){s->tx_open=false;if(s->handle)owner_.close_send(*s->handle);if(!s->rx_open && s->handle){owner_.close(*s->handle);s->ready=false;accounting_.retired(id);}changed();}
+            auto* s=find(id);if(!s)return;
+            s->tx_open=false;
+            if(s->ip || s->route_pending || !s->ready){revoke(*s,0x10c);return;}
+            if(s->handle)owner_.close_send(*s->handle);
+            if(!s->rx_open && s->handle){owner_.close(*s->handle);s->ready=false;accounting_.retired(id);}
+            changed();
         }
         auto shutdown(std::int64_t) noexcept -> int {return 0;}
     };

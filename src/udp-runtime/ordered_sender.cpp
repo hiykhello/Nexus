@@ -1,7 +1,7 @@
 module ss_udp.ordered_sender;
 import std;
 import rules;
-import proxy;
+import relay;
 import ss_udp.listener;
 import net.udp_authorization;
 import net.datagram_frame;
@@ -9,10 +9,10 @@ import uot;
 import xudp;
 import xudp.client_sessions;
 import xudp.client_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace proxy::udp_runtime {
+namespace relay::udp_runtime {
     // One executor owns this object, its routing server and all dispatchers.
     // Tokens remain under dispatcher budget until the writer takes a packet.
     class OrderedUdpSender : public std::enable_shared_from_this<OrderedUdpSender> {
@@ -25,8 +25,8 @@ namespace proxy::udp_runtime {
         struct Job { std::uint64_t token; Peer target; Clock::time_point deadline; Sink sink; };
         struct Stream {
             PacketTunnel* tunnel=nullptr;
-            auto write(std::span<std::uint8_t const> data) -> nex::capy::task<bool> {co_return co_await tunnel->send(data);}
-            auto read(std::span<std::uint8_t> data) -> nex::capy::task<std::expected<std::size_t,std::string>> {co_return co_await tunnel->read(data);}
+            auto write(std::span<std::uint8_t const> data) -> capy::task<bool> {co_return co_await tunnel->send(data);}
+            auto read(std::span<std::uint8_t> data) -> capy::task<std::expected<std::size_t,std::string>> {co_return co_await tunnel->read(data);}
             auto cancel() noexcept -> void {if(tunnel)tunnel->cancel();}
         };
         struct Slot {
@@ -43,12 +43,14 @@ namespace proxy::udp_runtime {
             Sink sink;
             Clock::time_point touched=Clock::now();
             std::optional<Clock::time_point> active_deadline;
+            capy::async_event reader_done,auth_wake;
             bool connected=false,writer=false,reader=false,rotating=false,closed=false;
         };
         Server& server_;
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         std::vector<std::unique_ptr<Slot>> slots_;
         std::stop_source timer_stop_;
+        capy::async_event timer_wake_;
         std::size_t pending_=0,active_=0;
         bool stopped_=false,timer_=false;
         static constexpr std::size_t max_slots_=64,max_pending_=64;
@@ -80,6 +82,7 @@ namespace proxy::udp_runtime {
         static auto same(Handle const& a,Handle const& b) noexcept -> bool {return a.owner==b.owner && a.id==b.id && a.generation==b.generation;}
         auto close(Slot& slot) noexcept -> void {
             if(slot.closed)return;slot.closed=true;slot.authorization.close();
+            slot.auth_wake.set();slot.reader_done.set();timer_wake_.set();
             for(auto& job:slot.queue){(void)slot.dispatcher->cancel(job.token);--pending_;}slot.queue.clear();
             if(slot.xudp)slot.xudp->cancel();else if(slot.tunnel)slot.tunnel->cancel();
             if(slot.routing)slot.routing->close();
@@ -87,13 +90,28 @@ namespace proxy::udp_runtime {
         auto reap() -> void {
             std::erase_if(slots_,[](auto const& slot){return slot->closed && !slot->writer && !slot->reader;});
         }
-        auto timer() -> nex::capy::task<> {
+        auto timer() -> capy::task<> {
             using namespace std::chrono_literals;
             while(!stopped_) {
-                auto [error]=co_await nex::corosio::delay(5ms);
-                if(error) {stop();break;}
+                timer_wake_.clear();
                 if(stopped_)break;
+                if(slots_.empty()) {
+                    auto [error]=co_await timer_wake_.wait();
+                    if(error || stopped_) {stop();break;}
+                    continue;
+                }
                 auto now=Clock::now();
+                auto next=now+250ms;
+                for(auto const& slot:slots_) if(!slot->closed) {
+                    if(slot->active_deadline)next=std::min(next,*slot->active_deadline);
+                    if(!slot->writer)next=std::min(next,slot->touched+62s);
+                }
+                if(now<next) {
+                    auto [error]=co_await corosio::timeout(timer_wake_.wait(),next);
+                    if(error && timer_stop_.stop_requested()) {stop();break;}
+                }
+                if(stopped_)break;
+                now=Clock::now();
                 for(auto& slot:slots_) if(!slot->closed &&
                     (!slot->dispatcher->current(slot->session) ||
                      (slot->active_deadline && now>=*slot->active_deadline) ||
@@ -103,11 +121,11 @@ namespace proxy::udp_runtime {
         }
         auto start_timer() -> void {
             if(timer_)return;timer_=true;++active_;
-            try {nex::capy::run_async(context_.get_executor(),timer_stop_.get_token(),[this]{timer_=false;--active_;},
+            try {capy::run_async(context_.get_executor(),timer_stop_.get_token(),[this]{timer_=false;--active_;},
                 [this](std::exception_ptr) noexcept {timer_=false;--active_;stop();})(timer());}
             catch (...) {timer_=false;--active_;throw;}
         }
-        auto deliver(Slot& slot,Peer source,std::span<std::uint8_t const> payload) -> nex::capy::task<bool> {
+        auto deliver(Slot& slot,Peer source,std::span<std::uint8_t const> payload) -> capy::task<bool> {
             using namespace std::chrono_literals;
             while(!stopped_ && !slot.closed) {
                 auto result=slot.sink(slot.session,source,payload);
@@ -115,11 +133,11 @@ namespace proxy::udp_runtime {
                     slot.touched=Clock::now();co_return true;
                 }
                 if(result!=shadowsocks::detail::UdpTunnelReplyResult::busy)co_return false;
-                auto [error]=co_await nex::corosio::delay(1ms);if(error)co_return false;
+                auto [error]=co_await corosio::delay(1ms);if(error)co_return false;
             }
             co_return false;
         }
-        auto read_loop(Slot& slot) -> nex::capy::task<> {
+        auto read_loop(Slot& slot) -> capy::task<> {
             using namespace std::chrono_literals;
             if(slot.xudp) {
                 while(!stopped_ && !slot.closed) {
@@ -131,7 +149,7 @@ namespace proxy::udp_runtime {
                 }
             } else {
                 net::DatagramDecoder decoder(slot.transport.framing,address(slot.target));
-                std::array<std::uint8_t,16384> bytes{};
+                std::array<std::uint8_t,16640> bytes{};
                 while(!stopped_ && !slot.closed) {
                     auto result=co_await slot.tunnel->read(bytes);if(!result || !*result || *result>bytes.size())break;
                     std::size_t offset=0;
@@ -142,7 +160,12 @@ namespace proxy::udp_runtime {
                         auto frame=decoder.packet();if(!frame){close(slot);break;}
                         auto source=peer(frame->destination);if(!source){close(slot);break;}
                         while(!stopped_ && !slot.closed && slot.authorization.classify(endpoint(*source))==net::UdpReplyAuthorization::pending) {
-                            auto [error]=co_await nex::corosio::delay(1ms);if(error){close(slot);break;}
+                            slot.auth_wake.clear();
+                            if(slot.authorization.classify(endpoint(*source))!=net::UdpReplyAuthorization::pending)break;
+                            auto [error]=slot.active_deadline
+                                ? co_await corosio::timeout(slot.auth_wake.wait(),*slot.active_deadline)
+                                : co_await slot.auth_wake.wait();
+                            if(error){close(slot);break;}
                         }
                         if(!slot.closed && slot.authorization.accepts(endpoint(*source)) && !co_await deliver(slot,*source,frame->payload)) {close(slot);break;}
                         (void)decoder.consume();
@@ -153,11 +176,11 @@ namespace proxy::udp_runtime {
         }
         auto start_reader(Slot& slot) -> void {
             slot.reader=true;++active_;
-            try {nex::capy::run_async(context_.get_executor(),[this,&slot]{slot.reader=false;--active_;},
-                [this,&slot](std::exception_ptr) noexcept {close(slot);slot.reader=false;--active_;})(read_loop(slot));}
-            catch (...) {slot.reader=false;--active_;throw;}
+            try {capy::run_async(context_.get_executor(),[this,&slot]{slot.reader=false;slot.reader_done.set();--active_;},
+                [this,&slot](std::exception_ptr) noexcept {close(slot);slot.reader=false;slot.reader_done.set();--active_;})(read_loop(slot));}
+            catch (...) {slot.reader=false;slot.reader_done.set();--active_;throw;}
         }
-        auto connect_slot(Slot& slot,Clock::time_point deadline,Sink const& sink) -> nex::capy::task<bool> {
+        auto connect_slot(Slot& slot,Clock::time_point deadline,Sink const& sink) -> capy::task<bool> {
             auto connected=co_await slot.tunnel->connect(address(slot.target),deadline);
             if(stopped_ || slot.closed || connected!=PacketConnectResult::connected)co_return false;
             slot.transport=slot.tunnel->transport();
@@ -172,11 +195,13 @@ namespace proxy::udp_runtime {
             if(stopped_ || slot.closed || Clock::now()>=deadline)co_return false;
             slot.connected=true;slot.sink=sink;start_reader(slot);co_return true;
         }
-        auto rotate_xudp(Slot& slot,Clock::time_point deadline,Sink const& sink) -> nex::capy::task<bool> {
+        auto rotate_xudp(Slot& slot,Clock::time_point deadline,Sink const& sink) -> capy::task<bool> {
             using namespace std::chrono_literals;
             slot.rotating=true;slot.connected=false;slot.xudp->cancel();
             while(slot.reader && !stopped_ && !slot.closed && Clock::now()<deadline) {
-                auto [error]=co_await nex::corosio::delay(1ms);if(error)co_return false;
+                slot.reader_done.clear();
+                if(!slot.reader)break;
+                auto [error]=co_await corosio::timeout(slot.reader_done.wait(),deadline);if(error)co_return false;
             }
             if(stopped_ || slot.closed || slot.reader || Clock::now()>=deadline)co_return false;
             slot.xudp.reset();slot.tunnel.reset();slot.xudp_id=0;slot.stream.tunnel=nullptr;
@@ -186,7 +211,7 @@ namespace proxy::udp_runtime {
             slot.active_deadline=slot.tunnel->connection_deadline(deadline);
             co_return co_await connect_slot(slot,*slot.active_deadline,sink);
         }
-        auto write_loop(Slot& slot) -> nex::capy::task<> {
+        auto write_loop(Slot& slot) -> capy::task<> {
             while(!stopped_ && !slot.closed && !slot.queue.empty()) {
                 auto job=std::move(slot.queue.front());slot.queue.pop_front();
                 struct Guard {OrderedUdpSender& owner;Dispatch& dispatcher;std::uint64_t token;~Guard(){(void)dispatcher.cancel(token);--owner.pending_;}} guard{*this,*slot.dispatcher,job.token};
@@ -223,6 +248,7 @@ namespace proxy::udp_runtime {
                     if(frame && transaction) {
                         sent=co_await slot.tunnel->send(*frame);
                         if(!slot.authorization.finish(*transaction,sent))sent=false;
+                        slot.auth_wake.set();
                     }
                 }
                 if (sent) {
@@ -237,7 +263,7 @@ namespace proxy::udp_runtime {
         }
         auto start_writer(Slot& slot) -> void {
             slot.writer=true;++active_;
-            try {nex::capy::run_async(context_.get_executor(),[this,&slot]{slot.writer=false;--active_;
+            try {capy::run_async(context_.get_executor(),[this,&slot]{slot.writer=false;--active_;
                     if(!slot.closed && !slot.queue.empty())try {start_writer(slot);} catch(...) {close(slot);}},
                 [this,&slot](std::exception_ptr) noexcept {close(slot);slot.writer=false;--active_;})(write_loop(slot));}
             catch (...) {slot.writer=false;--active_;throw;}
@@ -248,7 +274,7 @@ namespace proxy::udp_runtime {
         OrderedUdpSender(OrderedUdpSender const&)=delete;
         auto operator=(OrderedUdpSender const&) -> OrderedUdpSender& = delete;
         [[nodiscard]] auto allows(std::size_t outbound) const noexcept -> bool {return outbound==0 || server_.has_packet_outbound(outbound);}
-        [[nodiscard]] auto submit(nex::corosio::io_context& context,Dispatch& dispatcher,std::uint64_t token,std::size_t outbound,
+        [[nodiscard]] auto submit(corosio::io_context& context,Dispatch& dispatcher,std::uint64_t token,std::size_t outbound,
             std::span<Peer const> candidates,std::optional<std::string_view> inbound,Clock::time_point deadline,Sink sink) -> std::expected<void,Error> {
             if(stopped_ || &context!=&context_ || !allows(outbound) || deadline<=Clock::now())return std::unexpected(Error::state);
             if(outbound==0) {
@@ -259,10 +285,16 @@ namespace proxy::udp_runtime {
             std::optional<shadowsocks::UdpTunnelTicket> ticket;
             for(auto const& candidate:candidates) {auto result=dispatcher.inspect_selected(token,candidate,Clock::now());if(result){ticket=*result;break;}}
             if(!ticket)return std::unexpected(Error::dispatch);
-            reap();Slot* selected=nullptr;
+            reap();Slot* selected=nullptr;Slot* mux_candidate=nullptr;
             for(auto& slot:slots_)if(!slot->closed && slot->dispatcher==&dispatcher && same(slot->session,ticket->session) &&
-                slot->target==ticket->target && slot->source==ticket->source && slot->outbound==outbound &&
-                ((!slot->inbound && !inbound) || (slot->inbound && inbound && *slot->inbound==*inbound))){selected=slot.get();break;}
+                slot->source==ticket->source && slot->outbound==outbound &&
+                ((!slot->inbound && !inbound) || (slot->inbound && inbound && *slot->inbound==*inbound))){
+                if(slot->target==ticket->target){selected=slot.get();break;}
+                if(!mux_candidate && slot->connected &&
+                   (slot->xudp!=nullptr || (slot->transport.kind==net::PacketTransportKind::framed && !slot->transport.framing.connected)))
+                    mux_candidate=slot.get();
+            }
+            if(!selected) selected=mux_candidate;
             if(!selected) {
                 if(slots_.size()>=max_slots_)return std::unexpected(Error::state);
                 auto lease=server_.acquire_session();if(!lease)return std::unexpected(Error::state);
@@ -275,11 +307,11 @@ namespace proxy::udp_runtime {
                 selected=slot.get();slots_.push_back(std::move(slot));
             }
             selected->queue.push_back({token,ticket->target,deadline,std::move(sink)});++pending_;
-            try {start_timer();if(!selected->writer)start_writer(*selected);}
+            try {start_timer();timer_wake_.set();if(!selected->writer)start_writer(*selected);}
             catch (...) {close(*selected);throw;}
             return {};
         }
-        auto stop() noexcept -> void {if(stopped_)return;stopped_=true;timer_stop_.request_stop();for(auto& slot:slots_)close(*slot);}
+        auto stop() noexcept -> void {if(stopped_)return;stopped_=true;timer_wake_.set();timer_stop_.request_stop();for(auto& slot:slots_)close(*slot);}
         [[nodiscard]] auto drained() const noexcept -> bool {return !active_ && !pending_;}
         auto finish() noexcept -> void {if(!drained())std::terminate();slots_.clear();}
         [[nodiscard]] auto routing(std::shared_ptr<rules::RouteProgram const> program,std::size_t fallback,bool skip_unknown,std::chrono::milliseconds sniff_timeout)

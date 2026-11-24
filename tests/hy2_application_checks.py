@@ -1,6 +1,6 @@
 import argparse,hashlib,json,subprocess,sys,tempfile
 from pathlib import Path
-sys.path.insert(0,'/home/yk/Code/Nexus/tests')
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential
 parser=argparse.ArgumentParser();parser.add_argument('--build',type=Path,default=Path('build'));parser.add_argument('--report',type=Path,required=True);parser.add_argument('--resource',action='store_true');parser.add_argument('--abandon',action='store_true');args=parser.parse_args()
 report={'complete':False,'cases':[]}

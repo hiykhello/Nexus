@@ -12,14 +12,14 @@ import quic.tls_server;
 import net.datagram_driver;
 import net.stream_relay;
 import tls.server_credential;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hy2_port_link;
-namespace n=nex::ngtcp2;namespace q=quic;namespace h=hysteria2;namespace io=nex::corosio;namespace capy=nex::capy;namespace support=nexus::test::quic_tls;
+import ngtcp2;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hy2_port_link;
+namespace n = ::ngtcp2;namespace q=quic;namespace h=hysteria2;namespace io = ::corosio;namespace support=test::quic_tls;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
-using namespace nexus::test::hy2_port;
+using namespace test::hy2_port;
 auto transfer(capy::task<bool> operation) -> capy::task<capy::results<>> {co_return capy::results<>{co_await std::move(operation)?std::error_code{}:std::make_error_code(std::errc::io_error)};}
 auto business(Bundle& bundle,Driver& driver,std::size_t total,io::io_context& context,unsigned upstream,BusinessRoot root) -> capy::task<capy::results<>> {
     auto active=std::move(root);auto& app=bundle.app;

@@ -1,8 +1,8 @@
 import std;
 import snell.client_pool;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct State {int destroyed=0;bool destroyed_during_cancel=false;};
 struct Node {

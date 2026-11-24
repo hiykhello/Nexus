@@ -5,11 +5,14 @@ _nexus_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local top_cmds="run check rule endpoint control state --help"
-    local rule_cmds="convert explain fetch watch --help"
+    local top_cmds="run check rule endpoint control state generate tools convert-config provider system-proxy service --help"
+    local rule_cmds="convert merge explain fetch watch --help"
     local control_cmds="status connections close close-any close-all select probe group-health user-usage reload clear-cache network-change operation events diagnostics log-level"
     local state_cmds="inspect clear-cache reset --help"
     local endpoint_cmds="check run --help"
+    local provider_cmds="inspect sync --help"
+    local sysproxy_cmds="status on off --help"
+    local service_cmds="install uninstall start stop restart status --help"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "$top_cmds" -- "$cur") )
@@ -87,6 +90,30 @@ _nexus_completions() {
                 COMPREPLY=( $(compgen -f -X '!*.kdl' -- "$cur") )
             else
                 COMPREPLY=( $(compgen -W "--config --resolve --help" -- "$cur") )
+            fi
+            ;;
+        convert-config)
+            COMPREPLY=( $(compgen -W "--from --output -o --inbound-listen --inbound-type --default-group --include --exclude --tag-prefix --help" -- "$cur") $(compgen -f -- "$cur") )
+            ;;
+        provider)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "$provider_cmds" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "--config --name --json --force --help" -- "$cur") )
+            fi
+            ;;
+        system-proxy)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "$sysproxy_cmds" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "--host --port --socks-port --bypass --pac-url --dry-run --shell-env --json --help" -- "$cur") )
+            fi
+            ;;
+        service)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "$service_cmds" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -W "--config --name --binary --workdir --log --user --output-dir --render-target --dry-run --json --help" -- "$cur") )
             fi
             ;;
     esac

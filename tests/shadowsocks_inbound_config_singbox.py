@@ -65,7 +65,7 @@ def scenario(root,size,workers):
     port=free_port(); second_port=free_port()
     while second_port==port: second_port=free_port()
     key=root/"key"; key.write_text(base64.b64encode(bytes(range(size))).decode()+"\n"); key.chmod(0o600)
-    (root/"deny.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+    (root/"deny.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
     config_path=root/"server.kdl"
     config_path.write_text(f'''schema-version 1
 role "server"
@@ -75,7 +75,7 @@ inbounds {{
   shadowsocks "b" {{ listen host="127.0.0.1" port={second_port}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
 }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" value="deny" outbound="reject"; default-outbound "direct"; }}
+routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
     for invalid,mode in [("AAAA",0o600),(base64.b64encode(bytes(range(size))).decode(),0o644)]:
         key.write_text(invalid); key.chmod(mode)

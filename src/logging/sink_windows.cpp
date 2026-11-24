@@ -62,8 +62,10 @@ namespace logging {
                     }
                 }
             }
-            ::CloseHandle(static_cast<HANDLE>(active_handle));
-            active_handle = nullptr;
+            if (active_handle) {
+                ::CloseHandle(static_cast<HANDLE>(active_handle));
+                active_handle = nullptr;
+            }
             if (names.size() > 1) {
                 auto cur = dir / names[0];
                 auto bak = dir / names[1];
@@ -74,6 +76,12 @@ namespace logging {
                 DWORD e = ::GetLastError();
                 ::CloseHandle(static_cast<HANDLE>(next));
                 ::DeleteFileW(temp_path.c_str());
+                std::uint64_t recovered_sz = 0;
+                DWORD reopen_err = ERROR_SUCCESS;
+                if (void* recovered = open_append_file(cur, false, recovered_sz, reopen_err)) {
+                    active_handle = recovered;
+                    active_size = recovered_sz;
+                }
                 return e;
             }
             active_handle = next;
@@ -113,6 +121,9 @@ namespace logging {
 
             auto write(this FileSink& self, std::span<SinkRecord const> lines) noexcept -> SinkResult {
                 while (!lines.empty()) {
+                    if (!self.file.get()) {
+                        if (auto r = self.reopen(); !r) return r;
+                    }
                     if (self.max_size && self.size &&
                         lines.front().line.size() > self.max_size - std::min(self.size, self.max_size)) {
                         void* handle = self.file.release();

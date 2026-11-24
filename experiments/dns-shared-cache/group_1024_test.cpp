@@ -4,7 +4,7 @@
 import std;
 import dns.message;
 import dns.cache;
-#include "../../src/dns-shared/group_snapshot.hpp"
+import dns.group_snapshot;
 
 namespace d=dns;
 using Cache=dns_hp_experiment::GroupSnapshot;

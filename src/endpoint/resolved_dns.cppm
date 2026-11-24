@@ -1,7 +1,6 @@
 export module endpoint.resolved_dns;
 import std;
 import endpoint.host_dns_types;
-import platform.sd_bus_abi;
 import platform.netlink_abi;
 import platform.netlink_codec;
 import platform.netlink_socket;
@@ -23,10 +22,12 @@ export namespace endpoint {
         std::optional<platform::resolved::Failure> failure;
     };
     template<class KernelHooks=platform::netlink::NoHooks> class ResolvedHostDns {
+      public:
+        using Failure=platform::resolved::Failure;
+      private:
         using Clock=platform::resolved::Clock;
         using Lease=packet::TunNetworkLease<KernelHooks>;
         using Snapshot=platform::resolved::Snapshot;
-        using Failure=platform::resolved::Failure;
         using Error=platform::resolved::Error;
         Lease* lease_=nullptr;
         platform::resolved::Client<host_dns_detail::Cancellation<KernelHooks>> client_;
@@ -60,6 +61,7 @@ export namespace endpoint {
         }
       public:
         static constexpr bool enabled=true;
+        [[nodiscard]] static auto is_timeout(Failure const& problem) noexcept -> bool {return problem.code==Error::timeout;}
         [[nodiscard]] static auto describe(Failure const& problem,bool startup) noexcept -> std::string_view {
             switch(problem.code) {
                 case Error::canceled:return startup ? "endpoint startup canceled" : "host DNS check canceled";
@@ -113,11 +115,18 @@ export namespace endpoint {
             owner=identity(deadline);if(!owner)return abort(owner.error());
             client_.mark_clean();next_check_=Clock::now()+std::chrono::milliseconds(250);started_=true;return {};
         }
-        [[nodiscard]] auto poll(Clock::time_point now,Clock::time_point deadline) -> std::expected<void,Failure> {
+        [[nodiscard]] auto poll_events(Clock::time_point deadline) -> std::expected<bool,Failure> {
             if(!started_ || stopped_)return failure(Error::state);
-            auto events=client_.process(deadline);if(!events)return std::unexpected(events.error());
-            if(client_.revoked())return failure(Error::ownership);
-            if(!client_.dirty() && now<next_check_)return {};
+            for(unsigned batch=0;batch<8;++batch) {
+                auto events=client_.process(deadline);if(!events)return std::unexpected(events.error());
+                if(client_.revoked())return failure(Error::ownership);
+                if(!*events)break;
+            }
+            return client_.dirty();
+        }
+        [[nodiscard]] auto poll(Clock::time_point now,Clock::time_point deadline) -> std::expected<void,Failure> {
+            auto dirty=poll_events(deadline);if(!dirty)return std::unexpected(dirty.error());
+            if(!*dirty && now<next_check_)return {};
             auto owner=identity(deadline);if(!owner)return owner;
             auto current=client_.snapshot(deadline);if(!current)return std::unexpected(current.error());
             if(*current!=desired_)return failure(Error::ownership);
@@ -151,9 +160,9 @@ export namespace endpoint {
                                 auto changed=client_.template set_servers<false>(empty,deadline);if(!changed)issue(changed.error());
                                 auto verified=client_.template snapshot<false>(deadline);
                                 if(!verified || *verified!=empty)issue(verified ? Failure{Error::ownership} : verified.error());
-                                else {servers_attempted_=domains_attempted_=false;cleanup_.restored=true;}
+                                else {servers_attempted_=domains_attempted_=false;cleanup_.restored=true;cleanup_.uncertain=false;}
                             }
-                        } else if(current && !current->server_count && !current->domain_count){servers_attempted_=domains_attempted_=false;cleanup_.restored=true;}
+                        } else if(current && !current->server_count && !current->domain_count){servers_attempted_=domains_attempted_=false;cleanup_.restored=true;cleanup_.uncertain=false;}
                     }
                 }
             } else cleanup_.restored=true;

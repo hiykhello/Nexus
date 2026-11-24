@@ -81,7 +81,7 @@ package = {{
   spec = "1", namespace = "nexus", name = "boringssl-crypto-source",
   description = "Pinned BoringSSL non-FIPS libcrypto sources", licenses = {{ "Apache-2.0" }},
   repo = "https://boringssl.googlesource.com/boringssl/", type = "package",
-  archs = {{ "x86_64" }},
+  archs = {{ "x86_64", "arm64", "aarch64" }},
   xpm = {{ linux = {{ ["{VERSION}"] = {{
     url = "https://github.com/google/boringssl/archive/{REVISION}.tar.gz",
     sha256 = "{SHA256}",
@@ -91,7 +91,6 @@ package = {{
     private_include_dirs = {{ "*/crypto/x509" }},
     defines = {{ "BORINGSSL_IMPLEMENTATION" }},
     cxxflags = {{ "-fno-modules", "-fno-exceptions", "-fno-rtti" }},
-    flags = {{ {{ glob = "**/*.S", asmflags = {{ "-Wa,--noexecstack" }} }} }},
     ldflags = {{ "-lpthread" }},
     sources = {{
 {entries}

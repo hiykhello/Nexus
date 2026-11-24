@@ -4,14 +4,14 @@ import dns.message;
 import dns.fakeip_shared;
 import dns.shared_cache;
 import dns.shared_coordinator;
-import proxy;
+import relay;
 
 extern "C" void nexus_test_dns_shared_access(void const*) noexcept {}
 
 auto main(int argc,char** argv) -> int {
     using namespace std::chrono_literals;
     namespace d=dns;
-    namespace p=proxy;
+    namespace p = relay;
     namespace hp=dns_hp_experiment;
     if (argc!=2) return 2;
     auto upstream=std::strtoul(argv[1],nullptr,10);

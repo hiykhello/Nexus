@@ -1,5 +1,6 @@
 module;
 #include <cerrno>
+#include <csignal>
 #include <cstring>
 #include <poll.h>
 #include <spawn.h>
@@ -14,23 +15,14 @@ import packet.tun_network_types;
 import packet.tun_default_policy;
 import cli.tun_resolved;
 import platform.nftables;
+import platform.unique_fd;
 
 namespace cli::tun_enabled {
     namespace {
         using Clock=std::chrono::steady_clock;
         using namespace std::chrono_literals;
         constexpr int child_socket=3;
-
-        class FileDescriptor {
-            int fd_;
-        public:
-            explicit FileDescriptor(int fd) noexcept : fd_(fd) {}
-            FileDescriptor(FileDescriptor const&)=delete;
-            auto operator=(FileDescriptor const&) -> FileDescriptor& = delete;
-            ~FileDescriptor() { if (fd_>=0) (void)::close(fd_); }
-            auto get() const noexcept -> int {return fd_;}
-            auto release() noexcept -> int {return std::exchange(fd_,-1);}
-        };
+        using FileDescriptor = platform::UniqueFd;
 
         auto wait_events(int fd,short wanted,Clock::time_point deadline) noexcept -> short {
             pollfd item{fd,wanted,0};
@@ -135,6 +127,7 @@ namespace cli::tun_enabled {
         (void)::close(child.release());
         pid_=pid;
         socket_=local.release();
+        struct Rollback { StrictTunOwner& owner; bool ok=false; ~Rollback() { if (!ok) (void)owner.stop(); } } rollback{*this};
         auto amount=::send(socket_,&request,sizeof request,MSG_NOSIGNAL);
         if (amount!=sizeof request || !wait_events(socket_,POLLIN,Clock::now()+(request.dns_stub.front() ? 19s : 12s)))
             return std::unexpected("TUN strict-route installation failed or timed out");
@@ -146,6 +139,7 @@ namespace cli::tun_enabled {
         auto tun=packet::LinuxTun::attach(fd.get(),packet::TunFdOwnership::adopt);
         if (!tun) return std::unexpected("cannot adopt TUN network owner's device");
         (void)fd.release();
+        rollback.ok=true;
         return std::move(*tun);
     }
 
@@ -171,8 +165,9 @@ namespace cli::tun_enabled {
             if (done<0 && errno!=EINTR) {pid_=-1;return false;}
             (void)::poll(nullptr,0,10);
         } while (Clock::now()<deadline);
-        // The ownership socket is already closed. Leave the owner to run
-        // its bounded cleanup even if its parent is no longer waiting.
+        (void)::kill(pid_,SIGKILL);
+        while (::waitpid(pid_,&status,0)<0 && errno==EINTR) {}
+        pid_=-1;
         return false;
     }
 
@@ -184,7 +179,11 @@ namespace cli::tun_enabled {
         if (::recv(channel.get(),&request,sizeof request,MSG_TRUNC)!=sizeof request ||
             request.name.back()!=0 || request.dns_stub.back()!=0 || request.exclude_count>request.excludes.size() ||
             request.network.route_count || !packet::tun_network_detail::validate(request.network)) return 2;
-        if (request.redirect.protected_count>request.redirect.protected_destinations.size()) return 2;
+        if (request.redirect.protected_count>request.redirect.protected_destinations.size() ||
+            request.redirect.include_uid_count>request.redirect.include_uids.size() ||
+            request.redirect.exclude_uid_count>request.redirect.exclude_uids.size() ||
+            request.redirect.include_if_count>request.redirect.include_interfaces.size() ||
+            request.redirect.exclude_if_count>request.redirect.exclude_interfaces.size()) return 2;
         auto protected_destinations=std::span(request.redirect.protected_destinations).first(request.redirect.protected_count);
         for (auto const& entry:protected_destinations)
             if (!packet::tun_network_detail::valid(entry,true)) return 2;
@@ -193,14 +192,18 @@ namespace cli::tun_enabled {
         auto token=tun->claim_network();
         if (!token) return 2;
         std::optional<packet::TunNetworkLease<>> network;
-        if (!packet::TunNetworkLease<>::emplace_into(network,std::move(*token),request.network) ||
-            !network->start(Clock::now()+4s)) return 2;
+        if (!packet::TunNetworkLease<>::emplace_into(network,std::move(*token),request.network)) return 2;
+        if (!network->start(Clock::now()+4s)) { (void)network->stop(Clock::now()+3s); return 2; }
         packet::TunDefaultPolicy<> policy;
         auto deadline=Clock::now()+3s;
         auto excludes=std::span(request.excludes).first(request.exclude_count);
-        if (!policy.start(*network,request.policy,deadline,deadline+2s,excludes,request.redirect)) return 2;
+        if (!policy.start(*network,request.policy,deadline,deadline+2s,excludes,request.redirect)) {
+            (void)policy.stop(Clock::now()+3s);
+            (void)network->stop(Clock::now()+3s);
+            return 2;
+        }
         bool drift=false;
-        std::unique_ptr<TunResolvedLease> resolver;
+        TunResolvedLease resolver;
         if (request.dns_stub.front()) {
             auto until=Clock::now()+3s;
             auto claimed=start_tun_resolved(*network,request.dns_stub.data(),until,until+2s);
@@ -233,6 +236,18 @@ namespace cli::tun_enabled {
             options.excludes=excluded;
             options.protected_destinations=protected_list;
             options.local_destinations=local_destinations;
+            options.input_mark=request.redirect.input_mark;
+            options.output_mark=request.redirect.output_mark;
+            options.reset_mark=request.redirect.reset_mark;
+            std::vector<platform::nftables::UidRange> inc_uids, exc_uids;
+            for (auto const& u : std::span(request.redirect.include_uids).first(request.redirect.include_uid_count))
+                inc_uids.push_back({u.min, u.max});
+            for (auto const& u : std::span(request.redirect.exclude_uids).first(request.redirect.exclude_uid_count))
+                exc_uids.push_back({u.min, u.max});
+            options.include_uids=inc_uids;
+            options.exclude_uids=exc_uids;
+            options.include_interfaces=std::span(request.redirect.include_interfaces).first(request.redirect.include_if_count);
+            options.exclude_interfaces=std::span(request.redirect.exclude_interfaces).first(request.redirect.exclude_if_count);
             if (auto error=firewall.start(options,Clock::now()+2s)) {
                 auto detail=error.value();
                 (void)::send(channel.get(),&detail,sizeof detail,MSG_NOSIGNAL);

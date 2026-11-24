@@ -8,39 +8,36 @@ module;
 module cli.tailscale_identity;
 import std;
 import crypto;
+import platform.unique_fd;
 
 namespace cli::tailscale_identity {
     namespace {
         constexpr char file_name[] = "identity";
         constexpr std::array<std::uint8_t,8> magic{'N','X','T','A','I','L',1,0};
         using Record = std::array<std::uint8_t,72>;
-
-        struct Fd {
-            int value;
-            ~Fd() { if (value >= 0) ::close(value); }
-        };
+        using Fd = platform::UniqueFd;
 
         auto load_record(int dir, Record& record) -> std::expected<bool,std::string> {
             Fd file{::openat(dir, file_name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
-            if (file.value < 0) {
+            if (file.get() < 0) {
                 if (errno == ENOENT) return false;
                 return std::unexpected("cannot open Tailscale identity");
             }
             struct stat stat{};
-            if (::fstat(file.value, &stat) || !S_ISREG(stat.st_mode) || (stat.st_mode & 07777) != 0600 ||
+            if (::fstat(file.get(), &stat) || !S_ISREG(stat.st_mode) || (stat.st_mode & 07777) != 0600 ||
                 stat.st_uid != ::geteuid() || stat.st_nlink != 1 || stat.st_size != static_cast<off_t>(record.size()))
                 return std::unexpected("invalid Tailscale identity permissions or size");
             auto remaining = std::span(record);
             std::span<std::uint8_t> input = remaining;
             while (!input.empty()) {
-                auto count = ::read(file.value,input.data(),input.size());
+                auto count = ::read(file.get(),input.data(),input.size());
                 if (count < 0 && errno == EINTR) continue;
                 if (count <= 0) return std::unexpected("cannot read complete Tailscale identity");
                 input = input.subspan(static_cast<std::size_t>(count));
             }
             std::uint8_t extra{};
             ssize_t excess;
-            do { excess = ::read(file.value, &extra, 1); } while (excess < 0 && errno == EINTR);
+            do { excess = ::read(file.get(), &extra, 1); } while (excess < 0 && errno == EINTR);
             if (excess || !std::ranges::equal(remaining.first(magic.size()),magic))
                 return std::unexpected("invalid Tailscale identity record");
             return true;
@@ -50,15 +47,15 @@ namespace cli::tailscale_identity {
             constexpr char staging[] = ".identity-new";
             if (::unlinkat(directory, staging, 0) && errno != ENOENT) return false;
             Fd file{::openat(directory, staging, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600)};
-            if (file.value < 0) return false;
+            if (file.get() < 0) return false;
             auto remaining = std::span<const std::uint8_t>(record);
             while (!remaining.empty()) {
-                auto count = ::write(file.value,remaining.data(),remaining.size());
+                auto count = ::write(file.get(),remaining.data(),remaining.size());
                 if (count < 0 && errno == EINTR) continue;
                 if (count <= 0) break;
                 remaining = remaining.subspan(static_cast<std::size_t>(count));
             }
-            if (remaining.empty() && ::fsync(file.value) == 0 &&
+            if (remaining.empty() && ::fsync(file.get()) == 0 &&
                 ::renameat(directory, staging, directory, file_name) == 0) return ::fsync(directory) == 0;
             (void)::unlinkat(directory, staging, 0);
             return false;

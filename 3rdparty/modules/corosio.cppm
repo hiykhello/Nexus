@@ -10,6 +10,7 @@ module;
 #include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/socket_option.hpp>
 #include <boost/corosio/udp_socket.hpp>
+#include <boost/corosio/posix_stream_descriptor.hpp>
 #include <boost/corosio/resolver.hpp>
 #include <boost/corosio/endpoint.hpp>
 #include <boost/corosio/local_endpoint.hpp>
@@ -22,8 +23,8 @@ module;
 #include <tuple>
 #include <vector>
 
-export module nexus.thirdparty.corosio;
-export namespace nex::corosio {
+export module corosio;
+export namespace corosio {
     using ::boost::corosio::io_context;
     using ::boost::corosio::io_context_options;
     using ::boost::corosio::local_stream_socket;
@@ -31,7 +32,11 @@ export namespace nex::corosio {
     using ::boost::corosio::connect;
     using ::boost::corosio::tcp_socket;
     using ::boost::corosio::tcp_acceptor;
+    using ::boost::corosio::family;
     using ::boost::corosio::udp_socket;
+#if BOOST_COROSIO_POSIX || defined(BOOST_COROSIO_MRDOCS)
+    using ::boost::corosio::posix_stream_descriptor;
+#endif
     using ::boost::corosio::resolver;
     using ::boost::corosio::endpoint;
     using ::boost::corosio::endpoint_format;
@@ -52,7 +57,15 @@ export namespace nex::corosio {
     using ::boost::corosio::shutdown_send;
     using ::boost::corosio::wait_type;
     using ::boost::corosio::timeout;
+#if BOOST_COROSIO_HAS_EPOLL
     using ::boost::corosio::epoll;
+#endif
+#if BOOST_COROSIO_HAS_KQUEUE
+    using ::boost::corosio::kqueue;
+#endif
+#if BOOST_COROSIO_HAS_IOCP
+    using ::boost::corosio::iocp;
+#endif
     namespace socket_option {
         using ::boost::corosio::socket_option::keep_alive;
         using ::boost::corosio::socket_option::send_buffer_size;
@@ -69,9 +82,18 @@ export namespace nex::corosio {
     inline auto make_io_context(bool use_uring) -> io_context {
 #if BOOST_COROSIO_HAVE_LIBURING
         return use_uring ? io_context(uring) : io_context(epoll);
-#else
+#elif BOOST_COROSIO_HAS_EPOLL
         (void)use_uring;
         return io_context(epoll);
+#elif BOOST_COROSIO_HAS_KQUEUE
+        (void)use_uring;
+        return io_context(kqueue);
+#elif BOOST_COROSIO_HAS_IOCP
+        (void)use_uring;
+        return io_context(iocp);
+#else
+        (void)use_uring;
+        return io_context();
 #endif
     }
 }

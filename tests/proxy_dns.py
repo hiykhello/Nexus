@@ -165,9 +165,9 @@ def scenario(workers, mode="success", ipv6=False, named_config=False, strategy=N
     with tempfile.TemporaryDirectory() as tmp:
         config = pathlib.Path(tmp) / "proxy.kdl"
         if mode == "block":
-            (pathlib.Path(tmp) / "blocked.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
+            (pathlib.Path(tmp) / "blocked.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
         routing = ('outbound "reject" type="block"\nrouting { rule-set "blocked" path="blocked.kdl" format="kdl"; '
-                   'rule kind="rule-set" value="blocked" outbound="reject"; default-outbound "direct"; }') if mode == "block" else 'routing { default-outbound "direct"; }'
+                   'rules { - kind="rule-set" value="blocked" outbound="reject"; }; default-outbound "direct"; }') if mode == "block" else 'routing { default-outbound "direct"; }'
         if named_config == "tcp":
             dns_config = f'dns {{ server "tcp" type="tcp" host="{host}" port={dns.getsockname()[1]}; }}'
         elif named_config is True:
@@ -176,7 +176,7 @@ def scenario(workers, mode="success", ipv6=False, named_config=False, strategy=N
         elif named_config == "local":
             dns_config = 'dns { server "unused" type="udp" host="127.0.0.2"; server "system" type="local"; final "system"; }'
         else:
-            dns_config = f'dns-upstream host="{host}" port={dns.getsockname()[1]}'
+            dns_config = f'dns {{ server "up" type="udp" host="{host}" port={dns.getsockname()[1]}; final "up"; }}'
         if strategy:
             server = ('server "chosen" type="local"' if named_config == "local" else
                       f'server "chosen" type="{"tcp" if named_config == "tcp" else "udp"}" host="{host}" port={dns.getsockname()[1]}')

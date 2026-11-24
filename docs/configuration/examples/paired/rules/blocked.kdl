@@ -1,6 +1,6 @@
 /- kdl-version 2
 // 独立的谓词规则集草案；域名仅作结构示例。
-schema-version 1
+schema-version 2
 kind "predicate"
 rule type="domain-suffix" value="ads.example"
 rule type="domain-suffix" value="tracking.example"

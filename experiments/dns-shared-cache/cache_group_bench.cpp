@@ -7,7 +7,7 @@ import dns.message;
 #include "snapshot_cache.hpp"
 #include "paged_snapshot.hpp"
 #include "paged_semantic.hpp"
-#include "../../src/dns-shared/group_snapshot.hpp"
+import dns.group_snapshot;
 
 namespace d=dns;
 namespace experiment=dns_hp_experiment;

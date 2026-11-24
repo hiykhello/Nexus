@@ -2,7 +2,7 @@ import std;
 import grpc.headers;
 import grpc.session;
 import grpc.stream;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 import net.socket_stream;
 import net.stream_relay;
 import tls.profiles;
@@ -12,12 +12,11 @@ import tls.corosio_client;
 import tls.corosio_application;
 import tls.corosio_server_handshake;
 import vless;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace g=grpc;
 namespace v=vless;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Lower=tls::detail::ByteStream<io::tcp_socket>;
 using Channel=g::Channel<Lower>;
@@ -130,7 +129,7 @@ auto run_channel(Fixture& fixture,Lower& lower,bool server,bool lite,std::string
         auto [signal,run,application]=co_await capy::when_all(channel.run(),serve(fixture,channel,lite,deadline));
         (void)run; (void)application;
         fixture.failure=channel.failure(); fixture.success=fixture.application && channel.drained() && ((!signal && channel.finished() && !fixture.failure) ||
-            (lite && fixture.failure && fixture.failure->error==g::Error::reset && fixture.failure->code==nex::nghttp2::NGHTTP2_CANCEL));
+            (lite && fixture.failure && fixture.failure->error==g::Error::reset && fixture.failure->code==nghttp2::NGHTTP2_CANCEL));
     } else {
         auto [signal,run,application]=co_await capy::when_all(channel.run(),request(fixture,channel,target,deadline));
         (void)run; (void)application;

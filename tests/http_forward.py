@@ -155,9 +155,9 @@ workers {workers}
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 {direct}
 outbound "block" type="block"
-routing {{ rule-set "blocked" path="blocked.kdl" format="kdl"; rule kind="rule-set" value="blocked" outbound="block"; default-outbound "direct"; }}
+routing {{ rule-set "blocked" path="blocked.kdl" format="kdl"; rules {{ - kind="rule-set" value="blocked" outbound="block"; }}; default-outbound "direct"; }}
 ''')
-    (root / 'blocked.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
+    (root / 'blocked.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
     proc = subprocess.Popen([binary, 'run', '--config', config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         deadline = time.monotonic() + 5

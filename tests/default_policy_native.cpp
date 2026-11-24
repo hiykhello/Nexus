@@ -10,14 +10,14 @@ import packet.tun_network_requests;
 import packet.tun_network_view;
 import packet.tun_network;
 import packet.tun_default_policy;
-import nexus.test.lease_support;
+import test.lease_support;
 namespace {
     namespace p = ::packet;
     namespace a = ::platform::netlink_abi;
     namespace n = ::platform::netlink;
     namespace r = ::platform::routing;
     namespace d = ::packet::tun_network_detail;
-    namespace t=nexus::test::lease;
+    namespace t=test::lease;
     auto explain(p::TunPolicyFailure const& failure) -> void {
         std::println("policy failure={} netlink={} system={}",int(failure.code),failure.netlink?int(failure.netlink->code):-1,failure.netlink?failure.netlink->system.message():"");
     }

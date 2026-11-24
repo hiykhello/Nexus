@@ -5,43 +5,48 @@ import dns.message_fakeip;
 import dns.input_budget;
 import dns.response_program;
 import dns.message_cache;
+import dns.message_synthetic;
+import dns.policy;
 import dns.response_query;
+import rules;
 import dns.local_config;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace dns {
-    auto MessageExchange::refresh(nex::corosio::io_context& context,std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,
-        nex::corosio::endpoint endpoint,QueryMessage query,Clock::time_point until,bool tcp,
+    auto MessageExchange::refresh(corosio::io_context& context,std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,
+        corosio::endpoint endpoint,QueryMessage query,Clock::time_point until,bool tcp,
         std::shared_ptr<detail::ProtectedQuery const> protection,InputBudget::Lease reservation)
-        -> nex::capy::task<> {
+        -> capy::task<> {
         (void)reservation;
         struct Registration {
             MessageCache& cache;
             MessageCache::Ticket ticket;
             ~Registration() {cache.cancel(ticket);}
         } registration{*cache,ticket};
-        auto stop=cache->refresh_token();
-        if (stop.stop_requested()) co_return;
-        detail::MessageQuery transport(context,tcp,protection.get());
-        std::stop_callback cancellation(stop,[&transport] noexcept {transport.cancel();});
-        auto wire=co_await transport.run_borrowed(endpoint,query,until);
-        if (!wire || stop.stop_requested()) co_return;
-        auto response=parse_owned_response(std::move(*wire),query.id,query.question);
-        if (response && (response->rcode==0 || response->rcode==3))
-            cache->publish(ticket,query,std::move(*response),Clock::now());
+        try {
+            auto stop=cache->refresh_token();
+            if (stop.stop_requested()) co_return;
+            detail::MessageQuery transport(context,tcp,protection.get());
+            std::stop_callback cancellation(stop,[&transport] noexcept {transport.cancel();});
+            auto wire=co_await transport.run_borrowed(endpoint,query,until);
+            if (!wire || stop.stop_requested()) co_return;
+            auto response=parse_owned_response(std::move(*wire),query.id,query.question);
+            if (response && (response->rcode==0 || response->rcode==3))
+                cache->publish(ticket,query,std::move(*response),Clock::now());
+        } catch (...) {}
     }
 
-    auto MessageExchange::start_refresh(std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,nex::corosio::endpoint endpoint,
+    auto MessageExchange::start_refresh(std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,corosio::endpoint endpoint,
         QueryMessage const& query,Clock::time_point until,std::size_t server,bool tcp) -> void {
         auto cost=listener_query_cost(query);
         if (cost) {
             auto lease=default_message_override_budget().acquire(*cost);
             if (lease) {
                 try {
-                    nex::capy::run_async(context_.get_executor(),[] {},
-                        [](std::exception_ptr) noexcept {std::terminate();})
+                    capy::run_async(context_.get_executor(),[] {},
+                        [cache,ticket](std::exception_ptr) noexcept {cache->cancel(ticket);})
                         (refresh(context_,cache,ticket,endpoint,query,until,tcp,upstreams_[server].protection,std::move(*lease)));
                     return;
                 } catch (...) {
@@ -53,20 +58,23 @@ namespace dns {
         cache->cancel(ticket);
     }
 
-    auto MessageExchange::run_flight(nex::corosio::io_context& context,std::shared_ptr<MessageCache::QueryFlight> flight,
-        nex::corosio::endpoint endpoint,QueryMessage query,bool tcp,
+    auto MessageExchange::run_flight(corosio::io_context& context,std::shared_ptr<MessageCache::QueryFlight> flight,
+        corosio::endpoint endpoint,QueryMessage query,bool tcp,
         std::shared_ptr<detail::ProtectedQuery const> protection,InputBudget::Lease reservation)
-        -> nex::capy::task<MessageCache::QueryFlight::Result> {
+        -> capy::task<MessageCache::QueryFlight::Result> {
         (void)reservation;
-        auto stop=flight->stop.get_token();
-        if (stop.stop_requested()) co_return std::unexpected(detail::ResolveError::canceled);
-        detail::MessageQuery transport(context,tcp,protection.get());
-        std::stop_callback cancellation(stop,[&transport] noexcept {transport.cancel();});
-        co_return co_await transport.run_borrowed(endpoint,query,flight->deadline);
+        try {
+            auto stop=flight->stop.get_token();
+            if (stop.stop_requested()) co_return std::unexpected(detail::ResolveError::canceled);
+            detail::MessageQuery transport(context,tcp,protection.get());
+            std::stop_callback cancellation(stop,[&transport] noexcept {transport.cancel();});
+            co_return co_await transport.run_borrowed(endpoint,query,flight->deadline);
+        } catch (...) {}
+        co_return std::unexpected(detail::ResolveError::state);
     }
 
-    auto MessageExchange::coalesced(MessageCache::JoinedQuery joined,nex::corosio::endpoint endpoint,QueryMessage const& query,
-        Clock::time_point until,std::size_t server,bool tcp) -> nex::capy::task<MessageCache::QueryFlight::Result> {
+    auto MessageExchange::coalesced(MessageCache::JoinedQuery joined,corosio::endpoint endpoint,QueryMessage const& query,
+        Clock::time_point until,std::size_t server,bool tcp) -> capy::task<MessageCache::QueryFlight::Result> {
         using Error=detail::ResolveError;
         auto& flight=*joined.flight;
         ++flight.waiters;
@@ -85,16 +93,28 @@ namespace dns {
             auto cost=listener_query_cost(query);
             auto lease=cost ? default_message_override_budget().acquire(*cost) : std::nullopt;
             if (!lease) co_return std::unexpected(Error::budget_exhausted);
-            nex::capy::run_async(context_.get_executor(),
-                [owner=joined.flight](auto result) {owner->complete(std::move(result));},
-                [](std::exception_ptr) noexcept {std::terminate();})
-                (run_flight(context_,joined.flight,endpoint,query,tcp,upstreams_[server].protection,std::move(*lease)));
+            auto fail_flight = [](std::shared_ptr<MessageCache::QueryFlight> const& owner) noexcept {
+                try { owner->complete(std::unexpected(Error::state)); }
+                catch (...) { owner->result.emplace(std::unexpected(Error::state)); owner->changed.set(); }
+            };
+            try {
+                capy::run_async(context_.get_executor(),
+                    [owner=joined.flight, fail_flight](auto result) noexcept {
+                        try { owner->complete(std::move(result)); }
+                        catch (...) { fail_flight(owner); }
+                    },
+                    [owner=joined.flight, fail_flight](std::exception_ptr) noexcept { fail_flight(owner); })
+                    (run_flight(context_,joined.flight,endpoint,query,tcp,upstreams_[server].protection,std::move(*lease)));
+            } catch (...) {
+                fail_flight(joined.flight);
+                co_return std::unexpected(Error::state);
+            }
         }
         while (!flight.result && !canceled_) {
             flight.changed.clear();
-            auto [error]=co_await nex::corosio::timeout(flight.changed.wait(),until);
+            auto [error]=co_await corosio::timeout(flight.changed.wait(),until);
             if (error) co_return std::unexpected(canceled_ ? Error::canceled :
-                nex::capy::is_timeout(error) ? Error::timeout : Error::canceled);
+                capy::is_timeout(error) ? Error::timeout : Error::canceled);
         }
         if (canceled_) co_return std::unexpected(Error::canceled);
         if (Clock::now()>=until) co_return std::unexpected(Error::timeout);
@@ -109,14 +129,15 @@ namespace dns {
         co_return wire;
     }
 
-    auto MessageExchange::exchange(nex::corosio::endpoint endpoint,QueryMessage const& query,Clock::time_point until,
+    auto MessageExchange::exchange(corosio::endpoint endpoint,QueryMessage const& query,Clock::time_point until,
         std::size_t server,bool tcp,bool disabled,std::shared_ptr<LocalSnapshot const> snapshot)
-        -> nex::capy::task<std::expected<Bytes,detail::ResolveError>> {
+        -> capy::task<std::expected<Bytes,detail::ResolveError>> {
         using Error=detail::ResolveError;
         if(canceled_)co_return std::unexpected(Error::canceled);
         if(Clock::now()>=until)co_return std::unexpected(Error::timeout);
         if(cache_ && !disabled) {
-            MessageCache::View view(server,endpoint,tcp,snapshot,policy_view_);
+            auto cache_scope=independent_cache_ ? static_cast<std::uint32_t>(step_.rule+1) : 0u;
+            MessageCache::View view(server,endpoint,tcp,snapshot,policy_view_,cache_scope);
             auto now=Clock::now();
             if (auto cached=cache_->lookup(view,query,now)) co_return std::move(*cached);
             if (cache_->optimistic()) {
@@ -145,10 +166,19 @@ namespace dns {
         co_return wire;
     }
 
-    auto MessageExchange::run() -> nex::capy::task<std::expected<Bytes,detail::ResolveError>> {
+    auto MessageExchange::run() -> capy::task<std::expected<Bytes,detail::ResolveError>> {
         using Error=detail::ResolveError;
         if(std::exchange(started_,true) || step_.server>=upstreams_.size())co_return std::unexpected(Error::state);
         if(canceled_)co_return std::unexpected(Error::canceled);
+        if(step_.action==policy::DnsAction::route && query_.question.klass==1 &&
+            ((step_.strategy==rules::DnsRuleStrategy::ipv4_only && query_.question.type==28) ||
+             (step_.strategy==rules::DnsRuleStrategy::ipv6_only && query_.question.type==1))) {
+            policy::PredefinedResponse empty{.rcode=0};
+            auto reply=synthetic_message(query_,empty);
+            if(!reply)co_return std::unexpected(Error::protocol);
+            local_synthetic_=true;
+            co_return std::move(*reply);
+        }
         if(step_.subnet) {
             // Conservatively reserve the original capacity plus room for
             // both old and expanded option vectors during reallocation,
@@ -198,9 +228,9 @@ namespace dns {
                         auto const& server=cfg.servers[(rotation+index)%cfg.servers.size()];
                         if(canceled_)co_return std::unexpected(Error::canceled);
                         auto now=Clock::now();if(now>=until)co_return std::unexpected(Error::timeout);
-                        nex::corosio::endpoint endpoint;
-                        if(server.ipv6)endpoint={nex::corosio::ipv6_address(server.address),server.port};
-                        else {nex::corosio::ipv4_address::bytes_type bytes{};std::copy_n(server.address.begin(),4,bytes.begin());endpoint={nex::corosio::ipv4_address(bytes),server.port};}
+                        corosio::endpoint endpoint;
+                        if(server.ipv6)endpoint={corosio::ipv6_address(server.address),server.port};
+                        else {corosio::ipv4_address::bytes_type bytes{};std::copy_n(server.address.begin(),4,bytes.begin());endpoint={corosio::ipv4_address(bytes),server.port};}
                         wire=co_await exchange(endpoint,upstream_query,std::min(until,now+std::chrono::seconds(cfg.timeout_seconds)),step_.server,cfg.use_tcp,step_.disable_cache,snapshot);
                         if(wire) {
                             auto response=parse_response(*wire,query.id,query.question);
@@ -223,7 +253,7 @@ namespace dns {
                 chain.push_back(current);current=*upstreams_[current].resolver;
                 if(current>=upstreams_.size())co_return std::unexpected(Error::state);
             }
-            std::vector<nex::corosio::endpoint> endpoints;
+            std::vector<corosio::endpoint> endpoints;
             std::shared_ptr<LocalSnapshot const> bootstrap_local;
             std::shared_ptr<LocalSnapshot const> cache_snapshot;
             if(upstreams_[current].endpoint.port()) endpoints.push_back(upstreams_[current].endpoint);
@@ -235,20 +265,20 @@ namespace dns {
                 auto rotation=cfg.rotate && !cfg.servers.empty() ? upstreams_[current].local->rotation.fetch_add(1,std::memory_order_relaxed)%cfg.servers.size() : 0;
                 for(std::size_t index=0;index<cfg.servers.size();++index) {
                     auto const& server=cfg.servers[(rotation+index)%cfg.servers.size()];
-                    if(server.ipv6)endpoints.emplace_back(nex::corosio::ipv6_address(server.address),server.port);
-                    else {nex::corosio::ipv4_address::bytes_type bytes{};std::copy_n(server.address.begin(),4,bytes.begin());endpoints.emplace_back(nex::corosio::ipv4_address(bytes),server.port);}
+                    if(server.ipv6)endpoints.emplace_back(corosio::ipv6_address(server.address),server.port);
+                    else {corosio::ipv4_address::bytes_type bytes{};std::copy_n(server.address.begin(),4,bytes.begin());endpoints.emplace_back(corosio::ipv4_address(bytes),server.port);}
                 }
             }
             for(auto it=chain.rbegin();it!=chain.rend();++it) {
                 auto const& next=upstreams_[*it];if(next.host.empty() || !next.port)co_return std::unexpected(Error::state);
-                std::vector<nex::corosio::endpoint> resolved;
+                std::vector<corosio::endpoint> resolved;
                 bool hosts_known=false;
                 if(bootstrap_local) {
                     auto name=normalize_local_name(next.host);if(!name)co_return std::unexpected(Error::protocol);
                     for(auto const& host:bootstrap_local->hosts) if(host.name==*name) {
                         hosts_known=true;
-                        if(host.address.ipv6)resolved.emplace_back(nex::corosio::ipv6_address(host.address.address),next.port);
-                        else {nex::corosio::ipv4_address::bytes_type bytes{};std::copy_n(host.address.address.begin(),4,bytes.begin());resolved.emplace_back(nex::corosio::ipv4_address(bytes),next.port);}
+                        if(host.address.ipv6)resolved.emplace_back(corosio::ipv6_address(host.address.address),next.port);
+                        else {corosio::ipv4_address::bytes_type bytes{};std::copy_n(host.address.address.begin(),4,bytes.begin());resolved.emplace_back(corosio::ipv4_address(bytes),next.port);}
                         if(resolved.size()>64)co_return std::unexpected(Error::limit);
                     }
                 }
@@ -265,7 +295,7 @@ namespace dns {
                     if(hosts_known || !resolved.empty())break;
                     for(std::uint32_t attempt=0;attempt<attempts && resolved.empty();++attempt) {
                         for(auto const& endpoint:endpoints) {
-                            std::optional<std::string> canonical;std::vector<nex::corosio::endpoint> candidate;bool no_data=false;
+                            std::optional<std::string> canonical;std::vector<corosio::endpoint> candidate;bool no_data=false;
                             for(auto type:{std::uint16_t{1},std::uint16_t{28}}) {
                                 if(canceled_)co_return std::unexpected(Error::canceled);
                                 auto now=Clock::now();if(now>=until)co_return std::unexpected(Error::timeout);
@@ -285,8 +315,8 @@ namespace dns {
                                 canonical=answer->canonical_name;
                                 for(auto const& address:answer->addresses) {
                                     if(candidate.size()>=64)co_return std::unexpected(Error::limit);
-                                    if(address.size==4){nex::corosio::ipv4_address::bytes_type bytes{};std::copy_n(address.bytes.begin(),4,bytes.begin());candidate.emplace_back(nex::corosio::ipv4_address(bytes),next.port);}
-                                    else if(address.size==16)candidate.emplace_back(nex::corosio::ipv6_address(address.bytes),next.port);
+                                    if(address.size==4){corosio::ipv4_address::bytes_type bytes{};std::copy_n(address.bytes.begin(),4,bytes.begin());candidate.emplace_back(corosio::ipv4_address(bytes),next.port);}
+                                    else if(address.size==16)candidate.emplace_back(corosio::ipv6_address(address.bytes),next.port);
                                 }
                             }
                             if(!candidate.empty()){resolved=std::move(candidate);break;}
@@ -309,7 +339,7 @@ namespace dns {
         co_return wire;
     }
 
-    auto EvaluatedMessageExchange::run() -> nex::capy::task<std::expected<EvaluatedMessage,detail::ResolveError>> {
+    auto EvaluatedMessageExchange::run() -> capy::task<std::expected<EvaluatedMessage,detail::ResolveError>> {
         auto wire=co_await exchange_.run();
         if(!wire)co_return std::unexpected(wire.error());
         auto view=response_ecs_view(exchange_.upstream_query());

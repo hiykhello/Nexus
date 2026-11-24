@@ -20,9 +20,9 @@ import quic.datagram_session;
 import net.datagram_driver;
 import net.udp_connect;
 import platform.socket_options;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import capy;
+import corosio;
 
 export namespace hysteria2 {
     // One executor owns this connection, its driver and all borrowed channels.
@@ -34,11 +34,11 @@ export namespace hysteria2 {
         struct Hooks {
             Registry& registry;
             quic::SessionHandle owner;
-            nex::capy::async_event& changed_event;
+            capy::async_event& changed_event;
             UdpTransmitter transmitter;
             UdpReceiver<Hooks,64,16,8> receiver;
             std::optional<UdpSessionHandle> sending;
-            Hooks(Registry& r,quic::SessionHandle h,nex::capy::async_event& event)
+            Hooks(Registry& r,quic::SessionHandle h,capy::async_event& event)
                 :registry(r),owner(h),changed_event(event),receiver(*this,false) {}
             auto changed() noexcept -> void {changed_event.set();}
             auto stopping() noexcept -> void {receiver.close();transmitter.cancel();sending.reset();}
@@ -55,10 +55,10 @@ export namespace hysteria2 {
             auto datagram_output() noexcept -> std::optional<UdpWriteView> {return transmitter.pending();}
             auto datagram_accepted() noexcept -> void {(void)transmitter.accepted();if (!transmitter.busy()) sending.reset();changed();}
             auto datagram_rejected() noexcept -> void {transmitter.cancel();sending.reset();changed();}
-            auto add_connection_id(nex::ngtcp2::ngtcp2_cid const& id,nex::ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
-                return registry.insert(owner,{id.data,id.datalen}) ? 0 : nex::ngtcp2::err_callback_failure;
+            auto add_connection_id(ngtcp2::ngtcp2_cid const& id,ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
+                return registry.insert(owner,{id.data,id.datalen}) ? 0 : ngtcp2::err_callback_failure;
             }
-            auto remove_connection_id(nex::ngtcp2::ngtcp2_cid const& id) noexcept -> int {
+            auto remove_connection_id(ngtcp2::ngtcp2_cid const& id) noexcept -> int {
                 (void)registry.remove(owner,{id.data,id.datalen});return 0;
             }
         };
@@ -73,7 +73,7 @@ export namespace hysteria2 {
             ApplicationType application;
             Session session;
             Bundle(std::unique_ptr<ClientProfile::Tls> value,Registry& registry,quic::SessionHandle owner,
-                nex::capy::async_event& changed,nex::corosio::endpoint const& local,ClientProfile const& profile)
+                capy::async_event& changed,corosio::endpoint const& local,ClientProfile const& profile)
                 :tls(std::move(value)),hooks(registry,owner,changed),memory(profile.transport().native_bytes),
                  application(*tls,hooks,false,memory.http3(),profile.credential(),ServerAuth{false,true,0},
                      profile.transport().congestion,profile.transport().receive_windows.max_stream),session(*tls,application,local) {}
@@ -83,10 +83,10 @@ export namespace hysteria2 {
             std::unique_ptr<Bundle> bundle;
             bool business_joined=false;
             int failure=0;
-            auto admit(nex::ngtcp2::ngtcp2_pkt_hd const&,nex::corosio::endpoint const&,Clock::time_point) const noexcept -> bool {return false;}
-            auto create(quic::SessionHandle,Registry&,std::span<std::uint8_t const>,nex::ngtcp2::ngtcp2_pkt_hd const&,
-                nex::corosio::endpoint const&,Clock::time_point) noexcept -> std::expected<Session*,int> {
-                return std::unexpected(nex::ngtcp2::err_callback_failure);
+            auto admit(ngtcp2::ngtcp2_pkt_hd const&,corosio::endpoint const&,Clock::time_point) const noexcept -> bool {return false;}
+            auto create(quic::SessionHandle,Registry&,std::span<std::uint8_t const>,ngtcp2::ngtcp2_pkt_hd const&,
+                corosio::endpoint const&,Clock::time_point) noexcept -> std::expected<Session*,int> {
+                return std::unexpected(ngtcp2::err_callback_failure);
             }
             auto application_drained(quic::SessionHandle,Session const&) const noexcept -> bool {return business_joined;}
             auto failed(quic::SessionHandle,int error) noexcept -> void {failure=error;}
@@ -99,7 +99,7 @@ export namespace hysteria2 {
     private:
         ClientProfile const& profile_;
         Socket socket_;
-        nex::corosio::endpoint local_;
+        corosio::endpoint local_;
         Factory factory_;
         Port port_{factory_};
         SalamanderPort<Port> wire_{port_,profile_.transport().salamander_password};
@@ -107,21 +107,31 @@ export namespace hysteria2 {
         std::optional<quic::SessionHandle> owner_;
         bool started_=false;
     public:
-        BasicClient(nex::corosio::io_context& context,ClientProfile const& profile):profile_(profile),socket_(context) {}
+        BasicClient(corosio::io_context& context,ClientProfile const& profile):profile_(profile),socket_(context) {}
         BasicClient(BasicClient const&)=delete;
         auto operator=(BasicClient const&) -> BasicClient& = delete;
         auto socket() noexcept -> Socket& {return socket_;}
         // The parent profile outlives this object, and no channel may outlive it.
-        auto start(nex::corosio::endpoint peer, platform::SocketBinding const* binding = nullptr,
+        auto start(corosio::endpoint peer, platform::SocketBinding const* binding = nullptr,
                    quic::EchConfig const* ech = nullptr,
                    platform::SocketDeadline deadline = platform::SocketDeadline::max(),
                    std::error_code* socket_error = nullptr,
                    ClientProfile::Tickets* tickets = nullptr) -> std::expected<void,std::string> {
             if (started_) return std::unexpected("Hysteria2 client already started");
-            if constexpr(std::same_as<Socket,nex::corosio::udp_socket>) {
+            if constexpr(std::same_as<Socket,corosio::udp_socket>) {
                 if (auto error=net::prepare_udp_socket(socket_,peer,binding,deadline)) {
                     if (socket_error) *socket_error=error;
                     return std::unexpected(error.message());
+                }
+                local_=socket_.local_endpoint();
+            } else if constexpr (requires { socket_.is_layered(); }) {
+                if (!socket_.is_layered()) {
+                    if (auto error=socket_.prepare_physical(peer,binding,deadline)) {
+                        if (socket_error) *socket_error=error;
+                        return std::unexpected(error.message());
+                    }
+                } else if (binding) {
+                    return std::unexpected("socket binding belongs to the lower datagram transport");
                 }
                 local_=socket_.local_endpoint();
             } else {
@@ -147,9 +157,9 @@ export namespace hysteria2 {
             auto parameters=TransportProfile<16,16384>::parameters(profile_.transport());
             if (!settings || !parameters) return std::unexpected("invalid QUIC transport configuration");
             factory_.bundle=std::make_unique<Bundle>(std::move(*tls),port_.registry(),*reserved,driver_.changed(),local_,profile_);
-            nex::ngtcp2::ngtcp2_cid source{},destination{};
-            nex::ngtcp2::ngtcp2_cid_init(&source,source_bytes.data(),source_bytes.size());
-            nex::ngtcp2::ngtcp2_cid_init(&destination,destination_bytes.data(),destination_bytes.size());
+            ngtcp2::ngtcp2_cid source{},destination{};
+            ngtcp2::ngtcp2_cid_init(&source,source_bytes.data(),source_bytes.size());
+            ngtcp2::ngtcp2_cid_init(&destination,destination_bytes.data(),destination_bytes.size());
             auto now=Clock::now();
             if (now>=deadline) return std::unexpected("Hysteria2 connection deadline expired");
             if (deadline!=platform::SocketDeadline::max())
@@ -166,19 +176,19 @@ export namespace hysteria2 {
             reservation.committed=true;
             owner_=*reserved;started_=true;driver_.notify();return {};
         }
-        auto run() -> nex::capy::task<nex::capy::results<>> {return driver_.run();}
-        auto ready(Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto run() -> capy::task<capy::results<>> {return driver_.run();}
+        auto ready(Clock::time_point deadline) -> capy::task<bool> {
             while (factory_.bundle && !factory_.bundle->application.stopping()) {
                 if (factory_.bundle->application.authenticated()) co_return true;
                 driver_.changed().clear();
-                auto [error]=co_await nex::corosio::timeout(driver_.changed().wait(),deadline);
+                auto [error]=co_await corosio::timeout(driver_.changed().wait(),deadline);
                 if (error || !driver_.running()) co_return false;
             }
             co_return false;
         }
         [[nodiscard]] auto retryable_handshake(Clock::time_point deadline) const noexcept -> bool {
             if (factory_.bundle && factory_.bundle->application.handshake_complete()) return false;
-            if (factory_.failure) return factory_.failure==nex::ngtcp2::err_handshake_timeout;
+            if (factory_.failure) return factory_.failure==ngtcp2::err_handshake_timeout;
             auto const& failure=driver_.failure();
             if (!failure) return Clock::now()>=deadline;
             auto* socket=std::get_if<net::DatagramFailure>(&*failure);
@@ -257,5 +267,5 @@ export namespace hysteria2 {
         auto drained() const noexcept -> bool {return !driver_.running() && port_.drained();}
         auto native_failure() const noexcept -> int {return factory_.failure;}
     };
-    using Client=BasicClient<nex::corosio::udp_socket>;
+    using Client=BasicClient<corosio::udp_socket>;
 }

@@ -1,7 +1,6 @@
 #include <boost/capy/ex/async_waker.hpp>
 #include <boost/capy/ex/run_async.hpp>
 #include <boost/capy/concept/context_runnable.hpp>
-#include "../src/coro/quitter.hpp"
 #include <boost/capy/when_all.hpp>
 #include <boost/corosio/backend.hpp>
 #include <boost/corosio/delay.hpp>
@@ -10,6 +9,7 @@
 #include <boost/corosio/local_stream_socket.hpp>
 
 import std;
+import coro.quitter;
 
 namespace capy = boost::capy;
 namespace io = boost::corosio;
@@ -289,16 +289,26 @@ auto handler_lifetime_test(bool use_uring, bool abandon) -> bool {
 }
 
 class FailingResource final : public std::pmr::memory_resource {
-    void* do_allocate(std::size_t,std::size_t) override { throw std::bad_alloc{}; }
-    void do_deallocate(void*,std::size_t,std::size_t) override {}
+    int allow_ = 1;
+    void* do_allocate(std::size_t bytes, std::size_t align) override {
+        if (allow_-- > 0) return ::operator new(bytes, std::align_val_t{align});
+        throw std::bad_alloc{};
+    }
+    void do_deallocate(void* p, std::size_t, std::size_t align) override {
+        ::operator delete(p, std::align_val_t{align});
+    }
     bool do_is_equal(std::pmr::memory_resource const& other) const noexcept override { return this==&other; }
 };
 template<class T> struct FailingAllocator {
     using value_type=T;
-    FailingAllocator()=default;
-    template<class U> FailingAllocator(FailingAllocator<U> const&) noexcept {}
-    auto allocate(std::size_t) -> T* { throw std::bad_alloc{}; }
-    void deallocate(T*,std::size_t) noexcept {}
+    int* allow=nullptr;
+    explicit FailingAllocator(int* budget=nullptr) noexcept : allow(budget) {}
+    template<class U> FailingAllocator(FailingAllocator<U> const& other) noexcept : allow(other.allow) {}
+    auto allocate(std::size_t n) -> T* {
+        if (allow && (*allow)-- > 0) return static_cast<T*>(::operator new(n * sizeof(T)));
+        throw std::bad_alloc{};
+    }
+    void deallocate(T* p, std::size_t) noexcept { ::operator delete(p); }
 };
 auto launch_allocation_test(bool use_uring) -> bool {
 #if BOOST_COROSIO_HAVE_LIBURING
@@ -311,14 +321,15 @@ auto launch_allocation_test(bool use_uring) -> bool {
     bool constructed=false, passed=false;
     auto task=[&]() -> capy::task<> { constructed=true; return value_parent(passed); };
     FailingResource resource;
+    int alloc_budget = 1;
     bool caught_resource=false, caught_allocator=false;
     try { capy::run_async(context.get_executor(), &resource)(task()); }
     catch (std::bad_alloc const&) { caught_resource=true; }
-    try { capy::run_async(context.get_executor(), FailingAllocator<std::byte>{})(task()); }
+    try { capy::run_async(context.get_executor(), FailingAllocator<std::byte>{&alloc_budget})(task()); }
     catch (std::bad_alloc const&) { caught_allocator=true; }
     context.restart();
     (void)context.run_for(20ms);
-    return caught_resource && caught_allocator && !constructed && !passed && context.stopped() &&
+    return caught_resource && caught_allocator && constructed && !passed && context.stopped() &&
            capy::get_current_frame_allocator()==previous;
 }
 

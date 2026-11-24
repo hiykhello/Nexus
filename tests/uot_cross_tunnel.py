@@ -25,7 +25,7 @@ for order in ((1, 2), (2, 1)):
         root = pathlib.Path(directory)
         (root / "key").write_text(base64.b64encode(bytes(range(16))).decode())
         (root / "key").chmod(0o600)
-        (root / "second.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+        (root / "second.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
         listeners, peers, pipes = [], [], []
         proxy = None
         try:
@@ -44,7 +44,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={listen_port}; aut
 outbound "direct" type="direct"
 outbound "first" type="shadowsocks" {{ server host="127.0.0.1" port={listeners[0].getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
 outbound "second" type="shadowsocks" {{ server host="127.0.0.1" port={listeners[1].getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
-routing {{ rule-set "second" path="second.kdl" format="kdl"; rule kind="rule-set" value="second" outbound="second"; default-outbound "first"; }}
+routing {{ rule-set "second" path="second.kdl" format="kdl"; rules {{ - kind="rule-set" value="second" outbound="second"; }}; default-outbound "first"; }}
 ''')
             proxy = subprocess.Popen([nexus, "run", "--config", root / "config.kdl"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             deadline = time.monotonic() + 5

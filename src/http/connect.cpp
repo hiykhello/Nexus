@@ -28,6 +28,30 @@ namespace http {
             }
             return true;
         }
+        auto is_numeric_or_hex_label(std::string_view label) noexcept -> bool {
+            if (label.empty()) return false;
+            if (std::ranges::all_of(label, [](char c) { return c >= '0' && c <= '9'; })) return true;
+            if (label.size() > 2 && label[0] == '0' && (label[1] == 'x' || label[1] == 'X'))
+                return std::ranges::all_of(label.substr(2), [](char c) {
+                    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                });
+            return false;
+        }
+        auto is_alternate_numeric_ipv4(std::string_view host) noexcept -> bool {
+            std::size_t labels = 0;
+            bool all_num = true;
+            std::string_view last;
+            for (std::size_t start = 0; start <= host.size();) {
+                auto dot = host.find('.', start);
+                auto label = dot == host.npos ? host.substr(start) : host.substr(start, dot - start);
+                ++labels;
+                last = label;
+                if (!is_numeric_or_hex_label(label)) all_num = false;
+                if (dot == host.npos) break;
+                start = dot + 1;
+            }
+            return (labels >= 1 && labels <= 4 && all_num) || is_numeric_or_hex_label(last);
+        }
         auto authority(std::string_view text, bool port_required) -> std::optional<Authority> {
             Authority result;
             std::string_view host, port;
@@ -56,8 +80,8 @@ namespace http {
                     result.address = parsed->bytes;
                     result.kind = HostKind::ipv4;
                 }
-                else if (std::all_of(host.begin(), host.end(), [](char c) { return (c >= '0' && c <= '9') || c == '.'; }))
-                    return {}; // Prevent alternate numeric-address interpretations by the system resolver.
+                else if (is_alternate_numeric_ipv4(host))
+                    return {}; // Prevent alternate numeric/hex-address interpretations by the system resolver.
             }
             if (text.back() == ':') return {};
             if (!port.empty()) {

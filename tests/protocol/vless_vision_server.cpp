@@ -8,9 +8,9 @@ import vless.tls_server;
 import vision;
 import tls.application_io;
 import tls.corosio_application;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace v=vless; namespace vis=vision; namespace t=tls; namespace c = ::crypto; namespace capy=nex::capy; namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace v=vless; namespace vis=vision; namespace t=tls; namespace c = ::crypto; namespace io = ::corosio;
 using Bytes=c::Bytes; using namespace std::chrono_literals;
 auto secret(int n) -> t::Secret { return t::Secret(Bytes(32,static_cast<std::uint8_t>(n))); }
 auto layer(t::RecordDirection direction,int n) -> t::RecordLayer {

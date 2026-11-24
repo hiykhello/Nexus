@@ -2,9 +2,9 @@ module;
 #include <glaze/kdl.hpp>
 #include <glaze/beve.hpp>
 
-export module nexus.thirdparty.glaze;
+export module glaze;
 
-export namespace nex::glaze {
+export namespace glaze {
     using ::glz::raw_json_view;
     using ::glz::read;
     using ::glz::read_json;

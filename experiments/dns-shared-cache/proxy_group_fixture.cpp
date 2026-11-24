@@ -20,7 +20,7 @@
 #endif
 #endif
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import dns.corosio_local;
 import dns.message;
 import dns.corosio_query;
@@ -30,17 +30,17 @@ import dns.shared_cache;
 import dns.shared_coordinator;
 #endif
 #ifdef NEXUS_DNS_USE_MODULES
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 #endif
-import proxy;
+import relay;
 #ifdef NEXUS_TEST_DNS_GROUP_UDP
 import config;
 import crypto;
 import rules;
 import dns.local_config;
 import shadowsocks.udp_dispatch;
-#include "../../src/tools/udp_inbound.hpp"
+#include "udp_inbound.hpp"
 #endif
 
 namespace {
@@ -68,7 +68,7 @@ int main(int argc,char** argv) {
 #endif
     auto first_port=std::stoi(argv[1]); if (first_port<1 || first_port>65535) return 2;
     auto first_leaf=std::stoi(argv[2]); if (first_leaf<1 || first_leaf>65535) return 2;
-    namespace p=proxy;
+    namespace p = relay;
     using Cache=dns_hp_experiment::GroupSnapshot;
 #ifdef NEXUS_TEST_DNS_GROUP_UDP
     std::array<std::size_t,3> capacities{16,16,16};

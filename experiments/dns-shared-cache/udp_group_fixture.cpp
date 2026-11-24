@@ -1,11 +1,11 @@
 import std;
 import ss_udp.shared_coordinator;
 import rules;
-import proxy;
+import relay;
 
 namespace {
-    namespace p=proxy;
-    namespace u=proxy::udp_runtime;
+    namespace p = relay;
+    namespace u = relay::udp_runtime;
     using Cache=dns_hp_experiment::GroupSnapshot;
 
     auto parse_port(char const* text) -> std::optional<std::uint16_t> {

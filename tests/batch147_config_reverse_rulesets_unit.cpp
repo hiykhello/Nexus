@@ -194,8 +194,10 @@ routing {
     default-http-client "direct-http"
     rule-set "r1" url="https://rules.example/a.srs" format="srs" update-interval-ms=60000
     rule-set "r2" url="https://rules.example/b.kdl" format="kdl" http-client="alt-http"
-    rule kind="rule-set" value="r1" outbound="block"
-    rule kind="rule-set" value="r2" outbound="direct"
+    rules {
+        - kind="rule-set" value="r1" outbound="block"
+        - kind="rule-set" value="r2" outbound="direct"
+    }
     default-outbound "direct"
 }
 )kdl";
@@ -225,7 +227,9 @@ outbound "direct" type="direct"
 outbound "block" type="block"
 routing {
     rule-set "local" path="rel.kdl" format="kdl"
-    rule kind="rule-set" value="local" outbound="block"
+    rules {
+        - kind="rule-set" value="local" outbound="block"
+    }
     default-outbound "direct"
 }
 )kdl";

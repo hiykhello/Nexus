@@ -5,13 +5,12 @@ import masque.bearer;
 import crypto;
 import dns.local_config;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
+import capy;
+import corosio;
+import test.quic_tls_link;
 namespace m=masque;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
-namespace support=nexus::test::quic_tls;
+namespace io = ::corosio;
+namespace support=test::quic_tls;
 using namespace std::chrono_literals;
 auto main(int argc,char** argv) -> int {
     if(argc!=7)return 1;

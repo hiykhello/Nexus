@@ -1,7 +1,7 @@
 export module cli.masque_tun;
 import std;
 import config;
-import proxy;
+import relay;
 
 export namespace cli::tun_enabled {
     class MasqueTunHost {
@@ -12,7 +12,7 @@ export namespace cli::tun_enabled {
         ~MasqueTunHost();
         MasqueTunHost(MasqueTunHost const&) = delete;
         auto operator=(MasqueTunHost const&) -> MasqueTunHost& = delete;
-        auto start(proxy::Server&) -> std::expected<std::string, std::string>;
+        auto start(relay::Server&) -> std::expected<std::string, std::string>;
         auto healthy() const noexcept -> bool;
         auto failure() const -> std::optional<std::string>;
         auto stop() noexcept -> void;

@@ -1,5 +1,5 @@
 import std;
-import proxy;
+import relay;
 
 namespace {
     std::mutex mutex;
@@ -21,7 +21,7 @@ auto main(int argc,char** argv) -> int {
     if (argc!=3) return 2;
     auto port=std::stoi(argv[1]),count=std::stoi(argv[2]);
     if (port<1 || port>65535 || count<2 || count>16) return 2;
-    namespace p=proxy;
+    namespace p = relay;
     p::Server server;
     if (!server.set_dns_upstream(std::array<std::uint8_t,4>{127,0,0,1},port)) return 3;
     auto bound=server.start(0,p::Inbound::socks5,count);

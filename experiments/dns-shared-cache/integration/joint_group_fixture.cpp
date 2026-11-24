@@ -2,13 +2,13 @@
 import std;
 import dns.cache;
 import dns.shared_cache;
-import proxy;
+import relay;
 import rules;
 import ss_udp.shared_cache;
 
 namespace {
-    namespace p=proxy;
-    namespace u=proxy::udp_runtime;
+    namespace p = relay;
+    namespace u = relay::udp_runtime;
     using Cache=dns_hp_experiment::GroupSnapshot;
     using Budget=dns::detail::RefreshBudget;
 #ifdef NEXUS_TEST_DNS_GROUP_REFRESH

@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 import dns.local_config;
 
 namespace {
@@ -69,16 +69,16 @@ auto main() -> int {
         if (::bind(fd, reinterpret_cast<sockaddr*>(&address), size) ||
             ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &size)) return 2;
         ::close(fd);
-        proxy::Server server;
+        relay::Server server;
         auto fds = count("/proc/self/fd"), threads = count("/proc/self/task");
         calls = 0; throw_on = static_cast<int>(workers); fail_allocation=false;
         bool caught = false;
-        try { (void)server.start(ntohs(address.sin_port), proxy::Inbound::socks5, workers); }
+        try { (void)server.start(ntohs(address.sin_port), relay::Inbound::socks5, workers); }
         catch (LaunchFailure const&) { caught = true; }
         if (!caught || calls != throw_on || server.healthy() ||
             count("/proc/self/fd") != fds || count("/proc/self/task") != threads) return 3;
         throw_on = 0;
-        auto retry = server.start(ntohs(address.sin_port), proxy::Inbound::socks5, workers);
+        auto retry = server.start(ntohs(address.sin_port), relay::Inbound::socks5, workers);
         if (!retry || *retry != ntohs(address.sin_port) || !server.healthy()) return 4;
         auto client = std::async(std::launch::async, handshake, address,false);
         auto deadline = std::chrono::steady_clock::now() + 4s;
@@ -89,7 +89,7 @@ auto main() -> int {
         if (server.healthy() || count("/proc/self/fd") != fds || count("/proc/self/task") != threads) return 6;
         std::println("{} worker(s): launch exception rolled back and handshake succeeded after restart", workers);
 
-        using namespace proxy;
+        using namespace relay;
         auto admission=std::make_shared<TcpAdmission>();
         if (!server.stage_tcp(admission,1,ntohs(address.sin_port),Inbound::socks5,workers,false,{}) ||
             !admission->publish(1)) return 7;

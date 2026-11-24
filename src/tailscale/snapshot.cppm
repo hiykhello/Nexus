@@ -1,6 +1,6 @@
 export module tailscale.snapshot;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import tailscale.control;
 import tailscale.control_messages;
 
@@ -10,20 +10,20 @@ export namespace tailscale::snapshot {
     struct Peer {
         std::int64_t id=0,home_derp=0;
         control::NodePublic key;
-        nexus::inplace_vector<cm::Prefix,cm::max_prefixes> addresses,allowed_ips;
-        nexus::inplace_vector<cm::Endpoint,cm::max_endpoints> endpoints;
+        containers::inplace_vector<cm::Prefix,cm::max_prefixes> addresses,allowed_ips;
+        containers::inplace_vector<cm::Endpoint,cm::max_endpoints> endpoints;
         bool machine_authorized=false,expired=false;
         std::optional<std::chrono::sys_seconds> not_after;
         std::optional<cm::DiscoKey> discovery;
     };
     // Caller-owned staging makes the temporary 64-peer capacity explicit and
     // keeps it off coroutine/native stacks. Do not share scratch concurrently.
-    struct Scratch { nexus::inplace_vector<Peer,cm::max_peers> peers; };
+    struct Scratch { containers::inplace_vector<Peer,cm::max_peers> peers; };
     // Non-installable peer projection. No JsonField or borrowed Map frame survives.
     // Caller must separately validate policy, TKA, identity and routes before use.
     class Snapshot {
         cm::DecodeOrigin origin_{};
-        nexus::inplace_vector<Peer,cm::max_peers> peers_;
+        containers::inplace_vector<Peer,cm::max_peers> peers_;
         std::optional<Peer> self_;
         std::uint64_t last_frame_=0;
         std::int64_t self_id_=0;
@@ -31,7 +31,7 @@ export namespace tailscale::snapshot {
         static auto own(cm::PeerCandidate const& p) noexcept -> Peer {
             return {p.id,p.home_derp,p.key,p.addresses,p.allowed_ips,p.endpoints,p.machine_authorized,p.expired,p.not_after,p.discovery};
         }
-        static auto valid(nexus::inplace_vector<Peer,cm::max_peers> const& peers,control::NodePublic const& self,std::int64_t self_id) noexcept -> bool {
+        static auto valid(containers::inplace_vector<Peer,cm::max_peers> const& peers,control::NodePublic const& self,std::int64_t self_id) noexcept -> bool {
             for (std::size_t i=0;i<peers.size();++i) {
                 if (peers[i].id<=0 || peers[i].id==self_id || peers[i].key==self) return false;
                 for (std::size_t j=0;j<i;++j)
@@ -67,15 +67,16 @@ export namespace tailscale::snapshot {
             if (!seeded_ && (!view.self || view.self->id<=0 || view.self->key!=origin_.local_node || view.mode==cm::MapMode::delta)) return std::unexpected(Error::requires_full);
             if (seeded_ && view.self && (view.self->id!=self_id_ || view.self->key!=origin_.local_node)) return std::unexpected(Error::invalid);
             if ((view.mode==cm::MapMode::unchanged && (!view.peers.empty() || !view.changed.empty() || !view.removed.empty())) ||
-                (view.mode==cm::MapMode::delta && !view.peers.empty())) return std::unexpected(Error::invalid);
+                (view.mode==cm::MapMode::full && (view.peers.empty() || !view.changed.empty() || !view.removed.empty())) ||
+                (view.mode==cm::MapMode::delta && (!view.peers.empty() || (view.changed.empty() && view.removed.empty())))) return std::unexpected(Error::invalid);
+            auto self_id=seeded_ ? self_id_ : view.self->id;
             auto& next=scratch.peers;next=peers_;
             if (view.mode==cm::MapMode::full) {
-                if (view.peers.empty()) return std::unexpected(Error::invalid);
                 next.clear();
                 for (auto const& p:view.peers) { if (next.size()==next.capacity()) return std::unexpected(Error::capacity); next.push_back(own(p)); }
             } else if (view.mode==cm::MapMode::delta) {
                 for (auto id:view.removed) {
-                    if (id<=0) return std::unexpected(Error::invalid);
+                    if (id<=0 || id==self_id) return std::unexpected(Error::invalid);
                     auto pos=std::ranges::find(next,id,&Peer::id);if (pos!=next.end()) next.erase(pos);
                 }
                 for (auto const& p:view.changed) {
@@ -84,7 +85,6 @@ export namespace tailscale::snapshot {
                     else {if (next.size()==next.capacity()) return std::unexpected(Error::capacity);next.push_back(own(p));}
                 }
             }
-            auto self_id=seeded_ ? self_id_ : view.self->id;
             if (!valid(next,origin_.local_node,self_id)) return std::unexpected(Error::duplicate);
             peers_=std::move(next);
             if (view.self) self_=own(*view.self);

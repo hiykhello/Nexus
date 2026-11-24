@@ -8,7 +8,7 @@
 
 ngtcp2/nghttp3 已按固定 release 加入正式包、锁和无文本包含的命名模块，具体来源和边界见[QUIC 依赖](../../build/quic-dependencies.md)。自研 TLS 必须补齐握手字节、各加密级别 secret、QUIC transport parameters、证书验证、密钥更新和失败事件，不能把 TCP TLS record 或 Linux kTLS 直接套在 UDP QUIC 上。还需实现/验证 QUIC Initial 密钥、头保护、AEAD、重传和数据所有权，核对 libcrypto 所需原语及 provider 回调。`nghttp3` 是否能与 Hysteria 认证后 `0x401` 非标准请求流正确分流，必须做实验；若需要补丁，应明确维护边界。上述适配失败时不允许悄悄引入 libssl，也不宣称 Hysteria 2 可用。
 
-`lsquic`/`msquic` 可在调研中对照，但其 TLS provider、平台支持、HTTP/3 与拥塞控制的可插拔性需要同样验证，不因名字轻量就默认满足约束。模块草案为 `nexus.thirdparty.ngtcp2`、`nexus.thirdparty.nghttp3` 和项目内 `nexus.quic` / `nexus.protocol.hysteria2`；按[第三方模块封装](../../build/third-party-modules.md)和依赖锁定要求接入。
+`lsquic`/`msquic` 可在调研中对照，但其 TLS provider、平台支持、HTTP/3 与拥塞控制的可插拔性需要同样验证，不因名字轻量就默认满足约束。当前命名模块为 `ngtcp2`、`nghttp3` 和项目内 `quic` / `hysteria2`；按[第三方模块封装](../../build/third-party-modules.md)和依赖锁定要求接入。
 
 ## 会话与线格式
 

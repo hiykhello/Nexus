@@ -7,11 +7,11 @@ import vless;
 import vless.corosio_client;
 import vless.tls_server;
 import vless.vision_client;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace t=tls;
 namespace v=vless::detail;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 static thread_local bool watch_allocations=false;
 static thread_local std::size_t allocations=0;
 void* operator new(std::size_t size) {
@@ -54,7 +54,7 @@ auto main() -> int {
     if (allocations) { std::println("VLESS TLS owner/relay construction unexpectedly allocated {} blocks",allocations); return 2; }
     std::println("VLESS TLS layout: client={} relay={} combined={} inbound={} vision-client-core={} vision-inbound-core={} byte-stream={} reader={} mutex={} constructor-allocations={}",
         sizeof(Client),sizeof(Relay),sizeof(Client)+sizeof(Relay),sizeof(Inbound),sizeof(VisionClient),sizeof(VisionInbound),
-        sizeof(t::detail::ByteStream<Socket>),sizeof(t::detail::ApplicationStreamReader<Socket>),sizeof(nex::capy::async_mutex),allocations);
+        sizeof(t::detail::ByteStream<Socket>),sizeof(t::detail::ApplicationStreamReader<Socket>),sizeof(capy::async_mutex),allocations);
     std::println("VLESS TLS awaiting results: relay-read={} relay-write={} inbound-read={}",
         sizeof(decltype(relay.read(std::span<std::uint8_t>{}))),sizeof(decltype(relay.write(std::span<std::uint8_t const>{}))),
         sizeof(decltype(inbound.read(std::span<std::uint8_t>{}))));

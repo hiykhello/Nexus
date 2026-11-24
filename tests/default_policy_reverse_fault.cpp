@@ -7,13 +7,13 @@ import packet.tun_network_types;
 import packet.tun_network_view;
 import packet.tun_network;
 import packet.tun_default_policy;
-import nexus.test.lease_support;
+import test.lease_support;
 namespace {
     namespace a = ::platform::netlink_abi;
     namespace n = ::platform::netlink;
     namespace r = ::platform::routing::reverse_path_detail;
     namespace p = ::packet;
-    namespace t=nexus::test::lease;
+    namespace t=test::lease;
     bool enabled=false,used=false;
     std::string_view effect;
     unsigned target=0,open_read=0,open_write=0,reads=0,writes=0;

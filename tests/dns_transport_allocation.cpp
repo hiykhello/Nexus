@@ -6,10 +6,9 @@ import dns.corosio_resolver;
 import dns.message_program;
 import dns.message_cache;
 import dns.policy;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 namespace {
     struct alignas(std::max_align_t) Header {bool large;};

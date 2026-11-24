@@ -1,7 +1,7 @@
 export module cli.tailscale_endpoint;
 import std;
 import net.udp_socket;
-import proxy;
+import relay;
 
 export namespace cli::tailscale_endpoint {
     struct RelayConfig {
@@ -25,5 +25,5 @@ export namespace cli::tailscale_endpoint {
     // A missing value identifies the WireGuard endpoint document.
     auto parse(std::string_view input) -> std::expected<std::optional<Config>,std::string>;
     auto run(Config const& config, bool check, bool resolve) -> int;
-    auto make_userspace(Config) -> std::shared_ptr<proxy::MeshLink>;
+    auto make_userspace(Config) -> relay::MeshLink;
 }

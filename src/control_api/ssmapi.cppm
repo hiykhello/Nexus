@@ -27,6 +27,7 @@ export namespace control_api::ssmapi {
         std::vector<UserRecord> users_;
         auto find_mut(std::string_view name) noexcept -> UserRecord*;
     public:
+        ~UserStore();
         [[nodiscard]] auto upsert_user(UserRecord user) -> std::expected<void, std::string>;
         [[nodiscard]] auto remove_user(std::string_view username) -> bool;
         [[nodiscard]] auto get_user(std::string_view username) const -> std::optional<UserRecord>;

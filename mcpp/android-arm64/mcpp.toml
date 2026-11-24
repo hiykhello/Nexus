@@ -7,6 +7,9 @@ version = "0.1.0"
 standard = "c++26"
 mcpp = ">=2026.11.21.1"
 
+[toolchain]
+default = "llvm@23.1.6"
+
 [target.aarch64-linux-musl]
 sysroot = "musl@system"
 
@@ -17,7 +20,30 @@ nexus = { path = "../../3rdparty/mcpp-index" }
 nexus = { path = "../..", default-features = false, features = ["profile-sidecar"] }
 
 [build]
+dialect_cxxflags = ["-fstack-protector-strong"]
 sources = []
+
+[target.'cfg(os = "linux")'.build]
+cxxflags = ["-fmerge-all-constants"]
+ldflags = ["-Wl,-z,noexecstack", "-Wl,-z,relro,-z,now", "-Wl,--as-needed", "-Wl,--gc-sections", "-Wl,--icf=safe"]
+
+[profile.release]
+opt = "z"
+lto = true
+strip = true
+
+[profile.size]
+opt = "z"
+lto = true
+strip = true
+
+[profile.speed]
+opt = 3
+lto = true
+strip = true
+
+[targets.nexus-core-android]
+kind = "lib"
 
 [targets.nexus]
 kind = "bin"

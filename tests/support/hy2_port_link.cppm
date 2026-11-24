@@ -1,4 +1,4 @@
-export module nexus.test.hy2_port_link;
+export module test.hy2_port_link;
 import std;
 import crypto;
 import hysteria2.application;
@@ -13,14 +13,14 @@ import quic.tls_server;
 import net.datagram_driver;
 import net.stream_relay;
 import tls.server_credential;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hy2_native_memory;
+import ngtcp2;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hy2_native_memory;
 
-export namespace nexus::test::hy2_port {
-namespace n=nex::ngtcp2;namespace q=quic;namespace h=hysteria2;namespace io=nex::corosio;namespace capy=nex::capy;namespace support=nexus::test::quic_tls;
+export namespace test::hy2_port {
+namespace n = ::ngtcp2;namespace q=quic;namespace h=hysteria2;namespace io = ::corosio;namespace capy = ::capy;namespace support=test::quic_tls;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 using Registry=q::CidRegistry<4,8>;
 struct Hooks {
@@ -40,7 +40,7 @@ struct Bundle {
         :tls(credential,"h3"),hooks{registry,owner,work},app(tls,hooks,true,h3memory.http3()),session(tls,app,local),owner(owner){}
 };
 struct Factory {
-    using Session=nexus::test::hy2_port::Session;
+    using Session=test::hy2_port::Session;
     tls::ServerCredential const& credential;io::endpoint const& local;capy::async_event work;
     std::array<std::optional<Bundle>,4> bundles;
     unsigned created=0,destroyed=0,completed=0,failures=0;bool valid=true;

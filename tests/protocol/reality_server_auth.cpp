@@ -40,5 +40,10 @@ int main() {
     t::KeyShareEntry h{0x11ec,hybrid}; encoded=t::KeyShare::encode_client(std::span{&h,1}); if (!encoded) return 14;
     hello.extensions.back().data=*encoded; sealed=r::seal_client_hello(wire(hello),*client,*public_server,identity);
     if (!sealed || !accept(sealed->wire,1000)) return 15;
+    r::ReplayCache replay(16);
+    policy.replay_cache=&replay;
+    if (!accept(sealed->wire,1000)) return 16;
+    if (accept(sealed->wire,1050)) return 17; // Replay rejected within window
+    if (!accept(sealed->wire,1200)) return 18; // Allowed again after window expiry
     std::println("Reality server ClientHello identity policy passed");
 }

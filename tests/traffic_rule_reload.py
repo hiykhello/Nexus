@@ -22,8 +22,10 @@ def configure(root, ports, dns, ordered, use_fetch):
     rule action="resolve"
     rule action="route" outbound="direct"
   }''' if ordered else '''
-  rule kind="rule-set" value="primary" outbound="deny"
-  rule kind="rule-set" value="secondary" outbound="deny"'''
+  rules {
+    - kind="rule-set" value="primary" outbound="deny"
+    - kind="rule-set" value="secondary" outbound="deny"
+  }'''
     http_client = f'''
 http-clients {{
   updates {{ outbound "direct"; domain-resolver "dns"; ca-file "{root / 'cert'}"; }}

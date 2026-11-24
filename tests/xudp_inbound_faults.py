@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-xudp-inbound-faults-') as directo
     (root/'key').chmod(0o600)
     (root/'uuid').write_text(UUID)
     (root/'uuid').chmod(0o600)
-    (root/'block.kdl').write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+    (root/'block.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
     port = free_port()
     (root/'config.kdl').write_text(f'''schema-version 1
 role "server"
@@ -68,7 +68,7 @@ dns {{ server "test" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; st
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={port}; authentication {{ user "test" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{root/'cert'}"; private-key-file "{root/'key'}"; }}; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "blocked" path="{root/'block.kdl'}" format="kdl"; rule kind="rule-set" value="blocked" outbound="reject"; default-outbound "direct"; }}
+routing {{ rule-set "blocked" path="{root/'block.kdl'}" format="kdl"; rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
     server = subprocess.Popen([require_nexus(), 'run', '--config', root/'config.kdl'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

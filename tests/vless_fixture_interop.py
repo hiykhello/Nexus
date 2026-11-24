@@ -69,9 +69,9 @@ def vless_tls(directory, invalid=False, relay=False, cancel=False):
 def vless_identity_failure(directory, upstream_port, selected=False):
     routing = 'default-outbound "edge";'
     if selected:
-        (directory / "route-rules.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
+        (directory / "route-rules.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
         routing = ('rule-set "selected" path="route-rules.kdl" format="kdl"; '
-                   'rule kind="rule-set" value="selected" outbound="edge"; default-outbound "direct";')
+                   'rules { - kind="rule-set" value="selected" outbound="edge"; }; default-outbound "direct";')
     for name, ca in (("wrong.example", directory / "root.pem"), ("server.example", directory / "other.pem")):
         with socket.socket() as origin, socket.socket() as reservation:
             origin.bind(("127.0.0.1", 0))

@@ -4,10 +4,9 @@ import dns.message_tcp_listener;
 import dns.message_udp_listener;
 import dns.message_exchange;
 import dns.policy;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 auto main(int argc,char** argv) -> int {
     if(argc!=3)return 2;

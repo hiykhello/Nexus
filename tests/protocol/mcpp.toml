@@ -1,5 +1,4 @@
 [package]
-namespace = "nexus"
 name = "protocol-tests"
 version = "0.1.0"
 

@@ -10,13 +10,13 @@ import net.datagram_driver;
 import quic.cid_registry;
 import quic.tls_client;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hysteria2_application_link;
-import nexus.test.hy2_production_resource_link;
-namespace io=nex::corosio;namespace h=hysteria2;namespace support=nexus::test::quic_tls;
-using nexus::test::hy2_production_resource::Heap;using nexus::test::hy2_production_resource::phase;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hysteria2_application_link;
+import test.hy2_production_resource_link;
+namespace io = ::corosio;namespace h=hysteria2;namespace support=test::quic_tls;
+using test::hy2_production_resource::Heap;using test::hy2_production_resource::phase;
 auto main(int argc,char** argv)->int{
     if(argc!=3 && argc!=4)return 1;if(argc==4 && std::string_view(argv[3])!="0" && std::string_view(argv[3])!="1")return 1;auto cert=support::read(argv[1]),key=support::read(argv[2]);auto credential=tls::ServerCredential::create(cert,key);::crypto::cleanse(key);auto password=h::Password::create(support::bytes("test-password"));if(!credential || !password)return 2;
     for(bool backend:{false,true}){

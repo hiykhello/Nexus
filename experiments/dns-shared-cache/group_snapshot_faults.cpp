@@ -3,8 +3,8 @@
 import std;
 import dns.message;
 import dns.cache;
-#include "../../src/dns-shared/group_snapshot.hpp"
-#include "../../src/dns-shared/group_cache_binding.hpp"
+import dns.group_snapshot;
+import dns.group_cache_binding;
 
 namespace {
 thread_local int fail_after=-1;

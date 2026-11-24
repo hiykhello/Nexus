@@ -18,11 +18,10 @@ import tls.server_handshake_io;
 import tls.corosio_server_handshake;
 import tls.client_handshake_io;
 import tls.corosio_client;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace io = nex::corosio;
-namespace capy = nex::capy;
+namespace io = ::corosio;
 namespace stls = shadowtls;
 using Clock = std::chrono::steady_clock;
 

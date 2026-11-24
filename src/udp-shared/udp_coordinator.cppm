@@ -1,6 +1,6 @@
 export module ss_udp.shared_coordinator;
 import std;
-import proxy;
+import relay;
 import dns.response_cache;
 export import ss_udp.shared_cache;
 export import dns.shared_coordinator;
@@ -148,7 +148,7 @@ export namespace shadowsocks::detail {
     };
 }
 
-export namespace proxy::udp_runtime {
+export namespace relay::udp_runtime {
     class CoordinatorCacheSetup {
         GroupCacheSetup group_;
         dns_hp_experiment::Coordinator* coordinator_=nullptr;

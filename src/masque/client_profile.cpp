@@ -8,7 +8,7 @@ import platform.ip_address;
 import tls.fingerprint;
 import tls.profiles;
 import tls.certificate_trust;
-import nexus.thirdparty.corosio;
+import corosio;
 
 namespace masque {
     ClientProfile::ClientProfile(tls::ClientProfile tls,std::string authority,std::string bearer_header,
@@ -82,7 +82,7 @@ namespace masque {
         return ClientProfile(tls,std::string(authority),{},options,fingerprint,std::move(tickets));
     }
 
-    auto ClientProfile::tls_client(nex::corosio::endpoint const& peer,quic::EchConfig const* ech) const
+    auto ClientProfile::tls_client(corosio::endpoint const& peer,quic::EchConfig const* ech) const
         -> std::expected<std::unique_ptr<ClientProfile::Tls>,std::string> {
         constexpr std::array<std::string_view, 1> alpn{"h3"};
         auto sni = platform::parse_ip_address(tls_.server_name)

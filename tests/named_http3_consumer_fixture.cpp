@@ -1,12 +1,12 @@
 import std;
 import config;
 import http.named_client;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace {
-    namespace capy=nex::capy;
-    namespace io=nex::corosio;
+    namespace capy = ::capy;
+    namespace io = ::corosio;
     namespace http=http;
     using Clock=std::chrono::steady_clock;
     using namespace std::chrono_literals;

@@ -2,7 +2,7 @@ export module quic.packet_keys;
 import std;
 import crypto;
 import crypto.aead_context;
-import nexus.thirdparty.boringssl;
+import boringssl;
 import quic.varint;
 
 export namespace quic {
@@ -45,7 +45,7 @@ export namespace quic {
         // Mutually exclusive, directly typed algorithm states. Both members
         // are trivial; reset starts the selected lifetime with construct_at.
         union HeaderProtection {
-            nex::boringssl::AES_KEY aes{};
+            boringssl::AES_KEY aes{};
             std::array<std::uint8_t,32> chacha;
         } header_;
 

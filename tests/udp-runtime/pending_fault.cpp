@@ -13,7 +13,7 @@ import shadowsocks.udp_dispatch;
 import shadowsocks.udp_packet;
 import ss_udp.listener;
 namespace s=shadowsocks;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 auto enable_udp_pending_fault() noexcept -> void;
 auto udp_pending_fault_injected() noexcept -> bool;

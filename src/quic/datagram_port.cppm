@@ -3,8 +3,8 @@ import std;
 import crypto;
 import net.datagram_driver;
 import quic.cid_registry;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import corosio;
 
 export namespace quic {
     enum class DatagramPortError { state,random,exhausted,invalid_output,invalid_token };
@@ -25,11 +25,18 @@ export namespace quic {
         using Session=typename Factory::Session;
         using Failure=typename DatagramPortFailure<Factory>::type;
     private:
-        struct Slot { Session* session=nullptr;SessionHandle owner;bool retiring=false,close_started=false; };
+        struct Slot {
+            Session* session=nullptr;
+            SessionHandle owner;
+            bool retiring=false,close_started=false;
+            std::uint16_t active_pos=static_cast<std::uint16_t>(Capacity);
+        };
         struct Pending { SessionHandle owner;std::uint64_t session_token,token; };
         Factory& factory_;
         Registry registry_;
         std::array<Slot,Capacity> slots_{};
+        std::array<std::uint16_t,Capacity> active_slots_{};
+        std::size_t active_count_=0,retiring_count_=0;
         std::optional<Pending> pending_;
         [[no_unique_address]] GracefulFailureState<typename Session::Failure,Graceful> shutdown_failure_;
         std::uint64_t token_=0;
@@ -39,12 +46,25 @@ export namespace quic {
             DatagramPort& owner;
             ~Call(){owner.busy_=false;owner.maintain();}
         };
+        auto activate_slot(std::size_t idx) noexcept -> void {
+            slots_[idx].active_pos=static_cast<std::uint16_t>(active_count_);
+            active_slots_[active_count_++]=static_cast<std::uint16_t>(idx);
+        }
+        auto deactivate_slot(Slot& entry) noexcept -> void {
+            if(entry.active_pos>=active_count_)return;
+            auto const pos=entry.active_pos;
+            auto const last_idx=active_slots_[--active_count_];
+            if(pos<active_count_){active_slots_[pos]=last_idx;slots_[last_idx].active_pos=pos;}
+            entry.active_pos=static_cast<std::uint16_t>(Capacity);
+        }
         auto slot(SessionHandle owner) noexcept -> Slot* {
             if(!registry_.live(owner) || !slots_[owner.slot].session || slots_[owner.slot].owner!=owner)return nullptr;
             return &slots_[owner.slot];
         }
         auto retire(Slot& entry) noexcept -> void {
             if(std::exchange(entry.retiring,true))return;
+            deactivate_slot(entry);
+            ++retiring_count_;
             static_assert(noexcept(entry.session->request_stop()));entry.session->request_stop();
         }
         auto failed(Slot& entry,typename Session::Failure failure) noexcept -> void {
@@ -66,7 +86,9 @@ export namespace quic {
         // use the same shared socket and native CID routing as admitted peers.
         auto attach(SessionHandle owner,Session& session) noexcept -> bool {
             if(stopped_ || (Graceful && quiescing_) || busy_ || !registry_.live(owner) || slots_[owner.slot].session)return false;
-            slots_[owner.slot]={&session,owner,false};return true;
+            slots_[owner.slot]={&session,owner,false,false,static_cast<std::uint16_t>(Capacity)};
+            activate_slot(owner.slot);
+            return true;
         }
         auto request_retire(SessionHandle owner) noexcept -> bool {
             auto* entry=slot(owner);if(!entry)return false;retire(*entry);return true;
@@ -76,7 +98,7 @@ export namespace quic {
         // A sealed packet pins its session from output return until actual
         // transmitted or until global joined cancellation clears that pin.
         auto maintain() noexcept -> void {
-            if(busy_ || (stopped_ && !joined_))return;
+            if(!retiring_count_ || busy_ || (stopped_ && !joined_))return;
             busy_=true;struct Guard{bool& busy;~Guard(){busy=false;}}guard{busy_};
             for(auto& entry:slots_)if(entry.session && entry.retiring && !pinned(entry.owner)){
                 static_assert(noexcept(factory_.application_drained(entry.owner,*entry.session)));
@@ -85,6 +107,7 @@ export namespace quic {
                 entry.session->stop();entry.session->drain();
                 // Invalid routing/generation state precedes object reuse.
                 registry_.release(entry.owner);auto* session=std::exchange(entry.session,nullptr);factory_.destroy(entry.owner,*session);entry={};
+                if(--retiring_count_==0)break;
             }
         }
         // Graceful shutdown keeps the UDP driver alive until one authenticated
@@ -93,7 +116,7 @@ export namespace quic {
         auto begin_shutdown() noexcept -> void requires (Graceful && requires(Session& session,std::span<std::uint8_t> bytes,net::DatagramClock::time_point now) {session.close_output(bytes,now);}) {
             if(stopped_ || std::exchange(quiescing_,true))return;
             if constexpr(requires{factory_.control_request_stop();})factory_.control_request_stop();
-            for(auto& entry:slots_)if(entry.session && !entry.retiring)entry.session->request_stop();
+            for(std::size_t i=0;i<active_count_;++i)slots_[active_slots_[i]].session->request_stop();
         }
         auto quiescent() const noexcept -> bool requires Graceful {return quiescing_ && !registry_.size() && !pending_;}
         auto shutdown_failure() const noexcept -> std::optional<typename Session::Failure> const& requires Graceful {return shutdown_failure_.failure;}
@@ -101,7 +124,7 @@ export namespace quic {
         auto request_stop() noexcept -> void {
             if(std::exchange(stopped_,true))return;
             if constexpr(requires{factory_.control_request_stop();}){static_assert(noexcept(factory_.control_request_stop()));factory_.control_request_stop();}
-            for(auto& entry:slots_)if(entry.session)retire(entry);
+            while(active_count_)retire(slots_[active_slots_[active_count_-1]]);
         }
         // The generic driver calls these only after its three tasks join.
         // If a business root is still unwinding, native teardown waits for a
@@ -117,15 +140,15 @@ export namespace quic {
             if constexpr(requires{factory_.control_drained();})if(!factory_.control_drained())return false;
             return stopped_ && joined_ && !registry_.size() && !pending_;
         }
-        auto receive(nex::corosio::endpoint const& peer,std::span<std::uint8_t const> bytes,net::DatagramClock::time_point now) -> std::expected<void,Failure> {
+        auto receive(corosio::endpoint const& peer,std::span<std::uint8_t const> bytes,net::DatagramClock::time_point now) -> std::expected<void,Failure> {
             if(stopped_ || (Graceful && quiescing_))return {};
             if(!enter())return std::unexpected(Failure{DatagramPortError::state});Call call{*this};
-            nex::ngtcp2::ngtcp2_version_cid parsed{};
-            if(nex::ngtcp2::ngtcp2_pkt_decode_version_cid(&parsed,bytes.data(),bytes.size(),ShortCidBytes))return {};
+            ngtcp2::ngtcp2_version_cid parsed{};
+            if(ngtcp2::ngtcp2_pkt_decode_version_cid(&parsed,bytes.data(),bytes.size(),ShortCidBytes))return {};
             auto found=registry_.find({parsed.dcid,parsed.dcidlen});Slot* entry=found?slot(*found):nullptr;
             if(!entry){
-                nex::ngtcp2::ngtcp2_pkt_hd initial{};
-                if(bytes.size()<1200 || parsed.version!=nex::ngtcp2::proto_ver_v1 || nex::ngtcp2::ngtcp2_accept(&initial,bytes.data(),bytes.size()))return {};
+                ngtcp2::ngtcp2_pkt_hd initial{};
+                if(bytes.size()<1200 || parsed.version!=ngtcp2::proto_ver_v1 || ngtcp2::ngtcp2_accept(&initial,bytes.data(),bytes.size()))return {};
                 if constexpr(requires{factory_.admit(initial,peer,now,bytes.size());}){
                     static_assert(noexcept(factory_.admit(initial,peer,now,bytes.size())));
                     if(!factory_.admit(initial,peer,now,bytes.size())){
@@ -145,7 +168,8 @@ export namespace quic {
                 static_assert(noexcept(factory_.create(*owner,registry_,source,initial,peer,now)));
                 auto created=factory_.create(*owner,registry_,source,initial,peer,now);
                 if(!created || !*created){registry_.release(*owner);return {};}
-                entry=&slots_[owner->slot];*entry={*created,*owner,false};
+                entry=&slots_[owner->slot];*entry={*created,*owner,false,false,static_cast<std::uint16_t>(Capacity)};
+                activate_slot(owner->slot);
             }
             if(entry->retiring)return {};
             auto result=entry->session->receive(peer,bytes,now);
@@ -156,14 +180,23 @@ export namespace quic {
             if(stopped_)return std::optional<net::DatagramOutput>{};
             if(pending_ || !enter())return std::unexpected(Failure{DatagramPortError::state});Call call{*this};
             if constexpr(Graceful)if(quiescing_){
-                for(std::size_t count=0;count<Capacity;++count){
-                    auto& entry=slots_[cursor_++%Capacity];if(!entry.session || entry.retiring || entry.close_started)continue;
-                    entry.close_started=true;auto packet=entry.session->close_output(bytes,now);
-                    if(!packet){if(!shutdown_failure_.failure)shutdown_failure_.failure=packet.error();failed(entry,packet.error());continue;}
-                    if(!*packet){shutdown_unsent_=true;retire(entry);continue;}
-                    if((**packet).size>bytes.size())return std::unexpected(Failure{DatagramPortError::invalid_output});
-                    if(token_==std::numeric_limits<std::uint64_t>::max())return std::unexpected(Failure{DatagramPortError::exhausted});
-                    pending_=Pending{entry.owner,(**packet).token,++token_};(**packet).token=token_;return *packet;
+                if(active_count_){
+                    std::size_t remaining=active_count_,pos=cursor_%active_count_;
+                    while(remaining && active_count_){
+                        if(pos>=active_count_)pos=0;
+                        auto& entry=slots_[active_slots_[pos]];
+                        --remaining;
+                        if(entry.close_started){++pos;continue;}
+                        auto const before=active_count_;
+                        entry.close_started=true;auto packet=entry.session->close_output(bytes,now);
+                        if(!packet){if(!shutdown_failure_.failure)shutdown_failure_.failure=packet.error();failed(entry,packet.error());continue;}
+                        if(!*packet){shutdown_unsent_=true;retire(entry);continue;}
+                        cursor_=pos+1;
+                        if(active_count_==before)++pos;
+                        if((**packet).size>bytes.size())return std::unexpected(Failure{DatagramPortError::invalid_output});
+                        if(token_==std::numeric_limits<std::uint64_t>::max())return std::unexpected(Failure{DatagramPortError::exhausted});
+                        pending_=Pending{entry.owner,(**packet).token,++token_};(**packet).token=token_;return *packet;
+                    }
                 }
                 return std::optional<net::DatagramOutput>{};
             }
@@ -178,16 +211,24 @@ export namespace quic {
                     pending_=Pending{SessionHandle{},(**packet).token,++token_};(**packet).token=token_;return *packet;
                 }
             }
-            for(std::size_t count=0;count<Capacity;++count){
-                auto& entry=slots_[cursor_++%Capacity];if(!entry.session || entry.retiring)continue;
-                auto packet=entry.session->output(bytes,now);
-                if(!packet){failed(entry,packet.error());continue;}
-                if(entry.session->stopping()){retire(entry);continue;}
-                if(!*packet)continue;
-                if((**packet).size>bytes.size())return std::unexpected(Failure{DatagramPortError::invalid_output});
-                if(token_==std::numeric_limits<std::uint64_t>::max())return std::unexpected(Failure{DatagramPortError::exhausted});
-                pending_=Pending{entry.owner,(**packet).token,++token_};(**packet).token=token_;
-                return *packet;
+            if(active_count_){
+                std::size_t remaining=active_count_,pos=cursor_%active_count_;
+                while(remaining && active_count_){
+                    if(pos>=active_count_)pos=0;
+                    auto& entry=slots_[active_slots_[pos]];
+                    auto const before=active_count_;
+                    --remaining;
+                    auto packet=entry.session->output(bytes,now);
+                    if(!packet){failed(entry,packet.error());continue;}
+                    if(entry.session->stopping()){retire(entry);continue;}
+                    cursor_=pos+1;
+                    if(active_count_==before)++pos;
+                    if(!*packet)continue;
+                    if((**packet).size>bytes.size())return std::unexpected(Failure{DatagramPortError::invalid_output});
+                    if(token_==std::numeric_limits<std::uint64_t>::max())return std::unexpected(Failure{DatagramPortError::exhausted});
+                    pending_=Pending{entry.owner,(**packet).token,++token_};(**packet).token=token_;
+                    return *packet;
+                }
             }
             return std::optional<net::DatagramOutput>{};
         }
@@ -218,14 +259,18 @@ export namespace quic {
         auto next_expiry() const noexcept -> net::DatagramDeadline {
             net::DatagramDeadline next;
             if constexpr(requires{factory_.control_next_expiry();})next=factory_.control_next_expiry();
-            for(auto const& entry:slots_)if(entry.session && !entry.retiring){auto expiry=entry.session->next_expiry();if(expiry && (!next || *expiry<*next))next=expiry;}
+            for(std::size_t i=0;i<active_count_;++i){
+                auto expiry=slots_[active_slots_[i]].session->next_expiry();
+                if(expiry && (!next || *expiry<*next))next=expiry;
+            }
             return next;
         }
         auto expire(net::DatagramClock::time_point now) -> std::expected<void,Failure> {
             if(stopped_)return {};
             if(!enter())return std::unexpected(Failure{DatagramPortError::state});Call call{*this};
             if constexpr(requires{factory_.control_expire(now);}){auto result=factory_.control_expire(now);if(!result)return std::unexpected(Failure{result.error()});}
-            for(auto& entry:slots_)if(entry.session && !entry.retiring){
+            for(std::size_t i=active_count_;i>0;--i){
+                auto& entry=slots_[active_slots_[i-1]];
                 auto next=entry.session->next_expiry();if(!next || *next>now)continue;
                 auto result=entry.session->expire(now);if(!result)failed(entry,result.error());else if(entry.session->stopping())retire(entry);
             }return {};

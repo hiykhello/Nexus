@@ -1,37 +1,42 @@
 [package]
-namespace = "nexus"
 name = "platform"
 version = "0.1.0"
 
+[dependencies]
+containers = { path = "../containers" }
+encoding = { path = "../encoding" }
+functional = { path = "../functional" }
+utility = { path = "../utility" }
+
 [features]
-network-state = { implies = ["netlink-policy"], sources = ["network_state.cppm", "network_state.cpp", "network_selection.cppm"] }
-netlink = { sources = ["netlink_codec.cppm", "netlink_socket.cppm"] }
-netlink-policy = { implies = ["netlink"], sources = ["netlink_watch.cppm", "routing_rule.cppm", "ipv4_reverse_path.cppm"] }
+network-state = []
+netlink = []
+netlink-policy = { sources = ["routing_rule.cppm", "ipv4_reverse_path.cppm"] }
 nftables = { sources = ["nftables.cppm", "nftables.cpp", "nftables_encode.cpp"] }
-io-uring = { defines = ["NEXUS_ENABLE_IO_URING"], sources = ["uring_buf_ring.cppm", "uring_buf_ring.cpp"] }
+io-uring = { defines = ["NEXUS_ENABLE_IO_URING"], sources = ["uring_buf_ring.cppm", "uring_buf_ring.cpp", "!uring_buf_ring_disabled.cppm"] }
 # The consumer supplies the test hook; production has no hook or indirect call.
 test-random = { defines = ["NEXUS_TEST_LINUX_RANDOM"] }
 
 [feature-deps.io-uring]
-nexus.uring-system = { path = "../../3rdparty/mcpp-uring" }
+uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
-sources = ["compat.cppm", "compat_callable.cppm", "process_owner.cppm", "neighbor_mac.cppm", "netns_config.cppm", "netns_config.cpp", "linux_random.cppm", "platform_defaults.cppm", "socket_options.cppm", "ip_address.cppm", "stream_peer.cppm", "os_fs.cppm", "netlink_abi.cppm", "sd_bus_abi.cppm", "resolved_bus.cppm", "resolved_types.cppm", "resolved_codec.cppm", "resolved_client.cppm"]
+sources = ["process_owner.cppm", "neighbor_mac.cppm", "neighbor_mac_common.cpp", "netns_config.cppm", "netns_config.cpp", "linux_random.cppm", "platform_defaults.cppm", "socket_options.cppm", "socket_protect.cpp", "wall_clock.cppm", "wall_clock.cpp", "tun_bridge.cppm", "system_proxy.cppm", "system_proxy.cpp", "service_manager.cppm", "service_manager.cpp", "ip_address.cppm", "stream_peer.cppm", "os_fs.cppm", "unique_fd.cppm", "network_state.cppm", "network_state_common.cpp", "network_selection.cppm", "uring_buf_ring_disabled.cppm"]
 
 [target.'cfg(not(os = "windows"))'.build]
-sources = ["os_fs_posix.cpp", "udp_batch_posix.cppm"]
+sources = ["os_fs_posix.cpp", "udp_batch_posix.cppm", "unix_socket.cppm"]
 
 [target.'cfg(os = "linux")'.build]
-sources = ["process_owner_linux.cpp", "neighbor_mac_linux.cpp", "socket_namespace_linux.cpp", "udp_batch_linux.cpp"]
+sources = ["process_owner_linux.cpp", "neighbor_mac_linux.cpp", "socket_namespace_linux.cpp", "udp_batch_linux.cpp", "netlink_abi.cppm", "netlink_codec.cppm", "netlink_socket.cppm", "netlink_watch.cppm", "network_state.cpp", "dbus_wire.cppm", "resolved_bus.cppm", "resolved_bus.cpp", "resolved_types.cppm", "resolved_codec.cppm", "resolved_client.cppm"]
 
 [target.'cfg(not(os = "linux"))'.build]
 sources = ["neighbor_mac_stub.cpp"]
 
 [target.'cfg(any(os = "macos", os = "ios"))'.build]
-sources = ["process_owner_darwin.cpp", "socket_namespace_darwin.cpp"]
+sources = ["process_owner_darwin.cpp", "socket_namespace_darwin.cpp", "network_state_darwin.cpp"]
 
 [target.'cfg(all(not(os = "linux"), not(os = "windows")))'.build]
 sources = ["udp_batch_posix.cpp"]
 
 [target.'cfg(os = "windows")'.build]
-sources = ["process_owner_windows.cpp", "socket_namespace_windows.cpp", "os_fs_windows.cpp", "udp_batch_windows.cppm", "udp_batch_windows.cpp"]
+sources = ["process_owner_windows.cpp", "socket_namespace_windows.cpp", "os_fs_windows.cpp", "udp_batch_windows.cppm", "udp_batch_windows.cpp", "network_state_windows.cpp"]

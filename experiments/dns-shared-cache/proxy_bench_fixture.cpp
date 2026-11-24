@@ -4,7 +4,7 @@ import dns.message;
 import dns.cache;
 import dns.shared_cache;
 #endif
-import proxy;
+import relay;
 
 // Uses the same proxy path in each build; no cache-access instrumentation.
 auto main(int argc, char** argv) -> int {
@@ -16,12 +16,12 @@ auto main(int argc, char** argv) -> int {
     std::array<std::size_t,1> capacities{256};
     auto cache=std::make_unique<dns_hp_experiment::GroupSnapshot>(capacities,workers,0,8*1024*1024);
 #endif
-    proxy::Server server;
+    relay::Server server;
     if (!server.set_dns_upstream(std::array<std::uint8_t, 4>{127, 0, 0, 1}, dns_port)) return 3;
 #ifdef NEXUS_TEST_DNS_GROUP
     if (!server.set_dns_group_for_test(*cache,0,0)) return 3;
 #endif
-    auto bound = server.start(0, proxy::Inbound::socks5, workers);
+    auto bound = server.start(0, relay::Inbound::socks5, workers);
     if (!bound) return 4;
 #if defined(NEXUS_TEST_DNS_PER_WORKER)
     constexpr auto mode = "per-worker";
@@ -52,7 +52,7 @@ auto main(int argc, char** argv) -> int {
         cache=std::make_unique<dns_hp_experiment::GroupSnapshot>(capacities,workers,0,8*1024*1024);
         if (!server.set_dns_group_for_test(*cache,0,0)) return 7;
 #endif
-        bound = server.start(*bound, proxy::Inbound::socks5, workers);
+        bound = server.start(*bound, relay::Inbound::socks5, workers);
         if (!bound) return 8;
         auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - before).count();

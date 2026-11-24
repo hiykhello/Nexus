@@ -51,10 +51,10 @@ def scenario(root,in_size,out_size):
         upstream_port=endpoint.getsockname()[1]
         for name,size in (("in",in_size),("out",out_size)):
             key=root/f"{name}.key"; key.write_text(base64.b64encode(bytes(range(size))).decode()+"\n"); key.chmod(0o600)
-        (root/"deny.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
+        (root/"deny.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
         config=root/"nexus.kdl"
         def write_config(block):
-            rule='rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" value="deny" outbound="reject";' if block else ''
+            rule='rule-set "deny" path="deny.kdl" format="kdl"; rules { - kind="rule-set" value="deny" outbound="reject"; };' if block else ''
             config.write_text(f'''schema-version 1
 role "server"
 workers 2

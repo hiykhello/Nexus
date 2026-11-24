@@ -1,12 +1,12 @@
 import argparse,hashlib,json,socket,subprocess,sys,tempfile
 from pathlib import Path
-sys.path.insert(0,'/home/yk/Code/Nexus/tests');sys.path.insert(0,str(Path(__file__).resolve().parent))
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential,ready
 from dns_rule_support import proxy_client
 from hy2_production_listener_network import Origin
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('server',type=Path);p.add_argument('--retry-drivers',type=Path,default=Path('/home/yk/Code/Nexus/tests'));p.add_argument('--quick',action='store_true');p.add_argument('--mutations',action='store_true');p.add_argument('--backend',choices=('0','1','both'),default='both');p.add_argument('--report',type=Path,required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('server',type=Path);p.add_argument('--retry-drivers',type=Path,default=Path(__file__).resolve().parent);p.add_argument('--quick',action='store_true');p.add_argument('--mutations',action='store_true');p.add_argument('--backend',choices=('0','1','both'),default='both');p.add_argument('--report',type=Path,required=True);a=p.parse_args()
     sys.path.insert(0,str(a.retry_drivers.resolve(strict=True)))
     from retry_standard_network import Tap,payload,socks,REVISION
     server=a.server.resolve(strict=True);version=subprocess.run(['sing-box','version'],capture_output=True,text=True,check=True).stdout

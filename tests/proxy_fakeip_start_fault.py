@@ -35,7 +35,7 @@ def stop(process):
 with tempfile.TemporaryDirectory(prefix="nexus-fakeip-start-fault-") as root_path:
     root = pathlib.Path(root_path)
     inject = root / "inject.so"
-    subprocess.run(["cc", "-shared", "-fPIC", project / "experiments/beve-state/fault_inject.c",
+    subprocess.run(["cc", "-shared", "-fPIC", project / "tests/proxy_fakeip_fault_inject.c",
                     project / "tests/proxy_fakeip_listen_probe.c", "-o", inject], check=True)
     crash_inject = root / "crash.so"
     subprocess.run(["cc", "-shared", "-fPIC", project / "tests/proxy_fakeip_crash_probe.c",

@@ -1,11 +1,12 @@
 module config;
 import std;
 import config.kdl_common;
-import nexus.thirdparty.glaze;
+import glaze;
 namespace config {
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
     auto dns_ipv6(std::string_view) -> std::optional<std::array<std::uint8_t,16>>;
-    auto parse_tcp_dial_option(nex::glaze::KdlNode const&,TcpSocketOptions&)->std::expected<bool,std::string>;
+    auto parse_tcp_dial_option(glaze::KdlNode const&,TcpSocketOptions&)->std::expected<bool,std::string>;
+    auto parse_outbound_multiplex(glaze::KdlNode const&)->std::expected<MultiplexConfig,std::string>;
     auto parse_snell_inbound(kdl::Node const& node)->std::expected<InboundConfig,std::string> {
         using namespace config::kdl;auto name=argument(node);auto type=text_property(node,"type");
         if(!name||!valid_name(*name)||!type||*type!="snell"||node.properties.size()!=1)return error("invalid Snell inbound");
@@ -48,6 +49,10 @@ namespace config {
                 if(out.tcp_fast_open||c.tag||!c.properties.empty()||!c.children.empty()||c.arguments.size()!=1||c.arguments[0].tag||
                    !std::holds_alternative<bool>(c.arguments[0].data))return error("tcp-fast-open requires one boolean and cannot repeat");
                 out.tcp_fast_open=std::get<bool>(c.arguments[0].data);
+            }else if(c.name=="multiplex") {
+                if(out.multiplex)return error("duplicate Snell multiplex");
+                auto parsed=parse_outbound_multiplex(c);if(!parsed)return std::unexpected(parsed.error());
+                out.multiplex=std::move(*parsed);
             }else {auto option=parse_tcp_dial_option(c,out.tcp_options);if(!option)return std::unexpected(option.error());if(!*option)return error("unsupported Snell outbound field: "+c.name);}
         }
         if(!server||!psk||!version_seen)return error("Snell outbound requires server, version and PSK file");

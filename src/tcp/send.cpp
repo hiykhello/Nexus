@@ -41,6 +41,7 @@ namespace tcp {
     auto SendBuffer::acknowledge(std::uint32_t acknowledgement) noexcept -> std::expected<std::size_t, SendError> {
         auto acked = static_cast<std::uint32_t>(acknowledgement - una_);
         if (acked > sent_) return std::unexpected(SendError::invalid_ack);
+        if (!acked) return 0;
         head_ = (head_ + acked) % capacity_;
         count_ -= acked;
         sent_ -= acked;
@@ -92,6 +93,7 @@ namespace tcp {
         if (!count) return count;
         if (*count) {
             dup_acks_ = 0;
+            rto_retries_ = 0;
             fast_retransmit_ = false;
             if (rtt_tracking_ && static_cast<std::int32_t>(ack - rtt_seq_) >= 0) {
                 rtt_tracking_ = false;
@@ -121,6 +123,7 @@ namespace tcp {
             return {};
         }
         if (!deadline_ || now < *deadline_) return std::unexpected(SendError::not_due);
+        ++rto_retries_;
         rto_ = std::min<std::uint64_t>(rto_ * 2, 60000);
         arm(now);
         return {};

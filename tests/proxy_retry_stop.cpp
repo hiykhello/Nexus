@@ -4,7 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 import dns.local_config;
 using namespace std::chrono_literals;
 
@@ -23,7 +23,7 @@ auto main() -> int {
     (void)dns::system_local_snapshots();
     auto fds=count("/proc/self/fd"), threads=count("/proc/self/task");
     {
-    proxy::Server server;
+    relay::Server server;
     auto port=server.start(0);
     if (!port) return 2;
     int fd=::socket(AF_INET, SOCK_STREAM, 0);
@@ -41,7 +41,7 @@ auto main() -> int {
     auto again=server.start(0);
     if (!again || !server.healthy()) {
         if (!again) std::println("restart error: {}", again.error().message());
-        else if (auto failure=server.failure()) std::println("restart failure: {}", proxy::describe(failure->kind));
+        else if (auto failure=server.failure()) std::println("restart failure: {}", relay::describe(failure->kind));
         return 8;
     }
     server.stop();

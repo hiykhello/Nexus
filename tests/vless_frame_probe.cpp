@@ -7,11 +7,11 @@ import vless;
 import vless.corosio_client;
 import vless.tls_server;
 import vless.vision_client;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 namespace t=tls;
 namespace v=vless::detail;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 static thread_local bool watch_allocations=false;
 static thread_local std::size_t allocations=0;
 void* operator new(std::size_t size) {
@@ -48,9 +48,9 @@ struct Frames final:std::pmr::memory_resource {
     auto do_is_equal(std::pmr::memory_resource const& other) const noexcept -> bool override {return this==&other;}
 };
 template<class Factory> auto sample(std::string_view name,Factory factory) -> void {
-    Frames frames;auto previous=nex::capy::get_current_frame_allocator();nex::capy::set_current_frame_allocator(&frames);
+    Frames frames;auto previous=capy::get_current_frame_allocator();capy::set_current_frame_allocator(&frames);
     {auto operation=factory();(void)operation;}
-    nex::capy::set_current_frame_allocator(previous);if (frames.live) std::abort();
+    capy::set_current_frame_allocator(previous);if (frames.live) std::abort();
     std::println("{} {} {}",name,frames.calls,frames.bytes);
 }
 auto main() -> int {

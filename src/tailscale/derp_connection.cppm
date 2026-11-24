@@ -7,7 +7,8 @@ import tailscale.derp_info;
 import tailscale.derp_messages;
 import tls.byte_stream;
 import tls.connector;
-import nexus.thirdparty.capy;
+import capy;
+import corosio;
 
 export namespace tailscale::derp {
     // DERP runs on a separate authenticated TLS connection. Node identity
@@ -26,7 +27,29 @@ export namespace tailscale::derp {
         std::string authority_;
         crypto::X25519Private const& identity_;
         Key pin_;
-        bool ready_ = false, stopped_ = false;
+        capy::async_mutex write_lock_;
+        std::deque<std::array<std::uint8_t, 8>> pending_pongs_;
+        bool ready_ = false, stopped_ = false, write_active_ = false;
+
+        struct WriteGuard {
+            Connection& self;
+            bool ok = false;
+            ~WriteGuard() {
+                self.write_active_ = false;
+                if (!ok) self.cancel();
+            }
+        };
+
+        auto drain_pongs_locked(Clock::time_point deadline) -> capy::task<bool> {
+            while (!pending_pongs_.empty()) {
+                if (!ready_ || !stream_) co_return false;
+                auto token = pending_pongs_.front();
+                pending_pongs_.pop_front();
+                auto pong = encode_frame(Type::pong, token);
+                if (!pong || !co_await stream_->send(*pong, deadline)) co_return false;
+            }
+            co_return true;
+        }
 
         static auto lower(std::string_view value) -> std::string {
             std::string text(value);
@@ -34,7 +57,7 @@ export namespace tailscale::derp {
             return text;
         }
 
-        auto upgrade(Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto upgrade(Clock::time_point deadline) -> capy::task<bool> {
             if (authority_.empty() || authority_.size() > 259 || !http::valid_header_field_value(authority_)) co_return false;
             auto request = std::format("GET /derp HTTP/1.1\r\nHost: {}\r\nConnection: Upgrade\r\nUpgrade: DERP\r\n\r\n", authority_);
             if (!co_await stream_->send(Bytes(reinterpret_cast<const std::uint8_t*>(request.data()),request.size()), deadline))
@@ -72,7 +95,7 @@ export namespace tailscale::derp {
             co_return false;
         }
 
-        auto read_exact(std::span<std::uint8_t> target, Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto read_exact(std::span<std::uint8_t> target, Clock::time_point deadline) -> capy::task<bool> {
             while (!target.empty()) {
                 auto count = co_await stream_->read(target,deadline);
                 if (!count || !*count) co_return false;
@@ -81,7 +104,7 @@ export namespace tailscale::derp {
             co_return true;
         }
 
-        auto frame(Clock::time_point deadline) -> nex::capy::task<std::optional<Frame>> {
+        auto frame(Clock::time_point deadline) -> capy::task<std::optional<Frame>> {
             std::array<std::uint8_t,header_size> wire{};
             if (!co_await read_exact(wire,deadline)) co_return std::nullopt;
             auto head = parse_header(wire);
@@ -103,13 +126,19 @@ export namespace tailscale::derp {
         auto cancel() noexcept -> void {
             stopped_ = true;
             ready_ = false;
+            pending_pongs_.clear();
             if (handshake_) handshake_->cancel();
             if (stream_) stream_->cancel();
             connector_.cancel();
         }
 
-        auto start(Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto start(Clock::time_point deadline) -> capy::task<bool> {
             if (stopped_ || stream_) co_return false;
+            struct StartGuard {
+                Connection& self;
+                bool ok = false;
+                ~StartGuard() { if (!ok) self.cancel(); }
+            } guard{*this};
             auto started = Clock::now();
             auto result = co_await connector_.start(deadline);
             if (result != tls::detail::ConnectResult::connected || stopped_ || !connector_.application()) co_return false;
@@ -126,7 +155,9 @@ export namespace tailscale::derp {
             auto confirmed = handshake_->finish(*server_info,Clock::now());
             if (!confirmed || stopped_) co_return false;
             settings_ = *confirmed;
+            handshake_.reset();
             ready_ = true;
+            guard.ok = true;
             co_return true;
         }
 
@@ -135,7 +166,7 @@ export namespace tailscale::derp {
         }
 
         // Each task sees stable frame bytes until the next receive call.
-        auto receive(Clock::time_point deadline) -> nex::capy::task<std::optional<Packet>> {
+        auto receive(Clock::time_point deadline) -> capy::task<std::optional<Packet>> {
             while (ready_) {
                 auto message = co_await frame(deadline);
                 if (!message) break;
@@ -146,8 +177,18 @@ export namespace tailscale::derp {
                 }
                 if (message->type == Type::ping) {
                     auto ping = parse_ping(*message);
-                    auto pong = ping ? encode_frame(Type::pong,*ping) : std::expected<std::vector<std::uint8_t>,Error>{std::unexpected(Error::invalid)};
-                    if (!pong || !co_await stream_->send(*pong,deadline)) break;
+                    if (!ping) break;
+                    if (pending_pongs_.size() >= 16) pending_pongs_.pop_front();
+                    pending_pongs_.push_back(*ping);
+                    if (!write_active_) {
+                        auto operation = write_lock_.scoped_lock();
+                        auto [error, lock] = co_await corosio::timeout(std::move(operation), deadline);
+                        if (error || !ready_ || !stream_) break;
+                        write_active_ = true;
+                        WriteGuard guard{*this};
+                        if (!co_await drain_pongs_locked(deadline)) break;
+                        guard.ok = true;
+                    }
                 }
                 if (message->type == Type::restarting) break;
             }
@@ -155,13 +196,23 @@ export namespace tailscale::derp {
             co_return std::nullopt;
         }
 
-        auto send(Key const& peer, Bytes bytes, Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto send(Key const& peer, Bytes bytes, Clock::time_point deadline) -> capy::task<bool> {
             if (!ready_) co_return false;
             auto message = encode_packet(Type::send_packet,peer,bytes);
             if (!message) co_return false;
-            if (co_await stream_->send(*message,deadline)) co_return true;
-            cancel();
-            co_return false;
+            auto operation = write_lock_.scoped_lock();
+            auto [error, lock] = co_await corosio::timeout(std::move(operation), deadline);
+            if (error || !ready_ || !stream_) {
+                cancel();
+                co_return false;
+            }
+            write_active_ = true;
+            WriteGuard guard{*this};
+            if (!co_await drain_pongs_locked(deadline)) co_return false;
+            if (!co_await stream_->send(*message, deadline)) co_return false;
+            if (!co_await drain_pongs_locked(deadline)) co_return false;
+            guard.ok = true;
+            co_return true;
         }
     };
 }

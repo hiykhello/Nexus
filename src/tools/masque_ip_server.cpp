@@ -3,6 +3,7 @@ module;
 #include <unistd.h>
 module cli.masque_ip_server;
 import std;
+import proxy.v4;
 import config;
 import masque.ip_control;
 import masque.ip_server;
@@ -29,7 +30,7 @@ namespace cli::masque_enabled {
             return result;
         }
 
-        class LinuxIpServerPort final : public masque::IpServerPort {
+        class LinuxIpServerPort {
             using Clock = std::chrono::steady_clock;
             std::string name_;
             packet::TunNetworkOptions network_;
@@ -42,9 +43,9 @@ namespace cli::masque_enabled {
             LinuxIpServerPort(std::string name, packet::TunNetworkOptions network,
                               std::vector<masque::AddressEntry> assigned, std::vector<masque::RouteEntry> routes)
                 : name_(std::move(name)), network_(network), assigned_(std::move(assigned)), routes_(std::move(routes)) {}
-            ~LinuxIpServerPort() override { close(); }
+            ~LinuxIpServerPort() { close(); }
 
-            auto open() noexcept -> bool override {
+            auto open() noexcept -> bool {
                 if (tun_ || cleanup_failed_) return false;
                 try {
                     auto device = packet::LinuxTun::create(name_);
@@ -62,7 +63,7 @@ namespace cli::masque_enabled {
                 close();
                 return false;
             }
-            auto close() noexcept -> void override {
+            auto close() noexcept -> void {
                 if (lease_) {
                     auto result = lease_->stop(Clock::now() + std::chrono::seconds(2));
                     cleanup_failed_ |= result.total || !lease_->drained();
@@ -70,34 +71,38 @@ namespace cli::masque_enabled {
                 }
                 tun_.reset();
             }
-            auto healthy() const noexcept -> bool override {return !cleanup_failed_;}
-            auto read(std::span<std::uint8_t> bytes) noexcept -> std::optional<std::size_t> override {
+            auto healthy() const noexcept -> bool {return !cleanup_failed_;}
+            auto read(std::span<std::uint8_t> bytes) noexcept -> std::optional<std::size_t> {
+                if (!tun_) return {};
                 auto count = ::read(tun_->native_handle(), bytes.data(), bytes.size());
                 if (count > 0) return static_cast<std::size_t>(count);
                 if (count < 0 && (errno == EAGAIN || errno == EINTR)) return 0;
                 return {};
             }
-            auto write(std::span<std::uint8_t const> bytes) noexcept -> Write override {
+            auto write(std::span<std::uint8_t const> bytes) noexcept -> masque::IpServerWrite {
+                if (!tun_) return masque::IpServerWrite::failed;
                 auto count = ::write(tun_->native_handle(), bytes.data(), bytes.size());
-                if (count < 0 && (errno == EAGAIN || errno == EINTR)) return Write::blocked;
-                return count == static_cast<std::ptrdiff_t>(bytes.size()) ? Write::sent : Write::failed;
+                if (count < 0 && (errno == EAGAIN || errno == EINTR)) return masque::IpServerWrite::blocked;
+                return count == static_cast<std::ptrdiff_t>(bytes.size()) ? masque::IpServerWrite::sent : masque::IpServerWrite::failed;
             }
-            auto addresses() const noexcept -> std::span<masque::AddressEntry const> override { return assigned_; }
-            auto routes() const noexcept -> std::span<masque::RouteEntry const> override { return routes_; }
+            auto addresses() const noexcept -> std::span<masque::AddressEntry const> { return assigned_; }
+            auto routes() const noexcept -> std::span<masque::RouteEntry const> { return routes_; }
         };
     }
 
     auto make_ip_server_port(config::MasqueIpInbound const& options, config::MasqueInbound const& server) ->
-        std::expected<std::unique_ptr<masque::IpServerPort>, std::string> {
+        std::expected<masque::IpServerPort, std::string> {
         if (options.interface.size() > 15 || options.interface == "." || options.interface == ".." ||
             !std::ranges::all_of(options.interface, [](unsigned char c) {
                 return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                        (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
             })) return std::unexpected("invalid CONNECT-IP server interface-name");
-        packet::TunNetworkOptions network{.mtu = masque::IpServerPort::mtu};
+        packet::TunNetworkOptions network{.mtu = masque::ip_server_mtu};
         std::vector<masque::AddressEntry> assigned;
         std::vector<masque::RouteEntry> routes;
         for (auto const& text : options.local_addresses) {
+            if (network.address_count >= network.addresses.size())
+                return std::unexpected("too many CONNECT-IP local-addresses");
             auto local = address(text, false);
             if (!local || (local->family == (server.listen_host.contains(':') ? 6 : 4) &&
                 local->bytes == server.listen_address)) return std::unexpected("invalid CONNECT-IP local-address");
@@ -105,6 +110,8 @@ namespace cli::masque_enabled {
         }
         auto local = std::span(network.addresses).first(network.address_count);
         for (auto const& text : options.client_addresses) {
+            if (network.route_count >= network.routes.size())
+                return std::unexpected("too many CONNECT-IP client-addresses");
             auto client = address(text, false);
             if (!client || std::ranges::find(assigned, client->family, &masque::AddressEntry::version) != assigned.end() ||
                 std::ranges::count(local, client->family, &packet::TunAddress::family) != 1 ||
@@ -129,6 +136,7 @@ namespace cli::masque_enabled {
         if (!packet::tun_network_detail::validate(network) ||
             std::ranges::any_of(assigned, [&](auto const& entry) { return !route_family[entry.version == 6]; }))
             return std::unexpected("invalid CONNECT-IP server network");
-        return std::make_unique<LinuxIpServerPort>(options.interface, network, std::move(assigned), std::move(routes));
+        return pro::make_proxy<masque::IpServerPortFacade, LinuxIpServerPort>(
+            options.interface, network, std::move(assigned), std::move(routes));
     }
 }

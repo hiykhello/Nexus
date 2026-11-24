@@ -51,13 +51,13 @@
     "source_root": "proxy-9d9749d63766cdd9affb5ea7953237e38ce5ab63"
   },
   "glaze": {
-    "version": "0.1.0",
-    "revision": "fc646588635c42cca142562d7b3d0484cc4493b7",
-    "archive": "fc646588635c42cca142562d7b3d0484cc4493b7.tar.gz",
-    "sha256": "f238db70dee9ef25d0898a0da062209453225832d0d82f10d1fb11037c81ef3b",
-    "url": "https://github.com/hiykhello/glaze-kdl2.0-/archive/fc646588635c42cca142562d7b3d0484cc4493b7.tar.gz",
+    "version": "0.1.1",
+    "revision": "4e3230a6c1a3e665a6d81ca18e804291f894e876",
+    "archive": "4e3230a6c1a3e665a6d81ca18e804291f894e876.tar.gz",
+    "sha256": "d3f83cf958aed10f7e27dc672cb05d755773ce5572eed90c20a463b46b4a66c4",
+    "url": "https://github.com/hiykhello/glaze-kdl/archive/4e3230a6c1a3e665a6d81ca18e804291f894e876.tar.gz",
     "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.glaze-kdl.lua",
-    "source_root": "glaze-kdl2.0--fc646588635c42cca142562d7b3d0484cc4493b7"
+    "source_root": "glaze-kdl-4e3230a6c1a3e665a6d81ca18e804291f894e876"
   },
   "boringssl": {
     "version": "0.1.2",
@@ -147,5 +147,14 @@
     "url": "https://github.com/P-H-C/phc-winner-argon2/archive/62358ba2123abd17fccf2a108a301d4b52c01a7c.tar.gz",
     "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.argon2-source.lua",
     "source_root": "phc-winner-argon2-62358ba2123abd17fccf2a108a301d4b52c01a7c"
+  },
+  "beman_inplace_vector": {
+    "version": "0.1.0",
+    "revision": "c7fe76da307f0d6fda5023b2d2ebef7e3f7b18d1",
+    "archive": "c7fe76da307f0d6fda5023b2d2ebef7e3f7b18d1.tar.gz",
+    "sha256": "336fcdc77875fa75dc1e503b4dbbfc64f3483abce70d2e1669bb26f64e9ac2f3",
+    "url": "https://github.com/bemanproject/inplace_vector/archive/c7fe76da307f0d6fda5023b2d2ebef7e3f7b18d1.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.beman-inplace-vector.lua",
+    "source_root": "inplace_vector-c7fe76da307f0d6fda5023b2d2ebef7e3f7b18d1"
   }
 }

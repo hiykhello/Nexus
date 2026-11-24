@@ -1,6 +1,6 @@
 import argparse,concurrent.futures,hashlib,json,re,subprocess,sys,tempfile
 from pathlib import Path
-sys.path.insert(0,'/home/yk/Code/Nexus/tests')
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 from quic_udp_network import credential
 parser=argparse.ArgumentParser();parser.add_argument('binary',type=Path);parser.add_argument('--report',type=Path,required=True);parser.add_argument('--quick',action='store_true');args=parser.parse_args()
 binary=args.binary.resolve();report={'complete':False,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'groups':[]}

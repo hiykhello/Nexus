@@ -1,9 +1,8 @@
 import std;
 import net.tcp_fast_open;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 
 auto run(io::io_context& context,io::endpoint endpoint,std::string_view mode,bool& ok) -> capy::task<> {

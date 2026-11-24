@@ -5,10 +5,9 @@ import dns.message_program;
 import dns.response_race_walk;
 import dns.policy;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace io = ::corosio;
 auto main(int argc,char** argv) -> int {
     if(argc!=5)return 2;
     auto port=[](char const* text) {return static_cast<std::uint16_t>(std::strtoul(text,nullptr,10));};

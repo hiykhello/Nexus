@@ -6,8 +6,8 @@ import anytls.padding;
 import anytls.settings;
 import anytls.writer;
 import tls.connector;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace anytls {
     enum class ClientError { closed,timeout,unavailable };
@@ -22,12 +22,12 @@ export namespace anytls {
         using Pool=ClientPool<Connection>;
         using Lease=typename Pool::Lease;
     private:
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         Factory factory_;
         std::span<std::uint8_t const,32> key_;
         std::string metadata_;
         PaddingScheme padding_;
-        nex::capy::async_event changed_;
+        capy::async_event changed_;
         Pool pool_;
         std::array<Connection*,256> starting_{};
         std::chrono::milliseconds timeout_;
@@ -77,7 +77,7 @@ export namespace anytls {
                 return factory_.prewarm_allowed();
             return true;
         }
-        static auto warm(Warm job) -> nex::capy::task<> {
+        static auto warm(Warm job) -> capy::task<> {
             auto& owner=*job.owner;
             if (owner.stopped_ || !owner.prewarm_allowed()) co_return;
             auto connection=owner.factory_(owner.padding_,&owner.changed_);
@@ -93,7 +93,7 @@ export namespace anytls {
             // The lease returns the authenticated connection to the idle
             // pool. Its reader continues under the pool's explicit owner.
         }
-        static auto monitor(Monitor lifetime) -> nex::capy::task<> {
+        static auto monitor(Monitor lifetime) -> capy::task<> {
             auto& owner=*lifetime.owner;
             while (!owner.stopped_) {
                 auto prewarm=owner.prewarm_allowed();
@@ -102,16 +102,16 @@ export namespace anytls {
                 for (std::size_t i=0;i<needed && !owner.stopped_;++i) {
                     auto creation=owner.pool_.reserve();
                     if (!creation) break;
-                    nex::capy::run_async(owner.context_.get_executor(),owner.stop_.get_token(),[] {},
+                    capy::run_async(owner.context_.get_executor(),owner.stop_.get_token(),[] {},
                         [parent=&owner](std::exception_ptr) noexcept { parent->failed_=true; parent->stop(); })(
                             warm(Warm(owner,std::move(*creation))));
                 }
-                auto [error]=co_await nex::corosio::delay(owner.pool_.options().check_interval);
+                auto [error]=co_await corosio::delay(owner.pool_.options().check_interval);
                 if (error) break;
             }
         }
     public:
-        Client(nex::corosio::io_context& context,Factory factory,std::span<std::uint8_t const,32> key,
+        Client(corosio::io_context& context,Factory factory,std::span<std::uint8_t const,32> key,
             PaddingScheme padding,PoolOptions options={},std::chrono::milliseconds timeout=std::chrono::seconds(10),std::string_view metadata={})
             : context_(context),factory_(std::move(factory)),key_(key),metadata_(metadata),padding_(std::move(padding)),pool_(options),timeout_(timeout) {
             if (!valid_client_metadata(metadata) || timeout.count()<1 || timeout>std::chrono::hours(1))
@@ -124,7 +124,7 @@ export namespace anytls {
             if (stopped_ || monitor_running_) throw std::logic_error("AnyTLS pool cannot start");
             monitor_running_=true;
             try {
-                nex::capy::run_async(context_.get_executor(),stop_.get_token(),[] {},
+                capy::run_async(context_.get_executor(),stop_.get_token(),[] {},
                     [this](std::exception_ptr) noexcept { failed_=true; stop(); })(monitor(Monitor(*this)));
             } catch (...) { monitor_running_=false; stop(); throw; }
         }
@@ -136,9 +136,10 @@ export namespace anytls {
             changed_.set();
         }
         auto drained() const noexcept -> bool { return !monitor_running_ && pool_.drained(); }
+        auto reap() noexcept -> void { pool_.reap(IoClock::time_point::max(), false); changed_.set(); }
         auto idle_count() const noexcept -> std::size_t { return pool_.idle_count(); }
         auto size() const noexcept -> std::size_t { return pool_.size(); }
-        auto acquire(IoClock::time_point deadline,std::stop_token token={}) -> nex::capy::task<std::expected<Lease,ClientError>> {
+        auto acquire(IoClock::time_point deadline,std::stop_token token={}) -> capy::task<std::expected<Lease,ClientError>> {
             Activity activity{*this};
             Request request{*this};
             // Cancellation belongs to this request, including its unfinished
@@ -168,7 +169,7 @@ export namespace anytls {
                 }
                 if (creation.error()!=PoolError::full) co_return std::unexpected(ClientError::unavailable);
                 changed_.clear();
-                auto [error]=co_await nex::corosio::timeout(changed_.wait(),deadline);
+                auto [error]=co_await corosio::timeout(changed_.wait(),deadline);
                 if (error) co_return std::unexpected(IoClock::now()>=deadline ? ClientError::timeout : ClientError::closed);
             }
             co_return std::unexpected(failed_ ? ClientError::unavailable : ClientError::closed);

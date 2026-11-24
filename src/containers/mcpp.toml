@@ -1,0 +1,13 @@
+[package]
+name = "containers"
+version = "0.1.0"
+
+[dependencies]
+nexus.beman-inplace-vector = "=0.1.0"
+
+[features]
+ring-queue = { sources = ["ring_queue.cppm"] }
+byte-ring = { sources = ["byte_ring.cppm"] }
+
+[build]
+sources = ["inplace_vector.cppm", "cache_index.cppm"]

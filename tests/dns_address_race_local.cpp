@@ -7,10 +7,9 @@ import dns.local_response;
 import dns.message;
 import dns.input_budget;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;
 struct Operation {
     dns::ResponseStep step;std::uint16_t type;std::vector<std::string>& calls;

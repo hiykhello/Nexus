@@ -24,7 +24,7 @@ standard = "c++26"
 mcpp = ">=2026.11.21.1"
 
 [toolchain]
-default = "llvm@23.1.3"
+default = "llvm@23.1.6"
 
 [target.x86_64-linux-gnu]
 sysroot = "glibc@system"

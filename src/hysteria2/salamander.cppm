@@ -3,7 +3,7 @@ import std;
 import crypto;
 import net.datagram_driver;
 import quic.datagram_port;
-import nexus.thirdparty.corosio;
+import corosio;
 
 export namespace hysteria2 {
     // The caller owns the wire salt and supplies fresh randomness for each
@@ -91,9 +91,9 @@ export namespace hysteria2 {
         }
         auto mtu_rejected(std::uint64_t token,net::DatagramClock::time_point now) -> std::expected<void,Failure>
             requires requires {port_.mtu_rejected(token,now);} {return port_.mtu_rejected(token,now);}
-        auto receive(nex::corosio::endpoint const& peer,std::span<std::uint8_t> bytes,net::DatagramClock::time_point now)
+        auto receive(corosio::endpoint const& peer,std::span<std::uint8_t> bytes,net::DatagramClock::time_point now)
             -> std::expected<void,Failure> {
-            auto logical=(hopping_ && in_hop_set(peer.port())) ? nex::corosio::endpoint(peer.address(),primary_port_) : peer;
+            auto logical=(hopping_ && in_hop_set(peer.port())) ? corosio::endpoint(peer.address(),primary_port_) : peer;
             if (!password_) return port_.receive(logical,bytes,now);
             if (bytes.size()<8) return {};
             auto salt=std::span<std::uint8_t const,8>(bytes.data(),8);
@@ -106,7 +106,7 @@ export namespace hysteria2 {
             auto apply_hop=[this,now](std::expected<std::optional<net::DatagramOutput>,Failure>&& res) {
                 if (hopping_ && res && *res) {
                     if (now>=next_hop_) { active_port_=pick_hop_port(); next_hop_=now+hop_interval_; }
-                    (**res).peer=nex::corosio::endpoint((**res).peer.address(),active_port_);
+                    (**res).peer=corosio::endpoint((**res).peer.address(),active_port_);
                 }
                 return std::move(res);
             };

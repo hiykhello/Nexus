@@ -50,6 +50,9 @@ export namespace tailscale::wireguard_tun {
         auto receive_ip() -> std::optional<std::vector<std::uint8_t>>;
         auto select_relay(std::uint16_t region) noexcept -> void;
         auto relay_ready(bool) noexcept -> void;
+        auto set_relay_wake(void(*)(void*) noexcept, void*) noexcept -> void;
+        [[nodiscard]] auto watch_fds() const noexcept -> std::array<int, 2>;
+        [[nodiscard]] auto has_active_peers() const noexcept -> bool;
         auto next_relay_packet() -> std::optional<RelayPacket>;
         auto valid_relay_packet(RelayPacket const&) const noexcept -> bool;
         auto deliver_relay(wireguard::Key const&, std::span<const std::uint8_t>) -> bool;

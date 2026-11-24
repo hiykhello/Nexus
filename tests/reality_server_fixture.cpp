@@ -2,8 +2,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import reality.auth;
 import reality.server_auth;
 import reality.server_probe;
@@ -15,7 +15,7 @@ import tls.corosio_server_handshake;
 import tls.corosio_application;
 import vless;
 import vless.tls_server;
-namespace r=reality; namespace t=tls; namespace c = ::crypto; namespace io=nex::corosio; namespace capy=nex::capy; namespace v=vless;
+namespace r=reality; namespace t=tls; namespace c = ::crypto; namespace io = ::corosio; namespace v=vless;
 using namespace std::chrono_literals;
 struct Fixture { io::io_context context{io::epoll}; io::tcp_socket socket{context},cover{context}; bool has_cover=false; std::size_t probe_limit=131072; r::ServerProfile& profile; bool done=false,success=false;
     explicit Fixture(r::ServerProfile& p) : profile(p) {} };

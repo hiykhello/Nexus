@@ -3,7 +3,7 @@ import std;
 import http2.client_types;
 import http2.headers;
 import http2.session_core;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 
 export namespace http2::detail {
     template<std::size_t Capacity>
@@ -189,7 +189,7 @@ export namespace http2::detail {
         auto closed(Core& core,std::int32_t id,std::uint32_t code) noexcept -> int {
             auto stream=find(id); if (!stream || stream->closed) return 0;
             stream->closed=true; stream->release_body(); --active_streams;
-            if (code || stream->failure) {
+            if (code || stream->failure || !stream->remote_end) {
                 if (!stream->failure) stream->failure=Failure{ClientError::reset,static_cast<int>(code),id};
                 if (!discard_input(core,*stream)) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
             }

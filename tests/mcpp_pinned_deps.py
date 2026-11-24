@@ -189,7 +189,7 @@ def verify_blake3(archive: Path) -> None:
                           r'target_compile_definitions\(blake3 PRIVATE\s+(.*?)\)', cmake, re.S)
     if len(library) != 1 or len(portable) != 1:
         raise ValueError("BLAKE3: cannot determine upstream portable configuration")
-    sources, defines = library[0].split(), portable[0].split()
+    sources, defines = library[0].split(), [d for d in portable[0].split() if d != "BLAKE3_USE_NEON=0"]
     descriptor = (ROOT / pin["descriptor"]).read_text(encoding="utf-8")
     lists = [re.findall(rf'\b{field}\s*=\s*\{{(.*?)\}}', descriptor, re.S)
              for field in ("sources", "defines")]
@@ -197,9 +197,11 @@ def verify_blake3(archive: Path) -> None:
         raise ValueError("BLAKE3: expected one source list and one define list")
     described_sources = re.findall(r'"\*/c/([^"]+)"', lists[0][0])
     described_defines = re.findall(r'"([^"]+)"', lists[1][0])
-    if described_sources != sources or described_defines != defines:
-        raise ValueError("BLAKE3: descriptor differs from upstream portable CMake configuration")
-    for source in sources:
+    if (described_sources != sources or described_defines != defines
+            or '"mcpp_generated/blake3_neon_guard.c"' not in lists[0][0]
+            or 'blake3_neon.c' not in descriptor):
+        raise ValueError("BLAKE3: descriptor differs from upstream portable/NEON CMake configuration")
+    for source in [*sources, "blake3_neon.c"]:
         archive_file(archive, prefix + source)
 
 
@@ -270,7 +272,10 @@ def main() -> None:
         raise ValueError("ngcpp/proxy: generated module differs from pinned proxy.ixx")
     glaze = PINS["glaze"]
     for header in ("glaze/kdl.hpp", "glaze/beve.hpp"):
-        archive_file(archives["glaze"], f'glaze-kdl2.0--{glaze["revision"]}/include/{header}')
+        archive_file(archives["glaze"], f'{glaze["source_root"]}/include/{header}')
+    beman_iv = PINS["beman_inplace_vector"]
+    for header in ("beman/inplace_vector/config.hpp", "beman/inplace_vector/inplace_vector.hpp"):
+        archive_file(archives["beman_inplace_vector"], f'{beman_iv["source_root"]}/include/{header}')
     verify_generated_descriptor("corosio", "scripts/mcpp-corosio-sources.py", archives)
     verify_blake3(archives["blake3"])
     verify_argon2(archives["argon2"])

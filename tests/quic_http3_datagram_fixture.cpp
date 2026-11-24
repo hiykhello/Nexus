@@ -4,17 +4,16 @@ import net.datagram_driver;
 import quic.tls_client;
 import quic.tls_server;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.quic_datagram_link;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.quic_datagram_link;
 
 namespace q=quic;
 namespace t=tls;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
-namespace support=nexus::test::quic_tls;
-namespace app=nexus::test::quic_datagram_link;
+namespace io = ::corosio;
+namespace support=test::quic_tls;
+namespace app=test::quic_datagram_link;
 using namespace std::chrono_literals;
 namespace {
     template<class Tls> auto run(Tls& tls,bool server,bool ipv6,unsigned port,bool uring) -> int {

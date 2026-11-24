@@ -15,14 +15,10 @@ import dns.response_cache;
 import dns.response_match;
 import dns.shared_cache;
 import dns.reverse;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-
-#include "group_coalesced_resolve.hpp"
-
-export {
-#include "group_view_registry.hpp"
-}
+import capy;
+import corosio;
+import dns.group_coalesced_resolve;
+export import dns.group_view_registry;
 
 #ifdef NEXUS_DNS_RESPONSE
 namespace dns_hp_experiment {
@@ -88,13 +84,13 @@ export namespace dns_hp_experiment {
     };
 #ifdef NEXUS_DNS_RESPONSE
     class ResponseCoordinatorOwner {
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         dns::ResponseCache& cache_;
         FlightGroup& group_;
         ResponseFlightOwner owner_;
         friend class ResponseCoordinatorQuery;
     public:
-        ResponseCoordinatorOwner(nex::corosio::io_context&,dns::ResponseCache&,Coordinator&,
+        ResponseCoordinatorOwner(corosio::io_context&,dns::ResponseCache&,Coordinator&,
                                  std::chrono::milliseconds timeout=std::chrono::seconds(5));
         ~ResponseCoordinatorOwner();
         ResponseCoordinatorOwner(ResponseCoordinatorOwner const&)=delete;
@@ -115,14 +111,14 @@ export namespace dns_hp_experiment {
         ResponseCoordinatorQuery(ResponseCoordinatorQuery const&)=delete;
         auto cancel() noexcept -> void;
         // A supplied subnet must also be represented by the caller's view.
-        auto resolve(nex::corosio::endpoint,std::uint64_t,dns::Question,Clock::time_point,bool tcp=false,bool edns=false,bool disable_cache=false,
+        auto resolve(corosio::endpoint,std::uint64_t,dns::Question,Clock::time_point,bool tcp=false,bool edns=false,bool disable_cache=false,
                      std::optional<dns::ClientSubnet> subnet={},
                      std::shared_ptr<dns::detail::ProtectedQuery const> protection={})
-            -> nex::capy::task<FlightGroup::RawResult>;
+            -> capy::task<FlightGroup::RawResult>;
     };
 #endif
     class CoordinatorOwner {
-        nex::corosio::io_context& context_;
+        corosio::io_context& context_;
         GroupBinding& cache_;
         FlightGroup& group_;
         FlightOwner<GroupBinding> owner_;
@@ -130,7 +126,7 @@ export namespace dns_hp_experiment {
     public:
         // All methods, completions and queries on this owner run on the same
         // serialized executor. The coordinator and cache outlive the owner.
-        CoordinatorOwner(nex::corosio::io_context&,GroupBinding&,Coordinator&,
+        CoordinatorOwner(corosio::io_context&,GroupBinding&,Coordinator&,
                          std::chrono::milliseconds timeout=std::chrono::seconds(5));
         ~CoordinatorOwner();
         CoordinatorOwner(CoordinatorOwner const&)=delete;
@@ -157,14 +153,14 @@ export namespace dns_hp_experiment {
 #ifdef NEXUS_TEST_DNS_REVERSE_OBSERVATION
         auto observe_reverse_for_test(dns::ReverseCache& cache) noexcept -> void { resolver_.observe_reverse_for_test(cache); }
 #endif
-        [[nodiscard]] auto resolve(nex::corosio::endpoint,std::uint64_t view,std::string name,
-                                   std::chrono::steady_clock::time_point deadline) -> nex::capy::task<CoordinatedResult>;
-        [[nodiscard]] auto resolve_native(nex::corosio::endpoint,std::uint64_t view,std::string name,
+        [[nodiscard]] auto resolve(corosio::endpoint,std::uint64_t view,std::string name,
+                                   std::chrono::steady_clock::time_point deadline) -> capy::task<CoordinatedResult>;
+        [[nodiscard]] auto resolve_native(corosio::endpoint,std::uint64_t view,std::string name,
             std::chrono::steady_clock::time_point deadline)
-            -> nex::capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>>;
-        [[nodiscard]] auto resolve_answer(nex::corosio::endpoint,std::uint64_t view,std::string name,
+            -> capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>>;
+        [[nodiscard]] auto resolve_answer(corosio::endpoint,std::uint64_t view,std::string name,
             std::chrono::steady_clock::time_point deadline)
-            -> nex::capy::task<std::expected<dns::AddressAnswer,dns::detail::ResolveError>>;
+            -> capy::task<std::expected<dns::AddressAnswer,dns::detail::ResolveError>>;
     };
 
     // A local configuration snapshot is part of a view's identity. Weak keys
@@ -172,7 +168,7 @@ export namespace dns_hp_experiment {
     // drain; monotonically assigned IDs are never reused in this generation.
     class LocalViewRegistry {
         using Snapshot=dns::LocalSnapshot;
-        using Endpoint=nex::corosio::endpoint;
+        using Endpoint=corosio::endpoint;
         struct Entry { std::weak_ptr<Snapshot const> snapshot; Endpoint endpoint; std::optional<dns::ClientSubnet> subnet; std::uint64_t id; };
         std::mutex mutex_;
         std::vector<Entry> entries_;
@@ -194,12 +190,12 @@ export namespace dns_hp_experiment {
     class LocalViewBinding {
         LocalViewRegistry& registry_;
         std::weak_ptr<dns::LocalSnapshot const> snapshot_;
-        std::optional<nex::corosio::endpoint> endpoint_;
+        std::optional<corosio::endpoint> endpoint_;
         std::optional<dns::ClientSubnet> subnet_;
         std::uint64_t view_=0;
     public:
         explicit LocalViewBinding(LocalViewRegistry& registry) : registry_(registry) {}
-        [[nodiscard]] auto view(std::shared_ptr<dns::LocalSnapshot const> const& snapshot,nex::corosio::endpoint endpoint,std::optional<dns::ClientSubnet> subnet={})
+        [[nodiscard]] auto view(std::shared_ptr<dns::LocalSnapshot const> const& snapshot,corosio::endpoint endpoint,std::optional<dns::ClientSubnet> subnet={})
             -> std::expected<std::uint64_t,dns::detail::ResolveError> {
             if (endpoint_ && *endpoint_==endpoint && subnet_==subnet && snapshot_.lock()==snapshot) return view_;
             auto result=registry_.view(snapshot,endpoint,subnet);
@@ -219,12 +215,12 @@ export namespace dns_hp_experiment {
         std::optional<dns::ClientSubnet> subnet_;
         std::optional<CoordinatorQuery> active_;
         template<bool Full>
-        auto resolve_endpoint(nex::corosio::endpoint,bool,dns::detail::AddressStrategy,std::string const&,
+        auto resolve_endpoint(corosio::endpoint,bool,dns::detail::AddressStrategy,std::string const&,
             std::chrono::steady_clock::time_point)
-            -> nex::capy::task<std::expected<dns::detail::AddressResult<Full>,dns::detail::ResolveError>>;
+            -> capy::task<std::expected<dns::detail::AddressResult<Full>,dns::detail::ResolveError>>;
         template<bool Full>
         auto resolve_local(std::string,std::chrono::steady_clock::time_point)
-            -> nex::capy::task<std::expected<dns::detail::AddressResult<Full>,dns::detail::ResolveError>>;
+            -> capy::task<std::expected<dns::detail::AddressResult<Full>,dns::detail::ResolveError>>;
     public:
         LocalCoordinatedResolver(CoordinatorOwner&,GroupBinding::Reader&,LocalViewBinding&,
             std::shared_ptr<dns::LocalSnapshot const>,dns::detail::AddressStrategy,
@@ -234,15 +230,15 @@ export namespace dns_hp_experiment {
         auto operator=(LocalCoordinatedResolver const&) -> LocalCoordinatedResolver& = delete;
         auto cancel() noexcept -> void;
         auto finish() noexcept -> void;
-        auto resolve(nex::corosio::endpoint,bool,dns::detail::AddressStrategy,std::string const&,
+        auto resolve(corosio::endpoint,bool,dns::detail::AddressStrategy,std::string const&,
                      std::chrono::steady_clock::time_point)
-            -> nex::capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>>;
+            -> capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>>;
         auto resolve(std::string,std::chrono::steady_clock::time_point)
-            -> nex::capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>>;
-        auto resolve_answer(nex::corosio::endpoint,bool,dns::detail::AddressStrategy,std::string const&,
+            -> capy::task<std::expected<std::vector<dns::Address>,dns::detail::ResolveError>>;
+        auto resolve_answer(corosio::endpoint,bool,dns::detail::AddressStrategy,std::string const&,
             std::chrono::steady_clock::time_point)
-            -> nex::capy::task<std::expected<dns::AddressAnswer,dns::detail::ResolveError>>;
+            -> capy::task<std::expected<dns::AddressAnswer,dns::detail::ResolveError>>;
         auto resolve_answer(std::string,std::chrono::steady_clock::time_point)
-            -> nex::capy::task<std::expected<dns::AddressAnswer,dns::detail::ResolveError>>;
+            -> capy::task<std::expected<dns::AddressAnswer,dns::detail::ResolveError>>;
     };
 }

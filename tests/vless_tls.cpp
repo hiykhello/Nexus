@@ -4,13 +4,13 @@ import config;
 import rulefile;
 import tls.client_handshake_io;
 import tls.application_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.corosio_client;
 import tls.corosio_application;
 import vless.corosio_client;
 import vless.client_profile;
-namespace io=nex::corosio; namespace t=tls; namespace v=vless; namespace capy=nex::capy;
+namespace io = ::corosio; namespace t=tls; namespace v=vless;
 using Bytes=std::vector<std::uint8_t>; using namespace std::chrono_literals;
 struct Fixture {
     io::io_context context=io::make_io_context(std::getenv("NEXUS_TEST_URING")!=nullptr);

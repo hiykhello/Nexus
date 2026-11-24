@@ -1,0 +1,53 @@
+module packet.fd;
+import std;
+
+namespace packet {
+    namespace {
+        struct MemoryDevice {
+            using Packet = QueuedPacket;
+            using Failure = DeviceError;
+            MemoryLink& link;
+            FdPump::OutputValidator validator;
+            void* context;
+            auto receive_packet() -> std::expected<std::optional<Packet>, Failure> {
+                return link.receive_packet(Side::first);
+            }
+            auto send(std::span<std::uint8_t const> packet) -> std::expected<void, Failure> {
+                return link.send(Side::first, packet);
+            }
+            static auto packet_bytes(Packet const& packet) noexcept -> std::span<std::uint8_t const> {
+                return packet.bytes;
+            }
+            static auto retryable(Failure failure) noexcept -> bool {
+                return failure == DeviceError::queue_full;
+            }
+            auto valid_output(Packet const& packet) const noexcept -> bool {
+                return (!packet.generation || packet.generation->valid) && (!validator || validator(context, packet));
+            }
+        };
+    }
+
+    FdPump::FdPump(int fd, MemoryLink& link, std::size_t mtu)
+        : fd_(fd), link_(&link), mtu_(mtu), buffer_(mtu + 1) {}
+    FdPump::~FdPump() = default;
+    FdPump::FdPump(FdPump&&) noexcept = default;
+    auto FdPump::operator=(FdPump&&) noexcept -> FdPump& = default;
+
+    auto FdPump::create(int fd, MemoryLink& link, std::size_t mtu) -> std::expected<FdPump, FdFailure> {
+        auto checked = fd_detail::validate(fd, mtu, 65535);
+        if (!checked) return std::unexpected(fd_detail::convert<FdFailure>(checked.error()));
+        return FdPump(fd, link, mtu);
+    }
+
+    auto FdPump::step(OutputValidator validator, void* context) -> FdStep {
+        MemoryDevice device{*link_, validator, context};
+        return fd_detail::step(fd_, device, mtu_, buffer_, input_size_, output_);
+    }
+
+    auto FdPump::step_output(OutputValidator validator, void* context) -> FdStep {
+        MemoryDevice device{*link_, validator, context};
+        FdStep result;
+        fd_detail::step_output(fd_, device, mtu_, output_, result);
+        return result;
+    }
+}

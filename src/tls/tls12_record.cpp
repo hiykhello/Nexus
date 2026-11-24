@@ -50,13 +50,17 @@ namespace tls {
         auto aad=legacy_aad(counter,static_cast<std::uint8_t>(type),content.size());
         advance();
         active_=false;
-        auto encrypted=crypto::seal(algorithm_,key_,iv,content,aad);
-        if (!encrypted) return std::unexpected(RecordError::crypto_error);
-        auto size=explicit_size+encrypted->size();
-        crypto::Bytes record{static_cast<std::uint8_t>(type),3,3,static_cast<std::uint8_t>(size>>8),static_cast<std::uint8_t>(size)};
-        record.reserve(5+size);
-        record.insert(record.end(),counter.begin(),counter.begin()+explicit_size);
-        record.insert(record.end(),encrypted->begin(),encrypted->end());
+        auto cipher_size=content.size()+16;
+        auto size=explicit_size+cipher_size;
+        crypto::Bytes record(5+size);
+        record[0]=static_cast<std::uint8_t>(type);
+        record[1]=3;
+        record[2]=3;
+        record[3]=static_cast<std::uint8_t>(size>>8);
+        record[4]=static_cast<std::uint8_t>(size);
+        if (explicit_size) std::ranges::copy(counter.begin(),counter.begin()+explicit_size,record.begin()+5);
+        auto written=aead_->seal_to(std::span{record}.subspan(5+explicit_size),iv,content,aad);
+        if (!written || *written!=cipher_size) return std::unexpected(RecordError::crypto_error);
         active_=true;
         return record;
     }
@@ -75,11 +79,67 @@ namespace tls {
         auto explicit_size=overhead-21;
         if (explicit_size) std::ranges::copy(record.subspan(5,explicit_size),iv.begin()+4);
         auto aad=legacy_aad(explicit_nonce(sequence_),record[0],record.size()-overhead);
-        auto plain=crypto::open(algorithm_,key_,iv,record.subspan(5+explicit_size),aad);
-        if (!plain)
-            return std::unexpected(plain.error()==crypto::Error::authentication_failed ? RecordError::authentication_failed : RecordError::crypto_error);
+        auto ciphertext=record.subspan(5+explicit_size);
+        crypto::Bytes plain(ciphertext.size()-16);
+        auto written=aead_->open_to(plain,iv,ciphertext,aad);
+        if (!written)
+            return std::unexpected(written.error()==crypto::Error::authentication_failed ? RecordError::authentication_failed : RecordError::crypto_error);
+        plain.resize(*written);
         active_=true;
         advance();
-        return PlaintextRecord{type,std::move(*plain)};
+        return PlaintextRecord{type,std::move(plain)};
+    }
+
+    auto RecordLayer::seal_tls12_into(ContentType type,std::span<std::uint8_t const> content,std::span<std::uint8_t> out)
+        -> std::expected<std::size_t,RecordError> {
+        auto explicit_size=tls12_overhead()-21;
+        auto cipher_size=content.size()+16;
+        auto size=explicit_size+cipher_size;
+        auto total=5+size;
+        if (out.size()<total) return std::unexpected(RecordError::invalid_input);
+        auto counter=explicit_nonce(sequence_);
+        auto iv=nonce();
+        if (explicit_size) std::ranges::copy(counter,iv.begin()+4);
+        auto aad=legacy_aad(counter,static_cast<std::uint8_t>(type),content.size());
+        advance();
+        active_=false;
+        out[0]=static_cast<std::uint8_t>(type);
+        out[1]=3;
+        out[2]=3;
+        out[3]=static_cast<std::uint8_t>(size>>8);
+        out[4]=static_cast<std::uint8_t>(size);
+        if (explicit_size) std::ranges::copy(counter.begin(),counter.begin()+explicit_size,out.begin()+5);
+        auto written=aead_->seal_to(out.subspan(5+explicit_size,cipher_size),iv,content,aad);
+        if (!written || *written!=cipher_size) return std::unexpected(RecordError::crypto_error);
+        active_=true;
+        return total;
+    }
+
+    auto RecordLayer::open_tls12_into(std::span<std::uint8_t const> record,std::span<std::uint8_t> out)
+        -> std::expected<OpenedRecord,RecordError> {
+        auto overhead=tls12_overhead();
+        if (record.size()<overhead || record.size()>overhead+16384 || record[1]!=3 || record[2]!=3 ||
+            ((std::size_t{record[3]}<<8)|record[4])!=record.size()-5) {
+            active_=false; return std::unexpected(RecordError::invalid_record);
+        }
+        auto type=static_cast<ContentType>(record[0]);
+        if ((type!=ContentType::application_data && type!=ContentType::handshake && type!=ContentType::alert) ||
+            (record.size()==overhead && type!=ContentType::application_data)) {
+            active_=false; return std::unexpected(RecordError::invalid_record);
+        }
+        auto explicit_size=overhead-21;
+        auto ciphertext=record.subspan(5+explicit_size);
+        auto plain_cap=ciphertext.size()-16;
+        if (out.size()<plain_cap) return std::unexpected(RecordError::invalid_input);
+        active_=false;
+        auto iv=nonce();
+        if (explicit_size) std::ranges::copy(record.subspan(5,explicit_size),iv.begin()+4);
+        auto aad=legacy_aad(explicit_nonce(sequence_),record[0],record.size()-overhead);
+        auto written=aead_->open_to(out.first(plain_cap),iv,ciphertext,aad);
+        if (!written)
+            return std::unexpected(written.error()==crypto::Error::authentication_failed ? RecordError::authentication_failed : RecordError::crypto_error);
+        active_=true;
+        advance();
+        return OpenedRecord{type,*written};
     }
 }

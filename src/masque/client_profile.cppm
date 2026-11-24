@@ -8,7 +8,7 @@ import tls.profiles;
 import tls.fingerprint;
 import tls.certificate_trust;
 import platform.ip_address;
-import nexus.thirdparty.corosio;
+import corosio;
 
 export namespace masque {
 #ifdef NEXUS_QUIC_RESUMPTION
@@ -71,7 +71,7 @@ export namespace masque {
                              tls::Fingerprint fingerprint=tls::Fingerprint::native,
                              std::shared_ptr<HttpTicketCache> tickets={}) -> ClientProfile;
 
-        [[nodiscard]] auto tls_client(nex::corosio::endpoint const& peer,quic::EchConfig const* ech) const
+        [[nodiscard]] auto tls_client(corosio::endpoint const& peer,quic::EchConfig const* ech) const
             -> std::expected<std::unique_ptr<Tls>,std::string>;
 
         auto authority() const noexcept -> std::string_view { return authority_; }

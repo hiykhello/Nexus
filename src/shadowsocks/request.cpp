@@ -5,6 +5,7 @@ import shadowsocks.chunk;
 import shadowsocks.header;
 import shadowsocks.replay;
 import shadowsocks.identity;
+import platform.wall_clock;
 namespace shadowsocks {
     namespace {
         auto chunk_error(ChunkError error) -> RequestError {
@@ -79,7 +80,7 @@ namespace shadowsocks {
     auto decode_request_prefix_current(std::span<std::uint8_t const> psk, std::span<std::uint8_t const> input, ReplayTable& replay,
                                        bool has_identity,CipherMethod method)
         -> std::expected<RequestPrefix,RequestError> {
-        auto wall=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        auto wall=platform::calibrated_wall_seconds();
         if (wall<0) return std::unexpected(RequestError::clock);
         return decode_prefix(psk,input,static_cast<std::uint64_t>(wall),std::nullopt,replay,has_identity,method);
     }

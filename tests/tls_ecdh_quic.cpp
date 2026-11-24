@@ -4,7 +4,7 @@ import quic.connection;
 import quic.varint;
 import quic.tls_client;
 import quic.tls_server;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 import tls.hello;
 import tls.handshake;
 import tls.server_credential;
@@ -13,7 +13,7 @@ import tls.record;
 import tls.hybrid;
 
 namespace q=quic;
-namespace n=nex::ngtcp2;
+namespace n = ::ngtcp2;
 namespace t=tls;
 namespace c = ::crypto;
 namespace native {
@@ -406,7 +406,7 @@ namespace {
                 !client_tls.pending_handshake_bytes() && !server_tls.pending_handshake_bytes() && !client_app.business_before_auth && !server_app.business_before_auth;
         }
         if(native::live!=native_before || native::bytes!=native_bytes)std::println("native delta kind={} allowance={} live={}/{} bytes={}/{}",kind,allowance,native::live,native_before,native::bytes,native_bytes);
-        result.clean&=allocations::live==before && native::live==native_before && native::bytes==native_bytes; nex::boringssl::ERR_clear_error(); return result;
+        result.clean&=allocations::live==before && native::live==native_before && native::bytes==native_bytes; boringssl::ERR_clear_error(); return result;
     }
     auto fault_matrix(t::ServerCredential const& credential,View anchor) -> int {
         unsigned failures=0; std::array<unsigned,4> failures_by_kind{};

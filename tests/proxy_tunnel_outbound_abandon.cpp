@@ -3,7 +3,7 @@
 #include <unistd.h>
 #include <cerrno>
 import std;
-import proxy;
+import relay;
 using namespace std::chrono_literals;
 bool profile_alive=false;
 bool destroyed=false, alive_on_destroy=false, skip_stop=false;
@@ -21,7 +21,7 @@ auto connect_to(std::uint16_t port) -> int {
     if (connect(fd,reinterpret_cast<sockaddr*>(&address),sizeof(address))) { close(fd); return -1; }
     return fd;
 }
-auto read_exact(proxy::Server& server,int fd,std::span<unsigned char> output) -> bool {
+auto read_exact(relay::Server& server,int fd,std::span<unsigned char> output) -> bool {
     auto deadline=std::chrono::steady_clock::now()+3s;
     while (!output.empty() && std::chrono::steady_clock::now()<deadline) {
         server.poll(10ms);
@@ -40,12 +40,12 @@ int main(int argc,char** argv) {
     socklen_t size=sizeof(address); if (getsockname(listener,reinterpret_cast<sockaddr*>(&address),&size)) return 3;
     int client=-1,upstream=-1;
     {
-        proxy::Server server;
+        relay::Server server;
         std::array<std::uint8_t,16> key{};
         auto index=vless ? server.add_vless("127.0.0.1",ntohs(address.sin_port),argv[3],"localhost",argv[1]) :
             server.add_shadowsocks("127.0.0.1",ntohs(address.sin_port),key);
         if (!index || !server.set_indexed_routes({},*index)) return 4;
-        auto port=server.start(0,proxy::Inbound::socks5,1); if (!port) return 5;
+        auto port=server.start(0,relay::Inbound::socks5,1); if (!port) return 5;
         client=connect_to(*port); if (client<0) return 6;
         std::array<unsigned char,3> greeting{5,1,0}; std::array<unsigned char,2> method{};
         if (send(client,greeting.data(),greeting.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(greeting.size()) || !read_exact(server,client,method) || method!=std::array<unsigned char,2>{5,0}) return 7;

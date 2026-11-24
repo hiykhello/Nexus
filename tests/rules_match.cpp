@@ -24,7 +24,7 @@ namespace {
 }
 
 int main() {
-    constexpr auto source = R"(schema-version 1
+    constexpr auto source = R"(schema-version 2
 kind "predicate"
 rule type="ip-cidr" value="10.123.45.67/8"
 rule type="domain-suffix" value="Example.COM"
@@ -66,7 +66,11 @@ rule type="ip-cidr" value="::/0"
         }
     }
     check(!matcher->match({"bad..example", {}}), "invalid domain rejected");
-    check(!matcher->match({"example.com.", {}}), "trailing dot rejected");
+    {
+        auto fqdn = matcher->match({"example.com.", {}});
+        check(fqdn && *fqdn == std::optional<std::size_t>{1}, "trailing FQDN dot normalized");
+    }
+    check(!matcher->match({"example.com..", {}}), "double trailing dot rejected");
     check(!matcher->match({std::string_view("a\0b", 3), {}}), "embedded NUL in domain rejected");
     check(!matcher->match({{}, "10.0.0.1/8"}), "CIDR is not an address query");
     check(!matcher->match({{}, "fe80::1%eth0"}), "IPv6 zone identifier rejected");

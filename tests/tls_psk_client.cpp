@@ -1,5 +1,5 @@
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import tls.resuming_client;
 import tls.hello_config;
 import tls.record_stream;
@@ -83,12 +83,12 @@ int main(int argc,char** argv) {
    auto digit=[](char c)->int {if(c>='0'&&c<='9')return c-'0';if(c>='a'&&c<='f')return c-'a'+10;return -1;};
    for(std::size_t p=0;p<key.size();p+=2){auto hi=digit(key[p]),lo=digit(key[p+1]);if(hi<0||lo<0)return 12;bytes.push_back(static_cast<std::uint8_t>((hi<<4)|lo));}
    std::string_view identity=argv[8];auto material=t::ExternalPsk::create(t::Secret(std::move(bytes)),Bytes(identity.begin(),identity.end()),*binding,*t::psk_cipher_hash(suite));if(!material)return 13;
-   nexus::inplace_vector<t::ExternalPsk,8> offered;offered.push_back(std::move(*material));auto policy=t::PskClientPolicy<t::ExternalPsk>::create(std::move(*binding),std::move(offered));if(!policy)return 14;
+   containers::inplace_vector<t::ExternalPsk,8> offered;offered.push_back(std::move(*material));auto policy=t::PskClientPolicy<t::ExternalPsk>::create(std::move(*binding),std::move(offered));if(!policy)return 14;
    auto result=exchange(port,std::move(*hello),retry ? std::span<std::uint16_t const>{} : std::span<std::uint16_t const>(initial),anchors,std::move(*policy),cache);
    if(!result||!result->selected||result->resumed||result->retries!=(retry ? 1u : 0u)){std::println("external failed round={} {}",i,result ? "unexpected negotiation" : result.error());return 15;}
    std::println("external round={} psk_selected={} resumed={} retries={} authenticated_bytes={}",i,result->selected,result->resumed,result->retries,result->bytes);continue;
   }
-  nexus::inplace_vector<t::ResumptionTicket,8> offered;
+  containers::inplace_vector<t::ResumptionTicket,8> offered;
   if(auto ticket=cache.take(*binding,hello->cipher_suites,now_ms()))offered.push_back(std::move(*ticket));
   if(i && offered.empty()){std::println("ticket missing round={} cache={}",i,cache.size());return 5;}
   auto policy=t::PskClientPolicy<>::create(std::move(*binding),std::move(offered));if(!policy)return 6;

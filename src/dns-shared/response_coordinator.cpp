@@ -3,8 +3,8 @@ import std;
 import dns.response_query;
 import dns.response_cache;
 import dns.response_match;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace dns_hp_experiment {
     ResponseFlightOwner::Entry::Entry(FlightGroup::Flight* value,io::io_context& context,d::ResponseCache& cache)

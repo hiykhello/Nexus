@@ -1,24 +1,37 @@
+module;
+#include <proxy/proxy_macros.h>
+
 export module masque.ip_server;
 import std;
+import proxy.v4;
 import masque.connect_ip;
 import masque.ip_control;
 
 export namespace masque {
+    inline constexpr std::size_t ip_server_mtu = 1280;
+    enum class IpServerWrite { sent, blocked, failed };
+
+    PRO_DEF_MEM_DISPATCH(IpServerOpen, open);
+    PRO_DEF_MEM_DISPATCH(IpServerClose, close);
+    PRO_DEF_MEM_DISPATCH(IpServerHealthy, healthy);
+    PRO_DEF_MEM_DISPATCH(IpServerRead, read);
+    PRO_DEF_MEM_DISPATCH(IpServerWriteDispatch, write);
+    PRO_DEF_MEM_DISPATCH(IpServerAddresses, addresses);
+    PRO_DEF_MEM_DISPATCH(IpServerRoutes, routes);
+
     // The listener owns the port. At most one authenticated CONNECT-IP
     // request can acquire it, and only that request can send or receive.
-    class IpServerPort {
-    public:
-        static constexpr std::size_t mtu = 1280;
-        enum class Write { sent, blocked, failed };
-        virtual ~IpServerPort() = default;
-        virtual auto open() noexcept -> bool = 0;
-        virtual auto close() noexcept -> void = 0;
-        virtual auto healthy() const noexcept -> bool = 0;
-        virtual auto read(std::span<std::uint8_t>) noexcept -> std::optional<std::size_t> = 0;
-        virtual auto write(std::span<std::uint8_t const>) noexcept -> Write = 0;
-        virtual auto addresses() const noexcept -> std::span<AddressEntry const> = 0;
-        virtual auto routes() const noexcept -> std::span<RouteEntry const> = 0;
-    };
+    struct IpServerPortFacade : pro::facade_builder
+        ::add_convention<IpServerOpen, bool() noexcept>
+        ::add_convention<IpServerClose, void() noexcept>
+        ::add_convention<IpServerHealthy, bool() const noexcept>
+        ::add_convention<IpServerRead, std::optional<std::size_t>(std::span<std::uint8_t>) noexcept>
+        ::add_convention<IpServerWriteDispatch, IpServerWrite(std::span<std::uint8_t const>) noexcept>
+        ::add_convention<IpServerAddresses, std::span<AddressEntry const>() const noexcept>
+        ::add_convention<IpServerRoutes, std::span<RouteEntry const>() const noexcept>
+        ::build {};
+
+    using IpServerPort = pro::proxy<IpServerPortFacade>;
 
     class IpServerStream {
         struct Impl;

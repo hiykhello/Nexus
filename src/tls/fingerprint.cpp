@@ -5,30 +5,12 @@ import tls.hybrid;
 import tls.signature;
 import tls.certificate_compression;
 import crypto.ecdh;
+import tls.browser_extensions;
 
 namespace tls {
     namespace {
-        class Random {
-            std::array<std::uint8_t,64> bytes_{};
-            std::size_t offset_=64;
-        public:
-            auto sample(std::uint16_t bound) -> std::optional<std::uint16_t> {
-                if (!bound) return {};
-                auto limit=65536u-(65536u%bound);
-                for (;;) {
-                    if (offset_==bytes_.size()) {
-                        if (!crypto::random_bytes(bytes_)) return {};
-                        offset_=0;
-                    }
-                    auto value=(std::uint32_t{bytes_[offset_]}<<8)|bytes_[offset_+1]; offset_+=2;
-                    if (value<limit) return static_cast<std::uint16_t>(value%bound);
-                }
-            }
-            auto grease() -> std::optional<std::uint16_t> {
-                auto value=sample(16); if (!value) return {};
-                return static_cast<std::uint16_t>(0x0a0a+0x1010*(*value));
-            }
-        };
+        using detail::Random;
+        using detail::add_browser_extensions;
         auto prepend(Extension& extension,std::uint16_t value,bool vector8=false) -> void {
             auto header=vector8 ? 1u : 2u;
             extension.data.insert(extension.data.begin()+header,{static_cast<std::uint8_t>(value>>8),static_cast<std::uint8_t>(value)});
@@ -106,8 +88,6 @@ namespace tls {
         }
     }
 }
-
-#include "browser_extensions.hpp"
 
 namespace tls {
     auto make_fingerprint_hello(std::optional<std::string_view> name,std::span<std::string_view const> alpn,

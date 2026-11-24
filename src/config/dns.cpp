@@ -1,16 +1,15 @@
 module config;
 import std;
 import platform.ip_address;
-import nexus.thirdparty.glaze;
+import glaze;
+import config.kdl_common;
+import config.rule_set_parse;
 import rules;
 import rules.kdl_predicate;
 
 namespace config {
-    namespace g=nex::glaze;
-    namespace {
-#include "dns_fields.hpp"
-#include "rule_set_parse.hpp"
-    }
+    namespace g = ::glaze;
+    using namespace config::kdl;
     auto parse_dns_rule(g::KdlNode const& child,
         std::vector<std::pair<DnsRule,std::string>>& pending,
         std::vector<std::pair<std::size_t,std::pair<std::string,bool>>>& references)
@@ -62,7 +61,12 @@ namespace config {
         }
         return true;
     }
-#include "dns_fakeip.hpp"
+    auto dns_host_pattern(std::string_view name) -> bool {
+        if (name.starts_with("*.")) return dns_hostname(name.substr(2));
+        if (name.starts_with('.')) return dns_hostname(name.substr(1));
+        return dns_hostname(name);
+    }
+    auto parse_fakeip(kdl::Node const&) -> std::expected<std::pair<DnsFakeIp, std::string>, std::string>;
 
     auto parse_dns(Node const& node) -> std::expected<DnsRouting, std::string> {
         if (node.tag || !node.arguments.empty() || !node.properties.empty()) return error("dns takes no arguments or properties");
@@ -73,7 +77,7 @@ namespace config {
         std::vector<std::pair<std::size_t,std::pair<std::string,bool>>> rule_references;
         std::vector<std::pair<std::size_t,std::string>> dependencies;
         std::optional<std::string> final, fakeip_server;
-        bool strategy_seen=false, cache_seen=false, edns_seen=false, reverse_seen=false, flush_seen=false;
+        bool strategy_seen=false, cache_seen=false, independent_cache_seen=false, edns_seen=false, reverse_seen=false, flush_seen=false;
         std::vector<Node const*> children;
         std::vector<std::pair<std::string,std::string>> views;
         bool servers_seen=false, legacy_server=false; for (auto const& child : node.children) {
@@ -112,12 +116,62 @@ namespace config {
             } else if (child.name=="server") {
                 auto name=argument(child);
                 auto type=text_property(child,"type");
-                if (!name || !valid_name(*name) || !type || !child.children.empty() || result.servers.size()>=64 ||
+                if (!name || !valid_name(*name) || !type || (!child.children.empty() && *type!="hosts") || result.servers.size()>=64 ||
                     std::ranges::any_of(result.servers,[&](auto const& server) { return server.name==*name; }))
                     return error("invalid or duplicate DNS server name");
                 std::optional<DnsUpstream> upstream;
+                DnsServer server_entry{*name, std::nullopt};
                 if (*type=="local" && child.properties.size()==1) {
                     // The existing system resolver is the local server.
+                } else if (*type=="hosts") {
+                    auto file=text_property(child,"file");
+                    if (property(child,"file") && (!file || file->empty() || !file->starts_with('/') || file->contains('\0')))
+                        return error("DNS hosts file requires an absolute path");
+                    if (child.properties.size() != 1u + unsigned(bool(file)))
+                        return error("invalid DNS hosts server properties");
+                    server_entry.kind = DnsServerKind::hosts;
+                    if (file) server_entry.hosts_file = *file;
+                    for (auto const& sub : child.children) {
+                        auto h = text_property(sub, "host"), ip = text_property(sub, "ip"), cn = text_property(sub, "cname");
+                        auto ip_prop = property(sub, "ip"), cn_prop = property(sub, "cname");
+                        if (sub.name!="entry" || sub.tag || !sub.arguments.empty() || !sub.children.empty() ||
+                            !h || !dns_host_pattern(*h) || (!ip_prop && !cn_prop) ||
+                            (ip_prop && (!ip || ip->empty())) || (cn_prop && (!cn || !dns_hostname(*cn))) ||
+                            sub.properties.size()!=1u + unsigned(bool(ip_prop)) + unsigned(bool(cn_prop)))
+                            return error("DNS hosts entry requires host and ip or cname");
+                        std::string domain = *h;
+                        for (auto& c : domain) if (c>='A' && c<='Z') c = static_cast<char>(c + ('a' - 'A'));
+                        std::vector<platform::IpAddress> addrs;
+                        if (ip) {
+                            std::string_view rest = *ip;
+                            while (!rest.empty()) {
+                                auto comma = rest.find(',');
+                                auto tok = rest.substr(0, comma);
+                                auto parsed_ip = platform::parse_ip_address(tok);
+                                if (!parsed_ip) return error("invalid IP in DNS hosts entry");
+                                addrs.push_back(*parsed_ip);
+                                if (comma == rest.npos) break;
+                                rest.remove_prefix(comma + 1);
+                                if (rest.empty()) return error("trailing comma in DNS hosts entry");
+                            }
+                        }
+                        std::optional<std::string> cname;
+                        if (cn) {
+                            cname = *cn;
+                            for (auto& c : *cname) if (c>='A' && c<='Z') c = static_cast<char>(c + ('a' - 'A'));
+                        }
+                        server_entry.hosts_entries.push_back({std::move(domain), std::move(addrs), std::move(cname)});
+                    }
+                    if (server_entry.hosts_file.empty() && server_entry.hosts_entries.empty())
+                        return error("DNS hosts server requires file or at least one entry");
+                } else if (*type=="dhcp" || *type=="mdns") {
+                    auto iface=text_property(child,"interface");
+                    if (property(child,"interface") && (!iface || iface->empty() || iface->size()>=64 || iface->contains('\0')))
+                        return error("invalid DNS interface name");
+                    if (child.properties.size() != 1u + unsigned(bool(iface)))
+                        return error("invalid DNS dhcp/mdns server properties");
+                    server_entry.kind = (*type=="dhcp") ? DnsServerKind::dhcp : DnsServerKind::mdns;
+                    if (iface) server_entry.interface_name = *iface;
                 } else if (*type=="udp" || *type=="tcp" || *type=="tls" || *type=="https" || *type=="quic" || *type=="https3") {
                     auto https3=*type=="https3";
                     auto https=*type=="https" || https3;
@@ -131,18 +185,19 @@ namespace config {
                         return error("invalid DNS HTTPS path");
                     auto server_name=text_property(child,"server-name");
                     auto ca_file=text_property(child,"ca-file");
-                    if (tls && (!server_name || !dns_hostname(*server_name) || !ca_file || ca_file->empty() ||
-                        !ca_file->starts_with('/') || ca_file->contains('\0')))
-                        return error("DNS TLS requires server-name and an absolute ca-file");
+                    if (tls && (!server_name || !dns_hostname(*server_name)))
+                        return error("DNS TLS requires server-name");
+                    if (property(child,"ca-file") && (!tls || !ca_file || ca_file->empty() || !ca_file->starts_with('/') || ca_file->contains('\0')))
+                        return error("DNS ca-file must be an absolute path on an encrypted server");
                     auto host=text_property(child,"host");
                     auto resolver=text_property(child,"domain-resolver");
                     auto interface=text_property(child,"bind-interface");
                     auto detour=text_property(child,"detour");
-                    if (property(child,"detour") && (!tls || !detour || !valid_name(*detour) || interface))
-                        return error("DNS detour requires an encrypted server without a separate bind-interface");
+                    if (property(child,"detour") && (!detour || !valid_name(*detour) || interface))
+                        return error("DNS detour requires a valid outbound name without a separate bind-interface");
                     auto parsed=parse_dns_address(child,true);
-                    auto expected=2u+bool(property(child,"port"))+bool(property(child,"domain-resolver"))+bool(interface)+bool(detour)+bool(early_field);
-                    if (!host || child.properties.size()!=expected+2*unsigned(tls)+unsigned(bool(path))) return error("invalid DNS server fields");
+                    auto expected=2u+bool(property(child,"port"))+bool(property(child,"domain-resolver"))+bool(interface)+bool(detour)+bool(early_field)+unsigned(tls)*(1u+unsigned(bool(property(child,"ca-file"))))+unsigned(bool(path));
+                    if (!host || child.properties.size()!=expected) return error("invalid DNS server fields");
                     if (parsed) {
                         if (resolver || property(child,"domain-resolver")) return error("numeric DNS server must not have domain-resolver");
                         upstream=*parsed;
@@ -167,15 +222,16 @@ namespace config {
                         if (!binding.valid()) return error("invalid DNS bind-interface");
                     }
                     upstream->tcp=*type!="udp" && !quic && !https3;
+                    if (detour) upstream->detour=*detour;
                     if (tls) {
-                        if (detour) upstream->detour=*detour;
                         if (!property(child,"port")) upstream->port=https ? 443 : 853;
-                        upstream->tls=DnsTls{*server_name,*ca_file,https3 ? DnsSecurity::https3 :
+                        upstream->tls=DnsTls{*server_name,ca_file ? *ca_file : std::string{},https3 ? DnsSecurity::https3 :
                             https ? DnsSecurity::https : quic ? DnsSecurity::quic : DnsSecurity::tls,
                             https ? (path ? *path : "/dns-query") : std::string{}, early && *early};
                     }
                 } else return error("unsupported DNS server type or fields");
-                result.servers.push_back({*name,upstream});
+                server_entry.upstream=std::move(upstream);
+                result.servers.push_back(std::move(server_entry));
             } else if (child.name=="view") {
                 auto name=argument(child), fallback=text_property(child,"final");
                 if (!name || !valid_name(*name) || !fallback || !valid_name(*fallback) ||
@@ -223,6 +279,12 @@ namespace config {
                     return error("disable-cache requires one boolean");
                 result.disable_cache=std::get<bool>(child.arguments[0].data);
                 cache_seen=true;
+            } else if (child.name=="independent-cache") {
+                if (independent_cache_seen || child.tag || !child.properties.empty() || !child.children.empty() ||
+                    child.arguments.size()!=1 || child.arguments[0].tag || !std::holds_alternative<bool>(child.arguments[0].data))
+                    return error("independent-cache requires one boolean");
+                result.independent_cache=std::get<bool>(child.arguments[0].data);
+                independent_cache_seen=true;
             } else if (child.name=="edns") {
                 if (edns_seen || child.tag || !child.properties.empty() || !child.children.empty() ||
                     child.arguments.size()!=1 || child.arguments[0].tag || !std::holds_alternative<bool>(child.arguments[0].data))
@@ -275,7 +337,7 @@ namespace config {
         for(auto const& [index,reference]:rule_references) {
             auto file=std::ranges::find(rule_files,reference.first,&NamedFile::name);
             if(file==rule_files.end())return error("DNS rule-set reference not found");
-            if(reference.second && file->file.format!=RuleFormat::srs)return error("DNS ip-cidr-match-source requires SRS format");
+            if(reference.second && file->file.format!=RuleFormat::srs && file->file.format!=RuleFormat::nxmm)return error("DNS ip-cidr-match-source requires SRS or NXMM format");
             auto selected=file->file;selected.ip_cidr_match_source=reference.second;
             result.rule_files.push_back({index,std::move(selected)});
         }

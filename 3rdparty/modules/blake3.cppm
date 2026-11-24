@@ -1,7 +1,7 @@
 module;
 #include <blake3.h>
-export module nexus.thirdparty.blake3;
-export namespace nex::blake3 {
+export module blake3;
+export namespace blake3 {
     using ::blake3_hasher;
     using ::blake3_hasher_init;
     using ::blake3_hasher_init_derive_key_raw;

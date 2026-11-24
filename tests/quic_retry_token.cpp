@@ -1,8 +1,8 @@
 import std;
 import crypto;
 import quic.retry_token;
-import nexus.thirdparty.corosio;
-namespace q=quic;namespace io=nex::corosio;
+import corosio;
+namespace q=quic;namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 namespace entropy {
     bool fail=false,allocation_failure=false;unsigned calls=0;std::uint8_t next=0;

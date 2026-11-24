@@ -1,6 +1,6 @@
 export module state.fakeip;
 import std;
-import nexus.compat;
+import functional;
 export import state.core;
 
 export namespace state {
@@ -29,8 +29,10 @@ export namespace state {
         [[nodiscard]] static auto open(std::filesystem::path const& root, FakeIpScope scope, CrashMode mode)
             -> std::expected<std::unique_ptr<FakeIpStore>, StateError>;
         // Called while attaching the runtime pool, before the first allocation.
-        [[nodiscard]] auto visit_recovered(nexus::function_ref<bool(FakeIpRow const&)> visit) const -> bool;
+        [[nodiscard]] auto visit_recovered(functional::function_ref<bool(FakeIpRow const&)> visit) const -> bool;
         [[nodiscard]] auto assign(std::string_view canonical, std::uint64_t view)
             -> std::expected<std::uint32_t,StateError>;
+        [[nodiscard]] auto flush() -> std::expected<void,StateError>;
+        [[nodiscard]] auto stop() -> std::expected<void,StateError>;
     };
 }

@@ -1,42 +1,68 @@
+module;
+extern "C" void nexus_register_builtin_http_fetchers() noexcept;
 module cli.route_files;
 import std;
 import config;
-import nexus.thirdparty.glaze;
-import proxy;
+import glaze;
+import relay;
 import rulefile;
 import rules;
 import rules.rule_input;
+import cli.tun_route_sets;
 
 namespace cli {
     namespace {
+        std::mutex g_working_directory_mutex;
         std::optional<std::filesystem::path> g_working_directory;
-        ManagedRulesetFetcher g_managed_ruleset_fetcher = nullptr;
+        std::atomic<ManagedRulesetFetcher> g_managed_ruleset_fetcher{nullptr};
+        std::atomic<ManagedHttpPoolFactory> g_managed_http_pool_factory{nullptr};
     }
 
     auto register_managed_ruleset_fetcher(ManagedRulesetFetcher fetcher) noexcept -> void {
-        g_managed_ruleset_fetcher=fetcher;
+        g_managed_ruleset_fetcher.store(fetcher, std::memory_order_release);
+    }
+
+    auto register_managed_http_pool_factory(ManagedHttpPoolFactory factory) noexcept -> void {
+        g_managed_http_pool_factory.store(factory, std::memory_order_release);
+    }
+
+    auto ensure_http_fetchers_registered() noexcept -> void {
+        static std::once_flag once;
+        std::call_once(once, []() noexcept { ::nexus_register_builtin_http_fetchers(); });
+    }
+
+    auto create_managed_http_pool() noexcept -> std::shared_ptr<void> {
+        ensure_http_fetchers_registered();
+        auto fn = g_managed_http_pool_factory.load(std::memory_order_acquire);
+        return fn ? fn() : std::shared_ptr<void>{};
     }
 
     auto fetch_managed_ruleset(config::Config const& config,std::string_view config_source,
-        config::BlockRules const& spec,std::string_view previous_etag,bool offline_fallback)
+        config::BlockRules const& spec,std::string_view previous_etag,bool offline_fallback,std::stop_token stop,void* client_pool)
         -> std::expected<ManagedRulesetFetchResult,std::string> {
-        if (!g_managed_ruleset_fetcher)
+        ensure_http_fetchers_registered();
+        auto fn = g_managed_ruleset_fetcher.load(std::memory_order_acquire);
+        if (!fn)
             return std::unexpected("remote rule-set requires the http-client build feature");
-        return g_managed_ruleset_fetcher(config,config_source,spec,previous_etag,offline_fallback);
+        return fn(config,config_source,spec,previous_etag,offline_fallback,std::move(stop),client_pool);
     }
 
     auto set_working_directory(std::filesystem::path directory) -> void {
+        std::lock_guard lock(g_working_directory_mutex);
         g_working_directory=std::move(directory);
     }
 
-    auto working_directory() noexcept -> std::optional<std::filesystem::path> const& {
+    auto working_directory() -> std::optional<std::filesystem::path> {
+        std::lock_guard lock(g_working_directory_mutex);
         return g_working_directory;
     }
 
     auto read_config_source(std::string_view path,bool is_directory) -> std::expected<std::string,std::string> {
-        if (!is_directory) return rulefile::read_regular_file(path);
+        std::filesystem::path resolved(path);
+        if (resolved.is_relative()) if (auto wd = working_directory()) resolved = *wd / resolved;
+        if (!is_directory) return rulefile::read_regular_file(resolved.string());
         std::error_code ec;
-        auto root=std::filesystem::path(path);
+        auto root=resolved;
         if (!std::filesystem::is_directory(root,ec) || ec)
             return std::unexpected("config directory is not accessible: "+std::string(path));
         std::vector<std::filesystem::path> files;
@@ -56,10 +82,10 @@ namespace cli {
             if (!text) return std::unexpected(file.filename().string()+": "+text.error());
             if (merged.size()+text->size()+1>config::max_config_bytes)
                 return std::unexpected("merged config directory exceeds maximum size");
-            auto doc=nex::glaze::read_kdl<nex::glaze::KdlDocument>(*text);
+            auto doc=glaze::read_kdl<glaze::KdlDocument>(*text);
             if (!doc) return std::unexpected(file.filename().string()+": invalid KDL syntax");
             auto fname=file.filename().string();
-            auto check_named=[&](std::map<std::string,std::string>& seen,std::string_view kind,nex::glaze::KdlNode const& n) -> std::expected<void,std::string> {
+            auto check_named=[&](std::map<std::string,std::string>& seen,std::string_view kind,glaze::KdlNode const& n) -> std::expected<void,std::string> {
                 if (n.arguments.size()==1) if (auto* s=std::get_if<std::string>(&n.arguments[0].data)) {
                     if (auto [it,ok]=seen.emplace(*s,fname); !ok)
                         return std::unexpected(std::format("duplicate {} \"{}\" in {} (already defined in {})",kind,*s,fname,it->second));
@@ -99,29 +125,46 @@ namespace cli {
         };
         append(config.vless_outbounds,config.shadowsocks_outbounds,config.trojan_outbounds,config.anytls_outbounds,
             config.hysteria2_outbounds,config.snell_outbounds,config.shadowtls_outbounds,config.tuic_outbounds,
-            config.masque_outbounds,config.wireguard_outbounds,config.tailscale_outbounds,config.tcp_proxy_outbounds);
+            config.masque_outbounds,config.wireguard_outbounds,config.ssh_outbounds,config.naive_outbounds,
+            config.openvpn_outbounds,config.openconnect_outbounds,config.tailscale_outbounds,config.tcp_proxy_outbounds);
         return names;
     }
 
+    auto relay_rule_format(config::RuleFormat format) noexcept -> relay::RuleFormat {
+        using C = config::RuleFormat;
+        using R = relay::RuleFormat;
+        switch (format) {
+        case C::kdl: return R::kdl;
+        case C::beve: return R::beve;
+        case C::srs: return R::srs;
+        case C::nxmm: return R::nxmm;
+        case C::json: return R::json;
+        case C::domain_list: return R::domain_list;
+        case C::ipcidr_list: return R::ipcidr_list;
+        case C::classical: return R::classical;
+        case C::adguard: return R::adguard;
+        }
+        std::unreachable();
+    }
+
+    auto rule_input_format(config::RuleFormat format) noexcept -> rules::InputFormat {
+        using C = config::RuleFormat;
+        using I = rules::InputFormat;
+        switch (format) {
+        case C::kdl: return I::kdl;
+        case C::beve: return I::beve;
+        case C::srs: return I::srs;
+        case C::nxmm: return I::nxmm;
+        case C::json: return I::json;
+        case C::domain_list: return I::domain_list;
+        case C::ipcidr_list: return I::ipcidr_list;
+        case C::classical: return I::classical;
+        case C::adguard: return I::adguard;
+        }
+        std::unreachable();
+    }
+
     namespace {
-        auto format_for(config::RuleFormat format) noexcept -> proxy::RuleFormat {
-            switch(format) {
-            case config::RuleFormat::kdl: return proxy::RuleFormat::kdl;
-            case config::RuleFormat::beve: return proxy::RuleFormat::beve;
-            case config::RuleFormat::srs: return proxy::RuleFormat::srs;
-            }
-            std::unreachable();
-        }
-
-        auto input_format(config::RuleFormat format) noexcept -> rules::InputFormat {
-            switch(format) {
-            case config::RuleFormat::kdl: return rules::InputFormat::kdl;
-            case config::RuleFormat::beve: return rules::InputFormat::beve;
-            case config::RuleFormat::srs: return rules::InputFormat::srs;
-            }
-            std::unreachable();
-        }
-
         auto action_for(config::OrderedTcpRule const& rule) noexcept -> rules::ProgramActionKind {
             using Action=config::OrderedTcpAction;
             using Kind=rules::ProgramActionKind;
@@ -147,14 +190,31 @@ namespace cli {
             }
             std::unreachable();
         }
+
+        auto resolve_rule_path(std::filesystem::path const& config_path, std::string_view path)
+            -> std::expected<std::filesystem::path, std::string> {
+            std::filesystem::path target(path);
+            if (!target.is_absolute()) {
+                if (auto wd = working_directory()) return *wd / target;
+                std::error_code error;
+                auto base = std::filesystem::absolute(config_path, error);
+                if (error) return std::unexpected("configuration path: " + error.message());
+                if (!std::filesystem::is_directory(base, error)) base = base.parent_path();
+                return base / target;
+            }
+            return target;
+        }
     }
 
-    auto RouteFiles::indexed(config::Config const& config) const -> std::vector<proxy::IndexedRouteRule> {
-        std::vector<proxy::IndexedRouteRule> result;
+    auto RouteFiles::indexed(config::Config const& config) const -> std::vector<relay::IndexedRouteRule> {
+        std::vector<relay::IndexedRouteRule> result;
         result.reserve(config.routes.size());
         for(std::size_t index=0;index<config.routes.size();++index) {
             auto const& route=config.routes[index];
-            result.push_back({data[indices[index]],format_for(route.file.format),route.outbound,route.file.ip_cidr_match_source});
+            auto idx = indices[index];
+            auto mm = idx < data_mmaps.size() ? data_mmaps[idx] : nullptr;
+            result.push_back({data[idx], relay_rule_format(route.file.format), route.outbound,
+                              route.file.ip_cidr_match_source, std::move(mm)});
         }
         return result;
     }
@@ -175,34 +235,35 @@ namespace cli {
         return {std::move(indexed),std::move(ordered_rules),std::move(distribution),index_of(config.default_outbound_name)};
     }
 
-    auto ProjectedRoutes::program(config::Config const& config) const -> std::optional<proxy::OrderedRuleInput> {
+    auto ProjectedRoutes::program(config::Config const& config) const -> std::optional<relay::OrderedRuleInput> {
         if (!config.ordered_tcp) return {};
         auto const& settings=*config.ordered_tcp;
-        return proxy::OrderedRuleInput{ordered,settings.sniff_timeout_ms,settings.skip_unknown,settings.udp};
+        return relay::OrderedRuleInput{ordered,settings.sniff_timeout_ms,settings.skip_unknown,settings.udp};
     }
 
     auto ProjectedRoutes::compile(config::Config const& config,std::string_view inbound)
-        const -> std::expected<proxy::RouteSnapshot,std::string> {
-        return proxy::compile_routes(indexed,default_outbound,2+config.tunnel_count(),inbound,program(config),distribution);
+        const -> std::expected<relay::RouteSnapshot,std::string> {
+        return relay::compile_routes(indexed,default_outbound,2+config.tunnel_count(),inbound,program(config),distribution);
     }
 
     auto RuleFileInput::read(std::string const& path) -> std::expected<std::string_view,std::string> {
         if (auto found=files_.find(path);found!=files_.end()) return std::string_view(found->second);
-        std::filesystem::path target(path);
-        if (!target.is_absolute()) {
-            if (auto const& wd=working_directory()) {
-                target=*wd/target;
-            } else {
-                std::error_code error;
-                auto base=std::filesystem::absolute(config_path_,error);
-                if (error) return std::unexpected("configuration path: "+error.message());
-                if (!std::filesystem::is_directory(base,error)) base=base.parent_path();
-                target=base/target;
-            }
-        }
-        auto data=rulefile::read_regular_file(target.string());
+        auto target = resolve_rule_path(config_path_, path);
+        if (!target) return std::unexpected(std::move(target.error()));
+        auto data=rulefile::read_regular_file(target->string());
         if (!data) return std::unexpected(std::move(data.error()));
         return std::string_view(files_.emplace(path,std::move(*data)).first->second);
+    }
+
+    auto RuleFileInput::open_mapped(std::string const& path)
+        -> std::expected<std::shared_ptr<rules::MmapMatcher const>,std::string> {
+        if (auto found=mmaps_.find(path); found!=mmaps_.end()) return found->second;
+        auto target = resolve_rule_path(config_path_, path);
+        if (!target) return std::unexpected(std::move(target.error()));
+        auto mm = rules::MmapMatcher::open_file(target->string());
+        if (!mm) return std::unexpected(std::move(mm.error()));
+        auto ptr = std::make_shared<rules::MmapMatcher const>(std::move(*mm));
+        return mmaps_.emplace(path, ptr).first->second;
     }
 
     auto load_route_files(config::Config const& config,RuleFileInput& input) -> std::expected<RouteFiles,std::string> {
@@ -211,10 +272,11 @@ namespace cli {
 
         std::size_t total=0;
         std::vector<std::string> keys;
-        auto read=[&](config::BlockRules const& file) -> std::expected<std::size_t,std::string> {
+        auto read=[&](config::BlockRules const& file, bool allow_mmap) -> std::expected<std::size_t,std::string> {
             if (file.inline_rules) {
                 if (file.inline_kdl.empty()) return std::unexpected("inline rule-set encoding unavailable");
                 result.data.emplace_back(file.inline_kdl);
+                result.data_mmaps.emplace_back();
                 keys.emplace_back();
                 return keys.size()-1;
             }
@@ -222,26 +284,32 @@ namespace cli {
             auto previous=std::ranges::find(keys,key);
             if(previous!=keys.end())return static_cast<std::size_t>(previous-keys.begin());
             std::string content;
+            std::shared_ptr<rules::MmapMatcher const> mapped;
             if (!file.url.empty()) {
                 auto seeded=input.read(file.url);
                 if (seeded) content.assign(*seeded);
                 else if (input.allows_unfetched_remote()) {
                     content="schema-version 2\nkind \"predicate\"\ndomain \"remote-placeholder.invalid\"\n";
                 } else return std::unexpected("remote rule-set "+file.url+": "+seeded.error());
+            } else if (allow_mmap && file.format == config::RuleFormat::nxmm) {
+                auto mm = input.open_mapped(file.path);
+                if (!mm) return std::unexpected(std::move(mm.error()));
+                mapped = std::move(*mm);
             } else {
                 auto data=input.read(file.path);
                 if(!data)return std::unexpected(std::move(data.error()));
                 content.assign(*data);
             }
-            total+=content.size();
+            total += mapped ? mapped->byte_size() : content.size();
             if(total>8*1024*1024)return std::unexpected("routing rules exceed 8 MiB total");
             keys.push_back(key);
             result.data.emplace_back(std::move(content));
+            result.data_mmaps.emplace_back(std::move(mapped));
             return keys.size()-1;
         };
 
         for(auto const& route:config.routes) {
-            auto index=read(route.file);
+            auto index=read(route.file, true);
             if(!index)return std::unexpected(std::move(index.error()));
             result.indices.push_back(*index);
         }
@@ -260,9 +328,9 @@ namespace cli {
                         return placeholder;
                     }
                 }
-                auto index=read(file);
+                auto index=read(file, false);
                 if (!index) return std::unexpected(std::move(index.error()));
-                auto set=rules::parse_rule_input(result.data[*index],input_format(file.format),file.ip_cidr_match_source);
+                auto set=rules::parse_rule_input(result.data[*index],rule_input_format(file.format),file.ip_cidr_match_source);
                 if (!set) return std::unexpected(std::move(set.error().message));
                 if (set->rules.empty()) return std::unexpected("tcp-program rule-set must not be empty");
                 return std::move(*set);
@@ -303,14 +371,51 @@ namespace cli {
                     {action_for(rule),rule.outbound,rule.connect_timeout_ms,rule.route_only,
                      rule.reject_method,rule.reject_no_drop,rule.tls_record_fragment,
                      rule.tls_fragment_min,rule.tls_fragment_max,rule.tcp_prefix,rule.tcp_prefix_len,
-                     rule.udp_timeout_ms,rule.udp_adaptive_timeout},
+                     rule.udp_timeout_ms,rule.udp_adaptive_timeout,rule.override_address,
+                     rule.override_port,rule.tls_fragment_fallback_delay_ms,
+                     rule.extra.resolve_strategy,rule.extra.resolve_server,rule.extra.resolve_disable_cache,
+                     rule.extra.resolve_rewrite_ttl,rule.extra.resolve_client_subnet,
+                     rule.extra.sniff_protocols,rule.extra.sniff_override_destination,
+                     rule.extra.sniff_timeout_ms,rule.extra.udp_disable_domain_unmapping},
                     domain_source(rule.domain)});
+            }
+            for (auto const& in : config.inbounds) {
+                if (!in.tun) continue;
+                for (auto const* list : {&in.tun->route_address_sets, &in.tun->route_exclude_address_sets}) {
+                    for (auto const& tag : *list) {
+                        if (std::ranges::contains(result.tun_cidrs, tag, &std::pair<std::string, std::vector<std::string>>::first))
+                            continue;
+                        auto const* src = lookup(tag);
+                        if (!src) return std::unexpected(load_error.value_or("unknown TUN rule-set: " + tag));
+                        std::vector<std::string> cidrs;
+                        cli::detail::collect_ip_cidrs(*src, cidrs, true, true);
+                        result.tun_cidrs.emplace_back(tag, std::move(cidrs));
+                    }
+                }
             }
             for (auto const& [tag,file]:config.ordered_tcp->sets)
                 if (!used.contains(tag)) return std::unexpected("unreferenced rule-set: "+tag);
             result.data.clear();
         }
         return result;
+    }
+
+    auto apply_tun_route_sets(config::TunInbound& tun, RouteFiles const& files) -> std::expected<void, std::string> {
+        auto add_from = [&](std::vector<std::string> const& tags, std::vector<std::string>& dst, std::size_t cap)
+            -> std::expected<void, std::string> {
+            for (auto const& tag : tags) {
+                auto it = std::ranges::find(files.tun_cidrs, tag, &std::pair<std::string, std::vector<std::string>>::first);
+                if (it == files.tun_cidrs.end()) continue;
+                for (auto const& cidr : it->second) {
+                    if (!(cidr.contains(':') ? tun.inet6_address : tun.inet4_address)) continue;
+                    if (!std::ranges::contains(dst, cidr) && dst.size() < cap) dst.push_back(cidr);
+                }
+            }
+            return {};
+        };
+        if (auto ok = add_from(tun.route_address_sets, tun.route_includes, 64); !ok) return ok;
+        if (auto ok = add_from(tun.route_exclude_address_sets, tun.route_excludes, 64); !ok) return ok;
+        return {};
     }
 
     auto load_route_files(config::Config const& config,std::string_view config_path,bool allow_unfetched_remote) -> std::expected<RouteFiles,std::string> {

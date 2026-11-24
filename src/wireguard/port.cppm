@@ -51,6 +51,8 @@ export namespace wireguard {
         port_detail::HandshakePressure handshake_pressure_;
         PortMetrics metrics_;
         bool opened_=false,stopped_=false;
+        std::uint16_t business_packets_=0;
+        std::uint32_t business_bytes_=0;
         auto slot_handle(std::size_t position) const noexcept -> std::optional<PeerHandle> {
             auto const& handle=peers_[position].handle; return handle && host_.registry().valid(*handle) ? handle : std::nullopt;
         }
@@ -73,10 +75,19 @@ export namespace wireguard {
             auto synced=host_.registry().sync(peer,*peers_[peer.slot].endpoint);
             if (!synced) return port_detail::host_failure(synced.error()); return {};
         }
+        auto clear_sending(PeerSlot& slot) noexcept -> void {
+            if (slot.pending_business_bytes) {
+                --business_packets_;
+                business_bytes_-=static_cast<std::uint32_t>(slot.pending_business_bytes);
+                slot.pending_business_bytes=0;
+            }
+            slot.sending.reset();
+        }
         auto discard(Delivery& slot) noexcept -> void {
             crypto::cleanse(std::span(slot.packet.bytes).first(slot.packet.size)); --delivery_count_; delivery_bytes_-=slot.packet.size; slot={};
         }
         auto prune_deliveries() noexcept -> void {
+            if (!delivery_count_) return;
             for (auto& slot:deliveries_) if (slot.used && !valid_output(slot.packet)) discard(slot);
         }
         auto discard_business() noexcept -> void {
@@ -85,11 +96,17 @@ export namespace wireguard {
                 if (slot.sending && slot.sending->kind==OutboundKind::data) slot.sending.reset();
                 slot.pending_business_bytes=0;
             }
+            business_packets_=0; business_bytes_=0;
             prune_deliveries();
         }
         auto erase_peer_unchecked(PeerHandle peer) noexcept -> void {
             (void)routes_.erase(peer); (void)keys_.erase(peer); (void)host_.registry().erase(peer);
-            auto& slot=peers_[peer.slot]; slot.sending.reset(); slot.pending_business_bytes=0; slot.endpoint.reset(); slot.handle.reset();
+            auto& slot=peers_[peer.slot]; clear_sending(slot);
+            if (slot.endpoint) {
+                business_packets_-=static_cast<std::uint16_t>(slot.endpoint->queued_packets());
+                business_bytes_-=static_cast<std::uint32_t>(slot.endpoint->queued_bytes());
+            }
+            slot.endpoint.reset(); slot.handle.reset();
         }
         static auto initial_policy_epoch() noexcept -> std::uint64_t {
             if constexpr (requires { Hooks::initial_policy_epoch(); }) {
@@ -98,6 +115,8 @@ export namespace wireguard {
         }
         auto received(PeerHandle peer,std::expected<EndpointReceived,EndpointFailure> result) -> std::expected<void,PortFailure> {
             auto synced=sync(peer); if (!synced) return synced;
+            auto& peer_slot=peers_[peer.slot];
+            if (peer_slot.sending && !peer_slot.endpoint->output_valid(peer_slot.sending->serial)) clear_sending(peer_slot);
             if (!result) {
                 ++metrics_.dropped;
                 if (result.error().code==EndpointError::disallowed_source) ++metrics_.source_rejects;
@@ -148,6 +167,7 @@ export namespace wireguard {
                 return port_detail::endpoint_failure(output.error());
             }
             synced=sync(peer); if (!synced) return synced;
+            clear_sending(peers_[peer.slot]);
             peers_[peer.slot].sending=std::move(*output); return {};
         }
         using SendByte=std::conditional_t<std::same_as<WireProfile,PortStandardWire>,std::uint8_t const,std::uint8_t>;
@@ -195,7 +215,7 @@ export namespace wireguard {
             for (std::size_t offset=0;offset<PeerCapacity;++offset) {
                 auto position=(next_peer_+offset)%PeerCapacity; auto& slot=peers_[position];
                 if (!slot.endpoint || !slot.sending) continue;
-                if (!slot.endpoint->output_valid(slot.sending->serial)) { slot.sending.reset(); slot.pending_business_bytes=0; continue; }
+                if (!slot.endpoint->output_valid(slot.sending->serial)) { clear_sending(slot); continue; }
                 auto handle=slot_handle(position); if (!handle) return port_detail::failure(PortError::stale_peer);
                 auto sent=[&] -> std::expected<void,std::error_code> {
                     if (!slot.sending->relay) return send(*handle,slot.sending->kind,slot.sending->destination,slot.sending->bytes);
@@ -206,7 +226,7 @@ export namespace wireguard {
                 if (!handled(sent)) return {};
                 auto complete=slot.endpoint->complete_send(slot.sending->serial,sent.has_value(),now);
                 if (!complete) return port_detail::endpoint_failure(complete.error());
-                slot.sending.reset(); slot.pending_business_bytes=0;
+                clear_sending(slot);
             }
             return {};
         }
@@ -234,12 +254,23 @@ export namespace wireguard {
             if (!ingress_) return port_detail::identity_failure(ingress_.error());
             if (deadline<=now) return port_detail::failure(PortError::configuration);
             auto rotated=rotate_cookie(now); if (!rotated) return rotated;
+            struct SocketGuard {
+                Socket& socket;
+                bool active=false;
+                ~SocketGuard() {
+                    if (!active) return;
+                    if constexpr (requires { socket.discard(); }) socket.discard();
+                    else socket.close();
+                }
+            } guard{socket_};
             if constexpr (!std::is_same_v<Prepare,PortNoSocketPreparation>) {
                 auto opened=socket_.open(); if (!opened) return port_detail::failure(PortError::io,opened.error());
+                guard.active=true;
                 static_assert(noexcept(prepare(socket_.native_handle())));
                 if (auto error=prepare(socket_.native_handle())) return port_detail::failure(PortError::io,error);
             }
             auto bound=socket_.bind(local); if (!bound) return port_detail::failure(PortError::io,bound.error());
+            guard.active=false;
             opened_=true; deadline_=deadline; return {};
         }
         [[nodiscard]] auto local_endpoint() const -> std::expected<EndpointAddress,std::error_code> { return socket_.local_endpoint(); }
@@ -285,10 +316,7 @@ export namespace wireguard {
             auto& slot=peers_[peer.slot];
             auto changed=slot.endpoint->change_path(address,relay);
             if (!changed) return port_detail::endpoint_failure(changed.error());
-            if (slot.sending && !slot.endpoint->output_valid(slot.sending->serial)) {
-                slot.sending.reset();
-                slot.pending_business_bytes=0;
-            }
+            if (slot.sending && !slot.endpoint->output_valid(slot.sending->serial)) clear_sending(slot);
             return sync(peer);
         }
         [[nodiscard]] auto peer_status(PeerHandle peer) const noexcept -> std::expected<EndpointStatus,PortFailure> {
@@ -304,14 +332,14 @@ export namespace wireguard {
             auto parsed=parse_inner_packet(packet); if (!parsed || parsed->packet.size()!=packet.size()) return port_detail::failure(PortError::configuration);
             auto peer=routes_.lookup(parsed->family,std::span(parsed->destination).first(parsed->family==4 ? 4 : 16));
             if (!peer || !host_.registry().valid(*peer)) return port_detail::failure(PortError::no_route);
-            auto current=status();
-            if (current.business_packets>=options_.business_packets || packet.size()>options_.business_bytes-current.business_bytes) return port_detail::failure(PortError::queue_full);
+            if (business_packets_>=options_.business_packets || packet.size()>options_.business_bytes-business_bytes_) return port_detail::failure(PortError::queue_full);
             try {
-                auto queued=peers_[peer->slot].endpoint->enqueue(packet,now); if (!queued) return port_detail::endpoint_failure(queued.error()); return *peer;
+                auto queued=peers_[peer->slot].endpoint->enqueue(packet,now); if (!queued) return port_detail::endpoint_failure(queued.error());
+                ++business_packets_; business_bytes_+=static_cast<std::uint32_t>(packet.size()); return *peer;
             } catch (std::bad_alloc const&) { return port_detail::failure(PortError::allocation); }
         }
         [[nodiscard]] auto take_packet() noexcept -> std::optional<PortPacket<PacketBytes>> {
-            prune_deliveries(); Delivery* oldest=nullptr;
+            prune_deliveries(); if (!delivery_count_) return {}; Delivery* oldest=nullptr;
             for (auto& slot:deliveries_) if (slot.used && (!oldest || slot.packet.serial<oldest->packet.serial)) oldest=&slot;
             if (!oldest) return {}; auto packet=oldest->packet; discard(*oldest); return packet;
         }
@@ -348,7 +376,7 @@ export namespace wireguard {
             if (cookie_ && now>=cookie_->request.expires) {cookie_.reset();ingress_->cancel_cookie();}
             if (cookie_) flush_cookie(progress);
             for (std::size_t count=0;count<PacketCapacity;++count) {
-                if (delivery_count_==PacketCapacity || host_.status().packets==PacketCapacity) { progress.read_paused=true; break; }
+                if (delivery_count_==PacketCapacity || (host_.queued_packets()==PacketCapacity && host_.status().packets==PacketCapacity)) { progress.read_paused=true; break; }
                 auto datagram=socket_.receive(input_); if (!datagram) return port_detail::failure(PortError::io,datagram.error());
                 if (!*datagram) break; ++progress.received; ++metrics_.received;
                 auto const& packet=**datagram;
@@ -400,32 +428,48 @@ export namespace wireguard {
             for (std::size_t offset=0;offset<PeerCapacity;++offset) {
                 auto position=(next_peer_+offset)%PeerCapacity; auto& slot=peers_[position]; if (!slot.endpoint) continue;
                 auto handle=slot_handle(position); if (!handle) return port_detail::failure(PortError::stale_peer);
-                auto queued_before=slot.endpoint->status().queued_bytes;
+                auto packets_before=slot.endpoint->queued_packets(),bytes_before=slot.endpoint->queued_bytes();
                 auto output=slot.endpoint->poll(now);
-                if (!output) { if (output.error().code==EndpointError::source) continue; return port_detail::endpoint_failure(output.error()); }
+                auto packets_after=slot.endpoint->queued_packets(),bytes_after=slot.endpoint->queued_bytes();
+                business_packets_-=static_cast<std::uint16_t>(packets_before-packets_after);
+                business_bytes_-=static_cast<std::uint32_t>(bytes_before-bytes_after);
+                if (!output) {
+                    if (slot.sending && !slot.endpoint->output_valid(slot.sending->serial)) clear_sending(slot);
+                    if (output.error().code==EndpointError::source) continue;
+                    return port_detail::endpoint_failure(output.error());
+                }
                 auto synced=sync(*handle); if (!synced) return std::unexpected(synced.error());
-                if (slot.sending && !slot.endpoint->output_valid(slot.sending->serial)) { slot.sending.reset(); slot.pending_business_bytes=0; }
+                if (slot.sending && !slot.endpoint->output_valid(slot.sending->serial)) clear_sending(slot);
                 if (output->handshake) { auto prepared=prepare(*handle,*output->handshake,now,wall); if (!prepared) return std::unexpected(prepared.error()); }
                 else if (output->datagram) {
-                    slot.pending_business_bytes=output->datagram->kind==OutboundKind::data ? queued_before-slot.endpoint->status().queued_bytes : 0;
+                    clear_sending(slot);
+                    if (output->datagram->kind==OutboundKind::data) {
+                        auto popped=bytes_before-bytes_after;
+                        slot.pending_business_bytes=popped;
+                        if (popped) { ++business_packets_; business_bytes_+=static_cast<std::uint32_t>(popped); }
+                    }
                     slot.sending=std::move(*output->datagram);
                 }
             }
             auto flushed=flush(now,progress); if (!flushed) return std::unexpected(flushed.error());
             next_peer_=(next_peer_+1)%PeerCapacity;
-            if (host_.status().packets && delivery_count_<PacketCapacity) progress.next_poll=now;
+            if (host_.queued_packets() && delivery_count_<PacketCapacity && host_.status().packets) progress.next_poll=now;
             if (cookie_) progress.next_poll=std::min(progress.next_poll,cookie_->request.expires);
             progress.read_paused|=delivery_count_==PacketCapacity; return progress;
         }
     public:
+        [[nodiscard]] auto opened() const noexcept -> bool { return opened_; }
+        [[nodiscard]] auto stopped() const noexcept -> bool { return stopped_; }
+        [[nodiscard]] auto delivery_packets() const noexcept -> std::size_t { return delivery_count_; }
+        [[nodiscard]] auto delivery_bytes() const noexcept -> std::size_t { return delivery_bytes_; }
+        [[nodiscard]] auto business_packets() const noexcept -> std::size_t { return business_packets_; }
+        [[nodiscard]] auto business_bytes() const noexcept -> std::size_t { return business_bytes_; }
         [[nodiscard]] auto status() noexcept -> PortStatus {
             prune_deliveries(); PortStatus result{.registry=host_.registry().status(),.ingress=host_.status(),.routes=routes_.status().prefixes,.keys=keys_.size(),
-                .delivery_packets=delivery_count_,.delivery_bytes=delivery_bytes_,.pending_sends=std::size_t(cookie_.has_value()),.metrics=metrics_,.opened=opened_,.stopped=stopped_,
+                .delivery_packets=delivery_count_,.delivery_bytes=delivery_bytes_,.pending_sends=std::size_t(cookie_.has_value()),
+                .business_packets=business_packets_,.business_bytes=business_bytes_,.metrics=metrics_,.opened=opened_,.stopped=stopped_,
                 .automatic_cookie_active=!stopped_ && options_.auto_cookie && observed_ && handshake_pressure_.active(*observed_)};
-            for (auto const& slot:peers_) if (slot.endpoint) {
-                auto peer=slot.endpoint->status(); result.business_packets+=peer.queued_packets+std::size_t(slot.pending_business_bytes!=0);
-                result.business_bytes+=peer.queued_bytes+slot.pending_business_bytes; result.pending_sends+=slot.sending.has_value();
-            }
+            for (auto const& slot:peers_) if (slot.endpoint) result.pending_sends+=slot.sending.has_value();
             return result;
         }
         auto stop() noexcept -> void {
@@ -433,7 +477,8 @@ export namespace wireguard {
             stopped_=true;
             for (std::size_t position=0;position<PeerCapacity;++position) if (auto handle=slot_handle(position)) erase_peer_unchecked(*handle);
             host_.clear(); for (auto& delivery:deliveries_) if (delivery.used) discard(delivery);
-            cookie_.reset(); if (ingress_) ingress_->close(); socket_.close(); private_bytes_.clear(); identity_.reset(); opened_=false; stopped_=true;
+            cookie_.reset(); if (ingress_) ingress_->close(); socket_.close(); private_bytes_.clear(); identity_.reset();
+            business_packets_=0; business_bytes_=0; opened_=false; stopped_=true;
         }
         [[nodiscard]] auto drained() noexcept -> bool { auto current=status(); return stopped_ && !current.registry.peers && !current.registry.indexes && !current.ingress.packets && !current.delivery_packets && !current.pending_sends && !current.routes && !current.keys && !current.business_packets; }
     };

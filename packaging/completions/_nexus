@@ -9,6 +9,10 @@ _nexus() {
         'endpoint:Check or run standalone protocol endpoints'
         'control:Send NEXUS/1 commands over local control socket'
         'state:Inspect, clear caches, or reset persistent state'
+        'convert-config:Convert external proxy/URI configs to Nexus KDL'
+        'provider:Inspect or sync proxy providers'
+        'system-proxy:Manage OS system proxy settings'
+        'service:Manage systemd, launchd, or Windows service'
     )
     rule_cmds=(
         'convert:Convert rules between kdl, beve, and srs formats'
@@ -108,6 +112,9 @@ _nexus() {
                             '--resolve[Resolve endpoints during check]' \
                             '--help[Show help]'
                     fi
+                    ;;
+                convert-config|provider|system-proxy|service)
+                    _arguments '--help[Show help]' '*:arg:_files'
                     ;;
             esac
             ;;

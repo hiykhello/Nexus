@@ -1,12 +1,11 @@
 import std;
 import httpupgrade;
 import httpupgrade.stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace h=httpupgrade;
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct MemoryStream {
     std::string input,output;

@@ -6,11 +6,11 @@ import packet.tun_linux;
 import packet.tun_network;
 import endpoint.host_dns_types;
 import endpoint.resolved_dns;
-import nexus.test.lease_support;
+import test.lease_support;
 namespace e=endpoint;
 namespace p = ::packet;
 namespace r = ::platform::resolved;
-namespace t=nexus::test::lease;
+namespace t=test::lease;
 namespace {
     bool tracking=false,deny=false;
     std::size_t calls=0,bytes=0,live=0;

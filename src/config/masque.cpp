@@ -1,7 +1,7 @@
 module config;
 import std;
 import config.kdl_common;
-import nexus.thirdparty.glaze;
+import glaze;
 namespace config {
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t,4>>;
     auto dns_ipv6(std::string_view) -> std::optional<std::array<std::uint8_t,16>>;

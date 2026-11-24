@@ -13,9 +13,9 @@ import quic.retry_token;
 import quic.tls_server;
 import tls.server_credential;
 import net.datagram_driver;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import capy;
+import corosio;
 
 export namespace tuic {
     // Multi-session QUIC listener for TUIC v5. Mirrors Masque/Hysteria2 listener
@@ -48,10 +48,10 @@ export namespace tuic {
                 app_hooks.udp_dissociate(owner, assoc_id);
             }
             auto transport_closed() noexcept -> void { app_hooks.transport_closed(owner); }
-            auto add_connection_id(nex::ngtcp2::ngtcp2_cid const& id, nex::ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
-                return registry.insert(owner, {id.data, id.datalen}) ? 0 : nex::ngtcp2::err_callback_failure;
+            auto add_connection_id(ngtcp2::ngtcp2_cid const& id, ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
+                return registry.insert(owner, {id.data, id.datalen}) ? 0 : ngtcp2::err_callback_failure;
             }
-            auto remove_connection_id(nex::ngtcp2::ngtcp2_cid const& id) noexcept -> int {
+            auto remove_connection_id(ngtcp2::ngtcp2_cid const& id) noexcept -> int {
                 (void)registry.remove(owner, {id.data, id.datalen});
                 return 0;
             }
@@ -68,8 +68,8 @@ export namespace tuic {
             quic::NativeTransportMemory<> memory;
             App app;
             NativeSession session;
-            nex::corosio::endpoint initial_peer;
-            Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,nex::corosio::endpoint peer)
+            corosio::endpoint initial_peer;
+            Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,corosio::endpoint peer)
                 : tls(parent.credential_, "h3"), hooks{parent, reg, id, parent.hooks_, id.slot},
                   memory(parent.options_.native_bytes), app(tls, hooks, parent.users_),
                   session(tls,app,parent.local_),initial_peer(peer) {}
@@ -86,7 +86,7 @@ export namespace tuic {
 
             explicit Factory(Listener& owner) noexcept : listener(owner) {}
 
-            auto admit(nex::ngtcp2::ngtcp2_pkt_hd const& initial, nex::corosio::endpoint const& peer,
+            auto admit(ngtcp2::ngtcp2_pkt_hd const& initial, corosio::endpoint const& peer,
                        Clock::time_point now, std::size_t bytes) noexcept -> bool {
                 permit.reset();
                 auto res = retry.inspect(initial, peer, now, bytes);
@@ -108,9 +108,9 @@ export namespace tuic {
             auto control_drained() const noexcept -> bool { return retry.drained(); }
 
             auto create(quic::SessionHandle owner, Registry& reg, std::span<std::uint8_t const> source,
-                        nex::ngtcp2::ngtcp2_pkt_hd const& initial, nex::corosio::endpoint const& peer,
+                        ngtcp2::ngtcp2_pkt_hd const& initial, corosio::endpoint const& peer,
                         Clock::time_point now) noexcept -> std::expected<Session*, int> {
-                namespace n = nex::ngtcp2;
+                namespace n = ::ngtcp2;
                 try {
                     if (!permit || !std::ranges::equal(permit->retry.bytes(), std::span(initial.dcid.data).first(initial.dcid.datalen)))
                         return std::unexpected(n::err_callback_failure);
@@ -156,11 +156,11 @@ export namespace tuic {
 
     public:
         using Port = quic::DatagramPort<Factory, Sessions, 8, 8, false>;
-        using Driver = net::DatagramDriver<Port, nex::corosio::udp_socket>;
+        using Driver = net::DatagramDriver<Port, corosio::udp_socket>;
 
     private:
-        nex::corosio::udp_socket socket_;
-        nex::corosio::endpoint local_;
+        corosio::udp_socket socket_;
+        corosio::endpoint local_;
         tls::ServerCredential const& credential_;
         std::span<UserCredential const> users_;
         ClientTransportOptions options_;
@@ -168,13 +168,14 @@ export namespace tuic {
         Factory factory_{*this};
         Port port_{factory_};
         Driver driver_{socket_, port_};
+        bool run_started_ = false;
 
     public:
-        Listener(nex::corosio::io_context& ctx, tls::ServerCredential const& cred,
+        Listener(corosio::io_context& ctx, tls::ServerCredential const& cred,
                  std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks)
             : socket_(ctx), credential_(cred), users_(users), options_(opts), hooks_(hooks) {}
 
-        auto prepare(nex::corosio::endpoint local) -> std::expected<nex::corosio::endpoint, std::error_code> {
+        auto prepare(corosio::endpoint local) -> std::expected<corosio::endpoint, std::error_code> {
             if (!factory_.retry.initialize()) return std::unexpected(std::make_error_code(std::errc::io_error));
             if (auto err = socket_.open(local.address().family())) return std::unexpected(err);
             if (auto err = socket_.bind(local)) { socket_.close(); return std::unexpected(err); }
@@ -188,24 +189,28 @@ export namespace tuic {
             return b.hooks.owner == h ? &b.app : nullptr;
         }
 
-        auto initial_peer(quic::SessionHandle h) const noexcept -> std::optional<nex::corosio::endpoint> {
+        auto initial_peer(quic::SessionHandle h) const noexcept -> std::optional<corosio::endpoint> {
             if (h.slot>=Sessions) return {};
             auto const& bundle=factory_.bundles[h.slot];
             if (!bundle || bundle->hooks.owner!=h) return {};
             return bundle->initial_peer;
         }
 
-        auto changed() noexcept -> nex::capy::async_event& { return driver_.changed(); }
+        auto changed() noexcept -> capy::async_event& { return driver_.changed(); }
         auto notify() noexcept -> void { driver_.notify(); }
         auto running() const noexcept -> bool { return driver_.running(); }
+        auto driver_drained() const noexcept -> bool { return !run_started_ || driver_.drained(); }
         auto drained() const noexcept -> bool { return port_.drained(); }
         auto maintain() noexcept -> void { port_.maintain(); }
         auto start() -> void { driver_.notify(); }
-        auto run() -> auto { return driver_.run(); }
+        auto run() -> auto { run_started_ = true; return driver_.run(); }
         auto stop() noexcept -> void {
-            port_.request_stop();
-            port_.stop();
-            socket_.close();
+            driver_.finish();
+            if (!run_started_) {
+                port_.request_stop();
+                port_.stop();
+                socket_.close();
+            }
             notify();
         }
     };

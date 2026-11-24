@@ -16,19 +16,19 @@
 #include <boost/corosio/ipv4_address.hpp>
 #include <boost/corosio/ipv6_address.hpp>
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import dns.corosio_local;
 import dns.message;
 import dns.corosio_query;
 import dns.cache;
 import dns.shared_cache;
-import proxy;
+import relay;
 import config;
 import crypto;
 import rules;
 import dns.local_config;
 import shadowsocks.udp_dispatch;
-#include "../../src/tools/udp_inbound.hpp"
+#include "udp_inbound.hpp"
 
 namespace {
 thread_local int fail_after=-1;
@@ -79,7 +79,7 @@ extern "C" void nexus_test_start_throw() { inject_hook(FaultStage::launch); }
 namespace {
 using Cache=dns_hp_experiment::GroupSnapshot;
 using Budget=dns::detail::RefreshBudget;
-namespace p=proxy;
+namespace p = relay;
 
 auto count(std::string_view path) -> std::size_t {
     return std::ranges::distance(std::filesystem::directory_iterator(path),std::filesystem::directory_iterator{});

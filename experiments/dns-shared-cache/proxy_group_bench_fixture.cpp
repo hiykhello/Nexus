@@ -20,7 +20,7 @@
 #include <boost/corosio/ipv6_address.hpp>
 #endif
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import dns.corosio_local;
 import dns.message;
 import dns.corosio_query;
@@ -32,16 +32,16 @@ import dns.shared_cache;
 import dns.shared_coordinator;
 #endif
 #ifdef NEXUS_DNS_USE_MODULES
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 #endif
-import proxy;
+import relay;
 import config;
 import crypto;
 import rules;
 import dns.local_config;
 import shadowsocks.udp_dispatch;
-#include "../../src/tools/udp_inbound.hpp"
+#include "udp_inbound.hpp"
 
 auto main(int argc, char** argv) -> int {
     if (argc != 5) return 2;
@@ -52,7 +52,7 @@ auto main(int argc, char** argv) -> int {
         std::ranges::any_of(udp_ports, [](int port) { return port < 1 || port > 65535; }) ||
         udp_ports[0] == udp_ports[1]) return 2;
 
-    namespace p = proxy;
+    namespace p = relay;
 #ifdef NEXUS_TEST_DNS_GROUP
 #ifdef NEXUS_TEST_DNS_SHARED_CAPACITY
     std::array<std::size_t, 3> capacities{1, 1, 1};

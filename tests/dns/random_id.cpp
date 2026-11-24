@@ -1,9 +1,9 @@
 import std;
 import dns.corosio_resolver;
-import nexus.tests.random_fault;
+import test.random_fault;
 
 auto main() -> int {
-    using namespace nexus::tests;
+    using namespace test;
     namespace dns=dns::detail;
 #ifdef NEXUS_TEST_LINUX_RANDOM
     for (auto mode:{RandomFault::unavailable,RandomFault::permission,RandomFault::zero}) {

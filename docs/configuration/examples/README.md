@@ -3,12 +3,11 @@
 ## 可运行的实验与低内存配置
 
 - [low-memory-client.kdl](low-memory-client.kdl)：面向 50 MiB 移动端扩展与 128 MiB OpenWrt 路由器的低内存客户端基线（`workers 1`、`tcp-splice-pipes 4`、有界 DNS/规则集缓存与本机控制面），已通过 `nexus check --config docs/configuration/examples/low-memory-client.kdl` 三产物实机校验。
+- [ergonomic-client.kdl](ergonomic-client.kdl)：展示简洁人类可读 KDL 语法（`direct`/`block` 自动命名、`host:port` 短写、`members` 列表、`rules` 有序直连/分流/劫持规则与 DNS 规则简写）。
 
 [socks5.kdl](socks5.kdl) 可由 Linux 实验代理使用：`nexus run --config docs/configuration/examples/socks5.kdl`。它监听 `127.0.0.1:1080`，对示例规则命中执行 block，其余 direct；IPv4 映射 IPv6 目标同时检查两种地址族的 IP 规则；规则文件相对配置文件所在目录解析。[mixed.kdl](mixed.kdl) 将入站类型改为 `mixed`，同一端口支持 SOCKS5、HTTP/1.1 CONNECT 及有限的单次 HTTP 正向代理（支持 Content-Length 和 chunked 请求体）。入站和出站分别放在 `inbounds` 和 `outbounds` 块，DNS 服务器放在 `dns { servers { ... } }` 中；分组内用协议类型作节点名，`dns` 和 `routing` 的规则写在 `rules` 块内，并以 `-` 开始每条规则。旧的顶层 `inbound`/`outbound` 和 `dns` 下直接 `server` 暂兼容，同类配置不得混用新旧写法。当前支持最多 16 个入站（名称和监听地址/端口组合不能重复；IPv4 与 IPv6 回环可共用端口）、一个 direct 出站、可选 block 出站和最多 16 个具名 VLESS、SS-2022 和 Trojan 隧道出站（合计），以及最多 256 组 KDL/BEVE 规则集和 256 条有序引用规则；`role` 为 `client` 或 `server`，当前只作校验，不改变行为。配置和单个规则文件各限 1 MiB，规则文件合计限 8 MiB，展开后的谓词合计限 16384 条；未知节点、属性及未支持的组合均拒绝，加载成功后才监听。当前不支持重载或 HTTP 连接复用；SOCKS5 UDP ASSOCIATE 的受限能力见 [SOCKS5 说明](../../architecture/protocols/socks5-mixed.md)，Mixed 仅支持无认证。SOCKS5/Mixed 监听地址可选 IPv4 回环 `127.0.0.1` 或 IPv6 回环 `::1`。SS-2022 入站支持下述有限 UDP 路径。
 
-可选顶层 `dns-upstream host="127.0.0.1" port=5353` 为代理请求的目标域名指定数值 IPv4 或 IPv6 DNS 上游，例如 `host="::1"`；IPv6 zone ID 不支持。未配置时继续使用系统解析器。显式上游使用明文 UDP，截断时回退同一地址的 TCP；A 和 AAAA 顺序查询，任何一族的临时故障会使请求失败，不回退系统 DNS。每个 worker 独立缓存最多 256 条结果；带覆盖终点 SOA 的 NXDOMAIN/NODATA 可按 SOA 期限缓存（上限 600 秒），CNAME 链还受最短 TTL 限制。NXDOMAIN 和带 SOA 的 NODATA 的应答记录仅接受有效 CNAME 链，其他 answer 记录保守拒绝；其他失败不缓存。查询和握手共用 10 秒总期限。VLESS 上游服务器域名默认由系统解析器解析；可使用下述 `bootstrap-resolver` 指定 `dns` 中的服务器，因此仅配置此选项不能完全避免系统 DNS 查询。DNSSEC、加密 DNS 和地址竞速尚不支持；具名服务器的域名选路见下文。
-
-也可使用带名称的服务器列表，选择代理目标解析的默认服务器：
+可使用带名称的 `dns` 服务器列表选择代理目标解析的上游服务器（未配置 `dns` 块时继续使用系统解析器；旧顶层 `dns-upstream` 已移除）：
 
 ```kdl
 dns {
@@ -27,7 +26,7 @@ dns {
 }
 ```
 
-`final` 可省略，默认选择第一个服务器；`udp` 和 `tcp` 的 `port` 可省略，默认为 53。`local` 使用现有系统解析器；`udp` 与 `tcp` 使用明文 DNS；`tcp` 直接发起 TCP 查询，每次查询建立连接。规则按顺序匹配，第一个命中选择服务器；`domain` 精确匹配，`domain-suffix` 匹配该域名及其子域名，忽略 ASCII 大小写且要求完整标签边界。无命中使用 `final`。域名采用不带末尾点的 ASCII 标签，最多声明 64 个服务器和 256 条规则。名称必须唯一，缺失的服务器引用、未知字段与不支持的类型会被拒绝。此块与旧 `dns-upstream` 不能同时出现。
+`final` 可省略，默认选择第一个服务器；`udp` 和 `tcp` 的 `port` 可省略，默认为 53。`local` 使用现有系统解析器；`udp` 与 `tcp` 使用明文 DNS；`tcp` 直接发起 TCP 查询，每次查询建立连接。规则按顺序匹配，第一个命中选择服务器；`domain` 精确匹配，`domain-suffix` 匹配该域名及其子域名，忽略 ASCII 大小写且要求完整标签边界。无命中使用 `final`。域名采用不带末尾点的 ASCII 标签，最多声明 64 个服务器和 256 条规则。名称必须唯一，缺失的服务器引用、未知字段与不支持的类型会被拒绝。
 
 可选 `strategy` 为 `prefer_ipv4`、`prefer_ipv6`、`ipv4_only` 或 `ipv6_only`，作用于代理目标域名。显式上游按优先族顺序查询并返回地址，单族模式只查询该族；双族模式中任何临时故障仍使解析失败。`local` 使用系统解析后按策略过滤或排序，不能保证系统本身只查询一个地址族。未配置时显式上游按 A、AAAA 顺序查询，系统解析保留其原有顺序；指定 `bootstrap-resolver` 时，VLESS 上游域名也使用该策略。
 

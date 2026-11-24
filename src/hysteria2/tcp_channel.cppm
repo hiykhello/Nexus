@@ -1,8 +1,8 @@
 export module hysteria2.tcp_channel;
 import std;
 import hysteria2.stream_state;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace hysteria2 {
     using StreamClock=std::chrono::steady_clock;
@@ -19,7 +19,7 @@ export namespace hysteria2 {
         StreamHandle stream_;
         StreamDeadline deadline_;
         StreamDeadline response_deadline_;
-        nex::capy::async_mutex writer_;
+        capy::async_mutex writer_;
         bool reading_=false,canceled_=false;
         std::optional<StreamFailure> failure_;
         struct Guard {
@@ -46,10 +46,10 @@ export namespace hysteria2 {
             if (application_.stopping() || !driver_.running()) { fail({StreamError::transport}); return false; }
             return true;
         }
-        auto wait(StreamDeadline deadline,bool allow_closed=false) -> nex::capy::task<bool> {
+        auto wait(StreamDeadline deadline,bool allow_closed=false) -> capy::task<bool> {
             driver_.changed().clear();
             auto operation=driver_.changed().wait();
-            auto [error]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            auto [error]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
             if (error) { fail({expired(deadline)?StreamError::timeout:StreamError::canceled}); co_return false; }
             co_return valid(deadline,allow_closed);
         }
@@ -67,14 +67,14 @@ export namespace hysteria2 {
             try { (void)application_.reset(stream_); } catch (...) {}
             driver_.notify();
         }
-        auto ready(StreamDeadline requested={}) -> nex::capy::task<bool> {
+        auto ready(StreamDeadline requested={}) -> capy::task<bool> {
             Guard guard{*this};auto deadline=limit(requested);
             while (valid(deadline)) {
                 if (application_.phase(stream_)==StreamPhase::ready) { guard.released=true;co_return true; }
                 if (!co_await wait(deadline)) break;
             } co_return false;
         }
-        auto read(std::span<std::uint8_t> output,StreamDeadline requested={}) -> nex::capy::task<std::expected<std::size_t,StreamFailure>> {
+        auto read(std::span<std::uint8_t> output,StreamDeadline requested={}) -> capy::task<std::expected<std::size_t,StreamFailure>> {
             if (reading_) co_return std::unexpected(StreamFailure{StreamError::state});
             Guard guard{*this}; reading_=true;Reader reader{reading_};auto deadline=limit(requested);
             while (valid(deadline,true)) {
@@ -90,9 +90,9 @@ export namespace hysteria2 {
                 if (!co_await wait(deadline,true)) break;
             } co_return std::unexpected(failure_.value_or(StreamFailure{StreamError::canceled}));
         }
-        auto send(std::span<std::uint8_t const> input,StreamDeadline requested={}) -> nex::capy::task<bool> {
+        auto send(std::span<std::uint8_t const> input,StreamDeadline requested={}) -> capy::task<bool> {
             Guard guard{*this};auto deadline=limit(requested);auto operation=writer_.scoped_lock();
-            auto [error,lock]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
             if (error || !valid(deadline)) { if (error) fail({expired(deadline)?StreamError::timeout:StreamError::canceled});co_return false; }
             while (!input.empty()) {
                 if (!valid(deadline)) co_return false;
@@ -101,9 +101,9 @@ export namespace hysteria2 {
                 if (!input.empty() && !co_await wait(deadline)) co_return false;
             } guard.released=true;co_return true;
         }
-        auto close_output(StreamDeadline requested={}) -> nex::capy::task<bool> {
+        auto close_output(StreamDeadline requested={}) -> capy::task<bool> {
             Guard guard{*this};auto deadline=limit(requested);auto operation=writer_.scoped_lock();
-            auto [error,lock]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
             if (error || !valid(deadline)) { if (error) fail({expired(deadline)?StreamError::timeout:StreamError::canceled});co_return false; }
             if (!application_.close_output(stream_,response_deadline_.has_value())) { fail({StreamError::state});co_return false; } driver_.notify();
             while (valid(deadline)) {

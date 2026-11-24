@@ -1,18 +1,18 @@
 import std;
 import rules;
-import nexus.thirdparty.glaze;
+import glaze;
 
-namespace g = nex::glaze;
+namespace g = ::glaze;
 
 struct WireExtra {
-    std::uint32_t schema_version = 1;
+    std::uint32_t schema_version = 2;
     std::string kind = "predicate";
     std::vector<::rules::Rule> rules;
     std::string extra = "not-allowed";
 };
 
 struct WireMissing {
-    std::uint32_t schema_version = 1;
+    std::uint32_t schema_version = 2;
     std::string kind = "predicate";
 };
 
@@ -49,7 +49,7 @@ namespace {
 
 int main() {
     using namespace ::rules;
-    constexpr auto source = R"(schema-version 1
+    constexpr auto source = R"(schema-version 2
 kind "predicate"
 rule type="domain-suffix" value="Example.COM"
 rule type="ip-cidr" value="2001:db8::/32"
@@ -88,15 +88,16 @@ rule type="ip-cidr" value="2001:db8::/32"
     check(!parse_beve(malformed_container(WireExtra{})), "unknown BEVE field rejected");
     check(!parse_beve(malformed_container(WireMissing{})), "missing BEVE field rejected");
     check(fails(""), "empty document is not a rule set");
-    check(fails("schema-version 1\nkind \"predicate\"\nrule {"), "malformed KDL fails");
-    check(fails("schema-version 1\nschema-version 1\nkind \"predicate\""), "duplicate version fails");
+    check(fails("schema-version 1\nkind \"predicate\"\nrule type=\"domain-suffix\" value=\"example.com\""), "legacy schema-version 1 fails");
+    check(fails("schema-version 2\nkind \"predicate\"\nrule {"), "malformed KDL fails");
+    check(fails("schema-version 2\nschema-version 2\nkind \"predicate\""), "duplicate version fails");
     check(fails("schema-version 3\nkind \"predicate\""), "unsupported version fails");
-    check(fails("schema-version 1\nkind \"predicate\"\nunknown 1"), "unknown node fails");
-    check(fails("schema-version 1\nkind \"predicate\"\nrule type=\"domain-suffix\" value=\"bad..name\""), "invalid domain fails");
-    check(fails("schema-version 1\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"1.2.3.4/33\""), "invalid CIDR fails");
+    check(fails("schema-version 2\nkind \"predicate\"\nunknown 1"), "unknown node fails");
+    check(fails("schema-version 2\nkind \"predicate\"\nrule type=\"domain-suffix\" value=\"bad..name\""), "invalid domain fails");
+    check(fails("schema-version 2\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"1.2.3.4/33\""), "invalid CIDR fails");
     check(!normalize_rule(Rule{"ip-cidr", std::string("1.2.3.4\0evil/8", 14)}), "embedded NUL in CIDR fails");
-    check(fails("schema-version 1\nkind \"predicate\"\nrule type=\"unknown\" value=\"x\""), "unknown rule fails");
-    auto duplicate_property = parse_kdl("schema-version 1\nkind \"predicate\"\nrule type=\"unknown\" type=\"domain-suffix\" value=\"example.com\"");
+    check(fails("schema-version 2\nkind \"predicate\"\nrule type=\"unknown\" value=\"x\""), "unknown rule fails");
+    auto duplicate_property = parse_kdl("schema-version 2\nkind \"predicate\"\nrule type=\"unknown\" type=\"domain-suffix\" value=\"example.com\"");
     check(duplicate_property && duplicate_property->rules[0].type == "domain-suffix", "KDL duplicate property uses its final value");
     check(fails(std::string(max_input_bytes + 1, ' ')), "input budget enforced");
     for (auto path : {"docs/configuration/examples/paired/rules/blocked.kdl", "docs/configuration/examples/paired/rules/private.kdl"}) {

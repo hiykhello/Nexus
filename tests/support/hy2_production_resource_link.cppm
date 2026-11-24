@@ -1,9 +1,9 @@
-export module nexus.test.hy2_production_resource_link;
+export module test.hy2_production_resource_link;
 import std;
 import hysteria2.credential;
 import tls.server_credential;
-import nexus.thirdparty.corosio;
-export namespace nexus::test::hy2_production_resource {
+import corosio;
+export namespace test::hy2_production_resource {
 struct Heap {
     static inline std::size_t at=0,calls=0,blocks=0;static inline bool denied=false;
     static auto arm(std::size_t point)noexcept->void{at=point;calls=0;denied=false;}
@@ -11,5 +11,5 @@ struct Heap {
     static auto release(void* p)noexcept->void{--blocks;std::free(p);}
 };
 inline bool cpp_denied=false;
-auto phase(nex::corosio::io_context&,tls::ServerCredential const&,std::span<std::uint8_t const>,hysteria2::Password const&,bool* clean=nullptr)->bool;
+auto phase(corosio::io_context&,tls::ServerCredential const&,std::span<std::uint8_t const>,hysteria2::Password const&,bool* clean=nullptr)->bool;
 }

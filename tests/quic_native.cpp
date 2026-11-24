@@ -1,7 +1,7 @@
 import std;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 
-namespace n=nex::ngtcp2;
+namespace n = ::ngtcp2;
 auto main() -> int {
     n::ngtcp2_settings settings{};
     n::ngtcp2_settings_default_versioned(n::settings_version,&settings);

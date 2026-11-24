@@ -3,6 +3,23 @@ export module control_api.types;
 import std;
 
 export namespace control_api {
+    enum class SnapshotFields : std::uint32_t {
+        none = 0,
+        meta = 1u << 0,
+        listeners = 1u << 1,
+        connections = 1u << 2,
+        groups = 1u << 3,
+        all = (1u << 4) - 1,
+    };
+
+    [[nodiscard]] constexpr auto operator|(SnapshotFields a, SnapshotFields b) noexcept -> SnapshotFields {
+        return static_cast<SnapshotFields>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
+    }
+
+    [[nodiscard]] constexpr auto has_field(SnapshotFields mask, SnapshotFields bit) noexcept -> bool {
+        return (static_cast<std::uint32_t>(mask) & static_cast<std::uint32_t>(bit)) != 0;
+    }
+
     struct ListenerMetric {
         std::size_t index = 0;
         std::uint16_t port = 0;
@@ -59,5 +76,7 @@ export namespace control_api {
         std::vector<ListenerMetric> listeners;
         std::vector<GroupMetric> groups;
         std::vector<ConnectionMetric> connections;
+        std::string route_mode = "rule";
+        std::string global_outbound;
     };
 }

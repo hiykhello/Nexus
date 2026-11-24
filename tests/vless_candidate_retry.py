@@ -39,8 +39,8 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-candidate-") as directory:
     subprocess.run(["openssl","req","-x509","-newkey","rsa:2048","-nodes","-keyout",key,"-out",cert,
                     "-subj","/CN=localhost","-addext","subjectAltName=DNS:localhost","-days","1"],check=True,capture_output=True,timeout=10)
     uuid.write_text("00010203-0405-0607-0809-0a0b0c0d0e0f\n"); uuid.chmod(0o600)
-    rules.write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
-    block_rules.write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+    rules.write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
+    block_rules.write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
     with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as dns, socket.socket() as origin, socket.socket() as reserve, socket.socket() as tls_listener:
         dns.bind(("127.0.0.1",0)); dns.settimeout(5)
         origin.bind(("127.0.0.2",0)); origin.listen(1); origin.settimeout(5)

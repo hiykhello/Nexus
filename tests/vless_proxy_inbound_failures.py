@@ -21,7 +21,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-inbound-") as temp:
     openssl("x509", "-in", cert, "-outform", "DER", "-out", certder)
     keyder.chmod(0o600)
     uuid=root/"uuid"; uuid.write_text("00010203-0405-0607-0809-0a0b0c0d0e0f\n"); uuid.chmod(0o600)
-    rules=root/"blocked.kdl"; rules.write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
+    rules=root/"blocked.kdl"; rules.write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.1/32"\n')
     with socket.socket() as reserved, socket.socket() as target:
         reserved.bind(("127.0.0.1",0)); port=reserved.getsockname()[1]; reserved.close()
         target.bind(("127.0.0.1",0)); target.listen(); target.settimeout(.3)
@@ -35,7 +35,7 @@ inbounds {{ vless "edge" {{
  tls {{ certificate-file "{certder}"; private-key-file "{keyder}"; }}
 }} }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rule-set "local" path="{rules}" format="kdl"; rule kind="rule-set" value="local" outbound="reject"; default-outbound "direct"; }}
+routing {{ rule-set "local" path="{rules}" format="kdl"; rules {{ - kind="rule-set" value="local" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
         server=subprocess.Popen([binary,"run","--config",config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:

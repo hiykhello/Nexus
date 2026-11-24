@@ -1,15 +1,15 @@
 module config;
 import std;
 import platform.ip_address;
-import nexus.thirdparty.glaze;
+import glaze;
+import config.kdl_common;
+import config.dns_predefined;
 import rules;
 
 namespace config {
-    namespace g=nex::glaze;
-    namespace {
-#include "dns_fields.hpp"
-#include "dns_predefined.hpp"
-    }
+    namespace g = ::glaze;
+    using namespace config::kdl;
+    using namespace config::dns_detail;
     auto parse_dns_rule(g::KdlNode const& child,
         std::vector<std::pair<DnsRule,std::string>>& pending,
         std::vector<std::pair<std::size_t,std::pair<std::string,bool>>>& references)
@@ -21,14 +21,15 @@ namespace config {
         if((set_field && (!set || !valid_name(*set))) || (ip_source_field && (!ip_source || !set)))return error("invalid DNS rule-set reference");
         rule.has_rule_set=bool(set);
         unsigned domains=0;
-        for (auto field:{"domain","domain-suffix","domain-keyword","domain-wildcard"}) {
+        for (auto field:{"domain","domain-suffix","domain-keyword","domain-wildcard","domain-regex"}) {
             if (!property(child,field)) continue;
             auto value=text_property(child,field);
             if (!value || value->empty() || ++domains>1) return error("invalid DNS domain condition");
             rule.domain=*value;
             rule.suffix=std::string_view(field)=="domain-suffix";
             rule.pattern=std::string_view(field)=="domain-keyword" ? policy::DnsPattern::keyword :
-                std::string_view(field)=="domain-wildcard" ? policy::DnsPattern::wildcard : policy::DnsPattern::name;
+                std::string_view(field)=="domain-wildcard" ? policy::DnsPattern::wildcard :
+                std::string_view(field)=="domain-regex" ? policy::DnsPattern::regex : policy::DnsPattern::name;
         }
         auto server=text_property(child,"server");
         auto type=property(child,"query-type");
@@ -46,10 +47,29 @@ namespace config {
         auto timeout=property(child,"timeout-ms");
         auto rewrite_ttl=property(child,"rewrite-ttl");
         auto reject_method=property(child,"reject-method");
+        auto reject_rcode=property(child,"reject-rcode");
+        auto strategy_prop=property(child,"strategy");
         if(reject_method) {
             auto method=string(*reject_method);
             if(!method || (*method!="reply" && *method!="drop"))return error("invalid DNS reject-method");
             rule.reject_drop=*method=="drop";
+        }
+        if(reject_rcode) {
+            std::optional<std::uint64_t> rc=integer(*reject_rcode);
+            if(!rc) if(auto text=string(*reject_rcode)) {
+                std::string up(*text);
+                for(auto& c:up)c=static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                if(up=="NOERROR")rc=0;else if(up=="FORMERR")rc=1;else if(up=="SERVFAIL")rc=2;
+                else if(up=="NXDOMAIN")rc=3;else if(up=="NOTIMP")rc=4;else if(up=="REFUSED")rc=5;
+            }
+            if(!rc || *rc>15)return error("invalid DNS reject-rcode");
+            rule.reject_rcode=static_cast<std::uint8_t>(*rc);
+        }
+        if(strategy_prop) {
+            auto s=string(*strategy_prop);
+            auto parsed=s ? rules::parse_dns_rule_strategy(*s) : std::nullopt;
+            if(!parsed)return error("invalid DNS rule strategy");
+            rule.strategy=*parsed;
         }
 #ifdef NEXUS_DNS_RESPONSE
         if(race) {
@@ -134,8 +154,10 @@ namespace config {
         auto rrclass=property(child,"response-record-class");
         auto rrdata=property(child,"response-record-data-hex");
         auto ttl_min=property(child,"response-record-ttl-min"),ttl_max=property(child,"response-record-ttl-max");
+        auto cname_d=property(child,"response-cname-domain"),cname_s=property(child,"response-cname-domain-suffix"),
+             cname_k=property(child,"response-cname-domain-keyword"),cname_r=property(child,"response-cname-domain-regex");
 #ifdef NEXUS_DNS_RESPONSE
-        if (rcode || response_ad || rrtype || section || response_ip || response_private || response_any || rrname || rrclass || rrdata || ttl_min || ttl_max) {
+        if (rcode || response_ad || rrtype || section || response_ip || response_private || response_any || rrname || rrclass || rrdata || ttl_min || ttl_max || cname_d || cname_s || cname_k || cname_r) {
             if (!rule.match_response) return error("DNS response fields require match-response");
             rule.response.emplace();
             if (response_ad) {
@@ -184,28 +206,51 @@ namespace config {
                 else if (*where=="additional") rule.response->section=policy::ResponseSection::additional;
                 else return error("invalid DNS response section");
             }
+            for (auto [prop,kind,sfx] : {
+                std::tuple{cname_d,policy::DnsPattern::name,false},
+                std::tuple{cname_s,policy::DnsPattern::name,true},
+                std::tuple{cname_k,policy::DnsPattern::keyword,false},
+                std::tuple{cname_r,policy::DnsPattern::regex,false}}) {
+                if (!prop) continue;
+                auto val=string(*prop);
+                if (!val || val->empty()) return error("invalid DNS response CNAME condition");
+                rule.response->cname.push_back({*val,kind,sfx,false,{}});
+            }
         }
 #endif
 #ifndef NEXUS_DNS_RESPONSE
-        if (response_match || evaluate_tag || rcode || response_ad || rrtype || section || response_ip || response_private || response_any || rrname || rrclass || rrdata || ttl_min || ttl_max) return error("DNS response rules are unavailable in this build");
+        if (response_match || evaluate_tag || rcode || response_ad || rrtype || section || response_ip || response_private || response_any || rrname || rrclass || rrdata || ttl_min || ttl_max || cname_d || cname_s || cname_k || cname_r) return error("DNS response rules are unavailable in this build");
 #endif
         auto inverted=property(child,"invert");
         if (inverted) {
             if (inverted->tag || !std::holds_alternative<bool>(inverted->data)) return error("DNS invert requires a boolean");
             rule.invert=std::get<bool>(inverted->data);
         }
-        for (auto field:{"network","source-ip-cidr","source-ip-is-private","source-port","source-port-range","source-interface","inbound","auth-user"}) {
+        for (auto field:{"network","source-ip-cidr","source-ip-is-private","source-ip-is-cgnat","source-ip-accept-any",
+            "source-port","source-port-range","source-interface","inbound","auth-user",
+            "network-type","network-is-expensive","network-is-constrained","wifi-ssid","wifi-bssid",
+            "default-interface-address","source-uid","source-gid","source-user",
+            "process-name","process-path","process-path-regex","package-name","route-mode","client"}) {
             auto value=property(child,field);
             if (!value) continue;
             std::string text;
-            if (std::string_view(field)=="source-port") {
+            std::string_view key=field;
+            if (key=="source-port") {
                 auto port=integer(*value);
                 if (!port || !*port || *port>65535) return error("invalid DNS source-port");
                 text=std::to_string(*port);
-            } else if (std::string_view(field)=="source-ip-is-private") {
+            } else if (key=="source-uid" || key=="source-gid") {
+                auto id=integer(*value);
+                if (!id || *id>0xffffffffu) return error("invalid DNS source UID/GID");
+                text=std::to_string(*id);
+            } else if (key=="source-ip-is-private" || key=="source-ip-is-cgnat" || key=="source-ip-accept-any") {
                 if (value->tag || !std::holds_alternative<bool>(value->data) || !std::get<bool>(value->data))
-                    return error("DNS source-ip-is-private requires true");
+                    return error("DNS source IP flag requires true");
                 text="true";
+            } else if (key=="network-is-expensive" || key=="network-is-constrained") {
+                if (value->tag || !std::holds_alternative<bool>(value->data))
+                    return error("DNS network flag requires a boolean");
+                text=std::get<bool>(value->data) ? "true" : "false";
             } else {
                 auto name=string(*value);
                 if (!name) return error("invalid DNS context condition");
@@ -234,7 +279,7 @@ namespace config {
             if (cache->tag || !std::holds_alternative<bool>(cache->data)) return error("DNS disable-cache requires a boolean");
             rule.disable_cache=std::get<bool>(cache->data);
         }
-        auto fields=domains+bool(type)+bool(query_class)+bool(action)+bool(server_field)+bool(cache)+bool(inverted)+bool(response_match)+bool(evaluate_tag)+bool(race)+bool(speculative)+bool(timeout)+bool(rewrite_ttl)+bool(reject_method)+bool(query_dnssec)+bool(query_cd)+bool(query_ad)+bool(query_subnet)+bool(client_subnet)+bool(remove_client_subnet)+bool(rcode)+bool(response_ad)+bool(rrtype)+bool(section)+bool(response_ip)+bool(response_private)+bool(response_any)+bool(rrname)+bool(rrclass)+bool(rrdata)+bool(ttl_min)+bool(ttl_max)+bool(predefined_rcode)+bool(set_field)+bool(ip_source_field)+rule.context.size();
+        auto fields=domains+bool(type)+bool(query_class)+bool(action)+bool(server_field)+bool(cache)+bool(inverted)+bool(response_match)+bool(evaluate_tag)+bool(race)+bool(speculative)+bool(timeout)+bool(rewrite_ttl)+bool(reject_method)+bool(reject_rcode)+bool(strategy_prop)+bool(query_dnssec)+bool(query_cd)+bool(query_ad)+bool(query_subnet)+bool(client_subnet)+bool(remove_client_subnet)+bool(rcode)+bool(response_ad)+bool(rrtype)+bool(section)+bool(response_ip)+bool(response_private)+bool(response_any)+bool(rrname)+bool(rrclass)+bool(rrdata)+bool(ttl_min)+bool(ttl_max)+bool(cname_d)+bool(cname_s)+bool(cname_k)+bool(cname_r)+bool(predefined_rcode)+bool(set_field)+bool(ip_source_field)+rule.context.size();
         if (child.tag || !child.arguments.empty() || child.properties.size()!=fields ||
             (!domains && !type && !query_class && !action && !query_dnssec && !query_cd && !query_ad && !query_subnet && rule.context.empty() && !set) || pending.size()>=256 ||
             (reject_method && rule.action!=policy::DnsAction::reject) ||

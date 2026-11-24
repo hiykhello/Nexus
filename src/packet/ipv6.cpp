@@ -34,15 +34,17 @@ namespace packet {
             return length;
         }
         auto checksum(std::span<std::uint8_t const> p, std::size_t udp_offset) noexcept -> std::uint16_t {
-            std::uint32_t sum = 17 + static_cast<std::uint32_t>(p.size() - udp_offset);
+            std::uint64_t sum = 17 + static_cast<std::uint64_t>(p.size() - udp_offset);
             auto add = [&sum](std::span<std::uint8_t const> bytes) {
                 std::size_t i = 0;
-                while (i + 1 < bytes.size()) {
-                    sum += (std::uint32_t{bytes[i]} << 8) | bytes[i + 1];
-                    sum = (sum & 0xffff) + (sum >> 16);
-                    i += 2;
+                for (; i + 8 <= bytes.size(); i += 8) {
+                    sum += ((std::uint64_t{bytes[i]} << 8) | bytes[i + 1]) +
+                           ((std::uint64_t{bytes[i + 2]} << 8) | bytes[i + 3]) +
+                           ((std::uint64_t{bytes[i + 4]} << 8) | bytes[i + 5]) +
+                           ((std::uint64_t{bytes[i + 6]} << 8) | bytes[i + 7]);
                 }
-                if (i < bytes.size()) sum += std::uint32_t{bytes[i]} << 8;
+                for (; i + 1 < bytes.size(); i += 2) sum += (std::uint64_t{bytes[i]} << 8) | bytes[i + 1];
+                if (i < bytes.size()) sum += std::uint64_t{bytes[i]} << 8;
             };
             add(p.subspan(8, 32));
             add(p.subspan(udp_offset));

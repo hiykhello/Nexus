@@ -2,7 +2,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 import std;
-import proxy;
+import relay;
 using namespace std::chrono_literals;
 bool skip_stop=false, destroyed=false, valid=false;
 extern "C" bool nexus_test_skip_server_stop() { return skip_stop; }
@@ -12,9 +12,9 @@ extern "C" void nexus_test_handshake_borrowed_state(bool result) { destroyed=tru
 int main() {
     int fd=-1;
     {
-        proxy::Server server;
-        constexpr auto rules="schema-version 1\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"127.0.0.0/8\"\n";
-        if (!server.set_block_rules(rules,proxy::RuleFormat::kdl) || !server.set_socks5_credentials("user","password")) return 1;
+        relay::Server server;
+        constexpr auto rules="schema-version 2\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"127.0.0.0/8\"\n";
+        if (!server.set_block_rules(rules,relay::RuleFormat::kdl) || !server.set_socks5_credentials("user","password")) return 1;
         auto port=server.start(0); if (!port) return 2;
         fd=socket(AF_INET,SOCK_STREAM,0); if (fd<0) return 3;
         sockaddr_in address{}; address.sin_family=AF_INET; address.sin_addr.s_addr=htonl(INADDR_LOOPBACK); address.sin_port=htons(*port);

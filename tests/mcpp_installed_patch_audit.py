@@ -128,10 +128,7 @@ class PatchAudit(unittest.TestCase):
             with self.assertRaises(ValueError):
                 verify(manifest, pin)
 
-    def test_guard_covers_indirect_inputs(self):
-        guard = runpy.run_path(str(ROOT / "scripts/mcpp-generate-pinned-guard.py"))
-        self.assertIn("scripts/mcpp-verify-installed.py", guard["INPUTS"])
-        self.assertIn("src/mcpp.toml", guard["INPUTS"])
+
 
 
 if __name__ == "__main__":

@@ -1,13 +1,13 @@
-module proxy;
+module relay;
 import std;
 import proxy.v4;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import dns.local_config;
 import xudp;
 import xudp.client_sessions;
 import xudp.client_io;
-namespace proxy {
+namespace relay {
     namespace {
         struct Stream {
             pro::proxy<TunnelFacade>& tunnel;
@@ -15,13 +15,13 @@ namespace proxy {
             auto read(std::span<std::uint8_t> bytes) { return tunnel->read(bytes); }
             auto cancel() noexcept -> void { tunnel->cancel(); }
         };
-        auto run(Session& session,nex::corosio::io_context& context,TunnelFactory const& outer,unsigned inner,unsigned target,
-                 TunnelLayerFactory const& layer_factory,unsigned mode,int& result) -> nex::capy::task<> {
+        auto run(Session& session,corosio::io_context& context,TunnelFactory const& outer,unsigned inner,unsigned target,
+                 TunnelLayerFactory const& layer_factory,unsigned mode,int& result) -> capy::task<> {
             auto deadline=Clock::now()+std::chrono::seconds(8);
             auto begin=Clock::now();
-            std::array steps{TunnelChainStep{&layer_factory,nex::corosio::endpoint(nex::corosio::ipv4_address::loopback(),inner)}};
+            std::array steps{TunnelChainStep{&layer_factory,corosio::endpoint(corosio::ipv4_address::loopback(),inner)}};
             auto connected=co_await connect_tunnel_chain(session,context,outer,steps,
-                nex::corosio::endpoint(nex::corosio::ipv4_address::loopback(),target),mode==3 ? TunnelChainMode::xudp : TunnelChainMode::tcp,
+                corosio::endpoint(corosio::ipv4_address::loopback(),target),mode==3 ? TunnelChainMode::xudp : TunnelChainMode::tcp,
                 mode==1 ? begin+std::chrono::milliseconds(250) : deadline);
             if (mode==1 || mode==2) {
                 auto elapsed=Clock::now()-begin;
@@ -63,13 +63,13 @@ namespace proxy {
     }
 }
 extern "C" int nexus_test_chain_vless(unsigned outer,unsigned inner,unsigned target,char const* uuid,char const* ca,bool vision,bool uring,unsigned mode) {
-    using namespace proxy;
+    using namespace relay;
     std::array<std::uint8_t,16> key{}; std::iota(key.begin(),key.end(),std::uint8_t{0});
     auto factory=make_shadowsocks_factory("127.0.0.1",outer,key,{},false,10000); if (!factory) return 1;
     auto layer_factory=make_vless_layer_factory(uuid,"cover.example",ca,TlsKeyExchange::x25519,{},vision,10000); if (!layer_factory) return 1;
-    LocalDnsState dns; auto context=nex::corosio::make_io_context(uring); Session session(context); session.local_dns=&dns;
+    LocalDnsState dns; auto context=corosio::make_io_context(uring); Session session(context); session.local_dns=&dns;
     int result=9; bool stopped=false;
-    nex::capy::run_async(context.get_executor(),[] {},[&](std::exception_ptr) noexcept { stopped=true; })(run(session,context,*factory,inner,target,*layer_factory,mode,result));
+    capy::run_async(context.get_executor(),[] {},[&](std::exception_ptr) noexcept { stopped=true; })(run(session,context,*factory,inner,target,*layer_factory,mode,result));
     if (mode==2) { (void)context.run_for(std::chrono::milliseconds(300)); session.close(); context.restart(); }
     (void)context.run_for(std::chrono::seconds(10));
     if (!context.stopped()) { session.close(); context.restart(); (void)context.run_for(std::chrono::seconds(1)); return 10; }

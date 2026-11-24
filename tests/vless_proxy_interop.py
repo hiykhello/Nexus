@@ -14,13 +14,13 @@ def vless_proxy(directory, upstream_port, rule_action=None):
     config = directory / "nexus-vless.kdl"
     routing = 'default-outbound "edge";'
     if rule_action:
-        (directory / "route-rules.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
-        (directory / "unmatched-rules.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="192.0.2.0/24"\n')
+        (directory / "route-rules.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
+        (directory / "unmatched-rules.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="192.0.2.0/24"\n')
         default = "direct" if rule_action == "edge" else "edge"
         routing = (f'rule-set "unmatched" path="unmatched-rules.kdl" format="kdl"; '
                    f'rule-set "selected" path="route-rules.kdl" format="kdl"; '
-                   f'rule kind="rule-set" value="unmatched" outbound="{default}"; '
-                   f'rule kind="rule-set" value="selected" outbound="{rule_action}"; default-outbound "{default}";')
+                   f'rules {{ - kind="rule-set" value="unmatched" outbound="{default}"; '
+                   f'- kind="rule-set" value="selected" outbound="{rule_action}"; }}; default-outbound "{default}";')
     config.write_text(f'''schema-version 1
 role "client"
 workers {PROXY_WORKERS}

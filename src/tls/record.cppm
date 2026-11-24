@@ -1,5 +1,6 @@
 export module tls.record;
 export import crypto;
+import crypto.aead_context;
 import std;
 
 export namespace tls {
@@ -7,6 +8,7 @@ export namespace tls {
     enum class ContentType : std::uint8_t { alert = 21, handshake = 22, application_data = 23 };
     enum class RecordDirection { send, receive };
     struct PlaintextRecord { ContentType type; crypto::Bytes content; };
+    struct OpenedRecord { ContentType type; std::size_t size; };
     struct KtlsKeyMaterial {
         crypto::Aead algorithm = crypto::Aead::aes_128_gcm;
         crypto::Bytes key;
@@ -23,17 +25,20 @@ export namespace tls {
     class RecordLayer {
         crypto::Aead algorithm_;
         crypto::Bytes key_;
+        std::unique_ptr<crypto::AeadContext> aead_;
         std::array<std::uint8_t,12> iv_{};
         std::uint64_t sequence_ = 0;
         std::uint64_t send_limit_;
         RecordDirection direction_;
         bool active_ = true;
         bool legacy_ = false;
-        RecordLayer(crypto::Aead algorithm, crypto::Bytes key, std::array<std::uint8_t,12> iv, RecordDirection direction, std::uint64_t send_limit);
+        RecordLayer(crypto::Aead algorithm, crypto::Bytes key, std::unique_ptr<crypto::AeadContext> aead, std::array<std::uint8_t,12> iv, RecordDirection direction, std::uint64_t send_limit);
         auto nonce() const -> std::array<std::uint8_t,12>;
         auto advance() noexcept -> void;
         auto seal_tls12(ContentType,std::span<std::uint8_t const>) -> std::expected<crypto::Bytes,RecordError>;
         auto open_tls12(std::span<std::uint8_t const>) -> std::expected<PlaintextRecord,RecordError>;
+        auto seal_tls12_into(ContentType,std::span<std::uint8_t const>,std::span<std::uint8_t>) -> std::expected<std::size_t,RecordError>;
+        auto open_tls12_into(std::span<std::uint8_t const>,std::span<std::uint8_t>) -> std::expected<OpenedRecord,RecordError>;
     public:
         ~RecordLayer();
         RecordLayer(RecordLayer const&) = delete;
@@ -58,8 +63,12 @@ export namespace tls {
         [[nodiscard]] auto send_remaining() const noexcept -> std::uint64_t { return active_ && direction_==RecordDirection::send ? send_limit_-sequence_ : 0; }
         [[nodiscard]] auto seal(ContentType type, std::span<std::uint8_t const> content, std::size_t padding = 0)
             -> std::expected<crypto::Bytes,RecordError>;
+        [[nodiscard]] auto seal_into(ContentType type, std::span<std::uint8_t const> content, std::span<std::uint8_t> out)
+            -> std::expected<std::size_t,RecordError>;
         // Expects exactly one complete TLSCiphertext. Any malformed or unauthentic record terminates this state.
         [[nodiscard]] auto open(std::span<std::uint8_t const> record) -> std::expected<PlaintextRecord,RecordError>;
+        [[nodiscard]] auto open_into(std::span<std::uint8_t const> record, std::span<std::uint8_t> out)
+            -> std::expected<OpenedRecord,RecordError>;
         // Atomically extracts TLS 1.3 key/IV/sequence for kernel kTLS handoff and
         // deactivates + cleanses this user-space layer so nonces can never be reused.
         [[nodiscard]] auto export_ktls_material() -> std::optional<KtlsKeyMaterial>;

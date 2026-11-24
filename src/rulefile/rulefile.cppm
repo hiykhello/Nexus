@@ -2,6 +2,33 @@ export module rulefile;
 import std;
 
 export namespace rulefile {
+    inline constexpr std::size_t max_file_bytes = 33554432;
+
+    // Read-only memory-mapped regular file; unmaps on destruction.
+    class MappedFile {
+        void* data_ = nullptr;
+        std::size_t size_ = 0;
+        std::uintptr_t handle_ = 0;
+        MappedFile(void* data, std::size_t size, std::uintptr_t handle = 0) noexcept;
+        friend auto map_regular_file(std::string_view path) -> std::expected<MappedFile, std::string>;
+    public:
+        MappedFile() = default;
+        ~MappedFile();
+        MappedFile(MappedFile const&) = delete;
+        auto operator=(MappedFile const&) -> MappedFile& = delete;
+        MappedFile(MappedFile&&) noexcept;
+        auto operator=(MappedFile&&) noexcept -> MappedFile&;
+        [[nodiscard]] auto bytes() const noexcept -> std::span<std::uint8_t const> {
+            return {static_cast<std::uint8_t const*>(data_), size_};
+        }
+        [[nodiscard]] auto view() const noexcept -> std::string_view {
+            return {static_cast<char const*>(data_), size_};
+        }
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
+        [[nodiscard]] auto empty() const noexcept -> bool { return size_ == 0; }
+    };
+    [[nodiscard]] auto map_regular_file(std::string_view path) -> std::expected<MappedFile, std::string>;
+
     // Binary private file storage; erases the whole allocation on destruction.
     class PrivateFile {
         std::unique_ptr<char[]> data_;

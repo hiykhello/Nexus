@@ -113,20 +113,26 @@ namespace shadowtls {
         auto prefix = record.subspan(tls_header_size, tag_off - tls_header_size);
         auto observed = record.subspan(tag_off, hmac_tag_size);
         auto suffix = record.subspan(tag_off + hmac_tag_size);
+        std::optional<std::size_t> matched;
         for (std::size_t i = 0; i < passwords.size(); ++i) {
             auto mac = hmac_sha1_chunked(passwords[i], {prefix, zeros, suffix});
-            if (mac && crypto::constant_time_equal(observed, std::span(*mac).first(hmac_tag_size))) return i;
+            if (mac && crypto::constant_time_equal(observed, std::span(*mac).first(hmac_tag_size)) && !matched) matched = i;
         }
-        return {};
+        return matched;
     }
 
     auto extract_server_random(
         std::span<std::uint8_t const> record) noexcept -> std::optional<std::array<std::uint8_t, tls_random_size>> {
+        static constexpr std::array<std::uint8_t, tls_random_size> kHrrSentinel{
+            0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
+            0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
+        };
         if (record.size() < sh_rec_random_off + tls_random_size ||
             record[0] != tls_record_handshake ||
             record[tls_header_size] != tls_handshake_server_hello) return {};
         std::array<std::uint8_t, tls_random_size> out{};
         std::copy_n(record.begin() + sh_rec_random_off, tls_random_size, out.begin());
+        if (out == kHrrSentinel) return {};
         return out;
     }
 
@@ -191,6 +197,7 @@ namespace shadowtls {
         std::span<std::uint8_t const, tls_random_size> server_random) -> std::expected<ServerHandshakeMasker, crypto::Error> {
         auto hmac = seed_hmac(password, server_random); if (!hmac) return std::unexpected(hmac.error());
         auto key = derive_mask_key(password, server_random); if (!key) return std::unexpected(key.error());
+        struct KeyWipe { std::array<std::uint8_t, 32>& k; ~KeyWipe() { crypto::cleanse(k); } } wipe{*key};
         return ServerHandshakeMasker(std::move(*hmac), *key);
     }
 
@@ -224,6 +231,7 @@ namespace shadowtls {
         std::span<std::uint8_t const, tls_random_size> server_random) -> std::expected<ClientHandshakeUnmasker, crypto::Error> {
         auto hmac = seed_hmac(password, server_random); if (!hmac) return std::unexpected(hmac.error());
         auto key = derive_mask_key(password, server_random); if (!key) return std::unexpected(key.error());
+        struct KeyWipe { std::array<std::uint8_t, 32>& k; ~KeyWipe() { crypto::cleanse(k); } } wipe{*key};
         return ClientHandshakeUnmasker(std::move(*hmac), *key);
     }
 

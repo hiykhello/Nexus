@@ -6,12 +6,11 @@ import dns.response_race_walk;
 import dns.race_admission;
 import dns.policy;
 import dns.corosio_resolver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 extern "C" int fcntl(int,int,...);
 extern "C" int getsockopt(int,int,int,void*,unsigned int*);
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 namespace {
     thread_local int fail_after=-1;

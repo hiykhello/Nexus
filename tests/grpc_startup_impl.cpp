@@ -1,12 +1,12 @@
-module proxy;
+module relay;
 import std;
 import proxy.v4;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace startupcapy=nex::capy;
-namespace startupio=nex::corosio;
+import capy;
+import corosio;
+namespace startupcapy = ::capy;
+namespace startupio = ::corosio;
 namespace {
-    using namespace proxy;
+    using namespace relay;
     using namespace std::chrono_literals;
     struct StartupResult {
         Session* session=nullptr;
@@ -47,7 +47,7 @@ extern "C" int nexus_test_grpc_runtime(char const*,char const*,unsigned,unsigned
     void (*)(bool,std::size_t) noexcept,bool (*)() noexcept);
 extern "C" int nexus_test_grpc_startup(char const* uuid,char const* ca,unsigned remote,unsigned target,
     unsigned backend,unsigned mode,unsigned stalled,void (*inject)(bool,std::size_t) noexcept,bool (*fired)() noexcept){
-    using namespace proxy;
+    using namespace relay;
     if(!remote||!target||!stalled||backend>1||mode>3)return 64;
     auto previous=startupcapy::get_current_frame_allocator();startupcapy::set_current_frame_allocator(std::pmr::new_delete_resource());
     struct Restore{std::pmr::memory_resource* value;~Restore(){startupcapy::set_current_frame_allocator(value);}} restore{previous};

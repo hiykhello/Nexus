@@ -1,4 +1,4 @@
-export module nexus.test.http3_link;
+export module test.http3_link;
 import std;
 import crypto;
 import quic.connection;
@@ -6,16 +6,16 @@ import quic.http3;
 import quic.http3_headers;
 import hysteria2.auth;
 import http.header;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.nghttp3;
-import nexus.test.quic_tls_link;
+import ngtcp2;
+import nghttp3;
+import test.quic_tls_link;
 
-export namespace nexus::test::http3_link {
-    namespace n=nex::ngtcp2;
-    namespace h3=nex::nghttp3;
+export namespace test::http3_link {
+    namespace n = ::ngtcp2;
+    namespace h3 = ::nghttp3;
     namespace q=quic;
     namespace h=hysteria2;
-    namespace support=nexus::test::quic_tls;
+    namespace support=test::quic_tls;
     using View=std::span<std::uint8_t const>;
     template<std::size_t Count> auto fields(std::array<http::HeaderField,Count> const& source) -> std::array<h3::nghttp3_nv,Count> {
         std::array<h3::nghttp3_nv,Count> out{};

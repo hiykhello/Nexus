@@ -12,6 +12,8 @@ import cli.rule_fetch_h3;
 import cli.rule_fetch_response;
 import config;
 import dns.https_query;
+import dns.tls_query;
+import dns.quic_query;
 import dns.local_config;
 import dns.message;
 import dns.message_program;
@@ -19,30 +21,29 @@ import dns.response_addresses;
 import http.connect;
 import http.corosio_https;
 import http.header;
+import http.rule_fetch_connection;
+import http.named_http1_pool;
 import net.connection_pool;
 import platform.network_selection;
 import platform.network_state;
 import platform.socket_options;
-import proxy;
-import proxy.session_quota;
+import relay;
+import relay.session_quota;
 import tls.connector;
 import tls.byte_stream;
 import tls.fingerprint;
 import tls.profiles;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace http {
 namespace {
-    namespace io=nex::corosio;
-    namespace capy=nex::capy;
+    namespace io = ::corosio;
+    namespace capy = ::capy;
     namespace fetch=cli::rule_fetch;
     using Protocol=config::HttpProtocol;
     using Clock=std::chrono::steady_clock;
-
-#include "rule_fetch_connection.hpp"
-
-#include "named_http1_pool.hpp"
+    using namespace http::detail;
 
     template<class Connector>
     struct PhysicalStream {
@@ -53,10 +54,10 @@ namespace {
     };
 
     struct ProxyTcpStream {
-        proxy::Session session;
+        relay::Session session;
         tls::detail::LayerConnector<ProxyStream,tls::ShapedClientProfile> connector;
 
-        ProxyTcpStream(io::io_context& context,proxy::Server& server,proxy::SessionQuota::Lease lease,
+        ProxyTcpStream(io::io_context& context,relay::Server& server,relay::SessionQuota::Lease lease,
             tls::ShapedClientProfile const& profile,std::size_t outbound,Resolver resolver)
             :session(context),connector(profile,server,session,outbound,std::move(resolver)) {
             server.attach_session(session,std::move(lease));
@@ -119,7 +120,7 @@ struct NamedHttpClient::Impl {
     tls::ShapedClientProfile tls;
     std::vector<cli::DnsProtection> dns_transports;
     std::optional<io::io_context> direct;
-    std::unique_ptr<proxy::Server> server;
+    std::unique_ptr<relay::Server> server;
     std::size_t active=0;
     fetch::Http2Pool h2;
     fetch::Http3Pool h3;
@@ -136,7 +137,9 @@ struct NamedHttpClient::Impl {
         h1.stop();
         if (server) server->stop();
         else if (direct) {
+            dns::stop_tls_queries(*direct);
             dns::stop_https_queries(*direct);
+            dns::stop_quic_queries(*direct);
             direct->restart();
             (void)direct->run();
         }
@@ -195,7 +198,7 @@ auto NamedHttpClient::create(config::Config config,std::string_view name,std::st
     auto impl=std::make_unique<Impl>(std::move(config),index,std::move(destination),std::string(authority),
         std::move(*shaped),std::move(*transports));
     if (impl->settings().outbound_index!=0 || cli::uses_proxy_dns(impl->config.dns)) {
-        auto created=proxy::Server::create();
+        auto created=relay::Server::create();
         if (!created) return std::unexpected("cannot initialize HTTP outbound: "+created.error().message());
         impl->server=std::move(*created);
         auto outbounds=cli::configure_outbounds(*impl->server,impl->config,impl->dns_transports);
@@ -279,7 +282,7 @@ auto NamedHttpClient::get(NamedHttpRequest request,HttpBodyConsumer body,std::op
             auto quota=owner.server->acquire_session();
             if (!quota) return {};
             auto route=std::make_unique<fetch::Http3Tunnel>();
-            route->session=std::make_unique<proxy::Session>(context);
+            route->session=std::make_unique<relay::Session>(context);
             owner.server->attach_session(*route->session,std::move(*quota));
             route->session->relaying=true;
             route->tunnel=owner.server->open_packet_tunnel(*route->session,selected.outbound_index);

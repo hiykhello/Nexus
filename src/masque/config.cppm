@@ -6,7 +6,7 @@ import http.header;
 import net.udp_socket;
 import platform.ip_address;
 import dns.address_sequence;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 
 export namespace masque {
     struct DestinationRule {
@@ -67,10 +67,10 @@ export namespace masque {
         auto changed() noexcept -> void {wake_(wake_context_);}
         auto cid_callbacks(void* context,bool (*add)(void*,std::span<std::uint8_t const>) noexcept,
             void (*remove)(void*,std::span<std::uint8_t const>) noexcept) noexcept -> void {cid_context_=context;cid_add_=add;cid_remove_=remove;}
-        auto add_connection_id(nex::ngtcp2::ngtcp2_cid const& cid,nex::ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
-            return cid_add_ && cid_add_(cid_context_,{cid.data,cid.datalen}) ? 0 : nex::ngtcp2::err_callback_failure;
+        auto add_connection_id(ngtcp2::ngtcp2_cid const& cid,ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
+            return cid_add_ && cid_add_(cid_context_,{cid.data,cid.datalen}) ? 0 : ngtcp2::err_callback_failure;
         }
-        auto remove_connection_id(nex::ngtcp2::ngtcp2_cid const& cid) noexcept -> int {
+        auto remove_connection_id(ngtcp2::ngtcp2_cid const& cid) noexcept -> int {
             if(cid_remove_)cid_remove_(cid_context_,{cid.data,cid.datalen});return 0;
         }
     };

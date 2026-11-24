@@ -1,13 +1,13 @@
 export module anytls.writer;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import anytls;
 import anytls.auth;
 import anytls.settings;
 import anytls.padding;
 import crypto;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace anytls {
     using IoClock=std::chrono::steady_clock;
@@ -19,14 +19,24 @@ export namespace anytls {
     class Writer {
         Stream& stream_;
         PaddingScheme& scheme_;
-        nex::capy::async_mutex mutex_;
+        capy::async_mutex mutex_;
         std::vector<std::uint8_t> settings_;
+        std::vector<std::uint8_t> scratch_;
         std::uint32_t packet_=0;
         bool client_,failed_=false,authenticated_=false,pending_settings_=false,padding_=true;
         struct Guard { Writer& owner; bool done=false; ~Guard() { if (!done) owner.cancel(); } };
         auto expired(Deadline deadline) const noexcept -> bool { return deadline && IoClock::now()>=*deadline; }
         auto fail() noexcept -> bool { cancel(); return false; }
-        auto write(std::span<std::uint8_t const> bytes,Deadline deadline) -> nex::capy::task<bool> {
+        auto encode_into(Command command,std::uint32_t id,std::span<std::uint8_t const> payload) -> bool {
+            if (payload.size()>max_payload) return false;
+            scratch_.clear();
+            auto const total=header_size+payload.size();
+            if (scratch_.capacity()<total) scratch_.reserve(total);
+            append_header(scratch_,{command,id,static_cast<std::uint16_t>(payload.size())});
+            scratch_.insert(scratch_.end(),payload.begin(),payload.end());
+            return true;
+        }
+        auto write(std::span<std::uint8_t const> bytes,Deadline deadline) -> capy::task<bool> {
             if (failed_ || expired(deadline)) co_return fail();
             if (!client_ || !padding_) {
                 if (!co_await stream_.send(bytes,deadline) || expired(deadline)) co_return fail();
@@ -40,7 +50,7 @@ export namespace anytls {
             }
             // A padding update can arrive while a send is suspended. Retain
             // this write's bounded plan, never a span into mutable settings.
-            nexus::inplace_vector<PaddingStep,256> plan;
+            containers::inplace_vector<PaddingStep,256> plan;
             for (auto step:scheme_.steps(packet_)) plan.push_back(step);
             for (auto step:plan) {
                 if (step.check) { if (bytes.empty()) co_return true; continue; }
@@ -63,11 +73,12 @@ export namespace anytls {
         Writer(Stream& stream,PaddingScheme& scheme,bool client) : stream_(stream),scheme_(scheme),client_(client) {}
         Writer(Writer const&)=delete;
         auto operator=(Writer const&) -> Writer& = delete;
+        [[nodiscard]] auto failed() const noexcept -> bool { return failed_; }
         auto cancel() noexcept -> void { failed_=true; stream_.cancel(); }
-        auto start(std::span<std::uint8_t const> key,std::string_view metadata,IoClock::time_point deadline) -> nex::capy::task<bool> {
-            Guard operation_guard{*this};
+        auto start(std::span<std::uint8_t const> key,std::string_view metadata,IoClock::time_point deadline) -> capy::task<bool> {
             if (!client_ || authenticated_ || failed_) co_return false;
-            auto [error,guard]=co_await nex::corosio::timeout(mutex_.scoped_lock(),deadline);
+            Guard operation_guard{*this};
+            auto [error,guard]=co_await corosio::timeout(mutex_.scoped_lock(),deadline);
             if (error || failed_ || IoClock::now()>=deadline) co_return fail();
             std::size_t padding=0;
             auto steps=scheme_.steps(0);
@@ -87,17 +98,17 @@ export namespace anytls {
             if (!frame || !co_await stream_.send(*request,deadline) || failed_ || IoClock::now()>=deadline) co_return fail();
             settings_=std::move(*frame); pending_settings_=true; authenticated_=true; operation_guard.done=true; co_return true;
         }
-        auto open(std::uint32_t id,Address const& address,IoClock::time_point deadline) -> nex::capy::task<bool> {
-            Guard operation_guard{*this};
-            if (!client_ || !authenticated_ || !id || !net::valid_proxy_address(address)) co_return false;
-            auto [error,guard]=co_await nex::corosio::timeout(mutex_.scoped_lock(),deadline);
-            if (error || failed_ || IoClock::now()>=deadline) co_return fail();
+        auto open(std::uint32_t id,Address const& address,IoClock::time_point deadline) -> capy::task<bool> {
+            if (!client_ || !authenticated_ || failed_ || !id || !net::valid_proxy_address(address) || IoClock::now()>=deadline)
+                co_return false;
             std::vector<std::uint8_t> destination;
-            if (!net::append_proxy_address(destination,address,net::AddressWire::socks)) co_return fail();
+            if (!net::append_proxy_address(destination,address,net::AddressWire::socks)) co_return false;
             auto address_frame=encode_frame(Command::push,id,destination);
-            if (!address_frame) co_return fail();
             auto syn=encode_frame(Command::syn,id);
-            if (!syn) co_return fail();
+            if (!address_frame || !syn) co_return false;
+            auto [error,guard]=co_await corosio::timeout(mutex_.scoped_lock(),deadline);
+            if (error || failed_ || IoClock::now()>=deadline) co_return false;
+            Guard operation_guard{*this};
             if (pending_settings_) {
                 settings_.insert(settings_.end(),syn->begin(),syn->end());
                 settings_.insert(settings_.end(),address_frame->begin(),address_frame->end());
@@ -106,27 +117,26 @@ export namespace anytls {
             } else if (!co_await write(*syn,deadline) || !co_await write(*address_frame,deadline)) co_return false;
             operation_guard.done=true; co_return true;
         }
-        auto frame(Command command,std::uint32_t id,std::span<std::uint8_t const> payload={},Deadline deadline={}) -> nex::capy::task<bool> {
-            Guard operation_guard{*this};
-            if (client_ && (!authenticated_ || pending_settings_)) co_return false;
+        auto frame(Command command,std::uint32_t id,std::span<std::uint8_t const> payload={},Deadline deadline={}) -> capy::task<bool> {
+            if (failed_ || expired(deadline) || payload.size()>max_payload || (client_ && (!authenticated_ || pending_settings_)))
+                co_return false;
             auto operation=mutex_.scoped_lock();
-            auto [error,guard]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
-            if (error || failed_ || expired(deadline)) co_return fail();
-            auto encoded=encode_frame(command,id,payload);
-            if (!encoded) co_return false;
-            auto sent=co_await write(*encoded,deadline);
+            auto [error,guard]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            if (error || failed_ || expired(deadline) || (client_ && (!authenticated_ || pending_settings_))) co_return false;
+            if (!encode_into(command,id,payload)) co_return false;
+            Guard operation_guard{*this};
+            auto sent=co_await write(scratch_,deadline);
             operation_guard.done=sent; co_return sent;
         }
-        auto data(std::uint32_t id,std::span<std::uint8_t const> input,Deadline deadline={}) -> nex::capy::task<bool> {
-            Guard operation_guard{*this};
-            if (!id || (client_ && (!authenticated_ || pending_settings_))) co_return false;
+        auto data(std::uint32_t id,std::span<std::uint8_t const> input,Deadline deadline={}) -> capy::task<bool> {
+            if (failed_ || expired(deadline) || !id || (client_ && (!authenticated_ || pending_settings_))) co_return false;
             auto operation=mutex_.scoped_lock();
-            auto [error,guard]=deadline ? co_await nex::corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
-            if (error || failed_ || expired(deadline)) co_return fail();
+            auto [error,guard]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) : co_await std::move(operation);
+            if (error || failed_ || expired(deadline) || (client_ && (!authenticated_ || pending_settings_))) co_return false;
+            Guard operation_guard{*this};
             while (!input.empty()) {
                 auto amount=std::min(input.size(),max_payload);
-                auto encoded=encode_frame(Command::push,id,input.first(amount));
-                if (!encoded || !co_await write(*encoded,deadline)) co_return false;
+                if (!encode_into(Command::push,id,input.first(amount)) || !co_await write(scratch_,deadline)) co_return false;
                 input=input.subspan(amount);
             }
             operation_guard.done=true; co_return true;

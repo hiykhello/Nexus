@@ -1,7 +1,7 @@
 import std;
-import nexus.thirdparty.corosio;
+import corosio;
 
-namespace io = nex::corosio;
+namespace io = ::corosio;
 
 auto main() -> int {
     auto [v4_error, v4] = io::make_endpoint("127.0.0.1:8080");

@@ -1,6 +1,6 @@
 import std;
-import nexus.thirdparty.boringssl;
-namespace b=nex::boringssl;
+import boringssl;
+namespace b = ::boringssl;
 auto read(char const* path) -> std::vector<std::uint8_t> {std::ifstream input(path,std::ios::binary);return {std::istreambuf_iterator<char>(input),{}};}
 int main(int argc,char** argv) {
     if(argc!=2)return 1;

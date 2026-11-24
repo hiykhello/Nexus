@@ -8,8 +8,8 @@ import dns.response_match;
 import hysteria2.transport_options;
 import masque.client_session;
 import platform.socket_options;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 import tls.profiles;
 
 namespace dns {
@@ -63,7 +63,7 @@ namespace dns {
                  client(io,tls) {}
         };
 
-        using Physical=Carrier<nex::corosio::udp_socket>;
+        using Physical=Carrier<corosio::udp_socket>;
         using Routed=Carrier<RoutedSocket>;
 
         enum class Handshake { ready, try_interface, failed };

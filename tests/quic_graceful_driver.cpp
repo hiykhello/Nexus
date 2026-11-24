@@ -1,11 +1,11 @@
 import std;
 import quic.datagram_port;
 import quic.cid_registry;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 import net.datagram_driver;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace q=quic;namespace capy=nex::capy;namespace io=nex::corosio;
+import capy;
+import corosio;
+namespace q=quic;namespace io = ::corosio;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 struct Socket {
  io::io_context& ctx;capy::async_event read,write;bool closed=false,held=false,fail=false;unsigned sends=0;
@@ -30,8 +30,8 @@ struct Factory {
  auto application_drained(q::SessionHandle,Session const&)const noexcept->bool{return true;}
  auto failed(q::SessionHandle,int)noexcept->void{had_failure=true;}
  auto destroy(q::SessionHandle,Session&)noexcept->void{destroyed=true;}
- auto admit(nex::ngtcp2::ngtcp2_pkt_hd const&,io::endpoint const&,Clock::time_point)noexcept->bool{return false;}
- auto create(q::SessionHandle,q::CidRegistry<1,8>&,std::span<std::uint8_t const>,nex::ngtcp2::ngtcp2_pkt_hd const&,io::endpoint const&,Clock::time_point)noexcept->std::expected<Session*,int>{return nullptr;}
+ auto admit(ngtcp2::ngtcp2_pkt_hd const&,io::endpoint const&,Clock::time_point)noexcept->bool{return false;}
+ auto create(q::SessionHandle,q::CidRegistry<1,8>&,std::span<std::uint8_t const>,ngtcp2::ngtcp2_pkt_hd const&,io::endpoint const&,Clock::time_point)noexcept->std::expected<Session*,int>{return nullptr;}
 };
 using Port=q::DatagramPort<Factory,1,8,8,true>;
 struct Trial {io::io_context ctx;Socket socket{ctx};Factory factory;Session session;Port port{factory};net::DatagramDriver<Port,Socket> driver{socket,port};q::SessionHandle owner;bool ok=true,done=false;unsigned mode;

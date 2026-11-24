@@ -5,10 +5,18 @@
 #include <unistd.h>
 
 import std;
-import nexus.compat;
+import containers.inplace_vector;
+import functional;
+import utility;
 import platform.ip_address;
 import platform.os_fs;
 import platform.process_owner;
+
+static_assert(sizeof(functional::function_ref<void()>) == 2 * sizeof(void*));
+static_assert(std::is_trivially_copyable_v<functional::function_ref<int(int)>>);
+static_assert(std::is_trivially_destructible_v<functional::function_ref<int(int)>>);
+static_assert(std::default_initializable<containers::inplace_vector<int, 4>>);
+static_assert(std::default_initializable<utility::atomic_shared_ptr<int>>);
 
 namespace {
     struct Tracked {
@@ -28,7 +36,7 @@ namespace {
 
 int main() {
     {
-        nexus::inplace_vector<Tracked, 4> vec;
+        containers::inplace_vector<Tracked, 4> vec;
         assert(vec.empty() && vec.max_size() == 4 && vec.capacity() == 4);
         assert(vec.try_emplace_back("a") != nullptr);
         assert(vec.try_emplace_back("b") != nullptr);
@@ -39,7 +47,7 @@ int main() {
 
         auto copy = vec;
         assert(copy == vec && Tracked::live == 8);
-        nexus::erase_if(copy, [](Tracked const& t) { return t.label == "b" || t.label == "c"; });
+        containers::erase_if(copy, [](Tracked const& t) { return t.label == "b" || t.label == "c"; });
         assert(copy.size() == 2 && copy[0].label == "a" && copy[1].label == "d");
         copy.resize(3);
         assert(copy.size() == 3 && copy[2].label == "default");
@@ -50,10 +58,100 @@ int main() {
 
     {
         int factor = 3;
-        nexus::function_ref<int(int)> mul = [&](int x) { return x * factor; };
+        functional::function_ref<int(int)> mul = [&](int x) { return x * factor; };
         assert(mul(7) == 21);
-        nexus::function_ref<int(int, int) noexcept> add = &sum_via_ref;
+        functional::function_ref<int(int) const> cmul = [&](int x) { return x * factor; };
+        assert(cmul(5) == 15);
+        int accum = 10;
+        functional::function_ref<int(int)> mut = [&](int x) mutable { accum += x; return accum; };
+        assert(mut(4) == 14 && accum == 14);
+        functional::function_ref<int(int, int) noexcept> add = &sum_via_ref;
         assert(add(19, 23) == 42);
+    }
+
+    {
+        functional::move_only_function<int(int)> empty_mv;
+        assert(!empty_mv && empty_mv == nullptr);
+
+        auto up = std::make_unique<int>(10);
+        functional::move_only_function<int(int) const> sbo_mv = [p = std::move(up)](int x) { return *p + x; };
+        assert(static_cast<bool>(sbo_mv) && sbo_mv(5) == 15);
+        auto moved_sbo = std::move(sbo_mv);
+        assert(!sbo_mv && moved_sbo(7) == 17);
+
+        struct BigMove {
+            std::array<std::uint64_t, 8> pad{};
+            std::unique_ptr<int> ptr;
+            auto operator()(int x) const noexcept -> int { return *ptr + x; }
+        };
+        functional::move_only_function<int(int) const noexcept> big_mv = BigMove{{}, std::make_unique<int>(30)};
+        assert(big_mv(12) == 42);
+        big_mv.reset();
+        assert(big_mv == nullptr);
+
+        functional::copyable_function<int(int)> empty_cp = nullptr;
+        assert(!empty_cp);
+        int (*null_fn)(int) = nullptr;
+        functional::copyable_function<int(int)> null_target_cp = null_fn;
+        assert(!null_target_cp);
+
+        functional::copyable_function<int(int) const> sbo_cp = [base = 100](int x) { return base + x; };
+        auto sbo_cp2 = sbo_cp;
+        assert(sbo_cp(1) == 101 && sbo_cp2(2) == 102);
+
+        struct BigCopy {
+            std::array<std::uint64_t, 8> pad{};
+            int acc = 0;
+            auto operator()(int delta) -> int { acc += delta; return acc; }
+        };
+        functional::copyable_function<int(int)> big_cp = BigCopy{{}, 50};
+        auto big_cp2 = big_cp;
+        assert(big_cp(5) == 55);
+        assert(big_cp2(10) == 60);
+        assert(big_cp(1) == 56);
+    }
+
+    {
+        utility::atomic_shared_ptr<int> ptr(std::make_shared<int>(42));
+        auto loaded = ptr.load();
+        assert(loaded && *loaded == 42);
+        auto prev = ptr.exchange(std::make_shared<int>(99));
+        assert(prev && *prev == 42);
+        assert(*ptr.load() == 99);
+
+        auto expected = std::make_shared<int>(10);
+        auto desired = std::make_shared<int>(77);
+        assert(!ptr.compare_exchange_strong(expected, desired));
+        assert(expected && *expected == 99);
+        assert(ptr.compare_exchange_strong(expected, desired));
+        assert(*ptr.load() == 77);
+        ptr.store(nullptr);
+        assert(!ptr.load());
+    }
+
+    {
+        int calls = 0;
+        {
+            utility::scope_exit guard([&]() { ++calls; });
+            auto moved = std::move(guard);
+            (void)moved;
+        }
+        assert(calls == 1);
+        {
+            utility::scope_exit dismissed([&]() { ++calls; });
+            dismissed.release();
+        }
+        assert(calls == 1);
+    }
+
+    {
+        std::array<std::uint8_t, 32> secret{};
+        secret.fill(0xA5);
+        utility::secure_zero(std::span(secret));
+        assert(std::ranges::all_of(secret, [](std::uint8_t b) { return b == 0; }));
+        std::string pw = "super-secret-password";
+        utility::secure_zero(pw.data(), pw.size());
+        assert(std::ranges::all_of(pw, [](char c) { return c == '\0'; }));
     }
 
     assert(platform::normalize_windows_pipe_name("nexus-ctrl") == "\\\\.\\pipe\\nexus-ctrl");

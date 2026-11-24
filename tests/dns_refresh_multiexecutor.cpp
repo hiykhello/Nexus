@@ -15,11 +15,11 @@ import dns.corosio_query;
 import dns.cache;
 import dns.corosio_cached;
 #ifdef DNS_REFRESH_GROUP_EXPERIMENT
-#include "../src/dns-shared/group_cache_binding.hpp"
+import dns.shared_cache;
 #endif
 
 namespace d=dns;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
 

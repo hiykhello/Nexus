@@ -6,28 +6,22 @@ module control_api;
 import std;
 import config;
 import control_api.http_socket;
+import control_api.ssmapi_bridge;
 import control_api.types;
+import control_api.http_format;
+import control_api.dashboard_static;
 import crypto;
 import metrics;
 import platform.ip_address;
 import rulefile;
 
 namespace control_api {
-#include "http_format.hpp"
-#include "dashboard_static.hpp"
+    using namespace http_detail;
     namespace {
         constexpr std::size_t kMaxPeers = 16;
         constexpr std::size_t kMaxRequestBytes = 8192;
         constexpr std::size_t kMaxWriteBytes = kMaxDashboardFileBytes + 8192;
         constexpr auto kPeerTimeout = std::chrono::seconds(2);
-
-        auto secure_wipe(std::span<std::uint8_t> bytes) noexcept -> void {
-            for (auto& b : bytes) {
-                volatile auto* p = &b;
-                *p = 0;
-            }
-            std::atomic_signal_fence(std::memory_order_seq_cst);
-        }
     }
 
     struct HttpControlServer::Impl {
@@ -43,17 +37,21 @@ namespace control_api {
             std::vector<std::string> stream_filters;
             Clock::time_point deadline{};
             Clock::time_point next_stream_poll{};
+            Clock::time_point last_sse_write{};
         };
 
         Fd listen_fd;
         bool metrics_enabled = false;
+        bool ssmapi_enabled = false;
+        std::string ssmapi_prefix{"/ssmapi"};
+        SsmApiBridge ssmapi;
         std::filesystem::path dashboard_root;
         std::vector<std::uint8_t> token;
         std::vector<Peer> peers;
         std::uint64_t authorized = 0, unauthorized = 0, expired = 0;
 
         ~Impl() {
-            if (!token.empty()) secure_wipe(token);
+            if (!token.empty()) crypto::cleanse(token);
         }
 
         auto check_auth(std::string_view headers, std::string_view query) -> bool {
@@ -65,23 +63,7 @@ namespace control_api {
                 ++authorized;
                 return true;
             }
-            std::string_view provided;
-            auto rest = headers;
-            while (!rest.empty()) {
-                auto eol = rest.find("\r\n");
-                auto line = rest.substr(0, eol);
-                if (auto colon = line.find(':'); colon != std::string_view::npos) {
-                    auto name = line.substr(0, colon);
-                    if (name.size() == 13 && std::ranges::equal(name, std::string_view("authorization"),
-                        [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; })) {
-                        auto val = line.substr(colon + 1);
-                        while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.remove_prefix(1);
-                        if (val.starts_with("Bearer ")) provided = val.substr(7);
-                    }
-                }
-                if (eol == std::string_view::npos) break;
-                rest.remove_prefix(eol + 2);
-            }
+            auto provided = extract_bearer_token(headers);
             auto bytes = std::span(reinterpret_cast<std::uint8_t const*>(provided.data()), provided.size());
             bool ok = !provided.empty() && crypto::constant_time_equal(token, bytes);
             if (ok) ++authorized;
@@ -89,7 +71,7 @@ namespace control_api {
             return ok;
         }
 
-        auto handle_request(std::string_view raw, SnapshotBuilder snapshot, CommandHandler command) -> std::string {
+        auto handle_request(std::string_view raw, ScopedSnapshotBuilder snapshot, CommandHandler command) -> std::string {
             auto header_end = raw.find("\r\n\r\n");
             if (header_end == std::string_view::npos) return json_error(400, "Bad Request", "bad-request", "malformed HTTP");
             auto head = raw.substr(0, header_end);
@@ -109,32 +91,51 @@ namespace control_api {
                 query = target.substr(q + 1);
             }
             auto headers = first_eol == std::string_view::npos ? std::string_view{} : head.substr(first_eol + 2);
-            bool is_api = path == "/v1" || path.starts_with("/v1/") || path == "/metrics";
+            bool is_ssmapi = ssmapi_enabled && (path == ssmapi_prefix || path.starts_with(ssmapi_prefix + "/"));
+            bool is_api = is_ssmapi || path == "/v1" || path.starts_with("/v1/") || path == "/metrics";
             if (!is_api && !dashboard_root.empty())
                 return serve_dashboard_request(dashboard_root, method, path);
             if (!check_auth(headers, query))
                 return json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token");
 
-            auto snap = snapshot();
-            snap.authorized_requests += authorized;
-            snap.unauthorized_requests += unauthorized;
-            snap.expired_requests += expired;
+            if (is_ssmapi) {
+                if (auto res = ssmapi.dispatch(ssmapi_prefix, method, target, body)) {
+                    auto const* reason = res->first == 201 ? "Created" : res->first == 204 ? "No Content" :
+                        res->first == 400 ? "Bad Request" : res->first == 404 ? "Not Found" : "OK";
+                    return build_http_response(res->first, reason, "application/json",
+                        res->second.empty() ? std::string{} : res->second + "\n");
+                }
+            }
+
+            auto fetch = [&](SnapshotFields f, std::optional<std::uint64_t> cid = std::nullopt) -> ControlSnapshot {
+                auto snap = snapshot(f, cid);
+                snap.authorized_requests += authorized;
+                snap.unauthorized_requests += unauthorized;
+                snap.expired_requests += expired;
+                return snap;
+            };
 
             if (method == "GET" && path == "/v1/health")
                 return build_http_response(200, "OK", "application/json",
-                    std::format("{{\"status\":\"ok\",\"instance\":{}}}\n", json_escape(snap.instance)));
+                    std::format("{{\"status\":\"ok\",\"instance\":{}}}\n", json_escape(fetch(SnapshotFields::meta).instance)));
             if (method == "GET" && path == "/v1/status")
-                return build_http_response(200, "OK", "application/json", render_status_json(snap));
+                return build_http_response(200, "OK", "application/json",
+                    render_status_json(fetch(SnapshotFields::meta | SnapshotFields::listeners)));
+            if (method == "GET" && path == "/v1/mode")
+                return build_http_response(200, "OK", "application/json", render_mode_json(fetch(SnapshotFields::meta)));
             if (method == "GET" && path == "/v1/outbounds")
-                return build_http_response(200, "OK", "application/json", render_outbounds_json(snap));
+                return build_http_response(200, "OK", "application/json",
+                    render_outbounds_json(fetch(SnapshotFields::meta | SnapshotFields::groups)));
             if (method == "GET" && path == "/v1/connections")
-                return build_http_response(200, "OK", "application/json", render_connections_json(snap));
+                return build_http_response(200, "OK", "application/json",
+                    render_connections_json(fetch(SnapshotFields::connections)));
             if (method == "GET" && path.starts_with("/v1/connections/")) {
                 auto id_str = path.substr(16);
                 std::uint64_t cid = 0;
                 auto [end, ec] = std::from_chars(id_str.data(), id_str.data() + id_str.size(), cid);
                 if (id_str.empty() || id_str.contains('/') || ec != std::errc{} || end != id_str.data() + id_str.size() || !cid)
                     return json_error(400, "Bad Request", "invalid-id", "expected numeric connection id");
+                auto snap = fetch(SnapshotFields::connections, cid);
                 auto it = std::ranges::find(snap.connections, cid, &ConnectionMetric::id);
                 if (it == snap.connections.end())
                     return json_error(404, "Not Found", "unknown-connection", "connection not found");
@@ -150,7 +151,8 @@ namespace control_api {
                 return build_http_response(200, "OK", "application/json", render_logs_json(*res));
             }
             if (method == "GET" && path == "/v1/diagnostics")
-                return build_http_response(200, "OK", "application/json", render_diagnostics_json(snap));
+                return build_http_response(200, "OK", "application/json",
+                    render_diagnostics_json(fetch(SnapshotFields::meta | SnapshotFields::listeners | SnapshotFields::connections)));
             if (method == "GET" && path == "/v1/events") {
                 std::string_view cursor = "0";
                 if (query.starts_with("cursor=")) {
@@ -168,7 +170,27 @@ namespace control_api {
                     return json_error(404, "Not Found", "metrics-disabled", "OpenMetrics endpoint is disabled");
                 return build_http_response(200, "OK",
                     "application/openmetrics-text; version=1.0.0; charset=utf-8",
-                    metrics::render_openmetrics(snap));
+                    metrics::render_openmetrics(fetch(SnapshotFields::meta | SnapshotFields::listeners | SnapshotFields::groups)));
+            }
+            if (method == "PUT" && path == "/v1/mode") {
+                auto mode = extract_json_string(body, "mode");
+                auto outbound = extract_json_string(body, "outbound");
+                if (!mode || mode->empty())
+                    return json_error(400, "Bad Request", "invalid-body", "expected {\"mode\":\"...\"}");
+                std::expected<std::string, std::string> res;
+                if (outbound && !outbound->empty()) {
+                    std::array<std::string_view, 3> args{"mode", *mode, *outbound};
+                    res = command(args);
+                } else {
+                    std::array<std::string_view, 2> args{"mode", *mode};
+                    res = command(args);
+                }
+                if (!res) {
+                    int code = res.error() == "invalid-mode" ? 400 : (res.error() == "unknown-outbound" ? 404 : 409);
+                    return json_error(code, code == 400 ? "Bad Request" : (code == 404 ? "Not Found" : "Conflict"),
+                        res.error(), res.error());
+                }
+                return build_http_response(200, "OK", "application/json", render_mode_json(fetch(SnapshotFields::meta)));
             }
             if (method == "PUT" && path.starts_with("/v1/groups/")) {
                 auto tag = url_decode_once(path.substr(11));
@@ -205,10 +227,8 @@ namespace control_api {
             }
             if (method == "POST" && path == "/v1/state/clear-cache") {
                 auto target = extract_json_string(body, "target").value_or("all");
-                if (target != "all" && target != "dns" && target != "rulesets") {
-                    return json_error(400, "Bad Request", "invalid-target",
-                        "expected target in {\"all\",\"dns\",\"rulesets\"}");
-                }
+                if (target != "all" && target != "dns" && target != "rulesets")
+                    return json_error(400, "Bad Request", "invalid-target", "expected target in {\"all\",\"dns\",\"rulesets\"}");
                 std::array<std::string_view, 2> args{"clear-cache", target};
                 auto res = command(args);
                 if (!res) return json_error(409, "Conflict", res.error(), res.error());
@@ -230,7 +250,7 @@ namespace control_api {
                 return build_http_response(200, "OK", "application/json",
                     std::format("{{\"accepted\":true,\"detail\":{}}}\n", json_escape(*res)));
             }
-            if (method == "POST" && path.starts_with("/v1/groups/") && path.ends_with("/probe")) {
+            if (method == "POST" && path.size() > 17 && path.starts_with("/v1/groups/") && path.ends_with("/probe")) {
                 auto raw_tag = path.substr(11, path.size() - 17);
                 auto tag = url_decode_once(raw_tag);
                 if (!tag || tag->empty())
@@ -316,7 +336,36 @@ namespace control_api {
         return {};
     }
 
+    auto HttpControlServer::configure_ssmapi(this HttpControlServer& self, bool enabled,
+        std::string prefix) -> std::expected<void, std::string> {
+        if (!enabled) {
+            if (self.impl_) self.impl_->ssmapi_enabled = false;
+            return {};
+        }
+        if (!ssmapi_available()) return std::unexpected("ssmapi feature is not enabled in this build");
+        if (!self.impl_) self.impl_ = std::make_unique<Impl>();
+        self.impl_->ssmapi_enabled = true;
+        self.impl_->ssmapi_prefix = prefix.empty() ? std::string("/ssmapi") : std::move(prefix);
+        return {};
+    }
+
+    auto HttpControlServer::handle_direct_http_for_test(this HttpControlServer& self, std::string_view raw,
+        SnapshotBuilder snapshot, CommandHandler command) -> std::string {
+        return self.handle_direct_http_for_test(raw,
+            [&](SnapshotFields, std::optional<std::uint64_t>) { return snapshot(); }, command);
+    }
+
+    auto HttpControlServer::handle_direct_http_for_test(this HttpControlServer& self, std::string_view raw,
+        ScopedSnapshotBuilder snapshot, CommandHandler command) -> std::string {
+        if (!self.impl_) self.impl_ = std::make_unique<Impl>();
+        return self.impl_->handle_request(raw, snapshot, command);
+    }
+
     auto HttpControlServer::poll(this HttpControlServer& self, SnapshotBuilder snapshot, CommandHandler command) -> void {
+        self.poll([&](SnapshotFields, std::optional<std::uint64_t>) { return snapshot(); }, command);
+    }
+
+    auto HttpControlServer::poll(this HttpControlServer& self, ScopedSnapshotBuilder snapshot, CommandHandler command) -> void {
         if (!self.impl_ || !self.impl_->listen_fd.valid()) return;
         auto& impl = *self.impl_;
         auto now = Impl::Clock::now();
@@ -324,7 +373,7 @@ namespace control_api {
         while (impl.peers.size() < kMaxPeers) {
             auto c = accept_nonblocking(impl.listen_fd);
             if (!c.valid()) break;
-            impl.peers.push_back(Impl::Peer{std::move(c), {}, {}, 0, false, false, "0", {}, now + kPeerTimeout, {}});
+            impl.peers.push_back(Impl::Peer{std::move(c), {}, {}, 0, false, false, "0", {}, now + kPeerTimeout, {}, {}});
         }
 
         for (auto it = impl.peers.begin(); it != impl.peers.end();) {
@@ -346,21 +395,11 @@ namespace control_api {
                         it->in.append(buf, n);
                         auto hdr_end = it->in.find("\r\n\r\n");
                         if (hdr_end != std::string::npos) {
-                            std::size_t content_len = 0;
                             auto head = std::string_view(it->in).substr(0, hdr_end);
-                            auto cl_pos = head.find("Content-Length:");
-                            if (cl_pos == std::string_view::npos) cl_pos = head.find("content-length:");
-                            if (cl_pos != std::string_view::npos) {
-                                auto v = head.substr(cl_pos + 15);
-                                while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
-                                auto eol = v.find("\r\n");
-                                v = v.substr(0, eol);
-                                (void)std::from_chars(v.data(), v.data() + v.size(), content_len);
-                            }
-                            if (content_len > 4096) {
-                                it->out = json_error(413, "Payload Too Large", "body-too-large", "body exceeds 4 KiB");
-                                it->writing = true;
-                            } else if (it->in.size() >= hdr_end + 4 + content_len) {
+                            auto content_len = parse_content_length(head);
+                            if (!content_len) { it->out = json_error(400, "Bad Request", "invalid-content-length", "malformed Content-Length"); it->writing = true; }
+                            else if (*content_len > 4096) { it->out = json_error(413, "Payload Too Large", "body-too-large", "body exceeds 4 KiB"); it->writing = true; }
+                            else if (it->in.size() >= hdr_end + 4 + *content_len) {
                                 auto req = std::string_view(it->in);
                                 auto f_eol = req.find("\r\n");
                                 auto rl = req.substr(0, f_eol);
@@ -368,7 +407,7 @@ namespace control_api {
                                     auto sp1 = rl.find(' '), sp2 = rl.find(' ', sp1 + 1);
                                     auto tgt = sp2 == std::string_view::npos ? std::string_view{} : rl.substr(sp1 + 1, sp2 - sp1 - 1);
                                     auto q = tgt.contains('?') ? tgt.substr(tgt.find('?') + 1) : std::string_view{};
-                                    auto hdrs = f_eol == std::string_view::npos ? std::string_view{} : req.substr(f_eol + 2, hdr_end - f_eol - 2);
+                                    auto hdrs = (f_eol != std::string_view::npos && hdr_end > f_eol + 2) ? req.substr(f_eol + 2, hdr_end - f_eol - 2) : std::string_view{};
                                     if (!impl.check_auth(hdrs, q)) {
                                         it->out = json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token");
                                     } else {
@@ -378,6 +417,7 @@ namespace control_api {
                                                 it->stream_filters.push_back(std::string(k) + "=" + *v);
                                         it->out = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
                                         it->streaming = true;
+                                        it->last_sse_write = now;
                                         it->deadline = now + std::chrono::seconds(30);
                                         it->next_stream_poll = now;
                                     }
@@ -403,6 +443,8 @@ namespace control_api {
                 for (auto const& s : owned) args.emplace_back(s);
                 if (auto res = command(args); res) {
                     it->out = format_sse_logs(*res, it->stream_cursor);
+                    if (it->out.empty() && now - it->last_sse_write >= std::chrono::seconds(15))
+                        it->out = ": keepalive\n\n";
                     it->out_offset = 0;
                 }
             }
@@ -411,13 +453,43 @@ namespace control_api {
                     std::size_t n = 0;
                     auto status = send_nonblocking(it->fd,
                         std::span<char const>(it->out.data() + it->out_offset, it->out.size() - it->out_offset), n);
-                    if (status == SocketIoStatus::ok) it->out_offset += n;
-                    else { if (status == SocketIoStatus::closed) done = true; break; }
+                    if (status == SocketIoStatus::ok) {
+                        it->out_offset += n;
+                        if (it->streaming && n > 0) {
+                            it->last_sse_write = now;
+                            it->deadline = now + std::chrono::seconds(30);
+                        }
+                    } else { if (status == SocketIoStatus::closed) done = true; break; }
                 }
                 if (!it->streaming && it->out_offset >= it->out.size()) done = true;
             }
             if (done) it = impl.peers.erase(it); else ++it;
         }
+    }
+
+    auto HttpControlServer::listen_native_fd(this HttpControlServer const& self) noexcept -> int {
+#if defined(_WIN32)
+        (void)self; return -1;
+#else
+        return (self.impl_ && self.impl_->listen_fd.valid()) ? static_cast<int>(self.impl_->listen_fd.native()) : -1;
+#endif
+    }
+    auto HttpControlServer::next_poll_delay(this HttpControlServer const& self) noexcept
+        -> std::optional<std::chrono::milliseconds> {
+        if (!self.impl_ || !self.impl_->listen_fd.valid() || self.impl_->peers.empty()) return std::nullopt;
+        auto now = Impl::Clock::now();
+        std::chrono::milliseconds min_wait(100);
+        for (auto const& p : self.impl_->peers) {
+            if (!p.streaming || p.out_offset < p.out.size()) return std::chrono::milliseconds(5);
+            auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(p.next_stream_poll - now);
+            min_wait = std::min(min_wait, std::max(rem, std::chrono::milliseconds(1)));
+        }
+        return min_wait;
+    }
+
+    auto HttpControlServer::attach_ssmapi_users(this HttpControlServer& self,
+        std::shared_ptr<relay::ShadowsocksUserDirectory> users) noexcept -> void {
+        if (self.impl_) self.impl_->ssmapi.attach_users(std::move(users));
     }
 
     auto HttpControlServer::stop(this HttpControlServer& self) noexcept -> void { self.impl_.reset(); }

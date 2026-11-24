@@ -1,7 +1,7 @@
 import std;
 import dns.cache;
 import dns.message;
-import proxy;
+import relay;
 
 namespace {
     auto require(bool condition,std::string_view message) -> void {
@@ -31,7 +31,7 @@ auto main() -> int {
     try {
         constexpr std::size_t groups=17,readers=258,per_group=256,budget=32*1024*1024;
         auto initial=memory("VmRSS:");
-        proxy::SharedDnsGeneration generation(groups,readers);
+        relay::SharedDnsGeneration generation(groups,readers);
         auto& cache=generation.cache();
         require(cache.supports_binding(groups-1,readers-1,1),"last production reader unavailable");
         std::vector<decltype(cache.reader(0))> claimed;

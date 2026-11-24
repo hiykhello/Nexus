@@ -10,6 +10,7 @@ export namespace tls {
         ok,
         unavailable,    // Kernel ULP/cipher unsupported before key handoff; safe user-space fallback.
         invalid_state,  // Preconditions failed (unread bytes, TLS 1.2, already installed, etc.).
+        would_block,    // Non-blocking control record send hit EAGAIN/EWOULDBLOCK; retry when writable.
         fatal_error     // Failure after handoff or during active kTLS I/O; caller must close socket.
     };
 
@@ -109,24 +110,34 @@ export namespace tls {
         bool tx_closed_ = false;
         bool rx_closed_ = false;
         bool failed_ = false;
+        bool key_update_supported_ = false;
+        std::uint64_t tx_records_ = 0;
         ApplicationRole role_ = ApplicationRole::client;
         crypto::Bytes handshake_pending_;
+        std::array<std::uint8_t, 64> rx_buffered_{};
+        std::size_t rx_buf_off_ = 0;
+        std::size_t rx_buf_len_ = 0;
 
         [[nodiscard]] auto install_raw(int fd, KtlsDirection dir, KtlsKeyMaterial const& material) noexcept -> KtlsStatus;
         [[nodiscard]] auto rotate_direction(int fd, KtlsDirection dir) -> KtlsStatus;
         [[nodiscard]] auto handle_handshake(int fd, std::span<std::uint8_t const> payload) -> KtlsRecvResult;
     public:
+        static constexpr std::uint64_t kMaxTxRecords = 1ull << 24;
+
         explicit KtlsSession(ApplicationRole role = ApplicationRole::client, KtlsOps ops = default_ktls_ops()) noexcept
-            : ops_(ops), role_(role) {}
+            : ops_(ops), key_update_supported_(ops_.kernel_override.value_or(probe_ktls_kernel_support()).key_update), role_(role) {}
         KtlsSession(KtlsSession const&) = delete;
         auto operator=(KtlsSession const&) -> KtlsSession& = delete;
         KtlsSession(KtlsSession&&) noexcept = default;
         auto operator=(KtlsSession&&) noexcept -> KtlsSession& = default;
-        ~KtlsSession() { crypto::cleanse(handshake_pending_); }
+        ~KtlsSession() { crypto::cleanse(handshake_pending_); crypto::cleanse(rx_buffered_); }
 
         [[nodiscard]] auto ulp_attached() const noexcept -> bool { return ulp_attached_; }
         [[nodiscard]] auto tx_active() const noexcept -> bool { return tx_active_ && !failed_; }
         [[nodiscard]] auto rx_active() const noexcept -> bool { return rx_active_ && !failed_; }
+        [[nodiscard]] auto tx_closed() const noexcept -> bool { return tx_closed_; }
+        [[nodiscard]] auto key_update_supported() const noexcept -> bool { return key_update_supported_; }
+        [[nodiscard]] auto tx_rekey_required() const noexcept -> bool { return tx_records_ >= kMaxTxRecords; }
         [[nodiscard]] auto failed() const noexcept -> bool { return failed_; }
 
         // Attaches TCP_ULP="tls" without mutating user-space TLS state.

@@ -1,4 +1,4 @@
-module nexus.test.hy2_production_resource_link;
+module test.hy2_production_resource_link;
 import std;
 import crypto;
 import hysteria2.auth;
@@ -11,13 +11,13 @@ import net.datagram_driver;
 import quic.cid_registry;
 import quic.tls_client;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.test.quic_tls_link;
-import nexus.test.hysteria2_application_link;
+import capy;
+import corosio;
+import test.quic_tls_link;
+import test.hysteria2_application_link;
 
-namespace nexus::test::hy2_production_resource {
-namespace h=hysteria2;namespace io=nex::corosio;namespace capy=nex::capy;namespace support=nexus::test::quic_tls;namespace link=nexus::test::hysteria2_application_link;
+namespace test::hy2_production_resource {
+namespace h=hysteria2;namespace io = ::corosio;namespace capy = ::capy;namespace support=test::quic_tls;namespace link=test::hysteria2_application_link;
 using Clock=std::chrono::steady_clock;using namespace std::chrono_literals;
 
 struct Hooks {

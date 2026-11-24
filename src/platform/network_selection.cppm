@@ -1,7 +1,6 @@
 export module platform.network_selection;
 import std;
-import nexus.compat;
-import platform.netlink_abi;
+import containers.inplace_vector;
 import platform.network_state;
 import platform.socket_options;
 
@@ -10,10 +9,10 @@ export namespace platform::network {
     // come from the retained snapshot of the same namespace as the dials.
     [[nodiscard]] auto select_interfaces(Snapshot const& snapshot,Policy const& policy,bool ipv6,
         std::span<std::uint8_t const> explicit_source={}) noexcept -> InterfaceCandidates {
-        namespace abi=netlink_abi;
-        auto family=ipv6 ? abi::AF_INET6 : abi::AF_INET;
+        namespace abi=platform::network::constants;
+        auto family=ipv6 ? abi::af_inet6 : abi::af_inet;
         using Candidate=std::tuple<unsigned,std::uint32_t,std::size_t,std::uint32_t>;
-        nexus::inplace_vector<Candidate,16> ranked;
+        containers::inplace_vector<Candidate,16> ranked;
         for (std::size_t i=0;i<policy.interfaces.size();++i) {
             auto const& allowed=policy.interfaces[i];
             unsigned tier=0;
@@ -26,7 +25,7 @@ export namespace platform::network {
             auto link=std::ranges::find(snapshot.links,allowed.name,&Link::name);
             if (link==snapshot.links.end() || !link->up() || !link->carrier()) continue;
             auto addressed=std::ranges::any_of(snapshot.addresses,[&](auto const& address) {
-                return address.index==link->index && address.family==family && address.scope==abi::RT_SCOPE_UNIVERSE &&
+                return address.index==link->index && address.family==family && address.scope==abi::rt_scope_universe &&
                     address.usable() && (explicit_source.empty() ||
                         std::ranges::equal(explicit_source,std::span(address.local).first(ipv6 ? 16 : 4)));
             });
@@ -34,8 +33,8 @@ export namespace platform::network {
             std::optional<std::uint32_t> metric;
             for (auto const& route:snapshot.routes) {
                 if (route.family!=family || route.index!=link->index || route.multiple_hops ||
-                    route.table!=abi::RT_TABLE_MAIN || route.type!=abi::RTN_UNICAST ||
-                    (route.flags&abi::RTNH_F_LINKDOWN) || !route.default_route()) continue;
+                    route.table!=abi::rt_table_main || route.type!=abi::rtn_unicast ||
+                    (route.flags&abi::rtnh_f_linkdown) || !route.default_route()) continue;
                 if (!metric || route.priority<*metric) metric=route.priority;
             }
             if (metric) (void)ranked.try_emplace_back(tier,*metric,i,link->index);

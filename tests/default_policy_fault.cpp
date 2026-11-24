@@ -9,14 +9,14 @@ import packet.tun_network_records;
 import packet.tun_network_view;
 import packet.tun_network;
 import packet.tun_default_policy;
-import nexus.test.lease_support;
+import test.lease_support;
 namespace {
     namespace p = ::packet;
     namespace a = ::platform::netlink_abi;
     namespace n = ::platform::netlink;
     namespace r = ::platform::routing;
     namespace d = ::packet::tun_network_detail;
-    namespace t=nexus::test::lease;
+    namespace t=test::lease;
     struct Faults : n::NoHooks {
         static inline std::string_view effect;
         static inline unsigned mutations=0,dumps=0,target=0;

@@ -3,10 +3,10 @@ import crypto;
 import quic.connection;
 import quic.resumption;
 import quic.varint;
-import nexus.thirdparty.ngtcp2;
+import ngtcp2;
 import tls.hello_config;
 import tls.handshake;
-namespace q=quic;namespace n=nex::ngtcp2;namespace t=tls;namespace c = ::crypto;
+namespace q=quic;namespace n = ::ngtcp2;namespace t=tls;namespace c = ::crypto;
 namespace fault {
  bool native=false,cpp=false,single=false,denied=false;
  std::ptrdiff_t allowance=-1;std::size_t calls=0;
@@ -243,7 +243,7 @@ auto trial(t::ServerCredential const& credential,View anchor,std::uint16_t suite
   result.classified=(client_alert==0||client_alert==80)&&(server_alert==0||server_alert==80)&&native_error!=999&&(native?result.error!=98:result.error==0||result.error==98||native_error==n::err_nomem||native_error==n::err_callback_failure);
   result.recovered=pair(credential,anchor,store,cache,29,suite,retry,2,std::nullopt)==0;
  }
- nex::boringssl::ERR_clear_error();result.clean=nl==fault::native_live&&nb==fault::native_bytes&&cl==fault::cpp_live&&cb==fault::cpp_bytes;return result;
+ boringssl::ERR_clear_error();result.clean=nl==fault::native_live&&nb==fault::native_bytes&&cl==fault::cpp_live&&cb==fault::cpp_bytes;return result;
 }
 int main(int argc,char** argv){
  if(argc!=4)return 1;auto cert=read(argv[1]),key=read(argv[2]),root=read(argv[3]);auto credential=t::ServerCredential::create(cert,key);c::cleanse(key);if(!credential)return 2;

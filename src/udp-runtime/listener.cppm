@@ -10,17 +10,23 @@ export module ss_udp.listener;
 import std;
 import containers.ring_queue;
 import platform.socket_options;
+import platform.wall_clock;
 import crypto;
 import shadowsocks.key;
 import shadowsocks.identity;
 import rules;
-import proxy;
-import proxy.principal_limits;
-import proxy.session_quota;
+import relay;
+import relay.principal_limits;
+import relay.session_quota;
 import net.udp_socket;
 import dns.policy;
 import ss_udp.ordered_route;
 import ss_udp.ordered_sniff;
+export import ss_udp.listener_state;
+export import ss_udp.listener_ingress;
+export import ss_udp.listener_traffic;
+export import ss_udp.listener_route;
+import ss_udp.listener_receive;
 export import ss_udp.resolve;
 
 #ifdef NEXUS_TEST_UDP_PENDING
@@ -39,33 +45,14 @@ extern "C" void nexus_test_udp_send_before_write();
 
 
 export namespace shadowsocks::detail {
-#include "listener_state.hpp"
-#include "listener_ingress.hpp"
-    using UdpDnsServer=UdpResponseServer;
-    using UdpDnsRule=policy::DnsRule;
-    using UdpDnsRouting=UdpResponseRouting;
-    // The sender must consume the token synchronously or transfer it to an
-    // independently bounded owner. stop is idempotent, and drained remains
-    // false until that owner's tasks have completed; finish releases its
-    // routing sessions after drain and is idempotent. Candidate views are valid
-    // only in the call; asynchronous work must own the data it needs.
-    enum class UdpTunnelReplyResult { delivered,dropped,busy,error };
-    using UdpTunnelReplySink=std::function<UdpTunnelReplyResult(UdpSessionHandle const&,UdpPeer,std::span<std::uint8_t const>)>;
-    struct UdpOrderedRouting {
-        std::shared_ptr<rules::RouteProgram const> program;
-        std::size_t fallback=0;
-        bool skip_unknown=false;
-        std::chrono::milliseconds sniff_timeout{200};
-        std::function<bool(std::size_t)> allows;
-        std::function<std::expected<void,UdpResolveError>(udp_io::io_context&,UdpDispatcher&,std::uint64_t,std::size_t,
-            std::span<UdpPeer const>,std::optional<std::string_view>,std::chrono::steady_clock::time_point,UdpTunnelReplySink)> send;
-        std::function<void()> stop;
-        std::function<bool()> drained;
-        std::function<void()> finish;
-    };
-#include "listener_traffic.hpp"
+    using UdpDnsServer = UdpResponseServer;
+    using UdpDnsRule = policy::DnsRule;
+    using UdpDnsRouting = UdpResponseRouting;
+
     template<class Lookup>
     class BasicUdpListener {
+        friend struct ListenerRouteOps;
+        friend struct ListenerReceiveOps;
         using Clock=std::chrono::steady_clock;
         using Cache=typename Lookup::Cache;
         using OwnedCache=std::conditional_t<std::same_as<Cache,dns::AddressCache>,std::optional<dns::AddressCache>,std::monostate>;
@@ -93,7 +80,7 @@ export namespace shadowsocks::detail {
 #ifdef NEXUS_DNS_RESPONSE
         bool has_response_program_=false;
 #endif
-        bool started_=false,stopped_=false,timer_active_=false,timer_waiting_=false,attached_=false;
+        bool started_=false,stopped_=false,timer_active_=false,timer_waiting_=false,attached_=false,stop_ordered_=true;
         std::size_t receive_active_=0;
         std::stop_source timer_stop_;
         std::chrono::milliseconds tick_interval_;
@@ -134,7 +121,7 @@ export namespace shadowsocks::detail {
             else throw std::invalid_argument("experimental UDP cache required");
         }
         static auto wall() -> std::optional<std::uint64_t> {
-            auto value=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            auto value=platform::calibrated_wall_seconds();
             if (value<0) return {};
             return static_cast<std::uint64_t>(value);
         }
@@ -205,8 +192,35 @@ export namespace shadowsocks::detail {
             result.tcp=dns_routing_->servers[root].tcp_only;
             return result;
         }
-#include "listener_route.hpp"
-#include "listener_receive.hpp"
+        auto advance_ordered(OrderedUdpDecision& decision, std::uint64_t token, Clock::time_point& deadline)
+            -> std::expected<UdpResolvedAction, UdpResolveError> {
+            return ListenerRouteOps::advance_ordered(*this, decision, token, deadline);
+        }
+        auto send_legacy(std::uint64_t token, std::span<UdpPeer const> candidates,
+            std::optional<std::string_view> inbound, Clock::time_point deadline)
+            -> std::expected<UdpResolvedAction, UdpResolveError> {
+            return ListenerRouteOps::send_legacy(*this, token, candidates, inbound, deadline);
+        }
+        auto start_resolution(UdpPending pending, UdpPeer source, std::optional<std::string_view> inbound,
+            Clock::time_point deadline, std::shared_ptr<OrderedUdpDecision> decision = {}) -> bool {
+            return ListenerRouteOps::start_resolution(*this, std::move(pending), source, inbound, deadline, std::move(decision));
+        }
+        auto drain_ordered() -> void { ListenerRouteOps::drain_ordered(*this); }
+        auto handle_datagram(std::size_t index, std::span<std::uint8_t const> wire, UdpPeer remote, bool allow_new,
+            std::optional<UdpRequestIdentity> identity = {}) -> bool {
+            return ListenerReceiveOps::handle_datagram(*this, index, wire, remote, allow_new, identity);
+        }
+        auto receive(std::size_t index) -> udp_capy::task<> {
+            return ListenerReceiveOps::receive(*this, index);
+        }
+        [[nodiscard]] auto identity_route(std::size_t index) const noexcept -> UdpIdentityRoute const* {
+            return ListenerReceiveOps::identity_route(*this, index);
+        }
+        auto bind_socket(udp_io::udp_socket& socket, udp_io::endpoint endpoint, bool share)
+            -> std::expected<bool, std::error_code> {
+            return ListenerReceiveOps::bind_socket(*this, socket, endpoint, share);
+        }
+        auto register_ingress() -> void { ListenerReceiveOps::register_ingress(*this); }
         // A single executor serializes timer ticks with receives and stops.
         auto drive() -> udp_capy::task<> {
             while (!stopped_) {
@@ -229,8 +243,8 @@ export namespace shadowsocks::detail {
                 if (stopped_) continue;
                 nexus_test_udp_send_before_write();
 #endif
-                if (traffic_ && !state_.dispatcher_.current(response.session)) continue;
-                auto credit=state_.dispatcher_.reserve_bytes(response.session,false,response.payload_size,Clock::now());
+                if (traffic_ && !state_.dispatcher().current(response.session)) continue;
+                auto credit=state_.dispatcher().reserve_bytes(response.session,false,response.payload_size,Clock::now());
                 if (!credit) continue;
                 auto target=endpoint(response.peer);
                 credit->submit();
@@ -238,7 +252,7 @@ export namespace shadowsocks::detail {
                     udp_capy::const_buffer(response.wire.data(),response.wire.size()),target);
                 if (!error && size==response.wire.size()) {
                     credit->complete(response.payload_size);
-                    state_.dispatcher_.delivered(response.session,false,response.payload_size);
+                    state_.dispatcher().delivered(response.session,false,response.payload_size);
                 }
             }
         }
@@ -268,7 +282,7 @@ export namespace shadowsocks::detail {
             if(stopped_)return UdpTunnelReplyResult::error;
             if(send_pending_>=16)return UdpTunnelReplyResult::busy;
             auto seconds=wall();if(!seconds)return UdpTunnelReplyResult::error;
-            auto response=state_.dispatcher_.tunnel_response(state_.key_,session,source,payload,Clock::now(),*seconds);
+            auto response=state_.dispatcher().tunnel_response(state_.key(),session,source,payload,Clock::now(),*seconds);
             if(!response)return UdpTunnelReplyResult::error;
             if(!*response)return UdpTunnelReplyResult::dropped;
             auto index=(**response).peer.ingress;
@@ -288,7 +302,7 @@ export namespace shadowsocks::detail {
                     UdpListenerIngress* ingress=nullptr,std::uint64_t generation=0)
             : context_(context),ingress_(ingress),generation_(generation),state_(state),cache_(select_cache(owned_cache_,borrowed_cache)),
               local_source_(dns::system_local_snapshots()),
-              resolver_(state.dispatcher_,context,cache_,pending,&local_source_,&local_rotation_,reader,extra),
+              resolver_(state.dispatcher(),context,cache_,pending,&local_source_,&local_rotation_,reader,extra),
               upstream_(upstream),dns_options_(dns_options),dns_routing_(std::move(dns_routing)),ordered_(std::move(ordered)),tick_interval_(tick_interval) {}
         // A borrowed cache must outlive this listener and its completions. All
         // its users must share one executor and identical DNS view assignments.
@@ -297,11 +311,12 @@ export namespace shadowsocks::detail {
         ~BasicUdpListener() {
             if (attached_) {
                 if (!stopped_ || !drained()) std::terminate();
-                if (ordered_) { try { ordered_->finish(); } catch (...) { std::terminate(); } }
+                if (ordered_ && stop_ordered_) { try { ordered_->finish(); } catch (...) { std::terminate(); } }
                 traffic_.reset();
-                state_.attached_=false;
+                state_.set_attached(false);
             }
         }
+        auto set_stop_ordered(bool value) noexcept -> void { stop_ordered_ = value; }
         BasicUdpListener(BasicUdpListener const&)=delete;
         auto operator=(BasicUdpListener const&) -> BasicUdpListener& = delete;
         [[nodiscard]] auto start(udp_io::endpoint listen) -> std::error_code {
@@ -310,12 +325,12 @@ export namespace shadowsocks::detail {
         // All sockets share a single serialized session/replay owner. The
         // latest authenticated request selects the socket used for replies.
         [[nodiscard]] auto start(std::span<udp_io::endpoint const> listens,std::span<rules::RouteMatcher const> policies={},
-            std::span<proxy::Server* const> traffic_listeners={},std::span<std::optional<UdpIdentityRoute> const> identities={})
+            std::span<relay::Server* const> traffic_listeners={},std::span<std::optional<UdpIdentityRoute> const> identities={})
             -> std::error_code {
             if (started_ || stopped_) return std::make_error_code(std::errc::operation_not_permitted);
-            if ((state_.key_.size()!=16 && state_.key_.size()!=32) || tick_interval_<=std::chrono::milliseconds::zero() ||
+            if ((state_.key().size()!=16 && state_.key().size()!=32) || tick_interval_<=std::chrono::milliseconds::zero() ||
                 listens.empty() || listens.size()>16 || (!policies.empty() && policies.size()!=listens.size())) return std::make_error_code(std::errc::invalid_argument);
-            if (state_.attached_) return std::make_error_code(std::errc::operation_not_permitted);
+            if (state_.attached()) return std::make_error_code(std::errc::operation_not_permitted);
             if (!traffic_listeners.empty() && traffic_listeners.size()!=listens.size())
                 return std::make_error_code(std::errc::invalid_argument);
             if (!identities.empty() && identities.size()!=listens.size())
@@ -325,7 +340,7 @@ export namespace shadowsocks::detail {
             if (ordered_ && ((ordered_->program && ordered_->sniff_timeout<=Clock::duration::zero()) || !ordered_->allows || !ordered_->send || !ordered_->stop || !ordered_->drained || !ordered_->finish))
                 return std::make_error_code(std::errc::invalid_argument);
             if (!validate_dns()) return std::make_error_code(std::errc::invalid_argument);
-            if (ordered_ && ordered_->program) sniff_owner_.emplace(state_.dispatcher_,ordered_->sniff_timeout);
+            if (ordered_ && ordered_->program) sniff_owner_.emplace(state_.dispatcher(),ordered_->sniff_timeout);
             std::bitset<16> receivers;
             identities_=identities;
             try {
@@ -339,8 +354,10 @@ export namespace shadowsocks::detail {
                 if (ingress_) endpoints_.assign(listens.begin(),listens.end());
                 receive_stops_.resize(sockets_.size());
                 senders_.resize(sockets_.size());
-                if (std::ranges::any_of(traffic_listeners,[](auto* listener) {return listener!=nullptr;}))
-                    traffic_.emplace(state_.dispatcher_,traffic_listeners,state_.session_limit_);
+                std::shared_ptr<relay::ShadowsocksDynamicUser> dyn_user =
+                    (!identities.empty() && identities[0]) ? identities[0]->dynamic_user : nullptr;
+                if (dyn_user || std::ranges::any_of(traffic_listeners,[](auto* listener) {return listener!=nullptr;}))
+                    traffic_.emplace(state_.dispatcher(),traffic_listeners,state_.session_limit(),std::move(dyn_user));
                 register_ingress();
             } catch (...) {
                 if (ingress_) ingress_->remove(this);
@@ -348,7 +365,7 @@ export namespace shadowsocks::detail {
                 throw;
             }
             policies_=policies;
-            state_.attached_=true; attached_=true; started_=true;
+            state_.set_attached(true); attached_=true; started_=true;
 #ifdef NEXUS_TEST_UDP_START
             nexus_test_udp_attached();
 #endif
@@ -374,11 +391,11 @@ export namespace shadowsocks::detail {
             if (!started_ || stopped_) return false;
             auto now=Clock::now(); auto seconds=wall(); if (!seconds) { stop(); return false; }
             resolver_.cancel_expired(now);
-            if (!state_.dispatcher_.expire(now,*seconds)) { stop(); return false; }
+            if (!state_.dispatcher().expire(now,*seconds)) { stop(); return false; }
             if (traffic_) traffic_->maintain(now);
             if (sniff_owner_) {sniff_owner_->tick(now);drain_ordered();now=Clock::now();}
             for (unsigned i=0;i<64 && send_pending_<16;++i) {
-                auto response=state_.dispatcher_.poll(state_.key_,now,*seconds);
+                auto response=state_.dispatcher().poll(state_.key(),now,*seconds);
                 if (!response) {
                     // A relay socket error has already closed that socket. Other
                     // sessions can continue on the next tick.
@@ -408,22 +425,22 @@ export namespace shadowsocks::detail {
             timer_stop_.request_stop();
             resolver_.stop();
             if (sniff_owner_) sniff_owner_->stop();
-            if (ordered_) { try { ordered_->stop(); } catch (...) { std::terminate(); } }
+            if (ordered_ && stop_ordered_) { try { ordered_->stop(); } catch (...) { std::terminate(); } }
             for (auto& sender:senders_) { send_pending_-=sender.slots.size(); sender.clear(); }
-            for (auto& socket:sockets_) socket->close(); if (attached_) state_.dispatcher_.close_relays();
+            for (auto& socket:sockets_) socket->close(); if (attached_) state_.dispatcher().close_relays();
         }
         [[nodiscard]] auto timer_waiting() const noexcept -> bool { return timer_waiting_; }
         [[nodiscard]] auto running() const noexcept -> bool { return started_ && !stopped_; }
-        [[nodiscard]] auto relay_sockets() const noexcept -> std::size_t { return state_.dispatcher_.sockets(); }
+        [[nodiscard]] auto relay_sockets() const noexcept -> std::size_t { return state_.dispatcher().sockets(); }
 #ifdef NEXUS_TEST_UDP_PENDING
-        [[nodiscard]] auto pending_for_test() const noexcept -> std::size_t { return state_.dispatcher_.pending(); }
+        [[nodiscard]] auto pending_for_test() const noexcept -> std::size_t { return state_.dispatcher().pending(); }
 #endif
         [[nodiscard]] auto idle() const noexcept -> bool {
-            return !state_.dispatcher_.active() && !send_pending_ && resolver_.drained() &&
+            return !state_.dispatcher().active() && !send_pending_ && resolver_.drained() &&
                 (!sniff_owner_ || sniff_owner_->empty());
         }
         [[nodiscard]] auto drained() const noexcept -> bool {
-            if (ordered_) { try { if (!ordered_->drained()) return false; } catch (...) { std::terminate(); } }
+            if (ordered_ && stop_ordered_) { try { if (!ordered_->drained()) return false; } catch (...) { std::terminate(); } }
             return !receive_active_ && !timer_active_ && !send_active_ && !send_pending_ && resolver_.drained() &&
                 (!sniff_owner_ || sniff_owner_->empty());
         }

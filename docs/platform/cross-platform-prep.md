@@ -5,7 +5,7 @@
 ## 1. 跨平台前可顺手清掉的 4 处耦合尾巴（随第 91–98 批去前缀捎带完成）
 
 1. **统一随机数入口，消除 `linux_random` 泄露**：
-   - `src/wireguard/port.cppm`、`src/anytls/auth.cppm`、`src/proxy/wireguard_outbound.cpp`、`src/tools/tun_host.cpp` 当前直接导入 `nexus.platform.linux_random`。
+   - `src/wireguard/port.cppm`、`src/anytls/auth.cppm`、`src/relay/wireguard_outbound.cpp`、`src/tools/tun_host.cpp` 当前直接导入 `nexus.platform.linux_random`。
    - 改为统一走 `crypto::random_bytes`（底层 BoringSSL `RAND_bytes` 原生跨 Linux/Windows/macOS）或抽象 `platform.random`。
 2. **拆分 `src/platform/` 为跨平台通用与 Linux 专属**：
    - 通用：`ip_address`、`network_selection`、`network_state`（接口值类型）、`socket_options`（通用结构体，按 OS 分实现单元）。
@@ -14,8 +14,8 @@
    - 仅用 `<arpa/inet.h>` 做 IP 文本/字节转换的文件（`src/http/connect.cpp`、`src/config/{dependencies,dns}.cpp`、`src/rules/{validate,matcher,srs_payload}.cpp*`、`src/masque/{target,connect_ip}.cpp*`）统一改用 `platform.ip_address`（纯标准 C++，零 OS 头文件）。
    - `src/tls/certificate_trust.cpp`、`src/dns/local_config.cpp`、`src/dns/fakeip_history_store.cpp`、`src/rulefile/posix.cpp` 统一收口到 `platform.fs` / `state` 原子文件边界。
 4. **消除协议目录反向依赖**：
-   - 梳理 `src/masque/listener.cppm` 对 `nexus.proxy` / `session_quota` 的反向依赖，改由 `proxy` 适配层注入窄回调/facade；
-   - 评估将 `src/proxy/proxy.cppm`（当前 1,046 行、129 处 `#ifdef NEXUS_ENABLE_*`）按协议注册表拆细，降低跨平台裁剪维护成本。
+   - 梳理 `src/masque/listener.cppm` 对 `relay` / `session_quota` 的反向依赖，改由 `relay` 适配层注入窄回调/facade；
+   - 评估将 `src/relay/relay.cppm`（原 `src/proxy/proxy.cppm` 1,046 行、129 处 `#ifdef NEXUS_ENABLE_*`）按协议注册表拆细，降低跨平台裁剪维护成本。
 
 ## 2. 跨平台移植路线（第 98 批后启动，Android 优先）
 

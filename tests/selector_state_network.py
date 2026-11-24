@@ -39,7 +39,7 @@ outbound "blocked" type="block"
 outbound "manual" type="selector" {{ member "direct"; member "blocked"; selected "direct"; }}
 routing {{
     rule-set "target" path="target.kdl" format="kdl"
-    rule kind="rule-set" value="target" outbound="manual"
+    rules {{ - kind="rule-set" value="target" outbound="manual"; }}
     default-outbound "direct"
 }}
 '''

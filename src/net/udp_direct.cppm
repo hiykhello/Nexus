@@ -29,6 +29,7 @@ export namespace net {
         // size bytes; dropped reports a consumed but untrusted datagram.
         [[nodiscard]] auto poll(std::span<std::uint8_t> buffer,bool* dropped=nullptr)
             -> std::expected<std::optional<UdpDirectReply>,UdpDirectError>;
+        [[nodiscard]] auto native_handles() const noexcept -> std::array<int,2>;
         auto close() noexcept -> void;
     };
 }

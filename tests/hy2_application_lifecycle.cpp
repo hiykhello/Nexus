@@ -7,18 +7,17 @@ import hysteria2.wire;
 import quic.tls_client;
 import quic.tls_server;
 import tls.server_credential;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import nexus.thirdparty.ngtcp2;
-import nexus.test.quic_tls_link;
-import nexus.test.hysteria2_application_link;
-namespace io=nex::corosio;
-namespace capy=nex::capy;
+import capy;
+import corosio;
+import ngtcp2;
+import test.quic_tls_link;
+import test.hysteria2_application_link;
+namespace io = ::corosio;
 namespace h=hysteria2;
 namespace q=quic;
 namespace t=tls;
-namespace support=nexus::test::quic_tls;
-namespace link=nexus::test::hysteria2_application_link;
+namespace support=test::quic_tls;
+namespace link=test::hysteria2_application_link;
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
 template<class Endpoint,class Condition>auto wait(Endpoint& endpoint,Condition condition) -> capy::task<bool>{
@@ -97,7 +96,7 @@ template<class Client,class Server>auto exercise(Client& client,Server& server,u
         // The authentication request uses client stream 0; this first
         // business request is stream 4. The peer aborts only its read side,
         // then sends a response after the client observes STOP_SENDING.
-        if(nex::ngtcp2::ngtcp2_conn_shutdown_stream_read(server.connection.native(),0,4,0x123))co_return false;
+        if(ngtcp2::ngtcp2_conn_shutdown_stream_read(server.connection.native(),0,4,0x123))co_return false;
         server.driver->notify();
         if(!co_await wait(client,[&]{return client.app.output_stopped(stream);}))co_return false;
         std::array<std::uint8_t,4> data{1,2,3,4};auto sent=server.app.send(remote,data);

@@ -4,14 +4,13 @@ import std;
 import dns.message;
 import dns.cache;
 import dns.corosio_cached;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-#define NEXUS_DNS_USE_MODULES
-#include "../../src/dns-shared/group_singleflight.hpp"
+import capy;
+import corosio;
+import dns.group_singleflight;
 
 namespace hp=dns_hp_experiment;
 namespace d=dns;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using Error=d::detail::ResolveError;
 using Clock=std::chrono::steady_clock;
 using namespace std::chrono_literals;

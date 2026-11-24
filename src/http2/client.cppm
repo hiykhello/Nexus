@@ -4,7 +4,7 @@ export import http2.client_types;
 import http2.client_state;
 import http2.session_core;
 import memory.budget;
-import nexus.thirdparty.nghttp2;
+import nghttp2;
 
 export namespace http2 {
     namespace detail { struct ClientTest; }
@@ -48,16 +48,16 @@ export namespace http2 {
                 if (name.empty() || name.size()>limits.header_bytes-total || value.size()>limits.header_bytes-total-name.size() ||
                     32>limits.header_bytes-total-name.size()-value.size()) return std::unexpected(ClientFailure{ClientError::headers});
                 total+=name.size()+value.size()+32;
-                if (!nex::nghttp2::nghttp2_check_header_name(reinterpret_cast<std::uint8_t const*>(name.data()),name.size()) ||
-                    !nex::nghttp2::nghttp2_check_header_value_rfc9113(reinterpret_cast<std::uint8_t const*>(value.data()),value.size()) ||
+                if (!nghttp2::nghttp2_check_header_name(reinterpret_cast<std::uint8_t const*>(name.data()),name.size()) ||
+                    !nghttp2::nghttp2_check_header_value_rfc9113(reinterpret_cast<std::uint8_t const*>(value.data()),value.size()) ||
                     std::ranges::any_of(name,[](char c) { return c>='A' && c<='Z'; })) return std::unexpected(ClientFailure{ClientError::headers});
                 if (name.front()==':') {
                     if (regular) return std::unexpected(ClientFailure{ClientError::headers});
                     auto bytes=reinterpret_cast<std::uint8_t const*>(value.data());
-                    if (name==":method" && !method && nex::nghttp2::nghttp2_check_method(bytes,value.size())) { method=true; connect=value=="CONNECT"; result.head=value=="HEAD"; }
+                    if (name==":method" && !method && nghttp2::nghttp2_check_method(bytes,value.size())) { method=true; connect=value=="CONNECT"; result.head=value=="HEAD"; }
                     else if (name==":scheme" && !scheme && (value=="http" || value=="https")) scheme=true;
-                    else if (name==":path" && !path && !value.empty() && (value.front()=='/' || value=="*") && nex::nghttp2::nghttp2_check_path(bytes,value.size())) path=true;
-                    else if (name==":authority" && !authority && !value.empty() && value.find('@')==value.npos && nex::nghttp2::nghttp2_check_authority(bytes,value.size())) authority=true;
+                    else if (name==":path" && !path && !value.empty() && (value.front()=='/' || value=="*") && nghttp2::nghttp2_check_path(bytes,value.size())) path=true;
+                    else if (name==":authority" && !authority && !value.empty() && value.find('@')==value.npos && nghttp2::nghttp2_check_authority(bytes,value.size())) authority=true;
                     else return std::unexpected(ClientFailure{ClientError::headers});
                 } else {
                     regular=true;
@@ -109,8 +109,8 @@ export namespace http2 {
         auto output(std::span<std::uint8_t> bytes) noexcept -> std::expected<std::size_t,ClientFailure> {
             auto& state=core_.policy();
             if(state.local_draining&&!state.local_goaway&&!state.active_streams&&!core_.failure()){
-                auto last=nex::nghttp2::nghttp2_session_get_last_proc_stream_id(core_.native());
-                auto rc=nex::nghttp2::nghttp2_submit_goaway(core_.native(),0,last,nex::nghttp2::NGHTTP2_NO_ERROR,nullptr,0);
+                auto last=nghttp2::nghttp2_session_get_last_proc_stream_id(core_.native());
+                auto rc=nghttp2::nghttp2_submit_goaway(core_.native(),0,last,nghttp2::NGHTTP2_NO_ERROR,nullptr,0);
                 if(rc){state.core_fail(detail::CoreError::http2,rc);stop_native(*core_.failure());return std::unexpected(*core_.failure());}
                 state.local_goaway=Goaway{last,0};
             }
@@ -125,7 +125,7 @@ export namespace http2 {
             auto& state=core_.policy();
             if (state.goaway || state.local_draining) return std::unexpected(ClientFailure{ClientError::goaway});
             if (state.last_id==std::numeric_limits<std::int32_t>::max() || body.bytes.size()>state.limits.max_body_chunk ||
-                state.active_streams>=nex::nghttp2::nghttp2_session_get_remote_settings(core_.native(),nex::nghttp2::NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS))
+                state.active_streams>=nghttp2::nghttp2_session_get_remote_settings(core_.native(),nghttp2::NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS))
                 return std::unexpected(ClientFailure{ClientError::limit});
             auto checked=request(fields); if (!checked) return std::unexpected(checked.error());
             if (checked->length && (body.bytes.size()>*checked->length || (body.end_stream && body.bytes.size()!=*checked->length)))
@@ -141,13 +141,13 @@ export namespace http2 {
             catch (...) { state.pending_charge=0; return std::unexpected(ClientFailure{ClientError::allocation}); }
             state.pending_charge=0;
             auto& stream=*state.streams[selected]; stream.head=checked->head; stream.request_length=checked->length;
-            std::array<nex::nghttp2::nghttp2_nv,100> headers{};
+            std::array<nghttp2::nghttp2_nv,100> headers{};
             std::ranges::transform(fields,headers.begin(),[](auto field) { return Core::nv(field.name,field.value); });
             auto provider=core_.provider(&stream);
-            auto id=nex::nghttp2::nghttp2_submit_request2(core_.native(),nullptr,headers.data(),fields.size(),body.bytes.empty() && body.end_stream ? nullptr : &provider,&stream);
+            auto id=nghttp2::nghttp2_submit_request2(core_.native(),nullptr,headers.data(),fields.size(),body.bytes.empty() && body.end_stream ? nullptr : &provider,&stream);
             if (id<0) {
                 state.streams[selected].reset();
-                if (nex::nghttp2::nghttp2_is_fatal(id)) {state.core_fail(detail::CoreError::http2,id);stop_native(*core_.failure());}
+                if (nghttp2::nghttp2_is_fatal(id)) {state.core_fail(detail::CoreError::http2,id);stop_native(*core_.failure());}
                 return std::unexpected(ClientFailure{ClientError::http2,id});
             }
             if (!(id&1) || id<=state.last_id) { state.core_fail(detail::CoreError::state);stop_native(*core_.failure());return std::unexpected(*failure()); }
@@ -166,7 +166,7 @@ export namespace http2 {
                 return std::unexpected(ClientFailure{ClientError::headers});
             stream->body=body.bytes; stream->body_offset=0; stream->body_reserved=body.bytes.size(); stream->end_requested=body.end_stream; stream->provided=total;
             if (stream->deferred) {
-                auto rc=nex::nghttp2::nghttp2_session_resume_data(core_.native(),stream->id);
+                auto rc=nghttp2::nghttp2_session_resume_data(core_.native(),stream->id);
                 if (rc) { state.core_fail(detail::CoreError::http2,rc);stop_native(*core_.failure());return std::unexpected(*failure()); }
                 stream->deferred=false;
             }
@@ -193,12 +193,12 @@ export namespace http2 {
             if (!core_.usable()) return std::unexpected(failure_or_state());
             auto& state=core_.policy(); auto stream=state.ticket(ticket);
             if (!stream || stream->failure || count>stream->input.size()) return std::unexpected(ClientFailure{ClientError::state});
-            auto rc=stream->closed ? nex::nghttp2::nghttp2_session_consume_connection(core_.native(),count) :
-                nex::nghttp2::nghttp2_session_consume(core_.native(),stream->id,count);
+            auto rc=stream->closed ? nghttp2::nghttp2_session_consume_connection(core_.native(),count) :
+                nghttp2::nghttp2_session_consume(core_.native(),stream->id,count);
             if (rc) { state.core_fail(detail::CoreError::http2,rc);stop_native(*core_.failure());return std::unexpected(*failure()); }
             stream->input.consume(count); state.credited_connection+=count; if (!stream->closed) state.credited_stream+=count; return {};
         }
-        auto reset(StreamTicket ticket,std::uint32_t code=nex::nghttp2::NGHTTP2_CANCEL) noexcept -> std::expected<void,ClientFailure> {
+        auto reset(StreamTicket ticket,std::uint32_t code=nghttp2::NGHTTP2_CANCEL) noexcept -> std::expected<void,ClientFailure> {
             if (!core_.usable()) return std::unexpected(failure_or_state());
             auto& state=core_.policy(); auto stream=state.ticket(ticket); if (!stream) return std::unexpected(ClientFailure{ClientError::state});
             if (state.reject(core_,*stream,ClientError::reset,code)) {stop_native(*core_.failure());return std::unexpected(*failure());}return {};

@@ -2,15 +2,19 @@ module udp;
 import std;
 
 namespace udp {
+    auto Bridge4::prepare_parsed(packet::Udp4View const& parsed, std::uint64_t now)
+        -> std::expected<OutboundDatagram, BridgeError> {
+        Endpoint4 local{parsed.source, parsed.source_port}, remote{parsed.destination, parsed.destination_port};
+        packet::Bytes payload(parsed.payload.begin(), parsed.payload.end());
+        auto send = flows_.open_send(local, remote, now);
+        if (!send) return std::unexpected(BridgeError{send.error()});
+        return OutboundDatagram{send->first, send->second, remote, std::move(payload)};
+    }
     auto Bridge4::prepare(std::span<std::uint8_t const> input, std::uint64_t now)
         -> std::expected<OutboundDatagram, BridgeError> {
         auto parsed = packet::parse_udp4(input);
         if (!parsed) return std::unexpected(BridgeError{parsed.error()});
-        Endpoint4 local{parsed->source, parsed->source_port}, remote{parsed->destination, parsed->destination_port};
-        packet::Bytes payload(parsed->payload.begin(), parsed->payload.end());
-        auto send = flows_.open_send(local, remote, now);
-        if (!send) return std::unexpected(BridgeError{send.error()});
-        return OutboundDatagram{send->first, send->second, remote, std::move(payload)};
+        return prepare_parsed(*parsed, now);
     }
     auto Bridge4::reply(FlowId id, Endpoint4 remote, std::span<std::uint8_t const> payload, std::uint64_t now)
         -> std::expected<packet::Bytes, BridgeError> {
@@ -22,15 +26,19 @@ namespace udp {
         if (!result) return std::unexpected(BridgeError{result.error()});
         return std::move(*result);
     }
+    auto Bridge6::prepare_parsed(packet::Udp6View const& parsed, std::uint64_t now)
+        -> std::expected<OutboundDatagram6, BridgeError> {
+        Endpoint6 local{parsed.source, parsed.source_port}, remote{parsed.destination, parsed.destination_port};
+        packet::Bytes payload(parsed.payload.begin(), parsed.payload.end());
+        auto send = flows_.open_send(local, remote, now);
+        if (!send) return std::unexpected(BridgeError{send.error()});
+        return OutboundDatagram6{send->first, send->second, remote, std::move(payload)};
+    }
     auto Bridge6::prepare(std::span<std::uint8_t const> input, std::uint64_t now)
         -> std::expected<OutboundDatagram6, BridgeError> {
         auto parsed = packet::parse_udp6(input);
         if (!parsed) return std::unexpected(BridgeError{parsed.error()});
-        Endpoint6 local{parsed->source, parsed->source_port}, remote{parsed->destination, parsed->destination_port};
-        packet::Bytes payload(parsed->payload.begin(), parsed->payload.end());
-        auto send = flows_.open_send(local, remote, now);
-        if (!send) return std::unexpected(BridgeError{send.error()});
-        return OutboundDatagram6{send->first, send->second, remote, std::move(payload)};
+        return prepare_parsed(*parsed, now);
     }
     auto Bridge6::reply(FlowId id, Endpoint6 remote, std::span<std::uint8_t const> payload, std::uint64_t now)
         -> std::expected<packet::Bytes, BridgeError> {

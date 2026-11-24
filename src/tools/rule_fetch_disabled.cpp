@@ -1,5 +1,7 @@
 import std;
 
+extern "C" void nexus_register_builtin_http_fetchers() noexcept {}
+
 auto nexus_rule_fetch(int,char**) -> int {
     std::cerr << "HTTP rule fetch is unavailable in this build\n";
     return 1;

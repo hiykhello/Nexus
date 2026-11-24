@@ -2,7 +2,7 @@ import std;
 import packet;
 import tcp.connection;
 import tcp.receive;
-import nexus.tests.scheduled_link;
+import test.scheduled_link;
 namespace p = ::packet;
 namespace t = tcp;
 

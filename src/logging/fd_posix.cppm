@@ -9,20 +9,10 @@ module;
 export module logging.fd;
 import std;
 import logging.sink;
+export import platform.unique_fd;
 
 namespace logging {
-    export class FileDescriptor {
-        int fd_;
-    public:
-        explicit FileDescriptor(int fd) noexcept : fd_(fd) {}
-        FileDescriptor(FileDescriptor&& other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
-        auto operator=(this FileDescriptor& self, FileDescriptor&& other) noexcept -> FileDescriptor& {
-            std::swap(self.fd_, other.fd_);
-            return self;
-        }
-        ~FileDescriptor() { if (fd_ >= 0) ::close(fd_); }
-        auto get(this FileDescriptor const& self) noexcept -> int { return self.fd_; }
-    };
+    export using FileDescriptor = platform::UniqueFd;
 
     export auto system_error(int error) noexcept -> std::error_code {
         return {error, std::generic_category()};

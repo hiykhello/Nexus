@@ -22,6 +22,8 @@ int main() {
     assert(dns::mdns::is_mdns_name("printer.local"));
     assert(dns::mdns::is_mdns_name("nas.home.local."));
     assert(!dns::mdns::is_mdns_name("example.com"));
+    assert(dns::mdns::same_name("Printer.local.", "printer.LOCAL"));
+    assert(!dns::mdns::same_name("printer.local", "other.local"));
 
     auto q = dns::mdns::make_mdns_query("printer.local", dns::mdns::RecordType::a, true);
     assert(q.has_value() && q->size() > 12 && (*q)[0] == 0 && (*q)[1] == 0);

@@ -22,7 +22,7 @@ from tuic_singbox import REVISION, launch_singbox, stop_proc
 
 CLI_IP = "10.97.0.1"
 SRV_IP = "10.97.0.2"
-XRAY_BIN = Path("/home/yk/Code/Nexus/target/batch94a/xray-pinned")
+XRAY_BIN = Path(__file__).resolve().parents[1] / "target/batch94a/xray-pinned"
 
 
 def run_cmd(*args):

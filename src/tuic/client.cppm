@@ -1,6 +1,6 @@
 export module tuic.client;
 import std;
-import nexus.compat;
+import containers.inplace_vector;
 import crypto;
 import tuic.wire;
 export import tuic.transport_options;
@@ -20,9 +20,9 @@ import tls.fingerprint;
 import tls.certificate_trust;
 import platform.ip_address;
 import platform.socket_options;
-import nexus.thirdparty.ngtcp2;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import ngtcp2;
+import capy;
+import corosio;
 
 export namespace tuic {
     class ClientProfile {
@@ -71,7 +71,7 @@ export namespace tuic {
             tls::Fingerprint fingerprint = tls::Fingerprint::native,
             std::span<std::array<std::uint8_t,32> const> pins = {}) -> std::expected<std::unique_ptr<ClientProfile>, std::string>;
 
-        [[nodiscard]] auto tls_client(nex::corosio::endpoint const& peer,quic::EchConfig const* ech = nullptr) const
+        [[nodiscard]] auto tls_client(corosio::endpoint const& peer,quic::EchConfig const* ech = nullptr) const
             -> std::expected<std::unique_ptr<Tls>, std::string>;
         [[nodiscard]] auto tls_client(quic::EchConfig const* ech = nullptr) const
             -> std::expected<std::unique_ptr<Tls>, std::string> { return tls_client({},ech); }
@@ -81,7 +81,7 @@ export namespace tuic {
         auto transport() const noexcept -> ClientTransportOptions const& { return options_; }
     };
 
-    template<class Socket = nex::corosio::udp_socket>
+    template<class Socket = corosio::udp_socket>
     class Client {
         using Clock = std::chrono::steady_clock;
         using Registry = quic::CidRegistry<1, 8>;
@@ -89,13 +89,19 @@ export namespace tuic {
         struct Hooks {
             Registry& registry;
             quic::SessionHandle owner;
-            nex::capy::async_event& changed_event;
+            capy::async_event& changed_event;
+            void (*notify_fn)(void*) noexcept = nullptr;
+            void* notify_ctx = nullptr;
             std::deque<IncomingUdpPacket> udp_rx;
-            nexus::inplace_vector<std::uint16_t,256> udp_associations;
+            containers::inplace_vector<std::uint16_t,256> udp_associations;
             std::uint32_t next_association=1;
-            Hooks(Registry& r, quic::SessionHandle h, nex::capy::async_event& ev) noexcept
-                : registry(r), owner(h), changed_event(ev) {}
-            auto changed() noexcept -> void { changed_event.set(); }
+            Hooks(Registry& r, quic::SessionHandle h, capy::async_event& ev,
+                  void (*nfn)(void*) noexcept = nullptr, void* nctx = nullptr) noexcept
+                : registry(r), owner(h), changed_event(ev), notify_fn(nfn), notify_ctx(nctx) {}
+            auto changed() noexcept -> void {
+                if (notify_fn) notify_fn(notify_ctx);
+                else changed_event.set();
+            }
             auto authenticated(std::size_t) noexcept -> void {}
             auto connect_stream(StreamHandle, TargetAddress const&) noexcept -> void {}
             auto has_udp(std::uint16_t id) const noexcept -> bool {
@@ -108,10 +114,10 @@ export namespace tuic {
             }
             auto udp_dissociate(std::uint16_t) noexcept -> void {}
             auto transport_closed() noexcept -> void {}
-            auto add_connection_id(nex::ngtcp2::ngtcp2_cid const& id, nex::ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
-                return registry.insert(owner, {id.data, id.datalen}) ? 0 : nex::ngtcp2::err_callback_failure;
+            auto add_connection_id(ngtcp2::ngtcp2_cid const& id, ngtcp2::ngtcp2_stateless_reset_token const&) noexcept -> int {
+                return registry.insert(owner, {id.data, id.datalen}) ? 0 : ngtcp2::err_callback_failure;
             }
-            auto remove_connection_id(nex::ngtcp2::ngtcp2_cid const& id) noexcept -> int {
+            auto remove_connection_id(ngtcp2::ngtcp2_cid const& id) noexcept -> int {
                 (void)registry.remove(owner, {id.data, id.datalen});
                 return 0;
             }
@@ -129,8 +135,9 @@ export namespace tuic {
             App app;
             Session session;
             Bundle(std::unique_ptr<ClientProfile::Tls> t, Registry& reg, quic::SessionHandle owner,
-                   nex::capy::async_event& ev, nex::corosio::endpoint const& local, ClientProfile const& p)
-                : tls(std::move(t)), hooks(reg, owner, ev), memory(p.transport().native_bytes),
+                   capy::async_event& ev, void (*nfn)(void*) noexcept, void* nctx,
+                   corosio::endpoint const& local, ClientProfile const& p)
+                : tls(std::move(t)), hooks(reg, owner, ev, nfn, nctx), memory(p.transport().native_bytes),
                   app(*tls, hooks, p.uuid(), std::string(p.password())), session(*tls, app, local) {}
         };
         struct Factory {
@@ -138,10 +145,10 @@ export namespace tuic {
             std::unique_ptr<Bundle> bundle;
             bool joined = false;
             int failure = 0;
-            auto admit(nex::ngtcp2::ngtcp2_pkt_hd const&, nex::corosio::endpoint const&, Clock::time_point) const noexcept -> bool { return false; }
-            auto create(quic::SessionHandle, Registry&, std::span<std::uint8_t const>, nex::ngtcp2::ngtcp2_pkt_hd const&,
-                        nex::corosio::endpoint const&, Clock::time_point) noexcept -> std::expected<Session*, int> {
-                return std::unexpected(nex::ngtcp2::err_callback_failure);
+            auto admit(ngtcp2::ngtcp2_pkt_hd const&, corosio::endpoint const&, Clock::time_point) const noexcept -> bool { return false; }
+            auto create(quic::SessionHandle, Registry&, std::span<std::uint8_t const>, ngtcp2::ngtcp2_pkt_hd const&,
+                        corosio::endpoint const&, Clock::time_point) noexcept -> std::expected<Session*, int> {
+                return std::unexpected(ngtcp2::err_callback_failure);
             }
             auto application_drained(quic::SessionHandle, Session const&) const noexcept -> bool { return joined; }
             auto failed(quic::SessionHandle, int err) noexcept -> void { failure = err; }
@@ -156,7 +163,7 @@ export namespace tuic {
     private:
         ClientProfile const& profile_;
         Socket socket_;
-        nex::corosio::endpoint local_;
+        corosio::endpoint local_;
         Factory factory_;
         Port port_{factory_};
         Driver driver_{socket_, port_};
@@ -164,22 +171,32 @@ export namespace tuic {
         bool started_ = false;
 
     public:
-        Client(nex::corosio::io_context& ctx, ClientProfile const& profile) : profile_(profile), socket_(ctx) {}
+        Client(corosio::io_context& ctx, ClientProfile const& profile) : profile_(profile), socket_(ctx) {}
         Client(Client const&) = delete;
         auto operator=(Client const&) -> Client& = delete;
 
         auto socket() noexcept -> Socket& { return socket_; }
         auto driver() noexcept -> Driver& { return driver_; }
 
-        auto start(nex::corosio::endpoint peer, platform::SocketBinding const* binding = nullptr,
+        auto start(corosio::endpoint peer, platform::SocketBinding const* binding = nullptr,
                    quic::EchConfig const* ech = nullptr,
                    platform::SocketDeadline deadline = platform::SocketDeadline::max(),std::error_code* socket_error=nullptr)
             -> std::expected<void,std::string> {
             if (started_) return std::unexpected("TUIC client already started");
-            if constexpr (std::same_as<Socket, nex::corosio::udp_socket>) {
+            if constexpr (std::same_as<Socket, corosio::udp_socket>) {
                 if (auto error=net::prepare_udp_socket(socket_,peer,binding,deadline)) {
                     if (socket_error) *socket_error=error;
                     return std::unexpected(error.message());
+                }
+                local_=socket_.local_endpoint();
+            } else if constexpr (requires { socket_.is_layered(); }) {
+                if (!socket_.is_layered()) {
+                    if (auto error=socket_.prepare_physical(peer,binding,deadline)) {
+                        if (socket_error) *socket_error=error;
+                        return std::unexpected(error.message());
+                    }
+                } else if (binding) {
+                    return std::unexpected("socket binding belongs to physical datagram transport");
                 }
                 local_=socket_.local_endpoint();
             } else {
@@ -204,17 +221,19 @@ export namespace tuic {
                 socket_.close();
                 return std::unexpected(tls.error());
             }
-            nex::ngtcp2::ngtcp2_settings settings{};
-            nex::ngtcp2::ngtcp2_transport_params params{};
+            ngtcp2::ngtcp2_settings settings{};
+            ngtcp2::ngtcp2_transport_params params{};
             apply_tuic_quic_config(profile_.transport(), 64, 32768, settings, params);
             if (deadline!=Clock::time_point::max()) {
                 auto remaining=std::chrono::duration_cast<std::chrono::nanoseconds>(deadline-now).count();
                 settings.handshake_timeout=std::min(settings.handshake_timeout,static_cast<std::uint64_t>(remaining));
             }
-            factory_.bundle = std::make_unique<Bundle>(std::move(*tls), port_.registry(), *reserved, driver_.changed(), local_, profile_);
-            nex::ngtcp2::ngtcp2_cid src{}, dst{};
-            nex::ngtcp2::ngtcp2_cid_init(&src, src_bytes.data(), src_bytes.size());
-            nex::ngtcp2::ngtcp2_cid_init(&dst, dst_bytes.data(), dst_bytes.size());
+            factory_.bundle = std::make_unique<Bundle>(
+                std::move(*tls), port_.registry(), *reserved, driver_.changed(),
+                [](void* p) noexcept { static_cast<Driver*>(p)->notify(); }, &driver_, local_, profile_);
+            ngtcp2::ngtcp2_cid src{}, dst{};
+            ngtcp2::ngtcp2_cid_init(&src, src_bytes.data(), src_bytes.size());
+            ngtcp2::ngtcp2_cid_init(&dst, dst_bytes.data(), dst_bytes.size());
             auto err = factory_.bundle->session.start(false, dst, src, peer, settings, params, factory_.bundle->memory.transport(), Clock::now());
             if (err || !port_.attach(*reserved, factory_.bundle->session)) {
                 factory_.bundle.reset();
@@ -223,7 +242,7 @@ export namespace tuic {
                 return std::unexpected("cannot start TUIC QUIC connection");
             }
             auto heartbeat=std::chrono::duration_cast<std::chrono::nanoseconds>(profile_.transport().heartbeat).count();
-            nexus_ngtcp2_abi::ngtcp2_conn_set_keep_alive_timeout(factory_.bundle->session.transport().native(),
+            ngtcp2_abi::ngtcp2_conn_set_keep_alive_timeout(factory_.bundle->session.transport().native(),
                 static_cast<std::uint64_t>(heartbeat));
             owner_ = *reserved;
             started_ = true;
@@ -231,13 +250,13 @@ export namespace tuic {
             return {};
         }
 
-        auto run() -> nex::capy::task<nex::capy::results<>> { return driver_.run(); }
+        auto run() -> capy::task<capy::results<>> { return driver_.run(); }
 
-        auto ready(Clock::time_point deadline) -> nex::capy::task<bool> {
+        auto ready(Clock::time_point deadline) -> capy::task<bool> {
             while (factory_.bundle && !factory_.bundle->app.stopping()) {
                 if (factory_.bundle->app.authenticated()) co_return true;
                 driver_.changed().clear();
-                auto [err] = co_await nex::corosio::timeout(driver_.changed().wait(), deadline);
+                auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err || !driver_.running()) co_return false;
             }
             co_return false;
@@ -247,6 +266,7 @@ export namespace tuic {
             if (!factory_.bundle) return std::unexpected("TUIC client not ready");
             auto h = factory_.bundle->app.open_connect(target);
             if (!h) return std::unexpected("failed opening TUIC TCP stream");
+            driver_.notify();
             return std::make_unique<Channel>(factory_.bundle->app, driver_, *h);
         }
 
@@ -287,12 +307,12 @@ export namespace tuic {
         }
 
         auto wait_udp(Clock::time_point deadline,std::optional<std::uint16_t> assoc_id={})
-            -> nex::capy::task<std::optional<IncomingUdpPacket>> {
+            -> capy::task<std::optional<IncomingUdpPacket>> {
             while (active()) {
                 if (assoc_id && !factory_.bundle->hooks.has_udp(*assoc_id)) co_return std::nullopt;
                 if (auto packet=take_udp(assoc_id)) co_return packet;
                 driver_.changed().clear();
-                auto [error]=co_await nex::corosio::timeout(driver_.changed().wait(),deadline);
+                auto [error]=co_await corosio::timeout(driver_.changed().wait(),deadline);
                 if (error) break;
             }
             co_return std::nullopt;
@@ -301,7 +321,7 @@ export namespace tuic {
         auto dissociate(std::uint16_t assoc_id) -> bool {
             if (!factory_.bundle) return false;
             auto& bundle=*factory_.bundle;
-            nexus::erase(bundle.hooks.udp_associations,assoc_id);
+            containers::erase(bundle.hooks.udp_associations,assoc_id);
             std::erase_if(bundle.hooks.udp_rx,[assoc_id](auto const& packet){return packet.assoc_id==assoc_id;});
             bundle.hooks.changed();
             auto queued=bundle.app.send_dissociate(assoc_id);
@@ -315,7 +335,7 @@ export namespace tuic {
 
         auto retryable_handshake(Clock::time_point deadline) const noexcept -> bool {
             if (factory_.bundle && factory_.bundle->tls->complete()) return false;
-            if (factory_.failure) return factory_.failure==nex::ngtcp2::err_handshake_timeout;
+            if (factory_.failure) return factory_.failure==ngtcp2::err_handshake_timeout;
             auto const& failure=driver_.failure();
             if (!failure) return Clock::now()>=deadline;
             auto* socket=std::get_if<net::DatagramFailure>(&*failure);

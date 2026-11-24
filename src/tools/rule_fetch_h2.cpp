@@ -5,13 +5,13 @@ import http.header;
 import http2.client_channel;
 import http2.headers;
 import tls.byte_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 namespace cli::rule_fetch {
     namespace detail {
         using Clock=std::chrono::steady_clock;
-        namespace capy=nex::capy;
+        namespace capy = ::capy;
 
         auto valid_headers(std::span<http2::Header const> headers,std::size_t maximum) -> bool {
             for(auto const& header:headers) {
@@ -83,13 +83,13 @@ namespace cli::rule_fetch {
             Http2Stream& stream;
 
             auto read(std::span<std::uint8_t> bytes,Http2Deadline deadline)
-                -> nex::capy::task<std::expected<std::size_t,tls::detail::ByteStreamError>> {
+                -> capy::task<std::expected<std::size_t,tls::detail::ByteStreamError>> {
                 return stream->read(bytes,deadline);
             }
-            auto send(std::span<std::uint8_t const> bytes,Http2Deadline deadline) -> nex::capy::task<bool> {
+            auto send(std::span<std::uint8_t const> bytes,Http2Deadline deadline) -> capy::task<bool> {
                 return stream->send(bytes,deadline);
             }
-            auto close_output(Http2Deadline deadline) -> nex::capy::task<bool> {
+            auto close_output(Http2Deadline deadline) -> capy::task<bool> {
                 return stream->close_output(deadline);
             }
             auto cancel() noexcept -> void {stream->cancel();}
@@ -101,7 +101,7 @@ namespace cli::rule_fetch {
             Http2Stream stream_;
             Lower lower_{stream_};
             Channel channel_;
-            nex::capy::async_event idle_changed_;
+            capy::async_event idle_changed_;
             std::array<std::optional<Ticket>,streams> retired_;
             detail::Clock::time_point idle_since_=detail::Clock::now();
             std::size_t active_=0;
@@ -115,7 +115,7 @@ namespace cli::rule_fetch {
                 }
             }
 
-            auto drive() -> nex::capy::task<nex::capy::results<>> {
+            auto drive() -> capy::task<capy::results<>> {
                 struct Finish {
                     Connection& owner;
                     ~Finish(){owner.stop();}
@@ -123,7 +123,7 @@ namespace cli::rule_fetch {
                 co_return co_await channel_.run();
             }
 
-            auto reap_idle() -> nex::capy::task<nex::capy::results<>> {
+            auto reap_idle() -> capy::task<capy::results<>> {
                 while (!stopped_) {
                     if (obsolete(detail::Clock::now())) {
                         stop();
@@ -132,22 +132,22 @@ namespace cli::rule_fetch {
                     idle_changed_.clear();
                     auto wait=idle_changed_.wait();
                     auto [error]=active_ ? co_await std::move(wait) :
-                        co_await nex::corosio::timeout(std::move(wait),idle_since_+std::chrono::seconds(15));
-                    if (error && !nex::capy::is_timeout(error)) stop();
+                        co_await corosio::timeout(std::move(wait),idle_since_+std::chrono::seconds(15));
+                    if (error && !capy::is_timeout(error)) stop();
                 }
-                co_return nex::capy::results<>{};
+                co_return capy::results<>{};
             }
 
-            auto run() -> nex::capy::task<> {
-                (void)co_await nex::capy::when_all(drive(),reap_idle());
+            auto run() -> capy::task<> {
+                (void)co_await capy::when_all(drive(),reap_idle());
             }
 
         public:
             Connection(Http2Stream stream,std::unique_ptr<http2::Client<streams>> client)
                 :stream_(std::move(stream)),channel_(lower_,std::move(client)) {}
 
-            auto start(nex::corosio::io_context& io,std::shared_ptr<Connection> owner) -> void {
-                nex::capy::run_async(io.get_executor(),[owner] {},
+            auto start(corosio::io_context& io,std::shared_ptr<Connection> owner) -> void {
+                capy::run_async(io.get_executor(),[owner] {},
                     [owner](std::exception_ptr) noexcept {owner->stop();})(run());
             }
 
@@ -176,7 +176,7 @@ namespace cli::rule_fetch {
                 return {};
             }
 
-            auto receive(Ticket ticket,Transfer request) -> nex::capy::task<TransferResult> {
+            auto receive(Ticket ticket,Transfer request) -> capy::task<TransferResult> {
                 struct Release {
                     Connection& owner;
                     Ticket ticket;
@@ -201,8 +201,8 @@ namespace cli::rule_fetch {
             }
         }
 
-        auto request(nex::corosio::io_context& io,Transfer request,Http2Stream stream={})
-            -> nex::capy::task<std::optional<TransferResult>> {
+        auto request(corosio::io_context& io,Transfer request,Http2Stream stream={})
+            -> capy::task<std::optional<TransferResult>> {
             auto now=detail::Clock::now();
             if (now>=request.deadline)
                 co_return TransferResult(std::unexpected("HTTP/2 request deadline expired"));
@@ -243,8 +243,8 @@ namespace cli::rule_fetch {
         if (impl_) impl_->stop();
     }
 
-    auto Http2Pool::request(nex::corosio::io_context& io,Transfer transfer,Http2Stream stream)
-        -> nex::capy::task<std::optional<TransferResult>> {
+    auto Http2Pool::request(corosio::io_context& io,Transfer transfer,Http2Stream stream)
+        -> capy::task<std::optional<TransferResult>> {
         if (!impl_) {
             if (!stream) co_return std::nullopt;
             impl_=std::make_unique<Impl>();

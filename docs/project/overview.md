@@ -21,7 +21,7 @@ Nexus 是一个通用代理平台，提供可组合的代理能力，同时支�
 - C++ 代码尽量无异常，优先以 `std::expected` 表达可失败操作，以 `std::optional` 表达正常缺失；见 [编码规范](../development/cpp-guidelines.md)。
 - 优先使用本机 GCC 的 C++26/C++23 能力；成员函数优先显式 `this`，模板优先 concept，函数优先后置返回类型，反射优先原生静态反射。
 - 使用 `mcpp` 工作区作为项目构建入口，第三方依赖严格离线锁定。
-- 使用 KDL 2.0 编写配置，使用指定的 `glaze-kdl2.0-` 分支解析。
+- 使用 KDL 2.0 编写配置，使用指定的 `hiykhello/glaze-kdl` 仓库解析。
 - 使用 `ngcpp/proxy` 表达抽象接口，使用 `cppalliance/corosio` 作为协程与 I/O 引擎。
 - 自研 TUN 栈与用户态 TCP/IP/UDP 处理能力，核心设计原则见 [核心架构原则](../design-principles/core-architecture.md) 与 [TUN 设计](../architecture/tun.md)。
 - 自研 TLS 与现代浏览器指纹能力，密码原语统一采用静态 BoringSSL `libcrypto`，不引入第三方 `libssl`；见 [TLS 设计](../architecture/tls.md)。

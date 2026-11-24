@@ -43,7 +43,7 @@ rule type="and" { rule type="source-ip-cidr" value="127.0.0.0/8"; rule type="sou
 rule type="and" { rule type="source-ip-cidr" value="127.0.0.0/8"; rule type="ip-cidr" value="127.0.0.3/32"; }
 '''
     else:
-        rules='schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="127.0.0.3/32"\n'
+        rules='schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="127.0.0.3/32"\n'
     (root/"block.kdl").write_text(rules)
     (root/"server.kdl").write_text(f'''schema-version 1
 role "server"
@@ -52,7 +52,7 @@ inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={port}; method "202
 outbound "direct" type="direct"
 outbound "reject" type="block"
 {edge}
-routing {{ rule-set "block" path="block.kdl" format="kdl"; rule kind="rule-set" value="block" outbound="reject"; default-outbound "{'edge' if chain else 'direct'}"; }}
+routing {{ rule-set "block" path="block.kdl" format="kdl"; rules {{ - kind="rule-set" value="block" outbound="reject"; }}; default-outbound "{'edge' if chain else 'direct'}"; }}
 ''')
     stop=threading.Event(); queries=[]; events=[]; packets=[]; errors=[]
     def serve_dns():

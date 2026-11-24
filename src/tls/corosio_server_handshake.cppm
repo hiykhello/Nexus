@@ -2,8 +2,8 @@ export module tls.corosio_server_handshake;
 export import memory.budget;
 import std;
 import tls.server_handshake_io;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 export namespace tls::detail {
     enum class ServerAsyncError { transport, protocol, timeout, budget_exceeded, crypto };
     struct ServerAsyncResult {
@@ -34,7 +34,7 @@ export namespace tls::detail {
     // The deadline uses the steady-clock millisecond epoch. Returned unread bytes belong to the application reader.
     template<class Socket>
     auto server_handshake(Socket& socket, ServerHandshakeIo& handshake, std::shared_ptr<memory::Budget> budget = {},
-                          std::span<std::uint8_t const> initial = {}) -> nex::capy::task<std::expected<ServerAsyncResult,ServerAsyncError>> {
+                          std::span<std::uint8_t const> initial = {}) -> capy::task<std::expected<ServerAsyncResult,ServerAsyncError>> {
         try {
         auto handshake_budget=handshake.budget();
         if (handshake_budget && budget && handshake_budget!=budget) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::protocol); }
@@ -64,9 +64,9 @@ export namespace tls::detail {
                     if (!write_reservation) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::budget_exceeded); }
                 }
                 crypto::Bytes owned(pending.begin(),pending.end());
-                auto [error,n]=co_await nex::corosio::timeout(socket.write_some(nex::capy::const_buffer(owned.data(),owned.size())),deadline);
+                auto [error,n]=co_await corosio::timeout(socket.write_some(capy::const_buffer(owned.data(),owned.size())),deadline);
                 if (error || !n || n>owned.size()) {
-                    if (nex::capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::timeout); }
+                    if (capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::timeout); }
                     auto tick=handshake.tick(now());
                     if (!tick) co_return std::unexpected(io_error(tick.error()));
                     (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::transport);
@@ -76,9 +76,9 @@ export namespace tls::detail {
                 continue;
             }
             if (initial.empty() && begin==end) {
-                auto [error,n]=co_await nex::corosio::timeout(socket.read_some(nex::capy::mutable_buffer(buffer.data(),buffer.size())),deadline);
+                auto [error,n]=co_await corosio::timeout(socket.read_some(capy::mutable_buffer(buffer.data(),buffer.size())),deadline);
                 if (error || !n || n>buffer.size()) {
-                    if (nex::capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::timeout); }
+                    if (capy::is_timeout(error)) { (void)handshake.cancel(); co_return std::unexpected(ServerAsyncError::timeout); }
                     auto tick=handshake.tick(now());
                     if (!tick) co_return std::unexpected(io_error(tick.error()));
                     (void)handshake.finish_input(now()); co_return std::unexpected(ServerAsyncError::transport);

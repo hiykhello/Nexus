@@ -1,9 +1,9 @@
-export module nexus.tests.random_fault;
+export module test.random_fault;
 import std;
 
 extern "C" int* __errno_location() noexcept;
 
-export namespace nexus::tests {
+export namespace test {
     enum class RandomFault { disabled, unavailable, permission, interrupted_short, zero };
     auto set_random_fault(RandomFault mode) noexcept -> void;
     [[nodiscard]] auto random_calls() noexcept -> int;
@@ -11,19 +11,19 @@ export namespace nexus::tests {
 }
 
 namespace {
-    thread_local nexus::tests::RandomFault mode=nexus::tests::RandomFault::disabled;
+    thread_local test::RandomFault mode=test::RandomFault::disabled;
     thread_local int calls=0;
     thread_local bool bad_flag=false;
 }
 
-namespace nexus::tests {
+namespace test {
     auto set_random_fault(RandomFault value) noexcept -> void { mode=value; calls=0; bad_flag=false; }
     auto random_calls() noexcept -> int { return calls; }
     auto random_bad_flag() noexcept -> bool { return bad_flag; }
 }
 
 extern "C" bool nexus_test_linux_random(void* data,std::size_t size,unsigned int flags,std::ptrdiff_t* result) noexcept {
-    using nexus::tests::RandomFault;
+    using test::RandomFault;
     if (mode==RandomFault::disabled) return false;
     ++calls;
     bad_flag |= flags!=1u;

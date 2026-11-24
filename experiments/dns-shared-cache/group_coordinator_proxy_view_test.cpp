@@ -5,16 +5,16 @@ import dns.corosio_query;
 import dns.cache;
 import dns.shared_cache;
 import dns.shared_coordinator;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-import proxy;
+import capy;
+import corosio;
+import relay;
 import dns.corosio_cached;
 
 int main() {
-    namespace p=proxy;
+    namespace p = relay;
     namespace d=dns;
     namespace hp=dns_hp_experiment;
-    namespace io=nex::corosio;
+    namespace io = ::corosio;
     try {
         p::DnsServer root; root.address[0]=127; root.address[3]=1; root.port=5301;
         p::DnsServer leaf; leaf.host="DNS.Example.Test."; leaf.port=5302; leaf.resolver=0;

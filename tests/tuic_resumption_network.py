@@ -43,8 +43,8 @@ def verify(binary, fixture, enabled):
 }}''')
             rule = root / f"inbound-{index}.kdl"
             rule.write_text(f'schema-version 2\nkind "predicate"\nrule type="inbound" value="local{index}"\n')
-            rules.append(f'rule-set "origin{index}" path="{rule.name}" format="kdl"\n'
-                         f'rule kind="rule-set" value="origin{index}" outbound="edge{index}"')
+            rules.append((f'rule-set "origin{index}" path="{rule.name}" format="kdl"',
+                          f'- kind="rule-set" value="origin{index}" outbound="edge{index}"'))
         config = root / "nexus.kdl"
         config.write_text(f'''schema-version 1
 role "client"
@@ -52,7 +52,10 @@ role "client"
 outbound "direct" type="direct"
 {chr(10).join(edges)}
 routing {{
-    {chr(10).join(rules)}
+    {chr(10).join(rs for rs, _ in rules)}
+    rules {{
+        {chr(10).join(rr for _, rr in rules)}
+    }}
     default-outbound "edge0"
 }}
 ''')

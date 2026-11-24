@@ -6,9 +6,9 @@ import snell.async_record;
 import snell.owner;
 import snell.client_owner;
 import snell.client_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
-namespace s=snell;namespace io=nex::corosio;namespace capy=nex::capy;
+import capy;
+import corosio;
+namespace s=snell;namespace io = ::corosio;
 using namespace std::chrono_literals;
 struct Socket {
     capy::async_event wait_cancel;s::Bytes input;std::size_t offset=0;bool canceled=false,block=false,waiting=false;

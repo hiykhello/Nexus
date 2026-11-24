@@ -62,7 +62,7 @@ def checkpoint_listener_port():
     raise RuntimeError("no available DNS checkpoint listener port")
 
 
-def check(binary, root, peer, alternate, transport, check_expiry, legacy=None):
+def check(binary, root, peer, alternate, transport, check_expiry):
     front, dns_port = free_port(), checkpoint_listener_port()
     directory = root / "cache"
     directory.mkdir(mode=0o700)
@@ -81,11 +81,11 @@ dns {{
 }}
 '''
     config.write_text(source)
-    with nexus_process(legacy or binary, config):
+    with nexus_process(binary, config):
         assert query(dns_port, 51) == 8
     assert snapshot.stat().st_mode & 0o777 == 0o600
     first_checkpoint = snapshot.read_bytes()
-    assert first_checkpoint.startswith(b"NXDNS1" if legacy else b"NXDNS2")
+    assert first_checkpoint.startswith(b"NXDNS2")
     assert len(peer.seen) == 1
     time.sleep(1.1)
 
@@ -173,11 +173,10 @@ dns {{
 
 if __name__ == "__main__":
     cli = Path(sys.argv[1]).resolve(strict=True)
-    legacy = Path(sys.argv[2]).resolve(strict=True) if len(sys.argv) > 2 else None
     for protocol, ipv6 in (("udp", False), ("tcp", True)):
         with tempfile.TemporaryDirectory(prefix="nexus-dns-cache-state-") as folder, \
                 Peer(ipv6=ipv6) as first, Peer(ipv6=ipv6) as second:
-            check(cli, Path(folder), first, second, protocol, check_expiry=not ipv6, legacy=legacy)
+            check(cli, Path(folder), first, second, protocol, check_expiry=not ipv6)
         print(f"DNS checkpoint, restored TTL, reload and damaged snapshot passed over {protocol} IPv{6 if ipv6 else 4}")
 
     with tempfile.TemporaryDirectory(prefix="nexus-dns-cache-views-") as folder, \

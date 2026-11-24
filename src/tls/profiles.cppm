@@ -119,9 +119,10 @@ namespace tls {
 
     auto ClientProfile::load(std::string_view name,std::string_view ca,std::uint16_t key_share,
         bool hybrid_only,std::span<std::string_view const> alpn) -> std::expected<ClientProfile,std::string> {
-        if (ca.empty() || ca.front()!='/' || ca.find('\0')!=ca.npos) return std::unexpected("TLS CA path must be absolute");
-        auto anchors=load_trust_bundle(ca);
-        if (!anchors) return std::unexpected("cannot load TLS CA bundle");
+        if (!ca.empty() && (ca.front()!='/' || ca.find('\0')!=ca.npos))
+            return std::unexpected("TLS CA path must be absolute");
+        auto anchors=ca.empty() ? load_system_trust_bundle() : load_trust_bundle(ca);
+        if (!anchors) return std::unexpected(ca.empty() ? "cannot load system TLS CA bundle" : "cannot load TLS CA bundle");
         ClientProfile profile{std::string(name),std::move(*anchors),key_share,hybrid_only};
         if (alpn.size()>16) return std::unexpected("too many TLS application protocols");
         for (auto value:alpn) profile.alpn.emplace_back(value);

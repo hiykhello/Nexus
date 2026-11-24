@@ -72,7 +72,7 @@ int main() {
         auto before_failure=native::live;
         if(!exchange->initial_sent()||!exchange->receive(response))return 14;
         if(fault==3) {native::allowance=0;native::calls=0;native::denied=false;native::enabled=true;}
-        auto failed=exchange->take_flight();native::enabled=false;nex::boringssl::ERR_clear_error();
+        auto failed=exchange->take_flight();native::enabled=false;boringssl::ERR_clear_error();
         if(failed || failed.error()!=(fault==3 ? t::ClientHelloDriverError::crypto_error : t::ClientHelloDriverError::invalid_hello) || native::live!=before_failure-native_key_count || (fault==3 && !native::denied))return 15;
         if(exchange->ready()||exchange->can_receive()||exchange->initial_key())return 16;
     }

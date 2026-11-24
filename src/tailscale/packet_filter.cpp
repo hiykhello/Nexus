@@ -1,12 +1,12 @@
 module tailscale.packet_filter;
 import std;
-import nexus.compat;
-import nexus.thirdparty.glaze;
-import nexus.thirdparty.corosio;
+import containers.inplace_vector;
+import glaze;
+import corosio;
 
 namespace tailscale::packet_filter {
     namespace detail {
-        using Raw=nex::glaze::raw_json_view;
+        using Raw=glaze::raw_json_view;
         struct RuleJson {Raw SrcIPs,SrcBits,DstPorts,IPProto,CapGrant;};
         struct DestinationJson {Raw IP,Bits,Ports;};
         struct PortJson {Raw First,Last;};
@@ -16,9 +16,9 @@ namespace tailscale::packet_filter {
         using detail::RuleJson;
         using detail::DestinationJson;
         using detail::PortJson;
-        struct Options : nex::glaze::opts {bool validate_trailing_whitespace=true,validate_skipped=true;};
+        struct Options : glaze::opts {bool validate_trailing_whitespace=true,validate_skipped=true;};
         inline constexpr auto options=[] {Options value;value.null_terminated=false;value.error_on_unknown_keys=true;return value;}();
-        template<class T> auto read(T& value,std::string_view json) -> bool {return !nex::glaze::read<options>(value,json);}
+        template<class T> auto read(T& value,std::string_view json) -> bool {return !glaze::read<options>(value,json);}
         auto trim(std::string_view text) noexcept -> std::string_view {
             auto space=[](char c){return c==' ' || c=='\n' || c=='\r' || c=='\t';};
             while(!text.empty() && space(text.front()))text.remove_prefix(1);
@@ -29,7 +29,7 @@ namespace tailscale::packet_filter {
         auto array(std::string_view json) noexcept -> bool {json=trim(json);return json.size()>=2 && json.front()=='[' && json.back()==']';}
         auto fail(Error error) noexcept -> std::unexpected<Error> {return std::unexpected(error);}
         template<std::size_t N>
-        auto object(std::string_view json,nexus::inplace_vector<std::pair<std::string_view,Raw>,N>& fields) -> std::expected<void,Error> {
+        auto object(std::string_view json,containers::inplace_vector<std::pair<std::string_view,Raw>,N>& fields) -> std::expected<void,Error> {
             auto trimmed=trim(json);if(trimmed.size()<2 || trimmed.front()!='{' || trimmed.back()!='}')return fail(Error::schema);
             if(!read(fields,json))return fail(Error::json);
             for(std::size_t i=0;i<fields.size();++i) {
@@ -49,9 +49,9 @@ namespace tailscale::packet_filter {
         }
         auto address(std::string_view text) -> std::expected<Address,Error> {
             if(text.empty() || text.contains('%') || text.contains('[') || text.contains(']'))return fail(Error::address);
-            auto format=nex::corosio::detect_endpoint_format(text);
-            if(format!=nex::corosio::endpoint_format::ipv4_no_port && format!=nex::corosio::endpoint_format::ipv6_no_port)return fail(Error::address);
-            auto [error,endpoint]=nex::corosio::make_endpoint(text);
+            auto format=corosio::detect_endpoint_format(text);
+            if(format!=corosio::endpoint_format::ipv4_no_port && format!=corosio::endpoint_format::ipv6_no_port)return fail(Error::address);
+            auto [error,endpoint]=corosio::make_endpoint(text);
             if(error)return fail(Error::address);
             Address result;result.family=endpoint.is_v4() ? 4 : 6;
             if(result.family==4)std::ranges::copy(endpoint.address().to_v4().to_bytes(),result.bytes.begin());
@@ -63,11 +63,11 @@ namespace tailscale::packet_filter {
             for(unsigned i=0;i<count;++i)if(a.bytes[i]!=b.bytes[i])return a.bytes[i]<b.bytes[i] ? -1 : 1;
             return 0;
         }
-        auto ip_ranges(Raw const& raw) -> std::expected<nexus::inplace_vector<Range,2>,Error> {
+        auto ip_ranges(Raw const& raw) -> std::expected<containers::inplace_vector<Range,2>,Error> {
             auto parsed=raw_string(raw,128);if(!parsed)return std::unexpected(parsed.error());
             auto text=*parsed;
             if(text.starts_with("cap:"))return fail(Error::unsupported);
-            nexus::inplace_vector<Range,2> result;
+            containers::inplace_vector<Range,2> result;
             if(text=="*") {
                 Address first4{},last4{},first6{},last6{};
                 first4.family=last4.family=4;first6.family=last6.family=6;
@@ -99,7 +99,7 @@ namespace tailscale::packet_filter {
             result.push_back({*first,last});return result;
         }
         template<class T> auto fields_unique(std::string_view json) -> std::expected<T,Error> {
-            nexus::inplace_vector<std::pair<std::string_view,Raw>,64> fields;
+            containers::inplace_vector<std::pair<std::string_view,Raw>,64> fields;
             if(auto result=object(json,fields);!result)return std::unexpected(result.error());
             T value;if(!read(value,json))return fail(Error::schema);return value;
         }
@@ -113,13 +113,13 @@ namespace tailscale::packet_filter {
         auto empty_array(Raw const& raw) -> std::expected<bool,Error> {
             if(!present(raw))return true;
             if(!array(raw.str))return fail(Error::schema);
-            nexus::inplace_vector<Raw,1> items;
+            containers::inplace_vector<Raw,1> items;
             if(!read(items,raw.str))return fail(Error::unsupported);
             return items.empty();
         }
         auto rules(std::string_view json) -> std::expected<std::vector<Rule>,Error> {
             if(!array(json))return fail(Error::schema);
-            nexus::inplace_vector<Raw,max_rules> entries;
+            containers::inplace_vector<Raw,max_rules> entries;
             if(!read(entries,json))return fail(Error::json);
             std::vector<Rule> result;result.reserve(entries.size());std::size_t address_count=0;
             for(auto const& entry:entries) {
@@ -128,7 +128,7 @@ namespace tailscale::packet_filter {
                 if(!bits_empty || !caps_empty || !*bits_empty || !*caps_empty)return fail(Error::unsupported);
                 Rule rule;
                 if(present(input->SrcIPs)) {
-                    nexus::inplace_vector<Raw,max_protocols> src;
+                    containers::inplace_vector<Raw,max_protocols> src;
                     if(!array(input->SrcIPs.str) || !read(src,input->SrcIPs.str))return fail(Error::schema);
                     for(auto const& value:src) {
                         auto ranges=ip_ranges(value);if(!ranges)return std::unexpected(ranges.error());
@@ -137,7 +137,7 @@ namespace tailscale::packet_filter {
                     }
                 }
                 if(present(input->DstPorts)) {
-                    nexus::inplace_vector<Raw,max_protocols> dst;
+                    containers::inplace_vector<Raw,max_protocols> dst;
                     if(!array(input->DstPorts.str) || !read(dst,input->DstPorts.str))return fail(Error::schema);
                     for(auto const& value:dst) {
                         auto destination=fields_unique<DestinationJson>(value.str);if(!destination)return std::unexpected(destination.error());
@@ -148,7 +148,7 @@ namespace tailscale::packet_filter {
                         for(auto const& range:*ranges)rule.destinations.push_back({range,port->first,port->second});
                     }
                 }
-                nexus::inplace_vector<std::int64_t,max_protocols> protocols;
+                containers::inplace_vector<std::int64_t,max_protocols> protocols;
                 if(present(input->IPProto) && (!array(input->IPProto.str) || !read(protocols,input->IPProto.str)))return fail(Error::schema);
                 if(protocols.empty())for(auto n:{1u,6u,17u,58u})rule.protocols[n/64]|=std::uint64_t{1}<<(n%64);
                 else for(auto n:protocols)if(n>=0 && n<256)rule.protocols[static_cast<unsigned>(n)/64]|=std::uint64_t{1}<<(static_cast<unsigned>(n)%64);
@@ -199,7 +199,7 @@ namespace tailscale::packet_filter {
                 auto parsed=rules(*legacy);if(!parsed)return std::unexpected(parsed.error());
                 base=std::move(*parsed);
             }
-            nexus::inplace_vector<std::pair<std::string_view,Raw>,max_chunks+1> entries;
+            containers::inplace_vector<std::pair<std::string_view,Raw>,max_chunks+1> entries;
             bool clear_all=false,base_overridden=false;
             if(has_named) {
                 if(auto parsed=object(*named,entries);!parsed)return parsed;

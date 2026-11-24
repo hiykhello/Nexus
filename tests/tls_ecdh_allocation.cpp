@@ -109,7 +109,7 @@ int main() {
                 allocation::calls=0;allocation::denied=false;allocation::enabled=kind==0;
                 native::calls=0;native::denied=false;native::enabled=kind==1;
                 try {complete=attempt(profile,retry,transport,group);}catch(std::bad_alloc const&){threw=true;}
-                allocation::enabled=false;native::enabled=false;nex::boringssl::ERR_clear_error();
+                allocation::enabled=false;native::enabled=false;boringssl::ERR_clear_error();
                 bool denied=kind==0 ? allocation::denied : native::denied;
                 if(allocation::live!=before||native::live!=native_before||native::bytes!=native_bytes||(fail<count&&(!denied||complete))||(fail==count&&(!complete||threw||denied))) {
                     std::println("fault error kind={} group={} retry={} fail={}/{} complete={} threw={} denied={} C++live={}/{} native={}/{} nativebytes={}/{}",kind,group,retry,fail,count,complete,threw,denied,allocation::live,before,native::live,native_before,native::bytes,native_bytes);return 4;

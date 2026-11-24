@@ -70,7 +70,7 @@ with contextlib.ExitStack() as stack, tempfile.TemporaryDirectory() as directory
         reserve.bind(('127.0.0.1', 0))
         port = reserve.getsockname()[1]
     config = pathlib.Path(directory) / 'proxy.kdl'
-    (pathlib.Path(directory) / 'deny.kdl').write_text('schema-version 1\nkind "predicate"\n'
+    (pathlib.Path(directory) / 'deny.kdl').write_text('schema-version 2\nkind "predicate"\n'
         'rule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
     config.write_text(f'''schema-version 1
 role "client"
@@ -78,7 +78,7 @@ dns {{ server "upstream" type="{'tcp' if tcp else 'udp'}" host="127.0.0.1" port=
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" value="deny" outbound="reject"; default-outbound "direct"; }}
+routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
     proc = subprocess.Popen([binary, 'run', '--config', str(config)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

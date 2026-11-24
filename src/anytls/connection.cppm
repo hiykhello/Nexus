@@ -8,8 +8,8 @@ import httpupgrade.stream;
 import websocket.stream;
 import tls.connector;
 import tls.byte_stream;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace anytls {
     // An idle connection owns its connector/TLS/protocol independently of a
@@ -26,7 +26,7 @@ export namespace anytls {
         std::optional<ByteStream> stream_;
         std::optional<Protocol> protocol_;
         PaddingScheme& padding_;
-        nex::capy::async_event* changed_;
+        capy::async_event* changed_;
         httpupgrade::Profile const* transport_=nullptr;
         bool starting_=false,running_=false,leased_=false,canceled_=false;
         unsigned active_calls_=0;
@@ -56,12 +56,12 @@ export namespace anytls {
         };
         // The guard is a coroutine parameter so even a queued root that has
         // never resumed clears its owned I/O during context abandonment.
-        static auto reader(ReaderGuard guard) -> nex::capy::task<> {
+        static auto reader(ReaderGuard guard) -> capy::task<> {
             (void)co_await guard.owner->protocol_->run();
         }
     public:
         template<class... Args>
-        PooledConnection(PaddingScheme& padding,nex::capy::async_event* changed,Args&&... args)
+        PooledConnection(PaddingScheme& padding,capy::async_event* changed,Args&&... args)
             : connector_(std::in_place,std::forward<Args>(args)...),padding_(padding),changed_(changed) {}
         auto set_transport(httpupgrade::Profile const* transport) noexcept -> void { transport_=transport; }
         ~PooledConnection() {
@@ -87,7 +87,7 @@ export namespace anytls {
         auto drained() const noexcept -> bool { return !starting_ && !running_ && !leased_ && !active_calls_; }
         auto protocol() noexcept -> Protocol* { return protocol_ ? &*protocol_ : nullptr; }
         auto start(std::span<std::uint8_t const> key,IoClock::time_point deadline,std::string_view metadata={})
-            -> nex::capy::task<tls::detail::ConnectResult> {
+            -> capy::task<tls::detail::ConnectResult> {
             using Result=tls::detail::ConnectResult;
             if (starting_ || running_ || protocol_ || canceled_ || !connector_) co_return Result::failed;
             starting_=true; StartGuard guard{*this};
@@ -111,11 +111,11 @@ export namespace anytls {
                 co_return IoClock::now()>=deadline ? Result::timeout : Result::failed;
             guard.done=true; co_return Result::connected;
         }
-        auto run(nex::corosio::io_context& context) -> void {
+        auto run(corosio::io_context& context) -> void {
             if (starting_ || running_ || !usable()) throw std::logic_error("AnyTLS reader cannot start");
             running_=true;
             try {
-                nex::capy::run_async(context.get_executor(),[] {},[this](std::exception_ptr) noexcept { cancel(); })(reader(ReaderGuard{*this}));
+                capy::run_async(context.get_executor(),[] {},[this](std::exception_ptr) noexcept { cancel(); })(reader(ReaderGuard{*this}));
             } catch (...) {
                 running_=false; cancel(); throw;
             }

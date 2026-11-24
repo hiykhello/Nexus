@@ -54,7 +54,7 @@ namespace {
         auto first=config(32),second=config(64);
         calls=allocated_bytes=0; tracking=true;
         auto a=port->add_peer(std::move(first)),b=port->add_peer(std::move(second)); tracking=false;
-        if (!a || !b || !calls || !allocated_bytes) return false;
+        if (!a || !b || (calls==0)!=(allocated_bytes==0) || calls>8 || allocated_bytes>16384) return false;
         auto configuration_calls=calls,configuration_bytes=allocated_bytes;
         calls=allocated_bytes=0; tracking=true;
         for (unsigned step=0;step<1000;++step) {
@@ -70,11 +70,22 @@ namespace {
     auto failed_peer_construction_rolls_back() -> bool {
         auto port=Port::create(bytes(0)); auto now=Clock::time_point(10s);
         if (!port || !port->open(loopback(),now)) return false;
-        auto before=live; auto peer_config=config(32);
+        auto before=live; auto peer_config=config(32); auto with_config=live;
         allowance=0; auto failed=port->add_peer(std::move(peer_config)); allowance=-1;
-        if (failed || failed.error().code!=PortError::allocation || port->status().registry.peers || port->status().keys || port->status().routes || port->status().pending_sends || live!=before) return false;
-        auto peer=port->add_peer(config(32));
-        if (!peer || peer->generation<2 || port->status().registry.peers!=1) return false;
+        if (!failed) {
+            if (failed.error().code!=PortError::allocation || port->status().registry.peers || port->status().keys || port->status().routes || port->status().pending_sends || live!=before) return false;
+            auto peer=port->add_peer(config(32));
+            if (!peer || peer->generation<2 || port->status().registry.peers!=1) return false;
+        } else {
+            if (live!=with_config || port->status().registry.peers!=1 || port->status().keys!=1 || port->status().routes || port->status().pending_sends) return false;
+            if (!port->assign_route(*failed,{4,{},0})) return false;
+            std::array<std::uint8_t,24> packet{0x45,0,0,24,0,0,0,0,64,253,0,0,10,42,0,1,10,42,0,2,1,2,3,4};
+            allowance=0; auto enqueued=port->enqueue_ip(packet,now); allowance=-1;
+            if (enqueued || enqueued.error().code!=PortError::allocation || port->status().business_packets || port->status().business_bytes || live!=with_config) return false;
+            auto invalid=config(64); invalid.mtu=0;
+            auto rejected=port->add_peer(std::move(invalid));
+            if (rejected || rejected.error().code!=PortError::endpoint || port->status().registry.peers!=1 || port->status().keys!=1 || live!=with_config) return false;
+        }
         port->stop(); return port->drained();
     }
     auto handshake_allocation_failure_stops_all() -> bool {

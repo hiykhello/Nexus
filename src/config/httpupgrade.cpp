@@ -1,11 +1,11 @@
 module config;
 import std;
-import nexus.thirdparty.glaze;
+import glaze;
 
 namespace config {
     // Parse owned configuration values. The transport compiles and validates
     // the complete HTTP wire profile before any listener is opened.
-    auto parse_httpupgrade_transport(nex::glaze::KdlNode const& node) -> std::expected<HttpUpgradeTransport,std::string> {
+    auto parse_httpupgrade_transport(glaze::KdlNode const& node) -> std::expected<HttpUpgradeTransport,std::string> {
         auto text=[](auto const& value) -> std::string const* {
             return value.tag ? nullptr : std::get_if<std::string>(&value.data);
         };

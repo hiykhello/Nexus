@@ -9,7 +9,7 @@
 import std;
 import logging;
 import proxy.v4;
-import nexus.thirdparty.glaze;
+import glaze;
 
 using logging::Clock;
 using logging::Domain;
@@ -127,7 +127,7 @@ namespace {
         std::string line;
         while (std::getline(input, line)) {
             JsonLine parsed;
-            check(!nex::glaze::read_json(parsed, line), "parse each complete JSON object");
+            check(!glaze::read_json(parsed, line), "parse each complete JSON object");
             decoded.push_back(std::move(parsed));
         }
         check(decoded.size() == 3 && decoded[0].message == "probe" && decoded[0].level == "debug" &&

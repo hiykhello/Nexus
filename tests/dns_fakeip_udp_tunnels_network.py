@@ -84,8 +84,10 @@ def configure(root, front, dns_port, peer, trojan, other, outbound, ordered):
         rule action="route" rule-set="trojan" domain-source="fakeip" outbound="edge"
         rule action="route" rule-set="uot" domain-source="fakeip" outbound="{outbound}"
         rule action="reject"
-    }}''' if ordered else f'''rule kind="rule-set" value="trojan" outbound="edge"
-    rule kind="rule-set" value="uot" outbound="{outbound}"'''
+    }}''' if ordered else f'''rules {{
+        - kind="rule-set" value="trojan" outbound="edge"
+        - kind="rule-set" value="uot" outbound="{outbound}"
+    }}'''
     config = root / "proxy.kdl"
     config.write_text(f'''schema-version 1
 role "client"

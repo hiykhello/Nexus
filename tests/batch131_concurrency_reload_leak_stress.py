@@ -113,7 +113,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
     rule-set "dyn" path="{rules}" format="kdl"
-    rule kind="rule-set" value="dyn" outbound="reject"
+    rules {{ - kind="rule-set" value="dyn" outbound="reject"; }}
     default-outbound "direct"
 }}
 ''')

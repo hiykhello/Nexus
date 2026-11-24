@@ -5,7 +5,7 @@ module;
 #include <windows.h>
 module state.file;
 import std;
-import nexus.compat;
+import functional;
 
 namespace state {
     namespace win32 {
@@ -75,7 +75,7 @@ namespace state {
         return {};
     }
 
-    auto directory_entries(NativeHandle directory, nexus::function_ref<bool(std::string_view)> accept)
+    auto directory_entries(NativeHandle directory, functional::function_ref<bool(std::string_view)> accept)
         -> std::expected<std::vector<DirectoryEntry>, StateError> {
         auto base = win32::path_from_handle(directory);
         if (!base) return failure(Stage::scan, ERROR_INVALID_HANDLE);
@@ -106,11 +106,12 @@ namespace state {
     auto open_dir_append(NativeHandle dir, std::string_view name, Stage stage) -> std::expected<File, StateError> {
         auto full = win32::child_path(dir, name);
         if (!full) return failure(stage, ERROR_INVALID_PARAMETER);
+        constexpr DWORD access = GENERIC_READ | FILE_WRITE_DATA | FILE_APPEND_DATA;
         constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
-        HANDLE h = ::CreateFileW(full->c_str(), GENERIC_READ | FILE_APPEND_DATA, share, nullptr, OPEN_EXISTING,
+        HANDLE h = ::CreateFileW(full->c_str(), access, share, nullptr, OPEN_EXISTING,
             FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
         if (h == INVALID_HANDLE_VALUE && ::GetLastError() == ERROR_FILE_NOT_FOUND) {
-            h = ::CreateFileW(full->c_str(), GENERIC_READ | FILE_APPEND_DATA, share, nullptr, CREATE_NEW,
+            h = ::CreateFileW(full->c_str(), access, share, nullptr, CREATE_NEW,
                 FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
             if (h == INVALID_HANDLE_VALUE) return failure(stage, static_cast<int>(::GetLastError()));
             if (sync_file(h) < 0) { ::CloseHandle(h); return failure(Stage::sync_directory, static_cast<int>(::GetLastError())); }
@@ -181,6 +182,9 @@ namespace state {
 
     auto write_handle_all(NativeHandle handle, std::span<std::byte const> data, Stage stage)
         -> std::expected<void, StateError> {
+        LARGE_INTEGER end_off{};
+        if (!::SetFilePointerEx(static_cast<HANDLE>(handle), end_off, nullptr, FILE_END))
+            return failure(stage, static_cast<int>(::GetLastError()));
         std::size_t sent = 0;
         while (sent < data.size()) {
             DWORD chunk = static_cast<DWORD>(std::min<std::size_t>(data.size() - sent, 0x7fffffff));

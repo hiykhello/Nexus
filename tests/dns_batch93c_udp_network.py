@@ -42,8 +42,10 @@ def configure(root, front, dns, port, tun, ordered, trojan):
         rule action="route" outbound="direct"
     }
 ''' if ordered else '''
-    rule kind="rule-set" value="deny" outbound="block"
-    rule kind="rule-set" value="tunnel" outbound="edge"
+    rules {
+        - kind="rule-set" value="deny" outbound="block"
+        - kind="rule-set" value="tunnel" outbound="edge"
+    }
 '''
     explicit = 'rule-set "explicit-dns" path="explicit-dns.kdl" format="kdl"' if ordered else ""
     path.write_text(f'''schema-version 1

@@ -3,9 +3,22 @@ import std;
 
 namespace tcp {
     namespace {
-        auto mss_option(std::size_t mtu, std::size_t overhead) noexcept -> std::array<std::uint8_t,4> {
-            auto mss=static_cast<std::uint16_t>(std::min<std::size_t>(mtu-overhead,65535-overhead));
-            return {2,4,static_cast<std::uint8_t>(mss>>8),static_cast<std::uint8_t>(mss)};
+        struct SynAckOptions {
+            std::array<std::uint8_t, 12> bytes{};
+            std::size_t length = 0;
+            [[nodiscard]] auto span() const noexcept -> std::span<std::uint8_t const> { return {bytes.data(), length}; }
+        };
+        auto build_syn_ack_options(std::size_t mtu, std::size_t overhead, std::span<std::uint8_t const> existing) noexcept -> SynAckOptions {
+            SynAckOptions out;
+            auto mss = static_cast<std::uint16_t>(std::min<std::size_t>(mtu - overhead, 65535 - overhead));
+            out.bytes[0] = 2; out.bytes[1] = 4;
+            out.bytes[2] = static_cast<std::uint8_t>(mss >> 8); out.bytes[3] = static_cast<std::uint8_t>(mss);
+            out.length = 4;
+            auto extra = std::min(existing.size(), out.bytes.size() - out.length);
+            extra -= extra % 4;
+            std::copy_n(existing.data(), extra, out.bytes.data() + out.length);
+            out.length += extra;
+            return out;
         }
     }
     auto MemoryEngine::service(std::uint64_t now) -> std::expected<ServiceResult, EngineError> {
@@ -28,8 +41,9 @@ namespace tcp {
                 return report;
             }
             if (mtu_ < 44) return std::unexpected(EngineError::invalid_mtu);
-            auto option=mss_option(mtu_,40);
-            auto view=flow->syn_ack(); view.options=option;
+            auto view = flow->syn_ack();
+            auto options = build_syn_ack_options(mtu_, 40, view.options);
+            view.options = options.span();
             auto bytes = packet::make_tcp4(view, mtu_);
             if (!bytes) return std::unexpected(EngineError::invalid_mtu);
             report.action = ServiceAction::syn_ack;
@@ -89,8 +103,9 @@ namespace tcp {
                 return report;
             }
             if (mtu_ < 64) return std::unexpected(EngineError::invalid_mtu);
-            auto option=mss_option(mtu_,60);
-            auto view=flow->syn_ack(); view.options=option;
+            auto view = flow->syn_ack();
+            auto options = build_syn_ack_options(mtu_, 60, view.options);
+            view.options = options.span();
             auto bytes = packet::make_tcp6(view, mtu_);
             if (!bytes) return std::unexpected(EngineError::invalid_mtu);
             report.action = ServiceAction::syn_ack;

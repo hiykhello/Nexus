@@ -6,16 +6,14 @@
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <boost/capy/ex/run_async.hpp>
-#include <boost/corosio/backend.hpp>
-#include <boost/corosio/io_context.hpp>
-#include <boost/corosio/ipv4_address.hpp>
+import capy;
+import corosio;
 import std;
 import dns.message;
 import dns.corosio_query;
 import dns.cache;
 import dns.corosio_cached;
-#include "../../src/dns-shared/group_cache_binding.hpp"
+import dns.group_cache_binding;
 
 namespace {
 thread_local bool fail_next_allocation=false,allocation_failed=false;
@@ -41,7 +39,7 @@ void operator delete(void* pointer,std::align_val_t) noexcept { std::free(pointe
 void operator delete(void* pointer,std::size_t,std::align_val_t) noexcept { std::free(pointer); }
 
 namespace d=dns;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using Cache=dns_hp_experiment::GroupSnapshot;
 using Binding=dns_hp_experiment::GroupBinding;
 using Resolver=d::detail::BasicCachedAddressResolver<Binding>;

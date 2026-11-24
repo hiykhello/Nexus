@@ -154,7 +154,7 @@ def scenario(root, size, tcp_dns=False):
             with socket.socket() as local:
                 local.bind(("127.0.0.1",0)); port=local.getsockname()[1]
             key=root / "key"; key.write_text(base64.b64encode(bytes(range(size))).decode()+"\n"); key.chmod(0o600)
-            (root / "deny.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+            (root / "deny.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
             conf=root / "nexus.kdl"
             transport="tcp" if tcp_dns else "udp"
             bootstrap=(f'dns {{ server "boot" type="{transport}" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}' if size==32 else '')
@@ -167,7 +167,7 @@ inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authenticat
 outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "ss" type="shadowsocks" {{ server host="{host}" port={upstream_port}; {resolver} method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" value="deny" outbound="reject"; default-outbound "ss"; }}
+routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "ss"; }}
 ''')
             for invalid, mode in [("AAAA",0o600), (base64.b64encode(bytes(range(size))).decode(),0o644)]:
                 key.write_text(invalid); key.chmod(mode)

@@ -1,9 +1,59 @@
+module;
+#if !defined(_WIN32)
+#include <cerrno>
+#include <sys/socket.h>
+#endif
 export module net.stream_relay;
 import std;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
 export namespace net::stream_relay {
+    template<std::size_t Size, std::size_t MaxCached>
+    class PooledRelayBuffer {
+        struct Pool {
+            std::vector<std::unique_ptr<std::uint8_t[]>> free;
+            Pool() { free.reserve(MaxCached); }
+        };
+        static auto local_pool() noexcept -> Pool& {
+            thread_local Pool pool;
+            return pool;
+        }
+        std::unique_ptr<std::uint8_t[]> ptr_;
+    public:
+        static constexpr std::size_t size = Size;
+        PooledRelayBuffer() noexcept = default;
+        ~PooledRelayBuffer() { reset(); }
+        PooledRelayBuffer(PooledRelayBuffer const&) = delete;
+        auto operator=(PooledRelayBuffer const&) -> PooledRelayBuffer& = delete;
+        PooledRelayBuffer(PooledRelayBuffer&& o) noexcept : ptr_(std::move(o.ptr_)) {}
+        auto operator=(PooledRelayBuffer&& o) noexcept -> PooledRelayBuffer& {
+            if (this != &o) { reset(); ptr_ = std::move(o.ptr_); }
+            return *this;
+        }
+        auto acquire() noexcept -> bool {
+            if (ptr_) return true;
+            auto& free = local_pool().free;
+            if (!free.empty()) {
+                ptr_ = std::move(free.back());
+                free.pop_back();
+                return true;
+            }
+            ptr_.reset(new (std::nothrow) std::uint8_t[Size]);
+            return ptr_ != nullptr;
+        }
+        auto reset() noexcept -> void {
+            if (!ptr_) return;
+            auto& free = local_pool().free;
+            if (free.size() < MaxCached) {
+                try { free.push_back(std::move(ptr_)); return; } catch (...) {}
+            }
+            ptr_.reset();
+        }
+        [[nodiscard]] auto get() const noexcept -> std::uint8_t* { return ptr_.get(); }
+        [[nodiscard]] explicit operator bool() const noexcept { return ptr_ != nullptr; }
+    };
+
     struct Delivery {
         void* owner=nullptr;
         void (*notify)(void*,bool,std::size_t) noexcept=nullptr;
@@ -22,7 +72,7 @@ export namespace net::stream_relay {
             if (adapter.invalid_read(error,n,size)) return ReadState::failure;
             return ReadState::data;
         } else {
-            if (adapter.invalid_read(result)) return ReadState::failure;
+            if (adapter.invalid_read(result) || *result > size) return ReadState::failure;
             return *result ? ReadState::data : ReadState::eof;
         }
     }
@@ -37,33 +87,84 @@ export namespace net::stream_relay {
 
     // Adapters describe a single direction. Socket operations expose partial
     // writes; framed streams expose complete writes. The owner drains the task.
-    template<template<class> class Coroutine=nex::capy::task,class Adapter>
+    template<template<class> class Coroutine=capy::task,class Adapter>
     auto transfer(Adapter adapter) -> Coroutine<bool> {
         if constexpr (requires { adapter.delegates(); adapter.delegate(); })
             if (adapter.delegates()) co_return co_await adapter.delegate();
         if (!adapter.start()) co_return false;
-        std::array<std::uint8_t,16384> bytes{};
+        PooledRelayBuffer<16640, 64> small_buf;
+        PooledRelayBuffer<65536, 32> large_buf;
+        if (!small_buf.acquire()) { adapter.read_failed(); co_return false; }
+        std::size_t total_bytes=0;
+        bool large_failed=false;
+        bool try_nonblock_read=false;
         for (;;) {
-            auto result=co_await adapter.read(bytes);
-            switch (read_state(adapter,result,bytes.size())) {
-            case ReadState::failure:
-                adapter.read_failed(); co_return false;
-            case ReadState::eof:
-                if constexpr (Adapter::locked_output) {
-                    auto [lock_error,guard]=co_await adapter.lock();
-                    if (lock_error || adapter.canceled()) co_return false;
-                    auto closed=co_await adapter.close_locked();
-                    if (!closed) { adapter.cancel(); co_return false; }
-                    co_return true;
-                } else if constexpr (requires { adapter.close_now(); }) co_return adapter.close_now();
-                else co_return co_await adapter.close_output();
-            case ReadState::data:
-                break;
+            if (!large_buf && !large_failed && total_bytes>=65536) {
+                if (large_buf.acquire()) small_buf.reset();
+                else large_failed=true;
+            }
+            auto buf=large_buf ? std::span<std::uint8_t>(large_buf.get(),65536) : std::span<std::uint8_t>(small_buf.get(),16640);
+            std::size_t got=0;
+            bool need_async_read=true;
+#if !defined(_WIN32)
+            if constexpr (Adapter::socket_input) {
+                if (try_nonblock_read) {
+                    if (adapter.invalid_read(std::error_code{}, std::size_t{1}, std::size_t{1})) {
+                        adapter.read_failed(); co_return false;
+                    }
+                    int fd=-1;
+                    if constexpr (requires { { adapter.input_fd() } -> std::convertible_to<int>; })
+                        fd=static_cast<int>(adapter.input_fd());
+                    if (fd>=0) {
+                        ssize_t r=-1;
+                        do { r=::recv(fd,buf.data(),buf.size(),MSG_DONTWAIT); } while (r<0 && errno==EINTR);
+                        if (r>0) {
+                            got=static_cast<std::size_t>(r);
+                            if (adapter.invalid_read(std::error_code{}, got, buf.size())) {
+                                adapter.read_failed(); co_return false;
+                            }
+                            need_async_read=false;
+                        } else if (r==0) {
+                            if constexpr (Adapter::locked_output) {
+                                auto [lock_error,guard]=co_await adapter.lock();
+                                if (lock_error || adapter.canceled()) co_return false;
+                                auto closed_ok=co_await adapter.close_locked();
+                                if (!closed_ok) { adapter.cancel(); co_return false; }
+                                co_return true;
+                            } else if constexpr (requires { adapter.close_now(); }) co_return adapter.close_now();
+                            else co_return co_await adapter.close_output();
+                        } else if (errno!=EAGAIN && errno!=EWOULDBLOCK) {
+                            adapter.read_failed(); co_return false;
+                        }
+                    }
+                }
+            }
+#endif
+            if (need_async_read) {
+                auto result=co_await adapter.read(buf);
+                switch (read_state(adapter,result,buf.size())) {
+                case ReadState::failure:
+                    adapter.read_failed(); co_return false;
+                case ReadState::eof:
+                    if constexpr (Adapter::locked_output) {
+                        auto [lock_error,guard]=co_await adapter.lock();
+                        if (lock_error || adapter.canceled()) co_return false;
+                        auto closed=co_await adapter.close_locked();
+                        if (!closed) { adapter.cancel(); co_return false; }
+                        co_return true;
+                    } else if constexpr (requires { adapter.close_now(); }) co_return adapter.close_now();
+                    else co_return co_await adapter.close_output();
+                case ReadState::data:
+                    break;
+                }
+                got=read_size<Adapter>(result);
+                if constexpr (Adapter::socket_input) try_nonblock_read=true;
             }
             adapter.after_read();
+            total_bytes+=got;
             if constexpr (requires {adapter.meters_output(); adapter.reserve_output(std::size_t{});}) {
                 if (adapter.meters_output()) {
-                    auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                    auto pending=buf.first(got);
                     while (!pending.empty()) {
                         auto credit=co_await adapter.reserve_output(pending.size());
                         if (!credit) co_return false;
@@ -90,7 +191,40 @@ export namespace net::stream_relay {
                 }
             }
             if constexpr (Adapter::socket_output) {
-                auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                auto pending=buf.first(got);
+#if !defined(_WIN32)
+                {
+                    if (adapter.invalid_write(std::error_code{}, std::size_t{1}, std::size_t{1})) {
+                        adapter.write_failed(); co_return false;
+                    }
+                    int fd=-1;
+                    if constexpr (requires { { adapter.output_fd() } -> std::convertible_to<int>; })
+                        fd=static_cast<int>(adapter.output_fd());
+                    if (fd>=0) {
+#ifdef MSG_NOSIGNAL
+                        constexpr int kSendFlags=MSG_DONTWAIT|MSG_NOSIGNAL;
+#else
+                        constexpr int kSendFlags=MSG_DONTWAIT;
+#endif
+                        while (!pending.empty()) {
+                            ssize_t const w=::send(fd,pending.data(),pending.size(),kSendFlags);
+                            if (w>0) {
+                                auto const n=static_cast<std::size_t>(w);
+                                if constexpr (requires { adapter.delivered(n); }) adapter.delivered(n);
+                                if (adapter.invalid_write(std::error_code{}, n, pending.size())) {
+                                    adapter.write_failed(); co_return false;
+                                }
+                                adapter.after_write();
+                                pending=pending.subspan(n);
+                                continue;
+                            }
+                            if (w<0 && errno==EINTR) continue;
+                            if (w<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) break;
+                            adapter.write_failed(); co_return false;
+                        }
+                    }
+                }
+#endif
                 while (!pending.empty()) {
                     auto [error,n]=co_await adapter.write(pending);
                     if constexpr (requires { adapter.delivered(n); })
@@ -101,12 +235,12 @@ export namespace net::stream_relay {
             } else if constexpr (Adapter::locked_output) {
                 auto [lock_error,guard]=co_await adapter.lock();
                 if (lock_error || adapter.canceled()) co_return false;
-                auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                auto pending=buf.first(got);
                 auto sent=co_await adapter.send_locked(pending);
                 if (!sent) { adapter.cancel(); co_return false; }
                 if constexpr (requires { adapter.delivered(pending.size()); }) adapter.delivered(pending.size());
             } else {
-                auto pending=std::span{bytes}.first(read_size<Adapter>(result));
+                auto pending=buf.first(got);
                 if (!co_await adapter.write(pending)) co_return false;
                 if constexpr (requires { adapter.delivered(pending.size()); }) adapter.delivered(pending.size());
             }
@@ -121,7 +255,12 @@ export namespace net::stream_relay {
         auto delegates() const requires requires(Adapter const& a) { a.delegates(); } { return adapter.delegates(); }
         auto delegate() const requires requires(Adapter const& a) { a.delegate(); } { return adapter.delegate(); }
         auto start() { return adapter.start_upload(); }
-        auto read(std::span<std::uint8_t> bytes) { return adapter.local().read_some(nex::capy::mutable_buffer(bytes.data(),bytes.size())); }
+        auto input_fd() noexcept -> int {
+            if constexpr (requires { { adapter.local().native_handle() } -> std::convertible_to<int>; })
+                return static_cast<int>(adapter.local().native_handle());
+            else return -1;
+        }
+        auto read(std::span<std::uint8_t> bytes) { return adapter.local().read_some(capy::mutable_buffer(bytes.data(),bytes.size())); }
         template<class Error> auto eof(Error const& error,std::size_t n) { return adapter.upload_eof(error,n); }
         template<class Error> auto invalid_read(Error const& error,std::size_t n,std::size_t size) { return adapter.invalid_upload(error,n,size); }
         auto read_failed() { adapter.cancel(); }
@@ -150,7 +289,12 @@ export namespace net::stream_relay {
         auto read_failed() {}
         auto after_read() {}
         auto close_now() { return adapter.shutdown_local(); }
-        auto write(std::span<std::uint8_t const> bytes) { return adapter.local().write_some(nex::capy::const_buffer(bytes.data(),bytes.size())); }
+        auto output_fd() noexcept -> int {
+            if constexpr (requires { { adapter.local().native_handle() } -> std::convertible_to<int>; })
+                return static_cast<int>(adapter.local().native_handle());
+            else return -1;
+        }
+        auto write(std::span<std::uint8_t const> bytes) { return adapter.local().write_some(capy::const_buffer(bytes.data(),bytes.size())); }
         template<class Error> auto invalid_write(Error const& error,std::size_t n,std::size_t size) { return adapter.invalid_download(error,n,size); }
         auto write_failed() { adapter.cancel(); }
         auto after_write() { adapter.after_local_write(); }
@@ -159,10 +303,10 @@ export namespace net::stream_relay {
         }
     };
 
-    template<template<class> class Coroutine=nex::capy::task,class Adapter>
+    template<template<class> class Coroutine=capy::task,class Adapter>
     auto upload(Adapter adapter) -> Coroutine<bool> { return transfer<Coroutine>(UploadAdapter<Adapter>{std::move(adapter)}); }
     template<class Adapter>
-    auto download(Adapter adapter) -> nex::capy::task<bool> { return transfer(DownloadAdapter<Adapter>{std::move(adapter)}); }
+    auto download(Adapter adapter) -> capy::task<bool> { return transfer(DownloadAdapter<Adapter>{std::move(adapter)}); }
 }
 
 export namespace net {
@@ -179,7 +323,7 @@ export namespace net {
         auto local() const -> Local& { return socket; }
         auto start_upload() const -> bool { return true; }
         auto start_download() const -> bool { return true; }
-        template<class Error> auto upload_eof(Error const& error,std::size_t) const -> bool { return nex::capy::is_eof(error); }
+        template<class Error> auto upload_eof(Error const& error,std::size_t) const -> bool { return capy::is_eof(error); }
         template<class Error> auto invalid_upload(Error const& error,std::size_t n,std::size_t size) const -> bool { return error || !n || n>size; }
         template<class Error> auto invalid_download(Error const& error,std::size_t n,std::size_t size) const -> bool { return error || !n || n>size; }
         auto after_local_read() const -> void { touch(); }
@@ -188,7 +332,7 @@ export namespace net {
         auto close_upload() const { return stream.close_output(); }
         auto send_upload(std::span<std::uint8_t const> bytes) const { return stream.send(bytes); }
         auto receive(std::span<std::uint8_t> bytes) const { return stream.read(bytes); }
-        auto shutdown_local() const -> bool { (void)socket.shutdown(nex::corosio::shutdown_send); return true; }
+        auto shutdown_local() const -> bool { (void)socket.shutdown(corosio::shutdown_send); return true; }
     };
 
     // Adapts a framed byte stream to the partial-I/O interface used by TLS
@@ -216,7 +360,7 @@ export namespace net {
                 stop_=&context->stop_token;
                 return operation_->await_suspend(continuation,context);
             }
-            [[nodiscard]] auto await_resume() -> nex::capy::results<std::size_t> {
+            [[nodiscard]] auto await_resume() -> capy::results<std::size_t> {
                 if (!operation_) return {std::error_code{},0};
                 if constexpr (Write) {
                     if (!operation_->await_resume()) return {failure(),0};
@@ -233,13 +377,13 @@ export namespace net {
         explicit ByteStreamAdapter(Transport& transport) noexcept : transport_(transport) {}
         ByteStreamAdapter(ByteStreamAdapter const&)=delete;
         auto operator=(ByteStreamAdapter const&) -> ByteStreamAdapter& = delete;
-        auto read_some(nex::capy::mutable_buffer buffer) {
+        auto read_some(capy::mutable_buffer buffer) {
             using Operation=decltype(transport_.read(std::span<std::uint8_t>{}));
             std::optional<Operation> operation;
             if (buffer.size()) operation.emplace(transport_.read({static_cast<std::uint8_t*>(buffer.data()),buffer.size()}));
             return ResultAdapter<Operation,false>(std::move(operation),buffer.size());
         }
-        auto write_some(nex::capy::const_buffer buffer) {
+        auto write_some(capy::const_buffer buffer) {
             using Operation=decltype(transport_.send(std::span<std::uint8_t const>{}));
             std::optional<Operation> operation;
             if (buffer.size()) operation.emplace(transport_.send({static_cast<std::uint8_t const*>(buffer.data()),buffer.size()}));

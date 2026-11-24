@@ -4,7 +4,7 @@
 #include <cerrno>
 #include <memory_resource>
 import std;
-import proxy;
+import relay;
 using namespace std::chrono_literals;
 unsigned launches=0;
 extern "C" void nexus_test_root_launch(unsigned stage) {
@@ -17,7 +17,7 @@ auto connect_to(std::uint16_t port) -> int {
     if (connect(fd,reinterpret_cast<sockaddr*>(&address),sizeof(address))) { close(fd); return -1; }
     return fd;
 }
-auto read_exact(proxy::Server& server,int fd,std::span<unsigned char> bytes) -> bool {
+auto read_exact(relay::Server& server,int fd,std::span<unsigned char> bytes) -> bool {
     auto deadline=std::chrono::steady_clock::now()+3s;
     while (!bytes.empty() && std::chrono::steady_clock::now()<deadline) {
         server.poll(10ms);
@@ -28,9 +28,9 @@ auto read_exact(proxy::Server& server,int fd,std::span<unsigned char> bytes) -> 
     return bytes.empty();
 }
 int main() {
-    proxy::Server server;
-    constexpr auto rules="schema-version 1\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"127.0.0.0/8\"\n";
-    if (!server.set_block_rules(rules,proxy::RuleFormat::kdl) || !server.set_socks5_credentials("user","password")) return 1;
+    relay::Server server;
+    constexpr auto rules="schema-version 2\nkind \"predicate\"\nrule type=\"ip-cidr\" value=\"127.0.0.0/8\"\n";
+    if (!server.set_block_rules(rules,relay::RuleFormat::kdl) || !server.set_socks5_credentials("user","password")) return 1;
     auto port=server.start(0); if (!port) return 2;
     auto first=connect_to(*port); if (first<0) return 3;
     for (int i=0;i<100 && launches!=1;++i) server.poll(10ms);
@@ -38,9 +38,9 @@ int main() {
     auto second=connect_to(*port); if (second<0) return 5;
     for (int i=0;i<100 && server.healthy();++i) server.poll(10ms);
     auto failure=server.failure();
-    if (server.healthy() || !failure || failure->kind!=proxy::FailureKind::accept_task || launches!=2) return 6;
+    if (server.healthy() || !failure || failure->kind!=relay::FailureKind::accept_task || launches!=2) return 6;
     if (server.clear_socks5_credentials() || server.set_socks5_credentials("new","secret") ||
-        server.set_route({},proxy::RuleFormat::kdl,proxy::RouteAction::direct,proxy::RouteAction::direct)) return 7;
+        server.set_route({},relay::RuleFormat::kdl,relay::RouteAction::direct,relay::RouteAction::direct)) return 7;
     std::array<unsigned char,3> hello{5,1,2}; std::array<unsigned char,2> method{};
     if (send(first,hello.data(),hello.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(hello.size()) || !read_exact(server,first,method) || method!=std::array<unsigned char,2>{5,2}) return 8;
     std::array<unsigned char,15> auth{1,4,'u','s','e','r',8,'p','a','s','s','w','o','r','d'}, result{};
@@ -48,7 +48,7 @@ int main() {
     std::array<unsigned char,10> request{5,1,0,1,127,0,0,1,0,80}, reply{};
     if (send(first,request.data(),request.size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(request.size()) || !read_exact(server,first,reply) || reply[1]!=2) return 10;
     server.stop(); close(first); close(second);
-    if (!server.clear_socks5_credentials() || !server.set_route({},proxy::RuleFormat::kdl,proxy::RouteAction::direct,proxy::RouteAction::direct)) return 11;
+    if (!server.clear_socks5_credentials() || !server.set_route({},relay::RuleFormat::kdl,relay::RouteAction::direct,relay::RouteAction::direct)) return 11;
     auto again=server.start(0); if (!again) return 12;
     server.stop();
     std::println("Pending SOCKS session keeps its credentials and route after accept task failure");

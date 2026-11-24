@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory() as directory:
             key.write_text(base64.b64encode(bytes(range(size))).decode() + "\n")
             key.chmod(0o600)
             config = root / "server.kdl"
-            (root / "deny.kdl").write_text('schema-version 1\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
+            (root / "deny.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
             config.write_text(f'''schema-version 1
 role "server"
 workers {workers}
@@ -44,7 +44,7 @@ inbounds {{
  shadowsocks "b" {{ listen host="127.0.0.1" port={ports[1]}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
 }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rule kind="rule-set" value="deny" outbound="reject"; default-outbound "direct"; }}
+routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "direct"; }}
 ''')
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
                 occupied.bind(("127.0.0.1", ports[1]))

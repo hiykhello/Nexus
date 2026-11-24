@@ -75,17 +75,53 @@ namespace logging {
 
     Runtime::~Runtime() { shutdown(); }
 
+    auto Runtime::producer_for_thread(this Runtime const& self, bool& overflow) noexcept -> Producer const* {
+        if (!self.logger_ || !self.runtime_id_) return nullptr;
+        struct ThreadSlot {
+            std::uint64_t runtime_id = 0;
+            std::size_t index = 0;
+        };
+        thread_local std::array<ThreadSlot, 4> cache{};
+        thread_local std::size_t evict = 0;
+        for (auto const& e : cache) {
+            if (e.runtime_id == self.runtime_id_) {
+                overflow = (e.index + 1 >= kProducers);
+                return self.producers_[e.index] ? &*self.producers_[e.index] : nullptr;
+            }
+        }
+        auto claimed = self.next_slot_.fetch_add(1, std::memory_order_relaxed);
+        std::size_t overflow_idx = kProducers - 1;
+        std::size_t idx = claimed < overflow_idx ? claimed : overflow_idx;
+        if (!self.producer_ready_[idx].load(std::memory_order_acquire)) {
+            std::lock_guard lock(self.slot_mutex_);
+            if (!self.producer_ready_[idx].load(std::memory_order_relaxed)) {
+                self.producers_[idx] = self.logger_->producer(idx);
+                self.producer_ready_[idx].store(true, std::memory_order_release);
+            }
+        }
+        if (!self.producers_[idx]) return nullptr;
+        overflow = (idx == overflow_idx);
+        cache[evict++ % cache.size()] = {self.runtime_id_, idx};
+        return &*self.producers_[idx];
+    }
+
     auto Runtime::start(this Runtime& self, Config config, std::string_view config_path,
                         std::span<std::string const> protected_paths) -> std::expected<void, std::string> {
+        static std::atomic<std::uint64_t> next_runtime_id{1};
         auto valid = validate_paths(config, config_path, protected_paths);
         if (!valid) return valid;
         auto sink = open_sinks(config);
         if (!sink) return std::unexpected(sink.error());
-        auto logger = Logger::start(std::move(*sink), 1, config.settings);
+        auto logger = Logger::start(std::move(*sink), kProducers, config.settings);
         if (!logger) return std::unexpected(std::format("cannot start log writer: {}", logger.error().message()));
         self.config_ = std::move(config);
         self.logger_ = std::move(*logger);
-        self.producer_ = self.logger_->producer(0);
+        for (std::size_t i = 0; i < kProducers; ++i) {
+            self.producers_[i].reset();
+            self.producer_ready_[i].store(false, std::memory_order_relaxed);
+        }
+        self.next_slot_.store(0, std::memory_order_relaxed);
+        self.runtime_id_ = next_runtime_id.fetch_add(1, std::memory_order_relaxed);
         self.apply_levels(self.config_);
         return {};
     }
@@ -181,15 +217,22 @@ namespace logging {
         std::uint64_t dropped = 0;
         for (auto const& domain : snapshot.dropped)
             for (auto count : domain) dropped += count;
+        std::size_t hw = 0;
+        for (std::size_t i = 0; i < snapshot.producer_count && i < snapshot.queue_high_water.size(); ++i)
+            hw = std::max(hw, snapshot.queue_high_water[i]);
         result += std::format("dropped={} sink-errors={} queued={} queue-high-water={}\n",
-            dropped, snapshot.sink_errors, snapshot.undrained, snapshot.queue_high_water.front());
+            dropped, snapshot.sink_errors, snapshot.undrained, hw);
         return result;
     }
 
     auto Runtime::shutdown(this Runtime& self) -> void {
         if (!self.logger_) return;
         (void)self.logger_->drain(Clock::now() + std::chrono::seconds(2));
-        self.producer_.reset();
+        self.runtime_id_ = 0;
+        for (std::size_t i = 0; i < kProducers; ++i) {
+            self.producers_[i].reset();
+            self.producer_ready_[i].store(false, std::memory_order_relaxed);
+        }
         self.logger_.reset();
     }
 }

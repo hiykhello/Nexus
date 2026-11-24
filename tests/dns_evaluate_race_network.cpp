@@ -8,11 +8,10 @@ import dns.response_race_walk;
 import dns.policy;
 import dns.corosio_resolver;
 import rules;
-import nexus.thirdparty.capy;
-import nexus.thirdparty.corosio;
+import capy;
+import corosio;
 
-namespace capy=nex::capy;
-namespace io=nex::corosio;
+namespace io = ::corosio;
 using Result=std::expected<dns::EvaluatedMessage,dns::detail::ResolveError>;
 using Owner=dns::EvaluateOwner<dns::EvaluatedMessageExchange,Result,2>;
 using Walk=dns::ResponseRaceWalk;

@@ -36,6 +36,7 @@ export namespace tcp {
             PassiveConnection connection;
             bool eof_observed = false;
             bool reset_pending = false;
+            bool app_detached = false;
         };
         using List = std::list<Entry>;
         List entries_;
@@ -72,6 +73,8 @@ export namespace tcp {
         [[nodiscard]] auto next(ConnectionId after) const noexcept -> std::optional<ConnectionId>;
         [[nodiscard]] auto observe_eof(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto hold_reset(ConnectionId id, bool hold) noexcept -> bool;
+        [[nodiscard]] auto detach(ConnectionId id) noexcept -> bool;
+        [[nodiscard]] auto is_detached(ConnectionId id) const noexcept -> bool;
         [[nodiscard]] auto reclaim(ConnectionId id, std::uint64_t now) -> std::expected<bool, TableError>;
         [[nodiscard]] auto abort(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto size() const noexcept -> std::size_t { return entries_.size(); }
@@ -100,7 +103,7 @@ export namespace tcp {
             packet::Address6 source, destination;
             std::uint16_t source_port, destination_port;
             PassiveConnection6 connection;
-            bool eof_observed = false, reset_pending = false;
+            bool eof_observed = false, reset_pending = false, app_detached = false;
         };
         using List = std::list<Entry>;
         List entries_;
@@ -137,6 +140,8 @@ export namespace tcp {
         [[nodiscard]] auto next(ConnectionId after) const noexcept -> std::optional<ConnectionId>;
         [[nodiscard]] auto observe_eof(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto hold_reset(ConnectionId id, bool hold) noexcept -> bool;
+        [[nodiscard]] auto detach(ConnectionId id) noexcept -> bool;
+        [[nodiscard]] auto is_detached(ConnectionId id) const noexcept -> bool;
         [[nodiscard]] auto reclaim(ConnectionId id, std::uint64_t now) -> std::expected<bool, TableError>;
         [[nodiscard]] auto abort(ConnectionId id) noexcept -> bool;
         [[nodiscard]] auto size() const noexcept -> std::size_t { return entries_.size(); }

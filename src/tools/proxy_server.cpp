@@ -33,6 +33,9 @@ import cli.udp;
 
 #ifndef MCPP_FEATURE_SS2022
 auto nexus_run(int argc, char** argv) -> int {
-    return nexus_run_proxy<cli::UdpRuntime,cli::SelectedHy2Runtime,cli::SelectedMasqueRuntime,cli::SelectedTuicRuntime,cli::SelectedTunRuntime>(argc,argv);
+    return nexus_run_proxy<cli::UdpRuntime,cli::SelectedHy2Runtime,cli::SelectedMasqueRuntime,cli::SelectedTuicRuntime,cli::SelectedTunRuntime>(argc,argv,true);
+}
+auto nexus_run_embedded(int argc, char** argv) -> int {
+    return nexus_run_proxy<cli::UdpRuntime,cli::SelectedHy2Runtime,cli::SelectedMasqueRuntime,cli::SelectedTuicRuntime,cli::SelectedTunRuntime>(argc,argv,false);
 }
 #endif
