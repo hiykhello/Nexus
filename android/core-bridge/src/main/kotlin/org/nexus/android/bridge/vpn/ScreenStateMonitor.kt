@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
+import android.os.PowerManager
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -15,8 +17,9 @@ class ScreenStateMonitor(
     private val context: Context,
     private val onScreenInteractiveChanged: (Boolean) -> Unit,
 ) : Closeable {
-    private val interactive = AtomicBoolean(true)
-    private var registered = false
+    private val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    private val interactive = AtomicBoolean(powerManager?.isInteractive ?: true)
+    private val registered = AtomicBoolean(false)
 
     val isInteractive: Boolean get() = interactive.get()
 
@@ -38,18 +41,27 @@ class ScreenStateMonitor(
     }
 
     fun start() {
-        if (registered) return
+        if (!registered.compareAndSet(false, true)) return
+        interactive.set(powerManager?.isInteractive ?: true)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
         }
-        context.registerReceiver(receiver, filter)
-        registered = true
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                context.registerReceiver(receiver, filter)
+            }
+        } catch (t: Throwable) {
+            registered.set(false)
+            throw t
+        }
     }
 
     override fun close() {
-        if (!registered) return
+        if (!registered.compareAndSet(true, false)) return
         runCatching { context.unregisterReceiver(receiver) }
-        registered = false
     }
 }

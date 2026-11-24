@@ -115,7 +115,43 @@ class ShareLinkParserTest {
     }
 
     @Test
-    fun rejectsUnsupportedScheme() {
+    fun rejectsUnsupportedSchemeAndHandlesSlashOrSnellVersion() {
+        val slashPort = ShareLinkParser.parse(
+            "vless://11111111-2222-3333-4444-555555555555@edge.example.com:443/?security=tls&sni=edge.example.com#SlashPort"
+        ).getOrThrow()
+        assertEquals("edge.example.com", slashPort.host)
+        assertEquals(443, slashPort.port)
+
+        val slashV6 = ShareLinkParser.parse(
+            "vless://11111111-2222-3333-4444-555555555555@[2001:db8::1]:443/?security=tls&sni=edge.example.com#SlashV6"
+        ).getOrThrow()
+        assertEquals("2001:db8::1", slashV6.host)
+        assertEquals(443, slashV6.port)
+
+        val ssSlash = ShareLinkParser.parse(
+            "ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206YT8/@1.2.3.4:8388/?plugin=none#SlashB64"
+        ).getOrThrow()
+        assertEquals("2022-blake3-aes-128-gcm", ssSlash.method)
+        assertEquals("a??", ssSlash.secret)
+        assertEquals("1.2.3.4", ssSlash.host)
+        assertEquals(8388, ssSlash.port)
+
+        assertTrue(ShareLinkParser.parse("snell://pskvalue@sn.example.com:6160?version=3#Snell3").isFailure)
         assertTrue(ShareLinkParser.parse("http://example.com").isFailure)
+
+        // Security: untrusted ssh:// URIs must never inject local filesystem private-key-file paths.
+        val sshInjected = ShareLinkParser.parse(
+            "ssh://alice@bastion.example.com:22?private-key-file=%2Fetc%2Fpasswd#SafeSSH"
+        ).getOrThrow()
+        assertEquals("", sshInjected.privateKeyFile)
+        val sshKdl = ShareLinkParser.renderKdlOutbound(sshInjected, "")
+        assertFalse(sshKdl.contains("/etc/passwd"))
+
+        // Security: KDL escaping must strip control chars and Unicode line terminators.
+        val ctrlNode = ShareLinkParser.parse(
+            "trojan://pass@edge.example.com:443?sni=a%0Ab%E2%80%A8c#Tag"
+        ).getOrThrow()
+        val ctrlKdl = ShareLinkParser.renderKdlOutbound(ctrlNode, "/sec/t.pass")
+        assertTrue(ctrlKdl.contains("""server-name "abc""""))
     }
 }

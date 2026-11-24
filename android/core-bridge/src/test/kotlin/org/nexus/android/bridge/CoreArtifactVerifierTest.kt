@@ -33,9 +33,22 @@ class CoreArtifactVerifierTest {
             assertTrue(ok.valid)
             assertTrue(ok.isAarch64Elf)
 
+            // Also accept GNU sha256sum format emitted by Gradle syncNexusCore ("<hex>  libnexus.so\n").
+            val okWithFilename = CoreArtifactVerifier.verifyCoreBinary(bin, "$sha  libnexus.so\n", requireArm64Elf = true)
+            assertTrue(okWithFilename.valid)
+
             val badSha = CoreArtifactVerifier.verifyCoreBinary(bin, "0".repeat(64), requireArm64Elf = true)
             assertFalse(badSha.valid)
             assertEquals("sha256 mismatch", badSha.reason)
+
+            for (malformed in listOf("", "   \n", "abcd", "z".repeat(64))) {
+                val res = CoreArtifactVerifier.verifyCoreBinary(bin, malformed, requireArm64Elf = true)
+                assertFalse(res.valid)
+                assertEquals("invalid expected sha256", res.reason)
+            }
+
+            val noShaValidArch = CoreArtifactVerifier.verifyCoreBinary(bin, null, requireArm64Elf = true)
+            assertTrue(noShaValidArch.valid)
 
             val x86 = File(dir, "x86.so")
             x86.writeBytes(makeFakeElf(62))

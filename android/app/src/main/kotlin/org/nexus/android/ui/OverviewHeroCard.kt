@@ -1,0 +1,438 @@
+package org.nexus.android.ui
+
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import org.nexus.android.R
+import org.nexus.android.ui.theme.NexusNumericStyles
+import org.nexus.android.ui.theme.NexusTheme
+
+enum class HeroConnectionState {
+    STANDBY,
+    STARTING,
+    CONNECTED,
+    DEGRADED,
+    ERROR,
+}
+
+data class ActiveExitSummary(
+    val groupTag: String = "",
+    val memberName: String = "",
+    val latencyMs: Long = -1L,
+    val state: String = "unknown",
+)
+
+@Composable
+internal fun FiveStateHeroCard(
+    heroState: HeroConnectionState,
+    powerSave: Boolean,
+    uptimeMs: Long,
+    activeProfileName: String,
+    activeExit: ActiveExitSummary,
+    errorDetail: String,
+    onStartStop: () -> Unit,
+    onOpenConfig: () -> Unit,
+    onOpenGroups: () -> Unit,
+) {
+    val ext = NexusTheme.colors
+    val haptic = LocalHapticFeedback.current
+    val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
+
+    val accentColor by animateColorAsState(
+        targetValue = when (heroState) {
+            HeroConnectionState.CONNECTED -> ext.success
+            HeroConnectionState.STARTING -> ext.warning
+            HeroConnectionState.DEGRADED -> ext.warning
+            HeroConnectionState.ERROR -> ext.danger
+            HeroConnectionState.STANDBY -> ext.muted
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "heroAccent",
+    )
+    val borderColor = if (heroState == HeroConnectionState.STANDBY) {
+        ext.hairline
+    } else {
+        accentColor.copy(alpha = 0.55f)
+    }
+    val tint = if (heroState == HeroConnectionState.STANDBY) {
+        Color.Transparent
+    } else {
+        accentColor.copy(alpha = if (ext.isDark) 0.11f else 0.07f)
+    }
+
+    val statusLabel = when (heroState) {
+        HeroConnectionState.STANDBY -> "未连接"
+        HeroConnectionState.STARTING -> "正在连接"
+        HeroConnectionState.CONNECTED -> if (powerSave) "已连接 · 省电" else "已连接"
+        HeroConnectionState.DEGRADED -> "线路波动"
+        HeroConnectionState.ERROR -> "连接失败"
+    }
+    val primaryHeadline = when {
+        heroState == HeroConnectionState.ERROR -> errorDetail.ifEmpty { "连接未能建立" }
+        heroState == HeroConnectionState.STARTING -> "正在建立加密连接…"
+        isLive && activeExit.memberName.isNotEmpty() -> activeExit.memberName
+        isLive -> activeProfileName.ifEmpty { "默认配置" }
+        else -> activeProfileName.ifEmpty { "未连接" }
+    }
+    val latencyColor = when {
+        !isLive || activeExit.latencyMs < 0L -> ext.muted
+        activeExit.state.equals("timeout", ignoreCase = true) ||
+            activeExit.state.equals("unreachable", ignoreCase = true) ||
+            activeExit.latencyMs == 0L -> ext.danger
+        activeExit.latencyMs < 80L -> ext.success
+        activeExit.latencyMs < 180L -> ext.warning
+        activeExit.latencyMs < 350L -> ext.slow
+        else -> ext.danger
+    }
+    val latencyText = when {
+        activeExit.state.equals("timeout", ignoreCase = true) ||
+            activeExit.state.equals("unreachable", ignoreCase = true) ||
+            activeExit.latencyMs == 0L -> "超时"
+        activeExit.latencyMs > 0L -> "${activeExit.latencyMs} ms"
+        else -> ""
+    }
+
+    OpticalCard(
+        cornerRadius = 20.dp,
+        borderColor = borderColor,
+        accentTint = tint,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        HeroStatusOrb(heroState = heroState, accentColor = accentColor)
+                        Text(
+                            text = statusLabel,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (heroState == HeroConnectionState.ERROR) ext.danger else MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (isLive && activeExit.memberName.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(onClick = onOpenGroups)
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                SignalBarsIndicator(latencyMs = activeExit.latencyMs, state = activeExit.state)
+                                if (latencyText.isNotEmpty()) {
+                                    Text(
+                                        text = latencyText,
+                                        style = NexusNumericStyles.monoBadge,
+                                        color = latencyColor,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = primaryHeadline,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (heroState == HeroConnectionState.ERROR) ext.danger else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = if (isLive) onOpenGroups else onOpenConfig),
+                    )
+
+                    val subline = when {
+                        isLive && uptimeMs > 0L -> "运行时长 ${formatDurationClock(uptimeMs)}"
+                        heroState == HeroConnectionState.STANDBY -> "点击右侧开关连接"
+                        heroState == HeroConnectionState.STARTING -> "请稍候…"
+                        else -> ""
+                    }
+                    if (subline.isNotEmpty()) {
+                        Text(
+                            text = subline,
+                            style = if (isLive) NexusNumericStyles.monoBadge else MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+
+                HeroPowerOrbButton(
+                    heroState = heroState,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onStartStop()
+                    },
+                )
+            }
+
+            if (heroState == HeroConnectionState.DEGRADED || heroState == HeroConnectionState.ERROR) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (heroState == HeroConnectionState.DEGRADED) {
+                        FilledTonalButton(
+                            onClick = onOpenGroups,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_speed),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("切换线路")
+                        }
+                    } else {
+                        FilledTonalButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onStartStop()
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_refresh),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("重试连接")
+                        }
+                        OutlinedButton(
+                            onClick = onOpenConfig,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("检查配置")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Radiant circular `52.dp` Liquid Glass Hero Power Orb unified with Nexus Desktop.
+ * Zero per-frame allocations (`drawWithCache` radial outer bloom + premultiplied AGSL button).
+ */
+@Composable
+private fun HeroPowerOrbButton(
+    heroState: HeroConnectionState,
+    onClick: () -> Unit,
+) {
+    val ext = NexusTheme.colors
+    val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
+    val isStarting = heroState == HeroConnectionState.STARTING
+
+    val orbTint by animateColorAsState(
+        targetValue = when (heroState) {
+            HeroConnectionState.CONNECTED -> Color(0xFF10B981)
+            HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> Color(0xFFF59E0B)
+            HeroConnectionState.ERROR -> Color(0xFFF43F5E)
+            HeroConnectionState.STANDBY -> Color(0xFF3B82F6)
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "heroOrbTint",
+    )
+    val orbBase by animateColorAsState(
+        targetValue = when (heroState) {
+            HeroConnectionState.CONNECTED -> Color(0xFF059669)
+            HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> Color(0xFFD97706)
+            HeroConnectionState.ERROR -> Color(0xFFE11D48)
+            HeroConnectionState.STANDBY -> Color(0xFF2563EB)
+        },
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "heroOrbBase",
+    )
+
+    Box(
+        modifier = Modifier
+            .size(64.dp)
+            .drawWithCache {
+                val r = size.minDimension * 0.5f
+                val bloomCenter = Offset(size.width * 0.5f, size.height * 0.5f)
+                val bloomBrush = Brush.radialGradient(
+                    0.0f to orbTint.copy(alpha = if (ext.isDark) 0.46f else 0.28f),
+                    0.58f to orbTint.copy(alpha = if (ext.isDark) 0.18f else 0.10f),
+                    1.0f to Color.Transparent,
+                    center = bloomCenter,
+                    radius = r,
+                )
+                onDrawBehind {
+                    drawCircle(brush = bloomBrush, radius = r, center = bloomCenter)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        LiquidGlassButton(
+            onClick = onClick,
+            enabled = !isStarting,
+            tint = orbTint,
+            surfaceBase = orbBase,
+            contentColor = Color.White,
+            cornerRadius = 26.dp,
+            isDark = ext.isDark,
+            elevation = 8.dp,
+            pressedScale = 0.92f,
+            livingSheen = isLive,
+            modifier = Modifier.size(52.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(52.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                when {
+                    isStarting -> CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.4.dp,
+                        color = Color.White,
+                    )
+                    heroState == HeroConnectionState.ERROR -> Icon(
+                        painter = painterResource(R.drawable.ic_refresh),
+                        contentDescription = "重试连接",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    isLive -> Icon(
+                        painter = painterResource(R.drawable.ic_stop),
+                        contentDescription = "断开连接",
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    else -> Icon(
+                        painter = painterResource(R.drawable.ic_play),
+                        contentDescription = "连接",
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroStatusOrb(
+    heroState: HeroConnectionState,
+    accentColor: Color,
+) {
+    val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
+    Box(
+        modifier = Modifier.size(20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (heroState == HeroConnectionState.STARTING) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(15.dp),
+                strokeWidth = 2.dp,
+                color = accentColor,
+            )
+        } else {
+            if (isLive) {
+                val infinite = rememberInfiniteTransition(label = "heroPulse")
+                val pulseScaleState = infinite.animateFloat(
+                    initialValue = 1.15f,
+                    targetValue = 1.85f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Restart,
+                    ),
+                    label = "pulseScale",
+                )
+                val pulseAlphaState = infinite.animateFloat(
+                    initialValue = 0.42f,
+                    targetValue = 0.0f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Restart,
+                    ),
+                    label = "pulseAlpha",
+                )
+                Box(
+                    modifier = Modifier
+                        .size(11.dp)
+                        .graphicsLayer {
+                            val s = pulseScaleState.value
+                            scaleX = s
+                            scaleY = s
+                            alpha = pulseAlphaState.value
+                        }
+                        .background(accentColor, CircleShape),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(14.dp)
+                    .background(accentColor.copy(alpha = 0.24f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .background(accentColor, CircleShape),
+                )
+            }
+        }
+    }
+}

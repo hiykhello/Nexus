@@ -9,8 +9,8 @@ import org.junit.Test
 import org.nexus.android.bridge.ipc.NexusControlClient
 import org.nexus.android.bridge.ipc.OutboundJsonParser
 import org.nexus.android.bridge.profile.ProfileRepository
-import org.nexus.android.bridge.share.OutboundScheme
-import org.nexus.android.bridge.share.ShareLinkParser
+import org.nexus.android.bridge.model.OutboundScheme
+import org.nexus.android.bridge.model.ShareLinkParser
 import java.io.File
 import java.util.Base64
 
@@ -63,15 +63,29 @@ class CoreProtocolTest {
         assertNull(NexusControlClient.buildNexus1Frame(emptyList()))
         assertNull(NexusControlClient.buildNexus1Frame(listOf("select", "")))
         assertNull(NexusControlClient.buildNexus1Frame(listOf("a\u0000b")))
+
+        val okReply = NexusControlClient.decodeNexus1Reply("NEXUS/1 OK\nrunning\n")
+        assertTrue(okReply.ok)
+        assertEquals(200, okReply.statusCode)
+        assertEquals("running\n", okReply.body)
+
+        val errReply = NexusControlClient.decodeNexus1Reply("NEXUS/1 ERROR\npermission-denied\n")
+        assertFalse(errReply.ok)
+        assertEquals(400, errReply.statusCode)
+        assertEquals("permission-denied", errReply.body)
+
+        assertFalse(NexusControlClient.decodeNexus1Reply("").ok)
+        assertEquals("HK%20Group%2F1", NexusControlClient.encodePathSegment("HK Group/1"))
+        assertEquals("dns%20timeout%20%2B%20err", NexusControlClient.encodeQueryValue("dns timeout + err"))
     }
 
     @Test
     fun parsesOpenMetricsSummary() {
         val sample = """
             # HELP nexus_control_generation gen
-            nexus_control_generation 7
+            nexus_control_generation 7 1700000000
             nexus_active_sessions{listener="0"} 5
-            nexus_active_sessions{listener="1"} 2
+            nexus_active_sessions{listener="1"} 2 1700000000
             nexus_traffic_upload_bytes_total{listener="0"} 1000
             nexus_traffic_download_bytes_total{listener="0"} 4096
         """.trimIndent()
@@ -124,8 +138,20 @@ class CoreProtocolTest {
             assertTrue(kdl.contains("""outbound "Node-1" type="vless""""))
             assertTrue(kdl.contains("""outbound "Node-2" type="trojan""""))
             assertTrue(kdl.contains("""outbound "proxy" type="selector""""))
+            assertFalse(kdl.contains("control socket="))
             assertFalse(kdl.contains("aaaaaaaa-bbbb"))
             assertFalse(kdl.contains("topsecretpass"))
+
+            val controlLine =
+                """control socket="/data/c.sock" http-listen="127.0.0.1:9090" bearer-token-file="/data/c.tok" metrics=#true"""
+            val kdlWithControl = repo.buildKdlFromSubscriptionPayload(
+                payload = encoded,
+                profileId = "sub1",
+                controlDirective = controlLine,
+            )
+            assertTrue(kdlWithControl.contains(controlLine))
+            assertTrue(kdlWithControl.contains("""outbound "Node-1" type="vless""""))
+            assertTrue(kdlWithControl.contains("""outbound "proxy" type="selector""""))
         } finally {
             tmpRoot.deleteRecursively()
         }

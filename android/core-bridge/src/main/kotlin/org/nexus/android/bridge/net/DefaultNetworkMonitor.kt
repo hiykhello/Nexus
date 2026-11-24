@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.nexus.android.bridge.model.NetworkSnapshot
 import org.nexus.android.bridge.model.PrivateDnsWarning
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Monitors the active non-VPN physical default network (Wi-Fi / Cellular / Ethernet)
@@ -31,6 +32,8 @@ class DefaultNetworkMonitor(
 ) {
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private val lock = Any()
+    private val registered = AtomicBoolean(false)
 
     @Volatile
     private var activeNetwork: Network? = null
@@ -39,7 +42,6 @@ class DefaultNetworkMonitor(
     private var lastSnapshot: NetworkSnapshot? = null
 
     private var debounceJob: Job? = null
-    private var registered = false
 
     private val _snapshot = MutableStateFlow<NetworkSnapshot?>(null)
     val snapshot: StateFlow<NetworkSnapshot?> = _snapshot.asStateFlow()
@@ -61,36 +63,46 @@ class DefaultNetworkMonitor(
         }
 
         override fun onLost(network: Network) {
-            if (activeNetwork == network) {
-                activeNetwork = null
-                scheduleLoss()
+            synchronized(lock) {
+                if (activeNetwork == network) {
+                    activeNetwork = null
+                    scheduleLossLocked()
+                }
             }
         }
     }
 
     fun start() {
-        if (registered) return
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            connectivityManager.registerBestMatchingNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
-        } else {
-            connectivityManager.registerNetworkCallback(request, callback)
+        synchronized(lock) {
+            if (!registered.compareAndSet(false, true)) return
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build()
+            val handler = Handler(Looper.getMainLooper())
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    connectivityManager.registerBestMatchingNetworkCallback(request, callback, handler)
+                } else {
+                    connectivityManager.registerNetworkCallback(request, callback, handler)
+                }
+            } catch (t: Throwable) {
+                registered.set(false)
+                throw t
+            }
         }
-        registered = true
     }
 
     fun stop() {
-        if (!registered) return
-        debounceJob?.cancel()
-        runCatching { connectivityManager.unregisterNetworkCallback(callback) }
-        registered = false
-        activeNetwork = null
-        lastSnapshot = null
-        _snapshot.value = null
+        synchronized(lock) {
+            if (!registered.compareAndSet(true, false)) return
+            debounceJob?.cancel()
+            debounceJob = null
+            runCatching { connectivityManager.unregisterNetworkCallback(callback) }
+            activeNetwork = null
+            lastSnapshot = null
+            _snapshot.value = null
+        }
     }
 
     private fun scheduleRefresh(
@@ -98,6 +110,7 @@ class DefaultNetworkMonitor(
         knownCaps: NetworkCapabilities? = null,
         linkProperties: LinkProperties? = null,
     ) {
+        if (!registered.get()) return
         val caps = knownCaps ?: connectivityManager.getNetworkCapabilities(network) ?: return
         if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) ||
             !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -121,31 +134,55 @@ class DefaultNetworkMonitor(
             ),
         )
 
-        val sameNetwork = activeNetwork == network
-        activeNetwork = network
-        if (sameNetwork && next.equivalentRoutingKey(lastSnapshot)) {
-            return
-        }
+        synchronized(lock) {
+            if (!registered.get()) return
+            val sameNetwork = activeNetwork == network
+            activeNetwork = network
+            if (sameNetwork && next.equivalentRoutingKey(lastSnapshot)) {
+                return
+            }
 
-        debounceJob?.cancel()
-        debounceJob = scope.launch {
-            delay(DEBOUNCE_MS)
-            lastSnapshot = next
-            _snapshot.value = next
-            onUnderlyingNetworkChanged(network, next)
+            debounceJob?.cancel()
+            var job: Job? = null
+            job = scope.launch {
+                delay(DEBOUNCE_MS)
+                val shouldEmit = synchronized(lock) {
+                    if (!registered.get() || debounceJob !== job) {
+                        false
+                    } else {
+                        lastSnapshot = next
+                        _snapshot.value = next
+                        true
+                    }
+                }
+                if (shouldEmit) {
+                    onUnderlyingNetworkChanged(network, next)
+                }
+            }
+            debounceJob = job
         }
     }
 
-    private fun scheduleLoss() {
+    private fun scheduleLossLocked() {
+        if (!registered.get()) return
         debounceJob?.cancel()
-        debounceJob = scope.launch {
+        var job: Job? = null
+        job = scope.launch {
             delay(DEBOUNCE_MS)
-            if (activeNetwork == null) {
-                lastSnapshot = null
-                _snapshot.value = null
+            val shouldEmit = synchronized(lock) {
+                if (!registered.get() || debounceJob !== job || activeNetwork != null) {
+                    false
+                } else {
+                    lastSnapshot = null
+                    _snapshot.value = null
+                    true
+                }
+            }
+            if (shouldEmit) {
                 onUnderlyingNetworkChanged(null, null)
             }
         }
+        debounceJob = job
     }
 
     companion object {

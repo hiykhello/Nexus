@@ -1,8 +1,10 @@
 package org.nexus.android.bridge.dns
 
 import android.net.DnsResolver
+import android.net.LocalSocket
 import android.net.Network
 import android.os.CancellationSignal
+import android.os.Process
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -10,9 +12,13 @@ import java.io.EOFException
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -80,18 +86,32 @@ class AndroidDnsBridge(
     private val physicalNetworkProvider: () -> Network?,
 ) : Closeable {
     private val running = AtomicBoolean(false)
-    private var server: UdsServerSocket? = null
-    private var acceptThread: Thread? = null
-    private var workers: ExecutorService? = null
+    private val activeClients = ConcurrentHashMap.newKeySet<LocalSocket>()
+    private val directExecutor = Executor { it.run() }
+    @Volatile private var server: UdsServerSocket? = null
+    @Volatile private var acceptThread: Thread? = null
+    @Volatile private var workers: ExecutorService? = null
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
-        val bound = UdsServerSocket.bind(socketFile)
-        server = bound
-        val pool = Executors.newCachedThreadPool { r ->
-            Thread(r, "nexus-dns-bridge").apply { isDaemon = true }
+        val bound = try {
+            UdsServerSocket.bind(socketFile)
+        } catch (t: Throwable) {
+            running.set(false)
+            throw t
         }
+        server = bound
+        val pool = ThreadPoolExecutor(
+            2,
+            MAX_WORKERS,
+            30L,
+            TimeUnit.SECONDS,
+            LinkedBlockingQueue(MAX_QUEUED_CLIENTS),
+            { r -> Thread(r, "nexus-dns-bridge").apply { isDaemon = true } },
+            ThreadPoolExecutor.AbortPolicy(),
+        ).apply { allowCoreThreadTimeOut(true) }
         workers = pool
+        val expectedUid = Process.myUid()
         acceptThread = Thread({
             while (running.get()) {
                 val client = try {
@@ -100,7 +120,11 @@ class AndroidDnsBridge(
                     if (!running.get()) break
                     continue
                 }
-                pool.execute { handleClient(client, pool) }
+                try {
+                    pool.execute { handleClient(client, expectedUid) }
+                } catch (_: RejectedExecutionException) {
+                    runCatching { client.close() }
+                }
             }
         }, "nexus-dns-bridge-accept").apply {
             isDaemon = true
@@ -108,23 +132,30 @@ class AndroidDnsBridge(
         }
     }
 
-    private fun handleClient(client: android.net.LocalSocket, executor: ExecutorService) {
-        client.use { sock ->
-            runCatching {
-                val input = DataInputStream(sock.inputStream)
-                val output = DataOutputStream(sock.outputStream)
-                while (running.get()) {
-                    val req = DnsBridgeCodec.readRequest(input) ?: break
-                    val resp = resolveRaw(req, executor)
-                    synchronized(output) {
-                        DnsBridgeCodec.writeResponse(output, resp)
+    private fun handleClient(client: LocalSocket, expectedUid: Int) {
+        activeClients.add(client)
+        try {
+            client.use { sock ->
+                runCatching {
+                    sock.soTimeout = CLIENT_SO_TIMEOUT_MS
+                    if (sock.peerCredentials.uid != expectedUid) return
+                    val input = DataInputStream(sock.inputStream)
+                    val output = DataOutputStream(sock.outputStream)
+                    while (running.get()) {
+                        val req = DnsBridgeCodec.readRequest(input) ?: break
+                        val resp = resolveRaw(req)
+                        synchronized(output) {
+                            DnsBridgeCodec.writeResponse(output, resp)
+                        }
                     }
                 }
             }
+        } finally {
+            activeClients.remove(client)
         }
     }
 
-    private fun resolveRaw(req: DnsBridgeRequest, executor: ExecutorService): DnsBridgeResponse {
+    private fun resolveRaw(req: DnsBridgeRequest): DnsBridgeResponse {
         val network = physicalNetworkProvider()
             ?: return DnsBridgeResponse(req.requestId, DnsBridgeCodec.STATUS_NO_NETWORK, 0, ByteArray(0))
 
@@ -137,7 +168,7 @@ class AndroidDnsBridge(
             network,
             req.wireQuery,
             DnsResolver.FLAG_EMPTY,
-            executor,
+            directExecutor,
             signal,
             object : DnsResolver.Callback<ByteArray> {
                 override fun onAnswer(answer: ByteArray, rcode: Int) {
@@ -169,9 +200,19 @@ class AndroidDnsBridge(
         if (!running.compareAndSet(true, false)) return
         runCatching { server?.close() }
         server = null
+        for (client in activeClients) {
+            runCatching { client.close() }
+        }
+        activeClients.clear()
         runCatching { workers?.shutdownNow() }
         workers = null
         runCatching { acceptThread?.interrupt() }
         acceptThread = null
+    }
+
+    companion object {
+        private const val MAX_WORKERS = 16
+        private const val MAX_QUEUED_CLIENTS = 64
+        private const val CLIENT_SO_TIMEOUT_MS = 30_000
     }
 }

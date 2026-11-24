@@ -6,6 +6,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.nexus.android.bridge.dns.DnsBridgeCodec
 import org.nexus.android.bridge.dns.DnsBridgeResponse
+import org.nexus.android.bridge.ipc.NexusControlClient
 import org.nexus.android.bridge.model.RuntimeSocketPaths
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -29,7 +30,7 @@ class DnsBridgeAndPathsTest {
 
     @Test
     fun buildsNexus1ControlFrame() {
-        val frame = ControlSocketClient.buildWireFrame(listOf("select", "proxy", "hk-01"))
+        val frame = NexusControlClient.buildNexus1Frame(listOf("select", "proxy", "hk-01"))!!
         assertEquals("NEXUS/1 select\u0000proxy\u0000hk-01", frame.toString(Charsets.UTF_8))
     }
 

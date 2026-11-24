@@ -93,7 +93,6 @@ object ShareLinkParser {
                 q
             } else emptyMap()
         }
-        rest = rest.substringBefore('/')
 
         val at = rest.lastIndexOf('@')
         val userinfo: String
@@ -101,13 +100,13 @@ object ShareLinkParser {
         val port: Int
         if (at > 0) {
             userinfo = decodePercent(rest.substring(0, at))
-            val hp = splitHostPort(rest.substring(at + 1))
+            val hp = splitHostPort(rest.substring(at + 1).substringBefore('/'))
             host = hp.first
             port = hp.second
         } else {
             require(scheme == OutboundScheme.HTTP_CONNECT) { "Missing userinfo@host:port" }
             userinfo = ""
-            val hp = splitHostPort(rest)
+            val hp = splitHostPort(rest.substringBefore('/'))
             host = hp.first
             port = hp.second
         }
@@ -160,10 +159,15 @@ object ShareLinkParser {
         }
         val certPin = query["host-key-sha256"] ?: query["host_key_sha256"]
             ?: query["certificate-sha256"] ?: query["pinSHA256"] ?: query["pcs"] ?: ""
-        val snellVer = (query["version"] ?: query["v"])?.toIntOrNull() ?: 5
-        val privateKeyFile = if (scheme == OutboundScheme.SSH) {
-            query["private-key-file"] ?: query["private_key_file"] ?: query["private-key"] ?: query["key"] ?: ""
-        } else ""
+        val snellVer = if (scheme == OutboundScheme.SNELL) {
+            when (val rawVer = query["version"] ?: query["v"] ?: "") {
+                "", "5" -> 5
+                "4" -> 4
+                else -> error("Unsupported snell version: $rawVer")
+            }
+        } else 0
+        // Reject untrusted filesystem paths from share URIs (prevents arbitrary local file disclosure via ssh://).
+        val privateKeyFile = ""
         val cipher = if (scheme == OutboundScheme.SSH) query["cipher"].orEmpty() else ""
         val padRaw = query["padding"]?.lowercase().orEmpty()
         val paddingEnabled = if (scheme == OutboundScheme.NAIVE) {
@@ -249,8 +253,6 @@ object ShareLinkParser {
             if (node.username.isNotEmpty()) appendLine("    user ${q(node.username)}")
             if (node.secret.isNotEmpty() && secretFilePath.isNotEmpty()) {
                 appendLine("    password-file ${q(secretFilePath)}")
-            } else if (node.privateKeyFile.isNotEmpty()) {
-                appendLine("    private-key-file ${q(node.privateKeyFile)}")
             } else if (secretFilePath.isNotEmpty()) {
                 appendLine("    private-key-file ${q(secretFilePath)}")
             }
@@ -329,8 +331,7 @@ object ShareLinkParser {
         appendLine("}")
     }
 
-    private fun q(v: String): String =
-        "\"${v.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "").replace("\n", "")}\""
+    private fun q(v: String): String = "\"${AndroidKdlBuilder.escapeKdlString(v)}\""
 
     private fun decodePercent(s: String): String = URLDecoder.decode(s.replace("+", "%2B"), Charsets.UTF_8.name())
 
@@ -349,7 +350,8 @@ object ShareLinkParser {
         .toMap()
 
     private fun splitHostPort(hp: String): Pair<String, Int> {
-        val (host, portStr) = if (hp.startsWith("[")) {
+        val isBracketed = hp.startsWith("[")
+        val (host, portStr) = if (isBracketed) {
             val end = hp.indexOf(']')
             require(end > 1 && end + 2 <= hp.length && hp[end + 1] == ':') { "Invalid IPv6 host:port" }
             hp.substring(1, end) to hp.substring(end + 2)
@@ -358,16 +360,23 @@ object ShareLinkParser {
             require(colon > 0) { "Missing server port" }
             hp.substring(0, colon) to hp.substring(colon + 1)
         }
+        require(host.isNotEmpty() && host.length <= 253) { "Invalid server host" }
+        for (ch in host) {
+            val valid = ch.isLetterOrDigit() || ch == '.' || ch == '-' || ch == '_' || (isBracketed && (ch == ':' || ch == '%'))
+            require(valid) { "Invalid character in server host" }
+        }
         val port = portStr.toIntOrNull()
         require(port != null && port in 1..65535) { "Invalid server port: $portStr" }
         return host to port
     }
 
-    private fun sanitizeTag(raw: String, fallback: String): String = raw
+    private fun filterTagChars(raw: String): String = raw
         .map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else if (it == ' ' || it == '.' || it == '+') '-' else '\u0000' }
         .filter { it != '\u0000' }
         .joinToString("")
         .trimStart('-')
         .take(48)
-        .ifEmpty { fallback }
+
+    private fun sanitizeTag(raw: String, fallback: String): String =
+        filterTagChars(raw).ifEmpty { filterTagChars(fallback).ifEmpty { "node" } }
 }

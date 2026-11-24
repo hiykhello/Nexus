@@ -48,12 +48,14 @@ data class RuntimeSocketPaths(
     val protectSocket: File = File(rootDir, "p.sock")
     val controlSocket: File = File(rootDir, "c.sock")
     val dnsBridgeSocket: File = File(rootDir, "d.sock")
+    val tunFdSocket: File = File(rootDir, "t.sock")
+    val controlTokenFile: File = File(rootDir, "control.token")
     val runtimeConfigFile: File = File(rootDir, "runtime.kdl")
     val stateDir: File = File(rootDir, "state")
     val cacheDir: File = File(rootDir, "cache")
 
     fun validatePaths() {
-        listOf(protectSocket, controlSocket, dnsBridgeSocket).forEach { file ->
+        listOf(protectSocket, controlSocket, dnsBridgeSocket, tunFdSocket).forEach { file ->
             val path = file.absolutePath
             require(path.startsWith("/")) { "UDS path must be absolute: $path" }
             require(path.toByteArray(Charsets.UTF_8).size < MAX_UNIX_PATH_BYTES) {

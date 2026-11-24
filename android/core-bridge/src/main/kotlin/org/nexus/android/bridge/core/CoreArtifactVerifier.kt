@@ -66,12 +66,26 @@ object CoreArtifactVerifier {
             return ArtifactVerificationResult(false, "", file.length(), false, "expected aarch64 ELF64 binary")
         }
         val digestHex = computeSha256Hex(file)
-        val expected = expectedSha256Hex?.trim()?.lowercase()
-        if (!expected.isNullOrEmpty() && digestHex != expected) {
-            return ArtifactVerificationResult(false, digestHex, file.length(), arm64, "sha256 mismatch")
+        if (expectedSha256Hex != null) {
+            val expected = expectedSha256Hex
+                .trim()
+                .substringBefore(' ')
+                .substringBefore('\t')
+                .substringBefore('\n')
+                .substringBefore('\r')
+                .lowercase()
+            if (!isValidSha256Hex(expected)) {
+                return ArtifactVerificationResult(false, digestHex, file.length(), arm64, "invalid expected sha256")
+            }
+            if (digestHex != expected) {
+                return ArtifactVerificationResult(false, digestHex, file.length(), arm64, "sha256 mismatch")
+            }
         }
         return ArtifactVerificationResult(true, digestHex, file.length(), arm64, "verified")
     }
+
+    private fun isValidSha256Hex(hex: String): Boolean =
+        hex.length == 64 && hex.all { it in '0'..'9' || it in 'a'..'f' }
 
     fun evaluateOfflineRulesets(
         cacheDir: File,

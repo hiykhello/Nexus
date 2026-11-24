@@ -1,7 +1,10 @@
 package org.nexus.android.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.InetAddresses
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -10,80 +13,64 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.nexus.android.bridge.core.CoreProcessSupervisor
 import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
-import org.nexus.android.bridge.ipc.MetricsSummary
 import org.nexus.android.bridge.ipc.NexusControlClient
-import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.ipc.OutboundJsonParser
+import org.nexus.android.bridge.model.AndroidKdlBuilder
+import org.nexus.android.bridge.model.AndroidKdlOps
+import org.nexus.android.bridge.model.RuntimeSocketPaths
+import org.nexus.android.bridge.model.ShareLinkParser
 import org.nexus.android.bridge.owner.ConnectionOwnerResolver
 import org.nexus.android.bridge.profile.ProfileRepository
-import org.nexus.android.bridge.share.ShareLinkParser
 import org.nexus.android.bridge.vpn.NexusVpnService
+import org.nexus.android.ui.theme.NexusTheme
 import java.io.File
-import java.net.InetAddress
 
 class MainActivity : ComponentActivity() {
     private lateinit var configFile: File
+    private lateinit var socketPaths: RuntimeSocketPaths
     private lateinit var profiles: ProfileRepository
     private lateinit var supervisor: CoreProcessSupervisor
     private lateinit var controlClient: NexusControlClient
     private var ownerResolver: ConnectionOwnerResolver? = null
+    private var askedNotificationPermission = false
 
     private val vpnPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == RESULT_OK) startVpnService()
         }
 
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
+            // Proceed to start VPN even if notifications were denied; foreground service still runs.
+            launchVpnConsentOrStart()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
+        window.isNavigationBarContrastEnforced = false
         super.onCreate(savedInstanceState)
 
         configFile = File(filesDir, "config.kdl")
+        socketPaths = RuntimeSocketPaths(noBackupFilesDir)
         profiles = ProfileRepository(filesDir)
-        if (!configFile.exists()) configFile.writeText(DEFAULT_ANDROID_KDL)
-
         supervisor = CoreProcessSupervisor(this)
         controlClient = NexusControlClient(
-            unixSocketPath = File(noBackupFilesDir, "control.sock").absolutePath,
+            unixSocketPath = socketPaths.controlSocket.absolutePath,
             httpBaseUrl = "http://127.0.0.1:9090",
+            bearerTokenProvider = {
+                socketPaths.controlTokenFile.takeIf { it.isFile }?.readText()?.trim()
+            },
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ownerResolver = ConnectionOwnerResolver(applicationContext).apply { start() }
@@ -91,13 +78,55 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("nexus_prefs", Context.MODE_PRIVATE)
 
         setContent {
-            MaterialTheme {
+            NexusTheme {
                 var excluded by remember {
                     mutableStateOf(prefs.getStringSet("excluded_packages", emptySet()).orEmpty().toSet())
                 }
+                var dashVisibility by remember { mutableStateOf(DashboardLayoutPrefs.load(prefs)) }
+                var loadedKdl by remember { mutableStateOf("") }
+                var profileChips by remember { mutableStateOf<List<UiProfileChip>>(emptyList()) }
+                var activeProfileName by remember { mutableStateOf("默认配置") }
+
+                suspend fun refreshProfilesState() {
+                    val (chips, activeName) = loadProfileChips()
+                    profileChips = chips
+                    activeProfileName = activeName
+                }
+
+                LaunchedEffect(configFile) {
+                    loadedKdl = withContext(Dispatchers.IO) {
+                        if (!configFile.exists()) writeConfigAtomically(defaultAndroidKdl(socketPaths))
+                        configFile.readText()
+                    }
+                    refreshProfilesState()
+                }
+
+                val running by NexusVpnService.runningState.collectAsStateWithLifecycle()
+                val tunnelState by NexusVpnService.tunnelState.collectAsStateWithLifecycle()
+                val startedAtMs by NexusVpnService.startedAtMs.collectAsStateWithLifecycle()
+                val lastError by NexusVpnService.lastError.collectAsStateWithLifecycle()
+                val powerSave by NexusVpnService.powerSaveMode.collectAsStateWithLifecycle()
+                val rawLocalLogs by NexusVpnService.recentLogs.collectAsStateWithLifecycle()
+                val localLogs = remember(rawLocalLogs) {
+                    rawLocalLogs.map { UiLogLine(seq = -it.seq, text = it.text) }
+                }
+
                 NexusRootScreen(
-                    initialKdl = remember { configFile.readText() },
+                    running = running,
+                    tunnelState = tunnelState,
+                    startedAtMs = startedAtMs,
+                    lastError = lastError,
+                    powerSave = powerSave,
+                    localLogs = localLogs,
+                    initialKdl = loadedKdl,
+                    profiles = profileChips,
+                    activeProfileName = activeProfileName,
                     excludedPackages = excluded,
+                    dashVisibility = dashVisibility,
+                    onDashVisibilityChange = { next ->
+                        dashVisibility = next
+                        DashboardLayoutPrefs.save(prefs, next)
+                    },
                     onShareLogs = { text ->
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
@@ -111,11 +140,30 @@ class MainActivity : ComponentActivity() {
                         excluded = next
                         prefs.edit().putStringSet("excluded_packages", next).apply()
                     },
-                    onStartStop = { running -> if (running) stopVpnService() else requestAndStartVpn() },
+                    onStartStop = { isRunning -> if (isRunning) stopVpnService() else requestAndStartVpn() },
+                    onRestartVpn = { restartVpnService() },
+                    onSwitchOutboundMode = { mode, currentKdl -> switchOutboundMode(mode, currentKdl) },
+                    onCreateRuleFromConnection = { host, action, outbound, currentKdl ->
+                        createRuleFromConnection(host, action, outbound, currentKdl)
+                    },
+                    onSwitchProfile = { profileId ->
+                        val result = switchProfile(profileId)
+                        refreshProfilesState()
+                        result
+                    },
+                    onSaveProfileSnapshot = { name, kdl ->
+                        val note = saveProfileSnapshot(name, kdl)
+                        refreshProfilesState()
+                        note
+                    },
                     onValidateKdl = { text -> validateDraft(text) },
                     onSaveAndReload = { text -> saveAndReload(text) },
                     onImportShareLink = { uri, currentKdl -> importShareLink(uri, currentKdl) },
-                    onImportSubscription = { name, url -> importSubscription(name, url) },
+                    onImportSubscription = { name, url ->
+                        val result = importSubscription(name, url)
+                        refreshProfilesState()
+                        result
+                    },
                     onRefreshMetrics = { controlClient.fetchMetrics() },
                     onClearCache = { controlClient.clearCache().ok },
                     onFetchGroups = {
@@ -140,7 +188,7 @@ class MainActivity : ComponentActivity() {
                         val reply = controlClient.fetchLogsJson(level = level, search = search, limit = 128)
                         if (reply.ok) {
                             OutboundJsonParser.parseLogs(reply.body).entries.map { e ->
-                                "[${e.level}] ${e.domain}: ${e.message}"
+                                UiLogLine(seq = e.seq, text = "[${e.level}] ${e.domain}: ${e.message}")
                             }
                         } else {
                             emptyList()
@@ -151,38 +199,178 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun validateDraft(text: String): Pair<Boolean, String> {
-        val draft = File(cacheDir, ".draft.kdl").apply { writeText(text) }
-        val res = supervisor.validateConfig(draft)
-        draft.delete()
-        return res.ok to res.output
+    private suspend fun loadProfileChips(): Pair<List<UiProfileChip>, String> = withContext(Dispatchers.IO) {
+        val list = profiles.listProfiles()
+        val activeId = profiles.activeProfileId()
+        val chips = list.map { p ->
+            UiProfileChip(id = p.id, name = p.name, active = p.id == activeId)
+        }
+        val activeLabel = list.firstOrNull { it.id == activeId }?.name ?: "默认配置"
+        chips to activeLabel
+    }
+
+    private suspend fun validateDraft(text: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val draft = File.createTempFile("draft-", ".kdl", cacheDir)
+        try {
+            draft.writeText(text, Charsets.UTF_8)
+            val res = supervisor.validateConfig(draft)
+            res.ok to res.output
+        } finally {
+            runCatching { draft.delete() }
+        }
+    }
+
+    private fun writeConfigAtomically(text: String) {
+        val parent = configFile.parentFile ?: filesDir
+        parent.mkdirs()
+        val tmp = File.createTempFile(".config-", ".kdl.tmp", parent)
+        try {
+            tmp.writeText(text, Charsets.UTF_8)
+            if (!tmp.renameTo(configFile)) {
+                throw java.io.IOException("Atomic rename failed for ${configFile.name}")
+            }
+        } catch (t: Throwable) {
+            runCatching { tmp.delete() }
+            throw t
+        }
     }
 
     private suspend fun saveAndReload(text: String): Pair<Boolean, String> {
         val (ok, msg) = validateDraft(text)
         if (!ok) return false to "拒绝保存无效配置: $msg"
-        configFile.writeText(text)
+        val writeErr = withContext(Dispatchers.IO) {
+            runCatching { writeConfigAtomically(text) }.exceptionOrNull()
+        }
+        if (writeErr != null) {
+            return false to "保存配置失败: ${writeErr.message ?: writeErr.javaClass.simpleName}"
+        }
         val reload = controlClient.reload()
         return true to if (reload.ok) "已校验保存并热重载" else "已保存配置"
     }
 
-    private fun importShareLink(uri: String, currentKdl: String): Pair<String, String> {
-        val parsed = ShareLinkParser.parse(uri).getOrElse { return currentKdl to "解析失败: ${it.message}" }
-        val secretFile = profiles.writeSecret(parsed.tag, parsed.secret)
-        val block = ShareLinkParser.renderKdlOutbound(parsed, secretFile.absolutePath)
-        return (currentKdl.trimEnd() + "\n\n" + block) to "已导入节点 ${parsed.tag}（凭据已写入 0600 私有文件）"
+    private suspend fun switchOutboundMode(mode: String, currentKdl: String): Pair<String?, String> {
+        val (applied, nextOrErr) = AndroidKdlOps.applyOutboundMode(currentKdl, mode)
+        if (!applied) return null to nextOrErr
+        val (saved, msg) = saveAndReload(nextOrErr)
+        val label = when (mode) {
+            "global" -> "全局代理"
+            "direct" -> "直连放行"
+            else -> "规则分流"
+        }
+        return if (saved) nextOrErr to "已切换至$label（$msg）" else null to msg
     }
 
-    private suspend fun importSubscription(name: String, url: String): Pair<String, String> =
-        withContext(Dispatchers.IO) {
-            val result = profiles.importSubscription(name, url)
-            result.fold(
-                onSuccess = { p -> p.kdlFile.readText() to "已拉取订阅 ${p.name}（请点击校验并保存重载）" },
-                onFailure = { err -> "" to "订阅导入失败: ${err.message}" },
+    private suspend fun createRuleFromConnection(
+        targetHost: String,
+        action: String,
+        outbound: String,
+        currentKdl: String,
+    ): Pair<String?, String> {
+        val resolvedOutbound = if (action == "route" && outbound == "proxy") {
+            AndroidKdlOps.extractProxyGroupName(currentKdl)
+        } else {
+            outbound
+        }
+        val ruleBlock = AndroidKdlOps.buildQuickRouteRule(targetHost, action, resolvedOutbound)
+        val (inserted, nextOrErr) = AndroidKdlOps.insertRouteRule(currentKdl, ruleBlock)
+        if (!inserted) return null to "创建规则失败: $nextOrErr"
+        val (saved, msg) = saveAndReload(nextOrErr)
+        return if (saved) nextOrErr to "已为 $targetHost 创建规则（$msg）" else null to msg
+    }
+
+    private suspend fun switchProfile(profileId: String): Pair<String?, String> {
+        val rawKdl = withContext(Dispatchers.IO) {
+            profiles.listProfiles().firstOrNull { it.id == profileId }?.kdlFile?.takeIf { it.isFile }?.readText()
+        } ?: return null to "未找到档案 $profileId"
+        val withControl = ensureControlDirective(rawKdl)
+        val (saved, msg) = saveAndReload(withControl)
+        if (saved) {
+            withContext(Dispatchers.IO) { profiles.setActiveProfile(profileId) }
+            return withControl to "已切换档案 $profileId（$msg）"
+        }
+        return null to msg
+    }
+
+    private suspend fun saveProfileSnapshot(name: String, kdl: String): String = withContext(Dispatchers.IO) {
+        val saved = profiles.saveProfile(name, ensureControlDirective(kdl))
+        profiles.setActiveProfile(saved.id)
+        "已保存配置档案 ${saved.name}"
+    }
+
+    private fun ensureControlDirective(kdl: String): String {
+        if (kdl.contains("control ") && kdl.contains("bearer-token-file")) return kdl
+        val directive = androidControlDirective(socketPaths)
+        return if (kdl.startsWith("schema-version")) {
+            val firstNl = kdl.indexOf('\n')
+            if (firstNl > 0) {
+                kdl.substring(0, firstNl + 1) + directive + "\n" + kdl.substring(firstNl + 1)
+            } else {
+                "$kdl\n$directive\n"
+            }
+        } else {
+            "$directive\n$kdl"
+        }
+    }
+
+    private suspend fun importShareLink(uri: String, currentKdl: String): Pair<String?, String> {
+        val (candidate, importedTag, hasSecret) = withContext(Dispatchers.IO) {
+            val parsed = ShareLinkParser.parse(uri).getOrElse {
+                return@withContext Triple(null, "解析失败: ${it.message}", false)
+            }
+            val secretPath = if (parsed.secret.isNotEmpty()) {
+                profiles.writeSecret(parsed.tag, parsed.secret).absolutePath
+            } else {
+                ""
+            }
+            val block = ShareLinkParser.renderKdlOutbound(parsed, secretPath)
+            Triple(currentKdl.trimEnd() + "\n\n" + block, parsed.tag, secretPath.isNotEmpty())
+        }
+        if (candidate == null) return null to importedTag
+        val (saved, saveMsg) = saveAndReload(candidate)
+        if (!saved) return null to saveMsg
+        val detail = if (hasSecret) "凭据已保护，$saveMsg" else saveMsg
+        return candidate to "已导入节点 $importedTag（$detail）"
+    }
+
+    private suspend fun importSubscription(name: String, url: String): Pair<String, String> {
+        val imported = withContext(Dispatchers.IO) {
+            profiles.importSubscription(
+                name = name,
+                urlString = url,
+                controlDirective = androidControlDirective(socketPaths),
             )
         }
+        return imported.fold(
+            onSuccess = { p ->
+                val text = withContext(Dispatchers.IO) { p.kdlFile.readText() }
+                val (saved, saveMsg) = saveAndReload(text)
+                if (saved) {
+                    withContext(Dispatchers.IO) { profiles.setActiveProfile(p.id) }
+                    text to "已拉取并应用订阅 ${p.name}（$saveMsg）"
+                } else {
+                    "" to "订阅已拉取但校验失败: $saveMsg"
+                }
+            },
+            onFailure = { err -> "" to "订阅导入失败: ${err.message}" },
+        )
+    }
 
     private fun requestAndStartVpn() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedNotificationPermission) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                askedNotificationPermission = true
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return
+            }
+        }
+        launchVpnConsentOrStart()
+    }
+
+    private fun launchVpnConsentOrStart() {
         val prep = VpnService.prepare(this)
         if (prep != null) vpnPermissionLauncher.launch(prep) else startVpnService()
     }
@@ -201,36 +389,55 @@ class MainActivity : ComponentActivity() {
         startService(Intent(this, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_STOP))
     }
 
+    private fun restartVpnService() {
+        val prep = VpnService.prepare(this)
+        if (prep != null) {
+            vpnPermissionLauncher.launch(prep)
+            return
+        }
+        val prefs = getSharedPreferences("nexus_prefs", Context.MODE_PRIVATE)
+        val excluded = ArrayList(prefs.getStringSet("excluded_packages", emptySet()).orEmpty())
+        val intent = Intent(this, NexusVpnService::class.java)
+            .setAction(NexusVpnService.ACTION_RESTART)
+            .putExtra(NexusVpnService.EXTRA_CONFIG_PATH, configFile.absolutePath)
+            .putStringArrayListExtra(NexusVpnService.EXTRA_EXCLUDED_PACKAGES, excluded)
+        startForegroundService(intent)
+    }
+
     override fun onDestroy() {
         ownerResolver?.close()
         ownerResolver = null
         super.onDestroy()
     }
 
-    private fun resolveOwnerPackage(conn: ActiveConnectionSnapshot): String? {
-        val resolver = ownerResolver ?: return null
-        val src = splitHostPort(conn.source) ?: return null
-        val dst = splitHostPort(conn.target) ?: return null
-        val proto = if (conn.protocol.contains("udp", ignoreCase = true)) {
-            OsConstants.IPPROTO_UDP
-        } else {
-            OsConstants.IPPROTO_TCP
+    private suspend fun resolveOwnerPackage(conn: ActiveConnectionSnapshot): String? =
+        withContext(Dispatchers.IO) {
+            val resolver = ownerResolver ?: return@withContext null
+            val src = splitHostPort(conn.source) ?: return@withContext null
+            val dst = splitHostPort(conn.target) ?: return@withContext null
+            if (!InetAddresses.isNumericAddress(src.first) || !InetAddresses.isNumericAddress(dst.first)) {
+                return@withContext null
+            }
+            val proto = if (conn.protocol.contains("udp", ignoreCase = true)) {
+                OsConstants.IPPROTO_UDP
+            } else {
+                OsConstants.IPPROTO_TCP
+            }
+            val info = runCatching {
+                resolver.resolve(
+                    proto,
+                    InetAddresses.parseNumericAddress(src.first),
+                    src.second,
+                    InetAddresses.parseNumericAddress(dst.first),
+                    dst.second,
+                )
+            }.getOrNull() ?: return@withContext null
+            if (info.packageNames.isNotEmpty()) {
+                "${info.packageNames.joinToString(", ")} (UID ${info.uid})"
+            } else {
+                "UID ${info.uid}"
+            }
         }
-        val info = runCatching {
-            resolver.resolve(
-                proto,
-                InetAddress.getByName(src.first),
-                src.second,
-                InetAddress.getByName(dst.first),
-                dst.second,
-            )
-        }.getOrNull() ?: return null
-        return if (info.packageNames.isNotEmpty()) {
-            "${info.packageNames.joinToString(", ")} (UID ${info.uid})"
-        } else {
-            "UID ${info.uid}"
-        }
-    }
 
     private fun splitHostPort(endpoint: String): Pair<String, Int>? {
         val trimmed = endpoint.trim()
@@ -249,169 +456,26 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        private val DEFAULT_ANDROID_KDL = """
-            schema-version 1
-            role "client"
-            workers 2
-            inbound "local" type="socks5" {
-                listen host="127.0.0.1" port=10808
-                authentication "none"
-            }
-            outbound "direct" type="direct"
-            routing { default-outbound "direct"; }
-        """.trimIndent() + "\n"
-    }
-}
+        private fun androidControlDirective(paths: RuntimeSocketPaths): String {
+            val ctrlSock = AndroidKdlBuilder.escapeKdlString(paths.controlSocket.absolutePath)
+            val tokenFile = AndroidKdlBuilder.escapeKdlString(paths.controlTokenFile.absolutePath)
+            return """control socket="$ctrlSock" http-listen="127.0.0.1:9090" bearer-token-file="$tokenFile" metrics=#true"""
+        }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun NexusRootScreen(
-    initialKdl: String,
-    excludedPackages: Set<String>,
-    onToggleExcluded: (String, Boolean) -> Unit,
-    onStartStop: (Boolean) -> Unit,
-    onValidateKdl: suspend (String) -> Pair<Boolean, String>,
-    onSaveAndReload: suspend (String) -> Pair<Boolean, String>,
-    onImportShareLink: (String, String) -> Pair<String, String>,
-    onImportSubscription: suspend (String, String) -> Pair<String, String>,
-    onRefreshMetrics: suspend () -> MetricsSummary,
-    onClearCache: suspend () -> Boolean,
-    onFetchGroups: suspend () -> List<OutboundGroupSnapshot>,
-    onFetchConnections: suspend () -> List<ActiveConnectionSnapshot>,
-    onInspectConnection: suspend (Long) -> ActiveConnectionSnapshot?,
-    onResolveOwnerPackage: (ActiveConnectionSnapshot) -> String?,
-    onCloseConnection: suspend (Long) -> Boolean,
-    onCloseAllConnections: suspend () -> Boolean,
-    onSelectMember: suspend (String, String) -> Boolean,
-    onResetAuto: suspend (String) -> Boolean,
-    onProbeGroup: suspend (String) -> Boolean,
-    onFetchLogs: suspend (String, String) -> List<String>,
-    onShareLogs: (String) -> Unit,
-) {
-    val running by NexusVpnService.runningState.collectAsState()
-    val powerSave by NexusVpnService.powerSaveMode.collectAsState()
-    val localLogs by NexusVpnService.recentLogs.collectAsState()
-    var ringLogs by remember { mutableStateOf<List<String>>(emptyList()) }
-    var logSearch by remember { mutableStateOf("") }
-    var logLevel by remember { mutableStateOf("trace") }
-    val scope = rememberCoroutineScope()
-    val useRail = LocalConfiguration.current.screenWidthDp >= 600
-
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var kdlText by remember { mutableStateOf(initialKdl) }
-    var diagnostic by remember { mutableStateOf("") }
-    var metrics by remember { mutableStateOf(MetricsSummary()) }
-    val tabs = listOf("概览", "策略组", "连接", "分应用", "配置", "日志")
-
-    Scaffold(
-        topBar = { TopAppBar(title = { Text("Nexus") }) },
-        bottomBar = {
-            if (!useRail) {
-                NavigationBar {
-                    tabs.forEachIndexed { idx, label ->
-                        NavigationBarItem(
-                            selected = selectedTab == idx,
-                            onClick = { selectedTab = idx },
-                            icon = { Text(label.take(1)) },
-                            label = { Text(label) },
-                        )
-                    }
+        private fun defaultAndroidKdl(paths: RuntimeSocketPaths): String {
+            val controlLine = androidControlDirective(paths)
+            return """
+                schema-version 1
+                role "client"
+                workers 2
+                $controlLine
+                inbound "local" type="socks5" {
+                    listen host="127.0.0.1" port=10808
+                    authentication "none"
                 }
-            }
-        },
-    ) { innerPadding ->
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .consumeWindowInsets(innerPadding)
-                .imePadding(),
-        ) {
-            if (useRail) {
-                NavigationRail(modifier = Modifier.fillMaxHeight()) {
-                    tabs.forEachIndexed { idx, label ->
-                        NavigationRailItem(
-                            selected = selectedTab == idx,
-                            onClick = { selectedTab = idx },
-                            icon = { Text(label.take(1)) },
-                            label = { Text(label) },
-                        )
-                    }
-                }
-            }
-            Column(
-                modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                when (selectedTab) {
-                    0 -> Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                when {
-                                    running && powerSave -> "隧道运行中（省电待机）"
-                                    running -> "隧道运行中"
-                                    else -> "隧道已停止"
-                                },
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text("代次: ${metrics.controlGeneration} · 活跃会话: ${metrics.activeSessions}")
-                            Text("上行: ${metrics.uploadBytes / 1024} KiB · 下行: ${metrics.downloadBytes / 1024} KiB")
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { onStartStop(running) }) { Text(if (running) "断开" else "连接") }
-                                OutlinedButton(onClick = { scope.launch { metrics = onRefreshMetrics() } }) { Text("刷新") }
-                                OutlinedButton(onClick = {
-                                    scope.launch { diagnostic = if (onClearCache()) "缓存已清空" else "清空失败" }
-                                }) { Text("清缓存") }
-                            }
-                            if (diagnostic.isNotEmpty()) Text(diagnostic)
-                        }
-                    }
-                    1 -> GroupsScreen(onFetchGroups, onSelectMember, onResetAuto, onProbeGroup)
-                    2 -> ConnectionsScreen(
-                        onFetchConnections = onFetchConnections,
-                        onInspectConnection = onInspectConnection,
-                        onResolveOwnerPackage = onResolveOwnerPackage,
-                        onCloseConnection = onCloseConnection,
-                        onCloseAllConnections = onCloseAllConnections,
-                    )
-                    3 -> SplitTunnelScreen(excludedPackages, onToggleExcluded)
-                    4 -> ConfigScreen(
-                        kdlText = kdlText,
-                        onKdlChange = { kdlText = it },
-                        diagnostic = diagnostic,
-                        onDiagnosticChange = { diagnostic = it },
-                        onImportShareLink = onImportShareLink,
-                        onImportSubscription = onImportSubscription,
-                        onValidateKdl = onValidateKdl,
-                        onSaveAndReload = onSaveAndReload,
-                    )
-                    else -> Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val displayLogs = if (ringLogs.isNotEmpty()) ringLogs else localLogs
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            androidx.compose.material3.OutlinedTextField(
-                                value = logSearch,
-                                onValueChange = { logSearch = it },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                label = { Text("过滤日志") },
-                            )
-                            OutlinedButton(onClick = {
-                                scope.launch { ringLogs = onFetchLogs(logLevel, logSearch) }
-                            }) { Text("刷新") }
-                            OutlinedButton(
-                                enabled = displayLogs.isNotEmpty(),
-                                onClick = { onShareLogs(displayLogs.joinToString("\n")) },
-                            ) { Text("导出") }
-                        }
-                        LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            items(displayLogs) { line -> Text(line, style = MaterialTheme.typography.bodySmall) }
-                        }
-                    }
-                }
-            }
+                outbound "direct" type="direct"
+                routing { default-outbound "direct"; }
+            """.trimIndent() + "\n"
         }
     }
 }

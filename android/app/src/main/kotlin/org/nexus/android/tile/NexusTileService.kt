@@ -6,51 +6,116 @@ import android.net.VpnService
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.nexus.android.bridge.vpn.NexusVpnService
+import org.nexus.android.bridge.vpn.VpnTunnelState
 import org.nexus.android.ui.MainActivity
+import java.io.File
 
 class NexusTileService : TileService() {
+    private var listenScope: CoroutineScope? = null
+    @Volatile
+    private var cachedConfigReady: Boolean = false
+    @Volatile
+    private var cachedProfileName: String = "默认配置"
+
     override fun onStartListening() {
         super.onStartListening()
-        refreshTile()
+        listenScope?.cancel()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        listenScope = scope
+        scope.launch {
+            combine(
+                NexusVpnService.tunnelState,
+                NexusVpnService.powerSaveMode,
+            ) { tunnelState, powerSave -> tunnelState to powerSave }
+                .collect { (tunnelState, powerSave) ->
+                    val (configExists, profile) = withContext(Dispatchers.IO) {
+                        readTileDiskMeta()
+                    }
+                    cachedConfigReady = configExists
+                    cachedProfileName = profile
+                    applyTileState(tunnelState, powerSave, configExists, profile)
+                }
+        }
+    }
+
+    override fun onStopListening() {
+        listenScope?.cancel()
+        listenScope = null
+        super.onStopListening()
     }
 
     override fun onClick() {
         super.onClick()
-        val running = NexusVpnService.runningState.value
-        if (running) {
+        val state = NexusVpnService.tunnelState.value
+        val activeOrStarting = state == VpnTunnelState.RUNNING ||
+            state == VpnTunnelState.STARTING ||
+            NexusVpnService.runningState.value
+        if (activeOrStarting) {
             startService(Intent(this, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_STOP))
-        } else {
-            if (VpnService.prepare(this) != null) {
-                val launch = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    val pending = PendingIntent.getActivity(
-                        this, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                    )
-                    startActivityAndCollapse(pending)
-                } else {
-                    @Suppress("DEPRECATION")
-                    startActivityAndCollapse(launch)
-                }
-            } else {
-                startForegroundService(
-                    Intent(this, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_START),
-                )
-            }
+            applyTileState(VpnTunnelState.STOPPED, powerSave = false, configExists = cachedConfigReady, profile = cachedProfileName)
+            return
         }
-        refreshTile()
+
+        val configReady = cachedConfigReady
+        if (VpnService.prepare(this) != null || !configReady) {
+            val launch = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val pending = PendingIntent.getActivity(
+                    this,
+                    0,
+                    launch,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                startActivityAndCollapse(pending)
+            } else {
+                @Suppress("DEPRECATION")
+                startActivityAndCollapse(launch)
+            }
+        } else {
+            applyTileState(VpnTunnelState.STARTING, powerSave = false, configExists = true, profile = cachedProfileName)
+            startForegroundService(
+                Intent(this, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_START),
+            )
+        }
     }
 
-    private fun refreshTile() {
-        val running = NexusVpnService.runningState.value
-        val powerSave = NexusVpnService.powerSaveMode.value
+    private fun readTileDiskMeta(): Pair<Boolean, String> {
+        val configExists = File(filesDir, "config.kdl").isFile
+        val activeFile = File(filesDir, ".active_profile")
+        val profile = runCatching {
+            activeFile.takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+        }.getOrNull() ?: "默认配置"
+        return configExists to profile
+    }
+
+    private fun applyTileState(
+        state: VpnTunnelState,
+        powerSave: Boolean,
+        configExists: Boolean,
+        profile: String,
+    ) {
         qsTile?.apply {
-            state = if (running) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+            this.state = when {
+                !configExists && state == VpnTunnelState.STOPPED -> Tile.STATE_UNAVAILABLE
+                state == VpnTunnelState.RUNNING || state == VpnTunnelState.STARTING -> Tile.STATE_ACTIVE
+                else -> Tile.STATE_INACTIVE
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 subtitle = when {
-                    running && powerSave -> "省电待机"
-                    running -> "已连接"
-                    else -> "已断开"
+                    !configExists && state == VpnTunnelState.STOPPED -> "待配置"
+                    state == VpnTunnelState.STARTING -> "正在启动…"
+                    state == VpnTunnelState.RUNNING && powerSave -> "省电 · $profile"
+                    state == VpnTunnelState.RUNNING -> "已连接 · $profile"
+                    state == VpnTunnelState.ERROR -> "启动异常"
+                    else -> "已断开 · $profile"
                 }
             }
             updateTile()
