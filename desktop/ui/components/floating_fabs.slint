@@ -1,0 +1,123 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+
+export component FloatingCoreFab inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> core-toggling: false;
+    in property <string> core-uptime: "";
+    callback toggle-core();
+
+    property <float> pulse-p: Motion.reduced ? 0.0 : mod(animation-tick(), 2400ms) / 2400ms;
+
+    width: core-row.preferred-width;
+    height: 44px;
+    border-radius: 22px;
+    border-width: 1px;
+    border-color:
+        root.core-toggling ? Theme.warn-border
+        : root.core-running ? Theme.success-fg.with-alpha(ta.has-hover ? 0.90 : 0.68)
+        : Theme.accent.brighter(0.18);
+    background:
+        root.core-toggling ? Theme.warn-bg
+        : root.core-running
+            ? (ta.pressed ? (Theme.dark ? #4c1d24ee : #fee2e2f5) : ta.has-hover ? (Theme.dark ? #0f4c3af5 : #a7f3d0f5) : (Theme.dark ? #0b3b2cf0 : #d1fae5f2))
+            : (ta.pressed ? Theme.accent.darker(0.14) : ta.has-hover ? Theme.accent.brighter(0.10) : Theme.accent);
+    backdrop-blur: 18px;
+    drop-shadow-blur: root.core-running ? (Motion.reduced ? 18px : 16px + 8px * Math.abs(Math.sin(root.pulse-p * 180deg))) : 20px;
+    drop-shadow-offset-y: 5px;
+    drop-shadow-color: root.core-running ? Theme.success-fg.with-alpha(Theme.dark ? 0.42 : 0.30) : Theme.accent.with-alpha(Theme.dark ? 0.45 : 0.32);
+    transform-scale: !root.core-toggling && ta.pressed ? 0.94 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+
+    GlassSpeculum {}
+
+    ta := TouchArea {
+        enabled: !root.core-toggling;
+        mouse-cursor: root.core-toggling ? default : pointer;
+        clicked => { root.toggle-core(); }
+    }
+
+    core-row := HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 18px;
+        spacing: 8px;
+
+        if root.core-toggling : Image {
+            width: 15px; height: 15px; y: (parent.height - self.height) / 2;
+            source: @image-url("../icons/loader.svg");
+            colorize: Theme.warn-fg;
+            transform-rotation: Motion.reduced ? 0deg : 360deg * (mod(animation-tick(), 900ms) / 900ms);
+        }
+        if !root.core-toggling : Image {
+            width: 14px; height: 14px; y: (parent.height - self.height) / 2;
+            source: root.core-running ? @image-url("../icons/stop.svg") : @image-url("../icons/play.svg");
+            colorize: root.core-running ? (Theme.dark ? #ecfdf5 : #065f46) : Theme.accent-fg;
+        }
+        Text {
+            text:
+                root.core-toggling ? I18n.t("请稍候", "Wait")
+                : root.core-running ? (root.core-uptime != "" ? root.core-uptime : I18n.t("断开", "Stop"))
+                : I18n.t("连接", "Connect");
+            font-size: 13px;
+            font-weight: 700;
+            font-family: root.core-running && root.core-uptime != "" ? Theme.mono-font : "";
+            color: root.core-toggling ? Theme.warn-fg : root.core-running ? (Theme.dark ? #ecfdf5 : #065f46) : Theme.accent-fg;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component FloatingProbeFab inherits Rectangle {
+    in property <bool> probing: false;
+    callback clicked();
+
+    width: probe-row.preferred-width;
+    height: 42px;
+    border-radius: 21px;
+    border-width: 1px;
+    border-color: Theme.pill-active-top.brighter(0.24);
+    background: ta.pressed
+        ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+        : ta.has-hover
+            ? @linear-gradient(135deg, Theme.pill-active-top.brighter(0.10) 0%, Theme.pill-active-bot.brighter(0.06) 100%)
+            : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
+    drop-shadow-blur: root.probing ? 24px : 20px;
+    drop-shadow-offset-y: 5px;
+    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.56 : 0.36);
+    transform-scale: !root.probing && ta.pressed ? 0.94 : 1.0;
+    clip: true;
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+
+    GlassSpeculum { corner-inset: 14px; }
+
+    if root.probing && !Motion.reduced : Rectangle {
+        property <float> sw: mod(animation-tick(), 1100ms) / 1100ms;
+        x: (parent.width + self.width) * self.sw - self.width;
+        y: 0px; width: 46px; height: 2px;
+        background: Theme.pill-active-fg.with-alpha(0.75);
+    }
+
+    ta := TouchArea {
+        enabled: !root.probing;
+        mouse-cursor: root.probing ? default : pointer;
+        clicked => { root.clicked(); }
+    }
+
+    probe-row := HorizontalLayout {
+        padding-left: 16px; padding-right: 18px; spacing: 7px;
+        Image {
+            width: 15px; height: 15px; y: (parent.height - self.height) / 2;
+            source: root.probing ? @image-url("../icons/loader.svg") : @image-url("../icons/bolt.svg");
+            colorize: Theme.pill-active-fg;
+            transform-rotation: root.probing && !Motion.reduced ? 360deg * (mod(animation-tick(), 900ms) / 900ms) : 0deg;
+        }
+        Text {
+            text: root.probing ? I18n.t("测速中", "Probing") : I18n.t("一键测速", "Probe All");
+            font-size: 13px; font-weight: 700; color: Theme.pill-active-fg; vertical-alignment: center;
+        }
+    }
+}

@@ -1,87 +1,238 @@
-import { Button, ComboBox, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
+import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusSelect } from "nexus_select.slint";
 import { LogLineItem } from "../types.slint";
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
 
-export component LogsPanel inherits VerticalBox {
+export component LogsPanel inherits VerticalLayout {
     in property <[LogLineItem]> logs: [];
     in-out property <string> log-level: "info";
     in-out property <string> domain-filter: "all";
     in-out property <string> search-text: "";
     in property <string> export-status: "";
+    in property <bool> export-ok: true;
+
+    private property <string> sev-choice: "all";
+    property <string> sev-filter:
+        root.sev-choice == "ERR" ? "error"
+        : root.sev-choice == "WRN" ? "warn"
+        : root.sev-choice == "INF" ? "info"
+        : root.sev-choice == "DBG" ? "debug"
+        : "all";
 
     callback apply-log-level(string);
     callback refresh-logs();
     callback export-logs();
     callback clear-logs();
 
-    spacing: 10px;
+    spacing: Theme.space-md;
 
-    HorizontalBox {
-        spacing: 8px;
-        Text {
-            text: "运行日志";
-            font-size: 16px;
-            font-weight: 700;
-            vertical-alignment: center;
-        }
-        LineEdit {
+    // Single compact top toolbar: Search + Dropdown filters (显示级别 / 采集级别 / 模块) + Actions
+    HorizontalLayout {
+        vertical-stretch: 0;
+        spacing: Theme.space-sm;
+
+        NexusInput {
             horizontal-stretch: 1;
+            min-width: 160px;
+            search-icon: true;
             text <=> root.search-text;
-            placeholder-text: "搜索日志关键字...";
+            placeholder-text: I18n.t("搜索日志...", "Search logs...");
             accepted => { root.refresh-logs(); }
         }
-        ComboBox {
-            model: ["all", "core", "proxy", "route", "dns", "tun", "quic", "control"];
-            current-value <=> root.domain-filter;
-            selected => { root.refresh-logs(); }
+
+        NexusSelect {
+            width: 110px;
+            mono: false;
+            prefix: I18n.t("级别", "Lvl");
+            all-label: I18n.t("全部", "All");
+            options: ["all", "ERR", "WRN", "INF", "DBG"];
+            current-value <=> root.sev-choice;
         }
-        ComboBox {
-            model: ["error", "warn", "info", "debug", "trace"];
+
+        NexusSelect {
+            width: 118px;
+            prefix: I18n.t("采集", "Cap");
+            options: ["error", "warn", "info", "debug", "trace"];
             current-value <=> root.log-level;
-            selected(val) => { root.apply-log-level(val); }
+            selected(lvl) => { root.apply-log-level(lvl); }
         }
-        Button {
-            text: "刷新";
+
+        NexusSelect {
+            width: 114px;
+            prefix: I18n.t("模块", "Mod");
+            all-label: I18n.t("全部", "All");
+            options: ["all", "core", "proxy", "route", "dns", "tun", "quic", "control"];
+            current-value <=> root.domain-filter;
+            selected(d) => { root.refresh-logs(); }
+        }
+
+        IconActionButton {
+            icon: @image-url("../icons/refresh.svg");
+            label: I18n.t("刷新", "Refresh");
+            spin-on-click: true;
             clicked => { root.refresh-logs(); }
         }
-        Button {
-            text: "导出快照";
+        IconActionButton {
+            icon: @image-url("../icons/download.svg");
+            label: I18n.t("导出快照", "Export");
             clicked => { root.export-logs(); }
         }
-        Button {
-            text: "清空";
+        IconActionButton {
+            icon: @image-url("../icons/trash.svg");
+            label: I18n.t("清空", "Clear");
+            danger: true;
             clicked => { root.clear-logs(); }
         }
     }
 
-    if root.export-status != "" : Text {
-        text: root.export-status;
-        font-size: 12px;
-        opacity: 0.8;
+    if root.export-status != "" : Rectangle {
+        vertical-stretch: 0;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: root.export-ok ? Theme.success-border : Theme.error-border;
+        background: root.export-ok ? Theme.success-bg : Theme.error-bg;
+        HorizontalLayout {
+            padding-left: Theme.space-md; padding-right: Theme.space-md; padding-top: Theme.space-sm; padding-bottom: Theme.space-sm;
+            Text {
+                text: root.export-status; font-size: 12px;
+                color: root.export-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
+            }
+        }
     }
 
-    ListView {
+    // Row 4: Full-Height 20px Framed Log Console Card (zero bottom void in both live & empty states!)
+    Rectangle {
         vertical-stretch: 1;
-        for entry in root.logs : HorizontalBox {
-            spacing: 8px;
-            padding-top: 2px;
-            padding-bottom: 2px;
-            Text {
-                text: "[\{entry.level}]";
-                font-size: 12px;
-                font-weight: 600;
-                width: 58px;
+        border-radius: 20px;
+        border-width: 1px;
+        border-color: Theme.card-border;
+        background: Theme.card-surface;
+        drop-shadow-blur: 14px;
+        drop-shadow-offset-y: 3px;
+        drop-shadow-color: Theme.card-shadow;
+        clip: true;
+
+        GlassSpeculum {}
+
+        VerticalLayout {
+            width: 100%;
+            height: 100%;
+
+            // Crisp aligned column header strip
+            Rectangle {
+                vertical-stretch: 0;
+                height: 34px;
+                background: Theme.well-bg;
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: Theme.space-sm;
+                    Text { width: 46px; text: I18n.t("级别", "LVL"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { width: 70px; text: I18n.t("域", "DOMAIN"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; text: I18n.t("消息", "MESSAGE"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
+                    Rectangle {
+                        height: 18px; y: (parent.height - self.height) / 2; border-radius: Theme.radius-xs; background: Theme.inset-bg;
+                        HorizontalLayout {
+                            padding-left: 7px; padding-right: 7px;
+                            Text { text: "\{root.logs.length}"; font-size: 10px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; }
+                        }
+                    }
+                }
+                Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.hairline-subtle; }
             }
-            Text {
-                text: entry.domain;
-                font-size: 12px;
-                opacity: 0.7;
-                width: 84px;
+
+            if root.logs.length == 0 : VerticalLayout {
+                vertical-stretch: 1;
+                alignment: center;
+                padding: Theme.space-xl;
+                spacing: Theme.space-sm;
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 44px; height: 44px; border-radius: 22px;
+                        border-width: 1px; border-color: Theme.well-border; background: Theme.well-bg;
+                        Image { x: 12px; y: 12px; width: 20px; height: 20px; source: @image-url("../icons/logs.svg"); colorize: Theme.accent; }
+                    }
+                }
+                Text { text: I18n.t("暂无日志", "No logs yet"); font-size: 14px; font-weight: 700; color: Theme.text-primary; horizontal-alignment: center; }
+                Text { text: I18n.t("连接后刷新查看实时运行日志与诊断输出", "Connect and refresh to stream runtime logs"); font-size: 12px; color: Theme.text-muted; horizontal-alignment: center; }
             }
-            Text {
-                text: entry.message;
-                font-size: 12px;
-                horizontal-stretch: 1;
-                wrap: word-wrap;
+
+            if root.logs.length > 0 : lv := ListView {
+                vertical-stretch: 1;
+                for entry[idx] in root.logs : Rectangle {
+                    property <bool> visible-row:
+                        root.sev-filter == "all"
+                        || (root.sev-filter == "debug" ? (entry.level == "debug" || entry.level == "trace") : entry.level == root.sev-filter);
+                    width: lv.visible-width;
+                    height: visible-row ? row-body.preferred-height : 0px;
+                    visible: visible-row;
+                    clip: true;
+                    background: Math.mod(idx, 2) == 0 ? Theme.row-bg : Theme.row-alt-bg;
+
+                    row-body := HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        padding-top: 7px;
+                        padding-bottom: 7px;
+                        spacing: Theme.space-sm;
+
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 46px;
+                                height: 20px;
+                                border-radius: Theme.radius-xs;
+                                border-width: 1px;
+                                border-color:
+                                    entry.level == "error" ? Theme.error-border
+                                    : entry.level == "warn" ? Theme.warn-border
+                                    : entry.level == "info" ? Theme.telemetry-down.with-alpha(0.40)
+                                    : entry.level == "trace" ? Theme.telemetry-up.with-alpha(0.35)
+                                    : Theme.well-border;
+                                background:
+                                    entry.level == "error" ? Theme.error-bg
+                                    : entry.level == "warn" ? Theme.warn-bg
+                                    : entry.level == "info" ? Theme.proto-tls-bg
+                                    : entry.level == "trace" ? Theme.telemetry-up-soft
+                                    : Theme.inset-bg;
+                                Text {
+                                    width: 100%; height: 100%;
+                                    text:
+                                        entry.level == "error" ? "ERR"
+                                        : entry.level == "warn" ? "WRN"
+                                        : entry.level == "info" ? "INF"
+                                        : entry.level == "debug" ? "DBG"
+                                        : entry.level == "trace" ? "TRC"
+                                        : entry.level;
+                                    font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                    color:
+                                        entry.level == "error" ? Theme.error-fg
+                                        : entry.level == "warn" ? Theme.warn-fg
+                                        : entry.level == "info" ? Theme.telemetry-down
+                                        : entry.level == "trace" ? Theme.telemetry-up
+                                        : Theme.text-secondary;
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: entry.domain; font-size: 12px; font-weight: 600; font-family: Theme.mono-font;
+                            color: Theme.text-secondary; width: 70px; vertical-alignment: center; overflow: elide;
+                        }
+
+                        Text {
+                            text: entry.message; font-size: 12px; font-family: Theme.mono-font;
+                            color: Theme.text-primary; horizontal-stretch: 1; min-width: 0px;
+                            wrap: word-wrap; vertical-alignment: center;
+                        }
+                    }
+                }
             }
         }
     }

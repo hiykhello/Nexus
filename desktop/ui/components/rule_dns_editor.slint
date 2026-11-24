@@ -1,99 +1,184 @@
-import { Button, ComboBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
+import { GlassSpeculum, NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
+import { RuleDnsTab } from "rule_dns_tab.slint";
+import { RuleExplainPanel } from "rule_explain_panel.slint";
+import { RuleRouteTab } from "rule_route_tab.slint";
 
-export component RuleDnsEditorPanel inherits VerticalBox {
+// Centered modal dialog for Routing Rules, DNS Rules, and Live Rule Explain
+export component RuleModalDialog inherits Rectangle {
+    in-out property <int> active-mode: 0;
     in-out property <string> route-rule-kind: "domain-suffix";
     in-out property <string> route-match-value: "example.com";
+    in-out property <string> route-rule-action: "route";
     in-out property <string> route-target-outbound: "proxy";
     in-out property <string> dns-rule-kind: "domain-suffix";
     in-out property <string> dns-match-value: "internal.corp";
     in-out property <string> dns-target-server: "local";
     in property <string> editor-status: "";
+    in property <bool> editor-ok: true;
+    in property <string> explain-result: "";
+    in property <bool> explain-ok: true;
 
-    callback append-rule-snippet(string, string, string);
-    callback append-dns-rule-snippet(string, string, string);
+    callback close-requested();
+    callback append-route-rule-kdl(string);
+    callback append-dns-rule-kdl(string);
+    callback run-explain(string, string, string, string);
 
-    spacing: 12px;
+    background: Theme.dark ? #00000094 : #0f172a5e;
 
-    Text {
-        text: "可视化路由与 DNS 规则片段编辑器 (KDL 2.0)";
-        font-size: 16px;
-        font-weight: 700;
+    TouchArea {
+        clicked => { root.close-requested(); }
     }
 
     Rectangle {
-        border-radius: 8px;
+        property <length> max-dialog-h: max(280px, min(parent.height - 64px, 600px));
+        width: max(320px, min(parent.width - 64px, 780px));
+        height: min(self.max-dialog-h, max(240px, 62px + modal-body.preferred-height));
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: 20px;
         border-width: 1px;
-        border-color: Theme.card-border;
-        background: Theme.card-bg;
-        VerticalBox {
-            padding: 12px;
-            spacing: 8px;
-            Text { text: "路由规则生成"; font-size: 14px; font-weight: 600; }
-            HorizontalBox {
-                spacing: 8px;
-                ComboBox {
-                    width: 170px;
-                    model: ["domain-suffix", "domain", "ip-cidr", "source-mac", "gateway-mac", "process-name"];
-                    current-value <=> root.route-rule-kind;
+        border-color: Theme.dark ? Theme.hairline-strong : #0f172a26;
+        background: Theme.overlay-bg;
+        drop-shadow-blur: 36px;
+        drop-shadow-offset-y: 12px;
+        drop-shadow-color: Theme.dark ? #00000080 : #0f172a30;
+        clip: true;
+
+        // Absorb clicks inside modal sheet so backdrop doesn't dismiss
+        TouchArea {}
+        GlassSpeculum {}
+
+        VerticalLayout {
+            // Modal header bar: icon + title + 3-tab segment bar + close button
+            HorizontalLayout {
+                vertical-stretch: 0;
+                padding-left: 20px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 12px;
+                spacing: Theme.space-md;
+
+                HorizontalLayout {
+                    horizontal-stretch: 0;
+                    spacing: 9px;
+
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: Theme.accent.with-alpha(Theme.dark ? 0.42 : 0.30);
+                        background: Theme.accent-soft;
+
+                        Image {
+                            x: 6px;
+                            y: 6px;
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../icons/rule-edit.svg");
+                            colorize: Theme.accent;
+                        }
+                    }
+
+                    Text {
+                        text: I18n.t("路由与 DNS", "Routing & DNS");
+                        font-size: 15px;
+                        font-weight: 800;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
                 }
-                LineEdit {
-                    horizontal-stretch: 1;
-                    text <=> root.route-match-value;
-                    placeholder-text: "匹配值 (如 example.com 或 aa:bb:cc:dd:ee:ff)";
+
+                Rectangle { horizontal-stretch: 1; }
+
+                SlidingSegmentBar {
+                    horizontal-stretch: 0;
+                    width: 280px;
+                    bar-height: 32px;
+                    options: [I18n.t("路由规则", "Route"), I18n.t("DNS 规则", "DNS"), I18n.t("规则测试", "Explain")];
+                    current-index: root.active-mode;
+                    selected(idx) => {
+                        root.active-mode = idx;
+                        modal-sv.content-y = 0px;
+                    }
                 }
-                LineEdit {
-                    width: 130px;
-                    text <=> root.route-target-outbound;
-                    placeholder-text: "目标出站";
+
+                VerticalLayout {
+                    alignment: center;
+                    IconActionButton {
+                        size: 28px;
+                        icon: @image-url("../icons/x.svg");
+                        label: I18n.t("关闭 (Esc)", "Close (Esc)");
+                        clicked => { root.close-requested(); }
+                    }
                 }
-                Button {
-                    text: "追加至配置";
-                    primary: true;
-                    clicked => { root.append-rule-snippet(root.route-rule-kind, root.route-match-value, root.route-target-outbound); }
+            }
+
+            Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+            // Scrollable modal body with clean NexusVScrollBar when overflowing
+            Rectangle {
+                vertical-stretch: 1;
+
+                modal-sv := ScrollView {
+                    width: 100%;
+                    height: 100%;
+                    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    content-width: self.visible-width;
+                    content-height: max(self.visible-height, modal-body.preferred-height);
+
+                    modal-body := VerticalLayout {
+                        x: 0px;
+                        y: 0px;
+                        width: modal-sv.visible-width;
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-top: 16px;
+                        padding-bottom: 18px;
+                        alignment: start;
+
+                        if root.active-mode == 0 : RuleRouteTab {
+                            primary-kind <=> root.route-rule-kind;
+                            primary-value <=> root.route-match-value;
+                            action-kind <=> root.route-rule-action;
+                            target-outbound <=> root.route-target-outbound;
+                            status-text: root.editor-status;
+                            status-ok: root.editor-ok;
+                            append-route-rule-kdl(rule) => { root.append-route-rule-kdl(rule); }
+                        }
+
+                        if root.active-mode == 1 : RuleDnsTab {
+                            match-kind <=> root.dns-rule-kind;
+                            match-value <=> root.dns-match-value;
+                            target-server <=> root.dns-target-server;
+                            status-text: root.editor-status;
+                            status-ok: root.editor-ok;
+                            append-dns-rule-kdl(rule) => { root.append-dns-rule-kdl(rule); }
+                        }
+
+                        if root.active-mode == 2 : RuleExplainPanel {
+                            explain-result: root.explain-result;
+                            explain-ok: root.explain-ok;
+                            run-explain(inb, net, tgt, extra) => { root.run-explain(inb, net, tgt, extra); }
+                        }
+                    }
+                }
+
+                NexusVScrollBar {
+                    x: parent.width - self.width - 4px;
+                    y: 12px;
+                    height: max(0px, parent.height - 24px);
+                    viewport-size: modal-sv.visible-height;
+                    content-size: modal-sv.content-height;
+                    scroll-pos <=> modal-sv.content-y;
                 }
             }
         }
     }
-
-    Rectangle {
-        border-radius: 8px;
-        border-width: 1px;
-        border-color: Theme.card-border;
-        background: Theme.card-bg;
-        VerticalBox {
-            padding: 12px;
-            spacing: 8px;
-            Text { text: "DNS 分流规则生成"; font-size: 14px; font-weight: 600; }
-            HorizontalBox {
-                spacing: 8px;
-                ComboBox {
-                    width: 170px;
-                    model: ["domain-suffix", "domain", "query-type", "rule-set"];
-                    current-value <=> root.dns-rule-kind;
-                }
-                LineEdit {
-                    horizontal-stretch: 1;
-                    text <=> root.dns-match-value;
-                    placeholder-text: "域名后缀 / 查询类型 (如 HTTPS 或 .local)";
-                }
-                LineEdit {
-                    width: 130px;
-                    text <=> root.dns-target-server;
-                    placeholder-text: "DNS 服务器标签";
-                }
-                Button {
-                    text: "追加 DNS 规则";
-                    clicked => { root.append-dns-rule-snippet(root.dns-rule-kind, root.dns-match-value, root.dns-target-server); }
-                }
-            }
-        }
-    }
-
-    if root.editor-status != "" : Text {
-        text: root.editor-status;
-        font-size: 12px;
-    }
-
-    Rectangle { vertical-stretch: 1; }
 }

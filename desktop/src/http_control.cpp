@@ -10,6 +10,7 @@ module;
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -28,37 +29,106 @@ namespace desktop {
             return ec == std::errc{} ? value : 0;
         }
 
-        auto extract_json_string(std::string_view obj, std::string_view key) -> std::string {
-            auto needle = std::format("\"{}\":", key);
-            auto pos = obj.find(needle);
-            if (pos == std::string_view::npos) return {};
-            pos += needle.size();
-            while (pos < obj.size() && (obj[pos] == ' ' || obj[pos] == '\t')) ++pos;
-            if (pos >= obj.size() || obj[pos] != '"') return {};
-            ++pos;
-            std::string out;
-            while (pos < obj.size() && obj[pos] != '"') {
-                if (obj[pos] == '\\' && pos + 1 < obj.size()) ++pos;
-                out.push_back(obj[pos++]);
+        auto has_header_forbidden(std::string_view sv, bool forbid_space) noexcept -> bool {
+            for (unsigned char c : sv) {
+                if (c == '\r' || c == '\n' || c == '\0' || c < 0x20 || c == 0x7F) return true;
+                if (forbid_space && (c == ' ' || c == '\t')) return true;
             }
+            return false;
+        }
+
+        auto decode_json_string_at(std::string_view s, std::size_t quote_pos, std::size_t& next_pos) -> std::string {
+            std::string out;
+            std::size_t i = quote_pos + 1;
+            while (i < s.size()) {
+                char c = s[i++];
+                if (c == '"') {
+                    next_pos = i;
+                    return out;
+                }
+                if (c == '\\' && i < s.size()) {
+                    char esc = s[i++];
+                    switch (esc) {
+                    case '"': out.push_back('"'); break;
+                    case '\\': out.push_back('\\'); break;
+                    case '/': out.push_back('/'); break;
+                    case 'b': out.push_back('\b'); break;
+                    case 'f': out.push_back('\f'); break;
+                    case 'n': out.push_back('\n'); break;
+                    case 'r': out.push_back('\r'); break;
+                    case 't': out.push_back('\t'); break;
+                    case 'u':
+                        if (i + 4 <= s.size()) {
+                            unsigned int cp = 0;
+                            auto [p, ec] = std::from_chars(s.data() + i, s.data() + i + 4, cp, 16);
+                            if (ec == std::errc{} && p == s.data() + i + 4) {
+                                i += 4;
+                                if (cp < 0x80) out.push_back(static_cast<char>(cp));
+                                else if (cp < 0x800) {
+                                    out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                                    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                                } else {
+                                    out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                                    out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                                    out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                                }
+                                break;
+                            }
+                        }
+                        out.push_back('u');
+                        break;
+                    default: out.push_back(esc); break;
+                    }
+                } else {
+                    out.push_back(c);
+                }
+            }
+            next_pos = s.size();
             return out;
         }
 
+        // Finds a key's value offset strictly at depth 1 of a JSON object (ignoring nested objects/arrays).
+        auto find_json_value_pos(std::string_view obj, std::string_view key) -> std::size_t {
+            int depth = 0;
+            std::size_t i = 0;
+            while (i < obj.size()) {
+                char c = obj[i];
+                if (c == '{' || c == '[') { ++depth; ++i; continue; }
+                if (c == '}' || c == ']') { --depth; ++i; continue; }
+                if (c == '"') {
+                    std::size_t next = i;
+                    auto str = decode_json_string_at(obj, i, next);
+                    std::size_t j = next;
+                    while (j < obj.size() && (obj[j] == ' ' || obj[j] == '\t' || obj[j] == '\r' || obj[j] == '\n')) ++j;
+                    if (depth == 1 && j < obj.size() && obj[j] == ':' && str == key) {
+                        ++j;
+                        while (j < obj.size() && (obj[j] == ' ' || obj[j] == '\t' || obj[j] == '\r' || obj[j] == '\n')) ++j;
+                        return j;
+                    }
+                    i = next;
+                    continue;
+                }
+                ++i;
+            }
+            return std::string_view::npos;
+        }
+
+        auto extract_json_string(std::string_view obj, std::string_view key) -> std::string {
+            auto pos = find_json_value_pos(obj, key);
+            if (pos == std::string_view::npos || pos >= obj.size() || obj[pos] != '"') return {};
+            std::size_t next = pos;
+            return decode_json_string_at(obj, pos, next);
+        }
+
         auto extract_json_bool(std::string_view obj, std::string_view key) -> bool {
-            auto needle = std::format("\"{}\":", key);
-            auto pos = obj.find(needle);
+            auto pos = find_json_value_pos(obj, key);
             if (pos == std::string_view::npos) return false;
-            pos += needle.size();
-            while (pos < obj.size() && obj[pos] == ' ') ++pos;
             return obj.substr(pos).starts_with("true");
         }
 
         auto extract_json_i64(std::string_view obj, std::string_view key, std::int64_t fallback) -> std::int64_t {
-            auto needle = std::format("\"{}\":", key);
-            auto pos = obj.find(needle);
+            auto pos = find_json_value_pos(obj, key);
             if (pos == std::string_view::npos) return fallback;
-            pos += needle.size();
-            while (pos < obj.size() && obj[pos] == ' ') ++pos;
             std::int64_t value = fallback;
             auto [ptr, ec] = std::from_chars(obj.data() + pos, obj.data() + obj.size(), value);
             return ec == std::errc{} ? value : fallback;
@@ -90,10 +160,15 @@ namespace desktop {
             text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
             if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
             if (line.empty() || line.front() == '#') continue;
-            auto sp = line.rfind(' ');
+            auto brace_end = line.find('}');
+            auto search_from = brace_end == std::string_view::npos ? 0u : brace_end + 1u;
+            auto sp = line.find(' ', search_from);
             if (sp == std::string_view::npos) continue;
             auto metric = line.substr(0, sp);
-            auto val = parse_u64(line.substr(sp + 1));
+            auto rest = line.substr(sp + 1);
+            while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
+            auto val_end = rest.find_first_of(" \t");
+            auto val = parse_u64(val_end == std::string_view::npos ? rest : rest.substr(0, val_end));
             if (metric == "nexus_control_generation") out.control_generation = val;
             else if (metric.starts_with("nexus_active_sessions")) out.active_sessions += val;
             else if (metric.starts_with("nexus_traffic_upload_bytes_total")) out.upload_bytes += val;
@@ -250,13 +325,17 @@ namespace desktop {
                                     std::string_view method,
                                     std::string_view path,
                                     std::string_view body) -> HttpReply {
-        if (self.host_.empty() || self.port_ == 0 || path.empty() || path.front() != '/' ||
-            path.contains('\r') || path.contains('\n')) {
+        if (self.host_.empty() || self.port_ == 0 || method.empty() || path.empty() || path.front() != '/' ||
+            has_header_forbidden(method, true) || has_header_forbidden(path, true) ||
+            has_header_forbidden(self.host_, true) || has_header_forbidden(self.bearer_token_, false)) {
             return {false, 0, "invalid HTTP control request"};
         }
+        std::string host_hdr = (self.host_.contains(':') && !self.host_.starts_with('['))
+            ? std::format("[{}]:{}", self.host_, self.port_)
+            : std::format("{}:{}", self.host_, self.port_);
         std::string req = std::format(
-            "{} {} HTTP/1.1\r\nHost: {}:{}\r\nConnection: close\r\n",
-            method, path, self.host_, self.port_);
+            "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
+            method, path, host_hdr);
         if (!self.bearer_token_.empty()) {
             req += std::format("Authorization: Bearer {}\r\n", self.bearer_token_);
         }
@@ -267,8 +346,11 @@ namespace desktop {
         req += body;
 
 #ifdef _WIN32
-        WSADATA wsa{};
-        if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return {false, 0, "WSAStartup failed"};
+        static bool const wsa_ready = [] {
+            WSADATA wsa{};
+            return ::WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+        }();
+        if (!wsa_ready) return {false, 0, "WSAStartup failed"};
 #endif
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
@@ -279,34 +361,69 @@ namespace desktop {
             return {false, 0, "failed to resolve control host"};
         }
 
-        auto fd = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 #ifdef _WIN32
-        if (fd == INVALID_SOCKET) { ::freeaddrinfo(res); return {false, 0, "socket() failed"}; }
-        DWORD ms = static_cast<DWORD>(self.timeout_.count());
-        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char const*>(&ms), sizeof(ms));
-        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<char const*>(&ms), sizeof(ms));
-        auto close_sock = [&] { ::closesocket(fd); ::freeaddrinfo(res); };
-#else
-        if (fd < 0) { ::freeaddrinfo(res); return {false, 0, std::strerror(errno)}; }
-        timeval tv{};
-        tv.tv_sec = static_cast<time_t>(self.timeout_.count() / 1000);
-        tv.tv_usec = static_cast<suseconds_t>((self.timeout_.count() % 1000) * 1000);
-        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-        auto close_sock = [&] { ::close(fd); ::freeaddrinfo(res); };
-#endif
-
-        if (::connect(fd, res->ai_addr, static_cast<int>(res->ai_addrlen)) != 0) {
-            close_sock();
-            return {false, 0, "connect failed"};
+        SOCKET fd = INVALID_SOCKET;
+        for (addrinfo* ai = res; ai != nullptr; ai = ai->ai_next) {
+            SOCKET s = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+            if (s == INVALID_SOCKET) continue;
+            DWORD ms = static_cast<DWORD>(self.timeout_.count());
+            ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char const*>(&ms), sizeof(ms));
+            ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<char const*>(&ms), sizeof(ms));
+            if (::connect(s, ai->ai_addr, static_cast<int>(ai->ai_addrlen)) == 0) {
+                fd = s;
+                break;
+            }
+            ::closesocket(s);
         }
+        ::freeaddrinfo(res);
+        if (fd == INVALID_SOCKET) return {false, 0, "connect failed"};
+        auto close_sock = [&] { ::closesocket(fd); };
+#else
+        int fd = -1;
+        for (addrinfo* ai = res; ai != nullptr; ai = ai->ai_next) {
+#ifdef SOCK_CLOEXEC
+            int s = ::socket(ai->ai_family, ai->ai_socktype | SOCK_CLOEXEC, ai->ai_protocol);
+#else
+            int s = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+            if (s >= 0) (void)::fcntl(s, F_SETFD, FD_CLOEXEC);
+#endif
+            if (s < 0) continue;
+#ifdef SO_NOSIGPIPE
+            int one = 1;
+            (void)::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
+            timeval tv{};
+            tv.tv_sec = static_cast<time_t>(self.timeout_.count() / 1000);
+            tv.tv_usec = static_cast<suseconds_t>((self.timeout_.count() % 1000) * 1000);
+            ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            int rc = 0;
+            do {
+                rc = ::connect(s, ai->ai_addr, ai->ai_addrlen);
+            } while (rc != 0 && errno == EINTR);
+            if (rc == 0) {
+                fd = s;
+                break;
+            }
+            ::close(s);
+        }
+        ::freeaddrinfo(res);
+        if (fd < 0) return {false, 0, "connect failed"};
+        auto close_sock = [&] { ::close(fd); };
+#endif
 
         std::size_t sent = 0;
         while (sent < req.size()) {
 #ifdef _WIN32
             auto n = ::send(fd, req.data() + sent, static_cast<int>(req.size() - sent), 0);
 #else
-            auto n = ::send(fd, req.data() + sent, req.size() - sent, MSG_NOSIGNAL);
+#ifdef MSG_NOSIGNAL
+            constexpr int kSendFlags = MSG_NOSIGNAL;
+#else
+            constexpr int kSendFlags = 0;
+#endif
+            auto n = ::send(fd, req.data() + sent, req.size() - sent, kSendFlags);
+            if (n < 0 && errno == EINTR) continue;
 #endif
             if (n <= 0) { close_sock(); return {false, 0, "send failed"}; }
             sent += static_cast<std::size_t>(n);
@@ -316,6 +433,9 @@ namespace desktop {
         char buf[4096];
         for (;;) {
             auto n = ::recv(fd, buf, sizeof(buf), 0);
+#ifndef _WIN32
+            if (n < 0 && errno == EINTR) continue;
+#endif
             if (n == 0) break;
             if (n < 0) { close_sock(); return {false, 0, "recv failed"}; }
             if (raw.size() + static_cast<std::size_t>(n) > 256u * 1024u) {

@@ -80,6 +80,6 @@ namespace desktop {
             }
             if (read_bytes == 0) break;
         }
-        return {!reply.empty(), std::move(reply)};
+        return decode_nexus1_reply(std::move(reply));
     }
 }

@@ -1,0 +1,356 @@
+import { AboutSlint, ScrollView } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { LayoutMetrics } from "../layout_metrics.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum, NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
+import { ThemeStudioCard } from "theme_studio_card.slint";
+import { TraySettingsCard } from "tray_settings_card.slint";
+import { ShortcutsCard } from "shortcuts_card.slint";
+
+component SpecRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> value-color: Theme.text-primary;
+
+    vertical-stretch: 0;
+    height: 40px;
+    border-radius: 11px;
+    border-width: 1px;
+    border-color: Theme.well-border;
+    background: Theme.well-bg;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: Theme.space-sm;
+
+        Text {
+            horizontal-stretch: 0;
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            color: Theme.text-secondary;
+            vertical-alignment: center;
+        }
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            text: root.value;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: Theme.mono-font;
+            color: root.value-color;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+component AboutIdentityCard inherits Rectangle {
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 14px;
+
+            Rectangle {
+                width: 48px; height: 48px; border-radius: 15px;
+                border-width: 1px; border-color: Theme.accent.with-alpha(Theme.dark ? 0.46 : 0.32);
+                background: @radial-gradient(circle, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.well-bg 100%);
+                Image {
+                    x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                    width: 28px; height: 28px; source: @image-url("../icons/nexus-prism.svg");
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 3px;
+                Text { text: "Nexus"; font-size: 20px; font-weight: 800; letter-spacing: 0.2px; color: Theme.text-primary; }
+                Text { text: I18n.t("高性能跨平台网络代理客户端", "High-performance cross-platform proxy client"); font-size: 12px; color: Theme.text-secondary; overflow: elide; }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        // Required attribution badge under Slint's Royalty-Free Desktop License
+        VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            AboutSlint {
+                vertical-stretch: 0;
+                height: 96px;
+            }
+        }
+    }
+}
+
+component AboutRuntimeCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> tun-enabled: false;
+    in property <string> config-path: "";
+
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: 10px;
+
+        Text {
+            text: I18n.t("运行环境", "Runtime");
+            font-size: 14px; font-weight: 700; color: Theme.text-primary;
+        }
+
+        SpecRow {
+            label: I18n.t("界面引擎", "UI Engine");
+            value: "Slint 1.19";
+        }
+        SpecRow {
+            label: I18n.t("核心模式", "Core Engine");
+            value: root.core-running
+                ? (root.tun-enabled ? I18n.t("io_uring · TUN 运行中", "io_uring · TUN Active") : I18n.t("io_uring · 运行中", "io_uring · Active"))
+                : I18n.t("io_uring / epoll · 待命", "io_uring / epoll · Standby");
+            value-color: root.core-running ? Theme.success-fg : Theme.text-secondary;
+        }
+        SpecRow {
+            label: I18n.t("配置路径", "Config Path");
+            value: root.config-path != "" ? root.config-path : "~/.config/nexus/config.kdl";
+            value-color: Theme.text-secondary;
+        }
+    }
+}
+
+component RuleModalChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> show-icon: false;
+    callback clicked();
+
+    height: 28px;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.selected-border : transparent;
+    background: ta.pressed ? Theme.selected-bg : ta.has-hover ? Theme.row-hover-bg : transparent;
+    transform-scale: ta.pressed ? 0.96 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: root.show-icon ? 9px : 10px;
+        padding-right: 10px;
+        spacing: 5px;
+        alignment: center;
+
+        if root.show-icon : Image {
+            width: 13px;
+            height: 13px;
+            y: (parent.height - self.height) / 2;
+            source: @image-url("../icons/rule-edit.svg");
+            colorize: ta.has-hover ? Theme.accent : Theme.nav-active-fg;
+        }
+
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            color: ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component RuleQuickStrip inherits Rectangle {
+    callback open-rule-modal(int);
+
+    vertical-stretch: 0;
+    height: 36px;
+    border-radius: 18px;
+    border-width: 1px;
+    border-color: Theme.well-border;
+    background: Theme.well-bg;
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 2px;
+
+        RuleModalChip {
+            show-icon: true;
+            label: I18n.t("路由规则", "Rules");
+            clicked => { root.open-rule-modal(0); }
+        }
+        Rectangle { width: 1px; y: 6px; height: parent.height - 12px; background: Theme.hairline-subtle; }
+        RuleModalChip {
+            label: I18n.t("DNS 规则", "DNS");
+            clicked => { root.open-rule-modal(1); }
+        }
+        Rectangle { width: 1px; y: 6px; height: parent.height - 12px; background: Theme.hairline-subtle; }
+        RuleModalChip {
+            label: I18n.t("规则测试", "Explain");
+            clicked => { root.open-rule-modal(2); }
+        }
+    }
+}
+
+export component AboutPanel inherits VerticalLayout {
+    in property <length> window-width: 1040px;
+    in-out property <int> active-subtab: 0;
+
+    in-out property <bool> close-to-tray: true;
+    in-out property <bool> start-minimized: false;
+    in-out property <bool> tray-show-nodes: true;
+    in-out property <bool> tray-show-speed: true;
+    in-out property <string> tray-click-action: "toggle";
+    in property <bool> tray-native-active: true;
+    in property <bool> core-running: false;
+    in property <bool> tun-enabled: false;
+    in property <string> config-path: "";
+
+    callback tray-prefs-changed();
+    callback open-rule-modal(int);
+
+    property <bool> is-compact: LayoutMetrics.is-compact-w(root.window-width);
+    property <bool> about-two-col: root.window-width >= 840px;
+
+    spacing: Theme.space-md;
+
+    if !root.is-compact : HorizontalLayout {
+        vertical-stretch: 0;
+        padding-right: 18px;
+        spacing: Theme.space-md;
+
+        SlidingSegmentBar {
+            horizontal-stretch: 0;
+            preferred-width: 340px;
+            max-width: 360px;
+            options: [I18n.t("外观", "Appearance"), I18n.t("托盘", "Tray"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
+            current-index: root.active-subtab;
+            selected(idx) => {
+                root.active-subtab = idx;
+                sv.content-y = 0px;
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        RuleQuickStrip {
+            horizontal-stretch: 0;
+            open-rule-modal(tab) => { root.open-rule-modal(tab); }
+        }
+    }
+
+    if root.is-compact : VerticalLayout {
+        vertical-stretch: 0;
+        padding-right: 18px;
+        spacing: Theme.space-sm;
+
+        SlidingSegmentBar {
+            options: [I18n.t("外观", "Appearance"), I18n.t("托盘", "Tray"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
+            current-index: root.active-subtab;
+            selected(idx) => {
+                root.active-subtab = idx;
+                sv.content-y = 0px;
+            }
+        }
+
+        RuleQuickStrip {
+            open-rule-modal(tab) => { root.open-rule-modal(tab); }
+        }
+    }
+
+    Rectangle {
+        vertical-stretch: 1;
+        clip: true;
+
+        sv := ScrollView {
+            width: 100%;
+            height: 100%;
+            vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+            content-width: self.visible-width;
+            content-height: max(self.visible-height, settings-col.preferred-height);
+
+            settings-col := VerticalLayout {
+                x: 0px;
+                y: 0px;
+                width: sv.visible-width;
+                padding-right: 18px;
+                padding-bottom: 6px;
+                spacing: Theme.space-md;
+                alignment: start;
+
+                if root.active-subtab == 0 : ThemeStudioCard {
+                    window-width: root.window-width;
+                }
+
+                if root.active-subtab == 1 : TraySettingsCard {
+                    window-width: root.window-width;
+                    close-to-tray <=> root.close-to-tray;
+                    start-minimized <=> root.start-minimized;
+                    tray-show-nodes <=> root.tray-show-nodes;
+                    tray-show-speed <=> root.tray-show-speed;
+                    tray-click-action <=> root.tray-click-action;
+                    tray-native-active: root.tray-native-active;
+                    prefs-changed => { root.tray-prefs-changed(); }
+                }
+
+                if root.active-subtab == 2 : ShortcutsCard {
+                    window-width: root.window-width;
+                }
+
+                if root.active-subtab == 3 && root.about-two-col : HorizontalLayout {
+                    vertical-stretch: 0;
+                    spacing: Theme.space-md;
+                    AboutIdentityCard { horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; }
+                    AboutRuntimeCard {
+                        horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                        core-running: root.core-running; tun-enabled: root.tun-enabled; config-path: root.config-path;
+                    }
+                }
+
+                if root.active-subtab == 3 && !root.about-two-col : VerticalLayout {
+                    vertical-stretch: 0;
+                    spacing: Theme.space-md;
+                    AboutIdentityCard {}
+                    AboutRuntimeCard {
+                        core-running: root.core-running; tun-enabled: root.tun-enabled; config-path: root.config-path;
+                    }
+                }
+            }
+        }
+
+        NexusVScrollBar {
+            x: parent.width - self.width - 3px;
+            y: 2px;
+            height: max(0px, parent.height - 4px);
+            viewport-size: sv.visible-height;
+            content-size: sv.content-height;
+            scroll-pos <=> sv.content-y;
+        }
+    }
+}

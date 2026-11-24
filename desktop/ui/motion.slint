@@ -1,0 +1,9 @@
+export global Motion {
+    in-out property <bool> reduced: false;
+    out property <duration> micro: reduced ? 0ms : 100ms;
+    out property <duration> fast: reduced ? 0ms : 160ms;
+    out property <duration> normal: reduced ? 0ms : 240ms;
+    out property <duration> fluid: reduced ? 0ms : 340ms;
+    out property <duration> slow: reduced ? 0ms : 480ms;
+    out property <duration> ambient: reduced ? 0ms : 2200ms;
+}

@@ -1,0 +1,448 @@
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+import { CollapsibleSection, NexusSelect } from "nexus_select.slint";
+import { OutboundKdl } from "outbound_kdl_format.slint";
+import { RuleActionBar, RuleChipButton } from "rule_builder_parts.slint";
+
+component OutboundProtoCard inherits Rectangle {
+    in-out property <string> proto: "vless";
+    in-out property <string> tag: "hk-01";
+    in-out property <string> host: "hk01.example.net";
+    in-out property <string> port: "443";
+    in-out property <string> secret-file: "secrets/hk-01.secret";
+    in-out property <string> uuid-str: "";
+    in-out property <string> username: "user";
+    in-out property <string> flow: "xtls-rprx-vision";
+    in-out property <string> hy2-ports: "";
+    in-out property <string> hy2-salamander: "";
+    in-out property <string> hy2-up-bps: "";
+    in-out property <string> hy2-down-bps: "";
+    in-out property <string> tuic-cc: "bbr";
+    in-out property <string> tuic-udp-mode: "native";
+    in-out property <string> ss-method: "2022-blake3-aes-128-gcm";
+    in-out property <int> snell-ver: 5;
+    in-out property <string> snell-obfs: "none";
+    in-out property <string> snell-obfs-host: "";
+    in-out property <string> naive-proto: "h2";
+    in-out property <bool> naive-padding: true;
+    in-out property <string> http-ver: "auto";
+    in-out property <bool> http-udp: false;
+    in-out property <string> ssh-host-sha: "";
+
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    GlassSpeculum { corner-inset: 14px; }
+
+    VerticalLayout {
+        alignment: start;
+        padding: 14px;
+        spacing: Theme.space-sm;
+
+        Text { text: I18n.t("协议与凭据", "Protocol & Endpoint"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
+
+        FlexboxLayout {
+            spacing: 6px;
+            RuleChipButton { label: "vless"; active: root.proto == "vless"; clicked => { root.proto = "vless"; } }
+            RuleChipButton { label: "trojan"; active: root.proto == "trojan"; clicked => { root.proto = "trojan"; } }
+            RuleChipButton { label: "hysteria2"; active: root.proto == "hysteria2"; clicked => { root.proto = "hysteria2"; } }
+            RuleChipButton { label: "tuic"; active: root.proto == "tuic"; clicked => { root.proto = "tuic"; } }
+            RuleChipButton { label: "anytls"; active: root.proto == "anytls"; clicked => { root.proto = "anytls"; } }
+            RuleChipButton { label: "shadowsocks"; active: root.proto == "shadowsocks"; clicked => { root.proto = "shadowsocks"; } }
+            RuleChipButton { label: "snell"; active: root.proto == "snell"; clicked => { root.proto = "snell"; } }
+            RuleChipButton { label: "naive"; active: root.proto == "naive"; clicked => { root.proto = "naive"; } }
+            RuleChipButton { label: "ssh"; active: root.proto == "ssh"; clicked => { root.proto = "ssh"; } }
+            RuleChipButton { label: "http-connect"; active: root.proto == "http-connect"; clicked => { root.proto = "http-connect"; } }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("标签", "Tag"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.tag; placeholder-text: "hk-01"; }
+            Text { text: I18n.t("端口", "Port"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 68px; mono: true; text <=> root.port; placeholder-text: "443"; }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("主机", "Host"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.host; placeholder-text: "edge.example.net"; }
+        }
+
+        if root.proto == "vless" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("UUID 文件", "UUID File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+        }
+
+        if root.proto == "vless" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: "Flow"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect { horizontal-stretch: 1; options: ["none", "xtls-rprx-vision"]; current-value <=> root.flow; }
+        }
+
+        if root.proto == "trojan" || root.proto == "anytls" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+        }
+
+        if root.proto == "hysteria2" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            Text { text: I18n.t("跳端口", "Ports"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 92px; mono: true; text <=> root.hy2-ports; placeholder-text: "20000-40000"; }
+        }
+
+        if root.proto == "hysteria2" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("混淆", "Obfs"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 56px; horizontal-stretch: 1; mono: true; text <=> root.hy2-salamander; placeholder-text: I18n.t("可选", "Optional"); }
+            Text { text: "Up"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 66px; mono: true; text <=> root.hy2-up-bps; placeholder-text: "100M"; }
+            Text { text: "Down"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 66px; mono: true; text <=> root.hy2-down-bps; placeholder-text: "200M"; }
+        }
+
+        if root.proto == "tuic" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: "UUID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.uuid-str; placeholder-text: "TUIC UUID"; }
+            Text { text: I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+        }
+
+        if root.proto == "tuic" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("拥塞", "CC"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect { width: 96px; options: ["bbr", "cubic", "new_reno"]; current-value <=> root.tuic-cc; }
+            Text { text: "UDP"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect { width: 92px; options: ["native", "quic"]; current-value <=> root.tuic-udp-mode; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        if root.proto == "shadowsocks" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("加密", "Method"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect { horizontal-stretch: 1; options: ["2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"]; current-value <=> root.ss-method; }
+        }
+
+        if root.proto == "shadowsocks" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("密钥文件", "Key File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+        }
+
+        if root.proto == "snell" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("版本", "Ver"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            RuleChipButton { label: "v4"; active: root.snell-ver == 4; clicked => { root.snell-ver = 4; } }
+            RuleChipButton { label: "v5"; active: root.snell-ver == 5; clicked => { root.snell-ver = 5; } }
+            Text { text: "PSK"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+        }
+
+        if root.proto == "snell" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("混淆", "Obfs"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            RuleChipButton { label: "none"; active: root.snell-obfs == "none"; clicked => { root.snell-obfs = "none"; } }
+            RuleChipButton { label: "http"; active: root.snell-obfs == "http"; clicked => { root.snell-obfs = "http"; } }
+            if root.snell-obfs == "http" : NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.snell-obfs-host; placeholder-text: "obfs host"; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        if root.proto == "naive" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("承载", "Proto"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            RuleChipButton { label: "h2"; active: root.naive-proto == "h2"; clicked => { root.naive-proto = "h2"; } }
+            RuleChipButton { label: "h3"; active: root.naive-proto == "h3"; clicked => { root.naive-proto = "h3"; } }
+            NexusSwitch { text: "Padding"; checked <=> root.naive-padding; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        if root.proto == "http-connect" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: "HTTP"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            RuleChipButton { label: "auto"; active: root.http-ver == "auto"; clicked => { root.http-ver = "auto"; } }
+            RuleChipButton { label: "h1"; active: root.http-ver == "h1"; clicked => { root.http-ver = "h1"; } }
+            RuleChipButton { label: "h2"; active: root.http-ver == "h2"; clicked => { root.http-ver = "h2"; } }
+            RuleChipButton { label: "h3"; active: root.http-ver == "h3"; clicked => { root.http-ver = "h3"; } }
+            NexusSwitch { text: "UDP"; checked <=> root.http-udp; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        if root.proto == "naive" || root.proto == "http-connect" || root.proto == "ssh" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("用户", "User"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 78px; mono: true; text <=> root.username; placeholder-text: "user"; }
+            Text { text: root.proto == "ssh" ? I18n.t("私钥", "Key") : I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+        }
+
+        if root.proto == "ssh" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: "HostKey"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.ssh-host-sha; placeholder-text: I18n.t("可选 SHA-256 指纹", "Optional SHA-256"); }
+        }
+    }
+}
+
+component OutboundTransportCard inherits Rectangle {
+    in property <bool> has-tls: true;
+    in property <bool> has-transport: true;
+    in-out property <string> sni: "";
+    in-out property <string> fingerprint: "chrome";
+    in-out property <string> cert-sha256: "";
+    in-out property <bool> verify-tls: true;
+    in-out property <bool> use-reality: true;
+    in-out property <string> reality-pbk: "";
+    in-out property <string> reality-sid: "";
+    in-out property <string> transport: "tcp";
+    in-out property <string> transport-path: "/";
+    in-out property <string> transport-host: "";
+    in-out property <string> xhttp-mode: "auto";
+    in-out property <string> detour: "";
+    in-out property <string> bind-interface: "";
+    in-out property <string> routing-mark: "";
+    in-out property <bool> tcp-fast-open: false;
+    in-out property <bool> multipath-tcp: false;
+    in-out property <bool> tcp-keepalive: false;
+    in-out property <bool> dial-advanced-open: false;
+
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    GlassSpeculum { corner-inset: 14px; }
+
+    VerticalLayout {
+        alignment: start;
+        padding: 14px;
+        spacing: Theme.space-sm;
+
+        Text {
+            text: root.has-tls ? I18n.t("TLS、传输与套接字", "TLS, Transport & Socket") : I18n.t("前置链与套接字", "Detour & Socket");
+            font-size: 13px; font-weight: 700; color: Theme.text-primary;
+        }
+
+        if root.has-tls : HorizontalLayout {
+            spacing: 6px;
+            Text { text: "SNI"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.sni; placeholder-text: I18n.t("默认同主机", "Defaults to host"); }
+            Text { text: "uTLS"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect { width: 96px; options: ["default", "chrome", "firefox", "safari", "ios", "edge", "random"]; current-value <=> root.fingerprint; }
+        }
+
+        if root.has-tls : HorizontalLayout {
+            spacing: Theme.space-md;
+            NexusSwitch { text: "TLS Verify"; checked <=> root.verify-tls; }
+            if root.has-transport : NexusSwitch { text: "REALITY"; checked <=> root.use-reality; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        if root.has-tls && root.has-transport && root.use-reality : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("公钥", "PubKey"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; text <=> root.reality-pbk; placeholder-text: "Base64/Hex"; }
+            Text { text: "SID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 72px; mono: true; text <=> root.reality-sid; placeholder-text: I18n.t("可选", "Opt"); }
+        }
+
+        if root.has-tls && root.has-transport : HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("传输", "Transport"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            FlexboxLayout {
+                horizontal-stretch: 1;
+                spacing: 6px;
+                RuleChipButton { label: "tcp"; active: root.transport == "tcp"; clicked => { root.transport = "tcp"; } }
+                RuleChipButton { label: "websocket"; active: root.transport == "websocket"; clicked => { root.transport = "websocket"; } }
+                RuleChipButton { label: "grpc"; active: root.transport == "grpc"; clicked => { root.transport = "grpc"; } }
+                RuleChipButton { label: "httpupgrade"; active: root.transport == "httpupgrade"; clicked => { root.transport = "httpupgrade"; } }
+                RuleChipButton { label: "xhttp"; active: root.transport == "xhttp"; clicked => { root.transport = "xhttp"; } }
+            }
+        }
+
+        if root.has-tls && root.has-transport && root.transport != "tcp" : HorizontalLayout {
+            spacing: 6px;
+            Text { text: root.transport == "grpc" ? "Service" : "Path"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 68px; horizontal-stretch: 1; mono: true; text <=> root.transport-path; placeholder-text: "/ws"; }
+            Text { text: "Host"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 68px; horizontal-stretch: 1; mono: true; text <=> root.transport-host; placeholder-text: I18n.t("可选", "Opt"); }
+            if root.transport == "xhttp" : NexusSelect { width: 92px; options: ["auto", "packet-up", "stream-up", "stream-one"]; current-value <=> root.xhttp-mode; }
+        }
+
+        CollapsibleSection {
+            title: I18n.t("前置链、证书固定与底层套接字", "Detour, Cert Pin & Dial Socket");
+            expanded <=> root.dial-advanced-open;
+
+            if root.has-tls : HorizontalLayout {
+                spacing: 6px;
+                Text { text: "SHA-256"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { min-width: 84px; horizontal-stretch: 1; mono: true; text <=> root.cert-sha256; placeholder-text: I18n.t("可选证书 SHA-256 固定", "Optional cert SHA-256 pin"); }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                Text { text: I18n.t("前置", "Detour"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { min-width: 64px; horizontal-stretch: 1; mono: true; text <=> root.detour; placeholder-text: I18n.t("可选", "Opt"); }
+                Text { text: I18n.t("网卡", "Iface"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { width: 64px; mono: true; text <=> root.bind-interface; placeholder-text: "eth0"; }
+                Text { text: "Mark"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { width: 56px; mono: true; text <=> root.routing-mark; placeholder-text: "0x1"; }
+            }
+
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                NexusSwitch { text: "TFO"; checked <=> root.tcp-fast-open; }
+                NexusSwitch { text: "MPTCP"; checked <=> root.multipath-tcp; }
+                NexusSwitch { text: "Keepalive"; checked <=> root.tcp-keepalive; }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+    }
+}
+
+export component OutboundEditorTab inherits VerticalLayout {
+    in property <length> container-width: 760px;
+    in property <string> status-text: "";
+    in property <bool> status-ok: true;
+    callback append-raw-kdl(string);
+
+    in-out property <string> proto: "vless";
+    in-out property <string> tag: "hk-01";
+    in-out property <string> host: "hk01.example.net";
+    in-out property <string> port: "443";
+    in-out property <string> secret-file: "secrets/hk-01.secret";
+    in-out property <string> uuid-str: "";
+    in-out property <string> username: "user";
+    in-out property <string> flow: "xtls-rprx-vision";
+    in-out property <string> hy2-ports: "";
+    in-out property <string> hy2-salamander: "";
+    in-out property <string> hy2-up-bps: "";
+    in-out property <string> hy2-down-bps: "";
+    in-out property <string> tuic-cc: "bbr";
+    in-out property <string> tuic-udp-mode: "native";
+    in-out property <string> ss-method: "2022-blake3-aes-128-gcm";
+    in-out property <int> snell-ver: 5;
+    in-out property <string> snell-obfs: "none";
+    in-out property <string> snell-obfs-host: "";
+    in-out property <string> naive-proto: "h2";
+    in-out property <bool> naive-padding: true;
+    in-out property <string> http-ver: "auto";
+    in-out property <bool> http-udp: false;
+    in-out property <string> ssh-host-sha: "";
+    in-out property <string> sni: "";
+    in-out property <string> fingerprint: "chrome";
+    in-out property <string> cert-sha256: "";
+    in-out property <bool> verify-tls: true;
+    in-out property <bool> use-reality: true;
+    in-out property <string> reality-pbk: "";
+    in-out property <string> reality-sid: "";
+    in-out property <string> transport: "tcp";
+    in-out property <string> transport-path: "/";
+    in-out property <string> transport-host: "";
+    in-out property <string> xhttp-mode: "auto";
+    in-out property <string> detour: "";
+    in-out property <string> bind-interface: "";
+    in-out property <string> routing-mark: "";
+    in-out property <bool> tcp-fast-open: false;
+    in-out property <bool> multipath-tcp: false;
+    in-out property <bool> tcp-keepalive: false;
+    in-out property <bool> dial-advanced-open: false;
+
+    property <bool> two-col: root.container-width >= 680px;
+    property <bool> has-tls: root.proto != "shadowsocks" && root.proto != "snell" && root.proto != "ssh";
+    property <bool> has-transport: root.proto == "vless" || root.proto == "trojan" || root.proto == "anytls";
+
+    pure function current-kdl() -> string {
+        OutboundKdl.build(
+            root.proto, root.tag, root.host, root.port,
+            root.secret-file, root.uuid-str, root.username, root.flow,
+            root.hy2-ports, root.hy2-salamander, root.hy2-up-bps, root.hy2-down-bps,
+            root.tuic-cc, root.tuic-udp-mode,
+            root.ss-method, root.snell-ver, root.snell-obfs, root.snell-obfs-host,
+            root.naive-proto, root.naive-padding, root.http-ver, root.http-udp,
+            root.ssh-host-sha,
+            root.sni, root.fingerprint, root.cert-sha256, root.verify-tls, root.use-reality, root.reality-pbk, root.reality-sid,
+            root.transport, root.transport-path, root.transport-host, root.xhttp-mode,
+            root.detour, root.bind-interface, root.routing-mark, root.tcp-fast-open, root.multipath-tcp, root.tcp-keepalive,
+        )
+    }
+
+    function reset-form() {
+        root.proto = "vless"; root.tag = "hk-01"; root.host = "hk01.example.net"; root.port = "443";
+        root.secret-file = "secrets/hk-01.secret"; root.uuid-str = ""; root.username = "user"; root.flow = "xtls-rprx-vision";
+        root.sni = ""; root.fingerprint = "chrome"; root.cert-sha256 = ""; root.verify-tls = true; root.use-reality = true;
+        root.reality-pbk = ""; root.reality-sid = ""; root.transport = "tcp"; root.transport-path = "/"; root.transport-host = "";
+        root.detour = ""; root.bind-interface = ""; root.routing-mark = "";
+        root.tcp-fast-open = false; root.multipath-tcp = false; root.tcp-keepalive = false;
+    }
+
+    vertical-stretch: 0;
+    alignment: start;
+    spacing: Theme.space-md;
+
+    if root.two-col : HorizontalLayout {
+        spacing: Theme.space-md;
+
+        OutboundProtoCard {
+            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+            proto <=> root.proto; tag <=> root.tag; host <=> root.host; port <=> root.port;
+            secret-file <=> root.secret-file; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
+            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander; hy2-up-bps <=> root.hy2-up-bps; hy2-down-bps <=> root.hy2-down-bps;
+            tuic-cc <=> root.tuic-cc; tuic-udp-mode <=> root.tuic-udp-mode; ss-method <=> root.ss-method;
+            snell-ver <=> root.snell-ver; snell-obfs <=> root.snell-obfs; snell-obfs-host <=> root.snell-obfs-host;
+            naive-proto <=> root.naive-proto; naive-padding <=> root.naive-padding; http-ver <=> root.http-ver; http-udp <=> root.http-udp;
+            ssh-host-sha <=> root.ssh-host-sha;
+        }
+
+        OutboundTransportCard {
+            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+            has-tls: root.has-tls; has-transport: root.has-transport;
+            sni <=> root.sni; fingerprint <=> root.fingerprint; cert-sha256 <=> root.cert-sha256;
+            verify-tls <=> root.verify-tls; use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
+            transport <=> root.transport; transport-path <=> root.transport-path; transport-host <=> root.transport-host; xhttp-mode <=> root.xhttp-mode;
+            detour <=> root.detour; bind-interface <=> root.bind-interface; routing-mark <=> root.routing-mark;
+            tcp-fast-open <=> root.tcp-fast-open; multipath-tcp <=> root.multipath-tcp; tcp-keepalive <=> root.tcp-keepalive;
+            dial-advanced-open <=> root.dial-advanced-open;
+        }
+    }
+
+    if !root.two-col : VerticalLayout {
+        spacing: Theme.space-md;
+
+        OutboundProtoCard {
+            proto <=> root.proto; tag <=> root.tag; host <=> root.host; port <=> root.port;
+            secret-file <=> root.secret-file; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
+            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander; hy2-up-bps <=> root.hy2-up-bps; hy2-down-bps <=> root.hy2-down-bps;
+            tuic-cc <=> root.tuic-cc; tuic-udp-mode <=> root.tuic-udp-mode; ss-method <=> root.ss-method;
+            snell-ver <=> root.snell-ver; snell-obfs <=> root.snell-obfs; snell-obfs-host <=> root.snell-obfs-host;
+            naive-proto <=> root.naive-proto; naive-padding <=> root.naive-padding; http-ver <=> root.http-ver; http-udp <=> root.http-udp;
+            ssh-host-sha <=> root.ssh-host-sha;
+        }
+
+        OutboundTransportCard {
+            has-tls: root.has-tls; has-transport: root.has-transport;
+            sni <=> root.sni; fingerprint <=> root.fingerprint; cert-sha256 <=> root.cert-sha256;
+            verify-tls <=> root.verify-tls; use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
+            transport <=> root.transport; transport-path <=> root.transport-path; transport-host <=> root.transport-host; xhttp-mode <=> root.xhttp-mode;
+            detour <=> root.detour; bind-interface <=> root.bind-interface; routing-mark <=> root.routing-mark;
+            tcp-fast-open <=> root.tcp-fast-open; multipath-tcp <=> root.multipath-tcp; tcp-keepalive <=> root.tcp-keepalive;
+            dial-advanced-open <=> root.dial-advanced-open;
+        }
+    }
+
+    RuleActionBar {
+        button-text: I18n.t("添加出站", "Add Outbound");
+        status-text: root.status-text;
+        status-ok: root.status-ok;
+        commit => { root.append-raw-kdl(root.current-kdl()); }
+        reset => { root.reset-form(); }
+    }
+}

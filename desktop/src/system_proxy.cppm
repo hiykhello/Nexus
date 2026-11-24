@@ -23,6 +23,8 @@ export namespace desktop {
         std::optional<SystemProxySnapshot> saved_;
         bool active_ = false;
         bool diagnostic_mode_ = false;
+        std::string service_name_;
+        std::string kde_read_, kde_write_;
     public:
         ~SystemProxyController() { (void)restore(); }
 

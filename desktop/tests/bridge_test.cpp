@@ -43,6 +43,11 @@ namespace {
         std::string embedded_nul("a\0b", 3);
         std::string_view bad_nul[] = {embedded_nul};
         expect(!desktop::build_nexus1_frame(bad_nul).has_value(), "reject embedded NUL");
+
+        auto ok_r = desktop::decode_nexus1_reply("NEXUS/1 OK\nrunning\n");
+        expect(ok_r.ok && ok_r.body == "running\n", "decode NEXUS/1 OK reply");
+        auto err_r = desktop::decode_nexus1_reply("NEXUS/1 ERROR\nforbidden\n");
+        expect(!err_r.ok && err_r.body == "forbidden", "decode NEXUS/1 ERROR reply");
     }
 
 #ifndef _WIN32
@@ -173,10 +178,19 @@ namespace {
                ssh_pw_kdl.contains("cipher \"chacha20-poly1305@openssh.com\"") && !ssh_pw_kdl.contains("s3cr3t"),
             "ssh password KDL");
 
-        auto ssh_key = desktop::parse_share_link("ssh://git@ssh.example.com:22?private-key-file=/etc/nexus/secrets/id_ed25519&host-key-sha256=SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU#KeyJump");
-        expect(ssh_key.has_value() && ssh_key->username == "git" && ssh_key->secret.empty(), "parse ssh key link");
-        auto ssh_key_kdl = desktop::render_kdl_outbound(*ssh_key, {});
-        expect(ssh_key_kdl.contains("private-key-file \"/etc/nexus/secrets/id_ed25519\""), "ssh key KDL");
+        // Security: untrusted ssh:// URIs must never inject local filesystem private-key-file paths.
+        auto ssh_key = desktop::parse_share_link("ssh://git@ssh.example.com:22?private-key-file=/etc/passwd&host-key-sha256=SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU#KeyJump");
+        expect(ssh_key.has_value() && ssh_key->username == "git" && ssh_key->secret.empty() && ssh_key->private_key_file.empty(),
+            "reject untrusted ssh private-key-file query param");
+        auto ssh_key_kdl = desktop::render_kdl_outbound(*ssh_key, "/etc/nexus/secrets/id_ed25519");
+        expect(!ssh_key_kdl.contains("/etc/passwd") && ssh_key_kdl.contains("private-key-file \"/etc/nexus/secrets/id_ed25519\""),
+            "ssh key KDL uses only caller-supplied secret path");
+
+        // Security: KDL escaping strips control chars and Unicode line terminators (U+2028).
+        auto ctrl = desktop::parse_share_link("trojan://pw@tr.example.com:443?sni=a%0Ab%E2%80%A8c#Tag");
+        expect(ctrl.has_value(), "parse trojan with control chars in query");
+        auto ctrl_kdl = desktop::render_kdl_outbound(*ctrl, "/sec/tr.pass");
+        expect(ctrl_kdl.contains("server-name \"abc\""), "KDL escape strips LF and U+2028");
 
         auto nh2 = desktop::parse_share_link("naive+https://alice:s3cr3t@naive.example.com:443?sni=naive.example.com&fp=chrome#NaiveH2");
         expect(nh2.has_value() && nh2->scheme == desktop::OutboundScheme::naive && nh2->protocol == "h2" && nh2->padding, "parse naive+https");
@@ -198,6 +212,14 @@ namespace {
         auto h2p = desktop::parse_share_link("https://h2p.example.com:8443?h2=1#H2Proxy");
         expect(h2p.has_value() && h2p->scheme == desktop::OutboundScheme::http_connect && h2p->http_version == "h2" && !h2p->udp, "parse anonymous https h2");
 
+        auto slash_port = desktop::parse_share_link("vless://11111111-2222-3333-4444-555555555555@edge.example.com:443/?security=tls&sni=edge.example.com#SlashPort");
+        expect(slash_port.has_value() && slash_port->host == "edge.example.com" && slash_port->port == 443, "parse vless trailing slash port");
+        auto slash_v6 = desktop::parse_share_link("vless://11111111-2222-3333-4444-555555555555@[2001:db8::1]:443/?security=tls&sni=edge.example.com#SlashV6");
+        expect(slash_v6.has_value() && slash_v6->host == "2001:db8::1" && slash_v6->port == 443, "parse vless ipv6 trailing slash port");
+        auto ss_slash = desktop::parse_share_link("ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206YT8/@1.2.3.4:8388/?plugin=none#SlashB64");
+        expect(ss_slash.has_value() && ss_slash->method == "2022-blake3-aes-128-gcm" && ss_slash->secret == "a??" &&
+               ss_slash->host == "1.2.3.4" && ss_slash->port == 8388, "parse ss base64 slash before @");
+        expect(!desktop::parse_share_link("snell://pskvalue@sn.example.com:6160?version=3#Snell3").has_value(), "reject unsupported snell version");
         expect(!desktop::parse_share_link("http://example.com").has_value(), "reject unsupported scheme");
     }
 
@@ -216,26 +238,37 @@ namespace {
         tray.trigger_quit();
         expect(showed && reloaded && quitted && tray.quit_requested(), "tray callbacks & atomic quit");
         tray.stop();
+        desktop::TrayController live_tray;
+        live_tray.set_status(desktop::TrayState::running, "ok");
+        tray = std::move(live_tray);
+        expect(tray.state() == desktop::TrayState::running && live_tray.state() == desktop::TrayState::offline,
+            "move-assigned TrayController tears down old impl and transfers state");
     }
 
     auto test_http_control_parsers() -> void {
         constexpr std::string_view kMetrics =
             "# HELP nexus_control_generation gen\n"
-            "nexus_control_generation 4\n"
+            "nexus_control_generation 4 1700000000\n"
             "nexus_active_sessions{listener=\"0\"} 3\n"
-            "nexus_traffic_upload_bytes_total{listener=\"0\"} 1024\n"
+            "nexus_traffic_upload_bytes_total{listener=\"0\"} 1024 1700000000\n"
             "nexus_traffic_download_bytes_total{listener=\"0\"} 4096\n";
         auto m = desktop::parse_openmetrics_summary(kMetrics);
         expect(m.control_generation == 4 && m.active_sessions == 3 &&
-               m.upload_bytes == 1024 && m.download_bytes == 4096, "OpenMetrics summary parser");
+               m.upload_bytes == 1024 && m.download_bytes == 4096, "OpenMetrics summary parser with timestamps");
 
+        // Verify depth-1 field parsing when nested objects appear before top-level keys, plus JSON escape decoding.
         constexpr std::string_view kOutbounds =
-            R"({"groups":[{"name":"auto","mode":"url-test","selected":"hk-01","override":true,"members":[{"name":"hk-01","state":"up","latency_ms":42},{"name":"jp-02","state":"up","latency_ms":68}]}]})";
+            R"({"groups":[{"members":[{"name":"hk-01","state":"up","latency_ms":42},{"name":"jp-02","state":"up","latency_ms":68}],"name":"auto","mode":"url-test","selected":"hk-01","override":true}]})";
         auto groups = desktop::parse_outbounds_json(kOutbounds);
         expect(groups.size() == 1 && groups[0].tag == "auto" && groups[0].manual_override &&
                groups[0].members.size() == 2 && groups[0].members[0].selected &&
                groups[0].members[0].overridden && groups[0].members[0].latency_ms == 42,
-               "Outbounds JSON parser");
+               "Outbounds JSON parser (nested members first)");
+
+        expect(desktop::url_encode("HK Group/1") == "HK%20Group%2F1", "URL component encoding");
+        expect(desktop::json_escape("a\"b\\c\nd") == "a\\\"b\\\\c\\nd", "JSON string escaping");
+        desktop::HttpControlClient bad_hdr("127.0.0.1\r\nX-Inject: 1", 9090);
+        expect(!bad_hdr.health().ok, "reject CRLF in HTTP control host");
 
         constexpr std::string_view kConns =
             R"({"connections":[{"id":"77","listener":0,"inbound":"socks","protocol":"socks5","path":"direct","outbound":"direct","target":"1.1.1.1:443","destination_port":443,"duration_ms":"250","upload_bytes":"2048","download_bytes":"16384","can_close":true}]})";
@@ -338,7 +371,11 @@ namespace {
         char const* bin = std::getenv("NEXUS_CORE_BIN");
         if (!bin || !*bin) return;
         auto tmp = std::filesystem::temp_directory_path() / std::format("nexus-desktop-live-{}", ::getpid());
-        std::filesystem::create_directories(tmp);
+        auto run_dir = tmp / "run";
+        std::filesystem::create_directories(run_dir);
+        std::filesystem::permissions(run_dir,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::owner_exec);
+        auto sock_path = (run_dir / "control.sock").string();
         auto socks_port = reserve_loopback_port();
         auto http_port = reserve_loopback_port();
         auto token_path = tmp / "bearer.tok";
@@ -352,13 +389,13 @@ namespace {
             std::ofstream cf(cfg_path);
             cf << std::format(
                 "schema-version 1\nrole \"client\"\n"
-                "control http-listen=\"127.0.0.1:{}\" bearer-token-file=\"{}\" metrics=#true\n"
+                "control socket=\"{}\" http-listen=\"127.0.0.1:{}\" bearer-token-file=\"{}\" metrics=#true\n"
                 "inbound \"local\" type=\"socks5\" {{ listen host=\"127.0.0.1\" port={}; authentication \"none\"; }}\n"
                 "outbound \"direct\" type=\"direct\"\n"
                 "outbound \"alt\" type=\"socks5\" {{ server host=\"127.0.0.1\" port=18081; }}\n"
                 "outbound \"proxy\" type=\"selector\" {{ member \"direct\"; member \"alt\"; selected \"direct\"; }}\n"
                 "routing {{ default-outbound \"proxy\"; }}\n",
-                http_port, token_path.string(), socks_port);
+                sock_path, http_port, token_path.string(), socks_port);
         }
 
         desktop::CoreSupervisor sup(bin);
@@ -419,6 +456,9 @@ namespace {
         auto ev = authed.events();
         expect(ev.ok && ev.body.contains("\"events\":["), "GET /v1/events 200 OK");
         expect(authed.reload().ok, "authenticated POST /v1/reload 200 OK");
+        desktop::IpcClient uds(sock_path);
+        expect(uds.status().ok, "live SEQPACKET UDS NEXUS/1 status OK");
+        expect(uds.reload().ok, "live SEQPACKET UDS NEXUS/1 reload OK");
         auto m2 = authed.metrics();
         expect(desktop::parse_openmetrics_summary(m2.body).control_generation > gen1, "control_generation incremented after clear-cache");
         sup.stop();

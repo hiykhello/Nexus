@@ -22,6 +22,24 @@ export namespace desktop {
         return wire;
     }
 
+    [[nodiscard]] auto decode_nexus1_reply(std::string reply) -> IpcReply {
+        if (reply.starts_with("NEXUS/1 ERROR\n")) {
+            auto msg = reply.substr(14);
+            while (!msg.empty() && (msg.back() == '\n' || msg.back() == '\r')) msg.pop_back();
+            return {false, std::move(msg)};
+        }
+        if (reply == "NEXUS/1 ERROR") {
+            return {false, "control error"};
+        }
+        if (reply.starts_with("NEXUS/1 OK\n")) {
+            return {true, reply.substr(11)};
+        }
+        if (reply == "NEXUS/1 OK") {
+            return {true, {}};
+        }
+        return {!reply.empty(), std::move(reply)};
+    }
+
     class IpcClient {
         std::string endpoint_;
         std::chrono::milliseconds timeout_{2000};

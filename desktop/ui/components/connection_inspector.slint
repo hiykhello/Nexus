@@ -1,0 +1,423 @@
+import { ToastState } from "../feedback.slint";
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { ProportionBar } from "bento_deck_cards.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+
+component MetaGridTile inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> mono: true;
+    in property <bool> copyable: false;
+    callback copy-clicked(string);
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 56px;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: Theme.well-border;
+    background: Theme.well-bg;
+
+    VerticalLayout {
+        padding-left: 11px;
+        padding-right: 8px;
+        padding-top: 7px;
+        padding-bottom: 8px;
+        alignment: space-between;
+        spacing: 3px;
+
+        HorizontalLayout {
+            spacing: 4px;
+            Text {
+                text: root.label;
+                font-size: 10px;
+                font-weight: 600;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            if root.copyable && root.value != "" : IconActionButton {
+                size: 18px;
+                icon: @image-url("../icons/copy.svg");
+                label: I18n.t("复制", "Copy");
+                clicked => {
+                    root.copy-clicked(root.value);
+                    ToastState.push(I18n.t("已复制 ", "Copied ") + root.value, "success");
+                }
+            }
+        }
+
+        Text {
+            text: root.value != "" ? root.value : "-";
+            font-size: 12px;
+            font-weight: 600;
+            font-family: root.mono ? Theme.mono-font : "";
+            color: Theme.text-primary;
+            overflow: elide;
+        }
+    }
+}
+
+component CapsuleRuleOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <string> tone: "accent"; // "direct" | "accent" | "danger"
+    callback clicked();
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 30px;
+    border-radius: 15px;
+    border-width: root.active ? 1px : 0px;
+    border-color:
+        root.active
+            ? (root.tone == "danger" ? Theme.error-border : root.tone == "direct" ? Theme.success-border : Theme.pill-active-top.brighter(0.20))
+            : transparent;
+    background:
+        root.active
+            ? (root.tone == "danger"
+                ? @linear-gradient(135deg, #f43f5e 0%, #be123c 100%)
+                : root.tone == "direct"
+                    ? @linear-gradient(135deg, #10b981 0%, #047857 100%)
+                    : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+            : ta.has-hover ? Theme.row-hover-bg : transparent;
+    drop-shadow-blur: root.active ? 8px : 0px;
+    drop-shadow-color:
+        root.tone == "danger" ? #f43f5e44
+        : root.tone == "direct" ? #10b98144
+        : Theme.pill-active-bot.with-alpha(0.36);
+    transform-scale: ta.pressed ? 0.97 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate drop-shadow-blur { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.label;
+        font-size: 12px;
+        font-weight: root.active ? 700 : 600;
+        color:
+            root.active
+                ? (root.tone == "accent" ? Theme.pill-active-fg : #ffffff)
+                : Theme.text-secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component ConnectionInspectorCard inherits Rectangle {
+    in property <string> conn-id: "";
+    in property <string> protocol: "";
+    in property <string> target-host: "";
+    in property <int> dest-port: 0;
+    in property <string> inbound: "";
+    in property <string> outbound: "";
+    in property <string> route-rule: "";
+    in property <string> process-path: "";
+    in property <string> source-addr: "";
+    in property <string> duration-text: "";
+    in property <string> upload-text: "0 B";
+    in property <string> download-text: "0 B";
+    in property <float> up-ratio: 0.0;
+    in property <bool> has-traffic: false;
+    in property <string> raw-detail: "";
+    in property <bool> side-pane: false;
+    in property <string> default-proxy-outbound: "proxy";
+
+    callback dismiss();
+    callback copy-text(string);
+    callback close-connection(string);
+    callback create-rule-from-connection(string, int, string, string, string);
+
+    private property <string> custom-rule-action: "";
+    changed conn-id => { root.custom-rule-action = ""; }
+
+    property <string> eff-rule-action:
+        root.custom-rule-action != "" ? root.custom-rule-action
+        : (root.outbound == "direct" ? "proxy" : "direct");
+
+    property <bool> has-selection: root.conn-id != "" || root.raw-detail != "";
+    property <bool> is-udp: root.protocol == "QUIC" || root.protocol == "UDP" || root.protocol == "udp/quic";
+    property <bool> is-tls: root.protocol == "TLS" || root.protocol == "tcp/tls";
+    property <string> display-target:
+        root.target-host != "" ? root.target-host
+        : root.dest-port > 0 ? "\{root.outbound}:\{root.dest-port}" : root.outbound;
+    property <string> source-chip:
+        root.process-path != "" ? root.process-path
+        : root.source-addr != "" ? root.source-addr
+        : I18n.t("本机", "Local");
+
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: root.has-selection ? Theme.selected-border : Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+    clip: true;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        if !root.has-selection : VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-sm;
+            alignment: center;
+
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 44px; height: 44px; border-radius: 22px;
+                    background: Theme.well-bg; border-width: 1px; border-color: Theme.well-border;
+                    Image { x: 12px; y: 12px; width: 20px; height: 20px; source: @image-url("../icons/connections.svg"); colorize: Theme.text-muted; }
+                }
+            }
+            Text {
+                text: I18n.t("连接详情", "Connection Details");
+                font-size: 14px; font-weight: 700; color: Theme.text-primary; horizontal-alignment: center;
+            }
+            Text {
+                text: I18n.t("选择连接查看路由与流量", "Select a connection to inspect");
+                font-size: 12px; color: Theme.text-muted; horizontal-alignment: center; wrap: word-wrap;
+            }
+        }
+
+        // Header: Protocol pill + #id + duration pill + close icon
+        if root.has-selection : HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+
+            if root.protocol != "" : Rectangle {
+                horizontal-stretch: 0;
+                height: 24px; y: (parent.height - self.height) / 2; border-radius: 12px;
+                background: root.is-udp ? Theme.proto-quic-bg : root.is-tls ? Theme.proto-tls-bg : Theme.proto-direct-bg;
+                HorizontalLayout {
+                    padding-left: 9px; padding-right: 9px;
+                    Text {
+                        text: root.protocol; font-size: 11px; font-weight: 800; font-family: Theme.mono-font;
+                        color: root.is-udp ? Theme.proto-quic-fg : root.is-tls ? Theme.proto-tls-fg : Theme.proto-direct-fg;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Text {
+                horizontal-stretch: 0;
+                text: root.conn-id != "" ? "#\{root.conn-id}" : I18n.t("连接详情", "Details");
+                font-size: 16px; font-weight: 800; letter-spacing: -0.2px;
+                color: Theme.text-primary; vertical-alignment: center;
+            }
+
+            if root.duration-text != "" : Rectangle {
+                horizontal-stretch: 0;
+                height: 22px; y: (parent.height - self.height) / 2; border-radius: 11px;
+                border-width: 1px; border-color: Theme.well-border; background: Theme.well-bg;
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 8px;
+                    Text { text: root.duration-text; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; }
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            IconActionButton {
+                icon: @image-url("../icons/x.svg");
+                label: I18n.t("关闭", "Dismiss");
+                size: 24px;
+                clicked => { root.dismiss(); }
+            }
+        }
+
+        // Visual Route Pipeline Pill Bar: [source/app] -> [rule] -> [outbound (radiant Cobalt pill!)]
+        if root.has-selection : Rectangle {
+            vertical-stretch: 0;
+            height: 46px;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.well-border;
+            background: Theme.well-bg;
+
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; spacing: 6px;
+
+                Rectangle {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                    height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
+                    border-width: 1px; border-color: Theme.well-border; background: Theme.inset-bg;
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px;
+                        Text { text: root.source-chip; font-size: 11px; font-weight: 600; font-family: Theme.mono-font; color: Theme.text-primary; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                    }
+                }
+
+                Text { text: "→"; font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+
+                Rectangle {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                    height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
+                    border-width: 1px; border-color: Theme.well-border; background: Theme.inset-bg;
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px;
+                        Text { text: root.route-rule != "" ? root.route-rule : I18n.t("默认路由", "Default"); font-size: 11px; font-weight: 600; font-family: Theme.mono-font; color: Theme.text-secondary; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                    }
+                }
+
+                Text { text: "→"; font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+
+                Rectangle {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                    height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
+                    border-width: 1px; border-color: Theme.pill-active-top.brighter(0.20);
+                    background: @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
+                    drop-shadow-blur: 10px;
+                    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.44 : 0.26);
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px;
+                        Text { text: root.outbound != "" ? root.outbound : "-"; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.pill-active-fg; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                    }
+                }
+            }
+        }
+
+        // 2x2 Concentric Metadata Tiles (Target / Rule / Source / App)
+        if root.has-selection : GridLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+            Row {
+                MetaGridTile { label: I18n.t("目标地址", "Target"); value: root.display-target; copyable: true; copy-clicked(v) => { root.copy-text(v); } }
+                MetaGridTile { label: I18n.t("规则命中", "Rule Match"); value: root.route-rule; copyable: true; copy-clicked(v) => { root.copy-text(v); } }
+            }
+            Row {
+                MetaGridTile { label: I18n.t("本地来源", "Source"); value: root.source-addr; }
+                MetaGridTile { label: I18n.t("所属进程", "Process"); value: root.process-path; }
+            }
+        }
+
+        // Luminous Traffic Distribution Card with Wave 7 glowing ProportionBar
+        if root.has-selection : Rectangle {
+            vertical-stretch: 0;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.telemetry-down.with-alpha(Theme.dark ? 0.30 : 0.22);
+            background: @linear-gradient(135deg, Theme.telemetry-down.with-alpha(Theme.dark ? 0.11 : 0.07) 0%, Theme.telemetry-up.with-alpha(Theme.dark ? 0.10 : 0.06) 100%);
+
+            VerticalLayout {
+                padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 11px;
+                spacing: 8px;
+
+                HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: "↓ " + root.download-text; font-size: 12px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-stretch: 1; }
+                    Text { text: I18n.t("流量分布", "Traffic Split"); font-size: 11px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
+                    Text { text: "↑ " + root.upload-text; font-size: 12px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-stretch: 1; horizontal-alignment: right; }
+                }
+
+                ProportionBar {
+                    first-ratio: 1.0 - root.up-ratio;
+                    first-color: Theme.telemetry-down;
+                    second-color: Theme.telemetry-up;
+                    has-data: root.has-traffic;
+                }
+            }
+        }
+
+        // Quick Rule Deck (Recessed full-pill 3-option bar + Radiant CTA + Rose Close)
+        if root.has-selection : VerticalLayout {
+            vertical-stretch: 0;
+            spacing: 10px;
+
+            Text {
+                text: I18n.t("快速分流", "Quick Rule");
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.text-secondary;
+            }
+
+            Rectangle {
+                height: 36px;
+                border-radius: 18px;
+                border-width: 1px;
+                border-color: Theme.well-border;
+                background: Theme.well-bg;
+
+                HorizontalLayout {
+                    padding: 3px;
+                    spacing: 3px;
+                    CapsuleRuleOption { label: I18n.t("直连", "Direct"); tone: "direct"; active: root.eff-rule-action == "direct"; clicked => { root.custom-rule-action = "direct"; } }
+                    CapsuleRuleOption { label: I18n.t("代理", "Proxy"); active: root.eff-rule-action == "proxy"; clicked => { root.custom-rule-action = "proxy"; } }
+                    CapsuleRuleOption { label: I18n.t("拒绝", "Reject"); tone: "danger"; active: root.eff-rule-action == "reject"; clicked => { root.custom-rule-action = "reject"; } }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 36px;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.pill-active-top.brighter(0.20);
+                    background: rule-ta.pressed
+                        ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+                        : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
+                    drop-shadow-blur: 12px;
+                    drop-shadow-offset-y: 2px;
+                    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.44 : 0.28);
+                    transform-scale: rule-ta.pressed ? 0.97 : 1.0;
+                    animate transform-scale { duration: Motion.micro; }
+
+                    rule-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.create-rule-from-connection(root.display-target, root.dest-port, root.protocol, root.outbound, root.eff-rule-action);
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        padding-left: 12px; padding-right: 12px;
+                        spacing: 6px;
+                        Image { width: 14px; height: 14px; y: (parent.height - self.height) / 2; source: @image-url("../icons/wand.svg"); colorize: Theme.pill-active-fg; }
+                        Text { text: I18n.t("添加分流规则", "Add Rule"); font-size: 12px; font-weight: 700; color: Theme.pill-active-fg; vertical-alignment: center; overflow: elide; }
+                    }
+                }
+
+                if root.conn-id != "" : Rectangle {
+                    horizontal-stretch: 0;
+                    height: 36px;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Theme.error-border;
+                    background: cls-ta.pressed ? Theme.error-fg.with-alpha(0.32) : cls-ta.has-hover ? Theme.error-fg.with-alpha(0.24) : Theme.error-bg;
+                    transform-scale: cls-ta.pressed ? 0.96 : 1.0;
+                    animate background { duration: Motion.fast; }
+                    animate transform-scale { duration: Motion.micro; }
+                    cls-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.close-connection(root.conn-id); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 14px;
+                        Text { text: I18n.t("断开", "Close"); font-size: 12px; font-weight: 700; color: Theme.error-fg; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+}

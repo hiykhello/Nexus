@@ -4,6 +4,7 @@ export struct OutboundMemberItem {
     latency-ms: int,
     selected: bool,
     overridden: bool,
+    pinned: bool,
 }
 
 export struct OutboundGroupItem {
@@ -11,6 +12,8 @@ export struct OutboundGroupItem {
     mode: string,
     active-member: string,
     auto-mode: bool,
+    active-latency-ms: int,
+    member-count: int,
 }
 
 export struct LogLineItem {
@@ -23,9 +26,18 @@ export struct ActiveConnectionItem {
     id: string,
     protocol: string,
     path: string,
+    target: string,
+    inbound: string,
+    outbound: string,
+    route-rule: string,
+    process-path: string,
+    source: string,
+    duration-text: string,
     destination-port: int,
-    upload-bytes: int,
-    download-bytes: int,
+    upload-text: string,
+    download-text: string,
+    up-ratio: float,
+    has-traffic: bool,
 }
 
 export struct ProfileItem {

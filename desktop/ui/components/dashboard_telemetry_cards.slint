@@ -1,0 +1,478 @@
+import { Motion } from "../motion.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+import { InboundEndpointRow } from "dashboard_parts.slint";
+import { IconActionButton } from "icon_button.slint";
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+
+// Interactive 116px Dual-Channel Throughput Chart (Sky Cyan DL + Prism Violet UL)
+export component ThroughputChartCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> compact: false;
+    in property <string> rate-peak: "0.0 KB/s";
+    in property <[float]> rate-bars: [];
+    in property <[float]> upload-bars: [];
+    in property <[string]> down-labels: [];
+    in property <[string]> up-labels: [];
+
+    callback refresh-metrics();
+    callback clear-cache();
+
+    private property <int> hovered-idx: -1;
+    property <bool> has-hover: root.hovered-idx >= 0 && root.hovered-idx < root.rate-bars.length;
+    property <string> hover-dl-text:
+        root.has-hover
+            ? (root.hovered-idx < root.down-labels.length
+                ? root.down-labels[root.hovered-idx]
+                : "\{Math.round(clamp(root.rate-bars[root.hovered-idx], 0.0, 1.0) * 100)}%")
+            : "";
+    property <string> hover-ul-text:
+        root.has-hover
+            ? (root.hovered-idx < root.up-labels.length
+                ? root.up-labels[root.hovered-idx]
+                : (root.hovered-idx < root.upload-bars.length
+                    ? "\{Math.round(clamp(root.upload-bars[root.hovered-idx], 0.0, 1.0) * 100)}%"
+                    : "0%"))
+            : "";
+
+    vertical-stretch: 0;
+    border-radius: Theme.radius-lg;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        alignment: start;
+        padding-left: root.compact ? Theme.space-md : Theme.space-lg;
+        padding-right: root.compact ? Theme.space-md : Theme.space-lg;
+        padding-top: root.compact ? 8px : Theme.space-md;
+        padding-bottom: root.compact ? 8px : Theme.space-md;
+        spacing: root.compact ? 6px : Theme.space-sm;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: Theme.space-sm;
+
+            Text {
+                text: I18n.t("实时吞吐", "Live Throughput");
+                font-size: 13px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+
+            // Decoupled Sky Cyan DL legend
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                y: (parent.height - self.height) / 2;
+                background: Theme.telemetry-down;
+            }
+            Text {
+                text: I18n.t("下载", "DL");
+                font-size: 11px;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+            }
+
+            // Decoupled Prism Violet UL legend
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                y: (parent.height - self.height) / 2;
+                background: Theme.telemetry-up;
+            }
+            Text {
+                text: I18n.t("上行", "UL");
+                font-size: 11px;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            // Dynamic hover readout pill OR Peak badge
+            Rectangle {
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Theme.radius-xs;
+                background: root.has-hover ? Theme.overlay-bg : Theme.well-bg;
+                border-width: 1px;
+                border-color: root.has-hover ? Theme.telemetry-down.with-alpha(0.55) : Theme.well-border;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 8px;
+                    if root.has-hover : Text {
+                        text: "↓ " + root.hover-dl-text;
+                        font-size: 11px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: Theme.telemetry-down;
+                        vertical-alignment: center;
+                    }
+                    if root.has-hover : Text {
+                        text: "↑ " + root.hover-ul-text;
+                        font-size: 11px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: Theme.telemetry-up;
+                        vertical-alignment: center;
+                    }
+                    if !root.has-hover : Text {
+                        text: I18n.t("峰值 ", "Peak ") + root.rate-peak;
+                        font-size: 11px;
+                        font-weight: 600;
+                        font-family: Theme.mono-font;
+                        color: Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/refresh.svg");
+                label: I18n.t("刷新指标", "Refresh Metrics");
+                spin-on-click: true;
+                enabled: root.core-running;
+                clicked => { root.refresh-metrics(); }
+            }
+
+            IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/trash.svg");
+                label: I18n.t("清缓存", "Clear Cache");
+                danger: true;
+                enabled: root.core-running;
+                clicked => { root.clear-cache(); }
+            }
+        }
+
+        // Dual-Channel Telemetry Canvas (88px Compact / 116px Standard & Wide)
+        Rectangle {
+            height: root.compact ? 88px : 116px;
+            border-radius: Theme.radius-md;
+            border-width: 1px;
+            border-color: Theme.well-border;
+            background: Theme.well-bg;
+            clip: true;
+
+            // 100% and 50% horizontal reference guide lines + 0% baseline
+            Rectangle {
+                x: Theme.space-sm;
+                y: 14px;
+                width: parent.width - Theme.space-sm * 2;
+                height: 1px;
+                background: Theme.hairline-subtle;
+                opacity: 0.72;
+            }
+            Rectangle {
+                x: Theme.space-sm;
+                y: 14px + (parent.height - 22px) * 0.50;
+                width: parent.width - Theme.space-sm * 2;
+                height: 1px;
+                background: Theme.hairline-subtle;
+                opacity: 0.85;
+            }
+            Rectangle {
+                x: Theme.space-sm;
+                y: parent.height - 8px;
+                width: parent.width - Theme.space-sm * 2;
+                height: 1px;
+                background: Theme.hairline-strong;
+                opacity: 0.55;
+            }
+
+            // Right-aligned micro reference scale labels (100% / 50%)
+            if root.rate-bars.length > 0 : Text {
+                x: Theme.space-sm;
+                y: 2px;
+                width: parent.width - Theme.space-sm * 2;
+                text: "100% · " + root.rate-peak;
+                font-size: 9px;
+                font-weight: 600;
+                font-family: Theme.mono-font;
+                color: Theme.text-muted;
+                horizontal-alignment: right;
+                opacity: 0.82;
+            }
+            if root.rate-bars.length > 0 : Text {
+                x: Theme.space-sm;
+                y: 14px + (parent.height - 22px) * 0.50 - 11px;
+                width: parent.width - Theme.space-sm * 2;
+                text: "50%";
+                font-size: 9px;
+                font-weight: 600;
+                font-family: Theme.mono-font;
+                color: Theme.text-muted;
+                horizontal-alignment: right;
+                opacity: 0.72;
+            }
+
+            if root.rate-bars.length == 0 : HorizontalLayout {
+                padding: 8px;
+                spacing: 4px;
+                for _ in 24 : Rectangle {
+                    min-width: 2px;
+                    horizontal-stretch: 1;
+                    height: 100%;
+                    Rectangle {
+                        x: 0px;
+                        width: 100%;
+                        height: 4px;
+                        y: parent.height - self.height;
+                        border-radius: 2px;
+                        background: Theme.hairline-strong;
+                        opacity: 0.5;
+                    }
+                }
+            }
+
+            if root.rate-bars.length == 0 : Text {
+                width: 100%;
+                height: 100%;
+                text: root.core-running
+                    ? I18n.t("等待流量...", "Waiting for traffic...")
+                    : I18n.t("连接后显示实时速率", "Connect to view live speed");
+                font-size: 12px;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if root.rate-bars.length > 0 : HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 34px;
+                padding-top: 16px;
+                padding-bottom: 8px;
+                spacing: 4px;
+
+                for dl[idx] in root.rate-bars : Rectangle {
+                    property <float> ul: idx < root.upload-bars.length ? root.upload-bars[idx] : 0.0;
+                    property <bool> slot-hovered: root.hovered-idx == idx;
+                    min-width: 4px;
+                    horizontal-stretch: 1;
+                    height: 100%;
+                    border-radius: 3px;
+                    background: slot-hovered ? Theme.telemetry-down.with-alpha(0.14) : transparent;
+                    animate background { duration: Motion.micro; }
+
+                    if slot-hovered : Rectangle {
+                        x: (parent.width - 4px) / 2;
+                        y: -6px;
+                        width: 4px;
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Theme.telemetry-down;
+                    }
+
+                    slot-ta := TouchArea {
+                        changed has-hover => {
+                            if (self.has-hover) {
+                                root.hovered-idx = idx;
+                            } else if (root.hovered-idx == idx) {
+                                root.hovered-idx = -1;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 2px;
+
+                        // Download bar (Locked Sky Cyan with crisp rounded cap)
+                        Rectangle {
+                            min-width: 2px;
+                            horizontal-stretch: 2;
+                            height: 100%;
+                            Rectangle {
+                                x: 0px;
+                                width: 100%;
+                                height: dl > 0.005 ? max(4px, parent.height * clamp(dl, 0.0, 1.0)) : 2px;
+                                y: parent.height - self.height;
+                                border-radius: 3px;
+                                opacity: slot-hovered ? 1.0 : (dl > 0.005 ? 0.94 : 0.28);
+                                background: @linear-gradient(180deg, slot-hovered ? Theme.telemetry-down.brighter(0.16) : Theme.telemetry-down 0%, Theme.telemetry-down.with-alpha(0.42) 100%);
+                                animate height { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+                                animate opacity { duration: Motion.micro; }
+                            }
+                        }
+
+                        // Upload bar (Locked Prism Violet with crisp rounded cap)
+                        Rectangle {
+                            min-width: 1px;
+                            horizontal-stretch: 1;
+                            height: 100%;
+                            Rectangle {
+                                x: 0px;
+                                width: 100%;
+                                height: ul > 0.005 ? max(4px, parent.height * clamp(ul, 0.0, 1.0)) : 2px;
+                                y: parent.height - self.height;
+                                border-radius: 2.5px;
+                                opacity: slot-hovered ? 1.0 : (ul > 0.005 ? 0.92 : 0.25);
+                                background: @linear-gradient(180deg, slot-hovered ? Theme.telemetry-up.brighter(0.16) : Theme.telemetry-up 0%, Theme.telemetry-up.with-alpha(0.42) 100%);
+                                animate height { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+                                animate opacity { duration: Motion.micro; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component LocalInboundsCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> compact: false;
+    in property <int> active-inbound-count: 0;
+    in-out property <bool> mixed-proxy-enabled: true;
+    in-out property <string> mixed-proxy-host: "127.0.0.1";
+    in-out property <string> mixed-proxy-port: "7890";
+    in-out property <bool> socks-proxy-enabled: true;
+    in-out property <string> socks-proxy-host: "127.0.0.1";
+    in-out property <string> socks-proxy-port: "1080";
+    in-out property <bool> http-proxy-enabled: false;
+    in-out property <string> http-proxy-host: "127.0.0.1";
+    in-out property <string> http-proxy-port: "8080";
+
+    callback apply-inbound-proxy-config(string, bool, string, string);
+    callback copy-endpoint(string);
+    callback copy-proxy-env();
+    callback open-config();
+
+    vertical-stretch: 0;
+    border-radius: Theme.radius-lg;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        alignment: start;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 6px;
+
+            Text {
+                text: I18n.t("本地端口", "Local Ports");
+                font-size: 13px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Rectangle {
+                horizontal-stretch: 0;
+                height: 24px;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: env-ta.has-hover ? Theme.selected-border : Theme.card-border;
+                background: env-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+                transform-scale: env-ta.pressed ? 0.96 : 1.0;
+                animate background { duration: Motion.fast; }
+                animate transform-scale { duration: Motion.micro; }
+                env-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.copy-proxy-env(); }
+                }
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 4px;
+                    Image {
+                        width: 11px; height: 11px; y: (parent.height - self.height) / 2;
+                        source: @image-url("../icons/copy.svg");
+                        colorize: env-ta.has-hover ? Theme.nav-active-fg : Theme.text-secondary;
+                    }
+                    Text {
+                        text: I18n.t("复制终端代理", "Shell Proxy");
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: env-ta.has-hover ? Theme.nav-active-fg : Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 0;
+                height: 24px;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: cfg-ta.has-hover ? Theme.selected-border : Theme.card-border;
+                background: cfg-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+                transform-scale: cfg-ta.pressed ? 0.96 : 1.0;
+                animate background { duration: Motion.fast; }
+                animate transform-scale { duration: Motion.micro; }
+                cfg-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-config(); }
+                }
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    Text {
+                        text: I18n.t("编辑", "Edit");
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: cfg-ta.has-hover ? Theme.nav-active-fg : Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        InboundEndpointRow {
+            protocol: "mixed";
+            compact: root.compact;
+            core-running: root.core-running;
+            default-port: "7890";
+            enabled <=> root.mixed-proxy-enabled;
+            host <=> root.mixed-proxy-host;
+            port <=> root.mixed-proxy-port;
+            changed => { root.apply-inbound-proxy-config("mixed", root.mixed-proxy-enabled, root.mixed-proxy-host, root.mixed-proxy-port); }
+            copy-endpoint(ep) => { root.copy-endpoint(ep); }
+        }
+
+        InboundEndpointRow {
+            protocol: "socks5";
+            compact: root.compact;
+            core-running: root.core-running;
+            default-port: "1080";
+            enabled <=> root.socks-proxy-enabled;
+            host <=> root.socks-proxy-host;
+            port <=> root.socks-proxy-port;
+            changed => { root.apply-inbound-proxy-config("socks5", root.socks-proxy-enabled, root.socks-proxy-host, root.socks-proxy-port); }
+            copy-endpoint(ep) => { root.copy-endpoint(ep); }
+        }
+
+        InboundEndpointRow {
+            protocol: "http";
+            compact: root.compact;
+            core-running: root.core-running;
+            default-port: "8080";
+            enabled <=> root.http-proxy-enabled;
+            host <=> root.http-proxy-host;
+            port <=> root.http-proxy-port;
+            changed => { root.apply-inbound-proxy-config("http", root.http-proxy-enabled, root.http-proxy-host, root.http-proxy-port); }
+            copy-endpoint(ep) => { root.copy-endpoint(ep); }
+        }
+    }
+}

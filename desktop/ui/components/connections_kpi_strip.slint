@@ -1,0 +1,191 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { ActiveConnectionItem } from "../types.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+
+component KpiTile inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> sub-text;
+    in property <color> value-color: Theme.text-primary;
+    in property <color> dot-color: Theme.accent;
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 68px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 10px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum { corner-inset: 14px; }
+
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+        spacing: 4px;
+        alignment: center;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 3px;
+                background: root.dot-color;
+            }
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: root.label;
+                font-size: 11px;
+                font-weight: 600;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.sub-text != "" : Text {
+                horizontal-stretch: 0;
+                text: root.sub-text;
+                font-size: 10px;
+                font-weight: 600;
+                font-family: Theme.mono-font;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        Text {
+            text: root.value;
+            font-size: 20px;
+            font-weight: 800;
+            font-family: Theme.mono-font;
+            letter-spacing: -0.3px;
+            color: root.value-color;
+            overflow: elide;
+        }
+    }
+}
+
+// 4-Column Slim Live Connections KPI Strip (matches Wave 9 Graphite Connections studio layout)
+export component ConnectionsKpiStrip inherits VerticalLayout {
+    in property <[ActiveConnectionItem]> connections: [];
+    in property <string> download-rate: "0.0 KB/s";
+    in property <string> upload-rate: "0.0 KB/s";
+    in property <string> download-total: "0 B";
+    in property <string> upload-total: "0 B";
+    in property <bool> compact: false;
+
+    pure function is-udp-at(list: [ActiveConnectionItem], i: int) -> int {
+        return i < list.length && (list[i].protocol == "udp/quic" || list[i].protocol == "udp" || list[i].protocol == "QUIC" || list[i].protocol == "UDP") ? 1 : 0;
+    }
+
+    pure function is-direct-at(list: [ActiveConnectionItem], i: int) -> int {
+        return i < list.length && list[i].outbound == "direct" ? 1 : 0;
+    }
+
+    property <int> total-count: root.connections.length;
+    property <int> sample-len: min(24, root.total-count);
+    property <int> sample-udp:
+        is-udp-at(root.connections, 0) + is-udp-at(root.connections, 1) + is-udp-at(root.connections, 2) + is-udp-at(root.connections, 3)
+        + is-udp-at(root.connections, 4) + is-udp-at(root.connections, 5) + is-udp-at(root.connections, 6) + is-udp-at(root.connections, 7)
+        + is-udp-at(root.connections, 8) + is-udp-at(root.connections, 9) + is-udp-at(root.connections, 10) + is-udp-at(root.connections, 11)
+        + is-udp-at(root.connections, 12) + is-udp-at(root.connections, 13) + is-udp-at(root.connections, 14) + is-udp-at(root.connections, 15)
+        + is-udp-at(root.connections, 16) + is-udp-at(root.connections, 17) + is-udp-at(root.connections, 18) + is-udp-at(root.connections, 19)
+        + is-udp-at(root.connections, 20) + is-udp-at(root.connections, 21) + is-udp-at(root.connections, 22) + is-udp-at(root.connections, 23);
+    property <int> sample-direct:
+        is-direct-at(root.connections, 0) + is-direct-at(root.connections, 1) + is-direct-at(root.connections, 2) + is-direct-at(root.connections, 3)
+        + is-direct-at(root.connections, 4) + is-direct-at(root.connections, 5) + is-direct-at(root.connections, 6) + is-direct-at(root.connections, 7)
+        + is-direct-at(root.connections, 8) + is-direct-at(root.connections, 9) + is-direct-at(root.connections, 10) + is-direct-at(root.connections, 11)
+        + is-direct-at(root.connections, 12) + is-direct-at(root.connections, 13) + is-direct-at(root.connections, 14) + is-direct-at(root.connections, 15)
+        + is-direct-at(root.connections, 16) + is-direct-at(root.connections, 17) + is-direct-at(root.connections, 18) + is-direct-at(root.connections, 19)
+        + is-direct-at(root.connections, 20) + is-direct-at(root.connections, 21) + is-direct-at(root.connections, 22) + is-direct-at(root.connections, 23);
+
+    property <int> udp-count: root.sample-len > 0 ? Math.round(root.sample-udp * root.total-count / root.sample-len) : 0;
+    property <int> tcp-count: max(0, root.total-count - root.udp-count);
+    property <int> direct-pct: root.sample-len > 0 ? Math.round(root.sample-direct * 100 / root.sample-len) : 0;
+    property <int> proxy-pct: root.sample-len > 0 ? max(0, 100 - root.direct-pct) : 0;
+
+    vertical-stretch: 0;
+    spacing: Theme.space-sm;
+
+    if !root.compact : HorizontalLayout {
+        spacing: Theme.space-md;
+
+        KpiTile {
+            label: I18n.t("活跃连接", "Active");
+            value: "\{root.total-count}";
+            sub-text: root.total-count > 0 ? "TCP \{root.tcp-count} · UDP \{root.udp-count}" : I18n.t("待命", "Idle");
+            value-color: Theme.text-primary;
+            dot-color: root.total-count > 0 ? Theme.success-fg : Theme.offline-fg;
+        }
+
+        KpiTile {
+            label: I18n.t("实时下载", "Download");
+            value: root.download-rate;
+            sub-text: I18n.t("累计 ", "Total ") + root.download-total;
+            value-color: Theme.telemetry-down;
+            dot-color: Theme.telemetry-down;
+        }
+
+        KpiTile {
+            label: I18n.t("实时上传", "Upload");
+            value: root.upload-rate;
+            sub-text: I18n.t("累计 ", "Total ") + root.upload-total;
+            value-color: Theme.telemetry-up;
+            dot-color: Theme.telemetry-up;
+        }
+
+        KpiTile {
+            label: I18n.t("代理占比", "Proxy Share");
+            value: root.total-count > 0 ? "\{root.proxy-pct}%" : "--";
+            sub-text: root.total-count > 0 ? I18n.t("直连 ", "Direct ") + "\{root.direct-pct}%" : I18n.t("无会话", "None");
+            value-color: root.total-count > 0 ? Theme.success-fg : Theme.text-muted;
+            dot-color: Theme.success-fg;
+        }
+    }
+
+    if root.compact : GridLayout {
+        spacing: Theme.space-sm;
+        Row {
+            KpiTile {
+                label: I18n.t("活跃连接", "Active");
+                value: "\{root.total-count}";
+                sub-text: root.total-count > 0 ? "T:\{root.tcp-count} U:\{root.udp-count}" : I18n.t("待命", "Idle");
+                dot-color: root.total-count > 0 ? Theme.success-fg : Theme.offline-fg;
+            }
+            KpiTile {
+                label: I18n.t("代理占比", "Proxy Share");
+                value: root.total-count > 0 ? "\{root.proxy-pct}%" : "--";
+                sub-text: root.total-count > 0 ? I18n.t("直连 ", "Direct ") + "\{root.direct-pct}%" : "";
+                value-color: root.total-count > 0 ? Theme.success-fg : Theme.text-muted;
+                dot-color: Theme.success-fg;
+            }
+        }
+        Row {
+            KpiTile {
+                label: I18n.t("实时下载", "Download");
+                value: root.download-rate;
+                sub-text: root.download-total;
+                value-color: Theme.telemetry-down;
+                dot-color: Theme.telemetry-down;
+            }
+            KpiTile {
+                label: I18n.t("实时上传", "Upload");
+                value: root.upload-rate;
+                sub-text: root.upload-total;
+                value-color: Theme.telemetry-up;
+                dot-color: Theme.telemetry-up;
+            }
+        }
+    }
+}

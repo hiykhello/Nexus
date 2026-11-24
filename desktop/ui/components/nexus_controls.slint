@@ -1,0 +1,172 @@
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+
+export component NexusSwitch inherits HorizontalLayout {
+    in-out property <bool> checked: false;
+    in property <string> text: "";
+    in property <bool> enabled: true;
+    in property <bool> interactive: true;
+    in property <bool> auto-toggle: true;
+    callback toggled();
+
+    private property <bool> label-pressed: false;
+    private property <bool> is-pressed: (track-ta.pressed || root.label-pressed) && root.enabled && root.interactive;
+
+    vertical-stretch: 0;
+    spacing: Theme.space-sm;
+
+    accessible-role: switch;
+    accessible-label: root.text;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        if (root.enabled && root.interactive) {
+            if (root.auto-toggle) { root.checked = !root.checked; }
+            root.toggled();
+        }
+    }
+
+    Rectangle {
+        width: 38px;
+        height: 22px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 11px;
+        border-width: 1px;
+        border-color: root.checked
+            ? Theme.pill-active-top.with-alpha(0.75)
+            : (track-ta.has-hover && root.enabled && root.interactive ? Theme.selected-border : Theme.well-border);
+        background: root.checked
+            ? (track-ta.pressed
+                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+            : Theme.inset-bg;
+        drop-shadow-blur: root.checked && root.enabled ? 9px : 0px;
+        drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.40 : 0.24);
+        opacity: root.enabled ? 1.0 : 0.45;
+        animate border-color { duration: Motion.fast; }
+        animate drop-shadow-blur { duration: Motion.fast; }
+
+        Rectangle {
+            x: root.checked ? (root.is-pressed ? 16px : 18px) : 2px;
+            y: 2px;
+            width: root.is-pressed ? 20px : 18px;
+            height: 18px;
+            border-radius: 9px;
+            background: #ffffff;
+            drop-shadow-blur: 4px;
+            drop-shadow-offset-y: 1px;
+            drop-shadow-color: #00000038;
+            animate x { duration: Motion.normal; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+            animate width { duration: Motion.micro; }
+        }
+
+        track-ta := TouchArea {
+            width: root.interactive ? parent.width : 0px;
+            height: root.interactive ? parent.height : 0px;
+            enabled: root.enabled && root.interactive;
+            mouse-cursor: root.enabled ? pointer : default;
+            clicked => {
+                if (root.auto-toggle) { root.checked = !root.checked; }
+                root.toggled();
+            }
+        }
+    }
+
+    if root.text != "" : Text {
+        text: root.text;
+        font-size: 13px;
+        color: root.enabled ? Theme.text-primary : Theme.text-muted;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+
+        label-ta := TouchArea {
+            width: root.interactive ? parent.width : 0px;
+            height: root.interactive ? parent.height : 0px;
+            enabled: root.enabled && root.interactive;
+            mouse-cursor: root.enabled ? pointer : default;
+            changed pressed => { root.label-pressed = self.pressed; }
+            clicked => {
+                if (root.auto-toggle) { root.checked = !root.checked; }
+                root.toggled();
+            }
+        }
+    }
+}
+
+export component NexusSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> value: 0;
+    callback changed(float);
+
+    property <float> span: max(0.0001, root.maximum - root.minimum);
+    property <float> ratio: clamp((root.value - root.minimum) / root.span, 0.0, 1.0);
+    property <length> thumb-d: 16px;
+    property <length> thumb-vis: (ta.has-hover || ta.pressed) ? 17px : 13px;
+    property <length> track-w: max(1px, root.width - root.thumb-d);
+    property <length> thumb-x: root.track-w * root.ratio;
+
+    function emit-from-x(mx: length) {
+        let r = clamp((mx - root.thumb-d / 2) / root.track-w, 0.0, 1.0);
+        root.changed(root.minimum + r * root.span);
+    }
+
+    vertical-stretch: 0;
+    height: 24px;
+    accessible-role: slider;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value: "\{Math.round(root.value)}";
+
+    Rectangle {
+        x: root.thumb-d / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.track-w;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.inset-bg;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width * root.ratio;
+            height: parent.height;
+            border-radius: 2px;
+            background: Theme.accent;
+            drop-shadow-blur: ta.has-hover || ta.pressed ? 8px : 0px;
+            drop-shadow-color: Theme.accent.with-alpha(0.38);
+            animate drop-shadow-blur { duration: Motion.fast; }
+        }
+    }
+
+    Rectangle {
+        x: root.thumb-x + (root.thumb-d - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.thumb-vis;
+        height: root.thumb-vis;
+        border-radius: self.width / 2;
+        border-width: 2.5px;
+        border-color: ta.pressed ? Theme.accent.darker(0.12) : Theme.accent;
+        background: #ffffff;
+        drop-shadow-blur: ta.has-hover || ta.pressed ? 9px : 4px;
+        drop-shadow-offset-y: 1px;
+        drop-shadow-color: Theme.accent.with-alpha(ta.has-hover || ta.pressed ? 0.48 : 0.25);
+        animate width { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+        animate height { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+        animate drop-shadow-blur { duration: Motion.fast; }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+                root.emit-from-x(self.mouse-x);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                root.emit-from-x(self.mouse-x);
+            }
+        }
+    }
+}

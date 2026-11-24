@@ -1,6 +1,9 @@
 module;
 #ifndef _WIN32
+#include <cerrno>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 module desktop.profile_store;
 
@@ -14,19 +17,48 @@ namespace desktop {
             std::error_code ec;
             auto parent = target.parent_path();
             if (!parent.empty()) std::filesystem::create_directories(parent, ec);
+#ifndef _WIN32
+            auto tmp = parent / std::format(".{}.{}.tmp", target.filename().string(), ::getpid());
+            if (private_mode) {
+                int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+                if (fd < 0) return false;
+                (void)::fchmod(fd, 0600);
+                std::size_t off = 0;
+                bool ok = true;
+                while (off < content.size()) {
+                    auto n = ::write(fd, content.data() + off, content.size() - off);
+                    if (n < 0 && errno == EINTR) continue;
+                    if (n <= 0) { ok = false; break; }
+                    off += static_cast<std::size_t>(n);
+                }
+                if (::close(fd) != 0) ok = false;
+                if (!ok) {
+                    ::unlink(tmp.c_str());
+                    return false;
+                }
+            } else {
+                std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                if (!out) return false;
+                out.write(content.data(), static_cast<std::streamsize>(content.size()));
+                if (!out.good()) {
+                    out.close();
+                    std::filesystem::remove(tmp, ec);
+                    return false;
+                }
+            }
+#else
+            (void)private_mode;
             auto tmp = parent / ("." + target.filename().string() + ".tmp");
             {
                 std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
                 if (!out) return false;
                 out.write(content.data(), static_cast<std::streamsize>(content.size()));
-                if (!out.good()) return false;
+                if (!out.good()) {
+                    out.close();
+                    std::filesystem::remove(tmp, ec);
+                    return false;
+                }
             }
-#ifndef _WIN32
-            if (private_mode) {
-                (void)::chmod(tmp.c_str(), 0600);
-            }
-#else
-            (void)private_mode;
 #endif
             std::filesystem::rename(tmp, target, ec);
             if (ec) {
@@ -108,8 +140,13 @@ namespace desktop {
     }
 
     auto ProfileStore::remove_profile(this ProfileStore const& self, std::string_view id) -> bool {
+        auto safe = sanitize_id(id);
         std::error_code ec;
-        return std::filesystem::remove(self.profiles_dir_ / (sanitize_id(id) + ".kdl"), ec);
+        bool removed = std::filesystem::remove(self.profiles_dir_ / (safe + ".kdl"), ec);
+        if (removed && self.active_id() == safe) {
+            std::filesystem::remove(self.root_ / ".active_profile", ec);
+        }
+        return removed;
     }
 
     auto ProfileStore::write_secret(this ProfileStore const& self,

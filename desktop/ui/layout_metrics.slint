@@ -1,0 +1,34 @@
+export enum LayoutTier { compact, standard, wide }
+
+export global LayoutMetrics {
+    in-out property <length> window-width: 1040px;
+    in-out property <bool> user-sidebar-collapsed: false;
+    in-out property <bool> compact-override-expanded: false;
+
+    public pure function is-compact-w(w: length) -> bool {
+        w > 0px && w < 900px
+    }
+
+    public pure function is-wide-w(w: length) -> bool {
+        w >= 1200px
+    }
+
+    public pure function tier-for(w: length) -> LayoutTier {
+        w >= 1200px ? LayoutTier.wide
+        : (w > 0px && w < 900px) ? LayoutTier.compact
+        : LayoutTier.standard
+    }
+
+    out property <LayoutTier> tier: tier-for(window-width);
+    out property <bool> is-compact: is-compact-w(window-width);
+    out property <bool> is-standard: tier == LayoutTier.standard;
+    out property <bool> is-wide: is-wide-w(window-width);
+
+    public function toggle-sidebar(w: length) {
+        if (is-compact-w(w)) {
+            compact-override-expanded = !compact-override-expanded;
+        } else {
+            user-sidebar-collapsed = !user-sidebar-collapsed;
+        }
+    }
+}

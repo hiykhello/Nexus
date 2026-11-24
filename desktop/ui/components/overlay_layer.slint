@@ -1,0 +1,113 @@
+import { ToastState, TooltipState } from "../feedback.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+
+export component OverlayFeedbackLayer inherits Rectangle {
+    property <bool> tip-below: TooltipState.anchor-y + TooltipState.anchor-h + 36px < root.height;
+    property <length> tip-x: clamp(TooltipState.anchor-x + (TooltipState.anchor-w - tip-box.width) / 2, 8px, max(8px, root.width - tip-box.width - 8px));
+    property <length> tip-target-y: tip-below ? (TooltipState.anchor-y + TooltipState.anchor-h + 6px) : max(8px, TooltipState.anchor-y - tip-box.height - 6px);
+
+    property <color> toast-accent:
+        ToastState.tone == "success" ? Theme.success-fg
+        : ToastState.tone == "warn" ? Theme.warn-fg
+        : ToastState.tone == "error" ? Theme.error-fg
+        : Theme.accent;
+
+    property <int> observed-toast-seq: ToastState.seq;
+    changed observed-toast-seq => {
+        if (ToastState.open) {
+            toast-timer.restart();
+        }
+    }
+
+    toast-timer := Timer {
+        interval: 2800ms;
+        running: ToastState.open;
+        triggered => { ToastState.dismiss(); }
+    }
+
+    tip-box := Rectangle {
+        x: root.tip-x;
+        y: TooltipState.visible ? root.tip-target-y : (root.tip-target-y + (tip-below ? -4px : 4px));
+        width: max(40px, tip-label.preferred-width + 18px);
+        height: 26px;
+        opacity: TooltipState.visible ? 1.0 : 0.0;
+        visible: self.opacity > 0.01;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.hairline-strong;
+        background: Theme.overlay-bg;
+        drop-shadow-blur: 14px;
+        drop-shadow-offset-y: 3px;
+        drop-shadow-color: Theme.card-hover-shadow;
+        animate opacity { duration: Motion.fast; }
+        animate y { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+
+        GlassSpeculum {}
+
+        tip-label := Text {
+            width: 100%;
+            height: 100%;
+            text: TooltipState.text;
+            font-size: 11px;
+            font-weight: 600;
+            color: Theme.text-primary;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    toast-box := Rectangle {
+        x: max(16px, root.width - self.width - 20px);
+        y: ToastState.open ? max(16px, root.height - self.height - 20px) : (root.height + 16px);
+        width: min(380px, max(196px, toast-row.preferred-width));
+        height: toast-row.preferred-height;
+        opacity: ToastState.open ? 1.0 : 0.0;
+        visible: self.opacity > 0.01;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: root.toast-accent.with-alpha(0.52);
+        background: Theme.overlay-bg;
+        backdrop-blur: Theme.blur-radius;
+        drop-shadow-blur: 20px;
+        drop-shadow-offset-y: 6px;
+        drop-shadow-color: Theme.card-hover-shadow;
+        animate y { duration: Motion.fluid; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+        animate opacity { duration: Motion.fast; }
+
+        GlassSpeculum {}
+
+        TouchArea {
+            enabled: ToastState.open;
+            mouse-cursor: ToastState.open ? pointer : default;
+            clicked => { ToastState.dismiss(); }
+        }
+
+        toast-row := HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 9px;
+            padding-bottom: 9px;
+            spacing: 8px;
+
+            Rectangle {
+                width: 3px;
+                height: 16px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 2px;
+                background: root.toast-accent;
+            }
+
+            Text {
+                horizontal-stretch: 1;
+                text: ToastState.message;
+                font-size: 12px;
+                font-weight: 600;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

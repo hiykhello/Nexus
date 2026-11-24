@@ -50,25 +50,39 @@ namespace desktop {
             return out;
         }
 
-        auto sanitize_tag(std::string_view raw, std::string_view fallback) -> std::string {
+        auto filter_tag_chars(std::string_view raw) -> std::string {
             std::string out;
             for (unsigned char c : raw) {
                 if (std::isalnum(c) || c == '-' || c == '_') out.push_back(static_cast<char>(c));
                 else if (c == ' ' || c == '.' || c == '+') out.push_back('-');
             }
             while (!out.empty() && out.front() == '-') out.erase(out.begin());
-            if (out.empty()) return std::string(fallback);
             if (out.size() > 48) out.resize(48);
             return out;
+        }
+
+        auto sanitize_tag(std::string_view raw, std::string_view fallback) -> std::string {
+            if (auto out = filter_tag_chars(raw); !out.empty()) return out;
+            if (auto fb = filter_tag_chars(fallback); !fb.empty()) return fb;
+            return "node";
         }
 
         auto kdl_escape(std::string_view s) -> std::string {
             std::string out;
             out.reserve(s.size() + 2);
             out.push_back('"');
-            for (char c : s) {
+            for (std::size_t i = 0; i < s.size(); ++i) {
+                unsigned char c = static_cast<unsigned char>(s[i]);
+                // Strip UTF-8 KDL 2.0 Unicode line terminators: U+0085 (C2 85), U+2028 (E2 80 A8), U+2029 (E2 80 A9).
+                if (c == 0xC2 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0x85) { ++i; continue; }
+                if (c == 0xE2 && i + 2 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0x80 &&
+                    (static_cast<unsigned char>(s[i + 2]) == 0xA8 || static_cast<unsigned char>(s[i + 2]) == 0xA9)) {
+                    i += 2;
+                    continue;
+                }
+                if (c < 0x20 || c == 0x7F) continue;
                 if (c == '\\' || c == '"') out.push_back('\\');
-                if (c != '\r' && c != '\n') out.push_back(c);
+                out.push_back(static_cast<char>(c));
             }
             out.push_back('"');
             return out;
@@ -76,8 +90,9 @@ namespace desktop {
 
         auto split_host_port(std::string_view hostport)
             -> std::expected<std::pair<std::string, std::uint16_t>, std::string> {
+            bool bracketed = hostport.starts_with('[');
             std::string_view host, port_str;
-            if (hostport.starts_with('[')) {
+            if (bracketed) {
                 auto end = hostport.find(']');
                 if (end == std::string_view::npos || end + 2 > hostport.size() || hostport[end + 1] != ':')
                     return std::unexpected("invalid IPv6 host:port");
@@ -89,7 +104,11 @@ namespace desktop {
                 host = hostport.substr(0, colon);
                 port_str = hostport.substr(colon + 1);
             }
-            if (host.empty()) return std::unexpected("empty server host");
+            if (host.empty() || host.size() > 253) return std::unexpected("invalid server host");
+            for (unsigned char c : host) {
+                bool valid = std::isalnum(c) || c == '.' || c == '-' || c == '_' || (bracketed && (c == ':' || c == '%'));
+                if (!valid) return std::unexpected("invalid character in server host");
+            }
             std::uint16_t port = 0;
             auto [ptr, ec] = std::from_chars(port_str.data(), port_str.data() + port_str.size(), port);
             if (ec != std::errc{} || ptr != port_str.data() + port_str.size() || port == 0)
@@ -149,13 +168,18 @@ namespace desktop {
             query = parse_query(rest.substr(q + 1));
             rest = rest.substr(0, q);
         }
-        if (auto slash = rest.find('/'); slash != std::string_view::npos) rest = rest.substr(0, slash);
 
+        // Strip /path before finding '@' for non-SS URIs (SS SIP002 Base64 userinfo may contain '/').
+        if (out.scheme != OutboundScheme::shadowsocks) {
+            if (auto slash = rest.find('/'); slash != std::string_view::npos) rest = rest.substr(0, slash);
+        }
         auto at = rest.rfind('@');
         if (at == std::string_view::npos && out.scheme != OutboundScheme::http_connect)
             return std::unexpected("missing userinfo@host:port");
         std::string userinfo = at != std::string_view::npos ? percent_decode(rest.substr(0, at)) : std::string{};
-        auto hp = split_host_port(at != std::string_view::npos ? rest.substr(at + 1) : rest);
+        auto hostport = at != std::string_view::npos ? rest.substr(at + 1) : rest;
+        if (auto slash = hostport.find('/'); slash != std::string_view::npos) hostport = hostport.substr(0, slash);
+        auto hp = split_host_port(hostport);
         if (!hp) return std::unexpected(hp.error());
         out.host = std::move(hp->first);
         out.port = hp->second;
@@ -220,13 +244,16 @@ namespace desktop {
         out.xhttp_mode = qget({"mode"});
         if (out.scheme == OutboundScheme::snell) {
             auto ver = qget({"version", "v"});
-            out.snell_version = (ver == "4") ? 4 : 5;
+            if (ver.empty() || ver == "5") out.snell_version = 5;
+            else if (ver == "4") out.snell_version = 4;
+            else return std::unexpected("unsupported snell version (expected 4 or 5): " + ver);
             out.obfs = qget({"obfs"});
             out.obfs_host = qget({"obfs-host", "obfs_host"});
         }
         if (out.scheme == OutboundScheme::ssh) {
             out.method = qget({"cipher"});
-            out.private_key_file = qget({"private-key-file", "private_key_file", "private-key", "key"});
+            // Reject untrusted filesystem private-key-file paths embedded in ssh:// share links.
+            out.private_key_file.clear();
         }
         if (out.scheme == OutboundScheme::naive) {
             auto pad = qget({"padding"});
@@ -299,8 +326,6 @@ namespace desktop {
             if (!node.username.empty()) out += std::format("    user {}\n", kdl_escape(node.username));
             if (!node.secret.empty() && !secret_file_path.empty())
                 out += std::format("    password-file {}\n", kdl_escape(secret_file_path));
-            else if (!node.private_key_file.empty())
-                out += std::format("    private-key-file {}\n", kdl_escape(node.private_key_file));
             else if (!secret_file_path.empty())
                 out += std::format("    private-key-file {}\n", kdl_escape(secret_file_path));
             if (!node.certificate_sha256.empty())

@@ -1,0 +1,334 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { OutboundMemberItem } from "../types.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+
+component QuickNodeTile inherits Rectangle {
+    in property <OutboundMemberItem> member;
+    callback clicked();
+
+    property <bool> is-timeout: root.member.latency-ms <= 0 && (root.member.state == "timeout" || root.member.state == "unreachable" || root.member.state == "error" || root.member.state == "failed");
+    property <color> lat-color: Theme.latency-fg(root.member.latency-ms, root.member.state);
+    property <int> bars: Theme.latency-bars(root.member.latency-ms);
+    property <color> orb-color: root.member.selected ? Theme.accent : (root.is-timeout ? Theme.error-fg : Theme.offline-fg);
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 54px;
+    border-radius: 13px;
+    border-width: 1px;
+    border-color:
+        root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.78 : 0.62)
+        : ta.has-hover ? Theme.selected-border
+        : Theme.well-border;
+    background:
+        root.member.selected
+            ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.accent.with-alpha(Theme.dark ? 0.10 : 0.05) 100%)
+        : ta.has-hover ? Theme.row-hover-bg
+        : Theme.well-bg;
+    drop-shadow-blur: root.member.selected ? 14px : ta.has-hover ? 8px : 0px;
+    drop-shadow-offset-y: root.member.selected || ta.has-hover ? 2px : 0px;
+    drop-shadow-color: root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.28 : 0.16) : Theme.card-shadow;
+    transform-scale: !root.member.selected && ta.pressed ? 0.975 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate drop-shadow-blur { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea {
+        mouse-cursor: root.member.selected ? default : pointer;
+        clicked => { if (!root.member.selected) { root.clicked(); } }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 9px;
+
+        // Left: 24px concentric circular radial node-orb (matching approved v6 concept!)
+        Rectangle {
+            horizontal-stretch: 0;
+            width: 24px;
+            height: 24px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.56 : 0.42) : Theme.hairline-strong;
+            background: root.member.selected
+                ? @radial-gradient(circle, Theme.accent.with-alpha(0.34) 0%, Theme.accent.with-alpha(0.10) 100%)
+                : Theme.inset-bg;
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: root.member.selected ? 10px : 8px;
+                height: root.member.selected ? 10px : 8px;
+                border-radius: self.width / 2;
+                background: root.member.selected ? Theme.accent : root.orb-color.with-alpha(Theme.dark ? 0.55 : 0.42);
+                drop-shadow-blur: root.member.selected ? 8px : 0px;
+                drop-shadow-color: Theme.accent.with-alpha(0.70);
+            }
+        }
+
+        // Center: 2 tight crisp lines (bold node name + semantic mono latency below)
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            alignment: center;
+            spacing: 2px;
+
+            HorizontalLayout {
+                spacing: 4px;
+                Text {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    text: root.member.name;
+                    font-size: 12px;
+                    font-weight: root.member.selected ? 700 : 600;
+                    color: root.member.selected ? Theme.text-primary : Theme.text-primary;
+                    overflow: elide;
+                }
+                if root.member.pinned : Image {
+                    width: 10px;
+                    height: 10px;
+                    y: (parent.height - self.height) / 2;
+                    source: @image-url("../icons/star-filled.svg");
+                    colorize: Theme.warn-fg;
+                }
+            }
+
+            Text {
+                text: root.member.latency-ms > 0 ? "\{root.member.latency-ms}ms"
+                    : root.is-timeout ? I18n.t("超时", "Err") : "--";
+                font-size: 10px;
+                font-weight: 700;
+                font-family: Theme.mono-font;
+                color: lat-color;
+                overflow: elide;
+            }
+        }
+
+        // Right: 4-bar ascending signal meter
+        HorizontalLayout {
+            horizontal-stretch: 0;
+            width: 18px;
+            spacing: 2px;
+            padding-top: 20px;
+            padding-bottom: 20px;
+            Rectangle { width: 3px; height: 4px; y: parent.height - self.height - 20px; border-radius: 1.5px; background: bars >= 1 ? lat-color : Theme.offline-fg; opacity: bars >= 1 ? 1.0 : 0.26; }
+            Rectangle { width: 3px; height: 7px; y: parent.height - self.height - 20px; border-radius: 1.5px; background: bars >= 2 ? lat-color : Theme.offline-fg; opacity: bars >= 2 ? 1.0 : 0.24; }
+            Rectangle { width: 3px; height: 10px; y: parent.height - self.height - 20px; border-radius: 1.5px; background: bars >= 3 ? lat-color : Theme.offline-fg; opacity: bars >= 3 ? 1.0 : 0.22; }
+            Rectangle { width: 3px; height: 13px; y: parent.height - self.height - 20px; border-radius: 1.5px; background: bars >= 4 ? lat-color : Theme.offline-fg; opacity: bars >= 4 ? 1.0 : 0.20; }
+        }
+    }
+}
+
+// Dashboard Bento Card: 1-Click Quick Node Switcher (up to 6 top/pinned/fastest nodes)
+export component QuickNodesCard inherits Rectangle {
+    in property <string> selected-group: "";
+    in property <[OutboundMemberItem]> nodes: [];
+    in property <bool> probing: false;
+    in property <bool> three-cols: false;
+
+    callback select-member(string, string);
+    callback probe-group(string);
+    callback open-groups();
+
+    vertical-stretch: 0;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: root.probing ? Theme.selected-border : Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+    clip: true;
+    animate border-color { duration: Motion.fast; }
+
+    GlassSpeculum {}
+
+    // Animated light sweep across top rim during probing
+    if root.probing : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 2px;
+        background: Theme.accent-soft;
+        Rectangle {
+            property <float> scan: Motion.reduced ? 0.35 : mod(animation-tick(), 1100ms) / 1100ms;
+            x: (parent.width + self.width) * self.scan - self.width;
+            width: parent.width * 0.34;
+            height: 2px;
+            background: Theme.accent;
+        }
+    }
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+
+            Text {
+                text: I18n.t("快捷切换", "Quick Switch");
+                font-size: 13px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+
+            if root.selected-group != "" : Rectangle {
+                horizontal-stretch: 0;
+                height: 20px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Theme.radius-xs;
+                background: Theme.accent-soft;
+                HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 7px;
+                    Text {
+                        text: root.selected-group;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: Theme.nav-active-fg;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            if root.selected-group != "" : IconActionButton {
+                size: 26px;
+                icon: root.probing ? @image-url("../icons/loader.svg") : @image-url("../icons/bolt.svg");
+                label: I18n.t("测速", "Probe");
+                active: root.probing;
+                clicked => { root.probe-group(root.selected-group); }
+            }
+
+            Rectangle {
+                horizontal-stretch: 0;
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: all-ta.has-hover ? Theme.selected-border : Theme.card-border;
+                background: all-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+                animate background { duration: Motion.fast; }
+                all-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-groups(); }
+                }
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    Text {
+                        text: I18n.t("全部 ↗", "All ↗");
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: all-ta.has-hover ? Theme.nav-active-fg : Theme.text-secondary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        if root.nodes.length == 0 : Rectangle {
+            vertical-stretch: 1;
+            min-height: 92px;
+            border-radius: 14px;
+            border-width: 1px;
+            border-color: Theme.well-border;
+            background: Theme.well-bg;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 6px;
+                padding: Theme.space-md;
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 30px; height: 30px; border-radius: 15px;
+                        background: Theme.inset-bg;
+                        Image {
+                            x: 7px; y: 7px; width: 16px; height: 16px;
+                            source: @image-url("../icons/groups.svg");
+                            colorize: Theme.text-muted;
+                        }
+                    }
+                }
+                Text {
+                    text: I18n.t("连接后显示常用节点", "Connect to show quick nodes");
+                    font-size: 12px; font-weight: 600; color: Theme.text-secondary; horizontal-alignment: center;
+                }
+                Text {
+                    text: I18n.t("支持一键测速与星标置顶", "Supports 1-click probe and pinned favorites");
+                    font-size: 11px; color: Theme.text-muted; horizontal-alignment: center;
+                }
+            }
+        }
+
+        if root.nodes.length > 0 && root.three-cols : GridLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+            Row {
+                if root.nodes.length > 0 : QuickNodeTile { member: root.nodes[0]; clicked => { root.select-member(root.selected-group, root.nodes[0].name); } }
+                if root.nodes.length > 1 : QuickNodeTile { member: root.nodes[1]; clicked => { root.select-member(root.selected-group, root.nodes[1].name); } }
+                if root.nodes.length > 2 : QuickNodeTile { member: root.nodes[2]; clicked => { root.select-member(root.selected-group, root.nodes[2].name); } }
+            }
+            if root.nodes.length > 3 : Row {
+                if root.nodes.length > 3 : QuickNodeTile { member: root.nodes[3]; clicked => { root.select-member(root.selected-group, root.nodes[3].name); } }
+                if root.nodes.length > 4 : QuickNodeTile { member: root.nodes[4]; clicked => { root.select-member(root.selected-group, root.nodes[4].name); } }
+                if root.nodes.length > 5 : QuickNodeTile { member: root.nodes[5]; clicked => { root.select-member(root.selected-group, root.nodes[5].name); } }
+            }
+            if root.nodes.length > 6 : Row {
+                if root.nodes.length > 6 : QuickNodeTile { member: root.nodes[6]; clicked => { root.select-member(root.selected-group, root.nodes[6].name); } }
+                if root.nodes.length > 7 : QuickNodeTile { member: root.nodes[7]; clicked => { root.select-member(root.selected-group, root.nodes[7].name); } }
+                if root.nodes.length > 8 : QuickNodeTile { member: root.nodes[8]; clicked => { root.select-member(root.selected-group, root.nodes[8].name); } }
+            }
+        }
+
+        if root.nodes.length > 0 && !root.three-cols : GridLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+            Row {
+                if root.nodes.length > 0 : QuickNodeTile { member: root.nodes[0]; clicked => { root.select-member(root.selected-group, root.nodes[0].name); } }
+                if root.nodes.length > 1 : QuickNodeTile { member: root.nodes[1]; clicked => { root.select-member(root.selected-group, root.nodes[1].name); } }
+            }
+            if root.nodes.length > 2 : Row {
+                if root.nodes.length > 2 : QuickNodeTile { member: root.nodes[2]; clicked => { root.select-member(root.selected-group, root.nodes[2].name); } }
+                if root.nodes.length > 3 : QuickNodeTile { member: root.nodes[3]; clicked => { root.select-member(root.selected-group, root.nodes[3].name); } }
+            }
+            if root.nodes.length > 4 : Row {
+                if root.nodes.length > 4 : QuickNodeTile { member: root.nodes[4]; clicked => { root.select-member(root.selected-group, root.nodes[4].name); } }
+                if root.nodes.length > 5 : QuickNodeTile { member: root.nodes[5]; clicked => { root.select-member(root.selected-group, root.nodes[5].name); } }
+            }
+        }
+
+        if root.nodes.length > 0 : Rectangle { vertical-stretch: 1; min-height: 2px; }
+
+        if root.nodes.length > 0 : HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                text: I18n.t("共 \{root.nodes.length} 个快捷节点 · 点击即刻切换", "\{root.nodes.length} quick nodes · Click to switch");
+                font-size: 11px;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: root.probing ? I18n.t("测速中...", "Probing...") : I18n.t("延迟实时同步", "Live latency");
+                font-size: 11px;
+                font-family: Theme.mono-font;
+                color: root.probing ? Theme.accent : Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

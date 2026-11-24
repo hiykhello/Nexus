@@ -3,6 +3,10 @@
 #ifdef _WIN32
 #include <shellapi.h>
 #else
+#include <cerrno>
+#include <csignal>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -11,478 +15,462 @@ import desktop.async_worker;
 import desktop.core_supervisor;
 import desktop.http_control;
 import desktop.ipc_client;
+import desktop.kdl_ops;
 import desktop.profile_store;
 import desktop.share_link;
 import desktop.single_instance;
 import desktop.system_proxy;
 import desktop.tray_controller;
+import desktop.ui_actions;
+import desktop.ui_prefs;
+import desktop.window_blur;
 
 #include "main_helpers.hpp"
+#include "ui_redesign_helpers.hpp"
+#include "ui_binding_helpers.hpp"
+#include "main_callbacks.hpp"
 
 using desktop_ui_helpers::default_config_dir;
 using desktop_ui_helpers::default_control_endpoint;
+using desktop_ui_helpers::is_en_ui;
+using desktop_ui_helpers::on_ui_thread;
 using desktop_ui_helpers::open_with_system_editor;
 using desktop_ui_helpers::read_file_text;
+using desktop_ui_helpers::tr;
 using desktop_ui_helpers::write_file_atomic;
 
 auto main(int argc, char** argv) -> int {
     (void)argc;
-    auto cfg_dir = default_config_dir();
-    std::filesystem::create_directories(cfg_dir);
-    auto config_path = cfg_dir / "config.kdl";
-    auto binary_path = std::filesystem::path(argv[0]).parent_path() /
-#ifdef _WIN32
-        "nexus.exe";
-#else
-        "nexus";
+#ifndef _WIN32
+    std::signal(SIGPIPE, SIG_IGN);
 #endif
+    auto cfg_dir = default_config_dir();
+    std::error_code dir_ec;
+    std::filesystem::create_directories(cfg_dir, dir_ec);
+    auto config_path = cfg_dir / "config.kdl";
+    auto prefs_path = cfg_dir / "ui-prefs.conf";
+    auto binary_path = desktop_ui_helpers::resolve_core_binary(argv[0]);
+    slint::set_xdg_app_id("nexus-desktop");
 
     auto ui = nexus_ui::AppWindow::create();
-    auto weak_ui = ui->as_weak();
+    slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui(ui);
+    auto blur_ctrl = std::make_shared<desktop::WindowBlurController>();
+    desktop_ui_helpers::setup_native_window_blur(*ui, weak_ui, blur_ctrl);
 
-    auto instance = desktop::SingleInstanceGuard::acquire("nexus-desktop", [weak_ui] {
-        slint::invoke_from_event_loop([weak_ui] {
-            if (auto strong = weak_ui.lock()) strong->show();
+    std::function<void()> show_window_from_ui;
+    auto instance = desktop::SingleInstanceGuard::acquire("nexus-desktop", [weak_ui, &show_window_from_ui] {
+        on_ui_thread(weak_ui, [&show_window_from_ui](auto& s) {
+            if (show_window_from_ui) show_window_from_ui();
+            else s->window().show();
         });
     });
     if (!instance) return 0;
 
+    auto fallback_sock = default_control_endpoint(cfg_dir);
+    if (!std::filesystem::exists(config_path, dir_ec)) {
+        (void)write_file_atomic(config_path, desktop_ui_helpers::build_default_desktop_config(fallback_sock));
+    }
+    auto initial_kdl = read_file_text(config_path);
+    auto ctl_cfg = desktop_ui_helpers::parse_control_config(initial_kdl, fallback_sock, cfg_dir);
+
     desktop::CoreSupervisor supervisor(binary_path);
-    desktop::IpcClient ipc(default_control_endpoint(cfg_dir));
-    desktop::HttpControlClient http_ctrl("127.0.0.1", 9090);
+    desktop::IpcClient ipc(ctl_cfg.socket);
+    desktop::HttpControlClient http_ctrl(ctl_cfg.http_host, ctl_cfg.http_port, ctl_cfg.bearer_token);
     desktop::SystemProxyController sys_proxy;
-    desktop::AsyncWorker worker;
     desktop::ProfileStore profile_store(cfg_dir);
     std::vector<desktop::OutboundGroupSnapshot> cached_groups;
-    std::vector<desktop::LogRingEntry> cached_logs;
+    std::unordered_set<std::string> pinned_members;
+    desktop_ui_helpers::MemberModelPipeline member_models;
+    ui->set_members(member_models.sorted);
+    std::vector<desktop::LogEntrySnapshot> cached_logs;
     std::mutex logs_mu;
     desktop_ui_helpers::RateTracker rate_tracker;
+    std::optional<std::chrono::steady_clock::time_point> core_started_at;
+    std::atomic<bool> metrics_in_flight{false};
+    std::atomic<bool> conns_in_flight{false};
+    std::atomic<bool> core_toggling{false};
+    int conn_poll_tick = 0;
+    desktop::AsyncWorker worker;
 
-    ui->set_system_proxy_supported(desktop::SystemProxyController::supported());
     ui->set_control_endpoint(slint::SharedString(ipc.endpoint()));
     ui->set_config_path(slint::SharedString(config_path.string()));
-    auto initial_kdl = read_file_text(config_path);
-    ui->set_kdl_text(slint::SharedString(initial_kdl));
-    ui->set_tun_enabled(desktop_ui_helpers::kdl_has_tun_inbound(initial_kdl));
-
-    std::atomic<bool> quit_once{false};
-    desktop::TrayController tray({
-        .on_show = [weak_ui] { slint::invoke_from_event_loop([weak_ui] { if (auto s = weak_ui.lock()) s->show(); }); },
-        .on_reload = [weak_ui] { slint::invoke_from_event_loop([weak_ui] { if (auto s = weak_ui.lock()) s->invoke_reload_config(); }); },
-        .on_quit = [&quit_once] {
-            if (!quit_once.exchange(true, std::memory_order_acq_rel))
-                slint::invoke_from_event_loop([] { slint::quit_event_loop(); });
-        },
+    auto loaded_prefs = desktop::load_ui_prefs(prefs_path);
+    desktop_ui_helpers::apply_prefs_to_ui(*ui, loaded_prefs, desktop::detect_system_locale());
+    desktop_ui_helpers::clear_telemetry_ui(*ui, is_en_ui(*ui));
+    desktop_ui_helpers::apply_kdl_to_ui_state(*ui, initial_kdl);
+    worker.post([weak_ui] {
+        bool supported = desktop::SystemProxyController::supported();
+        on_ui_thread(weak_ui, [supported](auto& s) { s->set_system_proxy_supported(supported); });
     });
-    auto sync_tray = [&] {
-        bool running = supervisor.running(), tun = ui->get_tun_enabled();
-        tray.set_status(running ? (tun ? desktop::TrayState::tun_active : desktop::TrayState::running)
-                                : desktop::TrayState::offline,
-                        std::string_view(ui->get_status_summary()));
+    if (auto aid = profile_store.active_id(); !aid.empty()) {
+        for (auto const& e : profile_store.list()) {
+            if (e.id == aid) { ui->set_active_profile(slint::SharedString(e.name)); break; }
+        }
+    }
+
+    bool window_visible = true;
+    std::function<void()> sync_tray;
+    std::atomic<bool> quit_once{false};
+    desktop::TrayController tray(desktop_ui_helpers::make_tray_callbacks(weak_ui, window_visible, sync_tray, quit_once));
+    sync_tray = [&] {
+        desktop_ui_helpers::sync_tray_state(tray, supervisor, *ui, cached_groups, pinned_members, profile_store, window_visible);
+    };
+    show_window_from_ui = [&] {
+        ui->window().show();
+        window_visible = true;
+        sync_tray();
+    };
+    ui->set_tray_native_active(tray.native_backend_active());
+
+    auto poll_telemetry = [&](bool refresh_groups_too) {
+        desktop_ui_helpers::poll_telemetry_async(
+            weak_ui, worker, http_ctrl, cached_groups, pinned_members, member_models, rate_tracker, metrics_in_flight, is_en_ui(*ui), refresh_groups_too, sync_tray);
     };
 
     ui->on_toggle_core([&] {
-        ui->set_status_summary("正在切换核心状态...");
-        worker.post([&, weak_ui] {
-            bool running = false;
-            std::string summary;
-            if (supervisor.running()) {
-                (void)sys_proxy.restore();
-                supervisor.stop();
-                running = false;
-                summary = "已停止";
-            } else if (supervisor.start(config_path)) {
-                running = true;
-                summary = "运行中";
-            } else {
-                running = false;
-                summary = "启动失败：请检查 nexus 二进制与配置";
-            }
-            slint::invoke_from_event_loop([weak_ui, running, summary = std::move(summary)] {
-                if (auto strong = weak_ui.lock()) {
-                    strong->set_core_running(running);
-                    if (!running) strong->set_system_proxy_enabled(false);
-                    strong->set_status_summary(slint::SharedString(summary));
-                    sync_tray();
-                }
-            });
-        });
+        if (core_toggling.exchange(true, std::memory_order_acq_rel)) return;
+        bool en = is_en_ui(*ui);
+        std::string draft_kdl(ui->get_kdl_text());
+        ui->set_core_toggling(true);
+        ui->set_status_summary(slint::SharedString(tr(en, "正在切换连接状态...", "Switching connection...")));
+        desktop_ui_helpers::toggle_core_async(
+            weak_ui, worker, supervisor, sys_proxy, ipc, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
+            core_started_at, metrics_in_flight, core_toggling, cfg_dir, config_path, fallback_sock, std::move(draft_kdl), en);
     });
 
     ui->on_toggle_system_proxy([&](bool on) {
-        worker.post([&, weak_ui, on] {
-            bool ok = on ? sys_proxy.enable("127.0.0.1", 7890) : sys_proxy.restore();
-            slint::invoke_from_event_loop([weak_ui, active = ok && on] {
-                if (auto strong = weak_ui.lock()) strong->set_system_proxy_enabled(active);
+        auto endpoint = on ? desktop::select_system_proxy_endpoint(desktop_ui_helpers::read_inbounds_from_ui(*ui))
+                           : std::nullopt;
+        if (on && !endpoint) {
+            ui->set_system_proxy_enabled(false);
+            ui->set_status_summary(slint::SharedString(tr(is_en_ui(*ui), "请先启用本地入站端口", "Enable a local inbound port first")));
+            sync_tray();
+            return;
+        }
+        worker.post([&, weak_ui, on, endpoint] {
+            bool ok = on ? sys_proxy.enable(endpoint->first, endpoint->second) : sys_proxy.restore();
+            on_ui_thread(weak_ui, [&sync_tray, active = ok && on](auto& s) {
+                s->set_system_proxy_enabled(active);
+                sync_tray();
             });
         });
     });
+    ui->on_apply_inbound_proxy_config([&](slint::SharedString proto, bool enabled, slint::SharedString host, slint::SharedString port_s) {
+        bool en = is_en_ui(*ui);
+        auto port = desktop::parse_port_u16(std::string_view(port_s));
+        if (enabled && !port) {
+            ui->set_diagnostic_ok(false);
+            ui->set_diagnostic_message(slint::SharedString(tr(en, "入站端口需为 1..65535", "Inbound port must be 1..65535")));
+            return;
+        }
+        auto res = desktop::upsert_managed_inbound(
+            std::string_view(ui->get_kdl_text()), std::string_view(proto), enabled, std::string_view(host), port.value_or(0));
+        ui->set_diagnostic_ok(res.first);
+        if (!res.first) { ui->set_diagnostic_message(slint::SharedString(res.second)); return; }
+        ui->set_kdl_text(slint::SharedString(res.second));
+        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(res.second));
+        ui->set_diagnostic_message(slint::SharedString(tr(en, "已更新入站: ", "Updated inbound: ") + std::string(proto)));
+        ui->invoke_save_and_reload(slint::SharedString(res.second));
+        if (ui->get_system_proxy_enabled()) ui->invoke_toggle_system_proxy(true);
+        sync_tray();
+    });
+    ui->on_switch_outbound_mode([&](slint::SharedString mode) {
+        bool en = is_en_ui(*ui);
+        auto prev_mode = ui->get_outbound_mode();
+        auto grp = std::string(ui->get_selected_group());
+        std::string m(mode);
+        if (supervisor.running()) {
+            ui->set_outbound_mode(mode);
+            bool posted = worker.post([&, weak_ui, en, m, grp, prev_mode] {
+                auto reply = http_ctrl.set_mode(m, grp);
+                on_ui_thread(weak_ui, [&sync_tray, ok = reply.ok, en, m, prev_mode, msg = std::move(reply.body)](auto& s) {
+                    s->set_diagnostic_ok(ok);
+                    if (ok) {
+                        s->set_status_summary(slint::SharedString(tr(en, "运行模式已切换: ", "Mode switched: ") + m));
+                    } else {
+                        s->set_outbound_mode(prev_mode);
+                        auto err = tr(en, "切换模式失败: ", "Mode switch failed: ") + msg;
+                        s->set_diagnostic_message(slint::SharedString(err));
+                        desktop_ui_helpers::push_toast(*s, err, "error");
+                    }
+                    sync_tray();
+                });
+            });
+            if (!posted) ui->set_outbound_mode(prev_mode);
+            return;
+        }
+        auto res = desktop::apply_outbound_mode(std::string_view(ui->get_kdl_text()), m, grp);
+        ui->set_diagnostic_ok(res.first);
+        if (!res.first) { ui->set_diagnostic_message(slint::SharedString(res.second)); return; }
+        ui->set_outbound_mode(mode);
+        ui->set_kdl_text(slint::SharedString(res.second));
+        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(res.second));
+        ui->set_status_summary(slint::SharedString(tr(en, "路由模式: ", "Mode: ") + m));
+        ui->invoke_save_and_reload(slint::SharedString(res.second));
+        sync_tray();
+    });
 
     ui->on_toggle_tun([&](bool on) {
-        auto res = desktop_ui_helpers::toggle_tun_in_kdl(std::string_view(ui->get_kdl_text()), on);
-        if (!res.first) { ui->set_status_summary(slint::SharedString(res.second)); ui->set_tun_enabled(!on); return; }
+        auto prev_kdl = ui->get_kdl_text();
+        auto res = desktop_ui_helpers::toggle_tun_in_kdl(std::string_view(prev_kdl), on, is_en_ui(*ui));
+        if (!res.first) {
+            ui->set_status_summary(slint::SharedString(res.second));
+            ui->set_tun_enabled(!on);
+            desktop_ui_helpers::push_toast(*ui, res.second, "error");
+            return;
+        }
         ui->set_kdl_text(slint::SharedString(res.second));
+        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(res.second));
         ui->set_tun_enabled(on);
         ui->invoke_save_and_reload(slint::SharedString(res.second));
         sync_tray();
     });
 
     ui->on_reload_config([&] {
-        ui->set_status_summary("正在热重载...");
-        worker.post([&, weak_ui] {
+        bool en = is_en_ui(*ui);
+        if (!supervisor.running()) {
+            ui->set_status_summary(slint::SharedString(tr(en, "核心未运行", "Core is not running")));
+            return;
+        }
+        ui->set_status_summary(slint::SharedString(tr(en, "正在热重载...", "Reloading...")));
+        worker.post([&, weak_ui, en] {
             auto reply = ipc.reload();
-            auto msg = reply.ok ? std::string("热重载成功") : ("热重载失败: " + reply.body);
-            slint::invoke_from_event_loop([weak_ui, msg = std::move(msg)] {
-                if (auto strong = weak_ui.lock()) strong->set_status_summary(slint::SharedString(msg));
+            if (!reply.ok) {
+                if (auto hr = http_ctrl.reload(); hr.ok) reply = {true, "OK"};
+            }
+            auto msg = reply.ok ? tr(en, "热重载成功", "Reloaded") : (tr(en, "热重载失败: ", "Reload failed: ") + reply.body);
+            on_ui_thread(weak_ui, [ok = reply.ok, msg = std::move(msg)](auto& s) {
+                s->set_status_summary(slint::SharedString(msg));
+                desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
             });
         });
     });
 
+    ui->on_kdl_edited([&](slint::SharedString text) {
+        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(std::string_view(text)));
+    });
+
     ui->on_validate_kdl([&](slint::SharedString text) {
+        bool en = is_en_ui(*ui);
         std::string payload(text);
-        ui->set_diagnostic_message("正在调用内核校验...");
-        worker.post([&, weak_ui, payload = std::move(payload)] {
-            auto tmp = cfg_dir / ".validate-draft.kdl";
-            desktop::ValidationResult res{false, "无法写入临时校验文件"};
-            if (write_file_atomic(tmp, payload)) {
-                res = supervisor.validate_config(tmp);
-                std::error_code ec;
-                std::filesystem::remove(tmp, ec);
-            }
-            slint::invoke_from_event_loop([weak_ui, ok = res.ok, msg = std::move(res.message)] {
-                if (auto s = weak_ui.lock()) { s->set_diagnostic_ok(ok); s->set_diagnostic_message(slint::SharedString(msg)); }
+        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(payload));
+        ui->set_diagnostic_message(slint::SharedString(tr(en, "正在调用内核校验...", "Validating config...")));
+        worker.post([&, weak_ui, en, payload = std::move(payload)] {
+            auto res = desktop_ui_helpers::validate_draft_config(cfg_dir, supervisor, payload, en);
+            on_ui_thread(weak_ui, [ok = res.ok, msg = std::move(res.message)](auto& s) {
+                s->set_diagnostic_ok(ok);
+                s->set_diagnostic_message(slint::SharedString(msg));
             });
         });
     });
 
     ui->on_save_and_reload([&](slint::SharedString text) {
+        bool en = is_en_ui(*ui);
         std::string payload(text);
-        ui->set_diagnostic_message("正在校验并保存...");
-        worker.post([&, weak_ui, payload = std::move(payload)] {
-            auto tmp = cfg_dir / ".validate-draft.kdl";
-            if (!write_file_atomic(tmp, payload)) {
-                slint::invoke_from_event_loop([weak_ui] {
-                    if (auto s = weak_ui.lock()) { s->set_diagnostic_ok(false); s->set_diagnostic_message("保存临时文件失败"); }
-                });
-                return;
-            }
-            auto res = supervisor.validate_config(tmp);
-            std::error_code ec;
-            std::filesystem::remove(tmp, ec);
+        ui->set_diagnostic_message(slint::SharedString(tr(en, "正在校验并保存...", "Validating & saving...")));
+        worker.post([&, weak_ui, en, payload = std::move(payload)] {
+            auto res = desktop_ui_helpers::validate_draft_config(cfg_dir, supervisor, payload, en);
             if (!res.ok) {
-                slint::invoke_from_event_loop([weak_ui, msg = "拒绝下发无效配置: " + res.message] {
-                    if (auto s = weak_ui.lock()) { s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(msg)); }
+                auto disk_kdl = read_file_text(config_path);
+                on_ui_thread(weak_ui, [&sync_tray, disk_kdl = std::move(disk_kdl), msg = tr(en, "拒绝下发无效配置: ", "Invalid config rejected: ") + res.message](auto& s) {
+                    s->set_diagnostic_ok(false);
+                    s->set_diagnostic_message(slint::SharedString(msg));
+                    if (!disk_kdl.empty()) desktop_ui_helpers::apply_kdl_to_ui_state(*s, disk_kdl);
+                    sync_tray();
+                    desktop_ui_helpers::push_toast(*s, msg, "error");
                 });
                 return;
             }
             bool saved = write_file_atomic(config_path, payload);
-            auto reply = saved && supervisor.running() ? ipc.reload() : desktop::IpcReply{saved, saved ? "已保存" : "写入失败"};
-            std::string msg = !saved ? "写入 config.kdl 失败"
-                : (reply.ok ? "校验通过，已保存并热重载" : ("已保存，但重载失败: " + reply.body));
-            slint::invoke_from_event_loop([weak_ui, ok = saved && reply.ok, msg = std::move(msg)] {
-                if (auto strong = weak_ui.lock()) {
-                    strong->set_diagnostic_ok(ok);
-                    strong->set_diagnostic_message(slint::SharedString(msg));
+            std::string disk_kdl;
+            if (!saved) disk_kdl = read_file_text(config_path);
+            desktop::IpcReply reply{saved, saved ? tr(en, "已保存", "Saved") : tr(en, "写入失败", "Write failed")};
+            std::string synced_sock;
+            if (saved) {
+                bool was_running = supervisor.running();
+                if (was_running) {
+                    reply = ipc.reload();
+                    if (!reply.ok && http_ctrl.reload().ok) reply = {true, "OK"};
                 }
+                if (!was_running || reply.ok) {
+                    auto next_ctl = desktop_ui_helpers::parse_control_config(payload, fallback_sock, cfg_dir);
+                    ipc.set_endpoint(next_ctl.socket);
+                    http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
+                    http_ctrl.set_bearer_token(next_ctl.bearer_token);
+                    synced_sock = next_ctl.socket;
+                }
+            }
+            std::string msg = !saved ? tr(en, "写入配置文件失败", "Failed to write config file")
+                : (reply.ok ? tr(en, "校验通过，已保存并热重载", "Saved & reloaded") : (tr(en, "已保存，但重载失败: ", "Saved; reload failed: ") + reply.body));
+            on_ui_thread(weak_ui, [&sync_tray, ok = saved && reply.ok, saved, payload, disk_kdl = std::move(disk_kdl), synced_sock = std::move(synced_sock), msg = std::move(msg)](auto& s) {
+                if (saved) {
+                    desktop_ui_helpers::apply_kdl_to_ui_state(*s, payload);
+                    if (!synced_sock.empty()) s->set_control_endpoint(slint::SharedString(synced_sock));
+                } else {
+                    s->set_tun_enabled(desktop_ui_helpers::kdl_has_tun_inbound(disk_kdl));
+                }
+                s->set_diagnostic_ok(ok);
+                s->set_diagnostic_message(slint::SharedString(msg));
+                sync_tray();
+                desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
             });
         });
     });
 
     ui->on_open_external_editor([&] { open_with_system_editor(config_path); });
 
-    ui->on_refresh_metrics([&] {
-        worker.post([&, weak_ui] {
-            auto reply = http_ctrl.metrics();
-            if (!reply.ok) return;
-            auto m = desktop::parse_openmetrics_summary(reply.body);
-            auto text = std::format("代次: {} · 活跃会话: {} · 上行: {} KiB · 下行: {} KiB",
-                m.control_generation, m.active_sessions, m.upload_bytes / 1024, m.download_bytes / 1024);
-            auto rate = rate_tracker.record(m.upload_bytes, m.download_bytes);
-            slint::invoke_from_event_loop([weak_ui, text = std::move(text), rate = std::move(rate)] {
-                if (auto strong = weak_ui.lock()) {
-                    strong->set_metrics_summary(slint::SharedString(text));
-                    strong->set_rate_summary(slint::SharedString(rate.summary));
-                    strong->set_rate_bars(std::make_shared<slint::VectorModel<float>>(rate.bars));
-                }
-            });
-        });
+    ui->on_refresh_metrics([&] { poll_telemetry(true); });
+    ui->global<nexus_ui::ToastState>().set_has_endpoint_formatter(true);
+    ui->global<nexus_ui::ToastState>().on_format_endpoint_cb([](slint::SharedString h, slint::SharedString p) {
+        return slint::SharedString(desktop::format_host_port(std::string_view(h), std::string_view(p)));
     });
+    ui->on_copy_text([&](slint::SharedString text) {
+        std::string s(text);
+        worker.post([s = std::move(s)] { (void)desktop_ui_helpers::copy_text_to_clipboard(s); });
+    });
+    ui->on_copy_proxy_env([&] {
+        bool en = is_en_ui(*ui);
+        auto cmd = desktop_ui_helpers::build_proxy_env_from_inbounds(desktop_ui_helpers::read_inbounds_from_ui(*ui));
+        if (cmd.empty()) {
+            desktop_ui_helpers::push_toast(*ui, tr(en, "请先启用本地入站端口", "Enable a local inbound port first"), "warn");
+            return;
+        }
+        worker.post([cmd = std::move(cmd)] { (void)desktop_ui_helpers::copy_text_to_clipboard(cmd); });
+        desktop_ui_helpers::push_toast(*ui, tr(en, "已复制终端代理环境变量", "Copied proxy export command"), "success");
+    });
+    ui->on_tray_prefs_changed([&] { sync_tray(); });
+    desktop_ui_helpers::bind_dash_layout_callbacks(*ui, prefs_path);
 
     ui->on_clear_cache([&] {
-        worker.post([&, weak_ui] {
+        bool en = is_en_ui(*ui);
+        worker.post([&, weak_ui, en] {
             auto reply = http_ctrl.clear_cache();
-            auto msg = reply.ok ? std::string("缓存已清空") : ("清空缓存失败: " + reply.body);
-            slint::invoke_from_event_loop([weak_ui, msg = std::move(msg)] {
-                if (auto strong = weak_ui.lock()) strong->set_status_summary(slint::SharedString(msg));
+            auto msg = reply.ok ? tr(en, "缓存已清空", "Cache cleared") : (tr(en, "清空缓存失败: ", "Clear cache failed: ") + reply.body);
+            on_ui_thread(weak_ui, [ok = reply.ok, msg = std::move(msg)](auto& s) {
+                s->set_status_summary(slint::SharedString(msg));
+                desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
             });
         });
     });
 
     ui->on_import_share_link([&](slint::SharedString raw_uri) {
+        bool en = is_en_ui(*ui);
         auto parsed = desktop::parse_share_link(std::string_view(raw_uri));
         if (!parsed) {
+            auto msg = tr(en, "分享链接解析失败: ", "Share URI error: ") + parsed.error();
             ui->set_diagnostic_ok(false);
-            ui->set_diagnostic_message(slint::SharedString("分享链接解析失败: " + parsed.error()));
+            ui->set_diagnostic_message(slint::SharedString(msg));
+            desktop_ui_helpers::push_toast(*ui, msg, "error");
             return;
         }
-        auto secrets_dir = cfg_dir / "secrets";
-        std::filesystem::create_directories(secrets_dir);
-        auto secret_file = secrets_dir / (parsed->tag + ".secret");
-        if (!write_file_atomic(secret_file, parsed->secret + "\n")) {
-            ui->set_diagnostic_ok(false);
-            ui->set_diagnostic_message("写入私密凭据文件失败");
-            return;
-        }
-        std::error_code ec;
-        std::filesystem::permissions(secret_file,
-            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, ec);
-        auto block = desktop::render_kdl_outbound(*parsed, secret_file.string());
-        std::string merged(ui->get_kdl_text());
-        if (!merged.empty() && merged.back() != '\n') merged.push_back('\n');
-        merged += "\n" + block;
-        ui->set_kdl_text(slint::SharedString(merged));
-        ui->set_diagnostic_ok(true);
-        ui->set_diagnostic_message(slint::SharedString("已导入节点 " + parsed->tag + "（凭据已写入 0600 文件，请校验并保存）"));
-    });
-
-    auto push_group_models = [&](std::vector<desktop::OutboundGroupSnapshot> snapshot, std::string active_tag) {
-        slint::invoke_from_event_loop([weak_ui, &cached_groups, snapshot = std::move(snapshot), active_tag = std::move(active_tag)] mutable {
-            auto strong = weak_ui.lock();
-            if (!strong) return;
-            cached_groups = std::move(snapshot);
-            std::vector<nexus_ui::OutboundGroupItem> ui_groups;
-            for (auto const& g : cached_groups) {
-                ui_groups.push_back({
-                    slint::SharedString(g.tag),
-                    slint::SharedString(g.mode),
-                    slint::SharedString(g.active),
-                    !g.manual_override,
-                });
+        std::string secret_path;
+        if (!parsed->secret.empty()) {
+            auto saved_secret = profile_store.write_secret(parsed->tag, parsed->secret);
+            if (!saved_secret) {
+                auto msg = tr(en, "写入私密凭据文件失败", "Failed to write secret file");
+                ui->set_diagnostic_ok(false);
+                ui->set_diagnostic_message(slint::SharedString(msg));
+                desktop_ui_helpers::push_toast(*ui, msg, "error");
+                return;
             }
-            if (active_tag.empty() && !cached_groups.empty()) active_tag = cached_groups.front().tag;
-            std::vector<nexus_ui::OutboundMemberItem> ui_members;
-            for (auto const& g : cached_groups) {
-                if (g.tag == active_tag) {
-                    for (auto const& m : g.members) {
-                        ui_members.push_back({
-                            slint::SharedString(m.name),
-                            slint::SharedString(m.state),
-                            static_cast<int>(m.latency_ms),
-                            m.selected,
-                            m.overridden,
-                        });
-                    }
-                    break;
-                }
-            }
-            strong->set_selected_group(slint::SharedString(active_tag));
-            strong->set_groups(std::make_shared<slint::VectorModel<nexus_ui::OutboundGroupItem>>(std::move(ui_groups)));
-            strong->set_members(std::make_shared<slint::VectorModel<nexus_ui::OutboundMemberItem>>(std::move(ui_members)));
-        });
-    };
-
-    ui->on_refresh_groups([&] {
-        worker.post([&, weak_ui] {
-            auto reply = http_ctrl.outbounds();
-            if (reply.ok) push_group_models(desktop::parse_outbounds_json(reply.body), "");
-        });
-    });
-    ui->on_choose_group([&](slint::SharedString tag) {
-        push_group_models(cached_groups, std::string(tag));
-    });
-    ui->on_select_member([&](slint::SharedString group, slint::SharedString member) {
-        std::string g(group), m(member);
-        worker.post([&, g = std::move(g), m = std::move(m)] {
-            auto res = http_ctrl.select_group(g, m);
-            if (!res.ok) (void)ipc.select_outbound(g, m);
-            auto reply = http_ctrl.outbounds();
-            if (reply.ok) push_group_models(desktop::parse_outbounds_json(reply.body), g);
-        });
-    });
-    ui->on_reset_group_auto([&](slint::SharedString group) {
-        std::string g(group);
-        worker.post([&, g = std::move(g)] {
-            (void)http_ctrl.reset_group_auto(g);
-            auto reply = http_ctrl.outbounds();
-            if (reply.ok) push_group_models(desktop::parse_outbounds_json(reply.body), g);
-        });
-    });
-    ui->on_probe_group([&](slint::SharedString group) {
-        std::string g(group);
-        worker.post([&, g = std::move(g)] {
-            (void)http_ctrl.probe_group(g);
-            auto reply = http_ctrl.outbounds();
-            if (reply.ok) push_group_models(desktop::parse_outbounds_json(reply.body), g);
-        });
-    });
-
-    auto push_connections = [weak_ui](std::vector<desktop::ActiveConnectionSnapshot> parsed, std::string filter) {
-        auto items = desktop_ui_helpers::build_ui_connection_items(parsed, std::move(filter));
-        slint::invoke_from_event_loop([weak_ui, items = std::move(items)] mutable {
-            if (auto strong = weak_ui.lock())
-                strong->set_connections(std::make_shared<slint::VectorModel<nexus_ui::ActiveConnectionItem>>(std::move(items)));
-        });
-    };
-    ui->on_refresh_connections([&] {
-        std::string filter(ui->get_connection_filter());
-        worker.post([&, push_connections, filter = std::move(filter)] {
-            if (auto reply = http_ctrl.connections(); reply.ok)
-                push_connections(desktop::parse_connections_json(reply.body), filter);
-        });
-    });
-    ui->on_inspect_connection([&](slint::SharedString id_str) {
-        std::uint64_t id = 0;
-        std::string_view sv(id_str);
-        auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), id);
-        if (ec != std::errc{} || id == 0) return;
-        worker.post([&, weak_ui, id] {
-            auto reply = http_ctrl.connection_detail(id);
-            std::string detail;
-            if (reply.ok) {
-                if (auto c = desktop::parse_connection_detail_json(reply.body))
-                    detail = desktop_ui_helpers::format_connection_detail(*c);
-            } else {
-                detail = "查询连接详情失败: " + reply.body;
-            }
-            slint::invoke_from_event_loop([weak_ui, detail = std::move(detail)] {
-                if (auto strong = weak_ui.lock()) strong->set_selected_connection_detail(slint::SharedString(detail));
-            });
-        });
-    });
-    ui->on_close_connection([&](slint::SharedString id_str) {
-        std::uint64_t id = 0;
-        std::string_view sv(id_str);
-        auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), id);
-        if (ec != std::errc{} || id == 0) return;
-        std::string filter(ui->get_connection_filter());
-        worker.post([&, push_connections, id, filter = std::move(filter)] {
-            (void)http_ctrl.close_connection(id);
-            if (auto reply = http_ctrl.connections(); reply.ok)
-                push_connections(desktop::parse_connections_json(reply.body), filter);
-        });
-    });
-    ui->on_close_all_connections([&] {
-        std::string filter(ui->get_connection_filter());
-        worker.post([&, push_connections, filter = std::move(filter)] {
-            (void)http_ctrl.close_all_connections();
-            if (auto reply = http_ctrl.connections(); reply.ok)
-                push_connections(desktop::parse_connections_json(reply.body), filter);
-        });
-    });
-
-    auto push_profiles = [&] {
-        auto entries = profile_store.list();
-        auto active = profile_store.active_id();
-        std::vector<nexus_ui::ProfileItem> items;
-        for (auto const& e : entries) {
-            items.push_back({slint::SharedString(e.id), slint::SharedString(e.name), e.id == active});
+            secret_path = saved_secret->string();
         }
-        ui->set_profiles(std::make_shared<slint::VectorModel<nexus_ui::ProfileItem>>(std::move(items)));
-    };
-    ui->on_refresh_profiles([&] { push_profiles(); });
-    ui->on_create_profile([&](slint::SharedString name) {
-        if (auto saved = profile_store.save_profile(std::string_view(name), std::string_view(ui->get_kdl_text()))) {
-            push_profiles();
-            ui->set_status_summary(slint::SharedString("已保存配置档案: " + saved->id));
-        }
-    });
-    ui->on_activate_profile([&](slint::SharedString id) {
-        std::string target(id);
-        for (auto const& e : profile_store.list()) {
-            if (e.id == target) {
-                (void)profile_store.set_active(target);
-                auto text = read_file_text(e.kdl_path);
-                ui->set_kdl_text(slint::SharedString(text));
-                ui->set_active_profile(slint::SharedString(e.id));
-                push_profiles();
-                break;
-            }
-        }
-    });
-    ui->on_delete_profile([&](slint::SharedString id) {
-        if (profile_store.remove_profile(std::string_view(id))) push_profiles();
+        auto block = desktop::render_kdl_outbound(*parsed, secret_path);
+        auto merged_kdl = desktop::merge_raw_kdl_snippet(std::string_view(ui->get_kdl_text()), block);
+        ui->set_share_link_input(slint::SharedString(""));
+        ui->invoke_save_and_reload(slint::SharedString(std::move(merged_kdl)));
     });
 
-    ui->on_apply_log_level([&](slint::SharedString level) {
-        std::string lvl(level);
-        worker.post([&, weak_ui, lvl = std::move(lvl)] {
-            auto http_res = http_ctrl.set_log_level(lvl);
-            auto ok = http_res.ok || ipc.set_log_level(lvl).ok;
-            auto msg = ok ? std::string("日志级别已更新") : http_res.body;
-            slint::invoke_from_event_loop([weak_ui, msg = std::move(msg)] {
-                if (auto strong = weak_ui.lock()) strong->set_status_summary(slint::SharedString(msg));
-            });
-        });
-    });
-    ui->on_refresh_logs([&] {
-        std::string domain(ui->get_log_domain_filter()), search(ui->get_log_search());
-        worker.post([&, weak_ui, domain = std::move(domain), search = std::move(search)] {
-            auto reply = http_ctrl.logs("trace", domain, search, 0, 200);
-            if (!reply.ok) return;
-            auto snap = desktop::parse_logs_json(reply.body);
-            { std::lock_guard lock(logs_mu); cached_logs = snap.entries; }
-            slint::invoke_from_event_loop([weak_ui, entries = std::move(snap.entries)] {
-                auto strong = weak_ui.lock();
-                if (!strong) return;
-                std::vector<nexus_ui::LogLineItem> items;
-                items.reserve(entries.size());
-                for (auto const& e : entries)
-                    items.push_back({slint::SharedString(e.level), slint::SharedString(e.domain), slint::SharedString(e.message)});
-                strong->set_logs(std::make_shared<slint::VectorModel<nexus_ui::LogLineItem>>(std::move(items)));
-            });
-        });
-    });
-    ui->on_export_logs([&] {
-        worker.post([&, weak_ui] {
-            std::string body;
-            { std::lock_guard lock(logs_mu); body = desktop_ui_helpers::format_logs_snapshot(cached_logs); }
-            auto out_path = cfg_dir / "logs-snapshot.txt";
-            bool ok = !body.empty() && write_file_atomic(out_path, body);
-            auto msg = ok ? ("已导出日志快照: " + out_path.string()) : std::string("暂无可导出的日志快照");
-            slint::invoke_from_event_loop([weak_ui, msg = std::move(msg)] {
-                if (auto strong = weak_ui.lock()) strong->set_log_export_status(slint::SharedString(msg));
-            });
-        });
-    });
-    ui->on_clear_logs([&] {
-        { std::lock_guard lock(logs_mu); cached_logs.clear(); }
-        ui->set_logs(std::make_shared<slint::VectorModel<nexus_ui::LogLineItem>>());
-    });
-    ui->on_run_rule_explain([&](slint::SharedString inb, slint::SharedString net, slint::SharedString tgt, slint::SharedString extra) {
-        std::string i(inb), n(net), t(tgt), e(extra), kdl(ui->get_kdl_text());
-        worker.post([&, weak_ui, i = std::move(i), n = std::move(n), t = std::move(t), e = std::move(e), kdl = std::move(kdl)] {
-            auto draft = cfg_dir / ".explain-draft.kdl";
-            auto target_cfg = (!kdl.empty() && write_file_atomic(draft, kdl)) ? draft : config_path;
-            auto res = supervisor.explain_rule(target_cfg, i, n, t, e);
-            if (target_cfg == draft) { std::error_code ec; std::filesystem::remove(draft, ec); }
-            slint::invoke_from_event_loop([weak_ui, ok = res.ok, msg = std::move(res.message)] {
-                if (auto strong = weak_ui.lock()) {
-                    strong->set_explain_ok(ok);
-                    strong->set_explain_result(slint::SharedString(msg));
-                }
-            });
-        });
-    });
-    auto append_kdl_snippet = [&](std::string const& snippet, std::string_view label) {
-        std::string merged(ui->get_kdl_text());
-        if (!merged.empty() && merged.back() != '\n') merged.push_back('\n');
-        ui->set_kdl_text(slint::SharedString(merged + "\n" + snippet));
-        ui->set_diagnostic_ok(true);
-        ui->set_diagnostic_message(slint::SharedString(std::string("已追加规则片段到配置: ") + std::string(label)));
+    desktop_ui_helpers::DesktopCallbacksContext cb_ctx{
+        *ui, weak_ui, worker, supervisor, ipc, http_ctrl, profile_store,
+        cfg_dir, config_path, fallback_sock, cached_groups, pinned_members, member_models, cached_logs, logs_mu, sync_tray
     };
-    ui->on_append_rule_snippet([&](slint::SharedString k, slint::SharedString v, slint::SharedString out) {
-        append_kdl_snippet(desktop_ui_helpers::format_route_rule_kdl(k, v, out), "route");
-    });
-    ui->on_append_dns_rule_snippet([&](slint::SharedString k, slint::SharedString v, slint::SharedString srv) {
-        append_kdl_snippet(desktop_ui_helpers::format_dns_rule_kdl(k, v, srv), "dns");
-    });
-
-    ui->on_quit_requested([&] {
+    struct ShutdownGuard {
+        std::atomic<bool>& quit_once;
+        desktop::TrayController& tray;
+        desktop::AsyncWorker& worker;
+        ~ShutdownGuard() {
+            quit_once.store(true, std::memory_order_release);
+            tray.stop();
+            worker.stop();
+        }
+    } shutdown_guard{quit_once, tray, worker};
+    desktop_ui_helpers::bind_secondary_callbacks(cb_ctx);
+    ui->on_quit_requested([&] { if (!quit_once.exchange(true, std::memory_order_acq_rel)) slint::quit_event_loop(); });
+    ui->window().on_close_requested([&] {
+        if (ui->get_close_to_tray() && tray.native_backend_active() && !quit_once.load(std::memory_order_acquire)) {
+            window_visible = false;
+            sync_tray();
+            return slint::CloseRequestResponse::HideWindow;
+        }
+        window_visible = false;
         if (!quit_once.exchange(true, std::memory_order_acq_rel)) slint::quit_event_loop();
+        return slint::CloseRequestResponse::HideWindow;
     });
 
-    ui->run();
+    auto sync_memory_ui = [&] {
+        auto app_rss = desktop::current_process_memory_bytes();
+        auto core_rss = supervisor.running() ? supervisor.memory_bytes() : 0ULL;
+        auto total_rss = app_rss + core_rss;
+        ui->set_app_memory_text(slint::SharedString(app_rss > 0 ? desktop_ui_helpers::format_bytes_human(app_rss) : "--"));
+        ui->set_core_memory_text(slint::SharedString(core_rss > 0 ? desktop_ui_helpers::format_bytes_human(core_rss) : "--"));
+        ui->set_total_memory_text(slint::SharedString(total_rss > 0 ? desktop_ui_helpers::format_bytes_human(total_rss) : "--"));
+        ui->set_app_memory_ratio(total_rss > 0 ? static_cast<float>(static_cast<double>(app_rss) / static_cast<double>(total_rss)) : 1.0f);
+    };
+    desktop_ui_helpers::sync_profiles_to_ui(*ui, profile_store);
+    sync_memory_ui();
+
+    slint::Timer telemetry_timer(std::chrono::seconds(1), [&] {
+        sync_memory_ui();
+        if (core_toggling.load(std::memory_order_acquire)) return;
+        if (supervisor.running()) {
+            if (!core_started_at) core_started_at = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - *core_started_at);
+            ui->set_core_uptime(slint::SharedString(desktop_ui_helpers::format_uptime(elapsed)));
+            poll_telemetry(std::string_view(ui->get_active_node()).empty());
+            if (ui->get_active_tab() == 2 && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
+                !conns_in_flight.exchange(true, std::memory_order_acq_rel)) {
+                std::string filter(ui->get_connection_filter());
+                bool posted = worker.post([&, weak_ui, filter = std::move(filter)] {
+                    auto reply = http_ctrl.connections();
+                    conns_in_flight.store(false, std::memory_order_release);
+                    if (!reply.ok) return;
+                    auto items = desktop_ui_helpers::build_ui_connection_items(desktop::parse_connections_json(reply.body), filter);
+                    on_ui_thread(weak_ui, [items = std::move(items)](auto& s) mutable {
+                        if (s->get_connections_paused()) return;
+                        s->set_connections(std::make_shared<slint::VectorModel<nexus_ui::ActiveConnectionItem>>(std::move(items)));
+                    });
+                });
+                if (!posted) conns_in_flight.store(false, std::memory_order_release);
+            }
+        } else if (core_started_at || ui->get_core_running()) {
+            bool en = is_en_ui(*ui);
+            core_started_at.reset();
+            rate_tracker.reset();
+            ui->set_core_running(false);
+            ui->set_system_proxy_enabled(false);
+            worker.post([&sys_proxy] { (void)sys_proxy.restore(); });
+            auto err = supervisor.last_error();
+            auto msg = err.empty() ? tr(en, "核心意外退出", "Core exited unexpectedly") : (tr(en, "核心已退出: ", "Core exited: ") + err);
+            ui->set_diagnostic_ok(false);
+            ui->set_diagnostic_message(slint::SharedString(msg));
+            ui->set_status_summary(slint::SharedString(msg));
+            desktop_ui_helpers::push_toast(*ui, msg, "error");
+            desktop_ui_helpers::clear_telemetry_ui(*ui, en);
+            sync_tray();
+        }
+    });
+
+    if (!loaded_prefs.start_minimized || !tray.native_backend_active()) {
+        ui->window().show();
+        window_visible = true;
+    } else {
+        window_visible = false;
+    }
+    sync_tray();
+    slint::run_event_loop(slint::EventLoopMode::RunUntilQuit);
     quit_once.store(true, std::memory_order_release);
+    (void)desktop::save_ui_prefs(prefs_path, desktop_ui_helpers::capture_prefs_from_ui(*ui));
     tray.stop();
     worker.stop();
     (void)sys_proxy.restore();

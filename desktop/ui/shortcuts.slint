@@ -1,0 +1,214 @@
+import { I18n } from "i18n.slint";
+
+export struct KeyBinding {
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    key: string,
+}
+
+export global Shortcuts {
+    in-out property <KeyBinding> toggle-sidebar: { ctrl: true, alt: false, shift: false, key: "b" };
+    in-out property <KeyBinding> reload-config: { ctrl: true, alt: false, shift: false, key: "r" };
+    in-out property <KeyBinding> open-rules: { ctrl: true, alt: false, shift: true, key: "r" };
+    in-out property <KeyBinding> quit-app: { ctrl: true, alt: false, shift: false, key: "q" };
+    in-out property <KeyBinding> tab-overview: { ctrl: true, alt: false, shift: false, key: "1" };
+    in-out property <KeyBinding> tab-groups: { ctrl: true, alt: false, shift: false, key: "2" };
+    in-out property <KeyBinding> tab-connections: { ctrl: true, alt: false, shift: false, key: "3" };
+    in-out property <KeyBinding> tab-profiles: { ctrl: true, alt: false, shift: false, key: "4" };
+    in-out property <KeyBinding> tab-logs: { ctrl: true, alt: false, shift: false, key: "5" };
+    in-out property <KeyBinding> tab-settings: { ctrl: true, alt: false, shift: false, key: "6" };
+
+    in-out property <string> recording-action: "";
+    in-out property <string> status-hint: "";
+
+    pure public function normalize-key(raw: string) -> string {
+        if (raw == "A") { return "a"; }
+        if (raw == "B") { return "b"; }
+        if (raw == "C") { return "c"; }
+        if (raw == "D") { return "d"; }
+        if (raw == "E") { return "e"; }
+        if (raw == "F") { return "f"; }
+        if (raw == "G") { return "g"; }
+        if (raw == "H") { return "h"; }
+        if (raw == "I") { return "i"; }
+        if (raw == "J") { return "j"; }
+        if (raw == "K") { return "k"; }
+        if (raw == "L") { return "l"; }
+        if (raw == "M") { return "m"; }
+        if (raw == "N") { return "n"; }
+        if (raw == "O") { return "o"; }
+        if (raw == "P") { return "p"; }
+        if (raw == "Q") { return "q"; }
+        if (raw == "R") { return "r"; }
+        if (raw == "S") { return "s"; }
+        if (raw == "T") { return "t"; }
+        if (raw == "U") { return "u"; }
+        if (raw == "V") { return "v"; }
+        if (raw == "W") { return "w"; }
+        if (raw == "X") { return "x"; }
+        if (raw == "Y") { return "y"; }
+        if (raw == "Z") { return "z"; }
+        raw
+    }
+
+    pure public function display-key(raw: string) -> string {
+        if (raw == "a") { return "A"; }
+        if (raw == "b") { return "B"; }
+        if (raw == "c") { return "C"; }
+        if (raw == "d") { return "D"; }
+        if (raw == "e") { return "E"; }
+        if (raw == "f") { return "F"; }
+        if (raw == "g") { return "G"; }
+        if (raw == "h") { return "H"; }
+        if (raw == "i") { return "I"; }
+        if (raw == "j") { return "J"; }
+        if (raw == "k") { return "K"; }
+        if (raw == "l") { return "L"; }
+        if (raw == "m") { return "M"; }
+        if (raw == "n") { return "N"; }
+        if (raw == "o") { return "O"; }
+        if (raw == "p") { return "P"; }
+        if (raw == "q") { return "Q"; }
+        if (raw == "r") { return "R"; }
+        if (raw == "s") { return "S"; }
+        if (raw == "t") { return "T"; }
+        if (raw == "u") { return "U"; }
+        if (raw == "v") { return "V"; }
+        if (raw == "w") { return "W"; }
+        if (raw == "x") { return "X"; }
+        if (raw == "y") { return "Y"; }
+        if (raw == "z") { return "Z"; }
+        if (raw == " " || raw == Key.Space) { return "Space"; }
+        if (raw == Key.Return) { return "Enter"; }
+        if (raw == Key.Tab) { return "Tab"; }
+        if (raw == Key.UpArrow) { return "Up"; }
+        if (raw == Key.DownArrow) { return "Down"; }
+        if (raw == Key.LeftArrow) { return "Left"; }
+        if (raw == Key.RightArrow) { return "Right"; }
+        raw
+    }
+
+    pure public function matches(b: KeyBinding, ev: KeyEvent) -> bool {
+        b.key != ""
+            && (b.ctrl == (ev.modifiers.control || ev.modifiers.meta))
+            && b.alt == ev.modifiers.alt
+            && b.shift == ev.modifiers.shift
+            && b.key == normalize-key(ev.text)
+    }
+
+    pure public function equals-binding(a: KeyBinding, b: KeyBinding) -> bool {
+        a.key != "" && b.key != ""
+            && a.ctrl == b.ctrl
+            && a.alt == b.alt
+            && a.shift == b.shift
+            && a.key == b.key
+    }
+
+    pure public function format-full(b: KeyBinding) -> string {
+        if (b.key == "") { return I18n.t("未绑定", "Unbound"); }
+        (b.ctrl ? "Ctrl+" : "")
+            + (b.alt ? "Alt+" : "")
+            + (b.shift ? "Shift+" : "")
+            + display-key(b.key)
+    }
+
+    pure public function format-short(b: KeyBinding) -> string {
+        if (b.key == "") { return ""; }
+        (b.ctrl ? "^" : "")
+            + (b.alt ? "⌥" : "")
+            + (b.shift ? "⇧" : "")
+            + display-key(b.key)
+    }
+
+    public function start-recording(action: string) {
+        if (recording-action == action) {
+            recording-action = "";
+            status-hint = I18n.t("已取消快捷键录制", "Shortcut recording cancelled");
+        } else {
+            recording-action = action;
+            status-hint = I18n.t(
+                "请直接按下组合键（需含 Ctrl 或 Alt），Esc 取消，Backspace 清除",
+                "Press a Ctrl or Alt key combo (Esc cancels, Backspace clears)"
+            );
+        }
+    }
+
+    function set-action(action: string, b: KeyBinding) {
+        if (action == "toggle-sidebar") { toggle-sidebar = b; }
+        else if (action == "reload-config") { reload-config = b; }
+        else if (action == "open-rules") { open-rules = b; }
+        else if (action == "quit-app") { quit-app = b; }
+        else if (action == "tab-overview") { tab-overview = b; }
+        else if (action == "tab-groups") { tab-groups = b; }
+        else if (action == "tab-connections") { tab-connections = b; }
+        else if (action == "tab-profiles") { tab-profiles = b; }
+        else if (action == "tab-logs") { tab-logs = b; }
+        else if (action == "tab-settings") { tab-settings = b; }
+    }
+
+    public function clear-action(action: string) {
+        set-action(action, { ctrl: false, alt: false, shift: false, key: "" });
+        if (recording-action == action) {
+            recording-action = "";
+        }
+        status-hint = I18n.t("已清除该操作快捷键", "Shortcut cleared");
+    }
+
+    public function apply-recording(ev: KeyEvent) -> bool {
+        if (recording-action == "") { return false; }
+        if (ev.text == Key.Escape) {
+            recording-action = "";
+            status-hint = I18n.t("已取消录制", "Recording cancelled");
+            return true;
+        }
+        if (ev.text == Key.Backspace || ev.text == Key.Delete) {
+            clear-action(recording-action);
+            return true;
+        }
+        if (ev.text == "" || ev.text == Key.Control || ev.text == Key.Shift
+            || ev.text == Key.Alt || ev.text == Key.AltGr || ev.text == Key.Meta) {
+            return true;
+        }
+        if (!ev.modifiers.control && !ev.modifiers.alt && !ev.modifiers.meta) {
+            status-hint = I18n.t("为避免影响正常输入，请搭配 Ctrl 或 Alt 组合使用", "Use Ctrl or Alt modifier to avoid typing conflicts");
+            return true;
+        }
+        let nb: KeyBinding = {
+            ctrl: ev.modifiers.control || ev.modifiers.meta,
+            alt: ev.modifiers.alt,
+            shift: ev.modifiers.shift,
+            key: normalize-key(ev.text),
+        };
+        if (equals-binding(toggle-sidebar, nb)) { toggle-sidebar = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(reload-config, nb)) { reload-config = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(open-rules, nb)) { open-rules = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(quit-app, nb)) { quit-app = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-overview, nb)) { tab-overview = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-groups, nb)) { tab-groups = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-connections, nb)) { tab-connections = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-profiles, nb)) { tab-profiles = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-logs, nb)) { tab-logs = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-settings, nb)) { tab-settings = { ctrl: false, alt: false, shift: false, key: "" }; }
+
+        set-action(recording-action, nb);
+        recording-action = "";
+        status-hint = I18n.t("已绑定快捷键: ", "Shortcut bound: ") + format-full(nb);
+        true
+    }
+
+    public function reset-defaults() {
+        toggle-sidebar = { ctrl: true, alt: false, shift: false, key: "b" };
+        reload-config = { ctrl: true, alt: false, shift: false, key: "r" };
+        open-rules = { ctrl: true, alt: false, shift: true, key: "r" };
+        quit-app = { ctrl: true, alt: false, shift: false, key: "q" };
+        tab-overview = { ctrl: true, alt: false, shift: false, key: "1" };
+        tab-groups = { ctrl: true, alt: false, shift: false, key: "2" };
+        tab-connections = { ctrl: true, alt: false, shift: false, key: "3" };
+        tab-profiles = { ctrl: true, alt: false, shift: false, key: "4" };
+        tab-logs = { ctrl: true, alt: false, shift: false, key: "5" };
+        tab-settings = { ctrl: true, alt: false, shift: false, key: "6" };
+        recording-action = "";
+        status-hint = I18n.t("已恢复全部默认快捷键", "Restored all default shortcuts");
+    }
+}

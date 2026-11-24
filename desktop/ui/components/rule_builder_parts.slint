@@ -1,0 +1,227 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { NexusInput } from "glass_primitives.slint";
+import { NexusSelect } from "nexus_select.slint";
+
+export component RuleChipButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> warn-accent: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 28px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color:
+        root.active ? (root.warn-accent ? Theme.warn-fg : Theme.selected-border)
+        : ta.has-hover && root.enabled ? Theme.hairline-strong
+        : Theme.well-border;
+    background:
+        root.active ? (root.warn-accent ? Theme.warn-bg : Theme.selected-bg)
+        : (root.enabled && ta.has-hover) ? Theme.row-hover-bg
+        : Theme.well-bg;
+    opacity: root.enabled ? 1.0 : 0.45;
+    transform-scale: root.enabled && ta.pressed ? 0.96 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 9px;
+        padding-right: 9px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: root.active ? 700 : 500;
+            color:
+                root.active ? (root.warn-accent ? Theme.warn-fg : Theme.nav-active-fg)
+                : Theme.text-secondary;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component ConditionRow inherits HorizontalLayout {
+    in-out property <string> kind: "domain-suffix";
+    in-out property <string> value: "";
+    in-out property <bool> negate: false;
+    in property <bool> removable: true;
+    callback remove-requested();
+
+    vertical-stretch: 0;
+    spacing: Theme.space-sm;
+
+    NexusSelect {
+        width: 148px;
+        options: [
+            "domain-suffix",
+            "domain",
+            "domain-keyword",
+            "domain-wildcard",
+            "domain-regex",
+            "ip-cidr",
+            "source-ip-cidr",
+            "ip-is-private",
+            "port",
+            "port-range",
+            "network",
+            "protocol",
+            "inbound",
+            "process-name",
+            "process-path",
+            "source-mac",
+            "gateway-mac",
+            "source-interface",
+            "dscp",
+        ];
+        current-value <=> root.kind;
+    }
+
+    NexusInput {
+        min-width: 80px;
+        horizontal-stretch: 1;
+        mono: true;
+        text <=> root.value;
+        placeholder-text:
+            root.kind == "ip-cidr" || root.kind == "source-ip-cidr" ? I18n.t("如 10.0.0.0/8 或 2001:db8::/32", "e.g. 10.0.0.0/8 or 2001:db8::/32")
+            : root.kind == "port" ? I18n.t("如 443", "e.g. 443")
+            : root.kind == "port-range" ? I18n.t("如 8000:9000", "e.g. 8000:9000")
+            : root.kind == "network" ? I18n.t("tcp 或 udp", "tcp or udp")
+            : root.kind == "protocol" ? "tls / http / quic / dns / ssh / stun"
+            : root.kind == "ip-is-private" ? I18n.t("true 或 false", "true or false")
+            : root.kind == "inbound" ? I18n.t("如 local", "e.g. local")
+            : root.kind == "source-mac" || root.kind == "gateway-mac" ? I18n.t("如 aa:bb:cc:dd:ee:ff", "e.g. aa:bb:cc:dd:ee:ff")
+            : root.kind == "dscp" ? I18n.t("如 46 或 10,18", "e.g. 46 or 10,18")
+            : root.kind == "process-name" ? I18n.t("如 curl", "e.g. curl")
+            : I18n.t("输入匹配值 (如 example.com)", "Match value (e.g. example.com)");
+    }
+
+    RuleChipButton {
+        width: 44px;
+        height: 32px;
+        label: "NOT";
+        warn-accent: true;
+        active: root.negate;
+        clicked => { root.negate = !root.negate; }
+    }
+
+    RuleChipButton {
+        width: 30px;
+        height: 32px;
+        label: "×";
+        enabled: root.removable;
+        clicked => { root.remove-requested(); }
+    }
+}
+
+export component RuleActionBar inherits VerticalLayout {
+    in property <string> button-text: I18n.t("添加到配置", "Add to Config");
+    in property <string> status-text: "";
+    in property <bool> status-ok: true;
+    callback commit();
+    callback reset();
+
+    vertical-stretch: 0;
+    spacing: Theme.space-sm;
+
+    if root.status-text != "" : Rectangle {
+        vertical-stretch: 0;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: root.status-ok ? Theme.success-border : Theme.error-border;
+        background: root.status-ok ? Theme.success-bg : Theme.error-bg;
+        HorizontalLayout {
+            padding-left: Theme.space-md;
+            padding-right: Theme.space-md;
+            padding-top: 6px;
+            padding-bottom: 6px;
+            Text {
+                text: root.status-text;
+                font-size: 12px;
+                font-weight: 600;
+                color: root.status-ok ? Theme.success-fg : Theme.error-fg;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        vertical-stretch: 0;
+        spacing: Theme.space-sm;
+
+        Rectangle { horizontal-stretch: 1; }
+
+        Rectangle {
+            horizontal-stretch: 0;
+            height: 32px;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: reset-ta.has-hover ? Theme.hairline-strong : Theme.well-border;
+            background: reset-ta.pressed ? Theme.nav-active-bg : reset-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+            transform-scale: reset-ta.pressed ? 0.96 : 1.0;
+            animate background { duration: Motion.fast; }
+            animate border-color { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; }
+
+            reset-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.reset(); }
+            }
+
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 14px;
+                Text {
+                    text: I18n.t("重置", "Reset");
+                    font-size: 12px;
+                    font-weight: 600;
+                    color: Theme.text-secondary;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 0;
+            height: 32px;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: Theme.pill-active-top.brighter(0.20);
+            background: commit-ta.pressed
+                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
+            drop-shadow-blur: 10px;
+            drop-shadow-offset-y: 2px;
+            drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.40 : 0.24);
+            transform-scale: commit-ta.pressed ? 0.96 : 1.0;
+            animate transform-scale { duration: Motion.micro; }
+
+            commit-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.commit(); }
+            }
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                Text {
+                    text: root.button-text;
+                    font-size: 12px;
+                    font-weight: 700;
+                    color: Theme.pill-active-fg;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

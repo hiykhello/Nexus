@@ -1,0 +1,169 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+
+// Bento SpeedCard with full-bleed Gaussian + Catmull-Rom cubic Bezier wave
+export component SpeedWaveCard inherits Rectangle {
+    in property <string> title: "";
+    in property <string> arrow: "↓";
+    in property <string> value: "0.0";
+    in property <string> unit: "KB/s";
+    in property <string> peak-text: "0.0 KB/s";
+    in property <string> total-text: "0 B";
+    in property <string> wave-area: "";
+    in property <string> wave-line: "";
+    in property <color> wave-color: Theme.telemetry-down;
+    in property <bool> core-running: false;
+    in property <bool> compact: false;
+    in property <bool> show-peak: true;
+
+    property <length> wave-h: max(48px, (root.width + 6px) / 3);
+    property <length> wave-y: root.height - root.wave-h + (root.wave-h > 96px ? 22px : 3px);
+
+    horizontal-stretch: 1;
+    min-width: 0px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+    clip: true;
+
+    GlassSpeculum {}
+
+    // Subtle standby horizon curve when disconnected (alive & calibrated, never a dead flat box)
+    if !root.core-running : Path {
+        x: -3px;
+        y: root.wave-y;
+        width: parent.width + 6px;
+        height: root.wave-h;
+        viewbox-width: 240;
+        viewbox-height: 80;
+        fill: @linear-gradient(180deg,
+            root.wave-color.with-alpha(Theme.dark ? 0.10 : 0.08) 0%,
+            root.wave-color.with-alpha(0.01) 100%);
+        commands: "M 0 58 C 44 54 88 64 132 57 C 172 51 208 62 240 56 L 240 84 L 0 84 Z";
+    }
+
+    if !root.core-running : Path {
+        x: -3px;
+        y: root.wave-y;
+        width: parent.width + 6px;
+        height: root.wave-h;
+        viewbox-width: 240;
+        viewbox-height: 80;
+        stroke: root.wave-color.with-alpha(Theme.dark ? 0.28 : 0.22);
+        stroke-width: 1.5px;
+        commands: "M 0 58 C 44 54 88 64 132 57 C 172 51 208 62 240 56";
+    }
+
+    // 3-Layer Luminous Neon-Glass Vector Wave Stack matched to exact 3:1 viewbox ratio
+    // Layer 1: Soft ambient neon rim glow
+    if root.core-running && root.wave-line != "" : Path {
+        x: -3px;
+        y: root.wave-y;
+        width: parent.width + 6px;
+        height: root.wave-h;
+        viewbox-width: 240;
+        viewbox-height: 80;
+        stroke: root.wave-color.with-alpha(Theme.dark ? 0.30 : 0.16);
+        stroke-width: 6.5px;
+        commands: root.wave-line;
+    }
+
+    // Layer 2: Lush 3-stop translucent area fill
+    if root.core-running && root.wave-area != "" : Path {
+        x: -3px;
+        y: root.wave-y;
+        width: parent.width + 6px;
+        height: root.wave-h;
+        viewbox-width: 240;
+        viewbox-height: 80;
+        fill: @linear-gradient(180deg,
+            root.wave-color.with-alpha(Theme.dark ? 0.44 : 0.30) 0%,
+            root.wave-color.with-alpha(Theme.dark ? 0.16 : 0.10) 58%,
+            root.wave-color.with-alpha(Theme.dark ? 0.02 : 0.01) 100%);
+        commands: root.wave-area;
+    }
+
+    // Layer 3: Crisp bright top curve stroke
+    if root.core-running && root.wave-line != "" : Path {
+        x: -3px;
+        y: root.wave-y;
+        width: parent.width + 6px;
+        height: root.wave-h;
+        viewbox-width: 240;
+        viewbox-height: 80;
+        stroke: Theme.dark ? root.wave-color.brighter(0.18) : root.wave-color;
+        stroke-width: 2.3px;
+        commands: root.wave-line;
+    }
+
+    VerticalLayout {
+        padding-left: root.compact ? 12px : 16px;
+        padding-right: root.compact ? 12px : 16px;
+        padding-top: root.compact ? 12px : 14px;
+        padding-bottom: root.compact ? 12px : 14px;
+        spacing: root.compact ? 3px : 4px;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: 5px;
+            Text {
+                horizontal-stretch: 0;
+                text: root.arrow;
+                font-size: 13px; font-weight: 800; color: root.wave-color;
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: root.show-peak ? 0 : 1;
+                text: root.title;
+                font-size: 13px; font-weight: 700; color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+            if root.show-peak : Text {
+                horizontal-stretch: 1; min-width: 0px;
+                text: root.core-running ? I18n.t("峰值 ", "Peak ") + root.peak-text : I18n.t("待命中", "Standby");
+                font-size: 10px; font-weight: 600; font-family: Theme.mono-font;
+                color: Theme.text-muted;
+                horizontal-alignment: right; vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 5px;
+            alignment: start;
+            Text {
+                text: root.core-running ? root.value : "0.0";
+                font-size: root.compact ? 24px : 32px;
+                font-weight: 800;
+                letter-spacing: -0.6px;
+                color: root.core-running ? Theme.text-primary : Theme.text-muted;
+                vertical-alignment: bottom;
+            }
+            VerticalLayout {
+                alignment: end;
+                padding-bottom: root.compact ? 3px : 4px;
+                Text {
+                    text: root.core-running ? root.unit : "KB/s";
+                    font-size: root.compact ? 11px : 13px;
+                    font-weight: 600;
+                    color: Theme.text-secondary;
+                }
+            }
+        }
+
+        Text {
+            text: I18n.t("总计 ", "Total ") + (root.core-running ? root.total-text : "0 B");
+            font-size: 11px;
+            font-weight: 600;
+            font-family: Theme.mono-font;
+            color: Theme.text-muted;
+            overflow: elide;
+        }
+    }
+}

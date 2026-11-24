@@ -1,0 +1,234 @@
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum, SlidingSegmentBar } from "glass_primitives.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+component TraySwitchRow inherits HorizontalLayout {
+    in property <string> title;
+    in-out property <bool> checked: false;
+    callback toggled();
+
+    vertical-stretch: 0;
+    height: 30px;
+    spacing: Theme.space-md;
+
+    Text {
+        horizontal-stretch: 1;
+        min-width: 0px;
+        text: root.title;
+        font-size: 13px;
+        font-weight: 600;
+        color: Theme.text-primary;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        NexusSwitch {
+            checked <=> root.checked;
+            toggled => { root.toggled(); }
+        }
+    }
+}
+
+component TrayWindowCard inherits Rectangle {
+    in-out property <bool> close-to-tray: true;
+    in-out property <bool> start-minimized: false;
+    in property <bool> tray-native-active: true;
+    callback prefs-changed();
+
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        alignment: start;
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: I18n.t("窗口与驻留", "Window & Resident");
+                font-size: 14px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            Rectangle {
+                horizontal-stretch: 0;
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.tray-native-active ? Theme.success-border : Theme.well-border;
+                background: root.tray-native-active ? Theme.success-bg : Theme.well-bg;
+
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 9px; spacing: 5px;
+                    Rectangle {
+                        width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+                        background: root.tray-native-active ? Theme.success-fg : Theme.text-muted;
+                    }
+                    Text {
+                        text: root.tray-native-active ? I18n.t("系统托盘就绪", "Tray Ready") : I18n.t("托盘未就绪", "Tray Inactive");
+                        font-size: 10px; font-weight: 700;
+                        color: root.tray-native-active ? Theme.success-fg : Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        TraySwitchRow {
+            title: I18n.t("关闭窗口时最小化到托盘", "Minimize to tray on close");
+            checked <=> root.close-to-tray;
+            toggled => { root.prefs-changed(); }
+        }
+
+        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        TraySwitchRow {
+            title: I18n.t("启动时静默驻留托盘", "Start minimized in tray");
+            checked <=> root.start-minimized;
+            toggled => { root.prefs-changed(); }
+        }
+    }
+}
+
+component TrayMenuCard inherits Rectangle {
+    in-out property <bool> tray-show-nodes: true;
+    in-out property <bool> tray-show-speed: true;
+    in-out property <string> tray-click-action: "toggle";
+    callback prefs-changed();
+
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        alignment: start;
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        Text {
+            text: I18n.t("菜单与交互", "Menu & Interaction");
+            font-size: 14px;
+            font-weight: 700;
+            color: Theme.text-primary;
+        }
+
+        TraySwitchRow {
+            title: I18n.t("托盘菜单显示快捷节点", "Show quick nodes in tray menu");
+            checked <=> root.tray-show-nodes;
+            toggled => { root.prefs-changed(); }
+        }
+
+        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        TraySwitchRow {
+            title: I18n.t("托盘提示显示实时网速", "Show live speed in tray tooltip");
+            checked <=> root.tray-show-speed;
+            toggled => { root.prefs-changed(); }
+        }
+
+        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        VerticalLayout {
+            spacing: 8px;
+            Text {
+                text: I18n.t("左键点击托盘动作", "Left-click tray action");
+                font-size: 13px;
+                font-weight: 600;
+                color: Theme.text-primary;
+            }
+            SlidingSegmentBar {
+                bar-height: 34px;
+                options: [I18n.t("显示 / 隐藏", "Toggle"), I18n.t("呼出窗口", "Show"), I18n.t("开关代理", "Proxy")];
+                current-index: root.tray-click-action == "show" ? 1 : root.tray-click-action == "toggle_proxy" ? 2 : 0;
+                selected(idx) => {
+                    root.tray-click-action = idx == 1 ? "show" : idx == 2 ? "toggle_proxy" : "toggle";
+                    root.prefs-changed();
+                }
+            }
+        }
+    }
+}
+
+export component TraySettingsCard inherits VerticalLayout {
+    in property <length> window-width: 1040px;
+    in-out property <bool> close-to-tray: true;
+    in-out property <bool> start-minimized: false;
+    in-out property <bool> tray-show-nodes: true;
+    in-out property <bool> tray-show-speed: true;
+    in-out property <string> tray-click-action: "toggle"; // "toggle" | "show" | "toggle_proxy"
+    in property <bool> tray-native-active: true;
+
+    callback prefs-changed();
+
+    property <bool> two-col: root.window-width >= 900px;
+
+    vertical-stretch: 0;
+    spacing: Theme.space-md;
+
+    if root.two-col : HorizontalLayout {
+        spacing: Theme.space-md;
+
+        TrayWindowCard {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            min-width: 0px;
+            close-to-tray <=> root.close-to-tray;
+            start-minimized <=> root.start-minimized;
+            tray-native-active: root.tray-native-active;
+            prefs-changed => { root.prefs-changed(); }
+        }
+
+        TrayMenuCard {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            min-width: 0px;
+            tray-show-nodes <=> root.tray-show-nodes;
+            tray-show-speed <=> root.tray-show-speed;
+            tray-click-action <=> root.tray-click-action;
+            prefs-changed => { root.prefs-changed(); }
+        }
+    }
+
+    if !root.two-col : VerticalLayout {
+        spacing: Theme.space-md;
+
+        TrayWindowCard {
+            close-to-tray <=> root.close-to-tray;
+            start-minimized <=> root.start-minimized;
+            tray-native-active: root.tray-native-active;
+            prefs-changed => { root.prefs-changed(); }
+        }
+
+        TrayMenuCard {
+            tray-show-nodes <=> root.tray-show-nodes;
+            tray-show-speed <=> root.tray-show-speed;
+            tray-click-action <=> root.tray-click-action;
+            prefs-changed => { root.prefs-changed(); }
+        }
+    }
+}

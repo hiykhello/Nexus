@@ -1,0 +1,49 @@
+export global TooltipState {
+    in-out property <bool> visible: false;
+    in-out property <string> text: "";
+    in-out property <length> anchor-x: 0px;
+    in-out property <length> anchor-y: 0px;
+    in-out property <length> anchor-w: 0px;
+    in-out property <length> anchor-h: 0px;
+
+    public function show(t: string, ax: length, ay: length, aw: length, ah: length) {
+        text = t;
+        anchor-x = ax;
+        anchor-y = ay;
+        anchor-w = aw;
+        anchor-h = ah;
+        visible = t != "";
+    }
+
+    public function hide() {
+        visible = false;
+    }
+}
+
+export global ToastState {
+    in-out property <bool> open: false;
+    in-out property <string> message: "";
+    in-out property <string> tone: "info";
+    in-out property <int> seq: 0;
+    in-out property <bool> has-endpoint-formatter: false;
+
+    pure callback format-endpoint-cb(string, string) -> string;
+
+    public pure function format-endpoint(host: string, port: string) -> string {
+        has-endpoint-formatter
+            ? format-endpoint-cb(host, port)
+            : (((host == "" || host == "0.0.0.0" || host == "::" || host == "[::]") ? "127.0.0.1"
+                : host == "::1" ? "[::1]" : host) + ":" + port)
+    }
+
+    public function push(msg: string, t: string) {
+        message = msg;
+        tone = t;
+        open = msg != "";
+        seq += 1;
+    }
+
+    public function dismiss() {
+        open = false;
+    }
+}

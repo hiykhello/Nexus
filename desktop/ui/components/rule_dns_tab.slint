@@ -1,0 +1,227 @@
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+import { CollapsibleSection, NexusSelect } from "nexus_select.slint";
+import { RuleActionBar, RuleChipButton } from "rule_builder_parts.slint";
+
+component DnsMatchSection inherits VerticalLayout {
+    in-out property <string> match-kind: "domain-suffix";
+    in-out property <string> match-value: "internal.corp";
+    in-out property <bool> invert: false;
+    in-out property <string> query-type: "*";
+    in-out property <string> inbound-name: "";
+    in-out property <bool> match-response: false;
+
+    alignment: start;
+    spacing: Theme.space-sm;
+
+    Text {
+        text: I18n.t("匹配条件", "Match Predicates");
+        font-size: 13px; font-weight: 700; color: Theme.text-primary;
+    }
+
+    HorizontalLayout {
+        spacing: Theme.space-sm;
+        NexusSelect {
+            width: 144px;
+            options: ["domain-suffix", "domain", "domain-keyword", "domain-wildcard", "domain-regex", "rule-set", "inbound", "source-ip-cidr"];
+            current-value <=> root.match-kind;
+        }
+        NexusInput {
+            min-width: 80px;
+            horizontal-stretch: 1;
+            mono: true;
+            text <=> root.match-value;
+            placeholder-text: root.match-kind == "rule-set"
+                ? I18n.t("规则集名称", "Rule-set name")
+                : I18n.t("域名 / 后缀 / CIDR", "Domain / Suffix / CIDR");
+        }
+        RuleChipButton {
+            width: 44px; height: 32px; label: "NOT"; warn-accent: true; active: root.invert;
+            clicked => { root.invert = !root.invert; }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: Theme.space-sm;
+        Text { text: I18n.t("查询类型", "QTYPE"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusSelect { width: 92px; options: ["*", "A", "AAAA", "HTTPS", "SVCB", "TXT", "MX", "SRV", "CNAME"]; current-value <=> root.query-type; }
+        Text { text: I18n.t("入站", "Inbound"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.inbound-name; placeholder-text: I18n.t("可选", "Optional"); }
+        NexusSwitch { text: I18n.t("匹配响应", "Response"); checked <=> root.match-response; }
+    }
+}
+
+component DnsActionSection inherits VerticalLayout {
+    in-out property <string> action-kind: "route";
+    in-out property <string> target-server: "local";
+    in-out property <string> evaluate-tag: "";
+    in-out property <string> reject-method: "reply";
+    in-out property <string> predefined-rcode: "NXDOMAIN";
+    in-out property <bool> disable-cache: false;
+    in-out property <string> rewrite-ttl: "";
+    in-out property <string> client-subnet: "";
+    in-out property <bool> advanced-open: false;
+
+    alignment: start;
+    spacing: Theme.space-sm;
+
+    Text {
+        text: I18n.t("动作与策略", "Action & Policy");
+        font-size: 13px; font-weight: 700; color: Theme.text-primary;
+    }
+
+    FlexboxLayout {
+        spacing: 6px;
+        RuleChipButton { label: "route"; active: root.action-kind == "route"; clicked => { root.action-kind = "route"; } }
+        RuleChipButton { label: "reject"; warn-accent: true; active: root.action-kind == "reject"; clicked => { root.action-kind = "reject"; } }
+        RuleChipButton { label: "options"; active: root.action-kind == "route-options"; clicked => { root.action-kind = "route-options"; } }
+        RuleChipButton { label: "evaluate"; active: root.action-kind == "evaluate"; clicked => { root.action-kind = "evaluate"; } }
+        RuleChipButton { label: "predefined"; active: root.action-kind == "predefined"; clicked => { root.action-kind = "predefined"; } }
+    }
+
+    if root.action-kind == "route" || root.action-kind == "evaluate" : HorizontalLayout {
+        spacing: Theme.space-sm;
+        Text { text: I18n.t("DNS 服务器", "Server"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.target-server; placeholder-text: "local / doh-cf"; }
+        if root.action-kind == "evaluate" : Text { text: I18n.t("评估标签", "Eval Tag"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        if root.action-kind == "evaluate" : NexusInput { width: 112px; mono: true; text <=> root.evaluate-tag; placeholder-text: I18n.t("可选", "Opt"); }
+    }
+
+    if root.action-kind == "reject" : HorizontalLayout {
+        spacing: Theme.space-sm;
+        Text { text: I18n.t("拒绝方式", "Reject"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        RuleChipButton { label: "reply"; warn-accent: true; active: root.reject-method == "reply"; clicked => { root.reject-method = "reply"; } }
+        RuleChipButton { label: "drop"; warn-accent: true; active: root.reject-method == "drop"; clicked => { root.reject-method = "drop"; } }
+        Rectangle { horizontal-stretch: 1; }
+    }
+
+    if root.action-kind == "predefined" : HorizontalLayout {
+        spacing: Theme.space-sm;
+        Text { text: I18n.t("预设响应码", "RCODE"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusSelect { width: 132px; options: ["NOERROR", "NXDOMAIN", "REFUSED", "SERVFAIL"]; current-value <=> root.predefined-rcode; }
+        Rectangle { horizontal-stretch: 1; }
+    }
+
+    if root.action-kind == "route" || root.action-kind == "route-options" || root.action-kind == "evaluate" : CollapsibleSection {
+        title: I18n.t("缓存 / TTL / ECS 选项", "Cache / TTL / ECS");
+        expanded <=> root.advanced-open;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            NexusSwitch { text: I18n.t("禁用缓存", "No Cache"); checked <=> root.disable-cache; }
+            Text { text: "TTL(s)"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 64px; mono: true; text <=> root.rewrite-ttl; placeholder-text: I18n.t("可选", "Opt"); }
+            Text { text: "ECS"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 84px; horizontal-stretch: 1; mono: true; text <=> root.client-subnet; placeholder-text: "1.2.3.0/24"; }
+        }
+    }
+}
+
+export component RuleDnsTab inherits VerticalLayout {
+    in-out property <string> match-kind: "domain-suffix";
+    in-out property <string> match-value: "internal.corp";
+    in-out property <bool> invert: false;
+    in-out property <string> query-type: "*";
+    in-out property <string> inbound-name: "";
+    in-out property <bool> match-response: false;
+    in-out property <string> action-kind: "route";
+    in-out property <string> target-server: "local";
+    in-out property <string> evaluate-tag: "";
+    in-out property <string> reject-method: "reply";
+    in-out property <string> predefined-rcode: "NXDOMAIN";
+    in-out property <bool> disable-cache: false;
+    in-out property <string> rewrite-ttl: "";
+    in-out property <string> client-subnet: "";
+    in-out property <bool> advanced-open: false;
+    in property <string> status-text: "";
+    in property <bool> status-ok: true;
+
+    callback append-dns-rule-kdl(string);
+
+    pure function build-rule-line() -> string {
+        let val = root.match-value == "" ? "internal.corp" : root.match-value;
+        let m = root.match-kind == "rule-set" ? "rule-set=\"" + val + "\""
+            : root.match-kind == "domain" || root.match-kind == "domain-suffix"
+                || root.match-kind == "domain-keyword" || root.match-kind == "domain-wildcard"
+                || root.match-kind == "domain-regex" || root.match-kind == "source-ip-cidr"
+                || root.match-kind == "inbound"
+                ? root.match-kind + "=\"" + val + "\""
+                : "domain-suffix=\"" + val + "\"";
+        let inv-p = root.invert ? " invert=#true" : "";
+        let qt-p = root.query-type != "*" ? " query-type=\"" + root.query-type + "\"" : "";
+        let inb-p = (root.match-kind != "inbound" && root.inbound-name != "") ? " inbound=\"" + root.inbound-name + "\"" : "";
+        let resp-p = root.match-response ? " match-response=#true" : "";
+        let srv = root.target-server == "" ? "local" : root.target-server;
+        let act-p = " action=\"" + root.action-kind + "\""
+            + ((root.action-kind == "route" || root.action-kind == "evaluate") ? " server=\"" + srv + "\"" : "")
+            + (root.action-kind == "evaluate" && root.evaluate-tag != "" ? " evaluate-tag=\"" + root.evaluate-tag + "\"" : "")
+            + (root.action-kind == "reject" ? " reject-method=\"" + root.reject-method + "\"" : "")
+            + (root.action-kind == "predefined" ? " predefined-rcode=\"" + root.predefined-rcode + "\"" : "");
+        let can-policy = root.action-kind == "route" || root.action-kind == "route-options" || root.action-kind == "evaluate";
+        let cache-p = (can-policy && root.disable-cache) ? " disable-cache=#true" : "";
+        let ttl-p = (can-policy && root.rewrite-ttl != "") ? " rewrite-ttl=" + root.rewrite-ttl : "";
+        let ecs-p = (can-policy && root.client-subnet != "") ? " client-subnet=\"" + root.client-subnet + "\"" : "";
+        return "rule " + m + inv-p + qt-p + inb-p + resp-p + act-p + cache-p + ttl-p + ecs-p;
+    }
+
+    function reset-form() {
+        root.match-kind = "domain-suffix";
+        root.match-value = "internal.corp";
+        root.invert = false;
+        root.query-type = "*";
+        root.inbound-name = "";
+        root.match-response = false;
+        root.action-kind = "route";
+        root.target-server = "local";
+        root.evaluate-tag = "";
+        root.reject-method = "reply";
+        root.predefined-rcode = "NXDOMAIN";
+        root.disable-cache = false;
+        root.rewrite-ttl = "";
+        root.client-subnet = "";
+    }
+
+    vertical-stretch: 0;
+    alignment: start;
+
+    Rectangle {
+        border-radius: 16px;
+        border-width: 1px;
+        border-color: Theme.card-border;
+        background: Theme.card-surface;
+
+        GlassSpeculum {}
+
+        VerticalLayout {
+            alignment: start;
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            DnsMatchSection {
+                match-kind <=> root.match-kind; match-value <=> root.match-value; invert <=> root.invert;
+                query-type <=> root.query-type; inbound-name <=> root.inbound-name; match-response <=> root.match-response;
+            }
+
+            Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+            DnsActionSection {
+                action-kind <=> root.action-kind; target-server <=> root.target-server; evaluate-tag <=> root.evaluate-tag;
+                reject-method <=> root.reject-method; predefined-rcode <=> root.predefined-rcode;
+                disable-cache <=> root.disable-cache; rewrite-ttl <=> root.rewrite-ttl; client-subnet <=> root.client-subnet;
+                advanced-open <=> root.advanced-open;
+            }
+
+            Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+            RuleActionBar {
+                button-text: I18n.t("添加到配置", "Add to Config");
+                status-text: root.status-text;
+                status-ok: root.status-ok;
+                commit => { root.append-dns-rule-kdl(root.build-rule-line()); }
+                reset => { root.reset-form(); }
+            }
+        }
+    }
+}

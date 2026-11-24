@@ -81,6 +81,40 @@ export namespace desktop {
     // Parses JSON emitted by GET /v1/logs.
     [[nodiscard]] auto parse_logs_json(std::string_view json) -> LogsSnapshot;
 
+    [[nodiscard]] inline auto url_encode(std::string_view input) -> std::string {
+        std::string out;
+        out.reserve(input.size());
+        for (unsigned char c : input) {
+            if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                out.push_back(static_cast<char>(c));
+            } else {
+                out += std::format("%{:02X}", c);
+            }
+        }
+        return out;
+    }
+
+    [[nodiscard]] inline auto json_escape(std::string_view input) -> std::string {
+        std::string out;
+        out.reserve(input.size());
+        for (unsigned char c : input) {
+            switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) out += std::format("\\u{:04x}", c);
+                else out.push_back(static_cast<char>(c));
+                break;
+            }
+        }
+        return out;
+    }
+
     // Minimal zero-dependency HTTP/1.1 client for Nexus /v1/* and /metrics endpoints.
     class HttpControlClient {
         std::string host_;
@@ -94,6 +128,10 @@ export namespace desktop {
 
         [[nodiscard]] auto host(this HttpControlClient const& self) noexcept -> std::string_view { return self.host_; }
         [[nodiscard]] auto port(this HttpControlClient const& self) noexcept -> std::uint16_t { return self.port_; }
+        auto set_endpoint(this HttpControlClient& self, std::string host, std::uint16_t port) -> void {
+            self.host_ = std::move(host);
+            self.port_ = port;
+        }
         auto set_bearer_token(this HttpControlClient& self, std::string token) -> void {
             self.bearer_token_ = std::move(token);
         }
@@ -115,22 +153,22 @@ export namespace desktop {
         [[nodiscard]] auto select_group(this HttpControlClient const& self,
                                         std::string_view tag,
                                         std::string_view member) -> HttpReply {
-            return self.request("PUT", std::format("/v1/groups/{}", tag),
-                                std::format("{{\"member\":\"{}\"}}", member));
+            return self.request("PUT", std::format("/v1/groups/{}", url_encode(tag)),
+                                std::format("{{\"member\":\"{}\"}}", json_escape(member)));
         }
         [[nodiscard]] auto reset_group_auto(this HttpControlClient const& self,
                                             std::string_view tag) -> HttpReply {
-            return self.request("PUT", std::format("/v1/groups/{}", tag), "{\"member\":\"--auto\"}");
+            return self.request("PUT", std::format("/v1/groups/{}", url_encode(tag)), "{\"member\":\"--auto\"}");
         }
         [[nodiscard]] auto probe_group(this HttpControlClient const& self, std::string_view tag) -> HttpReply {
-            return self.request("POST", std::format("/v1/groups/{}/probe", tag), "{}");
+            return self.request("POST", std::format("/v1/groups/{}/probe", url_encode(tag)), "{}");
         }
         [[nodiscard]] auto reload(this HttpControlClient const& self) -> HttpReply {
             return self.request("POST", "/v1/reload");
         }
         [[nodiscard]] auto set_log_level(this HttpControlClient const& self,
                                          std::string_view level) -> HttpReply {
-            return self.request("POST", "/v1/log-level", std::format("{{\"level\":\"{}\"}}", level));
+            return self.request("POST", "/v1/log-level", std::format("{{\"level\":\"{}\"}}", json_escape(level)));
         }
         [[nodiscard]] auto connections(this HttpControlClient const& self) -> HttpReply {
             return self.request("GET", "/v1/connections");
@@ -146,15 +184,9 @@ export namespace desktop {
                                 std::size_t limit = 128) -> HttpReply {
             std::string path = std::format("/v1/logs?limit={}", limit);
             if (since > 0) path += std::format("&since={}", since);
-            if (!level.empty() && level != "all") path += std::format("&level={}", level);
-            if (!domain.empty() && domain != "all") path += std::format("&domain={}", domain);
-            if (!search.empty()) {
-                path += "&search=";
-                for (unsigned char c : search) {
-                    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') path.push_back(static_cast<char>(c));
-                    else path += std::format("%{:02X}", c);
-                }
-            }
+            if (!level.empty() && level != "all") path += std::format("&level={}", url_encode(level));
+            if (!domain.empty() && domain != "all") path += std::format("&domain={}", url_encode(domain));
+            if (!search.empty()) path += std::format("&search={}", url_encode(search));
             return self.request("GET", path);
         }
         [[nodiscard]] auto close_all_connections(this HttpControlClient const& self) -> HttpReply {
@@ -180,10 +212,21 @@ export namespace desktop {
         [[nodiscard]] auto clear_cache(this HttpControlClient const& self,
                                        std::string_view target = "all") -> HttpReply {
             return self.request("POST", "/v1/state/clear-cache",
-                                std::format("{{\"target\":\"{}\"}}", target));
+                                std::format("{{\"target\":\"{}\"}}", json_escape(target)));
         }
         [[nodiscard]] auto metrics(this HttpControlClient const& self) -> HttpReply {
             return self.request("GET", "/metrics");
+        }
+        [[nodiscard]] auto mode(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/v1/mode");
+        }
+        [[nodiscard]] auto set_mode(this HttpControlClient const& self,
+                                    std::string_view m,
+                                    std::string_view outbound = {}) -> HttpReply {
+            std::string payload = outbound.empty()
+                ? std::format("{{\"mode\":\"{}\"}}", json_escape(m))
+                : std::format("{{\"mode\":\"{}\",\"outbound\":\"{}\"}}", json_escape(m), json_escape(outbound));
+            return self.request("PUT", "/v1/mode", payload);
         }
     };
 }

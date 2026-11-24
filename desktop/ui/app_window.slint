@@ -1,59 +1,160 @@
-import { AboutSlint, Button, Palette, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Palette, ScrollView } from "std-widgets.slint";
 import { OutboundGroupItem, OutboundMemberItem, LogLineItem, ActiveConnectionItem, ProfileItem } from "types.slint";
+import { ToastState, TooltipState } from "feedback.slint";
+import { I18n } from "i18n.slint";
+import { LayoutMetrics } from "layout_metrics.slint";
+import { Motion } from "motion.slint";
+import { Shortcuts } from "shortcuts.slint";
 import { Theme, ThemePreference } from "theme.slint";
+import { NexusVScrollBar } from "components/glass_primitives.slint";
+import { OverlayFeedbackLayer } from "components/overlay_layer.slint";
+import { Sidebar } from "components/sidebar.slint";
 import { StatusCard } from "components/status_card.slint";
 import { GroupsPanel } from "components/groups_panel.slint";
 import { ConnectionsPanel } from "components/connections_panel.slint";
 import { ProfilesPanel } from "components/profiles_panel.slint";
-import { ConfigPanel } from "components/config_panel.slint";
 import { LogsPanel } from "components/logs_panel.slint";
-import { RuleExplainPanel } from "components/rule_explain_panel.slint";
-import { RuleDnsEditorPanel } from "components/rule_dns_editor.slint";
+import { RuleModalDialog } from "components/rule_dns_editor.slint";
+import { OutboundModalDialog } from "components/outbound_modal_dialog.slint";
+import { AboutPanel } from "components/about_panel.slint";
+
+export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState }
 
 export component AppWindow inherits Window {
     title: "Nexus";
+    background: transparent;
     min-width: 780px;
     min-height: 520px;
-    preferred-width: 960px;
-    preferred-height: 640px;
+    preferred-width: 1040px;
+    preferred-height: 680px;
 
     in-out property <int> active-tab: 0;
+    in-out property <int> settings-subtab: 0;
+    in-out property <bool> rule-modal-open: false;
+    in-out property <int> rule-modal-tab: 0;
+    in-out property <bool> outbound-modal-open: false;
+    in-out property <length> sidebar-width: 196px;
+    in-out property <bool> sidebar-collapsed: false;
     in-out property <bool> core-running: false;
+    in-out property <bool> core-toggling: false;
+    in-out property <string> core-uptime: "";
+    in-out property <string> outbound-mode: "rule";
     in-out property <bool> system-proxy-supported: true;
     in-out property <bool> system-proxy-enabled: false;
+    in-out property <bool> mixed-proxy-enabled: true;
+    in-out property <string> mixed-proxy-host: "127.0.0.1";
+    in-out property <string> mixed-proxy-port: "7890";
+    in-out property <bool> socks-proxy-enabled: true;
+    in-out property <string> socks-proxy-host: "127.0.0.1";
+    in-out property <string> socks-proxy-port: "1080";
+    in-out property <bool> http-proxy-enabled: false;
+    in-out property <string> http-proxy-host: "127.0.0.1";
+    in-out property <string> http-proxy-port: "8080";
     in-out property <bool> tun-enabled: false;
-    in-out property <string> active-profile: "config.kdl";
-    in-out property <string> status-summary: "未启动";
+    in-out property <string> active-profile: "";
+    in-out property <string> status-summary: I18n.t("内核待命中", "Core standby");
     in-out property <string> control-endpoint: "";
-    in-out property <string> metrics-summary: "代次: 0 · 活跃会话: 0 · 上行: 0 KiB · 下行: 0 KiB";
-    in-out property <string> rate-summary: "实时速率: ↑ 0.0 KiB/s · ↓ 0.0 KiB/s";
+    in-out property <string> metrics-summary: I18n.t("活跃会话 0 · ↑ 0 B · ↓ 0 B", "0 sessions · ↑ 0 B · ↓ 0 B");
+    in-out property <string> rate-summary: "↑ 0.0 KB/s · ↓ 0.0 KB/s";
+    in-out property <string> active-node: "";
+    in-out property <int> active-node-latency-ms: -1;
+    in-out property <int> active-sessions: 0;
+    in-out property <string> upload-rate: "0.0 KB/s";
+    in-out property <string> download-rate: "0.0 KB/s";
+    in-out property <string> upload-total: "0 B";
+    in-out property <string> download-total: "0 B";
+    in-out property <float> total-down-ratio: 0.85;
+    in-out property <string> rate-peak: "0.0 KB/s";
     in-out property <[float]> rate-bars: [];
+    in-out property <[float]> upload-bars: [];
+    in-out property <[string]> rate-down-labels: [];
+    in-out property <[string]> rate-up-labels: [];
     in-out property <[OutboundGroupItem]> groups: [];
     in-out property <[OutboundMemberItem]> members: [];
+    in-out property <[OutboundMemberItem]> quick-nodes: [];
     in-out property <string> selected-group: "";
+    in-out property <string> active-group-mode: "";
+    in-out property <bool> active-group-auto: false;
+    in-out property <int> active-group-healthy: 0;
+    in-out property <int> active-group-total: 0;
+    in-out property <string> member-filter: "";
+    in-out property <string> member-sort: "default";
+    in-out property <bool> groups-probing: false;
     in-out property <string> kdl-text: "";
+    in-out property <int> kdl-line-count: 0;
+    in-out property <string> share-link-input: "";
     in-out property <string> config-path: "";
     in-out property <string> diagnostic-message: "";
     in-out property <bool> diagnostic-ok: true;
+    in-out property <string> hero-state-override: "";
     in-out property <[LogLineItem]> logs: [];
     in-out property <[ActiveConnectionItem]> connections: [];
     in-out property <string> selected-connection-detail: "";
     in-out property <string> connection-filter: "";
+    in-out property <bool> connections-paused: false;
     in-out property <[ProfileItem]> profiles: [];
     in-out property <string> log-level: "info";
     in-out property <string> log-domain-filter: "all";
     in-out property <string> log-search: "";
     in-out property <string> log-export-status: "";
+    in-out property <bool> log-export-ok: true;
     in-out property <string> explain-result: "";
     in-out property <bool> explain-ok: true;
+    in-out property <string> route-rule-kind: "domain-suffix";
+    in-out property <string> route-match-value: "example.com";
+    in-out property <string> route-rule-action: "route";
+    in-out property <string> route-target-outbound: "proxy";
+    in-out property <bool> close-to-tray: true;
+    in-out property <bool> start-minimized: false;
+    in-out property <bool> tray-show-nodes: true;
+    in-out property <bool> tray-show-speed: true;
+    in-out property <string> tray-click-action: "toggle";
+    in-out property <bool> tray-native-active: true;
+    in-out property <string> app-memory-text: "--";
+    in-out property <string> core-memory-text: "--";
+    in-out property <string> total-memory-text: "--";
+    in-out property <float> app-memory-ratio: 0.78;
+    in-out property <string> down-speed-value: "0.0";
+    in-out property <string> down-speed-unit: "KB/s";
+    in-out property <string> down-speed-peak: "0.0 KB/s";
+    in-out property <string> down-wave-area: "M 0.0 49.6 C 3.5 48.2 7.0 46.6 10.4 44.5 C 13.9 42.5 17.4 39.9 20.9 37.2 C 24.3 34.5 27.8 31.3 31.3 28.3 C 34.8 25.4 38.3 22.0 41.7 19.6 C 45.2 17.1 48.7 14.8 52.2 13.5 C 55.7 12.3 59.1 11.8 62.6 12.2 C 66.1 12.5 69.6 14.1 73.0 15.8 C 76.5 17.5 80.0 20.3 83.5 22.4 C 87.0 24.6 90.4 27.2 93.9 28.7 C 97.4 30.2 100.9 31.4 104.3 31.4 C 107.8 31.5 111.3 30.6 114.8 29.2 C 118.3 27.8 121.7 25.3 125.2 23.0 C 128.7 20.7 132.2 17.7 135.7 15.5 C 139.1 13.3 142.6 11.1 146.1 9.8 C 149.6 8.5 153.0 7.9 156.5 7.8 C 160.0 7.8 163.5 8.7 167.0 9.5 C 170.4 10.3 173.9 11.8 177.4 12.8 C 180.9 13.8 184.3 14.8 187.8 15.3 C 191.3 15.8 194.8 15.9 198.3 15.8 C 201.7 15.7 205.2 15.1 208.7 14.8 C 212.2 14.6 215.7 14.2 219.1 14.0 C 222.6 13.9 226.1 13.9 229.6 13.9 C 233.0 14.0 236.5 14.4 240.0 14.4 L 240.0 84.0 L 0.0 84.0 Z";
+    in-out property <string> down-wave-line: "M 0.0 49.6 C 3.5 48.2 7.0 46.6 10.4 44.5 C 13.9 42.5 17.4 39.9 20.9 37.2 C 24.3 34.5 27.8 31.3 31.3 28.3 C 34.8 25.4 38.3 22.0 41.7 19.6 C 45.2 17.1 48.7 14.8 52.2 13.5 C 55.7 12.3 59.1 11.8 62.6 12.2 C 66.1 12.5 69.6 14.1 73.0 15.8 C 76.5 17.5 80.0 20.3 83.5 22.4 C 87.0 24.6 90.4 27.2 93.9 28.7 C 97.4 30.2 100.9 31.4 104.3 31.4 C 107.8 31.5 111.3 30.6 114.8 29.2 C 118.3 27.8 121.7 25.3 125.2 23.0 C 128.7 20.7 132.2 17.7 135.7 15.5 C 139.1 13.3 142.6 11.1 146.1 9.8 C 149.6 8.5 153.0 7.9 156.5 7.8 C 160.0 7.8 163.5 8.7 167.0 9.5 C 170.4 10.3 173.9 11.8 177.4 12.8 C 180.9 13.8 184.3 14.8 187.8 15.3 C 191.3 15.8 194.8 15.9 198.3 15.8 C 201.7 15.7 205.2 15.1 208.7 14.8 C 212.2 14.6 215.7 14.2 219.1 14.0 C 222.6 13.9 226.1 13.9 229.6 13.9 C 233.0 14.0 236.5 14.4 240.0 14.4";
+    in-out property <string> up-speed-value: "0.0";
+    in-out property <string> up-speed-unit: "KB/s";
+    in-out property <string> up-speed-peak: "0.0 KB/s";
+    in-out property <string> up-wave-area: "M 0.0 55.8 C 3.5 55.9 7.0 56.3 10.4 56.7 C 13.9 57.0 17.4 57.8 20.9 57.8 C 24.3 57.9 27.8 58.0 31.3 56.9 C 34.8 55.8 38.3 54.1 41.7 51.3 C 45.2 48.6 48.7 44.6 52.2 40.4 C 55.7 36.3 59.1 30.8 62.6 26.4 C 66.1 22.0 69.6 17.0 73.0 14.0 C 76.5 11.0 80.0 8.7 83.5 8.3 C 87.0 7.8 90.4 9.2 93.9 11.1 C 97.4 13.0 100.9 16.9 104.3 19.7 C 107.8 22.5 111.3 26.1 114.8 27.8 C 118.3 29.6 121.7 30.5 125.2 30.0 C 128.7 29.6 132.2 27.3 135.7 25.2 C 139.1 23.1 142.6 19.5 146.1 17.5 C 149.6 15.5 153.0 13.5 156.5 13.3 C 160.0 13.1 163.5 14.3 167.0 16.4 C 170.4 18.5 173.9 22.4 177.4 25.7 C 180.9 29.1 184.3 33.4 187.8 36.5 C 191.3 39.5 194.8 42.3 198.3 44.0 C 201.7 45.6 205.2 46.3 208.7 46.6 C 212.2 46.9 215.7 46.3 219.1 45.9 C 222.6 45.5 226.1 44.8 229.6 44.3 C 233.0 43.9 236.5 43.3 240.0 43.3 L 240.0 84.0 L 0.0 84.0 Z";
+    in-out property <string> up-wave-line: "M 0.0 55.8 C 3.5 55.9 7.0 56.3 10.4 56.7 C 13.9 57.0 17.4 57.8 20.9 57.8 C 24.3 57.9 27.8 58.0 31.3 56.9 C 34.8 55.8 38.3 54.1 41.7 51.3 C 45.2 48.6 48.7 44.6 52.2 40.4 C 55.7 36.3 59.1 30.8 62.6 26.4 C 66.1 22.0 69.6 17.0 73.0 14.0 C 76.5 11.0 80.0 8.7 83.5 8.3 C 87.0 7.8 90.4 9.2 93.9 11.1 C 97.4 13.0 100.9 16.9 104.3 19.7 C 107.8 22.5 111.3 26.1 114.8 27.8 C 118.3 29.6 121.7 30.5 125.2 30.0 C 128.7 29.6 132.2 27.3 135.7 25.2 C 139.1 23.1 142.6 19.5 146.1 17.5 C 149.6 15.5 153.0 13.5 156.5 13.3 C 160.0 13.1 163.5 14.3 167.0 16.4 C 170.4 18.5 173.9 22.4 177.4 25.7 C 180.9 29.1 184.3 33.4 187.8 36.5 C 191.3 39.5 194.8 42.3 198.3 44.0 C 201.7 45.6 205.2 46.3 208.7 46.6 C 212.2 46.9 215.7 46.3 219.1 45.9 C 222.6 45.5 226.1 44.8 229.6 44.3 C 233.0 43.9 236.5 43.3 240.0 43.3";
+    in-out property <bool> dash-editing: false;
+    in-out property <bool> dash-show-speed: true;
+    in-out property <bool> dash-show-quick-nodes: true;
+    in-out property <bool> dash-show-network: true;
+    in-out property <bool> dash-show-memory: true;
+    in-out property <bool> dash-show-traffic: true;
+    in-out property <bool> dash-show-ports: true;
+    in-out property <[int]> dash-section-order: [0, 1, 2, 3];
+    in-out property <[int]> dash-info-order: [0, 1, 2, 3];
+    in-out property <bool> dash-deck-swapped: false;
 
     callback toggle-core();
+    callback switch-outbound-mode(string);
     callback toggle-system-proxy(bool);
+    callback apply-inbound-proxy-config(string, bool, string, string);
     callback toggle-tun(bool);
     callback reload-config();
     callback refresh-metrics();
     callback clear-cache();
+    callback copy-text(string);
+    callback copy-proxy-env();
+    callback tray-prefs-changed();
+    callback dash-prefs-changed();
+    callback reorder-dash-section(int, int);
+    callback reorder-dash-info(int, int);
+    callback swap-dash-deck();
+    callback reset-dash-layout();
     callback choose-group(string);
+    callback filter-members(string);
+    callback sort-members(string);
+    callback toggle-pin-member(string, string);
     callback select-member(string, string);
     callback reset-group-auto(string);
     callback probe-group(string);
@@ -62,216 +163,318 @@ export component AppWindow inherits Window {
     callback inspect-connection(string);
     callback close-connection(string);
     callback close-all-connections();
+    callback create-rule-from-connection(string, int, string, string, string);
     callback activate-profile(string);
     callback create-profile(string);
     callback delete-profile(string);
     callback refresh-profiles();
     callback validate-kdl(string);
+    callback kdl-edited(string);
     callback save-and-reload(string);
     callback open-external-editor();
+    callback reload-config-from-disk();
     callback import-share-link(string);
     callback apply-log-level(string);
     callback refresh-logs();
     callback export-logs();
     callback clear-logs();
     callback run-rule-explain(string, string, string, string);
-    callback append-rule-snippet(string, string, string);
-    callback append-dns-rule-snippet(string, string, string);
+    callback append-route-rule-kdl(string);
+    callback append-dns-rule-kdl(string);
+    callback append-raw-kdl(string);
     callback quit-requested();
 
-    FocusScope {
+    forward-focus: root-focus;
+
+    private property <ThemePreference> observed-theme-pref: Theme.preference;
+    function sync-palette-scheme() {
+        if (Theme.preference == ThemePreference.dark) {
+            Palette.color-scheme = ColorScheme.dark;
+        } else if (Theme.preference == ThemePreference.light) {
+            Palette.color-scheme = ColorScheme.light;
+        }
+    }
+
+    init => {
+        LayoutMetrics.window-width = root.width;
+        LayoutMetrics.user-sidebar-collapsed = root.sidebar-collapsed;
+        root.sync-palette-scheme();
+        root-focus.focus();
+    }
+
+    changed observed-theme-pref => {
+        root.sync-palette-scheme();
+    }
+
+    changed width => {
+        LayoutMetrics.window-width = root.width;
+        if (!LayoutMetrics.is-compact-w(root.width)) {
+            LayoutMetrics.compact-override-expanded = false;
+        }
+    }
+
+    changed sidebar-collapsed => {
+        LayoutMetrics.user-sidebar-collapsed = root.sidebar-collapsed;
+    }
+
+    private property <string> observed-recording: Shortcuts.recording-action;
+    changed observed-recording => {
+        if (root.observed-recording != "") { root-focus.focus(); }
+    }
+
+    private property <bool> tab-initialized: false;
+    private property <bool> tab-settling: false;
+    private property <length> tab-shift: 0px;
+    private property <float> tab-alpha: 1.0;
+
+    changed active-tab => {
+        TooltipState.hide();
+        if (root.tab-initialized && !Motion.reduced) {
+            root.tab-shift = 8px;
+            root.tab-alpha = 0.68;
+            root.tab-settling = true;
+        }
+    }
+
+    init-guard := Timer { interval: 60ms; running: !root.tab-initialized; triggered => { root.tab-initialized = true; } }
+    tab-settle-timer := Timer {
+        interval: 16ms; running: root.tab-settling;
+        triggered => { root.tab-settling = false; root.tab-shift = 0px; root.tab-alpha = 1.0; }
+    }
+
+    root-focus := FocusScope {
         capture-key-pressed(event) => {
-            if (event.modifiers.control) {
-                if (event.text == "r" || event.text == "R") { root.reload-config(); return accept; }
-                if (event.text == "q" || event.text == "Q") { root.quit-requested(); return accept; }
-                if (event.text == "1") { root.active-tab = 0; return accept; }
-                if (event.text == "2") { root.active-tab = 1; return accept; }
-                if (event.text == "3") { root.active-tab = 5; root.refresh-connections(); return accept; }
-                if (event.text == "4") { root.active-tab = 6; root.refresh-profiles(); return accept; }
-                if (event.text == "5") { root.active-tab = 2; return accept; }
-                if (event.text == "6") { root.active-tab = 7; return accept; }
-                if (event.text == "7") { root.active-tab = 3; root.refresh-logs(); return accept; }
-                if (event.text == "8") { root.active-tab = 8; return accept; }
+            if (Shortcuts.recording-action != "") { Shortcuts.apply-recording(event); return accept; }
+            if (root.outbound-modal-open && event.text == Key.Escape) { root.outbound-modal-open = false; return accept; }
+            if (root.rule-modal-open && event.text == Key.Escape) { root.rule-modal-open = false; return accept; }
+            if (Shortcuts.matches(Shortcuts.toggle-sidebar, event)) {
+                if (LayoutMetrics.is-compact-w(root.width)) { LayoutMetrics.toggle-sidebar(root.width); } else { root.sidebar-collapsed = !root.sidebar-collapsed; }
+                return accept;
             }
+            if (Shortcuts.matches(Shortcuts.open-rules, event)) {
+                root.outbound-modal-open = false;
+                if (root.rule-modal-open) { root.rule-modal-open = false; } else { root.rule-modal-tab = 0; root.rule-modal-open = true; }
+                return accept;
+            }
+            if (Shortcuts.matches(Shortcuts.reload-config, event)) { root.reload-config(); return accept; }
+            if (Shortcuts.matches(Shortcuts.quit-app, event)) { root.quit-requested(); return accept; }
+            if (Shortcuts.matches(Shortcuts.tab-overview, event)) { root.rule-modal-open = false; root.outbound-modal-open = false; root.active-tab = 0; return accept; }
+            if (Shortcuts.matches(Shortcuts.tab-groups, event)) { root.rule-modal-open = false; root.outbound-modal-open = false; root.active-tab = 1; root.refresh-groups(); return accept; }
+            if (Shortcuts.matches(Shortcuts.tab-connections, event)) { root.rule-modal-open = false; root.outbound-modal-open = false; root.active-tab = 2; root.refresh-connections(); return accept; }
+            if (Shortcuts.matches(Shortcuts.tab-profiles, event)) { root.rule-modal-open = false; root.outbound-modal-open = false; root.active-tab = 3; root.refresh-profiles(); return accept; }
+            if (Shortcuts.matches(Shortcuts.tab-logs, event)) { root.rule-modal-open = false; root.outbound-modal-open = false; root.active-tab = 4; root.refresh-logs(); return accept; }
+            if (Shortcuts.matches(Shortcuts.tab-settings, event)) { root.rule-modal-open = false; root.outbound-modal-open = false; root.active-tab = 5; return accept; }
             reject
         }
 
-    HorizontalBox {
-        spacing: 0px;
-
-        // Sidebar navigation
         Rectangle {
-            width: 176px;
-            background: Theme.sidebar-bg;
-            VerticalBox {
-                padding: 14px;
-                spacing: 8px;
-                Text {
-                    text: "NEXUS";
-                    font-size: 20px;
-                    font-weight: 800;
-                    letter-spacing: 2px;
+            x: 0px;
+            y: 0px;
+            background: Theme.surface-bg;
+            clip: true;
+
+            if Theme.ambient-glow : Rectangle {
+                x: -160px; y: -180px; width: 620px; height: 520px; border-radius: 260px;
+                opacity: root.core-running ? 0.90 : 0.52;
+                background: @radial-gradient(circle, Theme.glow-primary 0%, transparent 72%);
+                animate opacity { duration: Motion.slow; }
+            }
+
+            if Theme.ambient-glow : Rectangle {
+                x: parent.width - 360px; y: parent.height - 340px; width: 520px; height: 520px; border-radius: 260px;
+                opacity: root.core-running ? 0.90 : 0.48;
+                background: @radial-gradient(circle, Theme.glow-secondary 0%, transparent 72%);
+                animate opacity { duration: Motion.slow; }
+            }
+
+            HorizontalLayout {
+                Sidebar {
+                    window-width: root.width;
+                    active-tab <=> root.active-tab;
+                    sidebar-width <=> root.sidebar-width;
+                    sidebar-collapsed <=> root.sidebar-collapsed;
+                    toggle-sidebar-requested => {
+                        if (LayoutMetrics.is-compact-w(root.width)) {
+                            LayoutMetrics.toggle-sidebar(root.width);
+                        } else {
+                            root.sidebar-collapsed = !root.sidebar-collapsed;
+                        }
+                    }
+                    refresh-groups => { root.refresh-groups(); }
+                    refresh-connections => { root.refresh-connections(); }
+                    refresh-profiles => { root.refresh-profiles(); }
+                    refresh-logs => { root.refresh-logs(); }
                 }
-                Button { text: "概览"; primary: active-tab == 0; clicked => { active-tab = 0; } }
-                Button { text: "策略组"; primary: active-tab == 1; clicked => { active-tab = 1; } }
-                Button { text: "连接"; primary: active-tab == 5; clicked => { active-tab = 5; root.refresh-connections(); } }
-                Button { text: "档案"; primary: active-tab == 6; clicked => { active-tab = 6; root.refresh-profiles(); } }
-                Button { text: "配置"; primary: active-tab == 2; clicked => { active-tab = 2; } }
-                Button { text: "规则测试"; primary: active-tab == 7; clicked => { active-tab = 7; } }
-                Button { text: "规则编辑"; primary: active-tab == 8; clicked => { active-tab = 8; } }
-                Button { text: "日志"; primary: active-tab == 3; clicked => { active-tab = 3; root.refresh-logs(); } }
-                Button { text: "关于"; primary: active-tab == 4; clicked => { active-tab = 4; } }
-                Rectangle { vertical-stretch: 1; }
-                Text {
-                    text: core-running ? "● 在线" : "○ 离线";
-                    font-size: 12px;
-                    opacity: 0.75;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    clip: true;
+
+                    VerticalLayout {
+                        x: 0px; y: root.tab-shift; width: 100%; height: 100%; opacity: root.tab-alpha;
+                        padding-left: 4px;
+                        padding-right: (active-tab == 0 || active-tab == 1 || active-tab == 3 || active-tab == 5) ? 0px : 16px;
+                        padding-top: active-tab == 0 ? 0px : 16px;
+                        padding-bottom: active-tab == 0 ? 0px : 16px;
+                        spacing: Theme.space-md;
+                        animate y { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+                        animate opacity { duration: Motion.fast; }
+
+                        if active-tab == 0 : Rectangle {
+                            vertical-stretch: 1;
+
+                            dash-sv := ScrollView {
+                                width: 100%;
+                                height: 100%;
+                                vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                                content-width: self.visible-width;
+                                content-height: max(self.visible-height, dash-box.preferred-height);
+
+                                dash-box := HorizontalLayout {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: dash-sv.visible-width;
+                                    padding-top: 16px;
+                                    padding-bottom: 16px;
+                                    padding-right: 20px;
+                                    alignment: center;
+
+                                    StatusCard {
+                                        width: max(240px, min(dash-sv.visible-width - 20px, 1440px));
+                                        min-height: max(0px, dash-sv.visible-height - 32px);
+                                        window-width: root.width;
+                                        core-running: root.core-running; core-toggling: root.core-toggling; core-uptime: root.core-uptime;
+                                        app-memory-text: root.app-memory-text; core-memory-text: root.core-memory-text; total-memory-text: root.total-memory-text; app-memory-ratio: root.app-memory-ratio;
+                                        outbound-mode: root.outbound-mode;
+                                        system-proxy-supported: root.system-proxy-supported; system-proxy-enabled: root.system-proxy-enabled;
+                                        mixed-proxy-enabled <=> root.mixed-proxy-enabled; mixed-proxy-host <=> root.mixed-proxy-host; mixed-proxy-port <=> root.mixed-proxy-port;
+                                        socks-proxy-enabled <=> root.socks-proxy-enabled; socks-proxy-host <=> root.socks-proxy-host; socks-proxy-port <=> root.socks-proxy-port;
+                                        http-proxy-enabled <=> root.http-proxy-enabled; http-proxy-host <=> root.http-proxy-host; http-proxy-port <=> root.http-proxy-port;
+                                        tun-enabled: root.tun-enabled; active-profile: root.active-profile; profiles: root.profiles; selected-group: root.selected-group;
+                                        active-node: root.active-node; active-node-latency-ms: root.active-node-latency-ms; active-sessions: root.active-sessions;
+                                        upload-total: root.upload-total; download-total: root.download-total; total-down-ratio: root.total-down-ratio;
+                                        down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit; down-speed-peak: root.down-speed-peak; down-wave-area: root.down-wave-area; down-wave-line: root.down-wave-line;
+                                        up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit; up-speed-peak: root.up-speed-peak; up-wave-area: root.up-wave-area; up-wave-line: root.up-wave-line;
+                                        diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok; hero-state-override: root.hero-state-override;
+                                        quick-nodes: root.quick-nodes; groups-probing: root.groups-probing;
+                                        dash-editing <=> root.dash-editing; dash-show-speed <=> root.dash-show-speed; dash-show-quick-nodes <=> root.dash-show-quick-nodes;
+                                        dash-show-network <=> root.dash-show-network; dash-show-memory <=> root.dash-show-memory; dash-show-traffic <=> root.dash-show-traffic; dash-show-ports <=> root.dash-show-ports;
+                                        dash-section-order: root.dash-section-order; dash-info-order: root.dash-info-order; dash-deck-swapped: root.dash-deck-swapped;
+                                        toggle-core => { root.toggle-core(); } switch-outbound-mode(m) => { root.switch-outbound-mode(m); }
+                                        toggle-system-proxy(on) => { root.toggle-system-proxy(on); } apply-inbound-proxy-config(proto, on, host, port) => { root.apply-inbound-proxy-config(proto, on, host, port); }
+                                        toggle-tun(on) => { root.toggle-tun(on); } reload-config => { root.reload-config(); }
+                                        clear-cache => { root.clear-cache(); } copy-text(txt) => { root.copy-text(txt); } copy-proxy-env => { root.copy-proxy-env(); }
+                                        select-member(g, m) => { root.select-member(g, m); } activate-profile(id) => { root.activate-profile(id); }
+                                        probe-active-group => { if (root.selected-group != "") { root.probe-group(root.selected-group); } else { root.active-tab = 1; root.refresh-groups(); } }
+                                        open-groups => { root.active-tab = 1; root.refresh-groups(); } open-connections => { root.active-tab = 2; root.refresh-connections(); }
+                                        open-rules => { root.outbound-modal-open = false; root.rule-modal-tab = 0; root.rule-modal-open = true; } open-profiles => { root.active-tab = 3; root.refresh-profiles(); }
+                                        open-config => { root.active-tab = 3; root.refresh-profiles(); } open-logs => { root.active-tab = 4; root.refresh-logs(); }
+                                        dash-prefs-changed => { root.dash-prefs-changed(); }
+                                        reorder-dash-section(f, t) => { root.reorder-dash-section(f, t); }
+                                        reorder-dash-info(f, t) => { root.reorder-dash-info(f, t); }
+                                        swap-dash-deck => { root.swap-dash-deck(); }
+                                        reset-dash-layout => { root.reset-dash-layout(); }
+                                    }
+                                }
+                            }
+
+                            NexusVScrollBar {
+                                x: parent.width - self.width - 4px;
+                                y: 16px;
+                                height: max(0px, parent.height - 32px);
+                                viewport-size: dash-sv.visible-height;
+                                content-size: dash-sv.content-height;
+                                scroll-pos <=> dash-sv.content-y;
+                            }
+                        }
+
+                        if active-tab == 1 : GroupsPanel {
+                            window-width: root.width; vertical-stretch: 1;
+                            groups: root.groups; members: root.members; selected-group: root.selected-group;
+                            active-group-mode: root.active-group-mode; active-group-auto: root.active-group-auto;
+                            active-group-node: root.active-node; active-group-latency-ms: root.active-node-latency-ms;
+                            active-group-healthy: root.active-group-healthy; active-group-total: root.active-group-total;
+                            member-filter <=> root.member-filter; member-sort <=> root.member-sort; probing: root.groups-probing;
+                            choose-group(tag) => { root.choose-group(tag); } filter-members(q) => { root.filter-members(q); } sort-members(mode) => { root.sort-members(mode); }
+                            toggle-pin-member(g, m) => { root.toggle-pin-member(g, m); } select-member(g, m) => { root.select-member(g, m); }
+                            reset-group-auto(g) => { root.reset-group-auto(g); } probe-group(g) => { root.probe-group(g); } refresh-groups => { root.refresh-groups(); }
+                            open-add-outbound => { root.rule-modal-open = false; root.outbound-modal-open = true; }
+                            open-config-import => { root.active-tab = 3; root.refresh-profiles(); }
+                        }
+
+                        if active-tab == 2 : ConnectionsPanel {
+                            window-width: root.width;
+                            vertical-stretch: 1;
+                            connections: root.connections; filter-text <=> root.connection-filter;
+                            selected-detail <=> root.selected-connection-detail; paused <=> root.connections-paused;
+                            default-proxy-outbound: root.selected-group != "" ? root.selected-group : "proxy";
+                            download-rate: root.download-rate; upload-rate: root.upload-rate;
+                            download-total: root.download-total; upload-total: root.upload-total;
+                            refresh-connections => { root.refresh-connections(); }
+                            inspect-connection(id) => { root.inspect-connection(id); }
+                            close-connection(id) => { root.close-connection(id); }
+                            close-all-connections => { root.close-all-connections(); }
+                            copy-text(t) => { root.copy-text(t); }
+                            create-rule-from-connection(h, p, pr, ob, act) => {
+                                root.create-rule-from-connection(h, p, pr, ob, act);
+                            }
+                        }
+
+                        if active-tab == 3 : ProfilesPanel {
+                            vertical-stretch: 1; profiles: root.profiles; share-link-input <=> root.share-link-input;
+                            config-path: root.config-path; kdl-line-count: root.kdl-line-count;
+                            diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok;
+                            activate-profile(id) => { root.activate-profile(id); } create-profile(name) => { root.create-profile(name); }
+                            delete-profile(id) => { root.delete-profile(id); } refresh-profiles => { root.refresh-profiles(); }
+                            import-share-link(uri) => { root.import-share-link(uri); }
+                            open-external-editor => { root.open-external-editor(); }
+                            reload-config-from-disk => { root.reload-config-from-disk(); }
+                        }
+
+                        if active-tab == 4 : LogsPanel {
+                            vertical-stretch: 1; logs: root.logs; log-level <=> root.log-level; domain-filter <=> root.log-domain-filter;
+                            search-text <=> root.log-search; export-status: root.log-export-status; export-ok: root.log-export-ok;
+                            apply-log-level(lvl) => { root.apply-log-level(lvl); } refresh-logs => { root.refresh-logs(); }
+                            export-logs => { root.export-logs(); } clear-logs => { root.clear-logs(); }
+                        }
+
+                        if active-tab == 5 : AboutPanel {
+                            window-width: root.width; vertical-stretch: 1; active-subtab <=> root.settings-subtab;
+                            close-to-tray <=> root.close-to-tray; start-minimized <=> root.start-minimized;
+                            tray-show-nodes <=> root.tray-show-nodes; tray-show-speed <=> root.tray-show-speed;
+                            tray-click-action <=> root.tray-click-action; tray-native-active: root.tray-native-active;
+                            core-running: root.core-running; tun-enabled: root.tun-enabled;
+                            config-path: root.config-path;
+                            tray-prefs-changed => { root.tray-prefs-changed(); }
+                            open-rule-modal(tab) => { root.outbound-modal-open = false; root.rule-modal-tab = tab; root.rule-modal-open = true; }
+                        }
+                    }
                 }
             }
         }
 
-        // Content workspace
-        VerticalBox {
-            padding: 18px;
-            spacing: 14px;
-            horizontal-stretch: 1;
-
-            if active-tab == 0 : StatusCard {
-                core-running: root.core-running;
-                system-proxy-supported: root.system-proxy-supported;
-                system-proxy-enabled: root.system-proxy-enabled;
-                tun-enabled: root.tun-enabled;
-                active-profile: root.active-profile;
-                status-summary: root.status-summary;
-                control-endpoint: root.control-endpoint;
-                metrics-summary: root.metrics-summary;
-                rate-summary: root.rate-summary;
-                rate-bars: root.rate-bars;
-                toggle-core => { root.toggle-core(); }
-                toggle-system-proxy(on) => { root.toggle-system-proxy(on); }
-                toggle-tun(on) => { root.toggle-tun(on); }
-                reload-config => { root.reload-config(); }
-                refresh-metrics => { root.refresh-metrics(); }
-                clear-cache => { root.clear-cache(); }
-            }
-
-            if active-tab == 1 : GroupsPanel {
-                vertical-stretch: 1;
-                groups: root.groups;
-                members: root.members;
-                selected-group: root.selected-group;
-                choose-group(tag) => { root.choose-group(tag); }
-                select-member(g, m) => { root.select-member(g, m); }
-                reset-group-auto(g) => { root.reset-group-auto(g); }
-                probe-group(g) => { root.probe-group(g); }
-                refresh-groups => { root.refresh-groups(); }
-            }
-
-            if active-tab == 2 : ConfigPanel {
-                vertical-stretch: 1;
-                kdl-text <=> root.kdl-text;
-                config-path: root.config-path;
-                diagnostic-message: root.diagnostic-message;
-                diagnostic-ok: root.diagnostic-ok;
-                validate-kdl(t) => { root.validate-kdl(t); }
-                save-and-reload(t) => { root.save-and-reload(t); }
-                open-external-editor => { root.open-external-editor(); }
-                import-share-link(uri) => { root.import-share-link(uri); }
-            }
-
-            if active-tab == 3 : LogsPanel {
-                vertical-stretch: 1;
-                logs: root.logs;
-                log-level <=> root.log-level;
-                domain-filter <=> root.log-domain-filter;
-                search-text <=> root.log-search;
-                export-status: root.log-export-status;
-                apply-log-level(lvl) => { root.apply-log-level(lvl); }
-                refresh-logs => { root.refresh-logs(); }
-                export-logs => { root.export-logs(); }
-                clear-logs => { root.clear-logs(); }
-            }
-
-            if active-tab == 7 : RuleExplainPanel {
-                vertical-stretch: 1;
-                explain-result: root.explain-result;
-                explain-ok: root.explain-ok;
-                run-explain(inb, net, tgt, extra) => { root.run-rule-explain(inb, net, tgt, extra); }
-            }
-
-            if active-tab == 8 : RuleDnsEditorPanel {
-                vertical-stretch: 1;
-                editor-status: root.diagnostic-message;
-                append-rule-snippet(k, v, out) => { root.append-rule-snippet(k, v, out); }
-                append-dns-rule-snippet(k, v, srv) => { root.append-dns-rule-snippet(k, v, srv); }
-            }
-
-            if active-tab == 5 : ConnectionsPanel {
-                vertical-stretch: 1;
-                connections: root.connections;
-                filter-text <=> root.connection-filter;
-                selected-detail: root.selected-connection-detail;
-                refresh-connections => { root.refresh-connections(); }
-                inspect-connection(id) => { root.inspect-connection(id); }
-                close-connection(id) => { root.close-connection(id); }
-                close-all-connections => { root.close-all-connections(); }
-            }
-
-            if active-tab == 6 : ProfilesPanel {
-                vertical-stretch: 1;
-                profiles: root.profiles;
-                activate-profile(id) => { root.activate-profile(id); }
-                create-profile(name) => { root.create-profile(name); }
-                delete-profile(id) => { root.delete-profile(id); }
-                refresh-profiles => { root.refresh-profiles(); }
-            }
-
-            if active-tab == 4 : VerticalBox {
-                spacing: 12px;
-                Text {
-                    text: "Nexus Desktop (Slint v1.19 · C++26)";
-                    font-size: 18px;
-                    font-weight: 700;
-                }
-                Text {
-                    text: "原生 C++26 代理内核独立进程 + 轻量 Slint 桌面控制外壳。";
-                    font-size: 13px;
-                    opacity: 0.85;
-                }
-                HorizontalBox {
-                    spacing: 8px;
-                    Text { text: "外观主题:"; vertical-alignment: center; }
-                    Button {
-                        text: "跟随系统";
-                        primary: Theme.preference == ThemePreference.system;
-                        clicked => {
-                            Theme.preference = ThemePreference.system;
-                            Palette.color-scheme = ColorScheme.unknown;
-                        }
-                    }
-                    Button {
-                        text: "浅色";
-                        primary: Theme.preference == ThemePreference.light;
-                        clicked => {
-                            Theme.preference = ThemePreference.light;
-                            Palette.color-scheme = ColorScheme.light;
-                        }
-                    }
-                    Button {
-                        text: "深色";
-                        primary: Theme.preference == ThemePreference.dark;
-                        clicked => {
-                            Theme.preference = ThemePreference.dark;
-                            Palette.color-scheme = ColorScheme.dark;
-                        }
-                    }
-                }
-                // Required attribution badge under Slint's Royalty-Free Desktop License
-                AboutSlint {
-                    preferred-height: 120px;
-                }
-            }
+        if root.rule-modal-open : RuleModalDialog {
+            width: 100%; height: 100%;
+            active-mode <=> root.rule-modal-tab;
+            route-rule-kind <=> root.route-rule-kind; route-match-value <=> root.route-match-value;
+            route-rule-action <=> root.route-rule-action; route-target-outbound <=> root.route-target-outbound;
+            editor-status: root.diagnostic-message; editor-ok: root.diagnostic-ok;
+            explain-result: root.explain-result; explain-ok: root.explain-ok;
+            close-requested => { root.rule-modal-open = false; }
+            append-route-rule-kdl(rule) => { root.append-route-rule-kdl(rule); }
+            append-dns-rule-kdl(rule) => { root.append-dns-rule-kdl(rule); }
+            run-explain(inb, net, tgt, extra) => { root.run-rule-explain(inb, net, tgt, extra); }
         }
-    }
+
+        if root.outbound-modal-open : OutboundModalDialog {
+            width: 100%; height: 100%;
+            editor-status: root.diagnostic-message; editor-ok: root.diagnostic-ok;
+            close-requested => { root.outbound-modal-open = false; }
+            append-raw-kdl(snippet) => { root.append-raw-kdl(snippet); }
+        }
+
+        OverlayFeedbackLayer { width: 100%; height: 100%; }
     }
 }

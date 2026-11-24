@@ -8,6 +8,8 @@ export namespace desktop {
         std::string message;
     };
 
+    [[nodiscard]] auto current_process_memory_bytes() noexcept -> std::uint64_t;
+
     // Supervises a local unprivileged Nexus core child process (user mode)
     // and executes offline `nexus check --config` validation before hot reload.
     class CoreSupervisor {
@@ -21,8 +23,10 @@ export namespace desktop {
         auto operator=(CoreSupervisor const&) -> CoreSupervisor& = delete;
 
         [[nodiscard]] auto running(this CoreSupervisor const& self) noexcept -> bool;
+        [[nodiscard]] auto memory_bytes(this CoreSupervisor const& self) noexcept -> std::uint64_t;
         [[nodiscard]] auto start(this CoreSupervisor& self, std::filesystem::path const& config_path) -> bool;
         auto stop(this CoreSupervisor& self) -> void;
+        [[nodiscard]] auto last_error(this CoreSupervisor const& self) -> std::string;
 
         [[nodiscard]] auto validate_config(
             this CoreSupervisor const& self,

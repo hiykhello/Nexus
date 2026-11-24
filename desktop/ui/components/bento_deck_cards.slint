@@ -1,0 +1,448 @@
+import { ToastState } from "../feedback.slint";
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { ProfileItem } from "../types.slint";
+import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+// Nexus ProportionBar: 8px luminous pill with soft outer color glow & 2px gap
+export component ProportionBar inherits Rectangle {
+    in property <float> first-ratio: 0.5;
+    in property <color> first-color: Theme.accent;
+    in property <color> second-color: Theme.telemetry-down;
+    in property <bool> has-data: false;
+    in property <bool> has-second: true;
+
+    property <float> clamped: clamp(root.first-ratio, 0.0, 1.0);
+    property <bool> show-gap: root.has-data && root.has-second && root.clamped > 0.02 && root.clamped < 0.98;
+    property <length> gap-w: root.show-gap ? 2px : 0px;
+    property <length> avail-w: max(0px, root.width - root.gap-w);
+
+    height: 8px;
+    border-radius: 4px;
+    background: Theme.inset-bg;
+
+    if root.has-data : Rectangle {
+        x: 0px; y: 0px;
+        width: root.has-second ? root.avail-w * root.clamped : parent.width;
+        height: parent.height;
+        border-radius: 4px;
+        background: root.first-color;
+        drop-shadow-blur: 7px;
+        drop-shadow-color: root.first-color.with-alpha(Theme.dark ? 0.42 : 0.24);
+        animate width { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+    }
+
+    if root.has-data && root.has-second && root.clamped < 0.99 : Rectangle {
+        x: root.avail-w * root.clamped + root.gap-w;
+        y: 0px;
+        width: max(0px, parent.width - self.x);
+        height: parent.height;
+        border-radius: 4px;
+        background: root.second-color;
+        drop-shadow-blur: 7px;
+        drop-shadow-color: root.second-color.with-alpha(Theme.dark ? 0.42 : 0.24);
+        animate x { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+        animate width { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+    }
+}
+
+component ConnectedModeBtn inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback clicked();
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 32px;
+    border-radius: 16px;
+    border-width: root.selected ? 1px : 0px;
+    border-color: root.selected ? Theme.pill-active-top.brighter(0.20) : transparent;
+    background: root.selected
+        ? @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%)
+        : ta.has-hover ? Theme.row-hover-bg : transparent;
+    drop-shadow-blur: root.selected ? 12px : 0px;
+    drop-shadow-offset-y: root.selected ? 2px : 0px;
+    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.48 : 0.30);
+    transform-scale: ta.pressed ? 0.97 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate drop-shadow-blur { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+
+    Text {
+        width: 100%; height: 100%;
+        text: root.label;
+        font-size: 12px;
+        font-weight: root.selected ? 700 : 600;
+        color: root.selected ? Theme.pill-active-fg : Theme.text-secondary;
+        horizontal-alignment: center; vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
+// Desktop Control Row Span-2 Outbound Mode Card with pill-in-capsule track
+export component OutboundModeCard inherits Rectangle {
+    in property <string> mode: "rule";
+    in property <bool> compact: false;
+    callback mode-selected(string);
+
+    height: 58px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    HorizontalLayout {
+        padding-left: root.compact ? 10px : 16px;
+        padding-right: 10px;
+        padding-top: 9px;
+        padding-bottom: 9px;
+        spacing: 12px;
+
+        if !root.compact : HorizontalLayout {
+            horizontal-stretch: 0;
+            spacing: 7px;
+            Image {
+                width: 15px; height: 15px; y: (parent.height - self.height) / 2;
+                source: @image-url("../icons/rule-edit.svg"); colorize: Theme.text-secondary;
+            }
+            Text {
+                text: I18n.t("出站模式", "Mode");
+                font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            height: 40px;
+            border-radius: 20px;
+            border-width: 1px;
+            border-color: Theme.well-border;
+            background: Theme.well-bg;
+
+            HorizontalLayout {
+                padding: 3px;
+                spacing: 3px;
+                ConnectedModeBtn { label: I18n.t("规则", "Rule"); selected: root.mode == "rule"; clicked => { root.mode-selected("rule"); } }
+                ConnectedModeBtn { label: I18n.t("全局", "Global"); selected: root.mode == "global"; clicked => { root.mode-selected("global"); } }
+                ConnectedModeBtn { label: I18n.t("直连", "Direct"); selected: root.mode == "direct"; clicked => { root.mode-selected("direct"); } }
+            }
+        }
+    }
+}
+
+// Row 3 Col 3: Connections & Cumulative DL/UL Traffic Split Card
+export component ConnectionTrafficCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <int> active-sessions: 0;
+    in property <string> download-total: "0 B";
+    in property <string> upload-total: "0 B";
+    in property <float> total-down-ratio: 0.85;
+    callback open-connections();
+
+    property <bool> has-traffic: root.core-running && (root.download-total != "0 B" || root.upload-total != "0 B");
+
+    horizontal-stretch: 1;
+    min-width: 0px;
+    height: 142px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.selected-border : Theme.card-border;
+    background: ta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+    transform-scale: ta.pressed ? 0.985 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    GlassSpeculum {}
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.open-connections(); } }
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Image { width: 14px; height: 14px; y: (parent.height - self.height) / 2; source: @image-url("../icons/connections.svg"); colorize: Theme.telemetry-down; }
+            Text { text: I18n.t("连接与流量", "Traffic"); font-size: 12px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            Text { text: "↗"; font-size: 12px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            Text {
+                text: root.core-running ? "\{root.active-sessions}" : "0";
+                font-size: 26px; font-weight: 800; letter-spacing: -0.4px;
+                color: root.core-running ? Theme.text-primary : Theme.text-muted;
+                vertical-alignment: bottom;
+            }
+            VerticalLayout {
+                alignment: end; padding-bottom: 3px;
+                Text {
+                    text: I18n.t("活跃连接", "active");
+                    font-size: 11px; font-weight: 600; color: Theme.text-muted;
+                }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+
+        ProportionBar {
+            first-ratio: root.total-down-ratio;
+            first-color: Theme.telemetry-down;
+            second-color: Theme.telemetry-up;
+            has-data: root.has-traffic;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "↓ " + (root.core-running ? root.download-total : "0 B"); font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-stretch: 1; overflow: elide; }
+            Text { text: "↑ " + (root.core-running ? root.upload-total : "0 B"); font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-alignment: right; overflow: elide; }
+        }
+    }
+}
+
+component CompactPortRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> enabled: false;
+    in property <string> host: "127.0.0.1";
+    in-out property <string> port: "7890";
+    in property <string> default-port: "7890";
+    in property <bool> live: false;
+    callback toggled(bool);
+    callback port-committed();
+    callback copy-endpoint(string);
+
+    height: 26px;
+    spacing: 2px;
+
+    Text {
+        text: root.label; font-size: 10px; font-weight: 700;
+        color: root.enabled ? Theme.text-primary : Theme.text-muted;
+        vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide;
+    }
+    NexusInput {
+        width: 52px; input-height: 22px; y: (parent.height - self.height) / 2;
+        mono: true; borderless: true; prefix: ":";
+        text <=> root.port; placeholder-text: root.default-port;
+        accepted => { root.port-committed(); }
+    }
+    IconActionButton {
+        size: 18px;
+        icon: @image-url("../icons/copy.svg");
+        label: I18n.t("复制", "Copy");
+        clicked => {
+            let p = root.port != "" ? root.port : root.default-port;
+            let ep = ToastState.format-endpoint(root.host, p);
+            if (ep != "") {
+                root.copy-endpoint(ep);
+                ToastState.push(I18n.t("已复制 ", "Copied ") + ep, "success");
+            }
+        }
+    }
+    VerticalLayout {
+        alignment: center;
+        NexusSwitch { auto-toggle: false; checked: root.enabled; toggled => { root.toggled(!root.enabled); } }
+    }
+}
+
+// Row 3 Col 4: Compact Square-ish Local Ports Card (Zero 800px stretched empty space!)
+export component LocalPortsCompactCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in-out property <bool> mixed-proxy-enabled: true;
+    in-out property <string> mixed-proxy-host: "127.0.0.1";
+    in-out property <string> mixed-proxy-port: "7890";
+    in-out property <bool> socks-proxy-enabled: true;
+    in-out property <string> socks-proxy-host: "127.0.0.1";
+    in-out property <string> socks-proxy-port: "1080";
+    in-out property <bool> http-proxy-enabled: false;
+    in-out property <string> http-proxy-host: "127.0.0.1";
+    in-out property <string> http-proxy-port: "8080";
+    callback apply-inbound-proxy-config(string, bool, string, string);
+    callback copy-endpoint(string);
+    callback copy-proxy-env();
+    callback open-config();
+
+    horizontal-stretch: 1;
+    min-width: 0px;
+    height: 142px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        padding-left: 8px; padding-right: 8px; padding-top: 10px; padding-bottom: 10px;
+        spacing: 5px;
+
+        HorizontalLayout {
+            spacing: 4px;
+            Text { text: I18n.t("本地端口", "Ports"); font-size: 12px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            IconActionButton { size: 22px; icon: @image-url("../icons/copy.svg"); label: I18n.t("复制终端代理", "Copy Env"); clicked => { root.copy-proxy-env(); } }
+            IconActionButton { size: 22px; icon: @image-url("../icons/profiles.svg"); label: I18n.t("管理档案", "Profiles"); clicked => { root.open-config(); } }
+        }
+
+        CompactPortRow {
+            label: I18n.t("混合", "Mixed"); enabled: root.mixed-proxy-enabled; host: root.mixed-proxy-host; port <=> root.mixed-proxy-port; live: root.core-running && root.mixed-proxy-enabled;
+            toggled(on) => { root.mixed-proxy-enabled = on; root.apply-inbound-proxy-config("mixed", on, root.mixed-proxy-host, root.mixed-proxy-port); }
+            port-committed => { root.apply-inbound-proxy-config("mixed", root.mixed-proxy-enabled, root.mixed-proxy-host, root.mixed-proxy-port); }
+            copy-endpoint(ep) => { root.copy-endpoint(ep); }
+        }
+        CompactPortRow {
+            label: "SOCKS"; enabled: root.socks-proxy-enabled; host: root.socks-proxy-host; port <=> root.socks-proxy-port; default-port: "1080"; live: root.core-running && root.socks-proxy-enabled;
+            toggled(on) => { root.socks-proxy-enabled = on; root.apply-inbound-proxy-config("socks5", on, root.socks-proxy-host, root.socks-proxy-port); }
+            port-committed => { root.apply-inbound-proxy-config("socks5", root.socks-proxy-enabled, root.socks-proxy-host, root.socks-proxy-port); }
+            copy-endpoint(ep) => { root.copy-endpoint(ep); }
+        }
+        CompactPortRow {
+            label: "HTTP"; enabled: root.http-proxy-enabled; host: root.http-proxy-host; port <=> root.http-proxy-port; default-port: "8080"; live: root.core-running && root.http-proxy-enabled;
+            toggled(on) => { root.http-proxy-enabled = on; root.apply-inbound-proxy-config("http", on, root.http-proxy-host, root.http-proxy-port); }
+            port-committed => { root.apply-inbound-proxy-config("http", root.http-proxy-enabled, root.http-proxy-host, root.http-proxy-port); }
+            copy-endpoint(ep) => { root.copy-endpoint(ep); }
+        }
+    }
+}
+
+component DeckNavBtn inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    callback clicked();
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 30px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.selected-border : Theme.well-border;
+    background: ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+    transform-scale: ta.pressed ? 0.97 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+
+    HorizontalLayout {
+        alignment: center; spacing: 6px;
+        Image { width: 13px; height: 13px; y: (parent.height - self.height) / 2; source: root.icon; colorize: Theme.text-secondary; }
+        Text { text: root.label; font-size: 12px; font-weight: 600; color: Theme.text-primary; vertical-alignment: center; }
+    }
+}
+
+// Row 4 Right (38%): Bento Profiles quick switch deck + Probe/Logs/Rules jump bar
+export component QuickProfilesDeckCard inherits Rectangle {
+    in property <[ProfileItem]> profiles: [];
+    in property <string> active-profile: "";
+    callback activate-profile(string);
+    callback probe-active-group();
+    callback open-profiles();
+    callback open-logs();
+    callback open-rules();
+
+    horizontal-stretch: 1;
+    min-width: 0px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 6px;
+            Image { width: 14px; height: 14px; y: (parent.height - self.height) / 2; source: @image-url("../icons/profiles.svg"); colorize: Theme.accent; }
+            Text { text: I18n.t("配置档案", "Profiles"); font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; horizontal-stretch: 1; }
+            Rectangle {
+                horizontal-stretch: 0; height: 22px; border-radius: 7px; border-width: 1px; border-color: all-ta.has-hover ? Theme.selected-border : Theme.well-border; background: all-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+                all-ta := TouchArea { mouse-cursor: pointer; clicked => { root.open-profiles(); } }
+                HorizontalLayout {
+                    padding-left: 8px; padding-right: 8px;
+                    Text { text: I18n.t("管理 ↗", "All ↗"); font-size: 11px; font-weight: 600; color: Theme.text-secondary; vertical-alignment: center; }
+                }
+            }
+        }
+
+        if root.profiles.length == 0 : Rectangle {
+            vertical-stretch: 0;
+            height: 44px; border-radius: 12px; border-width: 1px; border-color: Theme.selected-border; background: Theme.selected-bg;
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 12px; spacing: 8px;
+                Rectangle { width: 7px; height: 7px; y: (parent.height - self.height) / 2; border-radius: 3.5px; background: Theme.accent; }
+                Text { text: root.active-profile != "" ? root.active-profile : I18n.t("默认配置", "Default Config"); font-size: 12px; font-weight: 700; color: Theme.nav-active-fg; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                Text { text: I18n.t("当前", "Active"); font-size: 10px; font-weight: 700; color: Theme.accent; vertical-alignment: center; }
+            }
+        }
+
+        if root.profiles.length > 0 : VerticalLayout {
+            vertical-stretch: 0;
+            for p[idx] in root.profiles : Rectangle {
+                height: idx < 4 ? (idx > 0 ? 40px : 34px) : 0px;
+                visible: idx < 4;
+                clip: true;
+
+                Rectangle {
+                    y: idx > 0 ? 6px : 0px;
+                    width: parent.width;
+                    height: 34px;
+                    border-radius: 11px;
+                    border-width: 1px;
+                    border-color: p.active ? Theme.accent.with-alpha(Theme.dark ? 0.56 : 0.36) : p-ta.has-hover ? Theme.selected-border : Theme.well-border;
+                    background: p.active
+                        ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.22 : 0.13) 0%, Theme.accent.with-alpha(Theme.dark ? 0.09 : 0.05) 100%)
+                        : p-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+                    animate border-color { duration: Motion.fast; }
+                    p-ta := TouchArea { mouse-cursor: p.active ? default : pointer; clicked => { if (!p.active) { root.activate-profile(p.id); } } }
+                    HorizontalLayout {
+                        padding-left: 11px; padding-right: 11px; spacing: 8px;
+                        Rectangle {
+                            width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+                            background: p.active ? Theme.accent : Theme.offline-fg;
+                            opacity: p.active ? 1.0 : 0.45;
+                        }
+                        Text { text: p.name; font-size: 12px; font-weight: p.active ? 700 : 500; color: p.active ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        if p.active : Image { width: 13px; height: 13px; y: (parent.height - self.height) / 2; source: @image-url("../icons/check.svg"); colorize: Theme.accent; }
+                    }
+                }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; min-height: 4px; }
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 6px;
+            DeckNavBtn { icon: @image-url("../icons/bolt.svg"); label: I18n.t("测速", "Probe"); clicked => { root.probe-active-group(); } }
+            DeckNavBtn { icon: @image-url("../icons/logs.svg"); label: I18n.t("日志", "Logs"); clicked => { root.open-logs(); } }
+            DeckNavBtn { icon: @image-url("../icons/rule-edit.svg"); label: I18n.t("规则", "Rules"); clicked => { root.open-rules(); } }
+        }
+    }
+}

@@ -1,0 +1,163 @@
+import { ScrollView } from "std-widgets.slint";
+import { GlassSpeculum, NexusVScrollBar } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+import { OutboundEditorTab } from "outbound_editor_tab.slint";
+
+// Centered modal dialog for creating a new Outbound node
+export component OutboundModalDialog inherits Rectangle {
+    in property <string> editor-status: "";
+    in property <bool> editor-ok: true;
+
+    callback close-requested();
+    callback append-raw-kdl(string);
+
+    background: Theme.dark ? #00000094 : #0f172a5e;
+
+    TouchArea {
+        clicked => { root.close-requested(); }
+    }
+
+    Rectangle {
+        property <length> max-dialog-h: max(300px, min(parent.height - 64px, 600px));
+        width: max(340px, min(parent.width - 64px, 800px));
+        height: min(self.max-dialog-h, max(280px, 62px + modal-body.preferred-height));
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        border-radius: 20px;
+        border-width: 1px;
+        border-color: Theme.dark ? Theme.hairline-strong : #0f172a26;
+        background: Theme.overlay-bg;
+        drop-shadow-blur: 36px;
+        drop-shadow-offset-y: 12px;
+        drop-shadow-color: Theme.dark ? #00000080 : #0f172a30;
+        clip: true;
+
+        // Absorb clicks inside modal sheet so backdrop does not dismiss
+        TouchArea {}
+        GlassSpeculum {}
+
+        VerticalLayout {
+            // Modal header bar: icon badge + title + active protocol pill + close button
+            HorizontalLayout {
+                vertical-stretch: 0;
+                padding-left: 20px;
+                padding-right: 16px;
+                padding-top: 14px;
+                padding-bottom: 12px;
+                spacing: Theme.space-md;
+
+                HorizontalLayout {
+                    horizontal-stretch: 0;
+                    spacing: 9px;
+
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: Theme.accent.with-alpha(Theme.dark ? 0.42 : 0.30);
+                        background: Theme.accent-soft;
+
+                        Image {
+                            x: 6px;
+                            y: 6px;
+                            width: 16px;
+                            height: 16px;
+                            source: @image-url("../icons/plus.svg");
+                            colorize: Theme.accent;
+                        }
+                    }
+
+                    Text {
+                        text: I18n.t("新增出站节点", "New Outbound");
+                        font-size: 15px;
+                        font-weight: 800;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 0;
+                        height: 22px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 11px;
+                        border-width: 1px;
+                        border-color: Theme.selected-border;
+                        background: Theme.selected-bg;
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            Text {
+                                text: editor.proto;
+                                font-size: 11px;
+                                font-weight: 700;
+                                font-family: Theme.mono-font;
+                                color: Theme.nav-active-fg;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                VerticalLayout {
+                    alignment: center;
+                    IconActionButton {
+                        size: 28px;
+                        icon: @image-url("../icons/x.svg");
+                        label: I18n.t("关闭 (Esc)", "Close (Esc)");
+                        clicked => { root.close-requested(); }
+                    }
+                }
+            }
+
+            Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+            // Scrollable modal body with clean NexusVScrollBar when overflowing
+            Rectangle {
+                vertical-stretch: 1;
+
+                modal-sv := ScrollView {
+                    width: 100%;
+                    height: 100%;
+                    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    content-width: self.visible-width;
+                    content-height: max(self.visible-height, modal-body.preferred-height);
+
+                    modal-body := VerticalLayout {
+                        x: 0px;
+                        y: 0px;
+                        width: modal-sv.visible-width;
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-top: 16px;
+                        padding-bottom: 18px;
+                        alignment: start;
+
+                        editor := OutboundEditorTab {
+                            container-width: max(0px, modal-sv.visible-width - 40px);
+                            status-text: root.editor-status;
+                            status-ok: root.editor-ok;
+                            append-raw-kdl(snippet) => { root.append-raw-kdl(snippet); }
+                        }
+                    }
+                }
+
+                NexusVScrollBar {
+                    x: parent.width - self.width - 4px;
+                    y: 12px;
+                    height: max(0px, parent.height - 24px);
+                    viewport-size: modal-sv.visible-height;
+                    content-size: modal-sv.content-height;
+                    scroll-pos <=> modal-sv.content-y;
+                }
+            }
+        }
+    }
+}

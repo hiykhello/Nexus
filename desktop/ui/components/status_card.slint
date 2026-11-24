@@ -1,128 +1,267 @@
-import { Button, Switch, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { LayoutMetrics } from "../layout_metrics.slint";
 import { Theme } from "../theme.slint";
+import { OutboundMemberItem, ProfileItem } from "../types.slint";
+import { DashSectionSlot } from "dash_bento_sections.slint";
+import { DragGhostPill } from "dash_drag_chrome.slint";
+import { DashCustomizeBar } from "bento_cards.slint";
 
+// Proportional 4-Column (>=900px) / 2-Column (<900px) Drag-Reorderable Bento Dashboard
 export component StatusCard inherits Rectangle {
+    in property <length> window-width: 1040px;
     in property <bool> core-running: false;
+    in property <bool> core-toggling: false;
+    in property <string> core-uptime: "";
+    in property <string> app-memory-text: "--";
+    in property <string> core-memory-text: "--";
+    in property <string> total-memory-text: "--";
+    in property <float> app-memory-ratio: 0.78;
     in property <bool> system-proxy-supported: true;
     in property <bool> system-proxy-enabled: false;
+    in property <string> outbound-mode: "rule";
+    in-out property <bool> mixed-proxy-enabled: true;
+    in-out property <string> mixed-proxy-host: "127.0.0.1";
+    in-out property <string> mixed-proxy-port: "7890";
+    in-out property <bool> socks-proxy-enabled: true;
+    in-out property <string> socks-proxy-host: "127.0.0.1";
+    in-out property <string> socks-proxy-port: "1080";
+    in-out property <bool> http-proxy-enabled: false;
+    in-out property <string> http-proxy-host: "127.0.0.1";
+    in-out property <string> http-proxy-port: "8080";
     in property <bool> tun-enabled: false;
-    in property <string> active-profile: "default.kdl";
-    in property <string> status-summary: "未启动";
-    in property <string> control-endpoint: "";
-    in property <string> metrics-summary: "代次: 0 · 活跃会话: 0 · 上行: 0 KiB · 下行: 0 KiB";
-    in property <string> rate-summary: "实时速率: ↑ 0.0 KiB/s · ↓ 0.0 KiB/s";
-    in property <[float]> rate-bars: [];
+    in property <string> active-profile: "";
+    in property <[ProfileItem]> profiles: [];
+    in property <string> selected-group: "";
+    in property <string> active-node: "";
+    in property <int> active-node-latency-ms: -1;
+    in property <int> active-sessions: 0;
+    in property <string> upload-total: "0 B";
+    in property <string> download-total: "0 B";
+    in property <float> total-down-ratio: 0.85;
+    in property <string> down-speed-value: "0.0";
+    in property <string> down-speed-unit: "KB/s";
+    in property <string> down-speed-peak: "0.0 KB/s";
+    in property <string> down-wave-area: "";
+    in property <string> down-wave-line: "";
+    in property <string> up-speed-value: "0.0";
+    in property <string> up-speed-unit: "KB/s";
+    in property <string> up-speed-peak: "0.0 KB/s";
+    in property <string> up-wave-area: "";
+    in property <string> up-wave-line: "";
+    in property <string> diagnostic-message: "";
+    in property <bool> diagnostic-ok: true;
+    in property <string> hero-state-override: "";
+    in property <[OutboundMemberItem]> quick-nodes: [];
+    in property <bool> groups-probing: false;
+    in-out property <bool> dash-editing: false;
+    in-out property <bool> dash-show-speed: true;
+    in-out property <bool> dash-show-quick-nodes: true;
+    in-out property <bool> dash-show-network: true;
+    in-out property <bool> dash-show-memory: true;
+    in-out property <bool> dash-show-traffic: true;
+    in-out property <bool> dash-show-ports: true;
+    in property <[int]> dash-section-order: [0, 1, 2, 3];
+    in property <[int]> dash-info-order: [0, 1, 2, 3];
+    in property <bool> dash-deck-swapped: false;
 
     callback toggle-core();
     callback toggle-system-proxy(bool);
+    callback switch-outbound-mode(string);
+    callback apply-inbound-proxy-config(string, bool, string, string);
     callback toggle-tun(bool);
     callback reload-config();
-    callback refresh-metrics();
     callback clear-cache();
+    callback copy-text(string);
+    callback copy-proxy-env();
+    callback select-member(string, string);
+    callback activate-profile(string);
+    callback probe-active-group();
+    callback open-groups();
+    callback open-connections();
+    callback open-profiles();
+    callback open-config();
+    callback open-logs();
+    callback open-rules();
+    callback dash-prefs-changed();
+    callback reorder-dash-section(int, int);
+    callback reorder-dash-info(int, int);
+    callback swap-dash-deck();
+    callback reset-dash-layout();
 
-    border-radius: 10px;
-    border-width: 1px;
-    border-color: Theme.card-border;
-    background: Theme.card-bg;
+    property <string> sys-proxy-port:
+        root.mixed-proxy-enabled ? ":\{root.mixed-proxy-port != "" ? root.mixed-proxy-port : "7890"}"
+        : root.http-proxy-enabled ? ":\{root.http-proxy-port != "" ? root.http-proxy-port : "8080"}"
+        : root.socks-proxy-enabled ? ":\{root.socks-proxy-port != "" ? root.socks-proxy-port : "1080"}"
+        : "";
+    property <bool> is-compact: LayoutMetrics.is-compact-w(root.window-width);
+    property <bool> is-wide: LayoutMetrics.is-wide-w(root.window-width);
+    property <length> row1-h: root.is-wide ? 186px : 178px;
+    property <length> sec-gap: root.is-compact ? Theme.space-sm : Theme.space-md;
+    property <bool> has-any-info: root.dash-show-network || root.dash-show-memory || root.dash-show-traffic || root.dash-show-ports;
 
-    VerticalBox {
-        padding: 16px;
-        spacing: 10px;
+    pure function sec-vis(id: int) -> bool { id != 2 || root.has-any-info }
+    pure function sec-is-first(slot: int) -> bool {
+        slot == 0 || (slot == 1 && root.dash-section-order.length > 0 && !root.sec-vis(root.dash-section-order[0]))
+    }
 
-        HorizontalBox {
-            spacing: 12px;
-            Text {
-                text: root.core-running ? "Nexus 运行中" : "Nexus 已停止";
-                font-size: 18px;
-                font-weight: 700;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
+    // Live drag-and-drop state (strictly active ONLY while dash-editing == true)
+    private property <string> drag-kind: ""; // "" | "section" | "info" | "deck"
+    private property <int> drag-source-id: -1;
+    private property <int> hover-sec-id: -1;
+    private property <int> hover-info-id: -1;
+    private property <int> hover-deck-id: -1;
+    private property <length> drag-abs-x: 0px;
+    private property <length> drag-abs-y: 0px;
+
+    property <int> target-info-id:
+        (root.drag-kind == "info" && root.hover-info-id >= 0 && root.hover-info-id != root.drag-source-id)
+            ? root.hover-info-id : -1;
+    property <int> target-deck-id:
+        (root.drag-kind == "deck" && root.dash-show-quick-nodes && root.hover-deck-id >= 0 && root.hover-deck-id != root.drag-source-id)
+            ? root.hover-deck-id : -1;
+    property <int> target-sec-id:
+        root.drag-kind == "section"
+            ? ((root.hover-sec-id >= 0 && root.hover-sec-id != root.drag-source-id) ? root.hover-sec-id : -1)
+        : root.drag-kind == "info" && root.hover-info-id < 0
+            ? ((root.hover-sec-id >= 0 && root.hover-sec-id != 2) ? root.hover-sec-id : -1)
+        : root.drag-kind == "deck" && root.hover-deck-id < 0
+            ? ((root.hover-sec-id >= 0 && root.hover-sec-id != 3) ? root.hover-sec-id : -1)
+        : -1;
+
+    property <string> drag-ghost-label:
+        root.drag-kind == "section"
+            ? (root.drag-source-id == 0 ? I18n.t("主控与速率", "Hero & Speed")
+                : root.drag-source-id == 1 ? I18n.t("控制条", "Controls")
+                : root.drag-source-id == 2 ? I18n.t("信息卡片", "Status Cards")
+                : I18n.t("底部面板", "Quick Deck"))
+        : root.drag-kind == "info"
+            ? (root.drag-source-id == 0 ? I18n.t("网络状态", "Network")
+                : root.drag-source-id == 1 ? I18n.t("内存占用", "Memory")
+                : root.drag-source-id == 2 ? I18n.t("连接与流量", "Traffic")
+                : I18n.t("本地端口", "Ports"))
+        : root.drag-kind == "deck"
+            ? (root.drag-source-id == 0 ? I18n.t("快捷切换", "Quick Switch") : I18n.t("配置档案", "Profiles"))
+        : "";
+
+    function cancel-drag() {
+        root.drag-kind = "";
+        root.drag-source-id = -1;
+        root.hover-sec-id = -1;
+        root.hover-info-id = -1;
+        root.hover-deck-id = -1;
+    }
+
+    function begin-drag(kind: string, id: int, ax: length, ay: length) {
+        if (!root.dash-editing) { return; }
+        root.hover-sec-id = -1;
+        root.hover-info-id = -1;
+        root.hover-deck-id = -1;
+        root.drag-abs-x = ax;
+        root.drag-abs-y = ay;
+        root.drag-source-id = id;
+        root.drag-kind = kind;
+    }
+
+    function update-drag(ax: length, ay: length) {
+        if (!root.dash-editing || root.drag-kind == "") { return; }
+        root.drag-abs-x = ax;
+        root.drag-abs-y = ay;
+    }
+
+    function commit-drag() {
+        let kind = root.drag-kind;
+        let src = root.drag-source-id;
+        let t-sec = root.target-sec-id;
+        let t-info = root.target-info-id;
+        let t-deck = root.target-deck-id;
+        root.cancel-drag();
+        if (kind == "section" && src >= 0 && t-sec >= 0 && src != t-sec) {
+            root.reorder-dash-section(src, t-sec);
+        } else if (kind == "info") {
+            if (t-info >= 0 && src >= 0 && src != t-info) {
+                root.reorder-dash-info(src, t-info);
+            } else if (t-sec >= 0 && t-sec != 2) {
+                root.reorder-dash-section(2, t-sec);
             }
-            Button {
-                text: root.core-running ? "停止核心" : "启动核心";
-                primary: !root.core-running;
-                clicked => { root.toggle-core(); }
-            }
-            Button {
-                text: "热重载";
-                enabled: root.core-running;
-                clicked => { root.reload-config(); }
+        } else if (kind == "deck") {
+            if (t-deck >= 0 && src >= 0 && src != t-deck) {
+                root.swap-dash-deck();
+            } else if (t-sec >= 0 && t-sec != 3) {
+                root.reorder-dash-section(3, t-sec);
             }
         }
+    }
 
-        Text {
-            text: "配置: \{root.active-profile}  ·  \{root.status-summary}";
-            font-size: 13px;
-            opacity: 0.85;
+    changed dash-editing => {
+        if (!root.dash-editing) { root.cancel-drag(); }
+    }
+
+    preferred-height: main-col.preferred-height;
+
+    main-col := VerticalLayout {
+        width: 100%;
+        height: 100%;
+
+        DashCustomizeBar {
+            active-profile: root.active-profile; core-running: root.core-running; core-uptime: root.core-uptime;
+            editing <=> root.dash-editing;
+            show-speed <=> root.dash-show-speed; show-quick-nodes <=> root.dash-show-quick-nodes;
+            show-network <=> root.dash-show-network; show-memory <=> root.dash-show-memory;
+            show-traffic <=> root.dash-show-traffic; show-ports <=> root.dash-show-ports;
+            open-profiles => { root.open-profiles(); }
+            prefs-changed => { root.dash-prefs-changed(); }
+            reset-layout => { root.cancel-drag(); root.reset-dash-layout(); }
         }
 
-        if root.control-endpoint != "" : Text {
-            text: "控制通道: \{root.control-endpoint}";
-            font-size: 12px;
-            opacity: 0.65;
+        for sec-id[slot-idx] in root.dash-section-order : DashSectionSlot {
+            section-id: sec-id;
+            shown: root.sec-vis(sec-id);
+            top-gap: root.sec-is-first(slot-idx) ? Theme.space-md : root.sec-gap;
+            is-compact: root.is-compact; is-wide: root.is-wide; row1-h: root.row1-h;
+            editing: root.dash-editing; drag-kind: root.drag-kind; drag-source-id: root.drag-source-id;
+            target-sec-id: root.target-sec-id; target-info-id: root.target-info-id; target-deck-id: root.target-deck-id;
+            drag-abs-x: root.drag-abs-x; drag-abs-y: root.drag-abs-y;
+            core-running: root.core-running; core-toggling: root.core-toggling; core-uptime: root.core-uptime;
+            app-memory-text: root.app-memory-text; core-memory-text: root.core-memory-text; total-memory-text: root.total-memory-text; app-memory-ratio: root.app-memory-ratio;
+            system-proxy-supported: root.system-proxy-supported; system-proxy-enabled: root.system-proxy-enabled; sys-proxy-port: root.sys-proxy-port;
+            outbound-mode: root.outbound-mode;
+            mixed-proxy-enabled <=> root.mixed-proxy-enabled; mixed-proxy-host <=> root.mixed-proxy-host; mixed-proxy-port <=> root.mixed-proxy-port;
+            socks-proxy-enabled <=> root.socks-proxy-enabled; socks-proxy-host <=> root.socks-proxy-host; socks-proxy-port <=> root.socks-proxy-port;
+            http-proxy-enabled <=> root.http-proxy-enabled; http-proxy-host <=> root.http-proxy-host; http-proxy-port <=> root.http-proxy-port;
+            tun-enabled: root.tun-enabled; active-profile: root.active-profile; profiles: root.profiles; selected-group: root.selected-group;
+            active-node: root.active-node; active-node-latency-ms: root.active-node-latency-ms; active-sessions: root.active-sessions;
+            upload-total: root.upload-total; download-total: root.download-total; total-down-ratio: root.total-down-ratio;
+            down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit; down-speed-peak: root.down-speed-peak; down-wave-area: root.down-wave-area; down-wave-line: root.down-wave-line;
+            up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit; up-speed-peak: root.up-speed-peak; up-wave-area: root.up-wave-area; up-wave-line: root.up-wave-line;
+            diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok; hero-state-override: root.hero-state-override;
+            quick-nodes: root.quick-nodes; groups-probing: root.groups-probing;
+            dash-show-speed: root.dash-show-speed; dash-show-quick-nodes: root.dash-show-quick-nodes;
+            dash-show-network: root.dash-show-network; dash-show-memory: root.dash-show-memory;
+            dash-show-traffic: root.dash-show-traffic; dash-show-ports: root.dash-show-ports;
+            dash-info-order: root.dash-info-order; deck-swapped: root.dash-deck-swapped;
+            toggle-core => { root.toggle-core(); } toggle-system-proxy(on) => { root.toggle-system-proxy(on); } switch-outbound-mode(m) => { root.switch-outbound-mode(m); }
+            apply-inbound-proxy-config(pr, on, h, p) => { root.apply-inbound-proxy-config(pr, on, h, p); } toggle-tun(on) => { root.toggle-tun(on); }
+            reload-config => { root.reload-config(); } clear-cache => { root.clear-cache(); } copy-text(t) => { root.copy-text(t); } copy-proxy-env => { root.copy-proxy-env(); }
+            select-member(g, m) => { root.select-member(g, m); } activate-profile(id) => { root.activate-profile(id); } probe-active-group => { root.probe-active-group(); }
+            open-groups => { root.open-groups(); } open-connections => { root.open-connections(); } open-profiles => { root.open-profiles(); }
+            open-config => { root.open-config(); } open-logs => { root.open-logs(); } open-rules => { root.open-rules(); }
+            start-drag(k, id, ax, ay) => { root.begin-drag(k, id, ax, ay); } move-drag(ax, ay) => { root.update-drag(ax, ay); }
+            end-drag => { root.commit-drag(); } cancel-drag => { root.cancel-drag(); }
+            report-hover-sec(id, inside) => {
+                if (inside) { root.hover-sec-id = id; } else if (root.hover-sec-id == id) { root.hover-sec-id = -1; }
+            }
+            report-hover-info(id, inside) => {
+                if (inside) { root.hover-info-id = id; } else if (root.hover-info-id == id) { root.hover-info-id = -1; }
+            }
+            report-hover-deck(id, inside) => {
+                if (inside) { root.hover-deck-id = id; } else if (root.hover-deck-id == id) { root.hover-deck-id = -1; }
+            }
         }
+    }
 
-        HorizontalBox {
-            spacing: 8px;
-            Text {
-                text: root.metrics-summary;
-                font-size: 12px;
-                opacity: 0.8;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-            }
-            Button {
-                text: "刷新指标";
-                enabled: root.core-running;
-                clicked => { root.refresh-metrics(); }
-            }
-            Button {
-                text: "清缓存";
-                enabled: root.core-running;
-                clicked => { root.clear-cache(); }
-            }
-        }
-
-        Text {
-            text: root.rate-summary;
-            font-size: 12px;
-            font-weight: 600;
-            opacity: 0.9;
-        }
-
-        if root.rate-bars.length > 0 : Rectangle {
-            height: 48px;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: Theme.card-border;
-            HorizontalLayout {
-                padding: 6px;
-                spacing: 4px;
-                alignment: end;
-                for level in root.rate-bars : Rectangle {
-                    width: 10px;
-                    height: max(4px, 34px * clamp(level, 0.0, 1.0));
-                    y: 36px - self.height;
-                    border-radius: 2px;
-                    background: #3b82f6;
-                }
-            }
-        }
-
-        HorizontalBox {
-            spacing: 20px;
-            Switch {
-                text: root.system-proxy-supported ? "系统代理" : "系统代理（当前桌面不可用）";
-                enabled: root.core-running && root.system-proxy-supported;
-                checked: root.system-proxy-enabled;
-                toggled => { root.toggle-system-proxy(self.checked); }
-            }
-            Switch {
-                text: "TUN 接管";
-                enabled: root.core-running;
-                checked: root.tun-enabled;
-                toggled => { root.toggle-tun(self.checked); }
-            }
-        }
+    if root.dash-editing && root.drag-kind != "" : DragGhostPill {
+        label: root.drag-ghost-label;
+        x: clamp(root.drag-abs-x - root.absolute-position.x - self.width / 2, 0px, max(0px, root.width - self.width));
+        y: clamp(root.drag-abs-y - root.absolute-position.y - self.height / 2, 0px, max(0px, root.height - self.height));
     }
 }

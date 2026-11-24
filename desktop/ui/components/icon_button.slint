@@ -1,0 +1,104 @@
+import { TooltipState } from "../feedback.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+
+export component IconActionButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label: "";
+    in property <bool> active: false;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> success: false;
+    in property <bool> spin-on-click: false;
+    in property <bool> enabled: true;
+    in property <length> size: 32px;
+    callback clicked();
+
+    private property <int> spin-turns: 0;
+    private property <bool> tooltip-armed: false;
+
+    width: root.size;
+    height: root.size;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color:
+        root.success ? Theme.success-border
+        : root.primary ? Theme.pill-active-top.brighter(0.20)
+        : root.danger && root.enabled && ta.has-hover ? Theme.error-border
+        : root.active ? Theme.selected-border
+        : ta.has-hover && root.enabled ? Theme.selected-border
+        : Theme.card-border;
+    background:
+        root.success ? Theme.success-bg
+        : root.primary
+            ? (ta.pressed
+                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+        : root.danger && root.enabled && (ta.has-hover || ta.pressed) ? Theme.error-bg
+        : root.active ? Theme.selected-bg
+        : !root.enabled ? Theme.surface-bg
+        : ta.pressed ? Theme.nav-active-bg
+        : ta.has-hover ? Theme.row-hover-bg
+        : Theme.row-bg;
+    opacity: root.enabled ? 1.0 : 0.45;
+    transform-scale: ta.pressed && root.enabled ? 0.91 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        if (root.enabled) {
+            if (root.spin-on-click) { root.spin-turns += 1; }
+            root.clicked();
+        }
+    }
+
+    Timer {
+        interval: 380ms;
+        running: root.tooltip-armed && !ta.pressed;
+        triggered => {
+            root.tooltip-armed = false;
+            if (ta.has-hover && root.label != "") {
+                TooltipState.show(root.label, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+            }
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        changed has-hover => {
+            if (self.has-hover && root.label != "") {
+                root.tooltip-armed = true;
+            } else {
+                root.tooltip-armed = false;
+                TooltipState.hide();
+            }
+        }
+        clicked => {
+            root.tooltip-armed = false;
+            TooltipState.hide();
+            if (root.spin-on-click) { root.spin-turns += 1; }
+            root.clicked();
+        }
+    }
+
+    Image {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: root.size <= 28px ? 14px : 16px;
+        height: self.width;
+        source: root.icon;
+        transform-rotation: 360deg * root.spin-turns;
+        animate transform-rotation { duration: Motion.slow; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+        colorize:
+            root.success ? Theme.success-fg
+            : root.primary ? Theme.pill-active-fg
+            : root.danger ? Theme.error-fg
+            : root.active ? Theme.nav-active-fg
+            : ta.has-hover && root.enabled ? Theme.text-primary
+            : Theme.text-secondary;
+    }
+}

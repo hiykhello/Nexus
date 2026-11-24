@@ -19,12 +19,18 @@ set(NEXUS_BRIDGE_IMPLS
     src/core_supervisor.cpp
     src/firewall_helper.cpp
     src/http_control.cpp
+    src/kdl_ops.cpp
     src/profile_store.cpp
     src/service_installer.cpp
     src/share_link.cpp
     src/single_instance.cpp
     src/system_proxy.cpp
     src/tray_controller.cpp
+    src/tray_linux_sni.cpp
+    src/tray_win32.cpp
+    src/ui_actions.cpp
+    src/ui_prefs.cpp
+    src/window_blur.cpp
 )
 if(WIN32)
     list(APPEND NEXUS_BRIDGE_IMPLS src/ipc_client_win.cpp)
@@ -41,12 +47,16 @@ target_sources(nexus-desktop-bridge
             src/firewall_helper.cppm
             src/http_control.cppm
             src/ipc_client.cppm
+            src/kdl_ops.cppm
             src/profile_store.cppm
             src/service_installer.cppm
             src/share_link.cppm
             src/single_instance.cppm
             src/system_proxy.cppm
             src/tray_controller.cppm
+            src/ui_actions.cppm
+            src/ui_prefs.cppm
+            src/window_blur.cppm
 )
 if(MSVC)
     target_compile_features(nexus-desktop-bridge PUBLIC cxx_std_23)
@@ -56,6 +66,8 @@ endif()
 
 if(WIN32)
     target_link_libraries(nexus-desktop-bridge PUBLIC wininet ws2_32 advapi32 shell32 user32)
+elseif(UNIX AND NOT APPLE)
+    target_link_libraries(nexus-desktop-bridge PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
 if(NEXUS_DESKTOP_BUILD_UI)
@@ -87,6 +99,9 @@ if(NEXUS_DESKTOP_BUILD_UI)
     else()
         target_compile_features(nexus-desktop PRIVATE cxx_std_26)
     endif()
+    target_link_options(nexus-desktop PRIVATE
+        $<$<AND:$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<NOT:$<PLATFORM_ID:Darwin>>,$<OR:$<CONFIG:Release>,$<CONFIG:MinSizeRel>>>:-Wl,-s>
+    )
     target_link_libraries(nexus-desktop PRIVATE nexus-desktop-bridge Slint::Slint)
 
     if(WIN32)
@@ -104,4 +119,23 @@ if(NEXUS_DESKTOP_BUILD_TESTS)
     endif()
     target_link_libraries(nexus-desktop-tests PRIVATE nexus-desktop-bridge)
     add_test(NAME nexus-desktop-tests COMMAND nexus-desktop-tests)
+
+    add_executable(nexus-desktop-ui-ops-tests tests/ui_ops_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-ui-ops-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-ui-ops-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-ui-ops-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-ui-ops-tests COMMAND nexus-desktop-ui-ops-tests)
+
+    add_executable(nexus-desktop-tray-tests tests/tray_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-tray-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-tray-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-tray-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-tray-tests COMMAND nexus-desktop-tray-tests)
+    set_tests_properties(nexus-desktop-tray-tests PROPERTIES ENVIRONMENT "NEXUS_DISABLE_NATIVE_TRAY=1")
 endif()

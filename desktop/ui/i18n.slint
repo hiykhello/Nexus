@@ -1,0 +1,20 @@
+export enum LanguagePreference { system, zh-cn, en-us }
+
+export global I18n {
+    in-out property <LanguagePreference> preference: LanguagePreference.system;
+    // Set by host runtime from OS locale (e.g. "zh-CN", "en-US")
+    in-out property <string> system-locale: "zh-CN";
+
+    out property <bool> is-en:
+        preference == LanguagePreference.en-us ? true
+        : preference == LanguagePreference.zh-cn ? false
+        : (system-locale == "en"
+            || system-locale == "en-US"
+            || system-locale == "en-GB"
+            || system-locale == "en_US"
+            || system-locale == "en_GB");
+
+    public pure function t(zh: string, en: string) -> string {
+        return is-en ? en : zh;
+    }
+}

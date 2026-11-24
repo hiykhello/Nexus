@@ -1,78 +1,341 @@
-import { Button, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
-import { OutboundGroupItem, OutboundMemberItem } from "../types.slint";
+import { ScrollView } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { LayoutMetrics } from "../layout_metrics.slint";
+import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
+import { OutboundGroupItem, OutboundMemberItem } from "../types.slint";
+import { EmptyStateCard, NexusInput, NexusVScrollBar } from "glass_primitives.slint";
+import { FloatingProbeFab } from "floating_fabs.slint";
+import { GroupMemberCard } from "group_member_card.slint";
+import { GroupRail, GroupSummaryStrip } from "group_rail.slint";
+import { IconActionButton } from "icon_button.slint";
 
-export component GroupsPanel inherits VerticalBox {
+component CapsulePillButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> text;
+    in property <bool> active: false;
+    in property <bool> primary: false;
+    callback clicked();
+
+    height: 32px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color:
+        root.primary ? Theme.pill-active-top.brighter(0.20)
+        : root.active ? Theme.selected-border
+        : ta.has-hover ? Theme.hairline-strong : Theme.card-border;
+    background:
+        root.primary
+            ? (ta.pressed
+                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+        : root.active ? Theme.selected-bg
+        : ta.has-hover ? Theme.row-hover-bg
+        : Theme.row-bg;
+    drop-shadow-blur: root.primary ? 10px : 0px;
+    drop-shadow-offset-y: root.primary ? 2px : 0px;
+    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.42 : 0.26);
+    transform-scale: ta.pressed ? 0.96 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 11px;
+        padding-right: 12px;
+        spacing: 5px;
+        Image {
+            width: 13px;
+            height: 13px;
+            y: (parent.height - self.height) / 2;
+            source: root.icon;
+            colorize: root.primary ? Theme.pill-active-fg : root.active ? Theme.nav-active-fg : Theme.text-secondary;
+        }
+        Text {
+            text: root.text;
+            font-size: 12px;
+            font-weight: root.primary || root.active ? 700 : 600;
+            color: root.primary ? Theme.pill-active-fg : root.active ? Theme.nav-active-fg : Theme.text-primary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component GroupsPanel inherits VerticalLayout {
+    in property <length> window-width: 1040px;
     in property <[OutboundGroupItem]> groups: [];
     in property <[OutboundMemberItem]> members: [];
     in property <string> selected-group: "";
+    in property <string> active-group-mode: "";
+    in property <bool> active-group-auto: false;
+    in property <string> active-group-node: "";
+    in property <int> active-group-latency-ms: -1;
+    in property <int> active-group-healthy: 0;
+    in property <int> active-group-total: 0;
+    in-out property <string> member-filter: "";
+    in-out property <string> member-sort: "default"; // "default" | "latency" | "name"
+    in-out property <bool> hide-timeout: false;
+    in property <bool> probing: false;
 
     callback choose-group(string);
     callback select-member(string, string);
+    callback toggle-pin-member(string, string);
+    callback sort-members(string);
     callback reset-group-auto(string);
     callback probe-group(string);
     callback refresh-groups();
+    callback filter-members(string);
+    callback open-add-outbound();
+    callback open-config-import();
 
-    spacing: 12px;
+    property <bool> is-wide: LayoutMetrics.is-wide-w(root.window-width);
+    property <string> sort-label:
+        root.member-sort == "latency" ? I18n.t("按延迟", "Latency")
+        : root.member-sort == "name" ? I18n.t("按名称", "Name")
+        : I18n.t("默认排序", "Default");
 
-    HorizontalBox {
-        Text {
-            text: "出站策略组";
-            font-size: 16px;
-            font-weight: 700;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-        }
-        if root.selected-group != "" : Button {
-            text: "立即测速";
-            clicked => { root.probe-group(root.selected-group); }
-        }
-        if root.selected-group != "" : Button {
-            text: "恢复自动选优";
-            clicked => { root.reset-group-auto(root.selected-group); }
-        }
-        Button {
-            text: "刷新";
-            clicked => { root.refresh-groups(); }
-        }
+    pure function pick-min-lat(a: int, b: int) -> int {
+        return a <= 0 ? b : (b <= 0 ? a : min(a, b));
     }
 
-    HorizontalBox {
-        spacing: 8px;
-        for g in root.groups : Button {
-            text: "\{g.tag} (\{g.active-member})";
-            primary: g.tag == root.selected-group;
-            clicked => { root.choose-group(g.tag); }
-        }
+    pure function member-lat(list: [OutboundMemberItem], i: int) -> int {
+        return i < list.length && list[i].latency-ms > 0 ? list[i].latency-ms : -1;
     }
 
-    ListView {
-        vertical-stretch: 1;
-        for m in root.members : Rectangle {
-            height: 44px;
-            border-radius: 6px;
-            border-width: m.selected ? 1px : 0px;
-            border-color: Theme.selected-border;
-            background: m.selected ? Theme.selected-bg : Theme.row-bg;
+    property <int> fastest-member-ms:
+        pick-min-lat(
+            pick-min-lat(
+                pick-min-lat(pick-min-lat(member-lat(root.members, 0), member-lat(root.members, 1)), pick-min-lat(member-lat(root.members, 2), member-lat(root.members, 3))),
+                pick-min-lat(pick-min-lat(member-lat(root.members, 4), member-lat(root.members, 5)), pick-min-lat(member-lat(root.members, 6), member-lat(root.members, 7)))
+            ),
+            pick-min-lat(
+                pick-min-lat(pick-min-lat(member-lat(root.members, 8), member-lat(root.members, 9)), pick-min-lat(member-lat(root.members, 10), member-lat(root.members, 11))),
+                pick-min-lat(pick-min-lat(member-lat(root.members, 12), member-lat(root.members, 13)), pick-min-lat(member-lat(root.members, 14), root.active-group-latency-ms))
+            )
+        );
 
-            HorizontalBox {
+    spacing: Theme.space-md;
+
+    // Non-wide group selector strip (pill-rounded cards matching Wave 8 language)
+    if !root.is-wide && root.groups.length > 0 : FlexboxLayout {
+        vertical-stretch: 0;
+        padding-right: 18px;
+        spacing: Theme.space-sm;
+        for g in root.groups : Rectangle {
+            property <bool> is-current: g.tag == root.selected-group;
+            height: 34px;
+            border-radius: 17px;
+            border-width: 1px;
+            border-color: is-current ? Theme.pill-active-top.brighter(0.20) : Theme.card-border;
+            background: is-current
+                ? @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%)
+                : group-ta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
+            transform-scale: group-ta.pressed ? 0.97 : 1.0;
+            animate border-color { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; }
+
+            group-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { sv.content-y = 0px; root.choose-group(g.tag); }
+            }
+
+            HorizontalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
-                spacing: 12px;
-                Text {
-                    text: m.overridden ? "\{m.name} [手动覆盖]" : m.name;
-                    vertical-alignment: center;
+                spacing: 6px;
+                Text { text: g.tag; font-size: 12px; font-weight: is-current ? 700 : 600; color: is-current ? Theme.pill-active-fg : Theme.text-primary; vertical-alignment: center; }
+                Text { text: "· \{g.active-member}"; font-size: 11px; color: is-current ? Theme.pill-active-fg.with-alpha(0.82) : Theme.text-secondary; vertical-alignment: center; }
+            }
+        }
+    }
+
+    // Main Proxies Workspace: Wide Studio 224px left GroupRail + right Concentric Node Grid
+    HorizontalLayout {
+        vertical-stretch: 1;
+        spacing: Theme.space-md;
+
+        if root.is-wide && root.groups.length > 0 : GroupRail {
+            groups: root.groups;
+            selected-group: root.selected-group;
+            healthy-count: root.active-group-healthy;
+            total-count: root.active-group-total > 0 ? root.active-group-total : root.members.length;
+            fastest-latency-ms: root.fastest-member-ms;
+            choose-group(tag) => { sv.content-y = 0px; root.choose-group(tag); }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            spacing: 10px;
+
+            // De-duplicated Flagship Toolbar (bottom-right FloatingProbeFab owns 一键测速!)
+            HorizontalLayout {
+                vertical-stretch: 0;
+                padding-right: 18px;
+                spacing: Theme.space-sm;
+
+                NexusInput {
                     horizontal-stretch: 1;
+                    min-width: 110px;
+                    search-icon: true;
+                    text <=> root.member-filter;
+                    placeholder-text: I18n.t("搜索节点...", "Filter nodes...");
+                    edited(q) => { root.filter-members(q); }
+                    accepted => { root.filter-members(root.member-filter); }
                 }
-                Text {
-                    text: m.latency-ms > 0 ? "\{m.latency-ms} ms" : m.state;
-                    vertical-alignment: center;
-                    opacity: 0.8;
+
+                CapsulePillButton {
+                    icon: @image-url("../icons/sort.svg");
+                    text: root.sort-label;
+                    active: root.member-sort != "default";
+                    clicked => {
+                        let next = root.member-sort == "default" ? "latency"
+                            : root.member-sort == "latency" ? "name" : "default";
+                        root.member-sort = next;
+                        root.sort-members(next);
+                    }
                 }
-                Button {
-                    text: m.selected ? "当前" : "切换";
-                    enabled: !m.selected;
-                    clicked => { root.select-member(root.selected-group, m.name); }
+
+                CapsulePillButton {
+                    icon: @image-url("../icons/eye-off.svg");
+                    text: I18n.t("隐藏超时", "Hide Err");
+                    active: root.hide-timeout;
+                    clicked => { root.hide-timeout = !root.hide-timeout; }
+                }
+
+                CapsulePillButton {
+                    icon: @image-url("../icons/plus.svg");
+                    text: I18n.t("新增", "Add");
+                    primary: true;
+                    clicked => { root.open-add-outbound(); }
+                }
+
+                if root.selected-group != "" : IconActionButton {
+                    icon: @image-url("../icons/sparkles.svg");
+                    label: I18n.t("恢复自动选优", "Reset Auto");
+                    clicked => { root.reset-group-auto(root.selected-group); }
+                }
+
+                IconActionButton {
+                    icon: @image-url("../icons/refresh.svg");
+                    label: I18n.t("刷新", "Refresh");
+                    spin-on-click: true;
+                    clicked => { root.refresh-groups(); }
+                }
+            }
+
+            if root.selected-group != "" : HorizontalLayout {
+                vertical-stretch: 0;
+                padding-right: 18px;
+                GroupSummaryStrip {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    group-name: root.selected-group;
+                    group-mode: root.active-group-mode;
+                    auto-mode: root.active-group-auto;
+                    active-node: root.active-group-node;
+                    active-latency-ms: root.active-group-latency-ms;
+                    healthy-count: root.active-group-healthy;
+                    total-count: root.active-group-total > 0 ? root.active-group-total : root.members.length;
+                    probing: root.probing;
+                }
+            }
+
+            if root.probing && root.selected-group == "" : HorizontalLayout {
+                vertical-stretch: 0;
+                padding-right: 18px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 2px;
+                    border-radius: 1px;
+                    background: Theme.accent-soft;
+                    clip: true;
+                    Rectangle {
+                        property <float> scan: Motion.reduced ? 0.35 : mod(animation-tick(), 1100ms) / 1100ms;
+                        x: (parent.width + self.width) * self.scan - self.width;
+                        width: parent.width * 0.32;
+                        height: 2px;
+                        background: Theme.accent;
+                    }
+                }
+            }
+
+            // Bento Node Grid directly on #101114 graphite canvas
+            Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+
+                sv := ScrollView {
+                    width: 100%;
+                    height: 100%;
+                    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                    content-width: self.visible-width;
+                    content-height: max(self.visible-height, grid-col.preferred-height);
+
+                    grid-col := VerticalLayout {
+                        x: 0px;
+                        y: 0px;
+                        width: sv.visible-width;
+                        padding-bottom: 72px;
+                        alignment: start;
+
+                        property <length> grid-w: max(0px, sv.visible-width - 18px);
+                        property <int> grid-cols: grid-w >= 760px ? 3 : grid-w >= 440px ? 2 : 1;
+                        property <length> card-w: max(0px, Math.floor((grid-w - 10px * (grid-cols - 1)) / grid-cols / 1px) * 1px);
+                        property <length> cell-w: card-w + 10px;
+
+                        if root.members.length == 0 : EmptyStateCard {
+                            width: grid-w;
+                            icon: @image-url("../icons/groups.svg");
+                            title: I18n.t("暂无可用节点", "No nodes yet");
+                            subtitle: I18n.t("连接后自动同步策略组，或导入分享链接添加节点", "Connect to sync groups, or import a share link");
+                            action-label: I18n.t("新增节点", "Add Node");
+                            secondary-action-label: I18n.t("导入链接", "Import URI");
+                            action-clicked => { root.open-add-outbound(); }
+                            secondary-action-clicked => { root.open-config-import(); }
+                        }
+
+                        if root.members.length > 0 : FlexboxLayout {
+                            width: max(0px, grid-w + 10px);
+                            height: Math.ceil(root.members.length / grid-cols) * 102px;
+                            for m in root.members : Rectangle {
+                                property <bool> is-timeout: m.latency-ms <= 0 && (m.state == "timeout" || m.state == "unreachable" || m.state == "error" || m.state == "failed");
+                                property <bool> shown: !root.hide-timeout || !is-timeout;
+                                width: shown ? cell-w : 0px;
+                                height: shown ? 102px : 0px;
+
+                                if shown : GroupMemberCard {
+                                    x: 0px;
+                                    y: 0px;
+                                    width: card-w;
+                                    member: m;
+                                    select-clicked => { root.select-member(root.selected-group, m.name); }
+                                    toggle-pin-clicked => { root.toggle-pin-member(root.selected-group, m.name); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                NexusVScrollBar {
+                    x: parent.width - self.width - 3px;
+                    y: 2px;
+                    height: max(0px, parent.height - 4px);
+                    viewport-size: sv.visible-height;
+                    content-size: sv.content-height;
+                    scroll-pos <=> sv.content-y;
+                }
+
+                if root.selected-group != "" : FloatingProbeFab {
+                    x: parent.width - self.width - 18px;
+                    y: parent.height - self.height - 8px;
+                    probing: root.probing;
+                    clicked => { root.probe-group(root.selected-group); }
                 }
             }
         }

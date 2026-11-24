@@ -11,12 +11,54 @@ namespace desktop {
             });
         }
 
+        [[nodiscard]] auto has_control_char(std::string_view text) noexcept -> bool {
+            for (unsigned char c : text) {
+                if (c < 0x20 || c == 0x7F) return true;
+            }
+            return false;
+        }
+
         [[nodiscard]] auto sanitize_unit_field(std::string_view text) -> std::string {
             std::string out;
             out.reserve(text.size());
-            for (char c : text) {
-                if (c != '\r' && c != '\n') out.push_back(c);
+            for (unsigned char c : text) {
+                if (c >= 0x20 && c != 0x7F) out.push_back(static_cast<char>(c));
             }
+            return out;
+        }
+
+        [[nodiscard]] auto escape_systemd_exec_arg(std::string_view text) -> std::string {
+            std::string out;
+            out.reserve(text.size() + 4);
+            for (unsigned char c : text) {
+                if (c < 0x20 || c == 0x7F) continue;
+                if (c == '\\' || c == '"') { out.push_back('\\'); out.push_back(static_cast<char>(c)); }
+                else if (c == '%') out += "%%";
+                else if (c == '$') out += "$$";
+                else out.push_back(static_cast<char>(c));
+            }
+            return out;
+        }
+
+        [[nodiscard]] auto quote_windows_cmdline_arg(std::string_view text) -> std::string {
+            std::string out;
+            out.reserve(text.size() + 4);
+            out.push_back('"');
+            std::size_t backslashes = 0;
+            for (char c : text) {
+                if (c == '\\') {
+                    ++backslashes;
+                } else if (c == '"') {
+                    out.append(backslashes * 2 + 1, '\\');
+                    out.push_back('"');
+                    backslashes = 0;
+                } else {
+                    if (backslashes > 0) { out.append(backslashes, '\\'); backslashes = 0; }
+                    out.push_back(c);
+                }
+            }
+            if (backslashes > 0) out.append(backslashes * 2, '\\');
+            out.push_back('"');
             return out;
         }
     }
@@ -28,15 +70,20 @@ namespace desktop {
         if (spec.binary_path.empty() || spec.config_path.empty()) {
             return std::unexpected("binary_path and config_path are required");
         }
+        if (has_control_char(spec.binary_path.string()) ||
+            has_control_char(spec.config_path.string()) ||
+            has_control_char(spec.data_dir.string())) {
+            return std::unexpected("service paths must not contain control characters");
+        }
         return {};
     }
 
     auto render_systemd_user_unit(ServiceSpec const& spec) -> std::expected<std::string, std::string> {
         if (auto ok = validate_service_spec(spec); !ok) return std::unexpected(ok.error());
-        auto const bin = sanitize_unit_field(spec.binary_path.string());
-        auto const cfg = sanitize_unit_field(spec.config_path.string());
-        auto const data = sanitize_unit_field(spec.data_dir.empty() ? spec.config_path.parent_path().string()
-                                                                    : spec.data_dir.string());
+        auto const bin = escape_systemd_exec_arg(spec.binary_path.string());
+        auto const cfg = escape_systemd_exec_arg(spec.config_path.string());
+        auto const data = escape_systemd_exec_arg(spec.data_dir.empty() ? spec.config_path.parent_path().string()
+                                                                        : spec.data_dir.string());
         return std::format(
             "[Unit]\n"
             "Description={}\n"
@@ -81,8 +128,10 @@ namespace desktop {
         -> std::expected<std::vector<std::string>, std::string> {
         if (auto ok = validate_service_spec(spec); !ok) return std::unexpected(ok.error());
         auto const data = spec.data_dir.empty() ? spec.config_path.parent_path() : spec.data_dir;
-        auto bin_path_arg = std::format("\"{}\" run --config \"{}\" -D \"{}\"",
-            spec.binary_path.string(), spec.config_path.string(), data.string());
+        auto bin_path_arg = std::format("{} run --config {} -D {}",
+            quote_windows_cmdline_arg(spec.binary_path.string()),
+            quote_windows_cmdline_arg(spec.config_path.string()),
+            quote_windows_cmdline_arg(data.string()));
         return std::vector<std::string>{
             "sc.exe", "create", spec.service_name,
             "binPath=", std::move(bin_path_arg),

@@ -1,0 +1,391 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { ProportionBar } from "bento_deck_cards.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+component WidgetToggleChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: true;
+    callback toggled();
+
+    height: 26px;
+    border-radius: 13px;
+    border-width: 1px;
+    border-color: root.active ? Theme.selected-border : Theme.card-border;
+    background: root.active ? Theme.selected-bg : ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+    transform-scale: ta.pressed ? 0.96 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
+
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px; spacing: 5px;
+        Rectangle {
+            width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+            background: root.active ? Theme.accent : Theme.offline-fg;
+            opacity: root.active ? 1.0 : 0.45;
+        }
+        Text {
+            text: root.label; font-size: 11px; font-weight: root.active ? 700 : 600;
+            color: root.active ? Theme.nav-active-fg : Theme.text-muted; vertical-alignment: center;
+        }
+    }
+}
+
+export component DashCustomizeBar inherits VerticalLayout {
+    in property <string> active-profile: "";
+    in property <bool> core-running: false;
+    in property <string> core-uptime: "";
+    in-out property <bool> editing: false;
+    in-out property <bool> show-speed: true;
+    in-out property <bool> show-quick-nodes: true;
+    in-out property <bool> show-network: true;
+    in-out property <bool> show-memory: true;
+    in-out property <bool> show-traffic: true;
+    in-out property <bool> show-ports: true;
+
+    callback open-profiles();
+    callback prefs-changed();
+    callback reset-layout();
+
+    vertical-stretch: 0;
+    spacing: Theme.space-xs;
+
+    HorizontalLayout {
+        height: 28px;
+        spacing: Theme.space-sm;
+
+        Rectangle {
+            horizontal-stretch: 0;
+            height: 26px; y: (parent.height - self.height) / 2;
+            border-radius: 13px; border-width: 1px;
+            border-color: prof-ta.has-hover ? Theme.selected-border : Theme.card-border;
+            background: prof-ta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
+            prof-ta := TouchArea { mouse-cursor: pointer; clicked => { root.open-profiles(); } }
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; spacing: 6px;
+                Rectangle {
+                    width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+                    background: root.core-running ? Theme.success-fg : Theme.offline-fg;
+                }
+                Text {
+                    text: root.active-profile != "" ? root.active-profile : I18n.t("默认档案", "Default Profile");
+                    font-size: 11px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center;
+                }
+                if root.core-running && root.core-uptime != "" : Text {
+                    text: "· " + root.core-uptime;
+                    font-size: 11px; font-weight: 600; font-family: Theme.mono-font; color: Theme.success-fg; vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        Rectangle {
+            horizontal-stretch: 0;
+            height: 26px; y: (parent.height - self.height) / 2;
+            border-radius: 13px; border-width: 1px;
+            border-color: root.editing ? Theme.selected-border : edit-ta.has-hover ? Theme.hairline-strong : Theme.card-border;
+            background: root.editing ? Theme.selected-bg : edit-ta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
+            transform-scale: edit-ta.pressed ? 0.96 : 1.0;
+            animate background { duration: Motion.fast; }
+            animate border-color { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; }
+            edit-ta := TouchArea { mouse-cursor: pointer; clicked => { root.editing = !root.editing; } }
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; spacing: 5px;
+                Image {
+                    width: 12px; height: 12px; y: (parent.height - self.height) / 2;
+                    source: root.editing ? @image-url("../icons/check.svg") : @image-url("../icons/settings.svg");
+                    colorize: root.editing ? Theme.nav-active-fg : Theme.text-secondary;
+                }
+                Text {
+                    text: root.editing ? I18n.t("完成", "Done") : I18n.t("自定义", "Customize");
+                    font-size: 11px; font-weight: 700;
+                    color: root.editing ? Theme.nav-active-fg : Theme.text-secondary; vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    if root.editing : Rectangle {
+        border-radius: 16px; border-width: 1px; border-color: Theme.selected-border;
+        background: Theme.card-surface;
+        drop-shadow-blur: 10px;
+        drop-shadow-offset-y: 2px;
+        drop-shadow-color: Theme.card-shadow;
+        GlassSpeculum {}
+        VerticalLayout {
+            padding: 10px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    text: "⠿ " + I18n.t("拖拽卡片调整顺序", "Drag cards to reorder");
+                    font-size: 11px; font-weight: 700; color: Theme.nav-active-fg;
+                    vertical-alignment: center; horizontal-stretch: 1; overflow: elide;
+                }
+                Rectangle {
+                    horizontal-stretch: 0;
+                    height: 24px; border-radius: 12px; border-width: 1px;
+                    border-color: rst-ta.has-hover ? Theme.selected-border : Theme.card-border;
+                    background: rst-ta.pressed ? Theme.selected-bg : rst-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+                    transform-scale: rst-ta.pressed ? 0.96 : 1.0;
+                    animate background { duration: Motion.fast; }
+                    animate transform-scale { duration: Motion.micro; }
+                    rst-ta := TouchArea { mouse-cursor: pointer; clicked => { root.reset-layout(); } }
+                    HorizontalLayout {
+                        padding-left: 10px; padding-right: 10px; spacing: 4px;
+                        Image { width: 11px; height: 11px; y: (parent.height - self.height) / 2; source: @image-url("../icons/refresh.svg"); colorize: Theme.text-secondary; }
+                        Text { text: I18n.t("恢复默认", "Reset"); font-size: 11px; font-weight: 600; color: Theme.text-primary; vertical-alignment: center; }
+                    }
+                }
+            }
+
+            FlexboxLayout {
+                spacing: 6px;
+                WidgetToggleChip { label: I18n.t("实时速率", "Speed"); active: root.show-speed; toggled => { root.show-speed = !root.show-speed; root.prefs-changed(); } }
+                WidgetToggleChip { label: I18n.t("网络状态", "Network"); active: root.show-network; toggled => { root.show-network = !root.show-network; root.prefs-changed(); } }
+                WidgetToggleChip { label: I18n.t("内存占用", "Memory"); active: root.show-memory; toggled => { root.show-memory = !root.show-memory; root.prefs-changed(); } }
+                WidgetToggleChip { label: I18n.t("连接与流量", "Traffic"); active: root.show-traffic; toggled => { root.show-traffic = !root.show-traffic; root.prefs-changed(); } }
+                WidgetToggleChip { label: I18n.t("本地端口", "Ports"); active: root.show-ports; toggled => { root.show-ports = !root.show-ports; root.prefs-changed(); } }
+                WidgetToggleChip { label: I18n.t("快捷切换", "Quick Nodes"); active: root.show-quick-nodes; toggled => { root.show-quick-nodes = !root.show-quick-nodes; root.prefs-changed(); } }
+            }
+        }
+    }
+}
+
+export component BentoSwitchTile inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> subtitle: "";
+    in property <color> badge-color: Theme.accent;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <bool> compact: false;
+    callback toggled(bool);
+
+    horizontal-stretch: 1;
+    min-width: 0px;
+    height: 58px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.50 : 0.36) : ta.has-hover && root.enabled ? Theme.hairline-strong : Theme.card-border;
+    background: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.14 : 0.08) : (ta.has-hover && root.enabled) ? Theme.row-hover-bg : Theme.card-surface;
+    drop-shadow-blur: root.active || (ta.has-hover && root.enabled) ? 14px : 10px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.22 : 0.14) : Theme.card-shadow;
+    opacity: root.enabled ? 1.0 : 0.55;
+    transform-scale: root.enabled && ta.pressed ? 0.975 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+
+    GlassSpeculum {}
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.toggled(!root.active); }
+    }
+
+    HorizontalLayout {
+        padding-left: 11px; padding-right: 11px; spacing: 9px;
+
+        Rectangle {
+            width: 34px; height: 34px; y: (parent.height - self.height) / 2; border-radius: 10px;
+            border-width: 1px;
+            border-color: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.38 : 0.28) : Theme.well-border;
+            background: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.22 : 0.14) : Theme.well-bg;
+            Image {
+                x: 8px; y: 8px; width: 16px; height: 16px;
+                source: root.icon;
+                colorize: root.active ? root.badge-color : Theme.text-secondary;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 2px;
+            Text { text: root.label; font-size: 13px; font-weight: 700; color: root.active ? Theme.text-primary : Theme.text-primary; overflow: elide; }
+            if root.subtitle != "" : Text { text: root.subtitle; font-size: 10px; font-family: Theme.mono-font; color: root.active ? Theme.text-secondary : Theme.text-muted; overflow: elide; }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            NexusSwitch { enabled: root.enabled; checked: root.active; interactive: false; }
+        }
+    }
+}
+
+// Row 3 Col 1: Square-ish Network Health Card (matches approved v6 mockup)
+export component NetworkHealthCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <string> active-node: "";
+    in property <int> active-node-latency-ms: -1;
+    in property <bool> probing: false;
+    callback probe-active-group();
+    callback open-groups();
+
+    property <bool> is-timeout: root.core-running && root.active-node != "" && root.active-node-latency-ms == 0;
+    property <int> bars: root.core-running ? Theme.latency-bars(root.active-node-latency-ms) : 0;
+    property <color> tone: !root.core-running ? Theme.offline-fg : Theme.latency-fg(root.active-node-latency-ms, root.is-timeout ? "timeout" : "healthy");
+    property <string> quality:
+        !root.core-running ? I18n.t("未连接", "Offline")
+        : root.is-timeout ? I18n.t("超时", "Timeout")
+        : root.active-node-latency-ms <= 0 ? I18n.t("已连通", "Online")
+        : root.active-node-latency-ms < 80 ? I18n.t("极佳", "Optimal")
+        : root.active-node-latency-ms < 180 ? I18n.t("良好", "Good")
+        : I18n.t("偏高", "Slow");
+
+    horizontal-stretch: 1;
+    min-width: 0px;
+    height: 142px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        padding-left: 11px; padding-right: 11px; padding-top: 13px; padding-bottom: 13px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("网络状态", "Network"); font-size: 12px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            IconActionButton {
+                size: 26px;
+                icon: root.probing ? @image-url("../icons/loader.svg") : @image-url("../icons/bolt.svg");
+                label: I18n.t("测速", "Probe");
+                enabled: root.core-running && !root.probing;
+                clicked => { root.probe-active-group(); }
+            }
+        }
+
+        // Tightly grouped [▁▃▅▇] [极佳] [36 ms] with zero hollow middle gap
+        HorizontalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                horizontal-stretch: 0;
+                width: 22px; spacing: 2px; padding-top: 4px; padding-bottom: 4px;
+                Rectangle { width: 4px; height: 5px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: root.bars >= 1 ? root.tone : Theme.offline-fg; opacity: root.bars >= 1 ? 1.0 : 0.26; }
+                Rectangle { width: 4px; height: 9px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: root.bars >= 2 ? root.tone : Theme.offline-fg; opacity: root.bars >= 2 ? 1.0 : 0.24; }
+                Rectangle { width: 4px; height: 13px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: root.bars >= 3 ? root.tone : Theme.offline-fg; opacity: root.bars >= 3 ? 1.0 : 0.22; }
+                Rectangle { width: 4px; height: 17px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: root.bars >= 4 ? root.tone : Theme.offline-fg; opacity: root.bars >= 4 ? 1.0 : 0.20; }
+            }
+            Text { horizontal-stretch: 0; text: root.quality; font-size: 22px; font-weight: 800; color: Theme.dark ? Theme.text-primary : root.tone; vertical-alignment: center; }
+            Rectangle {
+                horizontal-stretch: 0; height: 22px; y: (parent.height - self.height) / 2; border-radius: 7px;
+                background: root.core-running ? Theme.latency-bg(root.active-node-latency-ms, root.is-timeout ? "timeout" : "healthy") : Theme.inset-bg;
+                HorizontalLayout {
+                    padding-left: 7px; padding-right: 7px;
+                    Text {
+                        text: !root.core-running ? I18n.t("待命", "Idle") : root.active-node-latency-ms > 0 ? "\{root.active-node-latency-ms} ms" : root.is-timeout ? I18n.t("超时", "Timeout") : "--";
+                        font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: root.tone; vertical-alignment: center;
+                    }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+
+        Rectangle {
+            height: 24px; border-radius: 8px;
+            background: node-ta.has-hover ? Theme.row-hover-bg : transparent;
+            node-ta := TouchArea { mouse-cursor: pointer; clicked => { root.open-groups(); } }
+            HorizontalLayout {
+                padding-left: 2px; padding-right: 4px; spacing: 4px;
+                Text {
+                    text: root.active-node != "" ? root.active-node : (root.core-running ? I18n.t("等待节点同步", "Syncing nodes") : I18n.t("节点待命中 · 点击管理", "Standby · Manage nodes"));
+                    font-size: 11px; font-weight: 600; font-family: Theme.mono-font; color: Theme.text-muted;
+                    vertical-alignment: center; horizontal-stretch: 1; overflow: elide;
+                }
+                Text { text: "↗"; font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+            }
+        }
+    }
+}
+
+// Row 3 Col 2: Bento Dual-Segment Memory Card (App RSS + Core RSS ProportionBar)
+export component CoreMemoryCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <string> total-memory-text: "--";
+    in property <string> app-memory-text: "--";
+    in property <string> core-memory-text: "--";
+    in property <float> app-memory-ratio: 0.78;
+    callback clear-cache();
+
+    property <bool> has-mem: root.total-memory-text != "" && root.total-memory-text != "--";
+
+    horizontal-stretch: 1;
+    min-width: 0px;
+    height: 142px;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        padding-left: 11px; padding-right: 11px; padding-top: 13px; padding-bottom: 13px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Text { text: I18n.t("内存占用", "Memory"); font-size: 12px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            IconActionButton {
+                size: 26px;
+                icon: @image-url("../icons/trash.svg");
+                label: I18n.t("清缓存", "Clear Cache");
+                enabled: root.core-running;
+                clicked => { root.clear-cache(); }
+            }
+        }
+
+        Text {
+            text: root.has-mem ? root.total-memory-text : "--";
+            font-size: 26px; font-weight: 800; letter-spacing: -0.4px;
+            color: root.has-mem ? Theme.text-primary : Theme.text-muted;
+            overflow: elide;
+        }
+
+        Rectangle { vertical-stretch: 1; }
+
+        ProportionBar {
+            first-ratio: root.core-running ? root.app-memory-ratio : 1.0;
+            first-color: Theme.accent;
+            second-color: Theme.telemetry-down;
+            has-data: root.has-mem;
+            has-second: root.core-running && root.core-memory-text != "--";
+        }
+
+        HorizontalLayout {
+            spacing: 4px;
+            HorizontalLayout {
+                horizontal-stretch: 1; spacing: 3px;
+                Rectangle { width: 5px; height: 5px; y: (parent.height - self.height) / 2; border-radius: 2.5px; background: Theme.accent; }
+                Text { text: I18n.t("应用 ", "App ") + root.app-memory-text; font-size: 9.5px; font-weight: 600; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+            }
+            HorizontalLayout {
+                horizontal-stretch: 1; spacing: 3px; alignment: end;
+                Rectangle { width: 5px; height: 5px; y: (parent.height - self.height) / 2; border-radius: 2.5px; background: Theme.telemetry-down; }
+                Text { text: I18n.t("核心 ", "Core ") + (root.core-running ? root.core-memory-text : "--"); font-size: 9.5px; font-weight: 600; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+            }
+        }
+    }
+}

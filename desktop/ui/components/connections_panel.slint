@@ -1,80 +1,457 @@
-import { Button, LineEdit, ListView, VerticalBox, HorizontalBox } from "std-widgets.slint";
-import { ActiveConnectionItem } from "../types.slint";
+import { ListView } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { LayoutMetrics } from "../layout_metrics.slint";
+import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
+import { ActiveConnectionItem } from "../types.slint";
+import { ConnectionInspectorCard } from "connection_inspector.slint";
+import { ConnectionsKpiStrip } from "connections_kpi_strip.slint";
+import { EmptyStateCard, GlassSpeculum, NexusInput, SlidingSegmentBar } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
 
-export component ConnectionsPanel inherits VerticalBox {
+export component ConnectionsPanel inherits VerticalLayout {
+    in property <length> window-width: 1040px;
     in property <[ActiveConnectionItem]> connections: [];
     in-out property <string> filter-text: "";
-    in property <string> selected-detail: "";
+    in-out property <string> selected-detail: "";
+    in-out property <bool> paused: false;
+    in property <string> default-proxy-outbound: "proxy";
+    in property <string> download-rate: "0.0 KB/s";
+    in property <string> upload-rate: "0.0 KB/s";
+    in property <string> download-total: "0 B";
+    in property <string> upload-total: "0 B";
+
+    private property <int> route-filter: 0; // 0: All | 1: Proxy | 2: Direct
+    private property <string> selected-id: "";
+    private property <string> selected-proto: "";
+    private property <string> selected-target: "";
+    private property <string> selected-inbound: "";
+    private property <string> selected-outbound: "";
+    private property <string> selected-rule: "";
+    private property <string> selected-process: "";
+    private property <string> selected-source: "";
+    private property <string> selected-duration: "";
+    private property <int> selected-port: 0;
+    private property <string> selected-up-text: "0 B";
+    private property <string> selected-down-text: "0 B";
+    private property <float> selected-up-ratio: 0.0;
+    private property <bool> selected-has-traffic: false;
+    property <bool> is-compact: LayoutMetrics.is-compact-w(root.window-width);
+    property <bool> is-wide: LayoutMetrics.is-wide-w(root.window-width);
+    property <bool> show-detail: root.selected-id != "" || root.selected-detail != "";
+    property <bool> show-rule-col: !root.is-compact && (!root.show-detail || root.is-wide);
 
     callback refresh-connections();
     callback inspect-connection(string);
     callback close-connection(string);
     callback close-all-connections();
+    callback copy-text(string);
+    callback create-rule-from-connection(string, int, string, string, string);
 
-    spacing: 10px;
+    function clear-selection() {
+        root.selected-id = "";
+        root.selected-detail = "";
+        root.inspect-connection("");
+    }
 
-    HorizontalBox {
-        spacing: 8px;
-        LineEdit {
+    spacing: Theme.space-md;
+
+    // 1. 4-Column Slim Live Connections KPI Strip
+    ConnectionsKpiStrip {
+        connections: root.connections;
+        download-rate: root.download-rate;
+        upload-rate: root.upload-rate;
+        download-total: root.download-total;
+        upload-total: root.upload-total;
+        compact: root.is-compact;
+    }
+
+    // 2. Unified Top Filter & Action Toolbar
+    HorizontalLayout {
+        vertical-stretch: 0;
+        spacing: Theme.space-sm;
+
+        NexusInput {
             horizontal-stretch: 1;
+            min-width: 120px;
+            search-icon: true;
             text <=> root.filter-text;
-            placeholder-text: "按协议 / 路径 / 端口过滤连接...";
+            placeholder-text: I18n.t("搜索域名、IP、进程或规则...", "Search host, IP, app or rule...");
             accepted => { root.refresh-connections(); }
         }
-        Button {
-            text: "断开全部";
-            clicked => { root.close-all-connections(); }
+
+        SlidingSegmentBar {
+            horizontal-stretch: 0;
+            width: 156px;
+            bar-height: 32px;
+            options: [I18n.t("全部", "All"), I18n.t("代理", "Proxy"), I18n.t("直连", "Direct")];
+            current-index: root.route-filter;
+            selected(idx) => { root.route-filter = idx; }
         }
-        Button {
-            text: "刷新连接";
+
+        // Pause-Refresh capsule preventing row jumping while inspecting
+        Rectangle {
+            horizontal-stretch: 0;
+            height: 32px;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: root.paused ? Theme.warn-border : pause-ta.has-hover ? Theme.hairline-strong : Theme.card-border;
+            background: root.paused ? Theme.warn-bg : pause-ta.has-hover ? Theme.row-hover-bg : Theme.row-bg;
+            transform-scale: pause-ta.pressed ? 0.96 : 1.0;
+            animate background { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; }
+            pause-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.paused = !root.paused;
+                    if (!root.paused) { root.refresh-connections(); }
+                }
+            }
+            HorizontalLayout {
+                padding-left: 11px; padding-right: 12px; spacing: 5px;
+                Image {
+                    width: 13px; height: 13px; y: (parent.height - self.height) / 2;
+                    source: root.paused ? @image-url("../icons/play.svg") : @image-url("../icons/pause.svg");
+                    colorize: root.paused ? Theme.warn-fg : Theme.text-secondary;
+                }
+                Text {
+                    text: root.paused ? I18n.t("已暂停", "Paused") : I18n.t("暂停", "Pause");
+                    font-size: 12px; font-weight: 600;
+                    color: root.paused ? Theme.warn-fg : Theme.text-primary;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Soft rose Close-All capsule (icon + label on Wide, icon button on narrow)
+        if root.is-wide : Rectangle {
+            horizontal-stretch: 0;
+            height: 32px;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: Theme.error-border;
+            background: cls-all-ta.pressed ? Theme.error-fg.with-alpha(0.30) : cls-all-ta.has-hover ? Theme.error-fg.with-alpha(0.22) : Theme.error-bg;
+            transform-scale: cls-all-ta.pressed ? 0.96 : 1.0;
+            animate background { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; }
+            cls-all-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.clear-selection();
+                    root.close-all-connections();
+                }
+            }
+            HorizontalLayout {
+                padding-left: 11px; padding-right: 12px; spacing: 5px;
+                Image { width: 13px; height: 13px; y: (parent.height - self.height) / 2; source: @image-url("../icons/close-all.svg"); colorize: Theme.error-fg; }
+                Text { text: I18n.t("全部断开", "Close All"); font-size: 12px; font-weight: 700; color: Theme.error-fg; vertical-alignment: center; }
+            }
+        }
+
+        if !root.is-wide : IconActionButton {
+            icon: @image-url("../icons/close-all.svg");
+            label: I18n.t("断开全部", "Close All");
+            danger: true;
+            clicked => {
+                root.clear-selection();
+                root.close-all-connections();
+            }
+        }
+
+        IconActionButton {
+            icon: @image-url("../icons/refresh.svg");
+            label: I18n.t("刷新连接", "Refresh");
+            spin-on-click: true;
             clicked => { root.refresh-connections(); }
         }
     }
 
-    if root.selected-detail != "" : Rectangle {
-        border-radius: 6px;
-        background: Theme.card-bg;
-        HorizontalBox {
-            padding: 10px;
-            Text {
-                text: root.selected-detail;
-                font-size: 12px;
-                wrap: word-wrap;
-                horizontal-stretch: 1;
+    // Hydrate metadata only when an external detail string is already active (never auto-select on open!)
+    property <bool> hydrate-first: root.selected-id == "" && root.selected-detail != "" && root.connections.length > 0;
+    property <string> disp-id: root.hydrate-first ? root.connections[0].id : root.selected-id;
+    property <string> disp-proto: root.hydrate-first
+        ? (root.connections[0].protocol == "udp/quic" ? "QUIC"
+            : root.connections[0].protocol == "udp" ? "UDP"
+            : root.connections[0].protocol == "tcp/tls" ? "TLS"
+            : root.connections[0].protocol == "tcp" ? "TCP"
+            : root.connections[0].protocol)
+        : root.selected-proto;
+    property <string> disp-target: root.hydrate-first ? root.connections[0].target : root.selected-target;
+    property <string> disp-inbound: root.hydrate-first ? root.connections[0].inbound : root.selected-inbound;
+    property <string> disp-outbound: root.hydrate-first ? root.connections[0].outbound : root.selected-outbound;
+    property <string> disp-rule: root.hydrate-first ? root.connections[0].route-rule : root.selected-rule;
+    property <string> disp-process: root.hydrate-first ? root.connections[0].process-path : root.selected-process;
+    property <string> disp-source: root.hydrate-first ? root.connections[0].source : root.selected-source;
+    property <string> disp-duration: root.hydrate-first ? root.connections[0].duration-text : root.selected-duration;
+    property <int> disp-port: root.hydrate-first ? root.connections[0].destination-port : root.selected-port;
+    property <string> disp-up-text: root.hydrate-first ? root.connections[0].upload-text : root.selected-up-text;
+    property <string> disp-down-text: root.hydrate-first ? root.connections[0].download-text : root.selected-down-text;
+    property <float> disp-up-ratio: root.hydrate-first ? root.connections[0].up-ratio : root.selected-up-ratio;
+    property <bool> disp-has-traffic: root.hydrate-first ? root.connections[0].has-traffic : root.selected-has-traffic;
+
+    // 3. Full-Width Connections Table + On-Demand Right Pop-Out Inspector
+    HorizontalLayout {
+        vertical-stretch: 1;
+        spacing: Theme.space-md;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            min-width: 0px;
+            spacing: Theme.space-sm;
+
+            // Full-Height 20px Framed Connections Table Card
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: 20px;
+                border-width: 1px;
+                border-color: Theme.card-border;
+                background: Theme.card-surface;
+                drop-shadow-blur: 14px;
+                drop-shadow-offset-y: 3px;
+                drop-shadow-color: Theme.card-shadow;
+                clip: true;
+
+                GlassSpeculum {}
+
+                VerticalLayout {
+                    width: 100%;
+                    height: 100%;
+
+                    // Aligned Bento Column Header Bar
+                    Rectangle {
+                        vertical-stretch: 0;
+                        height: 36px;
+                        background: Theme.well-bg;
+
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 12px;
+                            spacing: 8px;
+
+                            Text { width: 52px; text: I18n.t("协议", "PROTO"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; min-width: 0px; text: I18n.t("目标主机", "TARGET HOST"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; overflow: elide; }
+                            if root.show-rule-col : Text { width: 94px; text: I18n.t("规则", "RULE"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
+                            Text { width: 84px; text: I18n.t("出口", "OUTBOUND"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
+                            Text { width: 82px; text: I18n.t("流量", "TRAFFIC"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; horizontal-alignment: right; vertical-alignment: center; }
+                            Rectangle { width: 22px; }
+                        }
+
+                        Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.hairline-subtle; }
+                    }
+
+                    if root.connections.length == 0 : VerticalLayout {
+                        vertical-stretch: 1;
+                        alignment: center;
+                        padding: Theme.space-xl;
+                        spacing: Theme.space-sm;
+
+                        HorizontalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 44px; height: 44px; border-radius: 22px;
+                                border-width: 1px; border-color: Theme.well-border; background: Theme.well-bg;
+                                Image { x: 12px; y: 12px; width: 20px; height: 20px; source: @image-url("../icons/connections.svg"); colorize: Theme.accent; }
+                            }
+                        }
+                        Text { text: I18n.t("暂无活跃连接", "No active connections"); font-size: 14px; font-weight: 700; color: Theme.text-primary; horizontal-alignment: center; }
+                        Text { text: I18n.t("产生流量后将实时显示会话、路由规则与双向速率", "Live sessions, matched rules, and traffic appear here once traffic flows"); font-size: 12px; color: Theme.text-muted; horizontal-alignment: center; wrap: word-wrap; }
+                    }
+
+                    if root.connections.length > 0 : lv := ListView {
+                        vertical-stretch: 1;
+                        for conn[idx] in root.connections : Rectangle {
+                            property <bool> is-direct: conn.outbound == "direct";
+                            property <bool> visible-row: root.route-filter == 0 || (root.route-filter == 1 && !is-direct) || (root.route-filter == 2 && is-direct);
+                            property <bool> is-selected: root.disp-id != "" && root.disp-id == conn.id;
+                            property <bool> is-udp: conn.protocol == "udp/quic" || conn.protocol == "udp";
+                            property <bool> is-tls: conn.protocol == "tcp/tls";
+                            property <string> proto-label:
+                                conn.protocol == "udp/quic" ? "QUIC"
+                                : conn.protocol == "udp" ? "UDP"
+                                : conn.protocol == "tcp/tls" ? "TLS"
+                                : conn.protocol == "tcp" ? "TCP"
+                                : conn.protocol;
+                            property <string> display-host:
+                                conn.target != "" ? conn.target
+                                : conn.destination-port > 0 ? "\{conn.path}:\{conn.destination-port}" : conn.path;
+
+                            width: lv.visible-width;
+                            height: visible-row ? 52px : 0px;
+                            visible: visible-row;
+                            clip: true;
+                            background:
+                                is-selected ? Theme.selected-bg
+                                : conn-ta.has-hover ? Theme.row-hover-bg
+                                : Math.mod(idx, 2) == 0 ? Theme.row-bg : Theme.row-alt-bg;
+                            animate background { duration: Motion.micro; }
+
+                            conn-ta := TouchArea {
+                                enabled: visible-row;
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    if (is-selected) {
+                                        root.clear-selection();
+                                    } else {
+                                        if (root.selected-id != conn.id) { root.selected-detail = ""; }
+                                        root.selected-id = conn.id;
+                                        root.selected-proto = proto-label;
+                                        root.selected-target = display-host;
+                                        root.selected-inbound = conn.inbound;
+                                        root.selected-outbound = conn.outbound != "" ? conn.outbound : conn.path;
+                                        root.selected-rule = conn.route-rule;
+                                        root.selected-process = conn.process-path;
+                                        root.selected-source = conn.source;
+                                        root.selected-duration = conn.duration-text;
+                                        root.selected-port = conn.destination-port;
+                                        root.selected-up-text = conn.upload-text;
+                                        root.selected-down-text = conn.download-text;
+                                        root.selected-up-ratio = conn.up-ratio;
+                                        root.selected-has-traffic = conn.has-traffic;
+                                        lv.ensure-row-visible(idx, Motion.reduced ? ScrollBehavior.instant : ScrollBehavior.smooth);
+                                        root.inspect-connection(conn.id);
+                                    }
+                                }
+                            }
+
+                            if visible-row && is-selected : Rectangle {
+                                x: 0px; y: 6px; width: 3px; height: parent.height - 12px;
+                                border-radius: 1.5px; background: Theme.accent;
+                            }
+
+                            if visible-row : HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 12px;
+                                spacing: 8px;
+
+                                // Col 1: Protocol pill
+                                Rectangle {
+                                    width: 52px;
+                                    Rectangle {
+                                        x: 0px; y: (parent.height - self.height) / 2;
+                                        width: 46px; height: 22px; border-radius: 11px;
+                                        background: is-udp ? Theme.proto-quic-bg : is-tls ? Theme.proto-tls-bg : Theme.proto-direct-bg;
+                                        Text {
+                                            width: 100%; height: 100%;
+                                            text: proto-label; font-size: 10px; font-weight: 800; font-family: Theme.mono-font;
+                                            color: is-udp ? Theme.proto-quic-fg : is-tls ? Theme.proto-tls-fg : Theme.proto-direct-fg;
+                                            horizontal-alignment: center; vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // Col 2: Target host + subtle #id / process caption
+                                VerticalLayout {
+                                    horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 2px;
+                                    Text {
+                                        text: display-host; font-size: 13px; font-weight: is-selected ? 700 : 600;
+                                        color: Theme.text-primary; overflow: elide;
+                                    }
+                                    Text {
+                                        text: "#" + conn.id
+                                            + (conn.process-path != "" ? " · " + conn.process-path : "")
+                                            + (conn.duration-text != "" ? " · " + conn.duration-text : "");
+                                        font-size: 10px; font-family: Theme.mono-font;
+                                        color: Theme.text-muted; overflow: elide;
+                                    }
+                                }
+
+                                // Col 3: Rule badge
+                                if root.show-rule-col : Rectangle {
+                                    width: 94px;
+                                    if conn.route-rule != "" : Rectangle {
+                                        x: 0px; y: (parent.height - self.height) / 2;
+                                        width: min(parent.width, rule-lbl.preferred-width + 14px);
+                                        height: 21px; border-radius: 10px;
+                                        background: is-direct ? Theme.proto-direct-bg : Theme.accent-soft;
+                                        rule-lbl := Text {
+                                            x: 7px; width: max(0px, parent.width - 14px); height: 100%;
+                                            text: conn.route-rule; font-size: 10px; font-weight: 700;
+                                            color: is-direct ? Theme.proto-direct-fg : Theme.nav-active-fg;
+                                            vertical-alignment: center; overflow: elide;
+                                        }
+                                    }
+                                    if conn.route-rule == "" : Text {
+                                        width: 100%; height: 100%; text: "-"; font-size: 11px; color: Theme.text-muted; vertical-alignment: center;
+                                    }
+                                }
+
+                                // Col 4: Outbound node
+                                Text {
+                                    width: 84px;
+                                    text: conn.outbound != "" ? conn.outbound : conn.path;
+                                    font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
+                                    color: is-direct ? Theme.proto-direct-fg : Theme.text-secondary;
+                                    vertical-alignment: center; overflow: elide;
+                                }
+
+                                // Col 5: Right-aligned DL / UL traffic
+                                VerticalLayout {
+                                    width: 82px; alignment: center; spacing: 1px;
+                                    Text { text: "↓ " + conn.download-text; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-alignment: right; overflow: elide; }
+                                    Text { text: "↑ " + conn.upload-text; font-size: 10px; font-weight: 600; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-alignment: right; overflow: elide; }
+                                }
+
+                                // Col 6: Close action
+                                VerticalLayout {
+                                    alignment: center;
+                                    IconActionButton {
+                                        icon: @image-url("../icons/x.svg");
+                                        label: I18n.t("断开", "Close");
+                                        danger: true;
+                                        size: 22px;
+                                        clicked => {
+                                            if (is-selected) { root.clear-selection(); }
+                                            root.close-connection(conn.id);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if visible-row : Rectangle {
+                                x: 14px; y: parent.height - 1px; width: max(0px, parent.width - 28px); height: 1px;
+                                background: Theme.hairline-subtle;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Compact (<900px) on-demand bottom inspector drawer
+            if root.is-compact && root.show-detail : ConnectionInspectorCard {
+                vertical-stretch: 0;
+                default-proxy-outbound: root.default-proxy-outbound;
+                conn-id: root.disp-id; protocol: root.disp-proto; target-host: root.disp-target;
+                dest-port: root.disp-port; inbound: root.disp-inbound; outbound: root.disp-outbound;
+                route-rule: root.disp-rule; process-path: root.disp-process; source-addr: root.disp-source;
+                duration-text: root.disp-duration; upload-text: root.disp-up-text; download-text: root.disp-down-text;
+                up-ratio: root.disp-up-ratio; has-traffic: root.disp-has-traffic; raw-detail: root.selected-detail;
+                dismiss => { root.clear-selection(); }
+                copy-text(t) => { root.copy-text(t); }
+                close-connection(id) => { root.clear-selection(); root.close-connection(id); }
+                create-rule-from-connection(h, p, pr, ob, act) => { root.create-rule-from-connection(h, p, pr, ob, act); }
             }
         }
-    }
 
-    ListView {
-        vertical-stretch: 1;
-        for conn in root.connections : Rectangle {
-            height: 44px;
-            border-radius: 6px;
-            background: Theme.card-bg;
-            HorizontalBox {
-                padding-left: 12px;
-                padding-right: 12px;
-                spacing: 8px;
-                Text {
-                    text: "#" + conn.id + " · " + conn.protocol + " (" + conn.path + ") → :" + conn.destination-port;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-                Text {
-                    text: "↑ " + Math.floor(conn.upload-bytes / 1024) + " KiB  ↓ " + Math.floor(conn.download-bytes / 1024) + " KiB";
-                    font-size: 12px;
-                    opacity: 0.8;
-                    vertical-alignment: center;
-                }
-                Button {
-                    text: "详情";
-                    clicked => { root.inspect-connection(conn.id); }
-                }
-                Button {
-                    text: "断开";
-                    clicked => { root.close-connection(conn.id); }
-                }
+        // Non-compact (>=900px) on-demand right inspector pop-out (hidden until a row is clicked!)
+        if !root.is-compact && root.show-detail : VerticalLayout {
+            horizontal-stretch: 0;
+            width: max(340px, min(400px, root.width * 0.36));
+            alignment: start;
+
+            ConnectionInspectorCard {
+                vertical-stretch: 0;
+                side-pane: true;
+                default-proxy-outbound: root.default-proxy-outbound;
+                conn-id: root.disp-id; protocol: root.disp-proto; target-host: root.disp-target;
+                dest-port: root.disp-port; inbound: root.disp-inbound; outbound: root.disp-outbound;
+                route-rule: root.disp-rule; process-path: root.disp-process; source-addr: root.disp-source;
+                duration-text: root.disp-duration; upload-text: root.disp-up-text; download-text: root.disp-down-text;
+                up-ratio: root.disp-up-ratio; has-traffic: root.disp-has-traffic; raw-detail: root.selected-detail;
+                dismiss => { root.clear-selection(); }
+                copy-text(t) => { root.copy-text(t); }
+                close-connection(id) => { root.clear-selection(); root.close-connection(id); }
+                create-rule-from-connection(h, p, pr, ob, act) => { root.create-rule-from-connection(h, p, pr, ob, act); }
             }
         }
     }

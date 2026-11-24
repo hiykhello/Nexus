@@ -44,7 +44,10 @@ namespace desktop {
                 task = std::move(self.queue_.front());
                 self.queue_.pop_front();
             }
-            task();
+            try {
+                task();
+            } catch (...) {
+            }
         }
     }
 }
