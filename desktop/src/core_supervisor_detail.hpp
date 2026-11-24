@@ -101,7 +101,7 @@ namespace desktop::detail {
                 while (::PeekNamedPipe(read_pipe, nullptr, 0, nullptr, &avail, nullptr) && avail > 0) {
                     char buf[512];
                     DWORD got = 0;
-                    if (!::ReadFile(read_pipe, buf, std::min<DWORD>(avail, sizeof(buf)), &got, nullptr) || got == 0) break;
+                    if (!::ReadFile(read_pipe, buf, std::min<DWORD>(avail, static_cast<DWORD>(sizeof(buf))), &got, nullptr) || got == 0) break;
                     if (output.size() < 4096) output.append(buf, got);
                 }
             }
@@ -118,7 +118,7 @@ namespace desktop::detail {
             while (::PeekNamedPipe(read_pipe, nullptr, 0, nullptr, &avail, nullptr) && avail > 0) {
                 char buf[512];
                 DWORD got = 0;
-                if (!::ReadFile(read_pipe, buf, std::min<DWORD>(avail, sizeof(buf)), &got, nullptr) || got == 0) break;
+                if (!::ReadFile(read_pipe, buf, std::min<DWORD>(avail, static_cast<DWORD>(sizeof(buf))), &got, nullptr) || got == 0) break;
                 if (output.size() < 4096) output.append(buf, got);
             }
             ::CloseHandle(read_pipe);

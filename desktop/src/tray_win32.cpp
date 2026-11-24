@@ -1,5 +1,8 @@
 module;
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -127,7 +130,7 @@ namespace desktop::detail {
                 ::DestroyMenu(menu);
             }
 
-            static auto CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) -> LRESULT {
+            static LRESULT CALLBACK wnd_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
                 auto* self = reinterpret_cast<Win32TrayBackend*>(::GetWindowLongPtrW(w, GWLP_USERDATA));
                 if (msg == WM_NCCREATE) {
                     auto* cs = reinterpret_cast<CREATESTRUCTW const*>(lp);

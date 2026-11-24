@@ -14,8 +14,11 @@ jobs:
   audit:
     name: Repo Audits (Lock, Pins, Lines, Style)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - name: Install ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep && rg --version
       - name: Verify default epoll lock and corosio patch SHA-256
         run: |
           EXPECTED_LOCK="d98595bd120b31c66d05df7c1880728158a25cba478826c4b44654ebf793dc9f"
@@ -27,18 +30,32 @@ jobs:
       - name: Line limits & hygiene audit
         run: |
           ./scripts/check-source-lines.sh
-          python3 tests/mcpp_pinned_deps.py
+          python3 tests/mcpp_pinned_deps.py --manifest-only
           git diff --check
-          ! rg -n '^export module (nexus|thirdparty)\.' src/ 3rdparty/modules/ tests/
-          ! rg -n 'import (nexus|thirdparty)\.' src/ 3rdparty/modules/ tests/ experiments/ --glob '!*.patch'
-          ! rg -n '\bnex::|namespace nex\b|nexus_(ngtcp2|nghttp3|boringssl)_abi' src/ 3rdparty/modules/ tests/ scripts/
-          ! rg -n 'nexus\.compat|compat_callable' src/ 3rdparty/modules/ tests/ mcpp/ scripts/ mcpp.toml
-          ! rg -n '/home/yk|file:///' docs/ README.md packaging/ android/ apple/ desktop/ web/src/ web/README.md
-          ! rg -ni 'sing-box|mihomo|clash|v2ray|xray' docs/ README.md packaging/ android/ apple/ desktop/ web/src/ web/README.md
+          forbid_rg() {
+            local rc=0
+            rg "$@" || rc=$?
+            if [[ "$rc" -eq 1 ]]; then
+              return 0
+            elif [[ "$rc" -eq 0 ]]; then
+              echo "FAIL: forbidden pattern matched: rg $*" >&2
+              return 1
+            else
+              echo "FAIL: rg errored (exit $rc): rg $*" >&2
+              return "$rc"
+            fi
+          }
+          forbid_rg -n '^export module (nexus|thirdparty)\.' src/ 3rdparty/modules/ tests/
+          forbid_rg -n 'import (nexus|thirdparty)\.' src/ 3rdparty/modules/ tests/ experiments/ --glob '!*.patch'
+          forbid_rg -n '\bnex::|namespace nex\b|nexus_(ngtcp2|nghttp3|boringssl)_abi' src/ 3rdparty/modules/ tests/ scripts/
+          forbid_rg -n 'nexus\.compat|compat_callable' src/ 3rdparty/modules/ tests/ mcpp/ scripts/ mcpp.toml
+          forbid_rg -n '/home/yk|file:///' docs/ README.md packaging/ android/ apple/ desktop/ web/src/ web/README.md
+          forbid_rg -ni 'sing-box|mihomo|clash|v2ray|xray' docs/ README.md packaging/ android/ apple/ desktop/ web/src/ web/README.md
 
   web-dashboard:
     name: Web Dashboard (Lit + Vite 8)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -59,6 +76,7 @@ jobs:
   android-apk:
     name: Android APK & Unit Tests (arm64-v8a)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -79,19 +97,46 @@ jobs:
           name: nexus-android-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: ignore
+      - name: Upload Android unit test reports on failure
+        uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: nexus-android-test-reports
+          path: |
+            android/**/build/test-results/
+            android/**/build/reports/tests/
+          if-no-files-found: ignore
 
   desktop-windows:
     name: Desktop C++26 Bridge (Windows x64)
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
       - name: Configure & test Desktop C++26 Bridge (MSVC + CMake)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) {
+            Write-Error "vswhere.exe not found at $vswhere"
+            exit 1
+          }
+          $vsPath = (& $vswhere -latest -prerelease -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath | Select-Object -First 1)
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($vsPath)) {
+            Write-Error 'Visual Studio with VC x86/x64 tools not found'
+            exit 1
+          }
+          $vsPath = $vsPath.Trim()
+          $devShell = Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          if (-not (Test-Path $devShell)) {
+            Write-Error "Microsoft.VisualStudio.DevShell.dll not found at $devShell"
+            exit 1
+          }
+          Import-Module $devShell
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
           cmake -S desktop -B target/desktop-win -G Ninja `
             -DCMAKE_CXX_COMPILER=cl `
             -DCMAKE_BUILD_TYPE=Release `
@@ -106,6 +151,7 @@ jobs:
   apple-swift6:
     name: Apple Swift 6 Package & Tests (macOS arm64)
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Build & test NexusCoreBridge (Swift 6 strict concurrency)

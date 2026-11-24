@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if ! command -v rg >/dev/null 2>&1; then
+    printf 'FAIL: ripgrep (rg) is required\n' >&2
+    exit 127
+fi
+
 # Explicit, reviewed exceptions are listed here and in docs/development/file-sizes.md.
 declare -A exceptions=(
     [experiments/dns-shared-cache/group_shared_capacity_test.cpp]="established baseline"
@@ -31,12 +36,20 @@ while IFS= read -r -d '' path; do
 done < <(rg --files --hidden -0 \
     -g '!.git/**' -g '!target/**' \
     -g '!3rdparty/vendor/**' -g '!docs/**' \
+    -g '!web/node_modules/**' -g '!web/dist/**' \
+    -g '!android/**/build/**' -g '!apple/.build/**' \
     -g '*.c' -g '*.cc' -g '*.cpp' -g '*.cxx' -g '*.h' -g '*.hpp' \
     -g '*.hxx' -g '*.ixx' -g '*.cppm' -g '*.lua' -g '*.py' -g '*.sh' \
+    -g '*.kt' -g '*.swift' -g '*.slint' -g '*.ts' -g '*.tsx' \
     -g '!3rdparty/modules/ngtcp2.cppm' -g '!3rdparty/modules/nghttp3.cppm' \
     -g '!3rdparty/mcpp-index/pkgs/n/nexus.corosio-source.lua' \
     -g '!3rdparty/mcpp-index/pkgs/n/nexus.capy-source.lua' \
     -g '!3rdparty/mcpp-index/pkgs/n/nexus.boringssl-crypto-source.lua')
+
+if (( checked == 0 )); then
+    printf 'FAIL: checked 0 source files\n' >&2
+    exit 1
+fi
 
 printf 'Checked %s hand-written source files.\n' "$checked"
 exit "$failed"

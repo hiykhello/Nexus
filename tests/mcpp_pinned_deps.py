@@ -78,13 +78,14 @@ def verify_ngtcp2_manifest(manifest: Path, pin: dict) -> None:
         raise ValueError("ngtcp2: production dependency differs from pinned ordered patches")
 
 
-def checked_archive(cache: Path, name: str) -> Path:
+def verify_pin_manifest(name: str) -> None:
     pin = PINS[name]
     if pin["archive"] != pin["url"].rsplit("/", 1)[-1] or pin["revision"] not in pin["url"]:
         raise ValueError(f"{name}: archive, revision and URL disagree")
-    path = cache / pin["archive"]
-    check_digest(path, pin["sha256"])
-    descriptor = (ROOT / pin["descriptor"]).read_text(encoding="utf-8")
+    descriptor_path = ROOT / pin["descriptor"]
+    if not descriptor_path.is_file():
+        raise ValueError(f"{name}: missing descriptor {pin['descriptor']}")
+    descriptor = descriptor_path.read_text(encoding="utf-8")
     for expected in (f'["{pin["version"]}"]',
                      f'url = "{pin["url"]}"', f'sha256 = "{pin["sha256"]}"'):
         if descriptor.count(expected) != 1:
@@ -93,6 +94,12 @@ def checked_archive(cache: Path, name: str) -> Path:
         check_digest(ROOT / patch["path"], patch["sha256"])
     for patch in mcpp_patch_entries(pin):
         check_digest(ROOT / patch["path"], patch["sha256"])
+
+
+def checked_archive(cache: Path, name: str) -> Path:
+    pin = PINS[name]
+    path = cache / pin["archive"]
+    check_digest(path, pin["sha256"])
     return path
 
 
@@ -232,32 +239,75 @@ def verify_quic(archives: dict[str, Path]) -> None:
                     raise ValueError(f"{name}: bundled dependency {path} differs from pinned revision")
 
 
-def verify_argon2(archive: Path) -> None:
-    pin=PINS["argon2"]
-    descriptor=(ROOT/pin["descriptor"]).read_text(encoding="utf-8")
-    names=(ROOT/"3rdparty/argon2/symbols.txt").read_text(encoding="utf-8").splitlines()
-    if len(names)!=49 or len(set(names))!=49 or names!=sorted(names) or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*",n) for n in names):
+ARGON2_SOURCES = ["argon2.c", "core.c", "blake2/blake2b.c", "thread.c", "encoding.c", "ref.c"]
+
+
+def verify_argon2_manifest() -> None:
+    pin = PINS["argon2"]
+    descriptor = (ROOT / pin["descriptor"]).read_text(encoding="utf-8")
+    names = (ROOT / "3rdparty/argon2/symbols.txt").read_text(encoding="utf-8").splitlines()
+    if (len(names) != 49 or len(set(names)) != 49 or names != sorted(names)
+            or any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n) for n in names)):
         raise ValueError("argon2: invalid symbol namespace list")
-    match=re.search(r"defines\s*=\s*\{([^}]*)\}",descriptor)
-    if not match:raise ValueError("argon2: defines absent")
-    defines=re.findall(r'"([^"\n]+)"',match.group(1))
-    expected=["ARGON2_NO_THREADS"]+[f"{name}=nexus_snell_{name}" for name in names]
-    if defines!=expected:raise ValueError("argon2: collision namespace definitions differ")
-    expected_sources=["argon2.c","core.c","blake2/blake2b.c","thread.c","encoding.c","ref.c"]
-    match=re.search(r"sources\s*=\s*\{([^}]*)\}",descriptor)
-    if not match or re.findall(r'"([^"\n]+)"',match.group(1))!=[f"*/src/{name}" for name in expected_sources]:
+    match = re.search(r"defines\s*=\s*\{([^}]*)\}", descriptor)
+    if not match:
+        raise ValueError("argon2: defines absent")
+    defines = re.findall(r'"([^"\n]+)"', match.group(1))
+    expected = ["ARGON2_NO_THREADS"] + [f"{name}=nexus_snell_{name}" for name in names]
+    if defines != expected:
+        raise ValueError("argon2: collision namespace definitions differ")
+    match = re.search(r"sources\s*=\s*\{([^}]*)\}", descriptor)
+    if not match or re.findall(r'"([^"\n]+)"', match.group(1)) != [f"*/src/{name}" for name in ARGON2_SOURCES]:
         raise ValueError("argon2: unexpected source set")
-    for path in ["LICENSE","include/argon2.h",*[f"src/{name}" for name in expected_sources]]:
-        archive_file(archive,f'{pin["source_root"]}/{path}')
-    if 'licenses = { "Apache-2.0" }' not in descriptor or 'c_standard = "gnu11"' not in descriptor or 'generated_files' in descriptor:
+    if ('licenses = { "Apache-2.0" }' not in descriptor
+            or 'c_standard = "gnu11"' not in descriptor
+            or "generated_files" in descriptor):
         raise ValueError("argon2: unexpected license, C mode or generated overlay")
+
+
+def verify_argon2(archive: Path) -> None:
+    pin = PINS["argon2"]
+    for path in ["LICENSE", "include/argon2.h", *[f"src/{name}" for name in ARGON2_SOURCES]]:
+        archive_file(archive, f'{pin["source_root"]}/{path}')
+
+
+def verify_generator_pins() -> None:
+    for name, script in (
+        ("corosio", "scripts/mcpp-corosio-sources.py"),
+        ("boringssl", "scripts/mcpp-boringssl-sources.py"),
+        ("nghttp2", "scripts/mcpp-nghttp2-sources.py"),
+    ):
+        module = runpy.run_path(str(ROOT / script))
+        pin = PINS[name]
+        revision = module["VERSION"] if name == "nghttp2" else module["REVISION"]
+        if revision != pin["revision"] or module["SHA256"] != pin["sha256"]:
+            raise ValueError(f"{name}: source-list generator and independent pin disagree")
+    source_generator = runpy.run_path(str(ROOT / "scripts/mcpp-quic-sources.py"))
+    for name in ("ngtcp2", "nghttp3"):
+        pin = PINS[name]
+        if source_generator["PINS"][name] != (pin["revision"], pin["sha256"]):
+            raise ValueError(f"{name}: generator and independent pin disagree")
+
+
+def verify_manifests() -> None:
+    for name in PINS:
+        verify_pin_manifest(name)
+    verify_ngtcp2_manifest(ROOT / "src/mcpp.toml", PINS["ngtcp2"])
+    verify_argon2_manifest()
+    verify_generator_pins()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", type=Path, default=CACHE,
                         help="directory containing all pinned upstream archives")
+    parser.add_argument("--manifest-only", action="store_true",
+                        help="verify checked-in manifests, descriptors, patches and generator pins without archives")
     args = parser.parse_args()
+    verify_manifests()
+    if args.manifest_only:
+        print(f"mcpp pin manifests, descriptors, patches and generator pins verified ({len(PINS)} packages)")
+        return
     archives = {name: checked_archive(args.cache, name) for name in PINS}
     with tempfile.TemporaryDirectory(prefix="nexus-mcpp-pins-") as tmp:
         for name in HEADERS:

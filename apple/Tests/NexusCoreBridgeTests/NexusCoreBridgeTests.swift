@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import NexusCoreBridge
 
@@ -211,12 +212,36 @@ final class NexusCoreBridgeTests: XCTestCase {
     }
 
     func testEmbeddedCoreBridgeLifecycleAndCheckConfig() async throws {
+        /// Concurrency invariant (`@unchecked Sendable`): all stored fields are guarded by `lock`.
         final class HookState: @unchecked Sendable {
             private let lock = NSLock()
-            var running = false
-            var stopRequested = false
-            var reloadCount = 0
-            var launchedArgv: [String] = []
+            private var _running = false
+            private var _stopRequested = false
+            private var _reloadCount = 0
+            private var _launchedArgv: [String] = []
+
+            var running: Bool {
+                get { lock.withLock { _running } }
+                set { lock.withLock { _running = newValue } }
+            }
+
+            var stopRequested: Bool {
+                get { lock.withLock { _stopRequested } }
+                set { lock.withLock { _stopRequested = newValue } }
+            }
+
+            var reloadCount: Int {
+                lock.withLock { _reloadCount }
+            }
+
+            func incrementReloadCount() {
+                lock.withLock { _reloadCount += 1 }
+            }
+
+            var launchedArgv: [String] {
+                get { lock.withLock { _launchedArgv } }
+                set { lock.withLock { _launchedArgv = newValue } }
+            }
         }
 
         let state = HookState()
@@ -226,7 +251,7 @@ final class NexusCoreBridgeTests: XCTestCase {
                 state.launchedArgv = argv
                 state.running = true
                 while !state.stopRequested {
-                    Thread.sleep(forTimeInterval: 0.005)
+                    Thread.sleep(forTimeInterval: 0.002)
                 }
                 state.running = false
                 return 0
@@ -235,7 +260,7 @@ final class NexusCoreBridgeTests: XCTestCase {
                 path.hasSuffix(".kdl") ? 0 : 1
             },
             requestStop: { state.stopRequested = true },
-            requestReload: { state.reloadCount += 1 },
+            requestReload: { state.incrementReloadCount() },
             isRunning: { state.running }
         )
 
@@ -254,11 +279,52 @@ final class NexusCoreBridgeTests: XCTestCase {
         try await bridge.start(launchConfig: launchCfg)
         let runningState = await bridge.currentState()
         XCTAssertEqual(runningState, .running)
+
+        do {
+            try await bridge.start(launchConfig: launchCfg)
+            XCTFail("Expected alreadyRunning")
+        } catch EmbeddedCoreError.alreadyRunning {
+            // Expected while core is active.
+        }
+
         try await bridge.requestReload()
         XCTAssertEqual(state.reloadCount, 1)
         let exitCode = await bridge.stop()
         XCTAssertEqual(exitCode, 0)
         let stoppedState = await bridge.currentState()
         XCTAssertEqual(stoppedState, .idle)
+        XCTAssertFalse(state.running)
+
+        let argv = state.launchedArgv
+        XCTAssertTrue(argv.contains("--config"))
+        XCTAssertTrue(argv.contains("-D"))
+        if let configIdx = argv.firstIndex(of: "--config"), configIdx + 1 < argv.count {
+            XCTAssertTrue(argv[configIdx + 1].hasSuffix("config.kdl"))
+        } else {
+            XCTFail("Expected --config argument followed by config path")
+        }
+    }
+
+    func testEmbeddedCoreBridgeReportsImmediateStartFailure() async throws {
+        let hooks = EmbeddedCoreHooks(
+            version: { "0.1.0" },
+            runArgs: { _ in 7 },
+            checkConfig: { path in path.hasSuffix(".kdl") ? 0 : 1 },
+            requestStop: {},
+            requestReload: {},
+            isRunning: { false }
+        )
+
+        let bridge = EmbeddedCoreBridge(hooks: hooks)
+        let launchCfg = PacketTunnelLaunchConfig(configRelativePath: "config.kdl")
+        do {
+            try await bridge.start(launchConfig: launchCfg)
+            XCTFail("Expected EmbeddedCoreError.startFailed(code: 7)")
+        } catch EmbeddedCoreError.startFailed(let code) {
+            XCTAssertEqual(code, 7)
+        }
+
+        let finalState = await bridge.currentState()
+        XCTAssertEqual(finalState, .idle)
     }
 }

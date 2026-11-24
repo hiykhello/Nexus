@@ -42,12 +42,66 @@ public struct EmbeddedCoreHooks: Sendable {
     }
 }
 
+/// Lock-protected one-shot completion box bridging the blocking worker `Foundation.Thread`
+/// to Swift Concurrency without occupying a cooperative pool thread.
+///
+/// Concurrency invariant (`@unchecked Sendable`):
+/// All mutable properties (`exitCode`, `waiters`) are exclusively accessed while holding `lock`.
+/// Continuations are always resumed outside `lock` to avoid reentrancy or lock-order inversion.
+/// Replace `NSLock` with `Synchronization.Mutex` when deployment raises to macOS 15+ / iOS 18+.
+private final class RunCompletionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var exitCode: Int32?
+    private var waiters: [CheckedContinuation<Int32, Never>] = []
+
+    func finish(code: Int32) {
+        let pending: [CheckedContinuation<Int32, Never>] = lock.withLock {
+            if exitCode != nil {
+                return []
+            }
+            exitCode = code
+            let current = waiters
+            waiters.removeAll(keepingCapacity: false)
+            return current
+        }
+        for continuation in pending {
+            continuation.resume(returning: code)
+        }
+    }
+
+    func currentExitCode() -> Int32? {
+        lock.withLock { exitCode }
+    }
+
+    func wait() async -> Int32 {
+        if let code = currentExitCode() {
+            return code
+        }
+        return await withCheckedContinuation { continuation in
+            enqueueOrResume(continuation)
+        }
+    }
+
+    private func enqueueOrResume(_ continuation: CheckedContinuation<Int32, Never>) {
+        let immediate: Int32? = lock.withLock {
+            if let code = exitCode {
+                return code
+            }
+            waiters.append(continuation)
+            return nil
+        }
+        if let immediate {
+            continuation.resume(returning: immediate)
+        }
+    }
+}
+
 /// Swift 6 actor managing the in-process embedded Nexus core inside a macOS/iOS
 /// Network Extension (`NEPacketTunnelProvider`) where `fork`/`exec` is disallowed.
 public actor EmbeddedCoreBridge {
     private let hooks: EmbeddedCoreHooks
     private var state: EmbeddedCoreState = .idle
-    private var runnerTask: Task<Int32, Never>?
+    private var completionBox: RunCompletionBox?
 
     public init(hooks: EmbeddedCoreHooks) {
         self.hooks = hooks
@@ -64,39 +118,47 @@ public actor EmbeddedCoreBridge {
     }
 
     public func start(launchConfig: PacketTunnelLaunchConfig) async throws {
-        guard state == .idle, let argv = launchConfig.coreLaunchArguments() else {
-            if state != .idle { throw EmbeddedCoreError.alreadyRunning }
+        guard state == .idle else {
+            throw EmbeddedCoreError.alreadyRunning
+        }
+        guard let argv = launchConfig.coreLaunchArguments() else {
             throw EmbeddedCoreError.invalidConfigurationPath
         }
-        let checkArgs = argv.count >= 3 && argv[1] == "--config" ? argv[2] : ""
-        try validateConfiguration(at: checkArgs)
+        let configPath: String
+        if let idx = argv.firstIndex(of: "--config"), idx + 1 < argv.count {
+            configPath = argv[idx + 1]
+        } else {
+            configPath = ""
+        }
+        try validateConfiguration(at: configPath)
 
         state = .starting
+        let box = RunCompletionBox()
+        completionBox = box
         let runArgs = hooks.runArgs
-        let task = Task.detached(priority: .userInitiated) {
-            runArgs(argv)
-        }
-        runnerTask = task
+        Self.launchWorkerThread(argv: argv, runArgs: runArgs, box: box)
         state = .running
 
-        // Yield once so caller can observe startup failure immediately if synchronous exit happens.
-        await Task.yield()
-        if hooks.isRunning() == false && task.isCancelled == false {
-            // If the core already returned quickly with a non-zero exit code, report failure.
-            let poll = await withTaskGroup(of: Int32?.self) { group in
-                group.addTask { await task.value }
-                group.addTask {
-                    try? await Task.sleep(for: .milliseconds(5))
-                    return nil
-                }
-                let first = await group.next() ?? nil
-                group.cancelAll()
-                return first
+        // Non-blocking early-failure probe: give the dedicated worker thread a brief window
+        // to report immediate startup failure or begin running without blocking Swift's
+        // cooperative thread pool.
+        let maxProbeSteps = 10
+        for step in 0..<maxProbeSteps {
+            if completionBox !== box || state != .running { break }
+            if box.currentExitCode() != nil { break }
+            if step > 0 && hooks.isRunning() { break }
+            do {
+                try await Task.sleep(for: .milliseconds(5))
+            } catch {
+                break
             }
-            if let exitCode = poll {
-                runnerTask = nil
-                state = .idle
-                if exitCode != 0 { throw EmbeddedCoreError.startFailed(code: exitCode) }
+        }
+
+        if completionBox === box, state == .running, let code = box.currentExitCode() {
+            completionBox = nil
+            state = .idle
+            if code != 0 {
+                throw EmbeddedCoreError.startFailed(code: code)
             }
         }
     }
@@ -108,15 +170,33 @@ public actor EmbeddedCoreBridge {
 
     @discardableResult
     public func stop() async -> Int32 {
-        guard let task = runnerTask else {
+        guard let box = completionBox else {
             state = .idle
             return 0
         }
-        state = .stopping
-        hooks.requestStop()
-        let code = await task.value
-        runnerTask = nil
-        state = .idle
+        if state != .stopping {
+            state = .stopping
+            hooks.requestStop()
+        }
+        let code = await box.wait()
+        if completionBox === box {
+            completionBox = nil
+            state = .idle
+        }
         return code
+    }
+
+    private static func launchWorkerThread(
+        argv: [String],
+        runArgs: @escaping @Sendable ([String]) -> Int32,
+        box: RunCompletionBox
+    ) {
+        let thread = Foundation.Thread {
+            let code = runArgs(argv)
+            box.finish(code: code)
+        }
+        thread.name = "org.nexus.embedded-core"
+        thread.qualityOfService = .userInitiated
+        thread.start()
     }
 }
