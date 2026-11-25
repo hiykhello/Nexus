@@ -273,4 +273,40 @@ export namespace provider {
         std::vector<std::string> secret_files;
         std::string kdl;
     };
+
+    struct WorkspaceShareExportResult {
+        bool ok = false;
+        std::string uri;
+        std::size_t exported_count = 0;
+        std::vector<std::string> warnings;
+        std::vector<std::string> errors;
+    };
+
+    struct WorkspaceShareImportResult {
+        bool ok = false;
+        std::vector<std::string> imported_ids;
+        std::vector<std::string> warnings;
+        std::vector<std::string> errors;
+        std::string workspace_json;
+    };
+
+    struct WorkspaceSyncSealResult {
+        bool ok = false;
+        std::int64_t revision = 0;
+        std::int64_t updated_at_ms = 0;
+        std::string envelope_sha256;
+        std::vector<std::string> warnings;
+        std::vector<std::string> errors;
+        std::string envelope_json;
+    };
+
+    struct WorkspaceSyncOpenResult {
+        bool ok = false;
+        std::int64_t revision = 0;
+        std::int64_t updated_at_ms = 0;
+        std::string device_label;
+        std::vector<std::string> warnings;
+        std::vector<std::string> errors;
+        std::string workspace_json;
+    };
 }

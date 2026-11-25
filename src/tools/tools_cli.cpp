@@ -205,10 +205,12 @@ namespace cli {
     auto nexus_tools(int argc, char** argv) -> int {
         auto usage = [] {
             std::cerr << "usage:\n  nexus tools connect <host:port> [--timeout-ms N]\n"
-                      << "  nexus tools stun [--server host:port] [--timeout-ms N]\n";
+                      << "  nexus tools stun [--server host:port] [--timeout-ms N]\n"
+                      << "  nexus tools udp-probe --kind <ntp|dns|stun> [--target host:port] [--socks5 host:port] [--timeout-ms 3000] [--attempts 2] [--json]\n";
         };
         if (argc < 2 || std::string_view(argv[1]) == "--help") { usage(); return argc < 2 ? 2 : 0; }
         std::string_view sub = argv[1];
+        if (sub == "udp-probe") return nexus_tools_udp_probe(argc - 1, argv + 1);
         std::uint32_t timeout_ms = 5000;
         if (sub == "connect") {
             if (argc < 3) { usage(); return 2; }

@@ -23,6 +23,28 @@ export namespace cli {
     [[nodiscard]] auto probe_stun_server(std::string_view host, std::uint16_t port, std::uint32_t timeout_ms = 5000)
         -> std::expected<std::string, std::string>;
 
+    struct UdpProbeOptions {
+        std::string kind;
+        std::string target;
+        std::string socks5_proxy;
+        std::uint32_t timeout_ms = 3000;
+        std::uint32_t attempts = 2;
+    };
+
+    struct UdpProbeResult {
+        bool ok = false;
+        std::string kind;
+        bool via_socks5 = false;
+        std::uint64_t rtt_ms = 0;
+        std::uint32_t attempts = 0;
+        std::string detail;
+        std::string error;
+    };
+
+    [[nodiscard]] auto run_udp_probe(UdpProbeOptions const& opts) -> UdpProbeResult;
+    [[nodiscard]] auto serialize_udp_probe_json(UdpProbeResult const& res) -> std::string;
+    auto nexus_tools_udp_probe(int argc, char** argv) -> int;
+
     auto nexus_generate(int argc, char** argv) -> int;
     auto nexus_tools(int argc, char** argv) -> int;
 }

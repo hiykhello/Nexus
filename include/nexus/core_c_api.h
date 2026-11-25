@@ -88,6 +88,37 @@ NEXUS_CORE_EXPORT int nexus_core_compose_workspace(
     char* out_buf, size_t out_cap, size_t* out_len,
     char* err_buf, size_t err_cap);
 
+/// Exports selected profiles (`profile_ids_csv` comma-separated) to a `nexus://share/v1/...` bundle JSON result.
+/// Uses the `-4` size-query convention; returns 0 on `ok: true`, -2 on errors (JSON still populated), -1 on bad args.
+NEXUS_CORE_EXPORT int nexus_core_workspace_export_share(
+    const char* workspace_json,
+    const char* profile_ids_csv,
+    char* out_buf, size_t out_cap, size_t* out_len,
+    char* err_buf, size_t err_cap);
+
+/// Imports a `nexus://share/v1/...` bundle into `workspace_json` (binding `self` to optional `subscription_id`).
+NEXUS_CORE_EXPORT int nexus_core_workspace_import_share(
+    const char* workspace_json,
+    const char* share_uri,
+    const char* subscription_id,
+    char* out_buf, size_t out_cap, size_t* out_len,
+    char* err_buf, size_t err_cap);
+
+/// Seals canonical Layer 1 `workspace_json` into an E2EE `nexus-sync-v1` envelope (scrypt + XChaCha20-Poly1305).
+NEXUS_CORE_EXPORT int nexus_core_workspace_seal_sync(
+    const char* workspace_json,
+    const char* passphrase,
+    const char* device_label,
+    char* out_buf, size_t out_cap, size_t* out_len,
+    char* err_buf, size_t err_cap);
+
+/// Opens and verifies an E2EE `nexus-sync-v1` envelope back into canonical Layer 1 `workspace_json`.
+NEXUS_CORE_EXPORT int nexus_core_workspace_open_sync(
+    const char* envelope_json,
+    const char* passphrase,
+    char* out_buf, size_t out_cap, size_t* out_len,
+    char* err_buf, size_t err_cap);
+
 #ifdef __cplusplus
 }
 #endif

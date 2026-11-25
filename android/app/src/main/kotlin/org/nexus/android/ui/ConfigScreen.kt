@@ -42,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.nexus.android.R
+import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 import org.nexus.android.ui.theme.NexusTheme
 
 data class UiProfileChip(
@@ -98,6 +99,9 @@ fun ConfigScreen(
             scope.launch {
                 val lower = raw.lowercase()
                 when {
+                    raw.startsWith(WorkspaceSyncBridge.SHARE_URI_PREFIX) -> {
+                        onDiagnosticChange(workspaceActions.onImportShareUri(raw))
+                    }
                     raw.startsWith("{") && raw.contains("\"schema_version\"") -> {
                         onDiagnosticChange(workspaceActions.onImportWorkspaceJson(raw))
                     }
@@ -192,11 +196,23 @@ fun ConfigScreen(
                 onOpenRuleDnsModal = { showRuleDnsSheet = true },
                 onFeedback = onDiagnosticChange,
             )
-            "host" -> HostSettingsCard(
-                host = workspaceState.host,
-                onUpdateHost = { next -> scope.launch { onDiagnosticChange(workspaceActions.onUpdateHost(next)) } },
-                onOpenSplitTunnel = onOpenSplitTunnel,
-            )
+            "host" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                HostSettingsCard(
+                    host = workspaceState.host,
+                    onUpdateHost = { next -> scope.launch { onDiagnosticChange(workspaceActions.onUpdateHost(next)) } },
+                    onOpenSplitTunnel = onOpenSplitTunnel,
+                )
+                WebDavSyncCard(
+                    state = workspaceState,
+                    actions = workspaceActions,
+                    onFeedback = onDiagnosticChange,
+                )
+                UdpProbeCard(
+                    state = workspaceState,
+                    actions = workspaceActions,
+                    onFeedback = onDiagnosticChange,
+                )
+            }
             else -> ProfilesPillarPane(
                 state = workspaceState,
                 actions = workspaceActions,

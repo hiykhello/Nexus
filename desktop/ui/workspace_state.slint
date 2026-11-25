@@ -73,6 +73,21 @@ export global WorkspaceState {
     in-out property <string> edit-chain-prev: "";
     in-out property <string> edit-chain-next: "";
 
+    // Wave 23 E2EE WebDAV Sync (stored ONLY in local 0600 host.json) & UDP Probe state
+    in-out property <string> sync-webdav-url: "";
+    in-out property <string> sync-webdav-user: "";
+    in-out property <string> sync-webdav-pass: "";
+    in-out property <string> sync-passphrase: "";
+    in-out property <string> sync-device-label: "";
+    in property <bool> sync-busy: false;
+    in property <string> sync-status: "";
+    in property <bool> sync-status-ok: true;
+    in property <bool> sync-conflict-active: false;
+    in property <string> sync-conflict-detail: "";
+    in property <bool> udp-probe-busy: false;
+    in property <string> udp-probe-result: "";
+    in property <bool> udp-probe-ok: true;
+
     // Profile 5-kind editor inputs
     in-out property <string> draft-kind: "node";
     in-out property <string> draft-remarks: "";
@@ -103,4 +118,11 @@ export global WorkspaceState {
     callback apply-host-config();
     callback export-portable-workspace();
     callback import-portable-workspace();
+    callback export-profile-share(string);
+    callback import-profile-share(string);
+    callback save-sync-settings();
+    callback sync-push(bool); // force_overwrite
+    callback sync-pull(bool); // force_pull
+    callback dismiss-sync-conflict();
+    callback run-udp-probe(string); // "stun" | "dns" | "ntp"
 }

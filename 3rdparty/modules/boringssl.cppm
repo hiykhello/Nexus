@@ -141,6 +141,7 @@ export namespace boringssl {
     using ::EVP_MD_CTX_free;
     using ::EVP_MD_CTX_new;
     using ::EVP_MD_size;
+    using ::EVP_PBE_scrypt;
     using ::EVP_PKEY;
     using ::EVP_PKEY2PKCS8;
     using ::EVP_PKEY_CTX;

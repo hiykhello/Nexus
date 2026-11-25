@@ -13,6 +13,7 @@ export namespace glaze {
     using ::glz::read_beve_at;
     using ::glz::read_kdl;
     using ::glz::write_beve;
+    using ::glz::write_json;
     using ::glz::write_kdl;
     using Context = ::glz::context;
     using KdlDocument = ::glz::kdl::document;

@@ -2,9 +2,14 @@
 #pragma once
 
 #include "workspace_ui_sync.hpp"
+#include "workspace_sync_flow.hpp"
 
 namespace desktop_ui_helpers {
     inline auto import_share_uri_to_workspace(WorkspaceUiContext& ctx, std::string_view raw_uri) -> void {
+        if (trim_ascii_ws(raw_uri).starts_with("nexus://")) {
+            import_share_bundle_async(ctx, std::string(trim_ascii_ws(raw_uri)));
+            return;
+        }
         bool const en = is_en_ui(ctx.ui);
         std::unordered_set<std::string> ids;
         for (auto const& p : ctx.doc.profiles) ids.insert(p.id);
@@ -35,6 +40,7 @@ namespace desktop_ui_helpers {
         ctx.telemetry = desktop::load_telemetry_store(ctx.telemetry_path);
         auto notices = desktop::normalize_desktop_host_config(ctx.host, is_en_ui(ctx.ui));
         sync_workspace_to_ui(ctx);
+        sync_webdav_fields_to_ui(ctx);
         ctx.ui.global<nexus_ui::WorkspaceState>().set_host_strict_route_notice(
             slint::SharedString(notices.empty() ? "" : notices.front()));
         if (ctx.sync_tray) ctx.sync_tray();
@@ -57,6 +63,7 @@ namespace desktop_ui_helpers {
         }
         auto notices = desktop::normalize_desktop_host_config(ctx.host, is_en_ui(ctx.ui));
         sync_workspace_to_ui(ctx);
+        bind_workspace_sync_callbacks(ctx);
         auto const& ws = ctx.ui.global<nexus_ui::WorkspaceState>();
         if (!notices.empty()) ws.set_host_strict_route_notice(slint::SharedString(notices.front()));
 

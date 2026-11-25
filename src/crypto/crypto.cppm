@@ -91,6 +91,13 @@ export namespace crypto {
                                     std::span<std::uint8_t const> secret) -> std::expected<Bytes, Error>;
     [[nodiscard]] auto hkdf_expand(Hash hash, std::span<std::uint8_t const> prk,
                                    std::span<std::uint8_t const> info, std::size_t length) -> std::expected<Bytes, Error>;
+    // RFC 7914 scrypt key derivation (default max_mem = 64 MiB). Caller owns and must cleanse the returned key.
+    [[nodiscard]] auto scrypt_derive_key(
+        std::string_view password,
+        std::span<std::uint8_t const> salt,
+        std::uint64_t n, std::uint64_t r, std::uint64_t p,
+        std::size_t key_len = 32,
+        std::size_t max_mem = 64u * 1024u * 1024u) -> std::expected<Bytes, Error>;
     // Nonces must be unique per key. The caller owns nonce generation and usage limits.
     [[nodiscard]] auto seal(Aead algorithm, std::span<std::uint8_t const> key, std::span<std::uint8_t const> nonce,
                             std::span<std::uint8_t const> plaintext, std::span<std::uint8_t const> aad = {})

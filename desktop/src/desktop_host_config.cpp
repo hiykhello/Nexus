@@ -226,6 +226,13 @@ namespace desktop {
             {"start_minimized", cfg.start_minimized},
             {"theme", cfg.theme},
             {"language", cfg.language},
+            {"webdav_url", cfg.webdav_url},
+            {"webdav_username", cfg.webdav_username},
+            {"webdav_password", cfg.webdav_password},
+            {"sync_passphrase", cfg.sync_passphrase},
+            {"sync_device_label", cfg.sync_device_label},
+            {"webdav_last_etag", cfg.webdav_last_etag},
+            {"webdav_last_revision", cfg.webdav_last_revision},
         };
         JsonObject root{
             {"schema_version", cfg.schema_version},
@@ -295,6 +302,13 @@ namespace desktop {
             cfg.start_minimized = json_get_bool(obj, "start_minimized", false);
             cfg.theme = json_get_string(obj, "theme", "system");
             cfg.language = json_get_string(obj, "language", "system");
+            cfg.webdav_url = json_get_string(obj, "webdav_url", "");
+            cfg.webdav_username = json_get_string(obj, "webdav_username", "");
+            cfg.webdav_password = json_get_string(obj, "webdav_password", "");
+            cfg.sync_passphrase = json_get_string(obj, "sync_passphrase", "");
+            cfg.sync_device_label = json_get_string(obj, "sync_device_label", "");
+            cfg.webdav_last_etag = json_get_string(obj, "webdav_last_etag", "");
+            cfg.webdav_last_revision = json_get_i64(obj, "webdav_last_revision", 0);
         }
         return cfg;
     }

@@ -47,6 +47,15 @@ export namespace desktop {
         bool start_minimized = false;
         std::string theme = "system";
         std::string language = "system";
+
+        // Local-only E2EE WebDAV sync credentials & state (NEVER written to workspace.json or sync envelope)
+        std::string webdav_url;
+        std::string webdav_username;
+        std::string webdav_password;
+        std::string sync_passphrase;
+        std::string sync_device_label;
+        std::string webdav_last_etag;
+        std::int64_t webdav_last_revision = 0;
     };
 
     [[nodiscard]] auto current_desktop_platform_id() noexcept -> std::string_view;

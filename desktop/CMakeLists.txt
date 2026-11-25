@@ -35,9 +35,11 @@ set(NEXUS_BRIDGE_IMPLS
     src/tun_privilege.cpp
     src/ui_actions.cpp
     src/ui_prefs.cpp
+    src/webdav_client.cpp
     src/window_blur.cpp
     src/workspace_composer.cpp
     src/workspace_store.cpp
+    src/workspace_sync.cpp
 )
 if(WIN32)
     list(APPEND NEXUS_BRIDGE_IMPLS src/ipc_client_win.cpp)
@@ -72,6 +74,7 @@ target_sources(nexus-desktop-bridge
             src/workspace_composer.cppm
             src/workspace_models.cppm
             src/workspace_store.cppm
+            src/workspace_sync.cppm
 )
 if(MSVC)
     target_compile_features(nexus-desktop-bridge PUBLIC cxx_std_23)
@@ -186,4 +189,13 @@ if(NEXUS_DESKTOP_BUILD_TESTS)
     endif()
     target_link_libraries(nexus-desktop-workspace-tests PRIVATE nexus-desktop-bridge)
     add_test(NAME nexus-desktop-workspace-tests COMMAND nexus-desktop-workspace-tests)
+
+    add_executable(nexus-desktop-workspace-sync-tests tests/workspace_sync_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-workspace-sync-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-workspace-sync-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-workspace-sync-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-workspace-sync-tests COMMAND nexus-desktop-workspace-sync-tests)
 endif()

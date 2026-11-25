@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var supervisor: CoreProcessSupervisor
     private lateinit var controlClient: NexusControlClient
     private lateinit var workspaceCoordinator: WorkspaceCoordinator
+    private lateinit var syncCoordinator: WorkspaceSyncCoordinator
     private var ownerResolver: ConnectionOwnerResolver? = null
     private var askedNotificationPermission = false
     private var pendingStartConfigPath: String? = null
@@ -80,6 +81,7 @@ class MainActivity : ComponentActivity() {
         }
         val prefs = getSharedPreferences("nexus_prefs", Context.MODE_PRIVATE)
         workspaceCoordinator = WorkspaceCoordinator(filesDir, socketPaths, prefs, supervisor, controlClient)
+        syncCoordinator = WorkspaceSyncCoordinator(workspaceCoordinator, socketPaths, supervisor, controlClient)
 
         setContent {
             NexusTheme {
@@ -115,11 +117,24 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                fun applyWorkspace(
+                    next: WorkspaceUiState,
+                    syncConflict: SyncConflictUi? = workspaceState.syncConflict,
+                ) {
+                    workspaceState = next.copy(
+                        isRefreshingSub = workspaceState.isRefreshingSub,
+                        isSyncing = workspaceState.isSyncing,
+                        syncConflict = syncConflict,
+                        isProbingUdp = workspaceState.isProbingUdp,
+                        udpProbeResult = workspaceState.udpProbeResult,
+                    )
+                }
+
                 fun launchRestartAsync() {
                     scope.launch {
                         composeLaunchError = ""
                         val state = workspaceCoordinator.loadInitialState()
-                        workspaceState = state
+                        applyWorkspace(state)
                         if (state.document.profiles.isNotEmpty()) {
                             val composed = workspaceCoordinator.composeForLaunch(state.activeProfileId)
                             if (!composed.ok || !socketPaths.composedConfigFile.isFile) {
@@ -141,62 +156,51 @@ class MainActivity : ComponentActivity() {
                     WorkspaceUiActions(
                         onSelectProfile = { id ->
                             composeLaunchError = ""
-                            val (next, msg) = workspaceCoordinator.selectProfile(id, running) { launchRestartAsync() }
-                            workspaceState = next
-                            msg
+                            workspaceCoordinator.selectProfile(id, running) { launchRestartAsync() }.let { (n, m) -> applyWorkspace(n); m }
                         },
-                        onAddProfile = { item ->
-                            val (next, msg) = workspaceCoordinator.addProfile(item, running)
-                            workspaceState = next
-                            msg
-                        },
-                        onDeleteProfile = { id ->
-                            val (next, msg) = workspaceCoordinator.deleteProfile(id, running)
-                            workspaceState = next
-                            msg
-                        },
+                        onAddProfile = { item -> workspaceCoordinator.addProfile(item, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onDeleteProfile = { id -> workspaceCoordinator.deleteProfile(id, running).let { (n, m) -> applyWorkspace(n); m } },
                         onAddSubscription = { name, url ->
                             workspaceState = workspaceState.copy(isRefreshingSub = true)
-                            val (next, msg) = workspaceCoordinator.addAndRefreshSubscription(name, url, running)
-                            workspaceState = next.copy(isRefreshingSub = false)
-                            msg
+                            try { workspaceCoordinator.addAndRefreshSubscription(name, url, running).let { (n, m) -> applyWorkspace(n); m } }
+                            finally { workspaceState = workspaceState.copy(isRefreshingSub = false) }
                         },
                         onRefreshSubscription = { subId ->
                             workspaceState = workspaceState.copy(isRefreshingSub = true)
-                            val (next, msg) = workspaceCoordinator.refreshSubscription(subId, running)
-                            workspaceState = next.copy(isRefreshingSub = false)
-                            msg
+                            try { workspaceCoordinator.refreshSubscription(subId, running).let { (n, m) -> applyWorkspace(n); m } }
+                            finally { workspaceState = workspaceState.copy(isRefreshingSub = false) }
                         },
                         onUpdateSubscriptionChain = { subId, prevId, nextId ->
-                            val (next, msg) = workspaceCoordinator.updateSubscriptionChain(subId, prevId, nextId, running)
-                            workspaceState = next
-                            msg
+                            workspaceCoordinator.updateSubscriptionChain(subId, prevId, nextId, running).let { (n, m) -> applyWorkspace(n); m }
                         },
-                        onSelectRoutingProfile = { routingId ->
-                            val (next, msg) = workspaceCoordinator.selectRoutingProfile(routingId, running)
-                            workspaceState = next
-                            msg
-                        },
-                        onAddRoutingRule = { rule ->
-                            val (next, msg) = workspaceCoordinator.addRoutingRule(rule, running)
-                            workspaceState = next
-                            msg
-                        },
-                        onUpdateDns = { dns ->
-                            val (next, msg) = workspaceCoordinator.updateDns(dns, running)
-                            workspaceState = next
-                            msg
-                        },
-                        onUpdateHost = { host ->
-                            val (next, msg) = workspaceCoordinator.updateHost(host)
-                            workspaceState = next
-                            msg
+                        onSelectRoutingProfile = { routingId -> workspaceCoordinator.selectRoutingProfile(routingId, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onAddRoutingRule = { rule -> workspaceCoordinator.addRoutingRule(rule, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onUpdateDns = { dns -> workspaceCoordinator.updateDns(dns, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onUpdateHost = { host -> workspaceCoordinator.updateHost(host).let { (n, m) -> applyWorkspace(n); m } },
+                        onUpdateSyncSettings = { u, user, pw, pass, dev ->
+                            workspaceCoordinator.mutateHost { cur ->
+                                cur.copy(android = cur.android.copy(webdavUrl = u, webdavUsername = user, webdavPassword = pw, syncPassphrase = pass, syncDeviceLabel = dev))
+                            }.let { (n, m) -> applyWorkspace(n); m }
                         },
                         onExportWorkspaceJson = { workspaceCoordinator.exportPortableWorkspaceJson() },
-                        onImportWorkspaceJson = { raw ->
-                            val (next, msg) = workspaceCoordinator.importPortableWorkspaceJson(raw, running)
-                            workspaceState = next
-                            msg
+                        onImportWorkspaceJson = { raw -> workspaceCoordinator.importPortableWorkspaceJson(raw, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onExportShareUri = { id -> syncCoordinator.exportShareUri(id) },
+                        onImportShareUri = { uri -> syncCoordinator.importShareUri(uri, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onPushWebDav = { force ->
+                            workspaceState = workspaceState.copy(isSyncing = true)
+                            try { syncCoordinator.pushWebDav(force).let { (n, c, m) -> applyWorkspace(n, syncConflict = c); m } }
+                            finally { workspaceState = workspaceState.copy(isSyncing = false) }
+                        },
+                        onPullWebDav = { force ->
+                            workspaceState = workspaceState.copy(isSyncing = true)
+                            try { syncCoordinator.pullWebDav(force, running).let { (n, c, m) -> applyWorkspace(n, syncConflict = c); m } }
+                            finally { workspaceState = workspaceState.copy(isSyncing = false) }
+                        },
+                        onDismissSyncConflict = { workspaceState = workspaceState.copy(syncConflict = null) },
+                        onRunUdpProbe = { kind ->
+                            workspaceState = workspaceState.copy(isProbingUdp = true)
+                            try { syncCoordinator.runUdpProbe(kind, running).let { (r, m) -> workspaceState = workspaceState.copy(udpProbeResult = r); m } }
+                            finally { workspaceState = workspaceState.copy(isProbingUdp = false) }
                         },
                     )
                 }
@@ -229,19 +233,18 @@ class MainActivity : ComponentActivity() {
                     },
                     onToggleExcluded = { pkg, checked ->
                         scope.launch {
-                            workspaceState = workspaceCoordinator.mutateHost { cur ->
+                            applyWorkspace(workspaceCoordinator.mutateHost { cur ->
                                 val updated = if (checked) (cur.android.perAppPackages + pkg).distinct()
                                 else cur.android.perAppPackages.filterNot { it == pkg }
                                 cur.copy(android = cur.android.copy(perAppPackages = updated))
-                            }.first
+                            }.first)
                         }
                     },
                     onAddExcludedBatch = { pkgs ->
                         scope.launch {
-                            workspaceState = workspaceCoordinator.mutateHost { cur ->
-                                val updated = (cur.android.perAppPackages + pkgs).distinct()
-                                cur.copy(android = cur.android.copy(perAppPackages = updated))
-                            }.first
+                            applyWorkspace(workspaceCoordinator.mutateHost { cur ->
+                                cur.copy(android = cur.android.copy(perAppPackages = (cur.android.perAppPackages + pkgs).distinct()))
+                            }.first)
                         }
                     },
                     onStartStop = { isRunning ->
@@ -253,7 +256,7 @@ class MainActivity : ComponentActivity() {
                                 composeLaunchError = ""
                                 withContext(Dispatchers.IO) { workspaceCoordinator.telemetryStore.clearUnexpectedCrash() }
                                 val latest = workspaceCoordinator.loadInitialState()
-                                workspaceState = latest
+                                applyWorkspace(latest)
                                 if (latest.document.profiles.isNotEmpty()) {
                                     val composed = workspaceCoordinator.composeForLaunch(latest.activeProfileId)
                                     if (!composed.ok || !socketPaths.composedConfigFile.isFile) {
@@ -267,7 +270,7 @@ class MainActivity : ComponentActivity() {
                                 pendingFakeIpv6Pool = if (AndroidHostConfig.needsFakeIpv6Route(latest.document, latest.host.android)) {
                                     latest.document.dns.simple.fakeIpV6Pool
                                 } else ""
-                                workspaceState = workspaceCoordinator.loadInitialState()
+                                applyWorkspace(workspaceCoordinator.loadInitialState())
                                 requestAndStartTunnel(latest.host.android.runMode)
                             }
                         }
@@ -275,18 +278,18 @@ class MainActivity : ComponentActivity() {
                     onRestartVpn = { launchRestartAsync() },
                     onSwitchOutboundMode = { mode, _ ->
                         val (next, msg) = workspaceCoordinator.switchOutboundMode(mode, running)
-                        workspaceState = next
+                        applyWorkspace(next)
                         null to msg
                     },
                     onCreateRuleFromConnection = { host, action, outbound, _ ->
                         val rule = WorkspaceCoordinator.buildRuleFromConnection(host, action, outbound)
                         val (next, msg) = workspaceCoordinator.addRoutingRule(rule, running)
-                        workspaceState = next
+                        applyWorkspace(next)
                         null to msg
                     },
                     onSwitchProfile = { profileId ->
                         val (next, msg) = workspaceCoordinator.selectProfile(profileId, running) { launchRestartAsync() }
-                        workspaceState = next
+                        applyWorkspace(next)
                         null to msg
                     },
                     onSaveProfileSnapshot = { name, kdl ->
@@ -296,12 +299,12 @@ class MainActivity : ComponentActivity() {
                     onSaveAndReload = { text -> saveAndReload(text) },
                     onImportShareLink = { uri, _ ->
                         val (next, msg) = workspaceCoordinator.importShareUri(uri, running)
-                        workspaceState = next
+                        applyWorkspace(next)
                         null to msg
                     },
                     onImportSubscription = { name, url ->
                         val (next, msg) = workspaceCoordinator.addAndRefreshSubscription(name, url, running)
-                        workspaceState = next
+                        applyWorkspace(next)
                         "" to msg
                     },
                     onRefreshMetrics = { controlClient.fetchMetrics() },

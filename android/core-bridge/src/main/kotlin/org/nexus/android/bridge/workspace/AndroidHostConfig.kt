@@ -2,6 +2,7 @@ package org.nexus.android.bridge.workspace
 
 import org.json.JSONObject
 import org.nexus.android.bridge.model.RuntimeSocketPaths
+import org.nexus.android.bridge.profile.ProfileRepository
 import java.io.File
 
 enum class AndroidRunMode(val wire: String) {
@@ -68,6 +69,14 @@ data class AndroidHostSection(
     val oomSoftLimitMb: Int = 50,
     val screenOffPauseStats: Boolean = true,
     val dynamicColor: Boolean = false,
+    // E2EE WebDAV Sync settings (strictly local Layer 3 0600 host.json; NEVER in workspace.json)
+    val webdavUrl: String = "",
+    val webdavUsername: String = "",
+    val webdavPassword: String = "",
+    val syncPassphrase: String = "",
+    val syncDeviceLabel: String = "Android",
+    val lastSyncedEtag: String = "",
+    val lastSyncedRevision: Long = 0L,
 )
 
 data class AndroidHostConfig(
@@ -127,6 +136,13 @@ data class AndroidHostConfig(
                 put("oom_soft_limit_mb", android.oomSoftLimitMb)
                 put("screen_off_pause_stats", android.screenOffPauseStats)
                 put("dynamic_color", android.dynamicColor)
+                put("webdav_url", android.webdavUrl)
+                put("webdav_username", android.webdavUsername)
+                put("webdav_password", android.webdavPassword)
+                put("sync_passphrase", android.syncPassphrase)
+                put("sync_device_label", android.syncDeviceLabel)
+                put("last_synced_etag", android.lastSyncedEtag)
+                put("last_synced_revision", android.lastSyncedRevision)
             })
         }
         return if (indentSpaces > 0) root.toString(indentSpaces) + "\n" else root.toString()
@@ -179,6 +195,13 @@ data class AndroidHostConfig(
                     oomSoftLimitMb = a.optInt("oom_soft_limit_mb", 50).coerceIn(16, 512),
                     screenOffPauseStats = a.optBoolean("screen_off_pause_stats", true),
                     dynamicColor = a.optBoolean("dynamic_color", false),
+                    webdavUrl = a.optString("webdav_url", ""),
+                    webdavUsername = a.optString("webdav_username", ""),
+                    webdavPassword = a.optString("webdav_password", ""),
+                    syncPassphrase = a.optString("sync_passphrase", ""),
+                    syncDeviceLabel = a.optString("sync_device_label", "Android").ifBlank { "Android" },
+                    lastSyncedEtag = a.optString("last_synced_etag", ""),
+                    lastSyncedRevision = a.optLong("last_synced_revision", 0L).coerceAtLeast(0L),
                 ),
             )
         }
@@ -261,17 +284,8 @@ class AndroidHostConfigStore(val file: File) {
 
     fun save(config: AndroidHostConfig): AndroidHostConfig {
         file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, ".${file.name}.${System.nanoTime()}.tmp")
-        try {
-            tmp.writeText(config.toJson(indentSpaces = 2), Charsets.UTF_8)
-            if (!tmp.renameTo(file)) {
-                file.writeText(config.toJson(indentSpaces = 2), Charsets.UTF_8)
-                tmp.delete()
-            }
-        } catch (t: Throwable) {
-            runCatching { tmp.delete() }
-            throw t
-        }
+        // Strict 0600 atomic write because host.json holds local WebDAV & sync credentials.
+        ProfileRepository.atomicWriteSecret0600(file, config.toJson(indentSpaces = 2))
         return config
     }
 }

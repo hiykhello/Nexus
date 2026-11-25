@@ -15,6 +15,36 @@ public enum EmbeddedCoreState: String, Sendable, Equatable {
     case stopping
 }
 
+/// C-ABI compatible Swift hook signatures matching `include/nexus/core_c_api.h` and Wave 23 workspace/sync contracts.
+public typealias ComposeWorkspaceHook = @Sendable (
+    _ workspaceJSON: String,
+    _ hostJSON: String,
+    _ secretsDir: String,
+    _ activeProfileID: String
+) -> (code: Int32, resultJSON: String, errorMessage: String)
+
+public typealias ExportShareHook = @Sendable (
+    _ workspaceJSON: String,
+    _ profileIDs: [String]
+) -> (code: Int32, resultJSON: String, errorMessage: String)
+
+public typealias ImportShareHook = @Sendable (
+    _ workspaceJSON: String,
+    _ uri: String,
+    _ subscriptionID: String
+) -> (code: Int32, resultJSON: String, errorMessage: String)
+
+public typealias SealSyncHook = @Sendable (
+    _ workspaceJSON: String,
+    _ passphrase: String,
+    _ deviceLabel: String
+) -> (code: Int32, resultJSON: String, errorMessage: String)
+
+public typealias OpenSyncHook = @Sendable (
+    _ envelopeJSON: String,
+    _ passphrase: String
+) -> (code: Int32, resultJSON: String, errorMessage: String)
+
 /// Hooks connecting `EmbeddedCoreBridge` to the C-ABI `NexusCoreC` static library
 /// (or deterministic test doubles on Swift Package CI without native C++ linking).
 public struct EmbeddedCoreHooks: Sendable {
@@ -24,6 +54,11 @@ public struct EmbeddedCoreHooks: Sendable {
     public let requestStop: @Sendable () -> Void
     public let requestReload: @Sendable () -> Void
     public let isRunning: @Sendable () -> Bool
+    public let composeWorkspace: ComposeWorkspaceHook?
+    public let exportShare: ExportShareHook?
+    public let importShare: ImportShareHook?
+    public let sealSync: SealSyncHook?
+    public let openSync: OpenSyncHook?
 
     public init(
         version: @escaping @Sendable () -> String,
@@ -31,7 +66,12 @@ public struct EmbeddedCoreHooks: Sendable {
         checkConfig: @escaping @Sendable (String) -> Int32,
         requestStop: @escaping @Sendable () -> Void,
         requestReload: @escaping @Sendable () -> Void,
-        isRunning: @escaping @Sendable () -> Bool
+        isRunning: @escaping @Sendable () -> Bool,
+        composeWorkspace: ComposeWorkspaceHook? = nil,
+        exportShare: ExportShareHook? = nil,
+        importShare: ImportShareHook? = nil,
+        sealSync: SealSyncHook? = nil,
+        openSync: OpenSyncHook? = nil
     ) {
         self.version = version
         self.runArgs = runArgs
@@ -39,6 +79,11 @@ public struct EmbeddedCoreHooks: Sendable {
         self.requestStop = requestStop
         self.requestReload = requestReload
         self.isRunning = isRunning
+        self.composeWorkspace = composeWorkspace
+        self.exportShare = exportShare
+        self.importShare = importShare
+        self.sealSync = sealSync
+        self.openSync = openSync
     }
 }
 

@@ -236,7 +236,7 @@ class ProfileRepository(private val rootDir: File) {
             }
         }
 
-        internal fun atomicWriteSecret0600(target: File, content: String) {
+        fun atomicWriteSecret0600(target: File, content: String) {
             val parent = target.parentFile ?: error("Missing parent directory for ${target.path}")
             parent.mkdirs()
             val tmp = File(parent, ".${target.name}.${System.nanoTime()}.tmp")

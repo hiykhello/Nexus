@@ -71,6 +71,36 @@ namespace provider::ws_detail {
         return out;
     }
 
+    inline auto is_valid_utf8(std::string_view s) noexcept -> bool {
+        auto cont = [](unsigned char b) noexcept { return (b & 0xC0u) == 0x80u; };
+        for (std::size_t i = 0; i < s.size();) {
+            auto c = static_cast<unsigned char>(s[i]);
+            if (c < 0x80u) { ++i; continue; }
+            if (c >= 0xC2u && c <= 0xDFu && i + 1 < s.size() && cont(static_cast<unsigned char>(s[i + 1]))) { i += 2; continue; }
+            if (c >= 0xE0u && c <= 0xEFu && i + 2 < s.size()) {
+                auto b1 = static_cast<unsigned char>(s[i + 1]), b2 = static_cast<unsigned char>(s[i + 2]);
+                if (cont(b1) && cont(b2) && !(c == 0xE0u && b1 < 0xA0u) && !(c == 0xEDu && b1 >= 0xA0u)) { i += 3; continue; }
+                return false;
+            }
+            if (c >= 0xF0u && c <= 0xF4u && i + 3 < s.size()) {
+                auto b1 = static_cast<unsigned char>(s[i + 1]), b2 = static_cast<unsigned char>(s[i + 2]), b3 = static_cast<unsigned char>(s[i + 3]);
+                if (cont(b1) && cont(b2) && cont(b3) && !(c == 0xF0u && b1 < 0x90u) && !(c == 0xF4u && b1 >= 0x90u)) { i += 4; continue; }
+                return false;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    inline auto append_json_string_array(std::string& out, std::vector<std::string> const& items) -> void {
+        out.push_back('[');
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            if (i) out.push_back(',');
+            out += json_quote(items[i]);
+        }
+        out.push_back(']');
+    }
+
     inline auto sha256_hex_16(std::string_view input) -> std::string {
         static constexpr std::array<std::uint32_t, 64> K{
             0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,

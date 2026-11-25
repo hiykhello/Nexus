@@ -5,6 +5,7 @@ import { WorkspaceState, WorkspaceProfileRow, WorkspaceSubRow, WorkspaceRoutingR
 import { EmptyStateCard, GlassSpeculum, NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSwitch } from "nexus_controls.slint";
+import { WorkspaceSyncCard, WorkspaceUdpProbeCard } from "workspace_sync_cards.slint";
 
 component PillOption inherits Rectangle {
     in property <string> label;
@@ -83,11 +84,12 @@ export component WorkspaceProfilesView inherits VerticalLayout {
                 PillOption { label: I18n.t("代理链", "Chain"); active: WorkspaceState.draft-kind == "proxy_chain"; clicked => { WorkspaceState.draft-kind = "proxy_chain"; } }
                 PillOption { label: I18n.t("出站 KDL", "Outbound"); active: WorkspaceState.draft-kind == "custom_outbound"; clicked => { WorkspaceState.draft-kind = "custom_outbound"; } }
                 PillOption { label: I18n.t("完整 KDL", "Full KDL"); active: WorkspaceState.draft-kind == "full_custom_kdl"; clicked => { WorkspaceState.draft-kind = "full_custom_kdl"; } }
+                PillOption { label: I18n.t("导入 nexus://", "Import nexus://"); active: WorkspaceState.draft-kind == "nexus_share"; clicked => { WorkspaceState.draft-kind = "nexus_share"; } }
                 Rectangle { horizontal-stretch: 1; }
             }
             HorizontalLayout {
                 spacing: 8px;
-                NexusInput {
+                if WorkspaceState.draft-kind != "nexus_share" : NexusInput {
                     horizontal-stretch: 32; preferred-width: 0px; min-width: 100px;
                     text <=> WorkspaceState.draft-remarks;
                     placeholder-text: I18n.t("名称 / 备注...", "Remarks / Name...");
@@ -96,18 +98,23 @@ export component WorkspaceProfilesView inherits VerticalLayout {
                     horizontal-stretch: 68; preferred-width: 0px; min-width: 140px; mono: true;
                     text <=> WorkspaceState.draft-payload;
                     placeholder-text:
-                        WorkspaceState.draft-kind == "node" ? I18n.t("分享链接 URI 或 host:port...", "Share URI or host:port...")
+                        WorkspaceState.draft-kind == "nexus_share" ? I18n.t("粘贴 nexus://share/v1/... 便携分享包", "Paste nexus://share/v1/... portable bundle")
+                        : WorkspaceState.draft-kind == "node" ? I18n.t("分享链接 URI 或 host:port...", "Share URI or host:port...")
                         : WorkspaceState.draft-kind == "policy_group" ? I18n.t("策略(url-test/selector):成员ID逗号分隔", "strategy:member1,member2")
                         : WorkspaceState.draft-kind == "proxy_chain" ? I18n.t("跳点 ID 逗号分隔 (入口 -> 出口)", "hop1,hop2 (entry -> exit)")
                         : WorkspaceState.draft-kind == "custom_outbound" ? I18n.t("自定义出站 KDL (如 outbound \"{{tag}}\" type=\"direct\" {})", "Custom outbound KDL (e.g. outbound \"{{tag}}\" ...)")
                         : I18n.t("留空将从当前生效 KDL 快照创建", "Leave blank to snapshot current KDL");
                 }
                 IconActionButton {
-                    icon: @image-url("../icons/plus.svg");
-                    label: I18n.t("添加", "Add");
+                    icon: WorkspaceState.draft-kind == "nexus_share" ? @image-url("../icons/download.svg") : @image-url("../icons/plus.svg");
+                    label: WorkspaceState.draft-kind == "nexus_share" ? I18n.t("导入分享包", "Import Bundle") : I18n.t("添加", "Add");
                     primary: true;
                     clicked => {
-                        WorkspaceState.create-profile(WorkspaceState.draft-kind, WorkspaceState.draft-remarks, WorkspaceState.draft-payload);
+                        if (WorkspaceState.draft-kind == "nexus_share") {
+                            WorkspaceState.import-profile-share(WorkspaceState.draft-payload);
+                        } else {
+                            WorkspaceState.create-profile(WorkspaceState.draft-kind, WorkspaceState.draft-remarks, WorkspaceState.draft-payload);
+                        }
                         WorkspaceState.draft-remarks = "";
                         WorkspaceState.draft-payload = "";
                     }
@@ -178,6 +185,14 @@ export component WorkspaceProfilesView inherits VerticalLayout {
                             text: item.subtitle != "" ? item.subtitle : item.sub-name;
                             font-size: 11px; font-family: Theme.mono-font;
                             color: Theme.text-muted; overflow: elide;
+                        }
+                    }
+                    if item.kind != "full_custom_kdl" : VerticalLayout {
+                        alignment: center;
+                        IconActionButton {
+                            icon: @image-url("../icons/copy.svg"); label: I18n.t("分享 nexus://", "Share nexus://");
+                            size: 26px;
+                            clicked => { WorkspaceState.export-profile-share(item.id); }
                         }
                     }
                     if item.active : VerticalLayout {
@@ -464,4 +479,7 @@ export component WorkspaceHostPortableView inherits VerticalLayout {
             }
         }
     }
+
+    WorkspaceSyncCard { grid-w: root.grid-w; }
+    WorkspaceUdpProbeCard { grid-w: root.grid-w; }
 }

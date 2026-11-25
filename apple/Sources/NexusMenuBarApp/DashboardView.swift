@@ -100,6 +100,28 @@ private struct OverviewPane: View {
                     .disabled(!model.isRunning)
                 }
             }
+            Section("工作区与 E2EE 同步") {
+                LabeledContent("当前配置") {
+                    HStack(spacing: 6) {
+                        Text(model.activeProfileDisplayName)
+                        Text(model.activeProfileKindBadge)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.quaternary, in: Capsule())
+                    }
+                }
+                LabeledContent("工作区快照", value: model.workspaceSummaryText)
+                LabeledContent("E2EE WebDAV 同步", value: model.syncStatusSummary)
+                if model.syncConfig.lastSyncedRevision > 0 {
+                    LabeledContent("远端已同步代次", value: "r\(model.syncConfig.lastSyncedRevision)")
+                }
+                if let conflict = model.syncConflictSummary {
+                    Text("同步冲突: \(conflict)")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
             OverviewMetricsSection(
                 metrics: model.metrics,
                 diagnostics: model.diagnostics,

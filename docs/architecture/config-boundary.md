@@ -193,3 +193,24 @@ Desktop and Mobile clients persist canonical **Layer 1** `workspace.json` (`0600
 
 - **Desktop**: stores host preferences (`inbound_mixed/socks/http` enablement & ports, `allow_lan`, `tun_enabled`, `tun_mtu`, `tun_elevate_persistent`, `outbound_mode`) outside the portable library and composes `<config-dir>/runtime/`.
 - **Android**: stores host preferences (`runMode` VPN vs Proxy-Only, `splitTunnelMode` Exclude vs Include, `splitTunnelPackages`, `allowBypass`, `excludeSelfFromVpn`, `mtu`, `memoryBudgetMiB`, `localSocksPort`) outside the portable library and composes `<noBackupFilesDir>/runtime/`.
+
+## 6. Cross-Device E2EE Sync, Portable Share & UDP Probes (Wave 23)
+
+### 6.1 Portable `nexus://share/v1/` Bundle
+- **Format**: `nexus://share/v1/<base64url-unpadded-json>` carrying `{"schema_version":1,"kind":"bundle","profiles":[...],"root_ids":["p1"]}`.
+- **Export (`nexus workspace export-share`)**: transitively collects selected `node` / `custom_outbound` / `policy_group` / `proxy_chain` profiles, remaps IDs to portable `"p1"`, `"p2"`, ..., rewrites non-empty `dynamic_sub_id` to `"self"`, strips `subscription_id`/`is_from_sub`, and rejects `full_custom_kdl` (both direct and transitive).
+- **Import (`nexus workspace import-share`)**: enforces `schema_version == 1`, decoded size `<= 256 KiB`, valid UTF-8, zero `full_custom_kdl`, zero DAG/chain cycles, allocates fresh collision-free IDs, binds `"self"` to optional `--subscription-id` (clearing other `dynamic_sub_id`), and writes `--out-workspace` atomically with mode `0600`.
+
+### 6.2 E2EE Sync Envelope (`nexus-sync-v1`)
+- **Cryptography**: BoringSSL RFC 7914 `EVP_PBE_scrypt` (`N=32768, r=8, p=1`, maxmem `64 MiB`, 32-byte key) + `XChaCha20-Poly1305` (24-byte random nonce).
+- **AAD**: `"nexus-sync-v1|" + kdf + "|" + N + "|" + r + "|" + p + "|" + aead + "|" + salt_b64 + "|" + nonce_b64 + "|" + revision + "|" + updated_at_ms`.
+- **Sanitization & Hygiene**: `seal-sync` and `open-sync` round-trip strictly through canonical Layer 1 `workspace.json` (dropping stray host/telemetry/credential keys), verify `plaintext_sha256` after AEAD open, wipe passphrase and derived key buffers with `crypto::cleanse()`, and reject raw `--passphrase` CLI argv (requiring `--passphrase-file` or `--passphrase-env`). WebDAV credentials and sync passphrases stay strictly in host-local `0600` storage / Keychain and never enter `workspace.json` or the envelope.
+
+### 6.3 UDP Protocol Probe Suite (`nexus tools udp-probe`)
+```sh
+nexus tools udp-probe --kind <ntp|dns|stun> [--target <host:port>] [--socks5 <host:port>] [--timeout-ms 3000] [--attempts 2] [--json]
+```
+Supports direct UDP and RFC 1928 SOCKS5 `UDP ASSOCIATE` (`0x03`, IPv4/IPv6/domain framing) with strict protocol verifiers for NTP (48B mode-3 -> mode-4), DNS (random TXID A query -> matching TXID, `QR=1`, `RCODE=0`, `ANCOUNT>0`), and STUN (RFC 5389 Binding Request -> `0x0101` + matching magic/TXID + mapped `ip:port`).
+
+### 6.4 Wave 23 C API (`include/nexus/core_c_api.h`)
+- `nexus_core_workspace_export_share`, `nexus_core_workspace_import_share`, `nexus_core_workspace_seal_sync`, and `nexus_core_workspace_open_sync` all follow the `-4` buffer-sizing convention (`0` success, `-2` structured error JSON, `-1` null args).

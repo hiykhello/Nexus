@@ -218,6 +218,21 @@ namespace crypto {
         }
         return result;
     }
+    auto scrypt_derive_key(std::string_view password, std::span<std::uint8_t const> salt,
+                           std::uint64_t n, std::uint64_t r, std::uint64_t p,
+                           std::size_t key_len, std::size_t max_mem) -> std::expected<Bytes, Error> {
+        static constexpr std::uint8_t dummy = 0;
+        if (key_len == 0 || key_len > 1024 || max_mem == 0 || n < 2 || (n & (n - 1)) != 0 || r == 0 || p == 0)
+            return std::unexpected(Error::invalid_length);
+        Bytes out(key_len);
+        if (EVP_PBE_scrypt(password.empty() ? "" : password.data(), password.size(),
+                           salt.empty() ? &dummy : salt.data(), salt.size(),
+                           n, r, p, max_mem, out.data(), out.size()) != 1) {
+            cleanse(out);
+            return std::unexpected(Error::backend_failure);
+        }
+        return out;
+    }
     auto seal(Aead algorithm, std::span<std::uint8_t const> key, std::span<std::uint8_t const> nonce,
               std::span<std::uint8_t const> plaintext, std::span<std::uint8_t const> aad) -> std::expected<Bytes, Error> {
         return crypt(true,algorithm,key,nonce,plaintext,aad);

@@ -224,6 +224,55 @@ int main() {
         assert(nexus_core_compose_workspace(bad_ws, host_json, fail_sec.c_str(), "c1", bad_buf.data(), bad_buf.size(), &bad_len, err_buf, sizeof(err_buf)) == -2);
         assert(bad_buf.find("\"ok\":false") != std::string::npos && bad_buf.find("missing") != std::string::npos);
         assert(!std::filesystem::exists(fail_sec) || std::filesystem::is_empty(fail_sec));
+
+        // Wave 23 C APIs: export-share / import-share / seal-sync / open-sync
+        assert(nexus_core_workspace_export_share(nullptr, "n1", nullptr, 0, nullptr, err_buf, sizeof(err_buf)) == -1);
+        size_t exp_len = 0;
+        assert(nexus_core_workspace_export_share(ws_json, "n1", nullptr, 0, &exp_len, err_buf, sizeof(err_buf)) == -4);
+        std::string exp_buf(exp_len + 1, '\0');
+        assert(nexus_core_workspace_export_share(ws_json, "n1", exp_buf.data(), exp_buf.size(), &exp_len, err_buf, sizeof(err_buf)) == 0);
+        auto uri_pos = exp_buf.find("nexus://share/v1/");
+        assert(uri_pos != std::string::npos);
+        auto uri_end = exp_buf.find('"', uri_pos);
+        std::string share_uri = exp_buf.substr(uri_pos, uri_end - uri_pos);
+
+        size_t imp_len = 0;
+        assert(nexus_core_workspace_import_share(ws_json, share_uri.c_str(), nullptr, nullptr, 0, &imp_len, err_buf, sizeof(err_buf)) == -4);
+        std::string imp_buf(imp_len + 1, '\0');
+        assert(nexus_core_workspace_import_share(ws_json, share_uri.c_str(), nullptr, imp_buf.data(), imp_buf.size(), &imp_len, err_buf, sizeof(err_buf)) == 0);
+        assert(imp_buf.find("\"ok\":true") != std::string::npos && imp_buf.find("sh-") != std::string::npos);
+        // Oversized >256 KiB share URI must fail cleanly with -2
+        std::string big_uri = "nexus://share/v1/" + std::string(360000, 'A');
+        size_t big_len = 0;
+        assert(nexus_core_workspace_import_share(ws_json, big_uri.c_str(), nullptr, nullptr, 0, &big_len, err_buf, sizeof(err_buf)) == -4);
+        std::string big_buf(big_len + 1, '\0');
+        assert(nexus_core_workspace_import_share(ws_json, big_uri.c_str(), nullptr, big_buf.data(), big_buf.size(), &big_len, err_buf, sizeof(err_buf)) == -2);
+        assert(big_buf.find("\"ok\":false") != std::string::npos);
+
+        assert(nexus_core_workspace_seal_sync(ws_json, nullptr, "unit", nullptr, 0, nullptr, err_buf, sizeof(err_buf)) == -1);
+        size_t seal_len = 0;
+        assert(nexus_core_workspace_seal_sync(ws_json, "correct-horse-battery", "unit-box", nullptr, 0, &seal_len, err_buf, sizeof(err_buf)) == -4);
+        std::string seal_buf(seal_len + 1, '\0');
+        assert(nexus_core_workspace_seal_sync(ws_json, "correct-horse-battery", "unit-box", seal_buf.data(), seal_buf.size(), &seal_len, err_buf, sizeof(err_buf)) == 0);
+        assert(seal_buf.find("\"ok\":true") != std::string::npos && seal_buf.find("nexus-sync-v1") != std::string::npos);
+        // Extract unescaped envelope_json from seal result via a simple raw-envelope round-trip check
+        auto ek = seal_buf.find("\"envelope_json\":\"");
+        assert(ek != std::string::npos);
+        std::string env_json;
+        for (std::size_t i = ek + 17; i < seal_buf.size() && seal_buf[i] != '"'; ++i) {
+            if (seal_buf[i] == '\\' && i + 1 < seal_buf.size()) { env_json.push_back(seal_buf[++i]); }
+            else env_json.push_back(seal_buf[i]);
+        }
+        size_t open_len = 0;
+        assert(nexus_core_workspace_open_sync(env_json.c_str(), "correct-horse-battery", nullptr, 0, &open_len, err_buf, sizeof(err_buf)) == -4);
+        std::string open_buf(open_len + 1, '\0');
+        assert(nexus_core_workspace_open_sync(env_json.c_str(), "correct-horse-battery", open_buf.data(), open_buf.size(), &open_len, err_buf, sizeof(err_buf)) == 0);
+        assert(open_buf.find("\"ok\":true") != std::string::npos && open_buf.find("unit-box") != std::string::npos);
+        size_t bad_open_len = 0;
+        assert(nexus_core_workspace_open_sync(env_json.c_str(), "wrong-pass", nullptr, 0, &bad_open_len, err_buf, sizeof(err_buf)) == -4);
+        std::string bad_open_buf(bad_open_len + 1, '\0');
+        assert(nexus_core_workspace_open_sync(env_json.c_str(), "wrong-pass", bad_open_buf.data(), bad_open_buf.size(), &bad_open_len, err_buf, sizeof(err_buf)) == -2);
+        assert(bad_open_buf.find("\"ok\":false") != std::string::npos);
     }
     test_directory_flag_and_signals(tmp_dir);
     test_callback_drain_barriers_and_fd_adopt();

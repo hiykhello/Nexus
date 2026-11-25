@@ -54,6 +54,11 @@ final class NexusAppModel {
     var selectedConnectionDetail: ActiveConnectionSnapshot?
     var metrics = MetricsSnapshot()
     var diagnostics = DiagnosticsSnapshot()
+    var workspace = WorkspaceDocument()
+    var activeProfileID = ""
+    var syncConfig = WebDavSyncConfig()
+    var syncStatusSummary = "未配置 WebDAV 同步"
+    var syncConflictSummary: String?
 
     private let watcher = NetworkPathWatcher()
     private let session: ControlSocketSession
@@ -75,6 +80,26 @@ final class NexusAppModel {
         daemonController.shouldShowDaemonControls(for: tunElevationMode, state: daemonState)
     }
 
+    var activeWorkspaceProfile: WorkspaceProfileItem? {
+        if !activeProfileID.isEmpty, let match = workspace.profiles.first(where: { $0.id == activeProfileID }) {
+            return match
+        }
+        return workspace.profiles.first
+    }
+
+    var activeProfileKindBadge: String {
+        activeWorkspaceProfile?.kind.badgeTitle ?? "未选择"
+    }
+
+    var activeProfileDisplayName: String {
+        guard let profile = activeWorkspaceProfile else { return "默认配置" }
+        return profile.remarks.isEmpty ? profile.id : profile.remarks
+    }
+
+    var workspaceSummaryText: String {
+        "r\(workspace.revision) · \(workspace.profiles.count) 配置 · \(workspace.subscriptions.count) 订阅"
+    }
+
     private func startNetworkMonitor() {
         monitorTask?.cancel()
         let stream = watcher.updates()
@@ -91,8 +116,31 @@ final class NexusAppModel {
         }
     }
 
+    func loadWorkspaceState(rootDirectory: URL? = nil) async {
+        let baseDir = rootDirectory ?? Self.defaultWorkspaceDirectory()
+        let wsStore = WorkspaceStore(rootDirectory: baseDir)
+        let telStore = TelemetryStore(fileURL: baseDir.appendingPathComponent("telemetry.json"))
+        if let loaded = try? await wsStore.loadOrInit() {
+            workspace = loaded
+        }
+        let tel = await telStore.load()
+        if !tel.activeProfileId.isEmpty {
+            activeProfileID = tel.activeProfileId
+        }
+        if tel.unreadUnexpectedCrash && !tel.lastCrashReason.isEmpty {
+            statusSummary = "上次异常退出: \(tel.lastCrashReason)"
+        }
+    }
+
+    private static func defaultWorkspaceDirectory() -> URL {
+        let fm = FileManager.default
+        let root = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? fm.temporaryDirectory
+        return root.appendingPathComponent("Nexus", isDirectory: true)
+    }
+
     func refreshStatus() async {
         daemonState = daemonController.status()
+        await loadWorkspaceState()
         do {
             let text = try await session.status()
             isRunning = true
@@ -221,6 +269,7 @@ struct NexusMenuBarApp: App {
             systemImage: model.isRunning ? "network.badge.shield.half.filled" : "network.slash"
         ) {
             Text(model.isRunning ? "Nexus 运行中" : "Nexus 未运行")
+            Text("配置: \(model.activeProfileDisplayName) [\(model.activeProfileKindBadge)]")
             if let iface = model.network.interfaceName {
                 Text("物理网口: \(iface)")
             }
@@ -375,6 +424,8 @@ private struct AdaptiveMobileRootView: View {
             Form {
                 Section("状态") {
                     LabeledContent("连接状态", value: model.isRunning ? "在线" : "离线")
+                    LabeledContent("当前配置", value: "\(model.activeProfileDisplayName) [\(model.activeProfileKindBadge)]")
+                    LabeledContent("E2EE 同步", value: model.syncStatusSummary)
                     LabeledContent("详情", value: model.statusSummary)
                     HStack {
                         Button("刷新") { Task { await model.refreshStatus(); await model.refreshGroupsAndMetrics() } }

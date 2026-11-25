@@ -37,6 +37,7 @@ import desktop.window_blur;
 import desktop.workspace_composer;
 import desktop.workspace_models;
 import desktop.workspace_store;
+import desktop.workspace_sync;
 
 #include "main_helpers.hpp"
 #include "ui_redesign_helpers.hpp"

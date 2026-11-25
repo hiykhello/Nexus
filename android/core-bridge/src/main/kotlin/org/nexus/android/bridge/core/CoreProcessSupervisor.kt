@@ -59,6 +59,22 @@ class CoreProcessSupervisor(private val context: Context) {
         runBoundedCommand(args, timeoutSeconds = 5L, maxBytes = MAX_VALIDATION_OUTPUT_BYTES, emptyOkMsg = "configuration valid")
     }
 
+    suspend fun runCoreCommand(
+        args: List<String>,
+        timeoutSeconds: Long = 10L,
+        maxBytes: Int = MAX_COMPOSE_OUTPUT_BYTES,
+        emptyOkMsg: String = "",
+    ): CoreValidationResult = withContext(Dispatchers.IO) {
+        val bin = binaryFile()
+        verifyCoreBinary(bin)?.let { return@withContext it }
+        runBoundedCommand(
+            command = listOf(bin.absolutePath) + args,
+            timeoutSeconds = timeoutSeconds,
+            maxBytes = maxBytes,
+            emptyOkMsg = emptyOkMsg,
+        )
+    }
+
     suspend fun composeWorkspace(
         workspaceFile: File,
         hostFile: File,

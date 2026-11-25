@@ -125,6 +125,7 @@ export component NexusInput inherits Rectangle {
     in-out property <string> text: "";
     in property <string> placeholder-text: "";
     in property <bool> mono: false;
+    in property <bool> password: false;
     in property <bool> search-icon: false;
     in property <bool> borderless: false;
     in property <string> prefix: "";
@@ -207,6 +208,7 @@ export component NexusInput inherits Rectangle {
                 height: 100%;
                 text <=> root.text;
                 enabled: root.enabled;
+                input-type: root.password ? InputType.password : InputType.text;
                 font-size: 12px;
                 font-family: root.mono ? Theme.mono-font : "";
                 color: Theme.text-primary;

@@ -94,9 +94,9 @@ class WorkspaceStore(
     fun exportPortableJson(doc: WorkspaceDocument = loadOrInit()): String =
         WorkspaceJsonCodec.encode(doc, indentSpaces = 2)
 
-    fun importPortableJson(rawJson: String): WorkspaceDocument {
+    fun importPortableJson(rawJson: String, bumpRevision: Boolean = true): WorkspaceDocument {
         val decoded = WorkspaceJsonCodec.decode(rawJson)
-        return save(decoded)
+        return save(decoded, bumpRevision = bumpRevision)
     }
 
     companion object {

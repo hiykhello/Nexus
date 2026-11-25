@@ -341,4 +341,121 @@ extern "C" {
             return -2;
         }
     }
+
+    int nexus_core_workspace_export_share(
+        const char* workspace_json,
+        const char* profile_ids_csv,
+        char* out_buf, size_t out_cap, size_t* out_len,
+        char* err_buf, size_t err_cap) {
+        try {
+            if (out_len) *out_len = 0;
+            write_c_buf({}, err_buf, err_cap);
+            if (!workspace_json || !profile_ids_csv) {
+                write_c_buf("workspace_json and profile_ids_csv must not be null", err_buf, err_cap);
+                return -1;
+            }
+            std::vector<std::string> ids;
+            std::string_view rest(profile_ids_csv);
+            while (!rest.empty()) {
+                auto c = rest.find(',');
+                auto tok = rest.substr(0, c);
+                while (!tok.empty() && std::isspace(static_cast<unsigned char>(tok.front()))) tok.remove_prefix(1);
+                while (!tok.empty() && std::isspace(static_cast<unsigned char>(tok.back()))) tok.remove_suffix(1);
+                if (!tok.empty()) ids.emplace_back(tok);
+                if (c == std::string_view::npos) break;
+                rest.remove_prefix(c + 1);
+            }
+            auto res = provider::export_workspace_share(workspace_json, ids);
+            auto json = provider::serialize_share_export_result_json(res);
+            if (!res.ok && !res.errors.empty()) write_c_buf(res.errors.front(), err_buf, err_cap);
+            if (out_len) *out_len = json.size();
+            if (!out_buf || out_cap <= json.size()) return -4;
+            std::ranges::copy(json, out_buf);
+            out_buf[json.size()] = '\0';
+            return res.ok ? 0 : -2;
+        } catch (...) {
+            write_c_buf("internal error", err_buf, err_cap);
+            return -2;
+        }
+    }
+
+    int nexus_core_workspace_import_share(
+        const char* workspace_json,
+        const char* share_uri,
+        const char* subscription_id,
+        char* out_buf, size_t out_cap, size_t* out_len,
+        char* err_buf, size_t err_cap) {
+        try {
+            if (out_len) *out_len = 0;
+            write_c_buf({}, err_buf, err_cap);
+            if (!workspace_json || !share_uri) {
+                write_c_buf("workspace_json and share_uri must not be null", err_buf, err_cap);
+                return -1;
+            }
+            auto res = provider::import_workspace_share(workspace_json, share_uri, subscription_id ? std::string_view(subscription_id) : std::string_view{});
+            auto json = provider::serialize_share_import_result_json(res);
+            if (!res.ok && !res.errors.empty()) write_c_buf(res.errors.front(), err_buf, err_cap);
+            if (out_len) *out_len = json.size();
+            if (!out_buf || out_cap <= json.size()) return -4;
+            std::ranges::copy(json, out_buf);
+            out_buf[json.size()] = '\0';
+            return res.ok ? 0 : -2;
+        } catch (...) {
+            write_c_buf("internal error", err_buf, err_cap);
+            return -2;
+        }
+    }
+
+    int nexus_core_workspace_seal_sync(
+        const char* workspace_json,
+        const char* passphrase,
+        const char* device_label,
+        char* out_buf, size_t out_cap, size_t* out_len,
+        char* err_buf, size_t err_cap) {
+        try {
+            if (out_len) *out_len = 0;
+            write_c_buf({}, err_buf, err_cap);
+            if (!workspace_json || !passphrase) {
+                write_c_buf("workspace_json and passphrase must not be null", err_buf, err_cap);
+                return -1;
+            }
+            auto res = provider::seal_workspace_sync(workspace_json, passphrase, device_label ? std::string_view(device_label) : std::string_view{});
+            auto json = provider::serialize_sync_seal_result_json(res);
+            if (!res.ok && !res.errors.empty()) write_c_buf(res.errors.front(), err_buf, err_cap);
+            if (out_len) *out_len = json.size();
+            if (!out_buf || out_cap <= json.size()) return -4;
+            std::ranges::copy(json, out_buf);
+            out_buf[json.size()] = '\0';
+            return res.ok ? 0 : -2;
+        } catch (...) {
+            write_c_buf("internal error", err_buf, err_cap);
+            return -2;
+        }
+    }
+
+    int nexus_core_workspace_open_sync(
+        const char* envelope_json,
+        const char* passphrase,
+        char* out_buf, size_t out_cap, size_t* out_len,
+        char* err_buf, size_t err_cap) {
+        try {
+            if (out_len) *out_len = 0;
+            write_c_buf({}, err_buf, err_cap);
+            if (!envelope_json || !passphrase) {
+                write_c_buf("envelope_json and passphrase must not be null", err_buf, err_cap);
+                return -1;
+            }
+            auto res = provider::open_workspace_sync(envelope_json, passphrase);
+            auto json = provider::serialize_sync_open_result_json(res);
+            if (!res.ok && !res.errors.empty()) write_c_buf(res.errors.front(), err_buf, err_cap);
+            if (out_len) *out_len = json.size();
+            if (!out_buf || out_cap <= json.size()) return -4;
+            std::ranges::copy(json, out_buf);
+            out_buf[json.size()] = '\0';
+            return res.ok ? 0 : -2;
+        } catch (...) {
+            write_c_buf("internal error", err_buf, err_cap);
+            return -2;
+        }
+    }
 }
