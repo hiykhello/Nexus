@@ -117,7 +117,6 @@ namespace relay {
             bool launched_ = false;
             bool opened_ = false;
             bool canceled_ = false;
-            Clock::time_point deadline_;
             std::vector<std::uint8_t> rx_buf_;
             std::size_t rx_off_ = 0;
             net::ProxyAddress remote_addr_{};
@@ -142,7 +141,6 @@ namespace relay {
             auto connect_packets(Clock::time_point deadline) -> capy::task<TunnelConnectResult> {
                 if (starting_ || launched_ || canceled_ || session_.closed || Clock::now()>=deadline)
                     co_return Clock::now()>=deadline ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
-                deadline_=deadline;
                 starting_=true;
                 struct Started {
                     bool& pending;
@@ -185,8 +183,9 @@ namespace relay {
                     } else {
                         remote_host_.assign(reinterpret_cast<char const*>(remote_addr_.bytes.data()), remote_addr_.length);
                     }
-                    auto connected = co_await connection_->client.connect_udp(remote_host_, remote_addr_.port, deadline_);
-                    if (!connected || canceled_) co_return false;
+                    auto open_deadline = Clock::now() + std::chrono::milliseconds(profile_.timeout);
+                    auto connected = co_await connection_->client.connect_udp(remote_host_, remote_addr_.port, open_deadline);
+                    if (!connected || canceled_ || session_.closed) co_return false;
                     opened_ = true;
                 }
                 if (frame.destination != remote_addr_) co_return false;

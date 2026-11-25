@@ -53,11 +53,11 @@ export namespace anytls {
                 if (!fingerprint) co_return false;
                 if (parsed->padding_md5!=*fingerprint) {
                     auto raw=padding_.raw();
-                    if (!co_await writer_.frame(Command::padding,0,{reinterpret_cast<std::uint8_t const*>(raw.data()),raw.size()},IoClock::now()+std::chrono::seconds(5))) co_return false;
+                    if (!co_await writer_.frame_timeout(Command::padding,0,{reinterpret_cast<std::uint8_t const*>(raw.data()),raw.size()},std::chrono::seconds(5))) co_return false;
                 }
                 if (peer_version_>=2) {
                     auto settings=encode_server_settings();
-                    if (!co_await writer_.frame(Command::server_settings,0,settings,IoClock::now()+std::chrono::seconds(5))) co_return false;
+                    if (!co_await writer_.frame_timeout(Command::server_settings,0,settings,std::chrono::seconds(5))) co_return false;
                 }
             } else if (header.command==Command::server_settings && client_) {
                 auto parsed=parse_settings(frame.payload,false);
@@ -69,7 +69,7 @@ export namespace anytls {
                 if (!update) co_return false;
                 padding_=std::move(*update);
             } else if (header.command==Command::heart_request) {
-                if (!co_await writer_.frame(Command::heart_response,header.stream,{},IoClock::now()+std::chrono::seconds(5))) co_return false;
+                if (!co_await writer_.frame_timeout(Command::heart_response,header.stream,{},std::chrono::seconds(5))) co_return false;
             } else if (header.command==Command::alert) co_return false;
             co_return true;
         }
@@ -206,8 +206,17 @@ export namespace anytls {
                 }
                 auto id=finishes_[finish_begin_];
                 finish_begin_=(finish_begin_+1)%finishes_.size(); --finish_count_;
-                if (!co_await writer_.frame(Command::fin,id,{},IoClock::now()+std::chrono::seconds(5)))
+                IoClock::duration lock_wait=std::chrono::seconds(30);
+                if (open_deadline_) {
+                    auto now=IoClock::now();
+                    if (now>=*open_deadline_) co_return capy::results<>{std::make_error_code(std::errc::timed_out)};
+                    lock_wait=std::min(lock_wait,*open_deadline_-now);
+                }
+                if (!co_await writer_.frame_timeout(Command::fin,id,{},std::chrono::seconds(5),lock_wait)) {
+                    if (open_deadline_ && IoClock::now()>=*open_deadline_)
+                        co_return capy::results<>{std::make_error_code(std::errc::timed_out)};
                     co_return capy::results<>{std::make_error_code(std::errc::io_error)};
+                }
             }
             co_return capy::results<>{};
         }

@@ -425,6 +425,7 @@ routing {
                 std::array<std::uint8_t, 16> ip6{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
                 check(mm->match_ip(ip4(10, 7, 200, 55), 4), "NXMM IPv4 hit");
                 check(mm->match_ip(ip6, 6), "NXMM IPv6 hit");
+                check(!mm->match_ip(ip6, 0) && !mm->match_ip(ip6, 99), "NXMM invalid family rejected");
                 check(!mm->match_ip(ip4(192, 0, 2, 1), 4), "NXMM IP miss");
 
                 auto rt = rules::nxmm_to_ruleset(*mm);

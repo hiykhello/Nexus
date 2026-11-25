@@ -101,13 +101,20 @@ export namespace dns {
         auto run(QueryMessage query,Clock::time_point deadline,policy::DnsContext context)
             -> capy::task<std::expected<Bytes,detail::ResolveError>> {
             auto result=co_await run_inner(query,deadline,context);
-            if (result && reverse_cache_)
-                record_reverse_answer(*reverse_cache_,view_.value_or(0),query,*result);
-            co_return result;
+            if (!result) co_return std::unexpected(result.error());
+            if (result->record_reverse && reverse_cache_)
+                record_reverse_answer(*reverse_cache_,view_.value_or(0),query,result->wire);
+            co_return std::move(result->wire);
         }
     private:
+        struct RunOutcome { Bytes wire; bool record_reverse=false; };
+        struct NamedEval {
+            std::string_view tag;
+            std::optional<ResponseEcsView> ecs;
+            bool record_reverse=false;
+        };
         auto run_inner(QueryMessage query,Clock::time_point deadline,policy::DnsContext context)
-            -> capy::task<std::expected<Bytes,detail::ResolveError>> {
+            -> capy::task<std::expected<RunOutcome,detail::ResolveError>> {
             using Error=detail::ResolveError;
             if(std::exchange(started_,true) || fallback_>=upstreams_.size()) co_return std::unexpected(Error::state);
             if(!modes_.empty()
@@ -121,18 +128,21 @@ export namespace dns {
                 operation.set_fakeip_publication(publication_);
 #endif
                 racing_=&operation;if(canceled_)operation.cancel();
-                co_return co_await operation.run(std::move(query),deadline,context);
+                auto raced=co_await operation.run(std::move(query),deadline,context);
+                if (!raced) co_return std::unexpected(raced.error());
+                co_return RunOutcome{std::move(*raced),operation.record_reverse()};
             }
             if(!encode_query(query))co_return std::unexpected(Error::protocol);
             if(query.edns && query.edns->version!=0) {
                 policy::PredefinedResponse failure;
                 auto wire=synthetic_message(query,failure,1);if(!wire)co_return std::unexpected(Error::protocol);
-                co_return std::move(*wire);
+                co_return RunOutcome{std::move(*wire),false};
             }
             if (!apply_message_question(context,query)) co_return std::unexpected(Error::invalid_request);
             ResponseWalk walk(rules_,fallback_,disable_cache_);
             std::optional<ResponseEcsView> evaluated_query;
-            std::vector<std::pair<std::string_view,std::optional<ResponseEcsView>>> named_queries;
+            bool evaluated_record_reverse=false;
+            std::vector<NamedEval> named_queries;
             for(;;) {
                 if(canceled_) co_return std::unexpected(Error::canceled);
                 if(Clock::now()>=deadline) co_return std::unexpected(Error::timeout);
@@ -143,7 +153,7 @@ export namespace dns {
                         policy::PredefinedResponse reply{.rcode=*step->reject_rcode};
                         auto wire=synthetic_message(query,reply);
                         if(!wire)co_return std::unexpected(Error::protocol);
-                        co_return std::move(*wire);
+                        co_return RunOutcome{std::move(*wire),false};
                     }
                     co_return std::unexpected(step->rule<rules_.size() && rules_[step->rule].reject_drop ? Error::policy_dropped : Error::policy_rejected);
                 }
@@ -157,15 +167,17 @@ export namespace dns {
                         wire=encode_response(*response,query.id,step->rewrite_ttl);
                         if(!wire)co_return std::unexpected(Error::protocol);
                     }
-                    co_return std::move(*wire);
+                    co_return RunOutcome{std::move(*wire),false};
                 }
                 if(step->action==policy::DnsAction::respond) {
                     auto response=walk.take_response();if(!response)co_return std::unexpected(Error::state);
                     auto* selected=&evaluated_query;
+                    bool record_reverse=evaluated_record_reverse;
                     if(step->response_tag) {
-                        auto found=std::ranges::find(named_queries,*step->response_tag,&std::pair<std::string_view,std::optional<ResponseEcsView>>::first);
+                        auto found=std::ranges::find(named_queries,*step->response_tag,&NamedEval::tag);
                         if(found==named_queries.end())co_return std::unexpected(Error::state);
-                        selected=&found->second;
+                        selected=&found->ecs;
+                        record_reverse=found->record_reverse;
                     }
                     if(*selected) {
                         auto restored=restore_response_ecs(query,**selected,*response);
@@ -175,7 +187,8 @@ export namespace dns {
                         response=std::move(*parsed);
                     }
                     auto wire=encode_response(*response,query.id,step->rewrite_ttl);
-                    if(!wire)co_return std::unexpected(Error::protocol);co_return std::move(*wire);
+                    if(!wire)co_return std::unexpected(Error::protocol);
+                    co_return RunOutcome{std::move(*wire),record_reverse};
                 }
                 if(step->action!=policy::DnsAction::route && step->action!=policy::DnsAction::evaluate) co_return std::unexpected(Error::state);
                 if(step->server>=upstreams_.size()) co_return std::unexpected(Error::state);
@@ -185,12 +198,15 @@ export namespace dns {
                     policy::PredefinedResponse empty{.rcode=0};
                     auto wire=synthetic_message(query,empty);
                     if(!wire)co_return std::unexpected(Error::protocol);
-                    co_return std::move(*wire);
+                    co_return RunOutcome{std::move(*wire),false};
                 }
 #ifdef NEXUS_DNS_FAKEIP
                 if (auto* publisher=upstreams_[step->server].fakeip; publisher && step->action==policy::DnsAction::route) {
-                    if (auto wire=publisher->query_wire(query))
-                        co_return publication_.respond(*publisher,query,*wire,step->rewrite_ttl,view_);
+                    if (auto wire=publisher->query_wire(query)) {
+                        auto fake=publication_.respond(*publisher,query,*wire,step->rewrite_ttl,view_);
+                        if (!fake) co_return std::unexpected(fake.error());
+                        co_return RunOutcome{std::move(*fake),false};
+                    }
                 }
 #endif
                 auto until=step->timeout_ms ? std::min(deadline,Clock::now()+std::chrono::milliseconds(*step->timeout_ms)) : deadline;
@@ -200,6 +216,7 @@ export namespace dns {
                 auto wire=co_await operation.run();
                 auto const& upstream_query=operation.upstream_query();
                 auto local_synthetic=operation.local_synthetic();
+                bool eligible_reverse=!local_synthetic && !operation.stale_cache();
                 if(canceled_ || (!wire && wire.error()==Error::canceled))co_return std::unexpected(Error::canceled);
                 if(!wire) {
                     if(wire.error()==Error::budget_exhausted)co_return std::unexpected(Error::limit);
@@ -218,9 +235,9 @@ export namespace dns {
                         if(!response)co_return std::unexpected(Error::protocol);
                         auto output=encode_response(*response,query.id,step->rewrite_ttl);
                         if(!output)co_return std::unexpected(Error::protocol);
-                        co_return std::move(*output);
+                        co_return RunOutcome{std::move(*output),eligible_reverse};
                     }
-                    co_return std::move(*wire);
+                    co_return RunOutcome{std::move(*wire),eligible_reverse};
                 }
                 auto response=parse_owned_response(std::move(*wire),query.id,query.question);
                 std::optional<ResponseEcsView> query_metadata;
@@ -234,8 +251,8 @@ export namespace dns {
                 if(!response)co_return std::unexpected(Error::protocol);
                 auto saved=walk.evaluated(std::move(*response));
                 if(!saved)co_return std::unexpected(saved.error()==ResponseProgramError::resource_limit ? Error::limit : Error::state);
-                if(step->response_tag)named_queries.emplace_back(*step->response_tag,std::move(query_metadata));
-                else evaluated_query=std::move(query_metadata);
+                if(step->response_tag)named_queries.push_back({*step->response_tag,std::move(query_metadata),eligible_reverse});
+                else {evaluated_query=std::move(query_metadata);evaluated_record_reverse=eligible_reverse;}
             }
         }
     };

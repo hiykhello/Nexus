@@ -50,6 +50,112 @@ auto check_writer() -> bool {
     return commands==std::vector{a::Command::settings,a::Command::syn,a::Command::push,a::Command::syn,a::Command::push,a::Command::push} &&
         streams==std::vector<std::uint32_t>{0,1,1,2,2,2};
 }
+struct DelayedCapture {
+    std::vector<std::chrono::milliseconds> delays;
+    std::vector<std::vector<std::uint8_t>> writes;
+    std::vector<a::Deadline> deadlines;
+    std::vector<a::IoClock::time_point> started;
+    std::size_t index=0;
+    bool canceled=false;
+    capy::async_event cancel_ev;
+    auto cancel() noexcept -> void { canceled=true; cancel_ev.set(); }
+    auto send(std::span<std::uint8_t const> bytes,a::Deadline deadline) -> capy::task<bool> {
+        auto slot=index++;
+        started.push_back(a::IoClock::now());
+        deadlines.push_back(deadline);
+        if (slot<delays.size() && delays[slot]>0ms) {
+            cancel_ev.clear();
+            auto target=a::IoClock::now()+delays[slot];
+            bool clamped=deadline && *deadline<target;
+            if (clamped) target=*deadline;
+            auto [ec]=co_await io::timeout(cancel_ev.wait(),target);
+            if (canceled) co_return false;
+            if (deadline && (a::IoClock::now()>=*deadline || (clamped && ec==capy::cond::timeout))) co_return false;
+        }
+        writes.emplace_back(bytes.begin(),bytes.end());
+        co_return !canceled;
+    }
+};
+auto check_frame_timeout() -> bool {
+    auto padding=a::PaddingScheme::parse(a::default_padding_scheme); if (!padding) return false;
+    auto context=io::make_io_context(false);
+    // 1. Lock wait longer than write_timeout must NOT starve post-lock write timeout.
+    DelayedCapture stream; stream.delays={120ms,0ms};
+    a::Writer out(stream,*padding,false);
+    bool done1=false,done2=false,ok1=false,ok2=false;
+    auto hold=[&]() -> capy::task<> {
+        ok1=co_await out.data(1,std::array<std::uint8_t,4>{1,2,3,4},a::IoClock::now()+1s);
+        done1=true;
+    };
+    auto ctrl=[&]() -> capy::task<> {
+        auto [ec]=co_await io::delay(10ms); (void)ec;
+        ok2=co_await out.frame_timeout(a::Command::heart_response,7,{},80ms);
+        done2=true;
+    };
+    capy::run_async(context.get_executor())(hold());
+    capy::run_async(context.get_executor())(ctrl());
+    context.run_for(2s);
+    if (!done1 || !done2 || !ok1 || !ok2 || out.failed() || stream.writes.size()!=2 ||
+        !stream.deadlines[1] || (*stream.deadlines[1]-stream.started[1])<40ms) return false;
+    a::FrameDecoder dec;
+    auto fed=dec.feed(stream.writes[1]);
+    auto frame=dec.frame();
+    if (fed.status!=a::Status::accepted || !frame || frame->header.command!=a::Command::heart_response ||
+        frame->header.stream!=7) return false;
+    // 2. Post-lock send exceeding write_timeout fails cleanly.
+    DelayedCapture slow; slow.delays={150ms};
+    a::Writer slow_out(slow,*padding,false);
+    bool slow_done=false,slow_ok=true;
+    auto run_slow=[&]() -> capy::task<> {
+        slow_ok=co_await slow_out.frame_timeout(a::Command::heart_response,9,{},40ms);
+        slow_done=true;
+    };
+    context.restart();
+    capy::run_async(context.get_executor())(run_slow());
+    context.run_for(2s);
+    if (!slow_done || slow_ok || !slow_out.failed()) return false;
+    // 3. Cancellation while queued on mutex exits cleanly.
+    DelayedCapture blocked; blocked.delays={500ms};
+    a::Writer blocked_out(blocked,*padding,false);
+    bool b1=false,b2=false,bok2=true;
+    auto hold3=[&]() -> capy::task<> {
+        (void)co_await blocked_out.data(1,std::array<std::uint8_t,2>{9,8},a::IoClock::now()+2s);
+        b1=true;
+    };
+    auto wait3=[&]() -> capy::task<> {
+        auto [ec]=co_await io::delay(10ms); (void)ec;
+        bok2=co_await blocked_out.frame_timeout(a::Command::fin,3,{},5s);
+        b2=true;
+    };
+    auto cancel3=[&]() -> capy::task<> {
+        auto [ec]=co_await io::delay(30ms); (void)ec;
+        blocked_out.cancel();
+    };
+    context.restart();
+    capy::run_async(context.get_executor())(hold3());
+    capy::run_async(context.get_executor())(wait3());
+    capy::run_async(context.get_executor())(cancel3());
+    context.run_for(2s);
+    if (!b1 || !b2 || bok2 || !blocked_out.failed()) return false;
+    // 4. Bounded lock_timeout expires cleanly without poisoning a live writer.
+    DelayedCapture held; held.delays={150ms};
+    a::Writer held_out(held,*padding,false);
+    bool h1=false,h2=false,hok1=false,hok2=true;
+    auto hold4=[&]() -> capy::task<> {
+        hok1=co_await held_out.data(1,std::array<std::uint8_t,2>{5,6},a::IoClock::now()+1s);
+        h1=true;
+    };
+    auto wait4=[&]() -> capy::task<> {
+        auto [ec]=co_await io::delay(10ms); (void)ec;
+        hok2=co_await held_out.frame_timeout(a::Command::heart_response,11,{},5s,40ms);
+        h2=true;
+    };
+    context.restart();
+    capy::run_async(context.get_executor())(hold4());
+    capy::run_async(context.get_executor())(wait4());
+    context.run_for(2s);
+    return h1 && h2 && hok1 && !hok2 && !held_out.failed();
+}
 using Lower=net::SocketByteStream<io::local_stream_socket>;
 using Session=a::Session<Lower>;
 auto read_exact(Session& session,std::uint32_t id,std::span<std::uint8_t> bytes) -> capy::task<bool> {
@@ -149,6 +255,7 @@ auto duplex(bool uring) -> bool {
 }
 auto main() -> int {
     if (!check_writer()) return 1;
+    if (!check_frame_timeout()) return 3;
     for (bool uring:{false,true}) if ((!uring || io::has_uring) && !duplex(uring)) return 2;
-    std::println("AnyTLS duplex framing, padding updates, reused IDs, isolated rejection/cancellation and FIN passed on both backends");
+    std::println("AnyTLS duplex framing, padding updates, reused IDs, isolated rejection/cancellation, frame_timeout and FIN passed on both backends");
 }

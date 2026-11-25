@@ -18,16 +18,18 @@ import socks5;
 
 namespace relay {
     namespace {
-        auto redirected_target(io::tcp_socket const& client, io::endpoint bound) -> std::optional<io::endpoint> {
+        auto redirected_target(io::tcp_socket const& client, io::endpoint bound, bool allow_scoped_dns) -> std::optional<io::endpoint> {
 #if defined(__linux__) && defined(SO_ORIGINAL_DST)
             if (bound.address().is_v6()) {
                 sockaddr_in6 original{};
                 socklen_t size = sizeof(original);
                 if (::getsockopt(client.native_handle(), IPPROTO_IPV6, SO_ORIGINAL_DST, &original, &size) < 0 ||
-                    size != sizeof(original) || original.sin6_family != AF_INET6 || original.sin6_scope_id) return {};
+                    size != sizeof(original) || original.sin6_family != AF_INET6) return {};
+                auto port = ntohs(original.sin6_port);
+                if (original.sin6_scope_id && !(allow_scoped_dns && port == 53)) return {};
                 io::ipv6_address::bytes_type bytes;
                 std::ranges::copy(original.sin6_addr.s6_addr, bytes.begin());
-                return io::endpoint(io::ipv6_address(bytes), ntohs(original.sin6_port));
+                return io::endpoint(io::ipv6_address(bytes, original.sin6_scope_id), port);
             }
             sockaddr_in original{};
             socklen_t size = sizeof(original);
@@ -39,16 +41,23 @@ namespace relay {
 #else
             (void)client;
             (void)bound;
+            (void)allow_scoped_dns;
             return {};
 #endif
         }
 
         auto forward_tcp_destination(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
-            socks5::Request const& destination, TrafficProtocol protocol, bool redirect_dns = false) -> capy::task<> {
+            socks5::Request const& destination, TrafficProtocol protocol, bool redirect_dns = false,
+            bool dns_hijack_only = false) -> capy::task<> {
             session.begin_traffic(protocol, destination.port);
             if (session.ordered_tcp) {
                 co_await session_detail::ordered_connect(session, context, destination, {},
-                    session_detail::ConnectReply::none, redirect_dns);
+                    session_detail::ConnectReply::none, redirect_dns, dns_hijack_only);
+                co_return;
+            }
+            if (dns_hijack_only) {
+                session.close();
+                session.done = true;
                 co_return;
             }
             if (co_await dial(session, context, policy, destination)) {
@@ -74,7 +83,7 @@ namespace relay {
         // socket metadata. TPROXY preserves the destination on the accepted fd.
         auto bound = accepted_local(session.client);
         if (!bound.port()) { fail(); co_return; }
-        auto original = tproxy ? std::optional(bound) : redirected_target(session.client, bound);
+        auto original = tproxy ? std::optional(bound) : redirected_target(session.client, bound, redirect_dns);
         if (!original || !original->port() ||
             (!tproxy && *original == bound) ||
             (original->port() == listener.port() &&
@@ -85,8 +94,10 @@ namespace relay {
         socks5::Request destination;
         destination.status = socks5::Status::accepted;
         destination.port = original->port();
+        bool scoped_dest = false;
         if (original->address().is_v6()) {
-            if (original->address().to_v6().scope_id()) { fail(); co_return; }
+            scoped_dest = original->address().to_v6().scope_id() != 0;
+            if (scoped_dest && !(redirect_dns && original->port() == 53 && session.ordered_tcp)) { fail(); co_return; }
             destination.address_type = 4;
             destination.address_length = 16;
             std::ranges::copy(original->address().to_v6().to_bytes(), destination.address.begin());
@@ -99,6 +110,6 @@ namespace relay {
             session.ingress = ingress_metadata(session.network_monitor, *source);
         session.inspect_source_owner(policy, *original);
         co_await forward_tcp_destination(session, context, policy, destination,
-            tproxy ? TrafficProtocol::tproxy : TrafficProtocol::redirect, redirect_dns);
+            tproxy ? TrafficProtocol::tproxy : TrafficProtocol::redirect, redirect_dns, scoped_dest);
     }
 }

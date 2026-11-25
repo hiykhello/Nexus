@@ -35,18 +35,39 @@ namespace net {
             return socket.send(target,bytes);
         };
         if (binding_ && binding_->network) {
-            auto interfaces=(*binding_->network)(target.family==6);
+            bool const v6=target.family==6;
+            auto interfaces=(*binding_->network)(v6);
             auto selected=*binding_;
             selected.network.reset();
             auto error=std::make_error_code(std::errc::network_unreachable);
-            for (auto candidate:interfaces.indices) {
-                selected.interface_index=candidate;
+            bool saw_bound=false, all_eperm=true;
+            for (std::size_t i=0;i<interfaces.indices.size();++i) {
+                selected.interface_index=interfaces.indices[i];
+                saw_bound=true;
+                auto ready=prepare(index,target.family,&selected,deadline);
+                auto sent=ready ? send_ready() : ready;
+                if (sent) {
+                    if (interfaces.fallback_memory) interfaces.fallback_memory->mark_healthy(selected.interface_index,v6);
+                    return sent;
+                }
+                socket.discard();
+                error=sent.error();
+                if (error!=std::errc::operation_not_permitted) all_eperm=false;
+                if (interfaces.parallel_fallback && interfaces.fallback_memory && i==0 && interfaces.indices.size()>1 &&
+                    error!=std::errc::operation_not_permitted) {
+                    auto now_ms=std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
+                    interfaces.fallback_memory->mark_failed(interfaces.indices[0],now_ms,v6);
+                }
+                if (!platform::network::retry_interface_error(error)) break;
+            }
+            if (interfaces.parallel_fallback && saw_bound && all_eperm) {
+                selected.interface_index=0;
                 auto ready=prepare(index,target.family,&selected,deadline);
                 auto sent=ready ? send_ready() : ready;
                 if (sent) return sent;
                 socket.discard();
                 error=sent.error();
-                if (!platform::network::retry_interface_error(error)) break;
             }
             return std::unexpected(error);
         }

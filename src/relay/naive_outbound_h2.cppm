@@ -156,10 +156,12 @@ namespace relay::naive_out_detail {
         struct AcquireResult {
             std::optional<typename Pool::Lease> lease;
             std::unique_ptr<Connector> h1_fallback;
+            bool reused = false;
             TunnelConnectResult error = TunnelConnectResult::failed;
         };
 
-        auto acquire(std::stop_source& caller_stop, Clock::time_point deadline) -> capy::task<AcquireResult>;
+        auto acquire(std::stop_source& caller_stop, Clock::time_point deadline, bool allow_reuse = true)
+            -> capy::task<AcquireResult>;
     };
 
     struct H2Profile {
@@ -196,17 +198,22 @@ namespace relay::naive_out_detail {
         }
     };
 
-    inline auto H2Worker::acquire(std::stop_source& caller_stop, Clock::time_point deadline)
+    inline auto H2Worker::acquire(std::stop_source& caller_stop, Clock::time_point deadline, bool allow_reuse)
         -> capy::task<AcquireResult> {
         if (stopped || caller_stop.stop_requested()) co_return AcquireResult{.error = TunnelConnectResult::failed};
         if (Clock::now() >= deadline) co_return AcquireResult{.error = TunnelConnectResult::timeout};
         pool.reap(Clock::now());
-        if (auto reused = pool.acquire()) co_return AcquireResult{.lease = std::move(*reused)};
+        if (allow_reuse) {
+            if (auto reused = pool.acquire()) co_return AcquireResult{.lease = std::move(*reused), .reused = true};
+        }
         auto wait = corosio::timeout(starting.scoped_lock(), deadline);
         auto [lock_ec, lock] = co_await LocalOpToken(std::move(wait), caller_stop);
         if (lock_ec || caller_stop.stop_requested() || stopped || Clock::now() >= deadline)
             co_return AcquireResult{.error = Clock::now() >= deadline ? TunnelConnectResult::timeout : TunnelConnectResult::failed};
-        if (auto reused = pool.acquire()) co_return AcquireResult{.lease = std::move(*reused)};
+        if (allow_reuse) {
+            if (auto reused = pool.acquire()) co_return AcquireResult{.lease = std::move(*reused), .reused = true};
+        }
+        pool.reap(Clock::now());
         auto slot = pool.reserve();
         if (!slot) co_return AcquireResult{.error = TunnelConnectResult::failed};
         auto conn = std::make_unique<Conn>(mode, environment, profile.host, profile.port,
@@ -234,7 +241,7 @@ namespace relay::naive_out_detail {
         if (!lease) co_return AcquireResult{.error = TunnelConnectResult::failed};
         if (!lease->connection().run(environment.context))
             co_return AcquireResult{.error = TunnelConnectResult::failed};
-        co_return AcquireResult{.lease = std::move(*lease)};
+        co_return AcquireResult{.lease = std::move(*lease), .reused = false};
     }
 
     class H2Tunnel {
@@ -288,20 +295,27 @@ namespace relay::naive_out_detail {
 
         auto connect_auth(std::string authority, Clock::time_point deadline) -> capy::task<TunnelConnectResult> {
             if (ready_ || canceled_ || session_.closed) co_return TunnelConnectResult::failed;
-            auto res = co_await worker_.acquire(stop_, deadline);
-            if (res.h1_fallback) { h1_conn_ = std::move(res.h1_fallback); co_return co_await handshake_h1(authority, deadline); }
-            if (!res.lease) co_return res.error;
-            lease_.emplace(std::move(*res.lease));
-            auto st = co_await lease_->connection().open_connect(
-                authority, profile_.auth_header, profile_.extra_headers, profile_.padding, deadline);
-            if (!st || canceled_ || session_.closed) {
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                auto res = co_await worker_.acquire(stop_, deadline, attempt == 0);
+                if (res.h1_fallback) { h1_conn_ = std::move(res.h1_fallback); co_return co_await handshake_h1(authority, deadline); }
+                if (!res.lease) co_return res.error;
+                lease_.emplace(std::move(*res.lease));
+                auto open_op = lease_->connection().open_connect(
+                    authority, profile_.auth_header, profile_.extra_headers, profile_.padding, deadline);
+                auto st = co_await LocalOpToken(std::move(open_op), stop_);
+                if (st && !canceled_ && !session_.closed) {
+                    stream_ = std::move(*st);
+                    ready_ = true;
+                    co_return TunnelConnectResult::connected;
+                }
                 if (st) (*st)->release();
+                bool const retry = !st && attempt == 0 && res.reused && !lease_->connection().usable() &&
+                    !canceled_ && !session_.closed && Clock::now() < deadline;
                 lease_.reset();
+                if (retry) continue;
                 co_return Clock::now() >= deadline ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
             }
-            stream_ = std::move(*st);
-            ready_ = true;
-            co_return TunnelConnectResult::connected;
+            co_return Clock::now() >= deadline ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
         }
 
     public:

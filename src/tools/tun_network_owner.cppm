@@ -10,8 +10,9 @@ export namespace cli::tun_enabled {
         std::array<char,46> dns_stub{};
         packet::TunNetworkOptions network{};
         std::array<packet::TunAddress,packet::max_tun_excludes> excludes{};
+        std::array<packet::TunAddress,packet::max_tun_excludes> includes{};
         packet::TunDefaultOptions policy{};
-        std::uint8_t exclude_count=0;
+        std::uint8_t exclude_count=0, include_count=0;
         bool multi_queue=false;
         packet::TunRedirectOptions redirect;
     };

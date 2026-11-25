@@ -125,6 +125,7 @@ export namespace rules::any_detail {
     inline auto match_any_ip_one(auto const& idx, std::array<std::uint8_t, 16> const& bytes,
         unsigned family, bool match_mapped) noexcept -> bool {
         if (family == 4) return contains_v4(idx.ipv4, read_be32(bytes));
+        if (family != 6) return false;
         if (contains_v6(idx.ipv6, bytes)) return true;
         if (match_mapped && !idx.ipv4.empty() &&
             std::all_of(bytes.begin(), bytes.begin() + 10, [](auto b) { return b == 0; }) &&

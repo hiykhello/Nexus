@@ -38,7 +38,7 @@ export namespace dns {
         std::optional<detail::MessageQuery> active_;
         std::optional<detail::AddressResolver> bootstrap_;
         MessageCache::QueryFlight* flight_=nullptr;
-        bool started_=false,canceled_=false,local_synthetic_=false,independent_cache_=false;
+        bool started_=false,canceled_=false,local_synthetic_=false,independent_cache_=false,stale_cache_=false;
         // A refresh owns its cache generation and transport. Retiring the
         // listener cancels that generation before the executor is drained.
         static auto refresh(corosio::io_context& context,std::shared_ptr<MessageCache> cache,MessageCache::Ticket ticket,
@@ -81,6 +81,7 @@ export namespace dns {
         }
         [[nodiscard]] auto upstream_query() const noexcept -> QueryMessage const& {return upstream_query_ ? *upstream_query_ : query_;}
         [[nodiscard]] auto local_synthetic() const noexcept -> bool {return local_synthetic_;}
+        [[nodiscard]] auto stale_cache() const noexcept -> bool {return stale_cache_;}
         auto run() -> capy::task<std::expected<Bytes,detail::ResolveError>>;
     };
     struct EvaluatedMessage {
@@ -88,8 +89,9 @@ export namespace dns {
         Bytes wire;
         ResponseEcsView upstream_ecs;
         bool local_synthetic;
-        EvaluatedMessage(Bytes bytes,ResponseEcsView view,bool synthetic,std::optional<InputBudget::Lease> reservation={}) noexcept
-            :lease(std::move(reservation)),wire(std::move(bytes)),upstream_ecs(view),local_synthetic(synthetic) {}
+        bool stale_cache=false;
+        EvaluatedMessage(Bytes bytes,ResponseEcsView view,bool synthetic,std::optional<InputBudget::Lease> reservation={},bool stale=false) noexcept
+            :lease(std::move(reservation)),wire(std::move(bytes)),upstream_ecs(view),local_synthetic(synthetic),stale_cache(stale) {}
         EvaluatedMessage(EvaluatedMessage const&)=delete;
         auto operator=(EvaluatedMessage const&) -> EvaluatedMessage& = delete;
         EvaluatedMessage(EvaluatedMessage&&) noexcept = default;
@@ -97,7 +99,8 @@ export namespace dns {
             if(this!=&other) {
                 Bytes{}.swap(wire);
                 lease=std::move(other.lease);
-                wire=std::move(other.wire);upstream_ecs=other.upstream_ecs;local_synthetic=other.local_synthetic;
+                wire=std::move(other.wire);upstream_ecs=other.upstream_ecs;
+                local_synthetic=other.local_synthetic;stale_cache=other.stale_cache;
             }
             return *this;
         }

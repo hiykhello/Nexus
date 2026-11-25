@@ -283,6 +283,8 @@ namespace config {
         if (cfg.auto_redirect) {
             if (!cfg.auto_route || cfg.device_fd || cfg.connect_ip_outbound || (strict_seen && !cfg.strict_route))
                 return error("TUN auto-redirect requires auto-route and managed routed TUN strict-route");
+            if (!cfg.route_address_sets.empty() || !cfg.route_includes.empty())
+                return error("TUN auto-redirect cannot be combined with route-address-set");
             cfg.strict_route=true;
         }
         if (cfg.device_fd) {

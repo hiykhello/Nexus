@@ -2,20 +2,70 @@ module relay;
 import std;
 import capy;
 import corosio;
+import rules;
+import relay.dns_state;
 
 namespace relay {
     auto OutboundContext::prewarm_allowed() const noexcept -> bool {
-        if (!owner) return true;
+        if (!owner || !factories) return true;
         auto snapshot=owner->current_route_snapshot();
-        if (!snapshot || !snapshot->tunnel_references) return true;
-        auto referenced=*snapshot->tunnel_references;
-        while (referenced) {
-            auto index=static_cast<std::size_t>(std::countr_zero(referenced));
-            referenced&=referenced-1;
-            for (auto candidate=std::optional{index};candidate && *candidate<factories->size();
-                 candidate=(*factories)[*candidate].detour)
+        if (!snapshot) return true;
+        auto matches_chain=[&](std::size_t root) noexcept -> bool {
+            auto candidate=std::optional{root};
+            for (std::size_t hops=0;candidate && *candidate<factories->size() && hops<factories->size();++hops) {
                 if (*candidate==factory_index) return true;
+                candidate=(*factories)[*candidate].detour;
+            }
+            return false;
+        };
+        auto matches_outbound=[&](std::size_t root) noexcept -> bool {
+            auto const& dist=snapshot->matcher.distribution();
+            auto const physical=dist ? dist->physical_count : (2+factories->size());
+            if (root<2) return false;
+            if (root<physical) return root-2<factories->size() && matches_chain(root-2);
+            if (!dist) return false;
+            std::bitset<512> seen_group{};
+            std::array<std::size_t,256> stack{};
+            std::size_t sp=0;
+            stack[sp++]=root;
+            while (sp) {
+                auto idx=stack[--sp];
+                if (idx<2) continue;
+                if (idx<physical) {
+                    if (idx-2<factories->size() && matches_chain(idx-2)) return true;
+                    continue;
+                }
+                auto g=idx-physical;
+                if (g>=dist->groups.size() || g>=seen_group.size() || seen_group.test(g)) continue;
+                seen_group.set(g);
+                for (auto member : dist->groups[g]) {
+                    if (member<2) continue;
+                    if (member<physical) {
+                        if (member-2<factories->size() && matches_chain(member-2)) return true;
+                    } else if (sp<stack.size()) {
+                        stack[sp++]=member;
+                    }
+                }
+            }
+            return false;
+        };
+        if (snapshot->dns_transports) {
+            for (auto const& outbound : snapshot->dns_transports->outbounds)
+                if (outbound && matches_outbound(*outbound)) return true;
+        } else if (dns && std::ranges::any_of(dns->routing.servers,&DnsServer::proxy_detour)) {
+            return true;
         }
+        if (auto const& runtime=owner->get_runtime_mode()) {
+            auto mode=runtime->mode.load(std::memory_order_acquire);
+            if (mode==rules::RouteMode::global)
+                return matches_outbound(runtime->global_outbound.load(std::memory_order_acquire));
+            if (mode==rules::RouteMode::direct) return false;
+        }
+        if (!snapshot->tunnel_references) return true;
+        auto const& referenced=*snapshot->tunnel_references;
+        auto limit=std::min(factories->size(),referenced.size());
+        for (std::size_t index=0;index<limit;++index)
+            if (referenced.test(index) && matches_chain(index)) return true;
         return false;
     }
     struct PacketTunnel::Impl {

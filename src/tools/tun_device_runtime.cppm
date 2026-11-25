@@ -89,38 +89,29 @@ export namespace cli::tun_enabled {
         }
 
         inline auto is_fatal_io_error(std::error_code ec) noexcept -> bool {
-            return ec == std::errc::bad_file_descriptor ||
-                   ec == std::errc::no_such_device ||
-                   ec == std::errc::no_such_device_or_address ||
-                   ec == std::errc::broken_pipe ||
-                   ec == std::errc::io_error ||
-                   ec == std::errc::not_connected ||
-                   ec == std::errc::network_down ||
-                   ec == std::errc::permission_denied;
+            return ec == std::errc::bad_file_descriptor || ec == std::errc::no_such_device ||
+                   ec == std::errc::no_such_device_or_address || ec == std::errc::broken_pipe ||
+                   ec == std::errc::io_error || ec == std::errc::not_connected ||
+                   ec == std::errc::network_down || ec == std::errc::permission_denied;
         }
 
         template<class T>
         inline auto classify_tun_failure(T const& val, std::string& detail) -> bool {
             if constexpr (std::same_as<T, std::error_code>) {
                 if (!is_fatal_io_error(val)) return false;
-                detail = "TUN device I/O error: " + val.message();
-                return true;
+                detail = "TUN device I/O error: " + val.message(); return true;
             } else if constexpr (std::same_as<T, platform::TunBridgeError>) {
                 if (val == platform::TunBridgeError::closed) { detail = "TUN bridge closed"; return true; }
                 return false;
             } else if constexpr (std::same_as<T, packet::FdError>) {
-                if (val == packet::FdError::end_of_file || val == packet::FdError::invalid_fd) {
-                    detail = "TUN device closed"; return true;
-                }
+                if (val == packet::FdError::end_of_file || val == packet::FdError::invalid_fd) { detail = "TUN device closed"; return true; }
                 return false;
             } else if constexpr (std::same_as<T, packet::TunPumpError>) {
                 if (val == packet::TunPumpError::invalid_device) { detail = "TUN device invalid"; return true; }
                 return false;
             } else if constexpr (requires { std::visit([](auto const&) {}, val); }) {
                 return std::visit([&](auto const& inner) { return classify_tun_failure(inner, detail); }, val);
-            } else {
-                return false;
-            }
+            } else return false;
         }
 
         template<class Step>
@@ -207,10 +198,10 @@ export namespace cli::tun_enabled {
         [[nodiscard]] auto prepare_linux_request(config::TunInbound const& cfg, packet::TunRedirectOptions redirect,
             std::optional<std::uint16_t> redirect_port) -> std::expected<StrictTunRequest, std::string> {
             StrictTunRequest request;
-            if (redirect_port) {
+            if (cfg.strict_route) {
                 request.redirect = redirect;
-                request.redirect.port = *redirect_port;
-                request.redirect.exclude_mptcp = cfg.exclude_mptcp;
+                request.redirect.port = redirect_port.value_or(0);
+                request.redirect.exclude_mptcp = redirect_port ? cfg.exclude_mptcp : false;
             }
             if (cfg.host_dns_resolved) {
 #ifndef NEXUS_TUN_HOST_DNS
@@ -244,8 +235,16 @@ export namespace cli::tun_enabled {
                 }
             }
             for (auto const& text : cfg.route_includes) {
-                if (auto pfx = detail::parse_cidr_addr(text, text.contains(':')); pfx && nopts.route_count < nopts.routes.size())
-                    nopts.routes[nopts.route_count++] = detail::mask_network(*pfx);
+                auto pfx = detail::parse_cidr_addr(text, text.contains(':'));
+                if (!pfx || !(pfx->family == 4 ? cfg.inet4_address : cfg.inet6_address)) continue;
+                auto norm = detail::mask_network(*pfx);
+                if (cfg.strict_route) {
+                    if (std::ranges::contains(std::span(request.includes).first(request.include_count), norm)) continue;
+                    if (request.include_count >= request.includes.size()) return std::unexpected("TUN route-include limit exceeded");
+                    request.includes[request.include_count++] = norm;
+                } else if (nopts.route_count < nopts.routes.size() &&
+                           !std::ranges::contains(std::span(nopts.routes).first(nopts.route_count), norm))
+                    nopts.routes[nopts.route_count++] = norm;
             }
             if (cfg.strict_route) {
                 if (cfg.interface_name.size() >= request.name.size()) return std::unexpected("invalid TUN interface-name");
@@ -277,6 +276,8 @@ export namespace cli::tun_enabled {
                         request.excludes[request.exclude_count++] = prefix;
                     }
                 }
+                if (std::size_t(request.exclude_count) + request.include_count > packet::max_tun_excludes)
+                    return std::unexpected("TUN route-include + route-exclude limit exceeded");
             }
             request.multi_queue = cfg.multi_queue;
             return request;
@@ -334,7 +335,9 @@ export namespace cli::tun_enabled {
             default_policy.emplace();
             auto deadline = Clock::now() + std::chrono::seconds(3);
             auto excludes = std::span(req.excludes).first(req.exclude_count);
-            auto installed = default_policy->start(*lease, req.policy, deadline, deadline + std::chrono::seconds(2), excludes);
+            auto includes = std::span(req.includes).first(req.include_count);
+            auto installed = default_policy->start(*lease, req.policy, deadline, deadline + std::chrono::seconds(2),
+                excludes, req.redirect, includes);
             if (!installed) return std::unexpected(std::format("TUN strict-route installation failed (code={})",
                 static_cast<int>(installed.error().code)));
             return {};

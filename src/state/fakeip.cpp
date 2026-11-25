@@ -50,14 +50,24 @@ namespace state {
             return failed;
         }
 
-        auto flush(std::span<FakeIpRow> rows) -> std::expected<void,StateError> {
-            for (auto& row:rows) {
+        auto flush(std::span<FakeIpRow> rows, bool& synced) -> std::expected<void,StateError> {
+            synced=false;
+            auto persisted_before=disk_rows.size();
+            struct Rollback {
+                std::vector<FakeIpRow>& target;
+                std::size_t size;
+                bool committed=false;
+                ~Rollback() {if (!committed) target.resize(size);}
+            } rollback{disk_rows,persisted_before};
+            for (auto const& row:rows) {
                 auto result=append_fakeip(wal.get(),wal_identity,disk_rows.size()+1,row);
                 if (!result) return std::unexpected(result.error());
                 wal_bytes+=*result;
-                disk_rows.push_back(std::move(row));
+                disk_rows.push_back(row);
             }
-            if (auto synced=sync_handle(wal.get(),Stage::sync_stage); !synced) return std::unexpected(synced.error());
+            if (auto ok=sync_handle(wal.get(),Stage::sync_stage); !ok) return std::unexpected(ok.error());
+            synced=true;
+            rollback.committed=true;
             if (wal_bytes<fakeip_wal_limit) return {};
             auto compacted=compact_fakeip(directory,wal_identity,wal.get(),disk_rows);
             if (compacted) wal_bytes=0;
@@ -78,15 +88,27 @@ namespace state {
                 batch.swap(pending);
                 flushing=true;
                 lock.unlock();
+                bool batch_synced=false;
                 std::optional<StateError> error;
                 try {
-                    auto result=flush(batch);
+                    auto result=flush(batch,batch_synced);
                     if (!result) error=result.error();
                 } catch (std::bad_alloc const&) {error=StateError{Stage::capacity};}
-                batch.clear();
                 lock.lock();
                 flushing=false;
-                if (error) failed=*error;
+                if (error) {
+                    auto erase_rows=[&](std::span<FakeIpRow> rows) noexcept {
+                        for (auto& row:rows) {
+                            auto it=forward.find(std::pair(row.view,std::move(row.domain)));
+                            if (it!=forward.end() && it->second==row.address) forward.erase(it);
+                        }
+                    };
+                    if (!batch_synced) erase_rows(batch);
+                    erase_rows(pending);
+                    pending.clear();
+                    failed=*error;
+                }
+                batch.clear();
                 flushed.notify_all();
             }
             flushed.notify_all();
@@ -147,10 +169,12 @@ namespace state {
         if (owner.cursor>=capacity || owner.pending.size()==128)
             return std::unexpected(StateError{Stage::capacity});
         if (owner.mode==CrashMode::range_reserve && owner.cursor>=owner.meta.reserved) {
+            auto previous_meta=owner.meta;
             owner.meta.reserved=std::min(capacity,owner.cursor+fakeip_range);
             ++owner.meta.generation;
             auto reserved=save_fakeip_meta(owner.directory,owner.scope,owner.meta);
             if (!reserved) {
+                owner.meta=previous_meta;
                 owner.failed=reserved.error();
                 return std::unexpected(*owner.failed);
             }
@@ -159,12 +183,13 @@ namespace state {
         FakeIpRow row{address,view,key.second};
         auto saved_key=owner.forward.emplace(std::move(key),address).first;
         if (owner.mode==CrashMode::per_mapping) {
+            bool synced=false;
             try {
-                auto saved=owner.flush(std::span(&row,1));
+                auto saved=owner.flush(std::span(&row,1),synced);
                 if (!saved) owner.failed=saved.error();
             } catch (std::bad_alloc const&) {owner.failed=StateError{Stage::capacity};}
             if (owner.failed) {
-                owner.forward.erase(saved_key);
+                if (!synced) owner.forward.erase(saved_key);
                 return std::unexpected(*owner.failed);
             }
         } else {

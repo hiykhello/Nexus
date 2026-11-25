@@ -18,6 +18,63 @@ int main() {
         "nameserver 9.9.9.9\n");
     assert(lease.size() == 4 && lease[0].lease_ttl_seconds == 900);
 
+    // 1b. Multi-block dhclient.leases keeps only the latest lease per interface and respects interface_filter
+    constexpr std::string_view multi_blocks =
+        "lease {\n"
+        "  interface \"eth0\";\n"
+        "  option domain-name-servers 192.168.1.1;\n"
+        "}\n"
+        "lease {\n"
+        "  interface \"wlan0\";\n"
+        "  option domain-name-servers 172.16.0.1;\n"
+        "}\n"
+        "lease {\n"
+        "  interface \"eth0\";\n"
+        "  option domain-name-servers 10.0.0.1, 10.0.0.2;\n"
+        "}\n";
+    auto all_latest = dns::parse_dhcp_lease_text(multi_blocks);
+    assert(all_latest.size() == 3);
+    auto eth0_only = dns::parse_dhcp_lease_text(multi_blocks, "eth0");
+    assert(eth0_only.size() == 2 && eth0_only[0].address.bytes[0] == 10 && eth0_only[0].address.bytes[3] == 1 &&
+           eth0_only[1].address.bytes[3] == 2);
+    auto wlan0_only = dns::parse_dhcp_lease_text(multi_blocks, "wlan0");
+    assert(wlan0_only.size() == 1 && wlan0_only[0].address.bytes[0] == 172);
+    assert(dns::parse_dhcp_lease_text(multi_blocks, "missing0").empty());
+
+    // 1b2. Nested ISC lease6 { ia-na { iaaddr { ... } } option dhcp6.name-servers ...; } does not overwrite IPv4 lease
+    constexpr std::string_view nested_v6 =
+        "lease {\n"
+        "  interface \"eth0\";\n"
+        "  option domain-name-servers 10.0.0.1;\n"
+        "}\n"
+        "lease6 {\n"
+        "  interface \"eth0\";\n"
+        "  ia-na 01:02:03:04 {\n"
+        "    iaaddr 2001:db8::10 {\n"
+        "      preferred-life 3600;\n"
+        "    }\n"
+        "  }\n"
+        "  option dhcp6.name-servers 2001:4860:4860::8888;\n"
+        "}\n";
+    auto dual = dns::parse_dhcp_lease_text(nested_v6, "eth0");
+    assert(dual.size() == 2 && dual[0].address.size == 4 && dual[1].address.size == 16);
+
+    // 1c. discover_dhcp_dns_servers directory filtering avoids cross-interface leakage
+    {
+        auto tmp = std::filesystem::temp_directory_path() / "nexus_lan_dns_dhcp_test";
+        std::error_code ec;
+        std::filesystem::remove_all(tmp, ec);
+        std::filesystem::create_directories(tmp, ec);
+        { std::ofstream(tmp / "eth0") << "DNS=10.10.0.1\n"; }
+        { std::ofstream(tmp / "wlan0") << "DNS=172.20.0.1\n"; }
+        { std::ofstream(tmp / "999999") << "DNS=192.168.99.1\n"; }
+        std::string dir_str = tmp.string();
+        std::array<std::string_view, 1> paths{dir_str};
+        auto scoped = dns::discover_dhcp_dns_servers(paths, "eth0");
+        std::filesystem::remove_all(tmp, ec);
+        assert(scoped.size() == 1 && scoped[0].address.bytes[0] == 10 && scoped[0].address.bytes[1] == 10);
+    }
+
     // 2. mDNS query + response parse + cache-flush & TTL expiry
     assert(dns::mdns::is_mdns_name("printer.local"));
     assert(dns::mdns::is_mdns_name("nas.home.local."));

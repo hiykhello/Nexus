@@ -171,7 +171,7 @@ export namespace packet {
             return {};
         }
         auto preflight(TunNetworkOptions const& network,Clock::time_point deadline,std::span<TunAddress const> excludes,
-            std::array<char,16> const& device_name,TunRedirectOptions const& redirect) -> std::expected<void,TunPolicyFailure> {
+            std::array<char,16> const& device_name,TunRedirectOptions const& redirect,std::span<TunAddress const> includes={}) -> std::expected<void,TunPolicyFailure> {
             namespace d=tun_policy_detail;
             std::array<bool,2> enabled{};
             for(std::size_t i=0;i<network.address_count;++i)enabled[network.addresses[i].family==4?0:1]=true;
@@ -273,20 +273,31 @@ export namespace packet {
                     let_through.action=d::a::FR_ACT_UNREACHABLE;
                     rules_.push_back({let_through});
                 }
-                auto capture_rule=bypass;
-                capture_rule.priority=capture_priority_;
-                capture_rule.table=options_.capture_table;
-                if (options_.include_mark) {
-                    capture_rule.mark=options_.include_mark->mark;
-                    capture_rule.mask=options_.include_mark->mask;
+                auto emit_capture=[&](std::uint32_t& p,std::optional<d::r::DestinationPrefix> dest) {
+                    auto capture_rule=bypass;
+                    capture_rule.priority=p++;
+                    capture_rule.table=options_.capture_table;
+                    capture_rule.destination=dest;
+                    if (options_.include_mark) {
+                        capture_rule.mark=options_.include_mark->mark;
+                        capture_rule.mask=options_.include_mark->mask;
+                        rules_.push_back({capture_rule});
+                        capture_rule.priority=p++;
+                        capture_rule.table=0;
+                        capture_rule.action=d::a::FR_ACT_UNREACHABLE;
+                    } else {
+                        capture_rule.flags=d::a::FIB_RULE_INVERT;
+                    }
                     rules_.push_back({capture_rule});
-                    capture_rule.priority++;
-                    capture_rule.table=0;
-                    capture_rule.action=d::a::FR_ACT_UNREACHABLE;
+                };
+                auto cap_prio=capture_priority_;
+                if (includes.empty()) {
+                    emit_capture(cap_prio,std::nullopt);
                 } else {
-                    capture_rule.flags=d::a::FIB_RULE_INVERT;
+                    for (auto const& prefix : includes)
+                        if (prefix.family==family)
+                            emit_capture(cap_prio,d::r::DestinationPrefix{prefix.bytes,prefix.prefix});
                 }
-                rules_.push_back({capture_rule});
             }
             auto observed=observe();if(!observed)return observed;
             return drift_?std::expected<void,TunPolicyFailure>(fail(TunPolicyError::drift)):std::expected<void,TunPolicyFailure>{};
@@ -297,26 +308,33 @@ export namespace packet {
         auto operator=(TunDefaultPolicy const&) -> TunDefaultPolicy& =delete;
         ~TunDefaultPolicy(){if(!stopped_)(void)stop(Clock::now()+std::chrono::seconds(2));}
         template<class LeaseHooks> [[nodiscard]] auto start(TunNetworkLease<LeaseHooks>& lease,TunDefaultOptions options,
-            Clock::time_point deadline,Clock::time_point rollback_deadline,std::span<TunAddress const> excludes={},TunRedirectOptions const& redirect={})
+            Clock::time_point deadline,Clock::time_point rollback_deadline,std::span<TunAddress const> excludes={},
+            TunRedirectOptions const& redirect={},std::span<TunAddress const> includes={})
             -> std::expected<void,TunPolicyFailure> {
             namespace d=tun_policy_detail;
             if(starting_ || stopped_)return fail(TunPolicyError::state);
             starting_=true;options_=options;watch_local_=redirect.port!=0;auto const& network=lease.network_options();
-            if (excludes.size()>max_tun_excludes || options.priority>32759-2*excludes.size() ||
+            if (excludes.size()+includes.size()>max_tun_excludes ||
+                options.priority>32759-2*(excludes.size()+includes.size()) ||
                 redirect.protected_count>redirect.protected_destinations.size() ||
                 (options.include_mark && !options.include_mark->valid()) ||
                 (options.exclude_mark && !options.exclude_mark->valid()) ||
                 options.capture_table<256 ||
                 options.bypass_table<256 || options.capture_table==options.bypass_table || !options.mark ||
                 !options.priority || network.route_count || !d::t::validate(network)) return fail(TunPolicyError::configuration);
+            for (auto const& prefix : includes)
+                if (!d::t::valid(prefix,true) || !std::ranges::any_of(std::span(network.addresses).first(network.address_count),
+                    [&](auto const& addr){return addr.family==prefix.family;}))
+                    return fail(TunPolicyError::configuration);
             capture_priority_=static_cast<std::uint32_t>(options.priority+2+2*excludes.size()+
                 (options.exclude_mark ? 2 : 0)+redirect.protected_count+redirect.tcp_dns+redirect.udp_dns);
-            last_priority_=capture_priority_+(options.include_mark ? 1 : 0);
+            auto include_slots=includes.empty() ? std::size_t{1} : includes.size();
+            last_priority_=static_cast<std::uint32_t>(capture_priority_+include_slots*(options.include_mark ? 2 : 1)-1);
             auto device=lease.verified_device(deadline);if(!device)return fail(TunPolicyError::ownership);index_=device->index;
             auto opened=socket_.open();if(!opened)return failure(opened.error());
             std::array groups{d::a::RTNLGRP_IPV4_NETCONF,d::a::RTNLGRP_LINK,d::a::RTNLGRP_IPV4_ROUTE,d::a::RTNLGRP_IPV6_ROUTE,d::a::RTNLGRP_IPV4_RULE,d::a::RTNLGRP_IPV6_RULE};
             opened=watch_.open(groups);if(!opened)return failure(opened.error());
-            auto result=preflight(network,deadline,excludes,device->name,redirect);
+            auto result=preflight(network,deadline,excludes,device->name,redirect,includes);
             if(result) {
                 auto reverse=reverse_.start([&]{return synchronize();},[&](auto index,auto name){return same_link(index,name,deadline);});
                 if(!reverse)result=failure(reverse.error());

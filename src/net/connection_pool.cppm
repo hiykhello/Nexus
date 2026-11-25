@@ -115,11 +115,16 @@ export namespace net {
             if (!selected) return {};
             return Lease(*this,*selected);
         }
+        auto active_count() const noexcept -> std::size_t {
+            return static_cast<std::size_t>(std::ranges::count_if(entries_,[](auto const& entry) {
+                return !entry->retiring;
+            }));
+        }
         auto reserve() noexcept -> std::expected<Creation,PoolError> {
             if (closed_) return std::unexpected(PoolError::closed);
             if (!next_sequence_) return std::unexpected(PoolError::exhausted);
             if constexpr(Shared)if(leases_+creating_>=options_.max_sessions)return std::unexpected(PoolError::full);
-            if (entries_.size()+creating_>=options_.max_sessions) return std::unexpected(PoolError::full);
+            if (active_count()+creating_>=options_.max_sessions) return std::unexpected(PoolError::full);
             return Creation(*this);
         }
         auto idle_count() const noexcept -> std::size_t {
@@ -131,9 +136,10 @@ export namespace net {
             if (closed_) return 0;
             auto available=idle_count()+creating_;
             auto deficit=available<options_.min_idle ? options_.min_idle-available : 0;
-            if constexpr(Shared)return std::min({deficit,options_.max_sessions-std::min(options_.max_sessions,entries_.size()+creating_),
+            auto active=active_count();
+            if constexpr(Shared)return std::min({deficit,options_.max_sessions-std::min(options_.max_sessions,active+creating_),
                 options_.max_sessions-std::min(options_.max_sessions,leases_+creating_)});
-            return std::min(deficit,options_.max_sessions-std::min(options_.max_sessions,entries_.size()+creating_));
+            return std::min(deficit,options_.max_sessions-std::min(options_.max_sessions,active+creating_));
         }
         auto reap(PoolClock::time_point now,bool maintain_min_idle=true) noexcept -> void {
             auto idle=idle_count();

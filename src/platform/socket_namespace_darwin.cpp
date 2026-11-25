@@ -11,6 +11,16 @@ import std;
 
 namespace platform {
     namespace {
+        auto socket_is_ipv6(int fd) noexcept -> std::expected<bool, std::error_code> {
+            sockaddr_storage local{};
+            socklen_t len = sizeof(local);
+            if (::getsockname(fd, reinterpret_cast<sockaddr*>(&local), &len) != 0)
+                return std::unexpected(std::error_code(errno, std::generic_category()));
+            if (local.ss_family == AF_INET6) return true;
+            if (local.ss_family == AF_INET) return false;
+            return std::unexpected(std::make_error_code(std::errc::address_family_not_supported));
+        }
+
         auto bind_interface_non_linux(int fd, std::string_view name, std::uint32_t index,
             bool ipv6) noexcept -> std::error_code {
             unsigned int ifidx = index;
@@ -72,9 +82,15 @@ namespace platform {
         if (options.routing_mark || !options.network_namespace.empty())
             return std::make_error_code(std::errc::operation_not_supported);
         auto name = options.interface_name();
-        if (!name.empty() || options.interface_index) {
-            bool ipv6 = options.inet6_bind_address.has_value() && !options.inet4_bind_address.has_value();
-            if (auto error = bind_interface_non_linux(fd, name, options.interface_index, ipv6)) return error;
+        if (!name.empty() || options.interface_index || options.network) {
+            auto ipv6 = socket_is_ipv6(fd);
+            if (!ipv6) return ipv6.error();
+            std::uint32_t index = options.interface_index;
+            if (!index && options.network) {
+                index = (*options.network)(*ipv6).first();
+                if (!index) return std::make_error_code(std::errc::network_unreachable);
+            }
+            if (auto error = bind_interface_non_linux(fd, name, index, *ipv6)) return error;
         }
         if (auto error = invoke_protect_fd(fd)) return error;
         return options.protect_path.empty() ? std::error_code{} : std::make_error_code(std::errc::operation_not_supported);

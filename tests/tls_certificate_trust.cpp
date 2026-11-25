@@ -77,9 +77,31 @@ int main() {
     auto system=t::load_trust_bundle("/etc/ssl/certs/ca-certificates.crt");
     if (std::filesystem::exists("/etc/ssl/certs/ca-certificates.crt")) {
         if (!system || system->empty() || system->size()>1024) { std::cerr << "system bundle failed: " << (system ? -1 : static_cast<int>(system.error())) << "\n"; return 16; }
-        std::vector<View> many; many.push_back(root); for (auto const& cert:*system) many.emplace_back(cert);
+        std::vector<View> many; many.push_back(root);
+        for (auto const& cert:*system) { if (many.size()==1024) break; many.emplace_back(cert); }
         if (!verify(chain,many,t::PeerNameKind::dns,dns("server.example"),valid_time)) return 17;
         std::cout << "loaded " << system->size() << " system trust anchors\n";
+    }
+    auto has_system_bundle=[]() -> bool {
+#if defined(_WIN32) || defined(__APPLE__)
+        return true;
+#else
+        if (char const* env=std::getenv("SSL_CERT_FILE"); env && env[0]=='/' && std::filesystem::exists(env)) return true;
+        for (auto p:{"/etc/ssl/certs/ca-certificates.crt","/etc/pki/tls/certs/ca-bundle.crt",
+                     "/etc/ssl/ca-bundle.pem","/etc/ssl/cert.pem","/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"})
+            if (std::filesystem::exists(p)) return true;
+        return false;
+#endif
+    };
+    if (has_system_bundle()) {
+        auto auto_system=t::load_system_trust_bundle();
+        if (!auto_system || auto_system->empty() || auto_system->size()>1024) {
+            std::cerr << "load_system_trust_bundle failed: " << (auto_system ? -1 : static_cast<int>(auto_system.error())) << "\n";
+            return 19;
+        }
+        std::vector<View> auto_many; auto_many.push_back(root);
+        for (auto const& cert:*auto_system) { if (auto_many.size()==1024) break; auto_many.emplace_back(cert); }
+        if (!verify(chain,auto_many,t::PeerNameKind::dns,dns("server.example"),valid_time)) return 20;
     }
     std::cout << "TLS certificate trust, identity, purpose and time passed\n";
 }

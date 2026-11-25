@@ -51,7 +51,8 @@ namespace relay::session_detail {
 
     auto relay_pair(Session& session) -> capy::task<>;
     auto ordered_connect(Session& session, io::io_context& context, socks5::Request const& request,
-        std::span<std::uint8_t const> prefix, ConnectReply response, bool redirect_dns = false) -> capy::task<>;
+        std::span<std::uint8_t const> prefix, ConnectReply response, bool redirect_dns = false,
+        bool dns_hijack_only = false) -> capy::task<>;
 #ifdef NEXUS_ENABLE_SOCKS_UDP
     auto udp_associate(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
         socks5::Request const& request) -> capy::task<>;

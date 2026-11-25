@@ -102,6 +102,7 @@ namespace relay::tproxy_detail {
     // Avoids per-flow socket()/setsockopt()/bind()/close() churn across concurrent/short-lived UDP flows.
     class TproxyReplySocketCache {
     public:
+        enum class SendResult : std::uint8_t { sent, dropped, failed };
         static constexpr std::size_t max_entries = 64;
         static constexpr auto idle_ttl = std::chrono::seconds(60);
 
@@ -186,30 +187,38 @@ namespace relay::tproxy_detail {
         }
 
         auto send(net::UdpEndpoint const& source, std::optional<std::uint32_t> mark,
-            net::UdpEndpoint const& client, std::span<std::uint8_t const> bytes) -> bool {
+            net::UdpEndpoint const& client, std::span<std::uint8_t const> bytes) -> SendResult {
             auto now = Clock::now();
             auto key = make_key(source, mark, netns_);
             if (auto* hit = find(key)) {
                 int err = hit->socket.send_errno(client, bytes);
                 if (err == 0) {
                     hit->last_used = now;
-                    return true;
+                    return SendResult::sent;
+                }
+                if (err == EMSGSIZE) {
+                    hit->last_used = now;
+                    return SendResult::dropped;
                 }
                 if (err != ENOBUFS && err != EINVAL && err != EADDRNOTAVAIL && err != EBADF &&
                     err != ENETUNREACH && err != EHOSTUNREACH) {
-                    return false;
+                    return SendResult::failed;
                 }
                 std::erase_if(entries_, [&](Entry const& e) { return e.key == key; });
             }
-            if (ensure_bound(source, mark)) return false;
+            if (ensure_bound(source, mark)) return SendResult::failed;
             auto* bound = find(key);
-            if (!bound) return false;
+            if (!bound) return SendResult::failed;
             int err = bound->socket.send_errno(client, bytes);
             if (err == 0) {
                 bound->last_used = now;
-                return true;
+                return SendResult::sent;
             }
-            return false;
+            if (err == EMSGSIZE) {
+                bound->last_used = now;
+                return SendResult::dropped;
+            }
+            return SendResult::failed;
         }
     };
 }

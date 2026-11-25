@@ -283,6 +283,7 @@ namespace rules {
     auto MmapMatcher::match_ip(V6Bytes const& bytes, unsigned family, bool match_mapped_v4) const noexcept -> bool {
         if (!has_ip()) return false;
         if (family == 4) return v4_count_ && search_v4(any_detail::read_be32(bytes));
+        if (family != 6) return false;
         if (v6_count_ && search_v6(bytes)) return true;
         if (match_mapped_v4 && v4_count_ &&
             std::all_of(bytes.begin(), bytes.begin() + 10, [](auto b) { return b == 0; }) &&

@@ -263,10 +263,11 @@ namespace relay {
         }
 
         auto ordered_connect(Session& session,io::io_context& context,socks5::Request const& request,
-            std::span<std::uint8_t const> prefix,ConnectReply response,bool redirect_dns) -> capy::task<> {
+            std::span<std::uint8_t const> prefix,ConnectReply response,bool redirect_dns,bool dns_hijack_only) -> capy::task<> {
             auto fail=[&] {session.close();session.done=true;};
             OrderedTcpRequest owner;
             if(!owner.prepare(session,request)) {fail();co_return;}
+            if (dns_hijack_only) owner.input.reverse_domain.reset();
             owner.input.dns_hijack_tcp=redirect_dns;
             std::array<std::uint8_t,16384> wire{},scratch{};
             sniff::TcpSniffer sniffer(wire,scratch);
@@ -276,8 +277,40 @@ namespace relay {
             auto const& policy=*session.ordered_tcp;
             auto sniff_deadline=std::min(session.handshake_deadline,Clock::now()+policy.sniff_timeout);
             auto branch=[&]() -> capy::task<capy::results<OrderedTcpResult>> {
-                auto result=co_await execute_ordered_tcp(session,context,policy.program,cursor,owner.input,sniffer,
-                    owner.candidates,owner.endpoints,policy.fallback,sniff_deadline,session.handshake_deadline,policy.unknown_policy);
+                OrderedTcpResult result;
+                if (dns_hijack_only) {
+                    owner.input.route_mode=session.active_route_mode();
+                    auto deadline=session.handshake_deadline, sniff_limit=sniff_deadline;
+                    for (;;) {
+                        if (session.closed) { result={sniff::RouteTcpStop::canceled}; break; }
+                        if (Clock::now()>=deadline) { result={sniff::RouteTcpStop::io_error,6}; break; }
+                        auto step=co_await sniff::run_tcp_route(policy.program,cursor,owner.input,session.client,sniffer,
+                            sniff_limit,true,policy.unknown_policy);
+                        if (session.closed) { result={sniff::RouteTcpStop::canceled}; break; }
+                        if (step.stop==sniff::RouteTcpStop::options) {
+                            if (auto timeout=step.step->action.connect_timeout_ms) {
+                                deadline=std::min(deadline,session.started+std::chrono::milliseconds(timeout));
+                                sniff_limit=std::min(sniff_limit,deadline);
+                            }
+                            if (!cursor.complete(*step.step)) { result={sniff::RouteTcpStop::state_error}; break; }
+                            continue;
+                        }
+                        if (step.stop==sniff::RouteTcpStop::terminal &&
+                            step.step->action.kind==rules::ProgramActionKind::hijack_dns) {
+                            if (auto timeout=step.step->action.connect_timeout_ms)
+                                deadline=std::min(deadline,session.started+std::chrono::milliseconds(timeout));
+                            result=Clock::now()>=deadline
+                                ? OrderedTcpResult{sniff::RouteTcpStop::io_error,6}
+                                : OrderedTcpResult{.stop=sniff::RouteTcpStop::terminal,.code=0,.deadline=deadline,.dns_hijacked=true};
+                        } else {
+                            result={sniff::RouteTcpStop::terminal,2};
+                        }
+                        break;
+                    }
+                } else {
+                    result=co_await execute_ordered_tcp(session,context,policy.program,cursor,owner.input,sniffer,
+                        owner.candidates,owner.endpoints,policy.fallback,sniff_deadline,session.handshake_deadline,policy.unknown_policy);
+                }
                 co_return capy::results<OrderedTcpResult>{std::make_error_code(std::errc::operation_canceled),std::move(result)};
             };
             auto [signal,result,watch]=co_await capy::when_all(branch(),watch_client_error(session));
@@ -288,6 +321,7 @@ namespace relay {
                 fail();
                 co_return;
             }
+            if (dns_hijack_only) { fail(); co_return; }
             auto code=result.stop==sniff::RouteTcpStop::terminal ? result.code : std::uint8_t{1};
             if(code) {
                 if (!result.reject_drop) {

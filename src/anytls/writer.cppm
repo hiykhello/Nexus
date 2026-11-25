@@ -128,6 +128,19 @@ export namespace anytls {
             auto sent=co_await write(scratch_,deadline);
             operation_guard.done=sent; co_return sent;
         }
+        auto frame_timeout(Command command,std::uint32_t id,std::span<std::uint8_t const> payload={},
+            IoClock::duration write_timeout=std::chrono::seconds(5),
+            IoClock::duration lock_timeout=std::chrono::seconds(30)) -> capy::task<bool> {
+            if (failed_ || write_timeout<=IoClock::duration::zero() || lock_timeout<=IoClock::duration::zero() ||
+                payload.size()>max_payload || (client_ && (!authenticated_ || pending_settings_)))
+                co_return false;
+            auto [error,guard]=co_await corosio::timeout(mutex_.scoped_lock(),IoClock::now()+lock_timeout);
+            if (error || failed_ || (client_ && (!authenticated_ || pending_settings_))) co_return false;
+            if (!encode_into(command,id,payload)) co_return false;
+            Guard operation_guard{*this};
+            auto sent=co_await write(scratch_,IoClock::now()+write_timeout);
+            operation_guard.done=sent; co_return sent;
+        }
         auto data(std::uint32_t id,std::span<std::uint8_t const> input,Deadline deadline={}) -> capy::task<bool> {
             if (failed_ || expired(deadline) || !id || (client_ && (!authenticated_ || pending_settings_))) co_return false;
             auto operation=mutex_.scoped_lock();

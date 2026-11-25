@@ -13,6 +13,7 @@ import dns.message_program;
 import dns.policy;
 import dns.predefined;
 import dns.response_match;
+import dns.reverse;
 import platform.ip_address;
 import rules;
 import rules.kdl_predicate;
@@ -81,9 +82,10 @@ namespace {
 
     auto run_msg_program(corosio::io_context& io, std::span<policy::DnsRule const> rules,
         std::span<dns::MessageUpstream const> upstreams, std::size_t fallback, dns::MessageCache* cache,
-        bool independent_cache, std::string qname, std::uint16_t qtype, policy::DnsContext ctx)
+        bool independent_cache, std::string qname, std::uint16_t qtype, policy::DnsContext ctx,
+        dns::ReverseCache* reverse = nullptr)
         -> capy::task<std::expected<dns::Bytes, dns::detail::ResolveError>> {
-        dns::MessageProgram prog(io, rules, upstreams, fallback, cache, false, {}, nullptr, {}, nullptr, independent_cache);
+        dns::MessageProgram prog(io, rules, upstreams, fallback, cache, false, {}, nullptr, {}, reverse, independent_cache);
         dns::QueryMessage query{77, 0x0100, {std::move(qname), qtype}, std::nullopt};
         co_return co_await prog.run(std::move(query),
             std::chrono::steady_clock::now() + std::chrono::seconds(2), ctx);
@@ -357,6 +359,52 @@ routing { default-outbound "direct" }
         require(w2.has_value() && hits.load() == 1, "r0 second query hits r0 cache");
         auto w3 = sync_run(io, run_msg_program(io, drules, upstreams, 0, cache.get(), true, "shared.test", 1, {.client = "curl"}));
         require(w3.has_value() && hits.load() == 2, "r1 isolated from r0 cache by independent-cache");
+
+        // 3b. ReverseCache records fresh upstream answers, NOT predefined synthetic or optimistic stale hits
+        {
+            dns::ReverseCache reverse(64, 1, {0x123456789abcdef0ULL, 0xfedcba9876543210ULL});
+            auto now_ms = [] {
+                return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            };
+            policy::DnsRule predef{.domain = "predef.test", .action = policy::DnsAction::predefined};
+            policy::PredefinedResponse p_resp{.rcode = 0};
+            p_resp.records.push_back({policy::ResponseSection::answer, "@", 1, 1, 60, {198, 51, 100, 77}});
+            predef.predefined = std::move(p_resp);
+            require(policy::normalize_dns_rule(predef, 1), "norm predef");
+            std::vector<policy::DnsRule> rev_rules;
+            rev_rules.push_back(std::move(predef));
+
+            auto opt_cache = std::make_shared<dns::MessageCache>(std::chrono::seconds(600), 64);
+            auto w_pre = sync_run(io, run_msg_program(io, rev_rules, upstreams, 0, opt_cache.get(), false, "predef.test", 1, {}, &reverse));
+            require(w_pre.has_value(), "predefined answer");
+            dns::Address pre_ip{.bytes = {198, 51, 100, 77}, .size = 4};
+            require(!reverse.lookup(0, pre_ip, now_ms()).has_value(), "predefined response must not populate ReverseCache");
+
+            // Seed expired optimistic cache entry for stale.test -> 198.51.100.88
+            dns::Question stale_q{"stale.test", 1};
+            auto qwire = dns::make_query(0, stale_q);
+            policy::PredefinedResponse stale_def{.rcode = 0};
+            stale_def.records.push_back({policy::ResponseSection::answer, "@", 1, 1, 60, {198, 51, 100, 88}});
+            auto built_stale = dns::predefined_response(stale_def, stale_q);
+            require(qwire && built_stale, "build stale seed");
+            auto rwire = dns::encode_response(*built_stale, 0, {});
+            require(rwire.has_value(), "encode stale seed");
+            dns::MessageCache::View view(0, upstreams[0].endpoint, false, {}, 0, 0);
+            auto past = std::chrono::steady_clock::now() - std::chrono::seconds(120);
+            require(opt_cache->restore(view, *qwire, *rwire, 60, 0, past), "seed expired optimistic entry");
+            auto w_stale = sync_run(io, run_msg_program(io, rev_rules, upstreams, 0, opt_cache.get(), false, "stale.test", 1, {}, &reverse));
+            require(w_stale.has_value(), "optimistic stale hit returned");
+            dns::Address stale_ip{.bytes = {198, 51, 100, 88}, .size = 4};
+            require(!reverse.lookup(0, stale_ip, now_ms()).has_value(), "optimistic stale hit must not populate ReverseCache");
+
+            // Fresh upstream query for fresh.test -> 93.184.216.34 DOES populate ReverseCache
+            auto w_fresh = sync_run(io, run_msg_program(io, rev_rules, upstreams, 0, opt_cache.get(), false, "fresh.test", 1, {}, &reverse));
+            require(w_fresh.has_value(), "fresh upstream answer");
+            dns::Address fresh_ip{.bytes = {93, 184, 216, 34}, .size = 4};
+            auto looked = reverse.lookup(0, fresh_ip, now_ms());
+            require(looked.has_value() && looked->view() == "fresh.test", "fresh upstream answer populates ReverseCache");
+        }
 
         // 4. rule_explain_query metadata parsing
         std::array args_storage{

@@ -157,7 +157,7 @@ namespace relay {
                     struct Fin {
                         Host& h;
                         ~Fin() {
-                            if (!h.started) {
+                            if (!h.started && !h.loop_active) {
                                 if (h.detour) h.detour->close();
                                 h.port = nullptr;
                                 h.port_holder.reset();
@@ -245,6 +245,8 @@ namespace relay {
 
             std::mutex mutex;
             std::unordered_map<io::io_context*, std::shared_ptr<Host>> hosts;
+            std::vector<std::pair<io::io_context*, std::shared_ptr<Host>>> retired;
+            std::unordered_set<io::io_context*> stopping;
 
             ~WgProfile() {
                 private_key.clear();
@@ -253,8 +255,15 @@ namespace relay {
 
             auto get_host(io::io_context& ctx, platform::SocketBinding const& binding, TunnelFactory const* via) -> std::shared_ptr<Host> {
                 std::lock_guard lock(mutex);
-                auto it = hosts.find(&ctx);
-                if (it != hosts.end()) return it->second;
+                std::erase_if(retired, [&](auto const& e) {
+                    return e.first == &ctx && (!e.second || (!e.second->loop_active && !e.second->connecting));
+                });
+                if (auto it = hosts.find(&ctx); it != hosts.end() && it->second) {
+                    if (!it->second->stopped) return it->second;
+                    if (it->second->loop_active || it->second->connecting) retired.emplace_back(&ctx, std::move(it->second));
+                    hosts.erase(it);
+                }
+                if (stopping.contains(&ctx)) return nullptr;
                 auto h = std::make_shared<Host>(ctx, *this, binding, via);
                 hosts.emplace(&ctx, h);
                 return h;
@@ -307,23 +316,31 @@ namespace relay {
         TunnelFactory factory{
             [profile](Session& s, io::io_context& ctx, bool relay_local, TcpSocketOptions const* lower) -> pro::proxy<TunnelFacade> {
                 auto const& binding = lower ? lower->binding : profile->options.binding;
-                return pro::make_proxy<TunnelFacade, WgTunnel>(s, profile->get_host(ctx, binding, nullptr), profile->timeout_ms, relay_local);
+                auto h = profile->get_host(ctx, binding, nullptr);
+                return h ? pro::make_proxy<TunnelFacade, WgTunnel>(s, std::move(h), profile->timeout_ms, relay_local) : pro::proxy<TunnelFacade>{};
             },
             timeout_ms, [profile](Session& s, io::io_context& ctx, TunnelFactory const& lower, bool relay_local) -> pro::proxy<TunnelFacade> {
-                return pro::make_proxy<TunnelFacade, WgTunnel>(s, profile->get_host(ctx, platform::SocketBinding{}, &lower), profile->timeout_ms, relay_local);
+                auto h = profile->get_host(ctx, platform::SocketBinding{}, &lower);
+                return h ? pro::make_proxy<TunnelFacade, WgTunnel>(s, std::move(h), profile->timeout_ms, relay_local) : pro::proxy<TunnelFacade>{};
             }, std::nullopt, options.configured()};
         factory.stop_context = [profile](io::io_context& ctx) noexcept {
             std::lock_guard lock(profile->mutex);
-            if (auto it = profile->hosts.find(&ctx); it != profile->hosts.end()) it->second->stop();
+            try { profile->stopping.insert(&ctx); } catch (...) {}
+            if (auto it = profile->hosts.find(&ctx); it != profile->hosts.end() && it->second) it->second->stop();
+            for (auto const& [c, h] : profile->retired) if (c == &ctx && h) h->stop();
         };
         factory.quiesced_context = [profile](io::io_context& ctx) noexcept -> bool {
             std::lock_guard lock(profile->mutex);
             auto it = profile->hosts.find(&ctx);
-            return it == profile->hosts.end() || (!it->second->loop_active && !it->second->connecting);
+            bool ok = it == profile->hosts.end() || !it->second || (!it->second->loop_active && !it->second->connecting);
+            for (auto const& [c, h] : profile->retired) if (c == &ctx && h && (h->loop_active || h->connecting)) ok = false;
+            return ok;
         };
         factory.finish_context = [profile](io::io_context& ctx) noexcept {
             std::lock_guard lock(profile->mutex);
             profile->hosts.erase(&ctx);
+            std::erase_if(profile->retired, [&](auto const& e) { return e.first == &ctx; });
+            profile->stopping.erase(&ctx);
         };
         return factory;
     }

@@ -59,17 +59,25 @@ namespace relay {
                     std::span(endpoint.address).first(endpoint.family==4 ? 4 : 16)));
             }
 #endif
-            auto send_packet(net::ProxyAddress const& source,std::span<std::uint8_t const> data) -> capy::task<bool> {
-                if (!reply_cache) co_return false;
+            auto send_packet(net::ProxyAddress const& source,std::span<std::uint8_t const> data)
+                -> capy::task<net::stream_datagrams::ReplySendStatus> {
+                using Status = net::stream_datagrams::ReplySendStatus;
+                using CacheResult = TproxyReplySocketCache::SendResult;
+                auto to_status = [](CacheResult r) noexcept -> Status {
+                    if (r == CacheResult::sent) return Status::sent;
+                    if (r == CacheResult::dropped) return Status::dropped;
+                    return Status::failed;
+                };
+                if (!reply_cache) co_return Status::failed;
 #ifdef NEXUS_ENABLE_FAKEIP
                 // The relay validates the real reply source on its own socket or stream.
-                if (alias) co_return reply_cache->send(target,mark,client,data);
+                if (alias) co_return to_status(reply_cache->send(target,mark,client,data));
 #endif
                 auto expected=net::stream_datagrams::peer_address(target);
                 if(source.family!=expected.family || source.port!=expected.port || source.length!=expected.length ||
                     !std::ranges::equal(std::span(source.bytes).first(source.length),std::span(expected.bytes).first(expected.length)))
-                    co_return false;
-                co_return reply_cache->send(target,mark,client,data);
+                    co_return Status::failed;
+                co_return to_status(reply_cache->send(target,mark,client,data));
             }
         };
         struct Resolve {

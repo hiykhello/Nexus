@@ -150,7 +150,8 @@ namespace relay {
                 // the direct sequence completes, then resume in order.
                 bool attempted = false, boundary = false, policy_error = false;
                 std::optional<TrafficRoute> route;
-                io::endpoint routed_destination;
+                io::endpoint routed_destination, connected_target;
+                std::vector<std::pair<io::endpoint, TrafficRoute>> admitted_routes;
                 auto condition = [&](std::error_code const&, io::endpoint const& destination) {
                     if (boundary) return false;
                     if (session.closed) { boundary=true; return false; }
@@ -180,6 +181,7 @@ namespace relay {
                     }
                     route=*matched;
                     routed_destination=destination;
+                    admitted_routes.emplace_back(destination,*matched);
                     attempted=true;
                     return true;
                 };
@@ -199,7 +201,7 @@ namespace relay {
                     bool preparation_failed=false;
                     if(!first.empty() && session.direct_tcp_options && session.direct_tcp_options->tcp_fast_open.value_or(false)) {
                         auto result=co_await net::tcp_fast_open_candidates(session.target,candidates,condition,first,connect_deadline,*session.direct_tcp_options);
-                        connect_error=result.result.error;preparation_failed=result.preparation_failed;
+                        connect_error=result.result.error;preparation_failed=result.preparation_failed;connected_target=result.endpoint;
                         if (result.result.accepted && result.result.accepted<=first.size()) {
                             session.select_traffic_path(ConnectPath::direct);
                             session.count_traffic(true,result.result.accepted);
@@ -233,6 +235,7 @@ namespace relay {
                                     ? co_await corosio::timeout(session.target.connect(candidates[0]), connect_deadline)
                                     : co_await session.target.connect(candidates[0]);
                                 connect_error = result;
+                                connected_target = candidates[0];
                             } else {
                                 connect_error = std::make_error_code(std::errc::no_such_device_or_address);
                             }
@@ -243,7 +246,7 @@ namespace relay {
                                 ? co_await corosio::timeout(std::move(operation), connect_deadline)
                                 : co_await std::move(operation);
                             connect_error=result;
-                            (void)connected_endpoint;
+                            connected_target=connected_endpoint;
                         }
                         if (connect_error) session.target.close();
                         if (preparation_failed) co_return failure_code(connect_error);
@@ -251,7 +254,9 @@ namespace relay {
                 }
                 if (session.closed) co_return 1;
                 if (!connect_error) {
-                    session.record_traffic_route(*route,ConnectPath::direct);
+                    auto chosen=*route;
+                    for (auto const& [ep,r] : admitted_routes) if (ep==connected_target) { chosen=r; break; }
+                    session.record_traffic_route(chosen,ConnectPath::direct);
                     co_return 0;
                 }
                 if (connect_error == capy::cond::timeout) {

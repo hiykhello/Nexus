@@ -291,13 +291,16 @@ namespace relay {
                                 }
                                 flow->session.touched = flow->last_active = Clock::now(); flow->session.count_traffic(true, total); continue;
                             }
-                            if (!sent) break;
+                            if (!sent) {
+                                if (sent.error() != std::errc::message_size) break;
+                                buf_pool_.release(std::move(flow->tx_queue.front())); flow->tx_queue.pop_front(); continue;
+                            }
                         }
 #endif
                         auto pkt = std::move(flow->tx_queue.front()); flow->tx_queue.pop_front();
                         auto [ec, n] = co_await flow->upstream->send_to(capy::const_buffer(pkt.data(), pkt.size()), flow->resolved_target);
                         buf_pool_.release(std::move(pkt));
-                        if (ec) break;
+                        if (ec) { if (ec == std::errc::message_size) continue; break; }
                         flow->session.touched = flow->last_active = Clock::now(); flow->session.count_traffic(true, n);
                     }
                     flow->cancel(); co_return capy::results<>{};
@@ -342,20 +345,13 @@ namespace relay {
             flow->connected = true;
             auto writer = [&]() -> capy::task<capy::results<>> {
                 while (!stopping_ && flow->active) {
-                    if (flow->tx_queue.empty()) {
-                        flow->work.clear();
-                        auto [ec] = co_await flow->work.wait();
-                        if (ec) break;
-                        continue;
-                    }
-                    auto pkt = std::move(flow->tx_queue.front());
-                    flow->tx_queue.pop_front();
+                    if (flow->tx_queue.empty()) { flow->work.clear(); if (auto [ec] = co_await flow->work.wait(); ec) break; continue; }
+                    auto pkt = std::move(flow->tx_queue.front()); flow->tx_queue.pop_front();
                     auto wire = net::encode_datagram(flow->framing, target_addr_, pkt);
                     auto const pkt_len = pkt.size();
                     buf_pool_.release(std::move(pkt));
                     if (!wire || !co_await flow->tunnel->send(*wire)) break;
-                    flow->session.touched = flow->last_active = Clock::now();
-                    flow->session.count_traffic(true, pkt_len);
+                    flow->session.touched = flow->last_active = Clock::now(); flow->session.count_traffic(true, pkt_len);
                 }
                 flow->cancel();
                 co_return capy::results<>{};

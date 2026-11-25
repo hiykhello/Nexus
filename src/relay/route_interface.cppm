@@ -97,7 +97,7 @@ namespace relay {
         std::optional<OrderedTcpPolicy> ordered;
         std::shared_ptr<DnsRuleSnapshot const> dns{};
         std::uint64_t generation = 1;
-        std::optional<std::uint32_t> tunnel_references{};
+        std::optional<std::bitset<256>> tunnel_references{};
         std::shared_ptr<dns::detail::TransportSnapshot const> dns_transports;
     };
     export using RouteSnapshots = utility::atomic_shared_ptr<std::vector<RouteSnapshot> const>;
@@ -108,7 +108,8 @@ namespace relay {
     };
     export [[nodiscard]] auto compile_routes(std::span<IndexedRouteRule const>, std::size_t fallback,
         std::size_t physical_count, std::optional<std::string_view> inbound, std::optional<OrderedRuleInput>,
-        std::shared_ptr<rules::OutboundDistribution const> distribution = {}) -> std::expected<RouteSnapshot, std::string>;
+        std::shared_ptr<rules::OutboundDistribution const> distribution = {},
+        std::span<std::size_t const> extra_outbounds = {}) -> std::expected<RouteSnapshot, std::string>;
     // Sliding 30-second window (50 triggers) that upgrades default reject
     // replies to silent drop under flood unless no-drop is configured.
     export class RejectStormGuard {

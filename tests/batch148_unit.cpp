@@ -125,6 +125,10 @@ namespace {
         expect(cands.parallel_fallback, "148B: Strategy::fallback sets parallel_fallback");
         expect(cands.indices.size() == 3 && cands.indices[0] == 1 && cands.indices[1] == 2 && cands.indices[2] == 3,
             "148B: fallback tiers ordered wifi -> cellular -> other");
+        expect(cands.tiers.size() == 3 && cands.tiers[0] == 0 && cands.tiers[1] == 1 && cands.tiers[2] == 2,
+            "148B: select_interfaces populates tiers in lockstep");
+        expect(retry_interface_error(std::make_error_code(std::errc::operation_not_permitted)),
+            "148B: EPERM is retryable interface error");
 
         FallbackMemory mem;
         expect(!mem.is_degraded(1, 1000), "148B: initially not degraded");
@@ -134,6 +138,34 @@ namespace {
         mem.mark_failed(1, 20000);
         mem.mark_healthy(1);
         expect(!mem.is_degraded(1, 20010), "148B: mark_healthy clears degradation");
+        mem.mark_failed(1, 30000, true);
+        expect(mem.is_degraded(1, 31000, true), "148B: IPv6 failure degrades IPv6");
+        expect(!mem.is_degraded(1, 31000, false), "148B: IPv6 failure must not degrade IPv4");
+        expect(!mem.is_degraded(1, 31000), "148B: single-family failure is not full interface degradation");
+        mem.mark_failed(1, 30000, false);
+        expect(mem.is_degraded(1, 31000), "148B: both families failed marks interface degraded");
+        mem.mark_healthy(1, false);
+        expect(!mem.is_degraded(1, 31000, false) && mem.is_degraded(1, 31000, true),
+            "148B: mark_healthy(v4) clears IPv4 only");
+
+        std::array<std::size_t, 1> dns_extra{37};
+        auto wide = relay::compile_routes({}, 42, 45, std::nullopt, std::nullopt, {}, dns_extra);
+        expect(wide.has_value() && wide->tunnel_references.has_value(),
+            "148B: compile_routes supports >32 tunnels in tunnel_references");
+        if (wide && wide->tunnel_references) {
+            expect(wide->tunnel_references->test(40) && wide->tunnel_references->test(35),
+                "148B: fallback >32 and extra DNS outbound set in bitset");
+            expect(!wide->tunnel_references->test(0) && !wide->tunnel_references->test(41),
+                "148B: unreferenced tunnel bits remain clear");
+        }
+        auto max_wide = relay::compile_routes({}, 257, 258, std::nullopt, std::nullopt);
+        expect(max_wide && max_wide->tunnel_references && max_wide->tunnel_references->test(255),
+            "148B: compile_routes supports 256 tunnels (bit 255)");
+        auto dist = std::make_shared<rules::OutboundDistribution>(rules::OutboundDistribution{4, {{2, 3}}});
+        auto with_dist = relay::compile_routes({}, 4, 4, std::nullopt, std::nullopt, dist);
+        expect(with_dist && with_dist->matcher.distribution() == dist &&
+            with_dist->tunnel_references && with_dist->tunnel_references->test(0) && with_dist->tunnel_references->test(1),
+            "148B: compile_routes exposes distribution() and expands group members");
 
         auto ok_tun = config::parse_kdl(R"(
 schema-version 1

@@ -19,7 +19,8 @@ namespace relay {
             Profile profile;
             if (!options.dns && options.config_file.empty()) return profile;
             std::string normalized(name);
-            if (platform::parse_ip_address(name) || !dns::canonicalize_name(normalized) || normalized == ".")
+            if (!dns::canonicalize_name(normalized) || normalized == "." ||
+                platform::parse_ip_address(name) || platform::parse_ip_address(normalized))
                 return std::unexpected("QUIC ECH requires a DNS server-name");
             if (options.dns) {
 #ifdef NEXUS_DNS_RESPONSE
@@ -83,14 +84,15 @@ namespace relay {
                 std::optional<quic::EchConfig> config;
             };
 
-            auto service_binding(Bytes data, std::string_view owner, std::uint16_t port) -> std::optional<Binding> {
+            auto service_binding(Bytes data, std::string_view owner, std::string_view origin, std::uint16_t port)
+                -> std::optional<Binding> {
                 if (data.size() < 3) return {};
                 auto priority = read16(data);
                 data = data.subspan(2);
                 auto target = take_target(data);
                 if (!target) return {};
                 if (!priority) return Binding{0, {}};
-                bool compatible = *target == "." || *target == owner;
+                bool compatible = *target == "." || *target == owner || *target == origin;
                 std::optional<std::uint16_t> previous;
                 std::bitset<7> present;
                 Bytes mandatory, ech;
@@ -140,15 +142,15 @@ namespace relay {
                 return Binding{priority, std::move(*config)};
             }
 
-            auto select_binding(dns::Response const& response, std::string_view owner, std::uint16_t type,
-                                std::uint16_t port) -> std::optional<quic::EchConfig> {
+            auto select_binding(dns::Response const& response, std::string_view owner, std::string_view origin,
+                                std::uint16_t type, std::uint16_t port) -> std::optional<quic::EchConfig> {
                 if (response.rcode) return {};
                 std::optional<Binding> best;
                 for (auto const& record : response.records) {
                     if (record.section != dns::Section::answer || record.type != type || record.klass != 1 ||
                         record.name != owner) continue;
                     auto data = Bytes(response.wire).subspan(record.data_offset, record.data_length);
-                    auto candidate = service_binding(data, owner, port);
+                    auto candidate = service_binding(data, owner, origin, port);
                     if (!candidate || !candidate->priority) return {};
                     if (candidate->config && (!best || best->priority > candidate->priority)) best = std::move(candidate);
                 }
@@ -168,7 +170,16 @@ namespace relay {
             auto resolver=bootstrap.value_or(routing.final);
             if (resolver>=routing.resolver_count()) co_return std::unexpected("invalid QUIC ECH DNS resolver");
             auto snapshot = session.local_dns ? session.local_dns->source.acquire() : nullptr;
-            for (auto type : {https, svcb}) {
+            std::string prefixed;
+            std::vector<std::pair<std::string_view, std::uint16_t>> queries;
+            queries.reserve(3);
+            if (port && port != 443) {
+                prefixed = "_" + std::to_string(port) + "._https." + dns_name;
+                if (dns::canonicalize_name(prefixed)) queries.emplace_back(prefixed, https);
+            }
+            queries.emplace_back(dns_name, https);
+            queries.emplace_back(dns_name, svcb);
+            for (auto const& [query_name, type] : queries) {
                 if (slot.canceled || session.closed || Clock::now() >= deadline) break;
                 auto selected=resolver;
                 bool disable_cache=false;
@@ -179,10 +190,11 @@ namespace relay {
                     selected=decision.server;
                     disable_cache=decision.disable_cache;
                 }
-                auto response = co_await resolve_response_owned(session, context, slot, selected, dns_name, type,
-                    deadline, snapshot, disable_cache, nullptr, dns_name, {});
+                std::string name_copy(query_name);
+                auto response = co_await resolve_response_owned(session, context, slot, selected, name_copy, type,
+                    deadline, snapshot, disable_cache, nullptr, name_copy, {});
                 if (!response) continue;
-                if (auto found = select_binding(response->response, dns_name, type, port)) co_return found;
+                if (auto found = select_binding(response->response, query_name, dns_name, type, port)) co_return found;
             }
 #else
             (void)session; (void)context; (void)slot; (void)bootstrap; (void)port; (void)deadline;

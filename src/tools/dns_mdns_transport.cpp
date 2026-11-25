@@ -1,3 +1,9 @@
+module;
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+#include <net/if.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
 module cli.dns_transports;
 import std;
 import capy;
@@ -51,10 +57,11 @@ namespace cli {
         }
     }
 
-    auto prepare_mdns_transport(config::DnsServer const&)
+    auto prepare_mdns_transport(config::DnsServer const& server)
         -> std::expected<dns::detail::ProtectedQuery, std::string> {
+        auto iface = server.interface_name;
         return dns::detail::ProtectedQuery{
-            [](corosio::io_context& context, corosio::endpoint, dns::QueryMessage const& query, std::uint16_t id,
+            [iface = std::move(iface)](corosio::io_context& context, corosio::endpoint, dns::QueryMessage const& query, std::uint16_t id,
                 std::chrono::steady_clock::time_point deadline, dns::InputBudget&, std::stop_token stop)
                 -> capy::task<std::expected<dns::Response, dns::detail::UdpError>> {
                 using Error = dns::detail::UdpError;
@@ -72,6 +79,26 @@ namespace cli {
                 corosio::endpoint mcast(corosio::ipv4_address({224, 0, 0, 251}), 5353);
                 corosio::udp_socket sock(context);
                 if (sock.open(mcast.address().family())) co_return std::unexpected(Error::transport);
+                if (!iface.empty()) {
+#if defined(__linux__)
+                    unsigned ifidx = ::if_nametoindex(iface.c_str());
+                    if (ifidx == 0) { sock.close(); co_return std::unexpected(Error::transport); }
+                    ip_mreqn mreq{};
+                    mreq.imr_ifindex = static_cast<int>(ifidx);
+                    if (::setsockopt(sock.native_handle(), IPPROTO_IP, IP_MULTICAST_IF, &mreq, sizeof(mreq)) < 0) {
+                        sock.close();
+                        co_return std::unexpected(Error::transport);
+                    }
+#elif defined(__APPLE__)
+                    unsigned ifidx = ::if_nametoindex(iface.c_str());
+                    if (ifidx == 0) { sock.close(); co_return std::unexpected(Error::transport); }
+                    std::uint32_t bound_idx = ifidx;
+                    if (::setsockopt(sock.native_handle(), IPPROTO_IP, IP_BOUND_IF, &bound_idx, sizeof(bound_idx)) < 0) {
+                        sock.close();
+                        co_return std::unexpected(Error::transport);
+                    }
+#endif
+                }
                 if (sock.bind(corosio::endpoint(corosio::ipv4_address::any(), 0))) {
                     sock.close();
                     co_return std::unexpected(Error::transport);

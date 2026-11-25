@@ -80,41 +80,143 @@ export namespace net {
     [[nodiscard]] auto tcp_fast_open_candidates(corosio::tcp_socket& socket,Range endpoints,Condition condition,
         std::span<std::uint8_t const> payload,std::chrono::steady_clock::time_point deadline,
         platform::TcpSocketOptions const& options={}) -> capy::task<FastOpenCandidatesResult> {
+        std::vector<corosio::endpoint> ordered;
+        bool has_v4 = false, has_v6 = false;
+        for (auto&& item : endpoints) {
+            ordered.emplace_back(item);
+            if (ordered.back().is_v6()) has_v6 = true; else has_v4 = true;
+        }
+        bool const dual_stack = has_v4 && has_v6;
+        auto now_ms = []() noexcept {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        };
+        auto const plan_start_ms = now_ms();
+        auto plan = detail::plan_tcp_interfaces(options, has_v4, has_v6, plan_start_ms);
         std::error_code last;
-        for(auto&& item:endpoints) {
-            corosio::endpoint endpoint=item;
-            if(!condition(std::as_const(last),std::as_const(endpoint)))continue;
-            if(std::chrono::steady_clock::now()>=deadline)
-                co_return FastOpenCandidatesResult{{std::make_error_code(std::errc::timed_out)}, {}};
-            auto interfaces=detail::tcp_interfaces(options,endpoint.is_v6());
-            if (interfaces.indices.empty()) {
-                last=std::make_error_code(std::errc::network_unreachable);
-                continue;
+        std::vector<std::int8_t> admitted(ordered.size(), -1);
+        std::size_t checked = 0;
+        auto admit = [&](std::size_t idx) -> bool {
+            while (checked <= idx) {
+                admitted[checked] = condition(std::as_const(last), std::as_const(ordered[checked])) ? 1 : 0;
+                ++checked;
             }
-            for (std::size_t index=0;index<interfaces.indices.size();++index) {
-                if(socket.is_open())socket.close();
-                auto stop=detail::tcp_attempt_deadline(deadline,interfaces,index);
-                platform::TcpSocketOptions selected;
-                auto const& settings=detail::tcp_interface_options(options,interfaces.indices[index],selected);
-                auto result=co_await tcp_fast_open_first_write(socket,endpoint,payload,stop,settings);
-                if(result.unsupported) {
-                    socket.close();
-                    result=co_await tcp_fast_open_first_write(socket,endpoint,{},stop,settings);
-                }
-                if(!result.error)co_return FastOpenCandidatesResult{result,endpoint,false,settings.binding.interface_index};
+            return admitted[idx] == 1;
+        };
+        if (plan.entries.empty()) {
+            for (std::size_t i = 0; i < ordered.size(); ++i)
+                if (admit(i)) last = std::make_error_code(std::errc::network_unreachable);
+            if (!last) last = std::make_error_code(std::errc::no_such_device_or_address);
+            co_return FastOpenCandidatesResult{{last}, {}};
+        }
+        auto compatible = [](detail::PlannedInterface const& iface, corosio::endpoint const& ep) noexcept {
+            return ep.is_v6() ? iface.supports_v6 : iface.supports_v4;
+        };
+        bool saw_bound_attempt = false, all_bound_eperm = true;
+        std::vector<std::pair<std::size_t, std::size_t>> deferred;
+        auto try_attempt = [&](detail::PlannedInterface const& iface, std::size_t ep_idx,
+            std::chrono::steady_clock::time_point stop, bool unbound) -> capy::task<std::optional<FastOpenCandidatesResult>> {
+            if (std::chrono::steady_clock::now() >= deadline)
+                co_return FastOpenCandidatesResult{{std::make_error_code(std::errc::timed_out)}, {}};
+            corosio::endpoint endpoint = ordered[ep_idx];
+            if (socket.is_open()) socket.close();
+            platform::TcpSocketOptions selected;
+            auto const& settings = detail::tcp_interface_options(options, unbound ? std::uint32_t{0} : iface.index, selected);
+            if (!unbound && options.binding.network && iface.index != 0) saw_bound_attempt = true;
+            auto result = co_await tcp_fast_open_first_write(socket, endpoint, payload, stop, settings);
+            if (result.unsupported) {
                 socket.close();
-                if (result.preparation_failed && options.binding.network &&
-                    platform::network::retry_interface_error(result.error)) {
-                    last=result.error;
+                result = co_await tcp_fast_open_first_write(socket, endpoint, {}, stop, settings);
+            }
+            if (!result.error) {
+                if (!unbound && plan.fallback_memory && iface.index != 0)
+                    plan.fallback_memory->mark_healthy(iface.index, endpoint.is_v6());
+                co_return FastOpenCandidatesResult{result, endpoint, false, settings.binding.interface_index};
+            }
+            socket.close();
+            if (!unbound && options.binding.network && iface.index != 0 &&
+                result.error != std::errc::operation_not_permitted)
+                all_bound_eperm = false;
+            if (result.preparation_failed && !unbound && options.binding.network &&
+                platform::network::retry_interface_error(result.error)) {
+                last = result.error;
+                co_return std::nullopt;
+            }
+            if (result.preparation_failed || result.accepted || result.error == capy::cond::canceled ||
+                ((capy::is_timeout(result.error) || result.error == std::errc::timed_out) && stop == deadline))
+                co_return FastOpenCandidatesResult{result, endpoint, result.preparation_failed};
+            last = result.error;
+            co_return std::nullopt;
+        };
+        for (std::size_t iface_idx = 0; iface_idx < plan.entries.size(); ++iface_idx) {
+            auto const& iface = plan.entries[iface_idx];
+            bool const has_later_iface = iface_idx + 1 < plan.entries.size();
+            bool failed_v4 = false, failed_v6 = false;
+            bool non_eperm_v4 = false, non_eperm_v6 = false;
+            auto is_ep_degraded = [&](corosio::endpoint const& ep) noexcept {
+                return plan.parallel_fallback && plan.fallback_memory && iface.index != 0 &&
+                    plan.fallback_memory->is_degraded(iface.index, plan_start_ms, ep.is_v6());
+            };
+            for (std::size_t ep_idx = 0; ep_idx < ordered.size(); ++ep_idx) {
+                auto const& ep = ordered[ep_idx];
+                if (!compatible(iface, ep)) continue;
+                if (is_ep_degraded(ep)) {
+                    deferred.emplace_back(iface_idx, ep_idx);
                     continue;
                 }
-                if(result.preparation_failed || result.accepted || result.error==capy::cond::canceled ||
-                    ((capy::is_timeout(result.error) || result.error==std::errc::timed_out) && stop==deadline))
-                    co_return FastOpenCandidatesResult{result,endpoint,result.preparation_failed};
-                last=result.error;
+                if (!admit(ep_idx)) continue;
+                bool has_later_ep = false;
+                bool has_deferred = !deferred.empty();
+                for (std::size_t j = ep_idx + 1; j < ordered.size(); ++j) {
+                    if (!compatible(iface, ordered[j])) continue;
+                    if (is_ep_degraded(ordered[j])) has_deferred = true;
+                    else has_later_ep = true;
+                    if (has_later_ep && has_deferred) break;
+                }
+                auto stop = detail::tcp_planned_deadline(deadline, plan, has_later_iface, has_later_ep, dual_stack, has_deferred);
+                if (auto done = co_await try_attempt(iface, ep_idx, stop, false)) {
+                    if (!done->result.error && plan.parallel_fallback && plan.fallback_memory && iface.index != 0) {
+                        auto const ts = now_ms();
+                        if (ep.is_v6() && failed_v4 && non_eperm_v4) plan.fallback_memory->mark_failed(iface.index, ts, false);
+                        if (!ep.is_v6() && failed_v6 && non_eperm_v6) plan.fallback_memory->mark_failed(iface.index, ts, true);
+                    }
+                    co_return std::move(*done);
+                }
+                if (ep.is_v6()) { failed_v6 = true; if (last != std::errc::operation_not_permitted) non_eperm_v6 = true; }
+                else { failed_v4 = true; if (last != std::errc::operation_not_permitted) non_eperm_v4 = true; }
+            }
+            if (plan.parallel_fallback && plan.fallback_memory && iface.index != 0 && plan.entries.size() > 1) {
+                auto const ts = now_ms();
+                if (failed_v4 && non_eperm_v4) plan.fallback_memory->mark_failed(iface.index, ts, false);
+                if (failed_v6 && non_eperm_v6) plan.fallback_memory->mark_failed(iface.index, ts, true);
             }
         }
-        if(!last)last=std::make_error_code(std::errc::no_such_device_or_address);
-        co_return FastOpenCandidatesResult{{last},{}};
+        for (std::size_t d = 0; d < deferred.size(); ++d) {
+            auto [iface_idx, ep_idx] = deferred[d];
+            if (!admit(ep_idx)) continue;
+            auto const& iface = plan.entries[iface_idx];
+            bool const has_more = d + 1 < deferred.size();
+            auto stop = has_more ? std::min(deadline, std::chrono::steady_clock::now() +
+                (plan.fallback_delay.count() > 0 ? plan.fallback_delay : kHappyEyeballsFallbackDelay)) : deadline;
+            if (auto done = co_await try_attempt(iface, ep_idx, stop, false))
+                co_return std::move(*done);
+        }
+        if (options.binding.network && plan.parallel_fallback && saw_bound_attempt && all_bound_eperm) {
+            detail::PlannedInterface unbound{};
+            for (std::size_t ep_idx = 0; ep_idx < ordered.size(); ++ep_idx) {
+                if (!admit(ep_idx)) continue;
+                auto stop = (dual_stack && ep_idx + 1 < ordered.size())
+                    ? std::min(deadline, std::chrono::steady_clock::now() + kHappyEyeballsFallbackDelay)
+                    : deadline;
+                if (auto done = co_await try_attempt(unbound, ep_idx, stop, true))
+                    co_return std::move(*done);
+            }
+        }
+        if (!last) {
+            for (std::size_t i = 0; i < ordered.size(); ++i)
+                if (admit(i)) { last = std::make_error_code(std::errc::network_unreachable); break; }
+        }
+        if (!last) last = std::make_error_code(std::errc::no_such_device_or_address);
+        co_return FastOpenCandidatesResult{{last}, {}};
     }
 }

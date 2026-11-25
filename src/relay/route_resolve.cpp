@@ -95,21 +95,32 @@ namespace relay {
         combined.insert(combined.end(),tail.begin(),tail.end());
         auto shaped=shape_direct_first_payload(session,combined);
         auto bytes=shaped ? std::span<std::uint8_t const>(*shaped) : std::span<std::uint8_t const>(combined);
-        if (!session.tunnel && session.direct_shaping.tls_record_fragment &&
-            session.direct_shaping.tls_fragment_fallback_delay_ms && bytes.size()>=5 && bytes[0]==0x16 && bytes[1]==0x03) {
-            auto rec0=std::size_t{5}+((std::size_t{bytes[3]}<<8)|bytes[4]);
-            if (rec0<bytes.size()) {
-                sniff::TcpReplay first_rec(bytes.first(rec0));
-                if (!co_await replay_ordered_tcp(session,first_rec,deadline)) co_return false;
-                auto rem=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-Clock::now());
-                if (rem<=std::chrono::milliseconds::zero()) { session.close(); co_return false; }
-                auto pause=std::min<std::chrono::milliseconds>(
-                    std::chrono::milliseconds(session.direct_shaping.tls_fragment_fallback_delay_ms),rem);
-                auto [delay_err]=co_await corosio::delay(pause);
-                if (delay_err || session.closed || Clock::now()>=deadline) { session.close(); co_return false; }
-                sniff::TcpReplay rest_recs(bytes.subspan(rec0));
-                co_return co_await replay_ordered_tcp(session,rest_recs,deadline);
+        std::size_t const prefix_len=shaped ? std::min<std::size_t>(session.direct_shaping.tcp_prefix_len,bytes.size()) : 0u;
+        if (!session.tunnel && shaped && session.direct_shaping.tls_record_fragment) {
+            auto payload=bytes;
+            if (prefix_len) {
+                sniff::TcpReplay prefix_replay(bytes.first(prefix_len));
+                if (!co_await replay_ordered_tcp(session,prefix_replay,deadline)) co_return false;
+                payload=bytes.subspan(prefix_len);
             }
+            if (session.direct_shaping.tls_fragment_fallback_delay_ms && payload.size()>=5 &&
+                payload[0]==0x16 && payload[1]==0x03) {
+                auto rec0=std::size_t{5}+((std::size_t{payload[3]}<<8)|payload[4]);
+                if (rec0<payload.size()) {
+                    sniff::TcpReplay first_rec(payload.first(rec0));
+                    if (!co_await replay_ordered_tcp(session,first_rec,deadline)) co_return false;
+                    auto rem=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-Clock::now());
+                    if (rem<=std::chrono::milliseconds::zero()) { session.close(); co_return false; }
+                    auto pause=std::min<std::chrono::milliseconds>(
+                        std::chrono::milliseconds(session.direct_shaping.tls_fragment_fallback_delay_ms),rem);
+                    auto [delay_err]=co_await corosio::delay(pause);
+                    if (delay_err || session.closed || Clock::now()>=deadline) { session.close(); co_return false; }
+                    sniff::TcpReplay rest_recs(payload.subspan(rec0));
+                    co_return co_await replay_ordered_tcp(session,rest_recs,deadline);
+                }
+            }
+            sniff::TcpReplay replay(payload);
+            co_return co_await replay_ordered_tcp(session,replay,deadline);
         }
         sniff::TcpReplay replay(bytes);
         co_return co_await replay_ordered_tcp(session,replay,deadline);

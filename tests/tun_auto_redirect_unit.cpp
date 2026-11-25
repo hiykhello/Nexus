@@ -48,6 +48,50 @@ namespace {
         check(!nft::encode("inet_filter",nullptr,129),"foreign name rejected");
         redirect.port=0;
         check(!nft::encode(table,&redirect,129),"absent listener rejected");
+
+        // Verify prerouting orders listener-port guard -> protected/FakeIP -> intercept_dns -> local_destinations -> excludes
+        nft::Prefix local_ip{4,32,{192,168,1,1}};
+        nft::Prefix fake_ip{4,29,{198,18,0,0}};
+        nft::Redirect ordered{.port=32123,.ipv4=true,.ipv6=true,.intercept_dns=true,.socket_mark=42,
+            .excludes=std::span(&private_ip,1),.protected_destinations=std::span(&fake_ip,1),
+            .local_destinations=std::span(&local_ip,1)};
+        auto enc_ordered=nft::encode(table,&ordered,129);
+        check(enc_ordered.has_value(),"encode ordered prerouting");
+        auto contains_seq=[](std::span<std::uint8_t const> hay, std::span<std::uint8_t const> needle) {
+            return std::ranges::search(hay,needle).begin()!=hay.end();
+        };
+        auto contains_str=[&](std::span<std::uint8_t const> hay, std::string_view s) {
+            return contains_seq(hay,{reinterpret_cast<std::uint8_t const*>(s.data()),s.size()});
+        };
+        std::size_t guard_idx=999, fake_idx=999, dns_idx=999, local_idx=999, excl_idx=999, rule_idx=0;
+        constexpr std::array<std::uint8_t,4> local_b{192,168,1,1}, fake_b{198,18,0,0}, excl_b{10,0,0,0};
+        constexpr std::array<std::uint8_t,2> port_b{0x7d,0x7b}, dns_b{0,53};
+        for (std::size_t pos=0;pos<enc_ordered->bytes.size();) {
+            auto msg=std::span(enc_ordered->bytes).subspan(pos);
+            auto size=read<std::uint32_t>(msg,0);
+            auto type=read<std::uint16_t>(msg,4);
+            auto body=msg.first(size);
+            if (type==0xa06 && contains_str(body,"prerouting")) {
+                bool is_redir=contains_str(body,std::string_view("redir\0",6));
+                if (!is_redir && contains_seq(body,local_b) && contains_seq(body,port_b)) guard_idx=rule_idx;
+                else if (is_redir && contains_seq(body,fake_b)) fake_idx=rule_idx;
+                else if (is_redir && contains_seq(body,dns_b)) dns_idx=rule_idx;
+                else if (!is_redir && contains_seq(body,local_b)) local_idx=rule_idx;
+                else if (!is_redir && contains_seq(body,excl_b)) excl_idx=rule_idx;
+                ++rule_idx;
+            }
+            pos+=size;
+        }
+        check(guard_idx<fake_idx && fake_idx<dns_idx && dns_idx<local_idx && local_idx<excl_idx,
+            "prerouting rule order: port guard < fakeip < dns < local_destinations < excludes");
+
+        // Self-port 53 skips intercept_dns rule to prevent redirect loop
+        nft::Redirect p32123{.port=32123,.ipv4=true,.ipv6=false,.intercept_dns=true,.socket_mark=42};
+        nft::Redirect p53{.port=53,.ipv4=true,.ipv6=false,.intercept_dns=true,.socket_mark=42};
+        auto e32123=nft::encode(table,&p32123,129), e53=nft::encode(table,&p53,129);
+        check(e32123 && e53 &&
+            std::ranges::count(commands(*e53),0xa06)+2==std::ranges::count(commands(*e32123),0xa06),
+            "port 53 skips intercept_dns to avoid self-redirect loop");
     }
 
     auto configuration() -> void {
@@ -70,8 +114,28 @@ routing {{ default-outbound "direct"; }}
         for (auto spec:{"auto-redirect #true","auto-route #true; auto-redirect #true; device-fd 4",
              "auto-route #true; auto-redirect #true; strict-route #false",
              "auto-route #true; auto-redirect #true; connect-ip-outbound \"peer\"",
+             "auto-route #true; auto-redirect #true; route-address-set \"rs\"",
              "auto-route #true; auto-redirect #true; auto-redirect #false","auto-redirect \"true\""})
             check(!parse(spec),spec);
+
+        // FakeIP IPv4 CIDR validation rejects /31 and /32 while accepting /30
+        auto parse_fakeip=[](std::string_view cidr) {
+            return config::parse_kdl(std::format(R"kdl(schema-version 1
+role "client"
+inbound "s" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
+outbound "direct" type="direct"
+dns {{
+    listen host="127.0.0.1" port=1053
+    server "up" type="udp" host="127.0.0.1" port=5353
+    fake-ip server="up" ipv4-pool="{}" state-directory="/tmp/fakeip"
+    final "up"
+}}
+routing {{ default-outbound "direct"; }}
+)kdl",cidr));
+        };
+        check(parse_fakeip("198.18.0.0/30").has_value(),"fake-ip /30 accepted");
+        check(!parse_fakeip("198.18.0.0/31").has_value(),"fake-ip /31 rejected");
+        check(!parse_fakeip("198.18.0.0/32").has_value(),"fake-ip /32 rejected");
     }
 }
 int main() {

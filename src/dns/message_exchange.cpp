@@ -133,6 +133,7 @@ namespace dns {
         std::size_t server,bool tcp,bool disabled,std::shared_ptr<LocalSnapshot const> snapshot)
         -> capy::task<std::expected<Bytes,detail::ResolveError>> {
         using Error=detail::ResolveError;
+        stale_cache_=false;
         if(canceled_)co_return std::unexpected(Error::canceled);
         if(Clock::now()>=until)co_return std::unexpected(Error::timeout);
         if(cache_ && !disabled) {
@@ -145,6 +146,7 @@ namespace dns {
                 if (owner) if (auto stale=owner->lookup_stale(view,query,now)) {
                     if (stale->refresh)
                         start_refresh(std::move(owner),*stale->refresh,endpoint,query,until,server,tcp);
+                    stale_cache_=true;
                     co_return std::move(stale->wire);
                 }
             }
@@ -346,6 +348,6 @@ namespace dns {
         if(!view)co_return std::unexpected(detail::ResolveError::protocol);
         auto lease=default_message_race_result_budget().acquire(wire->capacity());
         if(!lease)co_return std::unexpected(detail::ResolveError::budget_exhausted);
-        co_return EvaluatedMessage{std::move(*wire),*view,exchange_.local_synthetic(),std::move(lease)};
+        co_return EvaluatedMessage{std::move(*wire),*view,exchange_.local_synthetic(),std::move(lease),exchange_.stale_cache()};
     }
 }

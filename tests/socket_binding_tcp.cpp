@@ -87,9 +87,46 @@ namespace {
         socket.close();
         return binding(socket,endpoint,ipv6);
     }
+    auto test_interface_plan() -> bool {
+        auto mem = std::make_shared<platform::network::FallbackMemory>();
+        platform::TcpSocketOptions opts;
+        opts.binding.network = std::make_shared<platform::network::InterfaceSelection>(
+            [mem](bool) noexcept -> platform::network::InterfaceCandidates {
+                platform::network::InterfaceCandidates c{};
+                c.indices.push_back(10); c.tiers.push_back(0);
+                c.indices.push_back(20); c.tiers.push_back(1);
+                c.fallback_delay = std::chrono::milliseconds(300);
+                c.parallel_fallback = true;
+                c.fallback_memory = mem;
+                return c;
+            });
+        auto p0 = net::detail::plan_tcp_interfaces(opts, true, true, 1000);
+        if (p0.entries.size() != 2 || p0.entries[0].index != 10 || p0.entries[1].index != 20 ||
+            !p0.entries[0].supports_v4 || !p0.entries[0].supports_v6 || p0.entries[0].all_degraded)
+            return false;
+        mem->mark_failed(10, 1000, true); // IPv6 degraded only
+        auto p1 = net::detail::plan_tcp_interfaces(opts, true, true, 2000);
+        if (p1.entries.size() != 2 || p1.entries[0].index != 10 || p1.entries[0].all_degraded) return false;
+        auto p2 = net::detail::plan_tcp_interfaces(opts, false, true, 2000);
+        if (p2.entries.size() != 2 || p2.entries[0].index != 20 || p2.entries[1].index != 10 || !p2.entries[1].all_degraded)
+            return false;
+        mem->mark_failed(10, 1000, false); // Both v4 and v6 degraded
+        auto p3 = net::detail::plan_tcp_interfaces(opts, true, true, 2000);
+        if (p3.entries.size() != 2 || p3.entries[0].index != 20 || p3.entries[1].index != 10 || !p3.entries[1].all_degraded)
+            return false;
+        net::detail::InterfacePlan zero_delay{};
+        zero_delay.fallback_delay = std::chrono::milliseconds(0);
+        auto now = std::chrono::steady_clock::now();
+        auto far = now + std::chrono::seconds(10);
+        auto d1 = net::detail::tcp_planned_deadline(far, zero_delay, true, false, false, false);
+        auto d2 = net::detail::tcp_planned_deadline(far, zero_delay, false, false, false, true);
+        return d1 > now + std::chrono::milliseconds(100) && d1 < far &&
+            d2 > now + std::chrono::milliseconds(100) && d2 < far;
+    }
 }
 
 auto main() -> int {
+    if (!test_interface_plan()) return 1;
     for (bool uring:{false,true}) {
         if (uring && !io::has_uring) continue;
         for (bool ipv6:{false,true}) if (!run(uring,ipv6)) return 1;

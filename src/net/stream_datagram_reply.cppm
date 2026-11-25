@@ -20,6 +20,8 @@ export namespace net::stream_datagrams {
     namespace capy = ::capy;
     namespace io = ::corosio;
 
+    enum class ReplySendStatus : std::uint8_t { sent, dropped, failed };
+
     struct UnmeteredDatagram {
         auto submit() noexcept -> void {}
         auto complete(std::size_t) noexcept -> void {}
@@ -59,7 +61,13 @@ export namespace net::stream_datagrams {
         }
         if constexpr (requires { state.incoming.send_packet(address, payload); }) {
             credit->submit();
-            if (!co_await state.incoming.send_packet(address, payload)) co_return false;
+            auto res = co_await state.incoming.send_packet(address, payload);
+            if constexpr (std::same_as<decltype(res), ReplySendStatus>) {
+                if (res == ReplySendStatus::failed) co_return false;
+                if (res == ReplySendStatus::dropped) { credit->complete(0); co_return true; }
+            } else if (!res) {
+                co_return false;
+            }
         } else {
             auto wire = encode_datagram(state.framing, address, payload);
             if (!wire) co_return false;

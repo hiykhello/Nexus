@@ -207,18 +207,25 @@ namespace platform::nftables {
                     writer.compare(std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(iface.data()), iface.size()), NFT_CMP_NEQ);
                 }
             });
-            if (!output) for (auto const& prefix:options.local_destinations)
-                bypass([&] {writer.destination(prefix);});
             if (options.exclude_mark) bypass([&] {writer.matches_mark(*options.exclude_mark);});
             if (options.include_mark) bypass([&] {writer.matches_mark(*options.include_mark,NFT_CMP_NEQ);});
             if (output) for (auto const& range : options.exclude_uids)
                 bypass([&] {uid_range(range);});
+            if (!output && (!options.protected_destinations.empty() || options.port==53))
+                for (auto const& prefix:options.local_destinations)
+                    bypass([&] {
+                        tcp();writer.destination(prefix);
+                        writer.payload(NFT_PAYLOAD_TRANSPORT_HEADER,2,2);
+                        writer.compare(std::array{static_cast<std::uint8_t>(options.port>>8),static_cast<std::uint8_t>(options.port)});
+                    });
             for (auto const& prefix:options.protected_destinations)
                 rule([&] {tcp();writer.destination(prefix);},divert);
-            if (options.intercept_dns) rule([&] {
+            if (options.intercept_dns && options.port!=53) rule([&] {
                 tcp();writer.payload(NFT_PAYLOAD_TRANSPORT_HEADER,2,2);
                 writer.compare(std::array<std::uint8_t,2>{0,53});
             },divert);
+            if (!output) for (auto const& prefix:options.local_destinations)
+                bypass([&] {writer.destination(prefix);});
             for (auto const& prefix:options.excludes) bypass([&] {writer.destination(prefix);});
             if (output && !options.include_uids.empty()) {
                 for (auto const& range : options.include_uids)

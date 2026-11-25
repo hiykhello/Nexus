@@ -228,6 +228,9 @@ export namespace rules {
         [[nodiscard]] auto has_distribution() const noexcept -> bool {
             return static_cast<bool>(distribution_);
         }
+        [[nodiscard]] auto distribution() const noexcept -> std::shared_ptr<OutboundDistribution const> const& {
+            return distribution_;
+        }
         [[nodiscard]] auto default_outbound_fast() const noexcept -> std::optional<std::size_t> {
             if (!empty_rules() || distribution_) return {};
             if (mode_state_) {

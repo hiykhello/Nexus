@@ -177,7 +177,10 @@ namespace cli::tun_enabled {
         StrictTunRequest request{};
         static_assert(std::is_trivially_copyable_v<StrictTunRequest>);
         if (::recv(channel.get(),&request,sizeof request,MSG_TRUNC)!=sizeof request ||
-            request.name.back()!=0 || request.dns_stub.back()!=0 || request.exclude_count>request.excludes.size() ||
+            request.name.back()!=0 || request.dns_stub.back()!=0 ||
+            request.exclude_count>request.excludes.size() || request.include_count>request.includes.size() ||
+            std::size_t(request.exclude_count)+request.include_count>packet::max_tun_excludes ||
+            (request.redirect.port && request.include_count) ||
             request.network.route_count || !packet::tun_network_detail::validate(request.network)) return 2;
         if (request.redirect.protected_count>request.redirect.protected_destinations.size() ||
             request.redirect.include_uid_count>request.redirect.include_uids.size() ||
@@ -186,6 +189,9 @@ namespace cli::tun_enabled {
             request.redirect.exclude_if_count>request.redirect.exclude_interfaces.size()) return 2;
         auto protected_destinations=std::span(request.redirect.protected_destinations).first(request.redirect.protected_count);
         for (auto const& entry:protected_destinations)
+            if (!packet::tun_network_detail::valid(entry,true)) return 2;
+        auto includes=std::span(request.includes).first(request.include_count);
+        for (auto const& entry:includes)
             if (!packet::tun_network_detail::valid(entry,true)) return 2;
         auto tun=packet::LinuxTun::create(request.name.data(),{.multi_queue=request.multi_queue});
         if (!tun) return 2;
@@ -197,7 +203,7 @@ namespace cli::tun_enabled {
         packet::TunDefaultPolicy<> policy;
         auto deadline=Clock::now()+3s;
         auto excludes=std::span(request.excludes).first(request.exclude_count);
-        if (!policy.start(*network,request.policy,deadline,deadline+2s,excludes,request.redirect)) {
+        if (!policy.start(*network,request.policy,deadline,deadline+2s,excludes,request.redirect,includes)) {
             (void)policy.stop(Clock::now()+3s);
             (void)network->stop(Clock::now()+3s);
             return 2;

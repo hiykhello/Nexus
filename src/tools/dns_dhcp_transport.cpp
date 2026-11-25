@@ -21,12 +21,13 @@ namespace cli {
         }
 
         struct DhcpServerCache {
+            std::string interface_name;
             std::mutex mutex;
             std::condition_variable_any cv;
             std::vector<corosio::endpoint> endpoints;
             std::jthread worker;
 
-            DhcpServerCache() {
+            explicit DhcpServerCache(std::string iface) : interface_name(std::move(iface)) {
                 refresh();
                 worker = std::jthread([this](std::stop_token tok) {
                     std::unique_lock lk(mutex);
@@ -45,7 +46,7 @@ namespace cli {
                 if (worker.joinable()) worker.join();
             }
             auto refresh() -> void {
-                auto found = dns::discover_dhcp_dns_servers();
+                auto found = dns::discover_dhcp_dns_servers({}, interface_name);
                 std::vector<corosio::endpoint> next;
                 next.reserve(found.size());
                 for (auto const& e : found) next.push_back(ip_to_endpoint(e.address));
@@ -59,9 +60,9 @@ namespace cli {
         };
     }
 
-    auto prepare_dhcp_dns_transport(config::DnsServer const&)
+    auto prepare_dhcp_dns_transport(config::DnsServer const& server)
         -> std::expected<dns::detail::ProtectedQuery, std::string> {
-        auto cache = std::make_shared<DhcpServerCache>();
+        auto cache = std::make_shared<DhcpServerCache>(server.interface_name);
         return dns::detail::ProtectedQuery{
             [cache](corosio::io_context& context, corosio::endpoint, dns::QueryMessage const& query, std::uint16_t id,
                 std::chrono::steady_clock::time_point deadline, dns::InputBudget&, std::stop_token stop)

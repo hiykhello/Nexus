@@ -31,6 +31,7 @@ export namespace dns {
             ResponseStep step{};
             std::optional<ResponseEcsView> ecs;
             std::optional<Result> terminal;
+            bool record_reverse=false;
         };
         corosio::io_context& context_;
         std::span<policy::DnsRule const> rules_;
@@ -40,7 +41,7 @@ export namespace dns {
         MessageCache* cache_;
         InputBudget* override_budget_;
         std::optional<std::uint64_t> view_;
-        bool disabled_,started_=false,canceled_=false,independent_cache_=false;
+        bool disabled_,started_=false,canceled_=false,independent_cache_=false,record_reverse_=false;
         Owner* owner_=nullptr;
         MessageExchange* active_=nullptr;
         std::array<Slot,32> slots_{};
@@ -83,6 +84,7 @@ export namespace dns {
                     if(!rewrite_response(*response,query.id,slot.step.rewrite_ttl))return std::unexpected(Error::protocol);
                 }
                 if(slot.step.subnet && !(**value).local_synthetic)slot.ecs=(**value).upstream_ecs;
+                slot.record_reverse=!(**value).local_synthetic && !(**value).stale_cache;
                 auto completed=walk.complete(*slot.ticket,std::move(*response));
                 if(!completed)return std::unexpected(completed.error()==ResponseProgramError::resource_limit ? Error::limit : Error::state);
             }
@@ -163,6 +165,7 @@ export namespace dns {
                     } else owner.stop();
                     if(!slot.terminal)co_return std::unexpected(Error::state);
                     if(!*slot.terminal)co_return std::unexpected(slot.terminal->error()==Error::budget_exhausted ? Error::limit : slot.terminal->error());
+                    record_reverse_=!(**slot.terminal).local_synthetic && !(**slot.terminal).stale_cache;
                     co_return output(query,step,std::move(**slot.terminal));
                 }
                 owner.stop();
@@ -194,6 +197,7 @@ export namespace dns {
                         response=std::move(*parsed);
                     }
                     auto wire=encode_response(*response,query.id,step.rewrite_ttl);if(!wire)co_return std::unexpected(Error::protocol);
+                    record_reverse_=metadata.record_reverse;
                     co_return std::move(*wire);
                 }
                 if(step.action!=policy::DnsAction::route || step.server>=upstreams_.size())co_return std::unexpected(Error::state);
@@ -204,7 +208,8 @@ export namespace dns {
                 if(canceled_)co_return std::unexpected(Error::canceled);
                 if(!wire)co_return std::unexpected(wire.error()==Error::budget_exhausted ? Error::limit : wire.error());
                 auto view=response_ecs_view(operation.upstream_query());if(!view)co_return std::unexpected(Error::protocol);
-                co_return output(query,step,EvaluatedMessage{std::move(*wire),*view,operation.local_synthetic()});
+                record_reverse_=!operation.local_synthetic() && !operation.stale_cache();
+                co_return output(query,step,EvaluatedMessage{std::move(*wire),*view,operation.local_synthetic(),{},operation.stale_cache()});
             }
         }
     public:
@@ -219,9 +224,11 @@ export namespace dns {
 #ifdef NEXUS_DNS_FAKEIP
         auto set_fakeip_publication(FakeIpPublication& publication) noexcept -> void { publication_=&publication; }
 #endif
+        [[nodiscard]] auto record_reverse() const noexcept -> bool {return record_reverse_;}
         auto cancel() noexcept -> void {canceled_=true;if(owner_)owner_->stop();if(active_)active_->cancel();}
         auto run(QueryMessage query,Clock::time_point deadline,policy::DnsContext context)
             -> capy::task<std::expected<Bytes,Error>> {
+            record_reverse_=false;
             if(std::exchange(started_,true) || fallback_>=upstreams_.size() || (!modes_.empty() && rules_.size()!=modes_.size()))co_return std::unexpected(Error::state);
             if(canceled_)co_return std::unexpected(Error::canceled);
             if(!encode_query(query))co_return std::unexpected(Error::protocol);

@@ -98,17 +98,21 @@ namespace relay::session_detail {
                 std::optional<std::vector<std::uint8_t>> shaped;
                 auto const* send_ptr = static_cast<std::uint8_t const*>(ptr);
                 auto len = static_cast<std::size_t>(received);
+                std::size_t prefix_len = 0;
                 if (upstream && session.direct_shaping.pending()) {
                     shaped = shape_direct_first_payload(session, std::span(send_ptr, len));
                     if (shaped) {
                         send_ptr = shaped->data();
                         len = shaped->size();
+                        prefix_len = std::min<std::size_t>(session.direct_shaping.tcp_prefix_len, len);
                     }
                 }
                 std::size_t off = 0;
                 while (off < len && !session.closed) {
                     std::size_t step = len - off;
-                    if (shaped && session.direct_shaping.tls_record_fragment && step >= 5 &&
+                    if (shaped && off < prefix_len) {
+                        step = prefix_len - off;
+                    } else if (shaped && session.direct_shaping.tls_record_fragment && step >= 5 &&
                         send_ptr[off] == 0x16 && send_ptr[off + 1] == 0x03) {
                         auto rec = std::size_t{5} + ((std::size_t{send_ptr[off + 3]} << 8) | send_ptr[off + 4]);
                         if (rec <= step) step = rec;

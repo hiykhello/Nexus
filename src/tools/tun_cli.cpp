@@ -104,12 +104,15 @@ namespace cli::tun_enabled {
                 std::ranges::copy_n(ifn.data(), std::min<std::size_t>(ifn.size(), 15),
                     redirect.exclude_interfaces[redirect.exclude_if_count++].begin());
         }
-        if (entry.tun->auto_redirect) {
-            redirect.tcp_dns=entry.tun->dns_hijack_tcp;
-            redirect.udp_dns=config.ordered_tcp && config.ordered_tcp->udp &&
-                std::ranges::any_of(config.ordered_tcp->rules,[](auto const& rule) {
-                    return rule.action==config::OrderedTcpAction::hijack_dns;
-                });
+        bool has_hijack_dns=config.ordered_tcp &&
+            std::ranges::any_of(config.ordered_tcp->rules,[](auto const& rule) {
+                return rule.action==config::OrderedTcpAction::hijack_dns;
+            });
+        if (entry.tun->strict_route && has_hijack_dns && config.dns)
+            entries_[index]->config.dns_hijack_tcp=true;
+        if (entry.tun->strict_route) {
+            redirect.tcp_dns=entries_[index]->config.dns_hijack_tcp;
+            redirect.udp_dns=config.ordered_tcp && config.ordered_tcp->udp && has_hijack_dns;
             if (config.dns && config.dns->fakeip) {
                 auto const& fake=*config.dns->fakeip;
                 if (entry.tun->inet4_address) {

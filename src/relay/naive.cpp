@@ -249,7 +249,6 @@ namespace relay {
                 cfg.host, cfg.port, std::move(auth), std::vector<std::pair<std::string, std::string>>{}, false,
                 cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(mp));
             return make_h3_factory(std::move(owner), cfg.connect_timeout_ms, cfg.tcp_options.configured(), cfg.udp);
-            return make_h3_factory(std::move(owner), cfg.connect_timeout_ms, cfg.tcp_options.configured(), false);
         }
         auto shaped = tls::ShapedClientProfile::create(std::move(*tls_id), *fp);
         if (!shaped) return std::unexpected(shaped.error());

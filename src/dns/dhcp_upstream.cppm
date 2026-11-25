@@ -12,9 +12,10 @@ export namespace dns {
     [[nodiscard]] auto parse_dhcp_option6(std::span<std::uint8_t const> bytes, std::uint32_t lease_ttl_seconds = 3600)
         -> containers::inplace_vector<DhcpServerEntry, 8>;
 
-    [[nodiscard]] auto parse_dhcp_lease_text(std::string_view text)
+    [[nodiscard]] auto parse_dhcp_lease_text(std::string_view text, std::string_view interface_filter = {})
         -> containers::inplace_vector<DhcpServerEntry, 8>;
 
-    [[nodiscard]] auto discover_dhcp_dns_servers(std::span<std::string_view const> candidate_paths = {})
+    [[nodiscard]] auto discover_dhcp_dns_servers(std::span<std::string_view const> candidate_paths = {},
+        std::string_view interface_filter = {})
         -> containers::inplace_vector<DhcpServerEntry, 8>;
 }

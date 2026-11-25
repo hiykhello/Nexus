@@ -44,28 +44,53 @@ export namespace platform {
 
         struct FallbackMemory {
             static constexpr std::int64_t window_ms = 15000;
-            std::atomic<std::int64_t> failed_at_ms{0};
-            std::atomic<std::uint32_t> degraded_index{0};
+            struct FamilyState {
+                std::atomic<std::int64_t> failed_at_ms{0};
+                std::atomic<std::uint32_t> degraded_index{0};
 
+                auto mark_failed(std::uint32_t index, std::int64_t now_ms) noexcept -> void {
+                    if (!index) return;
+                    degraded_index.store(index, std::memory_order_relaxed);
+                    failed_at_ms.store(now_ms, std::memory_order_release);
+                }
+                auto mark_healthy(std::uint32_t index) noexcept -> void {
+                    if (index && degraded_index.load(std::memory_order_relaxed) == index)
+                        failed_at_ms.store(0, std::memory_order_release);
+                }
+                [[nodiscard]] auto is_degraded(std::uint32_t index, std::int64_t now_ms) const noexcept -> bool {
+                    if (!index) return false;
+                    auto at = failed_at_ms.load(std::memory_order_acquire);
+                    if (!at || now_ms < at || now_ms - at >= window_ms) return false;
+                    return degraded_index.load(std::memory_order_relaxed) == index;
+                }
+            };
+            FamilyState ipv4{}, ipv6{};
+
+            auto mark_failed(std::uint32_t index, std::int64_t now_ms, bool v6) noexcept -> void {
+                (v6 ? ipv6 : ipv4).mark_failed(index, now_ms);
+            }
+            auto mark_healthy(std::uint32_t index, bool v6) noexcept -> void {
+                (v6 ? ipv6 : ipv4).mark_healthy(index);
+            }
+            [[nodiscard]] auto is_degraded(std::uint32_t index, std::int64_t now_ms, bool v6) const noexcept -> bool {
+                return (v6 ? ipv6 : ipv4).is_degraded(index, now_ms);
+            }
             auto mark_failed(std::uint32_t index, std::int64_t now_ms) noexcept -> void {
-                if (!index) return;
-                degraded_index.store(index, std::memory_order_relaxed);
-                failed_at_ms.store(now_ms, std::memory_order_release);
+                ipv4.mark_failed(index, now_ms);
+                ipv6.mark_failed(index, now_ms);
             }
             auto mark_healthy(std::uint32_t index) noexcept -> void {
-                if (index && degraded_index.load(std::memory_order_relaxed) == index)
-                    failed_at_ms.store(0, std::memory_order_release);
+                ipv4.mark_healthy(index);
+                ipv6.mark_healthy(index);
             }
             [[nodiscard]] auto is_degraded(std::uint32_t index, std::int64_t now_ms) const noexcept -> bool {
-                if (!index) return false;
-                auto at = failed_at_ms.load(std::memory_order_acquire);
-                if (!at || now_ms < at || now_ms - at >= window_ms) return false;
-                return degraded_index.load(std::memory_order_relaxed) == index;
+                return ipv4.is_degraded(index, now_ms) && ipv6.is_degraded(index, now_ms);
             }
         };
 
         struct InterfaceCandidates {
             containers::inplace_vector<std::uint32_t, 16> indices;
+            containers::inplace_vector<std::uint8_t, 16> tiers;
             std::chrono::milliseconds fallback_delay{};
             bool parallel_fallback = false;
             std::shared_ptr<FallbackMemory> fallback_memory;
@@ -79,7 +104,7 @@ export namespace platform {
         [[nodiscard]] auto retry_interface_error(std::error_code error) noexcept -> bool {
             return error == std::errc::network_unreachable || error == std::errc::host_unreachable ||
                 error == std::errc::network_down || error == std::errc::no_such_device ||
-                error == std::errc::address_not_available;
+                error == std::errc::address_not_available || error == std::errc::operation_not_permitted;
         }
     }
 

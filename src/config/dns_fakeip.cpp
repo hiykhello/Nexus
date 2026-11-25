@@ -32,8 +32,8 @@ namespace config {
         auto suffix = cidr.substr(slash + 1);
         unsigned prefix = 0;
         auto [end, parsed] = std::from_chars(suffix.data(), suffix.data() + suffix.size(), prefix);
-        if (!address || parsed != std::errc{} || end != suffix.data() + suffix.size() || prefix < 16 || prefix > 32)
-            return error("fake-ip ipv4-pool must have a prefix from 16 to 32");
+        if (!address || parsed != std::errc{} || end != suffix.data() + suffix.size() || prefix < 16 || prefix > 30)
+            return error("fake-ip ipv4-pool must have a prefix from 16 to 30");
         std::uint32_t base = 0;
         for (auto byte : *address) base = (base << 8) | byte;
         auto mask = (std::uint32_t{1} << (32 - prefix)) - 1;

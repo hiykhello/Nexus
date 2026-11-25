@@ -44,7 +44,10 @@ export namespace platform::network {
             .fallback_delay=policy.fallback_delay,
             .parallel_fallback=policy.strategy==Strategy::fallback,
         };
-        for (auto const& candidate:ranked) result.indices.push_back(std::get<3>(candidate));
+        for (auto const& candidate:ranked) {
+            result.indices.push_back(std::get<3>(candidate));
+            result.tiers.push_back(static_cast<std::uint8_t>(std::get<0>(candidate)));
+        }
         return result;
     }
 
@@ -69,8 +72,10 @@ export namespace platform::network {
             if (result.parallel_fallback && result.indices.size()>=2 && memory_) {
                 auto now_ms=std::chrono::duration_cast<std::chrono::milliseconds>(
                     Clock::now().time_since_epoch()).count();
-                if (memory_->is_degraded(result.indices.front(),now_ms)) {
+                if (memory_->is_degraded(result.indices.front(),now_ms,ipv6)) {
                     std::rotate(result.indices.begin(),result.indices.begin()+1,result.indices.end());
+                    if (result.tiers.size()==result.indices.size())
+                        std::rotate(result.tiers.begin(),result.tiers.begin()+1,result.tiers.end());
                 }
             }
             return result;

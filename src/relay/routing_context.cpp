@@ -118,11 +118,13 @@ namespace relay {
 
     auto compile_routes(std::span<IndexedRouteRule const> input,std::size_t fallback,
         std::size_t outbound_count,std::optional<std::string_view> inbound,std::optional<OrderedRuleInput> ordered,
-        std::shared_ptr<rules::OutboundDistribution const> distribution)
+        std::shared_ptr<rules::OutboundDistribution const> distribution,
+        std::span<std::size_t const> extra_outbounds)
         -> std::expected<RouteSnapshot,std::string> {
         auto physical_count=outbound_count;
         if (distribution) outbound_count+=distribution->groups.size();
         std::vector<std::size_t> referenced{fallback};
+        referenced.insert(referenced.end(),extra_outbounds.begin(),extra_outbounds.end());
         auto matcher=compile_indexed_routes(input,fallback,outbound_count,inbound,&referenced);
         if(!matcher)return std::unexpected(std::move(matcher.error()));
         matcher->set_distribution(distribution);
@@ -134,16 +136,16 @@ namespace relay {
             for (auto const& rule : ordered->rules)
                 if (rule.action.kind==rules::ProgramActionKind::route) referenced.push_back(rule.action.outbound);
         }
-        if (physical_count<=34) {
+        if (physical_count<=258) {
             std::vector<bool> seen(outbound_count);
-            std::uint32_t mask=0;
+            std::bitset<256> mask{};
             while (!referenced.empty()) {
                 auto index=referenced.back();
                 referenced.pop_back();
                 if (index>=outbound_count || seen[index]) continue;
                 seen[index]=true;
                 if (index<physical_count) {
-                    if (index>=2) mask|=std::uint32_t{1}<<(index-2);
+                    if (index>=2) mask.set(index-2);
                 } else {
                     auto const& members=distribution->groups[index-physical_count];
                     referenced.insert(referenced.end(),members.begin(),members.end());

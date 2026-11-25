@@ -17,6 +17,13 @@ module;
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#include <CoreFoundation/CoreFoundation.h>
+#include <Security/Security.h>
+#endif
+#endif
 #endif
 module tls.certificate_trust;
 import crypto.backend_errors;
@@ -129,6 +136,112 @@ namespace tls {
         ::CertCloseStore(store, 0);
         if (result.empty()) return std::unexpected(TrustBundleError::io_error);
         return result;
+#elif defined(__APPLE__)
+        if (char const* env = std::getenv("SSL_CERT_FILE"); env && env[0] == '/') {
+            if (auto loaded = load_trust_bundle_impl(env, true); loaded && !loaded->empty()) return loaded;
+        }
+#if TARGET_OS_OSX
+        constexpr std::size_t max_bytes = 4194304, max_count = 1024;
+        struct CfDeleter {
+            auto operator()(CFTypeRef ref) const noexcept -> void { if (ref) CFRelease(ref); }
+        };
+        using CfArray = std::unique_ptr<std::remove_pointer_t<CFArrayRef>, CfDeleter>;
+        using CfData = std::unique_ptr<std::remove_pointer_t<CFDataRef>, CfDeleter>;
+        using CfDict = std::unique_ptr<std::remove_pointer_t<CFDictionaryRef>, CfDeleter>;
+        enum class TrustDecision : std::uint8_t { none, trusted, denied, restricted };
+        auto domain_decision = [](SecCertificateRef cert, SecTrustSettingsDomain domain) noexcept -> TrustDecision {
+            CFArrayRef raw_settings = nullptr;
+            if (SecTrustSettingsCopyTrustSettings(cert, domain, &raw_settings) != errSecSuccess || !raw_settings)
+                return TrustDecision::none;
+            CfArray settings(raw_settings);
+            auto const count = CFArrayGetCount(settings.get());
+            if (count == 0) return TrustDecision::trusted;
+            bool trusted = false;
+            for (CFIndex i = 0; i < count; ++i) {
+                auto const* entry = CFArrayGetValueAtIndex(settings.get(), i);
+                if (!entry || CFGetTypeID(entry) != CFDictionaryGetTypeID()) continue;
+                auto dict = static_cast<CFDictionaryRef>(entry);
+                if (CFDictionaryGetValue(dict, kSecTrustSettingsPolicyString) != nullptr ||
+                    CFDictionaryGetValue(dict, kSecTrustSettingsAllowedError) != nullptr)
+                    continue;
+                if (auto const* policy_val = CFDictionaryGetValue(dict, kSecTrustSettingsPolicy)) {
+                    if (CFGetTypeID(policy_val) != SecPolicyGetTypeID()) continue;
+                    auto policy = static_cast<SecPolicyRef>(const_cast<void*>(policy_val));
+                    CfDict props(SecPolicyCopyProperties(policy));
+                    if (!props || CFDictionaryGetValue(props.get(), kSecPolicyName) != nullptr) continue;
+                    if (auto const* client = CFDictionaryGetValue(props.get(), kSecPolicyClient); client && CFEqual(client, kCFBooleanTrue)) continue;
+                    auto const* oid = CFDictionaryGetValue(props.get(), kSecPolicyOid);
+                    if (!oid || !CFEqual(oid, kSecPolicyAppleSSL)) continue;
+                }
+                auto const* val = CFDictionaryGetValue(dict, kSecTrustSettingsResult);
+                if (!val) {
+                    trusted = true;
+                    continue;
+                }
+                if (CFGetTypeID(val) != CFNumberGetTypeID()) continue;
+                std::int32_t res = 0;
+                if (!CFNumberGetValue(static_cast<CFNumberRef>(val), kCFNumberSInt32Type, &res) || res < 0) continue;
+                auto const ures = static_cast<std::uint32_t>(res);
+                if (ures == kSecTrustSettingsResultDeny) return TrustDecision::denied;
+                if (ures == kSecTrustSettingsResultTrustRoot || ures == kSecTrustSettingsResultTrustAsRoot)
+                    trusted = true;
+            }
+            return trusted ? TrustDecision::trusted : TrustDecision::restricted;
+        };
+        std::vector<std::vector<std::uint8_t>> result;
+        std::size_t total = 0;
+        auto append_cert = [&](SecCertificateRef cert) {
+            if (!cert || result.size() >= max_count) return;
+            CfData data(SecCertificateCopyData(cert));
+            if (!data) return;
+            auto const len = CFDataGetLength(data.get());
+            auto const* ptr = reinterpret_cast<std::uint8_t const*>(CFDataGetBytePtr(data.get()));
+            if (!ptr || len <= 0 || static_cast<std::size_t>(len) > max_bytes - total) return;
+            std::vector<std::uint8_t> der(ptr, ptr + static_cast<std::size_t>(len));
+            if (std::ranges::find(result, der) == result.end()) {
+                total += der.size();
+                result.push_back(std::move(der));
+            }
+        };
+        auto as_cert = [](void const* item) noexcept -> SecCertificateRef {
+            if (!item || CFGetTypeID(item) != SecCertificateGetTypeID()) return nullptr;
+            return static_cast<SecCertificateRef>(const_cast<void*>(item));
+        };
+        for (SecTrustSettingsDomain domain : {kSecTrustSettingsDomainUser, kSecTrustSettingsDomainAdmin}) {
+            CFArrayRef raw_certs = nullptr;
+            if (SecTrustSettingsCopyCertificates(domain, &raw_certs) != errSecSuccess || !raw_certs) continue;
+            CfArray certs(raw_certs);
+            auto const count = CFArrayGetCount(certs.get());
+            for (CFIndex i = 0; i < count; ++i) {
+                auto cert = as_cert(CFArrayGetValueAtIndex(certs.get(), i));
+                if (!cert) continue;
+                if (domain == kSecTrustSettingsDomainAdmin &&
+                    domain_decision(cert, kSecTrustSettingsDomainUser) == TrustDecision::denied) continue;
+                if (domain_decision(cert, domain) == TrustDecision::trusted) append_cert(cert);
+            }
+        }
+        CFArrayRef raw_anchors = nullptr;
+        if (SecTrustCopyAnchorCertificates(&raw_anchors) == errSecSuccess && raw_anchors) {
+            CfArray anchors(raw_anchors);
+            auto const count = CFArrayGetCount(anchors.get());
+            for (CFIndex i = 0; i < count; ++i) {
+                auto cert = as_cert(CFArrayGetValueAtIndex(anchors.get(), i));
+                if (!cert) continue;
+                auto const user = domain_decision(cert, kSecTrustSettingsDomainUser);
+                if (user == TrustDecision::denied) continue;
+                if (user == TrustDecision::trusted) { append_cert(cert); continue; }
+                auto const admin = domain_decision(cert, kSecTrustSettingsDomainAdmin);
+                if (admin == TrustDecision::denied) continue;
+                if (admin == TrustDecision::trusted) { append_cert(cert); continue; }
+                auto const sys = domain_decision(cert, kSecTrustSettingsDomainSystem);
+                if (sys == TrustDecision::denied || sys == TrustDecision::restricted) continue;
+                append_cert(cert);
+            }
+        }
+        if (!result.empty()) return result;
+#endif
+        if (auto loaded = load_trust_bundle_impl("/etc/ssl/cert.pem", true); loaded && !loaded->empty()) return loaded;
+        return std::unexpected(TrustBundleError::io_error);
 #else
         if (char const* env = std::getenv("SSL_CERT_FILE"); env && env[0] == '/') {
             if (auto loaded = load_trust_bundle_impl(env, true)) return loaded;
