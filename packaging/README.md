@@ -55,3 +55,22 @@ NEXUS_FEATURES=profile-linux-epoll makepkg -f
 # 复用已构建的 Release 二进制快速重新打包
 NEXUS_PREBUILT_BIN=/path/to/nexus makepkg -f
 ```
+
+## 6. Linux 全静态构建（`musl + mimalloc`，零动态库依赖）
+
+- [mcpp/linux-musl-mimalloc/mcpp.toml](../mcpp/linux-musl-mimalloc/mcpp.toml)：基于 LLVM 23.1.6 与 Alpine `musl` sysroot 构建零 `PT_INTERP` 的全静态 Linux 二进制，包含 `x86_64-linux-musl` 与 `aarch64-linux-musl` 目标配置。
+- 全局链接固定校验的 `mimalloc 3.6.1`（以 C++ 模式 `MI_USE_CXX=ON` + `-fno-builtin-malloc` 编译，启用 `MI_MALLOC_OVERRIDE=1` + `MI_LIBC_MUSL=1`，保证 OOM 抛出 `std::bad_alloc` 而非 `abort()` 并消除 `musl` 默认多线程 `malloc` 锁争用）；并通过 `-Wl,-z,stack-size=2097152` 将默认线程栈从 `musl` 默认的 `128 KiB` 提升至 `2 MiB`（`GNU_STACK` `RW` 不可执行 + Full RELRO）。
+- 默认启用 50/51 项 Linux 全功能（含 `epoll`、`srs` 静态 `libz.a`、`tailscale-outbound` 及全部主流代理/VPN/DNS/TUN/控制 API，仅排除因 Alpine `brotli-static` 采用 GCC LTO 字节码而不兼容的 `tls-certificate-compression`），亦可通过 `--features io-uring` 静态链接 `/usr/lib/liburing.a`。
+- 构建脚本 [scripts/build-linux-musl-mimalloc.sh](../scripts/build-linux-musl-mimalloc.sh) 在宿主机预先拉取并缓存 `llvm@23.1.6`、`ninja` 与全部 12 份固定校验源码包，随后在 `podman`/`docker` Alpine 容器（离线 `--offline --locked`）或原生 Alpine 环境中完成构建，并按 `Lineage:` 精确定位产物后自动校验 `statically linked`、无 `PT_INTERP`、`GNU_STACK >= 2 MiB (RW)`、`MIMALLOC_SHOW_STATS=1` 堆统计输出与 `nexus check`。
+- GitHub Actions `linux-musl-static` 任务自动缓存工具链与源码包、在 `ubuntu-latest` + Alpine 容器中离线构建、于 glibc 宿主机直接验证运行并上传 `nexus-linux-x86_64-musl-mimalloc` 产物与 `SHA256SUMS`。
+
+```bash
+# 在同架构 Linux 宿主机通过 podman/docker 一键构建并校验全静态二进制
+bash scripts/build-linux-musl-mimalloc.sh --profile release --out target/linux-musl-mimalloc/nexus
+
+# 启用静态 liburing.a（io_uring）
+bash scripts/build-linux-musl-mimalloc.sh --profile release --features io-uring
+
+# 在原生 aarch64 Linux 宿主机或 aarch64 Alpine 环境中构建 aarch64-linux-musl
+bash scripts/build-linux-musl-mimalloc.sh --native --arch aarch64 --profile release
+```

@@ -9,7 +9,7 @@ namespace packet {
     static_assert(requires { static_cast<decltype(&fd_detail::abi::read)>(&::read); });
     static_assert(requires { static_cast<decltype(&fd_detail::abi::write)>(&::write); });
     static_assert(requires { static_cast<decltype(&fd_detail::abi::fcntl)>(&::fcntl); });
-    static_assert(requires { static_cast<decltype(&fd_detail::abi::__errno_location)>(&::__errno_location); });
+    static_assert(requires { static_cast<int* (*)()>(&::__errno_location); });
     static_assert(F_GETFL==fd_detail::abi::get_flags && O_NONBLOCK==fd_detail::abi::nonblocking);
     static_assert(EAGAIN==std::to_underlying(std::errc::resource_unavailable_try_again) && EWOULDBLOCK==std::to_underlying(std::errc::operation_would_block) && EINTR==std::to_underlying(std::errc::interrupted));
     namespace {

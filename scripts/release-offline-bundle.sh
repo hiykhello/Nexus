@@ -49,8 +49,8 @@ import json, pathlib, re, subprocess, sys
 root = pathlib.Path(sys.argv[1])
 out_arg = sys.argv[2]
 descs = sorted((root / "3rdparty/mcpp-index/pkgs/n").glob("nexus.*.lua"))
-if len(descs) != 11:
-    raise SystemExit(f"expected 11 pinned xpkg descriptors, found {len(descs)}")
+if len(descs) != 12:
+    raise SystemExit(f"expected 12 pinned xpkg descriptors, found {len(descs)}")
 
 lines = ["Nexus Third-Party Pinned Source Notices", ""]
 for path in descs:

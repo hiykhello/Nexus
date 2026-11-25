@@ -156,5 +156,14 @@
     "url": "https://github.com/bemanproject/inplace_vector/archive/c7fe76da307f0d6fda5023b2d2ebef7e3f7b18d1.tar.gz",
     "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.beman-inplace-vector.lua",
     "source_root": "inplace_vector-c7fe76da307f0d6fda5023b2d2ebef7e3f7b18d1"
+  },
+  "mimalloc": {
+    "version": "3.6.1",
+    "revision": "3.6.1",
+    "archive": "v3.6.1.tar.gz",
+    "sha256": "2672e6a99d4579fb4bb32d9de0d63aa424ce600d31fbfaf06eb74d940d2e07a6",
+    "url": "https://github.com/microsoft/mimalloc/archive/refs/tags/v3.6.1.tar.gz",
+    "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.mimalloc-source.lua",
+    "source_root": "mimalloc-3.6.1"
   }
 }

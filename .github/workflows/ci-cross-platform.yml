@@ -244,3 +244,61 @@ jobs:
           path: |
             dist-arch/*.pkg.tar.zst
             dist-arch/SHA256SUMS
+
+  linux-musl-static:
+    name: Linux Static Binary (x86_64 musl + mimalloc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned mcpp v2026.11.24.1
+        run: |
+          MCPP_VER="2026.11.24.1"
+          MCPP_SHA256="fb4ef3b15cf99f284d6362d5232b13f633fa1aedbf99858f8592af28541b81ee"
+          MCPP_URL="https://github.com/mcpp-community/mcpp/releases/download/v${MCPP_VER}/mcpp-${MCPP_VER}-linux-x86_64.tar.gz"
+          TMP_TGZ="/tmp/mcpp-${MCPP_VER}.tar.gz"
+          curl -fsSL -o "$TMP_TGZ" "$MCPP_URL"
+          echo "${MCPP_SHA256}  ${TMP_TGZ}" | sha256sum -c -
+          sudo rm -rf /opt/mcpp
+          sudo mkdir -p /opt/mcpp
+          sudo tar -xzf "$TMP_TGZ" --strip-components=1 -C /opt/mcpp
+          rm -f "$TMP_TGZ"
+          sudo tee /usr/local/bin/mcpp >/dev/null <<'EOF'
+          #!/bin/sh
+          set -eu
+          MCPP_OPT="/opt/mcpp"
+          export MCPP_HOME="${MCPP_HOME:-$HOME/.mcpp}"
+          export MCPP_VENDORED_XLINGS="${MCPP_VENDORED_XLINGS:-$MCPP_OPT/registry/bin/xlings}"
+          exec "$MCPP_OPT/bin/mcpp" "$@"
+          EOF
+          sudo chmod 0755 /usr/local/bin/mcpp
+          mcpp --version
+      - name: Cache mcpp toolchain & upstream archives
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.mcpp/registry
+            ~/.mcpp/cache
+            ~/.mcpp/indices
+            ~/.mcpp/musl-xpkgs
+          key: musl-mcpp-v2026.11.24.1-${{ hashFiles('mcpp.lock', 'mcpp/linux-musl-mimalloc/mcpp.lock', '3rdparty/mcpp-pins.json', 'mcpp/linux-musl-mimalloc/mcpp.toml') }}
+          restore-keys: |
+            musl-mcpp-v2026.11.24.1-
+      - name: Build & verify 100% static musl + mimalloc binary
+        run: |
+          mkdir -p dist-musl
+          bash scripts/build-linux-musl-mimalloc.sh \
+            --engine docker \
+            --arch x86_64 \
+            --profile release \
+            --out dist-musl/nexus
+          (cd dist-musl && sha256sum nexus > SHA256SUMS)
+          ls -lh dist-musl/nexus
+          cat dist-musl/SHA256SUMS
+      - name: Upload Linux x86_64 static musl + mimalloc artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nexus-linux-x86_64-musl-mimalloc
+          path: |
+            dist-musl/nexus
+            dist-musl/SHA256SUMS

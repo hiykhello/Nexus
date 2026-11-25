@@ -1,0 +1,84 @@
+# Fully static Linux musl + mimalloc build profile (x86_64-linux-musl / aarch64-linux-musl).
+# Builds with LLVM 23.1.6 against an Alpine musl sysroot (libc++, libunwind, compiler-rt, zlib,
+# optional liburing) and links mimalloc 3.6.1 globally via MI_MALLOC_OVERRIDE=1 + MI_LIBC_MUSL=1
+# with a 2 MiB default musl thread stack (-Wl,-z,stack-size=2097152).
+[package]
+name = "nexus-linux-musl-mimalloc"
+version = "0.1.0"
+standard = "c++26"
+mcpp = ">=2026.11.21.1"
+
+[toolchain]
+default = "llvm@23.1.6"
+
+[target.x86_64-linux-musl]
+sysroot = { path = "/" }
+
+[target.aarch64-linux-musl]
+sysroot = { path = "/" }
+
+[indices]
+nexus = { path = "../../3rdparty/mcpp-index" }
+
+[dependencies]
+mimalloc-dep = { path = "mimalloc-dep" }
+nexus = { path = "../..", default-features = false, features = [
+    # Full Linux epoll + SRS (static libz.a) + Tailscale feature set (50/51 Linux features;
+    # omits only tls-certificate-compression because Alpine brotli-static ships GCC slim-LTO).
+    "http-connect-tls", "quic-sniff",
+    "vless", "trojan", "ss2022", "anytls",
+    "hy2-cli", "tuic", "wireguard-outbound",
+    "tls-resumption", "quic-resumption",
+    "dns-https", "dns-quic-resumption", "dns-fakeip", "dns-response-ss",
+    "http-client-h2", "srs",
+    "dns-https3", "http-client-h3",
+    "xhttp-vless", "grpc-vless", "masque-ip-endpoint",
+    "snell", "shadowtls-proxy", "ssh", "naive",
+    "control-http", "metrics-openmetrics", "ntp",
+    "masque-ip-server", "log-journald", "tun-host-dns", "wireguard-host-dns",
+    "tproxy-udp", "ktls", "memory-budget", "acme", "derp-server", "sni-demux",
+    "ssmapi", "reverse-tunnel", "bridge", "tor", "dns-dhcp", "dns-mdns",
+    "openvpn", "openconnect",
+    "tailscale-outbound",
+] }
+
+[features]
+# Optional static io_uring backend (links static /usr/lib/liburing.a on Alpine).
+io-uring = ["nexus/io-uring"]
+
+[build]
+dialect_cxxflags = ["-fstack-protector-strong"]
+sources = []
+
+[target.'cfg(os = "linux")'.build]
+cxxflags = ["-fmerge-all-constants"]
+ldflags = [
+    "-static",
+    "-Wl,--no-dynamic-linker",
+    "-Wl,-u,mi_malloc",
+    "-Wl,-u,nexus_mimalloc_version_anchor",
+    "-Wl,-z,stack-size=2097152",
+    "-Wl,-z,noexecstack",
+    "-Wl,-z,relro,-z,now",
+    "-Wl,--gc-sections",
+    "-Wl,--icf=safe",
+]
+
+[profile.release]
+opt = "z"
+lto = true
+strip = true
+
+[profile.size]
+opt = "z"
+lto = true
+strip = true
+
+[profile.speed]
+opt = 3
+lto = true
+strip = true
+
+[targets.nexus]
+kind = "bin"
+main = { from = "nexus/nexus-cli" }

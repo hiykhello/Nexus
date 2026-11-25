@@ -289,11 +289,32 @@ def verify_generator_pins() -> None:
             raise ValueError(f"{name}: generator and independent pin disagree")
 
 
+def verify_mimalloc_manifest() -> None:
+    pin = PINS["mimalloc"]
+    descriptor = (ROOT / pin["descriptor"]).read_text(encoding="utf-8")
+    match = re.search(r"defines\s*=\s*\{([^}]*)\}", descriptor)
+    if not match or re.findall(r'"([^"\n]+)"', match.group(1)) != [
+        "MI_MALLOC_OVERRIDE=1", "MI_LIBC_MUSL=1", "_DEFAULT_SOURCE"
+    ]:
+        raise ValueError("mimalloc: expected musl global-override defines")
+    match = re.search(r"cxxflags\s*=\s*\{([^}]*)\}", descriptor)
+    if not match or re.findall(r'"([^"\n]+)"', match.group(1)) != ["-fno-builtin-malloc"]:
+        raise ValueError("mimalloc: expected -fno-builtin-malloc cxxflag")
+    match = re.search(r"sources\s*=\s*\{([^}]*)\}", descriptor)
+    if not match or re.findall(r'"([^"\n]+)"', match.group(1)) != ["mcpp_generated/mimalloc_static.cpp"]:
+        raise ValueError("mimalloc: expected C++ static.c amalgamation wrapper source")
+    if ('licenses = { "MIT" }' not in descriptor
+            or 'language = "c++26"' not in descriptor
+            or '["mcpp_generated/mimalloc_static.cpp"] = "#include \\"static.c\\"\\n"' not in descriptor):
+        raise ValueError("mimalloc: unexpected license, C++ mode or static.c wrapper")
+
+
 def verify_manifests() -> None:
     for name in PINS:
         verify_pin_manifest(name)
     verify_ngtcp2_manifest(ROOT / "src/mcpp.toml", PINS["ngtcp2"])
     verify_argon2_manifest()
+    verify_mimalloc_manifest()
     verify_generator_pins()
 
 
@@ -326,6 +347,9 @@ def main() -> None:
     beman_iv = PINS["beman_inplace_vector"]
     for header in ("beman/inplace_vector/config.hpp", "beman/inplace_vector/inplace_vector.hpp"):
         archive_file(archives["beman_inplace_vector"], f'{beman_iv["source_root"]}/include/{header}')
+    mimalloc = PINS["mimalloc"]
+    for member in ("LICENSE", "include/mimalloc.h", "src/static.c", "src/alloc/alloc-override.c"):
+        archive_file(archives["mimalloc"], f'{mimalloc["source_root"]}/{member}')
     verify_generated_descriptor("corosio", "scripts/mcpp-corosio-sources.py", archives)
     verify_blake3(archives["blake3"])
     verify_argon2(archives["argon2"])

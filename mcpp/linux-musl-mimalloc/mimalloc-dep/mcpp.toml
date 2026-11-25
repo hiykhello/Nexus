@@ -1,0 +1,17 @@
+# Internal wrapper that pulls nexus.mimalloc-source using the canonical unquoted
+# dotted-key syntax without colliding with the parent package's `nexus = { path = ... }` dep.
+[package]
+name = "mimalloc-dep"
+version = "0.1.0"
+standard = "c++26"
+mcpp = ">=2026.11.21.1"
+
+[indices]
+nexus = { path = "../../../3rdparty/mcpp-index" }
+
+[dependencies]
+nexus.mimalloc-source = "=3.6.1"
+
+[build]
+dialect_cxxflags = ["-fstack-protector-strong"]
+sources = ["src/mimalloc_anchor.cpp"]
