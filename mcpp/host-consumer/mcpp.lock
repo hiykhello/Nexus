@@ -25,21 +25,21 @@ hash    = "fnv1a:eed6e522e86b525a"
 variant = "8cdeab330a86c84ffb5c5d91603877a7b17a298fee4d82e64f4d47b03734ff1d"
 patches = ["/home/yk/Code/Nexus/3rdparty/patches/boringssl/mcpp-exact.patch#sha256:d24d02c07946278ed0a81fd601f8596c7db9de1721b58f03fbf4d4cc9330174c"]
 
-[package."nexus.capy-source+p0cc0affe41b6"]
+[package."nexus.capy-source+pe90d5dbe8ca7"]
 namespace = "nexus"
-version = "0.2.8"
-source  = "index+nexus@0.2.8"
-hash    = "fnv1a:ea38e88dc58b65f2"
-variant = "0cc0affe41b6cd2c9f199b4ec64bebcb10d1cce2ba47d4473db309f783d8d7a3"
-patches = ["/home/yk/Code/Nexus/3rdparty/patches/capy/mcpp-exact.patch#sha256:ec43086d7f3b3e35fc9f802312a7b0d31440ead82f7aceec0b9358e1b3cfba8b"]
+version = "0.2.9"
+source  = "index+nexus@0.2.9"
+hash    = "fnv1a:cf9f4b4d7820fc0d"
+variant = "e90d5dbe8ca7ccb86a5cd41e18e8bfee23ff7f404de05816aa2523df3f18921a"
+patches = ["/home/yk/Code/Nexus/3rdparty/patches/capy/mcpp-exact.patch#sha256:c999c21b0931b8f2e78627be5072691dc0cd8b446864276e87b95a2cb3855e94"]
 
-[package."nexus.corosio-source+p1ec8568b7a39"]
+[package."nexus.corosio-source+p1f34810229bd"]
 namespace = "nexus"
-version = "0.3.12"
-source  = "index+nexus@0.3.12"
-hash    = "fnv1a:cae23b22fab80c7a"
-variant = "1ec8568b7a393fba309a5cf1cca043f27d1556726b75660ea5cc4f3197f19278"
-patches = ["/home/yk/Code/Nexus/3rdparty/patches/corosio/mcpp-exact.patch#sha256:b71384c36fadd705202dc82ac5b925e1b9fbae37ef7fe0d48ecc68181f03da94"]
+version = "0.3.13"
+source  = "index+nexus@0.3.13"
+hash    = "fnv1a:bcb6beb80d619003"
+variant = "1f34810229bd05dde82e60ecc0245614a40e95ee418c968714c6499295cca4be"
+patches = ["/home/yk/Code/Nexus/3rdparty/patches/corosio/mcpp-exact.patch#sha256:4a0fa002754df7c8251305ee9fc43f7423dbd2f54a2829ea50b88cd5beb76277"]
 
 [package."nexus.glaze-kdl"]
 namespace = "nexus"

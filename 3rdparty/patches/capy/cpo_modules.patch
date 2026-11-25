@@ -1,6 +1,6 @@
 --- a/include/boost/capy/buffers.hpp
 +++ b/include/boost/capy/buffers.hpp
-@@ -312,7 +312,8 @@
+@@ -316,7 +316,8 @@
  
      @functionobject
  */
@@ -10,7 +10,7 @@
  {
      /** Return a pointer to a single buffer, forming a one-element range.
  
-@@ -351,13 +352,16 @@
+@@ -355,13 +356,16 @@
      {
          return std::ranges::begin(bs);
      }
@@ -29,7 +29,7 @@
  {
      /** Return a pointer one past a single buffer, forming a one-element range.
  
-@@ -396,13 +400,16 @@
+@@ -400,13 +404,16 @@
      {
          return std::ranges::end(bs);
      }
@@ -48,7 +48,7 @@
  {
      // GCC 13 falsely flags reads of arr_[i].n_ in detail::buffer_array
      // when iterating here. The class uses union storage with placement
-@@ -440,13 +447,16 @@
+@@ -444,13 +451,16 @@
  #if defined(__GNUC__) && !defined(__clang__)
  #pragma GCC diagnostic pop
  #endif
@@ -67,7 +67,7 @@
  {
      // See note on buffer_size above — same union-storage false positive.
  #if defined(__GNUC__) && !defined(__clang__)
-@@ -477,7 +487,9 @@
+@@ -481,7 +491,9 @@
  #if defined(__GNUC__) && !defined(__clang__)
  #pragma GCC diagnostic pop
  #endif

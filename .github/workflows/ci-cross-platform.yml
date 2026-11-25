@@ -21,10 +21,10 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep && rg --version
       - name: Verify default epoll lock and corosio patch SHA-256
         run: |
-          EXPECTED_LOCK="d98595bd120b31c66d05df7c1880728158a25cba478826c4b44654ebf793dc9f"
+          EXPECTED_LOCK="5da3ae56d02ac0811654c4123958477182ea78d7652d74d82687c7cc92b18b5b"
           ACTUAL_LOCK="$(sha256sum mcpp/epoll/mcpp.lock | awk '{print $1}')"
           test "$ACTUAL_LOCK" = "$EXPECTED_LOCK"
-          EXPECTED_PATCH="b71384c36fadd705202dc82ac5b925e1b9fbae37ef7fe0d48ecc68181f03da94"
+          EXPECTED_PATCH="4a0fa002754df7c8251305ee9fc43f7423dbd2f54a2829ea50b88cd5beb76277"
           ACTUAL_PATCH="$(sha256sum 3rdparty/patches/corosio/mcpp-exact.patch | awk '{print $1}')"
           test "$ACTUAL_PATCH" = "$EXPECTED_PATCH"
       - name: Line limits & hygiene audit

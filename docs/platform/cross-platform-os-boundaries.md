@@ -17,7 +17,7 @@ Updated: 2026-11-22 (Batch 150 Phase A + `[target.'cfg(...)'.build]` Cross-Platf
 
 | Subsystem | Files | Linux / POSIX Primitives | Android (`aarch64-linux-musl`) | Windows (`x86_64-windows-msvc`) | Apple (`arm64-apple-darwin/ios`) |
 | --- | --- | --- | --- | --- | --- |
-| **Event Loop** | Corosio 0.3.12 | `epoll` / `io_uring` | `epoll` (locked) | IOCP (`corosio/iocp`) | `kqueue` (`corosio/kqueue`) |
+| **Event Loop** | Corosio 0.3.13 | `epoll` / `io_uring` | `epoll` (locked) | IOCP (`corosio/iocp`) | `kqueue` (`corosio/kqueue`) |
 | **Socket Binding & UDP** | `src/platform/{socket_options.cppm,socket_namespace_{linux,darwin,windows}.cpp,udp_batch_{posix,windows}.cppm,udp_batch_{linux,posix,windows}.cpp}` | `SO_BINDTODEVICE`, `SO_MARK`, `TCP_USER_TIMEOUT`, `recvmmsg`/`sendmmsg`, GSO | `protect-socket` (`SCM_RIGHTS`) | `IP_UNICAST_IF` (BE) / `IPV6_UNICAST_IF` (HE) + `SIO_UDP_CONNRESET`, Winsock2 batch | `IP_BOUND_IF` / `IPV6_BOUND_IF` + `SO_NOSIGPIPE`, POSIX batch |
 | **Process Lookup / Splice** | `src/relay/{socket_uid,process_owner,session_splice}_{linux,stub}.cpp` | `SOCK_DIAG`, `/proc`, `splice(2)` | `/proc` + `app_process*` Zygote filter | Clean stub fallback (IP Helper Table + PID `0`/`4`) | Clean stub fallback (`pcblist_n` `408B`/`384B`) |
 | **Logging I/O** | `src/logging/{fd_posix.cppm,fd_windows.cppm,sink_posix.cpp,sink_windows.cpp}` | `writev`, `poll`, `open`, `SIGPIPE` | Native Linux (active) | `WriteFile`, `CreateFileW`, `MoveFileExW` (Phase A wired) | Native POSIX (`writev`/`poll`, `sigwait`) |

@@ -1,8 +1,8 @@
 # 上游问题与待调查现象
 
-## 2026-11-22 上游升级与补丁收口（Capy / Corosio）
+## 2026-11-25 上游升级与补丁收口（Capy / Corosio）
 
-- **上游版本**：Capy 升级至 `6a9569060f999453e1f7b59cc9ae31c808c0778b`（`0.2.8`），Corosio 升级至 `2d246de82c62a62d0da9c1e4c81a1865be7f9321`（`0.3.12`）。
+- **上游版本**：Capy 升级至 `93e5f15ab964a64f80fa2d10e4860ae02319831f`（`0.2.9`），Corosio 升级至 `bc952757610c8b80d82bf862af712f41ca6aca21`（`0.3.13`）。
 - **现保留补丁（共 3 项）**：
   - [cpo_modules.patch](../../3rdparty/patches/capy/cpo_modules.patch)：Capy 缓冲 CPO 具名化以支持 C++ 模块导出。
   - [thread_local_modules.patch](../../3rdparty/patches/corosio/thread_local_modules.patch)：Corosio `thread_local_ptr` 改为类内 `inline static`。

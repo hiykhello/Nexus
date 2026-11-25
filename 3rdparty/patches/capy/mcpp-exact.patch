@@ -1,6 +1,6 @@
---- a/capy-6a9569060f999453e1f7b59cc9ae31c808c0778b/include/boost/capy/buffers.hpp
-+++ b/capy-6a9569060f999453e1f7b59cc9ae31c808c0778b/include/boost/capy/buffers.hpp
-@@ -312,7 +312,8 @@
+--- a/capy-93e5f15ab964a64f80fa2d10e4860ae02319831f/include/boost/capy/buffers.hpp
++++ b/capy-93e5f15ab964a64f80fa2d10e4860ae02319831f/include/boost/capy/buffers.hpp
+@@ -316,7 +316,8 @@
  
      @functionobject
  */
@@ -10,7 +10,7 @@
  {
      /** Return a pointer to a single buffer, forming a one-element range.
  
-@@ -351,13 +352,16 @@
+@@ -355,13 +356,16 @@
      {
          return std::ranges::begin(bs);
      }
@@ -29,7 +29,7 @@
  {
      /** Return a pointer one past a single buffer, forming a one-element range.
  
-@@ -396,13 +400,16 @@
+@@ -400,13 +404,16 @@
      {
          return std::ranges::end(bs);
      }
@@ -48,7 +48,7 @@
  {
      // GCC 13 falsely flags reads of arr_[i].n_ in detail::buffer_array
      // when iterating here. The class uses union storage with placement
-@@ -440,13 +447,16 @@
+@@ -444,13 +451,16 @@
  #if defined(__GNUC__) && !defined(__clang__)
  #pragma GCC diagnostic pop
  #endif
@@ -67,7 +67,7 @@
  {
      // See note on buffer_size above — same union-storage false positive.
  #if defined(__GNUC__) && !defined(__clang__)
-@@ -477,7 +487,9 @@
+@@ -481,7 +491,9 @@
  #if defined(__GNUC__) && !defined(__clang__)
  #pragma GCC diagnostic pop
  #endif
@@ -78,8 +78,8 @@
  
  namespace detail {
  
---- a/capy-6a9569060f999453e1f7b59cc9ae31c808c0778b/include/boost/capy/buffers/buffer_copy.hpp
-+++ b/capy-6a9569060f999453e1f7b59cc9ae31c808c0778b/include/boost/capy/buffers/buffer_copy.hpp
+--- a/capy-93e5f15ab964a64f80fa2d10e4860ae02319831f/include/boost/capy/buffers/buffer_copy.hpp
++++ b/capy-93e5f15ab964a64f80fa2d10e4860ae02319831f/include/boost/capy/buffers/buffer_copy.hpp
 @@ -22,7 +22,8 @@
  
      @functionobject
@@ -101,8 +101,8 @@
  
  } // capy
  } // boost
---- a/capy-6a9569060f999453e1f7b59cc9ae31c808c0778b/include/boost/capy/buffers/buffers_front.hpp
-+++ b/capy-6a9569060f999453e1f7b59cc9ae31c808c0778b/include/boost/capy/buffers/buffers_front.hpp
+--- a/capy-93e5f15ab964a64f80fa2d10e4860ae02319831f/include/boost/capy/buffers/buffers_front.hpp
++++ b/capy-93e5f15ab964a64f80fa2d10e4860ae02319831f/include/boost/capy/buffers/buffers_front.hpp
 @@ -29,7 +29,8 @@
  
      @functionobject

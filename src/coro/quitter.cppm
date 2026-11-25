@@ -116,6 +116,7 @@ export namespace coro {
                     }
                 }
             };
+            using boost::capy::context_awaitable_promise_base<promise_type>::transform_awaitable;
             template<class A> requires boost::capy::ContextAwaitable<std::decay_t<A>>
             auto transform_awaitable(this promise_type& self,A&& operation) {
                 return awaiter<std::decay_t<A>>{std::forward<A>(operation),&self};

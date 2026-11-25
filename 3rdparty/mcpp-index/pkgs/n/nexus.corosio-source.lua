@@ -2,7 +2,7 @@
 package = {
   spec = "1", namespace = "nexus", name = "corosio-source", licenses = { "BSL-1.0" },
   description = "Pinned upstream source for Nexus", repo = "https://github.com/cppalliance/corosio", type = "package",
-  xpm = { linux = { ["0.3.12"] = { url = "https://github.com/cppalliance/corosio/archive/2d246de82c62a62d0da9c1e4c81a1865be7f9321.tar.gz", sha256 = "84dc5a40d7bb9ced5bd9533652fe233cf6d4b574fe66d2333f58b2f6d4002336" } } },
+  xpm = { linux = { ["0.3.13"] = { url = "https://github.com/cppalliance/corosio/archive/bc952757610c8b80d82bf862af712f41ca6aca21.tar.gz", sha256 = "9a3f3fe366ea5eadf14cee72bb18a6951f5d18c3b074f5d2a3ad0fd211ba2c8a" } } },
   mcpp = { language = "c++23", import_std = false,
     include_dirs = { "*/include", "*/src/corosio" },
     private_include_dirs = { "*/src/corosio" },

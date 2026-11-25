@@ -1,29 +1,29 @@
 {
   "capy": {
-    "version": "0.2.8",
-    "revision": "6a9569060f999453e1f7b59cc9ae31c808c0778b",
-    "archive": "6a9569060f999453e1f7b59cc9ae31c808c0778b.tar.gz",
-    "sha256": "e08c47c3c91c1a6f5f37d3af450695a8e4fd8e573b1b53276e07643171db6f35",
-    "url": "https://github.com/cppalliance/capy/archive/6a9569060f999453e1f7b59cc9ae31c808c0778b.tar.gz",
+    "version": "0.2.9",
+    "revision": "93e5f15ab964a64f80fa2d10e4860ae02319831f",
+    "archive": "93e5f15ab964a64f80fa2d10e4860ae02319831f.tar.gz",
+    "sha256": "2f22efe35fb222e01c790c595d4f617c17408af681f94a006b7960fba14fb48a",
+    "url": "https://github.com/cppalliance/capy/archive/93e5f15ab964a64f80fa2d10e4860ae02319831f.tar.gz",
     "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.capy-source.lua",
     "patches": [
       {
         "path": "3rdparty/patches/capy/cpo_modules.patch",
-        "sha256": "3eecc81aa0a3834f1ab5b838f555e506e51fa8f7402f8ac2a73ef4d03c39f3cc"
+        "sha256": "20b6ea33549bf0a25f27812772389f097fd43f1453829e2ffd4916da646d2639"
       }
     ],
-    "source_root": "capy-6a9569060f999453e1f7b59cc9ae31c808c0778b",
+    "source_root": "capy-93e5f15ab964a64f80fa2d10e4860ae02319831f",
     "mcpp_patch": {
       "path": "3rdparty/patches/capy/mcpp-exact.patch",
-      "sha256": "ec43086d7f3b3e35fc9f802312a7b0d31440ead82f7aceec0b9358e1b3cfba8b"
+      "sha256": "c999c21b0931b8f2e78627be5072691dc0cd8b446864276e87b95a2cb3855e94"
     }
   },
   "corosio": {
-    "version": "0.3.12",
-    "revision": "2d246de82c62a62d0da9c1e4c81a1865be7f9321",
-    "archive": "2d246de82c62a62d0da9c1e4c81a1865be7f9321.tar.gz",
-    "sha256": "84dc5a40d7bb9ced5bd9533652fe233cf6d4b574fe66d2333f58b2f6d4002336",
-    "url": "https://github.com/cppalliance/corosio/archive/2d246de82c62a62d0da9c1e4c81a1865be7f9321.tar.gz",
+    "version": "0.3.13",
+    "revision": "bc952757610c8b80d82bf862af712f41ca6aca21",
+    "archive": "bc952757610c8b80d82bf862af712f41ca6aca21.tar.gz",
+    "sha256": "9a3f3fe366ea5eadf14cee72bb18a6951f5d18c3b074f5d2a3ad0fd211ba2c8a",
+    "url": "https://github.com/cppalliance/corosio/archive/bc952757610c8b80d82bf862af712f41ca6aca21.tar.gz",
     "descriptor": "3rdparty/mcpp-index/pkgs/n/nexus.corosio-source.lua",
     "patches": [
       {
@@ -35,10 +35,10 @@
         "sha256": "5e3f1a7a86169a45273759cde0ec8b48d22aef53b167a5ace0d6a19937b8901d"
       }
     ],
-    "source_root": "corosio-2d246de82c62a62d0da9c1e4c81a1865be7f9321",
+    "source_root": "corosio-bc952757610c8b80d82bf862af712f41ca6aca21",
     "mcpp_patch": {
       "path": "3rdparty/patches/corosio/mcpp-exact.patch",
-      "sha256": "b71384c36fadd705202dc82ac5b925e1b9fbae37ef7fe0d48ecc68181f03da94"
+      "sha256": "4a0fa002754df7c8251305ee9fc43f7423dbd2f54a2829ea50b88cd5beb76277"
     }
   },
   "proxy": {

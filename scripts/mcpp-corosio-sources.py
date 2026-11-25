@@ -10,9 +10,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DESCRIPTOR = ROOT / "3rdparty/mcpp-index/pkgs/n/nexus.corosio-source.lua"
-VERSION = "0.3.12"
-REVISION = "2d246de82c62a62d0da9c1e4c81a1865be7f9321"
-SHA256 = "84dc5a40d7bb9ced5bd9533652fe233cf6d4b574fe66d2333f58b2f6d4002336"
+VERSION = "0.3.13"
+REVISION = "bc952757610c8b80d82bf862af712f41ca6aca21"
+SHA256 = "9a3f3fe366ea5eadf14cee72bb18a6951f5d18c3b074f5d2a3ad0fd211ba2c8a"
 SOURCE_ROOT = f"corosio-{REVISION}"
 HEADERS = (
     "boost/corosio/detail/thread_local_ptr.hpp",

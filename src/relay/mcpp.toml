@@ -14,8 +14,8 @@ utility = { path = "../utility" }
 encoding = { path = "../encoding" }
 platform = { path = "../platform", features = ["network-state"] }
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = { version = "=0.2.8", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { version = "=0.3.12", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+nexus.capy-source = { version = "=0.2.9", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { version = "=0.3.13", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["dns-shared", "request-standard"]

@@ -1,5 +1,5 @@
---- a/corosio-2d246de82c62a62d0da9c1e4c81a1865be7f9321/include/boost/corosio/detail/thread_local_ptr.hpp
-+++ b/corosio-2d246de82c62a62d0da9c1e4c81a1865be7f9321/include/boost/corosio/detail/thread_local_ptr.hpp
+--- a/corosio-bc952757610c8b80d82bf862af712f41ca6aca21/include/boost/corosio/detail/thread_local_ptr.hpp
++++ b/corosio-bc952757610c8b80d82bf862af712f41ca6aca21/include/boost/corosio/detail/thread_local_ptr.hpp
 @@ -1,198 +1,194 @@
 -//
 -// Copyright (c) 2025 Vinnie Falco (vinnie.falco@gmail.com)
@@ -393,8 +393,8 @@
 +} // namespace boost::corosio::detail
 +
 +#endif
---- a/corosio-2d246de82c62a62d0da9c1e4c81a1865be7f9321/include/boost/corosio/native/detail/uring/uring_types.hpp
-+++ b/corosio-2d246de82c62a62d0da9c1e4c81a1865be7f9321/include/boost/corosio/native/detail/uring/uring_types.hpp
+--- a/corosio-bc952757610c8b80d82bf862af712f41ca6aca21/include/boost/corosio/native/detail/uring/uring_types.hpp
++++ b/corosio-bc952757610c8b80d82bf862af712f41ca6aca21/include/boost/corosio/native/detail/uring/uring_types.hpp
 @@ -2215,11 +2215,11 @@
          iovec iovecs[uring_max_iov];
          int iovec_count = copy_to_iovec(buffers, iovecs);

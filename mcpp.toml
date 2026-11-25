@@ -14,8 +14,8 @@ dialect_cxxflags = ["-fstack-protector-strong"]
 [workspace.dependencies]
 nexus.glaze-kdl = "=0.1.1"
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = "=0.2.8"
-nexus.corosio-source = "=0.3.12"
+nexus.capy-source = "=0.2.9"
+nexus.corosio-source = "=0.3.13"
 nexus.boringssl-crypto-source = "=0.1.2"
 nexus.blake3-source = "=1.8.7"
 nexus.argon2-source = "=20190702-nexus.2"
@@ -50,8 +50,8 @@ encoding = { path = "src/encoding" }
 platform = { path = "src/platform", features = ["network-state"] }
 nexus.glaze-kdl = "=0.1.1"
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = { version = "=0.2.8", patches = ["3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { version = "=0.3.12", patches = ["3rdparty/patches/corosio/mcpp-exact.patch"] }
+nexus.capy-source = { version = "=0.2.9", patches = ["3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { version = "=0.3.13", patches = ["3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring"]

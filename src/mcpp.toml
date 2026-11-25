@@ -12,8 +12,8 @@ utility = { path = "utility" }
 encoding = { path = "encoding" }
 platform = { path = "platform" }
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = { version = "=0.2.8", patches = ["../3rdparty/patches/capy/mcpp-exact.patch"], embed = true }
-nexus.corosio-source = { version = "=0.3.12", patches = ["../3rdparty/patches/corosio/mcpp-exact.patch"], embed = true }
+nexus.capy-source = { version = "=0.2.9", patches = ["../3rdparty/patches/capy/mcpp-exact.patch"], embed = true }
+nexus.corosio-source = { version = "=0.3.13", patches = ["../3rdparty/patches/corosio/mcpp-exact.patch"], embed = true }
 
 [features]
 ring-queue = ["containers/ring-queue"]

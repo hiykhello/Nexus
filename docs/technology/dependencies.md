@@ -29,7 +29,7 @@
 
 接入时需一并核对 Corosio 与 Capy 的匹配版本、协程类型、执行器、取消与 I/O 对象的生命周期。项目依赖由 mcpp 描述符固定；升级时仍须重新验证。
 
-Capy（`0.2.8`）与 Corosio（`0.3.12`）已锁定至本地离线验证归档，支持 Linux `epoll` 与 `io_uring` 后端。
+Capy（`0.2.9`）与 Corosio（`0.3.13`）已锁定至本地离线验证归档，支持 Linux `epoll` 与 `io_uring` 后端。
 
 ## HTTP/1.1、HTTPS 与可选 HTTP/2
 

@@ -35,7 +35,7 @@ case "$OPT_PROFILE" in
 esac
 
 LOCK_FILE="$ROOT/mcpp/epoll/mcpp.lock"
-EXPECTED_LOCK_SHA="d98595bd120b31c66d05df7c1880728158a25cba478826c4b44654ebf793dc9f"
+EXPECTED_LOCK_SHA="5da3ae56d02ac0811654c4123958477182ea78d7652d74d82687c7cc92b18b5b"
 ACTUAL_LOCK_SHA="$(sha256sum "$LOCK_FILE" | awk '{print $1}')"
 if [ "$ACTUAL_LOCK_SHA" != "$EXPECTED_LOCK_SHA" ]; then
     echo "error: lockfile digest mismatch before offline release: $ACTUAL_LOCK_SHA" >&2

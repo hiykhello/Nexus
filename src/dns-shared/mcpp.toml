@@ -8,8 +8,8 @@ version = "0.1.0"
 dns = { path = "../dns" }
 functional = { path = "../functional" }
 protocols = { path = ".." }
-nexus.capy-source = { version = "=0.2.8", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { version = "=0.3.12", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+nexus.capy-source = { version = "=0.2.9", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
+nexus.corosio-source = { version = "=0.3.13", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 io-uring = ["nexus.corosio-source/uring"]
