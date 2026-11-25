@@ -209,7 +209,7 @@ class ProfileRepository(private val rootDir: File) {
             return decoded.lines().map { it.trim() }.filter { it.contains("://") }
         }
 
-        internal fun readBoundedBytes(input: InputStream, maxBytes: Int): ByteArray {
+        fun readBoundedBytes(input: InputStream, maxBytes: Int): ByteArray {
             val out = ByteArrayOutputStream()
             val buf = ByteArray(8192)
             var total = 0

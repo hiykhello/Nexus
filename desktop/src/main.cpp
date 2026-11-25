@@ -20,6 +20,7 @@
 import std;
 import desktop.async_worker;
 import desktop.core_supervisor;
+import desktop.desktop_host_config;
 import desktop.http_control;
 import desktop.ipc_client;
 import desktop.kdl_ops;
@@ -27,16 +28,21 @@ import desktop.profile_store;
 import desktop.share_link;
 import desktop.single_instance;
 import desktop.system_proxy;
+import desktop.telemetry_store;
 import desktop.tray_controller;
 import desktop.tun_privilege;
 import desktop.ui_actions;
 import desktop.ui_prefs;
 import desktop.window_blur;
+import desktop.workspace_composer;
+import desktop.workspace_models;
+import desktop.workspace_store;
 
 #include "main_helpers.hpp"
 #include "ui_redesign_helpers.hpp"
 #include "ui_binding_helpers.hpp"
 #include "tun_elevation_flow.hpp"
+#include "workspace_ui_flow.hpp"
 #include "main_callbacks.hpp"
 
 using desktop_ui_helpers::default_config_dir;
@@ -136,18 +142,6 @@ auto main(int argc, char** argv) -> int {
             weak_ui, worker, http_ctrl, cached_groups, pinned_members, member_models, rate_tracker, metrics_in_flight, is_en_ui(*ui), refresh_groups_too, sync_tray);
     };
 
-    ui->on_toggle_core([&] {
-        if (lifecycle_busy.exchange(true, std::memory_order_acq_rel)) return;
-        bool en = is_en_ui(*ui);
-        bool prefer_persistent = ui->get_tun_elevate_persistent();
-        std::string draft_kdl(ui->get_kdl_text());
-        ui->set_core_toggling(true);
-        ui->set_status_summary(slint::SharedString(tr(en, "正在切换连接状态...", "Switching connection...")));
-        desktop_ui_helpers::toggle_core_async(
-            weak_ui, worker, supervisor, sys_proxy, ipc, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
-            core_started_at, metrics_in_flight, lifecycle_busy, cfg_dir, config_path, fallback_sock, std::move(draft_kdl), prefer_persistent, en);
-    });
-
     ui->on_toggle_system_proxy([&](bool on) {
         auto endpoint = on ? desktop::select_system_proxy_endpoint(desktop_ui_helpers::read_inbounds_from_ui(*ui))
                            : std::nullopt;
@@ -225,6 +219,19 @@ auto main(int argc, char** argv) -> int {
         cfg_dir, config_path, prefs_path, fallback_sock, lifecycle_busy, sync_tray
     };
     desktop_ui_helpers::bind_tun_callbacks(tun_ctx);
+    desktop_ui_helpers::WorkspaceUiContext ws_ctx{
+        *ui, weak_ui, worker, supervisor, ipc, http_ctrl, rate_tracker, core_started_at, lifecycle_busy,
+        cfg_dir, config_path, fallback_sock, sync_tray, {}, {}, {}, {}, {}, {}, {}, "proxy", {}, {}
+    };
+    desktop_ui_helpers::bind_workspace_callbacks(ws_ctx);
+
+    ui->on_toggle_core([&] {
+        desktop_ui_helpers::toggle_core_with_workspace(ws_ctx, [&](std::string kdl, bool prefer_persistent, bool en) {
+            desktop_ui_helpers::toggle_core_async(
+                weak_ui, worker, supervisor, sys_proxy, ipc, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
+                core_started_at, metrics_in_flight, lifecycle_busy, cfg_dir, config_path, fallback_sock, std::move(kdl), prefer_persistent, en);
+        });
+    });
 
     ui->on_reload_config([&] {
         bool en = is_en_ui(*ui);
@@ -353,31 +360,7 @@ auto main(int argc, char** argv) -> int {
     });
 
     ui->on_import_share_link([&](slint::SharedString raw_uri) {
-        bool en = is_en_ui(*ui);
-        auto parsed = desktop::parse_share_link(std::string_view(raw_uri));
-        if (!parsed) {
-            auto msg = tr(en, "分享链接解析失败: ", "Share URI error: ") + parsed.error();
-            ui->set_diagnostic_ok(false);
-            ui->set_diagnostic_message(slint::SharedString(msg));
-            desktop_ui_helpers::push_toast(*ui, msg, "error");
-            return;
-        }
-        std::string secret_path;
-        if (!parsed->secret.empty()) {
-            auto saved_secret = profile_store.write_secret(parsed->tag, parsed->secret);
-            if (!saved_secret) {
-                auto msg = tr(en, "写入私密凭据文件失败", "Failed to write secret file");
-                ui->set_diagnostic_ok(false);
-                ui->set_diagnostic_message(slint::SharedString(msg));
-                desktop_ui_helpers::push_toast(*ui, msg, "error");
-                return;
-            }
-            secret_path = saved_secret->string();
-        }
-        auto block = desktop::render_kdl_outbound(*parsed, secret_path);
-        auto merged_kdl = desktop::merge_raw_kdl_snippet(std::string_view(ui->get_kdl_text()), block);
-        ui->set_share_link_input(slint::SharedString(""));
-        ui->invoke_save_and_reload(slint::SharedString(std::move(merged_kdl)));
+        desktop_ui_helpers::import_share_uri_to_workspace(ws_ctx, std::string_view(raw_uri));
     });
 
     desktop_ui_helpers::DesktopCallbacksContext cb_ctx{
@@ -395,6 +378,10 @@ auto main(int argc, char** argv) -> int {
         }
     } shutdown_guard{quit_once, tray, worker};
     desktop_ui_helpers::bind_secondary_callbacks(cb_ctx);
+    ui->on_refresh_profiles([&] {
+        desktop_ui_helpers::sync_profiles_to_ui(*ui, profile_store);
+        desktop_ui_helpers::refresh_workspace_from_disk(ws_ctx);
+    });
     ui->on_quit_requested([&] { if (!quit_once.exchange(true, std::memory_order_acq_rel)) slint::quit_event_loop(); });
     ui->window().on_close_requested([&] {
         if (ui->get_close_to_tray() && tray.native_backend_active() && !quit_once.load(std::memory_order_acquire)) {
@@ -445,6 +432,7 @@ auto main(int argc, char** argv) -> int {
         } else if (core_started_at || ui->get_core_running()) {
             bool en = is_en_ui(*ui);
             core_started_at.reset();
+            ws_ctx.running_selector_members.clear();
             rate_tracker.reset();
             ui->set_core_running(false);
             ui->set_system_proxy_enabled(false);

@@ -14,12 +14,13 @@ auto nexus_rule_fetch(int argc, char** argv) -> int;
 auto nexus_state(int argc, char** argv) -> int;
 auto nexus_rule_watch(int argc, char** argv) -> int;
 auto nexus_convert_config(int argc, char** argv) -> int;
+auto nexus_workspace(int argc, char** argv) -> int;
 auto nexus_provider(int argc, char** argv) -> int;
 auto nexus_system_proxy(int argc, char** argv) -> int;
 auto nexus_service(int argc, char** argv) -> int;
 
 namespace {
-    enum class Command { run, check, rule, endpoint, control, state, generate, tools, convert_config, provider, system_proxy, service };
+    enum class Command { run, check, rule, endpoint, control, state, generate, tools, convert_config, workspace, provider, system_proxy, service };
     enum class RuleCommand { convert, merge, explain, fetch, watch };
 
     template<class T>
@@ -43,6 +44,7 @@ namespace {
             {"generate", Command::generate},
             {"tools", Command::tools},
             {"convert-config", Command::convert_config},
+            {"workspace", Command::workspace},
             {"provider", Command::provider},
             {"system-proxy", Command::system_proxy},
             {"service", Command::service},
@@ -132,6 +134,7 @@ int main(int argc, char** argv) {
     case Command::generate: return cli::nexus_generate(argc-1,argv+1);
     case Command::tools: return cli::nexus_tools(argc-1,argv+1);
     case Command::convert_config: return nexus_convert_config(argc-1,argv+1);
+    case Command::workspace: return nexus_workspace(argc-1,argv+1);
     case Command::provider: return nexus_provider(argc-1,argv+1);
     case Command::system_proxy: return nexus_system_proxy(argc-1,argv+1);
     case Command::service: return nexus_service(argc-1,argv+1);

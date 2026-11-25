@@ -17,14 +17,17 @@ option(NEXUS_SLINT_FETCH "Fetch Slint v1.19.0 from source if no prebuilt Slint C
 set(NEXUS_BRIDGE_IMPLS
     src/async_worker.cpp
     src/core_supervisor.cpp
+    src/desktop_host_config.cpp
     src/firewall_helper.cpp
     src/http_control.cpp
     src/kdl_ops.cpp
+    src/mini_json.cpp
     src/profile_store.cpp
     src/service_installer.cpp
     src/share_link.cpp
     src/single_instance.cpp
     src/system_proxy.cpp
+    src/telemetry_store.cpp
     src/tray_controller.cpp
     src/tray_linux_sni.cpp
     src/tray_win32.cpp
@@ -33,6 +36,8 @@ set(NEXUS_BRIDGE_IMPLS
     src/ui_actions.cpp
     src/ui_prefs.cpp
     src/window_blur.cpp
+    src/workspace_composer.cpp
+    src/workspace_store.cpp
 )
 if(WIN32)
     list(APPEND NEXUS_BRIDGE_IMPLS src/ipc_client_win.cpp)
@@ -46,21 +51,27 @@ target_sources(nexus-desktop-bridge
         FILE_SET CXX_MODULES FILES
             src/async_worker.cppm
             src/core_supervisor.cppm
+            src/desktop_host_config.cppm
             src/firewall_helper.cppm
             src/http_control.cppm
             src/ipc_client.cppm
             src/kdl_ops.cppm
+            src/mini_json.cppm
             src/profile_store.cppm
             src/service_installer.cppm
             src/share_link.cppm
             src/single_instance.cppm
             src/system_proxy.cppm
+            src/telemetry_store.cppm
             src/tray_controller.cppm
             src/tun_helper_protocol.cppm
             src/tun_privilege.cppm
             src/ui_actions.cppm
             src/ui_prefs.cppm
             src/window_blur.cppm
+            src/workspace_composer.cppm
+            src/workspace_models.cppm
+            src/workspace_store.cppm
 )
 if(MSVC)
     target_compile_features(nexus-desktop-bridge PUBLIC cxx_std_23)
@@ -166,4 +177,13 @@ if(NEXUS_DESKTOP_BUILD_TESTS)
     endif()
     target_link_libraries(nexus-desktop-tun-privilege-tests PRIVATE nexus-desktop-bridge)
     add_test(NAME nexus-desktop-tun-privilege-tests COMMAND nexus-desktop-tun-privilege-tests)
+
+    add_executable(nexus-desktop-workspace-tests tests/workspace_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-workspace-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-workspace-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-workspace-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-workspace-tests COMMAND nexus-desktop-workspace-tests)
 endif()

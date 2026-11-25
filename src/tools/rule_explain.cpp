@@ -348,16 +348,31 @@ auto nexus_rule_explain(int argc,char** argv) -> int {
 }
 
 auto nexus_check(int argc,char** argv) -> int {
-    constexpr std::string_view check_usage="usage: nexus check [--config|-c <config.kdl> | --config-dir|-C <dir>]\n";
+    constexpr std::string_view check_usage="usage: nexus check [--config|-c <config.kdl> | --config-dir|-C <dir>] [--host-override <file>] [--print-merged]\n";
     if (argc==2 && std::string_view(argv[1])=="--help") { std::cout << check_usage; return 0; }
-    char const* path=nullptr;
-    bool is_dir=false;
-    if (argc==2) path=argv[1];
-    else if (argc==3 && (std::string_view(argv[1])=="--config" || std::string_view(argv[1])=="-c")) path=argv[2];
-    else if (argc==3 && (std::string_view(argv[1])=="--config-dir" || std::string_view(argv[1])=="-C")) { path=argv[2]; is_dir=true; }
-    else { std::cerr << check_usage; return 2; }
+    std::string path, host_override;
+    bool is_dir=false, print_merged=false, has_host_override=false;
+    for (int i=1; i<argc; ++i) {
+        std::string_view arg(argv[i]);
+        if (arg=="--print-merged") { print_merged=true; continue; }
+        if (arg=="--config" || arg=="-c" || arg=="--config-dir" || arg=="-C") {
+            if (!path.empty() || i+1>=argc || std::string_view(argv[i+1]).empty()) { std::cerr << check_usage; return 2; }
+            is_dir=(arg=="--config-dir" || arg=="-C");
+            path=argv[++i];
+            continue;
+        }
+        if (arg=="--host-override") {
+            if (has_host_override || i+1>=argc || std::string_view(argv[i+1]).empty()) { std::cerr << check_usage; return 2; }
+            has_host_override=true;
+            host_override=argv[++i];
+            continue;
+        }
+        if (arg.starts_with('-') || !path.empty()) { std::cerr << check_usage; return 2; }
+        path=std::string(arg);
+    }
+    if (path.empty()) { std::cerr << check_usage; return 2; }
     auto fail=[](std::string_view err) { std::cerr << "check: " << err << '\n'; return 1; };
-    auto data=cli::read_config_source(path,is_dir);
+    auto data=cli::read_config_source(path,is_dir,host_override);
     if (!data) return fail(data.error());
     cli::ProxyProviderManager providers;
     auto expanded=providers.prepare_initial(*data,path,true);
@@ -374,6 +389,11 @@ auto nexus_check(int argc,char** argv) -> int {
         if (in.type==config::Inbound::masque || (in.type==config::Inbound::tun && in.tun && in.tun->connect_ip_outbound)) continue;
         if (auto snap=routes.compile(*cfg,in.name); !snap) return fail(snap.error());
     }
-    std::cout << "configuration valid\n";
+    if (print_merged) {
+        std::cout << *expanded;
+        if (!expanded->empty() && expanded->back()!='\n') std::cout << '\n';
+    } else {
+        std::cout << "configuration valid\n";
+    }
     return 0;
 }

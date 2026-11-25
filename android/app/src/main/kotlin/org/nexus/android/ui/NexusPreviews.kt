@@ -20,6 +20,14 @@ import org.nexus.android.bridge.ipc.MetricsSummary
 import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
 import org.nexus.android.bridge.vpn.VpnTunnelState
+import org.nexus.android.bridge.workspace.NodeConfig
+import org.nexus.android.bridge.workspace.PolicyGroupConfig
+import org.nexus.android.bridge.workspace.ProfileItem
+import org.nexus.android.bridge.workspace.ProfileKind
+import org.nexus.android.bridge.workspace.ProxyChainConfig
+import org.nexus.android.bridge.workspace.SubscriptionItem
+import org.nexus.android.bridge.workspace.SubscriptionUsage
+import org.nexus.android.bridge.workspace.WorkspaceDocument
 import org.nexus.android.ui.theme.NexusTheme
 
 private const val SAMPLE_KDL = """schema-version 1
@@ -318,6 +326,33 @@ private fun ConnectionsExpandedPreview() {
     }
 }
 
+private val SAMPLE_WORKSPACE = WorkspaceUiState(
+    document = WorkspaceDocument(
+        profiles = listOf(
+            ProfileItem(id = "hk-01", remarks = "HK-01 香港高速", kind = ProfileKind.NODE, node = NodeConfig(protocol = "vless", server = "hk.example.com", port = 443)),
+            ProfileItem(id = "auto-grp", remarks = "Auto 测速策略组", kind = ProfileKind.POLICY_GROUP, policyGroup = PolicyGroupConfig(strategy = "url-test", memberIds = listOf("hk-01"))),
+            ProfileItem(id = "chain-01", remarks = "双跳中继链", kind = ProfileKind.PROXY_CHAIN, proxyChain = ProxyChainConfig(hopIds = listOf("hk-01"))),
+            ProfileItem(id = "legacy-corp", remarks = "Corp-Split", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = SAMPLE_KDL),
+        ),
+        subscriptions = listOf(
+            SubscriptionItem(
+                id = "main-sub",
+                remarks = "Tokyo-Core",
+                url = "https://sub.example.com/nexus",
+                usage = SubscriptionUsage(
+                    uploadBytes = 12L * 1024 * 1024 * 1024,
+                    downloadBytes = 68L * 1024 * 1024 * 1024,
+                    totalBytes = 200L * 1024 * 1024 * 1024,
+                    expireUnixSec = 1_800_000_000L,
+                    profileTitle = "Tokyo-Core 专线",
+                ),
+            ),
+        ),
+    ),
+    activeProfileId = "hk-01",
+    outboundMode = "rule",
+)
+
 @Preview(name = "Config Phone Dark", showBackground = true, widthDp = 412, heightDp = 915, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
 private fun ConfigPhoneDarkPreview() {
@@ -327,7 +362,7 @@ private fun ConfigPhoneDarkPreview() {
             hasRemoteOutbound = true,
             profiles = SAMPLE_PROFILES,
             onApplyConfig = { true to "已校验保存并热重载" },
-            diagnostic = "配置已校验并生效",
+            diagnostic = "工作区已校验并生效",
             onDiagnosticChange = {},
             onImportShareLink = { _, cur -> cur to "" },
             onImportSubscription = { _, _ -> "" to "" },
@@ -338,6 +373,7 @@ private fun ConfigPhoneDarkPreview() {
             contentPadding = PaddingValues(16.dp),
             excludedCount = 2,
             onOpenSplitTunnel = {},
+            workspaceState = SAMPLE_WORKSPACE,
         )
     }
 }
@@ -362,6 +398,7 @@ private fun ConfigExpandedPreview() {
             contentPadding = PaddingValues(16.dp),
             excludedCount = 2,
             onOpenSplitTunnel = {},
+            workspaceState = SAMPLE_WORKSPACE,
         )
     }
 }

@@ -17,6 +17,8 @@ export namespace provider {
                                          std::string_view fallback_ca) -> std::expected<std::string, std::string>;
     [[nodiscard]] auto convert_config_to_kdl(std::string_view input, ConvertOptions const& opts)
         -> std::expected<std::pair<std::string, std::vector<std::string>>, std::string>;
+    [[nodiscard]] auto convert_config_to_nodes_json(std::string_view input, ConvertOptions const& opts)
+        -> std::expected<std::pair<std::string, std::vector<std::string>>, std::string>;
     [[nodiscard]] auto expand_providers_in_kdl(
         std::string_view raw_kdl,
         std::map<std::string, std::vector<std::pair<std::string, std::string>>> const& provider_outbounds_kdl)

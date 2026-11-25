@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.IpPrefix
+import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -27,6 +28,12 @@ import org.nexus.android.bridge.model.RuntimeSocketPaths
 import org.nexus.android.bridge.net.CidrRouteCalculator
 import org.nexus.android.bridge.net.DefaultNetworkMonitor
 import org.nexus.android.bridge.profile.ProfileRepository
+import org.nexus.android.bridge.workspace.AndroidHostConfig
+import org.nexus.android.bridge.workspace.AndroidHostConfigStore
+import org.nexus.android.bridge.workspace.AndroidHostSection
+import org.nexus.android.bridge.workspace.AndroidRunMode
+import org.nexus.android.bridge.workspace.TelemetryStore
+import org.nexus.android.bridge.workspace.WorkspaceStore
 import java.io.File
 import java.net.InetAddress
 import java.security.SecureRandom
@@ -50,13 +57,24 @@ enum class VpnTunnelState {
     ERROR,
 }
 
+private data class LaunchRequest(
+    val configTarget: File,
+    val isConfigDir: Boolean,
+    val hostOverrideFile: File?,
+    val fakeIpv6Pool: String,
+    val legacyExcludedOverride: List<String>?,
+)
+
 /**
- * Non-root Android VpnService coordinating the TUN descriptor, ProtectSocketServer,
- * AndroidDnsBridge, physical network observer, and isolated native libnexus.so child process.
+ * Non-root Android VpnService coordinating the TUN descriptor (with Self-Inside-VPN Protect-FD
+ * default & OFF/EXCLUDE/INCLUDE per-app split tunneling), Proxy-Only mode, Doze/Screen-Off power
+ * saving, crash-sentinel tracking, and isolated native libnexus.so sidecar lifecycle.
  */
 class NexusVpnService : VpnService() {
     private lateinit var supervisor: CoreProcessSupervisor
     private lateinit var paths: RuntimeSocketPaths
+    private lateinit var hostStore: AndroidHostConfigStore
+    private lateinit var telemetryStore: TelemetryStore
     private lateinit var lifecycleExecutor: ExecutorService
     private var tunInterface: ParcelFileDescriptor? = null
     private var protectServer: ProtectSocketServer? = null
@@ -71,6 +89,8 @@ class NexusVpnService : VpnService() {
         super.onCreate()
         supervisor = CoreProcessSupervisor(this)
         paths = RuntimeSocketPaths(noBackupFilesDir)
+        hostStore = AndroidHostConfigStore(File(filesDir, "host.json"))
+        telemetryStore = TelemetryStore(paths.telemetryFile)
         lifecycleExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "nexus-vpn-lifecycle").apply { isDaemon = true }
         }
@@ -79,22 +99,11 @@ class NexusVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                promoteForeground()
-                val cfgPath = intent.getStringExtra(EXTRA_CONFIG_PATH)
-                    ?: File(filesDir, "config.kdl").absolutePath
-                val cfgFile = File(cfgPath)
-                if (!cfgFile.isFile) {
-                    appendLog("[error] vpn: missing config file ${cfgFile.name}")
-                    _lastError.value = "未找到配置文件 ${cfgFile.name}"
-                    _tunnelState.value = VpnTunnelState.ERROR
-                    requestTileSync()
-                    runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
-                val excluded = intent.getStringArrayListExtra(EXTRA_EXCLUDED_PACKAGES)
-                    ?: loadPersistedExcludedPackages()
-                submitLifecycle { startTunnelLocked(cfgFile, excluded) }
+                val req = resolveLaunchRequest(intent)
+                if (!validateLaunchTarget(req)) return START_NOT_STICKY
+                val host = loadEffectiveHost(req.legacyExcludedOverride)
+                promoteForeground(host.android.runMode)
+                submitLifecycle { startTunnelLocked(req, host) }
                 return START_STICKY
             }
             ACTION_STOP -> {
@@ -102,37 +111,25 @@ class NexusVpnService : VpnService() {
                 return START_NOT_STICKY
             }
             ACTION_RESTART -> {
-                promoteForeground()
-                val cfgPath = intent.getStringExtra(EXTRA_CONFIG_PATH)
-                    ?: File(filesDir, "config.kdl").absolutePath
-                val cfgFile = File(cfgPath)
-                if (!cfgFile.isFile) {
-                    appendLog("[error] vpn: missing config file ${cfgFile.name}")
-                    _lastError.value = "未找到配置文件 ${cfgFile.name}"
-                    _tunnelState.value = VpnTunnelState.ERROR
-                    requestTileSync()
-                    runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
-                val excluded = intent.getStringArrayListExtra(EXTRA_EXCLUDED_PACKAGES)
-                    ?: loadPersistedExcludedPackages()
+                val req = resolveLaunchRequest(intent)
+                if (!validateLaunchTarget(req)) return START_NOT_STICKY
+                val host = loadEffectiveHost(req.legacyExcludedOverride)
+                promoteForeground(host.android.runMode)
                 submitLifecycle {
                     stopTunnelLocked(stopSelfAfter = false, preserveError = false)
-                    startTunnelLocked(cfgFile, excluded)
+                    startTunnelLocked(req, host)
                 }
                 return START_STICKY
             }
             else -> {
-                // System Always-On VPN restart with null/default intent
-                val defaultCfg = File(filesDir, "config.kdl")
-                if (!defaultCfg.isFile) {
+                val req = resolveLaunchRequest(null)
+                if (!req.configTarget.exists()) {
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                promoteForeground()
-                val excluded = loadPersistedExcludedPackages()
-                submitLifecycle { startTunnelLocked(defaultCfg, excluded) }
+                val host = loadEffectiveHost(null)
+                promoteForeground(host.android.runMode)
+                submitLifecycle { startTunnelLocked(req, host) }
                 return START_STICKY
             }
         }
@@ -148,7 +145,7 @@ class NexusVpnService : VpnService() {
             lifecycleExecutor.submit { stopTunnelLocked(stopSelfAfter = false) }
                 .get(DESTROY_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         } catch (_: TimeoutException) {
-            // Allow queued teardown to finish on the single background lifecycle thread without blocking main.
+            // Allow background teardown without blocking main thread.
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         } catch (_: ExecutionException) {
@@ -161,12 +158,48 @@ class NexusVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun submitLifecycle(task: () -> Unit) {
-        runCatching {
-            lifecycleExecutor.execute(task)
-        }.onFailure { err ->
-            if (err !is RejectedExecutionException) throw err
+    private fun resolveLaunchRequest(intent: Intent?): LaunchRequest {
+        val defaultTarget = paths.composedConfigFile.takeIf { it.isFile } ?: File(filesDir, "config.kdl")
+        val cfgPath = intent?.getStringExtra(EXTRA_CONFIG_PATH) ?: defaultTarget.absolutePath
+        val isDir = intent?.getBooleanExtra(EXTRA_CONFIG_IS_DIR, false) ?: false
+        val ovPath = intent?.getStringExtra(EXTRA_HOST_OVERRIDE_PATH)?.takeIf { it.isNotBlank() }
+        val fakeIpv6 = intent?.getStringExtra(EXTRA_FAKE_IPV6_POOL).orEmpty()
+        val legacyExcluded = intent?.getStringArrayListExtra(EXTRA_EXCLUDED_PACKAGES)
+        return LaunchRequest(
+            configTarget = File(cfgPath),
+            isConfigDir = isDir,
+            hostOverrideFile = ovPath?.let { File(it) },
+            fakeIpv6Pool = fakeIpv6,
+            legacyExcludedOverride = legacyExcluded,
+        )
+    }
+
+    private fun validateLaunchTarget(req: LaunchRequest): Boolean {
+        val ok = if (req.isConfigDir) req.configTarget.isDirectory else req.configTarget.isFile
+        if (ok) return true
+        appendLog("[error] vpn: missing config ${req.configTarget.name}")
+        _lastError.value = "未找到配置文件 ${req.configTarget.name}"
+        _tunnelState.value = VpnTunnelState.ERROR
+        requestTileSync()
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        stopSelf()
+        return false
+    }
+
+    private fun loadEffectiveHost(legacyExcludedOverride: List<String>?): AndroidHostConfig {
+        val loaded = hostStore.load(paths)
+        if (loaded.android.perAppPackages.isNotEmpty() || hostStore.file.isFile) return loaded
+        val legacy = legacyExcludedOverride ?: loadPersistedExcludedPackages()
+        return if (legacy.isNotEmpty()) {
+            loaded.copy(android = loaded.android.copy(perAppPackages = legacy))
+        } else {
+            loaded
         }
+    }
+
+    private fun submitLifecycle(task: () -> Unit) {
+        runCatching { lifecycleExecutor.execute(task) }
+            .onFailure { err -> if (err !is RejectedExecutionException) throw err }
     }
 
     private fun loadPersistedExcludedPackages(): List<String> {
@@ -182,127 +215,156 @@ class NexusVpnService : VpnService() {
         return token
     }
 
-    private fun configureRoutes(builder: Builder) {
+    private fun configureRoutes(builder: Builder, host: AndroidHostSection, fakeIpv6Pool: String) {
         val dns4 = InetAddress.getByName(TUN_DNS_V4)
         val dns6 = InetAddress.getByName(TUN_DNS_V6)
+        if (!host.bypassLan) {
+            builder.addRoute("0.0.0.0", 0)
+            if (host.enableIpv6) builder.addRoute("::", 0)
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             builder.addRoute("0.0.0.0", 0)
-            builder.addRoute("::", 0)
-            for (cidr in CidrRouteCalculator.PRIVATE_IPV4_CIDRS) {
-                runCatching { builder.excludeRoute(IpPrefix(cidr.address, cidr.prefixLength)) }
-            }
-            for (cidr in CidrRouteCalculator.PRIVATE_IPV6_CIDRS) {
-                runCatching { builder.excludeRoute(IpPrefix(cidr.address, cidr.prefixLength)) }
-            }
-            // Pin TUN DNS sentinels inside the tunnel despite private CIDR exclusions.
+            CidrRouteCalculator.PRIVATE_IPV4_CIDRS.forEach { c -> runCatching { builder.excludeRoute(IpPrefix(c.address, c.prefixLength)) } }
             builder.addRoute(dns4, 32)
-            builder.addRoute(dns6, 128)
-        } else {
-            val v4Routes = CidrRouteCalculator.computeAllowedRoutes(
-                ipv6 = false,
-                excludePrivate = true,
-                extraExcludes = emptyList(),
-                mustIncludeAddresses = listOf(dns4),
-            )
-            for (r in v4Routes) {
-                builder.addRoute(r.address, r.prefixLength)
+            if (host.enableIpv6) {
+                builder.addRoute("::", 0)
+                CidrRouteCalculator.PRIVATE_IPV6_CIDRS.forEach { c -> runCatching { builder.excludeRoute(IpPrefix(c.address, c.prefixLength)) } }
+                builder.addRoute(dns6, 128)
+                addExplicitIpv6PoolRoute(builder, fakeIpv6Pool)
             }
-            val v6Routes = CidrRouteCalculator.computeAllowedRoutes(
-                ipv6 = true,
-                excludePrivate = true,
-                extraExcludes = emptyList(),
-                mustIncludeAddresses = listOf(dns6),
-            )
-            for (r in v6Routes) {
-                builder.addRoute(r.address, r.prefixLength)
+        } else {
+            CidrRouteCalculator.computeAllowedRoutes(false, true, emptyList(), listOf(dns4))
+                .forEach { r -> builder.addRoute(r.address, r.prefixLength) }
+            if (host.enableIpv6) {
+                CidrRouteCalculator.computeAllowedRoutes(true, true, emptyList(), listOf(dns6))
+                    .forEach { r -> builder.addRoute(r.address, r.prefixLength) }
+                addExplicitIpv6PoolRoute(builder, fakeIpv6Pool)
             }
         }
     }
 
-    private fun startTunnelLocked(configFile: File, excludedPackages: List<String>) {
+    private fun addExplicitIpv6PoolRoute(builder: Builder, cidrPool: String) {
+        val trimmed = cidrPool.trim()
+        if (trimmed.isEmpty()) return
+        val slash = trimmed.indexOf('/')
+        if (slash <= 0) return
+        val addrStr = trimmed.substring(0, slash)
+        val prefix = trimmed.substring(slash + 1).toIntOrNull() ?: return
+        if (prefix in 1..128) {
+            runCatching { builder.addRoute(InetAddress.getByName(addrStr), prefix) }
+        }
+    }
+
+    private fun startTunnelLocked(req: LaunchRequest, hostConfig: AndroidHostConfig) {
         if (supervisor.isRunning()) return
+        val host = hostConfig.android
         _lastError.value = ""
         _tunnelState.value = VpnTunnelState.STARTING
         requestTileSync()
         try {
             paths.validatePaths()
             val sessionToken = writeSessionBearerToken()
-
-            val protectSrv = ProtectSocketServer(paths.protectSocket) { fd -> protect(fd) }
-            protectSrv.start()
-            protectServer = protectSrv
-
-            val builder = Builder()
-                .setSession("Nexus")
-                .setMtu(1400)
-                .addAddress("172.19.0.1", 30)
-                .addAddress("fdfe:dcba:9876::1", 126)
-                .addDnsServer(TUN_DNS_V4)
-                .addDnsServer(TUN_DNS_V6)
-                .setMetered(false)
-            configureRoutes(builder)
-
-            // Exclude ourselves, Android captive portal login apps, and user-selected split-tunnel packages.
-            val defaultExcluded = listOf(
-                packageName,
-                "com.android.captiveportallogin",
-                "com.google.android.captiveportallogin",
-            )
-            for (pkg in (defaultExcluded + excludedPackages).distinct()) {
-                runCatching { builder.addDisallowedApplication(pkg) }
-            }
-
-            val tun = builder.establish()
-                ?: error("VpnService.Builder.establish() returned null")
-            tunInterface = tun
-
-            val fdSrv = TunFdSocketServer(paths.tunFdSocket, tun)
-            fdSrv.start()
-            tunFdServer = fdSrv
-
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             serviceScope = scope
-
+            val httpUrl = hostConfig.common.controlHttpListen.takeIf { it.isNotBlank() }?.let { "http://$it" }
+                ?: "http://127.0.0.1:9090"
             val controlClient = NexusControlClient(
                 unixSocketPath = paths.controlSocket.absolutePath,
-                httpBaseUrl = "http://127.0.0.1:9090",
+                httpBaseUrl = httpUrl,
                 bearerToken = sessionToken,
             )
-            val monitor = DefaultNetworkMonitor(this, scope) { network, _ ->
-                // Empty array on network loss (never null) to avoid routing loops.
-                runCatching { setUnderlyingNetworks(if (network != null) arrayOf(network) else emptyArray()) }
-                val gen = networkGeneration.incrementAndGet()
-                scope.launch {
-                    runCatching { controlClient.notifyNetworkChange(gen) }
-                }
-            }.also { it.start() }
-            networkMonitor = monitor
 
-            val bridge = AndroidDnsBridge(paths.dnsBridgeSocket) { monitor.currentPhysicalNetwork }
-            bridge.start()
-            dnsBridge = bridge
+            var tunSockForCore: File? = null
+            if (host.runMode == AndroidRunMode.VPN) {
+                val protectSrv = ProtectSocketServer(paths.protectSocket) { fd -> protect(fd) }
+                protectSrv.start()
+                protectServer = protectSrv
+
+                val builder = Builder()
+                    .setSession("Nexus")
+                    .setMtu(host.tunMtu.coerceIn(1280, 9000))
+                    .addAddress("172.19.0.1", 30)
+                    .addDnsServer(TUN_DNS_V4)
+                    .setMetered(false)
+                if (host.enableIpv6) {
+                    builder.addAddress("fdfe:dcba:9876::1", 126)
+                    builder.addDnsServer(TUN_DNS_V6)
+                }
+                if (host.allowBypass) {
+                    builder.allowBypass()
+                }
+                if (host.enableLocalProxy && host.appendHttpProxy && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    AndroidHostConfig.parseHostPort(host.localListen)?.let { (h, p) ->
+                        runCatching { builder.setHttpProxy(ProxyInfo.buildDirectProxy(h, p)) }
+                    }
+                }
+                val effectiveFakeIpv6 = req.fakeIpv6Pool.ifBlank {
+                    runCatching {
+                        val ws = WorkspaceStore(filesDir).loadOrInit()
+                        if (AndroidHostConfig.needsFakeIpv6Route(ws, host)) ws.dns.simple.fakeIpV6Pool else ""
+                    }.getOrDefault("")
+                }
+                configureRoutes(builder, host, effectiveFakeIpv6)
+
+                val plan = AndroidHostConfig.computePerAppPlan(packageName, host)
+                for (pkg in plan.allowedPackages) runCatching { builder.addAllowedApplication(pkg) }
+                for (pkg in plan.disallowedPackages) runCatching { builder.addDisallowedApplication(pkg) }
+
+                val tun = builder.establish() ?: error("VpnService.Builder.establish() returned null")
+                tunInterface = tun
+
+                val fdSrv = TunFdSocketServer(paths.tunFdSocket, tun)
+                fdSrv.start()
+                tunFdServer = fdSrv
+                tunSockForCore = paths.tunFdSocket
+
+                val monitor = DefaultNetworkMonitor(this, scope) { network, _ ->
+                    runCatching { setUnderlyingNetworks(if (network != null) arrayOf(network) else emptyArray()) }
+                    val gen = networkGeneration.incrementAndGet()
+                    scope.launch { runCatching { controlClient.notifyNetworkChange(gen) } }
+                }.also { it.start() }
+                networkMonitor = monitor
+
+                val bridge = AndroidDnsBridge(paths.dnsBridgeSocket) { monitor.currentPhysicalNetwork }
+                bridge.start()
+                dnsBridge = bridge
+            }
 
             val started = supervisor.start(
-                configFile = configFile,
-                tunFdSocket = paths.tunFdSocket,
+                configFile = req.configTarget,
+                tunFdSocket = tunSockForCore,
+                isConfigDir = req.isConfigDir,
+                hostOverrideFile = req.hostOverrideFile,
                 onLogLine = { line -> appendLog(line) },
                 onExit = { code ->
                     appendLog("[error] core: sidecar exited unexpectedly (code=$code)")
+                    runCatching { telemetryStore.recordUnexpectedCrash("exit=$code") }
                     _lastError.value = "内核进程异常退出 (exit=$code)"
                     _tunnelState.value = VpnTunnelState.ERROR
                     submitLifecycle { stopTunnelLocked(stopSelfAfter = true, preserveError = true) }
                 },
             )
-            if (!started) {
-                error("failed to start libnexus.so sidecar")
-            }
+            if (!started) error("failed to start libnexus.so sidecar")
 
-            val screen = ScreenStateMonitor(this) { interactive ->
-                _powerSaveMode.value = !interactive
+            val screen = ScreenStateMonitor(this) { interactive, idle ->
+                _dozeMode.value = idle
+                _powerSaveMode.value = ScreenStateMonitor.shouldPausePolling(
+                    interactive = interactive,
+                    deviceIdle = idle,
+                    screenOffPauseStats = host.screenOffPauseStats,
+                    dozePauseEnabled = host.dozePauseEnabled,
+                )
                 requestTileSync()
             }.also { it.start() }
             screenMonitor = screen
-            _powerSaveMode.value = !screen.isInteractive
+            _dozeMode.value = screen.isDeviceIdle
+            _powerSaveMode.value = ScreenStateMonitor.shouldPausePolling(
+                interactive = screen.isInteractive,
+                deviceIdle = screen.isDeviceIdle,
+                screenOffPauseStats = host.screenOffPauseStats,
+                dozePauseEnabled = host.dozePauseEnabled,
+            )
             _startedAtMs.value = System.currentTimeMillis()
             _runningState.value = true
             _tunnelState.value = VpnTunnelState.RUNNING
@@ -317,24 +379,16 @@ class NexusVpnService : VpnService() {
     }
 
     private fun stopTunnelLocked(stopSelfAfter: Boolean, preserveError: Boolean = false) {
-        runCatching { screenMonitor?.close() }
-        screenMonitor = null
-        _powerSaveMode.value = false
-        runCatching { dnsBridge?.close() }
-        dnsBridge = null
-        runCatching { networkMonitor?.stop() }
-        networkMonitor = null
-        serviceScope?.cancel()
-        serviceScope = null
+        runCatching { screenMonitor?.close() }; screenMonitor = null
+        _dozeMode.value = false; _powerSaveMode.value = false
+        runCatching { dnsBridge?.close() }; dnsBridge = null
+        runCatching { networkMonitor?.stop() }; networkMonitor = null
+        serviceScope?.cancel(); serviceScope = null
         supervisor.stop()
-        runCatching { tunFdServer?.close() }
-        tunFdServer = null
-        runCatching { tunInterface?.close() }
-        tunInterface = null
-        runCatching { protectServer?.close() }
-        protectServer = null
-        _startedAtMs.value = 0L
-        _runningState.value = false
+        runCatching { tunFdServer?.close() }; tunFdServer = null
+        runCatching { tunInterface?.close() }; tunInterface = null
+        runCatching { protectServer?.close() }; protectServer = null
+        _startedAtMs.value = 0L; _runningState.value = false
         if (!preserveError) {
             _lastError.value = ""
             _tunnelState.value = VpnTunnelState.STOPPED
@@ -355,43 +409,33 @@ class NexusVpnService : VpnService() {
         }
     }
 
-    private fun promoteForeground() {
+    private fun promoteForeground(runMode: AndroidRunMode) {
         val nm = getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Nexus VPN",
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "Nexus background proxy tunnel status" }
-            nm.createNotificationChannel(channel)
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Nexus VPN", NotificationManager.IMPORTANCE_LOW)
+                    .apply { description = "Nexus background proxy tunnel status" },
+            )
         }
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         val contentPending = launchIntent?.let {
-            PendingIntent.getActivity(
-                this,
-                0,
-                it,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
+            PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         }
-        val stopIntent = Intent(this, NexusVpnService::class.java).setAction(ACTION_STOP)
         val stopPending = PendingIntent.getService(
-            this,
-            1,
-            stopIntent,
+            this, 1, Intent(this, NexusVpnService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val subtitle = if (runMode == AndroidRunMode.PROXY_ONLY) "仅本地代理模式已激活" else "本地加密隧道已激活"
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Nexus 正在运行")
-            .setContentText("本地加密隧道已激活")
+            .setContentText(subtitle)
             .setSmallIcon(android.R.drawable.stat_sys_vp_phone_call)
             .setOngoing(true)
             .apply { if (contentPending != null) setContentIntent(contentPending) }
             .addAction(Notification.Action.Builder(null, "停止", stopPending).build())
             .build()
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
@@ -404,6 +448,9 @@ class NexusVpnService : VpnService() {
         const val ACTION_STOP = "org.nexus.android.action.STOP_VPN"
         const val ACTION_RESTART = "org.nexus.android.action.RESTART_VPN"
         const val EXTRA_CONFIG_PATH = "org.nexus.android.extra.CONFIG_PATH"
+        const val EXTRA_CONFIG_IS_DIR = "org.nexus.android.extra.CONFIG_IS_DIR"
+        const val EXTRA_HOST_OVERRIDE_PATH = "org.nexus.android.extra.HOST_OVERRIDE_PATH"
+        const val EXTRA_FAKE_IPV6_POOL = "org.nexus.android.extra.FAKE_IPV6_POOL"
         const val EXTRA_EXCLUDED_PACKAGES = "org.nexus.android.extra.EXCLUDED_PACKAGES"
 
         private const val CHANNEL_ID = "nexus_vpn_channel"
@@ -429,6 +476,9 @@ class NexusVpnService : VpnService() {
 
         private val _powerSaveMode = MutableStateFlow(false)
         val powerSaveMode: StateFlow<Boolean> = _powerSaveMode
+
+        private val _dozeMode = MutableStateFlow(false)
+        val dozeMode: StateFlow<Boolean> = _dozeMode
 
         private val _recentLogs = MutableStateFlow<List<ServiceLogLine>>(emptyList())
         val recentLogs: StateFlow<List<ServiceLogLine>> = _recentLogs

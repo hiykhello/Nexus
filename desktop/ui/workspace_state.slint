@@ -1,0 +1,106 @@
+export struct WorkspaceProfileRow {
+    id: string,
+    remarks: string,
+    kind: string, // "node" | "custom_outbound" | "policy_group" | "proxy_chain" | "full_custom_kdl"
+    subtitle: string,
+    sub-name: string,
+    delay-ms: int,
+    active: bool,
+}
+
+export struct WorkspaceSubRow {
+    id: string,
+    remarks: string,
+    url: string,
+    node-count: int,
+    quota-text: string,
+    quota-ratio: float,
+    expire-text: string,
+    prev-profile-id: string,
+    next-profile-id: string,
+    enabled: bool,
+}
+
+export struct WorkspaceRoutingRow {
+    id: string,
+    name: string,
+    default-outbound: string,
+    rule-count: int,
+    active: bool,
+}
+
+export struct WorkspaceRuleRow {
+    id: string,
+    scope: string,
+    target-label: string,
+    match-summary: string,
+    process-summary: string,
+    enabled: bool,
+}
+
+export global WorkspaceState {
+    in-out property <int> active-subtab: 0; // 0: Profiles, 1: Subscriptions, 2: Routing & DNS, 3: Host & Portable
+    in-out property <string> active-profile-id: "";
+    in-out property <string> active-profile-kind: "node";
+
+    in property <[WorkspaceProfileRow]> profiles: [];
+    in property <[WorkspaceSubRow]> subscriptions: [];
+    in property <[WorkspaceRoutingRow]> routing-profiles: [];
+    in property <[WorkspaceRuleRow]> routing-rules: [];
+
+    // DNS Layer 1 fields
+    in-out property <string> dns-mode: "simple"; // "simple" | "raw_kdl"
+    in-out property <string> dns-direct: "https://223.5.5.5/dns-query";
+    in-out property <string> dns-remote: "https://1.1.1.1/dns-query";
+    in-out property <bool> dns-fakeip: false;
+    in-out property <string> dns-raw-kdl: "";
+
+    // Isolated Layer 3 Desktop Host fields (never exported into portable workspace.json)
+    in property <bool> host-is-linux: true;
+    in-out property <bool> host-enable-mixed: true;
+    in-out property <string> host-mixed-listen: "127.0.0.1:7890";
+    in-out property <string> host-lan-listen: "";
+    in-out property <bool> host-enable-tun: false;
+    in-out property <string> host-tun-mtu: "1400";
+    in-out property <bool> host-tun-strict-route: false;
+    in property <string> host-strict-route-notice: "";
+    in-out property <string> host-sys-proxy-mode: "off"; // "off" | "manual" | "pac"
+    in property <string> portable-status: "";
+    in property <bool> portable-status-ok: true;
+
+    // Inline subscription chain editor state
+    in-out property <string> edit-chain-sub-id: "";
+    in-out property <string> edit-chain-prev: "";
+    in-out property <string> edit-chain-next: "";
+
+    // Profile 5-kind editor inputs
+    in-out property <string> draft-kind: "node";
+    in-out property <string> draft-remarks: "";
+    in-out property <string> draft-payload: "";
+
+    // Subscription editor inputs
+    in-out property <string> sub-remarks: "";
+    in-out property <string> sub-url: "";
+    in-out property <string> sub-prev-id: "";
+    in-out property <string> sub-next-id: "";
+
+    // Routing rule adder inputs
+    in-out property <string> rule-scope: "both";
+    in-out property <string> rule-target-type: "proxy";
+    in-out property <string> rule-target-profile-id: "";
+    in-out property <string> rule-match-input: "";
+    in-out property <string> rule-desktop-process: "";
+
+    callback activate-profile(string);
+    callback create-profile(string, string, string); // kind, remarks, payload
+    callback delete-profile(string);
+    callback add-subscription(string, string, string, string); // remarks, url, prev-id, next-id
+    callback update-subscription-chain(string, string, string); // sub-id, prev-id, next-id
+    callback delete-subscription(string);
+    callback select-routing-profile(string);
+    callback add-routing-rule(string, string, string, string, string); // scope, target-type, target-profile-id, match, desktop-process
+    callback apply-dns-config(string, string, string, bool, string); // mode, direct, remote, fakeip, raw-kdl
+    callback apply-host-config();
+    callback export-portable-workspace();
+    callback import-portable-workspace();
+}

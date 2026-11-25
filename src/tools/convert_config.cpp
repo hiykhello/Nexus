@@ -4,7 +4,7 @@ import rulefile;
 
 namespace {
     constexpr std::string_view usage =
-        "usage: nexus convert-config [--from auto|uri|base64|clash|sing-box|sip008] "
+        "usage: nexus convert-config [--emit-nodes-json] [--from auto|uri|base64|clash|sing-box|sip008] "
         "[--secrets-dir <dir>] [--inline-placeholders] [--inbound-listen <host:port>] "
         "[--inbound-type mixed|socks5|http] [--default-group <name>] [--ca-file <path>] "
         "[--include <regex>] [--exclude <regex>] [--tag-prefix <prefix>] "
@@ -28,6 +28,7 @@ auto nexus_convert_config(int argc, char** argv) -> int {
         return argc == 1 ? 2 : 0;
     }
     provider::ConvertOptions opts{};
+    bool emit_nodes_json = false;
     std::string input_path, output_path;
     for (int i = 1; i < argc; ++i) {
         std::string_view arg(argv[i]);
@@ -35,7 +36,8 @@ auto nexus_convert_config(int argc, char** argv) -> int {
             if (i + 1 >= argc) { std::cerr << "missing value for " << arg << '\n'; return std::unexpected(2); }
             return std::string_view(argv[++i]);
         };
-        if (arg == "--inline-placeholders") opts.inline_placeholders = true;
+        if (arg == "--emit-nodes-json") emit_nodes_json = true;
+        else if (arg == "--inline-placeholders") opts.inline_placeholders = true;
         else if (arg == "--from") {
             auto v = next(); if (!v) return v.error();
             auto f = parse_format(*v);
@@ -79,15 +81,26 @@ auto nexus_convert_config(int argc, char** argv) -> int {
     if (input_path.empty()) { std::cerr << usage; return 2; }
     std::string raw;
     if (input_path == "-") {
-        std::ostringstream ss;
-        ss << std::cin.rdbuf();
-        raw = ss.str();
+        constexpr std::size_t max_bytes = ::rulefile::max_file_bytes;
+        std::array<char, 65536> buf{};
+        while (std::cin) {
+            std::cin.read(buf.data(), static_cast<std::streamsize>(buf.size()));
+            auto got = static_cast<std::size_t>(std::cin.gcount());
+            if (got == 0) break;
+            if (raw.size() + got > max_bytes) {
+                std::cerr << "convert-config: input exceeds maximum size\n";
+                return 1;
+            }
+            raw.append(buf.data(), got);
+        }
+        if (std::cin.bad()) { std::cerr << "convert-config: failed reading stdin\n"; return 1; }
     } else {
         auto data = ::rulefile::read_regular_file(input_path);
         if (!data) { std::cerr << "convert-config: " << data.error() << '\n'; return 1; }
         raw = std::move(*data);
     }
-    auto res = provider::convert_config_to_kdl(raw, opts);
+    auto res = emit_nodes_json ? provider::convert_config_to_nodes_json(raw, opts)
+                               : provider::convert_config_to_kdl(raw, opts);
     if (!res) { std::cerr << "convert-config: " << res.error() << '\n'; return 1; }
     for (auto const& w : res->second) std::cerr << "warning: " << w << '\n';
     if (output_path.empty() || output_path == "-") {

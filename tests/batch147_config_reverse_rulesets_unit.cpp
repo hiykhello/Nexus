@@ -252,6 +252,134 @@ routing {
               "duplicate inbound across -C files did not report both filenames");
         std::filesystem::remove_all(root);
     }
+
+    auto test_host_override_ast_merge() -> void {
+        auto root = std::filesystem::temp_directory_path() / "nexus_wave22_host_override_test";
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root);
+
+        auto write = [&](std::string_view name, std::string_view content) {
+            auto p = root / name;
+            std::ofstream(p) << content;
+            return p;
+        };
+
+        // 1. Singleton replacement + ergonomic inbounds { tun ... } replacement without mixing inbounds/inbound
+        auto base1 = write("base1.kdl", R"kdl(schema-version 1
+role "client"
+workers 2
+log { level "info"; }
+inbounds {
+    socks5 "local-socks" { listen "127.0.0.1:1080"; authentication "none"; }
+    tun "old-tun" { inet4-address "198.18.0.1/30"; mtu 1400; }
+}
+outbounds { direct; block; }
+routing { default "direct"; }
+)kdl");
+        auto ov1 = write("ov1.kdl", R"kdl(workers 4
+log { level "warn"; }
+control socket="/tmp/nexus-wave22-test.sock"
+inbound "local-socks" type="mixed" { listen host="127.0.0.1" port=7890; authentication "none"; }
+inbound "android-tun" type="tun" { device-fd 9; mtu 1500; }
+inbound "extra-http" type="http" { listen host="127.0.0.1" port=8080; authentication "none"; }
+)kdl");
+        auto m1 = cli::read_config_source(base1.string(), false, ov1.string());
+        check(m1.has_value(), m1 ? "" : "host-override merge 1 failed: " + m1.error());
+        auto c1 = config::parse_kdl(*m1);
+        check(c1.has_value(), c1 ? "" : "parse merged 1 failed: " + c1.error());
+        check(c1->workers == 4 && c1->control_socket == "/tmp/nexus-wave22-test.sock", "singleton overrides applied");
+        check(c1->inbounds.size() == 3, "replaced socks+tun and appended extra-http");
+        check(c1->inbounds[0].name == "local-socks" && c1->inbounds[0].type == config::Inbound::mixed && c1->inbounds[0].port == 7890,
+              "named inbound replaced in-place");
+        bool saw_old_tun = false, saw_new_tun = false, saw_http = false;
+        for (auto const& in : c1->inbounds) {
+            if (in.name == "old-tun") saw_old_tun = true;
+            if (in.name == "android-tun" && in.tun && in.tun->device_fd && in.tun->device_fd->number == 9 && in.tun->mtu == 1500) saw_new_tun = true;
+            if (in.name == "extra-http" && in.type == config::Inbound::http && in.port == 8080) saw_http = true;
+        }
+        check(!saw_old_tun && saw_new_tun && saw_http, "old tun stripped, new tun + extra http active");
+
+        // 2. strip-tun #true removes base TUN while keeping non-TUN inbounds and strips host-override block
+        auto ov2 = write("ov2.kdl", R"kdl(host-override {
+    strip-tun #true
+}
+)kdl");
+        auto m2 = cli::read_config_source(base1.string(), false, ov2.string());
+        check(m2.has_value() && m2->find("host-override") == std::string::npos, "strip-tun strips directive block");
+        auto c2 = config::parse_kdl(*m2);
+        check(c2.has_value() && c2->inbounds.size() == 1 && c2->inbounds[0].name == "local-socks",
+              "strip-tun keeps only non-tun inbound");
+
+        // 3. strip-inbounds #true removes all base inbounds and replaces with override inbound
+        auto ov3 = write("ov3.kdl", R"kdl(host-override {
+    strip-inbounds #true
+}
+inbound "proxy-only" type="socks5" { listen host="127.0.0.1" port=10808; authentication "none"; }
+)kdl");
+        auto m3 = cli::read_config_source(base1.string(), false, ov3.string());
+        check(m3.has_value(), m3 ? "" : "strip-inbounds failed: " + m3.error());
+        auto c3 = config::parse_kdl(*m3);
+        check(c3.has_value() && c3->inbounds.size() == 1 && c3->inbounds[0].name == "proxy-only" && c3->inbounds[0].port == 10808,
+              "strip-inbounds replaces all base inbounds");
+
+        // 4. Reject invalid KDL syntax and unknown host-override directives
+        auto bad_kdl = write("bad.kdl", "inbound \"broken\" { {{\n");
+        check(!cli::read_config_source(base1.string(), false, bad_kdl.string()).has_value(), "invalid KDL rejected");
+        auto bad_dir = write("bad_dir.kdl", "host-override { unknown-flag #true; }\n");
+        check(!cli::read_config_source(base1.string(), false, bad_dir.string()).has_value(), "unknown directive rejected");
+
+        // 5. Config-dir + host-override composition
+        auto dir = root / "cfgdir";
+        std::filesystem::create_directories(dir);
+        write("cfgdir/00-host.kdl", "schema-version 1\nrole \"client\"\nworkers 1\n");
+        write("cfgdir/10-in.kdl", "inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }\n");
+        write("cfgdir/20-out.kdl", "outbound \"direct\" type=\"direct\"\nrouting { default-outbound \"direct\"; }\n");
+        auto m5 = cli::read_config_source(dir.string(), true, ov3.string());
+        check(m5.has_value(), m5 ? "" : "config-dir + host-override failed: " + m5.error());
+        auto c5 = config::parse_kdl(*m5);
+        check(c5.has_value() && c5->inbounds.size() == 1 && c5->inbounds[0].name == "proxy-only",
+              "config-dir + host-override parsed");
+
+        // 6. Override TUN placed BEFORE host-override { strip-tun #false; } still strips base TUN
+        auto ov6 = write("ov6.kdl", R"kdl(inbound "new-tun" type="tun" { device-fd 5; mtu 1500; }
+host-override {
+    strip-tun #false
+}
+)kdl");
+        auto m6 = cli::read_config_source(base1.string(), false, ov6.string());
+        check(m6.has_value(), m6 ? "" : "tun-before-directive merge failed: " + m6.error());
+        auto c6 = config::parse_kdl(*m6);
+        check(c6.has_value() && c6->inbounds.size() == 2, "tun-before-directive kept socks + new-tun only");
+        bool saw_old6 = false, saw_new6 = false;
+        for (auto const& in : c6->inbounds) {
+            if (in.name == "old-tun") saw_old6 = true;
+            if (in.name == "new-tun") saw_new6 = true;
+        }
+        check(!saw_old6 && saw_new6, "strip-tun #false after override TUN did not retain base TUN");
+
+        // 7. Process singletons (sessions-per-listener, shutdown-grace-ms, tcp-splice-pipes) replace cleanly
+        auto base7 = write("base7.kdl", R"kdl(schema-version 1
+role "client"
+sessions-per-listener 128
+shutdown-grace-ms 1000
+tcp-splice-pipes 4
+inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+routing { default-outbound "direct"; }
+)kdl");
+        auto ov7 = write("ov7.kdl", "sessions-per-listener 256\nshutdown-grace-ms 2500\ntcp-splice-pipes 8\n");
+        auto m7 = cli::read_config_source(base7.string(), false, ov7.string());
+        check(m7.has_value(), m7 ? "" : "process singleton override failed: " + m7.error());
+        auto c7 = config::parse_kdl(*m7);
+        check(c7.has_value() && c7->sessions_per_listener == 256 && c7->shutdown_grace_ms == 2500 &&
+              c7->tcp_splice_pipes == 8, "process singletons overridden without duplicate error");
+
+        // 8. Oversized base / override rejected before AST parse
+        auto big_ov = write("big_ov.kdl", std::string(config::max_config_bytes + 32, ' '));
+        check(!cli::read_config_source(base7.string(), false, big_ov.string()).has_value(), "oversized host-override rejected");
+
+        std::filesystem::remove_all(root);
+    }
 }
 
 int main() {
@@ -259,6 +387,7 @@ int main() {
     test_reverse_mapping_and_zero_implicit_dns();
     test_three_tier_http_clients_and_remote_rulesets();
     test_working_dir_and_config_dir();
+    test_host_override_ast_merge();
     std::cout << "ALL BATCH 147 UNIT TESTS PASSED!\n";
     return 0;
 }

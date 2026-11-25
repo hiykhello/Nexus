@@ -13,8 +13,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.nexus.android.bridge.model.RuntimeSocketPaths
 import org.nexus.android.bridge.vpn.NexusVpnService
 import org.nexus.android.bridge.vpn.VpnTunnelState
+import org.nexus.android.bridge.workspace.AndroidHostConfigStore
+import org.nexus.android.bridge.workspace.AndroidRunMode
+import org.nexus.android.bridge.workspace.TelemetryStore
 import org.nexus.android.ui.MainActivity
 import java.io.File
 
@@ -24,6 +28,8 @@ class NexusTileService : TileService() {
     private var cachedConfigReady: Boolean = false
     @Volatile
     private var cachedProfileName: String = "默认配置"
+    @Volatile
+    private var cachedRunMode: AndroidRunMode = AndroidRunMode.VPN
 
     override fun onStartListening() {
         super.onStartListening()
@@ -36,11 +42,12 @@ class NexusTileService : TileService() {
                 NexusVpnService.powerSaveMode,
             ) { tunnelState, powerSave -> tunnelState to powerSave }
                 .collect { (tunnelState, powerSave) ->
-                    val (configExists, profile) = withContext(Dispatchers.IO) {
+                    val (configExists, profile, runMode) = withContext(Dispatchers.IO) {
                         readTileDiskMeta()
                     }
                     cachedConfigReady = configExists
                     cachedProfileName = profile
+                    cachedRunMode = runMode
                     applyTileState(tunnelState, powerSave, configExists, profile)
                 }
         }
@@ -65,7 +72,8 @@ class NexusTileService : TileService() {
         }
 
         val configReady = cachedConfigReady
-        if (VpnService.prepare(this) != null || !configReady) {
+        val needsConsent = cachedRunMode == AndroidRunMode.VPN && VpnService.prepare(this) != null
+        if (needsConsent || !configReady) {
             val launch = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 val pending = PendingIntent.getActivity(
@@ -87,13 +95,20 @@ class NexusTileService : TileService() {
         }
     }
 
-    private fun readTileDiskMeta(): Pair<Boolean, String> {
-        val configExists = File(filesDir, "config.kdl").isFile
+    private fun readTileDiskMeta(): Triple<Boolean, String, AndroidRunMode> {
+        val paths = RuntimeSocketPaths(noBackupFilesDir)
+        val configExists = paths.composedConfigFile.isFile || File(filesDir, "config.kdl").isFile
+        val runMode = runCatching {
+            AndroidHostConfigStore(File(filesDir, "host.json")).load().android.runMode
+        }.getOrDefault(AndroidRunMode.VPN)
+        val telemetryActive = runCatching { TelemetryStore(paths.telemetryFile).load().activeProfileId }.getOrDefault("")
         val activeFile = File(filesDir, ".active_profile")
-        val profile = runCatching {
-            activeFile.takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-        }.getOrNull() ?: "默认配置"
-        return configExists to profile
+        val profile = telemetryActive.ifBlank {
+            runCatching {
+                activeFile.takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+            }.getOrNull() ?: "默认配置"
+        }
+        return Triple(configExists, profile, runMode)
     }
 
     private fun applyTileState(

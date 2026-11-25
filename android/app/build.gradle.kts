@@ -76,6 +76,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
 }
 
 tasks.register("syncNexusCore") {

@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import org.nexus.android.R
 import org.nexus.android.apps.InstalledAppEntry
 import org.nexus.android.apps.InstalledAppsRepository
+import org.nexus.android.bridge.workspace.AndroidPerAppMode
 import org.nexus.android.ui.theme.NexusTheme
 
 @Composable
@@ -61,6 +62,13 @@ fun SplitTunnelScreen(
     contentPadding: PaddingValues,
     onBack: (() -> Unit)? = null,
     previewApps: List<InstalledAppEntry>? = null,
+    perAppMode: AndroidPerAppMode = AndroidPerAppMode.EXCLUDE,
+    onPerAppModeChange: (AndroidPerAppMode) -> Unit = {},
+    excludeSelfFromVpn: Boolean = false,
+    onToggleExcludeSelf: (Boolean) -> Unit = {},
+    allowBypass: Boolean = false,
+    onToggleAllowBypass: (Boolean) -> Unit = {},
+    onAddExcludedBatch: ((Set<String>) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -119,17 +127,35 @@ fun SplitTunnelScreen(
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "分应用绕过",
+                            text = "分应用分流控制",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                         )
+                        val modeDesc = when (perAppMode) {
+                            AndroidPerAppMode.OFF -> "当前已关闭分应用，全部应用经 VPN 隧道"
+                            AndroidPerAppMode.EXCLUDE -> "已选择 ${excludedPackages.size} 个应用直连绕过 VPN 隧道"
+                            AndroidPerAppMode.INCLUDE -> "仅 ${excludedPackages.size} 个所选应用经 VPN 隧道代理"
+                        }
                         Text(
-                            text = "已选择 ${excludedPackages.size} 个应用直连绕过 VPN 隧道",
+                            text = modeDesc,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
+                OpticalSegmentedControl(
+                    options = listOf(
+                        AndroidPerAppMode.OFF.wire to "关闭",
+                        AndroidPerAppMode.EXCLUDE.wire to "排除所选",
+                        AndroidPerAppMode.INCLUDE.wire to "仅代理所选",
+                    ),
+                    selectedKey = perAppMode.wire,
+                    onSelect = { key ->
+                        onPerAppModeChange(AndroidPerAppMode.fromWire(key))
+                        if (running) needsRestartBanner = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -138,12 +164,33 @@ fun SplitTunnelScreen(
                     FilterChip(
                         selected = includeSystem,
                         onClick = { includeSystem = !includeSystem },
-                        label = { Text("包含系统应用") },
+                        label = { Text("系统应用") },
                     )
+                    FilterChip(
+                        selected = !excludeSelfFromVpn,
+                        onClick = {
+                            onToggleExcludeSelf(!excludeSelfFromVpn)
+                            if (running) needsRestartBanner = true
+                        },
+                        label = { Text("本应用走 VPN") },
+                    )
+                    FilterChip(
+                        selected = allowBypass,
+                        onClick = {
+                            onToggleAllowBypass(!allowBypass)
+                            if (running) needsRestartBanner = true
+                        },
+                        label = { Text("允许绕过") },
+                    )
+                }
+                if (perAppMode == AndroidPerAppMode.EXCLUDE) {
                     AssistChip(
                         onClick = {
-                            InstalledAppsRepository.RECOMMENDED_BYPASS_PACKAGES.forEach { pkg ->
-                                onToggleExcluded(pkg, true)
+                            val recommended = InstalledAppsRepository.RECOMMENDED_BYPASS_PACKAGES
+                            if (onAddExcludedBatch != null) {
+                                onAddExcludedBatch(recommended)
+                            } else {
+                                recommended.forEach { pkg -> onToggleExcluded(pkg, true) }
                             }
                             if (running) needsRestartBanner = true
                         },

@@ -4,6 +4,7 @@ import std;
 import utility;
 import config;
 import provider;
+import provider.workspace_compose;
 import cli.proxy_run;
 import cli.route_files;
 import platform.socket_options;
@@ -306,6 +307,38 @@ extern "C" {
             return 0;
         } catch (...) {
             return -1;
+        }
+    }
+
+    int nexus_core_compose_workspace(
+        const char* workspace_json,
+        const char* host_json,
+        const char* secrets_dir,
+        const char* active_profile_id,
+        char* out_buf, size_t out_cap, size_t* out_len,
+        char* err_buf, size_t err_cap) {
+        try {
+            if (out_len) *out_len = 0;
+            write_c_buf({}, err_buf, err_cap);
+            if (!workspace_json || !host_json) {
+                write_c_buf("workspace_json and host_json must not be null", err_buf, err_cap);
+                return -1;
+            }
+            provider::WorkspaceComposeOptions opts{
+                .secrets_dir = secrets_dir ? std::string(secrets_dir) : std::string{},
+                .active_profile_id = active_profile_id ? std::string(active_profile_id) : std::string{},
+            };
+            auto res = provider::compose_workspace(workspace_json, host_json, opts);
+            auto json = provider::serialize_compose_result_json(res);
+            if (!res.ok && !res.errors.empty()) write_c_buf(res.errors.front(), err_buf, err_cap);
+            if (out_len) *out_len = json.size();
+            if (!out_buf || out_cap <= json.size()) return -4;
+            std::ranges::copy(json, out_buf);
+            out_buf[json.size()] = '\0';
+            return res.ok ? 0 : -2;
+        } catch (...) {
+            write_c_buf("internal error", err_buf, err_cap);
+            return -2;
         }
     }
 }

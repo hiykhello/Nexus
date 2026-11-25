@@ -37,7 +37,23 @@ class NexusControlClient(
     suspend fun reload(): ControlReply = sendUnix("reload")
     suspend fun setLogLevel(level: String): ControlReply = sendUnix("log-level", level)
     suspend fun selectOutbound(group: String, member: String): ControlReply =
-        sendUnix("select", group, member)
+        if (httpBaseUrl != null) {
+            val encoded = encodePathSegment(group)
+            val httpReply = sendHttp("PUT", "/v1/groups/$encoded", JSONObject().put("member", member).toString())
+            if (httpReply.ok) httpReply else sendUnix("select", group, member)
+        } else {
+            sendUnix("select", group, member)
+        }
+
+    suspend fun getOutboundMode(): ControlReply =
+        if (httpBaseUrl != null) sendHttp("GET", "/v1/mode") else sendUnix("mode")
+
+    suspend fun setOutboundMode(mode: String, outbound: String = "proxy"): ControlReply =
+        if (httpBaseUrl != null) {
+            sendHttp("PUT", "/v1/mode", buildSetModeHttpJson(mode, outbound))
+        } else {
+            sendUnix(*buildSetModeUnixTokens(mode, outbound).toTypedArray())
+        }
 
     suspend fun resetGroupAuto(group: String): ControlReply =
         if (httpBaseUrl != null) {
@@ -171,6 +187,14 @@ class NexusControlClient(
 
         internal fun encodeQueryValue(value: String): String =
             URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+        fun buildSetModeHttpJson(mode: String, outbound: String = ""): String =
+            JSONObject().put("mode", mode).apply {
+                if (outbound.isNotBlank()) put("outbound", outbound)
+            }.toString()
+
+        fun buildSetModeUnixTokens(mode: String, outbound: String = ""): List<String> =
+            if (outbound.isNotBlank()) listOf("mode", mode, outbound) else listOf("mode", mode)
 
         fun buildNexus1Frame(tokens: List<String>): ByteArray? {
             if (tokens.isEmpty()) return null

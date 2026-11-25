@@ -66,32 +66,14 @@ using namespace cli::run_detail;
 export template<class UdpRuntime,class Hy2Runtime,class MasqueRuntime,class TuicRuntime,class TunRuntime>
 auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int {
     cli::ensure_http_fetchers_registered();
-    bool traffic_stats=argc>1 && std::string_view(argv[1])=="--traffic-stats";
-    if (traffic_stats) { --argc; ++argv; }
-    constexpr std::string_view run_usage="usage: nexus run [--traffic-stats] <loopback-port> [kdl|beve|srs|nxmm <block-rules>]\n"
-        "       nexus run [--traffic-stats] --config|-c <config.kdl> | --config-dir|-C <dir>\n";
-    if (argc == 2 && std::string_view(argv[1]) == "--help") { std::cout << run_usage; return 0; }
-    if (argc != 2 && argc != 3 && argc != 4) { std::cerr << run_usage; return 2; }
-    unsigned port = 0, workers = 1;
+    auto parsed_args = parse_run_args(argc, argv);
+    if (!parsed_args) return parsed_args.error();
+    if (parsed_args->help) return 0;
+    auto const& run_args = *parsed_args;
+    bool traffic_stats = run_args.traffic_stats, is_cfg = run_args.is_cfg, config_is_dir = run_args.config_is_dir;
+    unsigned port = run_args.port, workers = 1;
     std::chrono::milliseconds shutdown_grace{};
     auto inbound = relay::Inbound::socks5;
-    bool is_cfg=argc>=2 && is_config_flag(argv[1]), config_is_dir=argc>=2 && is_config_dir_flag(argv[1]);
-    if ((argc == 3 && !is_cfg) || (argc != 3 && is_cfg)) {
-        std::cerr << "--config/-c/--config-dir/-C accepts exactly one path\n";
-        return 2;
-    } else if (!is_cfg) {
-        auto text = std::string_view(argv[1]);
-        auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), port);
-        if (error != std::errc{} || end != text.data() + text.size() || port == 0 || port > 65535) {
-            std::cerr << "port must be an integer from 1 to 65535\n";
-            return 2;
-        }
-    }
-    if (argc == 4 && std::string_view(argv[2]) != "kdl" && std::string_view(argv[2]) != "beve" &&
-        std::string_view(argv[2]) != "srs" && std::string_view(argv[2]) != "nxmm") {
-        std::cerr << "rule format must be kdl, beve, srs or nxmm\n";
-        return 2;
-    }
     logging::Runtime logs;
     auto created = relay::Server::create();
     if (!created) { std::cerr << "cannot initialize proxy: " << created.error().message() << '\n'; return 1; }
@@ -121,23 +103,26 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
 #endif
     listeners.push_back({std::move(*created),static_cast<std::uint16_t>(port),inbound});
     auto& server=*listeners.front().server;
-    if (argc == 4) {
-        auto format = std::string_view(argv[2]);
-        auto input = ::rulefile::read_regular_file(argv[3]);
+    if (!run_args.rule_path.empty()) {
+        std::string_view format = run_args.rule_format;
+        auto input = ::rulefile::read_regular_file(run_args.rule_path);
         if (!input) { std::cerr << input.error() << '\n'; return 1; }
         auto result = server.set_block_rules(*input, format == "kdl" ? relay::RuleFormat::kdl :
             format == "beve" ? relay::RuleFormat::beve : format == "srs" ? relay::RuleFormat::srs : relay::RuleFormat::nxmm);
         if (!result) { std::cerr << "invalid block rules: " << result.error() << '\n'; return 1; }
-    } else if (argc == 3 && is_cfg) {
-        auto input = cli::read_config_source(argv[2], config_is_dir);
+    } else if (is_cfg) {
+        auto input = cli::read_config_source(run_args.config_path, config_is_dir, run_args.host_override_path);
         if (!input) { std::cerr << "configuration: " << input.error() << '\n'; return 1; }
-        auto expanded = proxy_providers.prepare_initial(*input, argv[2], true);
+        auto expanded = proxy_providers.prepare_initial(*input, run_args.config_path, true);
         if (!expanded) { std::cerr << "configuration: " << expanded.error() << '\n'; return 1; }
         input = std::move(*expanded);
         reload_source = *input;
         auto config = config::parse_kdl(*input);
         if (!config) { std::cerr << "configuration: " << config.error() << '\n'; return 1; }
-        auto log_start=logs.start(config->log.value_or(logging::Config{}),argv[2],config->log_protected_paths);
+        if (auto ok = protect_host_override_path(config->log_protected_paths, run_args.host_override_path); !ok) {
+            std::cerr << "configuration: " << ok.error() << '\n'; return 1;
+        }
+        auto log_start=logs.start(config->log.value_or(logging::Config{}),run_args.config_path,config->log_protected_paths);
         if (!log_start) { std::cerr << "configuration: " << log_start.error() << '\n'; return 1; }
         if (config->state) for (auto const* root:{&config->state->directory,&config->state->cache_directory}) {
             if (root->empty()) continue;
@@ -165,7 +150,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
                 ::platform::network::SystemInterfaceSelection(network,*config->direct_network,binding));
         }
         shutdown_grace=std::chrono::milliseconds(config->shutdown_grace_ms.value_or(0));
-        cli::RuleFileInput rule_input(argv[2]);
+        cli::RuleFileInput rule_input(run_args.config_path);
         if (auto fetched=remote_rulesets.fetch_initial(*config,*input,rule_input); !fetched)
             return log_failure(logs,logging::Domain::route,"remote rule-set failed",fetched.error());
         if (config->dns) {
@@ -293,13 +278,13 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         if (!control_socket.empty() || control_http_config) route_outbound_names=cli::outbound_names(*config);
         if (route_snapshots || listener_reload.tcp_admission) reload_config.emplace(std::move(*config));
     }
-    if (argc!=3) {
+    if (!is_cfg) {
         auto started=logs.start({});
         if (!started) { std::cerr << started.error() << '\n'; return 1; }
     }
     SignalGuard signal_guard;
     utility::scope_exit stop_local_dns([]() noexcept { dns::stop_system_local_snapshots(); });
-    if (install_signals) if (auto ok = signal_guard.install(argc == 3, traffic_stats); !ok)
+    if (install_signals) if (auto ok = signal_guard.install(is_cfg, traffic_stats); !ok)
         return log_failure(logs, logging::Domain::core, ok.error());
     ControlEventBridge control_wake;
     ProxyHost host{listeners,dns_messages,udp,hy2,masque,tuic,tun,listener_reload.retired_tcp,{},tun.owns_host_dns(),{},shared_io.get(),&control_wake};
@@ -351,14 +336,14 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         }
         if (listener_reload.tcp_admission && (key!=reload_identity || !route_snapshots || udp->has_listeners())) {
             auto r=listener_reload.apply({listeners,reload_config,dns_generation,dns_messages,route_snapshots,
-                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr},argv[2],input,std::move(key),
+                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr},run_args.config_path,input,std::move(key),
                 traffic_stats || control.active() || http_control.active(),group_health.has_value(),udp,selector_state.choices(),
                 provider_sync_trigger || proxy_providers.has_providers(), std::move(*ids));
             if (r) { reload_source.assign(input); route_mode.sync(reload_config); if (control.active() || http_control.active()) route_outbound_names=cli::outbound_names(*reload_config); }
             return r;
         }
         if (key!=reload_identity) return std::unexpected("configuration change requires restart");
-        cli::RuleFileInput rule_input(argv[2]);
+        cli::RuleFileInput rule_input(run_args.config_path);
         remote_rulesets.seed_cached(rule_input);
         std::optional<config::Config> selection;
         if(!reload_config->selectors.empty() || (reload_config->dns && !reload_config->dns->rule_files.empty())) {
@@ -435,10 +420,10 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         if(sig_reload || remote_rulesets.consume_updated() || provider_sync_trigger) {
             auto previous=listener_reload.listener_generation;
             auto prep=[&](std::string_view raw) -> std::expected<std::string,std::string> {
-                if (sig_reload) return proxy_providers.prepare_initial(raw, argv[2], true);
+                if (sig_reload) return proxy_providers.prepare_initial(raw, run_args.config_path, true);
                 return proxy_providers.expand_kdl(raw);
             };
-            auto success=reload_logging_and_routes(logs,argv[2],config_is_dir,previous,listener_reload.listener_generation,reload_routes,prep);
+            auto success=reload_logging_and_routes(logs,run_args.config_path,config_is_dir,previous,listener_reload.listener_generation,reload_routes,prep,run_args.host_override_path);
             provider_sync_trigger = false;
             control_operations.finish_reload(success);
             if (success) {

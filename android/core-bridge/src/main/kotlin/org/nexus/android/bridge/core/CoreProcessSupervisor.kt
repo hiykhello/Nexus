@@ -39,57 +39,110 @@ class CoreProcessSupervisor(private val context: Context) {
         return if (check.valid) null else CoreValidationResult(false, "Core integrity check failed: ${check.reason}")
     }
 
-    suspend fun validateConfig(configFile: File): CoreValidationResult = withContext(Dispatchers.IO) {
+    suspend fun validateConfig(
+        configFile: File,
+        isConfigDir: Boolean = false,
+        hostOverrideFile: File? = null,
+    ): CoreValidationResult = withContext(Dispatchers.IO) {
         val bin = binaryFile()
         verifyCoreBinary(bin)?.let { return@withContext it }
-        runCatching {
-            val proc = ProcessBuilder(bin.absolutePath, "check", "--config", configFile.absolutePath)
-                .redirectErrorStream(true)
-                .start()
-            val captured = ByteArrayOutputStream()
-            val reader = Thread({
-                runCatching {
-                    val buf = ByteArray(1024)
-                    proc.inputStream.use { input ->
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n <= 0) break
-                            val remaining = MAX_VALIDATION_OUTPUT_BYTES - captured.size()
-                            if (remaining > 0) {
-                                captured.write(buf, 0, minOf(n, remaining))
-                            }
+        val args = buildList {
+            add(bin.absolutePath)
+            add("check")
+            add(if (isConfigDir) "--config-dir" else "--config")
+            add(configFile.absolutePath)
+            if (hostOverrideFile != null) {
+                add("--host-override")
+                add(hostOverrideFile.absolutePath)
+            }
+        }
+        runBoundedCommand(args, timeoutSeconds = 5L, maxBytes = MAX_VALIDATION_OUTPUT_BYTES, emptyOkMsg = "configuration valid")
+    }
+
+    suspend fun composeWorkspace(
+        workspaceFile: File,
+        hostFile: File,
+        secretsDir: File,
+        activeProfileId: String,
+        emitKdlFile: File,
+    ): CoreValidationResult = withContext(Dispatchers.IO) {
+        val bin = binaryFile()
+        verifyCoreBinary(bin)?.let { return@withContext it }
+        val args = buildList {
+            add(bin.absolutePath)
+            add("workspace")
+            add("compose")
+            add("--workspace")
+            add(workspaceFile.absolutePath)
+            add("--host")
+            add(hostFile.absolutePath)
+            add("--secrets-dir")
+            add(secretsDir.absolutePath)
+            if (activeProfileId.isNotBlank()) {
+                add("--active")
+                add(activeProfileId)
+            }
+            add("--emit-kdl")
+            add(emitKdlFile.absolutePath)
+            add("--json-result")
+        }
+        runBoundedCommand(args, timeoutSeconds = 10L, maxBytes = MAX_COMPOSE_OUTPUT_BYTES, emptyOkMsg = "")
+    }
+
+    private fun runBoundedCommand(
+        command: List<String>,
+        timeoutSeconds: Long,
+        maxBytes: Int,
+        emptyOkMsg: String,
+    ): CoreValidationResult = runCatching {
+        val proc = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .start()
+        val captured = ByteArrayOutputStream()
+        val reader = Thread({
+            runCatching {
+                val buf = ByteArray(4096)
+                proc.inputStream.use { input ->
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        val remaining = maxBytes - captured.size()
+                        if (remaining > 0) {
+                            captured.write(buf, 0, minOf(n, remaining))
                         }
                     }
                 }
-            }, "nexus-check-drain").apply {
-                isDaemon = true
-                start()
             }
-            val finished = proc.waitFor(5, TimeUnit.SECONDS)
-            if (!finished) {
-                proc.destroyForcibly()
-                proc.waitFor(500, TimeUnit.MILLISECONDS)
-                reader.join(250)
-                CoreValidationResult(false, "nexus check timed out")
-            } else {
-                reader.join(500)
-                val text = String(captured.toByteArray(), Charsets.UTF_8).trim()
-                CoreValidationResult(
-                    proc.exitValue() == 0,
-                    text.ifBlank {
-                        if (proc.exitValue() == 0) "configuration valid" else "exit ${proc.exitValue()}"
-                    },
-                )
-            }
-        }.getOrElse { err ->
-            CoreValidationResult(false, err.message ?: "failed to run nexus check")
+        }, "nexus-cli-drain").apply {
+            isDaemon = true
+            start()
         }
+        val finished = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+        if (!finished) {
+            proc.destroyForcibly()
+            proc.waitFor(500, TimeUnit.MILLISECONDS)
+            reader.join(250)
+            CoreValidationResult(false, "nexus command timed out")
+        } else {
+            reader.join(500)
+            val text = String(captured.toByteArray(), Charsets.UTF_8).trim()
+            CoreValidationResult(
+                proc.exitValue() == 0,
+                text.ifBlank {
+                    if (proc.exitValue() == 0) emptyOkMsg else "exit ${proc.exitValue()}"
+                },
+            )
+        }
+    }.getOrElse { err ->
+        CoreValidationResult(false, err.message ?: "failed to run nexus core command")
     }
 
     @Synchronized
     fun start(
         configFile: File,
         tunFdSocket: File? = null,
+        isConfigDir: Boolean = false,
+        hostOverrideFile: File? = null,
         onLogLine: ((String) -> Unit)? = null,
         onExit: ((Int) -> Unit)? = null,
     ): Boolean {
@@ -101,7 +154,17 @@ class CoreProcessSupervisor(private val context: Context) {
             return false
         }
 
-        val builder = ProcessBuilder(bin.absolutePath, "run", "--config", configFile.absolutePath)
+        val cmd = buildList {
+            add(bin.absolutePath)
+            add("run")
+            add(if (isConfigDir) "--config-dir" else "--config")
+            add(configFile.absolutePath)
+            if (hostOverrideFile != null) {
+                add("--host-override")
+                add(hostOverrideFile.absolutePath)
+            }
+        }
+        val builder = ProcessBuilder(cmd)
             .directory(context.filesDir)
             .redirectErrorStream(true)
         if (tunFdSocket != null) {
@@ -153,5 +216,6 @@ class CoreProcessSupervisor(private val context: Context) {
     companion object {
         private const val SHA256_ASSET_NAME = "nexus-core.sha256"
         private const val MAX_VALIDATION_OUTPUT_BYTES = 4096
+        private const val MAX_COMPOSE_OUTPUT_BYTES = 4 * 1024 * 1024
     }
 }

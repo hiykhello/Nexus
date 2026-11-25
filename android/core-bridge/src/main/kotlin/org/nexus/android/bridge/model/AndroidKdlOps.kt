@@ -251,13 +251,13 @@ object AndroidKdlOps {
         }
     }
 
-    internal fun isIpv4Literal(host: String): Boolean {
+    fun isIpv4Literal(host: String): Boolean {
         val parts = host.split('.')
         if (parts.size != 4) return false
         return parts.all { p -> p.isNotEmpty() && p.all { it.isDigit() } && (p.toIntOrNull() in 0..255) }
     }
 
-    internal fun isIpv6Literal(host: String): Boolean =
+    fun isIpv6Literal(host: String): Boolean =
         host.contains(':') && host.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' || it == ':' }
 
     private fun isSafeKdlToken(token: String): Boolean =

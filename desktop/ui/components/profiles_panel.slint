@@ -2,9 +2,15 @@ import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
-import { ProfileItem } from "../types.slint";
-import { EmptyStateCard, GlassSpeculum, NexusInput, NexusVScrollBar } from "glass_primitives.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { GlassSpeculum, NexusInput, NexusVScrollBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
+import {
+    WorkspaceProfilesView,
+    WorkspaceSubscriptionsView,
+    WorkspaceRoutingDnsView,
+    WorkspaceHostPortableView,
+} from "workspace_panels.slint";
 
 component SecondaryFileChip inherits Rectangle {
     in property <image> icon;
@@ -32,7 +38,6 @@ component SecondaryFileChip inherits Rectangle {
         padding-left: 8px;
         padding-right: root.show-label ? 9px : 8px;
         spacing: 5px;
-
         Image {
             width: 12px; height: 12px;
             y: (parent.height - self.height) / 2;
@@ -41,86 +46,88 @@ component SecondaryFileChip inherits Rectangle {
         }
         if root.show-label : Text {
             text: root.label;
-            font-size: 11px;
-            font-weight: 600;
+            font-size: 11px; font-weight: 600;
             color: ta.has-hover ? Theme.text-primary : Theme.text-secondary;
             vertical-alignment: center;
         }
     }
 }
 
+component WorkspaceSubTabPill inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+
+    horizontal-stretch: 1;
+    height: 30px;
+    border-radius: 15px;
+    border-width: root.active ? 1px : 0px;
+    border-color: root.active ? Theme.accent.with-alpha(0.75) : transparent;
+    background: root.active ? Theme.accent : ta.has-hover ? Theme.row-hover-bg : transparent;
+    animate background { duration: Motion.fast; }
+
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Text {
+        text: root.label;
+        font-size: 12px; font-weight: root.active ? 700 : 600;
+        color: root.active ? Theme.pill-active-fg : Theme.text-secondary;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+}
+
 export component ProfilesPanel inherits VerticalLayout {
-    in property <[ProfileItem]> profiles: [];
-    in-out property <string> new-profile-name: "";
     in-out property <string> share-link-input: "";
     in property <string> config-path: "";
     in property <int> kdl-line-count: 0;
     in property <string> diagnostic-message: "";
     in property <bool> diagnostic-ok: true;
 
-    callback activate-profile(string);
-    callback create-profile(string);
-    callback delete-profile(string);
     callback refresh-profiles();
     callback import-share-link(string);
     callback open-external-editor();
     callback reload-config-from-disk();
 
-    property <bool> narrow-toolbar: root.width < 678px;
     property <bool> show-file-labels: root.width >= 618px;
-
     spacing: Theme.space-md;
 
-    // Compact unified top controls: single row >= 660px content width, crisp 2-row stack < 660px
-    if !root.narrow-toolbar : HorizontalLayout {
+    // Unified 4-Layer Workspace Sub-Tab Bar + Quick Share-URI Import
+    HorizontalLayout {
         vertical-stretch: 0;
         padding-right: 18px;
         spacing: Theme.space-sm;
 
-        NexusInput {
-            horizontal-stretch: 45;
-            preferred-width: 0px;
-            min-width: 140px;
-            text <=> root.new-profile-name;
-            placeholder-text: I18n.t("新档案名称...", "New profile name...");
-            accepted => {
-                if (root.new-profile-name != "") {
-                    root.create-profile(root.new-profile-name);
-                    root.new-profile-name = "";
-                }
-            }
-        }
-        IconActionButton {
-            icon: @image-url("../icons/plus.svg");
-            label: I18n.t("新建档案", "Create Profile");
-            primary: true;
-            clicked => {
-                if (root.new-profile-name != "") {
-                    root.create-profile(root.new-profile-name);
-                    root.new-profile-name = "";
-                }
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 280px;
+            height: 36px;
+            border-radius: 18px;
+            border-width: 1px;
+            border-color: Theme.card-border;
+            background: Theme.card-surface;
+
+            HorizontalLayout {
+                padding: 3px; spacing: 3px;
+                WorkspaceSubTabPill { label: I18n.t("配置项", "Profiles"); active: WorkspaceState.active-subtab == 0; clicked => { WorkspaceState.active-subtab = 0; } }
+                WorkspaceSubTabPill { label: I18n.t("订阅", "Subs"); active: WorkspaceState.active-subtab == 1; clicked => { WorkspaceState.active-subtab = 1; } }
+                WorkspaceSubTabPill { label: I18n.t("路由与 DNS", "Route & DNS"); active: WorkspaceState.active-subtab == 2; clicked => { WorkspaceState.active-subtab = 2; } }
+                WorkspaceSubTabPill { label: I18n.t("本机宿主", "Host"); active: WorkspaceState.active-subtab == 3; clicked => { WorkspaceState.active-subtab = 3; } }
             }
         }
 
         NexusInput {
-            horizontal-stretch: 55;
-            preferred-width: 0px;
-            min-width: 160px;
+            horizontal-stretch: 0;
+            width: root.width >= 820px ? 240px : 170px;
             mono: true;
-            placeholder-text: I18n.t("粘贴节点分享链接导入...", "Paste share URI to import...");
+            placeholder-text: I18n.t("粘贴分享链接导入...", "Paste share URI...");
             text <=> root.share-link-input;
-            accepted => {
-                if (root.share-link-input != "") { root.import-share-link(root.share-link-input); }
-            }
+            accepted => { if (root.share-link-input != "") { root.import-share-link(root.share-link-input); } }
         }
         IconActionButton {
             icon: @image-url("../icons/download.svg");
-            label: I18n.t("导入节点", "Import Node");
+            label: I18n.t("导入", "Import");
             primary: root.share-link-input != "";
             enabled: root.share-link-input != "";
-            clicked => {
-                if (root.share-link-input != "") { root.import-share-link(root.share-link-input); }
-            }
+            clicked => { if (root.share-link-input != "") { root.import-share-link(root.share-link-input); } }
         }
         IconActionButton {
             icon: @image-url("../icons/refresh.svg");
@@ -130,115 +137,32 @@ export component ProfilesPanel inherits VerticalLayout {
         }
     }
 
-    if root.narrow-toolbar : VerticalLayout {
-        vertical-stretch: 0;
-        padding-right: 18px;
-        spacing: Theme.space-sm;
-
-        HorizontalLayout {
-            spacing: Theme.space-sm;
-            NexusInput {
-                horizontal-stretch: 1;
-                min-width: 120px;
-                text <=> root.new-profile-name;
-                placeholder-text: I18n.t("新档案名称...", "New profile name...");
-                accepted => {
-                    if (root.new-profile-name != "") {
-                        root.create-profile(root.new-profile-name);
-                        root.new-profile-name = "";
-                    }
-                }
-            }
-            IconActionButton {
-                icon: @image-url("../icons/plus.svg");
-                label: I18n.t("新建档案", "Create Profile");
-                primary: true;
-                clicked => {
-                    if (root.new-profile-name != "") {
-                        root.create-profile(root.new-profile-name);
-                        root.new-profile-name = "";
-                    }
-                }
-            }
-        }
-
-        HorizontalLayout {
-            spacing: Theme.space-sm;
-            NexusInput {
-                horizontal-stretch: 1;
-                min-width: 120px;
-                mono: true;
-                placeholder-text: I18n.t("粘贴节点分享链接导入...", "Paste share URI to import...");
-                text <=> root.share-link-input;
-                accepted => {
-                    if (root.share-link-input != "") { root.import-share-link(root.share-link-input); }
-                }
-            }
-            IconActionButton {
-                icon: @image-url("../icons/download.svg");
-                label: I18n.t("导入节点", "Import Node");
-                primary: root.share-link-input != "";
-                enabled: root.share-link-input != "";
-                clicked => {
-                    if (root.share-link-input != "") { root.import-share-link(root.share-link-input); }
-                }
-            }
-            IconActionButton {
-                icon: @image-url("../icons/refresh.svg");
-                label: I18n.t("刷新", "Refresh");
-                spin-on-click: true;
-                clicked => { root.refresh-profiles(); }
-            }
-        }
-    }
-
-    // Slim active config file bar (path + line count + External Editor + Reload from Disk)
+    // Slim active compiled config bar (path + line count + External Editor + Reload from Disk)
     HorizontalLayout {
         vertical-stretch: 0;
         padding-right: 18px;
 
         Rectangle {
-            horizontal-stretch: 1;
-            min-width: 0px;
-            height: 40px;
-            border-radius: 14px;
-            border-width: 1px;
-            border-color: Theme.card-border;
-            background: Theme.card-surface;
-
+            horizontal-stretch: 1; min-width: 0px; height: 40px;
+            border-radius: 14px; border-width: 1px;
+            border-color: Theme.card-border; background: Theme.card-surface;
             GlassSpeculum { corner-inset: 12px; }
 
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 8px;
-                spacing: 8px;
-
+                padding-left: 12px; padding-right: 8px; spacing: 8px;
                 Image {
-                    width: 13px; height: 13px;
-                    y: (parent.height - self.height) / 2;
-                    source: @image-url("../icons/config.svg");
-                    colorize: Theme.text-muted;
+                    width: 13px; height: 13px; y: (parent.height - self.height) / 2;
+                    source: @image-url("../icons/config.svg"); colorize: Theme.text-muted;
                 }
-
                 Text {
-                    horizontal-stretch: 1;
-                    min-width: 0px;
+                    horizontal-stretch: 1; min-width: 0px;
                     text: root.config-path != "" ? root.config-path : "~/.config/nexus/config.kdl";
-                    font-size: 11px;
-                    font-family: Theme.mono-font;
-                    color: Theme.text-secondary;
-                    vertical-alignment: center;
-                    overflow: elide;
+                    font-size: 11px; font-family: Theme.mono-font;
+                    color: Theme.text-secondary; vertical-alignment: center; overflow: elide;
                 }
-
                 if root.kdl-line-count > 0 && root.show-file-labels : Rectangle {
-                    horizontal-stretch: 0;
-                    height: 20px;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: 7px;
-                    border-width: 1px;
-                    border-color: Theme.well-border;
-                    background: Theme.well-bg;
+                    horizontal-stretch: 0; height: 20px; y: (parent.height - self.height) / 2;
+                    border-radius: 7px; border-width: 1px; border-color: Theme.well-border; background: Theme.well-bg;
                     HorizontalLayout {
                         padding-left: 7px; padding-right: 7px;
                         Text {
@@ -248,7 +172,6 @@ export component ProfilesPanel inherits VerticalLayout {
                         }
                     }
                 }
-
                 VerticalLayout {
                     alignment: center;
                     SecondaryFileChip {
@@ -274,145 +197,45 @@ export component ProfilesPanel inherits VerticalLayout {
     if root.diagnostic-message != "" : HorizontalLayout {
         vertical-stretch: 0;
         padding-right: 18px;
-
         Rectangle {
-            horizontal-stretch: 1;
-            min-width: 0px;
-            border-radius: Theme.radius-sm;
-            border-width: 1px;
+            horizontal-stretch: 1; min-width: 0px;
+            border-radius: Theme.radius-sm; border-width: 1px;
             border-color: root.diagnostic-ok ? Theme.success-border : Theme.error-border;
             background: root.diagnostic-ok ? Theme.success-bg : Theme.error-bg;
             HorizontalLayout {
                 padding-left: 12px; padding-right: 12px; padding-top: 7px; padding-bottom: 7px;
                 Text {
-                    text: root.diagnostic-message;
-                    font-size: 11px; font-weight: 600;
-                    color: root.diagnostic-ok ? Theme.success-fg : Theme.error-fg;
-                    overflow: elide;
+                    text: root.diagnostic-message; font-size: 11px; font-weight: 600;
+                    color: root.diagnostic-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
                 }
             }
         }
     }
 
-    // Bento Profile Cards directly on #101114 graphite canvas
+    // Main Scrollable 4-Layer Workspace Surface
     Rectangle {
         vertical-stretch: 1;
         clip: true;
 
         sv := ScrollView {
-            width: 100%;
-            height: 100%;
+            width: 100%; height: 100%;
             vertical-scrollbar-policy: ScrollBarPolicy.always-off;
             horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
             content-width: self.visible-width;
-            content-height: max(self.visible-height, prof-col.preferred-height);
+            content-height: max(self.visible-height, ws-col.preferred-height);
 
-            prof-col := VerticalLayout {
-                x: 0px;
-                y: 0px;
+            ws-col := VerticalLayout {
+                x: 0px; y: 0px;
                 width: sv.visible-width;
-                padding-bottom: 8px;
+                padding-bottom: 10px;
                 alignment: start;
 
                 property <length> grid-w: max(0px, sv.visible-width - 18px);
-                property <int> grid-cols: grid-w >= 800px ? 3 : grid-w >= 440px ? 2 : 1;
-                property <length> card-w: max(0px, Math.floor((grid-w - 12px * (grid-cols - 1)) / grid-cols / 1px) * 1px);
-                property <length> cell-w: card-w + 12px;
 
-                if root.profiles.length == 0 : EmptyStateCard {
-                    width: grid-w;
-                    icon: @image-url("../icons/profiles.svg");
-                    title: I18n.t("暂无配置档案", "No profiles yet");
-                    subtitle: I18n.t("保存当前配置为场景档案", "Save current config as a profile");
-                    action-label: I18n.t("保存为默认档案", "Save as Default");
-                    action-clicked => { root.create-profile("Default"); }
-                }
-
-                if root.profiles.length > 0 : FlexboxLayout {
-                    width: max(0px, grid-w + 12px);
-                    height: Math.ceil(root.profiles.length / grid-cols) * 84px;
-                    for prof in root.profiles : Rectangle {
-                        width: cell-w;
-                        height: 84px;
-
-                        Rectangle {
-                            x: 0px; y: 0px;
-                            width: card-w; height: 72px;
-                            border-radius: 16px;
-                            border-width: 1px;
-                            border-color: prof.active ? Theme.accent.with-alpha(Theme.dark ? 0.78 : 0.62) : prof-ta.has-hover ? Theme.selected-border : Theme.card-border;
-                            background: prof.active
-                                ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.accent.with-alpha(Theme.dark ? 0.09 : 0.04) 100%)
-                                : prof-ta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
-                            drop-shadow-blur: prof.active || prof-ta.has-hover ? 14px : 8px;
-                            drop-shadow-offset-y: prof.active || prof-ta.has-hover ? 3px : 2px;
-                            drop-shadow-color: prof.active ? Theme.accent.with-alpha(Theme.dark ? 0.28 : 0.16) : Theme.card-shadow;
-                            transform-scale: !prof.active && prof-ta.pressed ? 0.985 : 1.0;
-                            animate border-color { duration: Motion.fast; }
-                            animate drop-shadow-blur { duration: Motion.fast; }
-                            animate transform-scale { duration: Motion.micro; }
-
-                            GlassSpeculum { corner-inset: 14px; }
-
-                            prof-ta := TouchArea {
-                                mouse-cursor: prof.active ? default : pointer;
-                                clicked => { if (!prof.active) { root.activate-profile(prof.id); } }
-                            }
-
-                            Rectangle {
-                                x: 2px;
-                                y: prof.active ? 16px : parent.height / 2;
-                                width: 3px;
-                                height: prof.active ? (parent.height - 32px) : 0px;
-                                border-radius: 2px;
-                                opacity: prof.active ? 1.0 : 0.0;
-                                background: Theme.accent;
-                                animate height { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
-                                animate y { duration: Motion.normal; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
-                                animate opacity { duration: Motion.fast; }
-                            }
-
-                            HorizontalLayout {
-                                padding-left: 16px;
-                                padding-right: 14px;
-                                spacing: Theme.space-sm;
-
-                                VerticalLayout {
-                                    alignment: center;
-                                    Rectangle { width: 8px; height: 8px; border-radius: 4px; background: prof.active ? Theme.success-fg : Theme.offline-fg; }
-                                }
-
-                                Text {
-                                    text: prof.name; font-size: 14px; font-weight: prof.active ? 700 : 600;
-                                    color: Theme.text-primary;
-                                    vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide;
-                                }
-
-                                if prof.active : VerticalLayout {
-                                    alignment: center;
-                                    Rectangle {
-                                        height: 22px; border-radius: 11px; border-width: 1px; border-color: Theme.success-border; background: Theme.success-bg;
-                                        HorizontalLayout {
-                                            padding-left: 9px; padding-right: 9px;
-                                            Text { text: I18n.t("使用中", "Active"); font-size: 10px; font-weight: 700; color: Theme.success-fg; vertical-alignment: center; }
-                                        }
-                                    }
-                                }
-
-                                if !prof.active : VerticalLayout {
-                                    alignment: center;
-                                    IconActionButton {
-                                        icon: @image-url("../icons/trash.svg");
-                                        label: I18n.t("删除", "Delete");
-                                        danger: true;
-                                        size: 28px;
-                                        clicked => { root.delete-profile(prof.id); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                if WorkspaceState.active-subtab == 0 : WorkspaceProfilesView { grid-w: grid-w; }
+                if WorkspaceState.active-subtab == 1 : WorkspaceSubscriptionsView { grid-w: grid-w; }
+                if WorkspaceState.active-subtab == 2 : WorkspaceRoutingDnsView { grid-w: grid-w; }
+                if WorkspaceState.active-subtab == 3 : WorkspaceHostPortableView { grid-w: grid-w; }
             }
         }
 

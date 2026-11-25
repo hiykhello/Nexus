@@ -62,7 +62,10 @@ internal fun NexusRootScreen(
     excludedPackages: Set<String>,
     dashVisibility: DashboardCardVisibility = DashboardCardVisibility(),
     onDashVisibilityChange: (DashboardCardVisibility) -> Unit = {},
+    workspaceState: WorkspaceUiState = WorkspaceUiState(),
+    workspaceActions: WorkspaceUiActions = WorkspaceUiActions(),
     onToggleExcluded: (String, Boolean) -> Unit,
+    onAddExcludedBatch: ((Set<String>) -> Unit)? = null,
     onStartStop: (Boolean) -> Unit,
     onRestartVpn: () -> Unit = {},
     onSwitchOutboundMode: suspend (mode: String, currentKdl: String) -> Pair<String?, String> = { _, _ -> null to "" },
@@ -127,8 +130,12 @@ internal fun NexusRootScreen(
     }
 
     val currentTab = tabs[selectedTab.coerceIn(0, tabs.lastIndex)]
-    val outboundMode = remember(kdlText) { AndroidKdlOps.detectOutboundMode(kdlText) }
-    val hasRemoteOutbound = remember(kdlText) { AndroidKdlOps.hasRemoteOutbound(kdlText) }
+    val outboundMode = remember(workspaceState.outboundMode, kdlText) {
+        workspaceState.outboundMode.ifBlank { AndroidKdlOps.detectOutboundMode(kdlText) }
+    }
+    val hasRemoteOutbound = remember(workspaceState.hasAnyRemoteProfile, kdlText) {
+        workspaceState.hasAnyRemoteProfile || AndroidKdlOps.hasRemoteOutbound(kdlText)
+    }
 
     suspend fun syncPrimaryGroup(preferredTag: String = "") {
         val loaded = onFetchGroups()
@@ -262,12 +269,10 @@ internal fun NexusRootScreen(
                 bottom = innerPadding.calculateBottomPadding() + 16.dp,
             )
 
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.TopCenter,
-            ) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                 Box(modifier = Modifier.widthIn(max = 1120.dp).fillMaxSize()) {
                     if (showSplitTunnel) {
+                        val h = workspaceState.host
                         SplitTunnelScreen(
                             running = running,
                             excludedPackages = excludedPackages,
@@ -276,6 +281,13 @@ internal fun NexusRootScreen(
                             windowSizeClass = windowSizeClass,
                             contentPadding = innerPadding,
                             previewApps = previewApps,
+                            perAppMode = h.android.perAppMode,
+                            onPerAppModeChange = { m -> scope.launch { workspaceActions.onUpdateHost(h.copy(android = h.android.copy(perAppMode = m))) } },
+                            excludeSelfFromVpn = h.android.excludeSelfFromVpn,
+                            onToggleExcludeSelf = { v -> scope.launch { workspaceActions.onUpdateHost(h.copy(android = h.android.copy(excludeSelfFromVpn = v))) } },
+                            allowBypass = h.android.allowBypass,
+                            onToggleAllowBypass = { v -> scope.launch { workspaceActions.onUpdateHost(h.copy(android = h.android.copy(allowBypass = v))) } },
+                            onAddExcludedBatch = onAddExcludedBatch,
                         )
                     } else {
                         when (currentTab) {
@@ -380,9 +392,7 @@ internal fun NexusRootScreen(
                                 onCloseAllConnections = onCloseAllConnections,
                                 onCreateRuleFromConnection = { host, action, outbound ->
                                     val (updated, note) = onCreateRuleFromConnection(host, action, outbound, kdlText)
-                                    if (updated != null) {
-                                        kdlText = updated
-                                    }
+                                    if (updated != null) kdlText = updated
                                     note
                                 },
                                 onBypassPackage = { pkg -> onToggleExcluded(pkg, true) },
@@ -395,35 +405,20 @@ internal fun NexusRootScreen(
                                 kdlText = kdlText,
                                 hasRemoteOutbound = hasRemoteOutbound,
                                 profiles = profiles,
-                                onApplyConfig = { next ->
-                                    val res = onSaveAndReload(next)
-                                    if (res.first) kdlText = next
-                                    res
-                                },
+                                onApplyConfig = { next -> onSaveAndReload(next).also { if (it.first) kdlText = next } },
                                 diagnostic = diagnostic,
                                 onDiagnosticChange = { diagnostic = it },
-                                onImportShareLink = { raw, cur ->
-                                    val res = onImportShareLink(raw, cur)
-                                    if (res.first != null) kdlText = res.first!!
-                                    res
-                                },
-                                onImportSubscription = { name, url ->
-                                    val res = onImportSubscription(name, url)
-                                    if (res.first.isNotEmpty()) kdlText = res.first
-                                    res
-                                },
-                                onSwitchProfile = { id ->
-                                    val res = onSwitchProfile(id)
-                                    val loaded = res.first
-                                    if (loaded != null) kdlText = loaded
-                                    res
-                                },
+                                onImportShareLink = { raw, cur -> onImportShareLink(raw, cur).also { if (it.first != null) kdlText = it.first!! } },
+                                onImportSubscription = { name, url -> onImportSubscription(name, url).also { if (it.first.isNotEmpty()) kdlText = it.first } },
+                                onSwitchProfile = { id -> onSwitchProfile(id).also { if (it.first != null) kdlText = it.first!! } },
                                 onSaveProfileSnapshot = onSaveProfileSnapshot,
                                 onValidateKdl = onValidateKdl,
                                 windowSizeClass = windowSizeClass,
                                 contentPadding = screenPadding,
                                 excludedCount = excludedPackages.size,
                                 onOpenSplitTunnel = { showSplitTunnel = true },
+                                workspaceState = workspaceState,
+                                workspaceActions = workspaceActions,
                             )
                             NexusTab.LOGS -> LogsScreen(
                                 logs = if (ringLogs.isNotEmpty()) ringLogs else localLogs,

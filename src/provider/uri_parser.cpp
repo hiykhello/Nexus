@@ -146,6 +146,30 @@ namespace provider {
                 (void)std::from_chars(m.data(), m.data() + m.size(), mv);
                 out.wg_mtu = static_cast<std::uint16_t>(mv);
             }
+            if (auto r = qget({"reserved"}); !r.empty()) {
+                auto rv = trim(r);
+                if (rv.contains(',')) {
+                    std::array<std::uint8_t, 3> bytes{};
+                    std::size_t idx = 0;
+                    bool ok = true, done = false;
+                    while (!rv.empty() && idx < 3) {
+                        auto c = rv.find(',');
+                        auto tok = trim(rv.substr(0, c));
+                        unsigned v = 0;
+                        auto [e, ec] = std::from_chars(tok.data(), tok.data() + tok.size(), v);
+                        if (tok.empty() || ec != std::errc{} || e != tok.data() + tok.size() || v > 255) { ok = false; break; }
+                        bytes[idx++] = static_cast<std::uint8_t>(v);
+                        if (c == std::string_view::npos) { done = true; break; }
+                        rv.remove_prefix(c + 1);
+                    }
+                    if (ok && idx == 3 && done) out.wg_reserved = bytes;
+                } else if (auto dec = base64_decode(rv); dec && dec->size() == 3) {
+                    out.wg_reserved = {
+                        static_cast<std::uint8_t>((*dec)[0]),
+                        static_cast<std::uint8_t>((*dec)[1]),
+                        static_cast<std::uint8_t>((*dec)[2])};
+                }
+            }
             if (out.wg_private_key.empty() || out.wg_peer_public_key.empty())
                 return std::unexpected("wg:// requires private key and publickey");
             return out;
@@ -188,6 +212,22 @@ namespace provider {
         out.xhttp_mode = qget({"mode"});
         out.obfs = qget({"obfs"});
         out.obfs_password = qget({"obfs-password"});
+        if (out.protocol == ProxyProtocol::hysteria2) {
+            out.hy2_ports = qget({"mport", "ports"});
+            auto parse_u32 = [](std::string_view s) -> std::uint32_t {
+                std::uint32_t v = 0;
+                auto [e, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+                return (ec == std::errc{} && e > s.data()) ? v : 0;
+            };
+            if (auto hi_ms = qget({"hop-interval-ms", "hop_interval_ms"}); !hi_ms.empty()) {
+                if (auto v = parse_u32(hi_ms); v > 0) out.hy2_hop_interval_ms = v;
+            } else if (auto hi = qget({"hop-interval", "hop_interval"}); !hi.empty()) {
+                if (auto v = parse_u32(hi); v > 0)
+                    out.hy2_hop_interval_ms = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t(v) * 1000ull, 86400000ull));
+            }
+            out.hy2_up_mbps = parse_u32(qget({"upmbps", "up"}));
+            out.hy2_down_mbps = parse_u32(qget({"downmbps", "down"}));
+        }
         out.congestion_control = qget({"congestion_control", "cc"});
         out.udp_relay_mode = qget({"udp_relay_mode"});
         if (out.protocol == ProxyProtocol::snell) {

@@ -51,6 +51,9 @@ data class RuntimeSocketPaths(
     val tunFdSocket: File = File(rootDir, "t.sock")
     val controlTokenFile: File = File(rootDir, "control.token")
     val runtimeConfigFile: File = File(rootDir, "runtime.kdl")
+    val composedConfigFile: File = File(rootDir, "composed.kdl")
+    val telemetryFile: File = File(rootDir, "telemetry.json")
+    val secretsDir: File = File(rootDir, "secrets")
     val stateDir: File = File(rootDir, "state")
     val cacheDir: File = File(rootDir, "cache")
 

@@ -103,6 +103,76 @@ namespace provider::detail {
         [[nodiscard]] auto as_bool(bool def = false) const noexcept -> bool;
     };
 
+    inline auto protocol_kdl_name(ProxyProtocol p) noexcept -> std::string_view {
+        switch (p) {
+        case ProxyProtocol::vless: return "vless";
+        case ProxyProtocol::trojan: return "trojan";
+        case ProxyProtocol::shadowsocks: return "shadowsocks";
+        case ProxyProtocol::hysteria2: return "hysteria2";
+        case ProxyProtocol::tuic: return "tuic";
+        case ProxyProtocol::anytls: return "anytls";
+        case ProxyProtocol::snell: return "snell";
+        case ProxyProtocol::naive: return "naive";
+        case ProxyProtocol::ssh: return "ssh";
+        case ProxyProtocol::socks5: return "socks5";
+        case ProxyProtocol::http_connect: return "http-connect";
+        case ProxyProtocol::wireguard: return "wireguard";
+        }
+        return "vless";
+    }
+
+    inline auto json_escape(std::string_view s) -> std::string {
+        std::string out;
+        out.reserve(s.size() + 2);
+        out.push_back('"');
+        auto is_cont = [](unsigned char b) noexcept { return (b & 0xC0u) == 0x80u; };
+        for (std::size_t i = 0; i < s.size();) {
+            auto c = static_cast<unsigned char>(s[i]);
+            if (c < 0x80u) {
+                switch (c) {
+                case '"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b"; break;
+                case '\f': out += "\\f"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:
+                    if (c < 0x20u) out += std::format("\\u{:04x}", unsigned(c));
+                    else out.push_back(static_cast<char>(c));
+                    break;
+                }
+                ++i;
+            } else if (c >= 0xC2u && c <= 0xDFu && i + 1 < s.size() &&
+                       is_cont(static_cast<unsigned char>(s[i + 1]))) {
+                out.append(s.data() + i, 2);
+                i += 2;
+            } else if (c >= 0xE0u && c <= 0xEFu && i + 2 < s.size()) {
+                auto b1 = static_cast<unsigned char>(s[i + 1]);
+                auto b2 = static_cast<unsigned char>(s[i + 2]);
+                bool ok = is_cont(b1) && is_cont(b2) && !(c == 0xE0u && b1 < 0xA0u) && !(c == 0xEDu && b1 >= 0xA0u);
+                if (ok) { out.append(s.data() + i, 3); i += 3; }
+                else { out += "\\ufffd"; ++i; }
+            } else if (c >= 0xF0u && c <= 0xF4u && i + 3 < s.size()) {
+                auto b1 = static_cast<unsigned char>(s[i + 1]);
+                auto b2 = static_cast<unsigned char>(s[i + 2]);
+                auto b3 = static_cast<unsigned char>(s[i + 3]);
+                bool ok = is_cont(b1) && is_cont(b2) && is_cont(b3) && !(c == 0xF0u && b1 < 0x90u) && !(c == 0xF4u && b1 >= 0x90u);
+                if (ok) { out.append(s.data() + i, 4); i += 4; }
+                else { out += "\\ufffd"; ++i; }
+            } else {
+                out += "\\ufffd";
+                ++i;
+            }
+        }
+        out.push_back('"');
+        return out;
+    }
+
+    [[nodiscard]] auto write_provider_secret(ConvertOptions const& opts, std::set<std::string>& used_secrets,
+        std::string_view hint, std::string_view content, bool* wrote_file = nullptr)
+        -> std::expected<std::string, std::string>;
+
     [[nodiscard]] auto parse_yaml_dom(std::string_view body) -> std::expected<YamlVal, std::string>;
     [[nodiscard]] auto parse_uri_list(std::string_view body, bool was_base64)
         -> std::expected<ParsedDocument, std::string>;

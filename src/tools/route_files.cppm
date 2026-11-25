@@ -8,7 +8,8 @@ export import rules.rule_input;
 export namespace cli {
     auto set_working_directory(std::filesystem::path directory) -> void;
     [[nodiscard]] auto working_directory() -> std::optional<std::filesystem::path>;
-    [[nodiscard]] auto read_config_source(std::string_view path,bool is_directory=false) -> std::expected<std::string,std::string>;
+    [[nodiscard]] auto read_config_source(std::string_view path,bool is_directory=false,
+        std::string_view host_override_path={}) -> std::expected<std::string,std::string>;
 
     struct ManagedRulesetFetchResult {
         std::string body;

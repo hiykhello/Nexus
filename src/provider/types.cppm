@@ -33,6 +33,8 @@ export namespace provider {
         std::string reality_public_key, reality_short_id;
         bool udp = true, uot = false;
         std::string obfs, obfs_password;
+        std::string hy2_ports;
+        std::uint32_t hy2_hop_interval_ms = 0, hy2_up_mbps = 0, hy2_down_mbps = 0;
         std::string congestion_control, udp_relay_mode;
         int snell_version = 5;
         std::string naive_protocol = "h2";

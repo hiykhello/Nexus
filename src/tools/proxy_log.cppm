@@ -72,18 +72,91 @@ export namespace cli::run_detail {
         return 1;
     }
 
+    struct RunArgs {
+        bool help = false, traffic_stats = false, is_cfg = false, config_is_dir = false;
+        unsigned port = 0;
+        std::string config_path, host_override_path, rule_format, rule_path;
+    };
+
+    inline auto parse_run_args(int argc, char** argv) -> std::expected<RunArgs, int> {
+        constexpr std::string_view run_usage =
+            "usage: nexus run [--traffic-stats] <loopback-port> [kdl|beve|srs|nxmm <block-rules>]\n"
+            "       nexus run [--traffic-stats] [--host-override <file>] (--config|-c <config.kdl> | --config-dir|-C <dir>)\n";
+        if (argc == 2 && std::string_view(argv[1]) == "--help") { std::cout << run_usage; return RunArgs{.help = true}; }
+        RunArgs out{};
+        bool has_host_override = false;
+        std::vector<std::string_view> pos;
+        for (int i = 1; i < argc; ++i) {
+            std::string_view arg(argv[i]);
+            if (arg == "--traffic-stats") { out.traffic_stats = true; continue; }
+            if (arg == "--config" || arg == "-c" || arg == "--config-dir" || arg == "-C") {
+                if (out.is_cfg || i + 1 >= argc || std::string_view(argv[i + 1]).empty()) {
+                    std::cerr << "--config/-c/--config-dir/-C accepts exactly one path\n"; return std::unexpected(2);
+                }
+                out.is_cfg = true;
+                out.config_is_dir = (arg == "--config-dir" || arg == "-C");
+                out.config_path = argv[++i];
+                continue;
+            }
+            if (arg == "--host-override") {
+                if (has_host_override || i + 1 >= argc || std::string_view(argv[i + 1]).empty()) {
+                    std::cerr << "--host-override accepts exactly one non-empty path\n"; return std::unexpected(2);
+                }
+                has_host_override = true;
+                out.host_override_path = argv[++i];
+                continue;
+            }
+            if (arg.starts_with('-')) { std::cerr << run_usage; return std::unexpected(2); }
+            pos.push_back(arg);
+        }
+        if (out.is_cfg) {
+            if (!pos.empty()) { std::cerr << "--config/-c/--config-dir/-C accepts exactly one path\n"; return std::unexpected(2); }
+            return out;
+        }
+        if (has_host_override) { std::cerr << "--host-override requires --config or --config-dir\n"; return std::unexpected(2); }
+        if (pos.size() != 1 && pos.size() != 3) { std::cerr << run_usage; return std::unexpected(2); }
+        auto [end, error] = std::from_chars(pos[0].data(), pos[0].data() + pos[0].size(), out.port);
+        if (error != std::errc{} || end != pos[0].data() + pos[0].size() || out.port == 0 || out.port > 65535) {
+            std::cerr << "port must be an integer from 1 to 65535\n";
+            return std::unexpected(2);
+        }
+        if (pos.size() == 3) {
+            if (pos[1] != "kdl" && pos[1] != "beve" && pos[1] != "srs" && pos[1] != "nxmm") {
+                std::cerr << "rule format must be kdl, beve, srs or nxmm\n";
+                return std::unexpected(2);
+            }
+            out.rule_format = std::string(pos[1]);
+            out.rule_path = std::string(pos[2]);
+        }
+        return out;
+    }
+
+    inline auto protect_host_override_path(std::vector<std::string>& protected_paths, std::string_view host_override_path)
+        -> std::expected<void, std::string> {
+        if (host_override_path.empty()) return {};
+        std::filesystem::path resolved(host_override_path);
+        if (resolved.is_relative()) if (auto wd = cli::working_directory()) resolved = *wd / resolved;
+        std::error_code ec;
+        auto abs = std::filesystem::absolute(resolved, ec);
+        if (ec) return std::unexpected("cannot resolve host-override path for log files");
+        protected_paths.push_back(abs.string());
+        return {};
+    }
+
     inline auto reload_logging_and_routes(logging::Runtime& logs, std::string_view path, bool config_is_dir,
                                           std::uint64_t previous, std::uint64_t const& generation,
-                                          auto&& routes, auto&& prepare_source) -> bool {
+                                          auto&& routes, auto&& prepare_source,
+                                          std::string_view host_override_path = {}) -> bool {
         using logging::Domain;
         using logging::Level;
         auto reload = [&]() -> std::expected<void, std::string> {
-            auto raw = cli::read_config_source(path, config_is_dir);
+            auto raw = cli::read_config_source(path, config_is_dir, host_override_path);
             if (!raw) return std::unexpected(std::move(raw.error()));
             auto input = prepare_source(*raw);
             if (!input) return std::unexpected(std::move(input.error()));
             auto config = config::parse_kdl(*input);
             if (!config) return std::unexpected(std::move(config.error()));
+            if (auto ok = protect_host_override_path(config->log_protected_paths, host_override_path); !ok) return ok;
             auto options = config->log.value_or(logging::Config{});
             auto validated = logs.validate_reload(options, path, config->log_protected_paths);
             if (!validated) return validated;
@@ -119,9 +192,10 @@ export namespace cli::run_detail {
 
     inline auto reload_logging_and_routes(logging::Runtime& logs, std::string_view path, bool config_is_dir,
                                           std::uint64_t previous, std::uint64_t const& generation,
-                                          auto&& routes) -> bool {
+                                          auto&& routes, std::string_view host_override_path = {}) -> bool {
         return reload_logging_and_routes(logs, path, config_is_dir, previous, generation, routes,
-            [](std::string_view raw) -> std::expected<std::string, std::string> { return std::string(raw); });
+            [](std::string_view raw) -> std::expected<std::string, std::string> { return std::string(raw); },
+            host_override_path);
     }
 
     inline auto report_exit(logging::Runtime& logs, bool failed, bool udp_failed, std::uint64_t generation,

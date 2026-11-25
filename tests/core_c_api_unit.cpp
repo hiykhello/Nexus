@@ -181,6 +181,50 @@ int main() {
     assert(nexus_core_runtime_info_json(info_json, sizeof(info_json), &info_len) == 0 && info_len > 20);
 
     auto tmp_dir = make_temp_dir("nexus-capi");
+    {
+        auto ws_sec = tmp_dir / "ws-secrets";
+        const char* ws_json = R"json({
+            "schema_version": 1,
+            "profiles": [
+                {"id": "n1", "remarks": "HK-1", "kind": "node", "node": {
+                    "protocol": "vless", "server": "edge.example.test", "port": 443,
+                    "password": "11111111-2222-3333-4444-555555555555",
+                    "tls": {"enabled": true, "sni": "edge.example.test"}
+                }}
+            ],
+            "routing_profiles": [{"id": "r1", "is_active": true, "default_outbound": "proxy"}]
+        })json";
+        const char* host_json = R"json({
+            "schema_version": 1, "platform": "desktop-linux",
+            "desktop": {"enable_mixed": true, "mixed_listen": "127.0.0.1:7890"}
+        })json";
+        assert(nexus_core_compose_workspace(nullptr, host_json, ws_sec.c_str(), "n1", nullptr, 0, nullptr, err_buf, sizeof(err_buf)) == -1);
+        size_t comp_len = 0;
+        assert(nexus_core_compose_workspace(ws_json, host_json, ws_sec.c_str(), "n1", nullptr, 0, &comp_len, err_buf, sizeof(err_buf)) == -4);
+        assert(comp_len > 64);
+        std::string comp_buf(comp_len + 1, '\0');
+        assert(nexus_core_compose_workspace(ws_json, host_json, ws_sec.c_str(), "n1", comp_buf.data(), comp_buf.size(), &comp_len, err_buf, sizeof(err_buf)) == 0);
+        assert(comp_buf.find("\"ok\":true") != std::string::npos);
+        assert(comp_buf.find("\"selector_tag\":\"proxy\"") != std::string::npos);
+        // Fail-closed missing chain hop returns -2 with structured errors[] and cleans up secrets
+        auto fail_sec = tmp_dir / "ws-fail-secrets";
+        const char* bad_ws = R"json({
+            "schema_version": 1,
+            "profiles": [
+                {"id": "n1", "remarks": "Hop1", "kind": "node", "node": {
+                    "protocol": "trojan", "server": "198.51.100.1", "port": 443, "password": "pw",
+                    "tls": {"enabled": true, "sni": "h1.test"}
+                }},
+                {"id": "c1", "remarks": "BrokenChain", "kind": "proxy_chain", "proxy_chain": {"hop_ids": ["n1", "missing"]}}
+            ]
+        })json";
+        size_t bad_len = 0;
+        assert(nexus_core_compose_workspace(bad_ws, host_json, fail_sec.c_str(), "c1", nullptr, 0, &bad_len, err_buf, sizeof(err_buf)) == -4);
+        std::string bad_buf(bad_len + 1, '\0');
+        assert(nexus_core_compose_workspace(bad_ws, host_json, fail_sec.c_str(), "c1", bad_buf.data(), bad_buf.size(), &bad_len, err_buf, sizeof(err_buf)) == -2);
+        assert(bad_buf.find("\"ok\":false") != std::string::npos && bad_buf.find("missing") != std::string::npos);
+        assert(!std::filesystem::exists(fail_sec) || std::filesystem::is_empty(fail_sec));
+    }
     test_directory_flag_and_signals(tmp_dir);
     test_callback_drain_barriers_and_fd_adopt();
     std::error_code ec;

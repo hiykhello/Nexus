@@ -77,6 +77,17 @@ NEXUS_CORE_EXPORT int nexus_core_set_system_proxy(int enabled, const char* host,
 /// Writes compact native Nexus runtime metadata JSON into `out_buf`; returns -4 if buffer too small.
 NEXUS_CORE_EXPORT int nexus_core_runtime_info_json(char* out_buf, size_t out_cap, size_t* out_len);
 
+/// Compiles canonical Layer 1 workspace JSON + Layer 3 host JSON into validated KDL 2.0 + JSON result.
+/// Sets `*out_len` to exact result JSON byte length; returns -4 if `out_buf` is null or `out_cap <= *out_len`.
+/// Returns 0 on valid composition (`ok: true`), -2 on validation/compose errors (structured JSON still written), -1 on bad args.
+NEXUS_CORE_EXPORT int nexus_core_compose_workspace(
+    const char* workspace_json,
+    const char* host_json,
+    const char* secrets_dir,
+    const char* active_profile_id,
+    char* out_buf, size_t out_cap, size_t* out_len,
+    char* err_buf, size_t err_cap);
+
 #ifdef __cplusplus
 }
 #endif

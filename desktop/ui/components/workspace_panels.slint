@@ -1,0 +1,467 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { WorkspaceState, WorkspaceProfileRow, WorkspaceSubRow, WorkspaceRoutingRow, WorkspaceRuleRow } from "../workspace_state.slint";
+import { EmptyStateCard, GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+component PillOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+    horizontal-stretch: 0;
+    height: 26px;
+    border-radius: 13px;
+    border-width: 1px;
+    border-color: root.active ? Theme.accent.with-alpha(0.72) : ta.has-hover ? Theme.selected-border : Theme.well-border;
+    background: root.active ? Theme.selected-bg : ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px;
+        Text {
+            text: root.label; font-size: 11px; font-weight: root.active ? 700 : 600;
+            color: root.active ? Theme.nav-active-fg : Theme.text-secondary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component LabeledActionButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> primary: false;
+    callback clicked();
+    horizontal-stretch: 0;
+    height: 30px;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: root.primary ? Theme.pill-active-top.brighter(0.20) : ta.has-hover ? Theme.selected-border : Theme.card-border;
+    background: root.primary
+        ? (ta.pressed
+            ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+            : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+        : ta.pressed ? Theme.nav-active-bg : ta.has-hover ? Theme.row-hover-bg : Theme.row-bg;
+    transform-scale: ta.pressed ? 0.96 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 12px; spacing: 6px;
+        Image {
+            width: 13px; height: 13px; y: (parent.height - self.height) / 2;
+            source: root.icon;
+            colorize: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+        }
+        Text {
+            text: root.label; font-size: 12px; font-weight: 600;
+            color: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component WorkspaceProfilesView inherits VerticalLayout {
+    in property <length> grid-w: 600px;
+    spacing: Theme.space-sm;
+
+    // 5-Kind Profile Creator Card
+    Rectangle {
+        width: root.grid-w;
+        border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            HorizontalLayout {
+                spacing: 6px;
+                PillOption { label: I18n.t("节点", "Node"); active: WorkspaceState.draft-kind == "node"; clicked => { WorkspaceState.draft-kind = "node"; } }
+                PillOption { label: I18n.t("策略组", "Group"); active: WorkspaceState.draft-kind == "policy_group"; clicked => { WorkspaceState.draft-kind = "policy_group"; } }
+                PillOption { label: I18n.t("代理链", "Chain"); active: WorkspaceState.draft-kind == "proxy_chain"; clicked => { WorkspaceState.draft-kind = "proxy_chain"; } }
+                PillOption { label: I18n.t("出站 KDL", "Outbound"); active: WorkspaceState.draft-kind == "custom_outbound"; clicked => { WorkspaceState.draft-kind = "custom_outbound"; } }
+                PillOption { label: I18n.t("完整 KDL", "Full KDL"); active: WorkspaceState.draft-kind == "full_custom_kdl"; clicked => { WorkspaceState.draft-kind = "full_custom_kdl"; } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                NexusInput {
+                    horizontal-stretch: 32; preferred-width: 0px; min-width: 100px;
+                    text <=> WorkspaceState.draft-remarks;
+                    placeholder-text: I18n.t("名称 / 备注...", "Remarks / Name...");
+                }
+                NexusInput {
+                    horizontal-stretch: 68; preferred-width: 0px; min-width: 140px; mono: true;
+                    text <=> WorkspaceState.draft-payload;
+                    placeholder-text:
+                        WorkspaceState.draft-kind == "node" ? I18n.t("分享链接 URI 或 host:port...", "Share URI or host:port...")
+                        : WorkspaceState.draft-kind == "policy_group" ? I18n.t("策略(url-test/selector):成员ID逗号分隔", "strategy:member1,member2")
+                        : WorkspaceState.draft-kind == "proxy_chain" ? I18n.t("跳点 ID 逗号分隔 (入口 -> 出口)", "hop1,hop2 (entry -> exit)")
+                        : WorkspaceState.draft-kind == "custom_outbound" ? I18n.t("自定义出站 KDL (如 outbound \"{{tag}}\" type=\"direct\" {})", "Custom outbound KDL (e.g. outbound \"{{tag}}\" ...)")
+                        : I18n.t("留空将从当前生效 KDL 快照创建", "Leave blank to snapshot current KDL");
+                }
+                IconActionButton {
+                    icon: @image-url("../icons/plus.svg");
+                    label: I18n.t("添加", "Add");
+                    primary: true;
+                    clicked => {
+                        WorkspaceState.create-profile(WorkspaceState.draft-kind, WorkspaceState.draft-remarks, WorkspaceState.draft-payload);
+                        WorkspaceState.draft-remarks = "";
+                        WorkspaceState.draft-payload = "";
+                    }
+                }
+            }
+        }
+    }
+
+    property <int> cols: root.grid-w >= 760px ? 3 : root.grid-w >= 440px ? 2 : 1;
+    property <length> card-w: max(0px, Math.floor((root.grid-w - 12px * (cols - 1)) / cols / 1px) * 1px);
+    property <length> cell-w: card-w + 12px;
+
+    if WorkspaceState.profiles.length == 0 : EmptyStateCard {
+        width: root.grid-w;
+        icon: @image-url("../icons/profiles.svg");
+        title: I18n.t("暂无工作区配置项", "No workspace profiles yet");
+        subtitle: I18n.t("支持节点、策略组、代理链与自定义 KDL", "Supports Node, PolicyGroup, ProxyChain & Custom KDL");
+        action-label: I18n.t("创建完整 KDL 快照", "Snapshot Current KDL");
+        action-clicked => { WorkspaceState.create-profile("full_custom_kdl", "Default", ""); }
+    }
+
+    if WorkspaceState.profiles.length > 0 : FlexboxLayout {
+        width: max(0px, root.grid-w + 12px);
+        height: Math.ceil(WorkspaceState.profiles.length / cols) * 88px;
+        for item in WorkspaceState.profiles : Rectangle {
+            width: cell-w; height: 88px;
+            Rectangle {
+                x: 0px; y: 0px; width: card-w; height: 76px;
+                border-radius: 16px; border-width: 1px;
+                border-color: item.active ? Theme.accent.with-alpha(Theme.dark ? 0.78 : 0.62) : pta.has-hover ? Theme.selected-border : Theme.card-border;
+                background: item.active
+                    ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.accent.with-alpha(Theme.dark ? 0.08 : 0.04) 100%)
+                    : pta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
+                GlassSpeculum { corner-inset: 14px; }
+                pta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { WorkspaceState.activate-profile(item.id); }
+                }
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 12px; spacing: 8px;
+                    VerticalLayout {
+                        horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 4px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Rectangle {
+                                horizontal-stretch: 0; height: 18px; y: (parent.height - self.height) / 2;
+                                border-radius: 6px; border-width: 1px;
+                                border-color: item.kind == "proxy_chain" ? Theme.warn-border : item.kind == "policy_group" ? Theme.selected-border : Theme.well-border;
+                                background: item.kind == "proxy_chain" ? Theme.warn-bg : item.kind == "policy_group" ? Theme.selected-bg : Theme.well-bg;
+                                HorizontalLayout {
+                                    padding-left: 6px; padding-right: 6px;
+                                    Text {
+                                        text: item.kind == "node" ? "NODE" : item.kind == "policy_group" ? "GROUP" : item.kind == "proxy_chain" ? "CHAIN" : item.kind == "custom_outbound" ? "OUT" : "FULL";
+                                        font-size: 9px; font-weight: 700; font-family: Theme.mono-font;
+                                        color: item.kind == "proxy_chain" ? Theme.warn-fg : item.kind == "policy_group" ? Theme.nav-active-fg : Theme.text-secondary;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            Text {
+                                horizontal-stretch: 1; min-width: 0px;
+                                text: item.remarks != "" ? item.remarks : item.id;
+                                font-size: 13px; font-weight: item.active ? 700 : 600;
+                                color: Theme.text-primary; overflow: elide; vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: item.subtitle != "" ? item.subtitle : item.sub-name;
+                            font-size: 11px; font-family: Theme.mono-font;
+                            color: Theme.text-muted; overflow: elide;
+                        }
+                    }
+                    if item.active : VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            height: 22px; border-radius: 11px; border-width: 1px; border-color: Theme.success-border; background: Theme.success-bg;
+                            HorizontalLayout {
+                                padding-left: 8px; padding-right: 8px;
+                                Text { text: I18n.t("使用中", "Active"); font-size: 10px; font-weight: 700; color: Theme.success-fg; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                    if !item.active : VerticalLayout {
+                        alignment: center;
+                        IconActionButton {
+                            icon: @image-url("../icons/trash.svg"); label: I18n.t("删除", "Delete");
+                            danger: true; size: 26px;
+                            clicked => { WorkspaceState.delete-profile(item.id); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component WorkspaceSubscriptionsView inherits VerticalLayout {
+    in property <length> grid-w: 600px;
+    spacing: Theme.space-sm;
+
+    Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                NexusInput { horizontal-stretch: 28; preferred-width: 0px; min-width: 90px; text <=> WorkspaceState.sub-remarks; placeholder-text: I18n.t("订阅名称...", "Subscription name..."); }
+                NexusInput { horizontal-stretch: 72; preferred-width: 0px; min-width: 140px; mono: true; text <=> WorkspaceState.sub-url; placeholder-text: I18n.t("订阅 URL (https://...)", "Subscription URL (https://...)"); }
+                IconActionButton {
+                    icon: @image-url("../icons/plus.svg"); label: I18n.t("添加", "Add"); primary: true;
+                    clicked => {
+                        if (WorkspaceState.sub-remarks != "" || WorkspaceState.sub-url != "") {
+                            WorkspaceState.add-subscription(WorkspaceState.sub-remarks, WorkspaceState.sub-url, WorkspaceState.sub-prev-id, WorkspaceState.sub-next-id);
+                            WorkspaceState.sub-remarks = ""; WorkspaceState.sub-url = "";
+                            WorkspaceState.sub-prev-id = ""; WorkspaceState.sub-next-id = "";
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-prev-id; placeholder-text: I18n.t("前置代理 ID (prev_profile_id，可选)", "Pre-proxy ID (optional)"); }
+                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-next-id; placeholder-text: I18n.t("落地代理 ID (next_profile_id，可选)", "Landing proxy ID (optional)"); }
+            }
+        }
+    }
+
+    for sub in WorkspaceState.subscriptions : Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 6px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text { horizontal-stretch: 1; min-width: 0px; text: sub.remarks != "" ? sub.remarks : sub.id; font-size: 13px; font-weight: 700; color: Theme.text-primary; overflow: elide; vertical-alignment: center; }
+                Text { text: I18n.t("\{sub.node-count} 节点", "\{sub.node-count} nodes"); font-size: 11px; font-family: Theme.mono-font; color: Theme.text-muted; vertical-alignment: center; }
+                PillOption {
+                    label: I18n.t("订阅链", "Chain");
+                    active: WorkspaceState.edit-chain-sub-id == sub.id;
+                    clicked => {
+                        if (WorkspaceState.edit-chain-sub-id == sub.id) {
+                            WorkspaceState.edit-chain-sub-id = "";
+                        } else {
+                            WorkspaceState.edit-chain-sub-id = sub.id;
+                            WorkspaceState.edit-chain-prev = sub.prev-profile-id;
+                            WorkspaceState.edit-chain-next = sub.next-profile-id;
+                        }
+                    }
+                }
+                if sub.id != "manual" : IconActionButton {
+                    icon: @image-url("../icons/trash.svg"); label: I18n.t("删除", "Delete"); danger: true; size: 24px;
+                    clicked => { WorkspaceState.delete-subscription(sub.id); }
+                }
+            }
+            if sub.url != "" : Text {
+                text: sub.url; font-size: 10px; font-family: Theme.mono-font; color: Theme.text-muted; overflow: elide;
+            }
+            if sub.quota-text != "" || sub.expire-text != "" : HorizontalLayout {
+                spacing: 10px;
+                Text { horizontal-stretch: 1; min-width: 0px; text: sub.quota-text; font-size: 11px; font-family: Theme.mono-font; color: Theme.text-secondary; overflow: elide; }
+                Text { text: sub.expire-text; font-size: 11px; color: Theme.text-muted; }
+            }
+            if sub.quota-ratio > 0.0 : Rectangle {
+                height: 4px; border-radius: 2px; background: Theme.well-bg;
+                Rectangle { x: 0px; y: 0px; height: 4px; width: parent.width * min(1.0, max(0.0, sub.quota-ratio)); border-radius: 2px; background: Theme.accent; }
+            }
+            if sub.prev-profile-id != "" || sub.next-profile-id != "" : Text {
+                text: I18n.t("订阅链: 前置=\{sub.prev-profile-id} · 落地=\{sub.next-profile-id}", "Sub-Chain: prev=\{sub.prev-profile-id} · next=\{sub.next-profile-id}");
+                font-size: 11px; font-family: Theme.mono-font; color: Theme.nav-active-fg; overflow: elide;
+            }
+            if WorkspaceState.edit-chain-sub-id == sub.id : HorizontalLayout {
+                spacing: 8px;
+                NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-prev; placeholder-text: I18n.t("前置 ID (prev)", "Prev ID"); }
+                NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-next; placeholder-text: I18n.t("落地 ID (next)", "Next ID"); }
+                LabeledActionButton {
+                    icon: @image-url("../icons/check.svg"); label: I18n.t("保存链", "Save"); primary: true;
+                    clicked => {
+                        WorkspaceState.update-subscription-chain(sub.id, WorkspaceState.edit-chain-prev, WorkspaceState.edit-chain-next);
+                        WorkspaceState.edit-chain-sub-id = "";
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component WorkspaceRoutingDnsView inherits VerticalLayout {
+    in property <length> grid-w: 600px;
+    spacing: Theme.space-sm;
+
+    // Routing Profiles + Rule Adder
+    Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            HorizontalLayout {
+                spacing: 6px;
+                Text { text: I18n.t("路由方案", "Routing"); font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; }
+                for rp in WorkspaceState.routing-profiles : PillOption {
+                    label: rp.name; active: rp.active;
+                    clicked => { WorkspaceState.select-routing-profile(rp.id); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 6px;
+                PillOption { label: "proxy"; active: WorkspaceState.rule-target-type == "proxy"; clicked => { WorkspaceState.rule-target-type = "proxy"; } }
+                PillOption { label: "direct"; active: WorkspaceState.rule-target-type == "direct"; clicked => { WorkspaceState.rule-target-type = "direct"; } }
+                PillOption { label: "block"; active: WorkspaceState.rule-target-type == "block"; clicked => { WorkspaceState.rule-target-type = "block"; } }
+                PillOption { label: I18n.t("指定配置项", "Profile ID"); active: WorkspaceState.rule-target-type == "profile_id"; clicked => { WorkspaceState.rule-target-type = "profile_id"; } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                NexusInput { horizontal-stretch: 44; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.rule-match-input; placeholder-text: I18n.t("域名 / CIDR (如 example.com)", "Domain / CIDR"); }
+                NexusInput { horizontal-stretch: 32; preferred-width: 0px; min-width: 90px; mono: true; text <=> WorkspaceState.rule-desktop-process; placeholder-text: I18n.t("桌面进程名 (desktop_process)", "Desktop process name"); }
+                if WorkspaceState.rule-target-type == "profile_id" : NexusInput { horizontal-stretch: 24; preferred-width: 0px; min-width: 80px; mono: true; text <=> WorkspaceState.rule-target-profile-id; placeholder-text: I18n.t("目标 ID", "Target ID"); }
+                IconActionButton {
+                    icon: @image-url("../icons/plus.svg"); label: I18n.t("加规则", "Add Rule"); primary: true;
+                    clicked => {
+                        WorkspaceState.add-routing-rule(WorkspaceState.rule-scope, WorkspaceState.rule-target-type, WorkspaceState.rule-target-profile-id, WorkspaceState.rule-match-input, WorkspaceState.rule-desktop-process);
+                        WorkspaceState.rule-match-input = ""; WorkspaceState.rule-desktop-process = "";
+                    }
+                }
+            }
+            for r in WorkspaceState.routing-rules : HorizontalLayout {
+                spacing: 8px;
+                Text { text: "[\{r.target-label}]"; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.nav-active-fg; }
+                Text { horizontal-stretch: 1; min-width: 0px; text: r.match-summary; font-size: 11px; font-family: Theme.mono-font; color: Theme.text-secondary; overflow: elide; }
+                if r.process-summary != "" : Text { text: "proc:\{r.process-summary}"; font-size: 10px; font-family: Theme.mono-font; color: Theme.text-muted; }
+            }
+        }
+    }
+
+    // DNS SimpleDNS / RawDNS Card
+    Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: I18n.t("DNS 模式", "DNS Mode"); font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; }
+                PillOption { label: I18n.t("简易 DNS", "SimpleDNS"); active: WorkspaceState.dns-mode == "simple"; clicked => { WorkspaceState.dns-mode = "simple"; } }
+                PillOption { label: I18n.t("原始 KDL", "RawDNS"); active: WorkspaceState.dns-mode == "raw_kdl"; clicked => { WorkspaceState.dns-mode = "raw_kdl"; } }
+                Rectangle { horizontal-stretch: 1; }
+                LabeledActionButton {
+                    icon: @image-url("../icons/check.svg"); label: I18n.t("应用 DNS", "Apply DNS"); primary: true;
+                    clicked => { WorkspaceState.apply-dns-config(WorkspaceState.dns-mode, WorkspaceState.dns-direct, WorkspaceState.dns-remote, WorkspaceState.dns-fakeip, WorkspaceState.dns-raw-kdl); }
+                }
+            }
+            if WorkspaceState.dns-mode == "simple" : VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    NexusInput { horizontal-stretch: 50; preferred-width: 0px; mono: true; text <=> WorkspaceState.dns-direct; placeholder-text: I18n.t("直连 DNS (如 https://223.5.5.5/dns-query)", "Direct DNS"); }
+                    NexusInput { horizontal-stretch: 50; preferred-width: 0px; mono: true; text <=> WorkspaceState.dns-remote; placeholder-text: I18n.t("代理 DNS (如 https://1.1.1.1/dns-query)", "Remote DNS"); }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { horizontal-stretch: 1; text: I18n.t("启用 FakeIP (198.18.0.0/16 · fc00::/18 · prefer_ipv4)", "Enable FakeIP (198.18.0.0/16 · fc00::/18 · prefer_ipv4)"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                    NexusSwitch { checked <=> WorkspaceState.dns-fakeip; }
+                }
+            }
+            if WorkspaceState.dns-mode == "raw_kdl" : NexusInput {
+                mono: true; text <=> WorkspaceState.dns-raw-kdl;
+                placeholder-text: I18n.t("粘贴原始 KDL dns { ... } 片段...", "Paste raw KDL dns { ... } block...");
+            }
+        }
+    }
+}
+
+export component WorkspaceHostPortableView inherits VerticalLayout {
+    in property <length> grid-w: 600px;
+    spacing: Theme.space-sm;
+
+    // Isolated Layer 3 Desktop Host Card
+    Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text { horizontal-stretch: 1; text: I18n.t("本机宿主适配 (host.json · 永不同步)", "Desktop Host Adapter (host.json · Local Only)"); font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; }
+                LabeledActionButton { icon: @image-url("../icons/check.svg"); label: I18n.t("保存宿主设置", "Save Host"); primary: true; clicked => { WorkspaceState.apply-host-config(); } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: I18n.t("混合入站", "Mixed"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusSwitch { checked <=> WorkspaceState.host-enable-mixed; enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route); }
+                NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.host-mixed-listen; placeholder-text: "127.0.0.1:7890"; }
+                Text { text: "TUN"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusSwitch {
+                    checked <=> WorkspaceState.host-enable-tun;
+                    toggled => {
+                        if (WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route) {
+                            WorkspaceState.host-enable-mixed = false;
+                        }
+                        WorkspaceState.apply-host-config();
+                    }
+                }
+                Text { text: "MTU"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { width: 68px; mono: true; text <=> WorkspaceState.host-tun-mtu; placeholder-text: "1400"; }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { horizontal-stretch: 1; text: I18n.t("TUN 严格路由 (strict-route · Linux 下将自动关闭混合代理)", "TUN Strict Route (auto-disables mixed inbound on Linux)"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusSwitch {
+                    checked <=> WorkspaceState.host-tun-strict-route;
+                    toggled => {
+                        if (WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route) {
+                            WorkspaceState.host-enable-mixed = false;
+                        }
+                        WorkspaceState.apply-host-config();
+                    }
+                }
+            }
+            if WorkspaceState.host-strict-route-notice != "" : Rectangle {
+                border-radius: 10px; border-width: 1px; border-color: Theme.warn-border; background: Theme.warn-bg;
+                HorizontalLayout {
+                    padding: 8px;
+                    Text { text: WorkspaceState.host-strict-route-notice; font-size: 11px; font-weight: 600; color: Theme.warn-fg; wrap: word-wrap; }
+                }
+            }
+        }
+    }
+
+    // Portable Layer 1 Workspace Export / Import Card
+    Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            Text { text: I18n.t("便携工作区交换 (workspace.json)", "Portable Workspace Exchange (workspace.json)"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
+            Text { text: I18n.t("仅含节点、策略组、代理链、订阅、路由与 DNS；自动剥离本机端口、系统代理与测速遥测。", "Contains only Profiles, Subscriptions, Routing & DNS; automatically strips host ports, OS proxy & telemetry."); font-size: 11px; color: Theme.text-muted; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                LabeledActionButton { icon: @image-url("../icons/external-link.svg"); label: I18n.t("导出 workspace.json", "Export Workspace"); primary: true; clicked => { WorkspaceState.export-portable-workspace(); } }
+                LabeledActionButton { icon: @image-url("../icons/download.svg"); label: I18n.t("导入 workspace.json", "Import Workspace"); clicked => { WorkspaceState.import-portable-workspace(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if WorkspaceState.portable-status != "" : Text {
+                text: WorkspaceState.portable-status; font-size: 11px; font-family: Theme.mono-font;
+                color: WorkspaceState.portable-status-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
+            }
+        }
+    }
+}

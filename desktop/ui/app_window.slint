@@ -6,6 +6,7 @@ import { LayoutMetrics } from "layout_metrics.slint";
 import { Motion } from "motion.slint";
 import { Shortcuts } from "shortcuts.slint";
 import { Theme, ThemePreference } from "theme.slint";
+import { WorkspaceState } from "workspace_state.slint";
 import { NexusVScrollBar } from "components/glass_primitives.slint";
 import { OverlayFeedbackLayer } from "components/overlay_layer.slint";
 import { Sidebar } from "components/sidebar.slint";
@@ -18,7 +19,7 @@ import { RuleModalDialog } from "components/rule_dns_editor.slint";
 import { OutboundModalDialog } from "components/outbound_modal_dialog.slint";
 import { AboutPanel } from "components/about_panel.slint";
 
-export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState }
+export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState, WorkspaceState }
 
 export component AppWindow inherits Window {
     title: "Nexus";
@@ -430,11 +431,10 @@ export component AppWindow inherits Window {
                         }
 
                         if active-tab == 3 : ProfilesPanel {
-                            vertical-stretch: 1; profiles: root.profiles; share-link-input <=> root.share-link-input;
+                            vertical-stretch: 1; share-link-input <=> root.share-link-input;
                             config-path: root.config-path; kdl-line-count: root.kdl-line-count;
                             diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok;
-                            activate-profile(id) => { root.activate-profile(id); } create-profile(name) => { root.create-profile(name); }
-                            delete-profile(id) => { root.delete-profile(id); } refresh-profiles => { root.refresh-profiles(); }
+                            refresh-profiles => { root.refresh-profiles(); }
                             import-share-link(uri) => { root.import-share-link(uri); }
                             open-external-editor => { root.open-external-editor(); }
                             reload-config-from-disk => { root.reload-config-from-disk(); }

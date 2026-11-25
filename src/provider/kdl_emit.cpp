@@ -1,12 +1,3 @@
-module;
-#if !defined(_WIN32)
-#include <cerrno>
-#include <cstdio>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
-
 module provider;
 import std;
 import glaze;
@@ -142,23 +133,7 @@ namespace provider {
         -> std::expected<std::string, std::string> {
         if (p.host.empty() || p.port == 0) return std::unexpected("outbound missing server host or port: " + p.tag);
         std::ostringstream os;
-        auto proto_str = [&]() -> std::string_view {
-            switch (p.protocol) {
-            case ProxyProtocol::vless: return "vless";
-            case ProxyProtocol::trojan: return "trojan";
-            case ProxyProtocol::shadowsocks: return "shadowsocks";
-            case ProxyProtocol::hysteria2: return "hysteria2";
-            case ProxyProtocol::tuic: return "tuic";
-            case ProxyProtocol::anytls: return "anytls";
-            case ProxyProtocol::snell: return "snell";
-            case ProxyProtocol::naive: return "naive";
-            case ProxyProtocol::ssh: return "ssh";
-            case ProxyProtocol::socks5: return "socks5";
-            case ProxyProtocol::http_connect: return "http-connect";
-            case ProxyProtocol::wireguard: return "wireguard";
-            }
-            return "vless";
-        }();
+        auto proto_str = protocol_kdl_name(p.protocol);
         os << "  outbound " << kdl_escape(p.tag) << " type=" << kdl_escape(proto_str) << " {\n";
         os << "    server host=" << kdl_escape(p.host) << " port=" << p.port << '\n';
 
@@ -168,13 +143,14 @@ namespace provider {
             if (!uf) return std::unexpected(uf.error());
             os << "    authentication {\n      uuid-file " << kdl_escape(*uf) << "\n    }\n";
             bool is_vision = (p.flow == "xtls-rprx-vision" && p.transport.empty());
+            bool is_xhttp = (p.transport == "xhttp");
             if (is_vision) os << "    flow \"xtls-rprx-vision\"\n";
-            if (p.tls_enabled || p.transport != "xhttp") {
-                if (auto ok = emit_tls_block(os, p, fallback_ca, p.transport.empty(),
-                        !is_vision && p.reality_public_key.empty() && p.transport != "xhttp"); !ok) return std::unexpected(ok.error());
+            if (p.tls_enabled || !is_xhttp || !p.reality_public_key.empty()) {
+                if (auto ok = emit_tls_block(os, p, fallback_ca, p.transport.empty() || is_xhttp,
+                        !is_vision && p.reality_public_key.empty() && !is_xhttp); !ok) return std::unexpected(ok.error());
             }
-            emit_transport_block(os, p, !is_vision && p.reality_public_key.empty());
-            if (!is_vision && p.transport != "xhttp") emit_multiplex_block(os, p);
+            emit_transport_block(os, p, !is_vision);
+            if (!is_vision && !is_xhttp) emit_multiplex_block(os, p);
         } else if (p.protocol == ProxyProtocol::trojan || p.protocol == ProxyProtocol::anytls) {
             if (p.secret.empty()) return std::unexpected("missing password on " + p.tag);
             auto pf = write_secret(p.tag + "-pass", p.secret);
@@ -198,10 +174,24 @@ namespace provider {
             if (!pf) return std::unexpected(pf.error());
             os << "    authentication {\n      password-file " << kdl_escape(*pf) << "\n    }\n";
             if (auto ok = emit_tls_block(os, p, fallback_ca, false, false); !ok) return std::unexpected(ok.error());
-            if (lower_ascii(p.obfs) == "salamander" && !p.obfs_password.empty()) {
-                auto sf = write_secret(p.tag + "-salamander", p.obfs_password);
-                if (!sf) return std::unexpected(sf.error());
-                os << "    quic {\n      salamander-password-file " << kdl_escape(*sf) << "\n    }\n";
+            bool has_sal = lower_ascii(p.obfs) == "salamander" && !p.obfs_password.empty();
+            if (has_sal || !p.hy2_ports.empty() || p.hy2_up_mbps > 0 || p.hy2_down_mbps > 0) {
+                os << "    quic {\n";
+                if (has_sal) {
+                    auto sf = write_secret(p.tag + "-salamander", p.obfs_password);
+                    if (!sf) return std::unexpected(sf.error());
+                    os << "      salamander-password-file " << kdl_escape(*sf) << '\n';
+                }
+                if (!p.hy2_ports.empty()) {
+                    os << "      ports " << kdl_escape(p.hy2_ports) << '\n';
+                    if (p.hy2_hop_interval_ms >= 500 && p.hy2_hop_interval_ms <= 86400000)
+                        os << "      hop-interval-ms " << p.hy2_hop_interval_ms << '\n';
+                }
+                if (p.hy2_up_mbps > 0)
+                    os << "      send-bps " << std::min<std::uint64_t>(std::uint64_t(p.hy2_up_mbps) * 125000ull, 1000000000000ull) << '\n';
+                if (p.hy2_down_mbps > 0)
+                    os << "      receive-bps " << std::min<std::uint64_t>(std::uint64_t(p.hy2_down_mbps) * 125000ull, 1000000000000ull) << '\n';
+                os << "    }\n";
             }
         } else if (p.protocol == ProxyProtocol::tuic) {
             if (p.username.empty() || p.secret.empty())
@@ -216,7 +206,9 @@ namespace provider {
             auto cc = lower_ascii(p.congestion_control);
             if (cc == "bbr" || cc == "cubic" || cc == "reno")
                 os << "    congestion-control " << kdl_escape(cc) << '\n';
-            if (p.udp_relay_mode == "quic") os << "    udp-over-stream #false\n";
+            auto urm = lower_ascii(p.udp_relay_mode);
+            if (urm == "quic") os << "    udp-over-stream #true\n";
+            else if (urm == "native") os << "    udp-over-stream #false\n";
         } else if (p.protocol == ProxyProtocol::snell) {
             if (p.secret.empty()) return std::unexpected("Snell missing PSK: " + p.tag);
             auto kf = write_secret(p.tag + "-psk", p.secret);
@@ -304,83 +296,27 @@ namespace provider {
         if (doc.proxies.empty() && doc.groups.empty())
             return std::unexpected("no matching proxies after filtering");
 
-        auto ensure_private_dir = [](std::filesystem::path const& dir) -> std::expected<void, std::string> {
-            std::error_code ec;
-            std::filesystem::create_directories(dir, ec);
-            if (ec) return std::unexpected("cannot create secrets-dir: " + ec.message());
-#if !defined(_WIN32)
-            int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-            if (dfd < 0) return std::unexpected("cannot open secrets-dir safely: " + dir.string());
-            struct stat st{};
-            bool ok = (::fstat(dfd, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == ::geteuid() && ::fchmod(dfd, 0700) == 0);
-            ::close(dfd);
-            if (!ok) return std::unexpected("unsafe secrets-dir ownership or permissions: " + dir.string());
-#else
-            std::filesystem::permissions(dir, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, ec);
-#endif
-            return {};
-        };
-        auto write_atomic_0600 = [](std::filesystem::path const& dir, std::string const& base,
-            std::string_view content) -> std::expected<std::string, std::string> {
-            auto path = dir / base;
-#if !defined(_WIN32)
-            static std::atomic<std::uint64_t> seq{0};
-            int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-            if (dfd < 0) return std::unexpected("cannot open secrets-dir: " + dir.string());
-            struct DirFd { int fd; ~DirFd() { if (fd >= 0) ::close(fd); } } d{dfd};
-            struct stat dst{};
-            if (::fstat(dfd, &dst) != 0 || !S_ISDIR(dst.st_mode) || dst.st_uid != ::geteuid())
-                return std::unexpected("unsafe secrets-dir: " + dir.string());
-            auto tmp = std::format(".{}.tmp.{}.{}", base, ::getpid(), seq.fetch_add(1, std::memory_order_relaxed));
-            int fd = ::openat(dfd, tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-            if (fd < 0) return std::unexpected("cannot create secret file: " + path.string());
-            auto drop = [&] { ::close(fd); (void)::unlinkat(dfd, tmp.c_str(), 0); };
-            if (::fchmod(fd, 0600) != 0) { drop(); return std::unexpected("cannot chmod secret file: " + path.string()); }
-            for (std::size_t off = 0; off < content.size();) {
-                auto n = ::write(fd, content.data() + off, content.size() - off);
-                if (n < 0) { if (errno == EINTR) continue; drop(); return std::unexpected("cannot write secret file: " + path.string()); }
-                off += static_cast<std::size_t>(n);
-            }
-            if (::close(fd) != 0 || ::renameat(dfd, tmp.c_str(), dfd, base.c_str()) != 0) {
-                (void)::unlinkat(dfd, tmp.c_str(), 0);
-                return std::unexpected("cannot install secret file: " + path.string());
-            }
-            return path.string();
-#else
-            std::ofstream out(path, std::ios::out | std::ios::binary | std::ios::trunc);
-            if (!out) return std::unexpected("cannot write secret file: " + path.string());
-            out.write(content.data(), static_cast<std::streamsize>(content.size()));
-            out.close();
-            if (!out) return std::unexpected("cannot flush secret file: " + path.string());
-            std::error_code ec;
-            std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-                                         std::filesystem::perm_options::replace, ec);
-            return path.string();
-#endif
-        };
-
         std::set<std::string> used_secrets;
-        SecretWriter writer = [&](std::string_view hint, std::string_view content) -> std::expected<std::string, std::string> {
-            std::string clean = sanitize_tag(hint, "secret");
-            std::string unique = clean;
-            for (std::size_t n = 2; !used_secrets.insert(unique).second; ++n) unique = clean + "-" + std::to_string(n);
-            if (opts.inline_placeholders || opts.secrets_dir.empty())
-                return "/etc/nexus/secrets/" + unique + ".secret";
-            std::error_code ec;
-            auto dir = std::filesystem::weakly_canonical(opts.secrets_dir, ec);
-            if (ec) dir = std::filesystem::absolute(opts.secrets_dir, ec);
-            if (auto ok = ensure_private_dir(dir); !ok) return std::unexpected(ok.error());
-            return write_atomic_0600(dir, unique + ".secret", content);
-        };
-
         std::string fallback_ca = !opts.ca_file.empty() ? opts.ca_file : opts.filter.ca_file;
         std::vector<std::pair<std::string, std::string>> emitted;
         std::set<std::string> valid_tags{"direct", "block"};
         bool any_insecure = false;
         for (auto const& p : doc.proxies) {
             if (p.skip_cert_verify) any_insecure = true;
+            std::vector<std::string> node_secrets;
+            SecretWriter writer = [&](std::string_view hint, std::string_view content) -> std::expected<std::string, std::string> {
+                bool wrote = false;
+                auto res = write_provider_secret(opts, used_secrets, hint, content, &wrote);
+                if (res && wrote) node_secrets.push_back(*res);
+                return res;
+            };
             auto kdl = emit_outbound_kdl(p, writer, fallback_ca);
-            if (!kdl) { doc.warnings.push_back(kdl.error()); continue; }
+            if (!kdl) {
+                std::error_code ec;
+                for (auto const& sf : node_secrets) std::filesystem::remove(sf, ec);
+                doc.warnings.push_back(kdl.error());
+                continue;
+            }
             valid_tags.insert(p.tag);
             emitted.emplace_back(p.tag, std::move(*kdl));
         }
