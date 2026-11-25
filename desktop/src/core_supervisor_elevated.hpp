@@ -302,6 +302,100 @@ namespace desktop::detail {
         out.config_path = cfg_str;
         return out;
     }
+#elif defined(__APPLE__)
+    struct MacElevatedLaunchResult {
+        bool ok = false;
+        bool cancelled = false;
+        pid_t pid = -1;
+        std::filesystem::path canonical_bin;
+        std::string error;
+    };
+
+    inline auto macos_pid_matches_binary(pid_t pid, std::filesystem::path const& canonical_bin) -> bool {
+        if (pid <= 0 || canonical_bin.empty()) return false;
+        char pathbuf[PROC_PIDPATHINFO_MAXSIZE]{};
+        if (::proc_pidpath(pid, pathbuf, sizeof(pathbuf)) <= 0) return false;
+        std::error_code ec;
+        auto live = std::filesystem::weakly_canonical(std::filesystem::path(pathbuf), ec);
+        if (ec || live.empty()) live = std::filesystem::path(pathbuf);
+        if (live == canonical_bin) return true;
+        ec.clear();
+        return std::filesystem::equivalent(live, canonical_bin, ec) && !ec;
+    }
+
+    inline auto start_elevated_macos(
+        std::filesystem::path const& binary,
+        std::filesystem::path const& config_path,
+        std::filesystem::path const& workdir,
+        bool has_dir) -> MacElevatedLaunchResult {
+        MacElevatedLaunchResult out{};
+        std::error_code ec;
+        auto canon_bin = std::filesystem::weakly_canonical(binary, ec);
+        if (ec || canon_bin.empty()) canon_bin = binary;
+
+        auto q_bin = quote_posix_sh_arg(canon_bin.string());
+        auto q_cfg = quote_posix_sh_arg(config_path.string());
+        if (!q_bin || !q_cfg) { out.error = "Invalid characters in launch path"; return out; }
+
+        std::string sh = *q_bin;
+        if (has_dir) {
+            auto q_wd = quote_posix_sh_arg(workdir.string());
+            if (!q_wd) { out.error = "Invalid characters in workdir path"; return out; }
+            sh += " -D " + *q_wd;
+        }
+        sh += " run --config " + *q_cfg + " >/dev/null 2>&1 </dev/null & echo $!";
+        auto esc = escape_applescript_string(sh);
+        if (!esc) { out.error = esc.error(); return out; }
+
+        auto const exec = run_posix_execv_capture({"/usr/bin/osascript", "-e",
+            std::format("do shell script \"{}\" with administrator privileges", *esc)});
+        if (!exec.launched) { out.error = "Failed to launch osascript"; return out; }
+        if (exec.exit_code != 0) {
+            if (exec.output.contains("-128") || exec.output.contains("User canceled") || exec.output.contains("User cancelled")) {
+                out.cancelled = true;
+                out.error = "macOS administrator authorization cancelled";
+            } else {
+                out.error = exec.output.empty() ? std::format("osascript failed (exit {})", exec.exit_code) : exec.output;
+            }
+            return out;
+        }
+        std::string_view sv(exec.output);
+        while (!sv.empty() && (sv.front() == ' ' || sv.front() == '\t' || sv.front() == '\r' || sv.front() == '\n')) sv.remove_prefix(1);
+        while (!sv.empty() && (sv.back() == ' ' || sv.back() == '\t' || sv.back() == '\r' || sv.back() == '\n')) sv.remove_suffix(1);
+        long parsed_pid = 0;
+        auto [ptr, pec] = std::from_chars(sv.data(), sv.data() + sv.size(), parsed_pid, 10);
+        if (pec != std::errc{} || ptr != sv.data() + sv.size() || parsed_pid <= 0) {
+            out.error = "Failed to capture elevated macOS core PID";
+            return out;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (!macos_pid_matches_binary(static_cast<pid_t>(parsed_pid), canon_bin)) {
+            out.error = "Elevated core exited immediately after launch";
+            return out;
+        }
+        out.ok = true;
+        out.pid = static_cast<pid_t>(parsed_pid);
+        out.canonical_bin = std::move(canon_bin);
+        return out;
+    }
+
+    inline auto stop_elevated_macos(pid_t pid, std::filesystem::path const& canonical_bin) -> void {
+        if (!macos_pid_matches_binary(pid, canonical_bin)) return;
+        if (::kill(pid, SIGTERM) == 0) {
+            for (int i = 0; i < 30; ++i) {
+                if (!macos_pid_matches_binary(pid, canonical_bin)) return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (macos_pid_matches_binary(pid, canonical_bin)) (void)::kill(pid, SIGKILL);
+            return;
+        }
+        if (!macos_pid_matches_binary(pid, canonical_bin)) return;
+        auto pid_str = std::to_string(static_cast<long>(pid));
+        std::array<std::string_view, 3> kill_argv{"/bin/kill", "-TERM", pid_str};
+        if (auto script = build_macos_osascript_admin_script(kill_argv)) {
+            (void)run_posix_execv_capture({"/usr/bin/osascript", "-e", *script});
+        }
+    }
 #endif
 
 #ifndef _WIN32

@@ -277,4 +277,126 @@ namespace desktop::detail {
         return read_proc_statm_rss_bytes(statm_path);
     }
 #endif
+
+#ifdef _WIN32
+    struct WinSpawnResult {
+        bool ok = false;
+        HANDLE process = nullptr;
+        HANDLE job = nullptr;
+        std::string error;
+    };
+
+    inline auto spawn_unprivileged_win(
+        std::filesystem::path const& binary,
+        std::filesystem::path const& config_path,
+        std::filesystem::path const& workdir,
+        bool has_dir,
+        std::filesystem::path const& log_path) -> WinSpawnResult {
+        WinSpawnResult out{};
+        std::vector<std::wstring> args{binary.wstring()};
+        if (has_dir) { args.push_back(L"-D"); args.push_back(workdir.wstring()); }
+        args.push_back(L"run"); args.push_back(L"--config"); args.push_back(config_path.wstring());
+
+        SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+        HANDLE log_handle = ::CreateFileW(log_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                          &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        if (log_handle != INVALID_HANDLE_VALUE) {
+            si.dwFlags = STARTF_USESTDHANDLES;
+            si.hStdInput = INVALID_HANDLE_VALUE;
+            si.hStdOutput = log_handle;
+            si.hStdError = log_handle;
+        }
+        auto cmd = build_win_cmdline(args);
+        PROCESS_INFORMATION pi{};
+        BOOL created = ::CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, log_handle != INVALID_HANDLE_VALUE ? TRUE : FALSE,
+                                        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
+        if (log_handle != INVALID_HANDLE_VALUE) ::CloseHandle(log_handle);
+        if (!created) { out.error = std::format("CreateProcessW failed ({})", ::GetLastError()); return out; }
+        ::CloseHandle(pi.hThread);
+        HANDLE job_h = ::CreateJobObjectW(nullptr, nullptr);
+        if (job_h) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+            jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if (!::SetInformationJobObject(job_h, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli)) ||
+                !::AssignProcessToJobObject(job_h, pi.hProcess)) {
+                ::CloseHandle(job_h);
+                job_h = nullptr;
+            }
+        }
+        if (::WaitForSingleObject(pi.hProcess, 200) == WAIT_OBJECT_0) {
+            DWORD code = 1;
+            ::GetExitCodeProcess(pi.hProcess, &code);
+            ::CloseHandle(pi.hProcess);
+            if (job_h) ::CloseHandle(job_h);
+            out.error = format_win_exit_error(log_path, code);
+            return out;
+        }
+        out.ok = true; out.process = pi.hProcess; out.job = job_h;
+        return out;
+    }
+#else
+    struct PosixSpawnResult {
+        bool ok = false;
+        pid_t pid = -1;
+        std::string error;
+    };
+
+    inline auto spawn_unprivileged_posix(
+        std::filesystem::path const& binary,
+        std::filesystem::path const& config_path,
+        std::filesystem::path const& workdir,
+        bool has_dir,
+        std::filesystem::path const& log_path) -> PosixSpawnResult {
+        PosixSpawnResult out{};
+        std::vector<std::string> args{binary.string()};
+        if (has_dir) { args.push_back("-D"); args.push_back(workdir.string()); }
+        args.push_back("run"); args.push_back("--config"); args.push_back(config_path.string());
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& a : args) argv.push_back(a.data());
+        argv.push_back(nullptr);
+
+        int log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+        int devnull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+        pid_t child = ::fork();
+        if (child < 0) {
+            if (log_fd >= 0) ::close(log_fd);
+            if (devnull >= 0) ::close(devnull);
+            out.error = std::string("fork failed: ") + std::strerror(errno);
+            return out;
+        }
+        if (child == 0) {
+#ifdef __linux__
+            (void)::prctl(PR_SET_PDEATHSIG, SIGTERM);
+#endif
+            if (devnull >= 0) {
+                if (devnull == STDIN_FILENO) (void)::fcntl(devnull, F_SETFD, 0);
+                else (void)::dup2(devnull, STDIN_FILENO);
+            }
+            if (log_fd >= 0) {
+                if (log_fd == STDOUT_FILENO || log_fd == STDERR_FILENO) (void)::fcntl(log_fd, F_SETFD, 0);
+                (void)::dup2(log_fd, STDOUT_FILENO);
+                (void)::dup2(log_fd, STDERR_FILENO);
+            }
+            ::execv(args[0].c_str(), argv.data());
+            ::_exit(127);
+        }
+        if (log_fd >= 0) ::close(log_fd);
+        if (devnull >= 0) ::close(devnull);
+
+        int status = 0;
+        pid_t res = 0;
+        for (int i = 0; i < 8; ++i) {
+            res = ::waitpid(child, &status, WNOHANG);
+            if (res != 0) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        if (res == child) { out.error = format_posix_exit_error(log_path, status); return out; }
+        if (res < 0 && errno != EINTR) { out.error = std::string("waitpid failed: ") + std::strerror(errno); return out; }
+        out.ok = true; out.pid = child;
+        return out;
+    }
+#endif
 }

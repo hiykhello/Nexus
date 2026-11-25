@@ -8,7 +8,9 @@ module;
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <aclapi.h>
 #include <psapi.h>
+#include <sddl.h>
 #include <shellapi.h>
 #else
 #include <cerrno>
@@ -19,6 +21,13 @@ module;
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
+#ifdef __APPLE__
+#include <libproc.h>
+#include <mach-o/dyld.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/un.h>
+#endif
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -27,9 +36,11 @@ module;
 module desktop.core_supervisor;
 
 import std;
+import desktop.tun_helper_protocol;
 import desktop.tun_privilege;
 
 #include "core_supervisor_detail.hpp"
+#include "tun_helper_client.hpp"
 #include "core_supervisor_elevated.hpp"
 
 namespace desktop {
@@ -40,6 +51,9 @@ namespace desktop {
         mutable std::mutex state_mu;
         bool stopping = false;
         bool elevated_session = false;
+        bool persistent_helper_active = false;
+        bool helper_cached_running = false;
+        std::chrono::steady_clock::time_point helper_last_checked{};
         bool last_start_cancelled = false;
         std::string last_error;
         std::filesystem::path startup_log;
@@ -71,6 +85,12 @@ namespace desktop {
         return self.impl_->elevated_session;
     }
 
+    auto CoreSupervisor::using_persistent_helper(this CoreSupervisor const& self) noexcept -> bool {
+        if (!self.impl_) return false;
+        std::scoped_lock lk(self.impl_->state_mu);
+        return self.impl_->persistent_helper_active;
+    }
+
     auto CoreSupervisor::last_start_cancelled(this CoreSupervisor const& self) noexcept -> bool {
         if (!self.impl_) return false;
         std::scoped_lock lk(self.impl_->state_mu);
@@ -82,6 +102,32 @@ namespace desktop {
     }
 
     auto CoreSupervisor::running(this CoreSupervisor const& self) noexcept -> bool {
+        bool check_helper = false;
+        auto const now = std::chrono::steady_clock::now();
+        {
+            std::scoped_lock lk(self.impl_->state_mu);
+            if (self.impl_->stopping) return false;
+            if (self.impl_->persistent_helper_active) {
+                if ((now - self.impl_->helper_last_checked) < std::chrono::milliseconds(750)) {
+                    return self.impl_->helper_cached_running;
+                }
+                check_helper = true;
+            }
+        }
+        if (check_helper) {
+            auto r = tun_helper_rpc(TunHelperCommand::status, 1500);
+            std::scoped_lock lk(self.impl_->state_mu);
+            if (!self.impl_->persistent_helper_active) return false;
+            self.impl_->helper_last_checked = std::chrono::steady_clock::now();
+            if (r.ok && r.running) {
+                self.impl_->helper_cached_running = true;
+                return true;
+            }
+            self.impl_->helper_cached_running = false;
+            self.impl_->persistent_helper_active = false;
+            if (!r.ok && !r.detail.empty()) self.impl_->last_error = r.detail;
+            return false;
+        }
         std::scoped_lock lk(self.impl_->state_mu);
         if (self.impl_->stopping) return false;
 #ifdef _WIN32
@@ -99,6 +145,16 @@ namespace desktop {
         return false;
 #else
         if (self.impl_->pid <= 0) return false;
+#ifdef __APPLE__
+        if (self.impl_->elevated_session) {
+            if (macos_pid_matches_binary(self.impl_->pid, self.impl_->elevated_canon_bin)) return true;
+            self.impl_->pid = -1;
+            self.impl_->signal_pid = -1;
+            self.impl_->elevated_canon_bin.clear();
+            self.impl_->elevated_session = false;
+            return false;
+        }
+#endif
         int status = 0;
         pid_t res = ::waitpid(self.impl_->pid, &status, WNOHANG);
         if (res == self.impl_->pid) {
@@ -172,6 +228,18 @@ namespace desktop {
             std::scoped_lock lk(self.impl_->state_mu);
             self.impl_->last_start_cancelled = false;
         }
+        if (opts.use_persistent_helper) {
+            auto r = tun_helper_rpc(TunHelperCommand::start, 8000);
+            if (!r.ok) { set_error(r.detail.empty() ? "Persistent TUN helper start failed" : r.detail); return false; }
+            std::scoped_lock lk(self.impl_->state_mu);
+            self.impl_->persistent_helper_active = true;
+            self.impl_->helper_cached_running = true;
+            self.impl_->helper_last_checked = std::chrono::steady_clock::now();
+            self.impl_->elevated_session = false;
+            self.impl_->stopping = false;
+            self.impl_->last_error.clear();
+            return true;
+        }
         std::error_code file_ec;
         if (!std::filesystem::is_regular_file(self.binary_, file_ec)) {
             set_error("未找到 nexus 核心二进制: " + self.binary_.string());
@@ -212,58 +280,12 @@ namespace desktop {
             self.impl_->last_error.clear();
             return true;
         }
-        std::vector<std::wstring> args{self.binary_.wstring()};
-        if (has_dir) {
-            args.push_back(L"-D");
-            args.push_back(workdir.wstring());
-        }
-        args.push_back(L"run");
-        args.push_back(L"--config");
-        args.push_back(config_path.wstring());
-
-        SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-        HANDLE log_handle = ::CreateFileW(log_path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                          &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        STARTUPINFOW si{};
-        si.cb = sizeof(si);
-        if (log_handle != INVALID_HANDLE_VALUE) {
-            si.dwFlags = STARTF_USESTDHANDLES;
-            si.hStdInput = INVALID_HANDLE_VALUE;
-            si.hStdOutput = log_handle;
-            si.hStdError = log_handle;
-        }
-        auto cmd = build_win_cmdline(args);
-        PROCESS_INFORMATION pi{};
-        BOOL created = ::CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, log_handle != INVALID_HANDLE_VALUE ? TRUE : FALSE,
-                                        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
-        if (log_handle != INVALID_HANDLE_VALUE) ::CloseHandle(log_handle);
-        if (!created) {
-            set_error(std::format("CreateProcessW failed ({})", ::GetLastError()));
-            return false;
-        }
-        ::CloseHandle(pi.hThread);
-        HANDLE job_h = ::CreateJobObjectW(nullptr, nullptr);
-        if (job_h) {
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
-            jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if (!::SetInformationJobObject(job_h, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli)) ||
-                !::AssignProcessToJobObject(job_h, pi.hProcess)) {
-                ::CloseHandle(job_h);
-                job_h = nullptr;
-            }
-        }
-        if (::WaitForSingleObject(pi.hProcess, 200) == WAIT_OBJECT_0) {
-            DWORD code = 1;
-            ::GetExitCodeProcess(pi.hProcess, &code);
-            ::CloseHandle(pi.hProcess);
-            if (job_h) ::CloseHandle(job_h);
-            set_error(format_win_exit_error(log_path, code));
-            return false;
-        }
+        auto res = spawn_unprivileged_win(self.binary_, config_path, workdir, has_dir, log_path);
+        if (!res.ok) { set_error(std::move(res.error)); return false; }
         {
             std::scoped_lock lk(self.impl_->state_mu);
-            self.impl_->process = pi.hProcess;
-            self.impl_->job = job_h;
+            self.impl_->process = res.process;
+            self.impl_->job = res.job;
             self.impl_->elevated_session = false;
             self.impl_->stopping = false;
             self.impl_->startup_log = std::move(log_path);
@@ -286,67 +308,28 @@ namespace desktop {
             self.impl_->startup_log = std::move(log_path);
             self.impl_->last_error.clear();
             return true;
+#elif defined(__APPLE__)
+            auto res = start_elevated_macos(self.binary_, config_path, workdir, has_dir);
+            if (!res.ok) { set_error(std::move(res.error), res.cancelled); return false; }
+            std::scoped_lock lk(self.impl_->state_mu);
+            self.impl_->pid = res.pid;
+            self.impl_->signal_pid = res.pid;
+            self.impl_->elevated_canon_bin = std::move(res.canonical_bin);
+            self.impl_->elevated_session = true;
+            self.impl_->stopping = false;
+            self.impl_->startup_log = std::move(log_path);
+            self.impl_->last_error.clear();
+            return true;
 #else
-            set_error("当前平台暂不支持按次提权启动");
+            set_error("Session-only elevation unsupported on this platform");
             return false;
 #endif
         }
-        std::vector<std::string> args{self.binary_.string()};
-        if (has_dir) { args.push_back("-D"); args.push_back(workdir.string()); }
-        args.push_back("run"); args.push_back("--config"); args.push_back(config_path.string());
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 1);
-        for (auto& a : args) argv.push_back(a.data());
-        argv.push_back(nullptr);
-
-        int log_fd = ::open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
-        int devnull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
-
-        pid_t child = ::fork();
-        if (child < 0) {
-            if (log_fd >= 0) ::close(log_fd);
-            if (devnull >= 0) ::close(devnull);
-            set_error(std::string("fork failed: ") + std::strerror(errno));
-            return false;
-        }
-        if (child == 0) {
-#ifdef __linux__
-            (void)::prctl(PR_SET_PDEATHSIG, SIGTERM);
-#endif
-            if (devnull >= 0) {
-                if (devnull == STDIN_FILENO) (void)::fcntl(devnull, F_SETFD, 0);
-                else (void)::dup2(devnull, STDIN_FILENO);
-            }
-            if (log_fd >= 0) {
-                if (log_fd == STDOUT_FILENO || log_fd == STDERR_FILENO) (void)::fcntl(log_fd, F_SETFD, 0);
-                (void)::dup2(log_fd, STDOUT_FILENO);
-                (void)::dup2(log_fd, STDERR_FILENO);
-            }
-            ::execv(args[0].c_str(), argv.data());
-            ::_exit(127);
-        }
-        if (log_fd >= 0) ::close(log_fd);
-        if (devnull >= 0) ::close(devnull);
-
-        // Give the core 200ms to fail fast on invalid config or bound port collisions before declaring startup ok.
-        int status = 0;
-        pid_t res = 0;
-        for (int i = 0; i < 8; ++i) {
-            res = ::waitpid(child, &status, WNOHANG);
-            if (res != 0) break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(25));
-        }
-        if (res == child) {
-            set_error(format_posix_exit_error(log_path, status));
-            return false;
-        }
-        if (res < 0 && errno != EINTR) {
-            set_error(std::string("waitpid failed: ") + std::strerror(errno));
-            return false;
-        }
+        auto res = spawn_unprivileged_posix(self.binary_, config_path, workdir, has_dir, log_path);
+        if (!res.ok) { set_error(std::move(res.error)); return false; }
         {
             std::scoped_lock lk(self.impl_->state_mu);
-            self.impl_->pid = child;
+            self.impl_->pid = res.pid;
             self.impl_->signal_pid = -1;
             self.impl_->elevated_session = false;
             self.impl_->stopping = false;
@@ -359,6 +342,23 @@ namespace desktop {
 
     auto CoreSupervisor::stop(this CoreSupervisor& self) -> void {
         std::unique_lock lifecycle_lock(self.impl_->lifecycle_mu);
+        bool stop_helper = false;
+        {
+            std::scoped_lock lk(self.impl_->state_mu);
+            if (self.impl_->persistent_helper_active) {
+                stop_helper = true;
+                self.impl_->stopping = true;
+            }
+        }
+        if (stop_helper) {
+            auto r = tun_helper_rpc(TunHelperCommand::stop, 5000);
+            std::scoped_lock lk(self.impl_->state_mu);
+            self.impl_->persistent_helper_active = false;
+            self.impl_->helper_cached_running = false;
+            self.impl_->stopping = false;
+            if (!r.ok && !r.detail.empty()) self.impl_->last_error = std::move(r.detail);
+            return;
+        }
 #ifdef _WIN32
         HANDLE target = nullptr;
         HANDLE job_h = nullptr;
@@ -386,6 +386,7 @@ namespace desktop {
         pid_t wait_pid = -1;
         pid_t sig_pid = -1;
         uid_t elev_uid = 0;
+        bool is_elev_sess = false;
         std::filesystem::path elev_bin;
         std::string elev_cfg;
         {
@@ -393,12 +394,19 @@ namespace desktop {
             wait_pid = self.impl_->pid;
             sig_pid = self.impl_->signal_pid > 0 ? self.impl_->signal_pid : self.impl_->pid;
             elev_uid = self.impl_->elevated_uid;
+            is_elev_sess = self.impl_->elevated_session;
             elev_bin = self.impl_->elevated_canon_bin;
             elev_cfg = self.impl_->elevated_config_path;
             if (wait_pid <= 0) return;
             self.impl_->stopping = true;
         }
+#ifdef __APPLE__
+        if (is_elev_sess) stop_elevated_macos(wait_pid, elev_bin);
+        else stop_posix_process(wait_pid, sig_pid, elev_uid, elev_bin, elev_cfg);
+#else
+        (void)is_elev_sess;
         stop_posix_process(wait_pid, sig_pid, elev_uid, elev_bin, elev_cfg);
+#endif
         {
             std::scoped_lock lk(self.impl_->state_mu);
             self.impl_->pid = -1;

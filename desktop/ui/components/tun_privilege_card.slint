@@ -192,8 +192,8 @@ export component TunPrivilegeCard inherits Rectangle {
 
                 Text {
                     text: root.tun-elevate-persistent
-                        ? I18n.t("通过最小文件能力 (setcap) 或系统服务持久授权，开启 TUN 无需反复验证", "One-time minimal capability (setcap) or Windows service; avoids repeated prompts")
-                        : I18n.t("每次开启 TUN 时通过 pkexec / UAC 临时提权，停止或关闭后立即收回权限", "Temporary per-session pkexec / UAC elevation; privileges drop immediately on stop");
+                        ? I18n.t("通过最小文件能力 (setcap)、Windows 服务或 macOS LaunchDaemon 持久授权，开启 TUN 无需反复验证", "One-time minimal capability (setcap), Windows Service, or macOS LaunchDaemon; avoids repeated prompts")
+                        : I18n.t("每次开启 TUN 时通过 pkexec / UAC / 管理员验证临时提权，停止或关闭后立即收回权限", "Temporary per-session pkexec / UAC / admin elevation; privileges drop immediately on stop");
                     font-size: 11px;
                     color: Theme.text-muted;
                     wrap: word-wrap;

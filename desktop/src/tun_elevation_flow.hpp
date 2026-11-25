@@ -32,14 +32,19 @@ namespace desktop_ui_helpers {
 
     inline auto resolve_tun_elevation_for_start(
         std::filesystem::path const& binary_path,
+        std::filesystem::path const& config_path,
+        std::filesystem::path const& workdir,
         bool prefer_persistent,
         bool en,
-        bool& out_elevate_session,
+        desktop::CoreStartOptions& out_opts,
         desktop::TunPrivilegeProbe& out_probe) -> desktop::ElevationResult {
-        out_elevate_session = false;
+        out_opts = {};
         out_probe = desktop::probe_tun_privilege(binary_path);
-        if (out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin ||
-            out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap) {
+        if (out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin) {
+            return {true, false, {}};
+        }
+        if (out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap) {
+            out_opts.use_persistent_helper = out_probe.helper_required_for_persistent;
             return {true, false, {}};
         }
         if (out_probe.status == desktop::TunPrivilegeStatus::unavailable) {
@@ -48,25 +53,28 @@ namespace desktop_ui_helpers {
                 : out_probe.detail};
         }
         if (prefer_persistent && out_probe.supports_persistent) {
-            auto grant = desktop::grant_persistent_tun_privilege(binary_path, en);
+            auto grant = desktop::grant_persistent_tun_privilege(binary_path, en, config_path, workdir);
             out_probe = desktop::probe_tun_privilege(binary_path);
             if (!grant.ok) return grant;
-            if (out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap ||
-                out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin) {
+            if (out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap) {
+                out_opts.use_persistent_helper = out_probe.helper_required_for_persistent;
+                return {true, false, grant.message};
+            }
+            if (out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin) {
                 return {true, false, grant.message};
             }
             if (out_probe.supports_session_only) {
-                out_elevate_session = true;
+                out_opts.elevate_session = true;
                 return {true, false, grant.message};
             }
             return {false, false, grant.message};
         }
         if (out_probe.supports_session_only) {
-            out_elevate_session = true;
+            out_opts.elevate_session = true;
             return {true, false, {}};
         }
         return {false, false, out_probe.detail.empty()
-            ? tr(en, "缺少按次提权所需工具 (pkexec / setpriv)", "Session-only elevation requires pkexec and setpriv")
+            ? tr(en, "缺少按次提权所需系统工具", "Session-only elevation helper unavailable on host")
             : out_probe.detail};
     }
 
@@ -115,13 +123,13 @@ namespace desktop_ui_helpers {
                     http_ctrl.set_bearer_token(prep.control.bearer_token);
                     synced_sock = prep.control.socket;
 
-                    bool elevate_session = false;
+                    desktop::CoreStartOptions start_opts{};
                     bool elev_ok = true;
                     auto const& active_kdl = prep.synthesized_default ? new_kdl : prep.kdl_text;
                     if (kdl_has_tun_inbound(active_kdl)) {
                         desktop::TunPrivilegeProbe p{};
                         auto elev = resolve_tun_elevation_for_start(
-                            supervisor.binary_path(), prefer_persistent_tun, en, elevate_session, p);
+                            supervisor.binary_path(), config_path, cfg_dir, prefer_persistent_tun, en, start_opts, p);
                         refreshed_probe = std::move(p);
                         if (!elev.ok) {
                             elev_ok = false;
@@ -132,9 +140,11 @@ namespace desktop_ui_helpers {
                     }
 
                     if (elev_ok) {
-                        if (supervisor.start(config_path, {.elevate_session = elevate_session})) {
+                        if (supervisor.start(config_path, start_opts)) {
                             running = true;
-                            summary = elevate_session ? tr(en, "已连接 (按次提权 TUN)", "Connected (Session TUN)") : tr(en, "已连接", "Connected");
+                            summary = start_opts.elevate_session ? tr(en, "已连接 (按次提权 TUN)", "Connected (Session TUN)")
+                                    : start_opts.use_persistent_helper ? tr(en, "已连接 (持久服务 TUN)", "Connected (Helper TUN)")
+                                                                       : tr(en, "已连接", "Connected");
                         } else {
                             cancelled = supervisor.last_start_cancelled();
                             diag_err = supervisor.last_error();
@@ -264,9 +274,10 @@ namespace desktop_ui_helpers {
                 }
 
                 if (on) {
-                    bool elevate_session = false;
+                    desktop::CoreStartOptions start_opts{};
                     desktop::TunPrivilegeProbe probe{};
-                    auto elev = resolve_tun_elevation_for_start(ctx.supervisor.binary_path(), prefer_persistent, en, elevate_session, probe);
+                    auto elev = resolve_tun_elevation_for_start(
+                        ctx.supervisor.binary_path(), ctx.config_path, ctx.cfg_dir, prefer_persistent, en, start_opts, probe);
                     if (!elev.ok) {
                         finish_err(elev.message, elev.cancelled ? "warn" : "error", probe);
                         return;
@@ -279,13 +290,13 @@ namespace desktop_ui_helpers {
                     std::string synced_sock;
                     if (was_running) {
                         ctx.supervisor.stop();
-                        if (!ctx.supervisor.start(ctx.config_path, {.elevate_session = elevate_session})) {
+                        if (!ctx.supervisor.start(ctx.config_path, start_opts)) {
                             bool const cancelled = ctx.supervisor.last_start_cancelled();
                             auto reason = cancelled
                                 ? tr(en, "已取消提权，已回滚并恢复原有连接", "Elevation cancelled; rolled back to previous connection")
                                 : (tr(en, "TUN 启动失败，已回滚配置: ", "TUN start failed, rolled back: ") + ctx.supervisor.last_error());
                             (void)write_file_atomic(ctx.config_path, prev_kdl);
-                            bool recovered = ctx.supervisor.start(ctx.config_path, {.elevate_session = false});
+                            bool recovered = ctx.supervisor.start(ctx.config_path, {});
                             finish_err(std::move(reason), cancelled ? "warn" : "error", probe, recovered);
                             return;
                         }
@@ -296,8 +307,9 @@ namespace desktop_ui_helpers {
                         synced_sock = std::move(next_ctl.socket);
                     }
                     auto ok_msg = was_running
-                        ? (elevate_session ? tr(en, "已按次提权并启用 TUN 模式", "TUN enabled (session elevation)")
-                                           : tr(en, "已启用 TUN 模式并重启核心", "TUN enabled & core restarted"))
+                        ? (start_opts.elevate_session ? tr(en, "已按次提权并启用 TUN 模式", "TUN enabled (session elevation)")
+                           : start_opts.use_persistent_helper ? tr(en, "已通过持久服务启用 TUN 模式", "TUN enabled (persistent helper)")
+                                                              : tr(en, "已启用 TUN 模式并重启核心", "TUN enabled & core restarted"))
                         : tr(en, "已保存 TUN 配置，启动核心时生效", "TUN saved; activates when core starts");
                     on_ui_thread(ctx.weak_ui, [&ctx, kdl = std::move(next_res.second), synced_sock = std::move(synced_sock),
                                                probe, was_running, ok_msg = std::move(ok_msg)](auto& s) {
@@ -333,13 +345,15 @@ namespace desktop_ui_helpers {
                 bool restarted = false;
                 std::string ok_msg;
                 if (running_after) {
-                    if (ctx.supervisor.elevated_session()) {
+                    if (ctx.supervisor.elevated_session() || ctx.supervisor.using_persistent_helper()) {
+                        bool const was_helper = ctx.supervisor.using_persistent_helper();
                         restarted = true;
                         ctx.supervisor.stop();
-                        running_after = ctx.supervisor.start(ctx.config_path, {.elevate_session = false});
+                        running_after = ctx.supervisor.start(ctx.config_path, {});
                         op_ok = running_after;
                         ok_msg = running_after
-                            ? tr(en, "已关闭 TUN 并收回临时提权", "TUN disabled & session elevation dropped")
+                            ? (was_helper ? tr(en, "已关闭 TUN 并切换回普通模式", "TUN disabled & switched to unprivileged mode")
+                                          : tr(en, "已关闭 TUN 并收回临时提权", "TUN disabled & session elevation dropped"))
                             : (tr(en, "已关闭 TUN，但普通模式重启失败: ", "TUN disabled; unprivileged restart failed: ") + ctx.supervisor.last_error());
                     } else {
                         auto r = ctx.ipc.reload();
@@ -398,7 +412,7 @@ namespace desktop_ui_helpers {
             ctx.ui.set_tun_privilege_busy(true);
             ctx.ui.set_core_toggling(true);
             bool posted = ctx.worker.post([&ctx, en] {
-                auto res = desktop::grant_persistent_tun_privilege(ctx.supervisor.binary_path(), en);
+                auto res = desktop::grant_persistent_tun_privilege(ctx.supervisor.binary_path(), en, ctx.config_path, ctx.cfg_dir);
                 auto probe = desktop::probe_tun_privilege(ctx.supervisor.binary_path());
                 on_ui_thread(ctx.weak_ui, [&ctx, res = std::move(res), probe = std::move(probe)](auto& s) {
                     apply_tun_probe_to_ui(*s, probe);
@@ -422,17 +436,29 @@ namespace desktop_ui_helpers {
             ctx.ui.set_tun_privilege_busy(true);
             ctx.ui.set_core_toggling(true);
             bool posted = ctx.worker.post([&ctx, en, tun_active] {
+                bool const stopped_helper = ctx.supervisor.using_persistent_helper();
+                if (stopped_helper) ctx.supervisor.stop();
                 auto res = desktop::revoke_persistent_tun_privilege(ctx.supervisor.binary_path(), en);
                 auto probe = desktop::probe_tun_privilege(ctx.supervisor.binary_path());
                 bool const core_up = ctx.supervisor.running();
-                auto msg = (res.ok && core_up && tun_active)
-                    ? tr(en, "已撤销持久授权，将在下次重启核心后生效", "Persistent grant revoked; takes effect on next core restart")
-                    : res.message;
-                on_ui_thread(ctx.weak_ui, [&ctx, ok = res.ok, cancelled = res.cancelled, msg = std::move(msg), probe = std::move(probe)](auto& s) {
+                auto msg = (res.ok && stopped_helper)
+                    ? tr(en, "已停止核心并卸载 TUN 持久授权", "Core stopped & persistent TUN grant revoked")
+                    : (res.ok && core_up && tun_active)
+                        ? tr(en, "已撤销持久授权，将在下次重启核心后生效", "Persistent grant revoked; takes effect on next core restart")
+                        : res.message;
+                on_ui_thread(ctx.weak_ui, [&ctx, en, stopped_helper, ok = res.ok, cancelled = res.cancelled,
+                                           msg = std::move(msg), probe = std::move(probe)](auto& s) {
                     apply_tun_probe_to_ui(*s, probe);
+                    if (stopped_helper) {
+                        s->set_core_running(false);
+                        ctx.core_started_at.reset();
+                        ctx.rate_tracker.reset();
+                        clear_telemetry_ui(*s, en);
+                    }
                     s->set_tun_privilege_busy(false);
                     s->set_core_toggling(false);
                     push_toast(*s, msg, ok ? "success" : cancelled ? "warn" : "error");
+                    if (stopped_helper && ctx.sync_tray) ctx.sync_tray();
                     ctx.lifecycle_busy.store(false, std::memory_order_release);
                 });
             });

@@ -15,6 +15,7 @@ export namespace desktop {
         bool has_persistent_grant = false;
         bool supports_persistent = false;
         bool supports_session_only = false;
+        bool helper_required_for_persistent = false;
         std::string detail;
     };
 
@@ -60,7 +61,9 @@ export namespace desktop {
 
     [[nodiscard]] auto grant_persistent_tun_privilege(
         std::filesystem::path const& core_binary,
-        bool is_en = false) -> ElevationResult;
+        bool is_en = false,
+        std::filesystem::path const& config_path = {},
+        std::filesystem::path const& workdir = {}) -> ElevationResult;
 
     [[nodiscard]] auto revoke_persistent_tun_privilege(
         std::filesystem::path const& core_binary,

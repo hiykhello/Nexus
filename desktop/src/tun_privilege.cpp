@@ -8,6 +8,8 @@ module;
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <aclapi.h>
+#include <sddl.h>
 #include <shellapi.h>
 #include <winsvc.h>
 #else
@@ -19,6 +21,11 @@ module;
 #ifdef __linux__
 #include <sys/statvfs.h>
 #include <sys/xattr.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/un.h>
 #endif
 #endif
 
@@ -26,6 +33,9 @@ module desktop.tun_privilege;
 
 import std;
 import desktop.service_installer;
+import desktop.tun_helper_protocol;
+
+#include "tun_helper_client.hpp"
 
 namespace desktop {
     namespace {
@@ -91,56 +101,6 @@ namespace desktop {
             return ::statvfs(p.c_str(), &sv) == 0 && (sv.f_flag & ST_NOSUID) != 0;
         }
 
-        struct ExecOutput { bool launched = false; int exit_code = -1; std::string output; };
-
-        auto run_execv_capture(std::vector<std::string> const& args) -> ExecOutput {
-            ExecOutput res{};
-            if (args.empty() || args[0].empty()) return res;
-            int pipefd[2]{-1, -1};
-            if (::pipe(pipefd) != 0) return res;
-            (void)::fcntl(pipefd[0], F_SETFD, FD_CLOEXEC);
-            (void)::fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
-            std::vector<char*> argv;
-            argv.reserve(args.size() + 1);
-            for (auto const& a : args) argv.push_back(const_cast<char*>(a.c_str()));
-            argv.push_back(nullptr);
-            int devnull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
-            pid_t child = ::fork();
-            if (child < 0) {
-                if (devnull >= 0) ::close(devnull);
-                ::close(pipefd[0]); ::close(pipefd[1]);
-                return res;
-            }
-            if (child == 0) {
-                ::close(pipefd[0]);
-                if (devnull >= 0) {
-                    if (devnull == STDIN_FILENO) (void)::fcntl(devnull, F_SETFD, 0);
-                    else (void)::dup2(devnull, STDIN_FILENO);
-                }
-                if (pipefd[1] == STDOUT_FILENO || pipefd[1] == STDERR_FILENO) (void)::fcntl(pipefd[1], F_SETFD, 0);
-                (void)::dup2(pipefd[1], STDOUT_FILENO); (void)::dup2(pipefd[1], STDERR_FILENO);
-                ::execv(args[0].c_str(), argv.data());
-                ::_exit(127);
-            }
-            if (devnull >= 0) ::close(devnull);
-            ::close(pipefd[1]);
-            res.launched = true;
-            char buf[512];
-            for (;;) {
-                auto n = ::read(pipefd[0], buf, sizeof(buf));
-                if (n < 0 && errno == EINTR) continue;
-                if (n <= 0) break;
-                if (res.output.size() < 4096) res.output.append(buf, static_cast<std::size_t>(n));
-            }
-            ::close(pipefd[0]);
-            int status = 0;
-            while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-            if (WIFEXITED(status)) res.exit_code = WEXITSTATUS(status);
-            else if (WIFSIGNALED(status)) res.exit_code = 128 + WTERMSIG(status);
-            res.output = std::string(trim_sv(res.output));
-            return res;
-        }
-
         auto binary_has_net_admin_file_cap(std::filesystem::path const& canonical_bin) -> bool {
             if (canonical_bin.empty() || fs_has_nosuid(canonical_bin)) return false;
             unsigned char buf[64]{};
@@ -153,7 +113,7 @@ namespace desktop {
             }
             if (n < 0 && (errno == ENODATA || errno == ENOENT)) return false;
             if (auto getcap = resolve_executable_path("getcap")) {
-                auto out = run_execv_capture({getcap->string(), canonical_bin.string()});
+                auto out = detail::run_posix_execv_capture({getcap->string(), canonical_bin.string()});
                 if (out.launched && out.exit_code == 0) return parse_getcap_has_net_admin(out.output);
             }
             return false;
@@ -177,32 +137,15 @@ namespace desktop {
             return ok;
         }
 
-        auto win_nexus_service_exists() noexcept -> bool {
+        auto win_tun_helper_service_exists() noexcept -> bool {
             SC_HANDLE scm = ::OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
             if (!scm) return false;
-            SC_HANDLE svc = ::OpenServiceW(scm, L"nexus", SERVICE_QUERY_STATUS);
+            auto name_w = detail::utf8_to_wide_helper(kWinTunHelperServiceName);
+            SC_HANDLE svc = ::OpenServiceW(scm, name_w.c_str(), SERVICE_QUERY_STATUS);
             bool exists = svc != nullptr;
             if (svc) ::CloseServiceHandle(svc);
             ::CloseServiceHandle(scm);
             return exists;
-        }
-
-        auto run_win_uac_cmd(std::wstring const& file, std::wstring const& params, bool is_en) -> std::pair<ElevationResult, DWORD> {
-            SHELLEXECUTEINFOW sei{};
-            sei.cbSize = sizeof(sei); sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
-            sei.lpVerb = L"runas"; sei.lpFile = file.c_str(); sei.lpParameters = params.c_str(); sei.nShow = SW_HIDE;
-            if (!::ShellExecuteExW(&sei)) {
-                DWORD err = ::GetLastError();
-                if (err == ERROR_CANCELLED) return {{false, true, tr_msg(is_en, "已取消权限授权", "Authorization cancelled")}, err};
-                return {{false, false, std::format("ShellExecuteExW failed ({})", err)}, err};
-            }
-            DWORD exit_code = 1;
-            if (sei.hProcess) {
-                ::WaitForSingleObject(sei.hProcess, 30000);
-                ::GetExitCodeProcess(sei.hProcess, &exit_code);
-                ::CloseHandle(sei.hProcess);
-            }
-            return {{exit_code == 0, false, {}}, exit_code};
         }
 #endif
     }
@@ -367,11 +310,48 @@ namespace desktop {
         if (!search_dir.empty() && !detect_wintun_dll(search_dir).has_value()) {
             out.status = TunPrivilegeStatus::unavailable; out.detail = "wintun.dll not found next to nexus.exe"; return out;
         }
-        out.supports_persistent = false; out.supports_session_only = true;
-        out.has_persistent_grant = win_nexus_service_exists();
+        out.supports_persistent = detail::resolve_tun_helper_binary(core_binary).has_value();
+        out.supports_session_only = true;
+        out.has_persistent_grant = win_tun_helper_service_exists();
         if (is_win_process_elevated()) { out.status = TunPrivilegeStatus::ready_root_or_admin; out.detail = "Administrator token active"; return out; }
+        auto const canon = canonicalize_binary(core_binary);
+        auto const cur_sha = sha256_file(canon);
+        if (auto pinned = detail::win_read_pinned_helper_config(); pinned && cur_sha && *cur_sha == pinned->sha256 &&
+            canonicalize_binary(std::filesystem::path(detail::utf8_to_wide_helper(pinned->binary))) == canon &&
+            detail::tun_helper_rpc(TunHelperCommand::ping, 1500).ok) {
+            out.status = TunPrivilegeStatus::ready_persistent_cap;
+            out.has_persistent_grant = true;
+            out.helper_required_for_persistent = true;
+            out.detail = "NexusTunHelper Windows service active";
+            return out;
+        }
         out.status = TunPrivilegeStatus::needs_elevation;
-        out.detail = "Requires per-session UAC elevation for Wintun";
+        out.detail = out.supports_persistent ? "Requires one-time UAC for NexusTunHelper service" : "Requires per-session UAC elevation for Wintun";
+        return out;
+#elif defined(__APPLE__)
+        auto const osascript = resolve_executable_path("osascript");
+        out.supports_session_only = osascript.has_value();
+        out.supports_persistent = osascript.has_value() && detail::resolve_tun_helper_binary(core_binary).has_value();
+        auto const pinned = detail::macos_read_verified_pinned_config();
+        out.has_persistent_grant = pinned.has_value();
+        if (::geteuid() == 0) { out.status = TunPrivilegeStatus::ready_root_or_admin; out.detail = "Root privileges active"; return out; }
+        auto const canon = canonicalize_binary(core_binary);
+        auto const cur_sha = sha256_file(canon);
+        if (pinned && !pinned->staged_binary.empty() && cur_sha && *cur_sha == pinned->sha256 &&
+            canonicalize_binary(pinned->binary) == canon &&
+            detail::tun_helper_rpc(TunHelperCommand::ping, 1500).ok) {
+            out.status = TunPrivilegeStatus::ready_persistent_cap;
+            out.has_persistent_grant = true;
+            out.helper_required_for_persistent = true;
+            out.detail = "io.nexus.tun-helper LaunchDaemon active";
+            return out;
+        }
+        if (out.supports_persistent || out.supports_session_only) {
+            out.status = TunPrivilegeStatus::needs_elevation;
+            out.detail = out.supports_persistent ? "Requires one-time admin authorization for LaunchDaemon" : "Requires per-session macOS admin authorization";
+            return out;
+        }
+        out.status = TunPrivilegeStatus::unavailable; out.detail = "osascript unavailable on host";
         return out;
 #else
         if (::geteuid() == 0) { out.status = TunPrivilegeStatus::ready_root_or_admin; out.detail = "Root privileges active"; return out; }
@@ -385,27 +365,20 @@ namespace desktop {
         auto run_linux_setcap_op(std::filesystem::path const& core_binary, bool grant, bool is_en) -> ElevationResult {
             std::error_code ec;
             auto const canon = canonicalize_binary(core_binary);
-            if (!std::filesystem::is_regular_file(canon, ec)) {
-                return {false, false, tr_msg(is_en, "未找到 nexus 核心二进制文件", "Core binary not found")};
-            }
+            if (!std::filesystem::is_regular_file(canon, ec)) return {false, false, tr_msg(is_en, "未找到 nexus 核心二进制文件", "Core binary not found")};
             auto const pkexec = resolve_executable_path("pkexec");
             auto const setcap = resolve_executable_path("setcap");
-            if (!pkexec || !setcap) {
-                return {false, false, tr_msg(is_en, "系统缺少 pkexec 或 setcap 工具", "pkexec or setcap not found")};
-            }
-            auto const argv = grant
-                ? build_linux_setcap_grant_argv(canon, pkexec->string(), setcap->string())
-                : build_linux_setcap_revoke_argv(canon, pkexec->string(), setcap->string());
-            auto const exec = run_execv_capture(argv);
+            if (!pkexec || !setcap) return {false, false, tr_msg(is_en, "系统缺少 pkexec 或 setcap 工具", "pkexec or setcap not found")};
+            auto const argv = grant ? build_linux_setcap_grant_argv(canon, pkexec->string(), setcap->string())
+                                    : build_linux_setcap_revoke_argv(canon, pkexec->string(), setcap->string());
+            auto const exec = detail::run_posix_execv_capture(argv);
             if (!exec.launched) return {false, false, tr_msg(is_en, "无法启动提权程序 pkexec", "Failed to launch pkexec")};
             if (exec.exit_code == 126 || exec.exit_code == 127) {
-                return {false, true, grant ? tr_msg(is_en, "已取消权限授权", "Authorization cancelled")
-                                           : tr_msg(is_en, "已取消撤销授权", "Revocation cancelled")};
+                return {false, true, grant ? tr_msg(is_en, "已取消权限授权", "Authorization cancelled") : tr_msg(is_en, "已取消撤销授权", "Revocation cancelled")};
             }
             if (exec.exit_code != 0) {
                 return {false, false, !exec.output.empty() ? exec.output
-                    : (grant ? tr_msg(is_en, "持久授权失败", "Persistent authorization failed")
-                             : tr_msg(is_en, "撤销持久授权失败", "Failed to revoke persistent capability"))};
+                    : (grant ? tr_msg(is_en, "持久授权失败", "Persistent authorization failed") : tr_msg(is_en, "撤销持久授权失败", "Failed to revoke persistent capability"))};
             }
             if (grant) {
                 if (fs_has_nosuid(canon) || !binary_has_net_admin_file_cap(canon)) {
@@ -415,24 +388,54 @@ namespace desktop {
                 }
                 return {true, false, tr_msg(is_en, "已授予 TUN 持久权限 (setcap)", "Persistent TUN capability granted")};
             }
-            if (binary_has_net_admin_file_cap(canon)) {
-                return {false, false, tr_msg(is_en, "撤销后仍检测到文件能力", "File capability still present after revoke")};
-            }
+            if (binary_has_net_admin_file_cap(canon)) return {false, false, tr_msg(is_en, "撤销后仍检测到文件能力", "File capability still present after revoke")};
             return {true, false, tr_msg(is_en, "已撤销 TUN 持久授权", "Persistent TUN grant revoked")};
         }
     }
 #endif
 
-    auto grant_persistent_tun_privilege(std::filesystem::path const& core_binary, bool is_en) -> ElevationResult {
+    auto grant_persistent_tun_privilege(
+        std::filesystem::path const& core_binary, bool is_en,
+        std::filesystem::path const& config_path, std::filesystem::path const& workdir) -> ElevationResult {
 #ifdef __linux__
+        (void)config_path; (void)workdir;
         return run_linux_setcap_op(core_binary, true, is_en);
 #elif defined(_WIN32)
-        (void)core_binary;
-        return {false, false, tr_msg(is_en,
-            "Windows 暂请使用按次 UAC 提权（系统服务持久模式待接入）",
-            "Windows uses per-session UAC elevation (persistent service mode pending)")};
+        auto const helper = detail::resolve_tun_helper_binary(core_binary);
+        if (!helper) return {false, false, tr_msg(is_en, "未找到 nexus-tun-helper.exe，暂不支持持久服务授权", "nexus-tun-helper.exe not found")};
+        if (config_path.empty()) return {false, false, tr_msg(is_en, "缺少有效配置文件路径", "Config path required for persistent helper")};
+        auto const sid = detail::win_current_user_sid_string();
+        if (!sid) return {false, false, tr_msg(is_en, "无法获取当前用户 SID", "Failed to resolve current Windows user SID")};
+        auto const canon_bin = canonicalize_binary(core_binary);
+        auto const wd = workdir.empty() ? config_path.parent_path() : workdir;
+        std::wstring params = L"--install --binary " + detail::quote_win_param_helper(canon_bin.wstring())
+            + L" --config " + detail::quote_win_param_helper(config_path.wstring())
+            + L" --workdir " + detail::quote_win_param_helper(wd.wstring())
+            + L" --owner-sid " + detail::quote_win_param_helper(detail::utf8_to_wide_helper(*sid));
+        auto [launched, code] = detail::run_win_uac_process(helper->wstring(), params, 30000);
+        if (!launched) return {false, code == ERROR_CANCELLED, code == ERROR_CANCELLED ? tr_msg(is_en, "已取消权限授权", "Authorization cancelled") : std::format("ShellExecuteExW failed ({})", code)};
+        if (code != 0) return {false, false, tr_msg(is_en, "安装 Nexus TUN 服务失败", "Failed to install NexusTunHelper service")};
+        if (!detail::tun_helper_rpc(TunHelperCommand::ping, 3000).ok) return {false, false, tr_msg(is_en, "服务已安装但未响应管道检测", "NexusTunHelper installed but pipe ping failed")};
+        return {true, false, tr_msg(is_en, "已安装并启动 Nexus TUN 持久服务", "NexusTunHelper persistent service active")};
+#elif defined(__APPLE__)
+        auto const helper = detail::resolve_tun_helper_binary(core_binary);
+        auto const osascript = resolve_executable_path("osascript");
+        if (!helper || !osascript) return {false, false, tr_msg(is_en, "未找到 nexus-tun-helper 或 osascript", "nexus-tun-helper or osascript not found")};
+        if (config_path.empty()) return {false, false, tr_msg(is_en, "缺少有效配置文件路径", "Config path required for LaunchDaemon helper")};
+        auto const canon_bin = canonicalize_binary(core_binary);
+        auto const wd = workdir.empty() ? config_path.parent_path() : workdir;
+        auto [ok, cancelled, out_msg] = detail::run_macos_osascript_argv({
+            helper->string(), "--install", "--binary", canon_bin.string(), "--config", config_path.string(),
+            "--workdir", wd.string(), "--owner-uid", std::to_string(static_cast<unsigned long>(::getuid())),
+        }, osascript->string());
+        if (!ok) return {false, cancelled, cancelled ? tr_msg(is_en, "已取消权限授权", "Authorization cancelled") : (!out_msg.empty() ? out_msg : tr_msg(is_en, "macOS 提权安装失败", "macOS helper install failed"))};
+        for (int i = 0; i < 15; ++i) {
+            if (detail::tun_helper_rpc(TunHelperCommand::ping, 1000).ok) return {true, false, tr_msg(is_en, "已安装并启动 LaunchDaemon 持久授权", "macOS LaunchDaemon persistent helper active")};
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+        return {false, false, tr_msg(is_en, "LaunchDaemon 已注册但未响应本地套接字", "LaunchDaemon registered but socket ping failed")};
 #else
-        (void)core_binary;
+        (void)core_binary; (void)config_path; (void)workdir;
         return {false, false, tr_msg(is_en, "当前平台暂不支持持久授权", "Persistent elevation unsupported on this platform")};
 #endif
     }
@@ -441,11 +444,22 @@ namespace desktop {
 #ifdef __linux__
         return run_linux_setcap_op(core_binary, false, is_en);
 #elif defined(_WIN32)
-        (void)core_binary;
-        auto [res, code] = run_win_uac_cmd(L"sc.exe", L"delete nexus", is_en);
-        if (res.cancelled) return res;
-        if (code == 0 || code == ERROR_SERVICE_DOES_NOT_EXIST) return {true, false, tr_msg(is_en, "已移除 Nexus 系统服务", "Nexus Windows service removed")};
-        return {false, false, res.message.empty() ? tr_msg(is_en, "移除 Windows 服务失败", "Failed to remove Windows service") : res.message};
+        if (auto const helper = detail::resolve_tun_helper_binary(core_binary)) {
+            auto [launched, code] = detail::run_win_uac_process(helper->wstring(), L"--uninstall", 30000);
+            if (!launched) return {false, code == ERROR_CANCELLED, code == ERROR_CANCELLED ? tr_msg(is_en, "已取消撤销授权", "Revocation cancelled") : std::format("ShellExecuteExW failed ({})", code)};
+            return {code == 0, false, code == 0 ? tr_msg(is_en, "已移除 Nexus TUN 持久服务", "NexusTunHelper service removed") : tr_msg(is_en, "移除 Nexus TUN 服务失败", "Failed to remove NexusTunHelper service")};
+        }
+        auto [launched, code] = detail::run_win_uac_process(L"sc.exe", L"delete NexusTunHelper", 30000);
+        if (!launched && code == ERROR_CANCELLED) return {false, true, tr_msg(is_en, "已取消撤销授权", "Revocation cancelled")};
+        if (launched && (code == 0 || code == ERROR_SERVICE_DOES_NOT_EXIST)) return {true, false, tr_msg(is_en, "已移除 Nexus TUN 持久服务", "NexusTunHelper service removed")};
+        return {false, false, tr_msg(is_en, "移除 Windows 服务失败", "Failed to remove Windows service")};
+#elif defined(__APPLE__)
+        auto const helper = detail::resolve_tun_helper_binary(core_binary);
+        auto const osascript = resolve_executable_path("osascript");
+        if (!helper || !osascript) return {false, false, tr_msg(is_en, "未找到 nexus-tun-helper 或 osascript", "nexus-tun-helper or osascript not found")};
+        auto [ok, cancelled, out_msg] = detail::run_macos_osascript_argv({helper->string(), "--uninstall"}, osascript->string());
+        if (!ok) return {false, cancelled, cancelled ? tr_msg(is_en, "已取消撤销授权", "Revocation cancelled") : (!out_msg.empty() ? out_msg : tr_msg(is_en, "卸载 LaunchDaemon 失败", "Failed to remove LaunchDaemon"))};
+        return {true, false, tr_msg(is_en, "已卸载 macOS LaunchDaemon 持久授权", "macOS LaunchDaemon persistent helper removed")};
 #else
         (void)core_binary;
         return {false, false, tr_msg(is_en, "当前平台不支持撤销持久授权", "Revocation unsupported on this platform")};

@@ -11,6 +11,20 @@ import NexusSharedUI
 final class NexusAppModel {
     var isRunning = false
     var backend: AppleTunnelBackend = .launchDaemonUtun
+    @ObservationIgnored private var _storedTunElevationMode: TunElevationMode
+    var tunElevationMode: TunElevationMode {
+        get {
+            access(keyPath: \.tunElevationMode)
+            return _storedTunElevationMode
+        }
+        set {
+            guard newValue != _storedTunElevationMode else { return }
+            withMutation(keyPath: \.tunElevationMode) {
+                _storedTunElevationMode = newValue
+                PrivilegedDaemonController.saveElevationMode(newValue)
+            }
+        }
+    }
     var daemonState: DaemonRegistrationState = .notRegistered
     var statusSummary = "未启动"
     var residentMemoryMiB: Double = TunnelMemoryMonitor.currentResidentMemoryMiB()
@@ -50,10 +64,15 @@ final class NexusAppModel {
 
     init() {
         let sockPath = "/var/run/org.nexus.apple/c.sock"
+        self._storedTunElevationMode = PrivilegedDaemonController.loadSavedElevationMode()
         self.session = ControlSocketSession(socketPath: sockPath)
         self.httpControl = HttpControlClient(baseURL: URL(string: "http://127.0.0.1:9090")!)
         self.daemonState = daemonController.status()
         startNetworkMonitor()
+    }
+
+    var showDaemonManagementControls: Bool {
+        daemonController.shouldShowDaemonControls(for: tunElevationMode, state: daemonState)
     }
 
     private func startNetworkMonitor() {
@@ -231,7 +250,7 @@ struct NexusMenuBarApp: App {
 
         Settings {
             NexusSettingsView(model: model)
-                .frame(width: 420)
+                .frame(width: 460)
                 .scenePadding()
         }
     }
@@ -242,12 +261,33 @@ private struct NexusSettingsView: View {
 
     var body: some View {
         Form {
-            Section("特权 Daemon (SMAppService)") {
-                LabeledContent("注册状态", value: model.daemonState.rawValue)
-                HStack {
-                    Button("注册 Daemon") { model.registerDaemon() }
-                    Button("注销 Daemon") {
-                        Task { await model.unregisterDaemon() }
+            Section("TUN 提权模式") {
+                Picker("授权方式", selection: $model.tunElevationMode) {
+                    ForEach(TunElevationMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                Text(model.tunElevationMode.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if model.showDaemonManagementControls {
+                Section("特权 Daemon (SMAppService)") {
+                    LabeledContent("注册状态", value: model.daemonState.summaryText)
+                    if model.tunElevationMode == .sessionOnly && model.daemonState.isRegisteredOrPending {
+                        Text("当前已切换为按次提权，但后台 LaunchDaemon 仍处于已注册状态，可按需注销。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        if model.tunElevationMode == .persistentDaemon {
+                            Button("注册 Daemon") { model.registerDaemon() }
+                                .disabled(model.daemonState == .enabled)
+                        }
+                        Button("注销 Daemon") {
+                            Task { await model.unregisterDaemon() }
+                        }
+                        .disabled(!model.daemonState.isRegisteredOrPending)
                     }
                 }
             }

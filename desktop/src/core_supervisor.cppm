@@ -10,6 +10,7 @@ export namespace desktop {
 
     struct CoreStartOptions {
         bool elevate_session = false;
+        bool use_persistent_helper = false;
     };
 
     [[nodiscard]] auto current_process_memory_bytes() noexcept -> std::uint64_t;
@@ -29,6 +30,7 @@ export namespace desktop {
         [[nodiscard]] auto running(this CoreSupervisor const& self) noexcept -> bool;
         [[nodiscard]] auto memory_bytes(this CoreSupervisor const& self) noexcept -> std::uint64_t;
         [[nodiscard]] auto elevated_session(this CoreSupervisor const& self) noexcept -> bool;
+        [[nodiscard]] auto using_persistent_helper(this CoreSupervisor const& self) noexcept -> bool;
         [[nodiscard]] auto last_start_cancelled(this CoreSupervisor const& self) noexcept -> bool;
         [[nodiscard]] auto binary_path(this CoreSupervisor const& self) noexcept -> std::filesystem::path const&;
         [[nodiscard]] auto start(

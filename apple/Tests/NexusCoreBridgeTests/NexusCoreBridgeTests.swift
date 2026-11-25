@@ -327,4 +327,158 @@ final class NexusCoreBridgeTests: XCTestCase {
         let finalState = await bridge.currentState()
         XCTAssertEqual(finalState, .idle)
     }
+
+    func testTunElevationModeCodablePersistenceAndDaemonState() throws {
+        XCTAssertEqual(TunElevationMode.allCases, [.persistentDaemon, .sessionOnly])
+        for mode in TunElevationMode.allCases {
+            let encoded = try JSONEncoder().encode(mode)
+            let decoded = try JSONDecoder().decode(TunElevationMode.self, from: encoded)
+            XCTAssertEqual(decoded, mode)
+            XCTAssertFalse(mode.displayName.isEmpty)
+            XCTAssertFalse(mode.detailText.isEmpty)
+        }
+        XCTAssertTrue(TunElevationMode.persistentDaemon.displayName.contains("LaunchDaemon"))
+        XCTAssertTrue(TunElevationMode.sessionOnly.displayName.contains("仅本次会话"))
+
+        let suiteName = "org.nexus.apple.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertEqual(PrivilegedDaemonController.loadSavedElevationMode(defaults: defaults), .persistentDaemon)
+        PrivilegedDaemonController.saveElevationMode(.sessionOnly, defaults: defaults)
+        XCTAssertEqual(PrivilegedDaemonController.loadSavedElevationMode(defaults: defaults), .sessionOnly)
+        PrivilegedDaemonController.saveElevationMode(.persistentDaemon, defaults: defaults)
+        XCTAssertEqual(PrivilegedDaemonController.loadSavedElevationMode(defaults: defaults), .persistentDaemon)
+
+        XCTAssertTrue(DaemonRegistrationState.enabled.isRegisteredOrPending)
+        XCTAssertTrue(DaemonRegistrationState.requiresApproval.isRegisteredOrPending)
+        XCTAssertFalse(DaemonRegistrationState.notRegistered.isRegisteredOrPending)
+        XCTAssertFalse(DaemonRegistrationState.unsupported.isRegisteredOrPending)
+        for state in [DaemonRegistrationState.enabled, .requiresApproval, .notRegistered, .unsupported] {
+            XCTAssertFalse(state.summaryText.isEmpty)
+        }
+
+        let controller = PrivilegedDaemonController()
+        XCTAssertEqual(controller.plistName, "org.nexus.apple.daemon.plist")
+        XCTAssertTrue(controller.shouldShowDaemonControls(for: .persistentDaemon, state: .notRegistered))
+        XCTAssertFalse(controller.shouldShowDaemonControls(for: .sessionOnly, state: .notRegistered))
+        XCTAssertFalse(controller.shouldShowDaemonControls(for: .sessionOnly, state: .unsupported))
+        XCTAssertTrue(controller.shouldShowDaemonControls(for: .sessionOnly, state: .enabled))
+        XCTAssertTrue(controller.shouldShowDaemonControls(for: .sessionOnly, state: .requiresApproval))
+
+        let readyCap = TunElevationCapability(supportsPersistentDaemon: true, supportsSessionOnly: true, daemonState: .enabled)
+        XCTAssertTrue(readyCap.isPersistentReady)
+        XCTAssertFalse(readyCap.requiresInteractivePrompt(for: .persistentDaemon))
+        XCTAssertTrue(readyCap.requiresInteractivePrompt(for: .sessionOnly))
+
+        let pendingCap = TunElevationCapability(supportsPersistentDaemon: true, supportsSessionOnly: true, daemonState: .notRegistered)
+        XCTAssertFalse(pendingCap.isPersistentReady)
+        XCTAssertTrue(pendingCap.requiresInteractivePrompt(for: .persistentDaemon))
+    }
+
+    func testRenderLaunchDaemonPlistXmlSafety() throws {
+        let defaultXml = renderLaunchDaemonPlist(spec: LaunchDaemonPlistSpec())
+        XCTAssertTrue(defaultXml.contains("<key>Label</key>"))
+        XCTAssertTrue(defaultXml.contains("<string>org.nexus.apple.daemon</string>"))
+        XCTAssertTrue(defaultXml.contains("<key>ProgramArguments</key>"))
+        XCTAssertTrue(defaultXml.contains("<key>RunAtLoad</key>"))
+        XCTAssertTrue(defaultXml.contains("<key>KeepAlive</key>"))
+        XCTAssertTrue(defaultXml.contains("<key>StandardOutPath</key>"))
+        XCTAssertTrue(defaultXml.contains("<key>StandardErrorPath</key>"))
+
+        let parsed = try PropertyListSerialization.propertyList(
+            from: Data(defaultXml.utf8),
+            options: [],
+            format: nil
+        ) as? [String: Any]
+        let dict = try XCTUnwrap(parsed)
+        XCTAssertEqual(dict["Label"] as? String, "org.nexus.apple.daemon")
+        XCTAssertEqual(dict["RunAtLoad"] as? Bool, true)
+        let args = try XCTUnwrap(dict["ProgramArguments"] as? [String])
+        let dIdx = try XCTUnwrap(args.firstIndex(of: "-D"))
+        let runIdx = try XCTUnwrap(args.firstIndex(of: "run"))
+        let cfgIdx = try XCTUnwrap(args.firstIndex(of: "--config"))
+        XCTAssertEqual(dIdx, 1)
+        XCTAssertLessThan(dIdx + 1, runIdx)
+        XCTAssertEqual(runIdx + 1, cfgIdx)
+        XCTAssertEqual(args[dIdx + 1], "/var/lib/nexus")
+
+        let injectedSpec = LaunchDaemonPlistSpec(
+            label: "org.nexus.<evil>&\"'daemon",
+            binaryPath: "/tmp/a&b<c>/nexus",
+            configPath: "/tmp/x\"y'z</string><key>Injected</key><string>/c.kdl",
+            dataDirectory: "/tmp/data\0null",
+            workingDirectory: "/tmp/work<&>",
+            runAtLoad: false,
+            keepAliveOnCrash: false
+        )
+        let safeXml = renderLaunchDaemonPlist(spec: injectedSpec)
+        XCTAssertFalse(safeXml.contains("<key>Injected</key>"))
+        XCTAssertFalse(safeXml.contains("<evil>"))
+        XCTAssertFalse(safeXml.contains("\0"))
+
+        let safeParsed = try PropertyListSerialization.propertyList(
+            from: Data(safeXml.utf8),
+            options: [],
+            format: nil
+        ) as? [String: Any]
+        let safeDict = try XCTUnwrap(safeParsed)
+        XCTAssertNil(safeDict["Injected"])
+        XCTAssertEqual(safeDict["Label"] as? String, "org.nexus.<evil>&\"'daemon")
+        XCTAssertEqual(safeDict["RunAtLoad"] as? Bool, false)
+        XCTAssertEqual(safeDict["KeepAlive"] as? Bool, false)
+        let safeArgs = try XCTUnwrap(safeDict["ProgramArguments"] as? [String])
+        XCTAssertEqual(
+            safeArgs,
+            [
+                "/tmp/a&b<c>/nexus",
+                "-D",
+                "/tmp/datanull",
+                "run",
+                "--config",
+                "/tmp/x\"y'z</string><key>Injected</key><string>/c.kdl",
+            ]
+        )
+    }
+
+    func testPosixShellAndAppleScriptEscapingAgainstInjection() throws {
+        XCTAssertEqual(quotePosixShellArg("/usr/local/bin/nexus"), "'/usr/local/bin/nexus'")
+        XCTAssertEqual(quotePosixShellArg(""), "''")
+
+        let payload = "a'b\"c\\d$(touch /tmp/pwn)`id`\nrm -rf /\0"
+        let quoted = quotePosixShellArg(payload)
+        XCTAssertTrue(quoted.hasPrefix("'"))
+        XCTAssertTrue(quoted.hasSuffix("'"))
+        XCTAssertTrue(quoted.contains(#"a'\''b"#))
+        XCTAssertFalse(quoted.contains("\0"))
+
+        let asEscaped = PrivilegedDaemonController.escapeAppleScriptString(payload)
+        XCTAssertTrue(asEscaped.contains(#"\""#))
+        XCTAssertTrue(asEscaped.contains(#"\\"#))
+        XCTAssertTrue(asEscaped.contains(#"\n"#))
+        XCTAssertFalse(asEscaped.contains("\n"))
+        XCTAssertFalse(asEscaped.contains("\r"))
+        XCTAssertFalse(asEscaped.contains("\0"))
+
+        let script = try buildSessionElevationAppleScript(
+            binaryPath: "/tmp/bin'\"\\$(id)`whoami`/nexus",
+            configPath: "/tmp/dir with spaces/c'\"$(uname).kdl",
+            workingDirectory: "/tmp/work'\"\\`id`"
+        )
+        XCTAssertTrue(script.hasPrefix("do shell script \""))
+        XCTAssertTrue(script.hasSuffix("\" with administrator privileges"))
+        XCTAssertFalse(script.contains("\n"))
+        XCTAssertFalse(script.contains("\r"))
+        XCTAssertTrue(script.contains(#"'\\''"#))
+        XCTAssertTrue(script.contains(#"\""#))
+        let dRange = try XCTUnwrap(script.range(of: " -D "))
+        let runRange = try XCTUnwrap(script.range(of: " run --config "))
+        XCTAssertLessThan(dRange.lowerBound, runRange.lowerBound)
+
+        XCTAssertThrowsError(try buildSessionElevationAppleScript(binaryPath: "/tmp/nexus\nrm -rf /", configPath: "/tmp/c.kdl"))
+        XCTAssertThrowsError(try buildSessionElevationAppleScript(binaryPath: "/tmp/nexus", configPath: "/tmp/c.kdl\rid"))
+        XCTAssertThrowsError(try buildSessionElevationAppleScript(binaryPath: "/tmp/nexus", configPath: "/tmp/c.kdl", workingDirectory: "/tmp/w\0x"))
+        XCTAssertThrowsError(try buildSessionElevationAppleScript(binaryPath: "./nexus", configPath: "/tmp/c.kdl"))
+        XCTAssertThrowsError(try buildSessionElevationAppleScript(binaryPath: "/tmp/nexus", configPath: ""))
+    }
 }

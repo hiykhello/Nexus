@@ -1,4 +1,5 @@
 import std;
+import desktop.tun_helper_protocol;
 import desktop.tun_privilege;
 import desktop.ui_prefs;
 
@@ -129,6 +130,104 @@ namespace {
             expect(probe.has_persistent_grant, "ready_persistent_cap implies has_persistent_grant");
         }
     }
+
+    auto test_sha256_and_file() -> void {
+        expect(desktop::sha256_bytes("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "SHA-256 empty string NIST vector");
+        expect(desktop::sha256_bytes("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "SHA-256 'abc' NIST vector");
+        expect(desktop::sha256_bytes("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+               "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            "SHA-256 448-bit multi-block NIST vector");
+        expect(desktop::is_valid_sha256_hex("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
+            "valid 64-hex digest accepted");
+        expect(!desktop::is_valid_sha256_hex("248d6a61"), "short digest rejected");
+        expect(!desktop::is_valid_sha256_hex("z48d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
+            "non-hex digest rejected");
+
+        auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-sha256-test.bin";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            out.write("abc", 3);
+        }
+        auto file_digest = desktop::sha256_file(tmp);
+        std::error_code ec;
+        std::filesystem::remove(tmp, ec);
+        expect(file_digest.has_value() && *file_digest == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "sha256_file matches NIST vector");
+        expect(!desktop::sha256_file(tmp).has_value(), "sha256_file fails on missing file");
+    }
+
+    auto test_helper_protocol_and_security_builders() -> void {
+        expect(desktop::parse_tun_helper_request("PING") == desktop::TunHelperCommand::ping, "PING parsed");
+        expect(desktop::parse_tun_helper_request("STATUS") == desktop::TunHelperCommand::status, "STATUS parsed");
+        expect(desktop::parse_tun_helper_request("START") == desktop::TunHelperCommand::start, "START parsed");
+        expect(desktop::parse_tun_helper_request("STOP") == desktop::TunHelperCommand::stop, "STOP parsed");
+        expect(!desktop::parse_tun_helper_request("PING\n").has_value(), "newline rejected in request");
+        expect(!desktop::parse_tun_helper_request("ping").has_value(), "lowercase rejected");
+        expect(!desktop::parse_tun_helper_request("START;id").has_value(), "command injection rejected");
+        expect(!desktop::parse_tun_helper_request(std::string(300, 'A')).has_value(), "oversized request rejected");
+
+        auto r_run = desktop::parse_tun_helper_reply(desktop::format_tun_helper_reply({true, true, 4242, "RUNNING"}));
+        expect(r_run.ok && r_run.running && r_run.pid == 4242, "RUNNING reply roundtrip");
+        auto r_stop = desktop::parse_tun_helper_reply(desktop::format_tun_helper_reply({true, false, 0, ""}));
+        expect(r_stop.ok && !r_stop.running, "STOPPED reply roundtrip");
+        auto r_err = desktop::parse_tun_helper_reply(desktop::format_tun_helper_reply({false, false, 0, "digest mismatch"}));
+        expect(!r_err.ok && r_err.detail == "digest mismatch", "ERR reply roundtrip");
+        expect(!desktop::parse_tun_helper_reply(std::string(1100, 'X')).ok, "oversized reply rejected");
+
+        expect(desktop::validate_windows_sid("S-1-5-21-3623811015-3361044348-30300820-1013"), "valid user SID accepted");
+        expect(desktop::validate_windows_sid("S-1-5-18"), "valid SYSTEM SID accepted");
+        expect(!desktop::validate_windows_sid("S-1-5-21-1-2)(A;;GA;;;WD"), "SDDL injection SID rejected");
+        expect(!desktop::validate_windows_sid("S-1-5-"), "trailing dash SID rejected");
+        expect(!desktop::validate_windows_sid(""), "empty SID rejected");
+        auto sddl = desktop::build_win_helper_pipe_sddl("S-1-5-21-100-200-300-1001");
+        expect(sddl.has_value() && *sddl == "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;S-1-5-21-100-200-300-1001)",
+            "exact Windows Named Pipe SDDL built");
+        expect(!desktop::build_win_helper_pipe_sddl("bad;sid").has_value(), "invalid SID fails SDDL builder");
+
+        auto plist = desktop::render_macos_tun_helper_plist("/Applications/Nexus & Co <1>.app/Contents/MacOS/nexus-tun-helper");
+        expect(plist.has_value(), "macOS LaunchDaemon plist rendered");
+        expect(plist->contains("<string>io.nexus.tun-helper</string>"), "plist contains default label");
+        expect(plist->contains("Nexus &amp; Co &lt;1&gt;.app/Contents/MacOS/nexus-tun-helper"), "plist XML-escapes binary path");
+        expect(plist->contains("<string>--daemon</string>") && plist->contains("<key>RunAtLoad</key>"),
+            "plist contains daemon arg and RunAtLoad");
+        expect(!desktop::render_macos_tun_helper_plist("relative/path").has_value(), "relative helper binary rejected");
+        expect(!desktop::render_macos_tun_helper_plist("/bin/ok\n/bad").has_value(), "newline in helper path rejected");
+
+        auto q = desktop::quote_posix_sh_arg("a'b $(id) `uname`; rm -rf /");
+        expect(q.has_value() && *q == "'a'\\''b $(id) `uname`; rm -rf /'", "POSIX sh single-quoting neutralizes metachars");
+        auto esc = desktop::escape_applescript_string("path \"quoted\" \\ end");
+        expect(esc.has_value() && *esc == "path \\\"quoted\\\" \\\\ end", "AppleScript string escaping exact");
+        expect(!desktop::escape_applescript_string("bad\nline").has_value(), "AppleScript newline rejected");
+        std::array<std::string_view, 3> mac_argv{"/usr/local/bin/nexus-tun-helper", "--install", "--config=/tmp/a'b \"c\""};
+        auto osa = desktop::build_macos_osascript_admin_script(mac_argv);
+        expect(osa.has_value() && osa->starts_with("do shell script \"") && osa->ends_with("\" with administrator privileges"),
+            "osascript admin command built cleanly");
+
+        desktop::TunHelperPinnedConfig cfg{
+            "/usr/local/bin/nexus",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            "/Users/alice/.config/nexus/config.kdl",
+            "/Users/alice/.config/nexus",
+            "501",
+            "/Library/Application Support/Nexus/bin/nexus",
+        };
+        auto ser = desktop::serialize_tun_helper_config(cfg);
+        expect(ser.has_value(), "pinned config serialized");
+        auto parsed = desktop::parse_tun_helper_config(*ser);
+        expect(parsed.has_value() && parsed->binary == cfg.binary && parsed->sha256 == cfg.sha256 &&
+               parsed->config == cfg.config && parsed->workdir == cfg.workdir && parsed->owner == cfg.owner &&
+               parsed->staged_binary == cfg.staged_binary,
+            "pinned config roundtrip exact including staged_binary");
+        expect(desktop::kWinTunHelperStageDirSddl == "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)",
+            "Windows staging directory SDDL restricts access to SYSTEM and Administrators");
+        expect(!desktop::parse_tun_helper_config("binary=/a\nsha256=bad\nconfig=/c\nowner=501\n").has_value(),
+            "bad sha256 rejected in config parse");
+        expect(!desktop::parse_tun_helper_config(*ser + "extra=1\n").has_value(), "unknown key rejected");
+        expect(!desktop::parse_tun_helper_config(*ser + "owner=0\n").has_value(), "duplicate owner key rejected");
+        expect(!desktop::parse_tun_helper_config(*ser + "staged_binary=/tmp/x\n").has_value(), "duplicate staged_binary rejected");
+    }
 }
 
 auto main(int argc, char** argv) -> int {
@@ -139,6 +238,8 @@ auto main(int argc, char** argv) -> int {
         test_argv_builders();
         test_ui_prefs_tun_persistent_roundtrip();
         test_probe_host_binary(argc > 0 ? argv[0] : nullptr);
+        test_sha256_and_file();
+        test_helper_protocol_and_security_builders();
         std::println("nexus-desktop-tun-privilege-tests: ALL PASSED");
         return 0;
     } catch (std::exception const& e) {

@@ -28,6 +28,7 @@ set(NEXUS_BRIDGE_IMPLS
     src/tray_controller.cpp
     src/tray_linux_sni.cpp
     src/tray_win32.cpp
+    src/tun_helper_protocol.cpp
     src/tun_privilege.cpp
     src/ui_actions.cpp
     src/ui_prefs.cpp
@@ -55,6 +56,7 @@ target_sources(nexus-desktop-bridge
             src/single_instance.cppm
             src/system_proxy.cppm
             src/tray_controller.cppm
+            src/tun_helper_protocol.cppm
             src/tun_privilege.cppm
             src/ui_actions.cppm
             src/ui_prefs.cppm
@@ -70,7 +72,19 @@ endif()
 if(WIN32)
     target_compile_definitions(nexus-desktop-bridge PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(nexus-desktop-bridge PUBLIC wininet ws2_32 advapi32 shell32 user32)
-elseif(UNIX AND NOT APPLE)
+
+    add_executable(nexus-tun-helper src/tun_helper_win.cpp)
+    if(MSVC)
+        target_compile_features(nexus-tun-helper PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-tun-helper PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-tun-helper PRIVATE nexus-desktop-bridge)
+elseif(APPLE)
+    add_executable(nexus-tun-helper src/tun_helper_macos.cpp)
+    target_compile_features(nexus-tun-helper PRIVATE cxx_std_26)
+    target_link_libraries(nexus-tun-helper PRIVATE nexus-desktop-bridge)
+elseif(UNIX)
     target_link_libraries(nexus-desktop-bridge PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
