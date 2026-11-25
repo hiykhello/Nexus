@@ -15,8 +15,8 @@ public enum WorkspaceStoreError: Error, LocalizedError, Equatable, Sendable {
 
 /// Swift 6 actor managing atomic `0600` persistence for Layer 1 canonical `workspace.json`.
 public actor WorkspaceStore {
-    public let rootDirectory: URL
-    public let workspaceFileURL: URL
+    public nonisolated let rootDirectory: URL
+    public nonisolated let workspaceFileURL: URL
 
     public init(rootDirectory: URL, fileName: String = "workspace.json") {
         self.rootDirectory = rootDirectory

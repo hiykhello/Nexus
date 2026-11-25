@@ -286,7 +286,7 @@ public struct TelemetryDocument: Codable, Sendable, Equatable {
 
 /// Swift 6 actor managing Layer 4 ephemeral local telemetry (`telemetry.json`, NEVER synced).
 public actor TelemetryStore {
-    public let fileURL: URL
+    public nonisolated let fileURL: URL
 
     public init(fileURL: URL) {
         self.fileURL = fileURL

@@ -1,4 +1,5 @@
 #if os(macOS) || os(iOS)
+import Foundation
 import Observation
 import SwiftUI
 import NexusCoreBridge
