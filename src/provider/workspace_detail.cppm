@@ -101,6 +101,19 @@ namespace provider::ws_detail {
         out.push_back(']');
     }
 
+    inline auto format_json_error(std::uint32_t code, std::size_t byte_offset,
+                                  std::string_view custom_msg, std::string_view input) -> std::string {
+        std::size_t pos = std::min(byte_offset, input.size());
+        std::size_t line = 1, col = 1;
+        for (std::size_t i = 0; i < pos; ++i) {
+            if (input[i] == '\n') { ++line; col = 1; }
+            else ++col;
+        }
+        if (!custom_msg.empty())
+            return std::format("JSON parse error (code {}): {} at line {}, column {}", code, custom_msg, line, col);
+        return std::format("JSON parse error (code {}) at line {}, column {}", code, line, col);
+    }
+
     inline auto sha256_hex_16(std::string_view input) -> std::string {
         static constexpr std::array<std::uint32_t, 64> K{
             0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,

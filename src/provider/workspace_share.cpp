@@ -125,7 +125,7 @@ namespace provider {
         }
         Workspace ws{};
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(ws, workspace_json)) {
-            res.errors.push_back("invalid workspace.json: " + glaze::format_error(err, workspace_json));
+            res.errors.push_back("invalid workspace.json: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, workspace_json));
             return res;
         }
         if (ws.schema_version != 1) {
@@ -198,7 +198,7 @@ namespace provider {
         }
         Workspace ws{};
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(ws, workspace_json)) {
-            res.errors.push_back("invalid workspace.json: " + glaze::format_error(err, workspace_json));
+            res.errors.push_back("invalid workspace.json: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, workspace_json));
             return res;
         }
         if (ws.schema_version != 1) {
@@ -232,7 +232,7 @@ namespace provider {
 
         ShareBundle bundle{};
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(bundle, *decoded)) {
-            res.errors.push_back("invalid share bundle JSON: " + glaze::format_error(err, *decoded));
+            res.errors.push_back("invalid share bundle JSON: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, *decoded));
             return res;
         }
         if (bundle.schema_version != 1 || bundle.kind != "bundle" || bundle.profiles.empty()) {

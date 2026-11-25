@@ -116,7 +116,7 @@ namespace provider {
         }
         Workspace ws{};
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(ws, workspace_json)) {
-            res.errors.push_back("invalid workspace.json: " + glaze::format_error(err, workspace_json));
+            res.errors.push_back("invalid workspace.json: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, workspace_json));
             return res;
         }
         if (ws.schema_version != 1) {
@@ -204,7 +204,7 @@ namespace provider {
         }
         SyncEnvelope env{};
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(env, envelope_json)) {
-            res.errors.push_back("invalid sync envelope JSON: " + glaze::format_error(err, envelope_json));
+            res.errors.push_back("invalid sync envelope JSON: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, envelope_json));
             return res;
         }
         if (env.format != "nexus-sync-v1") {
@@ -272,7 +272,7 @@ namespace provider {
 
         Workspace ws{};
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(ws, pt_view)) {
-            res.errors.push_back("decrypted payload is not valid workspace.json: " + glaze::format_error(err, pt_view));
+            res.errors.push_back("decrypted payload is not valid workspace.json: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, pt_view));
             return res;
         }
         if (ws.schema_version != 1) {

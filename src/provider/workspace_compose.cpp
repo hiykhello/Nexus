@@ -188,11 +188,11 @@ namespace provider {
         Workspace ws{};
         HostConfig host{};
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(ws, workspace_json)) {
-            res.errors.push_back("invalid workspace.json: " + glaze::format_error(err, workspace_json));
+            res.errors.push_back("invalid workspace.json: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, workspace_json));
             return res;
         }
         if (auto err = glaze::read<glaze::opts{.error_on_unknown_keys = false}>(host, host_json)) {
-            res.errors.push_back("invalid host.json: " + glaze::format_error(err, host_json));
+            res.errors.push_back("invalid host.json: " + format_json_error(static_cast<std::uint32_t>(err.ec), err.count, err.custom_error_message, host_json));
             return res;
         }
         if (ws.schema_version != 1) { res.errors.push_back("unsupported workspace schema_version"); return res; }
