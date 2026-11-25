@@ -8,9 +8,13 @@ export namespace desktop {
         std::string message;
     };
 
+    struct CoreStartOptions {
+        bool elevate_session = false;
+    };
+
     [[nodiscard]] auto current_process_memory_bytes() noexcept -> std::uint64_t;
 
-    // Supervises a local unprivileged Nexus core child process (user mode)
+    // Supervises a local Nexus core child process (unprivileged or session-elevated)
     // and executes offline `nexus check --config` validation before hot reload.
     class CoreSupervisor {
         struct Impl;
@@ -24,7 +28,13 @@ export namespace desktop {
 
         [[nodiscard]] auto running(this CoreSupervisor const& self) noexcept -> bool;
         [[nodiscard]] auto memory_bytes(this CoreSupervisor const& self) noexcept -> std::uint64_t;
-        [[nodiscard]] auto start(this CoreSupervisor& self, std::filesystem::path const& config_path) -> bool;
+        [[nodiscard]] auto elevated_session(this CoreSupervisor const& self) noexcept -> bool;
+        [[nodiscard]] auto last_start_cancelled(this CoreSupervisor const& self) noexcept -> bool;
+        [[nodiscard]] auto binary_path(this CoreSupervisor const& self) noexcept -> std::filesystem::path const&;
+        [[nodiscard]] auto start(
+            this CoreSupervisor& self,
+            std::filesystem::path const& config_path,
+            CoreStartOptions opts = {}) -> bool;
         auto stop(this CoreSupervisor& self) -> void;
         [[nodiscard]] auto last_error(this CoreSupervisor const& self) -> std::string;
 

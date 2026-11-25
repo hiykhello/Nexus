@@ -110,6 +110,11 @@ export component AppWindow inherits Window {
     in-out property <bool> tray-show-speed: true;
     in-out property <string> tray-click-action: "toggle";
     in-out property <bool> tray-native-active: true;
+    in-out property <bool> tun-elevate-persistent: true;
+    in-out property <string> tun-privilege-status: "needs_elevation";
+    in-out property <bool> tun-persistent-granted: false;
+    in-out property <bool> tun-can-persist: true;
+    in-out property <bool> tun-privilege-busy: false;
     in-out property <string> app-memory-text: "--";
     in-out property <string> core-memory-text: "--";
     in-out property <string> total-memory-text: "--";
@@ -140,6 +145,8 @@ export component AppWindow inherits Window {
     callback toggle-system-proxy(bool);
     callback apply-inbound-proxy-config(string, bool, string, string);
     callback toggle-tun(bool);
+    callback grant-tun-privilege();
+    callback revoke-tun-privilege();
     callback reload-config();
     callback refresh-metrics();
     callback clear-cache();
@@ -445,9 +452,11 @@ export component AppWindow inherits Window {
                             close-to-tray <=> root.close-to-tray; start-minimized <=> root.start-minimized;
                             tray-show-nodes <=> root.tray-show-nodes; tray-show-speed <=> root.tray-show-speed;
                             tray-click-action <=> root.tray-click-action; tray-native-active: root.tray-native-active;
-                            core-running: root.core-running; tun-enabled: root.tun-enabled;
-                            config-path: root.config-path;
+                            tun-elevate-persistent <=> root.tun-elevate-persistent; tun-privilege-status: root.tun-privilege-status;
+                            tun-persistent-granted: root.tun-persistent-granted; tun-can-persist: root.tun-can-persist; tun-privilege-busy: root.tun-privilege-busy;
+                            core-running: root.core-running; tun-enabled: root.tun-enabled; config-path: root.config-path;
                             tray-prefs-changed => { root.tray-prefs-changed(); }
+                            grant-tun-privilege => { root.grant-tun-privilege(); } revoke-tun-privilege => { root.revoke-tun-privilege(); }
                             open-rule-modal(tab) => { root.outbound-modal-open = false; root.rule-modal-tab = tab; root.rule-modal-open = true; }
                         }
                     }

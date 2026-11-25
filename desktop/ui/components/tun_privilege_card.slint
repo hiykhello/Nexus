@@ -1,0 +1,213 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+component PrivilegeActionChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    horizontal-stretch: 0;
+    height: 26px;
+    border-radius: 13px;
+    border-width: 1px;
+    border-color:
+        !root.enabled ? Theme.well-border
+        : root.danger ? (ta.has-hover ? Theme.error-fg : Theme.error-border)
+        : (ta.has-hover ? Theme.accent : Theme.selected-border);
+    background:
+        !root.enabled ? Theme.well-bg
+        : root.danger ? (ta.pressed ? Theme.error-bg : ta.has-hover ? Theme.error-bg : Theme.well-bg)
+        : (ta.pressed ? Theme.selected-bg : ta.has-hover ? Theme.selected-bg : Theme.accent-soft);
+    opacity: root.enabled ? 1.0 : 0.52;
+    transform-scale: root.enabled && ta.pressed ? 0.96 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 11px;
+        padding-right: 11px;
+        Text {
+            text: root.label;
+            font-size: 11px;
+            font-weight: 700;
+            color:
+                !root.enabled ? Theme.text-muted
+                : root.danger ? Theme.error-fg
+                : Theme.nav-active-fg;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component TunPrivilegeCard inherits Rectangle {
+    in-out property <bool> tun-elevate-persistent: true;
+    in property <string> tun-privilege-status: "needs_elevation"; // "ready_root" | "ready_persistent" | "needs_elevation" | "unavailable"
+    in property <bool> tun-persistent-granted: false;
+    in property <bool> tun-can-persist: true;
+    in property <bool> tun-privilege-busy: false;
+
+    callback prefs-changed();
+    callback grant-tun-privilege();
+    callback revoke-tun-privilege();
+
+    property <bool> is-ready: root.tun-privilege-status == "ready_root" || root.tun-privilege-status == "ready_persistent";
+    property <bool> is-unavail: root.tun-privilege-status == "unavailable";
+    property <bool> is-session-mode: !root.is-ready && !root.is-unavail && !root.tun-elevate-persistent;
+
+    property <string> badge-text:
+        root.tun-privilege-status == "ready_root" ? I18n.t("已具备权限", "Privileged")
+        : root.tun-privilege-status == "ready_persistent" ? I18n.t("持久授权生效", "Persistent Active")
+        : root.is-unavail ? I18n.t("不可用", "Unavailable")
+        : root.is-session-mode ? I18n.t("按次提权", "Session-Only")
+        : I18n.t("需授权", "Needs Auth");
+
+    property <color> badge-fg:
+        root.is-ready ? Theme.success-fg
+        : root.is-unavail ? Theme.error-fg
+        : root.is-session-mode ? Theme.nav-active-fg
+        : Theme.warn-fg;
+
+    property <brush> badge-bg:
+        root.is-ready ? Theme.success-bg
+        : root.is-unavail ? Theme.error-bg
+        : root.is-session-mode ? Theme.selected-bg
+        : Theme.warn-bg;
+
+    property <brush> badge-border:
+        root.is-ready ? Theme.success-border
+        : root.is-unavail ? Theme.error-border
+        : root.is-session-mode ? Theme.selected-border
+        : Theme.warn-border;
+
+    vertical-stretch: 0;
+    border-radius: 20px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 14px;
+    drop-shadow-offset-y: 3px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum {}
+
+    VerticalLayout {
+        alignment: start;
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: I18n.t("TUN 提权方式", "TUN Elevation");
+                font-size: 14px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            if root.tun-persistent-granted : VerticalLayout {
+                alignment: center;
+                PrivilegeActionChip {
+                    label: I18n.t("撤销持久授权", "Revoke Persistent");
+                    danger: true;
+                    enabled: !root.tun-privilege-busy;
+                    clicked => { root.revoke-tun-privilege(); }
+                }
+            }
+
+            if !root.tun-persistent-granted && root.tun-elevate-persistent && root.tun-can-persist && root.tun-privilege-status != "ready_root" : VerticalLayout {
+                alignment: center;
+                PrivilegeActionChip {
+                    label: I18n.t("预先授权", "Authorize Now");
+                    enabled: !root.tun-privilege-busy;
+                    clicked => { root.grant-tun-privilege(); }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 0;
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: root.badge-border;
+                background: root.badge-bg;
+
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 9px;
+                    spacing: 5px;
+                    Rectangle {
+                        width: 6px;
+                        height: 6px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: 3px;
+                        background: root.badge-fg;
+                    }
+                    Text {
+                        text: root.badge-text;
+                        font-size: 10px;
+                        font-weight: 700;
+                        color: root.badge-fg;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: Theme.space-md;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                spacing: 3px;
+
+                Text {
+                    text: I18n.t("持久授权（免重复弹窗）", "Persistent authorization (no repeated prompts)");
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: Theme.text-primary;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: root.tun-elevate-persistent
+                        ? I18n.t("通过最小文件能力 (setcap) 或系统服务持久授权，开启 TUN 无需反复验证", "One-time minimal capability (setcap) or Windows service; avoids repeated prompts")
+                        : I18n.t("每次开启 TUN 时通过 pkexec / UAC 临时提权，停止或关闭后立即收回权限", "Temporary per-session pkexec / UAC elevation; privileges drop immediately on stop");
+                    font-size: 11px;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                NexusSwitch {
+                    checked <=> root.tun-elevate-persistent;
+                    enabled: !root.tun-privilege-busy;
+                    toggled => { root.prefs-changed(); }
+                }
+            }
+        }
+    }
+}

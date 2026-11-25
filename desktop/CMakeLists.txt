@@ -28,6 +28,7 @@ set(NEXUS_BRIDGE_IMPLS
     src/tray_controller.cpp
     src/tray_linux_sni.cpp
     src/tray_win32.cpp
+    src/tun_privilege.cpp
     src/ui_actions.cpp
     src/ui_prefs.cpp
     src/window_blur.cpp
@@ -54,6 +55,7 @@ target_sources(nexus-desktop-bridge
             src/single_instance.cppm
             src/system_proxy.cppm
             src/tray_controller.cppm
+            src/tun_privilege.cppm
             src/ui_actions.cppm
             src/ui_prefs.cppm
             src/window_blur.cppm
@@ -141,4 +143,13 @@ if(NEXUS_DESKTOP_BUILD_TESTS)
     target_link_libraries(nexus-desktop-tray-tests PRIVATE nexus-desktop-bridge)
     add_test(NAME nexus-desktop-tray-tests COMMAND nexus-desktop-tray-tests)
     set_tests_properties(nexus-desktop-tray-tests PROPERTIES ENVIRONMENT "NEXUS_DISABLE_NATIVE_TRAY=1")
+
+    add_executable(nexus-desktop-tun-privilege-tests tests/tun_privilege_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-tun-privilege-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-tun-privilege-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-tun-privilege-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-tun-privilege-tests COMMAND nexus-desktop-tun-privilege-tests)
 endif()

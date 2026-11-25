@@ -73,6 +73,7 @@ namespace desktop_ui_helpers {
         ui.set_tray_show_nodes(p.tray_show_nodes);
         ui.set_tray_show_speed(p.tray_show_speed);
         ui.set_tray_click_action(slint::SharedString(p.tray_click_action));
+        ui.set_tun_elevate_persistent(p.tun_elevate_persistent);
         ui.set_dash_show_speed(p.dash_show_speed); ui.set_dash_show_quick_nodes(p.dash_show_quick_nodes);
         ui.set_dash_show_network(p.dash_show_network); ui.set_dash_show_ports(p.dash_show_ports);
         ui.set_dash_show_traffic(p.dash_show_traffic); ui.set_dash_show_memory(p.dash_show_memory);
@@ -104,6 +105,7 @@ namespace desktop_ui_helpers {
         p.tray_show_nodes = ui.get_tray_show_nodes();
         p.tray_show_speed = ui.get_tray_show_speed();
         p.tray_click_action = std::string(ui.get_tray_click_action());
+        p.tun_elevate_persistent = ui.get_tun_elevate_persistent();
         p.dash_show_speed = ui.get_dash_show_speed(); p.dash_show_quick_nodes = ui.get_dash_show_quick_nodes();
         p.dash_show_network = ui.get_dash_show_network(); p.dash_show_ports = ui.get_dash_show_ports();
         p.dash_show_traffic = ui.get_dash_show_traffic(); p.dash_show_memory = ui.get_dash_show_memory();
@@ -405,91 +407,5 @@ namespace desktop_ui_helpers {
             });
         });
         if (!posted) in_flight.store(false, std::memory_order_release);
-    }
-
-    inline auto toggle_core_async(
-        slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui,
-        desktop::AsyncWorker& worker,
-        desktop::CoreSupervisor& supervisor,
-        desktop::SystemProxyController& sys_proxy,
-        desktop::IpcClient& ipc,
-        desktop::HttpControlClient& http_ctrl,
-        std::function<void()> on_tray_sync,
-        std::vector<desktop::OutboundGroupSnapshot>& cached_groups,
-        std::unordered_set<std::string> const& pinned_members,
-        MemberModelPipeline& member_models,
-        RateTracker& rate_tracker,
-        std::optional<std::chrono::steady_clock::time_point>& core_started_at,
-        std::atomic<bool>& metrics_in_flight,
-        std::atomic<bool>& core_toggling,
-        std::filesystem::path const& cfg_dir,
-        std::filesystem::path const& config_path,
-        std::string fallback_sock,
-        std::string draft_kdl,
-        bool en) -> void {
-        bool posted = worker.post([&, weak_ui, en, on_tray_sync = std::move(on_tray_sync),
-                                   draft_kdl = std::move(draft_kdl), fallback_sock = std::move(fallback_sock)]() mutable {
-            bool running = false;
-            std::string summary, diag_err, new_kdl, synced_sock;
-            if (supervisor.running()) {
-                (void)sys_proxy.restore();
-                supervisor.stop();
-                summary = tr(en, "已断开", "Disconnected");
-            } else {
-                auto prep = prepare_config_before_start(cfg_dir, config_path, supervisor, std::move(draft_kdl), fallback_sock, en);
-                if (!prep.ok) {
-                    diag_err = prep.error_message;
-                    summary = tr(en, "配置校验未通过: ", "Config invalid: ") + diag_err;
-                } else {
-                    if (prep.synthesized_default) new_kdl = std::move(prep.kdl_text);
-                    ipc.set_endpoint(prep.control.socket);
-                    http_ctrl.set_endpoint(prep.control.http_host, prep.control.http_port);
-                    http_ctrl.set_bearer_token(prep.control.bearer_token);
-                    synced_sock = prep.control.socket;
-                    if (supervisor.start(config_path)) {
-                        running = true;
-                        summary = tr(en, "已连接", "Connected");
-                    } else {
-                        diag_err = supervisor.last_error();
-                        summary = diag_err.empty()
-                            ? tr(en, "启动失败：请检查内核与配置", "Start failed: check core and config")
-                            : (tr(en, "启动失败: ", "Start failed: ") + diag_err);
-                    }
-                }
-            }
-            slint::invoke_from_event_loop([&, weak_ui, running, on_tray_sync = std::move(on_tray_sync),
-                                           summary = std::move(summary), diag_err = std::move(diag_err),
-                                           new_kdl = std::move(new_kdl), synced_sock = std::move(synced_sock), en]() mutable {
-                if (auto strong = weak_ui.lock()) {
-                    auto& s = **strong;
-                    s.set_core_running(running);
-                    if (!new_kdl.empty()) apply_kdl_to_ui_state(s, new_kdl);
-                    if (!synced_sock.empty()) s.set_control_endpoint(slint::SharedString(synced_sock));
-                    s.set_diagnostic_ok(diag_err.empty());
-                    s.set_diagnostic_message(slint::SharedString(diag_err));
-                    if (running) {
-                        core_started_at = std::chrono::steady_clock::now();
-                        rate_tracker.reset();
-                        s.set_core_uptime(slint::SharedString("00:00:00"));
-                        poll_telemetry_async(weak_ui, worker, http_ctrl, cached_groups, pinned_members, member_models, rate_tracker,
-                                             metrics_in_flight, en, true, on_tray_sync);
-                    } else {
-                        core_started_at.reset();
-                        rate_tracker.reset();
-                        s.set_system_proxy_enabled(false);
-                        clear_telemetry_ui(s, en);
-                    }
-                    s.set_status_summary(slint::SharedString(summary));
-                    s.set_core_toggling(false);
-                    push_toast(s, summary, !diag_err.empty() ? "error" : running ? "success" : "info");
-                    if (on_tray_sync) on_tray_sync();
-                }
-                core_toggling.store(false, std::memory_order_release);
-            });
-        });
-        if (!posted) {
-            core_toggling.store(false, std::memory_order_release);
-            on_ui_thread(weak_ui, [](auto& s) { s->set_core_toggling(false); });
-        }
     }
 }

@@ -28,6 +28,7 @@ import desktop.share_link;
 import desktop.single_instance;
 import desktop.system_proxy;
 import desktop.tray_controller;
+import desktop.tun_privilege;
 import desktop.ui_actions;
 import desktop.ui_prefs;
 import desktop.window_blur;
@@ -35,6 +36,7 @@ import desktop.window_blur;
 #include "main_helpers.hpp"
 #include "ui_redesign_helpers.hpp"
 #include "ui_binding_helpers.hpp"
+#include "tun_elevation_flow.hpp"
 #include "main_callbacks.hpp"
 
 using desktop_ui_helpers::default_config_dir;
@@ -95,7 +97,7 @@ auto main(int argc, char** argv) -> int {
     std::optional<std::chrono::steady_clock::time_point> core_started_at;
     std::atomic<bool> metrics_in_flight{false};
     std::atomic<bool> conns_in_flight{false};
-    std::atomic<bool> core_toggling{false};
+    std::atomic<bool> lifecycle_busy{false};
     int conn_poll_tick = 0;
     desktop::AsyncWorker worker;
 
@@ -135,14 +137,15 @@ auto main(int argc, char** argv) -> int {
     };
 
     ui->on_toggle_core([&] {
-        if (core_toggling.exchange(true, std::memory_order_acq_rel)) return;
+        if (lifecycle_busy.exchange(true, std::memory_order_acq_rel)) return;
         bool en = is_en_ui(*ui);
+        bool prefer_persistent = ui->get_tun_elevate_persistent();
         std::string draft_kdl(ui->get_kdl_text());
         ui->set_core_toggling(true);
         ui->set_status_summary(slint::SharedString(tr(en, "正在切换连接状态...", "Switching connection...")));
         desktop_ui_helpers::toggle_core_async(
             weak_ui, worker, supervisor, sys_proxy, ipc, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
-            core_started_at, metrics_in_flight, core_toggling, cfg_dir, config_path, fallback_sock, std::move(draft_kdl), en);
+            core_started_at, metrics_in_flight, lifecycle_busy, cfg_dir, config_path, fallback_sock, std::move(draft_kdl), prefer_persistent, en);
     });
 
     ui->on_toggle_system_proxy([&](bool on) {
@@ -217,21 +220,11 @@ auto main(int argc, char** argv) -> int {
         sync_tray();
     });
 
-    ui->on_toggle_tun([&](bool on) {
-        auto prev_kdl = ui->get_kdl_text();
-        auto res = desktop_ui_helpers::toggle_tun_in_kdl(std::string_view(prev_kdl), on, is_en_ui(*ui));
-        if (!res.first) {
-            ui->set_status_summary(slint::SharedString(res.second));
-            ui->set_tun_enabled(!on);
-            desktop_ui_helpers::push_toast(*ui, res.second, "error");
-            return;
-        }
-        ui->set_kdl_text(slint::SharedString(res.second));
-        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(res.second));
-        ui->set_tun_enabled(on);
-        ui->invoke_save_and_reload(slint::SharedString(res.second));
-        sync_tray();
-    });
+    desktop_ui_helpers::TunFlowContext tun_ctx{
+        *ui, weak_ui, worker, supervisor, ipc, http_ctrl, rate_tracker, core_started_at,
+        cfg_dir, config_path, prefs_path, fallback_sock, lifecycle_busy, sync_tray
+    };
+    desktop_ui_helpers::bind_tun_callbacks(tun_ctx);
 
     ui->on_reload_config([&] {
         bool en = is_en_ui(*ui);
@@ -345,7 +338,6 @@ auto main(int argc, char** argv) -> int {
         worker.post([cmd = std::move(cmd)] { (void)desktop_ui_helpers::copy_text_to_clipboard(cmd); });
         desktop_ui_helpers::push_toast(*ui, tr(en, "已复制终端代理环境变量", "Copied proxy export command"), "success");
     });
-    ui->on_tray_prefs_changed([&] { sync_tray(); });
     desktop_ui_helpers::bind_dash_layout_callbacks(*ui, prefs_path);
 
     ui->on_clear_cache([&] {
@@ -428,8 +420,8 @@ auto main(int argc, char** argv) -> int {
     sync_memory_ui();
 
     slint::Timer telemetry_timer(std::chrono::seconds(1), [&] {
+        if (lifecycle_busy.load(std::memory_order_acquire)) return;
         sync_memory_ui();
-        if (core_toggling.load(std::memory_order_acquire)) return;
         if (supervisor.running()) {
             if (!core_started_at) core_started_at = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - *core_started_at);

@@ -2,6 +2,7 @@ import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
 import { GlassSpeculum, SlidingSegmentBar } from "glass_primitives.slint";
 import { NexusSwitch } from "nexus_controls.slint";
+import { TunPrivilegeCard } from "tun_privilege_card.slint";
 
 component TraySwitchRow inherits HorizontalLayout {
     in property <string> title;
@@ -182,8 +183,15 @@ export component TraySettingsCard inherits VerticalLayout {
     in-out property <bool> tray-show-speed: true;
     in-out property <string> tray-click-action: "toggle"; // "toggle" | "show" | "toggle_proxy"
     in property <bool> tray-native-active: true;
+    in-out property <bool> tun-elevate-persistent: true;
+    in property <string> tun-privilege-status: "needs_elevation";
+    in property <bool> tun-persistent-granted: false;
+    in property <bool> tun-can-persist: true;
+    in property <bool> tun-privilege-busy: false;
 
     callback prefs-changed();
+    callback grant-tun-privilege();
+    callback revoke-tun-privilege();
 
     property <bool> two-col: root.window-width >= 900px;
 
@@ -230,5 +238,16 @@ export component TraySettingsCard inherits VerticalLayout {
             tray-click-action <=> root.tray-click-action;
             prefs-changed => { root.prefs-changed(); }
         }
+    }
+
+    TunPrivilegeCard {
+        tun-elevate-persistent <=> root.tun-elevate-persistent;
+        tun-privilege-status: root.tun-privilege-status;
+        tun-persistent-granted: root.tun-persistent-granted;
+        tun-can-persist: root.tun-can-persist;
+        tun-privilege-busy: root.tun-privilege-busy;
+        prefs-changed => { root.prefs-changed(); }
+        grant-tun-privilege => { root.grant-tun-privilege(); }
+        revoke-tun-privilege => { root.revoke-tun-privilege(); }
     }
 }

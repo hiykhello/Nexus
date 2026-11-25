@@ -227,11 +227,18 @@ export component AboutPanel inherits VerticalLayout {
     in-out property <bool> tray-show-speed: true;
     in-out property <string> tray-click-action: "toggle";
     in property <bool> tray-native-active: true;
+    in-out property <bool> tun-elevate-persistent: true;
+    in property <string> tun-privilege-status: "needs_elevation";
+    in property <bool> tun-persistent-granted: false;
+    in property <bool> tun-can-persist: true;
+    in property <bool> tun-privilege-busy: false;
     in property <bool> core-running: false;
     in property <bool> tun-enabled: false;
     in property <string> config-path: "";
 
     callback tray-prefs-changed();
+    callback grant-tun-privilege();
+    callback revoke-tun-privilege();
     callback open-rule-modal(int);
 
     property <bool> is-compact: LayoutMetrics.is-compact-w(root.window-width);
@@ -248,7 +255,7 @@ export component AboutPanel inherits VerticalLayout {
             horizontal-stretch: 0;
             preferred-width: 340px;
             max-width: 360px;
-            options: [I18n.t("外观", "Appearance"), I18n.t("托盘", "Tray"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
+            options: [I18n.t("外观", "Appearance"), I18n.t("系统", "System"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
             current-index: root.active-subtab;
             selected(idx) => {
                 root.active-subtab = idx;
@@ -270,7 +277,7 @@ export component AboutPanel inherits VerticalLayout {
         spacing: Theme.space-sm;
 
         SlidingSegmentBar {
-            options: [I18n.t("外观", "Appearance"), I18n.t("托盘", "Tray"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
+            options: [I18n.t("外观", "Appearance"), I18n.t("系统", "System"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
             current-index: root.active-subtab;
             selected(idx) => {
                 root.active-subtab = idx;
@@ -316,7 +323,14 @@ export component AboutPanel inherits VerticalLayout {
                     tray-show-speed <=> root.tray-show-speed;
                     tray-click-action <=> root.tray-click-action;
                     tray-native-active: root.tray-native-active;
+                    tun-elevate-persistent <=> root.tun-elevate-persistent;
+                    tun-privilege-status: root.tun-privilege-status;
+                    tun-persistent-granted: root.tun-persistent-granted;
+                    tun-can-persist: root.tun-can-persist;
+                    tun-privilege-busy: root.tun-privilege-busy;
                     prefs-changed => { root.tray-prefs-changed(); }
+                    grant-tun-privilege => { root.grant-tun-privilege(); }
+                    revoke-tun-privilege => { root.revoke-tun-privilege(); }
                 }
 
                 if root.active-subtab == 2 : ShortcutsCard {

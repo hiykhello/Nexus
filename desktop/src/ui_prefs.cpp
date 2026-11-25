@@ -144,6 +144,7 @@ namespace desktop {
             else if (key == "dash_section_order") prefs.dash_section_order = parse_dash_order(val);
             else if (key == "dash_info_order") prefs.dash_info_order = parse_dash_order(val);
             else if (key == "dash_deck_swapped") prefs.dash_deck_swapped = (val == "1" || val == "true");
+            else if (key == "tun_elevate_persistent") prefs.tun_elevate_persistent = (val == "1" || val == "true");
         }
         return prefs;
     }
@@ -184,7 +185,8 @@ namespace desktop {
             "dash_show_memory={}\n"
             "dash_section_order={},{},{},{}\n"
             "dash_info_order={},{},{},{}\n"
-            "dash_deck_swapped={}\n",
+            "dash_deck_swapped={}\n"
+            "tun_elevate_persistent={}\n",
             prefs.theme_preference, prefs.accent_preset, prefs.material_preset,
             std::clamp(prefs.window_opacity, 0.15f, 1.0f),
             std::clamp(prefs.surface_opacity, 0.15f, 1.0f),
@@ -207,7 +209,8 @@ namespace desktop {
             prefs.dash_show_memory ? "true" : "false",
             sec[0], sec[1], sec[2], sec[3],
             info[0], info[1], info[2], info[3],
-            prefs.dash_deck_swapped ? "true" : "false");
+            prefs.dash_deck_swapped ? "true" : "false",
+            prefs.tun_elevate_persistent ? "true" : "false");
         {
             std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
             if (!out) return false;

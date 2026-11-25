@@ -201,4 +201,80 @@ namespace desktop::detail {
         return {ok, output.empty() ? std::string(ok ? ok_fallback : fail_fallback) : std::move(output)};
     }
 #endif
+
+#ifdef _WIN32
+    inline auto query_win_working_set_bytes(HANDLE proc) noexcept -> std::uint64_t {
+        if (!proc) return 0;
+        PROCESS_MEMORY_COUNTERS pmc{};
+        pmc.cb = sizeof(pmc);
+        return ::K32GetProcessMemoryInfo(proc, &pmc, sizeof(pmc))
+            ? static_cast<std::uint64_t>(pmc.WorkingSetSize) : 0;
+    }
+#elif defined(__linux__)
+    inline auto read_proc_smaps_rollup_pss_bytes(char const* smaps_path) noexcept -> std::uint64_t {
+        if (!smaps_path || !*smaps_path) return 0;
+        int fd = ::open(smaps_path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return 0;
+        char buf[2048]{};
+        std::size_t total = 0;
+        while (total < sizeof(buf) - 1) {
+            ssize_t n = ::read(fd, buf + total, sizeof(buf) - 1 - total);
+            if (n < 0) { if (errno == EINTR) continue; total = 0; break; }
+            if (n == 0) break;
+            total += static_cast<std::size_t>(n);
+        }
+        ::close(fd);
+        if (total == 0) return 0;
+        std::string_view sv(buf, total);
+        std::size_t pos = 0;
+        while (pos < sv.size()) {
+            auto nl = sv.find('\n', pos);
+            auto line = sv.substr(pos, nl == std::string_view::npos ? sv.size() - pos : nl - pos);
+            if (line.starts_with("Pss:")) {
+                auto rest = line.substr(4);
+                while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
+                std::uint64_t pss_kb = 0;
+                auto [ptr, ec] = std::from_chars(rest.data(), rest.data() + rest.size(), pss_kb);
+                if (ec == std::errc{} && (ptr == rest.data() + rest.size() || *ptr == ' ' || *ptr == '\t' || *ptr == '\r')) {
+                    constexpr std::uint64_t kKiB = 1024;
+                    if (pss_kb <= std::numeric_limits<std::uint64_t>::max() / kKiB) return pss_kb * kKiB;
+                }
+                return 0;
+            }
+            if (nl == std::string_view::npos) break;
+            pos = nl + 1;
+        }
+        return 0;
+    }
+
+    inline auto read_proc_statm_rss_bytes(char const* statm_path) noexcept -> std::uint64_t {
+        if (!statm_path || !*statm_path) return 0;
+        int fd = ::open(statm_path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) return 0;
+        char buf[128]{};
+        ssize_t n = 0;
+        do { n = ::read(fd, buf, sizeof(buf) - 1); } while (n < 0 && errno == EINTR);
+        ::close(fd);
+        if (n <= 0) return 0;
+        std::string_view sv(buf, static_cast<std::size_t>(n));
+        auto sp1 = sv.find(' ');
+        if (sp1 == std::string_view::npos) return 0;
+        while (sp1 < sv.size() && sv[sp1] == ' ') ++sp1;
+        auto sp2 = sv.find_first_of(" \t\r\n", sp1);
+        auto rss_sv = sv.substr(sp1, sp2 == std::string_view::npos ? sv.size() - sp1 : sp2 - sp1);
+        std::uint64_t rss_pages = 0;
+        auto [ptr, ec] = std::from_chars(rss_sv.data(), rss_sv.data() + rss_sv.size(), rss_pages);
+        if (ec != std::errc{} || ptr != rss_sv.data() + rss_sv.size()) return 0;
+        long const page_size = ::sysconf(_SC_PAGESIZE);
+        if (page_size <= 0) return 0;
+        auto const page_u64 = static_cast<std::uint64_t>(page_size);
+        if (rss_pages > std::numeric_limits<std::uint64_t>::max() / page_u64) return 0;
+        return rss_pages * page_u64;
+    }
+
+    inline auto read_proc_memory_bytes(char const* smaps_path, char const* statm_path) noexcept -> std::uint64_t {
+        if (auto const pss = read_proc_smaps_rollup_pss_bytes(smaps_path); pss > 0) return pss;
+        return read_proc_statm_rss_bytes(statm_path);
+    }
+#endif
 }

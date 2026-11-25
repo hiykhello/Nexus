@@ -9,6 +9,7 @@ module;
 #endif
 #include <windows.h>
 #include <psapi.h>
+#include <shellapi.h>
 #else
 #include <cerrno>
 #include <csignal>
@@ -18,6 +19,7 @@ module;
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -25,8 +27,10 @@ module;
 module desktop.core_supervisor;
 
 import std;
+import desktop.tun_privilege;
 
 #include "core_supervisor_detail.hpp"
+#include "core_supervisor_elevated.hpp"
 
 namespace desktop {
     using namespace detail;
@@ -35,6 +39,8 @@ namespace desktop {
         std::mutex lifecycle_mu;
         mutable std::mutex state_mu;
         bool stopping = false;
+        bool elevated_session = false;
+        bool last_start_cancelled = false;
         std::string last_error;
         std::filesystem::path startup_log;
 #ifdef _WIN32
@@ -42,6 +48,10 @@ namespace desktop {
         HANDLE job = nullptr;
 #else
         pid_t pid = -1;
+        pid_t signal_pid = -1;
+        uid_t elevated_uid = 0;
+        std::filesystem::path elevated_canon_bin;
+        std::string elevated_config_path;
 #endif
     };
 
@@ -53,6 +63,22 @@ namespace desktop {
     auto CoreSupervisor::last_error(this CoreSupervisor const& self) -> std::string {
         std::scoped_lock lk(self.impl_->state_mu);
         return self.impl_->last_error;
+    }
+
+    auto CoreSupervisor::elevated_session(this CoreSupervisor const& self) noexcept -> bool {
+        if (!self.impl_) return false;
+        std::scoped_lock lk(self.impl_->state_mu);
+        return self.impl_->elevated_session;
+    }
+
+    auto CoreSupervisor::last_start_cancelled(this CoreSupervisor const& self) noexcept -> bool {
+        if (!self.impl_) return false;
+        std::scoped_lock lk(self.impl_->state_mu);
+        return self.impl_->last_start_cancelled;
+    }
+
+    auto CoreSupervisor::binary_path(this CoreSupervisor const& self) noexcept -> std::filesystem::path const& {
+        return self.binary_;
     }
 
     auto CoreSupervisor::running(this CoreSupervisor const& self) noexcept -> bool {
@@ -68,6 +94,7 @@ namespace desktop {
             ::CloseHandle(self.impl_->job);
             self.impl_->job = nullptr;
         }
+        self.impl_->elevated_session = false;
         self.impl_->last_error = format_win_exit_error(self.impl_->startup_log, code);
         return false;
 #else
@@ -76,99 +103,19 @@ namespace desktop {
         pid_t res = ::waitpid(self.impl_->pid, &status, WNOHANG);
         if (res == self.impl_->pid) {
             self.impl_->pid = -1;
+            self.impl_->signal_pid = -1;
+            self.impl_->elevated_session = false;
             self.impl_->last_error = format_posix_exit_error(self.impl_->startup_log, status);
             return false;
         }
         if (res < 0) {
             if (errno == EINTR) return true;
             self.impl_->pid = -1;
+            self.impl_->signal_pid = -1;
+            self.impl_->elevated_session = false;
             return false;
         }
         return res == 0;
-#endif
-    }
-
-    namespace {
-#ifdef _WIN32
-        auto query_win_working_set_bytes(HANDLE proc) noexcept -> std::uint64_t {
-            if (!proc) return 0;
-            PROCESS_MEMORY_COUNTERS pmc{};
-            pmc.cb = sizeof(pmc);
-            if (::K32GetProcessMemoryInfo(proc, &pmc, sizeof(pmc))) {
-                return static_cast<std::uint64_t>(pmc.WorkingSetSize);
-            }
-            return 0;
-        }
-#elif defined(__linux__)
-        auto read_proc_smaps_rollup_pss_bytes(char const* smaps_path) noexcept -> std::uint64_t {
-            if (!smaps_path || !*smaps_path) return 0;
-            int fd = ::open(smaps_path, O_RDONLY | O_CLOEXEC);
-            if (fd < 0) return 0;
-            char buf[2048]{};
-            std::size_t total = 0;
-            while (total < sizeof(buf) - 1) {
-                ssize_t n = ::read(fd, buf + total, sizeof(buf) - 1 - total);
-                if (n < 0) {
-                    if (errno == EINTR) continue;
-                    total = 0;
-                    break;
-                }
-                if (n == 0) break;
-                total += static_cast<std::size_t>(n);
-            }
-            ::close(fd);
-            if (total == 0) return 0;
-            std::string_view sv(buf, total);
-            std::size_t pos = 0;
-            while (pos < sv.size()) {
-                auto nl = sv.find('\n', pos);
-                auto line = sv.substr(pos, nl == std::string_view::npos ? sv.size() - pos : nl - pos);
-                if (line.starts_with("Pss:")) {
-                    auto rest = line.substr(4);
-                    while (!rest.empty() && (rest.front() == ' ' || rest.front() == '\t')) rest.remove_prefix(1);
-                    std::uint64_t pss_kb = 0;
-                    auto [ptr, ec] = std::from_chars(rest.data(), rest.data() + rest.size(), pss_kb);
-                    if (ec == std::errc{} && (ptr == rest.data() + rest.size() || *ptr == ' ' || *ptr == '\t' || *ptr == '\r')) {
-                        constexpr std::uint64_t kKiB = 1024;
-                        if (pss_kb <= std::numeric_limits<std::uint64_t>::max() / kKiB) return pss_kb * kKiB;
-                    }
-                    return 0;
-                }
-                if (nl == std::string_view::npos) break;
-                pos = nl + 1;
-            }
-            return 0;
-        }
-
-        auto read_proc_statm_rss_bytes(char const* statm_path) noexcept -> std::uint64_t {
-            if (!statm_path || !*statm_path) return 0;
-            int fd = ::open(statm_path, O_RDONLY | O_CLOEXEC);
-            if (fd < 0) return 0;
-            char buf[128]{};
-            ssize_t n = 0;
-            do { n = ::read(fd, buf, sizeof(buf) - 1); } while (n < 0 && errno == EINTR);
-            ::close(fd);
-            if (n <= 0) return 0;
-            std::string_view sv(buf, static_cast<std::size_t>(n));
-            auto sp1 = sv.find(' ');
-            if (sp1 == std::string_view::npos) return 0;
-            while (sp1 < sv.size() && sv[sp1] == ' ') ++sp1;
-            auto sp2 = sv.find_first_of(" \t\r\n", sp1);
-            auto rss_sv = sv.substr(sp1, sp2 == std::string_view::npos ? sv.size() - sp1 : sp2 - sp1);
-            std::uint64_t rss_pages = 0;
-            auto [ptr, ec] = std::from_chars(rss_sv.data(), rss_sv.data() + rss_sv.size(), rss_pages);
-            if (ec != std::errc{} || ptr != rss_sv.data() + rss_sv.size()) return 0;
-            long const page_size = ::sysconf(_SC_PAGESIZE);
-            if (page_size <= 0) return 0;
-            auto const page_u64 = static_cast<std::uint64_t>(page_size);
-            if (rss_pages > std::numeric_limits<std::uint64_t>::max() / page_u64) return 0;
-            return rss_pages * page_u64;
-        }
-
-        auto read_proc_memory_bytes(char const* smaps_path, char const* statm_path) noexcept -> std::uint64_t {
-            if (auto const pss = read_proc_smaps_rollup_pss_bytes(smaps_path); pss > 0) return pss;
-            return read_proc_statm_rss_bytes(statm_path);
-        }
 #endif
     }
 
@@ -194,7 +141,7 @@ namespace desktop {
             {
                 std::scoped_lock lk(self.impl_->state_mu);
                 if (self.impl_->stopping) return 0;
-                pid = self.impl_->pid;
+                pid = self.impl_->signal_pid > 0 ? self.impl_->signal_pid : self.impl_->pid;
             }
             if (pid <= 0) return 0;
             char smaps_path[64]{};
@@ -212,14 +159,19 @@ namespace desktop {
         }
     }
 
-    auto CoreSupervisor::start(this CoreSupervisor& self, std::filesystem::path const& config_path) -> bool {
+    auto CoreSupervisor::start(this CoreSupervisor& self, std::filesystem::path const& config_path, CoreStartOptions opts) -> bool {
         std::unique_lock lifecycle_lock(self.impl_->lifecycle_mu);
         if (self.running()) return true;
 
-        auto set_error = [&](std::string msg) {
+        auto set_error = [&](std::string msg, bool cancelled = false) {
             std::scoped_lock lk(self.impl_->state_mu);
             self.impl_->last_error = std::move(msg);
+            self.impl_->last_start_cancelled = cancelled;
         };
+        {
+            std::scoped_lock lk(self.impl_->state_mu);
+            self.impl_->last_start_cancelled = false;
+        }
         std::error_code file_ec;
         if (!std::filesystem::is_regular_file(self.binary_, file_ec)) {
             set_error("未找到 nexus 核心二进制: " + self.binary_.string());
@@ -248,6 +200,18 @@ namespace desktop {
         }
 
 #ifdef _WIN32
+        if (opts.elevate_session) {
+            auto res = start_elevated_win(self.binary_, config_path, workdir, has_dir, log_path);
+            if (!res.ok) { set_error(std::move(res.error), res.cancelled); return false; }
+            std::scoped_lock lk(self.impl_->state_mu);
+            self.impl_->process = res.process;
+            self.impl_->job = nullptr;
+            self.impl_->elevated_session = true;
+            self.impl_->stopping = false;
+            self.impl_->startup_log = std::move(log_path);
+            self.impl_->last_error.clear();
+            return true;
+        }
         std::vector<std::wstring> args{self.binary_.wstring()};
         if (has_dir) {
             args.push_back(L"-D");
@@ -300,12 +264,33 @@ namespace desktop {
             std::scoped_lock lk(self.impl_->state_mu);
             self.impl_->process = pi.hProcess;
             self.impl_->job = job_h;
+            self.impl_->elevated_session = false;
             self.impl_->stopping = false;
             self.impl_->startup_log = std::move(log_path);
             self.impl_->last_error.clear();
         }
         return true;
 #else
+        if (opts.elevate_session) {
+#ifdef __linux__
+            auto res = start_elevated_linux(self.binary_, config_path, workdir, has_dir, log_path);
+            if (!res.ok) { set_error(std::move(res.error), res.cancelled); return false; }
+            std::scoped_lock lk(self.impl_->state_mu);
+            self.impl_->pid = res.wait_pid;
+            self.impl_->signal_pid = res.signal_pid;
+            self.impl_->elevated_uid = res.expected_uid;
+            self.impl_->elevated_canon_bin = std::move(res.canonical_bin);
+            self.impl_->elevated_config_path = std::move(res.config_path);
+            self.impl_->elevated_session = true;
+            self.impl_->stopping = false;
+            self.impl_->startup_log = std::move(log_path);
+            self.impl_->last_error.clear();
+            return true;
+#else
+            set_error("当前平台暂不支持按次提权启动");
+            return false;
+#endif
+        }
         std::vector<std::string> args{self.binary_.string()};
         if (has_dir) { args.push_back("-D"); args.push_back(workdir.string()); }
         args.push_back("run"); args.push_back("--config"); args.push_back(config_path.string());
@@ -362,6 +347,8 @@ namespace desktop {
         {
             std::scoped_lock lk(self.impl_->state_mu);
             self.impl_->pid = child;
+            self.impl_->signal_pid = -1;
+            self.impl_->elevated_session = false;
             self.impl_->stopping = false;
             self.impl_->startup_log = std::move(log_path);
             self.impl_->last_error.clear();
@@ -375,63 +362,51 @@ namespace desktop {
 #ifdef _WIN32
         HANDLE target = nullptr;
         HANDLE job_h = nullptr;
+        bool is_elev = false;
         {
             std::scoped_lock lk(self.impl_->state_mu);
             target = self.impl_->process;
             job_h = self.impl_->job;
+            is_elev = self.impl_->elevated_session;
             if (!target && !job_h) return;
-            if (!target) {
-                self.impl_->job = nullptr;
-            } else {
-                self.impl_->stopping = true;
-            }
+            if (!target) self.impl_->job = nullptr;
+            else self.impl_->stopping = true;
         }
-        if (!target) {
-            ::CloseHandle(job_h);
-            return;
-        }
-        auto ev_name = L"Local\\nexus-stop-" + std::to_wstring(::GetProcessId(target));
-        if (HANDLE ev = ::OpenEventW(EVENT_MODIFY_STATE, FALSE, ev_name.c_str())) {
-            ::SetEvent(ev); ::CloseHandle(ev);
-        }
-        if (::WaitForSingleObject(target, 1500) == WAIT_TIMEOUT) {
-            ::TerminateProcess(target, 0);
-            ::WaitForSingleObject(target, 1000);
-        }
-        ::CloseHandle(target);
-        if (job_h) ::CloseHandle(job_h);
+        if (!target) { ::CloseHandle(job_h); return; }
+        auto stop_err = stop_win_process(target, job_h, is_elev);
         {
             std::scoped_lock lk(self.impl_->state_mu);
             self.impl_->process = nullptr;
             self.impl_->job = nullptr;
+            self.impl_->elevated_session = false;
             self.impl_->stopping = false;
+            if (!stop_err.empty()) self.impl_->last_error = std::move(stop_err);
         }
 #else
-        pid_t target_pid = -1;
+        pid_t wait_pid = -1;
+        pid_t sig_pid = -1;
+        uid_t elev_uid = 0;
+        std::filesystem::path elev_bin;
+        std::string elev_cfg;
         {
             std::scoped_lock lk(self.impl_->state_mu);
-            target_pid = self.impl_->pid;
-            if (target_pid <= 0) return;
+            wait_pid = self.impl_->pid;
+            sig_pid = self.impl_->signal_pid > 0 ? self.impl_->signal_pid : self.impl_->pid;
+            elev_uid = self.impl_->elevated_uid;
+            elev_bin = self.impl_->elevated_canon_bin;
+            elev_cfg = self.impl_->elevated_config_path;
+            if (wait_pid <= 0) return;
             self.impl_->stopping = true;
         }
-        ::kill(target_pid, SIGTERM);
-        for (int i = 0; i < 30; ++i) {
-            int status = 0;
-            pid_t res = ::waitpid(target_pid, &status, WNOHANG);
-            if (res == target_pid || (res < 0 && errno == ECHILD)) {
-                std::scoped_lock lk(self.impl_->state_mu);
-                self.impl_->pid = -1;
-                self.impl_->stopping = false;
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        }
-        ::kill(target_pid, SIGKILL);
-        int status = 0;
-        while (::waitpid(target_pid, &status, 0) < 0 && errno == EINTR) {}
+        stop_posix_process(wait_pid, sig_pid, elev_uid, elev_bin, elev_cfg);
         {
             std::scoped_lock lk(self.impl_->state_mu);
             self.impl_->pid = -1;
+            self.impl_->signal_pid = -1;
+            self.impl_->elevated_uid = 0;
+            self.impl_->elevated_canon_bin.clear();
+            self.impl_->elevated_config_path.clear();
+            self.impl_->elevated_session = false;
             self.impl_->stopping = false;
         }
 #endif

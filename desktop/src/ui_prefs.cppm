@@ -30,6 +30,7 @@ export namespace desktop {
         std::array<int, 4> dash_section_order = {0, 1, 2, 3};
         std::array<int, 4> dash_info_order = {0, 1, 2, 3};
         bool dash_deck_swapped = false;
+        bool tun_elevate_persistent = true;
     };
 
     [[nodiscard]] auto sanitize_dash_order(std::array<int, 4> order) -> std::array<int, 4>;
