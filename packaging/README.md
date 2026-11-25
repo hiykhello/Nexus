@@ -38,3 +38,20 @@ sudo systemctl reload nexus
 - Bash：[completions/nexus.bash](completions/nexus.bash) → `/usr/share/bash-completion/completions/nexus`
 - Zsh：[completions/_nexus](completions/_nexus) → `/usr/share/zsh/site-functions/_nexus`
 - Fish：[completions/nexus.fish](completions/nexus.fish) → `/usr/share/fish/vendor_completions.d/nexus.fish`
+
+## 5. Arch Linux 打包（`PKGBUILD`，默认 `io_uring`）
+
+- [arch/PKGBUILD](arch/PKGBUILD)：默认启用 `NEXUS_FEATURES=profile-linux-uring` 构建旗舰 Linux `x86_64` `io_uring` 发行二进制，并在 `check()` 中自动校验 `--help`、`liburing.so.2` 动态链接以及 PIE / Full RELRO / NX `GNU_STACK` / `__stack_chk_fail` ELF 加固属性。
+- 安装路径覆盖 `/usr/bin/nexus`、`/usr/include/nexus/core_c_api.h`、`/usr/lib/systemd/system/nexus{,@}.service`、Bash/Zsh/Fish 补全脚本与 `/usr/share/doc/nexus/README.md`。
+- GitHub Actions `arch-pkg` 任务在 `archlinux:base-devel` 容器中自动构建、校验并发布 `nexus-*.pkg.tar.zst` 与 `SHA256SUMS` 产物。
+
+```bash
+# 从本地仓库直接构建并安装（默认 profile-linux-uring）
+cd packaging/arch && makepkg -si
+
+# 切换为 epoll 配置构建
+NEXUS_FEATURES=profile-linux-epoll makepkg -f
+
+# 复用已构建的 Release 二进制快速重新打包
+NEXUS_PREBUILT_BIN=/path/to/nexus makepkg -f
+```

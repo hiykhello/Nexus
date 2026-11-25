@@ -1,0 +1,114 @@
+# Maintainer: Nexus Contributors
+pkgname=nexus
+pkgver="${NEXUS_PKGVER:-0.1.0}"
+pkgrel="${NEXUS_PKGREL:-1}"
+pkgdesc='Nexus C++26 modular network proxy platform (io_uring default)'
+arch=('x86_64')
+url='https://github.com/hiykhello/Nexus'
+license=('Apache-2.0')
+depends=('glibc' 'liburing' 'zlib' 'brotli' 'zstd')
+makedepends=('git' 'patch' 'pkgconf')
+optdepends=('systemd: systemd service integration')
+options=('!debug' '!strip' '!lto')
+source=()
+
+_nexus_src_dir() {
+    if [[ -n "${NEXUS_SRC_DIR:-}" ]]; then
+        printf '%s\n' "$NEXUS_SRC_DIR"
+    else
+        (cd "$startdir/../.." && pwd)
+    fi
+}
+
+build() {
+    if [[ -n "${NEXUS_PREBUILT_BIN:-}" ]]; then
+        if [[ ! -x "$NEXUS_PREBUILT_BIN" ]]; then
+            echo "ERROR: NEXUS_PREBUILT_BIN is not executable: $NEXUS_PREBUILT_BIN" >&2
+            return 1
+        fi
+        install -Dm755 "$NEXUS_PREBUILT_BIN" "$srcdir/nexus"
+        return 0
+    fi
+
+    local src_dir features build_log lineage built_bin
+    src_dir="$(_nexus_src_dir)"
+    features="${NEXUS_FEATURES:-profile-linux-uring}"
+
+    if [[ ! -f "$src_dir/mcpp.toml" ]]; then
+        echo "ERROR: Nexus source checkout not found at NEXUS_SRC_DIR=$src_dir" >&2
+        return 1
+    fi
+    if ! command -v mcpp >/dev/null 2>&1; then
+        echo "ERROR: mcpp is required to build Nexus (or set NEXUS_PREBUILT_BIN)" >&2
+        return 1
+    fi
+
+    build_log="$srcdir/mcpp-build.log"
+    (
+        set -o pipefail
+        cd "$src_dir"
+        mcpp --locked build --release --strict --print-fingerprint --features "$features" nexus 2>&1 \
+            | tee "$build_log"
+    )
+
+    lineage="$(awk '/^Lineage:[[:space:]]+/ { print $2; exit }' "$build_log")"
+    if [[ -z "$lineage" ]]; then
+        echo "ERROR: failed to extract mcpp build lineage from $build_log" >&2
+        return 1
+    fi
+
+    built_bin="$src_dir/target/x86_64-linux-gnu/$lineage/bin/nexus"
+    if [[ ! -x "$built_bin" ]]; then
+        built_bin="$(find "$src_dir/target" -path "*/$lineage/bin/nexus" -type f -executable | head -n 1)"
+    fi
+    if [[ ! -x "$built_bin" ]]; then
+        echo "ERROR: built nexus binary not found for lineage $lineage under $src_dir/target" >&2
+        return 1
+    fi
+
+    install -Dm755 "$built_bin" "$srcdir/nexus"
+}
+
+check() {
+    local bin="$srcdir/nexus"
+    local features="${NEXUS_FEATURES:-profile-linux-uring}"
+    local help_out ldd_out elf_hdr elf_phdr elf_dyn elf_syms
+
+    help_out="$("$bin" --help)"
+    grep -q 'usage: nexus' <<< "$help_out"
+
+    if [[ "$features" == *uring* ]]; then
+        ldd_out="$(LC_ALL=C ldd "$bin")"
+        grep -q 'liburing\.so\.2' <<< "$ldd_out"
+    fi
+
+    elf_hdr="$(LC_ALL=C readelf -h "$bin")"
+    elf_phdr="$(LC_ALL=C readelf -lW "$bin")"
+    elf_dyn="$(LC_ALL=C readelf -dW "$bin")"
+    elf_syms="$(LC_ALL=C readelf -W --dyn-syms "$bin")"
+
+    grep -Eq 'Type:[[:space:]]+DYN ' <<< "$elf_hdr"
+    grep -Eq 'FLAGS_1.*PIE' <<< "$elf_dyn"
+    grep -q 'GNU_RELRO' <<< "$elf_phdr"
+    grep -Eq '\(FLAGS\).*BIND_NOW|FLAGS_1.*NOW' <<< "$elf_dyn"
+    grep -Eq 'GNU_STACK[[:space:]].*[[:space:]]RW[[:space:]]' <<< "$elf_phdr"
+    if grep -Eq 'GNU_STACK[[:space:]].*RWE' <<< "$elf_phdr"; then
+        echo "ERROR: executable GNU_STACK detected in $bin" >&2
+        return 1
+    fi
+    grep -q '__stack_chk_fail' <<< "$elf_syms"
+}
+
+package() {
+    local src_dir
+    src_dir="$(_nexus_src_dir)"
+
+    install -Dm755 "$srcdir/nexus" "$pkgdir/usr/bin/nexus"
+    install -Dm644 "$src_dir/include/nexus/core_c_api.h" "$pkgdir/usr/include/nexus/core_c_api.h"
+    install -Dm644 "$src_dir/packaging/systemd/nexus.service" "$pkgdir/usr/lib/systemd/system/nexus.service"
+    install -Dm644 "$src_dir/packaging/systemd/nexus@.service" "$pkgdir/usr/lib/systemd/system/nexus@.service"
+    install -Dm644 "$src_dir/packaging/completions/nexus.bash" "$pkgdir/usr/share/bash-completion/completions/nexus"
+    install -Dm644 "$src_dir/packaging/completions/_nexus" "$pkgdir/usr/share/zsh/site-functions/_nexus"
+    install -Dm644 "$src_dir/packaging/completions/nexus.fish" "$pkgdir/usr/share/fish/vendor_completions.d/nexus.fish"
+    install -Dm644 "$src_dir/packaging/README.md" "$pkgdir/usr/share/doc/nexus/README.md"
+}

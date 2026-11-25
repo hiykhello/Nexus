@@ -154,3 +154,93 @@ jobs:
           else
             echo "mcpp not preinstalled on runner; skipping native Apple C++26 core compile"
           fi
+
+  arch-pkg:
+    name: Arch Linux Package (x86_64 io_uring)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install Arch build dependencies & create builder user
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git patch pkgconf curl ca-certificates tar xz \
+            binutils liburing zlib brotli zstd python
+          id -u builder >/dev/null 2>&1 || useradd -m builder
+          git config --system --add safe.directory '*'
+      - uses: actions/checkout@v7
+      - name: Install pinned mcpp v2026.11.24.1
+        run: |
+          MCPP_VER="2026.11.24.1"
+          MCPP_SHA256="fb4ef3b15cf99f284d6362d5232b13f633fa1aedbf99858f8592af28541b81ee"
+          MCPP_URL="https://github.com/mcpp-community/mcpp/releases/download/v${MCPP_VER}/mcpp-${MCPP_VER}-linux-x86_64.tar.gz"
+          TMP_TGZ="/tmp/mcpp-${MCPP_VER}.tar.gz"
+          curl -fsSL -o "$TMP_TGZ" "$MCPP_URL"
+          echo "${MCPP_SHA256}  ${TMP_TGZ}" | sha256sum -c -
+          rm -rf /opt/mcpp
+          mkdir -p /opt/mcpp
+          tar -xzf "$TMP_TGZ" --strip-components=1 -C /opt/mcpp
+          rm -f "$TMP_TGZ"
+          cat <<'EOF' > /usr/bin/mcpp
+          #!/bin/sh
+          set -eu
+          MCPP_OPT="/opt/mcpp"
+          export MCPP_HOME="${MCPP_HOME:-$HOME/.mcpp}"
+          export MCPP_VENDORED_XLINGS="${MCPP_VENDORED_XLINGS:-$MCPP_OPT/registry/bin/xlings}"
+          exec "$MCPP_OPT/bin/mcpp" "$@"
+          EOF
+          chmod 0755 /usr/bin/mcpp
+          su - builder -c 'mcpp --version'
+      - name: Cache mcpp toolchain & upstream archives
+        uses: actions/cache@v6
+        with:
+          path: |
+            /home/builder/.mcpp/registry
+            /home/builder/.mcpp/cache
+            /home/builder/.mcpp/indices
+          key: arch-mcpp-v2026.11.24.1-${{ hashFiles('mcpp.lock', '3rdparty/mcpp-pins.json') }}
+          restore-keys: |
+            arch-mcpp-v2026.11.24.1-
+      - name: Build io_uring binary & package Arch .pkg.tar.zst as builder
+        run: |
+          rm -rf /tmp/nexus-arch-src /tmp/nexus-arch-pkg /tmp/nexus-arch-out "$GITHUB_WORKSPACE/dist-arch"
+          mkdir -p /home/builder/.mcpp /tmp/nexus-arch-src /tmp/nexus-arch-pkg /tmp/nexus-arch-out "$GITHUB_WORKSPACE/dist-arch"
+          tar -C "$GITHUB_WORKSPACE" --exclude='./dist-arch' -cf - . | tar -C /tmp/nexus-arch-src -xf -
+          cp /tmp/nexus-arch-src/packaging/arch/PKGBUILD /tmp/nexus-arch-pkg/PKGBUILD
+          chown -R builder:builder /home/builder/.mcpp /tmp/nexus-arch-src /tmp/nexus-arch-pkg /tmp/nexus-arch-out
+          su - builder -c '
+            set -euo pipefail
+            export NEXUS_SRC_DIR=/tmp/nexus-arch-src
+            export NEXUS_FEATURES=profile-linux-uring
+            export PKGDEST=/tmp/nexus-arch-out
+            export PKGEXT=.pkg.tar.zst
+            cd /tmp/nexus-arch-pkg
+            makepkg -f --noconfirm
+          '
+          cp /tmp/nexus-arch-out/*.pkg.tar.zst "$GITHUB_WORKSPACE/dist-arch/"
+          (cd "$GITHUB_WORKSPACE/dist-arch" && sha256sum *.pkg.tar.zst > SHA256SUMS)
+          ls -la "$GITHUB_WORKSPACE/dist-arch"
+          cat "$GITHUB_WORKSPACE/dist-arch/SHA256SUMS"
+      - name: Inspect & smoke-test Arch package installation
+        run: |
+          PKG_FILE="$(ls "$GITHUB_WORKSPACE"/dist-arch/nexus-*.pkg.tar.zst | head -n 1)"
+          test -f "$PKG_FILE"
+          pacman -Qip "$PKG_FILE"
+          pacman -Qlp "$PKG_FILE"
+          pacman -U --noconfirm "$PKG_FILE"
+          /usr/bin/nexus --help | grep -q 'usage: nexus'
+          ldd /usr/bin/nexus | grep -q 'liburing\.so\.2'
+          test -f /usr/lib/systemd/system/nexus.service
+          test -f /usr/lib/systemd/system/nexus@.service
+          test -f /usr/include/nexus/core_c_api.h
+          test -f /usr/share/bash-completion/completions/nexus
+          test -f /usr/share/zsh/site-functions/_nexus
+          test -f /usr/share/fish/vendor_completions.d/nexus.fish
+      - name: Upload Arch Linux x86_64 package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nexus-arch-x86_64-pkg
+          path: |
+            dist-arch/*.pkg.tar.zst
+            dist-arch/SHA256SUMS
