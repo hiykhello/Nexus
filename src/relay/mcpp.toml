@@ -32,7 +32,7 @@ l3-mux = { sources = ["l3_mux.cppm"] }
 l3-tunnel = { implies = ["l3-mux"], sources = ["l3_tunnel.cppm"] }
 wireguard = { implies = ["l3-tunnel", "protocols/wireguard", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_WIREGUARD"], sources = ["wireguard_detour.cppm", "wireguard_outbound.cpp"] }
 openvpn = { implies = ["l3-tunnel", "protocols/openvpn", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_OPENVPN"], sources = ["openvpn_transport.cppm", "openvpn_outbound.cpp"] }
-openconnect = { implies = ["l3-tunnel", "protocols/openconnect"], defines = ["NEXUS_ENABLE_OPENCONNECT"], sources = ["openconnect_outbound.cpp"] }
+openconnect = { implies = ["l3-tunnel", "protocols/openconnect"], defines = ["NEXUS_ENABLE_OPENCONNECT"], sources = ["openconnect_dtls.cppm", "openconnect_outbound.cpp"] }
 ssh = { implies = ["protocols/ssh"], defines = ["NEXUS_ENABLE_SSH"], sources = ["ssh.cpp"] }
 naive = { implies = ["quic-ech", "protocols/naive"], defines = ["NEXUS_ENABLE_NAIVE"], sources = ["naive_inbound_helpers.cppm", "http_modern_h1.cppm", "modern_h3_connect_udp.cppm", "modern_h3_inbound.cppm", "naive_outbound_h3.cppm", "naive_outbound_h2.cppm", "naive.cpp", "naive_inbound.cpp", "http_modern_inbound.cpp"] }
 mesh-outbound = { implies = ["l3-tunnel", "protocols/wireguard"], sources = ["mesh_outbound.cpp"] }

@@ -6,8 +6,11 @@ import relay.tuic_host;
 import tuic.wire;
 import tuic.application;
 import tuic.transport_options;
+import tls.ech_server;
 import tls.server_credential;
 import tls.profiles;
+import cli.cert_reloader;
+import logging.cli;
 import rulefile;
 import crypto;
 import corosio;
@@ -16,13 +19,31 @@ namespace cli::tuic_enabled {
     Runtime::~Runtime() { stop(); }
     auto Runtime::resize(std::size_t count) -> void { profiles_.resize(count); }
 
-    auto Runtime::configure(std::size_t index, config::InboundConfig const& entry) -> std::expected<void, std::string> {
+    auto Runtime::configure(std::size_t index, config::InboundConfig const& entry,
+        std::shared_ptr<void> const& acme_credential, cli::CertReloaderHub* cert_reloaders, logging::Runtime const* logs) -> std::expected<void, std::string> {
         if (!entry.tuic) return {};
         if (index >= profiles_.size() || profiles_[index]) return std::unexpected("invalid TUIC slot");
         auto const& cfg = *entry.tuic;
-        auto cred = tls::load_server_credential(cfg.certificate_file, cfg.private_key_file);
-        if (!cred) return std::unexpected(cred.error());
-        auto profile = std::make_unique<Profile>(std::move(*cred));
+        auto profile = std::make_unique<Profile>();
+        if (!cfg.certificate_provider.empty()) {
+            if (cfg.certificate_provider != "acme" || !acme_credential)
+                return std::unexpected("TUIC TLS certificate-provider '" + cfg.certificate_provider + "' is unavailable");
+            profile->atomic_credential = std::static_pointer_cast<tls::AtomicServerCredential>(acme_credential);
+        } else if (cfg.cert_hot_reload) {
+            if (!cert_reloaders) return std::unexpected("TUIC TLS cert-hot-reload runtime unavailable");
+            auto watched = cert_reloaders->watch(cfg.certificate_file, cfg.private_key_file, logs);
+            if (!watched) return std::unexpected("TUIC TLS cert-hot-reload: " + watched.error());
+            profile->atomic_credential = std::static_pointer_cast<tls::AtomicServerCredential>(*watched);
+        } else {
+            auto cred = tls::load_server_credential(cfg.certificate_file, cfg.private_key_file);
+            if (!cred) return std::unexpected(cred.error());
+            profile->credential.emplace(std::move(*cred));
+        }
+        if (!cfg.ech_key_file.empty()) {
+            auto ech = tls::load_ech_server_keys_file(cfg.ech_key_file);
+            if (!ech) return std::unexpected("TUIC TLS ech-key-file: " + ech.error());
+            profile->ech_keys = std::move(*ech);
+        }
         profile->listen_address = cfg.listen_address;
         profile->options.handshake_timeout = std::chrono::milliseconds(cfg.handshake_timeout_ms);
         profile->options.idle_timeout = std::chrono::milliseconds(cfg.idle_timeout_ms);
@@ -49,7 +70,9 @@ namespace cli::tuic_enabled {
         -> std::expected<std::uint16_t, std::string> {
         if (index >= profiles_.size() || !profiles_[index]) return std::unexpected("TUIC inbound not configured");
         auto& p = *profiles_[index];
-        p.host = std::make_unique<relay::TuicHost>(server, p.credential, p.users, p.options);
+        p.host = p.atomic_credential
+            ? std::make_unique<relay::TuicHost>(server, p.atomic_credential, p.users, p.options, p.ech_keys)
+            : std::make_unique<relay::TuicHost>(server, *p.credential, p.users, p.options, p.ech_keys);
         corosio::endpoint ep;
         if (ipv6) {
             ep = {corosio::ipv6_address(p.listen_address), port};

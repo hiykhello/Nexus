@@ -33,10 +33,12 @@ def check(binary, root, origin, shim=None):
 role "client"
 log {{ privacy "verbose"; }}
 control socket="{control}" selector-state-directory="{directory}"
-inbound "input" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
-outbound "direct" type="direct"
-outbound "blocked" type="block"
-outbound "manual" type="selector" {{ member "direct"; member "blocked"; selected "direct"; }}
+inbounds {{ inbound "input" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}; }}
+outbounds {{
+    outbound "direct" type="direct"
+    outbound "blocked" type="block"
+    outbound "manual" type="selector" {{ member "direct"; member "blocked"; selected "direct"; }}
+}}
 routing {{
     rule-set "target" path="target.kdl" format="kdl"
     rules {{ - kind="rule-set" value="target" outbound="manual"; }}
@@ -47,6 +49,8 @@ routing {{
     legacy = b"NXSEL1\x01\x06manual\x06direct"
     snapshot.write_bytes(legacy)
     snapshot.chmod(0o600)
+    failed_start(binary, config, "selector state has an unsupported or damaged format")
+    snapshot.unlink()
     with nexus_process(binary, config) as running:
         failed_start(binary, config, "selector state directory cannot be locked")
         stream_request(front, origin.port, "127.0.0.1")
@@ -87,7 +91,7 @@ routing {{
     failed_start(binary, config, "selector state has an unsupported or damaged format")
     assert snapshot.read_bytes() == saved[:-1]
     snapshot.write_bytes(legacy[:-1])
-    failed_start(binary, config, "selector state contains invalid or duplicate choices")
+    failed_start(binary, config, "selector state has an unsupported or damaged format")
     assert snapshot.read_bytes() == legacy[:-1]
     snapshot.write_bytes(saved)
     with nexus_process(binary, config):

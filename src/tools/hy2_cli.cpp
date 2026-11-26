@@ -5,7 +5,11 @@ import relay;
 import relay.hysteria2_host;
 import hysteria2.credential;
 import hysteria2.transport_options;
+import tls.ech_server;
+import tls.server_credential;
 import tls.profiles;
+import cli.cert_reloader;
+import logging.cli;
 import rulefile;
 import crypto;
 import quic.retry_admission;
@@ -14,13 +18,33 @@ namespace cli::hy2_enabled {
     Runtime::~Runtime(){stop();}
     auto Runtime::resize(std::size_t count)->void {profiles_.resize(count);}
     auto Runtime::configure_outbound(config::Config const&)->std::expected<void,std::string> {return {};}
-    auto Runtime::configure(std::size_t index,config::InboundConfig const& entry)->std::expected<void,std::string> {
+    auto Runtime::configure(std::size_t index,config::InboundConfig const& entry,
+        std::shared_ptr<void> const& acme_credential,cli::CertReloaderHub* cert_reloaders,logging::Runtime const* logs)->std::expected<void,std::string> {
         if(!entry.hysteria2)return {};
         if(index>=profiles_.size() || profiles_[index])return std::unexpected("invalid Hysteria2 listener index");
         auto const& cfg=*entry.hysteria2;
-        auto credential=tls::load_server_credential(cfg.connection.certificate_file,cfg.connection.private_key_file);
-        if(!credential)return std::unexpected(credential.error());
-        auto profile=std::make_unique<Profile>(std::move(*credential));
+        auto profile=std::make_unique<Profile>();
+        auto const& provider=!cfg.certificate_provider.empty() ? cfg.certificate_provider : cfg.connection.certificate_provider;
+        auto const& ech_path=!cfg.ech_key_file.empty() ? cfg.ech_key_file : cfg.connection.ech_key_file;
+        bool const hot_reload=cfg.cert_hot_reload || cfg.connection.cert_hot_reload;
+        if(!provider.empty()){
+            if(provider!="acme" || !acme_credential)return std::unexpected("Hysteria2 TLS certificate-provider '"+provider+"' is unavailable");
+            profile->atomic_credential=std::static_pointer_cast<tls::AtomicServerCredential>(acme_credential);
+        } else if(hot_reload){
+            if(!cert_reloaders)return std::unexpected("Hysteria2 TLS cert-hot-reload runtime unavailable");
+            auto watched=cert_reloaders->watch(cfg.connection.certificate_file,cfg.connection.private_key_file,logs);
+            if(!watched)return std::unexpected("Hysteria2 TLS cert-hot-reload: "+watched.error());
+            profile->atomic_credential=std::static_pointer_cast<tls::AtomicServerCredential>(*watched);
+        } else {
+            auto credential=tls::load_server_credential(cfg.connection.certificate_file,cfg.connection.private_key_file);
+            if(!credential)return std::unexpected(credential.error());
+            profile->credential.emplace(std::move(*credential));
+        }
+        if(!ech_path.empty()){
+            auto ech=tls::load_ech_server_keys_file(ech_path);
+            if(!ech)return std::unexpected("Hysteria2 TLS ech-key-file: "+ech.error());
+            profile->ech_keys=std::move(*ech);
+        }
         profile->listen_address=cfg.listen_address;
         for(auto const& user:cfg.connection.users){
             auto password=rulefile::read_password_file(user.password_file);if(!password)return std::unexpected(password.error());
@@ -50,7 +74,10 @@ namespace cli::hy2_enabled {
     }
     auto Runtime::start(std::size_t index,relay::Server& server,std::uint16_t port,bool ipv6,unsigned workers)->std::expected<std::uint16_t,std::string> {
         if(index>=profiles_.size() || !profiles_[index])return std::unexpected("Hysteria2 profile missing");
-        auto& profile=*profiles_[index];profile.host=std::make_unique<relay::Hysteria2Host>(server,profile.credential,profile.passwords,profile.names,profile.options,profile.masquerade);
+        auto& profile=*profiles_[index];
+        profile.host=profile.atomic_credential
+            ? std::make_unique<relay::Hysteria2Host>(server,profile.atomic_credential,profile.passwords,profile.names,profile.options,profile.masquerade,profile.ech_keys)
+            : std::make_unique<relay::Hysteria2Host>(server,*profile.credential,profile.passwords,profile.names,profile.options,profile.masquerade,profile.ech_keys);
         corosio::endpoint endpoint;
         if (ipv6) endpoint={corosio::ipv6_address(profile.listen_address),port};
         else {

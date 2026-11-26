@@ -119,6 +119,11 @@ export namespace policy {
         bool has_rule_set=false, rule_set_needs_source=false, rule_set_needs_auth_user=false, rule_set_needs_response=false;
         bool rule_set_needs_source_uid=false, rule_set_needs_process=false, rule_set_needs_network=false;
         std::optional<rules::Matcher> rule_set_matcher;
+        // Optional inline logical predicate tree (mode="logical" logic="and"|"or" or nested and/or/not blocks).
+        std::optional<rules::Rule> inline_predicate;
+        std::optional<rules::Matcher> inline_matcher;
+        bool inline_needs_source=false, inline_needs_auth_user=false, inline_needs_response=false;
+        bool inline_needs_source_uid=false, inline_needs_process=false, inline_needs_network=false;
         // Empty optionals denote the anonymous evaluate slot.
         std::optional<std::string> evaluate_tag,match_response_tag;
     };

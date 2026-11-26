@@ -118,7 +118,7 @@ namespace relay {
                     co_return net::stream_datagrams::OrderedSelection{.outbound = 0, .rule = action.rule_index,
                         .dns_reply = std::move(reply)};
                 }
-                if (action.action.kind == rules::ProgramActionKind::route) {
+                if (action.action.kind == rules::ProgramActionKind::route || action.action.kind == rules::ProgramActionKind::bypass) {
                     capture_override(action.action);
                     selected = action.action.outbound;
                     route_rule = action.rule_index;

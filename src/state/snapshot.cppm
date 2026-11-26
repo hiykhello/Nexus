@@ -12,13 +12,11 @@ export namespace state {
         std::string name;
         std::string staging_name;
         EnvelopeSpec envelope{};
-        std::optional<Magic> legacy_magic;
     };
 
     struct SnapshotData {
         EnvelopeHeader header;
         Bytes payload;
-        bool legacy = false;
     };
 
     [[nodiscard]] auto validate_snapshot(SnapshotSpec const& spec) noexcept -> std::expected<void, StateError>;

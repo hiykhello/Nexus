@@ -49,6 +49,8 @@ namespace config {
                     cfg.server_name = *val;
                 } else if (field.name == "ca-file" && cfg.ca_file.empty() && val && absolute_path(*val)) {
                     cfg.ca_file = *val;
+                } else if (field.name == "client-cert-file" || field.name == "client-key-file") {
+                    return error(std::string(label) + " outbound TLS client-cert-file/client-key-file requires client TLS mTLS handshake support (not yet supported)");
                 } else if (field.name == "certificate-sha256") {
                     if (auto ok = parse_certificate_sha256(field, cfg.certificate_sha256); !ok)
                         return std::unexpected(ok.error());
@@ -97,7 +99,8 @@ namespace config {
     auto parse_openvpn_outbound(Node const& node) -> std::expected<OpenVpnOutbound, std::string> {
         OpenVpnOutbound cfg;
         bool server = false, tls_seen = false, tr_seen = false, ci_seen = false, auth_seen = false;
-        bool sk_seen = false, v4_seen = false, v6_seen = false, mtu_seen = false, ka_seen = false, to_seen = false;
+        bool sk_seen = false, tam_seen = false, kd_seen = false, sha1_seen = false;
+        bool v4_seen = false, v6_seen = false, mtu_seen = false, ka_seen = false, to_seen = false;
         for (auto const& child : node.children) {
             if (child.name == "server") {
                 if (std::exchange(server, true)) return error("duplicate OpenVPN server");
@@ -145,6 +148,24 @@ namespace config {
                 auto v = scalar(child);
                 if (std::exchange(sk_seen, true) || !v || !absolute_path(*v)) return error("OpenVPN static-key-file must be absolute");
                 cfg.static_key_file = *v;
+            } else if (child.name == "tls-auth-mode") {
+                auto v = scalar(child);
+                if (std::exchange(tam_seen, true) || !v) return error("invalid OpenVPN tls-auth-mode");
+                if (*v == "tls-auth") cfg.tls_auth_mode = OpenVpnTlsAuthMode::tls_auth;
+                else if (*v == "tls-crypt") cfg.tls_auth_mode = OpenVpnTlsAuthMode::tls_crypt;
+                else return error("OpenVPN tls-auth-mode must be tls-auth or tls-crypt");
+            } else if (child.name == "key-direction") {
+                if (std::exchange(kd_seen, true) || child.tag || !child.properties.empty() || !child.children.empty() || child.arguments.size() != 1)
+                    return error("invalid OpenVPN key-direction");
+                if (auto v = integer(child); v && (*v == 0 || *v == 1)) {
+                    cfg.key_direction = static_cast<std::int8_t>(*v);
+                } else if (auto sv = scalar(child); sv && (*sv == "bidirectional" || *sv == "none")) {
+                    cfg.key_direction = -1;
+                } else return error("OpenVPN key-direction must be 0, 1, or bidirectional");
+            } else if (child.name == "tls-auth-sha1") {
+                auto v = boolean(child);
+                if (std::exchange(sha1_seen, true) || !v) return error("invalid OpenVPN tls-auth-sha1");
+                cfg.tls_auth_sha1 = *v;
             } else if (child.name == "local-address") {
                 if (auto ok = parse_local_ip(child, cfg, v4_seen, v6_seen); !ok) return std::unexpected(ok.error());
             } else if (child.name == "mtu") {
@@ -176,6 +197,11 @@ namespace config {
         if (!server || !tls_seen) return error("OpenVPN outbound requires server and tls");
         if (cfg.username.empty() != !cfg.password_file.has_value())
             return error("OpenVPN username and password-file must be configured together");
+        if (cfg.static_key_file && !tam_seen) cfg.tls_auth_mode = OpenVpnTlsAuthMode::tls_auth;
+        if (!cfg.static_key_file && (tam_seen || kd_seen || sha1_seen))
+            return error("OpenVPN tls-auth options require static-key-file");
+        if (cfg.tls_auth_mode == OpenVpnTlsAuthMode::tls_crypt && (kd_seen || cfg.tls_auth_sha1))
+            return error("OpenVPN tls-crypt does not use key-direction or tls-auth-sha1");
         if (cfg.transport == OpenVpnTransport::udp && cfg.tcp_options.tcp_configured())
             return error("TCP-only dial options are not valid for OpenVPN UDP");
         if (!v4_seen && v6_seen) cfg.has_v4 = false;
@@ -185,6 +211,7 @@ namespace config {
     auto parse_openconnect_outbound(Node const& node) -> std::expected<OpenConnectOutbound, std::string> {
         OpenConnectOutbound cfg;
         bool server = false, tls_seen = false, auth_seen = false, ua_seen = false;
+        bool dtls_seen = false, dtls_fb_seen = false;
         bool v4_seen = false, v6_seen = false, mtu_seen = false, dpd_seen = false, ka_seen = false, to_seen = false;
         for (auto const& child : node.children) {
             if (child.name == "server") {
@@ -216,9 +243,14 @@ namespace config {
                         else return error("invalid OpenConnect authentication field: " + f.name);
                     }
                 } else return error("invalid OpenConnect authentication syntax");
-                bool has_user_pw = !cfg.username.empty() && cfg.password_file.has_value();
-                if (!has_user_pw && !cfg.cookie_file.has_value())
-                    return error("OpenConnect authentication requires cookie-file or username+password-file");
+            } else if (child.name == "dtls") {
+                auto v = boolean(child);
+                if (std::exchange(dtls_seen, true) || !v) return error("invalid OpenConnect dtls");
+                cfg.dtls = *v;
+            } else if (child.name == "dtls-fallback") {
+                auto v = boolean(child);
+                if (std::exchange(dtls_fb_seen, true) || !v) return error("invalid OpenConnect dtls-fallback");
+                cfg.dtls_fallback = *v;
             } else if (child.name == "user-agent") {
                 auto v = scalar(child);
                 if (std::exchange(ua_seen, true) || !v || v->empty()) return error("invalid OpenConnect user-agent");
@@ -255,8 +287,14 @@ namespace config {
                 if (!*opt) return error("unsupported OpenConnect outbound field: " + child.name);
             }
         }
+        bool has_user_pw = !cfg.username.empty() && cfg.password_file.has_value();
+        bool has_cookie = cfg.cookie_file.has_value();
         if (!server || !tls_seen || !auth_seen)
             return error("OpenConnect outbound requires server, tls and authentication");
+        if (!has_user_pw && !has_cookie)
+            return error("OpenConnect authentication requires cookie-file or username+password-file");
+        if (cfg.detour && cfg.dtls && !cfg.dtls_fallback)
+            return error("OpenConnect dtls without dtls-fallback cannot be used over a TCP detour");
         if (!v4_seen && v6_seen) cfg.has_v4 = false;
         return cfg;
     }

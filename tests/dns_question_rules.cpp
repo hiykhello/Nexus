@@ -5,14 +5,28 @@ import dns.address_sequence;
 import rules;
 
 namespace {
-    auto parse(std::string_view fields) {
+    auto parse(std::string_view fields,std::string_view dns_extra={}) {
+        std::string rules_block;
+        if (!fields.empty()) {
+            std::string body(fields);
+            std::string rewritten;
+            for (std::size_t pos=0;pos<body.size();) {
+                auto end=body.find('\n',pos);
+                auto line=body.substr(pos,end==std::string::npos ? body.size()-pos : end-pos);
+                if (line.starts_with("rule ")) rewritten+="- "+line.substr(5)+'\n';
+                else rewritten+=line+'\n';
+                if (end==std::string::npos) break;
+                pos=end+1;
+            }
+            rules_block="rules {\n"+rewritten+"}\n";
+        }
         return config::parse_kdl(std::format(R"(schema-version 1
 role "client"
-dns {{ server "a" type="udp" host="127.0.0.1"; server "b" type="local"; {} }}
-inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
-outbound "direct" type="direct"
+dns {{ servers {{ server "a" type="udp" host="127.0.0.1"; server "b" type="local"; }}; {} {} }}
+inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }} }}
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ default-outbound "direct"; }}
-)",fields));
+)",dns_extra,rules_block));
     }
     namespace dns=dns;
     using Error=dns::detail::ResolveError;
@@ -45,8 +59,7 @@ rule action="route" server="a" client-subnet="2001:db8::1234/64";)");
 #endif
     auto config=parse(R"(rule domain-suffix="Example.TEST" query-type="AAAA" server="b";
 rule query-type=1 server="a";
-rule domain="example.test" server="b";
-final "a";)");
+rule domain="example.test" server="b";)",R"(final "a";)");
     if (!config || !config->dns || config->dns->rules.size()!=3) return 1;
     auto const& rules=config->dns->rules;
     if (rules[0].query_type!=28 || rules[0].domain!="example.test" || !rules[0].suffix ||
@@ -206,11 +219,12 @@ rule action="route" server="b";)");
     if (::policy::select_dns_action(copy,"a.allowed.test",1,0,false,{.auth_user="bob"}).action!=::policy::DnsAction::reject) return 43;
     for (auto invalid:{R"(rule action="reject" invert=1;)",R"(rule action="reject" invert="true";)",R"(rule action="reject" invert=#null;)"})
         if (parse(invalid)) return 44;
-    auto all_inverted=parse(R"(rule action="reject" invert=#true; rule action="route" server="a";)");
+    auto all_inverted=parse(R"(rule action="reject" invert=#true;
+rule action="route" server="a";)");
     if (!all_inverted || ::policy::select_dns_action(all_inverted->dns->rules,"a.test",1,1).server!=0) return 45;
 
-    auto sets=parse(R"(rule-set "q" path="q.srs" format="srs";
-rule rule-set="q" invert=#true action="reject";)");
+    auto sets=parse(R"(rule rule-set="q" invert=#true action="reject";)",
+        R"(rule-set "q" path="q.srs" format="srs";)");
     if (!sets || sets->dns->rule_files.size()!=1 || !sets->dns->rules[0].has_rule_set || sets->dns->rules[0].match_all) return 70;
     auto set_rule=sets->dns->rules[0];
     if (::policy::normalize_dns_rule(set_rule,2)) return 71;
@@ -228,9 +242,9 @@ rule rule-set="q" invert=#true action="reject";)");
     if (::policy::bind_dns_rule_set(invalid_set,{{{"ip-cidr","192.0.2.0/24",{}}},2})) return 75;
     if (::policy::bind_dns_rule_set(invalid_set,{{{"query-type","1",{}}},1}) ||
         ::policy::bind_dns_rule_set(invalid_set,{{{"domain","a.test",{}}},99})) return 77;
-    if (parse(R"(rule-set "q" path="q.kdl" format="kdl"; rule rule-set="q" ip-cidr-match-source=#true server="a";)") ||
-        parse(R"(rule-set "q" path="q.srs" format="srs"; rule rule-set="missing" server="a";)") ||
-        parse(R"(rule-set "q" path="q.srs" format="srs"; rule action="reject";)") ) return 76;
+    if (parse(R"(rule rule-set="q" ip-cidr-match-source=#true server="a";)",R"(rule-set "q" path="q.kdl" format="kdl";)") ||
+        parse(R"(rule rule-set="missing" server="a";)",R"(rule-set "q" path="q.srs" format="srs";)") ||
+        parse(R"(rule action="reject";)",R"(rule-set "q" path="q.srs" format="srs";)") ) return 76;
 
     dns::detail::AddressAnswers<true> combined;
     if (!combined.add(answer("canonical.test",32,60)) || !combined.add(answer("canonical.test",32,12))) return 6;

@@ -19,6 +19,7 @@ import tuic.application;
 import tuic.transport_options;
 import tuic.stream;
 import tuic.server;
+import tls.ech_server;
 import tls.server_credential;
 import quic.cid_registry;
 import quic.datagram_port;
@@ -136,10 +137,12 @@ namespace relay {
             Server routing{RoutingOnly{}};
             TuicHooks hooks;
             tuic::Listener<TuicHooks> listener;
-            Worker(Server& parent, std::size_t idx, std::size_t count, tls::ServerCredential const& cred,
-                   std::vector<tuic::UserCredential> const& users, tuic::ClientTransportOptions opts)
+            Worker(Server& parent, std::size_t idx, std::size_t count, tls::ServerCredential const* cred,
+                   std::shared_ptr<tls::AtomicServerCredential> atomic_cred,
+                   std::vector<tuic::UserCredential> const& users, tuic::ClientTransportOptions opts,
+                   std::shared_ptr<tls::EchServerKeys const> ech_keys)
                 : hooks{routing, nullptr, users},
-                  listener(routing.executor_context(), cred, users, opts, hooks) {
+                  listener(routing.executor_context(), cred, std::move(atomic_cred), users, opts, hooks, std::move(ech_keys)) {
                 routing.inherit_routing(parent, idx, count);
                 hooks.listener = &listener;
             }
@@ -159,7 +162,9 @@ namespace relay {
         };
 
         Server& parent;
-        tls::ServerCredential const& credential;
+        tls::ServerCredential const* credential = nullptr;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential{};
+        std::shared_ptr<tls::EchServerKeys const> ech_keys{};
         std::vector<tuic::UserCredential> users;
         tuic::ClientTransportOptions options;
         std::vector<std::unique_ptr<Worker>> workers;
@@ -325,8 +330,13 @@ namespace relay {
     };
 
     TuicHost::TuicHost(Server& routing_source, tls::ServerCredential const& credential,
-                       std::vector<tuic::UserCredential> users, tuic::ClientTransportOptions options)
-        : impl_(std::make_unique<Impl>(routing_source, credential, std::move(users), options)) {}
+                       std::vector<tuic::UserCredential> users, tuic::ClientTransportOptions options,
+                       std::shared_ptr<tls::EchServerKeys const> ech_keys)
+        : impl_(std::make_unique<Impl>(routing_source, &credential, nullptr, std::move(ech_keys), std::move(users), options)) {}
+    TuicHost::TuicHost(Server& routing_source, std::shared_ptr<tls::AtomicServerCredential> atomic_credential,
+                       std::vector<tuic::UserCredential> users, tuic::ClientTransportOptions options,
+                       std::shared_ptr<tls::EchServerKeys const> ech_keys)
+        : impl_(std::make_unique<Impl>(routing_source, nullptr, std::move(atomic_credential), std::move(ech_keys), std::move(users), options)) {}
 
     TuicHost::~TuicHost() { stop(); }
 
@@ -334,7 +344,8 @@ namespace relay {
         if (count != 1) return std::unexpected("TUIC requires workers=1");
         auto prepared = impl_->parent.prepare_routing(count, true);
         if (!prepared) return std::unexpected(prepared.error().message());
-        auto w = std::make_unique<Impl::Worker>(impl_->parent, 0, count, impl_->credential, impl_->users, impl_->options);
+        auto w = std::make_unique<Impl::Worker>(impl_->parent, 0, count, impl_->credential, impl_->atomic_credential,
+                                                impl_->users, impl_->options, impl_->ech_keys);
         auto activated = w->routing.activate_context();
         if (!activated) return std::unexpected(activated.error().message());
         auto bound = w->listener.prepare(listen_ep);

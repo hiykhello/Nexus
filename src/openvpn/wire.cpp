@@ -132,31 +132,6 @@ namespace openvpn {
             crypto::cleanse(*sha1_part);
             return *md5_part;
         }
-
-        auto eq_icase(std::string_view a, std::string_view b) noexcept -> bool {
-            if (a.size() != b.size()) return false;
-            for (std::size_t i = 0; i < a.size(); ++i) {
-                auto ca = static_cast<unsigned char>(a[i]), cb = static_cast<unsigned char>(b[i]);
-                if (ca >= 'A' && ca <= 'Z') ca = static_cast<unsigned char>(ca - 'A' + 'a');
-                if (cb >= 'A' && cb <= 'Z') cb = static_cast<unsigned char>(cb - 'A' + 'a');
-                if (ca != cb) return false;
-            }
-            return true;
-        }
-
-        auto split_ws(std::string_view s) -> std::vector<std::string_view> {
-            std::vector<std::string_view> parts;
-            std::size_t i = 0;
-            while (i < s.size()) {
-                while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
-                if (i >= s.size()) break;
-                std::size_t j = i;
-                while (j < s.size() && s[j] != ' ' && s[j] != '\t') ++j;
-                parts.push_back(s.substr(i, j - i));
-                i = j;
-            }
-            return parts;
-        }
     }
 
     auto ReplayWindow::check_and_accept(std::uint32_t packet_id) noexcept -> bool {
@@ -347,63 +322,5 @@ namespace openvpn {
         std::copy_n(b.begin() + (server_role ? 192 : 64), 8, km.tx_iv.begin());
         std::copy_n(b.begin() + (server_role ? 64 : 192), 8, km.rx_iv.begin());
         return km;
-    }
-
-    auto parse_push_reply(std::string_view text) -> std::expected<PushConfig, std::string> {
-        while (!text.empty() && (text.back() == '\0' || text.back() == '\r' || text.back() == '\n' || text.back() == ' '))
-            text.remove_suffix(1);
-        if (!text.starts_with("PUSH_REPLY")) return std::unexpected("expected PUSH_REPLY");
-        PushConfig cfg;
-        std::size_t pos = 10;
-        while (pos < text.size()) {
-            if (text[pos] == ',') ++pos;
-            auto next = text.find(',', pos);
-            auto item = (next == std::string_view::npos) ? text.substr(pos) : text.substr(pos, next - pos);
-            pos = (next == std::string_view::npos) ? text.size() : next;
-            auto toks = split_ws(item);
-            if (toks.empty()) continue;
-            if (toks[0] == "ifconfig" && toks.size() >= 3) {
-                auto ip = platform::parse_ip_address(toks[1]);
-                if (!ip || ip->size != 4) return std::unexpected("invalid PUSH_REPLY IPv4 address");
-                std::array<std::uint8_t, 4> v4{};
-                std::ranges::copy(ip->view(), v4.begin());
-                cfg.local_v4 = v4;
-            } else if (toks[0] == "ifconfig-ipv6" && toks.size() >= 2) {
-                auto addr = toks[1];
-                if (auto slash = addr.find('/'); slash != std::string_view::npos) addr = addr.substr(0, slash);
-                auto ip = platform::parse_ip_address(addr);
-                if (!ip || ip->size != 16) return std::unexpected("invalid PUSH_REPLY IPv6 address");
-                std::array<std::uint8_t, 16> v6{};
-                std::ranges::copy(ip->view(), v6.begin());
-                cfg.local_v6 = v6;
-            } else if (toks[0] == "peer-id" && toks.size() >= 2) {
-                std::uint32_t pid = 0;
-                auto [end, ec] = std::from_chars(toks[1].data(), toks[1].data() + toks[1].size(), pid);
-                if (ec != std::errc{} || end != toks[1].data() + toks[1].size() || pid > 0xffffffu)
-                    return std::unexpected("invalid PUSH_REPLY peer-id");
-                cfg.peer_id = pid;
-            } else if (toks[0] == "cipher" && toks.size() >= 2) {
-                if (eq_icase(toks[1], "AES-256-GCM")) cfg.cipher = Cipher::aes_256_gcm;
-                else if (eq_icase(toks[1], "CHACHA20-POLY1305")) cfg.cipher = Cipher::chacha20_poly1305;
-                else return std::unexpected("unsupported PUSH_REPLY cipher");
-            } else if (toks[0] == "tun-mtu" && toks.size() >= 2) {
-                unsigned mtu = 0;
-                auto [end, ec] = std::from_chars(toks[1].data(), toks[1].data() + toks[1].size(), mtu);
-                if (ec != std::errc{} || end != toks[1].data() + toks[1].size() || mtu < 576 || mtu > 9000)
-                    return std::unexpected("invalid PUSH_REPLY tun-mtu");
-                cfg.mtu = static_cast<std::uint16_t>(mtu);
-            } else if (toks[0] == "ping" && toks.size() >= 2) {
-                unsigned v = 0;
-                auto [end, ec] = std::from_chars(toks[1].data(), toks[1].data() + toks[1].size(), v);
-                if (ec == std::errc{} && end == toks[1].data() + toks[1].size() && v <= 65535)
-                    cfg.ping_s = static_cast<std::uint16_t>(v);
-            } else if (toks[0] == "ping-restart" && toks.size() >= 2) {
-                unsigned v = 0;
-                auto [end, ec] = std::from_chars(toks[1].data(), toks[1].data() + toks[1].size(), v);
-                if (ec == std::errc{} && end == toks[1].data() + toks[1].size() && v <= 65535)
-                    cfg.ping_restart_s = static_cast<std::uint16_t>(v);
-            }
-        }
-        return cfg;
     }
 }

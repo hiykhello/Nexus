@@ -23,14 +23,13 @@ namespace {
     auto inventory(config::Config const& config) -> void {
         auto fake=config.dns ? config.dns->fakeip : std::nullopt;
         auto root=config.state ? config.state->cache_directory : std::string{};
-        auto dns=config.dns ? config.dns->message_cache_directory : std::string{};
         auto row=[](unsigned tier,std::string_view name,::state::Inventory info) {
             std::cout << std::format("tier={} component={} version={} entries={} bytes={} health={}\n",
                 tier,name,info.version,info.entries,info.bytes,info.health);
         };
         row(1,"selectors",::state::inspect_selectors(config.selector_state_directory));
         row(2,"fakeip",::state::inspect_fakeip(fake ? fake->state_directory : std::string{},fake && fake->unified));
-        row(3,"dns",::state::inspect_dns(root,dns,config.dns ? config.dns->servers.size() : 0));
+        row(3,"dns",::state::inspect_dns(root));
         row(3,"rulesets",::state::inspect_rules(root));
     }
 
@@ -47,10 +46,6 @@ namespace {
                 auto done=::state::RulesetCache(options.cache_directory,{options.ruleset_cache_max_bytes}).clear();
                 if (!done) return report(done.error());
             }
-        }
-        if (dns && config.dns && !config.dns->message_cache_directory.empty()) {
-            auto done=::state::clear_legacy_dns(config.dns->message_cache_directory);
-            if (!done) return report(done.error());
         }
         return 0;
     }

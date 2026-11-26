@@ -12,7 +12,8 @@ namespace packet {
                 auto& bytes = **received;
                 bool tcp = bytes.size() >= 20 && (bytes[0] >> 4) == 4 && bytes[9] == 6;
                 bool udp4 = bytes.size() >= 20 && (bytes[0] >> 4) == 4 && bytes[9] == 17;
-                bool tcp6 = false, udp6 = false;
+                bool icmp4 = pass_icmp_ && bytes.size() >= 28 && (bytes[0] >> 4) == 4 && bytes[9] == 1;
+                bool tcp6 = false, udp6 = false, icmp6 = false;
                 if (bytes.size() >= 40 && (bytes[0] >> 4) == 6) {
                     auto next = bytes[6]; std::size_t offset = 40;
                     // Only locate the upper-layer protocol; its parser validates the chain.
@@ -25,8 +26,9 @@ namespace packet {
                     tcp6 = tcp6_ && next==6;
                     udp6 = next==17 || next==0 || next==60 ||
                         (udp_fragments_ && next==44 && parse_udp6_fragment(bytes));
+                    icmp6 = pass_icmp_ && next==58;
                 }
-                if (!tcp && !tcp6 && !udp4 && !udp6) result.rejected = SwitchReject::unsupported_packet;
+                if (!tcp && !tcp6 && !udp4 && !udp6 && !icmp4 && !icmp6) result.rejected = SwitchReject::unsupported_packet;
                 else { input_route_ = tcp ? 0 : tcp6 ? 2 : 1; input_ = std::move(bytes); }
             }
         }

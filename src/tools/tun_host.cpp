@@ -167,7 +167,7 @@ namespace cli::tun_enabled {
             : parent(src), cfg(std::move(opts)),supervise_strict_network(supervised),
             link_limits{std::max<std::size_t>(cfg.mtu, 1500), 256, 512 * 1024},
             link(link_limits), tcp4_link(link_limits), udp_link(link_limits), tcp6_link(link_limits),
-            mux(link, tcp4_link, udp_link, tcp6_link,true) {
+            mux(link, tcp4_link, udp_link, tcp6_link, true, true) {
             udp_binding.routing_mark = cfg.socket_mark;
         }
 

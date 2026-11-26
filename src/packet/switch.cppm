@@ -16,15 +16,16 @@ export namespace packet {
         MemoryLink& tcp_;
         MemoryLink& udp_;
         MemoryLink* tcp6_ = nullptr;
-        bool udp_fragments_=false;
+        bool udp_fragments_=false, pass_icmp_=false;
         std::optional<Bytes> input_;
         std::optional<QueuedPacket> output_;
         std::size_t input_route_ = 0, next_output_ = 0;
     public:
         MemorySwitch(MemoryLink& external, MemoryLink& tcp, MemoryLink& udp)
             : external_(external), tcp_(tcp), udp_(udp) {}
-        MemorySwitch(MemoryLink& external, MemoryLink& tcp, MemoryLink& udp, MemoryLink& tcp6,bool udp_fragments=false)
-            : external_(external), tcp_(tcp), udp_(udp), tcp6_(&tcp6), udp_fragments_(udp_fragments) {}
+        MemorySwitch(MemoryLink& external, MemoryLink& tcp, MemoryLink& udp, MemoryLink& tcp6,
+            bool udp_fragments=false, bool pass_icmp=false)
+            : external_(external), tcp_(tcp), udp_(udp), tcp6_(&tcp6), udp_fragments_(udp_fragments), pass_icmp_(pass_icmp) {}
         MemorySwitch(MemorySwitch const&) = delete;
         auto operator=(MemorySwitch const&) -> MemorySwitch& = delete;
         [[nodiscard]] auto step() -> std::expected<SwitchStep, DeviceError>;

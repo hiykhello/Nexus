@@ -54,7 +54,7 @@ export namespace shadowsocks {
         [[nodiscard]] auto begin(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,UdpPeer peer,
             Clock::time_point now,std::uint64_t wall,Clock::time_point deadline,
             rules::RouteMatcher const* policy=nullptr,UdpListenerAdmission admission={},bool allow_tunnel=false) -> std::expected<UdpPending,UdpDispatchError>;
-        // Authenticate and retain the packet without executing a legacy rule.
+        // Authenticate and retain the packet without executing an indexed rule.
         // The caller must route it and consume or cancel the returned token.
         [[nodiscard]] auto begin_ordered(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,UdpPeer peer,
             Clock::time_point now,std::uint64_t wall,Clock::time_point deadline,UdpListenerAdmission admission={})
@@ -63,13 +63,13 @@ export namespace shadowsocks {
         // successful send ends the operation. A socket failure ends it too.
         [[nodiscard]] auto complete(std::uint64_t token,std::span<UdpPeer const> candidates,Clock::time_point now)
             -> std::expected<void,UdpDispatchError>;
-        // Select a retained packet with its legacy matcher, then use the
+        // Select a retained packet with its route matcher, then use the
         // same direct and tunnel submission contract as an ordered decision.
         [[nodiscard]] auto select_route(std::uint64_t token,std::span<UdpPeer const> candidates,Clock::time_point now)
             -> std::expected<UdpDispatchRoute,UdpDispatchError>;
         // The borrowed packet remains valid only while its pending token exists.
         [[nodiscard]] auto pending_packet(std::uint64_t token) const noexcept -> UdpAccepted const*;
-        // Completes a direct decision without consulting the legacy policy.
+        // Completes a direct decision without consulting the indexed policy.
         [[nodiscard]] auto complete_selected(std::uint64_t token,std::span<UdpPeer const> candidates,Clock::time_point now)
             -> std::expected<void,UdpDispatchError>;
         // An owned identity and target for acquiring a session-specific tunnel.

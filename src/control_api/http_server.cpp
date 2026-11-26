@@ -12,6 +12,7 @@ import control_api.http_format;
 import control_api.http_stream;
 import control_api.http_extra_routes;
 import control_api.dashboard_static;
+import control_api.http_ws;
 import crypto;
 import metrics;
 import platform.ip_address;
@@ -38,6 +39,7 @@ namespace control_api {
         std::vector<std::uint8_t> token;
         std::vector<std::string> cors_allow_origins;
         std::vector<Peer> peers;
+        std::vector<WsPeer> ws_peers;
         std::uint64_t authorized = 0, unauthorized = 0, expired = 0;
 
         ~Impl() {
@@ -79,8 +81,12 @@ namespace control_api {
             auto target = query.empty() ? std::string(path) : (std::string(path) + "?" + std::string(query));
             bool is_ssmapi = ssmapi_enabled && (path == ssmapi_prefix || path.starts_with(ssmapi_prefix + "/"));
             bool is_api = is_ssmapi || path == "/v1" || path.starts_with("/v1/") || path == "/metrics";
-            if (!is_api && !dashboard_root.empty())
-                return serve_dashboard_request(dashboard_root, method, path);
+            if (!is_api) {
+                if (!dashboard_root.empty())
+                    return serve_dashboard_request(dashboard_root, method, path);
+                if (has_embedded_dashboard())
+                    return serve_embedded_dashboard_request(method, path, headers);
+            }
             auto req_origin = extract_header_value(headers, "origin");
             auto matched_cors = match_cors_origin(cors_allow_origins, req_origin);
             auto with_cors = [&](std::string resp) -> std::string {
@@ -90,6 +96,12 @@ namespace control_api {
                 if (!matched_cors)
                     return json_error(403, "Forbidden", "cors-origin-denied", "origin is not allowed");
                 return cors_preflight_response(*matched_cors);
+            }
+            if (path == "/v1/ws") {
+                auto up = evaluate_ws_upgrade(req, token, cors_allow_origins);
+                if (up.auth_failed) ++unauthorized;
+                else if (up.authenticated) ++authorized;
+                return up.upgraded ? std::move(up.http_response) : with_cors(std::move(up.http_response));
             }
             if (!check_auth(headers, query))
                 return with_cors(json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token"));
@@ -399,6 +411,10 @@ namespace control_api {
                                     if (auto mc = match_cors_origin(impl.cors_allow_origins, extract_header_value(req.headers, "origin")))
                                         it->cors_origin = std::string(*mc);
                                 }
+                                if (req.valid && req.path == "/v1/ws") {
+                                    done = try_upgrade_ws_peer(*it, req, hdr_end, *content_len, impl.ws_peers,
+                                        impl.token, impl.cors_allow_origins, now, impl.authorized, impl.unauthorized);
+                                } else {
                                 auto skind = req.valid ? detect_stream_kind(req.method, req.path, req.query) : StreamKind::none;
                                 if (skind != StreamKind::none) {
                                     if (!impl.check_auth(req.headers, req.query)) {
@@ -421,6 +437,7 @@ namespace control_api {
                                         it->out = json_error(500, "Internal Server Error", "reply-too-large", "reply cap");
                                     it->writing = true;
                                 }
+                                }
                             }
                         }
                     }
@@ -438,6 +455,7 @@ namespace control_api {
                 done = flush_peer_writes(*it, now);
             if (done) it = impl.peers.erase(it); else ++it;
         }
+        poll_ws_peers(impl.ws_peers, impl.token, now, fetch, command, impl.authorized, impl.unauthorized, impl.expired);
     }
 
     auto HttpControlServer::listen_native_fd(this HttpControlServer const& self) noexcept -> int {
@@ -450,7 +468,11 @@ namespace control_api {
     auto HttpControlServer::next_poll_delay(this HttpControlServer const& self) noexcept
         -> std::optional<std::chrono::milliseconds> {
         if (!self.impl_ || !self.impl_->listen_fd.valid()) return std::nullopt;
-        return compute_peers_poll_delay(self.impl_->peers, Impl::Clock::now());
+        auto now = Impl::Clock::now();
+        auto d1 = compute_peers_poll_delay(self.impl_->peers, now);
+        auto d2 = compute_ws_peers_poll_delay(self.impl_->ws_peers, now);
+        if (d1 && d2) return std::min(*d1, *d2);
+        return d1 ? d1 : d2;
     }
 
     auto HttpControlServer::attach_ssmapi_users(this HttpControlServer& self,

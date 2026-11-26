@@ -17,24 +17,28 @@ namespace {
         constexpr std::string_view cfg = R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 dns {
     listen host="127.0.0.1" port=5353
     reverse-mapping #true
     cache-flush-interval-ms 5000
     message-cache-directory "/tmp/nexus-b147-dns-cache"
-    server "up" type="udp" host="127.0.0.1" port=5300
+    servers { server "up" type="udp" host="127.0.0.1" port=5300; }
     rule-set "inline-block" {
         domain-suffix "ads.example"
         domain "tracker.example"
     }
-    rule rule-set="inline-block" query-type="HTTPS" action="predefined" predefined-rcode="NOERROR"
-    rule domain-suffix="no6.example" query-type="SVCB" action="predefined" predefined-rcode="NOERROR"
-    rule domain-suffix="nx.example" query-type="caa" action="predefined" predefined-rcode="nxdomain"
+    rules {
+        - rule-set="inline-block" query-type="HTTPS" action="predefined" predefined-rcode="NOERROR"
+        - domain-suffix="no6.example" query-type="SVCB" action="predefined" predefined-rcode="NOERROR"
+        - domain-suffix="nx.example" query-type="caa" action="predefined" predefined-rcode="nxdomain"
+    }
     final "up"
 }
 routing {
@@ -62,14 +66,18 @@ routing {
         constexpr std::string_view missing_rev = R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
-outbound "block" type="block"
+outbounds {
+    outbound "direct" type="direct"
+    outbound "block" type="block"
+}
 dns {
-    server "up" type="udp" host="127.0.0.1" port=5300
+    servers { server "up" type="udp" host="127.0.0.1" port=5300; }
     final "up"
 }
 routing {
@@ -88,15 +96,19 @@ routing {
         constexpr std::string_view with_rev = R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
-outbound "block" type="block"
+outbounds {
+    outbound "direct" type="direct"
+    outbound "block" type="block"
+}
 dns {
     reverse-mapping #true
-    server "up" type="udp" host="127.0.0.1" port=5300
+    servers { server "up" type="udp" host="127.0.0.1" port=5300; }
     final "up"
 }
 routing {
@@ -168,14 +180,18 @@ routing {
         constexpr std::string_view cfg = R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
-outbound "block" type="block"
+outbounds {
+    outbound "direct" type="direct"
+    outbound "block" type="block"
+}
 dns {
-    server "up" type="udp" host="127.0.0.1" port=5300
+    servers { server "up" type="udp" host="127.0.0.1" port=5300; }
     final "up"
 }
 http-clients {
@@ -222,9 +238,11 @@ routing {
             std::ofstream(wd / "rel.kdl") << "version 2\ndomain \"from-wd.example\"\n";
             std::ofstream(cfgd / "00-base.kdl") << "schema-version 1\nrole \"client\"\n";
             std::ofstream(cfgd / "10-net.kdl") << R"kdl(
-inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "direct" type="direct"
-outbound "block" type="block"
+inbounds { inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "block" type="block"
+}
 routing {
     rule-set "local" path="rel.kdl" format="kdl"
     rules {
@@ -245,7 +263,7 @@ routing {
         check(files.has_value(), files ? "" : "load_route_files via -D working dir failed: " + files.error());
 
         // Duplicate inbound tag across two files must fail naming both files
-        std::ofstream(cfgd / "20-dup.kdl") << "inbound \"socks\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1081; authentication \"none\"; }\n";
+        std::ofstream(cfgd / "20-dup.kdl") << "inbounds { inbound \"socks\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1081; authentication \"none\"; }; }\n";
         auto dup = cli::read_config_source(cfgd.string(), true);
         check(!dup.has_value() && dup.error().find("20-dup.kdl") != std::string::npos &&
               dup.error().find("10-net.kdl") != std::string::npos,
@@ -279,9 +297,11 @@ routing { default "direct"; }
         auto ov1 = write("ov1.kdl", R"kdl(workers 4
 log { level "warn"; }
 control socket="/tmp/nexus-wave22-test.sock"
-inbound "local-socks" type="mixed" { listen host="127.0.0.1" port=7890; authentication "none"; }
-inbound "android-tun" type="tun" { device-fd 9; mtu 1500; }
-inbound "extra-http" type="http" { listen host="127.0.0.1" port=8080; authentication "none"; }
+inbounds {
+    inbound "local-socks" type="mixed" { listen host="127.0.0.1" port=7890; authentication "none"; }
+    inbound "android-tun" type="tun" { device-fd 9; mtu 1500; }
+    inbound "extra-http" type="http" { listen host="127.0.0.1" port=8080; authentication "none"; }
+}
 )kdl");
         auto m1 = cli::read_config_source(base1.string(), false, ov1.string());
         check(m1.has_value(), m1 ? "" : "host-override merge 1 failed: " + m1.error());
@@ -314,7 +334,7 @@ inbound "extra-http" type="http" { listen host="127.0.0.1" port=8080; authentica
         auto ov3 = write("ov3.kdl", R"kdl(host-override {
     strip-inbounds #true
 }
-inbound "proxy-only" type="socks5" { listen host="127.0.0.1" port=10808; authentication "none"; }
+inbounds { inbound "proxy-only" type="socks5" { listen host="127.0.0.1" port=10808; authentication "none"; }; }
 )kdl");
         auto m3 = cli::read_config_source(base1.string(), false, ov3.string());
         check(m3.has_value(), m3 ? "" : "strip-inbounds failed: " + m3.error());
@@ -332,8 +352,8 @@ inbound "proxy-only" type="socks5" { listen host="127.0.0.1" port=10808; authent
         auto dir = root / "cfgdir";
         std::filesystem::create_directories(dir);
         write("cfgdir/00-host.kdl", "schema-version 1\nrole \"client\"\nworkers 1\n");
-        write("cfgdir/10-in.kdl", "inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }\n");
-        write("cfgdir/20-out.kdl", "outbound \"direct\" type=\"direct\"\nrouting { default-outbound \"direct\"; }\n");
+        write("cfgdir/10-in.kdl", "inbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\n");
+        write("cfgdir/20-out.kdl", "outbounds { outbound \"direct\" type=\"direct\"; }\nrouting { default-outbound \"direct\"; }\n");
         auto m5 = cli::read_config_source(dir.string(), true, ov3.string());
         check(m5.has_value(), m5 ? "" : "config-dir + host-override failed: " + m5.error());
         auto c5 = config::parse_kdl(*m5);
@@ -341,7 +361,7 @@ inbound "proxy-only" type="socks5" { listen host="127.0.0.1" port=10808; authent
               "config-dir + host-override parsed");
 
         // 6. Override TUN placed BEFORE host-override { strip-tun #false; } still strips base TUN
-        auto ov6 = write("ov6.kdl", R"kdl(inbound "new-tun" type="tun" { device-fd 5; mtu 1500; }
+        auto ov6 = write("ov6.kdl", R"kdl(inbounds { inbound "new-tun" type="tun" { device-fd 5; mtu 1500; }; }
 host-override {
     strip-tun #false
 }
@@ -363,8 +383,8 @@ role "client"
 sessions-per-listener 128
 shutdown-grace-ms 1000
 tcp-splice-pipes 4
-inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "direct" type="direct"
+inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct"; }
 )kdl");
         auto ov7 = write("ov7.kdl", "sessions-per-listener 256\nshutdown-grace-ms 2500\ntcp-splice-pipes 8\n");

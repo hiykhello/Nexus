@@ -25,53 +25,20 @@ import tls.connector;
 import openconnect.types;
 import openconnect.auth;
 import openconnect.cstp;
+import openconnect.dtls;
 import capy;
 import corosio;
 import relay.l3_mux;
 import :l3_tunnel;
+import :openconnect_dtls;
 
 namespace relay {
     namespace {
-        auto oc_now_ms() noexcept -> std::uint64_t {
-            return static_cast<std::uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count());
-        }
-
-        auto trim_crlf(std::string& s) noexcept -> void {
-            while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
-        }
-
+        using oc_detail::DtlsChannel;
+        using oc_detail::oc_now_ms;
+        using oc_detail::parse_content_length;
+        using oc_detail::trim_crlf;
         using encoding::hex_encode;
-
-        auto parse_content_length(std::string_view hdrs) -> std::optional<std::size_t> {
-            std::size_t pos = 0;
-            while (pos < hdrs.size()) {
-                auto nl = hdrs.find('\n', pos);
-                auto line = (nl == hdrs.npos) ? hdrs.substr(pos) : hdrs.substr(pos, nl - pos);
-                pos = (nl == hdrs.npos) ? hdrs.size() : nl + 1;
-                if (auto colon = line.find(':'); colon != line.npos) {
-                    auto k = line.substr(0, colon);
-                    bool match = k.size() == 14 && [&] {
-                        constexpr std::string_view cl = "content-length";
-                        for (std::size_t i = 0; i < 14; ++i) {
-                            unsigned char c = static_cast<unsigned char>(k[i]);
-                            if (c >= 'A' && c <= 'Z') c = static_cast<unsigned char>(c - 'A' + 'a');
-                            if (c != static_cast<unsigned char>(cl[i])) return false;
-                        }
-                        return true;
-                    }();
-                    if (match) {
-                        auto v = line.substr(colon + 1);
-                        while (!v.empty() && (v.front() == ' ' || v.front() == '\t')) v.remove_prefix(1);
-                        while (!v.empty() && (v.back() == ' ' || v.back() == '\t' || v.back() == '\r')) v.remove_suffix(1);
-                        std::size_t len = 0;
-                        auto [end, ec] = std::from_chars(v.data(), v.data() + v.size(), len);
-                        if (ec == std::errc{} && end == v.data() + v.size()) return len;
-                    }
-                }
-            }
-            return std::nullopt;
-        }
 
         struct OcResolver {
             Session& session; io::io_context& context; std::string_view host; std::uint16_t port;
@@ -86,13 +53,11 @@ namespace relay {
 
         struct OcLower {
             using Candidates = LowerConnector::Candidates;
-            Session& session;
-            LowerConnector connector;
-            OcLower(Session& value, io::io_context& context, TunnelFactory const& factory,
-                    std::string_view host, std::uint16_t port, std::optional<std::size_t> bootstrap)
-                : session(value), connector{{}, &context, &factory, host, port, bootstrap} {}
-            auto connect(Clock::time_point deadline, Candidates& candidates) -> capy::task<tls::detail::ConnectResult> {
-                switch (co_await connector.connect(session, deadline, candidates)) {
+            Session& session; LowerConnector connector;
+            OcLower(Session& v, io::io_context& c, TunnelFactory const& f, std::string_view h, std::uint16_t p, std::optional<std::size_t> b)
+                : session(v), connector{{}, &c, &f, h, p, b} {}
+            auto connect(Clock::time_point dl, Candidates& cands) -> capy::task<tls::detail::ConnectResult> {
+                switch (co_await connector.connect(session, dl, cands)) {
                 case TunnelConnectResult::connected: co_return tls::detail::ConnectResult::connected;
                 case TunnelConnectResult::retryable: co_return tls::detail::ConnectResult::retryable;
                 case TunnelConnectResult::failed: co_return tls::detail::ConnectResult::failed;
@@ -101,8 +66,8 @@ namespace relay {
                 std::terminate();
             }
             auto retry() noexcept -> bool { return connector.retry(); }
-            auto read(std::span<std::uint8_t> bytes) { return connector.tunnel->read(bytes); }
-            auto send(std::span<std::uint8_t const> bytes) { return connector.tunnel->send(bytes); }
+            auto read(std::span<std::uint8_t> b) { return connector.tunnel->read(b); }
+            auto send(std::span<std::uint8_t const> b) { return connector.tunnel->send(b); }
             auto close_output() { return connector.tunnel->close_output(); }
             auto cancel() noexcept -> void { connector.cancel(); }
         };
@@ -121,9 +86,11 @@ namespace relay {
                 OpenConnectProfile const& profile;
                 platform::TcpSocketOptions options;
                 TunnelFactory const* via;
+                net::UdpEndpoint connected_peer{};
                 std::unique_ptr<Session> conn_session;
                 std::unique_ptr<OcConnector> conn;
                 std::unique_ptr<OcTlsStream> tls_stream;
+                DtlsChannel dtls;
                 std::vector<std::uint8_t> rx_buf;
                 std::size_t rx_head = 0;
                 openconnect::Session oc_session;
@@ -142,7 +109,13 @@ namespace relay {
 
                 static auto send_ip(void* ctx, std::span<std::uint8_t const> pkt) -> bool {
                     auto* h = static_cast<Host*>(ctx);
-                    if (h->stopped || h->tx_queue.size() >= 256) return false;
+                    if (h->stopped) return false;
+                    if (h->dtls.established() && h->dtls.send_data(pkt, h->oc_session)) {
+                        h->last_tx_ms = oc_now_ms();
+                        return true;
+                    }
+                    if (h->dtls.failed_hard) { h->stop(); return false; }
+                    if (h->tx_queue.size() >= 256) return false;
                     auto frame = openconnect::encode_cstp_frame(openconnect::CstpType::data, pkt);
                     if (!frame) return false;
                     h->last_tx_ms = oc_now_ms();
@@ -157,6 +130,7 @@ namespace relay {
                     sess = std::make_unique<Session>(context);
                     sess->dns = parent.dns; sess->local_dns = parent.local_dns; sess->route_snapshot = parent.route_snapshot;
                     sess->tunnel_factories = parent.tunnel_factories; sess->direct_tcp_options = parent.direct_tcp_options;
+                    sess->physical_peer = &connected_peer;
                     c = via
                         ? std::make_unique<OcConnector>(context, profile.tls, std::in_place, *sess, context, *via,
                               profile.cfg.host, profile.cfg.port, profile.cfg.bootstrap_index)
@@ -290,9 +264,25 @@ namespace relay {
                     co_return capy::results<>{};
                 }
 
+                static auto dtls_loop(Host* h) -> capy::task<capy::results<>> {
+                    while (!h->stopped && !h->stop_src.stop_requested() && h->dtls.enabled) {
+                        auto ms = oc_now_ms();
+                        bool moved = h->dtls.poll_once(h->oc_session, ms, [&](std::span<std::uint8_t const> ip) {
+                            h->last_rx_ms = ms;
+                            h->mux.on_ip_packet(ip, ms);
+                            h->timer_wake.set();
+                        });
+                        if (h->dtls.failed_hard) { h->stop(); break; }
+                        if (!h->dtls.enabled) break;
+                        auto [ec] = co_await io::delay(moved ? std::chrono::milliseconds(1) : std::chrono::milliseconds(5));
+                        if (ec) break;
+                    }
+                    co_return capy::results<>{};
+                }
+
                 static auto run(std::shared_ptr<Host> h) -> capy::task<> {
                     struct Guard { Host& host; ~Guard() { host.loop_active = false; } } guard{*h};
-                    (void)co_await capy::when_all(rx_loop(h.get()), tx_loop(h.get()), timer_loop(h.get()));
+                    (void)co_await capy::when_all(rx_loop(h.get()), tx_loop(h.get()), timer_loop(h.get()), dtls_loop(h.get()));
                 }
 
                 auto ensure_started(Session& s, DnsSlot& dns, Clock::time_point deadline) -> capy::task<bool> {
@@ -321,15 +311,17 @@ namespace relay {
                         }
                     } fin{*this};
 
-                    std::string cookie = profile.initial_cookie, cstp_req;
+                    std::string cookie = profile.initial_cookie, cstp_req, dtls_secret_hex;
                     std::array<std::uint8_t, 48> dtls_secret{};
-                    struct Cleanse { std::string& ck, &req; std::array<std::uint8_t, 48>& sec; ~Cleanse() {
+                    struct Cleanse { std::string& ck, &req, &hex; std::array<std::uint8_t, 48>& sec; ~Cleanse() {
                         if (!ck.empty()) crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(ck.data()), ck.size()));
                         if (!req.empty()) crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(req.data()), req.size()));
+                        if (!hex.empty()) crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(hex.data()), hex.size()));
                         crypto::cleanse(std::span<std::uint8_t>(sec));
-                    } } cleanse{cookie, cstp_req, dtls_secret};
+                    } } cleanse{cookie, cstp_req, dtls_secret_hex, dtls_secret};
                     if (cookie.empty()) {
-                        openconnect::AuthRequest req{profile.cfg.username, profile.password, profile.cfg.group, {}, profile.cfg.user_agent};
+                        openconnect::AuthRequest req{profile.cfg.username, profile.password, profile.cfg.group, {},
+                            profile.cfg.user_agent};
                         auto a1 = co_await authenticate_once(s, req, deadline);
                         if (!a1) co_return false;
                         if (a1->needs_auth_reply) {
@@ -346,8 +338,10 @@ namespace relay {
 
                     if (!co_await open_tls(s, conn_session, conn, tls_stream, deadline)) co_return false;
                     if (!platform::secure_random(std::as_writable_bytes(std::span{dtls_secret}))) co_return false;
+                    if (profile.cfg.dtls) dtls_secret_hex = hex_encode(dtls_secret);
                     cstp_req = openconnect::build_cstp_connect_headers(
-                        profile.cfg.server_name, cookie, profile.cfg.mtu, hex_encode(dtls_secret), profile.cfg.user_agent);
+                        profile.cfg.server_name, cookie, profile.cfg.mtu,
+                        dtls_secret_hex, profile.cfg.user_agent, profile.cfg.dtls);
                     if (!co_await tls_stream->send(std::span(reinterpret_cast<std::uint8_t const*>(cstp_req.data()), cstp_req.size()), deadline))
                         co_return false;
 
@@ -369,41 +363,31 @@ namespace relay {
                     if (!parsed) co_return false;
 
                     auto ep_l3 = mux.endpoint();
-                    if (!parsed->ipv4_address.empty()) {
-                        if (auto ip4 = platform::parse_ip_address(parsed->ipv4_address); ip4 && ip4->size == 4) {
-                            ep_l3.has_v4 = true; std::ranges::copy(ip4->view(), ep_l3.local_v4.begin());
-                        }
+                    if (!parsed->ipv4_address.empty())
+                        if (auto ip4 = platform::parse_ip_address(parsed->ipv4_address); ip4 && ip4->size == 4) { ep_l3.has_v4 = true; std::ranges::copy(ip4->view(), ep_l3.local_v4.begin()); }
+                    if (!parsed->ipv6_address.empty())
+                        if (auto ip6 = platform::parse_ip_address(parsed->ipv6_address); ip6 && ip6->size == 16) { ep_l3.has_v6 = true; std::ranges::copy(ip6->view(), ep_l3.local_v6.begin()); }
+                    ep_l3.mtu = parsed->mtu; mux.set_endpoint(ep_l3);
+                    dpd_s = parsed->dpd_s; keepalive_s = parsed->keepalive_s;
+                    bool dtls_started = false;
+                    if (profile.cfg.dtls) {
+                        dtls_started = !via && !parsed->dtls_session_id.empty() &&
+                            dtls.start(connected_peer, *parsed, dtls_secret, options.binding, profile.cfg.dtls_fallback, oc_now_ms(), deadline);
+                        if (!dtls_started && !profile.cfg.dtls_fallback) co_return false;
                     }
-                    if (!parsed->ipv6_address.empty()) {
-                        if (auto ip6 = platform::parse_ip_address(parsed->ipv6_address); ip6 && ip6->size == 16) {
-                            ep_l3.has_v6 = true; std::ranges::copy(ip6->view(), ep_l3.local_v6.begin());
-                        }
-                    }
-                    ep_l3.mtu = parsed->mtu;
-                    mux.set_endpoint(ep_l3);
-                    dpd_s = parsed->dpd_s;
-                    keepalive_s = parsed->keepalive_s;
-                    oc_session.on_connected(!parsed->dtls_session_id.empty());
-
-                    last_tx_ms = last_rx_ms = oc_now_ms();
-                    loop_active = true;
+                    oc_session.on_connected(dtls_started);
+                    last_tx_ms = last_rx_ms = oc_now_ms(); loop_active = true;
                     try {
                         auto keep = shared_from_this();
-                        capy::run_async(context.get_executor(), []() noexcept {},
-                            [keep](std::exception_ptr) noexcept { keep->stop(); })(run(keep));
-                    } catch (...) {
-                        loop_active = false; stop(); co_return false;
-                    }
-                    started = !stopped;
-                    co_return started;
+                        capy::run_async(context.get_executor(), []() noexcept {}, [keep](std::exception_ptr) noexcept { keep->stop(); })(run(keep));
+                    } catch (...) { loop_active = false; stop(); co_return false; }
+                    started = !stopped; co_return started;
                 }
 
                 auto stop() noexcept -> void {
                     if (stopped) return;
-                    stopped = true;
-                    stop_src.request_stop();
-                    ready_event.set(); tx_event.set(); timer_wake.set();
-                    mux.reset_flows();
+                    stopped = true; stop_src.request_stop(); ready_event.set(); tx_event.set(); timer_wake.set();
+                    mux.reset_flows(); dtls.close();
                     if (tls_stream) tls_stream->cancel();
                     if (conn) conn->cancel();
                     if (conn_session) conn_session->close();
@@ -454,6 +438,8 @@ namespace relay {
             cookie.assign(f->bytes().data(), f->bytes().size()); trim_crlf(cookie);
             if (cookie.empty()) return std::unexpected("OpenConnect cookie-file is empty");
         }
+        if (cfg.client_cert_file || cfg.client_key_file)
+            return std::unexpected("OpenConnect outbound TLS client-cert-file/client-key-file requires client TLS mTLS handshake support");
         auto fp = tls::parse_fingerprint(config::tls_fingerprint_name(cfg.fingerprint));
         if (!fp) return std::unexpected("invalid OpenConnect TLS fingerprint");
         std::uint16_t kx = cfg.key_exchange == config::TlsKeyExchange::x25519 ? 0x001d : 0x11ec;

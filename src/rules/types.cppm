@@ -23,7 +23,7 @@ export namespace rules {
         auto operator==(RuleSet const&) const -> bool;
     };
 
-    enum class Network { tcp, udp };
+    enum class Network { tcp, udp, icmp };
     enum class Protocol { http, tls, dns, ssh, stun, quic, bittorrent, dtls, rdp, ntp, tls_ech };
     [[nodiscard]] inline constexpr auto protocol_mask(Protocol protocol) noexcept -> std::uint32_t {
         return std::uint32_t{1} << static_cast<unsigned>(protocol);
@@ -180,6 +180,7 @@ export namespace rules {
         bool sniff_override_destination = false;
         std::uint32_t sniff_timeout_ms = 0;
         bool udp_disable_domain_unmapping = false;
+        bool bypass_explicit = false;
         auto operator==(ProgramAction const&) const -> bool = default;
     };
 
@@ -251,6 +252,7 @@ export namespace rules {
         ProgramAction action;
         [[nodiscard]] auto terminal() const noexcept -> bool {
             return action.kind == ProgramActionKind::route ||
+                   action.kind == ProgramActionKind::bypass ||
                    action.kind == ProgramActionKind::reject ||
                    action.kind == ProgramActionKind::hijack_dns;
         }

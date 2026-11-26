@@ -80,20 +80,18 @@ namespace config {
         bool strategy_seen=false, cache_seen=false, independent_cache_seen=false, edns_seen=false, reverse_seen=false, flush_seen=false;
         std::vector<Node const*> children;
         std::vector<std::pair<std::string,std::string>> views;
-        bool servers_seen=false, legacy_server=false; for (auto const& child : node.children) {
+        bool servers_seen=false; for (auto const& child : node.children) {
             if (child.name=="servers") {
-                if (servers_seen || legacy_server || child.tag || !child.arguments.empty() || !child.properties.empty())
+                if (servers_seen || child.tag || !child.arguments.empty() || !child.properties.empty())
                     return error("invalid or duplicate DNS servers block");
                 servers_seen=true;
                 for (auto const& server : child.children) {
                     if (server.name!="server") return error("servers accepts only server nodes");
                     children.push_back(&server);
                 }
+            } else if (child.name=="server") {
+                return error("bare DNS server is removed; use dns { servers { ... } }");
             } else {
-                if (child.name=="server") {
-                    if (servers_seen) return error("cannot mix servers block and top-level DNS server nodes");
-                    legacy_server=true;
-                }
                 children.push_back(&child);
             }
         }

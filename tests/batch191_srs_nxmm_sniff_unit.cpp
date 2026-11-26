@@ -241,17 +241,21 @@ namespace {
 schema-version 1
 role "client"
 state {{ cache-directory "{}" }}
-inbound "socks" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
-inbound "tun0" type="tun" {{
-    interface-name "utun9"
-    inet4-address "172.19.0.1/30"
-    auto-route #true
-    strict-route #true
-    route-address-set "geo"
-    route-exclude-address-set "geo"
+inbounds {{
+    inbound "socks" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
+    inbound "tun0" type="tun" {{
+        interface-name "utun9"
+        inet4-address "172.19.0.1/30"
+        auto-route #true
+        strict-route #true
+        route-address-set "geo"
+        route-exclude-address-set "geo"
+    }}
 }}
-outbound "direct" type="direct"
-outbound "proxy" type="socks5" {{ server host="127.0.0.1" port=1081; }}
+outbounds {{
+    outbound "direct" type="direct"
+    outbound "proxy" type="socks5" {{ server host="127.0.0.1" port=1081; }}
+}}
 routing {{
     rule-set "geo" path="{}" format="srs"
     rules sniff-timeout-ms=300 unknown="skip" udp=#true {{

@@ -5,11 +5,107 @@ import glaze;
 import config.kdl_common;
 import config.dns_predefined;
 import rules;
+import rules.kdl_predicate;
 
 namespace config {
     namespace g = ::glaze;
     using namespace config::kdl;
     using namespace config::dns_detail;
+
+    namespace {
+        auto decode_dns_predicate_node(g::KdlNode const& node, unsigned depth, std::size_t& count)
+            -> std::expected<rules::Rule, std::string> {
+            if (depth > rules::max_rule_depth || ++count > rules::max_rules)
+                return error("DNS logical rule nesting or count exceeds limit");
+            if (node.tag) return error("tagged predicate node in DNS rule");
+            if (node.name == "and" || node.name == "or" || node.name == "not" ||
+                node.name == "all" || node.name == "any") {
+                if (!node.arguments.empty() || !node.properties.empty() || node.children.empty())
+                    return error("invalid DNS logical group");
+                std::string kind = node.name == "all" ? "and" : node.name == "any" ? "or" : node.name;
+                if (kind == "not" && node.children.size() != 1)
+                    return error("DNS logical not requires one child");
+                rules::Rule out{std::move(kind), {}, {}};
+                out.children.reserve(node.children.size());
+                for (auto const& sub : node.children) {
+                    auto decoded = decode_dns_predicate_node(sub, depth + 1, count);
+                    if (!decoded) return std::unexpected(std::move(decoded.error()));
+                    out.children.push_back(std::move(*decoded));
+                }
+                return out;
+            }
+            if (node.name == "query-type") {
+                if (!node.properties.empty() || !node.children.empty() || node.arguments.size() != 1)
+                    return error("invalid DNS query-type predicate");
+                auto rr = parse_dns_rrtype(node.arguments.front());
+                if (!rr) return error("invalid DNS query-type predicate value");
+                return rules::Rule{"query-type", std::to_string(*rr), {}};
+            }
+            if (node.name == "-" || node.name == "rule") {
+                if (auto mode = text_property(node, "mode")) {
+                    auto logic = text_property(node, "logic");
+                    if (*mode != "logical" || !logic || (*logic != "and" && *logic != "or") ||
+                        !node.arguments.empty() || node.properties.size() != 2 || node.children.empty())
+                        return error("invalid nested DNS logical rule");
+                    rules::Rule out{*logic, {}, {}};
+                    out.children.reserve(node.children.size());
+                    for (auto const& sub : node.children) {
+                        auto decoded = decode_dns_predicate_node(sub, depth + 1, count);
+                        if (!decoded) return std::unexpected(std::move(decoded.error()));
+                        out.children.push_back(std::move(*decoded));
+                    }
+                    return out;
+                }
+                if (node.name == "-" && node.arguments.size() == 2 && node.properties.empty() && node.children.empty()) {
+                    auto k = string(node.arguments[0]);
+                    if (!k) return error("invalid DNS logical shorthand predicate");
+                    if (*k == "query-type") {
+                        auto rr = parse_dns_rrtype(node.arguments[1]);
+                        if (!rr) return error("invalid DNS query-type predicate value");
+                        return rules::Rule{"query-type", std::to_string(*rr), {}};
+                    }
+                    g::KdlNode synthetic{.name = *k, .arguments = {node.arguments[1]}};
+                    auto decoded = rules::decode_kdl_predicate(synthetic, depth, count);
+                    if (!decoded) return error(std::move(decoded.error().message));
+                    return std::move(*decoded);
+                }
+                if (node.name == "rule" && property(node, "type")) {
+                    if (auto t = text_property(node, "type"); t && *t == "query-type") {
+                        auto v = property(node, "value");
+                        auto rr = (v && node.arguments.empty() && node.children.empty() && node.properties.size() == 2)
+                            ? parse_dns_rrtype(*v) : std::nullopt;
+                        if (!rr) return error("invalid DNS query-type predicate value");
+                        return rules::Rule{"query-type", std::to_string(*rr), {}};
+                    }
+                    auto decoded = rules::decode_kdl_predicate(node, depth, count);
+                    if (!decoded) return error(std::move(decoded.error().message));
+                    return std::move(*decoded);
+                }
+                if (!node.properties.empty() && node.arguments.empty() && node.children.empty()) {
+                    std::vector<rules::Rule> terms;
+                    terms.reserve(node.properties.size());
+                    for (auto const& [k, v] : node.properties) {
+                        if (k == "query-type") {
+                            auto rr = parse_dns_rrtype(v);
+                            if (!rr) return error("invalid DNS query-type predicate value");
+                            terms.push_back({"query-type", std::to_string(*rr), {}});
+                        } else {
+                            g::KdlNode synthetic{.name = k, .arguments = {v}};
+                            auto decoded = rules::decode_kdl_predicate(synthetic, depth + 1, count);
+                            if (!decoded) return error(std::move(decoded.error().message));
+                            terms.push_back(std::move(*decoded));
+                        }
+                    }
+                    if (terms.size() == 1) return std::move(terms.front());
+                    return rules::Rule{"and", {}, std::move(terms)};
+                }
+                return error("invalid nested DNS rule predicate");
+            }
+            auto decoded = rules::decode_kdl_predicate(node, depth, count);
+            if (!decoded) return error(std::move(decoded.error().message));
+            return std::move(*decoded);
+        }
+    }
     auto parse_dns_rule(g::KdlNode const& child,
         std::vector<std::pair<DnsRule,std::string>>& pending,
         std::vector<std::pair<std::size_t,std::pair<std::string,bool>>>& references)
@@ -49,6 +145,16 @@ namespace config {
         auto reject_method=property(child,"reject-method");
         auto reject_rcode=property(child,"reject-rcode");
         auto strategy_prop=property(child,"strategy");
+        auto mode_prop=property(child,"mode");
+        auto logic_prop=property(child,"logic");
+        std::optional<std::string_view> logical_op;
+        if (mode_prop || logic_prop) {
+            auto mode_val = mode_prop ? string(*mode_prop) : nullptr;
+            auto logic_val = logic_prop ? string(*logic_prop) : nullptr;
+            if (!mode_val || *mode_val != "logical" || !logic_val || (*logic_val != "and" && *logic_val != "or"))
+                return error("DNS logical rule requires mode=\"logical\" and logic=\"and\" or \"or\"");
+            logical_op = *logic_val;
+        }
         if(reject_method) {
             auto method=string(*reject_method);
             if(!method || (*method!="reply" && *method!="drop"))return error("invalid DNS reject-method");
@@ -258,6 +364,22 @@ namespace config {
             }
             rule.context.push_back({field,std::move(text)});
         }
+        std::vector<rules::Rule> inline_children;
+        std::size_t predicate_nodes = 0;
+        for (auto const& sub : child.children) {
+            if (sub.name == "record") continue;
+            auto decoded = decode_dns_predicate_node(sub, logical_op ? 2u : 1u, predicate_nodes);
+            if (!decoded) return std::unexpected(std::move(decoded.error()));
+            inline_children.push_back(std::move(*decoded));
+        }
+        if (logical_op) {
+            if (inline_children.empty())
+                return error("DNS logical rule requires at least one child condition");
+            rule.inline_predicate = rules::Rule{std::string(*logical_op), {}, std::move(inline_children)};
+        } else if (!inline_children.empty()) {
+            if (inline_children.size() == 1) rule.inline_predicate = std::move(inline_children.front());
+            else rule.inline_predicate = rules::Rule{"and", {}, std::move(inline_children)};
+        }
         if (action) {
             auto name=string(*action);
             if (!name || (*name!="route" && *name!="reject" && *name!="route-options" && *name!="evaluate" && *name!="respond" && *name!="predefined")) return error("unsupported DNS action");
@@ -268,7 +390,7 @@ namespace config {
                 *name=="route-options" ? policy::DnsAction::route_options :
                 *name=="evaluate" ? policy::DnsAction::evaluate : *name=="respond" ? policy::DnsAction::respond :
                 *name=="predefined" ? policy::DnsAction::predefined : policy::DnsAction::route;
-            rule.match_all=!domains && !type && !query_class && !query_dnssec && !query_cd && !query_ad && !query_subnet && rule.context.empty() && !rule.has_rule_set;
+            rule.match_all=!domains && !type && !query_class && !query_dnssec && !query_cd && !query_ad && !query_subnet && rule.context.empty() && !rule.has_rule_set && !rule.inline_predicate;
         }
         auto predefined_rcode=property(child,"predefined-rcode");
         if (auto parsed=parse_dns_predefined(child,predefined_rcode,rule); !parsed)
@@ -279,9 +401,9 @@ namespace config {
             if (cache->tag || !std::holds_alternative<bool>(cache->data)) return error("DNS disable-cache requires a boolean");
             rule.disable_cache=std::get<bool>(cache->data);
         }
-        auto fields=domains+bool(type)+bool(query_class)+bool(action)+bool(server_field)+bool(cache)+bool(inverted)+bool(response_match)+bool(evaluate_tag)+bool(race)+bool(speculative)+bool(timeout)+bool(rewrite_ttl)+bool(reject_method)+bool(reject_rcode)+bool(strategy_prop)+bool(query_dnssec)+bool(query_cd)+bool(query_ad)+bool(query_subnet)+bool(client_subnet)+bool(remove_client_subnet)+bool(rcode)+bool(response_ad)+bool(rrtype)+bool(section)+bool(response_ip)+bool(response_private)+bool(response_any)+bool(rrname)+bool(rrclass)+bool(rrdata)+bool(ttl_min)+bool(ttl_max)+bool(cname_d)+bool(cname_s)+bool(cname_k)+bool(cname_r)+bool(predefined_rcode)+bool(set_field)+bool(ip_source_field)+rule.context.size();
+        auto fields=domains+bool(type)+bool(query_class)+bool(action)+bool(server_field)+bool(cache)+bool(inverted)+bool(response_match)+bool(evaluate_tag)+bool(race)+bool(speculative)+bool(timeout)+bool(rewrite_ttl)+bool(reject_method)+bool(reject_rcode)+bool(strategy_prop)+bool(mode_prop)+bool(logic_prop)+bool(query_dnssec)+bool(query_cd)+bool(query_ad)+bool(query_subnet)+bool(client_subnet)+bool(remove_client_subnet)+bool(rcode)+bool(response_ad)+bool(rrtype)+bool(section)+bool(response_ip)+bool(response_private)+bool(response_any)+bool(rrname)+bool(rrclass)+bool(rrdata)+bool(ttl_min)+bool(ttl_max)+bool(cname_d)+bool(cname_s)+bool(cname_k)+bool(cname_r)+bool(predefined_rcode)+bool(set_field)+bool(ip_source_field)+rule.context.size();
         if (child.tag || !child.arguments.empty() || child.properties.size()!=fields ||
-            (!domains && !type && !query_class && !action && !query_dnssec && !query_cd && !query_ad && !query_subnet && rule.context.empty() && !set) || pending.size()>=256 ||
+            (!domains && !type && !query_class && !action && !query_dnssec && !query_cd && !query_ad && !query_subnet && rule.context.empty() && !set && !rule.inline_predicate) || pending.size()>=256 ||
             (reject_method && rule.action!=policy::DnsAction::reject) ||
             ((client_subnet || remove_client_subnet) && rule.action!=policy::DnsAction::route && rule.action!=policy::DnsAction::route_options && rule.action!=policy::DnsAction::evaluate) ||
             ((rule.action==policy::DnsAction::route || rule.action==policy::DnsAction::evaluate) ? !server || !valid_name(*server) : bool(server_field)))

@@ -144,7 +144,8 @@ namespace {
             if (step.action.udp_timeout_ms) out.udp_timeout_ms=step.action.udp_timeout_ms;
             if (step.action.udp_adaptive_timeout) out.udp_adaptive=true;
             switch (step.action.kind) {
-            case rules::ProgramActionKind::route:
+            case rules::ProgramActionKind::bypass:
+            case rules::ProgramActionKind::route: {
                 if (step.action.outbound!=1 && input.explicit_domain && !input.candidates && query.resolved.empty()) {
                     auto leaf=snapshot.matcher.choose_outbound(step.action.outbound,*input.explicit_domain);
                     if (leaf!=1) {
@@ -156,17 +157,20 @@ namespace {
                 out.route_label="rule:"+std::to_string(next->rule_index+1);
                 out.protocol=input.protocol;
                 if (!query.oneline) {
-                    if (configured.action==config::OrderedTcpAction::bypass) std::cout << "bypass ";
+                    if (configured.action==config::OrderedTcpAction::bypass || step.action.kind==rules::ProgramActionKind::bypass)
+                        std::cout << "bypass ";
                     if (step.action.connect_timeout_ms) std::cout << "connect-timeout-ms=" << step.action.connect_timeout_ms << ' ';
                     if (step.action.udp_timeout_ms) std::cout << "udp-timeout-ms=" << step.action.udp_timeout_ms << ' ';
                     if (step.action.udp_adaptive_timeout) std::cout << "udp-adaptive-timeout=true ";
                     if (step.action.udp_disable_domain_unmapping) std::cout << "udp-disable-domain-unmapping=true ";
                 }
-                apply_route(*configured.outbound_name,step.action.outbound);
-                if (configured.action==config::OrderedTcpAction::bypass) out.action="bypass";
+                auto target_name = configured.outbound_name ? std::string_view(*configured.outbound_name)
+                                                            : std::string_view(config.direct_outbound_name);
+                apply_route(target_name,step.action.outbound);
+                if (configured.action==config::OrderedTcpAction::bypass || step.action.kind==rules::ProgramActionKind::bypass)
+                    out.action="bypass";
                 return {};
-            case rules::ProgramActionKind::bypass:
-                return std::unexpected("bypass requires kernel pre-match");
+            }
             case rules::ProgramActionKind::reject:
                 out.route_label="rule:"+std::to_string(next->rule_index+1);
                 out.action="reject"; out.outbound="reject";
@@ -323,7 +327,8 @@ auto nexus_rule_explain(int argc,char** argv) -> int {
         dns_outcome=std::move(*dns_res);
     }
     ExplainOutcome out{};
-    auto ordered=snapshot->ordered && (context->input.network==rules::Network::tcp || snapshot->ordered->udp);
+    auto ordered=snapshot->ordered && (context->input.network==rules::Network::tcp ||
+        context->input.network==rules::Network::icmp || snapshot->ordered->udp);
     auto result=ordered ? explain_ordered(*config,*snapshot,*context,out) : explain_indexed(*config,*snapshot,*context,out);
     if (!result) return fail(result.error());
     if (context->oneline) {

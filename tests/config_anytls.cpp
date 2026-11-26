@@ -11,15 +11,18 @@ namespace {
 authentication { password-file "/tmp/password"; }
 tls { server-name "remote.test"; ca-file "/tmp/ca"; verify #true; }
 )";
-    auto document(std::string_view options={},std::string_view extra={},std::string_view inbound=incoming) {
+    auto document(std::string_view options={},std::string_view extra_outbounds={},std::string_view inbound=incoming,std::string_view extra_top={}) {
         return config::parse_kdl(std::format(R"(schema-version 1
 role "server"
 inbounds {{ {} }}
-outbound "direct" type="direct"
-outbound "edge" type="anytls" {{ {} {} }}
+outbounds {{
+    outbound "direct" type="direct"
+    outbound "edge" type="anytls" {{ {} {} }}
+    {}
+}}
 {}
 routing {{ default-outbound "edge"; }}
-)",inbound,connection,options,extra));
+)",inbound,connection,options,extra_outbounds,extra_top));
     }
 }
 auto main() -> int {
@@ -43,8 +46,7 @@ detour "lower";
 server host="127.0.0.1" port=443;
 authentication { password-file "/tmp/password"; }
 tls { server-name "localhost"; ca-file "/tmp/ca"; verify #true; }
-}
-dns { server "dns" type="udp" host="127.0.0.1"; })");
+})",incoming,R"(dns { servers { server "dns" type="udp" host="127.0.0.1"; }; })");
     if (!configured || configured->default_outbound!=3 || configured->tunnel_count()!=2) {
         if (!configured) std::cerr<<configured.error()<<'\n';
         return 3;

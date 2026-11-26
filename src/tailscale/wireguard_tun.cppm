@@ -1,8 +1,10 @@
 export module tailscale.wireguard_tun;
 import std;
 import net.udp_socket;
-import tailscale.map_session;
+import tailscale.control;
 import tailscale.control_messages;
+import tailscale.magic_dns;
+import tailscale.map_session;
 import wireguard;
 
 export namespace tailscale::wireguard_tun {
@@ -15,10 +17,15 @@ export namespace tailscale::wireguard_tun {
         std::uint16_t relay_region = 0;
         bool discover_paths = false;
         std::optional<net::UdpEndpoint> stun_server;
+        std::optional<control::NodePublic> exit_node;
+        std::string_view exit_node_name;
+        bool exit_node_allow_lan_access = true;
+        std::span<const control_messages::Prefix> advertise_routes;
+        std::shared_ptr<magic_dns::Resolver> magic_dns;
     };
 
-    // One executor owns the control snapshot, port, device and route lease.
-    // A failed update withdraws the device and all peer permissions.
+    // Thread-safe WireGuard+TUN device wrapper for Tailscale control snapshots.
+    // A failed update withdraws the device, peer permissions, and MagicDNS records.
     class Device {
         struct Impl;
         std::unique_ptr<Impl> impl_;
@@ -53,6 +60,9 @@ export namespace tailscale::wireguard_tun {
         auto set_relay_wake(void(*)(void*) noexcept, void*) noexcept -> void;
         [[nodiscard]] auto watch_fds() const noexcept -> std::array<int, 2>;
         [[nodiscard]] auto has_active_peers() const noexcept -> bool;
+        [[nodiscard]] auto using_exit_node() const noexcept -> bool;
+        [[nodiscard]] auto lan_bypass_routes() const -> std::vector<control_messages::Prefix>;
+        [[nodiscard]] auto magic_dns() const noexcept -> std::shared_ptr<magic_dns::Resolver>;
         auto next_relay_packet() -> std::optional<RelayPacket>;
         auto valid_relay_packet(RelayPacket const&) const noexcept -> bool;
         auto deliver_relay(wireguard::Key const&, std::span<const std::uint8_t>) -> bool;

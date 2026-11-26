@@ -85,30 +85,33 @@ int main() {
         {RuleSet{{{"domain","special.example"},{"ip-cidr","10.0.0.0/8"}},2},1},
         {RuleSet{{{"domain-suffix","example.org"}},2},2}
     };
+    std::vector<ProgramRule> prog_rules{
+        {RuleSet{{{"domain","special.example"},{"ip-cidr","10.0.0.0/8"}},2},{ProgramActionKind::route,1}},
+        {RuleSet{{{"domain-suffix","example.org"}},2},{ProgramActionKind::route,2}},
+        {RuleSet{{},2},{ProgramActionKind::route,0}}
+    };
     auto old=RouteMatcher::compile(legacy_rules,0,3);
-    auto bridge=LegacyRouteProgram::compile(legacy_rules,0,3);
-    if(!old || !bridge)return 17;
+    auto unified=RouteProgram::compile(prog_rules,3);
+    if(!old || !unified)return 17;
     for(auto domain:{"special.example","other.example","www.example.org"}) {
-        auto prior=old->preflight({.domain=domain,.port=443,.network=Network::tcp});
-        auto adapted=bridge->preflight_program({.explicit_domain=domain,.port=443,.network=Network::tcp});
-        if(!prior || !adapted || *prior!=*adapted)return 18;
         for(auto address:{"10.1.2.3","192.0.2.4","::ffff:10.2.3.4"}) {
             auto expected=old->match({.domain=domain,.ip=address,.port=443,.network=Network::tcp});
-            auto actual=bridge->next({.explicit_domain=domain,.ip=address,.port=443,.network=Network::tcp});
-            auto compatible=bridge->match({.domain=domain,.ip=address,.port=443,.network=Network::tcp});
-            if(!expected || !actual || !compatible || *compatible!=*expected || actual->action.kind!=ProgramActionKind::route || actual->action.outbound!=*expected)return 19;
+            auto actual=unified->next({.explicit_domain=domain,.ip=address,.port=443,.network=Network::tcp});
+            if(!expected || !actual || !*actual || (**actual).action.kind!=ProgramActionKind::route || (**actual).action.outbound!=*expected)return 19;
         }
     }
-    if(bridge->next({},legacy_rules.size()+1))return 20;
-    std::vector<RouteRule> metadata_rules{{RuleSet{{{"source-ip-cidr","192.0.2.0/24"},{"auth-user","alice"},{"inbound","local"}},2},1}};
-    auto metadata=LegacyRouteProgram::compile(metadata_rules,0,2,SourceMetadata::provided,"local",AuthMetadata::provided);
-    if(!metadata || !metadata->needs_source() || !metadata->needs_auth_user() || metadata->inbound()!="local" ||
-        metadata->next({.inbound="other"}) || metadata->preflight({.inbound="other"}))return 21;
-    auto metadata_result=metadata->next({.source_ip="198.51.100.1",.auth_user="bob"});
-    if(!metadata_result || metadata_result->action.outbound!=1)return 22;
-    auto empty=LegacyRouteProgram::compile({},2,3);
-    if(!empty || !empty->match({}) || *empty->match({})!=2 || !empty->preflight(MatchInput{}) ||
-        *empty->preflight(MatchInput{})!=std::optional<std::size_t>{2})return 23;
+    if(unified->next({},prog_rules.size()+1))return 20;
+    std::vector<ProgramRule> metadata_rules{
+        {RuleSet{{{"source-ip-cidr","192.0.2.0/24"},{"auth-user","alice"},{"inbound","local"}},2},{ProgramActionKind::route,1}},
+        {RuleSet{{},2},{ProgramActionKind::route,0}}
+    };
+    auto metadata=RouteProgram::compile(metadata_rules,2);
+    if(!metadata)return 21;
+    auto metadata_result=metadata->next({.source_ip="198.51.100.1",.inbound="local",.auth_user="bob"});
+    if(!metadata_result || !*metadata_result || (**metadata_result).action.outbound!=1)return 22;
+    auto empty=RouteProgram::compile({},3);
+    auto empty_step=empty ? empty->next({}) : std::expected<std::optional<ProgramStep>,Error>(std::unexpected(Error{}));
+    if(!empty || !empty_step || empty_step->has_value())return 23;
     std::vector<ProgramRule> deferred{
         {RuleSet{{{"ip-cidr","10.0.0.0/8"},{"domain","yes.example"}},2},{ProgramActionKind::route,1}},
         {RuleSet{{},2},{ProgramActionKind::sniff}}
@@ -188,12 +191,15 @@ int main() {
         auto nx_mm=MmapMatcher::open_bytes(std::move(*nx_bin));
         if(!nx_mm)return 42;
         auto nx_ptr=std::make_shared<MmapMatcher const>(std::move(*nx_mm));
-        std::vector<RouteRule> nx_rules{{RuleSet{{},2},1,{},nx_ptr}};
-        auto nx_prog=LegacyRouteProgram::compile(nx_rules,0,2);
+        std::vector<ProgramRule> nx_rules{
+            {RuleSet{{},2},{ProgramActionKind::route,1},DomainSource::explicit_target,nx_ptr},
+            {RuleSet{{},2},{ProgramActionKind::route,0}}
+        };
+        auto nx_prog=RouteProgram::compile(nx_rules,2);
         if(!nx_prog)return 43;
-        auto hit=nx_prog->match({.domain="api.nxmm.example"});
-        auto miss=nx_prog->match({.domain="other.invalid"});
-        if(!hit || *hit!=1 || !miss || *miss!=0)return 44;
+        auto hit=nx_prog->next({.explicit_domain="api.nxmm.example"});
+        auto miss=nx_prog->next({.explicit_domain="other.invalid"});
+        if(!hit || !*hit || (**hit).action.outbound!=1 || !miss || !*miss || (**miss).action.outbound!=0)return 44;
     }
     std::cout << "HTTP/TLS sniff metadata and ordered rule actions passed\n";
 }

@@ -53,11 +53,13 @@ namespace {
         auto ok_kdl = config::parse_kdl(R"(
             schema-version 1
             role "client"
-            inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-            outbound "direct" type="direct"
-            outbound "s4" type="socks4" { server host="127.0.0.1" port=1081; userid "alice"; }
-            outbound "s4a" type="socks4a" { server host="127.0.0.1" port=1082; userid "bob"; }
-            outbound "sel" type="selector" { member "s4"; member "s4a"; selected "s4"; }
+            inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+            outbounds {
+                outbound "direct" type="direct"
+                outbound "s4" type="socks4" { server host="127.0.0.1" port=1081; userid "alice"; }
+                outbound "s4a" type="socks4a" { server host="127.0.0.1" port=1082; userid "bob"; }
+                outbound "sel" type="selector" { member "s4"; member "s4a"; selected "s4"; }
+            }
             routing { default-outbound "sel"; }
         )");
         expect(ok_kdl.has_value() && ok_kdl->tcp_proxy_outbounds.size() == 2 &&
@@ -69,9 +71,11 @@ namespace {
         auto bad_kdl = config::parse_kdl(R"(
             schema-version 1
             role "client"
-            inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-            outbound "direct" type="direct"
-            outbound "s4" type="socks4" { server host="127.0.0.1" port=1081; authentication { username "a"; password-file "/tmp/p"; }; }
+            inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+            outbounds {
+                outbound "direct" type="direct"
+                outbound "s4" type="socks4" { server host="127.0.0.1" port=1081; authentication { username "a"; password-file "/tmp/p"; }; }
+            }
             routing { default-outbound "s4"; }
         )");
         expect(!bad_kdl.has_value(), "149A: reject password authentication on socks4");
@@ -81,12 +85,14 @@ namespace {
         auto ok = config::parse_kdl(R"(
             schema-version 1
             role "client"
-            inbound "fudp" type="fixed-udp" {
-                listen host="127.0.0.1" port=15353
-                target host="127.0.0.1" port=5353
-                idle-timeout-ms 15000
+            inbounds {
+                inbound "fudp" type="fixed-udp" {
+                    listen host="127.0.0.1" port=15353
+                    target host="127.0.0.1" port=5353
+                    idle-timeout-ms 15000
+                }
             }
-            outbound "direct" type="direct"
+            outbounds { outbound "direct" type="direct"; }
             routing { default-outbound "direct"; }
         )");
         expect(ok.has_value() && ok->inbounds.size() == 1 &&
@@ -98,8 +104,8 @@ namespace {
         auto bad = config::parse_kdl(R"(
             schema-version 1
             role "client"
-            inbound "fudp" type="fixed-udp" { listen host="127.0.0.1" port=15353; idle-timeout-ms 500; }
-            outbound "direct" type="direct"
+            inbounds { inbound "fudp" type="fixed-udp" { listen host="127.0.0.1" port=15353; idle-timeout-ms 500; }; }
+            outbounds { outbound "direct" type="direct"; }
             routing { default-outbound "direct"; }
         )");
         expect(!bad.has_value(), "149B: reject missing target and low idle-timeout-ms");
@@ -134,45 +140,49 @@ namespace {
         auto ok = config::parse_kdl(R"(
             schema-version 1
             role "client"
-            inbound "tr-ws" type="trojan" {
-                listen host="127.0.0.1" port=14443
-                authentication { user "u1" password-file="/tmp/p1"; }
-                tls { certificate-file "/tmp/c.pem"; private-key-file "/tmp/k.pem"; }
-                transport "websocket" { path "/ws"; host "example.com"; }
+            inbounds {
+                inbound "tr-ws" type="trojan" {
+                    listen host="127.0.0.1" port=14443
+                    authentication { user "u1" password-file="/tmp/p1"; }
+                    tls { certificate-file "/tmp/c.pem"; private-key-file "/tmp/k.pem"; }
+                    transport "websocket" { path "/ws"; host "example.com"; }
+                }
+                inbound "at-grpc" type="anytls" {
+                    listen host="127.0.0.1" port=14444
+                    authentication { user "u1" password-file="/tmp/p1"; }
+                    tls { certificate-file "/tmp/c.pem"; private-key-file "/tmp/k.pem"; }
+                    transport "grpc" { service-name "tun"; authority "example.com"; }
+                }
             }
-            inbound "at-grpc" type="anytls" {
-                listen host="127.0.0.1" port=14444
-                authentication { user "u1" password-file="/tmp/p1"; }
-                tls { certificate-file "/tmp/c.pem"; private-key-file "/tmp/k.pem"; }
-                transport "grpc" { service-name "tun"; authority "example.com"; }
-            }
-            outbound "direct" type="direct"
-            outbound "tr-hu" type="trojan" {
-                server host="127.0.0.1" port=14443
-                authentication { password-file "/tmp/p1"; }
-                tls { server-name "example.com"; ca-file "/tmp/ca.pem"; verify #true; }
-                transport "httpupgrade" { path "/hu"; host "example.com"; }
-            }
-            outbound "at-ws" type="anytls" {
-                server host="127.0.0.1" port=14444
-                authentication { password-file "/tmp/p1"; }
-                tls { server-name "example.com"; ca-file "/tmp/ca.pem"; verify #true; }
-                transport "websocket" { path "/ws"; host "example.com"; }
-            }
-            outbound "sn5" type="snell" {
-                server host="127.0.0.1" port=16160
-                version 5
-                psk-file "/tmp/psk"
-            }
-            outbound "hy2-hop" type="hysteria2" {
-                server host="127.0.0.1" port=20000
-                authentication { password-file "/tmp/p1"; }
-                tls { server-name "example.com"; ca-file "/tmp/ca.pem"; verify #true; }
-                quic { ports "20001-20005,20010"; hop-interval-ms 1000; }
-            }
-            outbound "sel" type="selector" {
-                member "tr-hu"; member "at-ws"; member "sn5"; member "hy2-hop";
-                selected "tr-hu"
+            outbounds {
+                outbound "direct" type="direct"
+                outbound "tr-hu" type="trojan" {
+                    server host="127.0.0.1" port=14443
+                    authentication { password-file "/tmp/p1"; }
+                    tls { server-name "example.com"; ca-file "/tmp/ca.pem"; verify #true; }
+                    transport "httpupgrade" { path "/hu"; host "example.com"; }
+                }
+                outbound "at-ws" type="anytls" {
+                    server host="127.0.0.1" port=14444
+                    authentication { password-file "/tmp/p1"; }
+                    tls { server-name "example.com"; ca-file "/tmp/ca.pem"; verify #true; }
+                    transport "websocket" { path "/ws"; host "example.com"; }
+                }
+                outbound "sn5" type="snell" {
+                    server host="127.0.0.1" port=16160
+                    version 5
+                    psk-file "/tmp/psk"
+                }
+                outbound "hy2-hop" type="hysteria2" {
+                    server host="127.0.0.1" port=20000
+                    authentication { password-file "/tmp/p1"; }
+                    tls { server-name "example.com"; ca-file "/tmp/ca.pem"; verify #true; }
+                    quic { ports "20001-20005,20010"; hop-interval-ms 1000; }
+                }
+                outbound "sel" type="selector" {
+                    member "tr-hu"; member "at-ws"; member "sn5"; member "hy2-hop";
+                    selected "tr-hu"
+                }
             }
             routing { default-outbound "sel"; }
         )");
@@ -238,8 +248,8 @@ namespace {
             schema-version 1
             role "client"
             control http-listen="127.0.0.1:19090" dashboard-root="/tmp" metrics=#true
-            inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-            outbound "direct" type="direct"
+            inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+            outbounds { outbound "direct" type="direct"; }
             routing {
                 tcp-program sniff-timeout-ms=500 unknown="skip" udp=#true {
                     rule action="route-options" udp-adaptive-timeout=#true { network "udp"; }

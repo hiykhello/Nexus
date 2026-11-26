@@ -58,12 +58,103 @@ namespace config {
             if (pfx > (v6 ? 128u : 32u)) return std::nullopt;
             return ip;
         }
+        auto zero_host_bits(std::span<std::uint8_t const> bytes, unsigned bits) noexcept -> bool {
+            if (bits > bytes.size() * 8u) return false;
+            std::size_t full = bits / 8u, rem = bits % 8u;
+            if (rem != 0 && (bytes[full] & static_cast<std::uint8_t>((1u << (8u - rem)) - 1u)) != 0) return false;
+            for (std::size_t i = full + (rem != 0 ? 1u : 0u); i < bytes.size(); ++i)
+                if (bytes[i] != 0) return false;
+            return true;
+        }
+
+        auto parse_allowed_ip(std::string_view text) -> bool {
+            auto slash = text.find('/');
+            if (slash == std::string_view::npos) return false;
+            auto ip = text.substr(0, slash);
+            auto ps = text.substr(slash + 1);
+            unsigned pfx = 0;
+            auto [end, ec] = std::from_chars(ps.data(), ps.data() + ps.size(), pfx);
+            if (ec != std::errc{} || end != ps.data() + ps.size()) return false;
+            if (auto v4 = dns_ipv4(ip)) return pfx <= 32u && zero_host_bits(*v4, pfx);
+            if (auto v6 = dns_ipv6(ip)) return pfx <= 128u && zero_host_bits(*v6, pfx);
+            return false;
+        }
+
+        auto parse_reserved(Node const& child, std::array<std::uint8_t, 3>& reserved, bool& warp)
+            -> std::expected<void, std::string> {
+            if (child.tag || !child.properties.empty() || !child.children.empty())
+                return error("invalid WireGuard reserved");
+            if (child.arguments.size() == 1 && !child.arguments[0].tag) {
+                auto* s = std::get_if<std::string>(&child.arguments[0].data);
+                auto b = s ? decode_reserved_b64(*s) : std::nullopt;
+                if (!b) return error("WireGuard reserved string must be 4-char base64");
+                reserved = *b; warp = true;
+                return {};
+            }
+            if (child.arguments.size() == 3) {
+                for (std::size_t i = 0; i < 3; ++i) {
+                    auto v = child.arguments[i].tag ? std::nullopt : integer(child.arguments[i]);
+                    if (!v || *v > 255) return error("WireGuard reserved bytes must be 0..255");
+                    reserved[i] = static_cast<std::uint8_t>(*v);
+                }
+                warp = true;
+                return {};
+            }
+            return error("WireGuard reserved requires 3 integers or 1 base64 string");
+        }
+
+        auto parse_peer(Node const& node) -> std::expected<WireGuardPeer, std::string> {
+            if (node.tag || !node.arguments.empty() || !node.properties.empty() || node.children.empty())
+                return error("invalid WireGuard peer block");
+            WireGuardPeer peer;
+            bool server = false, pub = false, psk = false, res = false, ka = false;
+            for (auto const& child : node.children) {
+                if (child.name == "server") {
+                    if (std::exchange(server, true)) return error("duplicate WireGuard peer server");
+                    if (auto ok = parse_endpoint(child, peer.host, peer.port); !ok) return std::unexpected(ok.error());
+                } else if (child.name == "peer-public-key-file" || child.name == "public-key-file") {
+                    auto v = scalar(child);
+                    if (std::exchange(pub, true) || !v || !absolute_path(*v))
+                        return error("WireGuard peer public-key-file must be absolute");
+                    peer.peer_public_key_file = *v;
+                } else if (child.name == "preshared-key-file") {
+                    auto v = scalar(child);
+                    if (std::exchange(psk, true) || !v || !absolute_path(*v))
+                        return error("WireGuard peer preshared-key-file must be absolute");
+                    peer.preshared_key_file = *v;
+                } else if (child.name == "allowed-ips") {
+                    if (child.tag || child.arguments.empty() || !child.properties.empty() || !child.children.empty())
+                        return error("WireGuard peer allowed-ips requires one or more CIDR strings");
+                    for (auto const& arg : child.arguments) {
+                        auto* s = arg.tag ? nullptr : std::get_if<std::string>(&arg.data);
+                        if (!s || !parse_allowed_ip(*s) || peer.allowed_ips.size() >= 64)
+                            return error("invalid WireGuard peer allowed-ips CIDR");
+                        peer.allowed_ips.push_back(*s);
+                    }
+                } else if (child.name == "reserved") {
+                    if (std::exchange(res, true)) return error("duplicate WireGuard peer reserved");
+                    if (auto ok = parse_reserved(child, peer.reserved, peer.warp); !ok) return std::unexpected(ok.error());
+                } else if (child.name == "persistent-keepalive") {
+                    auto v = integer(child);
+                    if (std::exchange(ka, true) || !v || *v > 65535)
+                        return error("WireGuard peer persistent-keepalive must be 0..65535");
+                    peer.keepalive_s = static_cast<std::uint16_t>(*v);
+                } else {
+                    return error("unsupported WireGuard peer field: " + child.name);
+                }
+            }
+            if (!server || !pub)
+                return error("WireGuard peer requires server and peer-public-key-file");
+            if (peer.allowed_ips.empty()) peer.allowed_ips = {"0.0.0.0/0", "::/0"};
+            return peer;
+        }
     }
 
     auto parse_wireguard_outbound(Node const& node) -> std::expected<WireGuardOutbound, std::string> {
         WireGuardOutbound cfg;
         bool server = false, priv = false, pub = false, psk = false, v4_seen = false, v6_seen = false;
         bool mtu_seen = false, ka_seen = false, res_seen = false, to_seen = false;
+        bool od_seen = false, idle_seen = false;
         for (auto const& child : node.children) {
             if (child.name == "server") {
                 if (server) return error("duplicate WireGuard server");
@@ -81,6 +172,20 @@ namespace config {
                 auto v = scalar(child);
                 if (psk || !v || !absolute_path(*v)) return error("WireGuard preshared-key-file must be absolute");
                 cfg.preshared_key_file = *v; psk = true;
+            } else if (child.name == "peer") {
+                if (cfg.peers.size() >= 64) return error("too many WireGuard peers (max 64)");
+                auto parsed = parse_peer(child);
+                if (!parsed) return std::unexpected(parsed.error());
+                cfg.peers.push_back(std::move(*parsed));
+            } else if (child.name == "on-demand") {
+                auto v = boolean(child);
+                if (std::exchange(od_seen, true) || !v) return error("invalid WireGuard on-demand");
+                cfg.on_demand = *v;
+            } else if (child.name == "idle-timeout") {
+                auto v = integer(child);
+                if (std::exchange(idle_seen, true) || !v || *v < 1 || *v > 86400)
+                    return error("WireGuard idle-timeout must be 1..86400 seconds");
+                cfg.idle_timeout_s = static_cast<std::uint16_t>(*v);
             } else if (child.name == "local-address") {
                 auto v = scalar(child);
                 auto ip = v ? strip_cidr(*v) : std::nullopt;
@@ -93,21 +198,8 @@ namespace config {
                     cfg.local_v6 = *a6; cfg.has_v6 = true; v6_seen = true;
                 } else return error("invalid WireGuard local-address");
             } else if (child.name == "reserved") {
-                if (res_seen || child.tag || !child.properties.empty() || !child.children.empty())
-                    return error("invalid WireGuard reserved");
-                if (child.arguments.size() == 1 && !child.arguments[0].tag) {
-                    auto* s = std::get_if<std::string>(&child.arguments[0].data);
-                    auto b = s ? decode_reserved_b64(*s) : std::nullopt;
-                    if (!b) return error("WireGuard reserved string must be 4-char base64");
-                    cfg.reserved = *b; cfg.warp = true; res_seen = true;
-                } else if (child.arguments.size() == 3) {
-                    for (std::size_t i = 0; i < 3; ++i) {
-                        auto v = child.arguments[i].tag ? std::nullopt : integer(child.arguments[i]);
-                        if (!v || *v > 255) return error("WireGuard reserved bytes must be 0..255");
-                        cfg.reserved[i] = static_cast<std::uint8_t>(*v);
-                    }
-                    cfg.warp = true; res_seen = true;
-                } else return error("WireGuard reserved requires 3 integers or 1 base64 string");
+                if (std::exchange(res_seen, true)) return error("duplicate WireGuard reserved");
+                if (auto ok = parse_reserved(child, cfg.reserved, cfg.warp); !ok) return std::unexpected(ok.error());
             } else if (child.name == "mtu") {
                 auto v = integer(child);
                 if (mtu_seen || !v || *v < 68 || *v > 1500) return error("WireGuard mtu must be 68..1500");
@@ -134,8 +226,21 @@ namespace config {
                 if (!*opt) return error("unsupported WireGuard outbound field: " + child.name);
             }
         }
-        if (!server || !priv || !pub)
+        if (!priv) return error("WireGuard outbound requires private-key-file");
+        if (!cfg.peers.empty()) {
+            if (server || pub || psk || res_seen || ka_seen)
+                return error("WireGuard cannot mix top-level peer fields with peer blocks");
+            auto const& first = cfg.peers.front();
+            cfg.host = first.host; cfg.port = first.port;
+            cfg.peer_public_key_file = first.peer_public_key_file;
+            cfg.preshared_key_file = first.preshared_key_file;
+            cfg.reserved = first.reserved; cfg.warp = first.warp;
+            cfg.keepalive_s = first.keepalive_s;
+        } else if (!server || !pub) {
             return error("WireGuard outbound requires server, private-key-file and peer-public-key-file");
+        }
+        if (cfg.detour && (cfg.peers.size() > 1 || cfg.on_demand))
+            return error("WireGuard detour is not supported with multi-peer or on-demand mode");
         if (cfg.tcp_options.tcp_configured()) return error("TCP-only dial options are not valid for WireGuard");
         if (!v4_seen && v6_seen) cfg.has_v4 = false;
         return cfg;

@@ -137,6 +137,7 @@ export namespace config {
 
     enum class OpenVpnTransport : std::uint8_t { udp, tcp };
     enum class OpenVpnCipher : std::uint8_t { aes_256_gcm, chacha20_poly1305 };
+    enum class OpenVpnTlsAuthMode : std::uint8_t { none, tls_auth, tls_crypt };
 
     struct OpenVpnOutbound {
         OpenVpnTransport transport = OpenVpnTransport::udp;
@@ -149,6 +150,10 @@ export namespace config {
         TlsFingerprint fingerprint = TlsFingerprint::native;
         std::string username;
         std::optional<std::string> password_file, static_key_file;
+        OpenVpnTlsAuthMode tls_auth_mode = OpenVpnTlsAuthMode::none;
+        std::int8_t key_direction = -1;
+        bool tls_auth_sha1 = false;
+        std::optional<std::string> client_cert_file, client_key_file;
         bool has_v4 = true;
         std::array<std::uint8_t, 4> local_v4{10, 8, 0, 2};
         bool has_v6 = false;
@@ -172,6 +177,9 @@ export namespace config {
         TlsFingerprint fingerprint = TlsFingerprint::native;
         std::string username, group, user_agent{"AnyConnect Linux_64 5.0"};
         std::optional<std::string> password_file, cookie_file;
+        std::optional<std::string> client_cert_file, client_key_file;
+        bool dtls = true;
+        bool dtls_fallback = true;
         bool has_v4 = true;
         std::array<std::uint8_t, 4> local_v4{10, 99, 0, 2};
         bool has_v6 = false;

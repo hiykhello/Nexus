@@ -144,8 +144,11 @@ namespace cli {
                 }
                 if (!replaced) {
                     auto grp = std::ranges::find(*base_doc, std::string_view("inbounds"), &glaze::KdlNode::name);
-                    if (grp != base_doc->end()) grp->children.push_back(std::move(in));
-                    else base_doc->push_back(canonical_in(std::move(in)));
+                    if (grp == base_doc->end()) {
+                        base_doc->push_back(glaze::KdlNode{.name = "inbounds"});
+                        grp = std::prev(base_doc->end());
+                    }
+                    grp->children.push_back(canonical_in(std::move(in)));
                 }
             }
             std::erase_if(*base_doc, [](auto const& n) { return n.name == "inbounds" && n.children.empty(); });

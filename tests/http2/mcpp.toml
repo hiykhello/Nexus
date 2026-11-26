@@ -21,7 +21,7 @@ uring-system.workspace = true
 sources = []
 
 [test]
-discover = ["http2_server.cpp", "http2_memory_budget.cpp", "nghttp2_memory.cpp", "window.cpp"]
+discover = ["http2_server.cpp", "http2_server_flow.cpp", "http2_memory_budget.cpp", "nghttp2_memory.cpp", "window.cpp"]
 
 [targets.http2-tls-server]
 kind = "bin"

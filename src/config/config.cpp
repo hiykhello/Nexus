@@ -90,27 +90,21 @@ namespace config {
         std::optional<Route> route;
         Config result; result.host_parallelism = detect_host_parallelism();
         std::vector<Node const*> nodes;
-        bool inbounds_block=false, outbounds_block=false, legacy_inbound=false, legacy_outbound=false;
+        bool inbounds_block=false, outbounds_block=false;
         for (auto const& node : *document) {
             if (node.name=="inbounds" || node.name=="outbounds") {
                 bool is_inbound=node.name=="inbounds";
                 auto& seen=is_inbound ? inbounds_block : outbounds_block;
-                bool legacy=is_inbound ? legacy_inbound : legacy_outbound;
-                if (seen || legacy || node.tag || !node.arguments.empty() || !node.properties.empty())
+                if (seen || node.tag || !node.arguments.empty() || !node.properties.empty())
                     return error("invalid or duplicate " + node.name + " block");
                 seen=true;
                 for (auto const& child : node.children) {
                     if (child.name!=(is_inbound ? "inbound" : "outbound")) return error("invalid child in " + node.name);
                     nodes.push_back(&child);
                 }
+            } else if (node.name=="inbound" || node.name=="outbound") {
+                return error("top-level " + node.name + " is removed; wrap in " + node.name + "s { ... }");
             } else {
-                if (node.name=="inbound") {
-                    if (inbounds_block) return error("cannot mix inbounds block and top-level inbound nodes");
-                    legacy_inbound=true;
-                } else if (node.name=="outbound") {
-                    if (outbounds_block) return error("cannot mix outbounds block and top-level outbound nodes");
-                    legacy_outbound=true;
-                }
                 nodes.push_back(&node);
             }
         }
@@ -417,9 +411,9 @@ namespace config {
         };
         if (auto valid=bind_outbound_dependencies(result,*direct,block); !valid) return std::unexpected(valid.error());
         if(!result.tailscale_outbounds.empty() &&
-           (result.workers!=1 || result.inbounds.size()!=1 ||
+           (result.workers==0 || result.workers>16 || result.inbounds.size()!=1 ||
             (result.inbounds.front().type!=Inbound::socks5 && result.inbounds.front().type!=Inbound::mixed)))
-            return error("Tailscale outbound requires one SOCKS5 or mixed inbound and one worker");
+            return error("Tailscale outbound requires 1..16 workers and one SOCKS5 or mixed inbound");
         if (auto valid=configure_tun_strict_route(result); !valid) return std::unexpected(valid.error());
         auto fallback=outbound(*route->default_outbound);
         if (!fallback || *fallback==1) return error("default-outbound must name a direct or tunnel outbound");

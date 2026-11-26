@@ -1,12 +1,15 @@
 module relay.hysteria2_host;
 import std;
 import corosio;
+import tls.ech_server;
+import tls.server_credential;
 import ngtcp2;
 namespace relay {
 auto Hysteria2Host::Worker::inherit(Server& routing,Server& parent,std::size_t index,std::size_t count,std::span<hysteria2::Password const> passwords,std::span<std::string const> names,config::Hysteria2Masquerade const& masquerade) -> Hysteria2Business {
     routing.inherit_routing(parent,index,count);return Hysteria2Business{routing,passwords,names,masquerade};
 }
-Hysteria2Host::Worker::Worker(Server& parent,std::size_t index,std::size_t count,std::span<hysteria2::Password const> passwords,std::span<std::string const> names,tls::ServerCredential const& credential,hysteria2::TransportOptions options,config::Hysteria2Masquerade const& masquerade) :hooks(inherit(routing,parent,index,count,passwords,names,masquerade)),listener(routing.executor_context(),hooks,credential,options) {
+Hysteria2Host::Worker::Worker(Server& parent,std::size_t index,std::size_t count,std::span<hysteria2::Password const> passwords,std::span<std::string const> names,tls::ServerCredential const* credential,std::shared_ptr<tls::AtomicServerCredential> atomic_credential,hysteria2::TransportOptions options,config::Hysteria2Masquerade const& masquerade,std::shared_ptr<tls::EchServerKeys const> ech_keys)
+    :hooks(inherit(routing,parent,index,count,passwords,names,masquerade)),listener(routing.executor_context(),hooks,credential,std::move(atomic_credential),options,std::move(ech_keys)) {
     hooks.udp_enabled=options.udp;hooks.listener=&listener;
 }
 Hysteria2Host::Worker::~Worker() {listener.stop();routing.stop();listener.maintain();}
@@ -43,7 +46,10 @@ auto Hysteria2Host::loop(Worker& worker) noexcept -> void {
     } catch(...) {Hysteria2RuntimeFailure failure{Hysteria2RuntimeFailure::Kind::unexpected};failure.exception=std::current_exception();record(std::move(failure));worker.listener.stop();worker.routing.stop();}
 }
 
-Hysteria2Host::Hysteria2Host(Server& parent,tls::ServerCredential const& credential,std::span<hysteria2::Password const> passwords,std::span<std::string const> names,hysteria2::TransportOptions options,config::Hysteria2Masquerade masquerade) :parent_(parent),credential_(credential),passwords_(passwords),names_(names),options_(options),masquerade_(std::move(masquerade)) {}
+Hysteria2Host::Hysteria2Host(Server& parent,tls::ServerCredential const& credential,std::span<hysteria2::Password const> passwords,std::span<std::string const> names,hysteria2::TransportOptions options,config::Hysteria2Masquerade masquerade,std::shared_ptr<tls::EchServerKeys const> ech_keys)
+    :parent_(parent),credential_(&credential),ech_keys_(std::move(ech_keys)),passwords_(passwords),names_(names),options_(options),masquerade_(std::move(masquerade)) {}
+Hysteria2Host::Hysteria2Host(Server& parent,std::shared_ptr<tls::AtomicServerCredential> atomic_credential,std::span<hysteria2::Password const> passwords,std::span<std::string const> names,hysteria2::TransportOptions options,config::Hysteria2Masquerade masquerade,std::shared_ptr<tls::EchServerKeys const> ech_keys)
+    :parent_(parent),atomic_credential_(std::move(atomic_credential)),ech_keys_(std::move(ech_keys)),passwords_(passwords),names_(names),options_(options),masquerade_(std::move(masquerade)) {}
 Hysteria2Host::~Hysteria2Host() {stop();}
 auto Hysteria2Host::start(std::uint16_t port,bool ipv6,unsigned count) -> std::expected<std::uint16_t,Hysteria2HostFailure> {
             auto local=ipv6 ? corosio::endpoint(corosio::ipv6_address::loopback(),port) :
@@ -57,7 +63,7 @@ auto Hysteria2Host::start(corosio::endpoint local,unsigned count) -> std::expect
             stop_=false;failed_=false;{std::lock_guard lock(failure_mutex_);failure_.reset();}std::uint16_t bound=local.port();
             try {
                 for(unsigned i=0;i<count;++i) {
-                    auto worker=std::make_unique<Worker>(parent_,i,count,passwords_,names_,credential_,options_,masquerade_);
+                    auto worker=std::make_unique<Worker>(parent_,i,count,passwords_,names_,credential_,atomic_credential_,options_,masquerade_,ech_keys_);
                     auto activated=worker->routing.activate_context();if(!activated)throw std::system_error(activated.error());
                     auto endpoint=corosio::endpoint(local,bound);
                     auto result=worker->listener.prepare(endpoint,count>1);

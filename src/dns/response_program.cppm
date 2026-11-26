@@ -57,7 +57,7 @@ export namespace dns {
         auto input=context;input.response_addresses.reset();
         auto question=policy::dns_question_truth(rule,name,type,input);
         if(!question)return std::optional<Truth>{};
-        if(*question==Truth::unknown && rule.match_response && rule.rule_set_needs_response && response) {
+        if(*question==Truth::unknown && rule.match_response && (rule.rule_set_needs_response || rule.inline_needs_response) && response) {
             if(!addresses) {
                 try {
                     std::optional<InputBudget::Lease> reservation;

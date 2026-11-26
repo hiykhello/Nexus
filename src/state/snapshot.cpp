@@ -9,11 +9,6 @@ namespace state {
                 name != "instance.lock" && !name.contains('/') && !name.contains('\\') && !name.contains('\0');
         }
 
-        auto matches(std::span<std::byte const> bytes, Magic const& magic) noexcept -> bool {
-            return bytes.size() >= magic.size() &&
-                std::ranges::equal(bytes.first(magic.size()), std::as_bytes(std::span(magic)));
-        }
-
         auto read_exact(NativeHandle fd, std::span<std::byte> bytes) -> std::expected<void, StateError> {
             auto got = read_handle(fd, bytes, Stage::read);
             if (!got) return std::unexpected(got.error());
@@ -39,25 +34,12 @@ namespace state {
             auto size_opt = handle_size(fd->get(), Stage::open);
             if (!size_opt) return std::unexpected(size_opt.error());
             auto size = *size_opt;
-            if (size < spec.envelope.magic.size() || size > std::uint64_t(spec.envelope.max_payload) + header_bytes)
+            if (size < header_bytes || size > std::uint64_t(spec.envelope.max_payload) + header_bytes)
                 return std::unexpected(StateError{Stage::format});
 
             EncodedHeader prefix{};
-            auto initial = std::span(prefix).first<6>();
-            auto begun = read_exact(fd->get(), initial);
-            if (!begun) return std::unexpected(begun.error());
-            if (spec.legacy_magic && matches(initial, *spec.legacy_magic)) {
-                if (size > spec.envelope.max_payload) return std::unexpected(StateError{Stage::format});
-                Bytes legacy(static_cast<std::size_t>(size));
-                std::ranges::copy(initial, legacy.begin());
-                auto read = read_exact(fd->get(), std::span(legacy).subspan(initial.size()));
-                if (!read) return std::unexpected(read.error());
-                auto end = expect_eof(fd->get());
-                if (!end) return std::unexpected(end.error());
-                return SnapshotData{{}, std::move(legacy), true};
-            }
-            auto rest = read_exact(fd->get(), std::span(prefix).subspan(initial.size()));
-            if (!rest) return std::unexpected(rest.error());
+            auto read_hdr = read_exact(fd->get(), prefix);
+            if (!read_hdr) return std::unexpected(read_hdr.error());
             auto header = decode_header(prefix, spec.envelope);
             if (!header) return std::unexpected(header.error());
             if (size != std::uint64_t(header->payload_bytes) + header_bytes)
@@ -91,7 +73,7 @@ namespace state {
     auto validate_snapshot(SnapshotSpec const& spec) noexcept -> std::expected<void, StateError> {
         if (!name_valid(spec.name) || !name_valid(spec.staging_name) || spec.name == spec.staging_name ||
             spec.envelope.schema_version == 0 || spec.envelope.tier < Tier::authority ||
-            spec.envelope.tier > Tier::secret || spec.legacy_magic == spec.envelope.magic)
+            spec.envelope.tier > Tier::secret)
             return std::unexpected(StateError{Stage::validate});
         return {};
     }

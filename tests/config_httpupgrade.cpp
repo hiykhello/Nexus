@@ -11,12 +11,14 @@ inbounds {{ vless "edge-in" {{
  tls {{ certificate-file "/tmp/cert"; private-key-file "/tmp/key"; }}
  {} {}
 }} }}
+outbounds {{
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{
  server host="remote.test" port=443;
  authentication {{ uuid-file "/tmp/uuid"; }}
  tls {{ server-name "remote.test"; ca-file "/tmp/ca"; verify #true; }}
  {} {}
+}}
 }}
 routing {{ default-outbound "edge"; }}
 )",incoming,inbound_extra,outgoing,outbound_extra));

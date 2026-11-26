@@ -144,12 +144,14 @@ namespace {
     auto parse(std::string_view mode,std::string_view protocol,std::string_view extra) {
         return config::parse_kdl(std::format(R"kdl(schema-version 1
 role "client"
-inbound "entry" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
-outbound "direct" type="direct"
-outbound "edge" type="vless" {{
-    server host="127.0.0.1" port=9000
-    authentication {{ uuid-file "/private/uuid"; }}
-    transport "xhttp" {{ mode "{}"; protocol "{}"; {}; }}
+inbounds {{ inbound "entry" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }} }}
+outbounds {{
+    outbound "direct" type="direct"
+    outbound "edge" type="vless" {{
+        server host="127.0.0.1" port=9000
+        authentication {{ uuid-file "/private/uuid"; }}
+        transport "xhttp" {{ mode "{}"; protocol "{}"; {}; }}
+    }}
 }}
 routing {{ default-outbound "edge"; }}
 )kdl",mode,protocol,extra));

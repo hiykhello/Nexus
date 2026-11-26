@@ -171,48 +171,52 @@ namespace {
         auto ok_naive = config::parse_kdl(R"(
             schema-version 1
             role "client"
-            dns { server "boot" type="udp" host="1.1.1.1" port=53; final "boot"; }
-            inbound "n-in" type="naive" {
-                listen host="127.0.0.1" port=8443
-                protocol "both"
-                tls { certificate-file "/etc/nexus/cert.pem"; private-key-file "/etc/nexus/key.pem"; }
-                authentication {
-                    user "alice" username="alice" password-file="/tmp/pw"
+            dns { servers { server "boot" type="udp" host="1.1.1.1" port=53; }; final "boot"; }
+            inbounds {
+                inbound "n-in" type="naive" {
+                    listen host="127.0.0.1" port=8443
+                    protocol "both"
+                    tls { certificate-file "/etc/nexus/cert.pem"; private-key-file "/etc/nexus/key.pem"; }
+                    authentication {
+                        user "alice" username="alice" password-file="/tmp/pw"
+                    }
+                    padding #true
+                    fallback-status 200
+                    handshake-timeout-ms 5000
+                    idle-timeout-ms 30000
+                    native-bytes 4194304
                 }
-                padding #true
-                fallback-status 200
-                handshake-timeout-ms 5000
-                idle-timeout-ms 30000
-                native-bytes 4194304
             }
-            outbound "n-out-h3" type="naive" {
-                protocol "h3"
-                server host="naive.example.com" port=443
-                authentication username="alice" password-file="/tmp/pw"
-                tls {
-                    server-name "naive.example.com"
-                    ca-file "/etc/nexus/ca.pem"
-                    fingerprint "chrome"
-                    verify #true
+            outbounds {
+                outbound "n-out-h3" type="naive" {
+                    protocol "h3"
+                    server host="naive.example.com" port=443
+                    authentication username="alice" password-file="/tmp/pw"
+                    tls {
+                        server-name "naive.example.com"
+                        ca-file "/etc/nexus/ca.pem"
+                        fingerprint "chrome"
+                        verify #true
+                    }
+                    padding #true
+                    extra-header "X-Probe" "1"
+                    max-sessions 4
+                    bootstrap-resolver "boot"
                 }
-                padding #true
-                extra-header "X-Probe" "1"
-                max-sessions 4
-                bootstrap-resolver "boot"
-            }
-            outbound "n-out-h2" type="naive" {
-                protocol "h2"
-                server host="127.0.0.1" port=8443
-                authentication username="alice" password-file="/tmp/pw"
-                tls {
-                    server-name "localhost"
-                    ca-file "/etc/nexus/ca.pem"
-                    verify #true
+                outbound "n-out-h2" type="naive" {
+                    protocol "h2"
+                    server host="127.0.0.1" port=8443
+                    authentication username="alice" password-file="/tmp/pw"
+                    tls {
+                        server-name "localhost"
+                        ca-file "/etc/nexus/ca.pem"
+                        verify #true
+                    }
+                    tcp-fast-open #true
                 }
-                tcp-fast-open #true
+                outbound "direct" type="direct"
+                outbound "grp" type="selector" { member "n-out-h3"; member "n-out-h2"; selected "n-out-h3"; }
             }
-            outbound "direct" type="direct"
-            outbound "grp" type="selector" { member "n-out-h3"; member "n-out-h2"; selected "n-out-h3"; }
             routing { default-outbound "grp"; }
         )");
         expect(ok_naive.has_value(), ok_naive ? "151B: naive KDL ok" : ("151B: naive KDL failed: " + ok_naive.error()));
@@ -232,43 +236,47 @@ namespace {
         auto ok_http = config::parse_kdl(R"(
             schema-version 1
             role "client"
-            dns { server "boot" type="udp" host="1.1.1.1" port=53; final "boot"; }
-            inbound "h-in" type="http" {
-                listen host="127.0.0.1" port=8444
-                authentication "password" username="u" password-file="/tmp/pw"
-                tls {
-                    certificate-file "/etc/nexus/cert.pem"
-                    private-key-file "/etc/nexus/key.pem"
-                }
-                http2 #true
-                http3 #true
-                connect-udp #true
-            }
-            outbound "hc-h3" type="http-connect" {
-                http-version "h3"
-                server host="proxy.example.com" port=443
-                authentication username="u" password-file="/tmp/pw"
-                udp #true
-                tls {
-                    server-name "proxy.example.com"
-                    ca-file "/etc/nexus/ca.pem"
-                    fingerprint "chrome"
-                    verify #true
-                }
-                bootstrap-resolver "boot"
-            }
-            outbound "hc-auto" type="http-connect" {
-                http-version "auto"
-                server host="127.0.0.1" port=8444
-                tls {
-                    server-name "localhost"
-                    ca-file "/etc/nexus/ca.pem"
-                    fingerprint "firefox"
-                    verify #true
+            dns { servers { server "boot" type="udp" host="1.1.1.1" port=53; }; final "boot"; }
+            inbounds {
+                inbound "h-in" type="http" {
+                    listen host="127.0.0.1" port=8444
+                    authentication "password" username="u" password-file="/tmp/pw"
+                    tls {
+                        certificate-file "/etc/nexus/cert.pem"
+                        private-key-file "/etc/nexus/key.pem"
+                    }
+                    http2 #true
+                    http3 #true
+                    connect-udp #true
                 }
             }
-            outbound "direct" type="direct"
-            outbound "pool" type="selector" { member "hc-h3"; member "hc-auto"; selected "hc-h3"; }
+            outbounds {
+                outbound "hc-h3" type="http-connect" {
+                    http-version "h3"
+                    server host="proxy.example.com" port=443
+                    authentication username="u" password-file="/tmp/pw"
+                    udp #true
+                    tls {
+                        server-name "proxy.example.com"
+                        ca-file "/etc/nexus/ca.pem"
+                        fingerprint "chrome"
+                        verify #true
+                    }
+                    bootstrap-resolver "boot"
+                }
+                outbound "hc-auto" type="http-connect" {
+                    http-version "auto"
+                    server host="127.0.0.1" port=8444
+                    tls {
+                        server-name "localhost"
+                        ca-file "/etc/nexus/ca.pem"
+                        fingerprint "firefox"
+                        verify #true
+                    }
+                }
+                outbound "direct" type="direct"
+                outbound "pool" type="selector" { member "hc-h3"; member "hc-auto"; selected "hc-h3"; }
+            }
             routing { default-outbound "pool"; }
         )");
         expect(ok_http.has_value(), ok_http ? "151A: modern HTTP KDL ok" : ("151A: modern HTTP KDL failed: " + ok_http.error()));
@@ -286,64 +294,74 @@ namespace {
         // Validation negative tests
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
-            inbound "h" type="http" { listen host="127.0.0.1" port=8080; authentication "none"; http2 #true; }
-            outbound "d" type="direct"; routing { default-outbound "d"; }
+            inbounds { inbound "h" type="http" { listen host="127.0.0.1" port=8080; authentication "none"; http2 #true; }; }
+            outbounds { outbound "d" type="direct"; }; routing { default-outbound "d"; }
         )").has_value(), "151A: reject http2 without tls on http inbound");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
-            inbound "h" type="http" {
-                listen host="127.0.0.1" port=8443; authentication "none"
-                tls { certificate-file "/etc/c.pem"; private-key-file "/etc/k.pem"; }
-                http2 #true; connect-udp #true
+            inbounds {
+                inbound "h" type="http" {
+                    listen host="127.0.0.1" port=8443; authentication "none"
+                    tls { certificate-file "/etc/c.pem"; private-key-file "/etc/k.pem"; }
+                    http2 #true; connect-udp #true
+                }
             }
-            outbound "d" type="direct"; routing { default-outbound "d"; }
+            outbounds { outbound "d" type="direct"; }; routing { default-outbound "d"; }
         )").has_value(), "151A: reject connect-udp without http3 #true");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
-            inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-            outbound "hc" type="http-connect" {
-                http-version "h2"; server host="127.0.0.1" port=8443; udp #true
-                tls { server-name "localhost"; ca-file "/etc/ca.pem"; verify #true; }
+            inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+            outbounds {
+                outbound "hc" type="http-connect" {
+                    http-version "h2"; server host="127.0.0.1" port=8443; udp #true
+                    tls { server-name "localhost"; ca-file "/etc/ca.pem"; verify #true; }
+                }
+                outbound "direct" type="direct"
             }
-            outbound "direct" type="direct"
             routing { default-outbound "hc"; }
         )").has_value(), "151A: reject http-connect udp without h3");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
-            inbound "n" type="naive" {
-                listen host="127.0.0.1" port=8443
-                tls { certificate-file "/etc/c.pem"; private-key-file "/etc/k.pem"; }
-                authentication { user "u" username="u" password-file="/tmp/p"; }
-                fallback-status 407
+            inbounds {
+                inbound "n" type="naive" {
+                    listen host="127.0.0.1" port=8443
+                    tls { certificate-file "/etc/c.pem"; private-key-file "/etc/k.pem"; }
+                    authentication { user "u" username="u" password-file="/tmp/p"; }
+                    fallback-status 407
+                }
             }
-            outbound "d" type="direct"; routing { default-outbound "d"; }
+            outbounds { outbound "d" type="direct"; }; routing { default-outbound "d"; }
         )").has_value(), "151B: reject naive fallback-status 407");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
-            inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-            outbound "n" type="naive" {
-                protocol "h3"; server host="127.0.0.1" port=8443
-                authentication username="u" password-file="/tmp/p"
-                tls { server-name "localhost"; ca-file "/etc/ca.pem"; fingerprint "tls12"; verify #true; }
+            inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+            outbounds {
+                outbound "n" type="naive" {
+                    protocol "h3"; server host="127.0.0.1" port=8443
+                    authentication username="u" password-file="/tmp/p"
+                    tls { server-name "localhost"; ca-file "/etc/ca.pem"; fingerprint "tls12"; verify #true; }
+                }
+                outbound "direct" type="direct"
             }
-            outbound "direct" type="direct"
             routing { default-outbound "n"; }
         )").has_value(), "151B: reject naive h3 with tls12 fingerprint");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
-            inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-            outbound "n" type="naive" {
-                protocol "h2"; server host="127.0.0.1" port=8443
-                authentication username="u" password-file="/tmp/p"
-                tls { server-name "localhost"; ca-file "/etc/ca.pem"; verify #true; }
-                extra-header "Proxy-Authorization" "Basic abc"
+            inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+            outbounds {
+                outbound "n" type="naive" {
+                    protocol "h2"; server host="127.0.0.1" port=8443
+                    authentication username="u" password-file="/tmp/p"
+                    tls { server-name "localhost"; ca-file "/etc/ca.pem"; verify #true; }
+                    extra-header "Proxy-Authorization" "Basic abc"
+                }
+                outbound "direct" type="direct"
             }
-            outbound "direct" type="direct"
             routing { default-outbound "n"; }
         )").has_value(), "151B: reject forbidden Proxy-Authorization extra-header");
     }

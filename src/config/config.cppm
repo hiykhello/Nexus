@@ -143,6 +143,15 @@ export namespace config {
         std::vector<std::string> alpn;
     };
     struct NamedMasqueOutbound {std::string name;MasqueOutbound config;};
+    struct WireGuardPeer {
+        std::string host; std::uint16_t port=51820;
+        std::string peer_public_key_file;
+        std::optional<std::string> preshared_key_file;
+        std::vector<std::string> allowed_ips;
+        std::array<std::uint8_t,3> reserved{};
+        bool warp=false;
+        std::uint16_t keepalive_s=0;
+    };
     struct WireGuardOutbound {
         std::string host; std::uint16_t port=51820;
         std::string private_key_file,peer_public_key_file;
@@ -156,6 +165,9 @@ export namespace config {
         std::optional<std::string> bootstrap_resolver,detour;
         std::optional<std::size_t> bootstrap_index,detour_index;
         TcpSocketOptions tcp_options;
+        std::vector<WireGuardPeer> peers;
+        bool on_demand=false;
+        std::uint16_t idle_timeout_s=120;
     };
     struct NamedWireGuardOutbound {std::string name;WireGuardOutbound config;};
     struct NamedTailscaleOutbound { std::string name, endpoint_file; };

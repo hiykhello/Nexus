@@ -69,7 +69,11 @@ export namespace cli::run_detail {
 
     inline auto initialize_selector_state(SelectorState& state, config::Config& config)
         -> std::expected<void, std::string> {
-        if (config.selector_state_directory.empty()) return {};
+        if (config.selector_state_directory.empty()) {
+            if (config.state && !config.state->directory.empty())
+                return state.open_route_mode_only(config.state->directory);
+            return {};
+        }
         auto opened = state.open(config.selector_state_directory);
         if (!opened || state.choices().empty()) return opened;
         auto requested = config;

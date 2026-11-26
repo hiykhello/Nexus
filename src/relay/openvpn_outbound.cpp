@@ -26,6 +26,7 @@ import openvpn.types;
 import openvpn.wire;
 import openvpn.control;
 import openvpn.session;
+import openvpn.tls_crypt;
 import capy;
 import corosio;
 import relay.l3_mux;
@@ -112,7 +113,7 @@ namespace relay {
 
                 if (!platform::secure_random(std::as_writable_bytes(std::span(&local_sid, 1))) || local_sid == 0) co_return false;
                 openvpn::ControlChannel ctrl(local_sid, false);
-                auto reset_wire = openvpn::encode_control_packet(ctrl.begin_client_reset(now_ms()));
+                auto reset_wire = encode_ctrl(ctrl.begin_client_reset(now_ms()));
                 if (!reset_wire || !co_await send_wire(*reset_wire)) co_return false;
 
                 std::vector<std::uint8_t> tls_rx;
@@ -124,11 +125,11 @@ namespace relay {
                         if (!co_await send_ctrl_packets(ctrl.retransmit_due(now_ms(), 350))) co_return false;
                         continue;
                     }
-                    auto cp = openvpn::decode_control_packet(*pkt);
+                    auto cp = decode_ctrl(*pkt);
                     if (!cp) continue;
                     if (!ctrl.on_packet(*cp, now_ms())) co_return false;
                     if (auto ack = ctrl.take_ack()) {
-                        auto aw = openvpn::encode_control_packet(*ack);
+                        auto aw = encode_ctrl(*ack);
                         if (!aw || !co_await send_wire(*aw)) co_return false;
                     }
                 }
@@ -164,12 +165,12 @@ namespace relay {
                         if (!co_await send_ctrl_packets(ctrl.retransmit_due(now_ms(), 350))) co_return false;
                         continue;
                     }
-                    auto cp = openvpn::decode_control_packet(*pkt);
+                    auto cp = decode_ctrl(*pkt);
                     if (!cp) continue;
                     auto chunk = ctrl.on_packet(*cp, now_ms());
                     if (!chunk) co_return false;
                     if (auto ack = ctrl.take_ack()) {
-                        auto aw = openvpn::encode_control_packet(*ack);
+                        auto aw = encode_ctrl(*ack);
                         if (!aw || !co_await send_wire(*aw)) co_return false;
                     }
                     tls_rx.insert(tls_rx.end(), chunk->begin(), chunk->end());
@@ -271,6 +272,7 @@ namespace relay {
             config::OpenVpnOutbound cfg;
             tls::ShapedClientProfile tls;
             std::string password;
+            std::optional<std::array<std::uint8_t, 256>> static_key;
             std::mutex mutex;
             std::unordered_map<io::io_context*, std::shared_ptr<OpenVpnHost>> hosts;
             std::vector<std::pair<io::io_context*, std::shared_ptr<OpenVpnHost>>> retired;
@@ -279,6 +281,7 @@ namespace relay {
             ~OpenVpnProfile() {
                 if (!password.empty())
                     crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(password.data()), password.size()));
+                if (static_key) crypto::cleanse(std::span<std::uint8_t>(*static_key));
             }
 
             auto get_host(io::io_context& ctx, platform::SocketBinding const& binding, TunnelFactory const* via)
@@ -291,7 +294,7 @@ namespace relay {
                     if (it->second->loop_active || it->second->connecting) retired.emplace_back(&ctx, std::move(it->second));
                 }
                 if (shutting_down) return nullptr;
-                auto h = std::make_shared<OpenVpnHost>(ctx, cfg, tls, password, binding, via);
+                auto h = std::make_shared<OpenVpnHost>(ctx, cfg, tls, password, static_key, binding, via);
                 hosts[&ctx] = h;
                 return h;
             }
@@ -303,14 +306,25 @@ namespace relay {
     auto make_openvpn_factory(config::OpenVpnOutbound const& cfg) -> std::expected<TunnelFactory, std::string> {
         if (cfg.host.empty() || !cfg.port || !cfg.connect_timeout_ms || cfg.connect_timeout_ms > 3600000 || !cfg.tcp_options.valid())
             return std::unexpected("invalid OpenVPN outbound options");
+        if (cfg.client_cert_file || cfg.client_key_file)
+            return std::unexpected("OpenVPN outbound TLS client-cert-file/client-key-file requires client TLS mTLS handshake support");
         std::string pw;
         if (cfg.password_file) {
             auto f = rulefile::read_password_file(*cfg.password_file);
             if (!f) return std::unexpected("OpenVPN password-file: " + f.error());
             pw = std::move(*f); trim_crlf(pw);
         }
-        if (cfg.static_key_file)
-            return std::unexpected("OpenVPN static-key-file (tls-auth/tls-crypt) is not supported");
+        std::optional<std::array<std::uint8_t, 256>> static_key;
+        if (cfg.static_key_file) {
+            auto f = rulefile::read_private_file(*cfg.static_key_file);
+            if (!f) return std::unexpected("OpenVPN static-key-file: " + f.error());
+            auto parsed = openvpn::parse_static_key_v1(std::string_view(f->bytes().data(), f->bytes().size()));
+            if (!parsed) return std::unexpected("OpenVPN static-key-file: " + parsed.error());
+            struct KeyWipe { std::array<std::uint8_t, 256>& k; ~KeyWipe() { crypto::cleanse(k); } } wipe{*parsed};
+            static_key = *parsed;
+        }
+        if (cfg.tls_auth_mode != config::OpenVpnTlsAuthMode::none && !static_key)
+            return std::unexpected("OpenVPN tls-auth-mode requires static-key-file");
         auto fp = tls::parse_fingerprint(config::tls_fingerprint_name(cfg.fingerprint));
         if (!fp) return std::unexpected("invalid OpenVPN TLS fingerprint");
         std::uint16_t kx = cfg.key_exchange == config::TlsKeyExchange::x25519 ? 0x001d : 0x11ec;
@@ -319,7 +333,7 @@ namespace relay {
         tls_id->certificate_pins = cfg.certificate_sha256;
         auto shaped = tls::ShapedClientProfile::create(std::move(*tls_id), *fp);
         if (!shaped) return std::unexpected(shaped.error());
-        auto profile = std::make_shared<OpenVpnProfile>(cfg, std::move(*shaped), std::move(pw));
+        auto profile = std::make_shared<OpenVpnProfile>(cfg, std::move(*shaped), std::move(pw), std::move(static_key));
         TunnelFactory factory{
             [profile](Session& s, io::io_context& ctx, bool rl, TcpSocketOptions const* lower) -> pro::proxy<TunnelFacade> {
                 auto const& b = lower ? lower->binding : profile->cfg.tcp_options.binding;

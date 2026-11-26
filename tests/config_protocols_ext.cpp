@@ -4,19 +4,23 @@ import config;
 auto main() -> int {
     auto shadowtls_cfg = R"(schema-version 1
 role "server"
-inbound "stls-in" type="shadowtls" {
-    listen host="127.0.0.1" port=8443
-    handshake host="127.0.0.1" port=9443
-    target host="127.0.0.1" port=10443
-    strict-tls13 #true
-    authentication { user "u1" password-file="/tmp/p1"; }
+inbounds {
+    inbound "stls-in" type="shadowtls" {
+        listen host="127.0.0.1" port=8443
+        handshake host="127.0.0.1" port=9443
+        target host="127.0.0.1" port=10443
+        strict-tls13 #true
+        authentication { user "u1" password-file="/tmp/p1"; }
+    }
 }
-outbound "direct" type="direct"
-outbound "stls-out" type="shadowtls" {
-    server host="127.0.0.1" port=8443
-    strict-tls13 #false
-    authentication { password-file "/tmp/p1"; }
-    tls { server-name "cover.example"; ca-file "/tmp/ca.pem"; fingerprint "chrome"; verify #true; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "stls-out" type="shadowtls" {
+        server host="127.0.0.1" port=8443
+        strict-tls13 #false
+        authentication { password-file "/tmp/p1"; }
+        tls { server-name "cover.example"; ca-file "/tmp/ca.pem"; fingerprint "chrome"; verify #true; }
+    }
 }
 routing { default-outbound "stls-out"; }
 )";
@@ -29,19 +33,23 @@ routing { default-outbound "stls-out"; }
 
     auto tuic_cfg = R"(schema-version 1
 role "server"
-inbound "tuic-in" type="tuic" {
-    listen host="127.0.0.1" port=8444
-    congestion-control "bbr"
-    authentication { user "u1" uuid-file="/tmp/u1" password-file="/tmp/p1"; }
-    tls { certificate-file "/tmp/cert.pem"; private-key-file "/tmp/key.pem"; }
+inbounds {
+    inbound "tuic-in" type="tuic" {
+        listen host="127.0.0.1" port=8444
+        congestion-control "bbr"
+        authentication { user "u1" uuid-file="/tmp/u1" password-file="/tmp/p1"; }
+        tls { certificate-file "/tmp/cert.pem"; private-key-file "/tmp/key.pem"; }
+    }
 }
-outbound "direct" type="direct"
-outbound "tuic-out" type="tuic" {
-    server host="127.0.0.1" port=8444
-    congestion-control "bbr"
-    udp-over-stream #true
-    authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
-    tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; fingerprint "firefox"; verify #true; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "tuic-out" type="tuic" {
+        server host="127.0.0.1" port=8444
+        congestion-control "bbr"
+        udp-over-stream #true
+        authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
+        tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; fingerprint "firefox"; verify #true; }
+    }
 }
 routing { default-outbound "tuic-out"; }
 )";
@@ -54,16 +62,20 @@ routing { default-outbound "tuic-out"; }
 
     auto masque_out_cfg = R"(schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
-outbound "mq" type="masque" {
-    server host="127.0.0.1" port=8445
-    authority "proxy.example"
-    authentication { bearer-file "/tmp/bearer"; }
-    tls { server-name "proxy.example"; ca-file "/tmp/ca.pem"; fingerprint "safari"; verify #true; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "mq" type="masque" {
+        server host="127.0.0.1" port=8445
+        authority "proxy.example"
+        authentication { bearer-file "/tmp/bearer"; }
+        tls { server-name "proxy.example"; ca-file "/tmp/ca.pem"; fingerprint "safari"; verify #true; }
+    }
 }
 routing { default-outbound "mq"; }
 )";
@@ -88,21 +100,23 @@ routing { default-outbound "mq"; }
 
     auto tun_cfg = R"(schema-version 1
 role "client"
-inbound "tun-in" type="tun" {
-    interface-name "nx-tun0"
-    inet4-address "10.77.0.1/24"
-    inet6-address "fd77::1/64"
-    mtu 1420
-    auto-route #true
-    strict-route #true
-    stack "system"
-    tcp-flows 512
-    tcp-buffer 65536
-    udp-idle-ms 30000
-    socket-mark 42
-    endpoint-independent-nat #false
+inbounds {
+    inbound "tun-in" type="tun" {
+        interface-name "nx-tun0"
+        inet4-address "10.77.0.1/24"
+        inet6-address "fd77::1/64"
+        mtu 1420
+        auto-route #true
+        strict-route #true
+        stack "system"
+        tcp-flows 512
+        tcp-buffer 65536
+        udp-idle-ms 30000
+        socket-mark 42
+        endpoint-independent-nat #false
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct"; }
 )";
     auto tun_parsed = config::parse_kdl(tun_cfg);
@@ -119,29 +133,28 @@ routing { default-outbound "direct"; }
     unsupported_stack.replace(unsupported_stack.find("system"), std::string_view("system").size(), "gvisor");
     if (config::parse_kdl(unsupported_stack))
         return 5;
-    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbound \"t\" type=\"tun\" {\n    auto-route #true\n}\noutbound \"d\" type=\"direct\"\nrouting { default-outbound \"d\"; }\n"))
+    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbounds { inbound \"t\" type=\"tun\" {\n    auto-route #true\n}; }\noutbounds { outbound \"d\" type=\"direct\"; }\nrouting { default-outbound \"d\"; }\n"))
         return 6;
-    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbound \"t\" type=\"tun\" {\n    mtu 10\n}\noutbound \"d\" type=\"direct\"\nrouting { default-outbound \"d\"; }\n"))
+    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbounds { inbound \"t\" type=\"tun\" {\n    mtu 10\n}; }\noutbounds { outbound \"d\" type=\"direct\"; }\nrouting { default-outbound \"d\"; }\n"))
         return 7;
 
     auto wg_cfg = R"(schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
-}
-outbound "direct" type="direct"
-outbound "wg" type="wireguard" {
-    server host="127.0.0.1" port=51820
-    private-key-file "/tmp/wg.key"
-    peer-public-key-file "/tmp/wg.pub"
-    preshared-key-file "/tmp/wg.psk"
-    local-address "10.9.0.2/32"
-    local-address "fd09::2/128"
-    reserved 1 2 3
-    mtu 1380
-    persistent-keepalive 25
-    routing-mark 42
+inbounds { inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "wg" type="wireguard" {
+        server host="127.0.0.1" port=51820
+        private-key-file "/tmp/wg.key"
+        peer-public-key-file "/tmp/wg.pub"
+        preshared-key-file "/tmp/wg.psk"
+        local-address "10.9.0.2/32"
+        local-address "fd09::2/128"
+        reserved 1 2 3
+        mtu 1380
+        persistent-keepalive 25
+        routing-mark 42
+    }
 }
 routing { default-outbound "wg"; }
 )";
@@ -159,13 +172,15 @@ routing { default-outbound "wg"; }
 
     auto wg_b64 = config::parse_kdl(R"(schema-version 1
 role "client"
-inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "d" type="direct"
-outbound "wg" type="wireguard" {
-    server host="127.0.0.1" port=51820
-    private-key-file "/tmp/wg.key"
-    peer-public-key-file "/tmp/wg.pub"
-    reserved "AQID"
+inbounds { inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "d" type="direct"
+    outbound "wg" type="wireguard" {
+        server host="127.0.0.1" port=51820
+        private-key-file "/tmp/wg.key"
+        peer-public-key-file "/tmp/wg.pub"
+        reserved "AQID"
+    }
 }
 routing { default-outbound "wg"; }
 )");
@@ -175,18 +190,20 @@ routing { default-outbound "wg"; }
 
     auto mq_ip = config::parse_kdl(R"(schema-version 1
 role "client"
-inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "d" type="direct"
-outbound "mq-ip" type="masque" {
-    server host="127.0.0.1" port=8445
-    authority "proxy.example"
-    mode "connect-ip"
-    path "/.well-known/masque/ip/*/*/"
-    mtu 1360
-    local-address "10.10.0.2/32"
-    local-address "fd10::2/128"
-    authentication { bearer-file "/tmp/bearer"; }
-    tls { server-name "proxy.example"; ca-file "/tmp/ca.pem"; verify #true; }
+inbounds { inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "d" type="direct"
+    outbound "mq-ip" type="masque" {
+        server host="127.0.0.1" port=8445
+        authority "proxy.example"
+        mode "connect-ip"
+        path "/.well-known/masque/ip/*/*/"
+        mtu 1360
+        local-address "10.10.0.2/32"
+        local-address "fd10::2/128"
+        authentication { bearer-file "/tmp/bearer"; }
+        tls { server-name "proxy.example"; ca-file "/tmp/ca.pem"; verify #true; }
+    }
 }
 routing { default-outbound "mq-ip"; }
 )");
@@ -198,19 +215,21 @@ routing { default-outbound "mq-ip"; }
     // Wave 31E: ShadowTLS handshake-for-server-name (flat + block) & wildcard-sni.
     auto stls_w31 = config::parse_kdl(R"(schema-version 1
 role "server"
-inbound "stls-in" type="shadowtls" {
-    listen host="127.0.0.1" port=8443
-    handshake host="127.0.0.1" port=9443
-    target host="127.0.0.1" port=10443
-    handshake-for-server-name "Alt.Example.COM" "127.0.0.1:9444"
-    handshake-for-server-name {
-        "cdn.example.com" host="127.0.0.1" port=9445
-        server "api.example.com" "127.0.0.1:9446"
+inbounds {
+    inbound "stls-in" type="shadowtls" {
+        listen host="127.0.0.1" port=8443
+        handshake host="127.0.0.1" port=9443
+        target host="127.0.0.1" port=10443
+        handshake-for-server-name "Alt.Example.COM" "127.0.0.1:9444"
+        handshake-for-server-name {
+            "cdn.example.com" host="127.0.0.1" port=9445
+            server "api.example.com" "127.0.0.1:9446"
+        }
+        wildcard-sni "authed"
+        authentication { user "u1" password-file="/tmp/p1"; }
     }
-    wildcard-sni "authed"
-    authentication { user "u1" password-file="/tmp/p1"; }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct"; }
 )");
     if (!stls_w31 || !stls_w31->inbounds.front().shadowtls) return 11;
@@ -232,12 +251,14 @@ routing { default-outbound "direct"; }
     }) {
         auto doc = std::format(R"(schema-version 1
 role "server"
-inbound "s" type="shadowtls" {{
-    listen host="127.0.0.1" port=8443; handshake host="127.0.0.1" port=9443; target host="127.0.0.1" port=10443;
-    authentication {{ user "u1" password-file="/tmp/p1"; }}
-    {};
+inbounds {{
+    inbound "s" type="shadowtls" {{
+        listen host="127.0.0.1" port=8443; handshake host="127.0.0.1" port=9443; target host="127.0.0.1" port=10443;
+        authentication {{ user "u1" password-file="/tmp/p1"; }}
+        {};
+    }}
 }}
-outbound "direct" type="direct"
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ default-outbound "direct"; }}
 )", bad_s);
         if (config::parse_kdl(doc)) return 13;
@@ -246,19 +267,23 @@ routing {{ default-outbound "direct"; }}
     // Wave 31E: TUIC zero-rtt-handshake (inbound + outbound), outbound alpn, and ech-query-server-name.
     auto tuic_w31 = config::parse_kdl(R"(schema-version 1
 role "server"
-dns { server "d1" type="udp" host="127.0.0.1"; }
-inbound "tuic-in" type="tuic" {
-    listen host="127.0.0.1" port=8444
-    zero-rtt-handshake #true
-    authentication { user "u1" uuid-file="/tmp/u1" password-file="/tmp/p1"; }
-    tls { certificate-file "/tmp/cert.pem"; private-key-file "/tmp/key.pem"; }
+dns { servers { server "d1" type="udp" host="127.0.0.1"; }; }
+inbounds {
+    inbound "tuic-in" type="tuic" {
+        listen host="127.0.0.1" port=8444
+        zero-rtt-handshake #true
+        authentication { user "u1" uuid-file="/tmp/u1" password-file="/tmp/p1"; }
+        tls { certificate-file "/tmp/cert.pem"; private-key-file "/tmp/key.pem"; }
+    }
 }
-outbound "direct" type="direct"
-outbound "tuic-out" type="tuic" {
-    server host="127.0.0.1" port=8444
-    zero-rtt-handshake #true
-    authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
-    tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; alpn "h3"; ech-dns #true; ech-query-server-name "cloudflare-ech.com"; verify #true; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "tuic-out" type="tuic" {
+        server host="127.0.0.1" port=8444
+        zero-rtt-handshake #true
+        authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
+        tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; alpn "h3"; ech-dns #true; ech-query-server-name "cloudflare-ech.com"; verify #true; }
+    }
 }
 routing { default-outbound "tuic-out"; }
 )");
@@ -274,14 +299,16 @@ routing { default-outbound "tuic-out"; }
     // Order-independent ech-query-server-name BEFORE ech-dns #true.
     auto ech_order = config::parse_kdl(R"(schema-version 1
 role "client"
-dns { server "d1" type="udp" host="127.0.0.1"; }
-inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "d" type="direct"
-outbound "tuic-out" type="tuic" {
-    server host="127.0.0.1" port=8444
-    zero-rtt-handshake #false
-    authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
-    tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; ech-query-server-name "ech.example.net"; ech-dns #true; verify #true; }
+dns { servers { server "d1" type="udp" host="127.0.0.1"; }; }
+inbounds { inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "d" type="direct"
+    outbound "tuic-out" type="tuic" {
+        server host="127.0.0.1" port=8444
+        zero-rtt-handshake #false
+        authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
+        tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; ech-query-server-name "ech.example.net"; ech-dns #true; verify #true; }
+    }
 }
 routing { default-outbound "tuic-out"; }
 )");
@@ -300,13 +327,15 @@ routing { default-outbound "tuic-out"; }
     }) {
         auto doc = std::format(R"(schema-version 1
 role "client"
-dns {{ server "d1" type="udp" host="127.0.0.1"; }}
-inbound "socks" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
-outbound "d" type="direct"
-outbound "tuic-out" type="tuic" {{
-    server host="127.0.0.1" port=8444
-    authentication {{ uuid-file "/tmp/u1"; password-file "/tmp/p1"; }}
-    tls {{ server-name "tuic.example"; ca-file "/tmp/ca.pem"; {}; verify #true; }}
+dns {{ servers {{ server "d1" type="udp" host="127.0.0.1"; }}; }}
+inbounds {{ inbound "socks" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}; }}
+outbounds {{
+    outbound "d" type="direct"
+    outbound "tuic-out" type="tuic" {{
+        server host="127.0.0.1" port=8444
+        authentication {{ uuid-file "/tmp/u1"; password-file "/tmp/p1"; }}
+        tls {{ server-name "tuic.example"; ca-file "/tmp/ca.pem"; {}; verify #true; }}
+    }}
 }}
 routing {{ default-outbound "tuic-out"; }}
 )", bad_ech);

@@ -17,6 +17,7 @@ import quic.retry_admission;
 import quic.retry_token;
 import quic.tls_server;
 import net.datagram_driver;
+import tls.ech_server;
 import tls.server_credential;
 import ngtcp2;
 import capy;
@@ -76,8 +77,8 @@ export namespace hysteria2 {
             quic::TlsServer tls;quic::NativeMemory<Heap> memory;Policy policy;App app;NativeSession session;
             corosio::endpoint peer;quic::SessionHandle owner;std::stop_source stop;
             std::size_t business=0;std::optional<int> failure;bool canceled=false,reported=false;
-            Bundle(Listener& listener,Registry& registry,quic::SessionHandle owner,corosio::endpoint const& peer,ConnectionState&& connection)
-                :connection(std::move(connection)),tls(listener.credential_,"h3"),memory(listener.options_.native_bytes),policy{listener.hooks_,registry,owner,listener.work_},
+            Bundle(Listener& listener,Registry& registry,quic::SessionHandle owner,corosio::endpoint const& peer,ConnectionState&& connection,std::optional<tls::ServerCredential>&& dynamic_credential)
+                :connection(std::move(connection)),tls(std::move(dynamic_credential),listener.credential_,"h3",listener.ech_keys_),memory(listener.options_.native_bytes),policy{listener.hooks_,registry,owner,listener.work_},
                 app(tls,policy,true,memory.http3(),{},ServerAuth{listener.options_.udp,true,0},
                     listener.options_.congestion,listener.options_.receive_windows.max_stream),session(tls,app,listener.local_),peer(peer),owner(owner){}
         };
@@ -113,7 +114,13 @@ export namespace hysteria2 {
                     // A host's physical-session quota rejects before any native
                     // or TLS owner allocation. This is an admission decision.
                     if(!connection)return static_cast<Session*>(nullptr);
-                    entry.emplace(listener,registry,owner,peer,std::move(*connection));auto parameters=TransportProfile<Streams,Window>::parameters(listener.options_);
+                    std::optional<tls::ServerCredential> dyn_cred;
+                    if(listener.atomic_credential_) {
+                        auto cur=listener.atomic_credential_->clone_current();
+                        if(!cur)return std::unexpected(n::err_callback_failure);
+                        dyn_cred.emplace(std::move(*cur));
+                    } else if(!listener.credential_)return std::unexpected(n::err_callback_failure);
+                    entry.emplace(listener,registry,owner,peer,std::move(*connection),std::move(dyn_cred));auto parameters=TransportProfile<Streams,Window>::parameters(listener.options_);
                     auto settings=TransportProfile<Streams,Window>::settings(listener.options_);
                     if(!parameters || !settings){entry.reset();return std::unexpected(n::err_invalid_argument);}
                     n::ngtcp2_cid_init(&parameters->original_dcid,verified.original.data.data(),verified.original.size);parameters->original_dcid_present=1;
@@ -174,7 +181,10 @@ export namespace hysteria2 {
             }
         };
     private:
-        corosio::io_context& context_;Hooks& hooks_;tls::ServerCredential const& credential_;TransportOptions options_;
+        corosio::io_context& context_;Hooks& hooks_;tls::ServerCredential const* credential_=nullptr;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential_{};
+        std::shared_ptr<tls::EchServerKeys const> ech_keys_{};
+        TransportOptions options_;
         corosio::udp_socket socket_;corosio::endpoint local_;capy::async_event work_;
         Factory factory_;Port port_;SalamanderPort<Port> wire_;Driver driver_;std::stop_source stop_;
         std::optional<InitializationFailure> initialization_failure_;std::optional<RuntimeFailure> runtime_failure_;
@@ -264,10 +274,19 @@ export namespace hysteria2 {
         }
     public:
         using PrepareFailure=std::variant<std::error_code,quic::RetryFailure>;
-        Listener(corosio::io_context& context,Hooks& hooks,tls::ServerCredential const& credential,TransportOptions options={})
-            :context_(context),hooks_(hooks),credential_(credential),options_(options),socket_(context),factory_(*this),port_(factory_),wire_(port_,options_.salamander_password),driver_(socket_,wire_){
+        Listener(corosio::io_context& context,Hooks& hooks,tls::ServerCredential const* credential,
+            std::shared_ptr<tls::AtomicServerCredential> atomic_credential,TransportOptions options={},
+            std::shared_ptr<tls::EchServerKeys const> ech_keys={})
+            :context_(context),hooks_(hooks),credential_(credential),atomic_credential_(std::move(atomic_credential)),
+             ech_keys_(std::move(ech_keys)),options_(options),socket_(context),factory_(*this),port_(factory_),wire_(port_,options_.salamander_password),driver_(socket_,wire_){
             if(!options.valid())throw std::invalid_argument("invalid Hysteria2 transport options");
         }
+        Listener(corosio::io_context& context,Hooks& hooks,tls::ServerCredential const& credential,TransportOptions options={},
+            std::shared_ptr<tls::EchServerKeys const> ech_keys={})
+            :Listener(context,hooks,&credential,{},options,std::move(ech_keys)){}
+        Listener(corosio::io_context& context,Hooks& hooks,std::shared_ptr<tls::AtomicServerCredential> atomic_credential,TransportOptions options={},
+            std::shared_ptr<tls::EchServerKeys const> ech_keys={})
+            :Listener(context,hooks,nullptr,std::move(atomic_credential),options,std::move(ech_keys)){}
         Listener(Listener const&)=delete;auto operator=(Listener const&) -> Listener& = delete;
         ~Listener(){stop();port_.drain();if(!drained())std::terminate();}
         auto prepare(corosio::endpoint local,bool reuse=false) -> std::expected<corosio::endpoint,PrepareFailure> {

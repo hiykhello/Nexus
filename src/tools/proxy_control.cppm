@@ -149,10 +149,6 @@ export namespace cli::run_detail {
                         if (!done) return std::unexpected(std::string(::state::describe(done.error().stage)));
                     }
                 }
-                if (clear_dns && running->dns && !running->dns->message_cache_directory.empty()) {
-                    auto done = ::state::clear_legacy_dns(running->dns->message_cache_directory);
-                    if (!done) return std::unexpected(std::string(::state::describe(done.error().stage)));
-                }
             }
             if (clear_dns) {
                 if (reverse_cache) (void)reverse_cache->clear();

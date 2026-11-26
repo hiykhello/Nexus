@@ -134,7 +134,8 @@ namespace relay {
             if(!program)return std::unexpected(std::move(program.error()));
             result.ordered.emplace(std::move(*program));
             for (auto const& rule : ordered->rules)
-                if (rule.action.kind==rules::ProgramActionKind::route) referenced.push_back(rule.action.outbound);
+                if (rule.action.kind==rules::ProgramActionKind::route || rule.action.kind==rules::ProgramActionKind::bypass)
+                    referenced.push_back(rule.action.outbound);
         }
         if (physical_count<=258) {
             std::vector<bool> seen(outbound_count);

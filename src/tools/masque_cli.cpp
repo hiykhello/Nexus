@@ -6,16 +6,41 @@ import masque.bearer;
 import masque.ip_server;
 import cli.masque_ip_server;
 import rulefile;
+import tls.ech_server;
+import tls.server_credential;
 import tls.profiles;
+import cli.cert_reloader;
+import logging.cli;
 import dns.local_config;
 import corosio;
 namespace cli::masque_enabled {
-    auto Runtime::configure(std::size_t index,config::InboundConfig const& entry) -> std::expected<void,std::string> {
+    auto Runtime::configure(std::size_t index,config::InboundConfig const& entry,
+        std::shared_ptr<void> const& acme_credential,cli::CertReloaderHub* cert_reloaders,logging::Runtime const* logs) -> std::expected<void,std::string> {
         if(!entry.masque)return {};
         if(index>=profiles_.size() || profiles_[index])return std::unexpected("invalid MASQUE profile slot");
         auto const& value=*entry.masque;
-        auto credential=tls::load_server_credential(value.certificate_file,value.private_key_file);
-        if(!credential)return std::unexpected(credential.error());
+        std::optional<tls::ServerCredential> credential;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential;
+        std::shared_ptr<tls::EchServerKeys const> ech_keys;
+        if(!value.certificate_provider.empty()) {
+            if(value.certificate_provider!="acme" || !acme_credential)
+                return std::unexpected("MASQUE TLS certificate-provider '"+value.certificate_provider+"' is unavailable");
+            atomic_credential=std::static_pointer_cast<tls::AtomicServerCredential>(acme_credential);
+        } else if(value.cert_hot_reload) {
+            if(!cert_reloaders)return std::unexpected("MASQUE TLS cert-hot-reload runtime unavailable");
+            auto watched=cert_reloaders->watch(value.certificate_file,value.private_key_file,logs);
+            if(!watched)return std::unexpected("MASQUE TLS cert-hot-reload: "+watched.error());
+            atomic_credential=std::static_pointer_cast<tls::AtomicServerCredential>(*watched);
+        } else {
+            auto loaded=tls::load_server_credential(value.certificate_file,value.private_key_file);
+            if(!loaded)return std::unexpected(loaded.error());
+            credential.emplace(std::move(*loaded));
+        }
+        if(!value.ech_key_file.empty()) {
+            auto ech=tls::load_ech_server_keys_file(value.ech_key_file);
+            if(!ech)return std::unexpected("MASQUE TLS ech-key-file: "+ech.error());
+            ech_keys=std::move(*ech);
+        }
         auto password=rulefile::read_password_file(value.bearer_file);if(!password)return std::unexpected(password.error());
         struct Wipe {std::string& value;~Wipe(){crypto::cleanse({reinterpret_cast<std::uint8_t*>(value.data()),value.size()});}} wipe{*password};
         auto secret=masque::BearerCredential::create({reinterpret_cast<std::uint8_t const*>(password->data()),password->size()});
@@ -28,7 +53,7 @@ namespace cli::masque_enabled {
         masque::HostConfig config(value.authority,std::move(*secret),std::move(rules));
         config.dns_timeout=std::chrono::milliseconds(value.dns_timeout_ms);config.native_bytes=value.native_bytes;
         if(!config.valid(value.ip.has_value()))return std::unexpected("invalid MASQUE policy");
-        auto profile=std::make_unique<Profile>(std::move(*credential),std::move(config));
+        auto profile=std::make_unique<Profile>(std::move(credential),std::move(atomic_credential),std::move(ech_keys),std::move(config));
         if(value.ip) {
             auto port=make_ip_server_port(*value.ip,value);
             if(!port)return std::unexpected(port.error());
@@ -70,7 +95,7 @@ namespace cli::masque_enabled {
         auto& profile=*profiles_[index];std::uint16_t bound=port;profile.stopped=false;profile.failed=false;
         try {
             for(unsigned i=0;i<count;++i) {
-                auto worker=std::make_unique<Worker>(uring_,profile.config,profile.credential,profile.ip ? &profile.ip : nullptr,accounting);
+                auto worker=std::make_unique<Worker>(uring_,profile.config,profile.credential ? &*profile.credential : nullptr,profile.atomic_credential,profile.ip ? &profile.ip : nullptr,accounting,profile.ech_keys);
                 corosio::endpoint local;
                 if(profile.ipv6)local={corosio::ipv6_address(profile.address),bound};
                 else {corosio::ipv4_address::bytes_type bytes{};std::ranges::copy(std::span(profile.address).first<4>(),bytes.begin());local={corosio::ipv4_address(bytes),bound};}

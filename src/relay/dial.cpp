@@ -119,7 +119,7 @@ namespace relay {
 
         // The caller owns the endpoints and classifier until this operation completes.
         // A fixed classifier lets an ordered program dial its selected outbound
-        // without performing DNS or evaluating the legacy policy again.
+        // without performing DNS or evaluating the indexed route policy again.
         template<class Classifier>
         auto dial_candidates(Session& session,io::io_context& context,
             std::span<io::endpoint const> destinations,Clock::time_point limit,Classifier& classify,

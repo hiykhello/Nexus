@@ -4,14 +4,16 @@ auto parse(std::string_view fields,bool inbound=false) {
     auto config=std::format(R"(schema-version 1
 role "server"
 inbounds {{ socks5 "s" {{listen host="127.0.0.1" port=1080;authentication "none";}} }}
+outbounds {{
 outbound "direct" type="direct"
 outbound "v" type="vless" {{server host="127.0.0.1" port=443; authentication {{uuid-file "/tmp/u";}}; tls {{server-name "localhost";ca-file "/tmp/c";verify #true;}}; {} }}
+}}
 routing {{default-outbound "v";}}
 )",fields);
     if (inbound) config=std::format(R"(schema-version 1
 role "server"
-inbound "v" type="vless" {{listen host="127.0.0.1" port=1080;authentication {{user "u" uuid-file="/tmp/u";}};tls {{certificate-file "/tmp/c";private-key-file "/tmp/k";}};{} }}
-outbound "direct" type="direct"
+inbounds {{ inbound "v" type="vless" {{listen host="127.0.0.1" port=1080;authentication {{user "u" uuid-file="/tmp/u";}};tls {{certificate-file "/tmp/c";private-key-file "/tmp/k";}};{} }} }}
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{default-outbound "direct";}}
 )",fields);
     return config::parse_kdl(config);

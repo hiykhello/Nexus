@@ -76,13 +76,43 @@ export namespace policy {
         };
         for (auto const& rule:entries) {
             for (auto const& field:rule.context) mark(field.type);
-            result.source |= rule.rule_set_needs_source;
-            result.auth_user |= rule.rule_set_needs_auth_user;
-            result.source_uid |= rule.rule_set_needs_source_uid;
-            result.process |= rule.rule_set_needs_process;
-            result.network_state |= rule.rule_set_needs_network;
+            result.source |= rule.rule_set_needs_source || rule.inline_needs_source;
+            result.auth_user |= rule.rule_set_needs_auth_user || rule.inline_needs_auth_user;
+            result.source_uid |= rule.rule_set_needs_source_uid || rule.inline_needs_source_uid;
+            result.process |= rule.rule_set_needs_process || rule.inline_needs_process;
+            result.network_state |= rule.rule_set_needs_network || rule.inline_needs_network;
         }
         return result;
+    }
+
+    struct DnsPredicateScan {
+        bool source=false, auth=false, response=false, uid=false, proc=false, net=false;
+        std::size_t nodes=0;
+    };
+
+    [[nodiscard]] inline auto scan_dns_predicate_tree(rules::Rule const& node,bool allow_response_ip,
+        unsigned depth,DnsPredicateScan& scan) noexcept -> bool {
+        if (depth>rules::max_rule_depth || ++scan.nodes>rules::max_rules) return false;
+        if (node.type=="and" || node.type=="or" || node.type=="not") {
+            if (node.children.empty() || (node.type=="not" && node.children.size()!=1)) return false;
+            return std::ranges::all_of(node.children,[&](auto const& child){
+                return scan_dns_predicate_tree(child,allow_response_ip,depth+1,scan);
+            });
+        }
+        scan.source |= node.type!="source-interface" && node.type.starts_with("source-");
+        scan.auth |= node.type=="auth-user";
+        scan.uid |= node.type=="source-uid" || node.type=="source-gid" || node.type=="source-user";
+        scan.proc |= node.type=="process-name" || node.type=="process-path" || node.type=="process-path-regex" ||
+            node.type=="package-name" || node.type=="package-name-regex";
+        scan.net |= node.type=="network-type" || node.type=="network-is-expensive" || node.type=="network-is-constrained" ||
+            node.type=="wifi-ssid" || node.type=="wifi-bssid" || node.type=="default-interface-address" ||
+            node.type=="network-interface-address";
+        bool is_ip = node.type=="ip-cidr" || node.type=="ip-is-private" || node.type=="ip-is-cgnat" ||
+            node.type=="ip-accept-any" || node.type=="ip-version";
+        scan.response |= is_ip;
+        return is_dns_context_predicate(node.type) || node.type=="domain" || node.type=="domain-suffix" ||
+            node.type=="domain-keyword" || node.type=="domain-wildcard" || node.type=="domain-regex" ||
+            node.type=="query-type" || (allow_response_ip && is_ip);
     }
 
     inline auto bind_dns_rule_set(DnsRule& rule,rules::RuleSet set) -> bool {
@@ -90,38 +120,19 @@ export namespace policy {
         auto normalized=rules::normalize_set(std::move(set));
         if (!normalized) return false;
         set=std::move(*normalized);
-        bool source=false, auth=false, response=false, uid=false, proc=false, net=false;
-        auto supported=[&](auto&& self,rules::Rule const& node) -> bool {
-            if (node.type=="and" || node.type=="or" || node.type=="not")
-                return std::ranges::all_of(node.children,[&](auto const& child){return self(self,child);});
-            source |= node.type!="source-interface" && node.type.starts_with("source-");
-            auth |= node.type=="auth-user";
-            uid |= node.type=="source-uid" || node.type=="source-gid" || node.type=="source-user";
-            proc |= node.type=="process-name" || node.type=="process-path" || node.type=="process-path-regex" ||
-                node.type=="package-name" || node.type=="package-name-regex";
-            net |= node.type=="network-type" || node.type=="network-is-expensive" || node.type=="network-is-constrained" ||
-                node.type=="wifi-ssid" || node.type=="wifi-bssid" || node.type=="default-interface-address" ||
-                node.type=="network-interface-address";
-            response |= node.type=="ip-cidr" || node.type=="ip-is-private" || node.type=="ip-is-cgnat" ||
-                node.type=="ip-accept-any" || node.type=="ip-version";
-            return is_dns_context_predicate(node.type) || node.type=="domain" || node.type=="domain-suffix" ||
-                node.type=="domain-keyword" || node.type=="domain-wildcard" || node.type=="domain-regex" ||
-                node.type=="query-type" ||
-                (rule.match_response && (node.type=="ip-cidr" || node.type=="ip-is-private" ||
-                    node.type=="ip-is-cgnat" || node.type=="ip-accept-any" || node.type=="ip-version"));
-        };
-        if (!std::ranges::all_of(set.rules,[&](auto const& node){return supported(supported,node);})) return false;
+        DnsPredicateScan scan;
+        if (!std::ranges::all_of(set.rules,[&](auto const& node){return scan_dns_predicate_tree(node,rule.match_response,1,scan);})) return false;
         if (set.rules.size()>1) set.rules={rules::Rule{"or","",std::move(set.rules)}};
         set.version=2;
         auto compiled=rules::Matcher::compile(set);
         if (!compiled) return false;
         rule.rule_set_matcher=std::move(*compiled);
-        rule.rule_set_needs_source=source;
-        rule.rule_set_needs_auth_user=auth;
-        rule.rule_set_needs_response=response;
-        rule.rule_set_needs_source_uid=uid;
-        rule.rule_set_needs_process=proc;
-        rule.rule_set_needs_network=net;
+        rule.rule_set_needs_source=scan.source;
+        rule.rule_set_needs_auth_user=scan.auth;
+        rule.rule_set_needs_response=scan.response;
+        rule.rule_set_needs_source_uid=scan.uid;
+        rule.rule_set_needs_process=scan.proc;
+        rule.rule_set_needs_network=scan.net;
         return true;
     }
 
@@ -222,6 +233,9 @@ export namespace policy {
         }
 #endif
         rule.context_matcher.reset();
+        rule.inline_matcher.reset();
+        rule.inline_needs_source=rule.inline_needs_auth_user=rule.inline_needs_response=false;
+        rule.inline_needs_source_uid=rule.inline_needs_process=rule.inline_needs_network=false;
         rule.domain_regex.reset();
         for (auto& field:rule.context) {
             if (!field.children.empty() || !is_dns_context_predicate(field.type)) return false;
@@ -232,9 +246,25 @@ export namespace policy {
             if (!matcher) return false;
             rule.context_matcher=std::move(*matcher);
         }
+        if (rule.inline_predicate) {
+            auto norm=rules::normalize_rule(*rule.inline_predicate);
+            if (!norm) return false;
+            DnsPredicateScan scan;
+            if (!scan_dns_predicate_tree(*norm,rule.match_response,1,scan)) return false;
+            auto matcher=rules::Matcher::compile({{*norm},2});
+            if (!matcher) return false;
+            rule.inline_predicate=std::move(*norm);
+            rule.inline_matcher=std::move(*matcher);
+            rule.inline_needs_source=scan.source;
+            rule.inline_needs_auth_user=scan.auth;
+            rule.inline_needs_response=scan.response;
+            rule.inline_needs_source_uid=scan.uid;
+            rule.inline_needs_process=scan.proc;
+            rule.inline_needs_network=scan.net;
+        }
         if (rule.query_subnet && ((rule.query_subnet->size!=4 && rule.query_subnet->size!=16) || rule.query_subnet->bits>rule.query_subnet->size*8)) return false;
-        if (rule.match_all) return rule.domain.empty() && !rule.query_type && !rule.query_class && !rule.query_dnssec && !rule.query_checking_disabled && !rule.query_authenticated_data && !rule.query_subnet && rule.context.empty() && !rule.has_rule_set && !rule.suffix && rule.pattern==DnsPattern::name;
-        if (rule.domain.empty()) return (rule.query_type.has_value() || rule.query_class.has_value() || rule.query_dnssec.has_value() || rule.query_checking_disabled.has_value() || rule.query_authenticated_data.has_value() || rule.query_subnet.has_value() || !rule.context.empty() || rule.has_rule_set) && !rule.suffix && rule.pattern==DnsPattern::name;
+        if (rule.match_all) return rule.domain.empty() && !rule.query_type && !rule.query_class && !rule.query_dnssec && !rule.query_checking_disabled && !rule.query_authenticated_data && !rule.query_subnet && rule.context.empty() && !rule.has_rule_set && !rule.inline_predicate && !rule.suffix && rule.pattern==DnsPattern::name;
+        if (rule.domain.empty()) return (rule.query_type.has_value() || rule.query_class.has_value() || rule.query_dnssec.has_value() || rule.query_checking_disabled.has_value() || rule.query_authenticated_data.has_value() || rule.query_subnet.has_value() || !rule.context.empty() || rule.has_rule_set || rule.inline_predicate.has_value()) && !rule.suffix && rule.pattern==DnsPattern::name;
         if (rule.pattern==DnsPattern::keyword) {
             if (rule.suffix || rule.domain.size()>253) return false;
             for (auto& c:rule.domain) {
@@ -285,7 +315,7 @@ export namespace policy {
         using Truth=rules::Matcher::Truth;
         if (!rule.context.empty() && ((context.source_port && !*context.source_port) ||
             (context.source_ip_bytes && context.source_ip_bytes->size()!=4 && context.source_ip_bytes->size()!=16) ||
-            (context.network && *context.network!=rules::Network::tcp && *context.network!=rules::Network::udp))) return {};
+            (context.network && *context.network!=rules::Network::tcp && *context.network!=rules::Network::udp && *context.network!=rules::Network::icmp))) return {};
         if (!rule.context.empty()) for (auto value:{context.inbound,context.auth_user})
             if (value && (value->empty() || value->size()>255 || value->find('\0')!=std::string_view::npos)) return {};
         if (rule.query_type && *rule.query_type!=type) return Truth::no;
@@ -325,6 +355,17 @@ export namespace policy {
             auto domain=rules::valid_domain(name) ? std::optional(name) : std::nullopt;
             auto qtype=type ? std::optional(type) : std::nullopt;
             auto result=rule.rule_set_matcher->match_truth_mapped(
+                dns_context_to_match_input(domain,qtype,context),
+                rule.match_response ? context.response_addresses : std::nullopt);
+            if (!result) return {};
+            if (*result==Truth::no) return Truth::no;
+            if (*result==Truth::unknown) truth=Truth::unknown;
+        }
+        if (rule.inline_predicate) {
+            if (!rule.inline_matcher) return {};
+            auto domain=rules::valid_domain(name) ? std::optional(name) : std::nullopt;
+            auto qtype=type ? std::optional(type) : std::nullopt;
+            auto result=rule.inline_matcher->match_truth_mapped(
                 dns_context_to_match_input(domain,qtype,context),
                 rule.match_response ? context.response_addresses : std::nullopt);
             if (!result) return {};

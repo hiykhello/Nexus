@@ -26,11 +26,13 @@ int main() {
         std::string kdl = std::format(R"kdl(
 schema-version 1
 role "server"
-inbound "socks" type="socks5" {{
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {{
+    inbound "socks" type="socks5" {{
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }}
 }}
-outbound "direct" type="direct"
+outbounds {{ outbound "direct" type="direct"; }}
 services {{
     memory-watchdog soft-mb=32 hard-mb=48 emergency-mb=64 cooldown-ms=1000
     ssmapi enabled=#true prefix="/ssmapi"
@@ -83,11 +85,13 @@ routing {{
         auto bad_kdl = R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 services {
     openvpn
 }

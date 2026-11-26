@@ -19,13 +19,15 @@ namespace {
     auto config_windows(std::string_view fields) {
         return config::parse_kdl(std::format(R"kdl(schema-version 1
 role "client"
-inbound "edge" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
-outbound "direct" type="direct"
-outbound "hy" type="hysteria2" {{
-    server host="127.0.0.1" port=443
-    authentication {{ password-file "/private/password"; }}
-    tls {{ server-name "localhost"; ca-file "/private/cert"; verify #true; }}
-    quic {{ {}; }}
+inbounds {{ inbound "edge" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }} }}
+outbounds {{
+    outbound "direct" type="direct"
+    outbound "hy" type="hysteria2" {{
+        server host="127.0.0.1" port=443
+        authentication {{ password-file "/private/password"; }}
+        tls {{ server-name "localhost"; ca-file "/private/cert"; verify #true; }}
+        quic {{ {}; }}
+    }}
 }}
 routing {{ default-outbound "hy"; }}
 )kdl",fields));

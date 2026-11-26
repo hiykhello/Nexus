@@ -40,6 +40,7 @@ import cli.proxy_ntp;
 import cli.proxy_providers;
 import cli.proxy_services;
 import cli.cert_reloader;
+import cli.ruleset_watcher;
 import http.connect;
 import socks5;
 export import cli.proxy_run_state;
@@ -86,7 +87,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     std::optional<config::Config> reload_config; std::string reload_identity, reload_source;
     ListenerReload listener_reload; TunLiveReload tun_live_reload; AdHocOutboundProber outbound_prober;
     std::shared_ptr<relay::RouteSnapshots> route_snapshots;
-    std::shared_ptr<dns::ReverseCache> reverse_cache; RemoteRulesetManager remote_rulesets; cli::ProxyProviderManager proxy_providers;
+    std::shared_ptr<dns::ReverseCache> reverse_cache; RemoteRulesetManager remote_rulesets; LocalRulesetWatcher local_rulesets{std::chrono::milliseconds(200), std::chrono::milliseconds(1000), &notify_proxy_wakeup}; cli::ProxyProviderManager proxy_providers;
     std::optional<OutboundGroupHealth> group_health; std::optional<cli::RouteFiles> group_route_files;
     std::string_view reload_unavailable="no traffic rule files configured"; cli::DnsMessageRuntime dns_messages(logs);
     cli::LocalControl control; control_api::HttpControlServer http_control;
@@ -190,9 +191,9 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             if (auto result=configure_listener(server,*config,entry,*dns_transports,*route_files,indexed_routes,
                     snell_replay,remember,listener_reload.principals,acme_credential,&cert_reloaders,&logs); !result)
                 return log_failure(logs,logging::Domain::proxy,"listener configuration failed",result.error());
-            if(auto configured=hy2.configure(index,entry);!configured){return log_failure(logs,logging::Domain::core,"Hysteria2 configuration",configured.error());}
-            if(auto configured=masque.configure(index,entry);!configured){return log_failure(logs,logging::Domain::core,"MASQUE configuration",configured.error());}
-            if(auto configured=tuic.configure(index,entry);!configured){return log_failure(logs,logging::Domain::core,"TUIC configuration",configured.error());}
+            if(auto configured=hy2.configure(index,entry,acme_credential,&cert_reloaders,&logs);!configured){return log_failure(logs,logging::Domain::core,"Hysteria2 configuration",configured.error());}
+            if(auto configured=masque.configure(index,entry,acme_credential,&cert_reloaders,&logs);!configured){return log_failure(logs,logging::Domain::core,"MASQUE configuration",configured.error());}
+            if(auto configured=tuic.configure(index,entry,acme_credential,&cert_reloaders,&logs);!configured){return log_failure(logs,logging::Domain::core,"TUIC configuration",configured.error());}
             auto entry_cfg=entry;
             if (entry_cfg.tun) if (auto ok=cli::apply_tun_route_sets(*entry_cfg.tun,*route_files); !ok) return log_failure(logs,logging::Domain::core,"TUN route-set",ok.error());
             if(auto configured=tun.configure(index,entry_cfg,*config);!configured){return log_failure(logs,logging::Domain::core,"TUN configuration",configured.error());}
@@ -203,7 +204,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             return 0;
         };
         for (std::size_t i=0; i<listeners.size(); ++i) if (configure(*listeners[i].server,i)) return 1;
-        route_mode.sync(*config); route_mode.attach(listeners);
+        route_mode.restore(selector_state, *config); route_mode.attach(listeners);
         auto has_udp=uses_native_udp(*config);
         if (has_udp && (traffic_stats || !control_socket.empty() || control_http_config))
             for (std::size_t index=0;index<listeners.size();++index)
@@ -335,6 +336,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     }
     report_ready(logs,listeners,workers,traffic_stats,workers_clamped_from,host_parallelism);
     if (reload_config && remote_rulesets.has_remote()) remote_rulesets.start_background(*reload_config,reload_source,logs);
+    if (reload_config && route_snapshots) local_rulesets.start(*reload_config,run_args.config_path,&logs);
     if (proxy_providers.has_providers()) proxy_providers.start_background(logs);
     bool provider_sync_trigger = false;
     auto reload_routes=[&](std::string_view input,config::Config requested)
@@ -438,7 +440,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         if (traffic_requested.exchange(false,std::memory_order_relaxed)) emit_traffic_snapshot(listeners);
         provider_sync_trigger = proxy_providers.consume_updated();
         bool sig_reload = reload_requested.exchange(false,std::memory_order_relaxed) || control_operations.pending();
-        if(sig_reload || remote_rulesets.consume_updated() || provider_sync_trigger) {
+        if(sig_reload || remote_rulesets.consume_updated() || local_rulesets.consume_updated() || provider_sync_trigger) {
             auto previous=listener_reload.listener_generation;
             auto prep=[&](std::string_view raw) -> std::expected<std::string,std::string> {
                 if (sig_reload) return proxy_providers.prepare_initial(raw, run_args.config_path, true);
@@ -449,7 +451,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             control_operations.finish_reload(success);
             if (success) {
                 if (proxy_providers.has_providers()) proxy_providers.start_background(logs);
-                if (reload_config) remote_rulesets.start_background(*reload_config, reload_source, logs);
+                if (reload_config) { remote_rulesets.start_background(*reload_config, reload_source, logs); if (route_snapshots) local_rulesets.start(*reload_config, run_args.config_path, &logs); }
             }
         }
         if(group_health) {
@@ -481,7 +483,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             std::chrono::steady_clock::now().time_since_epoch()).count()),logs);
     }
     control_wake.detach();
-    proxy_providers.stop(); remote_rulesets.stop();
+    proxy_providers.stop(); remote_rulesets.stop(); local_rulesets.stop();
     services_runtime.stop(); cert_reloaders.stop(); ntp_runtime.stop();
     http_control.stop(); control.stop();
     logs.emit(logging::Level::info,logging::Domain::core,104,{.generation=listener_reload.listener_generation},"proxy draining");

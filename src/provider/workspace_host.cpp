@@ -322,8 +322,11 @@ namespace provider::ws_detail {
             auto inject_inbound = [&](std::string const& snippet) {
                 if (auto d = glaze::read_kdl<glaze::KdlDocument>(snippet); d && !d->empty()) {
                     auto grp = std::ranges::find(*base_doc, std::string_view("inbounds"), &glaze::KdlNode::name);
-                    if (grp != base_doc->end()) grp->children.push_back(std::move(d->front()));
-                    else base_doc->push_back(std::move(d->front()));
+                    if (grp == base_doc->end()) {
+                        base_doc->push_back(glaze::KdlNode{.name = "inbounds"});
+                        grp = std::prev(base_doc->end());
+                    }
+                    grp->children.push_back(std::move(d->front()));
                 }
             };
             if (lower_ascii(h.android.run_mode) != "proxy_only") {
@@ -375,7 +378,6 @@ namespace provider::ws_detail {
 
         if (tmpl.append_proxies_only) {
             if (c_obs != cdoc->end()) {
-                bool has_top = std::ranges::any_of(*tdoc, [](auto const& n) { return n.name == "outbound"; });
                 std::set<std::string> existing;
                 if (t_obs != tdoc->end()) {
                     for (auto const& ch : t_obs->children)
@@ -383,13 +385,6 @@ namespace provider::ws_detail {
                     for (auto const& ch : c_obs->children)
                         if (auto [nm, _] = outbound_tag_and_type(ch); !nm.empty() && existing.insert(nm).second)
                             t_obs->children.push_back(ch);
-                } else if (has_top) {
-                    for (auto const& n : *tdoc)
-                        if (n.name == "outbound")
-                            if (auto [nm, _] = outbound_tag_and_type(n); !nm.empty()) existing.insert(nm);
-                    for (auto const& ch : c_obs->children)
-                        if (auto [nm, _] = outbound_tag_and_type(ch); !nm.empty() && existing.insert(nm).second)
-                            tdoc->push_back(ch);
                 } else {
                     tdoc->push_back(*c_obs);
                 }

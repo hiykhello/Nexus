@@ -38,21 +38,35 @@ export namespace cli {
         std::string member;
     };
 
+    struct PersistedRouteMode {
+        std::string mode;
+        std::string global_outbound;
+        auto operator==(PersistedRouteMode const&) const -> bool = default;
+    };
+
     class SelectorState {
         std::optional<::state::InstanceLock> instance_;
         std::uint64_t revision_=0;
+        std::uint64_t route_mode_revision_=0;
         std::vector<SelectorChoice> choices_;
+        std::optional<PersistedRouteMode> route_mode_;
     public:
         SelectorState() noexcept=default;
         ~SelectorState();
         SelectorState(SelectorState const&)=delete;
         auto operator=(SelectorState const&) -> SelectorState& =delete;
         auto open(this SelectorState& self,std::string const& path) -> std::expected<void,std::string>;
+        auto open_route_mode_only(this SelectorState& self,std::string const& path) -> std::expected<void,std::string>;
         // False means rename succeeded but directory sync did not confirm durability.
         auto select(this SelectorState& self,std::string_view group,std::string_view member)
             -> std::expected<bool,std::string>;
+        auto save_route_mode(this SelectorState& self,std::string_view mode,std::string_view global_outbound)
+            -> std::expected<bool,std::string>;
         [[nodiscard]] auto choices(this SelectorState const& self) noexcept -> std::span<SelectorChoice const> {
             return self.choices_;
+        }
+        [[nodiscard]] auto route_mode(this SelectorState const& self) noexcept -> std::optional<PersistedRouteMode> const& {
+            return self.route_mode_;
         }
     };
 

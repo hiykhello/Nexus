@@ -19,6 +19,7 @@ import openvpn.types;
 import openvpn.wire;
 import openvpn.control;
 import openvpn.session;
+import openvpn.tls_crypt;
 import capy;
 import corosio;
 import relay.l3_mux;
@@ -65,6 +66,10 @@ export namespace relay::ovpn_detail {
             }
         }
         openvpn::DataChannel data;
+        openvpn::TlsAuthCodec tls_auth;
+        openvpn::TlsCryptCodec tls_crypt;
+        std::uint32_t session_epoch_s = static_cast<std::uint32_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
         openvpn::Cipher active_cipher;
         std::uint64_t local_sid = 0;
         std::uint32_t peer_id = 0;
@@ -82,16 +87,54 @@ export namespace relay::ovpn_detail {
         capy::async_event ready_event, tx_event;
         std::stop_source stop_src;
         std::uint64_t last_tx_ms = 0, last_rx_ms = 0;
-        bool started = false, connecting = false, stopped = false, loop_active = false, use_tcp = false;
+        bool started = false, connecting = false, stopped = false, loop_active = false, use_tcp = false, ctrl_codec_failed = false;
 
         HostState(io::io_context& ctx, config::OpenVpnOutbound const& c, tls::ShapedClientProfile const& t,
-                  std::string const& pw, platform::SocketBinding b, TunnelFactory const* d)
+                  std::string const& pw, std::optional<std::array<std::uint8_t, 256>> const& static_key,
+                  platform::SocketBinding b, TunnelFactory const* d)
             : context(ctx), cfg(c), tls(t), password(pw), binding(std::move(b)), via(d),
               active_cipher(c.cipher == config::OpenVpnCipher::chacha20_poly1305
                   ? openvpn::Cipher::chacha20_poly1305 : openvpn::Cipher::aes_256_gcm),
               ping_s(c.keepalive_s),
               mux(L3Endpoint{c.has_v4, c.local_v4, c.has_v6, c.local_v6, c.mtu}, &HostState::send_ip, this),
-              use_tcp(c.transport == config::OpenVpnTransport::tcp || d != nullptr) {}
+              use_tcp(c.transport == config::OpenVpnTransport::tcp || d != nullptr) {
+            if (c.tls_auth_mode != config::OpenVpnTlsAuthMode::none) {
+                if (!static_key) {
+                    ctrl_codec_failed = true;
+                } else if (c.tls_auth_mode == config::OpenVpnTlsAuthMode::tls_crypt) {
+                    ctrl_codec_failed = !tls_crypt.init(*static_key, false);
+                } else {
+                    auto kd = c.key_direction == 0 ? openvpn::KeyDirection::client_0
+                        : (c.key_direction == 1 ? openvpn::KeyDirection::client_1
+                                                : openvpn::KeyDirection::bidirectional);
+                    ctrl_codec_failed = !tls_auth.init(*static_key, kd, false, c.tls_auth_sha1);
+                }
+            }
+        }
+
+        auto encode_ctrl(openvpn::ControlPacket const& pkt) -> std::expected<std::vector<std::uint8_t>, std::string> {
+            if (ctrl_codec_failed) return std::unexpected("OpenVPN control codec not initialized");
+            auto plain = openvpn::encode_control_packet(pkt);
+            if (!plain) return plain;
+            if (tls_crypt.active()) return tls_crypt.wrap(*plain, session_epoch_s);
+            if (tls_auth.active()) return tls_auth.wrap(*plain, session_epoch_s);
+            return plain;
+        }
+
+        auto decode_ctrl(std::span<std::uint8_t const> wire) -> std::expected<openvpn::ControlPacket, std::string> {
+            if (ctrl_codec_failed) return std::unexpected("OpenVPN control codec not initialized");
+            if (tls_crypt.active()) {
+                auto plain = tls_crypt.unwrap(wire);
+                if (!plain) return std::unexpected(plain.error());
+                return openvpn::decode_control_packet(*plain);
+            }
+            if (tls_auth.active()) {
+                auto plain = tls_auth.unwrap(wire);
+                if (!plain) return std::unexpected(plain.error());
+                return openvpn::decode_control_packet(*plain);
+            }
+            return openvpn::decode_control_packet(wire);
+        }
 
         static auto send_ip(void* ctx, std::span<std::uint8_t const> pkt) -> bool {
             auto* h = static_cast<HostState*>(ctx);
@@ -165,7 +208,7 @@ export namespace relay::ovpn_detail {
 
         auto send_ctrl_packets(std::vector<openvpn::ControlPacket> const& pkts) -> capy::task<bool> {
             for (auto const& p : pkts) {
-                auto w = openvpn::encode_control_packet(p);
+                auto w = encode_ctrl(p);
                 if (!w || !co_await send_wire(*w)) co_return false;
             }
             co_return true;
@@ -205,12 +248,12 @@ export namespace relay::ovpn_detail {
                 if (!plain_out.empty()) co_return true;
                 auto pkt = co_await recv_wire(dl);
                 if (!pkt) co_return false;
-                auto cp = openvpn::decode_control_packet(*pkt);
+                auto cp = decode_ctrl(*pkt);
                 if (!cp) continue;
                 auto tls_chunk = ctrl.on_packet(*cp, now_ms());
                 if (!tls_chunk) co_return false;
                 if (auto ack = ctrl.take_ack()) {
-                    auto aw = openvpn::encode_control_packet(*ack);
+                    auto aw = encode_ctrl(*ack);
                     if (!aw || !co_await send_wire(*aw)) co_return false;
                 }
                 tls_rx.insert(tls_rx.end(), tls_chunk->begin(), tls_chunk->end());
@@ -235,10 +278,10 @@ export namespace relay::ovpn_detail {
                 last_rx_ms = ms;
                 if (plain->size() == openvpn::ping_magic.size() && std::ranges::equal(*plain, openvpn::ping_magic)) return;
                 mux.on_ip_packet(*plain, ms);
-            } else if (auto cp = openvpn::decode_control_packet(wire); cp && cp->packet_id && cp->session_id != 0) {
+            } else if (auto cp = decode_ctrl(wire); cp && cp->packet_id && cp->session_id != 0) {
                 openvpn::ControlPacket ack{.opcode = openvpn::Opcode::ack_v1, .key_id = cp->key_id,
                     .session_id = local_sid, .acks = {*cp->packet_id}, .remote_session_id = cp->session_id};
-                if (auto w = openvpn::encode_control_packet(ack)) {
+                if (auto w = encode_ctrl(ack)) {
                     if (!use_tcp) (void)udp.send(udp_target, *w);
                     else if (auto f = openvpn::encode_tcp_frame(*w); f && tx_push(std::move(*f))) {
                         tx_event.set();

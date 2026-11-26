@@ -95,6 +95,7 @@ namespace relay {
     auto make_wireguard_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::optional<std::string_view>,
         bool, std::array<std::uint8_t, 4>, bool, std::array<std::uint8_t, 16>, bool, std::array<std::uint8_t, 3>,
         std::uint16_t, std::uint16_t, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions) -> std::expected<TunnelFactory, std::string>;
+    auto make_wireguard_factory(config::WireGuardOutbound const&) -> std::expected<TunnelFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_SSH
     auto make_ssh_factory(std::string_view, std::uint16_t, std::string_view, std::optional<std::string_view>,

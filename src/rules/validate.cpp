@@ -252,7 +252,7 @@ namespace rules {
             } else if (rule.type=="route-mode") {
                 if (!parse_route_mode(rule.value)) return invalid("invalid route-mode");
             } else if (rule.type=="network") {
-                if (rule.value!="tcp" && rule.value!="udp") return invalid("invalid network");
+                if (rule.value!="tcp" && rule.value!="udp" && rule.value!="icmp") return invalid("invalid network");
             } else if (rule.type=="client") {
                 if (!valid_client_name(rule.value)) return invalid("invalid client name");
                 for (auto& c : rule.value) if (c>='A' && c<='Z') c=static_cast<char>(c+('a'-'A'));

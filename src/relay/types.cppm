@@ -83,15 +83,24 @@ export namespace relay {
         std::optional<std::array<std::uint8_t, 16>> ipv6;
         std::uint64_t revision;
     };
+    struct MeshWorkerBinding {
+        std::size_t worker_id = 0;
+        std::uint16_t port_begin = 32768;
+        std::uint16_t port_end = 60999;
+    };
     PRO_DEF_MEM_DISPATCH(MeshLinkNetwork, network);
     PRO_DEF_MEM_DISPATCH(MeshLinkFailed, failed);
+    PRO_DEF_MEM_DISPATCH(MeshLinkBindWorker, bind_worker);
+    PRO_DEF_MEM_DISPATCH(MeshLinkUnbindWorker, unbind_worker);
     PRO_DEF_MEM_DISPATCH(MeshLinkSend, send);
     PRO_DEF_MEM_DISPATCH(MeshLinkReceive, receive);
     struct MeshLinkFacade : pro::facade_builder
         ::add_convention<MeshLinkNetwork, std::optional<MeshNetwork>() const>
         ::add_convention<MeshLinkFailed, bool() const noexcept>
-        ::add_convention<MeshLinkSend, bool(std::uint64_t, std::span<std::uint8_t const>)>
-        ::add_convention<MeshLinkReceive, std::optional<std::vector<std::uint8_t>>(std::uint64_t)>
+        ::add_convention<MeshLinkBindWorker, std::optional<MeshWorkerBinding>()>
+        ::add_convention<MeshLinkUnbindWorker, void(std::size_t) noexcept>
+        ::add_convention<MeshLinkSend, bool(std::size_t, std::uint64_t, std::span<std::uint8_t const>)>
+        ::add_convention<MeshLinkReceive, std::optional<std::vector<std::uint8_t>>(std::size_t, std::uint64_t)>
         ::support_copy<pro::constraint_level::nothrow>
         ::build {};
     using MeshLink = pro::proxy<MeshLinkFacade>;

@@ -461,6 +461,7 @@ export namespace relay {
             bool has_v4, std::array<std::uint8_t, 4> local_v4, bool has_v6, std::array<std::uint8_t, 16> local_v6,
             bool warp, std::array<std::uint8_t, 3> reserved, std::uint16_t mtu = 1420, std::uint16_t keepalive_s = 0,
             std::optional<std::size_t> bootstrap = {}, std::uint32_t timeout_ms = 10000, TcpSocketOptions options = {}) -> std::expected<std::size_t, std::string>;
+        [[nodiscard]] auto add_wireguard(config::WireGuardOutbound const&) -> std::expected<std::size_t, std::string>;
         [[nodiscard]] auto add_ssh(std::string_view host, std::uint16_t port, std::string_view user,
             std::optional<std::string_view> password_file, std::optional<std::string_view> private_key_file,
             std::span<std::array<std::uint8_t, 32> const> host_key_sha256, std::string_view cipher = {},

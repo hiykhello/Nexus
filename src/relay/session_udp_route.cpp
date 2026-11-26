@@ -278,7 +278,7 @@ namespace relay {
                                 resolution.deadline = ingress.limit_route(std::chrono::milliseconds(timeout));
                                 if (Clock::now() >= resolution.deadline) { valid = false; break; }
                             }
-                            if (action.action.kind == rules::ProgramActionKind::route) {
+                            if (action.action.kind == rules::ProgramActionKind::route || action.action.kind == rules::ProgramActionKind::bypass) {
                                 if (action.action.udp_disable_domain_unmapping) udp_disable_unmapping = true;
                                 selected = action.action.outbound;
                                 route_rule = action.rule_index;

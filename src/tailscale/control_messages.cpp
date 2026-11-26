@@ -201,6 +201,34 @@ namespace tailscale::control_messages {
             }
             return {};
         }
+        auto format_prefix(Prefix const& p) -> std::expected<std::string, Failure> {
+            auto width = p.family == 4 ? 4u : p.family == 6 ? 16u : 0u;
+            if (!width || p.bits > width * 8) return failure(Error::address);
+            auto whole = p.bits / 8, part = p.bits % 8;
+            if (part && (p.address[whole] & ((1u << (8 - part)) - 1))) return failure(Error::address);
+            if (!std::ranges::all_of(std::span(p.address).subspan(whole + (part ? 1u : 0u)), [](auto c) { return c == 0; }))
+                return failure(Error::address);
+            if (width == 4) {
+                corosio::ipv4_address::bytes_type ip{};
+                std::copy_n(p.address.begin(), ip.size(), ip.begin());
+                return std::format("{}/{}", corosio::ipv4_address(ip).to_string(), p.bits);
+            }
+            return std::format("{}/{}", corosio::ipv6_address(p.address).to_string(), p.bits);
+        }
+        auto encode_routable_ips_json(std::span<const Prefix> routes) -> std::expected<std::string, Failure> {
+            if (routes.size() > max_prefixes) return failure(Error::limit);
+            std::string out = R"(,"RoutableIPs":[)";
+            for (std::size_t i = 0; i < routes.size(); ++i) {
+                auto formatted = format_prefix(routes[i]);
+                if (!formatted) return std::unexpected(formatted.error());
+                if (i) out += ',';
+                out += '"';
+                out += *formatted;
+                out += '"';
+            }
+            out += ']';
+            return out;
+        }
     }
     RegisterWire::RegisterWire(std::span<std::uint8_t> bytes) noexcept : bytes_(bytes) {}
     RegisterWire::~RegisterWire() {clear();}
@@ -209,9 +237,17 @@ namespace tailscale::control_messages {
     auto RegisterWire::clear() noexcept -> void {crypto::cleanse(bytes_);bytes_={};}
 
     auto encode_map_request(control::NodePublic const& node, MapRequestMode mode,
-                            std::span<const Endpoint> endpoints, std::optional<DiscoKey> const& disco) -> std::expected<std::string, Failure> {
+                            std::span<const Endpoint> endpoints, std::optional<DiscoKey> const& disco,
+                            std::span<const Prefix> advertise_routes) -> std::expected<std::string, Failure> {
         if (!nonzero(node.view()) || endpoints.size() > max_endpoints ||
             (mode == MapRequestMode::stream && !endpoints.empty())) return failure(Error::schema);
+        std::string hostinfo_routes;
+        if (!advertise_routes.empty()) {
+            auto encoded = encode_routable_ips_json(advertise_routes);
+            if (!encoded) return std::unexpected(encoded.error());
+            // Strip leading comma to form standalone Hostinfo object.
+            hostinfo_routes = std::format(R"(,"Hostinfo":{{{}}})", std::string_view(*encoded).substr(1));
+        }
         std::string result = R"({"Version":148,"NodeKey":"nodekey:)";
         constexpr std::string_view digits = "0123456789abcdef";
         for (auto byte : node.view()) { result += digits[byte >> 4]; result += digits[byte & 15]; }
@@ -221,10 +257,14 @@ namespace tailscale::control_messages {
             for(auto byte:*disco) {result+=digits[byte>>4];result+=digits[byte&15];}
         }
         if (mode == MapRequestMode::stream) {
-            result += R"(","Stream":true,"KeepAlive":true})";
+            result += R"(","Stream":true,"KeepAlive":true)";
+            result += hostinfo_routes;
+            result += '}';
             return result;
         }
-        result += R"(","OmitPeers":true,"Endpoints":[)";
+        result += R"(","OmitPeers":true)";
+        result += hostinfo_routes;
+        result += R"(,"Endpoints":[)";
         for (std::size_t index = 0; index < endpoints.size(); ++index) {
             auto const& endpoint = endpoints[index];
             auto width = endpoint.family == 4 ? 4u : endpoint.family == 6 ? 16u : 0u;
@@ -250,6 +290,12 @@ namespace tailscale::control_messages {
             if (output.size()>max_json_bytes || !nonzero(request.node.view()) || !safe_text(request.auth_key,4096) || !safe_text(request.hostname,253) ||
                 !safe_text(request.os,64) || !safe_text(request.client_version,128)) return failure(Error::schema);
             for (auto text:{request.auth_key,request.hostname,request.os,request.client_version}) if (overlaps(output,text)) return failure(Error::overlap);
+            std::string routable_json;
+            if (!request.advertise_routes.empty()) {
+                auto encoded = encode_routable_ips_json(request.advertise_routes);
+                if (!encoded) return std::unexpected(encoded.error());
+                routable_json = std::move(*encoded);
+            }
             std::array<char,72> node_text{};std::ranges::copy(std::string_view("nodekey:"),node_text.begin());
             for (unsigned i=0;i<32;++i) {node_text[8+2*i]="0123456789abcdef"[request.node.view()[i]>>4];node_text[9+2*i]="0123456789abcdef"[request.node.view()[i]&15];}
             // This fixed schema writes directly to the final caller buffer.
@@ -258,7 +304,8 @@ namespace tailscale::control_messages {
             constexpr std::array<std::string_view,6> parts{R"({"Version":148,"NodeKey":)",R"(,"Auth":{"AuthKey":)",
                 R"(},"Hostinfo":{"Hostname":)",R"(,"OS":)",R"(,"IPNVersion":)",R"(},"Ephemeral":)"};
             std::array<std::string_view,5> values{{{node_text.data(),node_text.size()},request.auth_key,request.hostname,request.os,request.client_version}};
-            auto ending=request.ephemeral ? std::string_view("true}") : std::string_view("false}");std::size_t size=ending.size();
+            auto ending=request.ephemeral ? std::string_view("true}") : std::string_view("false}");
+            std::size_t size=ending.size()+routable_json.size();
             for (auto part:parts) size+=part.size();
             for (auto value:values) {size+=value.size()+2;for (auto c:value) if (c=='"' || c=='\\') ++size;}
             if (output.size()<size) return failure(Error::capacity);
@@ -267,6 +314,7 @@ namespace tailscale::control_messages {
                 append(parts[i]);output[used++]='"';
                 for (auto c:values[i]) {if (c=='"' || c=='\\') output[used++]='\\';output[used++]=static_cast<std::uint8_t>(c);}output[used++]='"';
             }
+            if (!routable_json.empty()) append(routable_json);
             append(parts.back());append(ending);Raw checked;
             if (!read(checked,bytes(std::span<std::uint8_t const>(output.first(used))))) return failure(Error::schema);
             erase.success=true;return RegisterWire(output.first(used));

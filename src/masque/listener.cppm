@@ -20,6 +20,7 @@ import quic.retry_token;
 import quic.tls_server;
 import hysteria2.transport_options;
 import dns.local_config;
+import tls.ech_server;
 import tls.server_credential;
 import ngtcp2;
 import capy;
@@ -66,8 +67,8 @@ export namespace masque {
                 slot->emplace(Flow{stream,std::move(*lease),std::move(traffic)});
                 return true;
             }
-            Bundle(Listener& parent,Registry& table,quic::SessionHandle id,corosio::endpoint const& peer)
-                :listener(parent),registry(table),owner(id),source(source_endpoint(peer)),tls(parent.credential_,"h3"),memory(parent.config_.native_bytes),
+            Bundle(Listener& parent,Registry& table,quic::SessionHandle id,corosio::endpoint const& peer,std::optional<tls::ServerCredential>&& dynamic_credential)
+                :listener(parent),registry(table),owner(id),source(source_endpoint(peer)),tls(std::move(dynamic_credential),parent.credential_,"h3",parent.ech_keys_),memory(parent.config_.native_bytes),
                  host(parent.context_,tls,parent.config_,parent.snapshots_,memory.http3(),[&parent]() {parent.notify();},parent.ip_port_),
                  session(tls,host.server().application(),parent.local_) {
                 if (parent.accounting_) host.server().observe_traffic({this,
@@ -114,7 +115,13 @@ export namespace masque {
                 try {
                     if(!permit || !std::ranges::equal(permit->retry.bytes(),std::span(initial.dcid.data).first(initial.dcid.datalen)))return std::unexpected(n::err_callback_failure);
                     auto verified=*permit;permit.reset();auto& entry=bundles[owner.slot];if(entry)return std::unexpected(n::err_callback_failure);
-                    entry.emplace(listener,registry,owner,peer);
+                    std::optional<tls::ServerCredential> dyn_cred;
+                    if(listener.atomic_credential_) {
+                        auto cur=listener.atomic_credential_->clone_current();
+                        if(!cur)return std::unexpected(n::err_callback_failure);
+                        dyn_cred.emplace(std::move(*cur));
+                    } else if(!listener.credential_)return std::unexpected(n::err_callback_failure);
+                    entry.emplace(listener,registry,owner,peer,std::move(dyn_cred));
                     hysteria2::TransportOptions options;options.native_bytes=listener.config_.native_bytes;
                     auto params=hysteria2::TransportProfile<Streams,Window>::parameters(options);
                     auto settings=hysteria2::TransportProfile<Streams,Window>::settings(options);
@@ -146,7 +153,10 @@ export namespace masque {
         };
         using Port=quic::DatagramPort<Factory,Sessions,8,8,true>;
         using Driver=net::DatagramDriver<Port>;
-        corosio::io_context& context_;HostConfig const& config_;tls::ServerCredential const& credential_;dns::LocalSnapshotSource& snapshots_;
+        corosio::io_context& context_;HostConfig const& config_;tls::ServerCredential const* credential_=nullptr;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential_{};
+        std::shared_ptr<tls::EchServerKeys const> ech_keys_{};
+        dns::LocalSnapshotSource& snapshots_;
         IpServerPort* ip_port_;
         relay::Server* accounting_;
         bool ip_withdrawing_=false;
@@ -167,10 +177,17 @@ export namespace masque {
             ~Root(){if(owner){owner->stop();owner->root_=false;owner->port_.stop();owner->port_.drain();owner->changed_.set();}}
         };
     public:
-        Listener(corosio::io_context& context,HostConfig const& config,tls::ServerCredential const& credential,dns::LocalSnapshotSource& snapshots,IpServerPort* ip_port=nullptr,relay::Server* accounting=nullptr)
-            :context_(context),config_(config),credential_(credential),snapshots_(snapshots),ip_port_(ip_port),accounting_(accounting),socket_(context),factory_(*this),port_(factory_),driver_(socket_,port_) {
+        Listener(corosio::io_context& context,HostConfig const& config,tls::ServerCredential const* credential,
+            std::shared_ptr<tls::AtomicServerCredential> atomic_credential,dns::LocalSnapshotSource& snapshots,
+            IpServerPort* ip_port=nullptr,relay::Server* accounting=nullptr,std::shared_ptr<tls::EchServerKeys const> ech_keys={})
+            :context_(context),config_(config),credential_(credential),atomic_credential_(std::move(atomic_credential)),
+             ech_keys_(std::move(ech_keys)),snapshots_(snapshots),ip_port_(ip_port),accounting_(accounting),socket_(context),factory_(*this),port_(factory_),driver_(socket_,port_) {
             if(!config.valid(ip_port!=nullptr))throw std::invalid_argument("invalid MASQUE listener config");
         }
+        Listener(corosio::io_context& context,HostConfig const& config,tls::ServerCredential const& credential,dns::LocalSnapshotSource& snapshots,IpServerPort* ip_port=nullptr,relay::Server* accounting=nullptr,std::shared_ptr<tls::EchServerKeys const> ech_keys={})
+            :Listener(context,config,&credential,{},snapshots,ip_port,accounting,std::move(ech_keys)) {}
+        Listener(corosio::io_context& context,HostConfig const& config,std::shared_ptr<tls::AtomicServerCredential> atomic_credential,dns::LocalSnapshotSource& snapshots,IpServerPort* ip_port=nullptr,relay::Server* accounting=nullptr,std::shared_ptr<tls::EchServerKeys const> ech_keys={})
+            :Listener(context,config,nullptr,std::move(atomic_credential),snapshots,ip_port,accounting,std::move(ech_keys)) {}
         Listener(Listener const&)=delete;auto operator=(Listener const&) -> Listener& = delete;
         ~Listener(){stop();port_.drain();if(!drained())std::terminate();}
         auto process_traffic_closes() -> bool {

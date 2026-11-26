@@ -221,5 +221,7 @@ export namespace wireguard {
         [[nodiscard]] auto queued_bytes() const noexcept -> std::size_t { return queued_bytes_; }
         [[nodiscard]] auto latest_attempt() const noexcept -> std::uint64_t { return latest_; }
         [[nodiscard]] auto receiver_indexes() const noexcept -> ReceiverIndexes;
+        [[nodiscard]] auto last_initiation_timestamp() const -> Timestamp { return timestamps_.last(); }
+        auto seed_initiation_timestamp(Timestamp const& ts) -> void { timestamps_.seed(ts); }
     };
 }

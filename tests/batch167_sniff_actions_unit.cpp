@@ -78,11 +78,13 @@ int main() {
         std::string kdl = R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing {
     tcp-program sniff-timeout-ms=500 unknown="skip" udp=#true {
         rule action="sniff"

@@ -147,23 +147,26 @@ export namespace relay {
         L3Endpoint cfg_;
         SendPacketFn send_fn_;
         void* send_ctx_;
+        std::uint16_t port_begin_ = 32768, port_end_ = 60999;
         std::uint16_t next_port_ = 32768;
         PortTable<TcpFlow> tcp_;
         PortTable<UdpFlow> udp_;
 
         auto alloc_tcp_port() -> std::optional<std::uint16_t> {
-            for (std::uint32_t n = 0; n < 28232; ++n) {
+            std::uint32_t span = static_cast<std::uint32_t>(port_end_) - port_begin_ + 1u;
+            for (std::uint32_t n = 0; n < span; ++n) {
                 std::uint16_t p = next_port_;
-                next_port_ = next_port_ >= 60999 ? 32768 : static_cast<std::uint16_t>(next_port_ + 1);
+                next_port_ = next_port_ >= port_end_ ? port_begin_ : static_cast<std::uint16_t>(next_port_ + 1);
                 if (!tcp_.contains(p)) return p;
             }
             return std::nullopt;
         }
 
         auto alloc_udp_port() -> std::optional<std::uint16_t> {
-            for (std::uint32_t n = 0; n < 28232; ++n) {
+            std::uint32_t span = static_cast<std::uint32_t>(port_end_) - port_begin_ + 1u;
+            for (std::uint32_t n = 0; n < span; ++n) {
                 std::uint16_t p = next_port_;
-                next_port_ = next_port_ >= 60999 ? 32768 : static_cast<std::uint16_t>(next_port_ + 1);
+                next_port_ = next_port_ >= port_end_ ? port_begin_ : static_cast<std::uint16_t>(next_port_ + 1);
                 if (!udp_.contains(p)) return p;
             }
             return std::nullopt;
@@ -282,6 +285,9 @@ export namespace relay {
 
         [[nodiscard]] auto endpoint() const noexcept -> L3Endpoint const& { return cfg_; }
         auto set_endpoint(L3Endpoint cfg) noexcept -> void { cfg_ = cfg; }
+        auto set_port_range(std::uint16_t begin, std::uint16_t end) noexcept -> void {
+            if (begin >= 1024 && begin <= end) { port_begin_ = begin; port_end_ = end; next_port_ = begin; }
+        }
         auto reset_flows() -> void {
             for (auto& f : tcp_.items()) { f->state = TcpFlow::State::closed; f->changed.set(); }
             tcp_.clear();

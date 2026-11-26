@@ -36,17 +36,4 @@ namespace state {
         if (!*same) return std::unexpected(StateError{Stage::directory, std::make_error_code(std::errc::io_error)});
         return backup(parent->get(), "fakeip");
     }
-
-    auto clear_legacy_dns(std::filesystem::path const& directory) -> std::expected<void, StateError> {
-        auto locked = InstanceLock::open(directory);
-        if (!locked) {
-            if (locked.error().os == std::errc::no_such_file_or_directory) return {};
-            return std::unexpected(locked.error());
-        }
-        for (auto name : {"messages.cache", ".messages.next"}) {
-            auto removed = unlink_dir_file(locked->directory(), name, Stage::remove_blob);
-            if (!removed) return removed;
-        }
-        return sync_handle(locked->directory(), Stage::sync_directory);
-    }
 }

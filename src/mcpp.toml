@@ -61,7 +61,7 @@ trojan = { implies = ["tls", "websocket", "grpc-tls", "stream-datagrams"], sourc
 anytls = { implies = ["tls", "websocket", "grpc-tls", "stream-datagrams"], sources = ["anytls/auth.cppm", "anytls/writer.cppm", "anytls/session.cppm", "anytls/connection.cppm", "anytls/client.cppm"] }
 wireguard-tun = { implies = ["wireguard"], sources = ["wireguard/packet_link.cppm", "wireguard/tun.cppm"] }
 ssh = { sources = ["ssh/wire.cppm", "ssh/crypto.cppm", "ssh/crypto.cpp", "ssh/session.cppm", "ssh/connection.cppm"] }
-wireguard = { sources = ["wireguard/crypto.cppm", "wireguard/session.cppm", "wireguard/admission.cppm", "wireguard/initiation.cppm", "wireguard/noise.cppm", "wireguard/identity.cppm", "wireguard/cookie.cppm", "wireguard/endpoint.cppm", "wireguard/endpoint.cpp", "wireguard/endpoint_handshake.cpp", "wireguard/endpoint_timers.cpp", "wireguard/endpoint_cookie.cpp", "wireguard/registry.cppm", "wireguard/host.cppm", "wireguard/routing.cppm", "wireguard/port_types.cppm", "wireguard/port.cppm"] }
+wireguard = { sources = ["wireguard/crypto.cppm", "wireguard/session.cppm", "wireguard/admission.cppm", "wireguard/initiation.cppm", "wireguard/noise.cppm", "wireguard/identity.cppm", "wireguard/cookie.cppm", "wireguard/endpoint.cppm", "wireguard/endpoint.cpp", "wireguard/endpoint_handshake.cpp", "wireguard/endpoint_timers.cpp", "wireguard/endpoint_cookie.cpp", "wireguard/registry.cppm", "wireguard/host.cppm", "wireguard/routing.cppm", "wireguard/port_types.cppm", "wireguard/port.cppm", "wireguard/multi_peer_outbound.cppm", "wireguard/multi_peer_outbound.cpp"] }
 tailscale = { sources = ["tailscale/derp.cppm", "tailscale/derp_messages.cppm", "tailscale/stun.cppm", "tailscale/stun_queries.cppm", "tailscale/box.cppm", "tailscale/derp_info.cppm", "tailscale/derp_info.cpp", "tailscale/derp_handshake.cppm", "tailscale/control.cppm"] }
 
 unified-stream = { sources = ["net/unified_stream.cppm"] }
@@ -69,8 +69,8 @@ stream-framing = { sources = ["net/framed_stream.cppm"] }
 datagram-driver = { sources = ["net/datagram_driver.cppm"] }
 packet-stream-socket = { sources = ["net/packet_stream_socket.cppm", "net/unified_datagram.cppm"] }
 tailscale-policy = { sources = ["tailscale/packet_filter.cppm", "tailscale/packet_filter.cpp"] }
-tailscale-map-projection = { implies = ["tailscale-control", "tailscale-policy"], sources = ["tailscale/snapshot.cppm", "tailscale/map_session.cppm", "tailscale/control_application.cppm"] }
-tailscale-wireguard-tun = { implies = ["tailscale-map-projection", "wireguard-tun"], sources = ["tailscale/discovery.cppm", "tailscale/wireguard_routes.cppm", "tailscale/wireguard_tun.cppm", "tailscale/wireguard_tun.cpp", "tailscale/derp_connection.cppm"] }
+tailscale-map-projection = { implies = ["tailscale-control", "tailscale-policy"], sources = ["tailscale/snapshot.cppm", "tailscale/magic_dns.cppm", "tailscale/magic_dns.cpp", "tailscale/map_session.cppm", "tailscale/control_application.cppm"] }
+tailscale-wireguard-tun = { implies = ["tailscale-map-projection", "wireguard-tun"], sources = ["tailscale/discovery.cppm", "tailscale/wireguard_routes.cppm", "tailscale/netlink_worker.cppm", "tailscale/multi_worker.cppm", "tailscale/wireguard_tun.cppm", "tailscale/wireguard_tun.cpp", "tailscale/derp_connection.cppm"] }
 tailscale-control = { implies = ["tailscale", "tls", "http2", "stream-framing"], sources = [
     "tailscale/control_http.cppm", "tailscale/control_messages.cppm", "tailscale/control_messages.cpp",
     "tailscale/control_record_codec.cppm", "tailscale/control_stream.cppm",
@@ -120,8 +120,8 @@ tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "byte-ring"], sources
 masque-client = { implies = ["masque-session", "quic-tls", "quic-shared-port", "hysteria2-support"], sources = ["masque/client_profile.cppm", "masque/client_profile.cpp", "masque/client_hooks.cppm", "masque/client_http.cppm", "masque/client_session.cppm", "quic/optional_client_resumption_disabled.cppm"] }
 naive = { implies = ["http2", "masque-client", "masque-server", "quic-retry", "packet-stream-socket"], sources = ["naive/*.cpp", "naive/*.cppm"] }
 derp-server = { implies = ["tailscale"], sources = ["tailscale/derp_server.cppm", "tailscale/derp_server.cpp"] }
-openvpn = { implies = ["tls"], sources = ["openvpn/types.cppm", "openvpn/wire.cppm", "openvpn/wire.cpp", "openvpn/session.cppm", "openvpn/session.cpp", "openvpn/control.cppm", "openvpn/control.cpp"] }
-openconnect = { implies = ["tls"], sources = ["openconnect/types.cppm", "openconnect/auth.cppm", "openconnect/auth.cpp", "openconnect/cstp.cppm", "openconnect/cstp.cpp"] }
+openvpn = { implies = ["tls"], sources = ["openvpn/types.cppm", "openvpn/wire.cppm", "openvpn/wire.cpp", "openvpn/push.cpp", "openvpn/session.cppm", "openvpn/session.cpp", "openvpn/control.cppm", "openvpn/control.cpp", "openvpn/tls_crypt.cppm", "openvpn/tls_crypt.cpp", "openvpn/server.cppm", "openvpn/server.cpp"] }
+openconnect = { implies = ["tls"], sources = ["openconnect/types.cppm", "openconnect/auth.cppm", "openconnect/auth.cpp", "openconnect/cstp.cppm", "openconnect/cstp.cpp", "openconnect/dtls.cppm", "openconnect/dtls.cpp", "openconnect/dtls_fallback.cpp"] }
 
 [feature-deps.acme]
 crypto = { path = "crypto" }

@@ -206,7 +206,7 @@ namespace rules {
                 entry.route_mode = *parse_route_mode(rule.value);
             } else if (rule.type == "network") {
                 entry.kind = Kind::network;
-                entry.network = rule.value == "tcp" ? Network::tcp : Network::udp;
+                entry.network = rule.value == "tcp" ? Network::tcp : rule.value == "udp" ? Network::udp : Network::icmp;
             } else if (rule.type == "network-type") {
                 entry.kind = Kind::network_type;
                 entry.network_type = *parse_network_type(rule.value);

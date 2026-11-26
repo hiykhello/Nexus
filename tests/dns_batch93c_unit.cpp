@@ -183,25 +183,31 @@ namespace {
     auto view_config() -> void {
         std::string const skeleton=R"kdl(schema-version 1
 role "client"
-inbound "app" type="socks5" { listen host="127.0.0.1" port=12345; authentication "none"; }
+inbounds { inbound "app" type="socks5" { listen host="127.0.0.1" port=12345; authentication "none"; }; }
+outbounds {
 outbound "direct" type="direct"
 outbound "edge" type="http-connect" {
     server host="edge.test" port=18080
     domain-resolver "RESOLVER"
 }
+EXTRA_OB
+}
 DNS
 routing { default-outbound "edge"; }
 )kdl";
-        auto parse=[&](std::string_view resolver,std::string_view dns) {
+        auto parse=[&](std::string_view resolver,std::string_view dns,std::string_view extra_ob={}) {
             auto document=skeleton;
             document.replace(document.find("RESOLVER"),8,resolver);
+            document.replace(document.find("EXTRA_OB"),8,extra_ob);
             document.replace(document.find("\nDNS\n")+1,3,dns);
             return config::parse_kdl(document);
         };
         auto good=R"kdl(dns {
-    server "wire" type="udp" host="127.0.0.1" port=20053
-    server "fallback" type="udp" host="127.0.0.1" port=20054
-    rule domain="edge.test" server="wire"
+    servers {
+        server "wire" type="udp" host="127.0.0.1" port=20053
+        server "fallback" type="udp" host="127.0.0.1" port=20054
+    }
+    rules { - domain="edge.test" server="wire"; }
     view "dial" final="fallback"
     final "wire"
 })kdl";
@@ -211,25 +217,22 @@ routing { default-outbound "edge"; }
         auto missing=parse("missing",good);
         check(!missing && missing.error().contains("unknown DNS server or view"),"unknown name rejected");
         auto cycle=R"kdl(dns {
-    server "wire" type="udp" host="127.0.0.1" port=20053
-    server "loop" type="tls" host="127.0.0.1" port=853 server-name="resolver.test" ca-file="/tmp/ca.pem" detour="edge"
-    rule domain="edge.test" server="loop"
+    servers {
+        server "wire" type="udp" host="127.0.0.1" port=20053
+        server "loop" type="tls" host="127.0.0.1" port=853 server-name="resolver.test" ca-file="/tmp/ca.pem" detour="edge"
+    }
+    rules { - domain="edge.test" server="loop"; }
     view "dial" final="wire"
 })kdl";
         auto direct=parse("dial",cycle);
         check(!direct && direct.error().contains("dependency cycle"),"direct policy cycle rejected");
-        std::string indirect=skeleton;
-        indirect.replace(indirect.find("RESOLVER"),8,"dial");
-        auto dependency=R"kdl(
-outbound "lower" type="http-connect" {
+        auto dependency=R"kdl(outbound "lower" type="http-connect" {
     server host="127.0.0.1" port=18081
     detour "edge"
-}
-)kdl";
+})kdl";
         std::string rules=cycle;
         rules.replace(rules.find("detour=\"edge\""),13,"detour=\"lower\"");
-        indirect.replace(indirect.find("\nDNS\n")+1,3,std::string(dependency)+rules);
-        auto graph=config::parse_kdl(indirect);
+        auto graph=parse("dial",rules,dependency);
         check(!graph && graph.error().contains("dependency cycle"),"indirect cycle rejected");
     }
 

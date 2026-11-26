@@ -3,17 +3,22 @@ import std;
 import crypto;
 import quic.packet_keys;
 import quic.tls_common;
+import tls.ech_server;
 import tls.raw_server_flight;
 import tls.handshake_policy;
 import tls.handshake;
+import tls.server_credential;
 import ngtcp2;
 
 export namespace quic {
     class TlsServer {
         enum class State { hello,retry_hello,finished,completing,complete,failed } state_=State::hello;
         struct ApplicationReadKey { PacketSuite suite; tls::Secret secret; };
-        tls::ServerCredential const& credential_;
+        std::optional<tls::ServerCredential> owned_credential_;
+        tls::ServerCredential const* credential_=nullptr;
         std::string_view alpn_;
+        tls::EchServerContext ech_;
+        std::string negotiated_sni_;
         std::optional<tls::HandshakeDecoder> decoder_;
         std::optional<tls::RawServerFlight> flight_;
         std::optional<ApplicationReadKey> application_;
@@ -29,17 +34,22 @@ export namespace quic {
             using Resumption=tls::RecoveryPolicy<Recovery...>;
             using namespace ngtcp2;
             if ((state_!=State::hello && state_!=State::retry_hello) || type!=1) return fail(connection,10,ngtcp2::err_crypto,recovery...);
-            auto client=tls::ClientHello::parse(wire.subspan(4),65535); if (!client) return fail(connection,50,ngtcp2::err_crypto,recovery...);
-            auto parameters=tls::quic_client_parameters<Resumption::enabled>(*client,alpn());
+            if (!credential_) return fail(connection,80,ngtcp2::err_crypto,recovery...);
+            auto step=process_quic_client_hello_ech(ech_,wire,state_==State::retry_hello);
+            if (!step) return fail(connection,step.error(),ngtcp2::err_crypto,recovery...);
+            auto effective_wire=step->effective_wire(wire);
+            negotiated_sni_=std::move(step->sni);
+            auto parameters=tls::quic_client_parameters<Resumption::enabled>(step->client,alpn());
             if (!parameters) return fail(connection,parameters.error()==tls::HandshakePolicyError::missing_transport_parameters ? 109 : parameters.error()==tls::HandshakePolicyError::invalid_alpn ? 120 : 47,ngtcp2::err_crypto,recovery...);
             auto framing=parameter_block_status(*parameters); if (framing) return fail(connection,47,framing,recovery...);
-            auto schemes=credential_.signature_schemes(); if (schemes.empty()) return fail(connection,80,ngtcp2::err_crypto,recovery...);
-            auto raw=state_==State::hello ? tls::server_handshake_secrets(wire,schemes,tls::PeerSignaturePolicy::require_offered,tls_packet_ciphers,tls::HandshakeTransport::quic,recovery...) :
-                tls::server_handshake_secrets_retry(first_,retry_,wire,schemes,tls_packet_ciphers,tls::HandshakeTransport::quic,recovery...);
+            auto schemes=credential_->signature_schemes(); if (schemes.empty()) return fail(connection,80,ngtcp2::err_crypto,recovery...);
+            bool const ech_ok=ech_.accepted();
+            auto raw=state_==State::hello ? quic_server_handshake_secrets(effective_wire,schemes,ech_ok,recovery...) :
+                quic_server_handshake_secrets_retry(first_,retry_,effective_wire,schemes,ech_ok,recovery...);
             if (!raw) {
                 if (state_!=State::hello || raw.error()!=tls::ServerKeyError::retry_required) return fail(connection,raw.error()==tls::ServerKeyError::crypto_error ? 80 : 40,ngtcp2::err_crypto,recovery...);
-                auto response=tls::server_retry_hello(wire,schemes,tls_packet_ciphers,tls::HandshakeTransport::quic,recovery...); if (!response) return fail(connection,response.error()==tls::ServerKeyError::crypto_error ? 80 : 40,ngtcp2::err_crypto,recovery...);
-                first_.assign(wire.begin(),wire.end()); retry_=std::move(*response);
+                auto response=quic_server_retry_hello(effective_wire,schemes,ech_ok,recovery...); if (!response) return fail(connection,response.error()==tls::ServerKeyError::crypto_error ? 80 : 40,ngtcp2::err_crypto,recovery...);
+                first_.assign(effective_wire.begin(),effective_wire.end()); retry_=std::move(*response);
                 auto error=connection.submit_crypto(NGTCP2_ENCRYPTION_LEVEL_INITIAL,retry_);
                 if (error) return fail(connection,80,error,recovery...);
                 state_=State::retry_hello; return 0;
@@ -53,7 +63,7 @@ export namespace quic {
             error=connection.submit_crypto(NGTCP2_ENCRYPTION_LEVEL_INITIAL,raw->server_hello); if (error) return fail(connection,80,error,recovery...);
             std::array<crypto::Bytes,4> messages;
             std::optional<tls::TrafficSecrets> application;
-            auto flight=tls::RawServerFlight::create(std::move(*raw),credential_,messages,application,alpn(),std::span<std::uint8_t const>(*local),recovery...);
+            auto flight=tls::RawServerFlight::create_with_ech_retry(std::move(*raw),*credential_,messages,application,alpn(),std::span<std::uint8_t const>(*local),ech_.retry_configs(),recovery...);
             if (!flight) return fail(connection,flight.error().alert,ngtcp2::err_crypto,recovery...);
             error=connection.install_secret(NGTCP2_ENCRYPTION_LEVEL_1RTT,true,*suite,application->server.view());
             if (error) return fail(connection,80,error,recovery...);
@@ -77,13 +87,32 @@ export namespace quic {
             flight_.reset(); application_.reset(); state_=State::completing; return 0;
         }
     public:
-        TlsServer(tls::ServerCredential const& credential,std::string_view required_alpn) noexcept : credential_(credential),alpn_(required_alpn) {}
+        TlsServer(tls::ServerCredential const& credential,std::string_view required_alpn,
+            std::shared_ptr<tls::EchServerKeys const> ech_keys={}) noexcept
+            : credential_(&credential),alpn_(required_alpn),ech_(std::move(ech_keys)) {}
+        TlsServer(tls::ServerCredential&& credential,std::string_view required_alpn,
+            std::shared_ptr<tls::EchServerKeys const> ech_keys={}) noexcept
+            : owned_credential_(std::move(credential)),credential_(&*owned_credential_),alpn_(required_alpn),ech_(std::move(ech_keys)) {}
+        TlsServer(std::optional<tls::ServerCredential>&& dynamic_credential,tls::ServerCredential const* fallback,
+            std::string_view required_alpn,std::shared_ptr<tls::EchServerKeys const> ech_keys={}) noexcept
+            : owned_credential_(std::move(dynamic_credential)),credential_(owned_credential_ ? &*owned_credential_ : fallback),
+              alpn_(required_alpn),ech_(std::move(ech_keys)) {}
+        TlsServer(std::shared_ptr<tls::AtomicServerCredential> const& atomic_credential,std::string_view required_alpn,
+            std::shared_ptr<tls::EchServerKeys const> ech_keys={})
+            : alpn_(required_alpn),ech_(std::move(ech_keys)) {
+            if (atomic_credential) if (auto cloned=atomic_credential->clone_current()) {
+                owned_credential_.emplace(std::move(*cloned)); credential_=&*owned_credential_;
+            }
+        }
         TlsServer(TlsServer const&)=delete;
         auto operator=(TlsServer const&) -> TlsServer& = delete;
         TlsServer(TlsServer&&)=delete;
         auto operator=(TlsServer&&) -> TlsServer& = delete;
         auto complete() const noexcept -> bool { return state_==State::complete; }
         auto alert() const noexcept -> std::uint8_t { return last_alert_; }
+        [[nodiscard]] auto ech_accepted() const noexcept -> bool { return ech_.accepted(); }
+        [[nodiscard]] auto ech_rejected() const noexcept -> bool { return ech_.rejected_offered(); }
+        [[nodiscard]] auto negotiated_sni() const noexcept -> std::string_view { return negotiated_sni_; }
         auto pending_handshake_bytes() const noexcept -> std::size_t { return decoder_ ? decoder_->pending_bytes() : 0; }
         struct ExporterMaster { crypto::Hash hash; std::span<std::uint8_t const> secret; };
         [[nodiscard]] auto exporter_master() const noexcept -> std::optional<ExporterMaster> {
@@ -92,7 +121,7 @@ export namespace quic {
         template<class... Recovery> auto cancel(Recovery&... recovery) noexcept -> void {
             using Resumption=tls::RecoveryPolicy<Recovery...>;
             if constexpr(Resumption::enabled) tls::recovery_policy(recovery...).cancel();
-            state_=State::failed; flight_.reset(); application_.reset(); decoder_.reset(); exporter_.reset(); crypto::Bytes{}.swap(first_); crypto::Bytes{}.swap(retry_);
+            state_=State::failed; flight_.reset(); application_.reset(); decoder_.reset(); exporter_.reset(); ech_.reset(); crypto::Bytes{}.swap(first_); crypto::Bytes{}.swap(retry_);
         }
         template<class Connection,class... Recovery> auto start(Connection&,Recovery&... recovery) -> int {
             using Resumption=tls::RecoveryPolicy<Recovery...>; return ngtcp2::err_callback_failure; } // Client-only callback is never used.

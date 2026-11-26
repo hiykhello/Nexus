@@ -126,8 +126,8 @@ namespace {
         char err[256]{};
         char const* valid_kdl =
             "schema-version 1\nrole \"client\"\n"
-            "inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }\n"
-            "outbound \"direct\" type=\"direct\"\n"
+            "inbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\n"
+            "outbounds { outbound \"direct\" type=\"direct\"; }\n"
             "routing { default-outbound \"direct\"; }\n";
         require(nexus_core_check_config_text(valid_kdl, err, sizeof(err)) == 0, "check_config_text valid");
         require(nexus_core_check_config_text("bad {", err, sizeof(err)) != 0 && std::string_view(err).size() > 0,
@@ -243,32 +243,34 @@ namespace {
         char const* valid_kdl = R"(
 schema-version 1
 role "client"
-inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "direct" type="direct"
-outbound "n1" type="socks5" { server host="127.0.0.1" port=2001; }
-outbound "n2" type="socks5" { server host="127.0.0.1" port=2002; }
-outbound "n3" type="socks5" { server host="127.0.0.1" port=2003; }
-outbound "n4" type="socks5" { server host="127.0.0.1" port=2004; }
-outbound "n5" type="socks5" { server host="127.0.0.1" port=2005; }
-outbound "n6" type="socks5" { server host="127.0.0.1" port=2006; }
-outbound "man" type="selector" {
-    member "n1"; member "n2"; selected "n1";
-    interrupt-exist-connections #true;
-}
-outbound "auto" type="url-test" {
-    member "n1"; member "n2"; member "n3"; member "n4"; member "n5"; member "n6";
-    probe-url "http://127.0.0.1:80/ping";
-    probe-interval-ms 500;
-    idle-timeout-ms 100;
-    probe-concurrency 4;
-    interrupt-exist-connections #true;
-}
-outbound "lb" type="load-balance" {
-    member "n1"; member "n2"; member "n3";
-    probe-url "http://127.0.0.1:80/ping";
-    probe-interval-ms 500;
-    probe-concurrency 2;
-    interrupt-exist-connections #true;
+inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "n1" type="socks5" { server host="127.0.0.1" port=2001; }
+    outbound "n2" type="socks5" { server host="127.0.0.1" port=2002; }
+    outbound "n3" type="socks5" { server host="127.0.0.1" port=2003; }
+    outbound "n4" type="socks5" { server host="127.0.0.1" port=2004; }
+    outbound "n5" type="socks5" { server host="127.0.0.1" port=2005; }
+    outbound "n6" type="socks5" { server host="127.0.0.1" port=2006; }
+    outbound "man" type="selector" {
+        member "n1"; member "n2"; selected "n1";
+        interrupt-exist-connections #true;
+    }
+    outbound "auto" type="url-test" {
+        member "n1"; member "n2"; member "n3"; member "n4"; member "n5"; member "n6";
+        probe-url "http://127.0.0.1:80/ping";
+        probe-interval-ms 500;
+        idle-timeout-ms 100;
+        probe-concurrency 4;
+        interrupt-exist-connections #true;
+    }
+    outbound "lb" type="load-balance" {
+        member "n1"; member "n2"; member "n3";
+        probe-url "http://127.0.0.1:80/ping";
+        probe-interval-ms 500;
+        probe-concurrency 2;
+        interrupt-exist-connections #true;
+    }
 }
 routing {
     rules {
@@ -294,27 +296,33 @@ routing {
         auto bad1 = config::parse_kdl(R"(
 schema-version 1
 role "client"
-inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "direct" type="direct"
-outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 0; }
+inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 0; }
+}
 routing { default-outbound "g"; }
 )");
         require(!bad1.has_value(), "30B reject probe-concurrency 0");
         auto bad2 = config::parse_kdl(R"(
 schema-version 1
 role "client"
-inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "direct" type="direct"
-outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 17; }
+inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 17; }
+}
 routing { default-outbound "g"; }
 )");
         require(!bad2.has_value(), "30B reject probe-concurrency 17");
         auto bad3 = config::parse_kdl(R"(
 schema-version 1
 role "client"
-inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
-outbound "direct" type="direct"
-outbound "g" type="selector" { member "direct"; idle-timeout-ms 1000; }
+inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
+    outbound "direct" type="direct"
+    outbound "g" type="selector" { member "direct"; idle-timeout-ms 1000; }
+}
 routing { default-outbound "g"; }
 )");
         require(!bad3.has_value(), "30B reject idle-timeout-ms on selector");

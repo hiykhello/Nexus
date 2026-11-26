@@ -33,17 +33,13 @@ namespace {
     using namespace std::chrono_literals;
 
     auto require(bool ok, std::string_view msg) -> void {
-        if (!ok) {
-            std::cerr << "FAIL: " << msg << '\n';
-            std::exit(1);
-        }
+        if (!ok) { std::cerr << "FAIL: " << msg << '\n'; std::exit(1); }
     }
 
     struct Fd {
         int fd = -1;
         explicit Fd(int v = -1) : fd(v) {}
-        Fd(Fd const&) = delete;
-        auto operator=(Fd const&) -> Fd& = delete;
+        Fd(Fd const&) = delete; auto operator=(Fd const&) -> Fd& = delete;
         ~Fd() { if (fd >= 0) ::close(fd); }
     };
 
@@ -151,8 +147,12 @@ namespace {
         auto sk = openvpn::parse_static_key_v1("-----BEGIN OpenVPN Static key V1-----\n" + std::string(512, 'a') + "\n-----END OpenVPN Static key V1-----\n");
         require(sk.has_value() && (*sk)[0] == 0xaa && (*sk)[255] == 0xaa, "static key V1");
         auto sk_file = tmp / "ovpn.key"; write_secret_file(sk_file, "-----BEGIN OpenVPN Static key V1-----\n" + std::string(512, 'a') + "\n-----END OpenVPN Static key V1-----\n");
-        relay::Server srv; auto rej = srv.add_openvpn({.host = "vpn.test", .port = 1194, .ca_file = (tmp / "ca.crt").string(), .static_key_file = sk_file.string()});
-        require(!rej.has_value() && rej.error().contains("static-key-file"), "openvpn static-key-file explicitly rejected");
+        auto bad_sk = tmp / "bad.key"; write_secret_file(bad_sk, "not-a-valid-static-key\n");
+        relay::Server srv;
+        auto ok_sk = srv.add_openvpn({.host = "vpn.test", .port = 1194, .server_name = "vpn.test", .ca_file = (tmp / "ca.crt").string(), .static_key_file = sk_file.string(), .tls_auth_mode = config::OpenVpnTlsAuthMode::tls_crypt});
+        require(ok_sk.has_value(), ok_sk ? "" : "openvpn tls-crypt static-key-file accepted: " + ok_sk.error());
+        auto rej = srv.add_openvpn({.host = "vpn.test", .port = 1194, .server_name = "vpn.test", .ca_file = (tmp / "ca.crt").string(), .static_key_file = bad_sk.string(), .tls_auth_mode = config::OpenVpnTlsAuthMode::tls_auth});
+        require(!rej.has_value() && rej.error().contains("static-key-file"), "malformed openvpn static-key-file rejected");
 
         // 2. OpenConnect 2-step HTTP/XML auth & CSTP header parsing
         auto step1 = *openconnect::parse_config_auth_response("<config-auth><auth id=\"main\"/><opaque>tok-xyz</opaque></config-auth>");

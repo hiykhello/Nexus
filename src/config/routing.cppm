@@ -404,9 +404,10 @@ export namespace config::routing_detail {
                     }
                     bool has_udp_opt = bool(udp_to_val) || udp_adaptive || bool(udpunmap_val);
                     auto permits_timeout = kind == OrderedTcpAction::route_options || kind == OrderedTcpAction::route ||
-                        (kind == OrderedTcpAction::bypass && outbound);
-                    if ((has_evasion || has_udp_opt || has_override) && kind != OrderedTcpAction::route_options && kind != OrderedTcpAction::route)
-                        return error("route options require route-options or route");
+                        kind == OrderedTcpAction::bypass;
+                    if ((has_evasion || has_udp_opt || has_override) && kind != OrderedTcpAction::route_options &&
+                        kind != OrderedTcpAction::route && kind != OrderedTcpAction::bypass)
+                        return error("route options require route-options, route or bypass");
                     if ((kind == OrderedTcpAction::route_options && !timeout_value && !has_evasion && !has_udp_opt && !has_override) ||
                         (timeout_value && (!permits_timeout || !connect_timeout || !*connect_timeout || *connect_timeout > 3600000)))
                         return error("invalid route connection timeout");
@@ -447,7 +448,7 @@ export namespace config::routing_detail {
             else if (rule.ip_cidr_match_source && file->file.format != RuleFormat::srs && file->file.format != RuleFormat::nxmm)
                 return error("ip-cidr-match-source requires SRS or NXMM format");
         if (route.ordered_tcp) {
-            if (!route.rules.empty()) return error("tcp-program cannot be combined with legacy routing rules");
+            if (!route.rules.empty()) return error("tcp-program cannot be combined with rule-set routing rules");
             for (auto const& rule : route.ordered_tcp->rules)
                 if (rule.set) {
                     auto file = std::ranges::find(route.files, *rule.set, &NamedRouteFile::name);

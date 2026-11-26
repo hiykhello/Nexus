@@ -277,9 +277,6 @@ export namespace rules {
         Matcher matcher_;
         std::vector<Instruction> instructions_;
         bool has_dns_hijack_ = false;
-        [[nodiscard]] static auto compile_legacy(std::span<RouteRule const>, std::size_t outbound_count)
-            -> std::expected<RouteProgram, Error>;
-        friend class LegacyRouteProgram;
     public:
         [[nodiscard]] static auto compile(std::span<ProgramRule const>, std::size_t outbound_count)
             -> std::expected<RouteProgram, Error>;
@@ -317,28 +314,6 @@ export namespace rules {
         // Skip only the uncertainty returned by the most recent poll. A later
         // poll may still pause at another rule after a continuing action.
         [[nodiscard]] auto skip_unknown(std::size_t rule_index) noexcept -> std::expected<void, ProgramCursorError>;
-    };
-    // Compatibility bridge for existing ordered route sets. The old matcher
-    // remains authoritative for preflight because unknown IP predicates may
-    // defer the decision until resolution. The program supplies the same
-    // terminal action after candidate metadata is available.
-    class LegacyRouteProgram {
-        RouteMatcher matcher_;
-        RouteProgram program_;
-        std::size_t default_outbound_ = 0;
-    public:
-        [[nodiscard]] static auto compile(std::span<RouteRule const>, std::size_t default_outbound,
-            std::size_t outbound_count, SourceMetadata source = SourceMetadata::unavailable,
-            std::optional<std::string_view> inbound = {}, AuthMetadata auth = AuthMetadata::unavailable)
-            -> std::expected<LegacyRouteProgram, Error>;
-        [[nodiscard]] auto needs_source() const noexcept -> bool { return matcher_.needs_source(); }
-        [[nodiscard]] auto needs_auth_user() const noexcept -> bool { return matcher_.needs_auth_user(); }
-        [[nodiscard]] auto inbound() const noexcept -> std::optional<std::string_view> { return matcher_.inbound(); }
-        [[nodiscard]] auto preflight(std::string_view domain) const -> std::expected<std::optional<std::size_t>, Error> { return matcher_.preflight(domain); }
-        [[nodiscard]] auto preflight(MatchInput input) const -> std::expected<std::optional<std::size_t>, Error> { return matcher_.preflight(input); }
-        [[nodiscard]] auto preflight_program(ProgramInput) const -> std::expected<std::optional<std::size_t>, Error>;
-        [[nodiscard]] auto match(MatchInput) const -> std::expected<std::size_t, Error>;
-        [[nodiscard]] auto next(ProgramInput, std::size_t start = 0) const -> std::expected<ProgramStep, Error>;
     };
     inline constexpr unsigned max_rules = 262144;
     inline constexpr unsigned max_rule_depth = 32;

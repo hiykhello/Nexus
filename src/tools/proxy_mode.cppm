@@ -10,6 +10,18 @@ export namespace cli::run_detail {
     struct RuntimeRouteModeController {
         std::shared_ptr<rules::RuntimeRouteMode> shared = std::make_shared<rules::RuntimeRouteMode>();
         std::string global_outbound_name;
+        cli::SelectorState* persistence = nullptr;
+
+        auto restore(cli::SelectorState& state, config::Config const& cfg) -> void {
+            persistence = &state;
+            if (auto const& saved = state.route_mode(); saved.has_value()) {
+                if (auto parsed = rules::parse_route_mode(saved->mode))
+                    shared->mode.store(*parsed, std::memory_order_release);
+                if (!saved->global_outbound.empty())
+                    global_outbound_name = saved->global_outbound;
+            }
+            sync(cfg);
+        }
 
         auto sync(config::Config const& cfg) -> void {
             auto target = global_outbound_name.empty() ? std::string_view(cfg.default_outbound_name)
@@ -50,6 +62,9 @@ export namespace cli::run_detail {
             if (args.size() > 3) return std::unexpected("invalid-command-or-arguments");
             auto parsed = rules::parse_route_mode(args[1]);
             if (!parsed) return std::unexpected("invalid-mode");
+            auto prev_mode = shared->mode.load(std::memory_order_acquire);
+            auto prev_global = shared->global_outbound.load(std::memory_order_acquire);
+            auto prev_name = global_outbound_name;
             if (args.size() == 3) {
                 if (!running) return std::unexpected("unknown-outbound");
                 auto idx = config::distributed_outbound_index(*running, args[2]);
@@ -60,6 +75,15 @@ export namespace cli::run_detail {
                 sync(running);
             }
             shared->mode.store(*parsed, std::memory_order_release);
+            if (persistence) {
+                auto saved = persistence->save_route_mode(rules::route_mode_name(*parsed), global_outbound_name);
+                if (!saved) {
+                    global_outbound_name = std::move(prev_name);
+                    shared->global_outbound.store(prev_global, std::memory_order_release);
+                    shared->mode.store(prev_mode, std::memory_order_release);
+                    return std::unexpected(std::move(saved.error()));
+                }
+            }
             operations.published();
             operations.record(ControlOps::EventKind::mode_changed);
             return std::format("mode={} outbound={}\n", mode_name(), control_name(global_outbound_name));

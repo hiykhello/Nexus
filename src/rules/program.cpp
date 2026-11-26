@@ -23,7 +23,7 @@ namespace rules {
             return std::ranges::all_of(std::span(subnet.address).subspan(bytes), [](auto c) { return c == 0; });
         }
 
-        auto to_match_input(ProgramInput const& input, std::optional<std::string_view> domain = {}, bool include_route_mode = true) noexcept -> MatchInput {
+        auto to_match_input(ProgramInput const& input, std::optional<std::string_view> domain = {}) noexcept -> MatchInput {
             return {
                 .domain = domain,
                 .ip = input.ip,
@@ -42,7 +42,7 @@ namespace rules {
                 .dscp = input.dscp,
                 .source_mac = input.source_mac,
                 .gateway_mac = input.gateway_mac,
-                .route_mode = include_route_mode ? input.route_mode : std::nullopt,
+                .route_mode = input.route_mode,
                 .network_type = input.network_type,
                 .network_is_expensive = input.network_is_expensive,
                 .network_is_constrained = input.network_is_constrained,
@@ -63,9 +63,10 @@ namespace rules {
                 if (*field && (*field)->ends_with('.')) (*field)->remove_suffix(1);
         }
 
-        auto skip_action(ProgramInput const& input, ProgramActionKind kind, bool constrained) noexcept -> bool {
-            if (kind == ProgramActionKind::bypass) return true;
-            if (kind != ProgramActionKind::hijack_dns) return false;
+        auto skip_action(ProgramInput const& input, ProgramAction const& action, bool constrained) noexcept -> bool {
+            if (action.kind == ProgramActionKind::bypass)
+                return !constrained && action.outbound == 0 && !action.bypass_explicit;
+            if (action.kind != ProgramActionKind::hijack_dns) return false;
             if (input.network == Network::udp)
                 return input.dns_query == false || (input.port != 53 && !constrained);
             return input.network != Network::tcp || !input.dns_hijack_tcp;
@@ -138,16 +139,18 @@ namespace rules {
             if (act.tls_fragment_fallback_delay_ms > 10000 ||
                 (act.tls_fragment_fallback_delay_ms && !act.tls_record_fragment))
                 return std::unexpected(Error{ErrorCode::invalid_rule, "invalid tls-fragment-fallback-delay-ms"});
-            if ((has_evasion || has_udp_opt || has_override) && kind != ProgramActionKind::route_options && kind != ProgramActionKind::route)
-                return std::unexpected(Error{ErrorCode::invalid_rule, "route options require route-options or route"});
+            if ((has_evasion || has_udp_opt || has_override) && kind != ProgramActionKind::route_options &&
+                kind != ProgramActionKind::route && kind != ProgramActionKind::bypass)
+                return std::unexpected(Error{ErrorCode::invalid_rule, "route options require route-options, route or bypass"});
             if (act.udp_timeout_ms && (act.udp_timeout_ms < 1000 || act.udp_timeout_ms > 3600000))
                 return std::unexpected(Error{ErrorCode::invalid_rule, "udp-timeout-ms must be 1000..3600000"});
             if ((kind == ProgramActionKind::route_options && !timeout && !has_evasion && !has_udp_opt && !has_override) ||
-                (timeout && kind != ProgramActionKind::route_options && kind != ProgramActionKind::route) ||
+                (timeout && kind != ProgramActionKind::route_options && kind != ProgramActionKind::route && kind != ProgramActionKind::bypass) ||
                 timeout > 3600000)
                 return std::unexpected(Error{ErrorCode::invalid_rule, "invalid program connection timeout"});
             switch (kind) {
             case ProgramActionKind::route:
+            case ProgramActionKind::bypass:
                 if (act.outbound >= outbound_count)
                     return std::unexpected(Error{ErrorCode::invalid_rule, "invalid program outbound"});
                 break;
@@ -156,7 +159,6 @@ namespace rules {
                 [[fallthrough]];
             case ProgramActionKind::sniff:
             case ProgramActionKind::resolve:
-            case ProgramActionKind::bypass:
             case ProgramActionKind::route_options:
             case ProgramActionKind::reject:
                 if (act.outbound != 0)
@@ -217,7 +219,7 @@ namespace rules {
         prepared->candidates = input.candidates;
         for (auto i = start; i < instructions_.size(); ++i) {
             auto const& instruction = instructions_[i];
-            if (skip_action(input, instruction.action.kind, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
+            if (skip_action(input, instruction.action, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
             switch (instruction.domain_source) {
             case DomainSource::explicit_target: prepared->input.domain = input.explicit_domain; break;
             case DomainSource::fakeip: prepared->input.domain = input.fakeip_domain; break;
@@ -253,7 +255,7 @@ namespace rules {
         prepared->candidates = input.candidates;
         for (auto i = start; i < instructions_.size(); ++i) {
             auto const& instruction = instructions_[i];
-            if (skip_action(input, instruction.action.kind, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
+            if (skip_action(input, instruction.action, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
             switch (instruction.domain_source) {
             case DomainSource::explicit_target: prepared->input.domain = input.explicit_domain; break;
             case DomainSource::fakeip: prepared->input.domain = input.fakeip_domain; break;
@@ -329,95 +331,5 @@ namespace rules {
         if (pending_) return std::unexpected(ProgramCursorError::awaiting_action);
         if (!uncertain_ || *uncertain_ != rule_index) return std::unexpected(ProgramCursorError::stale_uncertainty);
         index_ = rule_index + 1; uncertain_.reset(); return {};
-    }
-
-    auto RouteProgram::compile_legacy(std::span<RouteRule const> rules, std::size_t outbound_count)
-        -> std::expected<RouteProgram, Error> {
-        if (!outbound_count || rules.size() > max_rules)
-            return std::unexpected(Error{ErrorCode::invalid_rule, "invalid program size or outbound count"});
-        RouteProgram program;
-        RuleSet flattened{.version = 2};
-        program.instructions_.reserve(rules.size());
-        bool tail_proc = false, tail_uid = false;
-        for (auto const& rule : rules) {
-            if (rule.outbound >= outbound_count) return std::unexpected(Error{ErrorCode::invalid_rule, "invalid program outbound"});
-            if (rule.mmap) {
-                std::shared_ptr<Matcher const> tail;
-                if (rule.mmap->tail_beve_bytes() > 0) {
-                    auto dec = parse_beve(rule.mmap->tail_beve());
-                    if (!dec) return std::unexpected(std::move(dec.error()));
-                    auto cm = Matcher::compile(*dec);
-                    if (!cm) return std::unexpected(std::move(cm.error()));
-                    tail_proc |= cm->uses_process_; tail_uid |= cm->uses_source_uid_;
-                    tail = std::make_shared<Matcher const>(std::move(*cm));
-                }
-                auto off = flattened.rules.size();
-                program.instructions_.push_back({off, off, {ProgramActionKind::route, rule.outbound},
-                    DomainSource::explicit_target, rule.mmap, std::move(tail), rule.mmap_match_source || rule.mmap->ip_cidr_match_source()});
-                continue;
-            }
-            auto norm = normalize_set(rule.predicates);
-            if (!norm) return std::unexpected(std::move(norm.error()));
-            auto first = flattened.rules.size();
-            flattened.version = std::max(flattened.version, norm->version);
-            for (auto& pred : norm->rules) flattened.rules.push_back(std::move(pred));
-            program.instructions_.push_back({first, flattened.rules.size(), {ProgramActionKind::route, rule.outbound}, DomainSource::explicit_target});
-        }
-        auto compiled = Matcher::compile(flattened);
-        if (!compiled) return std::unexpected(std::move(compiled.error()));
-        compiled->uses_process_ |= tail_proc; compiled->uses_source_uid_ |= tail_uid;
-        program.matcher_ = std::move(*compiled);
-        return program;
-    }
-
-    auto LegacyRouteProgram::compile(std::span<RouteRule const> rules, std::size_t default_outbound,
-        std::size_t outbound_count, SourceMetadata source, std::optional<std::string_view> inbound, AuthMetadata auth)
-        -> std::expected<LegacyRouteProgram, Error> {
-        auto matcher = RouteMatcher::compile(rules, default_outbound, outbound_count, source, inbound, auth);
-        if (!matcher) return std::unexpected(std::move(matcher.error()));
-        auto program = RouteProgram::compile_legacy(rules, outbound_count);
-        if (!program) return std::unexpected(std::move(program.error()));
-        LegacyRouteProgram result;
-        result.matcher_ = std::move(*matcher); result.program_ = std::move(*program); result.default_outbound_ = default_outbound;
-        return result;
-    }
-
-    auto LegacyRouteProgram::preflight_program(ProgramInput input) const -> std::expected<std::optional<std::size_t>, Error> {
-        if (input.candidates) return std::unexpected(Error{ErrorCode::invalid_query, "legacy preflight requires one address"});
-        return matcher_.preflight(to_match_input(input, input.explicit_domain, false));
-    }
-
-    auto LegacyRouteProgram::match(MatchInput input) const -> std::expected<std::size_t, Error> {
-        ProgramInput pin{
-            .explicit_domain = input.domain, .ip = input.ip, .port = input.port, .network = input.network,
-            .source_ip = input.source_ip, .source_port = input.source_port, .source_ip_bytes = input.source_ip_bytes,
-            .inbound = input.inbound, .auth_user = input.auth_user, .protocol = input.protocol,
-            .source_uid = input.source_uid, .process_path = input.process_path,
-            .source_interface = input.source_interface, .tls_ech = input.tls_ech,
-            .dscp = input.dscp, .source_mac = input.source_mac, .gateway_mac = input.gateway_mac,
-            .network_type = input.network_type, .network_is_expensive = input.network_is_expensive,
-            .network_is_constrained = input.network_is_constrained, .wifi_ssid = input.wifi_ssid,
-            .wifi_bssid = input.wifi_bssid, .default_interface_addresses = input.default_interface_addresses,
-            .network_interface_addresses = input.network_interface_addresses,
-            .source_gid = input.source_gid, .source_user = input.source_user,
-            .package_name = input.package_name, .client = input.client,
-            .process_paths = input.process_paths
-        };
-        auto step = next(pin);
-        if (!step) return std::unexpected(std::move(step.error()));
-        return step->action.outbound;
-    }
-
-    auto LegacyRouteProgram::next(ProgramInput input, std::size_t start) const -> std::expected<ProgramStep, Error> {
-        if (input.candidates) return std::unexpected(Error{ErrorCode::invalid_query, "legacy routing requires one address"});
-        if (auto inbound = matcher_.inbound()) {
-            if (input.inbound && *input.inbound != *inbound) return std::unexpected(Error{ErrorCode::invalid_query, "conflicting inbound name"});
-            input.inbound = *inbound;
-        }
-        input.fakeip_domain.reset(); input.reverse_domain.reset(); input.sniffed_domain.reset();
-        auto step = program_.next(input, start);
-        if (!step) return std::unexpected(std::move(step.error()));
-        if (*step) return **step;
-        return ProgramStep{program_.size(), program_.size(), {ProgramActionKind::route, default_outbound_}};
     }
 }

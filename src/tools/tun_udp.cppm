@@ -88,6 +88,11 @@ export namespace cli::tun_enabled {
                 if (!pkt || !*pkt) break;
                 moved = true;
                 if ((**pkt).empty()) continue;
+                auto raw_ver = (**pkt)[0] >> 4;
+                if ((raw_ver == 4 && (**pkt).size() >= 28 && (**pkt)[9] == 1) ||
+                    (raw_ver == 6 && (**pkt).size() >= 48 && ((**pkt)[6] == 58 || (**pkt)[6] == 0 || (**pkt)[6] == 60))) {
+                    if (TunUdpProxyOps::handle_tun_icmp(host, **pkt)) continue;
+                }
                 auto fragmented = TunUdpFragments::fragmented(**pkt);
                 if (fragmented) {
                     auto whole = host.udp_fragments.feed(**pkt, Clock::now());

@@ -98,11 +98,13 @@ namespace {
         auto parse=[](std::string_view fields) {
             return config::parse_kdl(std::format(R"kdl(schema-version 1
 role "client"
-inbound "tun" type="tun" {{
-    inet4-address "198.51.100.1/32"
-    {}
+inbounds {{
+    inbound "tun" type="tun" {{
+        inet4-address "198.51.100.1/32"
+        {}
+    }}
 }}
-outbound "direct" type="direct"
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ default-outbound "direct"; }}
 )kdl",fields));
         };
@@ -120,21 +122,23 @@ routing {{ default-outbound "direct"; }}
         // Wave 30D: auto-redirect combined with route-address-set, route-address, TPROXY mark, MAC filters, gso
         auto combined=config::parse_kdl(R"kdl(schema-version 1
 role "client"
-inbound "tun" type="tun" {
-    inet4-address "198.51.100.1/32"
-    inet6-address "2001:db8:1::1/128"
-    auto-route #true
-    auto-redirect #true
-    auto-redirect-tproxy-mark 0x4444
-    auto-redirect-tproxy-port 15444
-    include-mac-address "aa:bb:cc:dd:ee:01"
-    exclude-mac-address "11-22-33-44-55-66"
-    route-address "192.0.2.0/24"
-    route-address "192.0.2.42/24"
-    route-address-set "rs"
-    gso #true
+inbounds {
+    inbound "tun" type="tun" {
+        inet4-address "198.51.100.1/32"
+        inet6-address "2001:db8:1::1/128"
+        auto-route #true
+        auto-redirect #true
+        auto-redirect-tproxy-mark 0x4444
+        auto-redirect-tproxy-port 15444
+        include-mac-address "aa:bb:cc:dd:ee:01"
+        exclude-mac-address "11-22-33-44-55-66"
+        route-address "192.0.2.0/24"
+        route-address "192.0.2.42/24"
+        route-address-set "rs"
+        gso #true
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing {
     rule-set "rs" format="kdl" path="rs.kdl"
     default-outbound "direct"
@@ -236,11 +240,11 @@ routing {
         auto parse_fakeip=[](std::string_view cidr) {
             return config::parse_kdl(std::format(R"kdl(schema-version 1
 role "client"
-inbound "s" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
-outbound "direct" type="direct"
+inbounds {{ inbound "s" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}; }}
+outbounds {{ outbound "direct" type="direct"; }}
 dns {{
     listen host="127.0.0.1" port=1053
-    server "up" type="udp" host="127.0.0.1" port=5353
+    servers {{ server "up" type="udp" host="127.0.0.1" port=5353; }}
     fake-ip server="up" ipv4-pool="{}" state-directory="/tmp/fakeip"
     final "up"
 }}

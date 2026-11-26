@@ -379,11 +379,9 @@ namespace config {
                 return std::unexpected("TLS certificate-provider references unconfigured ACME service: " + std::string(provider));
             return {};
         };
-        auto reject_quic_tls = [](std::string_view kind, std::string_view provider, bool hot_reload,
-            std::string_view ech, std::vector<std::string> const& alpn) -> std::expected<void, std::string> {
-            if (!provider.empty()) return std::unexpected(std::string(kind) + " inbound does not support TLS certificate-provider");
-            if (hot_reload) return std::unexpected(std::string(kind) + " inbound does not support TLS cert-hot-reload");
-            if (!ech.empty()) return std::unexpected(std::string(kind) + " inbound does not support TLS ech-key-file");
+        auto check_quic_tls = [&](std::string_view kind, std::string_view provider,
+            std::vector<std::string> const& alpn) -> std::expected<void, std::string> {
+            if (auto ok = check_cert_provider(provider); !ok) return ok;
             if (!alpn.empty()) return std::unexpected(std::string(kind) + " inbound does not support custom TLS alpn");
             return {};
         };
@@ -397,16 +395,14 @@ namespace config {
             if (in.anytls) { if (auto ok = check_cert_provider(in.anytls->certificate_provider); !ok) return ok; }
             if (in.hysteria2) {
                 auto const& cp = !in.hysteria2->certificate_provider.empty() ? in.hysteria2->certificate_provider : in.hysteria2->connection.certificate_provider;
-                auto const& ech = !in.hysteria2->ech_key_file.empty() ? in.hysteria2->ech_key_file : in.hysteria2->connection.ech_key_file;
                 auto const& alpn = !in.hysteria2->alpn.empty() ? in.hysteria2->alpn : in.hysteria2->connection.alpn;
-                bool reload = in.hysteria2->cert_hot_reload || in.hysteria2->connection.cert_hot_reload;
-                if (auto ok = reject_quic_tls("Hysteria2", cp, reload, ech, alpn); !ok) return ok;
+                if (auto ok = check_quic_tls("Hysteria2", cp, alpn); !ok) return ok;
             }
             if (in.tuic) {
-                if (auto ok = reject_quic_tls("TUIC", in.tuic->certificate_provider, in.tuic->cert_hot_reload, in.tuic->ech_key_file, in.tuic->alpn); !ok) return ok;
+                if (auto ok = check_quic_tls("TUIC", in.tuic->certificate_provider, in.tuic->alpn); !ok) return ok;
             }
             if (in.masque) {
-                if (auto ok = reject_quic_tls("MASQUE", in.masque->certificate_provider, in.masque->cert_hot_reload, in.masque->ech_key_file, in.masque->alpn); !ok) return ok;
+                if (auto ok = check_quic_tls("MASQUE", in.masque->certificate_provider, in.masque->alpn); !ok) return ok;
             }
             if (in.http) {
                 if (auto ok = check_cert_provider(in.http->certificate_provider); !ok) return ok;

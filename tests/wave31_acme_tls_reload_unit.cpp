@@ -442,13 +442,22 @@ routing { default-outbound "direct" }
 )kdl";
         require(!config::parse_kdl(bad_eab).has_value(), "reject eab-kid without eab-hmac-file");
 
-        // P1-3: reject unsupported TLS fields on Hysteria2 / TUIC / MASQUE and ech-key-file on HTTP/3 inbounds
-        constexpr std::array<std::string_view, 5> unsupported_quic_kdl{{
+        // Wave 33A: Hysteria2 / TUIC / MASQUE now accept certificate-provider, cert-hot-reload, and ech-key-file,
+        // while custom ALPN on QUIC inbounds, unconfigured certificate-provider, and ech-key-file on H3 inbounds remain rejected.
+        constexpr std::array<std::string_view, 2> supported_quic_kdl{{
             R"kdl(schema-version 1; role "server"; services { acme directory-url="https://acme.example/dir" email="a@b.c" state-dir="/tmp/acme" { domain "a.example" } }
 inbounds { inbound "h" type="hysteria2" { listen host="127.0.0.1" port=8443; authentication { user "u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }
 outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
             R"kdl(schema-version 1; role "server"
 inbounds { inbound "t" type="tuic" { listen host="127.0.0.1" port=8444; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; cert-hot-reload #true } } }
+outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+        }};
+        for (auto doc : supported_quic_kdl)
+            require(config::parse_kdl(doc).has_value(), "accept QUIC inbound cert-provider / cert-hot-reload");
+
+        constexpr std::array<std::string_view, 4> unsupported_quic_kdl{{
+            R"kdl(schema-version 1; role "server"
+inbounds { inbound "h" type="hysteria2" { listen host="127.0.0.1" port=8443; authentication { user "u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }
 outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
             R"kdl(schema-version 1; role "server"
 inbounds { inbound "m" type="masque" { listen host="127.0.0.1" port=8445; authority "m.test"; bearer-file "/tmp/b"; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; alpn "h3" } } }

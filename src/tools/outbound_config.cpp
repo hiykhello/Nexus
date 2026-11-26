@@ -152,9 +152,8 @@ namespace cli {
             if (auto r = server.add_masque(m.host, m.port, m.authority, m.bearer_file, m.server_name, m.ca_file, to_kx(m.key_exchange), m.fingerprint, m.handshake_timeout_ms, m.idle_timeout_ms, m.native_bytes, m.bootstrap_index, m.connect_timeout_ms, m.tcp_options, std::move(ip), m.ech, m.certificate_sha256); !r) {
                 return std::unexpected("MASQUE outbound configuration: "+r.error()); }
         }
-        for (auto const& n : config.wireguard_outbounds) { auto const& w = n.config;
-            auto psk = w.preshared_key_file ? std::optional<std::string_view>(*w.preshared_key_file) : std::nullopt;
-            if (auto r = server.add_wireguard(w.host, w.port, w.private_key_file, w.peer_public_key_file, psk, w.has_v4, w.local_v4, w.has_v6, w.local_v6, w.warp, w.reserved, w.mtu, w.keepalive_s, w.bootstrap_index, w.connect_timeout_ms, w.tcp_options); !r) {
+        for (auto const& n : config.wireguard_outbounds) {
+            if (auto r = server.add_wireguard(n.config); !r) {
                 return std::unexpected("WireGuard outbound configuration: "+r.error()); }
         }
         for (auto const& n : config.ssh_outbounds) { auto const& s = n.config;

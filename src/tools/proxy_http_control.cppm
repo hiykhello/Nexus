@@ -53,6 +53,7 @@ export namespace cli::run_detail {
                 rm.index = i + 1;
                 rm.action = std::string(ordered_action_name(r.action));
                 if (r.outbound_name) rm.target = *r.outbound_name;
+                else if (r.action == config::OrderedTcpAction::bypass) rm.target = cfg.direct_outbound_name;
                 else if (r.action == config::OrderedTcpAction::reject) rm.target = "reject";
                 else if (r.action == config::OrderedTcpAction::hijack_dns) rm.target = "dns";
                 if (r.set_tag) {

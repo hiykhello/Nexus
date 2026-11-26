@@ -2,12 +2,15 @@ export module cli.hy2_disabled;
 import std;
 import config;
 import relay;
+import cli.cert_reloader;
+import logging.cli;
 export namespace cli::hy2_disabled {
     class Runtime {
     public:
         auto resize(std::size_t) noexcept -> void {}
         auto configure_outbound(config::Config const&) -> std::expected<void,std::string> {return {};}
-        auto configure(std::size_t,config::InboundConfig const& entry) -> std::expected<void,std::string> {
+        auto configure(std::size_t,config::InboundConfig const& entry,std::shared_ptr<void> const& ={},
+            cli::CertReloaderHub* =nullptr,logging::Runtime const* =nullptr) -> std::expected<void,std::string> {
             if(entry.hysteria2)return std::unexpected("Hysteria2 is unavailable in this build");return {};
         }
         auto start(std::size_t,relay::Server&,std::uint16_t,bool,unsigned) -> std::expected<std::uint16_t,std::string> {

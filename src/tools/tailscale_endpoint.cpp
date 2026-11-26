@@ -49,6 +49,23 @@ namespace cli::tailscale_endpoint {
             return {io::ipv4_address(bytes),value.port};
         }
 
+        auto parse_prefixes(std::span<std::string const> cidrs) -> std::vector<cm::Prefix> {
+            std::vector<cm::Prefix> out;
+            for (auto const& c : cidrs) {
+                auto slash = c.find('/');
+                if (slash == std::string::npos) continue;
+                auto ip = platform::parse_ip_address(std::string_view(c).substr(0, slash));
+                unsigned bits = 0; auto ps = std::string_view(c).substr(slash + 1);
+                auto [end, ec] = std::from_chars(ps.data(), ps.data() + ps.size(), bits);
+                if (!ip || ec != std::errc{} || end != ps.data() + ps.size() || bits > ip->size * 8u) continue;
+                std::size_t full = bits / 8u, rem = bits % 8u;
+                bool clean = rem == 0 || (ip->bytes[full] & static_cast<std::uint8_t>((1u << (8u - rem)) - 1u)) == 0;
+                for (std::size_t i = full + (rem != 0 ? 1u : 0u); clean && i < ip->size; ++i) clean = ip->bytes[i] == 0;
+                if (clean) out.push_back({ip->bytes, static_cast<std::uint8_t>(ip->size == 4 ? 4 : 6), static_cast<std::uint8_t>(bits)});
+            }
+            return out;
+        }
+
         struct Resolver {
             io::endpoint remote;
             bool stopped = false;
@@ -216,7 +233,8 @@ namespace cli::tailscale_endpoint {
                 } completion{*this, finished};
                 Sink sink{device, config, bound.port, relays, selected_relay, active_relay, userspace, &relay_sel_wake};
                 auto endpoints=advertised(device.mapping());
-                app::Options options{config.authority, {node,auth_key,config.name,"linux","Nexus",config.ephemeral},
+                auto adv = parse_prefixes(config.advertise_routes);
+                app::Options options{config.authority, {node,auth_key,config.name,"linux","Nexus",config.ephemeral,adv},
                                      endpoints,generation};
                 options.registered = &registered;
                 options.disco=device.discovery_key();
@@ -412,74 +430,65 @@ namespace cli::tailscale_endpoint {
                 return !fatal && device.healthy();
             }
         };
-    }
-
-    static auto run_impl(Config const& config, bool check, std::stop_token stop, UserspaceLink* userspace) -> int {
-        auto reject = [](std::string_view reason) { std::cerr << "Tailscale endpoint: " << reason << '\n'; return 1; };
-        auto auth = rulefile::read_password_file(config.auth_key_file);
-        if (!auth) return reject(auth.error());
-        struct Wipe {
-            std::string& value;
-            ~Wipe() { crypto::cleanse(std::span(reinterpret_cast<std::uint8_t*>(value.data()),value.size())); }
-        } wipe{*auth};
-        if (auth->empty() || auth->size() > 4096) return reject("invalid auth-key length");
-        constexpr std::array<std::string_view,1> alpn{"http/1.1"};
-        auto tls_profile = tls::ClientProfile::load(config.server_name,config.ca_file,0x001d,false,alpn);
-        if (!tls_profile) return reject(tls_profile.error());
-        std::vector<PreparedRelay> relays;
-        auto relay_options = config.relay ? std::span(&*config.relay, 1) : std::span<RelayConfig const>(config.relay_candidates);
-        for (auto const& relay : relay_options) {
-            auto profile = tls::ClientProfile::load(relay.server_name,relay.ca_file,0x001d,false,alpn);
-            if (!profile) return reject(profile.error());
-            relays.push_back({&relay, std::move(*profile)});
-        }
-        auto keys = tailscale_identity::load(config.state_dir,config.ephemeral,check);
-        if (!keys) return reject(keys.error());
-        auto pin = noise::ControlPublic::from_bytes(config.pin);
-        if (!pin) return reject("invalid control pin");
-        if (check) {
-            std::cout << "Tailscale endpoint configuration valid\n";
-            return 0;
-        }
-        auto machine = noise::MachinePrivate::from_bytes(keys->machine.view());
-        keys->machine.clear();
-        auto node = noise::NodePrivate::from_bytes(keys->node.view());
-        if (!machine || !node || !machine->agree(*pin)) return reject("invalid identity or control pin");
-        auto public_node = node->public_key();
-        if (!public_node) return reject("cannot derive node identity");
-        std::optional<crypto::X25519Private> node_identity;
-        std::vector<net::UdpEndpoint> protected_endpoints{config.control,config.listen};
-        if(config.stun_server)protected_endpoints.push_back(*config.stun_server);
-        if (!relays.empty()) {
-            auto identity = crypto::X25519Private::from_bytes(keys->node.view());
-            if (!identity) return reject("invalid DERP node key");
+        auto run_impl(Config const& config, bool check, std::stop_token stop, UserspaceLink* userspace) -> int {
+            auto reject = [](std::string_view reason) { std::cerr << "Tailscale endpoint: " << reason << '\n'; return 1; };
+            auto auth = rulefile::read_password_file(config.auth_key_file);
+            if (!auth) return reject(auth.error());
+            struct Wipe { std::string& v; ~Wipe() { crypto::cleanse(std::span(reinterpret_cast<std::uint8_t*>(v.data()), v.size())); } } wipe{*auth};
+            if (auth->empty() || auth->size() > 4096) return reject("invalid auth-key length");
+            constexpr std::array<std::string_view,1> alpn{"http/1.1"};
+            auto tls_profile = tls::ClientProfile::load(config.server_name,config.ca_file,0x001d,false,alpn);
+            if (!tls_profile) return reject(tls_profile.error());
+            std::vector<PreparedRelay> relays;
+            auto relay_options = config.relay ? std::span(&*config.relay, 1) : std::span<RelayConfig const>(config.relay_candidates);
             for (auto const& relay : relay_options) {
-                if (!identity->agree(relay.pin)) return reject("invalid DERP server pin");
-                protected_endpoints.push_back(relay.server);
+                auto profile = tls::ClientProfile::load(relay.server_name,relay.ca_file,0x001d,false,alpn);
+                if (!profile) return reject(profile.error());
+                relays.push_back({&relay, std::move(*profile)});
             }
-            node_identity.emplace(std::move(*identity));
+            auto keys = tailscale_identity::load(config.state_dir,config.ephemeral,check);
+            if (!keys) return reject(keys.error());
+            auto pin = noise::ControlPublic::from_bytes(config.pin);
+            if (!pin) return reject("invalid control pin");
+            if (check) { std::cout << "Tailscale endpoint configuration valid\n"; return 0; }
+            auto machine = noise::MachinePrivate::from_bytes(keys->machine.view()); keys->machine.clear();
+            auto node = noise::NodePrivate::from_bytes(keys->node.view());
+            if (!machine || !node || !machine->agree(*pin)) return reject("invalid identity or control pin");
+            auto public_node = node->public_key();
+            if (!public_node) return reject("cannot derive node identity");
+            std::optional<crypto::X25519Private> node_identity;
+            std::vector<net::UdpEndpoint> protected_endpoints{config.control,config.listen};
+            if (config.stun_server) protected_endpoints.push_back(*config.stun_server);
+            if (!relays.empty()) {
+                auto identity = crypto::X25519Private::from_bytes(keys->node.view());
+                if (!identity) return reject("invalid DERP node key");
+                for (auto const& relay : relay_options) {
+                    if (!identity->agree(relay.pin)) return reject("invalid DERP server pin");
+                    protected_endpoints.push_back(relay.server);
+                }
+                node_identity.emplace(std::move(*identity));
+            }
+            auto adv = parse_prefixes(config.advertise_routes);
+            tailscale::wireguard_tun::Options dev_opts{userspace ? std::string_view{} : config.interface,config.listen,
+                protected_endpoints,config.mtu,config.accept_routes,0,config.discover_paths,config.stun_server};
+            dev_opts.exit_node_name = config.exit_node_name; dev_opts.exit_node_allow_lan_access = config.exit_node_allow_lan_access;
+            dev_opts.advertise_routes = adv;
+            auto device = std::make_unique<Device>(keys->node.view(), dev_opts);
+            keys->node.clear();
+            if (!device->open()) return reject(std::format("cannot bind Tailscale UDP listener on port {}",config.listen.port));
+            auto bound = device->local_endpoint();
+            if (!bound) return reject("cannot inspect UDP listener");
+            Runtime runtime{config,*tls_profile,*machine,*public_node,*pin,*device,*auth,*bound,
+                            relays,node_identity ? &*node_identity : nullptr,stop,userspace};
+            if (!runtime.run()) return reject("control or data plane failed");
+            return !userspace && ::endpoint::process::requested_signal == platform::netlink_abi::SIGHUP ? reject("SIGHUP reload is unsupported") : 0;
         }
-        auto device = std::make_unique<Device>(keys->node.view(), tailscale::wireguard_tun::Options{
-            userspace ? std::string_view{} : config.interface,config.listen,protected_endpoints,config.mtu,
-            config.accept_routes,0,config.discover_paths,config.stun_server});
-        keys->node.clear();
-        if (!device->open()) return reject(std::format("cannot bind Tailscale UDP listener on port {}",config.listen.port));
-        auto bound = device->local_endpoint();
-        if (!bound) return reject("cannot inspect UDP listener");
-        Runtime runtime{config,*tls_profile,*machine,*public_node,*pin,*device,*auth,*bound,
-                        relays,node_identity ? &*node_identity : nullptr,stop,userspace};
-        if (!runtime.run()) return reject("control or data plane failed");
-        return !userspace && ::endpoint::process::requested_signal == platform::netlink_abi::SIGHUP ? reject("SIGHUP reload is unsupported") : 0;
     }
 
-    auto run(Config const& config, bool check, bool) -> int {
-        return run_impl(config,check,{},nullptr);
-    }
+    auto run(Config const& config, bool check, bool) -> int { return run_impl(config,check,{},nullptr); }
 
     auto make_userspace(Config config) -> relay::MeshLink {
         return pro::make_proxy_shared<relay::MeshLinkFacade, OutboundLink>(
-            [config=std::move(config)](std::stop_token stop, UserspaceLink& link) {
-                return run_impl(config,false,stop,&link);
-            });
+            [config=std::move(config)](std::stop_token stop, UserspaceLink& link) { return run_impl(config,false,stop,&link); });
     }
 }

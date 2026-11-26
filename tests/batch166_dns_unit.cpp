@@ -35,23 +35,29 @@ int main() {
     std::string kdl = std::format(R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {{
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {{
+    inbound "socks" type="socks5" {{
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }}
 }}
-outbound "direct" type="direct"
-outbound "proxy" type="socks5" {{
-    server host="127.0.0.1" port=1081
-    udp #true
+outbounds {{
+    outbound "direct" type="direct"
+    outbound "proxy" type="socks5" {{
+        server host="127.0.0.1" port=1081
+        udp #true
+    }}
 }}
 dns {{
-    server "h" type="hosts" file="{}" {{
-        entry host="inline.example" ip="198.51.100.7,2001:db8::7"
+    servers {{
+        server "h" type="hosts" file="{}" {{
+            entry host="inline.example" ip="198.51.100.7,2001:db8::7"
+        }}
+        server "d" type="dhcp" interface="eth0"
+        server "m" type="mdns" interface="wlan0"
+        server "doh" type="https" host="1.1.1.1" server-name="cloudflare-dns.com" path="/dns-query"
+        server "plain-detour" type="udp" host="8.8.8.8" port=53 detour="proxy"
     }}
-    server "d" type="dhcp" interface="eth0"
-    server "m" type="mdns" interface="wlan0"
-    server "doh" type="https" host="1.1.1.1" server-name="cloudflare-dns.com" path="/dns-query"
-    server "plain-detour" type="udp" host="8.8.8.8" port=53 detour="proxy"
     final "h"
 }}
 routing {{

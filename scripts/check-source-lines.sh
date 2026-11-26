@@ -7,12 +7,7 @@ if ! command -v rg >/dev/null 2>&1; then
 fi
 
 # Explicit, reviewed exceptions are listed here and in docs/development/file-sizes.md.
-declare -A exceptions=(
-    [tests/config.cpp]="established baseline"
-    [tests/dns_message.cpp]="established baseline"
-    [tests/http2/http2_server.cpp]="established baseline"
-    [tests/http2/http2_tls_backpressure.cpp]="established baseline"
-)
+declare -A exceptions=()
 failed=0
 checked=0
 

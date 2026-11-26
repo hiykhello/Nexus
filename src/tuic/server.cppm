@@ -12,6 +12,7 @@ import quic.retry_admission;
 import quic.retry_token;
 import quic.tls_server;
 import quic.optional_client_resumption;
+import tls.ech_server;
 import tls.server_credential;
 import net.datagram_driver;
 import ngtcp2;
@@ -88,8 +89,8 @@ export namespace tuic {
                 app.set_issue_tickets(parent.options_.zero_rtt_handshake);
             }
 #else
-            Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,corosio::endpoint peer)
-                : tls(parent.credential_, "h3"), hooks{parent, reg, id, parent.hooks_, id.slot},
+            Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,corosio::endpoint peer,std::optional<tls::ServerCredential>&& dynamic_credential)
+                : tls(std::move(dynamic_credential), parent.credential_, "h3", parent.ech_keys_), hooks{parent, reg, id, parent.hooks_, id.slot},
                   memory(parent.options_.native_bytes), app(tls, hooks, parent.users_),
                   session(tls,app,parent.local_),initial_peer(peer) {}
 #endif
@@ -154,12 +155,23 @@ export namespace tuic {
                     auto& entry = bundles[owner.slot];
                     if (entry) return std::unexpected(n::err_callback_failure);
 #ifdef NEXUS_QUIC_RESUMPTION
-                    auto server_tls = ServerTls::create(listener.credential_, "h3", listener.ticket_store_,
-                        listener.options_.zero_rtt_handshake);
+                    auto server_tls = listener.atomic_credential_
+                        ? ServerTls::create(listener.atomic_credential_, "h3", listener.ticket_store_,
+                            listener.options_.zero_rtt_handshake, {}, listener.ech_keys_)
+                        : (listener.credential_
+                            ? ServerTls::create(*listener.credential_, "h3", listener.ticket_store_,
+                                listener.options_.zero_rtt_handshake, {}, listener.ech_keys_)
+                            : std::unexpected(tls::PskError::invalid_input));
                     if (!server_tls) return std::unexpected(n::err_callback_failure);
                     entry.emplace(listener, reg, owner, peer, std::move(*server_tls));
 #else
-                    entry.emplace(listener, reg, owner, peer);
+                    std::optional<tls::ServerCredential> dyn_cred;
+                    if (listener.atomic_credential_) {
+                        auto cur = listener.atomic_credential_->clone_current();
+                        if (!cur) return std::unexpected(n::err_callback_failure);
+                        dyn_cred.emplace(std::move(*cur));
+                    } else if (!listener.credential_) return std::unexpected(n::err_callback_failure);
+                    entry.emplace(listener, reg, owner, peer, std::move(dyn_cred));
 #endif
                     n::ngtcp2_settings settings{};
                     n::ngtcp2_transport_params params{};
@@ -208,7 +220,9 @@ export namespace tuic {
     private:
         corosio::udp_socket socket_;
         corosio::endpoint local_;
-        tls::ServerCredential const& credential_;
+        tls::ServerCredential const* credential_ = nullptr;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential_{};
+        std::shared_ptr<tls::EchServerKeys const> ech_keys_{};
         std::span<UserCredential const> users_;
         ClientTransportOptions options_;
 #ifdef NEXUS_QUIC_RESUMPTION
@@ -221,9 +235,20 @@ export namespace tuic {
         bool run_started_ = false;
 
     public:
+        Listener(corosio::io_context& ctx, tls::ServerCredential const* cred,
+                 std::shared_ptr<tls::AtomicServerCredential> atomic_cred,
+                 std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks,
+                 std::shared_ptr<tls::EchServerKeys const> ech_keys = {})
+            : socket_(ctx), credential_(cred), atomic_credential_(std::move(atomic_cred)),
+              ech_keys_(std::move(ech_keys)), users_(users), options_(opts), hooks_(hooks) {}
         Listener(corosio::io_context& ctx, tls::ServerCredential const& cred,
-                 std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks)
-            : socket_(ctx), credential_(cred), users_(users), options_(opts), hooks_(hooks) {}
+                 std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks,
+                 std::shared_ptr<tls::EchServerKeys const> ech_keys = {})
+            : Listener(ctx, &cred, {}, users, opts, hooks, std::move(ech_keys)) {}
+        Listener(corosio::io_context& ctx, std::shared_ptr<tls::AtomicServerCredential> atomic_cred,
+                 std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks,
+                 std::shared_ptr<tls::EchServerKeys const> ech_keys = {})
+            : Listener(ctx, nullptr, std::move(atomic_cred), users, opts, hooks, std::move(ech_keys)) {}
 
         auto prepare(corosio::endpoint local) -> std::expected<corosio::endpoint, std::error_code> {
             if (!factory_.retry.initialize()) return std::unexpected(std::make_error_code(std::errc::io_error));

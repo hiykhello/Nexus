@@ -170,16 +170,20 @@ namespace {
         auto ok_tun = config::parse_kdl(R"(
 schema-version 1
 role "client"
-inbound "t" type="tun" {
-    interface-name "utun0"
-    inet4-address "172.19.0.1/30"
-    exclude-package "com.android.captiveportallogin"
-    multi-queue #true
+inbounds {
+    inbound "t" type="tun" {
+        interface-name "utun0"
+        inet4-address "172.19.0.1/30"
+        exclude-package "com.android.captiveportallogin"
+        multi-queue #true
+    }
 }
-outbound "direct" type="direct" {
-    network strategy="fallback" type="wifi" fallback="cellular" fallback-delay-ms=350 {
-        interface "wlan0" type="wifi"
-        interface "wwan0" type="cellular"
+outbounds {
+    outbound "direct" type="direct" {
+        network strategy="fallback" type="wifi" fallback="cellular" fallback-delay-ms=350 {
+            interface "wlan0" type="wifi"
+            interface "wwan0" type="cellular"
+        }
     }
 }
 routing { default-outbound "direct" }
@@ -193,17 +197,19 @@ routing { default-outbound "direct" }
         auto ok_mptcp = config::parse_kdl(R"(
 schema-version 1
 role "client"
-inbound "t" type="tun" {
-    interface-name "utun0"
-    inet4-address "172.19.0.1/30"
-    auto-route #true
-    strict-route #true
-    auto-redirect #true
-    socket-mark 100
-    exclude-mptcp #true
-    multi-queue #true
+inbounds {
+    inbound "t" type="tun" {
+        interface-name "utun0"
+        inet4-address "172.19.0.1/30"
+        auto-route #true
+        strict-route #true
+        auto-redirect #true
+        socket-mark 100
+        exclude-mptcp #true
+        multi-queue #true
+    }
 }
-outbound "direct" type="direct" { routing-mark 100; }
+outbounds { outbound "direct" type="direct" { routing-mark 100; }; }
 routing { default-outbound "direct" }
 )");
         expect(ok_mptcp.has_value(), ok_mptcp ? std::string_view("ok") : std::string_view(ok_mptcp.error()));
@@ -213,13 +219,15 @@ routing { default-outbound "direct" }
         auto bad_strict = config::parse_kdl(R"(
 schema-version 1
 role "client"
-inbound "t" type="tun" {
-    interface-name "utun0"
-    inet4-address "172.19.0.1/30"
-    strict-route #true
-    exclude-package "com.example.app"
+inbounds {
+    inbound "t" type="tun" {
+        interface-name "utun0"
+        inet4-address "172.19.0.1/30"
+        strict-route #true
+        exclude-package "com.example.app"
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct" }
 )");
         expect(!bad_strict.has_value(), "148B: strict-route + exclude-package must be rejected");
@@ -258,11 +266,13 @@ routing { default-outbound "direct" }
         auto cfg = config::parse_kdl(R"(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing {
     default-outbound "direct"
     tcp-program sniff-timeout-ms=1000 unknown="skip" {
@@ -349,43 +359,47 @@ ntp {
     interval-ms 60000
     timeout-ms 1500
 }
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
-outbound "vl" type="vless" {
-    server host="127.0.0.1" port=443
-    authentication { uuid-file "/tmp/u"; }
-    tls { server-name "vl.example"; verify #true; certificate-sha256 "01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef"; }
-}
-outbound "hp" type="http-connect" {
-    server host="127.0.0.1" port=8443
-    tls { server-name "hp.example"; verify #true; certificate-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; }
-}
-outbound "hy" type="hysteria2" {
-    server host="127.0.0.1" port=4433
-    authentication { password-file "/tmp/p"; }
-    tls { server-name "hy.example"; verify #true; certificate-sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }
-}
-outbound "tu" type="tuic" {
-    server host="127.0.0.1" port=4434
-    authentication { uuid-file "/tmp/u"; password-file "/tmp/p"; }
-    tls { server-name "tu.example"; verify #true; certificate-sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"; }
-}
-outbound "mq" type="masque" {
-    server host="127.0.0.1" port=4435
-    authority "mq.example"
-    authentication { bearer-file "/tmp/b"; }
-    tls { server-name "mq.example"; verify #true; certificate-sha256 "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"; }
-}
-outbound "pool" type="selector" {
-    member "vl"
-    member "hp"
-    member "hy"
-    member "tu"
-    member "mq"
-    selected "vl"
+outbounds {
+    outbound "direct" type="direct"
+    outbound "vl" type="vless" {
+        server host="127.0.0.1" port=443
+        authentication { uuid-file "/tmp/u"; }
+        tls { server-name "vl.example"; verify #true; certificate-sha256 "01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef"; }
+    }
+    outbound "hp" type="http-connect" {
+        server host="127.0.0.1" port=8443
+        tls { server-name "hp.example"; verify #true; certificate-sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; }
+    }
+    outbound "hy" type="hysteria2" {
+        server host="127.0.0.1" port=4433
+        authentication { password-file "/tmp/p"; }
+        tls { server-name "hy.example"; verify #true; certificate-sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }
+    }
+    outbound "tu" type="tuic" {
+        server host="127.0.0.1" port=4434
+        authentication { uuid-file "/tmp/u"; password-file "/tmp/p"; }
+        tls { server-name "tu.example"; verify #true; certificate-sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"; }
+    }
+    outbound "mq" type="masque" {
+        server host="127.0.0.1" port=4435
+        authority "mq.example"
+        authentication { bearer-file "/tmp/b"; }
+        tls { server-name "mq.example"; verify #true; certificate-sha256 "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"; }
+    }
+    outbound "pool" type="selector" {
+        member "vl"
+        member "hp"
+        member "hy"
+        member "tu"
+        member "mq"
+        selected "vl"
+    }
 }
 routing { default-outbound "pool" }
 )");

@@ -32,6 +32,7 @@ export namespace quic {
         std::optional<tls::HandshakeDecoder> decoder_;
         std::optional<tls::Secret> exporter_;
         std::unique_ptr<EchClient> ech_;
+        crypto::Bytes ech_retry_configs_;
         crypto::Hash cipher_hash_=crypto::Hash::sha256;
         std::uint16_t cipher_suite_=0;
         std::uint8_t expected_message_=8,last_alert_=0;
@@ -91,6 +92,7 @@ export namespace quic {
             if (type==8) {
                 auto extensions=flight_->quic_encrypted_extensions(wire,alpn(),recovery...);
                 if (!extensions) return fail(connection,extensions.error().alert,ngtcp2::err_crypto,recovery...);
+                ech_retry_configs_=std::move(extensions->common.ech_retry_configs);
                 if constexpr(tls::EarlyDataPolicy<Resumption>) {
                     auto& policy=tls::recovery_policy(recovery...);
                     if (extensions->accepted_early && (!policy.offered_early() || !policy.selected() ||
@@ -144,6 +146,7 @@ export namespace quic {
         auto operator=(TlsClient&&) -> TlsClient& = delete;
         auto complete() const noexcept -> bool { return state_==State::complete; }
         auto alert() const noexcept -> std::uint8_t { return last_alert_; }
+        [[nodiscard]] auto ech_retry_configs() const noexcept -> std::span<std::uint8_t const> { return ech_retry_configs_; }
         [[nodiscard]] auto enable_ech(EchConfig const& config) -> bool {
             if (state_!=State::initial || ech_) return false;
             auto client=EchClient::create(config);
@@ -158,7 +161,7 @@ export namespace quic {
         }
         template<class... Recovery> auto cancel(Recovery&... recovery) noexcept -> void {
             using Resumption=tls::RecoveryPolicy<Recovery...>;
-            if constexpr(Resumption::enabled) tls::recovery_policy(recovery...).cancel(); state_=State::failed; template_.reset(); exchange_.reset(); flight_.reset(); decoder_.reset(); exporter_.reset(); ech_.reset(); }
+            if constexpr(Resumption::enabled) tls::recovery_policy(recovery...).cancel(); state_=State::failed; template_.reset(); exchange_.reset(); flight_.reset(); decoder_.reset(); exporter_.reset(); ech_.reset(); ech_retry_configs_.clear(); }
         template<class Connection,class... Recovery> auto start(Connection& connection,Recovery&... recovery) -> int {
             using Resumption=tls::RecoveryPolicy<Recovery...>;
             using namespace ngtcp2;

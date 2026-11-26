@@ -229,7 +229,7 @@ namespace relay {
                     else if (step.action.udp_adaptive_timeout)
                         flow.idle_timeout = std::chrono::milliseconds(rules::adaptive_udp_timeout_ms(proto, target_port_, static_cast<std::uint32_t>(idle_timeout_.count())));
                     if (step.action.kind == rules::ProgramActionKind::reject) return std::nullopt;
-                    if (step.action.kind == rules::ProgramActionKind::route) {
+                    if (step.action.kind == rules::ProgramActionKind::route || step.action.kind == rules::ProgramActionKind::bypass) {
                         auto chosen = policy.choose_outbound(step.action.outbound, target_host_);
                         return chosen == 1 ? std::nullopt : std::optional(chosen);
                     }

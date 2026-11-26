@@ -22,6 +22,7 @@ export namespace wireguard {
             last_=timestamp; consumed_=now; return {};
         }
         auto last(this TimestampGuard const& self) -> Timestamp { std::lock_guard lock(self.mutex_); return self.last_; }
+        auto seed(Timestamp const& timestamp) -> void { std::lock_guard lock(mutex_); if (timestamp > last_) last_ = timestamp; }
     };
     // A single Noise_IKpsk2 attempt for a configured peer. The immutable local
     // identity outlives this object. Fresh ephemeral keys are supplied by the

@@ -146,7 +146,7 @@ namespace rules {
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid DSCP"});
         if (input.query_type && !*input.query_type)
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid DNS query type"});
-        if (input.network && *input.network != Network::tcp && *input.network != Network::udp)
+        if (input.network && *input.network != Network::tcp && *input.network != Network::udp && *input.network != Network::icmp)
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid network"});
         if (input.protocol && (*input.protocol < Protocol::http || *input.protocol > Protocol::tls_ech))
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid protocol"});

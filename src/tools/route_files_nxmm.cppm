@@ -102,7 +102,7 @@ export namespace cli::nxmm_detail {
         using A = config::OrderedTcpAction; using K = rules::ProgramActionKind;
         switch (rule.action) {
         case A::sniff: return K::sniff; case A::resolve: return K::resolve; case A::route: return K::route;
-        case A::bypass: return rule.outbound_name ? K::route : K::bypass;
+        case A::bypass: return K::bypass;
         case A::route_options: return K::route_options; case A::hijack_dns: return K::hijack_dns; case A::reject: return K::reject;
         }
         std::unreachable();
@@ -192,7 +192,8 @@ export namespace cli::nxmm_detail {
                 rule.extra.resolve_strategy, rule.extra.resolve_server, rule.extra.resolve_disable_cache,
                 rule.extra.resolve_rewrite_ttl, rule.extra.resolve_client_subnet,
                 rule.extra.sniff_protocols, rule.extra.sniff_override_destination,
-                rule.extra.sniff_timeout_ms, rule.extra.udp_disable_domain_unmapping};
+                rule.extra.sniff_timeout_ms, rule.extra.udp_disable_domain_unmapping,
+                rule.action == config::OrderedTcpAction::bypass && rule.outbound_name.has_value()};
             std::shared_ptr<rules::MmapMatcher const> direct_mmap;
             bool direct_mmap_src = false;
             if (rule.file) {

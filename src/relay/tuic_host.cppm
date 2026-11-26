@@ -3,6 +3,7 @@ import std;
 import relay;
 import tuic.application;
 import tuic.transport_options;
+import tls.ech_server;
 import tls.server_credential;
 import corosio;
 
@@ -12,7 +13,11 @@ export namespace relay {
         std::unique_ptr<Impl> impl_;
     public:
         TuicHost(Server& routing_source, tls::ServerCredential const& credential,
-                 std::vector<tuic::UserCredential> users, tuic::ClientTransportOptions options);
+                 std::vector<tuic::UserCredential> users, tuic::ClientTransportOptions options,
+                 std::shared_ptr<tls::EchServerKeys const> ech_keys = {});
+        TuicHost(Server& routing_source, std::shared_ptr<tls::AtomicServerCredential> atomic_credential,
+                 std::vector<tuic::UserCredential> users, tuic::ClientTransportOptions options,
+                 std::shared_ptr<tls::EchServerKeys const> ech_keys = {});
         ~TuicHost();
         TuicHost(TuicHost const&) = delete;
         auto operator=(TuicHost const&) -> TuicHost& = delete;

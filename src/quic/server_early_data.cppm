@@ -7,6 +7,7 @@ import crypto.ecdh;
 import quic.packet_keys;
 import quic.tls_common;
 export import quic.resumption;
+import tls.ech_server;
 import tls.psk;
 import tls.psk_server_policy;
 import tls.server_credential;
@@ -68,33 +69,6 @@ export namespace quic {
     };
 
     namespace early_detail {
-        inline auto encode_early_encrypted_extensions(std::span<std::uint8_t const> alpn,
-            std::span<std::uint8_t const> quic_params) -> std::optional<crypto::Bytes> {
-            if (alpn.empty() || alpn.size() > 255 || quic_params.size() > 65000) return {};
-            std::size_t ext_len = (alpn.size() + 7) + (4 + quic_params.size()) + 4;
-            crypto::Bytes msg(6 + ext_len);
-            auto put16 = [&](std::size_t pos, std::size_t v) {
-                msg[pos] = static_cast<std::uint8_t>(v >> 8);
-                msg[pos + 1] = static_cast<std::uint8_t>(v);
-            };
-            std::size_t body = ext_len + 2;
-            msg[0] = 8;
-            msg[1] = static_cast<std::uint8_t>(body >> 16);
-            msg[2] = static_cast<std::uint8_t>(body >> 8);
-            msg[3] = static_cast<std::uint8_t>(body);
-            put16(4, ext_len);
-            std::size_t off = 6;
-            put16(off, 16); put16(off + 2, alpn.size() + 3); put16(off + 4, alpn.size() + 1);
-            msg[off + 6] = static_cast<std::uint8_t>(alpn.size());
-            std::ranges::copy(alpn, msg.begin() + static_cast<std::ptrdiff_t>(off + 7));
-            off += alpn.size() + 7;
-            put16(off, 0x39); put16(off + 2, quic_params.size());
-            std::ranges::copy(quic_params, msg.begin() + static_cast<std::ptrdiff_t>(off + 4));
-            off += 4 + quic_params.size();
-            put16(off, 42); put16(off + 2, 0);
-            return msg;
-        }
-
         struct EarlyFlight {
             crypto::Hash hash;
             tls::Transcript transcript;
@@ -121,6 +95,7 @@ export namespace quic {
         EarlyDataServerPolicy(EarlyDataServerPolicy&&) noexcept = default;
 
         auto cancel() noexcept -> void { base_.cancel(); early_traffic_.reset(); accepted_early_ = false; }
+        auto disallow_early() noexcept -> void { early_allowed_ = false; }
         [[nodiscard]] auto selected() const noexcept -> bool { return base_.selected(); }
         [[nodiscard]] auto selected_index() const noexcept -> std::optional<std::uint16_t> { return base_.selected_index(); }
         [[nodiscard]] auto binding() const noexcept -> tls::ServerTicketBinding const& { return base_.binding(); }
@@ -170,10 +145,13 @@ export namespace quic {
     class EarlyDataTlsServer {
         enum class State { hello, retry_hello, finished, completing, complete, failed } state_ = State::hello;
         struct ApplicationReadKey { PacketSuite suite; tls::Secret secret; };
-        tls::ServerCredential const& credential_;
+        std::optional<tls::ServerCredential> owned_credential_;
+        tls::ServerCredential const* credential_ = nullptr;
         std::string_view alpn_;
         Store& store_;
         EarlyDataServerPolicy<Store, Clock> recovery_;
+        tls::EchServerContext ech_;
+        std::string negotiated_sni_;
         std::optional<tls::HandshakeDecoder> decoder_;
         std::optional<tls::RawServerFlight> flight_;
         std::optional<early_detail::EarlyFlight> early_flight_;
@@ -251,6 +229,11 @@ export namespace quic {
             if (!sh_body) return std::unexpected(tls::ServerKeyError::crypto_error);
             auto sh_wire = tls::HandshakeDecoder::encode(2, *sh_body, 65535);
             if (!sh_wire) return std::unexpected(tls::ServerKeyError::crypto_error);
+            if (ech_.accepted()) {
+                auto confirmed = tls::apply_ech_accept_confirmation(wire, {}, {}, *sh_wire);
+                if (!confirmed) return std::unexpected(tls::ServerKeyError::crypto_error);
+                *sh_wire = std::move(*confirmed);
+            }
             auto hash = sel->cipher_suite == 0x1302 ? crypto::Hash::sha384 : crypto::Hash::sha256;
             auto transcript = tls::Transcript::create(hash);
             if (!transcript || !transcript->append(wire) || !transcript->append(*sh_wire))
@@ -270,28 +253,31 @@ export namespace quic {
         auto initial_message(Connection& connection, std::uint8_t type, std::span<std::uint8_t const> wire) -> int {
             using namespace ngtcp2;
             if ((state_ != State::hello && state_ != State::retry_hello) || type != 1) return fail(connection, 10);
-            auto client = tls::ClientHello::parse(wire.subspan(4), 65535);
-            if (!client) return fail(connection, 50);
-            auto params = tls::quic_client_parameters<true, true>(*client, alpn());
+            if (!credential_) return fail(connection, 80);
+            auto step = process_quic_client_hello_ech(ech_, wire, state_ == State::retry_hello);
+            if (!step) return fail(connection, step.error());
+            auto effective_wire = step->effective_wire(wire);
+            negotiated_sni_ = std::move(step->sni);
+            if (ech_.rejected_offered()) recovery_.disallow_early();
+            auto params = tls::quic_client_parameters<true, true>(step->client, alpn());
             if (!params) return fail(connection, params.error() == tls::HandshakePolicyError::missing_transport_parameters ? 109
                 : params.error() == tls::HandshakePolicyError::invalid_alpn ? 120 : 47);
             if (auto f = parameter_block_status(*params)) return fail(connection, 47, f);
-            auto schemes = credential_.signature_schemes();
+            auto schemes = credential_->signature_schemes();
             if (schemes.empty()) return fail(connection, 80);
-            bool has_early_ext = client->extension(42) != nullptr;
+            bool const ech_ok = ech_.accepted();
+            bool has_early_ext = step->client.extension(42) != nullptr;
             auto raw = (state_ == State::hello && has_early_ext)
-                ? make_secrets_for_early(*client, wire, schemes)
+                ? make_secrets_for_early(step->client, effective_wire, schemes)
                 : (state_ == State::hello
-                    ? tls::server_handshake_secrets(wire, schemes, tls::PeerSignaturePolicy::require_offered,
-                        tls_packet_ciphers, tls::HandshakeTransport::quic, recovery_)
-                    : tls::server_handshake_secrets_retry(first_, retry_, wire, schemes,
-                        tls_packet_ciphers, tls::HandshakeTransport::quic, recovery_));
+                    ? quic_server_handshake_secrets(effective_wire, schemes, ech_ok, recovery_)
+                    : quic_server_handshake_secrets_retry(first_, retry_, effective_wire, schemes, ech_ok, recovery_));
             if (!raw) {
                 if (state_ != State::hello || raw.error() != tls::ServerKeyError::retry_required || has_early_ext)
                     return fail(connection, raw.error() == tls::ServerKeyError::crypto_error ? 80 : 40);
-                auto hrr = tls::server_retry_hello(wire, schemes, tls_packet_ciphers, tls::HandshakeTransport::quic, recovery_);
+                auto hrr = quic_server_retry_hello(effective_wire, schemes, ech_ok, recovery_);
                 if (!hrr) return fail(connection, 40);
-                first_.assign(wire.begin(), wire.end()); retry_ = std::move(*hrr);
+                first_.assign(effective_wire.begin(), effective_wire.end()); retry_ = std::move(*hrr);
                 if (auto e = connection.submit_crypto(NGTCP2_ENCRYPTION_LEVEL_INITIAL, retry_)) return fail(connection, 80, e);
                 state_ = State::retry_hello; return 0;
             }
@@ -309,7 +295,7 @@ export namespace quic {
             if (recovery_.accepted_early() && recovery_.early_traffic()) {
                 error = connection.install_server_early_data(*suite, *recovery_.early_traffic());
                 if (error) return fail(connection, 80, error);
-                auto ee = early_detail::encode_early_encrypted_extensions(alpn(), *local);
+                auto ee = encode_early_encrypted_extensions(alpn(), *local);
                 if (!ee || !raw->secrets.transcript.append(*ee)) return fail(connection, 80);
                 auto h1 = raw->secrets.transcript.snapshot();
                 if (!h1) return fail(connection, 80);
@@ -335,8 +321,8 @@ export namespace quic {
             }
             std::array<crypto::Bytes, 4> messages;
             std::optional<tls::TrafficSecrets> app;
-            auto flight = tls::RawServerFlight::create(std::move(*raw), credential_, messages, app, alpn(),
-                std::span<std::uint8_t const>(*local), recovery_);
+            auto flight = tls::RawServerFlight::create_with_ech_retry(std::move(*raw), *credential_, messages, app, alpn(),
+                std::span<std::uint8_t const>(*local), ech_.retry_configs(), recovery_);
             if (!flight) return fail(connection, flight.error().alert);
             if (auto e = connection.install_secret(NGTCP2_ENCRYPTION_LEVEL_1RTT, true, *suite, app->server.view()))
                 return fail(connection, 80, e);
@@ -379,14 +365,21 @@ export namespace quic {
         }
     public:
         EarlyDataTlsServer(tls::ServerCredential const& credential, std::string_view alpn, Store& store,
-            tls::ServerTicketBinding binding, bool early_allowed = true) noexcept
-            : credential_(credential), alpn_(alpn), store_(store), recovery_(store, std::move(binding), early_allowed),
-              early_allowed_(early_allowed) {}
+            tls::ServerTicketBinding binding, bool early_allowed = true,
+            std::shared_ptr<tls::EchServerKeys const> ech_keys = {}) noexcept
+            : credential_(&credential), alpn_(alpn), store_(store), recovery_(store, std::move(binding), early_allowed),
+              ech_(std::move(ech_keys)), early_allowed_(early_allowed) {}
+        EarlyDataTlsServer(tls::ServerCredential&& credential, std::string_view alpn, Store& store,
+            tls::ServerTicketBinding binding, bool early_allowed = true,
+            std::shared_ptr<tls::EchServerKeys const> ech_keys = {}) noexcept
+            : owned_credential_(std::move(credential)), credential_(&*owned_credential_), alpn_(alpn), store_(store),
+              recovery_(store, std::move(binding), early_allowed), ech_(std::move(ech_keys)), early_allowed_(early_allowed) {}
         EarlyDataTlsServer(EarlyDataTlsServer const&) = delete;
         auto operator=(EarlyDataTlsServer const&) -> EarlyDataTlsServer& = delete;
 
         [[nodiscard]] static auto create(tls::ServerCredential const& credential, std::string_view alpn,
-            Store& store, bool early_allowed = true, std::span<std::uint8_t const> application_scope = {})
+            Store& store, bool early_allowed = true, std::span<std::uint8_t const> application_scope = {},
+            std::shared_ptr<tls::EchServerKeys const> ech_keys = {})
             -> std::expected<std::unique_ptr<EarlyDataTlsServer>, tls::PskError> {
             if (alpn.empty() || alpn.size() > 255) return std::unexpected(tls::PskError::invalid_input);
             auto scope = detail::resumption_scope(application_scope);
@@ -394,12 +387,36 @@ export namespace quic {
             auto binding = tls::make_server_ticket_binding(credential,
                 std::span(reinterpret_cast<std::uint8_t const*>(alpn.data()), alpn.size()), *scope);
             if (!binding) return std::unexpected(binding.error());
-            return std::make_unique<EarlyDataTlsServer>(credential, alpn, store, std::move(*binding), early_allowed);
+            return std::make_unique<EarlyDataTlsServer>(credential, alpn, store, std::move(*binding), early_allowed, std::move(ech_keys));
+        }
+        [[nodiscard]] static auto create(tls::ServerCredential&& credential, std::string_view alpn,
+            Store& store, bool early_allowed = true, std::span<std::uint8_t const> application_scope = {},
+            std::shared_ptr<tls::EchServerKeys const> ech_keys = {})
+            -> std::expected<std::unique_ptr<EarlyDataTlsServer>, tls::PskError> {
+            if (alpn.empty() || alpn.size() > 255) return std::unexpected(tls::PskError::invalid_input);
+            auto scope = detail::resumption_scope(application_scope);
+            if (!scope) return std::unexpected(scope.error());
+            auto binding = tls::make_server_ticket_binding(credential,
+                std::span(reinterpret_cast<std::uint8_t const*>(alpn.data()), alpn.size()), *scope);
+            if (!binding) return std::unexpected(binding.error());
+            return std::make_unique<EarlyDataTlsServer>(std::move(credential), alpn, store, std::move(*binding), early_allowed, std::move(ech_keys));
+        }
+        [[nodiscard]] static auto create(std::shared_ptr<tls::AtomicServerCredential> const& atomic, std::string_view alpn,
+            Store& store, bool early_allowed = true, std::span<std::uint8_t const> application_scope = {},
+            std::shared_ptr<tls::EchServerKeys const> ech_keys = {})
+            -> std::expected<std::unique_ptr<EarlyDataTlsServer>, tls::PskError> {
+            if (!atomic) return std::unexpected(tls::PskError::invalid_input);
+            auto cloned = atomic->clone_current();
+            if (!cloned) return std::unexpected(tls::PskError::invalid_input);
+            return create(std::move(*cloned), alpn, store, early_allowed, application_scope, std::move(ech_keys));
         }
 
         auto complete() const noexcept -> bool { return state_ == State::complete; }
         auto resumed() const noexcept -> bool { return complete() && recovery_.selected(); }
         auto early_accepted() const noexcept -> bool { return recovery_.accepted_early(); }
+        [[nodiscard]] auto ech_accepted() const noexcept -> bool { return ech_.accepted(); }
+        [[nodiscard]] auto ech_rejected() const noexcept -> bool { return ech_.rejected_offered(); }
+        [[nodiscard]] auto negotiated_sni() const noexcept -> std::string_view { return negotiated_sni_; }
         auto alert() const noexcept -> std::uint8_t { return last_alert_; }
         auto cipher_suite() const noexcept -> std::uint16_t { return cipher_suite_; }
         struct ExporterMaster { crypto::Hash hash; std::span<std::uint8_t const> secret; };
@@ -408,7 +425,7 @@ export namespace quic {
         }
         auto cancel() noexcept -> void {
             recovery_.cancel(); state_ = State::failed; flight_.reset(); early_flight_.reset();
-            application_.reset(); decoder_.reset(); exporter_.reset();
+            application_.reset(); decoder_.reset(); exporter_.reset(); ech_.reset();
             crypto::Bytes{}.swap(first_); crypto::Bytes{}.swap(retry_);
         }
         template<class Connection> auto start(Connection&) -> int { return ngtcp2::err_callback_failure; }

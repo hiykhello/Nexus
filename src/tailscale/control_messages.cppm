@@ -12,10 +12,22 @@ export namespace tailscale::control_messages {
     // borrows unchanged caller input and expires before that frame is reused.
     struct JsonField {Presence presence=Presence::missing;std::string_view json;};
     enum class RegistrationState { authorized,pending,expired,denied };
+    struct Prefix {
+        std::array<std::uint8_t,16> address{};
+        std::uint8_t family=0,bits=0;
+        auto operator==(Prefix const&) const -> bool = default;
+    };
+    struct Endpoint {
+        std::array<std::uint8_t,16> address{};
+        std::uint8_t family=0;
+        std::uint16_t port=0;
+        auto operator==(Endpoint const&) const -> bool = default;
+    };
     struct RegisterRequest {
         control::NodePublic node;
         std::string_view auth_key,hostname,os,client_version;
         bool ephemeral=false;
+        std::span<Prefix const> advertise_routes{};
     };
     // Exclusive lease on the final caller-owned JSON buffer. Retain through
     // the H2 body's release point; success/failure/abandonment clears secrets.
@@ -42,21 +54,11 @@ export namespace tailscale::control_messages {
     // Unknown keys are deliberately rejected by this initial narrow schema.
     auto encode_register(std::span<std::uint8_t>,RegisterRequest const&) noexcept -> std::expected<RegisterWire,Failure>;
     auto parse_register(unsigned status,std::span<std::uint8_t const>) noexcept -> std::expected<RegisterReply,Failure>;
-    struct Prefix {
-        std::array<std::uint8_t,16> address{};
-        std::uint8_t family=0,bits=0;
-        auto operator==(Prefix const&) const -> bool = default;
-    };
-    struct Endpoint {
-        std::array<std::uint8_t,16> address{};
-        std::uint8_t family=0;
-        std::uint16_t port=0;
-        auto operator==(Endpoint const&) const -> bool = default;
-    };
     enum class MapRequestMode { endpoints, stream };
     using DiscoKey = std::array<std::uint8_t,32>;
     [[nodiscard]] auto encode_map_request(control::NodePublic const& node, MapRequestMode mode,
-        std::span<const Endpoint> endpoints = {}, std::optional<DiscoKey> const& disco = {}) -> std::expected<std::string, Failure>;
+        std::span<const Endpoint> endpoints = {}, std::optional<DiscoKey> const& disco = {},
+        std::span<const Prefix> advertise_routes = {}) -> std::expected<std::string, Failure>;
     struct PeerCandidate {
         std::int64_t id=0,home_derp=0;
         control::NodePublic key;

@@ -109,7 +109,8 @@ export namespace tailscale::control_application {
         template<class Channel>
         auto update_endpoints(Channel& channel, Options const& options, Clock::time_point deadline)
             -> capy::task<capy_result> {
-            auto update = cm::encode_map_request(options.registration.node, cm::MapRequestMode::endpoints, options.endpoints, options.disco);
+            auto update = cm::encode_map_request(options.registration.node, cm::MapRequestMode::endpoints,
+                options.endpoints, options.disco, options.registration.advertise_routes);
             if (!update) co_return std::unexpected(Error::endpoint_update);
             auto ticket = submit(channel, options.authority, "/machine/map", bytes(*update));
             if (!ticket) co_return std::unexpected(Error::endpoint_update);
@@ -186,7 +187,8 @@ export namespace tailscale::control_application {
             Sink& sink;
             ~RevokeBeforeStateDestruction() { sink.revoke(); }
         } revoke{sink};
-        auto request = cm::encode_map_request(options.registration.node, cm::MapRequestMode::stream, {}, options.disco);
+        auto request = cm::encode_map_request(options.registration.node, cm::MapRequestMode::stream, {},
+            options.disco, options.registration.advertise_routes);
         if (!request) co_return std::unexpected(Error::map_request);
         auto ticket = detail::submit(channel, options.authority, "/machine/map", detail::bytes(*request));
         if (!ticket) co_return std::unexpected(Error::map_request);

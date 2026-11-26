@@ -33,21 +33,17 @@ namespace config {
                 if (node.name == "outbounds")
                     for (auto& child : node.children)
                         if (auto ok = desugar_detail::desugar_group_members(child); !ok) return ok;
-            } else if (node.name == "inbound" || node.name == "outbound") {
-                if (auto ok = desugar_detail::desugar_endpoints(node); !ok) return ok;
-                if (node.name == "outbound")
-                    if (auto ok = desugar_detail::desugar_group_members(node); !ok) return ok;
             } else if (node.name == "routing") {
                 if (auto ok = desugar_detail::desugar_routing(node); !ok) return ok;
             } else if (node.name == "dns") {
-                bool rules_seen = false, legacy = false;
+                bool rules_seen = false;
                 std::vector<Node> children;
                 for (auto& child : node.children) {
                     if (child.name == "servers") {
                         if (auto result = typed(child, "server", {"local", "hosts", "udp", "tcp", "tls", "https", "quic", "https3", "dhcp", "mdns"}); !result) return result;
                     }
                     if (child.name == "rules") {
-                        if (rules_seen || legacy || child.tag || !child.arguments.empty() || !child.properties.empty())
+                        if (rules_seen || child.tag || !child.arguments.empty() || !child.properties.empty())
                             return error("invalid or duplicate rules block");
                         rules_seen = true;
                         for (auto& rule : child.children) {
@@ -56,11 +52,9 @@ namespace config {
                             rule.name = "rule";
                             children.push_back(std::move(rule));
                         }
+                    } else if (child.name == "rule") {
+                        return error("bare DNS rule is removed; use dns { rules { - ... } }");
                     } else {
-                        if (child.name == "rule") {
-                            if (rules_seen) return error("cannot mix rules block and rule nodes");
-                            legacy = true;
-                        }
                         children.push_back(std::move(child));
                     }
                 }

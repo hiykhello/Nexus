@@ -88,13 +88,14 @@ export namespace config::dns_detail {
                 rule.predefined->rcode = *value;
             }
             for (auto const& node : child.children) {
+                if (node.name != "record") continue;
                 auto section = text_property(node, "section"), name = text_property(node, "name"), data = text_property(node, "data-hex");
                 auto address = text_property(node, "address"), target = text_property(node, "target");
                 auto type_value = property(node, "type"), class_value = property(node, "class"), ttl_value = property(node, "ttl");
                 auto record_type = type_value ? parse_dns_rrtype(*type_value) : std::nullopt;
                 auto record_class = class_value ? integer(*class_value) : std::optional<std::uint64_t>{1};
                 auto ttl = ttl_value ? integer(*ttl_value) : std::optional<std::uint64_t>{60};
-                if (node.name != "record" || node.tag || !node.arguments.empty() || !node.children.empty() ||
+                if (node.tag || !node.arguments.empty() || !node.children.empty() ||
                     !section || !name || (bool(data) + bool(address) + bool(target) != 1) || !record_type || !*record_type || *record_type > 65535 ||
                     !record_class || !*record_class || *record_class > 65535 || !ttl || *ttl > 0xffffffffu ||
                     node.properties.size() != 4u + bool(class_value) + bool(ttl_value) ||
@@ -124,10 +125,12 @@ export namespace config::dns_detail {
                 }
                 rule.predefined->records.push_back(std::move(record));
             }
-        } else if (predefined_rcode || !child.children.empty()) return error("predefined DNS fields require predefined action");
+        } else if (predefined_rcode || std::ranges::any_of(child.children, [](auto const& n) { return n.name == "record"; }))
+            return error("predefined DNS fields require predefined action");
 #else
         (void)rule;
-        if (predefined_rcode || !child.children.empty()) return error("DNS response rules are unavailable in this build");
+        if (predefined_rcode || std::ranges::any_of(child.children, [](auto const& n) { return n.name == "record"; }))
+            return error("DNS response rules are unavailable in this build");
 #endif
         return {};
     }

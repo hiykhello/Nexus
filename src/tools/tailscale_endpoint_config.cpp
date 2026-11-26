@@ -56,6 +56,22 @@ namespace cli::tailscale_endpoint {
             return std::ranges::any_of(output, [](auto byte) { return byte != 0; });
         }
 
+        auto valid_cidr(std::string_view text) -> bool {
+            auto slash = text.find('/');
+            if (slash == std::string_view::npos) return false;
+            auto ip = platform::parse_ip_address(text.substr(0, slash));
+            if (!ip) return false;
+            unsigned pfx = 0;
+            auto ps = text.substr(slash + 1);
+            auto [end, ec] = std::from_chars(ps.data(), ps.data() + ps.size(), pfx);
+            if (ec != std::errc{} || end != ps.data() + ps.size() || pfx > ip->size * 8u) return false;
+            std::size_t full = pfx / 8u, rem = pfx % 8u;
+            if (rem != 0 && (ip->bytes[full] & static_cast<std::uint8_t>((1u << (8u - rem)) - 1u)) != 0) return false;
+            for (std::size_t i = full + (rem != 0 ? 1u : 0u); i < ip->size; ++i)
+                if (ip->bytes[i] != 0) return false;
+            return true;
+        }
+
         auto relay(k::Node const& node) -> std::expected<RelayConfig,std::string> {
             if (node.tag || !node.arguments.empty() || !node.properties.empty())
                 return std::unexpected("invalid Tailscale derp block");
@@ -107,8 +123,26 @@ namespace cli::tailscale_endpoint {
                     options.relay_candidates.push_back(std::move(*candidate));
                     continue;
                 }
+                if (field.name == "advertise-routes") {
+                    if (field.tag || field.arguments.empty() || !field.properties.empty() || !field.children.empty())
+                        return std::unexpected("Tailscale advertise-routes requires one or more CIDR strings");
+                    for (auto const& arg : field.arguments) {
+                        auto* s = arg.tag ? nullptr : std::get_if<std::string>(&arg.data);
+                        if (!s || !valid_cidr(*s) || options.advertise_routes.size() >= 64)
+                            return std::unexpected("invalid Tailscale advertise-routes CIDR");
+                        options.advertise_routes.push_back(*s);
+                    }
+                    continue;
+                }
                 if (!fields.emplace(field.name).second) return std::unexpected("duplicate Tailscale field: " + field.name);
                 if (field.name == "control-url" && value && url(*value,options.authority,options.server_name,options.control.port)) continue;
+                if (field.name == "exit-node" && value && !value->empty() && value->size() <= 253) {
+                    options.exit_node_name = *value;
+                    continue;
+                }
+                if (field.name == "exit-node-allow-lan-access") {
+                    if (auto enabled = k::boolean(field)) { options.exit_node_allow_lan_access = *enabled; continue; }
+                }
                 if (field.name == "derp") {
                     auto parsed = relay(field);
                     if (!parsed) return std::unexpected(parsed.error());

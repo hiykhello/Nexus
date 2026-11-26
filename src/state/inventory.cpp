@@ -47,41 +47,33 @@ namespace state {
                 result=(result<<8)|std::to_integer<unsigned>(bytes[big ? i : width-i-1]);
             return result;
         }
-
-        auto dns_legacy(std::filesystem::path const& path,std::size_t servers) -> Inventory {
-            auto [info,folder]=begin(path,"NXDNS2");
-            if (!folder || !stat_files(folder->get(),info,[](auto name){return name=="messages.cache";})) return info;
-            auto dir=folder->get();
-            constexpr auto signature=[](std::string_view value) {
-                std::uint64_t number=0;
-                for (unsigned char ch:value) number=(number<<8)|ch;
-                return number;
-            };
-            auto magic=read_number(dir,"messages.cache",0,6,true);
-            if (magic==signature("NXDNS2")) {
-                info.version="NXDNS2";
-                auto policy=read_number(dir,"messages.cache",6,4,true);
-                if (!policy || *policy>1024*1024 || servers>256) info.health="damaged";
-                else {
-                    auto count=read_number(dir,"messages.cache",18+*policy+servers*4,2,true);
-                    if (!count || *count>256) info.health="damaged";
-                    else {info.entries=*count;info.health="legacy";}
-                }
-            } else info.health="damaged";
-            return info;
-        }
     }
 
     auto inspect_selectors(std::filesystem::path const& path) -> Inventory {
         auto [info,folder]=begin(path,"NXST01");
         if (!folder || !stat_files(folder->get(),info,[](auto name){return name=="selectors.state";})) return info;
         auto snapshot=inspect_snapshot(folder->get(),{"selectors.state",".selectors.next",
-            {.max_payload=8199,.fingerprint={std::byte{'S'},std::byte{'E'},std::byte{'L'}}},
-            Magic{'N','X','S','E','L','1'}});
+            {.max_payload=8199,.fingerprint={std::byte{'S'},std::byte{'E'},std::byte{'L'}}}});
         if (!snapshot || !*snapshot || (**snapshot).payload.size()<7) {info.health="damaged";return info;}
-        if ((**snapshot).legacy) info.version="NXSEL1";
         info.entries=std::to_integer<unsigned>((**snapshot).payload[6]);
         if (info.entries>16) info.health="damaged";
+        return info;
+    }
+
+    auto inspect_route_mode(std::filesystem::path const& path) -> Inventory {
+        auto [info,folder]=begin(path,"NXST01");
+        if (!folder || !stat_files(folder->get(),info,[](auto name){return name=="route-mode.state";})) return info;
+        auto snapshot=inspect_snapshot(folder->get(),{"route-mode.state",".route-mode.next",
+            {.max_payload=263,.fingerprint={std::byte{'R'},std::byte{'M'},std::byte{'D'}}}});
+        if (!snapshot || !*snapshot || (**snapshot).payload.size()<8) {info.health="damaged";return info;}
+        auto const& p=(**snapshot).payload;
+        constexpr std::string_view magic{"NXMOD1"};
+        auto hdr=std::string_view(reinterpret_cast<char const*>(p.data()),6);
+        auto mode=std::to_integer<unsigned>(p[6]);
+        auto len=std::to_integer<unsigned>(p[7]);
+        auto tail=std::string_view(reinterpret_cast<char const*>(p.data()+8),p.size()-8);
+        if (hdr!=magic || mode>2 || p.size()!=8+len || tail.contains('\0')) {info.health="damaged";return info;}
+        info.entries=1;
         return info;
     }
 
@@ -140,9 +132,8 @@ namespace state {
         return info;
     }
 
-    auto inspect_dns(std::filesystem::path const& root,std::filesystem::path const& legacy,std::size_t servers) -> Inventory {
-        if (root.empty()) return dns_legacy(legacy,servers);
-        auto [info,folder]=begin(root/"dns","NXDN03");
+    auto inspect_dns(std::filesystem::path const& root) -> Inventory {
+        auto [info,folder]=begin(root.empty() ? root : root/"dns","NXDN03");
         if (!folder) return info;
         auto dir=folder->get();
         auto entries=directory_entries(dir,[](auto name){return dns_shard_fingerprint(name).has_value();});

@@ -99,12 +99,12 @@ export namespace shadowsocks::detail {
                     if (Clock::now()>=limit_) return {OrderedUdpStop::error};
                 }
                 switch(step.action.kind) {
-                case rules::ProgramActionKind::bypass:
                 case rules::ProgramActionKind::hijack_dns:return {OrderedUdpStop::error};
                 case rules::ProgramActionKind::route_options:
                     if (!cursor_.complete(step)) return {OrderedUdpStop::error};
                     break;
                 case rules::ProgramActionKind::reject:return {OrderedUdpStop::reject};
+                case rules::ProgramActionKind::bypass:
                 case rules::ProgramActionKind::route:return {OrderedUdpStop::route,step.action.outbound};
                 case rules::ProgramActionKind::resolve:
                     if(input_.explicit_domain){pending_=step;return {OrderedUdpStop::resolve};}

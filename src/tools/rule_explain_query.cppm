@@ -7,7 +7,7 @@ import rules;
 
 export namespace cli::explain {
     inline constexpr std::string_view usage=
-        "usage: nexus rule explain <config> <inbound> <tcp|udp> <host:port> "
+        "usage: nexus rule explain <config> <inbound> <tcp|udp|icmp> <host[:port]> "
         "[--oneline] [dns-qtype=TYPE] [--expect-outbound=NAME] [--expect-action=ACTION] [--expect-dns=RESULT] "
         "[source-ip=IP] [source-port=PORT] [source-uid=UID] [source-gid=GID] [source-user=NAME] "
         "[process-name=NAME] [process-path=PATH] [package-name=NAME] [source-interface=NAME] "
@@ -70,21 +70,29 @@ export namespace cli::explain {
     inline auto parse_query_args(std::string_view network,std::string_view authority,std::span<char*> options)
         -> std::expected<Query,std::string> {
         using Kind=http::HostKind;
-        auto target=http::parse_destination_authority(authority);
-        if (target.status!=http::ConnectStatus::accepted) return std::unexpected("invalid target authority");
         Query result;
         auto& input=result.input;
         if (network=="tcp") input.network=rules::Network::tcp;
         else if (network=="udp") input.network=rules::Network::udp;
+        else if (network=="icmp") input.network=rules::Network::icmp;
         else return std::unexpected("invalid network");
-        input.port=target.port;
-        if (target.kind==Kind::domain)
-            input.explicit_domain=authority.substr(0,authority.find(':'));
-        else {
-            auto open=authority.starts_with('[');
-            input.ip=authority.substr(open ? 1 : 0,authority.rfind(open ? ']' : ':')-(open ? 1 : 0));
-            input.domain_absent[0]=true;
-        }
+        if (auto target=http::parse_destination_authority(authority); target.status==http::ConnectStatus::accepted) {
+            input.port=target.port;
+            if (target.kind==Kind::domain)
+                input.explicit_domain=authority.substr(0,authority.find(':'));
+            else {
+                auto open=authority.starts_with('[');
+                input.ip=authority.substr(open ? 1 : 0,authority.rfind(open ? ']' : ':')-(open ? 1 : 0));
+                input.domain_absent[0]=true;
+            }
+        } else if (input.network==rules::Network::icmp) {
+            if (platform::parse_ip_address(authority)) {
+                input.ip=authority;
+                input.domain_absent[0]=true;
+            } else if (rules::valid_domain(authority)) {
+                input.explicit_domain=authority;
+            } else return std::unexpected("invalid target authority");
+        } else return std::unexpected("invalid target authority");
         auto domain=[&](std::optional<std::string_view>& slot,std::size_t source,std::string_view value) {
             if (slot || input.domain_absent[source]) return false;
             if (value=="-") {input.domain_absent[source]=true;return true;}

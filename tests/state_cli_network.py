@@ -40,11 +40,13 @@ def program(dns_port, dns, state="", proxy_port=None):
     proxy_port = proxy_port or checkpoint_listener_port()
     return f'''schema-version 1
 role "client"
-inbound "main" type="socks5" {{
-    listen host="127.0.0.1" port={proxy_port}
-    authentication "none"
+inbounds {{
+    inbound "main" type="socks5" {{
+        listen host="127.0.0.1" port={proxy_port}
+        authentication "none"
+    }}
 }}
-outbound "direct" type="direct"
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ default-outbound "direct"; }}
 {state}
 dns {{
@@ -88,7 +90,7 @@ def fakeip(binary, root, peer, shim, durable):
     mode = "per-mapping" if durable else "range-reserve"
     proxy = checkpoint_listener_port()
     config.write_text(program(port, f'''
-server "dns" type="udp" host="{peer.host}" port={peer.port}
+servers {{ server "dns" type="udp" host="{peer.host}" port={peer.port}; }}
 final "dns"
 fake-ip server="dns" ipv4-pool="198.18.0.0/22" ipv6-pool="fd15:4231::/96"
 ''', f'''state {{
@@ -166,10 +168,12 @@ def encrypted_views(binary, root, plain):
         rules = root / "view.kdl"
         port = checkpoint_listener_port()
         dns = f'''
-server "plain" type="udp" host="{plain.host}" port={plain.port}
-server "secure" type="tls" host="{tls.host}" port={tls.port} server-name="dot.test" ca-file="{tls.cert}"
+servers {{
+    server "plain" type="udp" host="{plain.host}" port={plain.port}
+    server "secure" type="tls" host="{tls.host}" port={tls.port} server-name="dot.test" ca-file="{tls.cert}"
+}}
 rule-set "policy" path="{rules}" format="kdl"
-rule rule-set="policy" server="secure"
+rules {{ - rule-set="policy" server="secure"; }}
 final "plain"
 '''
         config.write_text(program(port, dns, f'state {{ cache-directory "{cache}"; }}'))

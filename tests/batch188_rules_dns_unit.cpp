@@ -169,18 +169,24 @@ namespace {
         auto cfg = config::parse_kdl(R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
-outbound "proxy" type="socks5" {
-    server host="127.0.0.1" port=1081
+outbounds {
+    outbound "direct" type="direct"
+    outbound "proxy" type="socks5" {
+        server host="127.0.0.1" port=1081
+    }
 }
 dns {
     independent-cache #true
-    server "main" type="local"
-    server "doh" type="udp" host="127.0.0.1" port=5353
+    servers {
+        server "main" type="local"
+        server "doh" type="udp" host="127.0.0.1" port=5353
+    }
     rules {
         - domain-regex="^api-[0-9]+\\.test$" action="route" server="doh" strategy="ipv4-only" client="chromium" package-name="com.example.app"
         - domain="blocked.test" action="reject" reject-rcode="NXDOMAIN"
@@ -273,17 +279,21 @@ routing {
         auto cfg = config::parse_kdl(R"kdl(
 schema-version 1
 role "client"
-inbound "socks" type="socks5" {
-    listen host="127.0.0.1" port=1080
-    authentication "none"
+inbounds {
+    inbound "socks" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 dns {
-    server "hosts" type="hosts" {
-        entry host="exact.wild.test" ip="192.0.2.1"
-        entry host="*.wild.test" ip="192.0.2.2"
-        entry host=".sfx.test" ip="192.0.2.3,2001:db8::3"
-        entry host="alias.test" cname="sub.wild.test"
+    servers {
+        server "hosts" type="hosts" {
+            entry host="exact.wild.test" ip="192.0.2.1"
+            entry host="*.wild.test" ip="192.0.2.2"
+            entry host=".sfx.test" ip="192.0.2.3,2001:db8::3"
+            entry host="alias.test" cname="sub.wild.test"
+        }
     }
     final "hosts"
 }

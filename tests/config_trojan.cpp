@@ -2,15 +2,18 @@ import std;
 import config;
 
 namespace {
-    auto document(std::string_view inbound,std::string_view outbound,std::string_view extra={},std::string_view route="edge") {
+    auto document(std::string_view inbound,std::string_view outbound,std::string_view extra_outbounds={},std::string_view route="edge",std::string_view extra_top={}) {
         return config::parse_kdl(std::format(R"(schema-version 1
 role "server"
 inbounds {{ {} }}
+outbounds {{
 outbound "direct" type="direct"
 outbound "edge" type="trojan" {{ {} }}
 {}
+}}
+{}
 routing {{ default-outbound "{}"; }}
-)",inbound,outbound,extra,route));
+)",inbound,outbound,extra_outbounds,extra_top,route));
     }
     constexpr std::string_view inbound=R"(trojan "edge-in" {
  listen host="::1" port=443;
@@ -42,10 +45,10 @@ auto main() -> int {
         if (document(bad,outbound)) return 4;
     auto plain=std::string(outbound);
     auto keepalive=plain.find("tcp-keepalive"); plain.erase(keepalive);
-    auto detoured=document(inbound,plain+"detour \"ss\"; bootstrap-resolver \"dns\";",R"(
-outbound "ss" type="shadowsocks" { server host="127.0.0.1" port=443; method "2022-blake3-aes-128-gcm"; key-file "/tmp/key"; }
-dns { server "dns" type="udp" host="127.0.0.1"; }
-)");
+    auto detoured=document(inbound,plain+"detour \"ss\"; bootstrap-resolver \"dns\";",
+        R"(outbound "ss" type="shadowsocks" { server host="127.0.0.1" port=443; method "2022-blake3-aes-128-gcm"; key-file "/tmp/key"; })",
+        "edge",
+        R"(dns { servers { server "dns" type="udp" host="127.0.0.1"; }; })");
     if (!detoured || detoured->trojan_outbounds[0].config.detour_index!=2 || detoured->default_outbound!=3 ||
         detoured->trojan_outbounds[0].config.bootstrap_index!=0) return 5;
     auto duplicate=document(inbound,outbound,R"(outbound "edge" type="shadowsocks" { server host="127.0.0.1" port=443; method "2022-blake3-aes-128-gcm"; key-file "/tmp/key"; })");

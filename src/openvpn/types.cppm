@@ -19,6 +19,32 @@ export namespace openvpn {
 
     enum class Transport : std::uint8_t { udp, tcp };
 
+    enum class TlsAuthMode : std::uint8_t {
+        none = 0,
+        tls_auth = 1,
+        tls_crypt = 2,
+    };
+
+    enum class KeyDirection : std::int8_t {
+        bidirectional = -1,
+        client_0 = 0,
+        client_1 = 1,
+    };
+
+    struct RouteV4 {
+        std::array<std::uint8_t, 4> network{};
+        std::array<std::uint8_t, 4> netmask{255, 255, 255, 255};
+        std::optional<std::array<std::uint8_t, 4>> gateway;
+        auto operator==(RouteV4 const&) const -> bool = default;
+    };
+
+    struct RouteV6 {
+        std::array<std::uint8_t, 16> network{};
+        std::uint8_t prefix_len = 128;
+        std::optional<std::array<std::uint8_t, 16>> gateway;
+        auto operator==(RouteV6 const&) const -> bool = default;
+    };
+
     inline constexpr std::array<std::uint8_t, 16> ping_magic{
         0x2a, 0x18, 0x7b, 0xf3, 0x64, 0x1e, 0xb4, 0xcb,
         0x07, 0xed, 0x2d, 0x0a, 0x98, 0x1f, 0xc7, 0x48,
@@ -48,6 +74,17 @@ export namespace openvpn {
         std::optional<std::uint16_t> mtu;
         std::uint16_t ping_s = 10;
         std::uint16_t ping_restart_s = 60;
+        std::optional<std::array<std::uint8_t, 4>> netmask_v4;
+        std::uint8_t prefix_v6 = 64;
+        std::optional<std::array<std::uint8_t, 4>> gateway_v4;
+        std::optional<std::array<std::uint8_t, 16>> gateway_v6;
+        std::vector<RouteV4> routes_v4;
+        std::vector<RouteV6> routes_v6;
+        std::vector<std::string> dns_servers;
+        std::vector<std::string> search_domains;
+        bool redirect_gateway = false;
+        bool redirect_gateway_v6 = false;
+        bool topology_subnet = false;
     };
 
     struct Config {

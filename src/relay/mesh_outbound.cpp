@@ -35,23 +35,33 @@ namespace relay {
             MeshLink link;
             io::io_context& context;
             std::uint16_t mtu;
+            std::optional<MeshWorkerBinding> binding;
             std::optional<std::uint64_t> revision;
             L3Mux mux;
             bool stopped=false, active=false;
             std::stop_source stop_source;
 
             MeshHost(MeshLink value, io::io_context& io, std::uint16_t limit)
-                : link(std::move(value)), context(io), mtu(limit), mux({false,{},false,{},mtu},
+                : link(std::move(value)), context(io), mtu(limit), binding(link->bind_worker()),
+                  mux({false,{},false,{},mtu},
                     [](void* raw, std::span<std::uint8_t const> packet) {
                         auto& self=*static_cast<MeshHost*>(raw);
-                        return self.revision && !self.stopped && self.link->send(*self.revision,packet);
-                    },this) {}
+                        return self.binding && self.revision && !self.stopped &&
+                            self.link->send(self.binding->worker_id,*self.revision,packet);
+                    },this) {
+                if (binding) mux.set_port_range(binding->port_begin, binding->port_end);
+                else stopped = true;
+            }
+            ~MeshHost() {
+                if (binding && link) { link->unbind_worker(binding->worker_id); binding.reset(); }
+            }
 
             auto stop() noexcept -> void {
                 stopped=true;
                 stop_source.request_stop();
                 mux.reset_flows();
                 revision.reset();
+                if (binding && link) { link->unbind_worker(binding->worker_id); binding.reset(); }
             }
             auto refresh() -> void {
                 auto next=link->network();
@@ -70,9 +80,9 @@ namespace relay {
                 while(!self->stopped && !self->link->failed()) {
                     self->refresh();
                     auto now=now_ms();
-                    if(self->revision) {
+                    if(self->binding && self->revision) {
                         for(unsigned i=0;i<32;++i) {
-                            auto packet=self->link->receive(*self->revision);
+                            auto packet=self->link->receive(self->binding->worker_id,*self->revision);
                             if(!packet)break;
                             self->mux.on_ip_packet(*packet,now);
                         }

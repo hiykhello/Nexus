@@ -17,6 +17,9 @@ export namespace cli::tailscale_endpoint {
         std::array<std::uint8_t,32> pin{};
         std::uint16_t mtu = 1280;
         bool ephemeral = false, accept_routes = false, discover_paths = false;
+        std::string exit_node_name;
+        bool exit_node_allow_lan_access = true;
+        std::vector<std::string> advertise_routes;
         std::optional<net::UdpEndpoint> stun_server;
         std::optional<RelayConfig> relay;
         std::vector<RelayConfig> relay_candidates;

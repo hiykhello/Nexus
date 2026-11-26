@@ -4,9 +4,10 @@ import tailscale.control_messages;
 import tailscale.control_http;
 import tailscale.snapshot;
 import tailscale.packet_filter;
+import tailscale.magic_dns;
 
 export namespace tailscale::map_session {
-    namespace cm=control_messages;namespace ch=control_http;namespace sn=snapshot;namespace pf=packet_filter;
+    namespace cm=control_messages;namespace ch=control_http;namespace sn=snapshot;namespace pf=packet_filter;namespace md=magic_dns;
     enum class Error { state,frame,parse,snapshot,policy,exhausted };
     struct Result {std::size_t consumed=0;std::optional<Error> error;};
 
@@ -19,13 +20,14 @@ export namespace tailscale::map_session {
         sn::Snapshot snapshot_;
         pf::Filter filter_;
         cm::DerpNodes derp_;
+        std::optional<md::DnsConfig> dns_;
         std::uint64_t revision_=0;
         friend class Session;
         auto begin(cm::DecodeOrigin const& origin) noexcept -> bool {
             if(!snapshot_.begin(origin))return false;
-            filter_.clear();derp_.clear();revision_=0;return true;
+            filter_.clear();derp_.clear();dns_.reset();revision_=0;return true;
         }
-        auto revoke() noexcept -> void {snapshot_.stop();filter_.clear();derp_.clear();revision_=0;}
+        auto revoke() noexcept -> void {snapshot_.stop();filter_.clear();derp_.clear();dns_.reset();revision_=0;}
     public:
         State()=default;
         State(State const&)=delete;
@@ -36,6 +38,14 @@ export namespace tailscale::map_session {
         auto revision() const noexcept -> std::uint64_t {return ready() ? revision_ : 0;}
         auto derp_nodes() const noexcept -> std::span<cm::DerpNode const> {
             return ready() ? std::span<cm::DerpNode const>(derp_) : std::span<cm::DerpNode const>{};
+        }
+        auto dns_config() const noexcept -> md::DnsConfig const* {
+            return ready() && dns_ ? &*dns_ : nullptr;
+        }
+        auto sync_magic_dns(md::Resolver& resolver) const -> void {
+            if (!ready()) { resolver.clear(); return; }
+            md::DnsConfig cfg = dns_.value_or(md::DnsConfig{});
+            (void)resolver.update(std::move(cfg), peers(), self());
         }
         auto matches(pf::Address const& source, pf::Address const& target, std::uint8_t protocol,
                      std::uint16_t port) const noexcept -> bool {
@@ -90,6 +100,9 @@ export namespace tailscale::map_session {
                     auto relays=cm::derp_nodes(view->derp_map);
                     if(!relays)return fail(Error::parse,total);
                     if(*relays)state_.derp_=std::move(**relays);
+                    auto dns=md::parse_dns_config(view->dns_config,view->domain);
+                    if(!dns)return fail(Error::parse,total);
+                    if(*dns)state_.dns_=std::move(**dns);
                     if (!view->keep_alive) state_.revision_=ordinal_;
                     candidate_.clear();if(!decoder_.consume())return fail(Error::frame,total);
                 } else if(!part.consumed)return fail(Error::frame,total);

@@ -15,6 +15,13 @@ export namespace tailscale::snapshot {
         bool machine_authorized=false,expired=false;
         std::optional<std::chrono::sys_seconds> not_after;
         std::optional<cm::DiscoKey> discovery;
+        std::string dns_name;
+
+        [[nodiscard]] auto offers_exit_node() const noexcept -> bool {
+            return std::ranges::any_of(allowed_ips, [](cm::Prefix const& p) {
+                return (p.family == 4 || p.family == 6) && p.bits == 0;
+            });
+        }
     };
     // Caller-owned staging makes the temporary 64-peer capacity explicit and
     // keeps it off coroutine/native stacks. Do not share scratch concurrently.
@@ -28,8 +35,20 @@ export namespace tailscale::snapshot {
         std::uint64_t last_frame_=0;
         std::int64_t self_id_=0;
         bool active_=false,seeded_=false,has_epoch_=false;
-        static auto own(cm::PeerCandidate const& p) noexcept -> Peer {
-            return {p.id,p.home_derp,p.key,p.addresses,p.allowed_ips,p.endpoints,p.machine_authorized,p.expired,p.not_after,p.discovery};
+        static auto decode_name(cm::JsonField field) -> std::string {
+            if (field.presence != cm::Presence::value) return {};
+            auto s = field.json;
+            if (s.size() >= 2 && s.front() == '"' && s.back() == '"') s = s.substr(1, s.size() - 2);
+            while (!s.empty() && s.back() == '.') s.remove_suffix(1);
+            std::string out(s.size(), '\0');
+            for (std::size_t i = 0; i < s.size(); ++i) {
+                unsigned char c = static_cast<unsigned char>(s[i]);
+                out[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+            }
+            return out;
+        }
+        static auto own(cm::PeerCandidate const& p) -> Peer {
+            return {p.id,p.home_derp,p.key,p.addresses,p.allowed_ips,p.endpoints,p.machine_authorized,p.expired,p.not_after,p.discovery,decode_name(p.name)};
         }
         static auto valid(containers::inplace_vector<Peer,cm::max_peers> const& peers,control::NodePublic const& self,std::int64_t self_id) noexcept -> bool {
             for (std::size_t i=0;i<peers.size();++i) {

@@ -11,10 +11,12 @@ namespace {
         auto direct=protocol=="direct" || extra.find("outbound \"direct\"")!=extra.npos ? "" : "outbound \"direct\" type=\"direct\"\n";
         return config::parse_kdl(std::format(R"(schema-version 1
 role "client"
-inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
+inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }} }}
+outbounds {{
 outbound "{}" type="{}" {{ {} {} }}
 {}
 {}
+}}
 routing {{ default-outbound "{}"; }}
 )",protocol=="direct" ? "direct" : "node",protocol,options,fields,direct,extra,protocol=="direct" ? "direct" : "node"));
     }
@@ -106,11 +108,14 @@ auto main() -> int {
         auto inherited = config::parse_kdl(R"(schema-version 1
 role "client"
 dns {
-    server "boot" type="udp" host="127.0.0.1" port=5353
-    server "alt" type="udp" host="127.0.0.2" port=5353
+    servers {
+        server "boot" type="udp" host="127.0.0.1" port=5353
+        server "alt" type="udp" host="127.0.0.2" port=5353
+    }
     final "boot"
 }
-inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
 outbound "direct" type="direct"
 outbound "entry" type="shadowsocks" {
     server host="entry.example" port=443
@@ -135,6 +140,7 @@ outbound "layered" type="vless" {
     authentication { uuid-file "/uuid"; }
     tls { server-name "cover.example"; ca-file "/ca"; verify #true; }
     detour "entry"
+}
 }
 routing {
     default-interface "lo"
@@ -170,12 +176,14 @@ routing {
 
         auto auto_hybrid = config::parse_kdl(R"(schema-version 1
 role "client"
-inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds {
 outbound "direct" type="direct"
 outbound "node" type="shadowsocks" {
     server host="127.0.0.1" port=443
     method "2022-blake3-aes-128-gcm"
     key-file "/key"
+}
 }
 routing {
     auto-detect-interface #true
@@ -214,8 +222,8 @@ routing {
             R"(find-process "yes"; default-outbound "direct";)"}) {
             auto bad = config::parse_kdl(std::format(R"(schema-version 1
 role "client"
-inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
-outbound "direct" type="direct"
+inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }} }}
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ {} }}
 )", bad_routing));
             if (bad) { std::cerr << "expected failure for routing: " << bad_routing << '\n'; return 52; }
@@ -275,7 +283,7 @@ inbounds {
         udp-fragment #false
     }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct"; }
 )");
         if (!multi) { std::cerr << "listen options multi: " << multi.error() << '\n'; return 60; }
@@ -296,18 +304,18 @@ routing { default-outbound "direct"; }
         if (multi->inbounds[5].listen.routing_mark != 0x202u || multi->inbounds[5].listen.udp_fragment != false) return 66;
 
         for (auto bad_in : {
-            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "missing"; })",
-            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "a"; })",
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "missing"; }; })",
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "a"; }; })",
             R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "b"; }; inbound "b" type="mixed" { listen host="127.0.0.1" port=1081; authentication "none"; detour "a"; }; })",
-            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; bind-interface "a/b"; })",
-            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; netns "relative/path"; })",
-            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; tcp-keepalive #false idle-s=10; })",
-            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; udp-timeout-ms 500; })",
-            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; reuse-addr #true; reuse-addr #false; })"}) {
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; bind-interface "a/b"; }; })",
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; netns "relative/path"; }; })",
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; tcp-keepalive #false idle-s=10; }; })",
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; udp-timeout-ms 500; }; })",
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; reuse-addr #true; reuse-addr #false; }; })"}) {
             auto bad = config::parse_kdl(std::format(R"(schema-version 1
 role "client"
 {}
-outbound "direct" type="direct"
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ default-outbound "direct"; }}
 )", bad_in));
             if (bad) { std::cerr << "expected failure for inbound: " << bad_in << '\n'; return 67; }

@@ -12,12 +12,26 @@ export namespace openconnect {
         compressed = 0x08,
     };
 
+    enum class DtlsVersion : std::uint16_t {
+        none = 0,
+        dtls1_2 = 0xfefd,
+        dtls1_3 = 0xfefc,
+    };
+
+    enum class DtlsCipher : std::uint8_t {
+        aes_128_gcm,
+        aes_256_gcm,
+        chacha20_poly1305,
+    };
+
     struct AuthRequest {
         std::string username;
         std::string password;
         std::string group;
         std::string opaque;
         std::string user_agent{"AnyConnect Linux_64 5.0"};
+        bool client_cert_auth = false;
+        std::string client_cert_fingerprint_hex;
         ~AuthRequest() {
             if (!password.empty())
                 crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(password.data()), password.size()));
@@ -39,6 +53,12 @@ export namespace openconnect {
         std::string dtls_cipher;
         std::vector<std::string> dns_servers;
         std::string banner;
+        DtlsVersion dtls_version = DtlsVersion::none;
+        std::uint16_t dtls_mtu = 0;
+        std::uint16_t dtls_dpd_s = 0;
+        std::uint16_t dtls_keepalive_s = 0;
+        std::string dtls_app_id;
+        bool cert_auth_accepted = false;
         ~AuthResult() {
             if (!cookie.empty())
                 crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(cookie.data()), cookie.size()));

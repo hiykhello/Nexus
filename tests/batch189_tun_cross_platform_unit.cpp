@@ -262,8 +262,8 @@ namespace {
         auto cfg = config::parse_kdl(R"kdl(
 schema-version 1
 role "client"
-inbound "android-tun" type="tun" { mtu 1400; }
-outbound "direct" type="direct"
+inbounds { inbound "android-tun" type="tun" { mtu 1400; }; }
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct"; }
 )kdl");
         require(cfg.has_value(), "parse Android-style TUN config");
@@ -291,22 +291,24 @@ routing { default-outbound "direct"; }
         auto kdl = std::format(R"kdl(
 schema-version 1
 role "client"
-inbound "tun" type="tun" {{
-    inet4-address "172.19.0.1/30"
-    auto-route #true
-    auto-redirect #true
-    auto-redirect-input-mark 0x1111
-    auto-redirect-output-mark 0x2222
-    auto-redirect-reset-mark 0x3333
-    include-uid 1000
-    include-uid "2000:2999"
-    exclude-uid 0
-    include-android-user 10
-    include-interface "wlan0"
-    exclude-interface "rmnet0"
+inbounds {{
+    inbound "tun" type="tun" {{
+        inet4-address "172.19.0.1/30"
+        auto-route #true
+        auto-redirect #true
+        auto-redirect-input-mark 0x1111
+        auto-redirect-output-mark 0x2222
+        auto-redirect-reset-mark 0x3333
+        include-uid 1000
+        include-uid "2000:2999"
+        exclude-uid 0
+        include-android-user 10
+        include-interface "wlan0"
+        exclude-interface "rmnet0"
 {}
+    }}
 }}
-outbound "direct" type="direct"
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ default-outbound "direct"; }}
 )kdl", excludes);
         auto cfg = config::parse_kdl(kdl);
@@ -323,11 +325,13 @@ routing {{ default-outbound "direct"; }}
         auto bridge_cfg = config::parse_kdl(R"kdl(
 schema-version 1
 role "client"
-inbound "tun" type="tun" {
-    device-mode "bridge"
-    mtu 1400
+inbounds {
+    inbound "tun" type="tun" {
+        device-mode "bridge"
+        mtu 1400
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct"; }
 )kdl");
         require(bridge_cfg.has_value() && bridge_cfg->inbounds[0].tun->extra.bridge_mode, "device-mode bridge parsed");
@@ -335,10 +339,12 @@ routing { default-outbound "direct"; }
         auto skip_cfg = config::parse_kdl(R"kdl(
 schema-version 1
 role "client"
-inbound "tun" type="tun" {
-    device-fd 5 ownership="borrow" skip-ioctl=#true
+inbounds {
+    inbound "tun" type="tun" {
+        device-fd 5 ownership="borrow" skip-ioctl=#true
+    }
 }
-outbound "direct" type="direct"
+outbounds { outbound "direct" type="direct"; }
 routing { default-outbound "direct"; }
 )kdl");
         require(skip_cfg.has_value() && skip_cfg->inbounds[0].tun->extra.device_fd_skip_ioctl,

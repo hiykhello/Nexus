@@ -47,4 +47,5 @@ export namespace openvpn {
         std::uint64_t client_session_id, std::uint64_t server_session_id,
         bool server_role = false) -> std::expected<KeyMaterial, std::string>;
     [[nodiscard]] auto parse_push_reply(std::string_view text) -> std::expected<PushConfig, std::string>;
+    [[nodiscard]] auto encode_push_reply(PushConfig const& cfg) -> std::string;
 }

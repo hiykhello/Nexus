@@ -187,30 +187,33 @@ export namespace cli {
     };
 
     namespace live_dns_detail {
+        inline auto run_runtime_live_query(corosio::io_context& io, dns::MessageRuleSnapshot snap,
+            std::size_t fallback, bool forced, std::string name, std::uint16_t qtype, std::uint32_t timeout_ms,
+            LiveDnsCompletion finish) -> capy::task<> {
+            auto t0 = Clock::now();
+            auto dl = t0 + std::chrono::milliseconds(timeout_ms);
+            dns::QueryMessage query{0x1234u, 0x0100u, {name, qtype, 1}, {}};
+            auto rules = forced ? std::span<policy::DnsRule const>{} :
+                (snap.rules ? std::span<policy::DnsRule const>(*snap.rules) : std::span<policy::DnsRule const>{});
+            dns::MessageProgram prog(io, rules, snap.resolver->upstreams, fallback,
+                snap.resolver->cache, snap.resolver->disable_cache, {}, nullptr, snap.view,
+                snap.resolver->reverse_cache, snap.resolver->independent_cache);
+            auto wire = co_await prog.run(query, dl, {});
+            auto ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
+            if (!wire) {
+                finish(std::unexpected(wire.error() == dns::detail::ResolveError::timeout ? "dns-timeout" : "dns-query-failed"));
+                co_return;
+            }
+            auto parsed = dns::parse_response(*wire, query.id, query.question);
+            if (!parsed) { finish(std::unexpected("dns-malformed-response")); co_return; }
+            finish(format_dns_response_json(name, qtype, *parsed, ms));
+        }
+
         inline auto dispatch_runtime_live_query(corosio::io_context& io, dns::MessageRuleSnapshot snap,
             std::size_t fallback, bool forced, std::string name, std::uint16_t qtype, std::uint32_t timeout_ms,
             LiveDnsCompletion finish) -> void {
-            auto run_q = [&io, snap = std::move(snap), fallback, forced, name = std::move(name), qtype,
-                timeout_ms, finish = std::move(finish)]() mutable -> capy::task<> {
-                auto t0 = Clock::now();
-                auto dl = t0 + std::chrono::milliseconds(timeout_ms);
-                dns::QueryMessage query{0x1234u, 0x0100u, {name, qtype, 1}, {}};
-                auto rules = forced ? std::span<policy::DnsRule const>{} :
-                    (snap.rules ? std::span<policy::DnsRule const>(*snap.rules) : std::span<policy::DnsRule const>{});
-                dns::MessageProgram prog(io, rules, snap.resolver->upstreams, fallback,
-                    snap.resolver->cache, snap.resolver->disable_cache, {}, nullptr, snap.view,
-                    snap.resolver->reverse_cache, snap.resolver->independent_cache);
-                auto wire = co_await prog.run(query, dl, {});
-                auto ms = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count());
-                if (!wire) {
-                    finish(std::unexpected(wire.error() == dns::detail::ResolveError::timeout ? "dns-timeout" : "dns-query-failed"));
-                    co_return;
-                }
-                auto parsed = dns::parse_response(*wire, query.id, query.question);
-                if (!parsed) { finish(std::unexpected("dns-malformed-response")); co_return; }
-                finish(format_dns_response_json(name, qtype, *parsed, ms));
-            };
-            capy::run_async(io.get_executor(), [] {}, [](std::exception_ptr) noexcept {})(run_q());
+            capy::run_async(io.get_executor(), [] {}, [](std::exception_ptr) noexcept {})(
+                run_runtime_live_query(io, std::move(snap), fallback, forced, std::move(name), qtype, timeout_ms, std::move(finish)));
         }
     }
 
