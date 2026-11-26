@@ -287,7 +287,7 @@ inbound "extra-http" type="http" { listen host="127.0.0.1" port=8080; authentica
         check(m1.has_value(), m1 ? "" : "host-override merge 1 failed: " + m1.error());
         auto c1 = config::parse_kdl(*m1);
         check(c1.has_value(), c1 ? "" : "parse merged 1 failed: " + c1.error());
-        check(c1->workers == 4 && c1->control_socket == "/tmp/nexus-wave22-test.sock", "singleton overrides applied");
+        check(c1->workers == std::min(4u, config::detect_host_parallelism()) && c1->control_socket == "/tmp/nexus-wave22-test.sock", "singleton overrides applied");
         check(c1->inbounds.size() == 3, "replaced socks+tun and appended extra-http");
         check(c1->inbounds[0].name == "local-socks" && c1->inbounds[0].type == config::Inbound::mixed && c1->inbounds[0].port == 7890,
               "named inbound replaced in-place");

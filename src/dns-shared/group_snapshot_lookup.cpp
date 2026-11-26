@@ -58,9 +58,9 @@ namespace dns_hp_experiment {
     }
 
     auto GroupSnapshot::checked_readers(std::size_t readers) -> std::size_t {
-        // Sixteen listeners with sixteen workers, plus SS UDP lookup and
-        // the ordered UDP routing context on its separately driven executor.
-        if (readers > 16 * 16 + 2) throw std::out_of_range("too many readers");
+        // Up to sixteen listeners with up to 256 workers each, plus SS UDP lookup
+        // and the ordered UDP routing context on its separately driven executor.
+        if (readers > readers_max) throw std::out_of_range("too many readers");
         return readers;
     }
 

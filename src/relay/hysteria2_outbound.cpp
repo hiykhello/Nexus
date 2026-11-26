@@ -33,9 +33,9 @@ namespace relay {
             TcpSocketOptions options;
             quic_ech::Profile ech;
             std::mutex mutex;
-            // Up to 16 stream workers plus one native UDP routing context.
-            std::array<std::unique_ptr<Worker>,17> physical;
-            std::array<std::unique_ptr<Worker>,17> layered;
+            // Per-worker stream/UDP routing contexts.
+            std::vector<std::unique_ptr<Worker>> physical;
+            std::vector<std::unique_ptr<Worker>> layered;
             ~Profile();
         };
         struct LowerStream {
@@ -152,8 +152,9 @@ namespace relay {
         auto initialize(Profile& profile,bool is_layered,OutboundContext const& env,TunnelFactory const* detour,bool direct) -> bool {
             std::lock_guard lock(profile.mutex);if(find(profile,is_layered,env.context) || (direct && !env.direct_options))return false;
             auto& entries=slots(profile,is_layered);auto slot=std::ranges::find_if(entries,[](auto const& worker){return !worker;});
-            if(slot==entries.end())return false;
-            *slot=std::make_unique<Worker>(env,profile,direct ? *env.direct_options : profile.options,detour);return true;
+            auto worker=std::make_unique<Worker>(env,profile,direct ? *env.direct_options : profile.options,detour);
+            if(slot!=entries.end()) *slot=std::move(worker); else entries.push_back(std::move(worker));
+            return true;
         }
         auto stop(Profile& profile,bool is_layered,corosio::io_context& context) noexcept -> void {
             Worker* worker=nullptr;{std::lock_guard lock(profile.mutex);worker=find(profile,is_layered,context);}if(worker)worker->stop();

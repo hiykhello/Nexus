@@ -246,6 +246,8 @@ export namespace provider {
         std::string log_level = "info";
         std::string log_file;
         unsigned workers = 1;
+        std::string workers_spec;
+        unsigned workers_max = 0;
         std::string state_dir;
         std::string cache_dir;
         std::string control_socket;

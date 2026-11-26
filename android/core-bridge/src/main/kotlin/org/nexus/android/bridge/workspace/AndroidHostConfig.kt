@@ -31,7 +31,9 @@ data class HostCommonConfig(
     val platform: String = "android",
     val logLevel: String = "info",
     val logFile: String = "",
-    val workers: Int = 2,
+    val workers: Int = 1,
+    val workersSpec: String = "",
+    val workersMax: Int = 0,
     val stateDir: String = "",
     val cacheDir: String = "",
     val controlSocket: String = "",
@@ -43,6 +45,18 @@ data class HostCommonConfig(
 ) {
     companion object {
         const val SCHEMA_VERSION = 1
+
+        fun isValidWorkersSpec(spec: String): Boolean {
+            if (spec.isEmpty() || spec == "auto" || spec == "max") return true
+            val suffix = when {
+                spec.startsWith("max-") -> spec.removePrefix("max-")
+                spec.startsWith("auto-") -> spec.removePrefix("auto-")
+                else -> return false
+            }
+            if (suffix.isEmpty() || !suffix.all { it in '0'..'9' }) return false
+            val parsed = suffix.toLongOrNull() ?: return false
+            return parsed in 0L..Int.MAX_VALUE.toLong()
+        }
     }
 }
 
@@ -105,7 +119,10 @@ data class AndroidHostConfig(
             put("platform", common.platform.ifBlank { "android" })
             put("log_level", common.logLevel)
             put("log_file", common.logFile)
-            put("workers", common.workers)
+            put("workers", common.workers.coerceAtLeast(1))
+            val cleanSpec = common.workersSpec.trim()
+            if (cleanSpec.isNotEmpty() && HostCommonConfig.isValidWorkersSpec(cleanSpec)) put("workers_spec", cleanSpec)
+            if (common.workersMax > 0) put("workers_max", common.workersMax)
             put("state_dir", common.stateDir)
             put("cache_dir", common.cacheDir)
             put("control_socket", common.controlSocket)
@@ -165,7 +182,9 @@ data class AndroidHostConfig(
                     platform = root.optString("platform", "android").ifBlank { "android" },
                     logLevel = root.optString("log_level", "info"),
                     logFile = root.optString("log_file", ""),
-                    workers = root.optInt("workers", 2).coerceIn(1, 8),
+                    workers = root.optInt("workers", 1).coerceAtLeast(1),
+                    workersSpec = root.optString("workers_spec", "").trim().takeIf { HostCommonConfig.isValidWorkersSpec(it) }.orEmpty(),
+                    workersMax = root.optInt("workers_max", 0).coerceAtLeast(0),
                     stateDir = root.optString("state_dir", ""),
                     cacheDir = root.optString("cache_dir", ""),
                     controlSocket = root.optString("control_socket", ""),

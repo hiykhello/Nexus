@@ -181,6 +181,10 @@ namespace {
         expect(desktop::save_workspace_atomic(dir / "workspace.json", legacy_ws), "seed legacy workspace.json");
 
         auto legacy_host = desktop::make_default_desktop_host_config(dir, "/run/nexus.sock");
+        expect(legacy_host.workers == 1, "default host workers == 1");
+        legacy_host.workers = 24;
+        legacy_host.workers_spec = "max-2";
+        legacy_host.workers_max = 12;
         legacy_host.enable_mixed = true;
         legacy_host.mixed_listen = "127.0.0.1:7895";
         legacy_host.webdav_url = "https://dav.example.net/nexus/";
@@ -261,12 +265,15 @@ namespace {
         expect(::stat(creds_path.c_str(), &st) == 0 && (st.st_mode & 0777) == 0600, "sync-creds.json has 0600 mode");
 #endif
         auto host_reloaded = desktop::load_host_config_from_db(*db, dir, sec_dir, "/run/nexus.sock");
-        expect(host_reloaded.mixed_listen == "127.0.0.1:7895" &&
+        expect(host_reloaded.workers == 24 &&
+               host_reloaded.workers_spec == "max-2" &&
+               host_reloaded.workers_max == 12 &&
+               host_reloaded.mixed_listen == "127.0.0.1:7895" &&
                host_reloaded.webdav_url == "https://dav.example.net/nexus/" &&
                host_reloaded.webdav_password == "dav-super-secret-password" &&
                host_reloaded.sync_passphrase == "e2ee-ultra-secret-passphrase" &&
                host_reloaded.lan_password == "lan-secret-password",
-            "load_host_config_from_db re-hydrates non-secrets from SQLite + secrets from 0600 file");
+            "load_host_config_from_db re-hydrates non-secrets (incl. workers/workers_spec/workers_max) from SQLite + secrets from 0600 file");
 
         // And verify desktop_host_to_core_json strips WebDAV/E2EE secrets while keeping mixed/lan settings.
         auto core_host_json = desktop::desktop_host_to_core_json(host_reloaded);

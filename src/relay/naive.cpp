@@ -85,10 +85,11 @@ namespace relay::naive_out_detail {
                 auto& vec = m == Mode::layered ? raw->layered : m == Mode::fast_open ? raw->fast : raw->physical;
                 for (auto const& x : vec) if (x && &x->environment.context == &env.context) return false;
                 auto it = std::ranges::find_if(vec, [](auto const& x) { return !x; });
-                if (it == vec.end()) return false;
+                bool append = it == vec.end();
+                if (append) vec.reserve(vec.size() + 1);
                 auto w = std::make_unique<H2Worker>(m, env, *raw, detour, opts, raw->max_sessions);
                 w->start_reaper();
-                *it = std::move(w);
+                if (!append) *it = std::move(w); else vec.push_back(std::move(w));
                 return true;
             };
             factory.stop_context = [raw](corosio::io_context& ctx) noexcept {
@@ -145,12 +146,14 @@ namespace relay::naive_out_detail {
                 if (direct && !env.direct_options) return false;
                 auto const& opts = direct ? *env.direct_options : raw->options;
                 auto& arr = detour ? raw->layered : raw->physical;
+                for (auto const& x : arr) if (x && &x->environment.context == &env.context) return false;
                 auto it = std::ranges::find_if(arr, [](auto const& x) { return !x; });
-                if (it == arr.end()) return false;
+                bool append = it == arr.end();
+                if (append) arr.reserve(arr.size() + 1);
                 auto w = std::make_unique<H3Worker>(env, raw->host, raw->port, raw->bootstrap, *raw->client_profile, raw->ech,
                     opts, detour, raw->max_sessions, enable_datagrams);
                 w->start_reaper();
-                *it = std::move(w);
+                if (!append) *it = std::move(w); else arr.push_back(std::move(w));
                 return true;
             };
             f.stop_context = [raw](corosio::io_context& ctx) noexcept {

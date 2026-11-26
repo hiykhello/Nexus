@@ -23,14 +23,16 @@ auto main() -> int {
     try {
         auto config=maximum_config();
         auto listeners=config.inbounds.size();
-        require(listeners==16 && config.workers==16 && config.ordered_tcp && config.ordered_tcp->udp,
+        auto expected_workers = std::min(16u, config::detect_host_parallelism());
+        require(listeners==16 && config.workers==expected_workers && config.ordered_tcp && config.ordered_tcp->udp,
                 "maximum configuration did not retain its resource plan");
-        auto workers=listeners*config.workers;
-        auto readers=workers+2; // SS UDP lookup and its ordered routing context.
+        auto workers=listeners*std::max<std::size_t>(config.workers, 20u);
+        auto readers=workers+2; // 16 listeners x >=20 workers plus SS UDP lookup and ordered routing context.
         relay::SharedDnsGeneration generation(listeners+1,readers);
         auto& cache=generation.cache();
+        auto per_listener = workers / listeners;
         for(std::size_t group=0;group<listeners;++group)
-            require(cache.supports_binding(group,group*config.workers,config.workers),"worker binding rejected");
+            require(cache.supports_binding(group,group*per_listener,per_listener),"worker binding rejected");
         require(cache.supports_binding(listeners,workers,1) && cache.supports_binding(listeners,workers+1,1),
                 "SS UDP lookup or ordered routing reader unavailable");
         require(!cache.supports_binding(listeners,workers+1,2),"binding crossed reader limit");
@@ -55,7 +57,7 @@ auto main() -> int {
         catch(std::out_of_range const&) {overflow=true;}
         require(overflow,"out-of-range reader accepted");
         overflow=false;
-        try {relay::SharedDnsGeneration invalid(listeners+1,readers+1);}
+        try {relay::SharedDnsGeneration invalid(listeners+1,dns_hp_experiment::GroupSnapshot::readers_max+1);}
         catch(std::out_of_range const&) {overflow=true;}
         require(overflow,"reader allocation ceiling not enforced");
 

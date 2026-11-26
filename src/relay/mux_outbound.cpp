@@ -220,7 +220,7 @@ namespace relay {
             std::shared_ptr<TunnelFactory> inner;
             config::MultiplexConfig cfg;
             std::mutex mutex;
-            std::array<std::unique_ptr<MuxWorker>, 17> workers;
+            std::vector<std::unique_ptr<MuxWorker>> workers;
             MuxProfile(std::shared_ptr<TunnelFactory> in, config::MultiplexConfig c)
                 : inner(std::move(in)), cfg(c) {}
 
@@ -453,10 +453,11 @@ namespace relay {
             std::lock_guard lock(profile->mutex);
             for (auto const& w : profile->workers) if (w && &w->env.context == &env.context) return false;
             auto slot = std::ranges::find_if(profile->workers, [](auto const& w) { return !w; });
-            if (slot == profile->workers.end()) return false;
+            bool append = slot == profile->workers.end();
+            if (append) profile->workers.reserve(profile->workers.size() + 1);
             auto w = std::make_unique<MuxWorker>(env, *profile->inner, profile->cfg, d, dir);
             w->start_reaper();
-            *slot = std::move(w);
+            if (!append) *slot = std::move(w); else profile->workers.push_back(std::move(w));
             return true;
         };
         out.stop_context = [profile](io::io_context& ctx) noexcept {

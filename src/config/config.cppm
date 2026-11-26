@@ -414,7 +414,8 @@ export namespace config {
         std::uint16_t port = 0;
         bool listen_ipv6 = false;
         std::vector<InboundConfig> inbounds;
-        unsigned workers = 1;
+        unsigned workers = 1, host_parallelism = 1;
+        std::optional<unsigned> workers_clamped_from;
         std::optional<std::uint32_t> sessions_per_listener;
         std::optional<std::uint32_t> tcp_splice_pipes;
         std::optional<std::uint32_t> shutdown_grace_ms;
@@ -487,6 +488,9 @@ export namespace config {
     enum class ReloadIdentity { full, dns_policy, process, tun_live }; struct ReloadIdentities { std::string full, dns_policy, process, tun_live; };
     [[nodiscard]] auto reload_identity(std::string_view input,ReloadIdentity scope=ReloadIdentity::full) -> std::expected<std::string,std::string>;
     [[nodiscard]] auto reload_identities(std::string_view input) -> std::expected<ReloadIdentities,std::string>;
+    [[nodiscard]] auto detect_host_parallelism() noexcept -> unsigned;
+    [[nodiscard]] auto validate_workers_spec(std::string_view spec) noexcept -> bool;
+    [[nodiscard]] auto resolve_workers_spec(std::string_view spec, std::optional<unsigned> max_cap, unsigned host_parallelism) -> std::expected<unsigned, std::string>;
     [[nodiscard]] auto parse_kdl(std::string_view input) -> std::expected<Config, std::string>; [[nodiscard]] auto parse_provider_manifest(std::string_view input) -> std::expected<Config, std::string>;
     auto outbound_index(Config const&,std::string_view,std::optional<std::string> const&,std::string_view) -> std::optional<std::size_t>;
     auto bind_outbound_selectors(Config&,std::string_view,std::optional<std::string> const&) -> std::expected<void,std::string>;

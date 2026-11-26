@@ -227,7 +227,14 @@ final class NexusClientDatabaseTests: XCTestCase {
             to: dir.appendingPathComponent("workspace.json")
         )
 
-        let legacyHost = AppleHostConfig(platform: .desktopMacOS, logLevel: "debug", workers: 3, controlHttpListen: "127.0.0.1:9191")
+        let legacyHost = AppleHostConfig(
+            platform: .desktopMacOS,
+            logLevel: "debug",
+            workers: 20,
+            workersSpec: "max-2",
+            workersMax: 12,
+            controlHttpListen: "127.0.0.1:9191"
+        )
         try WorkspaceStore.atomicWrite0600(
             data: Data(try legacyHost.encodeCanonicalJSON(pretty: true).utf8),
             to: dir.appendingPathComponent("host.json")
@@ -255,7 +262,9 @@ final class NexusClientDatabaseTests: XCTestCase {
 
         let migratedHost = try await hostStore.loadOrInit()
         XCTAssertEqual(migratedHost.logLevel, "debug")
-        XCTAssertEqual(migratedHost.workers, 3)
+        XCTAssertEqual(migratedHost.workers, 20)
+        XCTAssertEqual(migratedHost.workersSpec, "max-2")
+        XCTAssertEqual(migratedHost.workersMax, 12)
         XCTAssertEqual(migratedHost.controlHttpListen, "127.0.0.1:9191")
 
         let migratedTel = await telStore.load()
@@ -280,7 +289,9 @@ final class NexusClientDatabaseTests: XCTestCase {
         try await reopenedWSStore.shrinkMemory()
 
         let reloadedHost = try await HostConfigStore(rootDirectory: dir, database: reopenedDB).loadOrInit()
-        XCTAssertEqual(reloadedHost.workers, 3)
+        XCTAssertEqual(reloadedHost.workers, 20)
+        XCTAssertEqual(reloadedHost.workersSpec, "max-2")
+        XCTAssertEqual(reloadedHost.workersMax, 12)
 
         let reopenedTelStore = TelemetryStore(rootDirectory: dir, database: reopenedDB)
         let reloadedTel = await reopenedTelStore.load()

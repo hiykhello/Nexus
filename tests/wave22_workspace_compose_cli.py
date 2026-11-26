@@ -463,6 +463,19 @@ def test_review_kernel_regressions(nexus: str, root: Path) -> None:
     assert rc == 0 and r_sw["ok"], r_sw
     wtext = "\n".join(r_sw["warnings"])
     assert "parallel_query" in wtext and "direct_expected_rule_sets" in wtext and "fake_ip_global" in wtext, r_sw["warnings"]
+    # Wave 27: workers_spec + workers_max (incl. full_custom_kdl), uncapped workers=20, fail-closed invalid workers_spec
+    ws_w = {"schema_version": 1, "profiles": [make_node("w1", "W1", server="198.51.100.50")]}
+    h_spec = dict(host, workers_spec="max-2", workers_max=12)
+    rc, r_ws, _, _ = compose(nexus, root, "w27-spec", ws_w, h_spec, active="w1", emit_kdl=True)
+    assert rc == 0 and r_ws["ok"] and 'workers "max-2" max=12\n' in r_ws["kdl"], r_ws
+    rc, r_whi, _, _ = compose(nexus, root, "w27-hi", ws_w, dict(host, workers=20), active="w1", emit_kdl=True)
+    assert rc == 0 and r_whi["ok"] and "workers 20\n" in r_whi["kdl"], r_whi
+    ws_fcw = {"schema_version": 1, "profiles": [{"id": "fcw", "kind": "full_custom_kdl", "full_custom_kdl": 'schema-version 1\nrole "client"\nworkers 2\ninbound "i" type="mixed" { listen "127.0.0.1:1080"; authentication "none"; }\noutbound "direct" type="direct"\nrouting { default "direct"; }\n'}]}
+    rc, r_fcw, _, _ = compose(nexus, root, "w27-fc", ws_fcw, h_spec, active="fcw", emit_kdl=True)
+    assert rc == 0 and r_fcw["ok"] and 'workers "max-2" max=12' in r_fcw["kdl"], r_fcw
+    for bad in ("max-abc", "max--1", "foo"):
+        rc, r_wb, sec_b, _ = compose(nexus, root, f"w27-bad-{bad}", ws_w, dict(host, workers_spec=bad), active="w1")
+        assert rc == 1 and not r_wb["ok"] and any("workers_spec" in e for e in r_wb["errors"]) and not (sec_b.exists() and any(sec_b.iterdir()))
 
 
 def main() -> int:

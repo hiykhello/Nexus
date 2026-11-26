@@ -356,7 +356,7 @@ namespace relay {
     auto Server::prepare_routing(unsigned count,bool child_workers)->std::expected<void,std::error_code> {
         auto& state=*this;
         if(running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty())return std::unexpected(std::make_error_code(std::errc::operation_in_progress));
-        if(!count || count>16)return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+        if(!count)return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         { std::lock_guard lock(state.failure_mutex); state.failure_state.reset(); }
 #ifdef NEXUS_DNS_SHARED
         // A standalone restart may change the number of workers. Retire the
@@ -376,7 +376,7 @@ namespace relay {
                 auto bound=state.bind_shared_dns(*generation,0,0);
                 if (!bound) return std::unexpected(bound.error());
                 generation->seal(); state.owned_dns_generation=std::move(generation);
-            } catch (std::bad_alloc const&) { return std::unexpected(std::make_error_code(std::errc::not_enough_memory)); }
+            } catch (std::bad_alloc const&) { return std::unexpected(std::make_error_code(std::errc::not_enough_memory)); } catch (std::out_of_range const&) { return std::unexpected(std::make_error_code(std::errc::invalid_argument)); }
         }
 #endif
 #if defined(NEXUS_DNS_SHARED) || defined(NEXUS_TEST_DNS_GROUP)
@@ -399,8 +399,10 @@ namespace relay {
 #elif defined(NEXUS_TEST_DNS_SNAPSHOT)
         if (state.dns_routing) {
             state.dns.reset();
-            state.dns=std::make_unique<DnsState>(*state.dns_routing,nullptr,count,
-                count==1 && !child_workers ? std::optional<std::size_t>{0} : std::nullopt);
+            try {
+                state.dns=std::make_unique<DnsState>(*state.dns_routing,nullptr,count,
+                    count==1 && !child_workers ? std::optional<std::size_t>{0} : std::nullopt);
+            } catch (std::bad_alloc const&) { return std::unexpected(std::make_error_code(std::errc::not_enough_memory)); } catch (std::out_of_range const&) { return std::unexpected(std::make_error_code(std::errc::invalid_argument)); }
         }
 #endif
         stopping=false;failed=false;return {};

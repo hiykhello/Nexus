@@ -64,7 +64,12 @@ dns {
 
 ## 网络 worker
 
-可在主配置顶层加入 `workers 2`，范围为 1–16，省略时为 1。单 worker 由调用方线程运行；多 worker 在 Linux 上各用一个事件循环和监听器，每个入站的各 worker 共享该入站的 64 会话上限；不同入站分别计数。系统 DNS 的阻塞线程池按入站和 worker 分配，增加 worker 也会增加潜在后台线程。多 worker VLESS 在 `--crypto=y` 下可用；该能力仍为实验性，详见[并发架构](../../architecture/concurrency.md)。
+主配置顶层可省略 `workers`（默认为 `1`），或显式设置为：
+
+- 正整数 `workers <N>`（`N >= 1`）：超过宿主机可用并行度 `H` 时自动夹紧到 `H` 并在启动日志输出 `warn` 告警；无硬编码 `16` 上限。
+- 宿主机并行度表达式：`workers "auto"`、`workers "max"`、`workers "max-<K>"` 或 `workers "auto-<K>"`（解析为 `max(1, H - K)`），支持可选属性 `max=<M>`（`M >= 1`，仅限字符串形式，进一步夹紧到 `min(resolved, M)`）。
+
+`H` 在 Linux 上取 `sched_getaffinity`、cgroup v2 `cpu.max`（含父层级继承）/ cgroup v1 `cpu.cfs_quota_us` 及 `hardware_concurrency()` 的正值最小值（下限 1）；其他平台使用 `max(1, hardware_concurrency())`。单 worker 由调用方线程运行；多 worker 在 Linux 上各用一个事件循环和监听器，每个入站的各 worker 共享该入站的会话配额上限；不同入站分别计数。部分特性（Tailscale 出站、VLESS XHTTP、Naive/HTTP3、MASQUE、TUIC 及 Unix socket 入站）仍要求最终解析值为 `workers == 1`。系统 DNS 的阻塞线程池按入站和 worker 分配，增加 worker 也会增加潜在后台线程。详见[并发架构](../../architecture/concurrency.md)。
 
 ## SOCKS5 用户名密码
 

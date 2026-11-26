@@ -262,6 +262,44 @@ namespace {
         expect(desktop::save_desktop_host_config(host_path, cfg), "save host.json succeeds");
         auto raw_host = desktop::desktop_host_to_json(cfg);
         expect(!raw_host.contains("profiles") && !raw_host.contains("subscriptions"), "host.json never embeds workspace profiles/subs");
+        expect(!raw_host.contains("workers_spec") && !raw_host.contains("workers_max"),
+            "default host.json omits empty workers_spec and zero workers_max");
+        expect(cfg.workers == 1 && cfg.workers_spec.empty() && cfg.workers_max == 0,
+            "default DesktopHostConfig uses workers == 1 with empty workers_spec and 0 workers_max");
+
+        // Wave 27: workers > 16 preserved without artificial cap, legacy workers=0 accepted, workers_spec/workers_max round-trip.
+        expect(desktop::is_valid_workers_spec("") && desktop::is_valid_workers_spec("auto") &&
+               desktop::is_valid_workers_spec("max") && desktop::is_valid_workers_spec("max-0") &&
+               desktop::is_valid_workers_spec("max-2") && desktop::is_valid_workers_spec("auto-4") &&
+               !desktop::is_valid_workers_spec("max-") && !desktop::is_valid_workers_spec("max-abc") &&
+               !desktop::is_valid_workers_spec("max--1") && !desktop::is_valid_workers_spec("foo") &&
+               !desktop::is_valid_workers_spec("max-99999999999999999999"),
+            "is_valid_workers_spec matches Core workers spec grammar");
+
+        auto legacy_zero = desktop::desktop_host_from_json(R"({"schema_version":1,"workers":0,"desktop":{}})");
+        expect(legacy_zero.has_value() && legacy_zero->workers == 0, "legacy workers=0 remains backwards-compatible");
+        auto omitted_w = desktop::desktop_host_from_json(R"({"schema_version":1,"desktop":{}})");
+        expect(omitted_w.has_value() && omitted_w->workers == 1 && omitted_w->workers_spec.empty() && omitted_w->workers_max == 0,
+            "omitted workers defaults to 1");
+
+        auto w_cfg = desktop::make_default_desktop_host_config(dir, "/run/nexus.sock");
+        w_cfg.workers = 24;
+        w_cfg.workers_spec = "max-2";
+        w_cfg.workers_max = 12;
+        auto w_notices = desktop::normalize_desktop_host_config(w_cfg, true);
+        expect(w_cfg.workers == 24 && w_cfg.workers_spec == "max-2" && w_cfg.workers_max == 12 && w_notices.empty(),
+            "normalize_desktop_host_config preserves workers > 16 and valid workers_spec/workers_max");
+        auto w_json = desktop::desktop_host_to_json(w_cfg);
+        expect(w_json.contains("\"workers_spec\": \"max-2\"") && w_json.contains("\"workers_max\": 12"),
+            "host.json emits non-empty workers_spec and positive workers_max");
+        auto w_parsed = desktop::desktop_host_from_json(w_json);
+        expect(w_parsed.has_value() && w_parsed->workers == 24 && w_parsed->workers_spec == "max-2" && w_parsed->workers_max == 12,
+            "workers > 16, workers_spec, and workers_max round-trip cleanly");
+
+        desktop::DesktopHostConfig bad_w = w_cfg;
+        bad_w.workers_spec = "max-bad";
+        auto bad_notices = desktop::normalize_desktop_host_config(bad_w, true);
+        expect(bad_w.workers_spec.empty() && !bad_notices.empty(), "invalid workers_spec cleared with notice on normalize");
 
         desktop::TelemetryStoreData tel{.schema_version = 1, .active_profile_id = "p1"};
         tel.entries.push_back({.profile_id = "p1", .delay_ms = 42});

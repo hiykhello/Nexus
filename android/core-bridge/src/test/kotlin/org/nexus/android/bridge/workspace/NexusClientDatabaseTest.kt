@@ -248,6 +248,7 @@ class NexusClientDatabaseTest {
             val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
             val legacyHostFile = File(dir, "host.json")
             val legacyCfg = AndroidHostConfig(
+                common = HostCommonConfig(workers = 24, workersSpec = "auto", workersMax = 16),
                 android = AndroidHostSection(
                     runMode = AndroidRunMode.PROXY_ONLY,
                     webdavUrl = "https://dav.example.com/nexus/",
@@ -260,6 +261,9 @@ class NexusClientDatabaseTest {
 
             val hostStore = AndroidHostConfigStore(legacyHostFile, db)
             val migratedHost = hostStore.load()
+            assertEquals(24, migratedHost.common.workers)
+            assertEquals("auto", migratedHost.common.workersSpec)
+            assertEquals(16, migratedHost.common.workersMax)
             assertEquals(AndroidRunMode.PROXY_ONLY, migratedHost.android.runMode)
             assertTrue(migratedHost.android.autoStartOnBoot)
             assertEquals("legacy-dav-password", migratedHost.android.webdavPassword)

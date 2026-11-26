@@ -55,9 +55,9 @@ namespace relay {
             std::optional<httpupgrade::Profile> transport;
             quic_ech::Profile ech;
             std::mutex mutex;
-            std::array<std::unique_ptr<Worker>,17> physical;
-            std::array<std::unique_ptr<Worker>,17> layered;
-            std::array<std::unique_ptr<Worker>,17> fast;
+            std::vector<std::unique_ptr<Worker>> physical;
+            std::vector<std::unique_ptr<Worker>> layered;
+            std::vector<std::unique_ptr<Worker>> fast;
             ~Profile();
         };
         struct Resolver {
@@ -161,9 +161,13 @@ namespace relay {
             auto& entries=slots(profile,mode);
             auto slot=std::ranges::find_if(entries,[](auto const& worker) { return !worker; });
             auto padding=a::PaddingScheme::parse(a::default_padding_scheme);
-            if (slot==entries.end() || !padding || (direct && !environment.direct_options)) return false;
+            if (!padding || (direct && !environment.direct_options)) return false;
+            bool append=slot==entries.end();
+            if (append) entries.reserve(entries.size()+1);
             auto worker=std::make_unique<Worker>(environment,profile,detour,direct ? *environment.direct_options : profile.options,mode,std::move(*padding));
-            worker->client.start(); *slot=std::move(worker); return true;
+            worker->client.start();
+            if (!append) *slot=std::move(worker); else entries.push_back(std::move(worker));
+            return true;
         }
         auto stop(Profile& profile,corosio::io_context& context) noexcept -> void {
             for (auto mode : {Mode::physical,Mode::layered,Mode::fast_open}) {

@@ -51,7 +51,7 @@ auto Hysteria2Host::start(std::uint16_t port,bool ipv6,unsigned count) -> std::e
             return start(local,count);
         }
 auto Hysteria2Host::start(corosio::endpoint local,unsigned count) -> std::expected<std::uint16_t,Hysteria2HostFailure> {
-            if(!workers_.empty() || !count || count>16 || passwords_.empty() || passwords_.size()!=names_.size())
+            if(!workers_.empty() || !count || passwords_.empty() || passwords_.size()!=names_.size())
                 return std::unexpected(Hysteria2HostFailure{std::make_error_code(std::errc::invalid_argument)});
             auto prepared=parent_.prepare_routing(count,true);if(!prepared)return std::unexpected(Hysteria2HostFailure{prepared.error()});
             stop_=false;failed_=false;{std::lock_guard lock(failure_mutex_);failure_.reset();}std::uint16_t bound=local.port();

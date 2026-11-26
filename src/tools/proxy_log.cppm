@@ -38,7 +38,11 @@ export namespace cli::run_detail {
         std::cerr << std::format("traffic-total active={} upload={} download={}\n", active, total.upload, total.download);
     }
 
-    inline auto report_ready(logging::Runtime& logs, std::vector<Listener> const& listeners, unsigned workers, bool traffic_stats) -> void {
+    inline auto report_ready(logging::Runtime& logs, std::vector<Listener> const& listeners, unsigned workers, bool traffic_stats,
+                             std::optional<unsigned> workers_clamped_from = {}, unsigned host_parallelism = 0) -> void {
+        if (workers_clamped_from)
+            logs.emit(logging::Level::warn, logging::Domain::core, 100, {.generation = 1},
+                "configured workers {} clamped to host parallelism {}", *workers_clamped_from, host_parallelism ? host_parallelism : workers);
         logs.emit(traffic_stats ? logging::Level::debug : logging::Level::info, logging::Domain::core, 100, {.generation = 1},
             "proxy started with {} listeners and {} workers per listener", listeners.size(), workers);
         for (auto const& listener : listeners) {
@@ -186,6 +190,9 @@ export namespace cli::run_detail {
         } catch (std::system_error const& error) {
             logs.emit(Level::error, Domain::route, 103, {.generation = generation},
                 "traffic rule reload failed: {}", error.code().message());
+        } catch (std::out_of_range const& error) {
+            logs.emit(Level::error, Domain::route, 103, {.generation = generation},
+                "traffic rule reload failed: {}", logs.private_text(error.what()));
         }
         return false;
     }

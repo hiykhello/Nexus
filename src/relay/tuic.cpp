@@ -160,7 +160,7 @@ namespace relay {
             TcpSocketOptions options;
             quic_ech::Profile ech;
             std::mutex mutex;
-            std::array<std::shared_ptr<TuicWorker>, 17> workers;
+            std::vector<std::shared_ptr<TuicWorker>> workers;
             ~TuicProfile() { for (auto& w : workers) w.reset(); }
         };
 
@@ -427,12 +427,12 @@ namespace relay {
             if (lower) return true;
             auto binding = direct ? env.direct_options->binding : borrowed->options.binding;
             std::lock_guard lock(borrowed->mutex);
-            for (auto& slot : borrowed->workers) {
-                if (slot) continue;
-                slot = std::make_shared<TuicWorker>(env.context, *borrowed->client, binding);
-                return true;
-            }
-            return false;
+            for (auto const& slot : borrowed->workers) if (slot && &slot->context == &env.context) return false;
+            auto slot = std::ranges::find_if(borrowed->workers, [](auto const& w) { return !w; });
+            auto w = std::make_shared<TuicWorker>(env.context, *borrowed->client, binding);
+            if (slot != borrowed->workers.end()) *slot = std::move(w);
+            else borrowed->workers.push_back(std::move(w));
+            return true;
         };
         factory.stop_context = [borrowed](io::io_context& ctx) noexcept {
             std::shared_ptr<TuicWorker> w;

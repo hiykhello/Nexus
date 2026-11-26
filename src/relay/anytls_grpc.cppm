@@ -53,9 +53,9 @@ namespace relay::anytls_grpc {
         bool fast_open;
         quic_ech::Profile ech;
         std::mutex mutex;
-        std::array<std::unique_ptr<Worker>, 17> physical;
-        std::array<std::unique_ptr<Worker>, 17> layered;
-        std::array<std::unique_ptr<Worker>, 17> fast;
+        std::vector<std::unique_ptr<Worker>> physical;
+        std::vector<std::unique_ptr<Worker>> layered;
+        std::vector<std::unique_ptr<Worker>> fast;
         ~Profile();
     };
 
@@ -196,12 +196,14 @@ namespace relay::anytls_grpc {
         auto& entries = grpc_pool::slots(profile, mode);
         auto slot = std::ranges::find_if(entries, [](auto const& w) { return !w; });
         auto padding = a::PaddingScheme::parse(a::default_padding_scheme);
-        if (slot == entries.end() || !padding || (direct && !environment.direct_options)) return false;
+        if (!padding || (direct && !environment.direct_options)) return false;
+        bool append = slot == entries.end();
+        if (append) entries.reserve(entries.size() + 1);
         auto w = std::make_unique<Worker>(environment, profile, detour,
                                           direct ? *environment.direct_options : profile.options, mode, std::move(*padding));
         w->grpc.start_reaper();
         w->client.start();
-        *slot = std::move(w);
+        if (!append) *slot = std::move(w); else entries.push_back(std::move(w));
         return true;
     }
 

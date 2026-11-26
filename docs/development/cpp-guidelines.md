@@ -97,7 +97,7 @@ auto buffer_size(Sized auto const& value) -> std::size_t {
 
 如第三方 API 只能通过异常报告错误，应在明确的适配边界处理可识别异常，转换为项目错误；记录尚未覆盖的异常及处理策略。不要吞掉异常后返回成功，也不要在每一层增加宽泛的 `catch (...)`。
 
-用户已放开异常限制；在其自维护的新标准库完成前，继续使用现有标准库和依赖，Capy 保留异常运行。内存分配失败导致进程退出是预期行为，无需将其转成可恢复错误或重试。`nexus` 不再替换全局分配函数，普通分配使用标准库行为；实际退出机制取决于异常边界与第三方实现。历史实验见[无异常与可恢复分配路线](../planning/fallible-allocation.md)。
+用户已放开异常限制；项目继续使用标准 C++ 库（`libc++` / `import std;`）与现有依赖，Capy 保留异常运行。内存分配失败导致进程退出是预期行为，无需将其转成可恢复错误或重试。`nexus` 不再替换全局分配函数，普通分配使用标准库行为；实际退出机制取决于异常边界与第三方实现。历史实验见[无异常与可恢复分配路线](../planning/fallible-allocation.md)。
 
 容器选择需分别考虑容量、分配和元素操作。标准动态容器没有通用的可恢复分配失败插入接口；预留空间也不能消除长度错误、元素构造或第三方分配器等其他异常路径。对于合理且编译期确定的上限，C++26 `std::inplace_vector` 的 `try_push_back` / `try_emplace_back` 可在容量满时返回空结果；本机 GCC 16 已用 `-fno-exceptions` 验证填满、拒绝和释放后复用。元素构造和移动仍需单独验证，普通 `push_back` 的满容量行为不同。Boost `static_vector` 也不能仅因有内嵌存储就断言插入绝不抛异常：元素操作可能抛异常，关闭溢出异常选项也要求调用方严格保证容量（[Boost 文档](https://www.boost.org/latest/doc/html/container/configurable_containers.html)）。
 

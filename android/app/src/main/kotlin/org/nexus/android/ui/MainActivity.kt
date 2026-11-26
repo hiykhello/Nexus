@@ -473,7 +473,7 @@ class MainActivity : ComponentActivity() {
         private fun defaultAndroidKdl(paths: RuntimeSocketPaths): String = """
             schema-version 1
             role "client"
-            workers 2
+            workers 1
             ${androidControlDirective(paths)}
             inbound "local" type="socks5" {
                 listen host="127.0.0.1" port=10808

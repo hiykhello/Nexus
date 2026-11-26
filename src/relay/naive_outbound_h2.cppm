@@ -189,9 +189,9 @@ namespace relay::naive_out_detail {
         tls::ShapedClientProfile tls;
         quic_ech::Profile ech;
         std::mutex mutex;
-        std::array<std::unique_ptr<H2Worker>, 17> physical;
-        std::array<std::unique_ptr<H2Worker>, 17> layered;
-        std::array<std::unique_ptr<H2Worker>, 17> fast;
+        std::vector<std::unique_ptr<H2Worker>> physical;
+        std::vector<std::unique_ptr<H2Worker>> layered;
+        std::vector<std::unique_ptr<H2Worker>> fast;
 
         H2Profile(std::string h, std::uint16_t p, std::string auth,
                   std::vector<std::pair<std::string, std::string>> eh,

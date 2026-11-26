@@ -73,7 +73,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     if (parsed_args->help) return 0;
     auto const& run_args = *parsed_args;
     bool traffic_stats = run_args.traffic_stats, is_cfg = run_args.is_cfg, config_is_dir = run_args.config_is_dir;
-    unsigned port = run_args.port, workers = 1;
+    unsigned port = run_args.port, workers = 1, host_parallelism = 1; std::optional<unsigned> workers_clamped_from;
     std::chrono::milliseconds shutdown_grace{};
     auto inbound = relay::Inbound::socks5;
     logging::Runtime logs;
@@ -139,7 +139,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             udp->stage_admission(nullptr,1);
             listener_reload.listener_grace=std::chrono::milliseconds(config->shutdown_grace_ms.value_or(5000));
         }
-        workers=config->workers;
+        workers=config->workers; host_parallelism=config->host_parallelism; workers_clamped_from=config->workers_clamped_from;
         control_socket=config->control_socket;
         control_read_uid=config->control_read_uid;
         control_http_config=config->control_http;
@@ -222,7 +222,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
                     return log_failure(logs,logging::Domain::core,"DNS UDP shared setup failed");
                 }
                 dns_generation->seal();
-            } catch (std::bad_alloc const&) { return log_failure(logs,logging::Domain::core,"DNS shared setup: out of memory"); }
+            } catch (std::bad_alloc const&) { return log_failure(logs,logging::Domain::core,"DNS shared setup: out of memory"); } catch (std::out_of_range const& e) { return log_failure(logs,logging::Domain::core,"DNS shared setup",e.what()); }
         }
         bool has_route_files=!config->routes.empty() || (config->ordered_tcp &&
             !config->ordered_tcp->sets.empty());
@@ -326,7 +326,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         if (stopped.load(std::memory_order_relaxed)) return 0;
         return log_failure(logs,logging::Domain::proxy,"proxy startup failed",started.error());
     }
-    report_ready(logs,listeners,workers,traffic_stats);
+    report_ready(logs,listeners,workers,traffic_stats,workers_clamped_from,host_parallelism);
     if (reload_config && remote_rulesets.has_remote()) remote_rulesets.start_background(*reload_config,reload_source,logs);
     if (proxy_providers.has_providers()) proxy_providers.start_background(logs);
     bool provider_sync_trigger = false;

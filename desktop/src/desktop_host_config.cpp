@@ -149,6 +149,21 @@ namespace desktop {
 #endif
     }
 
+    auto is_valid_workers_spec(std::string_view spec) noexcept -> bool {
+        if (spec.empty() || spec == "auto" || spec == "max") return true;
+        std::string_view rest;
+        if (spec.starts_with("max-")) rest = spec.substr(4);
+        else if (spec.starts_with("auto-")) rest = spec.substr(5);
+        else return false;
+        if (rest.empty()) return false;
+        for (char c : rest) {
+            if (c < '0' || c > '9') return false;
+        }
+        unsigned parsed = 0;
+        auto [ptr, ec] = std::from_chars(rest.data(), rest.data() + rest.size(), parsed);
+        return ec == std::errc{} && ptr == rest.data() + rest.size();
+    }
+
     auto make_default_desktop_host_config(
         std::filesystem::path const& cfg_dir,
         std::string_view control_socket) -> DesktopHostConfig {
@@ -170,6 +185,14 @@ namespace desktop {
     auto normalize_desktop_host_config(DesktopHostConfig& cfg, bool is_en) -> std::vector<std::string> {
         std::vector<std::string> notices;
         if (cfg.platform.empty()) cfg.platform = std::string(current_desktop_platform_id());
+        if (cfg.workers < 0) cfg.workers = 1;
+        if (cfg.workers_max < 0) cfg.workers_max = 0;
+        if (!cfg.workers_spec.empty() && !is_valid_workers_spec(cfg.workers_spec)) {
+            cfg.workers_spec.clear();
+            notices.push_back(is_en
+                ? "Invalid workers_spec reset to default (expected auto, max, max-<N>, or auto-<N>)."
+                : "无效的 workers_spec 已重置为默认（仅支持 auto、max、max-<N> 或 auto-<N>）。");
+        }
         if (cfg.tun_mtu < 576 || cfg.tun_mtu > 9000) cfg.tun_mtu = 1400;
         if (cfg.max_selector_members < 1) cfg.max_selector_members = 128;
         if (cfg.max_selector_members > 4096) cfg.max_selector_members = 4096;
@@ -250,6 +273,8 @@ namespace desktop {
             {"max_selector_members", cfg.max_selector_members},
             {"desktop", JsonValue(std::move(desktop_obj))},
         };
+        if (!cfg.workers_spec.empty()) root.emplace_back("workers_spec", cfg.workers_spec);
+        if (cfg.workers_max > 0) root.emplace_back("workers_max", cfg.workers_max);
         return json_stringify(JsonValue(std::move(root)), true);
     }
 
@@ -317,7 +342,10 @@ namespace desktop {
         cfg.platform = json_get_string(root, "platform", current_desktop_platform_id());
         cfg.log_level = json_get_string(root, "log_level", "info");
         cfg.log_file = json_get_string(root, "log_file", "");
-        cfg.workers = json_get_i64(root, "workers", 0);
+        cfg.workers = json_get_i64(root, "workers", 1);
+        if (cfg.workers < 0) cfg.workers = 1;
+        cfg.workers_spec = json_get_string(root, "workers_spec", "");
+        cfg.workers_max = std::max<std::int64_t>(0, json_get_i64(root, "workers_max", 0));
         cfg.state_dir = json_get_string(root, "state_dir", "");
         cfg.cache_dir = json_get_string(root, "cache_dir", "");
         cfg.control_socket = json_get_string(root, "control_socket", "");

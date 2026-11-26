@@ -34,9 +34,9 @@ namespace relay {
             TcpSocketOptions options;
             bool fast_open = false;
             std::mutex mutex;
-            std::array<std::unique_ptr<SshWorker<0>>, 17> physical;
-            std::array<std::unique_ptr<SshWorker<1>>, 17> layered;
-            std::array<std::unique_ptr<SshWorker<2>>, 17> fast;
+            std::vector<std::unique_ptr<SshWorker<0>>> physical;
+            std::vector<std::unique_ptr<SshWorker<1>>> layered;
+            std::vector<std::unique_ptr<SshWorker<2>>> fast;
             ~SshProfile();
         };
 
@@ -216,10 +216,12 @@ namespace relay {
             if (ssh_find<Mode>(profile, env.context)) return false;
             auto& entries = ssh_slots<Mode>(profile);
             auto slot = std::ranges::find_if(entries, [](auto const& w) { return !w; });
-            if (slot == entries.end() || (direct && !env.direct_options)) return false;
+            if (direct && !env.direct_options) return false;
+            bool append = slot == entries.end();
+            if (append) entries.reserve(entries.size() + 1);
             auto worker = std::make_unique<SshWorker<Mode>>(env, profile, detour, direct ? *env.direct_options : profile.options);
             worker->start_reaper();
-            *slot = std::move(worker);
+            if (!append) *slot = std::move(worker); else entries.push_back(std::move(worker));
             return true;
         }
         template<int Mode>

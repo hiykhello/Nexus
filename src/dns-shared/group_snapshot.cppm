@@ -8,6 +8,7 @@ export namespace dns_hp_experiment {
     class GroupSnapshot {
     public:
         struct BudgetExceeded {};
+        static constexpr std::size_t readers_max = 16 * 256 + 2;
     private:
         using Key = dns::CacheKey;
         using Answer = dns::AddressAnswer;

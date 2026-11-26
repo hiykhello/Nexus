@@ -74,9 +74,9 @@ class BasicSnapshotState {
     std::vector<Pending> pending_;
 
     static auto checked_readers(std::size_t readers) -> std::size_t {
-        // Up to sixteen configured listeners with sixteen workers each, plus
+        // Up to sixteen configured listeners with up to 256 workers each, plus
         // the separately driven UDP executor in the command process.
-        if (readers>257) throw std::out_of_range("too many readers");
+        if (readers>16*256+1) throw std::out_of_range("too many readers");
         return readers;
     }
 

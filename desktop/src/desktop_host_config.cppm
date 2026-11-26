@@ -8,7 +8,9 @@ export namespace desktop {
         std::string platform; // "desktop-linux" | "desktop-windows" | "desktop-macos"
         std::string log_level = "info";
         std::string log_file;
-        std::int64_t workers = 0;
+        std::int64_t workers = 1;
+        std::string workers_spec; // "" | "auto" | "max" | "max-<N>" | "auto-<N>"
+        std::int64_t workers_max = 0; // >= 0; optional cap for workers_spec
         std::string state_dir;
         std::string cache_dir;
         std::string control_socket;
@@ -59,6 +61,7 @@ export namespace desktop {
     };
 
     [[nodiscard]] auto current_desktop_platform_id() noexcept -> std::string_view;
+    [[nodiscard]] auto is_valid_workers_spec(std::string_view spec) noexcept -> bool;
 
     [[nodiscard]] auto make_default_desktop_host_config(
         std::filesystem::path const& cfg_dir,

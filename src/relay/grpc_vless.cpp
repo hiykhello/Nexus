@@ -34,9 +34,9 @@ namespace relay {
             std::optional<std::size_t> bootstrap; std::uint32_t timeout; TcpSocketOptions options; bool fast_open;
             quic_ech::Profile ech;
             std::mutex mutex;
-            std::array<std::unique_ptr<Worker>, 17> physical;
-            std::array<std::unique_ptr<Worker>, 17> layered;
-            std::array<std::unique_ptr<Worker>, 17> fast;
+            std::vector<std::unique_ptr<Worker>> physical;
+            std::vector<std::unique_ptr<Worker>> layered;
+            std::vector<std::unique_ptr<Worker>> fast;
             ~Profile();
         };
         Profile::~Profile() = default;
@@ -51,11 +51,12 @@ namespace relay {
             if (grpc_pool::find(profile, mode, environment.context) || (direct && !environment.direct_options)) return false;
             auto& entries = grpc_pool::slots(profile, mode);
             auto slot = std::ranges::find_if(entries, [](auto const& value) { return !value; });
-            if (slot == entries.end()) return false;
+            bool append = slot == entries.end();
+            if (append) entries.reserve(entries.size() + 1);
             auto worker = std::make_unique<Worker>(environment, endpoint_spec(profile), detour,
                                                  direct ? *environment.direct_options : profile.options, mode);
             worker->start_reaper();
-            *slot = std::move(worker);
+            if (!append) *slot = std::move(worker); else entries.push_back(std::move(worker));
             return true;
         }
 

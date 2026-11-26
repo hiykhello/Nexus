@@ -142,7 +142,11 @@ namespace provider::ws_detail {
     auto emit_host_header(ComposeContext const& ctx, std::ostringstream& out) -> void {
         auto const& h = ctx.host;
         out << "schema-version 1\nrole \"client\"\n";
-        if (h.workers >= 1 && h.workers <= 16) out << "workers " << h.workers << '\n';
+        if (!h.workers_spec.empty()) {
+            out << "workers " << kdl_quote(h.workers_spec);
+            if (h.workers_max >= 1) out << " max=" << h.workers_max;
+            out << '\n';
+        } else if (h.workers >= 1) out << "workers " << h.workers << '\n';
         if (!h.ca_file.empty()) out << "certificate {\n  ca-file " << kdl_quote(h.ca_file) << "\n}\n";
         else if (!ctx.resolved_ca_file.empty()) out << "certificate {\n  store \"system\"\n}\n";
         bool has_state = (!h.state_dir.empty() && h.state_dir.starts_with('/')) ||
@@ -274,7 +278,11 @@ namespace provider::ws_detail {
             } else base_doc->push_back(std::move(sub->front()));
         };
         auto const& h = ctx.host;
-        if (h.workers >= 1 && h.workers <= 16) upsert("workers " + std::to_string(h.workers) + "\n", "workers");
+        if (!h.workers_spec.empty()) {
+            std::string w = "workers " + kdl_quote(h.workers_spec);
+            if (h.workers_max >= 1) w += " max=" + std::to_string(h.workers_max);
+            upsert(w + "\n", "workers");
+        } else if (h.workers >= 1) upsert("workers " + std::to_string(h.workers) + "\n", "workers");
         if (!h.control_socket.empty() || !h.control_http_listen.empty()) {
             std::string c = "control";
             if (!h.control_socket.empty()) c += " socket=" + kdl_quote(h.control_socket);

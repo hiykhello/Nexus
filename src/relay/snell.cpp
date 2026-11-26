@@ -28,9 +28,9 @@ namespace relay {
             std::string host; std::uint16_t port; snell::ClientOwner owner; std::optional<std::size_t> bootstrap;
             std::uint32_t timeout; TcpSocketOptions options; bool http_obfs; std::string obfs_host, obfs_uri;
             std::mutex mutex;
-            std::array<std::unique_ptr<SnellWorker>, 17> physical;
-            std::array<std::unique_ptr<SnellWorker>, 17> layered;
-            std::array<std::unique_ptr<SnellWorker>, 17> fast;
+            std::vector<std::unique_ptr<SnellWorker>> physical;
+            std::vector<std::unique_ptr<SnellWorker>> layered;
+            std::vector<std::unique_ptr<SnellWorker>> fast;
             SnellProfile(std::string_view h, std::uint16_t p, snell::Credential credential, std::optional<std::size_t> b,
                          std::uint32_t t, TcpSocketOptions o, bool obfs, std::string_view oh, std::string_view ou);
             ~SnellProfile();
@@ -334,9 +334,12 @@ namespace relay {
             if (snell_find(profile, mode, env.context) || (direct && !env.direct_options)) return false;
             auto& slots = snell_slots(profile, mode);
             auto slot = std::ranges::find_if(slots, [](auto const& value) { return !value; });
-            if (slot == slots.end()) return false;
+            bool append = slot == slots.end();
+            if (append) slots.reserve(slots.size() + 1);
             auto worker = std::make_unique<SnellWorker>(mode, env, profile, direct ? *env.direct_options : profile.options, detour);
-            worker->pool.start(); *slot = std::move(worker); return true;
+            worker->pool.start();
+            if (!append) *slot = std::move(worker); else slots.push_back(std::move(worker));
+            return true;
         }
         auto snell_stop(SnellProfile& profile, corosio::io_context& context) noexcept -> void {
             for (auto mode : {SnellMode::physical, SnellMode::layered, SnellMode::fast_open}) {

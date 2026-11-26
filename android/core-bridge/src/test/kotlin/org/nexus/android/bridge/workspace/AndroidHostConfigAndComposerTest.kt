@@ -17,7 +17,7 @@ class AndroidHostConfigAndComposerTest {
             val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
             val store = AndroidHostConfigStore(File(dir, "host.json"), db)
             val cfg = AndroidHostConfig(
-                common = HostCommonConfig(workers = 4, logLevel = "debug", maxSelectorMembers = 64),
+                common = HostCommonConfig(workers = 20, workersSpec = "max-2", workersMax = 12, logLevel = "debug", maxSelectorMembers = 64),
                 android = AndroidHostSection(
                     runMode = AndroidRunMode.PROXY_ONLY,
                     localListen = "127.0.0.1:10809",
@@ -37,10 +37,34 @@ class AndroidHostConfigAndComposerTest {
             store.save(cfg)
             val loaded = store.load()
             assertEquals(cfg, loaded)
+            assertEquals(20, loaded.common.workers)
+            assertEquals("max-2", loaded.common.workersSpec)
+            assertEquals(12, loaded.common.workersMax)
             val raw = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG) ?: ""
+            assertTrue(raw.contains("\"workers\":20") || raw.contains("\"workers\": 20"))
+            assertTrue(raw.contains("\"workers_spec\":\"max-2\"") || raw.contains("\"workers_spec\": \"max-2\""))
+            assertTrue(raw.contains("\"workers_max\":12") || raw.contains("\"workers_max\": 12"))
             assertTrue(raw.contains("\"run_mode\":\"proxy_only\"") || raw.contains("\"run_mode\": \"proxy_only\""))
             assertTrue(raw.contains("\"exclude_self_from_vpn\":false") || raw.contains("\"exclude_self_from_vpn\": false"))
             assertFalse(raw.contains("\"profiles\""))
+
+            // Default workers == 1 and compact JSON omits empty workers_spec / zero workers_max
+            val defaultCfg = AndroidHostConfig()
+            assertEquals(1, defaultCfg.common.workers)
+            assertEquals(1, AndroidHostConfig.fromJson("{}").common.workers)
+            val defaultJson = defaultCfg.toJson()
+            assertFalse(defaultJson.contains("workers_spec"))
+            assertFalse(defaultJson.contains("workers_max"))
+
+            // Strict workers_spec validation parity with Core
+            listOf("", "auto", "max", "max-0", "max-2", "auto-4").forEach { spec ->
+                assertTrue("Expected valid spec: '$spec'", HostCommonConfig.isValidWorkersSpec(spec))
+            }
+            listOf("max-", "auto-", "max-abc", "max--1", "foo", "2", "AUTO", "max-99999999999999999999").forEach { spec ->
+                assertFalse("Expected invalid spec: '$spec'", HostCommonConfig.isValidWorkersSpec(spec))
+            }
+            assertEquals("", AndroidHostConfig.fromJson("""{"workers_spec":"max-bad","workers_max":-5}""").common.workersSpec)
+            assertEquals(0, AndroidHostConfig.fromJson("""{"workers_spec":"max-bad","workers_max":-5}""").common.workersMax)
         } finally {
             dir.deleteRecursively()
         }

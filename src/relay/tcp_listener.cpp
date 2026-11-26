@@ -442,7 +442,7 @@ namespace relay {
                      (inbound==Inbound::http && http_modern_h3_enabled && http_modern_tcp_enabled);
         if ((want_h3_only || want_dual_h3) && count!=1) return std::unexpected(std::make_error_code(std::errc::invalid_argument));
 #endif
-        if (!count || count>16 || (shared_context && count!=1) ||
+        if (!count || (shared_context && count!=1) ||
             (endpoint.address().is_v6() && !xhttp_listener && inbound!=Inbound::socks5 && inbound!=Inbound::mixed && inbound!=Inbound::http && inbound!=Inbound::naive && inbound!=Inbound::fixed_tcp && inbound!=Inbound::fixed_udp && inbound!=Inbound::trojan && inbound!=Inbound::anytls && inbound!=Inbound::snell && inbound!=Inbound::shadowtls && inbound!=Inbound::redirect && inbound!=Inbound::tproxy))
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         drain_requested.store(false,std::memory_order_relaxed); drain_complete.store(false,std::memory_order_relaxed);

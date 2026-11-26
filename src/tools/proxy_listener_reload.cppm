@@ -146,9 +146,13 @@ export namespace cli::run_detail {
             auto native_readers = native_udp_dns_readers(*config);
             auto tcp_readers = config->inbounds.size() * workers;
             candidate.listeners.reserve(config->inbounds.size());
-            candidate.dns = std::make_unique<relay::SharedDnsGeneration>(
-                config->inbounds.size() + has_udp, tcp_readers + native_readers,
-                config->dns ? config->dns->optimistic_cache_seconds : 0);
+            try {
+                candidate.dns = std::make_unique<relay::SharedDnsGeneration>(
+                    config->inbounds.size() + has_udp, tcp_readers + native_readers,
+                    config->dns ? config->dns->optimistic_cache_seconds : 0);
+            } catch (std::out_of_range const& e) {
+                return std::unexpected("DNS shared setup: " + std::string(e.what()));
+            }
             if (route_snapshots || uses_dns_groups(config->dns) ||
                 (config->dns && (!config->dns->rule_files.empty() || config->dns->fakeip))) {
                 candidate.routes = std::make_shared<relay::RouteSnapshots>();

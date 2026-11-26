@@ -1,7 +1,7 @@
 // Ergonomic client configuration showcasing compact KDL syntax.
 schema-version 1
 role "client"
-workers 2
+workers 1
 
 inbounds {
     socks5 "socks-in" {

@@ -197,6 +197,10 @@ namespace provider {
         }
         if (ws.schema_version != 1) { res.errors.push_back("unsupported workspace schema_version"); return res; }
         if (host.schema_version != 1) { res.errors.push_back("unsupported host schema_version"); return res; }
+        if (!host.workers_spec.empty() && !config::validate_workers_spec(host.workers_spec)) {
+            res.errors.push_back("invalid host workers_spec: " + host.workers_spec);
+            return res;
+        }
         if (ws.profiles.empty()) { res.errors.push_back("workspace contains no profiles"); return res; }
 
         ComposeContext ctx{ws, host, opts};

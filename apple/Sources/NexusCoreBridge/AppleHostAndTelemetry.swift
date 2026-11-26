@@ -121,6 +121,8 @@ public struct AppleHostConfig: Codable, Sendable, Equatable {
     public var logLevel: String
     public var logFile: String
     public var workers: Int
+    public var workersSpec: String
+    public var workersMax: Int
     public var stateDir: String
     public var cacheDir: String
     public var controlSocket: String
@@ -136,6 +138,8 @@ public struct AppleHostConfig: Codable, Sendable, Equatable {
         case schemaVersion = "schema_version"
         case logLevel = "log_level"
         case logFile = "log_file"
+        case workersSpec = "workers_spec"
+        case workersMax = "workers_max"
         case stateDir = "state_dir"
         case cacheDir = "cache_dir"
         case controlSocket = "control_socket"
@@ -152,6 +156,8 @@ public struct AppleHostConfig: Codable, Sendable, Equatable {
         logLevel: String = "info",
         logFile: String = "",
         workers: Int = 1,
+        workersSpec: String = "",
+        workersMax: Int = 0,
         stateDir: String = "",
         cacheDir: String = "",
         controlSocket: String = "/var/run/org.nexus.apple/c.sock",
@@ -166,7 +172,9 @@ public struct AppleHostConfig: Codable, Sendable, Equatable {
         self.platform = platform
         self.logLevel = logLevel
         self.logFile = logFile
-        self.workers = max(1, min(16, workers))
+        self.workers = max(1, workers)
+        self.workersSpec = workersSpec.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.workersMax = max(0, workersMax)
         self.stateDir = stateDir
         self.cacheDir = cacheDir
         self.controlSocket = controlSocket
@@ -188,7 +196,10 @@ public struct AppleHostConfig: Codable, Sendable, Equatable {
         self.platform = try c.decodeIfPresent(AppleHostPlatform.self, forKey: .platform) ?? .desktopMacOS
         self.logLevel = try c.decodeIfPresent(String.self, forKey: .logLevel) ?? "info"
         self.logFile = try c.decodeIfPresent(String.self, forKey: .logFile) ?? ""
-        self.workers = max(1, min(16, try c.decodeIfPresent(Int.self, forKey: .workers) ?? 1))
+        self.workers = max(1, try c.decodeIfPresent(Int.self, forKey: .workers) ?? 1)
+        self.workersSpec = (try c.decodeIfPresent(String.self, forKey: .workersSpec) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.workersMax = max(0, try c.decodeIfPresent(Int.self, forKey: .workersMax) ?? 0)
         self.stateDir = try c.decodeIfPresent(String.self, forKey: .stateDir) ?? ""
         self.cacheDir = try c.decodeIfPresent(String.self, forKey: .cacheDir) ?? ""
         self.controlSocket = try c.decodeIfPresent(String.self, forKey: .controlSocket) ?? "/var/run/org.nexus.apple/c.sock"
@@ -198,6 +209,27 @@ public struct AppleHostConfig: Codable, Sendable, Equatable {
         self.includeSiblingNodesInSelector = try c.decodeIfPresent(Bool.self, forKey: .includeSiblingNodesInSelector) ?? true
         self.maxSelectorMembers = try c.decodeIfPresent(Int.self, forKey: .maxSelectorMembers) ?? 128
         self.desktop = try c.decodeIfPresent(AppleDesktopHostSection.self, forKey: .desktop) ?? AppleDesktopHostSection()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(platform, forKey: .platform)
+        try c.encode(logLevel, forKey: .logLevel)
+        try c.encode(logFile, forKey: .logFile)
+        try c.encode(max(1, workers), forKey: .workers)
+        let trimmedSpec = workersSpec.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedSpec.isEmpty { try c.encode(trimmedSpec, forKey: .workersSpec) }
+        if workersMax > 0 { try c.encode(workersMax, forKey: .workersMax) }
+        try c.encode(stateDir, forKey: .stateDir)
+        try c.encode(cacheDir, forKey: .cacheDir)
+        try c.encode(controlSocket, forKey: .controlSocket)
+        try c.encode(controlHttpListen, forKey: .controlHttpListen)
+        try c.encode(controlBearerFile, forKey: .controlBearerFile)
+        try c.encode(caFile, forKey: .caFile)
+        try c.encode(includeSiblingNodesInSelector, forKey: .includeSiblingNodesInSelector)
+        try c.encode(maxSelectorMembers, forKey: .maxSelectorMembers)
+        try c.encode(desktop, forKey: .desktop)
     }
 
     public func encodeCanonicalJSON(pretty: Bool = true) throws -> String {

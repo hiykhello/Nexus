@@ -262,8 +262,8 @@ namespace relay::naive_out_detail {
         std::unique_ptr<masque::ClientProfile> client_profile;
         quic_ech::Profile ech;
         std::mutex mutex;
-        std::array<std::unique_ptr<H3Worker>, 17> physical;
-        std::array<std::unique_ptr<H3Worker>, 17> layered;
+        std::vector<std::unique_ptr<H3Worker>> physical;
+        std::vector<std::unique_ptr<H3Worker>> layered;
 
         H3Profile(std::string h, std::uint16_t p, std::string auth,
                   std::vector<std::pair<std::string, std::string>> eh,

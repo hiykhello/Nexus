@@ -158,16 +158,43 @@ final class WorkspaceAndSyncTests: XCTestCase {
         // Unsupported schema_version must throw.
         XCTAssertThrowsError(try WorkspaceDocument.decodeCanonicalJSON("{\"schema_version\":99}"))
 
-        // Layer 3 AppleHostConfig v1 for desktop-macos & ios.
-        let macHost = AppleHostConfig(platform: .desktopMacOS, workers: 4, controlHttpListen: "127.0.0.1:9090")
+        // Layer 3 AppleHostConfig v1 for desktop-macos & ios (default workers=1, no 16 cap, workers_spec/workers_max parity).
+        let defaultHost = AppleHostConfig()
+        XCTAssertEqual(defaultHost.workers, 1)
+        XCTAssertEqual(defaultHost.workersSpec, "")
+        XCTAssertEqual(defaultHost.workersMax, 0)
+        let defaultJSON = try defaultHost.encodeCanonicalJSON(pretty: false)
+        XCTAssertFalse(defaultJSON.contains("\"workers_spec\""))
+        XCTAssertFalse(defaultJSON.contains("\"workers_max\""))
+
+        let macHost = AppleHostConfig(
+            platform: .desktopMacOS,
+            workers: 20,
+            workersSpec: "max-2",
+            workersMax: 12,
+            controlHttpListen: "127.0.0.1:9090"
+        )
+        XCTAssertEqual(macHost.workers, 20)
         let macJSON = try macHost.encodeCanonicalJSON(pretty: false)
         XCTAssertTrue(macJSON.contains("\"platform\":\"desktop-macos\""))
         XCTAssertTrue(macJSON.contains("\"schema_version\":1"))
+        XCTAssertTrue(macJSON.contains("\"workers\":20"))
+        XCTAssertTrue(macJSON.contains("\"workers_spec\":\"max-2\""))
+        XCTAssertTrue(macJSON.contains("\"workers_max\":12"))
         XCTAssertFalse(macJSON.contains("passphrase"))
+        let decodedMac = try JSONDecoder().decode(AppleHostConfig.self, from: Data(macJSON.utf8))
+        XCTAssertEqual(decodedMac, macHost)
 
         let iosHost = AppleHostConfig(platform: .iOS)
         let iosJSON = try iosHost.encodeCanonicalJSON(pretty: false)
         XCTAssertTrue(iosJSON.contains("\"platform\":\"ios\""))
+        let clampedHost = try JSONDecoder().decode(
+            AppleHostConfig.self,
+            from: Data("{\"schema_version\":1,\"platform\":\"ios\",\"workers\":0,\"workers_max\":-4}".utf8)
+        )
+        XCTAssertEqual(clampedHost.workers, 1)
+        XCTAssertEqual(clampedHost.workersSpec, "")
+        XCTAssertEqual(clampedHost.workersMax, 0)
 
         // Layer 4 TelemetryStore isolated from workspace.json.
         let dir = try makeTempDir()

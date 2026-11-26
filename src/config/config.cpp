@@ -79,6 +79,7 @@ namespace config {
     auto parse_outbound_selector(g::KdlNode const&, std::string_view, std::string_view) -> std::expected<OutboundSelector, std::string>;
     auto is_process_option(std::string_view) noexcept -> bool;
     auto parse_process_option(kdl::Node const&, Config&) -> std::expected<void, std::string>;
+    auto parse_workers_node(kdl::Node const&, Config&, bool&) -> std::expected<void, std::string>;
     auto parse_kdl(std::string_view input) -> std::expected<Config, std::string> {
         auto document = kdl::read_document(input,max_config_bytes);
         if (!document) return std::unexpected(document.error());
@@ -86,7 +87,7 @@ namespace config {
         bool version_seen = false, role_seen = false, inbound_seen = false, workers_seen = false, dns_seen = false;
         std::optional<std::string> direct, block;
         std::optional<Route> route;
-        Config result;
+        Config result; result.host_parallelism = detect_host_parallelism();
         std::vector<Node const*> nodes;
         bool inbounds_block=false, outbounds_block=false, legacy_inbound=false, legacy_outbound=false;
         for (auto const& node : *document) {
@@ -144,10 +145,7 @@ namespace config {
             } else if (is_extra_top_level(node.name)) {
                 if (auto ok=parse_extra_top_level(node,result); !ok) return std::unexpected(ok.error());
             } else if (node.name == "workers") {
-                auto value=node.arguments.size()==1 ? integer(node.arguments.front()) : std::nullopt;
-                if (workers_seen || node.tag || !node.properties.empty() || !node.children.empty() || !value || *value<1 || *value>16)
-                    return error("workers must be an integer from 1 to 16");
-                result.workers=static_cast<unsigned>(*value); workers_seen=true;
+                if (auto ok = parse_workers_node(node, result, workers_seen); !ok) return std::unexpected(std::move(ok.error()));
             } else if (is_process_option(node.name)) {
                 if (auto parsed=parse_process_option(node,result); !parsed) return std::unexpected(std::move(parsed.error()));
             } else if (node.name == "dns") {

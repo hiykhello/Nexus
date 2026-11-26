@@ -394,10 +394,55 @@ outbounds {)");
                      "dns { server \"a\" type=\"local\"; }\ndns-upstream host=\"127.0.0.1\" port=53\n",
                      "dns-upstream host=\"127.0.0.1\" port=53\ndns { server \"a\" type=\"local\"; }\n"})
         if (config::parse_kdl(std::string(bad)+complete)) return 1;
-    auto multi=config::parse_kdl("workers 2\n"+complete);
-    if (!multi || multi->workers!=2 || config::parse_kdl("workers 0\n"+complete) ||
-        config::parse_kdl("workers 17\n"+complete) ||
-        config::parse_kdl("workers 1\nworkers 2\n"+complete)) return 1;
+    auto const host_h = config::detect_host_parallelism();
+    if (host_h < 1 || !config::validate_workers_spec("auto") || !config::validate_workers_spec("max") ||
+        !config::validate_workers_spec("max-0") || !config::validate_workers_spec("max-2") ||
+        !config::validate_workers_spec("auto-2") || !config::validate_workers_spec("max-25") ||
+        config::validate_workers_spec("") || config::validate_workers_spec("max-") ||
+        config::validate_workers_spec("auto-") || config::validate_workers_spec("max-abc") ||
+        config::validate_workers_spec("max--1") || config::validate_workers_spec("max-+1") ||
+        config::validate_workers_spec("foo") || config::validate_workers_spec("AUTO") ||
+        config::validate_workers_spec("max-99999999999999999999")) return 1;
+    auto expect_resolve = [](std::string_view spec, std::optional<unsigned> cap, unsigned h, unsigned want) {
+        auto r = config::resolve_workers_spec(spec, cap, h);
+        return r && *r == want;
+    };
+    if (!expect_resolve("auto", {}, 20, 20) || !expect_resolve("max", {}, 20, 20) ||
+        !expect_resolve("max-2", {}, 20, 18) || !expect_resolve("auto-2", {}, 20, 18) ||
+        !expect_resolve("max-0", {}, 20, 20) || !expect_resolve("max-25", {}, 20, 1) ||
+        !expect_resolve("auto", 8, 20, 8) || !expect_resolve("max-2", 12, 20, 12) ||
+        !expect_resolve("max-2", 24, 20, 18) || !expect_resolve("auto", {}, 4, 4) ||
+        !expect_resolve("max-2", {}, 4, 2) || !expect_resolve("auto", 8, 4, 4) ||
+        !expect_resolve("max-4", {}, 2, 1) || !expect_resolve("max-1", {}, 2, 1) ||
+        !expect_resolve("auto", {}, 1, 1) || !expect_resolve("max-2", {}, 1, 1) ||
+        !expect_resolve("auto", {}, 0, 1) || config::resolve_workers_spec("auto", 0, 20).has_value() ||
+        config::resolve_workers_spec("bad", {}, 20).has_value()) return 1;
+    auto def_w = config::parse_kdl(complete);
+    if (!def_w || def_w->workers != 1 || def_w->host_parallelism != host_h || def_w->workers_clamped_from) return 1;
+    auto multi = config::parse_kdl("workers 2\n" + complete);
+    if (!multi || multi->workers != std::min(2u, host_h) ||
+        (host_h >= 2 ? multi->workers_clamped_from.has_value() : multi->workers_clamped_from != 2u)) return 1;
+    auto over_req = host_h + 5u;
+    auto clamped = config::parse_kdl("workers " + std::to_string(over_req) + "\n" + complete);
+    if (!clamped || clamped->workers != host_h || clamped->workers_clamped_from != over_req) return 1;
+    auto w_auto = config::parse_kdl("workers \"auto\"\n" + complete);
+    auto w_max = config::parse_kdl("workers \"max\"\n" + complete);
+    auto w_m2 = config::parse_kdl("workers \"max-2\"\n" + complete);
+    auto w_a2 = config::parse_kdl("workers \"auto-2\"\n" + complete);
+    auto w_m25 = config::parse_kdl("workers \"max-25\"\n" + complete);
+    auto w_cap8 = config::parse_kdl("workers \"auto\" max=8\n" + complete);
+    auto w_m2c12 = config::parse_kdl("workers \"max-2\" max=12\n" + complete);
+    auto want_m2 = host_h > 2 ? host_h - 2 : 1u;
+    if (!w_auto || w_auto->workers != host_h || w_auto->workers_clamped_from ||
+        !w_max || w_max->workers != host_h || !w_m2 || w_m2->workers != want_m2 ||
+        !w_a2 || w_a2->workers != want_m2 || !w_m25 || w_m25->workers != (host_h > 25 ? host_h - 25 : 1u) ||
+        !w_cap8 || w_cap8->workers != std::min(host_h, 8u) ||
+        !w_m2c12 || w_m2c12->workers != std::min(want_m2, 12u)) return 1;
+    for (auto bad_w : {"workers 0\n", "workers -1\n", "workers 4 max=2\n", "workers \"auto\" max=0\n",
+                       "workers \"auto\" max=-1\n", "workers \"auto\" other=1\n", "workers \"\"\n",
+                       "workers \"max-\"\n", "workers \"max-abc\"\n", "workers \"max--1\"\n",
+                       "workers \"foo\"\n", "workers 1\nworkers 2\n", "workers 1 { child; }\n"})
+        if (config::parse_kdl(std::string(bad_w) + complete)) return 1;
     auto mixed = config::parse_kdl(replace(complete, "type=\"socks5\"", "type=\"mixed\""));
     if (!mixed || mixed->inbound != config::Inbound::mixed) return 1;
     auto authenticated = replace(complete, "authentication \"none\"", "authentication \"password\" username=\"alice\" password-file=\"/tmp/password\"");

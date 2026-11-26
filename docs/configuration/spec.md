@@ -495,6 +495,14 @@ inbounds {
 
 原生 Shadowsocks UDP 按已验证的会话 ID 保留原代的路由和回包。新会话由当前代接入，旧代会话在排空期内仍可使用原端口。相同密钥跨代共享防重放记录。
 
+顶层 `workers` 设置每个 TCP/UDP 监听器的工作线程数，省略时默认 `1`（无硬编码 `16` 上限，上限由当前宿主机有效并行度 `H` 动态决定）。在 Linux 上，`H` 取 `sched_getaffinity` 亲和核心数、cgroup v2 `cpu.max`（沿父目录向上回溯至 `/sys/fs/cgroup`）或 cgroup v1 `cpu.cfs_quota_us/cpu.cfs_period_us` 配额上限（向上取整，下限 1）以及 `std::thread::hardware_concurrency()` 的正值最小值；在非 Linux 平台使用 `max(1, hardware_concurrency())`。支持以下写法：
+
+- 固定正整数：`workers <N>`（`N >= 1`，不接受 `max=` 属性）；当 `N > H` 时自动夹紧至 `H` 并在启动日志记录 `warn` 告警。
+- 动态字符串：`workers "auto"`、`workers "max"`（解析为 `H`），或 `workers "max-<K>"`、`workers "auto-<K>"`（`K >= 0` 非负整数，解析为 `H > K ? H - K : 1`）。
+- 可选上限属性（仅字符串写法支持）：`workers "auto" max=8`、`workers "max-2" max=12`（`max >= 1`，最终解析为 `min(resolved, max)`）。
+
+需要单 worker 的特性（如 Tailscale 出站、VLESS XHTTP、Naive H3、HTTP/3、MASQUE、TUIC、Unix socket 入站）仍要求最终解析值为 `1`。修改 `workers` 需要重启进程。
+
 顶层 `shutdown-grace-ms 1500` 为普通 Server 监听设置停机排空时间，范围为 0 至 30000 毫秒，默认 0。收到 SIGINT 或 SIGTERM 后先停止接收新连接，现有会话可使用剩余时间完成，达到期限后取消。独立包设备及独立协议宿主沿用各自的停止流程。
 
 顶层 `sessions-per-listener 256` 设置各监听器的 Server 会话配额，范围为 1 至 4096，默认 64。一个监听器的 worker 共用同一配额，各监听器独立记账。使用 Server 配额的协议子流也计入其中，独立数据报和包设备仍使用各自的资源预算。超限的普通 TCP 接入会关闭，已有会话继续转发。修改配额需重启。
