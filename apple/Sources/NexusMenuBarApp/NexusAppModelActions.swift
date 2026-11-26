@@ -35,7 +35,7 @@ extension NexusAppModel {
         if let saved = try? await store.save(hostConfig) {
             hostConfig = saved
             rebuildControlClient(fromListen: saved.controlHttpListen)
-            statusSummary = "主机设置已保存至 SQLite"
+            statusSummary = "代理设置已保存"
         }
     }
 
@@ -91,6 +91,7 @@ extension NexusAppModel {
             statusSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             isRunning = false
+            stopLiveStreams()
             statusSummary = "未连接: \(error.localizedDescription)"
         }
     }
@@ -298,9 +299,9 @@ extension NexusAppModel {
         do {
             try await clientDatabase.shrinkMemory()
             residentMemoryMiB = TunnelMemoryMonitor.currentResidentMemoryMiB()
-            statusSummary = "SQLite 内存已回收 (WAL 检查点完成)"
+            statusSummary = "本地存储内存已回收"
         } catch {
-            statusSummary = "SQLite 回收失败: \(error.localizedDescription)"
+            statusSummary = "本地存储内存回收失败: \(error.localizedDescription)"
         }
     }
 

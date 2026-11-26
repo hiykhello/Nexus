@@ -204,6 +204,8 @@ public struct StatusSnapshot: Sendable, Equatable, Codable {
         case activeSessions = "active_sessions"
         case uploadBytesTotal = "upload_bytes_total"
         case downloadBytesTotal = "download_bytes_total"
+        case uploadBytes = "upload_bytes"
+        case downloadBytes = "download_bytes"
     }
 
     public init(
@@ -234,8 +236,24 @@ public struct StatusSnapshot: Sendable, Equatable, Codable {
         self.listeners = try c.decodeIfPresent(Int.self, forKey: .listeners) ?? 0
         self.controlGeneration = HttpControlClient.decodeFlexibleUInt64(c, key: .controlGeneration)
         self.activeSessions = HttpControlClient.decodeFlexibleUInt64(c, key: .activeSessions)
-        self.uploadBytesTotal = HttpControlClient.decodeFlexibleUInt64(c, key: .uploadBytesTotal)
-        self.downloadBytesTotal = HttpControlClient.decodeFlexibleUInt64(c, key: .downloadBytesTotal)
+        self.uploadBytesTotal = c.contains(.uploadBytesTotal)
+            ? HttpControlClient.decodeFlexibleUInt64(c, key: .uploadBytesTotal)
+            : HttpControlClient.decodeFlexibleUInt64(c, key: .uploadBytes)
+        self.downloadBytesTotal = c.contains(.downloadBytesTotal)
+            ? HttpControlClient.decodeFlexibleUInt64(c, key: .downloadBytesTotal)
+            : HttpControlClient.decodeFlexibleUInt64(c, key: .downloadBytes)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(instance, forKey: .instance)
+        try c.encode(state, forKey: .state)
+        try c.encode(workers, forKey: .workers)
+        try c.encode(listeners, forKey: .listeners)
+        try c.encode(controlGeneration, forKey: .controlGeneration)
+        try c.encode(activeSessions, forKey: .activeSessions)
+        try c.encode(uploadBytesTotal, forKey: .uploadBytesTotal)
+        try c.encode(downloadBytesTotal, forKey: .downloadBytesTotal)
     }
 }
 

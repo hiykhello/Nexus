@@ -30,7 +30,7 @@ public enum WorkspaceProfileKind: String, Codable, Sendable, Equatable, Hashable
         case .customOutbound: return "自定义出站"
         case .policyGroup: return "策略组"
         case .proxyChain: return "代理链"
-        case .fullCustomKdl: return "完整 KDL"
+        case .fullCustomKdl: return "高级自定义配置"
         }
     }
 }

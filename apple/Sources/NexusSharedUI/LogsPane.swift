@@ -76,7 +76,7 @@ public struct LogsPane: View {
                 ContentUnavailableView(
                     "暂无日志",
                     systemImage: "text.alignleft",
-                    description: Text("连接核心后将通过 SSE /v1/logs?stream=1 实时流式输出日志。")
+                    description: Text("连接核心后将实时流式输出运行日志。")
                 )
             } else {
                 List(visibleLogs) { entry in
@@ -147,7 +147,7 @@ public struct LogsPane: View {
 
     private var levelPillsRow: some View {
         HStack(spacing: 6) {
-            StatusBadgeView(isOnline: isStreaming && !isPaused, label: isPaused ? "已暂停" : (isStreaming ? "SSE 实时" : "轮询"))
+            StatusBadgeView(isOnline: isStreaming && !isPaused, label: isPaused ? "已暂停" : (isStreaming ? "实时流" : "轮询"))
             ForEach(levelFilters, id: \.self) { level in
                 let active = selectedLevelFilter == level
                 Button {

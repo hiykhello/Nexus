@@ -275,6 +275,14 @@ public struct WorkspaceDnsConfig: Codable, Sendable, Equatable {
         self.simple = try c.decodeIfPresent(WorkspaceSimpleDnsConfig.self, forKey: .simple) ?? WorkspaceSimpleDnsConfig()
         self.rawKdl = try c.decodeIfPresent(String.self, forKey: .rawKdl) ?? ""
     }
+
+    public var displayModeTitle: String {
+        switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "simple", "": return "标准模式"
+        case "raw_kdl", "raw", "custom": return "自定义 DNS"
+        default: return "自定义"
+        }
+    }
 }
 
 public struct WorkspaceRuleSetAsset: Codable, Sendable, Equatable {

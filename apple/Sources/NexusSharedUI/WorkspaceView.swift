@@ -2,7 +2,7 @@
 import SwiftUI
 import NexusCoreBridge
 
-/// Cross-platform Workspace & Subscriptions management screen wired to SQLite `WorkspaceStore`.
+/// Cross-platform Workspace & Subscriptions management screen backed by the app-managed local store.
 public struct WorkspaceView: View {
     public let workspace: WorkspaceDocument
     public let activeProfileID: String
@@ -110,7 +110,7 @@ public struct WorkspaceView: View {
     private var summaryBanner: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("SQLite 工作区 · r\(workspace.revision)")
+                Text("工作区 · r\(workspace.revision)")
                     .font(.headline.monospacedDigit())
                 Text("\(workspace.profiles.count) 配置 · \(workspace.subscriptions.count) 订阅 · \(workspace.routingProfiles.count) 路由方案")
                     .font(.caption.monospacedDigit())
@@ -132,7 +132,7 @@ public struct WorkspaceView: View {
             }
             Button("回收内存", action: onCompactDatabase)
                 .buttonStyle(.bordered)
-                .accessibilityHint("执行 SQLite shrink_memory 与 WAL 检查点")
+                .accessibilityHint("回收本地缓存与存储占用的内存")
         }
         .bentoCard(padding: 12)
     }
@@ -166,7 +166,7 @@ public struct WorkspaceView: View {
                 ContentUnavailableView(
                     "暂无订阅源",
                     systemImage: "antenna.radiowaves.left.and.right",
-                    description: Text("订阅更新元数据将持久化在 nexus-client.db 的 subscriptions 表。")
+                    description: Text("添加订阅源后，节点与流量配额信息将自动保存在应用本地。")
                 )
             } else {
                 List(workspace.subscriptions) { sub in
@@ -191,7 +191,7 @@ public struct WorkspaceView: View {
                 .bentoCard(padding: 12)
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("DNS 配置 (\(workspace.dns.mode))")
+                    Text("DNS 配置 (\(workspace.dns.displayModeTitle))")
                         .font(.headline)
                     let simple = workspace.dns.simple
                     Text("FakeIP: \(simple.fakeIpEnabled ? "已开启 (\(simple.fakeIpV4Pool))" : "已关闭") · 策略: \(simple.strategy)")

@@ -114,9 +114,13 @@ final class NexusAppModel {
     var lastSampleDown: UInt64 = 0
     var lastSampleAt: Date?
     var monitorTask: Task<Void, Never>?
+    var wsStreamTask: Task<Void, Never>?
     var statusStreamTask: Task<Void, Never>?
+    var connectionsStreamTask: Task<Void, Never>?
     var logStreamTask: Task<Void, Never>?
     var elevationSaveTask: Task<Void, Never>?
+    var isWebSocketActive = false
+    var liveStreamGeneration: UInt64 = 0
 
     init() {
         let sockPath = "/var/run/org.nexus.apple/c.sock"
@@ -192,50 +196,131 @@ final class NexusAppModel {
     }
 
     func startLiveStreams() {
-        if statusStreamTask == nil {
-            let client = httpControl
-            statusStreamTask = Task { [weak self] in
-                do {
-                    for try await snap in client.streamStatus(intervalMs: 1000) {
-                        guard let self, !Task.isCancelled else { break }
-                        self.applyStatusSnapshot(snap)
-                    }
-                } catch {}
-                self?.statusStreamTask = nil
-            }
+        if wsStreamTask != nil { return }
+        if statusStreamTask != nil || connectionsStreamTask != nil || logStreamTask != nil {
+            if !isLogPaused && logStreamTask == nil { startSseLogStream() }
+            return
         }
-        if logStreamTask == nil && !isLogPaused {
-            let client = httpControl
-            let sinceSeq = logs.last?.seq ?? 0
-            isLogStreaming = true
-            logStreamTask = Task { [weak self] in
-                do {
-                    for try await entry in client.streamLogs(level: "trace", since: sinceSeq) {
-                        guard let self, !Task.isCancelled else { break }
-                        if !self.isLogPaused { self.appendLogEntry(entry) }
-                    }
-                } catch {}
-                self?.isLogStreaming = false
-                self?.logStreamTask = nil
+        let client = httpControl
+        let sinceSeq = logs.last?.seq ?? 0
+        let generation = liveStreamGeneration
+        wsStreamTask = Task { [weak self] in
+            var shouldFallbackToSse = false
+            do {
+                for try await event in client.streamControlWebSocket(
+                    channels: ControlWsChannel.allCases,
+                    since: sinceSeq,
+                    intervalMs: 1000
+                ) {
+                    guard let self, !Task.isCancelled, self.liveStreamGeneration == generation else { break }
+                    self.handleControlWsEvent(event)
+                }
+            } catch {
+                if !Task.isCancelled { shouldFallbackToSse = true }
+            }
+            guard let self, self.liveStreamGeneration == generation else { return }
+            self.wsStreamTask = nil
+            self.isWebSocketActive = false
+            if self.logStreamTask == nil { self.isLogStreaming = false }
+            if shouldFallbackToSse && !Task.isCancelled && self.isRunning {
+                self.startSseFallbackStreams()
             }
         }
     }
 
+    func handleControlWsEvent(_ event: ControlWsEvent) {
+        switch event {
+        case .connected:
+            isWebSocketActive = true
+            isLogStreaming = !isLogPaused
+        case .authOk, .subscribed, .pong:
+            break
+        case .log(let entry):
+            if !isLogPaused { appendLogEntry(entry) }
+        case .connections(let snap):
+            connections = snap.connections
+        case .metrics(let snap):
+            applyStatusSnapshot(snap)
+        case .serverError(_, let message):
+            if !message.isEmpty { statusSummary = "控制流错误: \(message)" }
+        }
+    }
+
+    func startSseFallbackStreams() {
+        let client = httpControl
+        let generation = liveStreamGeneration
+        if statusStreamTask == nil {
+            statusStreamTask = Task { [weak self] in
+                do {
+                    for try await snap in client.streamStatus(intervalMs: 1000) {
+                        guard let self, !Task.isCancelled, self.liveStreamGeneration == generation else { break }
+                        self.applyStatusSnapshot(snap)
+                    }
+                } catch {}
+                guard let self, self.liveStreamGeneration == generation else { return }
+                self.statusStreamTask = nil
+            }
+        }
+        if connectionsStreamTask == nil {
+            connectionsStreamTask = Task { [weak self] in
+                do {
+                    for try await conns in client.streamConnections(intervalMs: 1000) {
+                        guard let self, !Task.isCancelled, self.liveStreamGeneration == generation else { break }
+                        self.connections = conns
+                    }
+                } catch {}
+                guard let self, self.liveStreamGeneration == generation else { return }
+                self.connectionsStreamTask = nil
+            }
+        }
+        if !isLogPaused && logStreamTask == nil {
+            startSseLogStream()
+        }
+    }
+
+    private func startSseLogStream() {
+        let client = httpControl
+        let sinceSeq = logs.last?.seq ?? 0
+        let generation = liveStreamGeneration
+        isLogStreaming = true
+        logStreamTask = Task { [weak self] in
+            do {
+                for try await entry in client.streamLogs(level: "trace", since: sinceSeq) {
+                    guard let self, !Task.isCancelled, self.liveStreamGeneration == generation else { break }
+                    if !self.isLogPaused { self.appendLogEntry(entry) }
+                }
+            } catch {}
+            guard let self, self.liveStreamGeneration == generation else { return }
+            self.isLogStreaming = false
+            self.logStreamTask = nil
+        }
+    }
+
     func stopLiveStreams() {
+        liveStreamGeneration &+= 1
+        wsStreamTask?.cancel()
+        wsStreamTask = nil
         statusStreamTask?.cancel()
         statusStreamTask = nil
+        connectionsStreamTask?.cancel()
+        connectionsStreamTask = nil
         logStreamTask?.cancel()
         logStreamTask = nil
+        isWebSocketActive = false
         isLogStreaming = false
     }
 
     func toggleLogPause() {
         isLogPaused.toggle()
+        if isWebSocketActive {
+            isLogStreaming = !isLogPaused
+            return
+        }
         if isLogPaused {
             logStreamTask?.cancel()
             logStreamTask = nil
             isLogStreaming = false
-        } else {
+        } else if isRunning {
             startLiveStreams()
         }
     }

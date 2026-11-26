@@ -146,7 +146,14 @@ final class WorkspaceAndSyncTests: XCTestCase {
         XCTAssertEqual(decoded.profiles[0].kind.badgeTitle, "节点")
         XCTAssertEqual(decoded.profiles[2].kind.badgeTitle, "策略组")
         XCTAssertEqual(decoded.profiles[3].kind.badgeTitle, "代理链")
-        XCTAssertEqual(decoded.profiles[4].kind.badgeTitle, "完整 KDL")
+        XCTAssertEqual(decoded.profiles[4].kind.badgeTitle, "高级自定义配置")
+        for kind in WorkspaceProfileKind.allCases {
+            XCTAssertFalse(kind.badgeTitle.isEmpty)
+            XCTAssertFalse(kind.badgeTitle.lowercased().contains("kdl"))
+        }
+        XCTAssertEqual(WorkspaceDnsConfig(mode: "simple").displayModeTitle, "标准模式")
+        XCTAssertEqual(WorkspaceDnsConfig(mode: "raw_kdl").displayModeTitle, "自定义 DNS")
+        XCTAssertFalse(WorkspaceDnsConfig(mode: "raw_kdl").displayModeTitle.lowercased().contains("kdl"))
 
         // Array-tolerant dns.simple.hosts decode parity with Core/Android.
         let arrayHostsJSON = """

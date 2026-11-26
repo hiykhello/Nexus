@@ -38,7 +38,7 @@ struct SettingsView: View {
                 .disabled(model.loginItemStatus != .enabled && model.loginItemStatus != .requiresApproval)
                 #endif
                 Spacer()
-                Button("保存主机配置") {
+                Button("保存代理配置") {
                     Task { await model.saveHostConfig() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -47,7 +47,7 @@ struct SettingsView: View {
     }
 
     private var tunAndElevationSection: some View {
-        Section("TUN 接管与 NEProxySettings") {
+        Section("TUN 接管与系统代理") {
             Picker("接管形态", selection: $model.backend) {
                 ForEach(AppleTunnelBackend.allCases, id: \.self) { item in
                     Text(item.rawValue).tag(item)
@@ -134,14 +134,14 @@ struct SettingsView: View {
         Section("诊断与关于") {
             LabeledContent("控制面端点", value: model.controlEndpoint)
                 .font(.caption.monospaced())
-            LabeledContent("SQLite 存储引擎", value: "WAL Schema v\(NexusClientDatabase.schemaVersion) (系统 libsqlite3)")
+            LabeledContent("本地存储", value: "应用容器自动管理 (v\(NexusClientDatabase.schemaVersion))")
                 .font(.caption.monospacedDigit())
             LabeledContent("授权 / 拒绝请求", value: "\(model.diagnostics.authorizedRequests) / \(model.diagnostics.unauthorizedRequests)")
                 .font(.caption.monospacedDigit())
             LabeledContent("常驻内存", value: String(format: "%.1f MiB", model.residentMemoryMiB))
                 .font(.caption.monospacedDigit())
             HStack {
-                Button("回收 SQLite 内存") {
+                Button("回收本地存储内存") {
                     Task { await model.compactDatabase() }
                 }
                 Spacer()

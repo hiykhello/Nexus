@@ -74,7 +74,7 @@ public struct RulesDnsView: View {
     private var dnsInspectorCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("实时 DNS 探测 (/v1/dns/query)", systemImage: "magnifyingglass.circle")
+                Label("实时 DNS 探测", systemImage: "magnifyingglass.circle")
                     .font(.headline)
                 Spacer()
                 if isQueryingDns {
@@ -122,7 +122,7 @@ public struct RulesDnsView: View {
                 Label("刷新 FakeIP", systemImage: "sparkles")
             }
             .buttonStyle(.bordered)
-            .accessibilityHint("调用 POST /v1/cache/fakeip/flush 清理未固定 FakeIP 映射")
+            .accessibilityHint("清理未固定的 FakeIP 映射缓存")
 
             Button(action: onClearDnsCache) {
                 Label("清空 DNS 缓存", systemImage: "trash")
@@ -147,7 +147,7 @@ public struct RulesDnsView: View {
     private var rulesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("生效路由规则 (/v1/rules)")
+                Text("生效路由规则")
                     .font(.headline)
                 Text("\(filteredRules.count) / \(rules.count)")
                     .font(.caption.monospacedDigit())
