@@ -2,10 +2,8 @@ package org.nexus.android.ui
 
 import android.content.ClipboardManager
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,30 +13,27 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -90,6 +85,8 @@ fun OverviewScreen(
     onOpenConfig: () -> Unit,
     onOpenSplitTunnel: () -> Unit,
     onOpenDiagnostics: (() -> Unit)? = null,
+    routingProfileName: String = "",
+    dnsSummaryText: String = "",
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -100,8 +97,8 @@ fun OverviewScreen(
     val orderedCards = remember(dashVisibility, allowQuickNodes) {
         dashVisibility.visibleOrderedCards(allowQuickNodes = allowQuickNodes)
     }
-    val onNetworkTileClick: () -> Unit = {
-        if (running && activeExit.groupTag.isNotEmpty()) onProbeActiveGroup() else onOpenGroups()
+    val onRoutingTileClick: () -> Unit = {
+        onOpenDiagnostics?.invoke() ?: onOpenConfig()
     }
 
     val renderDashboardCard: @Composable (String) -> Unit = { cardId ->
@@ -118,13 +115,14 @@ fun OverviewScreen(
             )
             DashboardCardVisibility.KEY_NETWORK_MEMORY -> OverviewStatusMiniPair(
                 running = running,
-                activeExit = activeExit,
+                routingProfileName = routingProfileName,
+                dnsSummaryText = dnsSummaryText,
+                outboundMode = outboundMode,
                 memoryText = memoryText,
                 activeSessions = metrics.activeSessions,
                 downloadBytes = metrics.downloadBytes,
                 uploadBytes = metrics.uploadBytes,
-                isProbing = isProbing,
-                onNetworkClick = onNetworkTileClick,
+                onRoutingClick = onRoutingTileClick,
                 onConnectionsClick = onOpenConnections,
             )
             DashboardCardVisibility.KEY_QUICK_NODES -> QuickNodesCarouselCard(
@@ -313,15 +311,6 @@ private fun OutboundModeCard(
 ) {
     val ext = NexusTheme.colors
     val haptic = LocalHapticFeedback.current
-    val tunInteraction = remember { MutableInteractionSource() }
-    val primary = MaterialTheme.colorScheme.primary
-    val offTrack = ext.insetSurface
-    // Deferred Draw-phase animation (zero recompositions during toggle transition)
-    val thumbProgressState = animateFloatAsState(
-        targetValue = if (running) 1f else 0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow),
-        label = "tunThumbProgress",
-    )
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -338,55 +327,53 @@ private fun OutboundModeCard(
             onSelect = onSelectMode,
             modifier = Modifier.weight(1f),
         )
-        Surface(
+        FilterChip(
+            selected = running,
+            enabled = !starting,
             onClick = {
-                if (!starting) {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onToggleTun()
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onToggleTun()
+            },
+            shape = RoundedCornerShape(999.dp),
+            leadingIcon = {
+                if (running) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_check),
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .background(ext.muted, CircleShape),
+                    )
                 }
             },
-            enabled = !starting,
-            interactionSource = tunInteraction,
-            modifier = Modifier.height(48.dp).liquidPress(tunInteraction, pressedScale = 0.95f),
-            shape = RoundedCornerShape(999.dp),
-            color = ext.wellSurface,
-            border = BorderStroke(
-                1.dp,
-                if (running) primary.copy(alpha = 0.45f) else ext.hairline,
-            ),
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
+            label = {
                 Text(
-                    text = "TUN 模式",
-                    style = MaterialTheme.typography.labelMedium,
+                    text = "TUN",
+                    style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (running) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     softWrap = false,
                 )
-                Box(
-                    modifier = Modifier
-                        .width(34.dp)
-                        .height(20.dp)
-                        .drawBehind {
-                            val p = thumbProgressState.value.coerceIn(0f, 1f)
-                            val radius = size.height * 0.5f
-                            drawRoundRect(
-                                color = lerp(offTrack, primary, p),
-                                cornerRadius = CornerRadius(radius, radius),
-                            )
-                            val thumbR = 8.dp.toPx()
-                            val pad = 2.dp.toPx()
-                            val cx = pad + thumbR + (size.width - (pad + thumbR) * 2f) * p
-                            drawCircle(color = Color.White, radius = thumbR, center = Offset(cx, size.height * 0.5f))
-                        },
-                )
-            }
-        }
+            },
+            colors = FilterChipDefaults.filterChipColors(
+                containerColor = ext.wellSurface,
+                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
+            ),
+            border = FilterChipDefaults.filterChipBorder(
+                enabled = !starting,
+                selected = running,
+                borderColor = ext.hairline,
+                selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+            ),
+            modifier = Modifier.heightIn(min = 48.dp),
+        )
     }
 }
 

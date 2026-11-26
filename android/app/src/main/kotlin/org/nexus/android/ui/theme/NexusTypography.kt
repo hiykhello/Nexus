@@ -46,6 +46,7 @@ val NexusTypography = Typography(
         fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
         lineHeight = 20.sp,
+        fontFeatureSettings = "tnum",
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -64,6 +65,7 @@ val NexusTypography = Typography(
         fontWeight = FontWeight.Normal,
         fontSize = 12.sp,
         lineHeight = 17.sp,
+        fontFeatureSettings = "tnum",
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
@@ -83,9 +85,9 @@ val NexusTypography = Typography(
     labelSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
-        fontSize = 10.5.sp,
+        fontSize = 11.sp,
         lineHeight = 14.sp,
-        letterSpacing = 0.4.sp,
+        letterSpacing = 0.35.sp,
         fontFeatureSettings = "tnum",
     ),
 )

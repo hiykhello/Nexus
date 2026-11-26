@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,8 +37,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -67,9 +67,7 @@ private val DNS_STRATEGIES = listOf(
 
 /**
  * Focused Rules & DNS Modal Bottom Sheet backed by Layer 1 `WorkspaceDocument`:
- * - Single system bar inset handling (no redundant `.navigationBarsPadding()`)
- * - Semantic MaterialTheme primary CTA colors & 48dp touch targets
- * - Exposes Wave 30-31 `tlsFragment`, `autoDetectInterface`, `findProcess`, and `blockSvcbHttps`
+ * - Single system bar inset handling, grouped divider-separated toggles, and native M3 CTA button
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,7 +81,6 @@ internal fun RuleDnsModalSheet(
     val haptic = LocalHapticFeedback.current
     val ext = NexusTheme.colors
     val primary = MaterialTheme.colorScheme.primary
-    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val activeRp = workspaceState.document.activeRoutingProfile()
@@ -164,7 +161,7 @@ internal fun RuleDnsModalSheet(
                     onValueChange = { routePattern = it; inlineError = "" },
                     label = { Text(if (routeMatchType == "android_packages") "Android 应用包名" else "匹配目标", maxLines = 1) },
                     placeholder = { Text(hint, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -185,30 +182,40 @@ internal fun RuleDnsModalSheet(
                         }
                     }
                 }
-                ModalToggleWell(
-                    title = "TLS ClientHello 分片",
-                    subtitle = "对此条规则匹配的直连或代理 TLS 握手启用分片",
-                    checked = routeTlsFragment,
-                    onCheckedChange = { routeTlsFragment = it },
-                )
-                ModalToggleWell(
-                    title = "自动探测默认出口网卡",
-                    subtitle = "路由方案级开关，跨设备工作区同步保留",
-                    checked = autoDetectInterface,
-                    onCheckedChange = { next ->
-                        autoDetectInterface = next
-                        scope.launch { onResultFeedback(workspaceActions.onUpdateRoutingFlags(next, findProcess)) }
-                    },
-                )
-                ModalToggleWell(
-                    title = "进程与应用归属识别",
-                    subtitle = "开启路由引擎进程匹配与连接归属解析",
-                    checked = findProcess,
-                    onCheckedChange = { next ->
-                        findProcess = next
-                        scope.launch { onResultFeedback(workspaceActions.onUpdateRoutingFlags(autoDetectInterface, next)) }
-                    },
-                )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = ext.wellSurface,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        ModalToggleItem(
+                            title = "TLS ClientHello 分片",
+                            subtitle = "对此条规则匹配的直连或代理 TLS 握手启用分片",
+                            checked = routeTlsFragment,
+                            onCheckedChange = { routeTlsFragment = it },
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                        ModalToggleItem(
+                            title = "自动探测默认出口网卡",
+                            subtitle = "路由方案级开关，跨设备工作区同步保留",
+                            checked = autoDetectInterface,
+                            onCheckedChange = { next ->
+                                autoDetectInterface = next
+                                scope.launch { onResultFeedback(workspaceActions.onUpdateRoutingFlags(next, findProcess)) }
+                            },
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                        ModalToggleItem(
+                            title = "进程与应用归属识别",
+                            subtitle = "开启路由引擎进程匹配与连接归属解析",
+                            checked = findProcess,
+                            onCheckedChange = { next ->
+                                findProcess = next
+                                scope.launch { onResultFeedback(workspaceActions.onUpdateRoutingFlags(autoDetectInterface, next)) }
+                            },
+                        )
+                    }
+                }
             } else {
                 OpticalSegmentedControl(
                     options = listOf("simple" to "简易 DNS", "raw_kdl" to "高级自定义"),
@@ -221,7 +228,7 @@ internal fun RuleDnsModalSheet(
                         value = directDnsText,
                         onValueChange = { directDnsText = it },
                         label = { Text("直连 DNS（逗号分隔）") },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -229,7 +236,7 @@ internal fun RuleDnsModalSheet(
                         value = remoteDnsText,
                         onValueChange = { remoteDnsText = it },
                         label = { Text("远程代理 DNS（逗号分隔）") },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -239,31 +246,41 @@ internal fun RuleDnsModalSheet(
                             ModalSelectPill(label, dnsStrategy == key) { dnsStrategy = key }
                         }
                     }
-                    ModalToggleWell(
-                        title = "启用 FakeIP",
-                        subtitle = "IPv4 198.18.0.0/16 · IPv6 fc00::/18",
-                        checked = fakeIpEnabled,
-                        onCheckedChange = { fakeIpEnabled = it },
-                    )
-                    ModalToggleWell(
-                        title = "屏蔽 AAAA (IPv6) 解析",
-                        subtitle = "对 AAAA 查询返回 NOERROR 空应答",
-                        checked = blockAaaa,
-                        onCheckedChange = { blockAaaa = it },
-                    )
-                    ModalToggleWell(
-                        title = "屏蔽 HTTPS / SVCB 记录",
-                        subtitle = "避免浏览器通过 HTTPS RR 绕过规则或降级 ECH",
-                        checked = blockSvcbHttps,
-                        onCheckedChange = { blockSvcbHttps = it },
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = ext.wellSurface,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            ModalToggleItem(
+                                title = "启用 FakeIP",
+                                subtitle = "IPv4 198.18.0.0/16 · IPv6 fc00::/18",
+                                checked = fakeIpEnabled,
+                                onCheckedChange = { fakeIpEnabled = it },
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                            ModalToggleItem(
+                                title = "屏蔽 AAAA (IPv6) 解析",
+                                subtitle = "对 AAAA 查询返回 NOERROR 空应答",
+                                checked = blockAaaa,
+                                onCheckedChange = { blockAaaa = it },
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                            ModalToggleItem(
+                                title = "屏蔽 HTTPS / SVCB 记录",
+                                subtitle = "避免浏览器通过 HTTPS RR 绕过规则或降级 ECH",
+                                checked = blockSvcbHttps,
+                                onCheckedChange = { blockSvcbHttps = it },
+                            )
+                        }
+                    }
                 } else {
                     OutlinedTextField(
                         value = rawDnsKdl,
                         onValueChange = { rawDnsKdl = it },
                         label = { Text("高级自定义 DNS 配置") },
                         textStyle = NexusNumericStyles.codeBlock,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(12.dp),
                         minLines = 5,
                         maxLines = 8,
                         modifier = Modifier.fillMaxWidth(),
@@ -284,7 +301,7 @@ internal fun RuleDnsModalSheet(
 
             Spacer(Modifier.height(2.dp))
             val submitEnabled = !busy && (activeTab == "dns" || routePattern.trim().isNotEmpty())
-            LiquidGlassButton(
+            Button(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     busy = true
@@ -335,19 +352,14 @@ internal fun RuleDnsModalSheet(
                         onDismiss()
                     }
                 },
-                tint = if (submitEnabled) primary else ext.insetSurface,
-                surfaceBase = if (submitEnabled) lerp(primary, Color.Black, if (ext.isDark) 0.14f else 0.08f) else ext.wellSurface,
-                contentColor = if (submitEnabled) onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 enabled = submitEnabled,
-                cornerRadius = 999.dp,
-                isDark = ext.isDark,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(999.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) {
                 Text(
                     text = if (busy) "正在应用..." else if (activeTab == "route") "保存路由规则" else "保存 DNS 方案",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    color = if (submitEnabled) onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -355,30 +367,22 @@ internal fun RuleDnsModalSheet(
 }
 
 @Composable
-private fun ModalToggleWell(
+private fun ModalToggleItem(
     title: String,
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val ext = NexusTheme.colors
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = ext.wellSurface,
-        border = BorderStroke(1.dp, ext.hairline),
-        modifier = Modifier.fillMaxWidth(),
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -394,7 +398,7 @@ private fun ModalSelectPill(
         onClick = onClick,
         modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 38.dp),
         shape = RoundedCornerShape(999.dp),
-        color = if (selected) accent.copy(alpha = if (ext.isDark) 0.26f else 0.14f) else ext.wellSurface,
+        color = if (selected) accent.copy(alpha = if (ext.isDark) 0.24f else 0.14f) else ext.wellSurface,
         border = BorderStroke(if (selected) 1.2.dp else 1.dp, if (selected) accent.copy(alpha = 0.72f) else ext.hairline),
     ) {
         Text(

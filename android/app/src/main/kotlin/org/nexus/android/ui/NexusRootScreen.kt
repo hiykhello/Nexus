@@ -227,79 +227,90 @@ internal fun NexusRootScreen(
                         )
                     } else {
                         when (currentTab) {
-                            NexusTab.OVERVIEW -> OverviewScreen(
-                                heroState = heroState,
-                                powerSave = powerSave,
-                                uptimeMs = telemetry.uptimeMs,
-                                activeProfileName = activeProfileName,
-                                outboundMode = outboundMode,
-                                hasRemoteOutbound = hasRemoteOutbound,
-                                activeExit = telemetry.activeExit,
-                                quickNodes = telemetry.quickNodes,
-                                memoryText = telemetry.memoryText,
-                                isProbing = isProbingOverview,
-                                dashEditing = dashEditing,
-                                dashVisibility = dashVisibility,
-                                metrics = telemetry.metrics,
-                                downloadRateBps = telemetry.downloadRateBps,
-                                uploadRateBps = telemetry.uploadRateBps,
-                                peakRateBps = telemetry.peakRateBps,
-                                downloadSamples = telemetry.downloadSamples,
-                                uploadSamples = telemetry.uploadSamples,
-                                excludedCount = excludedPackages.size,
-                                perAppMode = perAppMode,
-                                diagnostic = diagnostic,
-                                errorDetail = lastError,
-                                windowSizeClass = windowSizeClass,
-                                contentPadding = screenPadding,
-                                onStartStop = { onStartStop(running) },
-                                onSwitchOutboundMode = { mode ->
-                                    scope.launch { diagnostic = onSwitchOutboundMode(mode) }
-                                },
-                                onDashVisibilityChange = onDashVisibilityChange,
-                                onQuickPasteImport = { raw ->
-                                    scope.launch {
-                                        diagnostic = importClipboardPayload(
-                                            raw = raw,
-                                            onImportWorkspaceShare = workspaceActions.onImportShareUri,
-                                            onImportWorkspaceBackup = workspaceActions.onImportWorkspaceJson,
-                                            onImportCustomConfig = onImportCustomConfig,
-                                            onImportSubscription = onImportSubscription,
-                                            onImportShareLink = onImportShareLink,
-                                        )
-                                        selectedTab = NexusTab.CONFIG.ordinal
-                                    }
-                                },
-                                onSelectQuickNode = { node ->
-                                    val tag = telemetry.activeExit.groupTag.ifEmpty { return@OverviewScreen }
-                                    scope.launch {
-                                        val ok = onSelectMember(tag, node.name)
-                                        diagnostic = if (ok) "已切换至 ${node.name}" else "切换失败"
-                                        if (ok) telemetry.applyPrimaryGroups(onFetchGroups(), tag)
-                                    }
-                                },
-                                onProbeActiveGroup = {
-                                    val tag = telemetry.activeExit.groupTag.ifEmpty { return@OverviewScreen }
-                                    scope.launch {
-                                        isProbingOverview = true
-                                        val ok = onProbeGroup(tag)
-                                        if (ok) {
-                                            delay(650L)
-                                            telemetry.applyPrimaryGroups(onFetchGroups(), tag)
-                                            diagnostic = "测速已更新"
-                                        } else {
-                                            diagnostic = "测速失败"
+                            NexusTab.OVERVIEW -> {
+                                val activeRouting = workspaceState.document.activeRoutingProfile()
+                                val dnsCfg = workspaceState.document.dns
+                                val dnsLabel = when {
+                                    dnsCfg.mode == "raw_kdl" -> "高级 DNS · ${activeRouting.rules.size} 条规则"
+                                    dnsCfg.simple.fakeIpEnabled -> "FakeIP · ${activeRouting.rules.size} 条规则"
+                                    else -> "标准 DNS · ${activeRouting.rules.size} 条规则"
+                                }
+                                OverviewScreen(
+                                    heroState = heroState,
+                                    powerSave = powerSave,
+                                    uptimeMs = telemetry.uptimeMs,
+                                    activeProfileName = activeProfileName,
+                                    outboundMode = outboundMode,
+                                    hasRemoteOutbound = hasRemoteOutbound,
+                                    activeExit = telemetry.activeExit,
+                                    quickNodes = telemetry.quickNodes,
+                                    memoryText = telemetry.memoryText,
+                                    isProbing = isProbingOverview,
+                                    dashEditing = dashEditing,
+                                    dashVisibility = dashVisibility,
+                                    metrics = telemetry.metrics,
+                                    downloadRateBps = telemetry.downloadRateBps,
+                                    uploadRateBps = telemetry.uploadRateBps,
+                                    peakRateBps = telemetry.peakRateBps,
+                                    downloadSamples = telemetry.downloadSamples,
+                                    uploadSamples = telemetry.uploadSamples,
+                                    excludedCount = excludedPackages.size,
+                                    perAppMode = perAppMode,
+                                    diagnostic = diagnostic,
+                                    errorDetail = lastError,
+                                    windowSizeClass = windowSizeClass,
+                                    contentPadding = screenPadding,
+                                    onStartStop = { onStartStop(running) },
+                                    onSwitchOutboundMode = { mode ->
+                                        scope.launch { diagnostic = onSwitchOutboundMode(mode) }
+                                    },
+                                    onDashVisibilityChange = onDashVisibilityChange,
+                                    onQuickPasteImport = { raw ->
+                                        scope.launch {
+                                            diagnostic = importClipboardPayload(
+                                                raw = raw,
+                                                onImportWorkspaceShare = workspaceActions.onImportShareUri,
+                                                onImportWorkspaceBackup = workspaceActions.onImportWorkspaceJson,
+                                                onImportCustomConfig = onImportCustomConfig,
+                                                onImportSubscription = onImportSubscription,
+                                                onImportShareLink = onImportShareLink,
+                                            )
+                                            selectedTab = NexusTab.CONFIG.ordinal
                                         }
-                                        isProbingOverview = false
-                                    }
-                                },
-                                onClearCache = { scope.launch { diagnostic = if (onClearCache()) "缓存已清空" else "清空失败" } },
-                                onOpenGroups = { selectedTab = NexusTab.GROUPS.ordinal },
-                                onOpenConnections = { selectedTab = NexusTab.CONNECTIONS.ordinal },
-                                onOpenConfig = { selectedTab = NexusTab.CONFIG.ordinal },
-                                onOpenSplitTunnel = { showSplitTunnel = true },
-                                onOpenDiagnostics = { showDiagnostics = true },
-                            )
+                                    },
+                                    onSelectQuickNode = { node ->
+                                        val tag = telemetry.activeExit.groupTag.ifEmpty { return@OverviewScreen }
+                                        scope.launch {
+                                            val ok = onSelectMember(tag, node.name)
+                                            diagnostic = if (ok) "已切换至 ${node.name}" else "切换失败"
+                                            if (ok) telemetry.applyPrimaryGroups(onFetchGroups(), tag)
+                                        }
+                                    },
+                                    onProbeActiveGroup = {
+                                        val tag = telemetry.activeExit.groupTag.ifEmpty { return@OverviewScreen }
+                                        scope.launch {
+                                            isProbingOverview = true
+                                            val ok = onProbeGroup(tag)
+                                            if (ok) {
+                                                delay(650L)
+                                                telemetry.applyPrimaryGroups(onFetchGroups(), tag)
+                                                diagnostic = "测速已更新"
+                                            } else {
+                                                diagnostic = "测速失败"
+                                            }
+                                            isProbingOverview = false
+                                        }
+                                    },
+                                    onClearCache = { scope.launch { diagnostic = if (onClearCache()) "缓存已清空" else "清空失败" } },
+                                    onOpenGroups = { selectedTab = NexusTab.GROUPS.ordinal },
+                                    onOpenConnections = { selectedTab = NexusTab.CONNECTIONS.ordinal },
+                                    onOpenConfig = { selectedTab = NexusTab.CONFIG.ordinal },
+                                    onOpenSplitTunnel = { showSplitTunnel = true },
+                                    onOpenDiagnostics = { showDiagnostics = true },
+                                    routingProfileName = activeRouting.name,
+                                    dnsSummaryText = dnsLabel,
+                                )
+                            }
                             NexusTab.GROUPS -> GroupsScreen(
                                 onFetchGroups = onFetchGroups,
                                 onSelectMember = onSelectMember,
@@ -308,6 +319,8 @@ internal fun NexusRootScreen(
                                 onProbeOutbound = onProbeOutbound,
                                 windowSizeClass = windowSizeClass,
                                 contentPadding = innerPadding,
+                                running = running,
+                                onOpenOverview = { selectedTab = NexusTab.OVERVIEW.ordinal },
                             )
                             NexusTab.CONNECTIONS -> ConnectionsScreen(
                                 running = running,
@@ -401,6 +414,8 @@ internal fun NexusRootScreen(
                         selectedTab = selectedTab,
                         showSplitTunnel = showSplitTunnel,
                         running = running,
+                        heroState = heroState,
+                        showQuickPower = showSplitTunnel || currentTab != NexusTab.OVERVIEW,
                         onSelectTab = { idx ->
                             showSplitTunnel = false
                             selectedTab = idx

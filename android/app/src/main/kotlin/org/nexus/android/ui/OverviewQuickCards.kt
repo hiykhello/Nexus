@@ -173,7 +173,7 @@ internal fun QuickNodesCarouselCard(
             Surface(
                 onClick = onOpenGroups,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = ext.wellSurface,
                 border = BorderStroke(1.dp, ext.hairline),
             ) {
@@ -200,8 +200,8 @@ internal fun QuickNodesCarouselCard(
 }
 
 /**
- * Slim 1-row quick tools bar (`测速` / `诊断` / `分应用`) or full TrafficSplit card when
- * speed wave & status cards are hidden. Mode-aware split-tunnel pill label.
+ * Slim 1-row quick tools bar (`清缓存` / `诊断` / `分应用` — deduplicated from QuickNodes's `测速`
+ * button) or full TrafficSplit card when speed wave & status cards are hidden.
  */
 @Composable
 internal fun TrafficSplitCard(
@@ -234,14 +234,14 @@ internal fun TrafficSplitCard(
 
     val toolsRow: @Composable () -> Unit = {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            QuickActionPill(
-                label = if (isProbing) "测速中" else "测速",
-                iconRes = R.drawable.ic_speed,
-                enabled = running && !isProbing,
-                onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onProbeGroup() },
-                modifier = Modifier.weight(1f),
-            )
             if (onOpenDiagnostics != null) {
+                QuickActionPill(
+                    label = "清缓存",
+                    iconRes = R.drawable.ic_delete,
+                    enabled = running,
+                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClearCache() },
+                    modifier = Modifier.weight(1f),
+                )
                 QuickActionPill(
                     label = "诊断",
                     iconRes = R.drawable.ic_rule,
@@ -250,6 +250,13 @@ internal fun TrafficSplitCard(
                     modifier = Modifier.weight(1f),
                 )
             } else {
+                QuickActionPill(
+                    label = if (isProbing) "测速中" else "测速",
+                    iconRes = R.drawable.ic_speed,
+                    enabled = running && !isProbing,
+                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onProbeGroup() },
+                    modifier = Modifier.weight(1f),
+                )
                 QuickActionPill(
                     label = "清缓存",
                     iconRes = R.drawable.ic_delete,
@@ -296,7 +303,7 @@ internal fun TrafficSplitCard(
         return
     }
 
-    OpticalCard(modifier = modifier.fillMaxWidth(), cornerRadius = 20.dp) {
+    OpticalCard(modifier = modifier.fillMaxWidth(), cornerRadius = 16.dp) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -345,8 +352,9 @@ private fun QuickActionPill(
         enabled = enabled,
         interactionSource = interactionSource,
         modifier = modifier
-            .heightIn(min = 44.dp)
-            .liquidPress(interactionSource = interactionSource, pressedScale = 0.95f)
+            .minimumInteractiveComponentSize()
+            .heightIn(min = 48.dp)
+            .liquidPress(interactionSource = interactionSource, pressedScale = 0.97f)
             .alpha(if (enabled) 1f else 0.48f),
         shape = RoundedCornerShape(999.dp),
         color = ext.wellSurface,

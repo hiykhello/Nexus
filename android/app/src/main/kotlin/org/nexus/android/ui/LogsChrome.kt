@@ -221,13 +221,12 @@ internal fun LogLineRow(line: String) {
             .background(rowTint, RoundedCornerShape(8.dp))
             .padding(horizontal = 6.dp, vertical = 5.dp),
         verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Surface(
-            modifier = Modifier.width(40.dp),
-            shape = RoundedCornerShape(6.dp),
+            modifier = Modifier.width(30.dp),
+            shape = RoundedCornerShape(4.dp),
             color = badgeBg,
-            border = BorderStroke(1.dp, badgeFg.copy(alpha = 0.30f)),
         ) {
             Text(
                 text = parsed.level,
@@ -236,7 +235,7 @@ internal fun LogLineRow(line: String) {
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 softWrap = false,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
             )
         }
         if (parsed.timestamp.isNotEmpty()) {

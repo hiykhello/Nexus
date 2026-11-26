@@ -1,10 +1,9 @@
 package org.nexus.android.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,10 +33,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -277,7 +276,26 @@ fun ConnectionsScreen(
             FilledTonalIconButton(onClick = { scope.launch { connections = latestFetch() } }) {
                 Icon(painterResource(R.drawable.ic_refresh), "刷新", Modifier.size(20.dp))
             }
-            if (windowSizeClass != NexusWindowSizeClass.COMPACT) {
+            if (windowSizeClass == NexusWindowSizeClass.COMPACT) {
+                FilledTonalIconButton(
+                    enabled = connections.isNotEmpty(),
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        scope.launch {
+                            if (onCloseAllConnections()) {
+                                dismissDetail()
+                                connections = latestFetch()
+                            }
+                        }
+                    },
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = ext.dangerContainer,
+                        contentColor = ext.danger,
+                    ),
+                ) {
+                    Icon(painterResource(R.drawable.ic_delete), "全部断开", Modifier.size(18.dp))
+                }
+            } else {
                 Surface(
                     onClick = {
                         if (connections.isNotEmpty()) {
@@ -291,7 +309,7 @@ fun ConnectionsScreen(
                         }
                     },
                     enabled = connections.isNotEmpty(),
-                    modifier = Modifier.heightIn(min = 44.dp),
+                    modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 48.dp),
                     shape = RoundedCornerShape(999.dp),
                     color = if (connections.isNotEmpty()) ext.dangerContainer else ext.wellSurface,
                     border = BorderStroke(1.dp, if (connections.isNotEmpty()) ext.danger.copy(alpha = 0.40f) else ext.hairline),
@@ -323,33 +341,13 @@ fun ConnectionsScreen(
             compact = windowSizeClass == NexusWindowSizeClass.COMPACT,
         )
 
-        if (windowSizeClass == NexusWindowSizeClass.COMPACT || isPaused) {
+        if (isPaused) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (isPaused) {
-                    StatusPill(text = "实时刷新已暂停", containerColor = ext.warningContainer, contentColor = ext.warning)
-                }
-                Box(modifier = Modifier.weight(1f))
-                if (windowSizeClass == NexusWindowSizeClass.COMPACT) {
-                    OutlinedButton(
-                        enabled = connections.isNotEmpty(),
-                        shape = RoundedCornerShape(999.dp),
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            scope.launch {
-                                if (onCloseAllConnections()) {
-                                    dismissDetail()
-                                    connections = latestFetch()
-                                }
-                            }
-                        },
-                    ) {
-                        Text("全部断开")
-                    }
-                }
+                StatusPill(text = "实时刷新已暂停", containerColor = ext.warningContainer, contentColor = ext.warning)
             }
         }
 
@@ -408,8 +406,8 @@ fun ConnectionsScreen(
 
             AnimatedVisibility(
                 visible = twoPane && activeDetail != null,
-                enter = expandHorizontally(expandFrom = Alignment.End) + fadeIn(),
-                exit = shrinkHorizontally(shrinkTowards = Alignment.End) + fadeOut(),
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(120)),
             ) {
                 activeDetail?.let { detail ->
                     Column(
@@ -419,7 +417,7 @@ fun ConnectionsScreen(
                             .padding(start = 14.dp, bottom = bottomPad + 8.dp),
                     ) {
                         OpticalCard(
-                            cornerRadius = 24.dp,
+                            cornerRadius = 16.dp,
                             borderColor = primary.copy(alpha = 0.55f),
                         ) {
                             ConnectionDetailContent(

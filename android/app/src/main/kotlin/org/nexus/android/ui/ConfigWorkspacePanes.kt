@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,18 +20,21 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -95,13 +99,13 @@ internal fun LazyListScope.profilesPillarItems(
         item(key = "profiles_empty", contentType = "empty") {
             val ext = NexusTheme.colors
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = ext.wellSurface,
                 border = BorderStroke(1.dp, ext.hairline),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    text = "暂无节点档案。粘贴 nexus:// 分享包、节点链接或拉取订阅即可开始。",
+                    text = "暂无节点档案。粘贴分享包、节点链接或拉取订阅即可开始。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(14.dp),
@@ -147,25 +151,121 @@ private fun ProfilesHeaderCard(
     val ext = NexusTheme.colors
     var shareUri by rememberSaveable { mutableStateOf("") }
     var interruptOnSwitch by rememberSaveable { mutableStateOf(false) }
+    var createMenuExpanded by remember { mutableStateOf(false) }
 
-    OpticalCard(cornerRadius = 20.dp) {
-        Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("节点与多态档案", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                StatusPill("${state.document.profiles.size} 项", ext.insetSurface, MaterialTheme.colorScheme.onSurfaceVariant, mono = true)
+    OpticalCard(cornerRadius = 16.dp) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "节点与档案",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                StatusPill(
+                    text = "${state.document.profiles.size} 项",
+                    containerColor = ext.insetSurface,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    mono = true,
+                )
+                Spacer(Modifier.weight(1f))
+                Box {
+                    FilledTonalButton(
+                        onClick = { createMenuExpanded = true },
+                        shape = RoundedCornerShape(999.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 38.dp),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_add), null, Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("新建", maxLines = 1, softWrap = false)
+                    }
+                    DropdownMenu(
+                        expanded = createMenuExpanded,
+                        onDismissRequest = { createMenuExpanded = false },
+                        shape = RoundedCornerShape(14.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("新建策略组 (自动测速)") },
+                            onClick = {
+                                createMenuExpanded = false
+                                val nodes = state.document.profiles.filter { it.kind == ProfileKind.NODE }.take(4).map { it.id }
+                                val item = ProfileItem(
+                                    id = WorkspaceStore.newProfileId("grp"),
+                                    remarks = "自动测速组",
+                                    kind = ProfileKind.POLICY_GROUP,
+                                    policyGroup = PolicyGroupConfig(
+                                        strategy = "url-test",
+                                        memberIds = nodes,
+                                        interruptExistConnections = interruptOnSwitch,
+                                    ),
+                                )
+                                scope.launch { onFeedback(actions.onAddProfile(item)) }
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("新建策略组切线断开旧连接") },
+                            trailingIcon = if (interruptOnSwitch) {
+                                {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_check),
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            } else null,
+                            onClick = { interruptOnSwitch = !interruptOnSwitch },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("新建双跳代理链") },
+                            onClick = {
+                                createMenuExpanded = false
+                                val hops = state.document.profiles.filter { it.kind == ProfileKind.NODE }.take(2).map { it.id }
+                                val item = ProfileItem(
+                                    id = WorkspaceStore.newProfileId("chain"),
+                                    remarks = "双跳代理链",
+                                    kind = ProfileKind.PROXY_CHAIN,
+                                    proxyChain = ProxyChainConfig(hopIds = hops),
+                                )
+                                scope.launch { onFeedback(actions.onAddProfile(item)) }
+                            },
+                        )
+                        HorizontalDivider(color = ext.hairline)
+                        DropdownMenuItem(
+                            text = { Text("导出工作区备份") },
+                            leadingIcon = { Icon(painterResource(R.drawable.ic_copy), null, Modifier.size(16.dp)) },
+                            onClick = {
+                                createMenuExpanded = false
+                                val json = WorkspaceJsonCodec.encode(state.document)
+                                context.getSystemService(ClipboardManager::class.java)
+                                    ?.setPrimaryClip(ClipData.newPlainText("nexus-workspace", json))
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onFeedback("已复制工作区备份（不含本机端口与凭据）")
+                            },
+                        )
+                    }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     value = shareUri,
                     onValueChange = { shareUri = it },
-                    placeholder = { Text("粘贴 nexus:// 或节点分享链接", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    shape = RoundedCornerShape(14.dp),
+                    placeholder = { Text("粘贴节点链接或分享包", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    shape = RoundedCornerShape(999.dp),
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
                 FilledTonalButton(
                     enabled = shareUri.isNotBlank(),
                     shape = RoundedCornerShape(999.dp),
+                    modifier = Modifier.heightIn(min = 48.dp),
                     onClick = {
                         val raw = shareUri.trim()
                         shareUri = ""
@@ -176,84 +276,6 @@ private fun ProfilesHeaderCard(
                         }
                     },
                 ) { Text("导入") }
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val nodes = state.document.profiles.filter { it.kind == ProfileKind.NODE }.take(4).map { it.id }
-                        val item = ProfileItem(
-                            id = WorkspaceStore.newProfileId("grp"),
-                            remarks = "自动测速组",
-                            kind = ProfileKind.POLICY_GROUP,
-                            policyGroup = PolicyGroupConfig(
-                                strategy = "url-test",
-                                memberIds = nodes,
-                                interruptExistConnections = interruptOnSwitch,
-                            ),
-                        )
-                        scope.launch { onFeedback(actions.onAddProfile(item)) }
-                    },
-                    shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
-                    modifier = Modifier.weight(1f),
-                ) { Text("+ 策略组", maxLines = 1) }
-                OutlinedButton(
-                    onClick = {
-                        val hops = state.document.profiles.filter { it.kind == ProfileKind.NODE }.take(2).map { it.id }
-                        val item = ProfileItem(
-                            id = WorkspaceStore.newProfileId("chain"),
-                            remarks = "双跳代理链",
-                            kind = ProfileKind.PROXY_CHAIN,
-                            proxyChain = ProxyChainConfig(hopIds = hops),
-                        )
-                        scope.launch { onFeedback(actions.onAddProfile(item)) }
-                    },
-                    shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
-                    modifier = Modifier.weight(1f),
-                ) { Text("+ 代理链", maxLines = 1) }
-            }
-            FilterChip(
-                selected = interruptOnSwitch,
-                onClick = { interruptOnSwitch = !interruptOnSwitch },
-                label = { Text("新建策略组切换时断开旧连接") },
-            )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        val json = WorkspaceJsonCodec.encode(state.document)
-                        context.getSystemService(ClipboardManager::class.java)
-                            ?.setPrimaryClip(ClipData.newPlainText("nexus-workspace", json))
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onFeedback("已复制工作区备份（不含本机端口与凭据）")
-                    },
-                    shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(painterResource(R.drawable.ic_copy), null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("导出工作区", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                OutlinedButton(
-                    onClick = {
-                        val raw = context.getSystemService(ClipboardManager::class.java)
-                            ?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
-                        when {
-                            raw.isEmpty() -> onFeedback("剪贴板为空")
-                            raw.startsWith(WorkspaceSyncBridge.SHARE_URI_PREFIX) ->
-                                scope.launch { onFeedback(actions.onImportShareUri(raw)) }
-                            else -> scope.launch { onFeedback(actions.onImportWorkspaceJson(raw)) }
-                        }
-                    },
-                    shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(painterResource(R.drawable.ic_paste), null, Modifier.size(14.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("导入 nexus://", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
             }
         }
     }
@@ -278,10 +300,10 @@ private fun ProfileListRow(
         },
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = if (active) primary.copy(alpha = if (ext.isDark) 0.18f else 0.10f) else ext.cardGradientTop,
+        color = if (active) primary.copy(alpha = if (ext.isDark) 0.16f else 0.08f) else ext.cardSurface,
         border = BorderStroke(
-            if (active) 1.3.dp else 1.dp,
-            if (active) primary.copy(alpha = 0.78f) else ext.hairline,
+            if (active) 1.5.dp else 1.dp,
+            if (active) primary.copy(alpha = 0.75f) else ext.hairline,
         ),
     ) {
         Row(
@@ -324,7 +346,7 @@ private fun ProfileListRow(
             ProfileKindBadge(profile.kind)
             if (profile.kind != ProfileKind.FULL_CUSTOM_KDL) {
                 IconButton(onClick = onExportShare) {
-                    Icon(painterResource(R.drawable.ic_share), "分享 nexus://", tint = primary, modifier = Modifier.size(18.dp))
+                    Icon(painterResource(R.drawable.ic_share), "分享链接", tint = primary, modifier = Modifier.size(18.dp))
                 }
             }
             if (!active) {

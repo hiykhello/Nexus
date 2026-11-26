@@ -15,9 +15,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,8 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -69,7 +67,6 @@ fun ConnectionDetailContent(
 ) {
     val ext = NexusTheme.colors
     val primary = MaterialTheme.colorScheme.primary
-    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     var copiedHost by remember(detail.id) { mutableStateOf(false) }
@@ -119,21 +116,12 @@ fun ConnectionDetailContent(
             )
             if (showDismissButton) {
                 IconButton(onClick = onDismiss) {
-                    Surface(
-                        shape = CircleShape,
-                        color = ext.wellSurface,
-                        border = BorderStroke(1.dp, ext.hairline),
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_close),
-                                contentDescription = "关闭",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    }
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = "关闭",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
         }
@@ -180,7 +168,7 @@ fun ConnectionDetailContent(
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(12.dp),
             color = ext.wellSurface,
             border = BorderStroke(1.dp, ext.hairline),
         ) {
@@ -247,31 +235,19 @@ fun ConnectionDetailContent(
                     selectedKey = ruleTargetMode,
                     onSelect = { ruleTargetMode = it },
                 )
-                LiquidGlassButton(
+                Button(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         val action = if (ruleTargetMode == "reject") "reject" else "route"
                         val outbound = if (ruleTargetMode == "direct") "direct" else "proxy"
                         onCreateRule(ruleHost, action, outbound)
                     },
-                    tint = primary,
-                    surfaceBase = lerp(primary, Color.Black, if (ext.isDark) 0.16f else 0.08f),
-                    contentColor = onPrimary,
-                    cornerRadius = 22.dp,
-                    isDark = ext.isDark,
-                    elevation = 7.dp,
-                    pressedScale = 0.96f,
-                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(999.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(painter = painterResource(R.drawable.ic_rule), contentDescription = null, tint = onPrimary, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("保存规则", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = onPrimary, maxLines = 1)
-                    }
+                    Icon(painter = painterResource(R.drawable.ic_rule), contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("保存规则", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             }
         }

@@ -1,12 +1,6 @@
 package org.nexus.android.ui
 
 import androidx.annotation.DrawableRes
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -22,7 +16,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,7 +49,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -213,7 +209,7 @@ internal fun CompactBottomChrome(
             color = ext.hairline,
         )
         NavigationBar(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             tabs.forEachIndexed { idx, tab ->
                 NavigationBarItem(
@@ -242,77 +238,61 @@ internal fun MediumNavigationRail(
     selectedTab: Int,
     showSplitTunnel: Boolean,
     running: Boolean,
+    heroState: HeroConnectionState = if (running) HeroConnectionState.CONNECTED else HeroConnectionState.STANDBY,
+    showQuickPower: Boolean = showSplitTunnel || selectedTab != NexusTab.OVERVIEW.ordinal,
     onSelectTab: (Int) -> Unit,
     onStartStop: () -> Unit,
 ) {
     val ext = NexusTheme.colors
     val haptic = LocalHapticFeedback.current
+    val isStarting = heroState == HeroConnectionState.STARTING
+    val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
+    val (fabContainer, fabContent) = when (heroState) {
+        HeroConnectionState.CONNECTED -> ext.successContainer to ext.success
+        HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> ext.warningContainer to ext.warning
+        HeroConnectionState.ERROR -> ext.dangerContainer to ext.danger
+        HeroConnectionState.STANDBY -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+    }
+
     NavigationRail(
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        header = {
-            val orbTint = if (running) ext.danger else MaterialTheme.colorScheme.primary
-            val orbBase = if (running) ext.dangerContainer else MaterialTheme.colorScheme.primary
-            val orbFg = if (running) ext.danger else MaterialTheme.colorScheme.onPrimary
-            Box(
-                modifier = Modifier.padding(top = 8.dp, bottom = 12.dp).size(62.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (running) {
-                    val infinite = rememberInfiniteTransition(label = "railOrbPulse")
-                    val scaleState = infinite.animateFloat(
-                        initialValue = 1.06f,
-                        targetValue = 1.24f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1900, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Restart,
-                        ),
-                        label = "railPulseScale",
-                    )
-                    val alphaState = infinite.animateFloat(
-                        initialValue = 0.34f,
-                        targetValue = 0.0f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1900, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Restart,
-                        ),
-                        label = "railPulseAlpha",
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(54.dp)
-                            .graphicsLayer {
-                                val s = scaleState.value
-                                scaleX = s
-                                scaleY = s
-                                alpha = alphaState.value
-                            }
-                            .background(orbTint, RoundedCornerShape(18.dp)),
-                    )
-                }
-                LiquidGlassButton(
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        header = if (showQuickPower) {
+            {
+                FloatingActionButton(
                     onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onStartStop()
+                        if (!isStarting) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onStartStop()
+                        }
                     },
-                    tint = orbTint,
-                    surfaceBase = orbBase,
-                    contentColor = orbFg,
-                    cornerRadius = 17.dp,
-                    isDark = ext.isDark,
-                    elevation = 7.dp,
-                    pressedScale = 0.92f,
-                    livingSheen = running,
-                    modifier = Modifier.size(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = fabContainer,
+                    contentColor = fabContent,
+                    elevation = FloatingActionButtonDefaults.loweredElevation(defaultElevation = 0.dp),
+                    modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
                 ) {
-                    Icon(
-                        painter = painterResource(if (running) R.drawable.ic_stop else R.drawable.ic_play),
-                        contentDescription = if (running) "断开" else "连接",
-                        tint = orbFg,
-                        modifier = Modifier.size(20.dp),
-                    )
+                    if (isStarting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.2.dp,
+                            color = fabContent,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(
+                                when {
+                                    heroState == HeroConnectionState.ERROR -> R.drawable.ic_refresh
+                                    isLive -> R.drawable.ic_stop
+                                    else -> R.drawable.ic_play
+                                },
+                            ),
+                            contentDescription = if (isLive) "断开" else "连接",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
-        },
+        } else null,
     ) {
         tabs.forEachIndexed { idx, tab ->
             NavigationRailItem(
@@ -349,7 +329,7 @@ internal fun ExpandedDrawerContent(
     val running = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
     PermanentDrawerSheet(
         modifier = Modifier.width(236.dp),
-        drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        drawerContainerColor = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Column(
             modifier = Modifier.fillMaxHeight().padding(vertical = 12.dp),
@@ -390,7 +370,7 @@ internal fun ExpandedDrawerContent(
             Surface(
                 onClick = onStartStop,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = ext.wellSurface,
                 border = BorderStroke(1.dp, if (running) ext.success.copy(alpha = 0.45f) else ext.hairline),
             ) {
@@ -415,16 +395,27 @@ internal fun ExpandedDrawerContent(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         Text(
                             text = "↓ ${formatTrafficRate(downloadRateBps)}",
                             style = NexusNumericStyles.monoBadge,
                             color = ext.telemetryDownload,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
                         )
                         Text(
                             text = "↑ ${formatTrafficRate(uploadRateBps)}",
                             style = NexusNumericStyles.monoBadge,
                             color = ext.telemetryUpload,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }

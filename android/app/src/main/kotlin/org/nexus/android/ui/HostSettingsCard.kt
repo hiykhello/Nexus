@@ -12,12 +12,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +40,7 @@ import org.nexus.android.ui.theme.NexusTheme
 private val MTU_PRESETS = listOf(1280, 1400, 1500, 9000)
 
 /**
- * Layer 3 Android Host Adapter Settings card (`host.json`, strictly never synced with workspace).
+ * Layer 3 Android Host Adapter Settings card (local-only, never synced with workspace).
  */
 @Composable
 internal fun HostSettingsCard(
@@ -56,7 +58,7 @@ internal fun HostSettingsCard(
         onUpdateHost(host.copy(android = transform(host.android)))
     }
 
-    OpticalCard(cornerRadius = 20.dp, modifier = modifier.fillMaxWidth()) {
+    OpticalCard(cornerRadius = 16.dp, modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(15.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -97,8 +99,8 @@ internal fun HostSettingsCard(
                 OpticalSegmentedControl(
                     options = listOf(
                         AndroidPerAppMode.OFF.wire to "关闭",
-                        AndroidPerAppMode.EXCLUDE.wire to "排除所选",
-                        AndroidPerAppMode.INCLUDE.wire to "仅代理所选",
+                        AndroidPerAppMode.EXCLUDE.wire to "排除",
+                        AndroidPerAppMode.INCLUDE.wire to "仅代理",
                     ),
                     selectedKey = a.perAppMode.wire,
                     onSelect = { key -> updateAndroid { it.copy(perAppMode = AndroidPerAppMode.fromWire(key)) } },
@@ -109,7 +111,7 @@ internal fun HostSettingsCard(
                         onClick = onOpenSplitTunnel,
                         shape = RoundedCornerShape(999.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) {
                         Icon(painterResource(R.drawable.ic_apps), null, Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
@@ -144,9 +146,9 @@ internal fun HostSettingsCard(
                         Surface(
                             onClick = { updateAndroid { it.copy(tunMtu = preset) } },
                             shape = RoundedCornerShape(999.dp),
-                            color = if (active) accent.copy(alpha = if (ext.isDark) 0.25f else 0.14f) else ext.wellSurface,
+                            color = if (active) accent.copy(alpha = if (ext.isDark) 0.24f else 0.14f) else ext.wellSurface,
                             border = BorderStroke(1.dp, if (active) accent.copy(alpha = 0.72f) else ext.hairline),
-                            modifier = Modifier.weight(1f).heightIn(min = 42.dp),
+                            modifier = Modifier.weight(1f).minimumInteractiveComponentSize().heightIn(min = 48.dp),
                         ) {
                             Row(
                                 modifier = Modifier.padding(vertical = 10.dp),
@@ -165,95 +167,102 @@ internal fun HostSettingsCard(
                 }
             }
 
-            HostToggleRow(
-                title = "排除本应用出 VPN",
-                subtitle = "默认关闭：本应用经 Protect-FD 走隧道，可直接经隧道更新订阅与测速",
-                checked = a.excludeSelfFromVpn,
-                onCheckedChange = { v -> updateAndroid { it.copy(excludeSelfFromVpn = v) } },
-            )
-            HostToggleRow(
-                title = "允许应用绕过 VPN",
-                subtitle = "开启 allowBypass 允许系统应用在需要时直连物理网卡",
-                checked = a.allowBypass,
-                onCheckedChange = { v -> updateAndroid { it.copy(allowBypass = v) } },
-            )
-            HostToggleRow(
-                title = "绕过局域网地址",
-                subtitle = "私有网段直连（保留 DNS 哨兵与 FakeIPv6 路由）",
-                checked = a.bypassLan,
-                onCheckedChange = { v -> updateAndroid { it.copy(bypassLan = v) } },
-            )
-            HostToggleRow(
-                title = "启用 IPv6 隧道",
-                subtitle = "支持双栈流量与 FakeIPv6 (fc00::/18)",
-                checked = a.enableIpv6,
-                onCheckedChange = { v -> updateAndroid { it.copy(enableIpv6 = v) } },
-            )
-            HostToggleRow(
-                title = "附加 HTTP 代理到 VPN",
-                subtitle = "Android 10+ 为应用自动声明本地代理 (${a.localListen})",
-                checked = a.appendHttpProxy,
-                onCheckedChange = { v -> updateAndroid { it.copy(appendHttpProxy = v) } },
-            )
-            HostToggleRow(
-                title = "开机自动启动",
-                subtitle = "检测到异常崩溃时下次开机自动中止防循环",
-                checked = a.autoStartOnBoot,
-                onCheckedChange = { v -> updateAndroid { it.copy(autoStartOnBoot = v) } },
-            )
-            HostToggleRow(
-                title = "Doze 与息屏省电暂停轮询",
-                subtitle = "低电耗或息屏时暂停高频流量统计以降低功耗",
-                checked = a.dozePauseEnabled && a.screenOffPauseStats,
-                onCheckedChange = { v -> updateAndroid { it.copy(dozePauseEnabled = v, screenOffPauseStats = v) } },
-            )
-            HostToggleRow(
-                title = "Material You 动态取色",
-                subtitle = "Android 12+ 跟随壁纸主题色，关闭则使用 Nexus 光学精密蓝",
-                checked = a.dynamicColor,
-                onCheckedChange = { v -> updateAndroid { it.copy(dynamicColor = v) } },
-            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = ext.wellSurface,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    HostToggleItem(
+                        title = "排除本应用出 VPN",
+                        subtitle = "默认关闭：本应用经隧道更新订阅与测速",
+                        checked = a.excludeSelfFromVpn,
+                        onCheckedChange = { v -> updateAndroid { it.copy(excludeSelfFromVpn = v) } },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                    HostToggleItem(
+                        title = "允许应用绕过 VPN",
+                        subtitle = "允许系统应用在需要时直连物理网络",
+                        checked = a.allowBypass,
+                        onCheckedChange = { v -> updateAndroid { it.copy(allowBypass = v) } },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                    HostToggleItem(
+                        title = "绕过局域网地址",
+                        subtitle = "私有网段直连（保留 DNS 与 FakeIPv6 路由）",
+                        checked = a.bypassLan,
+                        onCheckedChange = { v -> updateAndroid { it.copy(bypassLan = v) } },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                    HostToggleItem(
+                        title = "启用 IPv6 隧道",
+                        subtitle = "支持双栈流量与 FakeIPv6 (fc00::/18)",
+                        checked = a.enableIpv6,
+                        onCheckedChange = { v -> updateAndroid { it.copy(enableIpv6 = v) } },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                    HostToggleItem(
+                        title = "附加 HTTP 代理到 VPN",
+                        subtitle = "Android 10+ 为应用自动声明本地代理 (${a.localListen})",
+                        checked = a.appendHttpProxy,
+                        onCheckedChange = { v -> updateAndroid { it.copy(appendHttpProxy = v) } },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                    HostToggleItem(
+                        title = "开机自动启动",
+                        subtitle = "检测到异常崩溃时下次开机自动中止防循环",
+                        checked = a.autoStartOnBoot,
+                        onCheckedChange = { v -> updateAndroid { it.copy(autoStartOnBoot = v) } },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                    HostToggleItem(
+                        title = "低电耗与息屏省电",
+                        subtitle = "低电耗或息屏时暂停高频流量统计以降低功耗",
+                        checked = a.dozePauseEnabled && a.screenOffPauseStats,
+                        onCheckedChange = { v -> updateAndroid { it.copy(dozePauseEnabled = v, screenOffPauseStats = v) } },
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
+                    HostToggleItem(
+                        title = "Material You 动态取色",
+                        subtitle = "Android 12+ 跟随壁纸主题色，关闭则使用默认配色",
+                        checked = a.dynamicColor,
+                        onCheckedChange = { v -> updateAndroid { it.copy(dynamicColor = v) } },
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun HostToggleRow(
+private fun HostToggleItem(
     title: String,
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val ext = NexusTheme.colors
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = ext.wellSurface,
-        border = BorderStroke(1.dp, ext.hairline),
-        modifier = Modifier.fillMaxWidth(),
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

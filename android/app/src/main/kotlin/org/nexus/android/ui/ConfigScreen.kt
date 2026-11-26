@@ -143,7 +143,7 @@ fun ConfigScreen(
     val diagnosticBanner: @Composable () -> Unit = {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(12.dp),
             color = if (diagnosticError) ext.dangerContainer else ext.successContainer,
             border = BorderStroke(1.dp, (if (diagnosticError) ext.danger else ext.success).copy(alpha = 0.45f)),
         ) {

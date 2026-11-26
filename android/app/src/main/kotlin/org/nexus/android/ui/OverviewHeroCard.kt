@@ -1,13 +1,8 @@
 package org.nexus.android.ui
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,22 +15,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -89,7 +82,6 @@ internal fun FiveStateHeroCard(
     } else {
         accentColor.copy(alpha = 0.45f)
     }
-    // Restrained matte surface wash (preserves crisp Optical Precision hierarchy in Dark & Light)
     val tint = if (heroState == HeroConnectionState.STANDBY) {
         Color.Transparent
     } else {
@@ -129,7 +121,7 @@ internal fun FiveStateHeroCard(
     }
 
     OpticalCard(
-        cornerRadius = 20.dp,
+        cornerRadius = 16.dp,
         borderColor = borderColor,
         accentTint = tint,
     ) {
@@ -213,7 +205,7 @@ internal fun FiveStateHeroCard(
                     }
                 }
 
-                HeroPowerOrbButton(
+                HeroPowerButton(
                     heroState = heroState,
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -270,11 +262,11 @@ internal fun FiveStateHeroCard(
 }
 
 /**
- * Radiant circular `52.dp` Liquid Glass Hero Power Orb harmonized with MaterialTheme primary
- * (supports Dynamic Color when enabled) and semantic running/warning/error states.
+ * Clean native Material 3 `56.dp` circular `FilledIconButton` harmonized with semantic connection
+ * state colors and Dynamic Color, with restrained scale-only press feedback.
  */
 @Composable
-private fun HeroPowerOrbButton(
+private fun HeroPowerButton(
     heroState: HeroConnectionState,
     onClick: () -> Unit,
 ) {
@@ -283,83 +275,56 @@ private fun HeroPowerOrbButton(
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
     val isStarting = heroState == HeroConnectionState.STARTING
+    val interactionSource = remember { MutableInteractionSource() }
 
-    val orbTint = when (heroState) {
-        HeroConnectionState.CONNECTED -> ext.success
-        HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> ext.warning
-        HeroConnectionState.ERROR -> ext.danger
-        HeroConnectionState.STANDBY -> primary
+    val (containerColor, contentColor) = when (heroState) {
+        HeroConnectionState.CONNECTED -> ext.success to Color(0xFF04261B)
+        HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> ext.warning to Color(0xFF2B1902)
+        HeroConnectionState.ERROR -> ext.danger to Color.White
+        HeroConnectionState.STANDBY -> primary to onPrimary
     }
-    val orbBase = when (heroState) {
-        HeroConnectionState.CONNECTED -> lerp(ext.success, Color.Black, 0.22f)
-        HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> lerp(ext.warning, Color.Black, 0.22f)
-        HeroConnectionState.ERROR -> lerp(ext.danger, Color.Black, 0.22f)
-        HeroConnectionState.STANDBY -> lerp(primary, Color.Black, 0.16f)
+    val resolvedContent = if (ext.isDark || heroState == HeroConnectionState.STANDBY) {
+        contentColor
+    } else {
+        Color.White
     }
-    val iconColor = if (heroState == HeroConnectionState.STANDBY) onPrimary else Color.White
 
-    Box(
+    FilledIconButton(
+        onClick = onClick,
+        enabled = !isStarting,
+        interactionSource = interactionSource,
+        shape = CircleShape,
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = containerColor,
+            contentColor = resolvedContent,
+            disabledContainerColor = containerColor.copy(alpha = 0.72f),
+            disabledContentColor = resolvedContent,
+        ),
         modifier = Modifier
-            .size(64.dp)
-            .drawWithCache {
-                val r = size.minDimension * 0.5f
-                val bloomCenter = Offset(size.width * 0.5f, size.height * 0.5f)
-                val bloomBrush = Brush.radialGradient(
-                    0.0f to orbTint.copy(alpha = if (ext.isDark) 0.42f else 0.24f),
-                    0.58f to orbTint.copy(alpha = if (ext.isDark) 0.16f else 0.08f),
-                    1.0f to Color.Transparent,
-                    center = bloomCenter,
-                    radius = r,
-                )
-                onDrawBehind {
-                    drawCircle(brush = bloomBrush, radius = r, center = bloomCenter)
-                }
-            },
-        contentAlignment = Alignment.Center,
+            .size(56.dp)
+            .liquidPress(interactionSource = interactionSource, pressedScale = 0.96f),
     ) {
-        LiquidGlassButton(
-            onClick = onClick,
-            enabled = !isStarting,
-            tint = orbTint,
-            surfaceBase = orbBase,
-            contentColor = iconColor,
-            cornerRadius = 26.dp,
-            isDark = ext.isDark,
-            elevation = 8.dp,
-            pressedScale = 0.92f,
-            livingSheen = isLive,
-            modifier = Modifier.size(52.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(52.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                when {
-                    isStarting -> CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.4.dp,
-                        color = iconColor,
-                    )
-                    heroState == HeroConnectionState.ERROR -> Icon(
-                        painter = painterResource(R.drawable.ic_refresh),
-                        contentDescription = "重试连接",
-                        tint = iconColor,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    isLive -> Icon(
-                        painter = painterResource(R.drawable.ic_stop),
-                        contentDescription = "断开连接",
-                        tint = iconColor,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    else -> Icon(
-                        painter = painterResource(R.drawable.ic_play),
-                        contentDescription = "连接",
-                        tint = iconColor,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
+        when {
+            isStarting -> CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.4.dp,
+                color = resolvedContent,
+            )
+            heroState == HeroConnectionState.ERROR -> Icon(
+                painter = painterResource(R.drawable.ic_refresh),
+                contentDescription = "重试连接",
+                modifier = Modifier.size(22.dp),
+            )
+            isLive -> Icon(
+                painter = painterResource(R.drawable.ic_stop),
+                contentDescription = "断开连接",
+                modifier = Modifier.size(20.dp),
+            )
+            else -> Icon(
+                painter = painterResource(R.drawable.ic_play),
+                contentDescription = "连接",
+                modifier = Modifier.size(22.dp),
+            )
         }
     }
 }
@@ -369,54 +334,21 @@ private fun HeroStatusOrb(
     heroState: HeroConnectionState,
     accentColor: Color,
 ) {
-    val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
     Box(
-        modifier = Modifier.size(20.dp),
+        modifier = Modifier.size(18.dp),
         contentAlignment = Alignment.Center,
     ) {
         if (heroState == HeroConnectionState.STARTING) {
             CircularProgressIndicator(
-                modifier = Modifier.size(15.dp),
+                modifier = Modifier.size(14.dp),
                 strokeWidth = 2.dp,
                 color = accentColor,
             )
         } else {
-            if (isLive) {
-                val infinite = rememberInfiniteTransition(label = "heroPulse")
-                val pulseScaleState = infinite.animateFloat(
-                    initialValue = 1.15f,
-                    targetValue = 1.85f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Restart,
-                    ),
-                    label = "pulseScale",
-                )
-                val pulseAlphaState = infinite.animateFloat(
-                    initialValue = 0.42f,
-                    targetValue = 0.0f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(durationMillis = 1800, easing = FastOutSlowInEasing),
-                        repeatMode = RepeatMode.Restart,
-                    ),
-                    label = "pulseAlpha",
-                )
-                Box(
-                    modifier = Modifier
-                        .size(11.dp)
-                        .graphicsLayer {
-                            val s = pulseScaleState.value
-                            scaleX = s
-                            scaleY = s
-                            alpha = pulseAlphaState.value
-                        }
-                        .background(accentColor, CircleShape),
-                )
-            }
             Box(
                 modifier = Modifier
                     .size(14.dp)
-                    .background(accentColor.copy(alpha = 0.24f), CircleShape),
+                    .background(accentColor.copy(alpha = 0.20f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Box(

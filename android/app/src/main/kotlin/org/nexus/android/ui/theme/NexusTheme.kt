@@ -2,6 +2,7 @@ package org.nexus.android.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -10,16 +11,19 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * Optical Precision semantic tokens strictly decoupled from brand accent colors:
- * - Download (`telemetryDownload`) = Sky Cyan (`#38BDF8` Dark / `#0284C7` Light)
+ * Material 3 Adaptive semantic telemetry tokens strictly decoupled from brand accent colors:
+ * - Download (`telemetryDownload`) = Sky Cyan (`#38BDF8` Dark / `#0369A1` Light)
  * - Upload (`telemetryUpload`) = Prism Violet (`#C084FC` Dark / `#7C3AED` Light)
  * - 5-tier latency scale: <80ms Emerald, 80..179ms Amber, 180..349ms Orange-Coral, >=350ms/Timeout Rose, Unprobed Neutral
- * - Optical surface lighting: 1dp hairline border + subtle directional top specular highlight
+ * - Flat tonal surfaces (`cardSurface`, `wellSurface`, `insetSurface`) and hairlines derive directly
+ *   from the active Material 3 `ColorScheme` so both static Nexus schemes and Material You dynamic
+ *   color harmonize cleanly without synthetic gradients or specular highlights.
  */
 @Immutable
 data class NexusExtendedColors(
@@ -46,14 +50,12 @@ data class NexusExtendedColors(
     val protocolDirectContainer: Color,
     val hairline: Color,
     val hairlineStrong: Color,
-    val topSpeculum: Color,
-    val cardGradientTop: Color,
-    val cardGradientBottom: Color,
+    val cardSurface: Color,
     val wellSurface: Color,
     val insetSurface: Color,
 )
 
-private val DarkExtendedColors = NexusExtendedColors(
+private val DarkExtendedBase = NexusExtendedColors(
     isDark = true,
     success = Color(0xFF34D399),
     successContainer = Color(0xFF182D26),
@@ -75,16 +77,14 @@ private val DarkExtendedColors = NexusExtendedColors(
     protocolTlsContainer = Color(0xFF162B3A),
     protocolDirect = Color(0xFF34D399),
     protocolDirectContainer = Color(0xFF182D26),
-    hairline = Color(0x14FFFFFF),
-    hairlineStrong = Color(0x22FFFFFF),
-    topSpeculum = Color(0x26FFFFFF),
-    cardGradientTop = Color(0xFF242730),
-    cardGradientBottom = Color(0xFF1E2027),
+    hairline = Color(0xFF2F333E),
+    hairlineStrong = Color(0xFF535968),
+    cardSurface = Color(0xFF1B1D24),
     wellSurface = Color(0xFF2B2E37),
     insetSurface = Color(0xFF383C47),
 )
 
-private val LightExtendedColors = NexusExtendedColors(
+private val LightExtendedBase = NexusExtendedColors(
     isDark = false,
     success = Color(0xFF047857),
     successContainer = Color(0xFFDCFCE7),
@@ -106,16 +106,28 @@ private val LightExtendedColors = NexusExtendedColors(
     protocolTlsContainer = Color(0xFFE0F2FE),
     protocolDirect = Color(0xFF047857),
     protocolDirectContainer = Color(0xFFDCFCE7),
-    hairline = Color(0x180F172A),
-    hairlineStrong = Color(0x280F172A),
-    topSpeculum = Color(0xD8FFFFFF),
-    cardGradientTop = Color(0xFFFFFFFF),
-    cardGradientBottom = Color(0xFFF6F9FE),
+    hairline = Color(0xFFD5DFEC),
+    hairlineStrong = Color(0xFF94A3B8),
+    cardSurface = Color(0xFFFFFFFF),
     wellSurface = Color(0xFFE6ECF5),
     insetSurface = Color(0xFFD6E0F0),
 )
 
-val LocalNexusExtendedColors = staticCompositionLocalOf { LightExtendedColors }
+private fun deriveExtendedColors(
+    colorScheme: ColorScheme,
+    darkTheme: Boolean,
+): NexusExtendedColors {
+    val base = if (darkTheme) DarkExtendedBase else LightExtendedBase
+    return base.copy(
+        cardSurface = colorScheme.surfaceContainerLow,
+        wellSurface = colorScheme.surfaceContainerHigh,
+        insetSurface = colorScheme.surfaceContainerHighest,
+        hairline = colorScheme.outlineVariant.copy(alpha = if (darkTheme) 0.65f else 0.75f),
+        hairlineStrong = colorScheme.outline.copy(alpha = if (darkTheme) 0.55f else 0.65f),
+    )
+}
+
+val LocalNexusExtendedColors = staticCompositionLocalOf { LightExtendedBase }
 
 private val NexusDarkColorScheme = darkColorScheme(
     primary = Color(0xFF5899FF),
@@ -135,8 +147,8 @@ private val NexusDarkColorScheme = darkColorScheme(
     surfaceVariant = Color(0xFF252832),
     onSurfaceVariant = Color(0xFFA8AEB9),
     surfaceContainerLowest = Color(0xFF0C0D10),
-    surfaceContainerLow = Color(0xFF17191F),
-    surfaceContainer = Color(0xFF202229),
+    surfaceContainerLow = Color(0xFF1B1D24),
+    surfaceContainer = Color(0xFF22252E),
     surfaceContainerHigh = Color(0xFF2B2E37),
     surfaceContainerHighest = Color(0xFF383C47),
     outline = Color(0xFF535968),
@@ -165,9 +177,9 @@ private val NexusLightColorScheme = lightColorScheme(
     surfaceVariant = Color(0xFFE2EAF5),
     onSurfaceVariant = Color(0xFF475569),
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF9FBFE),
-    surfaceContainer = Color(0xFFEDF2FA),
-    surfaceContainerHigh = Color(0xFFE2E9F4),
+    surfaceContainerLow = Color(0xFFFFFFFF),
+    surfaceContainer = Color(0xFFF5F8FD),
+    surfaceContainerHigh = Color(0xFFE6ECF5),
     surfaceContainerHighest = Color(0xFFD6E0F0),
     outline = Color(0xFF94A3B8),
     outlineVariant = Color(0xFFCBD5E1),
@@ -197,7 +209,9 @@ fun NexusTheme(
         darkTheme -> NexusDarkColorScheme
         else -> NexusLightColorScheme
     }
-    val extendedColors = if (darkTheme) DarkExtendedColors else LightExtendedColors
+    val extendedColors = remember(colorScheme, darkTheme) {
+        deriveExtendedColors(colorScheme, darkTheme)
+    }
 
     CompositionLocalProvider(LocalNexusExtendedColors provides extendedColors) {
         MaterialTheme(

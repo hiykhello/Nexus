@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,7 +25,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -41,10 +39,9 @@ import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
 /**
- * Tactile reorder chrome displayed around Overview Bento cards strictly while Customize Mode
- * (`dashEditing == true`) is active. Renders [content] directly with zero wrapper overhead or
- * gesture interception during normal daily usage (`dashEditing == false`).
- * All action buttons use 48dp IconButton touch targets wrapping sleek 30dp optical badges.
+ * Slim drag-header reorder chrome displayed directly above Overview Bento cards while Customize
+ * Mode (`dashEditing == true`) is active — avoids outer double-bordered wrappers and renders
+ * [content] directly with zero overhead during daily usage (`dashEditing == false`).
  */
 @Composable
 internal fun ReorderableDashboardCardFrame(
@@ -79,7 +76,7 @@ internal fun ReorderableDashboardCardFrame(
     val canMoveDown = index < totalCount - 1
     val accent = MaterialTheme.colorScheme.primary
 
-    Surface(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .zIndex(if (dragging) 4f else 0f)
@@ -89,87 +86,82 @@ internal fun ReorderableDashboardCardFrame(
                 scaleX = s
                 scaleY = s
             },
-        shape = RoundedCornerShape(22.dp),
-        color = accent.copy(alpha = if (dragging) 0.14f else if (ext.isDark) 0.08f else 0.05f),
-        border = BorderStroke(
-            width = if (dragging) 1.5.dp else 1.dp,
-            color = accent.copy(alpha = if (dragging) 0.78f else 0.40f),
-        ),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(7.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = if (dragging) MaterialTheme.colorScheme.primaryContainer else ext.wellSurface,
+            border = BorderStroke(
+                width = 1.dp,
+                color = if (dragging) accent.copy(alpha = 0.65f) else ext.hairline,
+            ),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
+                    .padding(start = 10.dp, end = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = if (dragging) accent.copy(alpha = 0.28f) else ext.insetSurface,
-                    border = BorderStroke(1.dp, if (dragging) accent.copy(alpha = 0.65f) else ext.hairline),
-                    modifier = Modifier.pointerInput(cardId) {
-                        detectVerticalDragGestures(
-                            onDragStart = {
-                                dragging = true
-                                dragAccumPx = 0f
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            },
-                            onDragEnd = {
-                                dragging = false
-                                dragAccumPx = 0f
-                            },
-                            onDragCancel = {
-                                dragging = false
-                                dragAccumPx = 0f
-                            },
-                            onVerticalDrag = { change, dragAmount ->
-                                change.consume()
-                                dragAccumPx += dragAmount
-                                if (dragAccumPx <= -dragStepPx && latestIndex > 0) {
-                                    dragAccumPx += dragStepPx
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    latestMoveUp()
-                                } else if (dragAccumPx >= dragStepPx && latestIndex < latestTotal - 1) {
-                                    dragAccumPx -= dragStepPx
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    latestMoveDown()
-                                }
-                            },
-                        )
-                    },
+                Row(
+                    modifier = Modifier
+                        .padding(vertical = 8.dp)
+                        .pointerInput(cardId) {
+                            detectVerticalDragGestures(
+                                onDragStart = {
+                                    dragging = true
+                                    dragAccumPx = 0f
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                },
+                                onDragEnd = {
+                                    dragging = false
+                                    dragAccumPx = 0f
+                                },
+                                onDragCancel = {
+                                    dragging = false
+                                    dragAccumPx = 0f
+                                },
+                                onVerticalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragAccumPx += dragAmount
+                                    if (dragAccumPx <= -dragStepPx && latestIndex > 0) {
+                                        dragAccumPx += dragStepPx
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        latestMoveUp()
+                                    } else if (dragAccumPx >= dragStepPx && latestIndex < latestTotal - 1) {
+                                        dragAccumPx -= dragStepPx
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        latestMoveDown()
+                                    }
+                                },
+                            )
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = "⠿",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (dragging) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = "#${index + 1}",
-                            style = NexusNumericStyles.monoBadge,
-                            color = accent,
-                        )
-                        Text(
-                            text = DashboardCardVisibility.cardLabel(cardId),
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                        )
-                    }
+                    Text(
+                        text = "⠿",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (dragging) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "#${index + 1}",
+                        style = NexusNumericStyles.monoBadge,
+                        color = accent,
+                    )
+                    Text(
+                        text = DashboardCardVisibility.cardLabel(cardId),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
                 }
 
                 Spacer(Modifier.weight(1f))
 
-                ReorderActionPill(
+                ReorderActionButton(
                     label = "↑",
                     enabled = canMoveUp,
                     onClick = {
@@ -177,7 +169,7 @@ internal fun ReorderableDashboardCardFrame(
                         onMoveUp()
                     },
                 )
-                ReorderActionPill(
+                ReorderActionButton(
                     label = "↓",
                     enabled = canMoveDown,
                     onClick = {
@@ -191,52 +183,36 @@ internal fun ReorderableDashboardCardFrame(
                         onHide()
                     },
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = ext.insetSurface,
-                        border = BorderStroke(1.dp, ext.hairline),
-                        modifier = Modifier.size(30.dp),
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_close),
-                                contentDescription = "隐藏卡片",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                    }
+                    Icon(
+                        painter = painterResource(R.drawable.ic_close),
+                        contentDescription = "隐藏卡片",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
                 }
             }
-
-            content()
         }
+
+        content()
     }
 }
 
 @Composable
-private fun ReorderActionPill(
+private fun ReorderActionButton(
     label: String,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val ext = NexusTheme.colors
     val accent = MaterialTheme.colorScheme.primary
+    val disabledColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     IconButton(onClick = onClick, enabled = enabled) {
-        Surface(
-            shape = CircleShape,
-            color = if (enabled) accent.copy(alpha = if (ext.isDark) 0.22f else 0.12f) else ext.wellSurface,
-            border = BorderStroke(1.dp, if (enabled) accent.copy(alpha = 0.50f) else ext.hairline),
-            modifier = Modifier.size(30.dp),
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = if (enabled) accent else Color.Gray.copy(alpha = 0.45f),
-                )
-            }
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (enabled) accent else disabledColor,
+            )
         }
     }
 }

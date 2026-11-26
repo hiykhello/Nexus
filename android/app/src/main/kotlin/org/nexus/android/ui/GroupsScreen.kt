@@ -65,6 +65,8 @@ fun GroupsScreen(
     onProbeOutbound: (suspend (outboundTag: String) -> OutboundProbeResult)? = null,
     windowSizeClass: NexusWindowSizeClass,
     contentPadding: PaddingValues,
+    running: Boolean = true,
+    onOpenOverview: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -120,6 +122,7 @@ fun GroupsScreen(
     val bottomPad = contentPadding.calculateBottomPadding()
 
     if (groups.isEmpty()) {
+        val openOverview = if (!running) onOpenOverview else null
         Box(
             modifier = modifier
                 .fillMaxSize()
@@ -127,11 +130,17 @@ fun GroupsScreen(
                 .padding(top = topPad, bottom = bottomPad, start = startPad, end = endPad),
         ) {
             EmptyStateCard(
-                title = "暂无策略组",
-                subtitle = "连接后可在此搜索、测速并切换节点。",
+                title = if (openOverview != null) "尚未连接" else "暂无策略组",
+                subtitle = if (openOverview != null) {
+                    "开启代理连接后，即可在此搜索、测速并切换节点。"
+                } else {
+                    "连接后可在此搜索、测速并切换节点。"
+                },
                 iconRes = R.drawable.ic_nav_groups,
-                actionLabel = "刷新",
-                onAction = { scope.launch { reload() } },
+                actionLabel = if (openOverview != null) "前往连接" else "刷新",
+                onAction = {
+                    if (openOverview != null) openOverview() else scope.launch { reload() }
+                },
             )
         }
         return

@@ -95,7 +95,7 @@ private fun ExpandedKpiTile(
 ) {
     OpticalCard(
         modifier = modifier,
-        cornerRadius = 18.dp,
+        cornerRadius = 16.dp,
         accentTint = accentTint,
     ) {
         Column(
@@ -144,8 +144,8 @@ private fun CompactKpiPill(
     val ext = NexusTheme.colors
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = ext.cardGradientTop,
+        shape = RoundedCornerShape(12.dp),
+        color = ext.cardSurface,
         border = BorderStroke(1.dp, ext.hairline),
     ) {
         Column(
@@ -154,11 +154,24 @@ private fun CompactKpiPill(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                Text(subtitle, style = NexusNumericStyles.monoBadge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = subtitle,
+                    style = NexusNumericStyles.monoBadge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Text(
                 text = value,
@@ -191,7 +204,7 @@ internal fun ConnectionItemCard(
 
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 18.dp,
+        cornerRadius = 16.dp,
         borderColor = if (selected) primary.copy(alpha = 0.80f) else ext.hairline,
         borderWidth = if (selected) 1.5.dp else 1.dp,
         accentTint = if (selected) primary.copy(alpha = if (ext.isDark) 0.12f else 0.06f) else Color.Transparent,

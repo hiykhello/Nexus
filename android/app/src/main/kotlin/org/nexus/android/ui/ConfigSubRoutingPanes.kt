@@ -63,7 +63,7 @@ internal fun SubscriptionsPillarPane(
         state.document.profiles.filter { it.kind == ProfileKind.NODE || it.kind == ProfileKind.POLICY_GROUP }
     }
 
-    OpticalCard(cornerRadius = 20.dp) {
+    OpticalCard(cornerRadius = 16.dp) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("订阅与链式前置/落地", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -136,7 +136,7 @@ private fun SubscriptionItemCard(
     val nextName = chainCandidates.firstOrNull { it.id == sub.nextProfileId }?.remarks?.ifBlank { sub.nextProfileId } ?: "无落地"
 
     Surface(
-        shape = RoundedCornerShape(15.dp),
+        shape = RoundedCornerShape(12.dp),
         color = ext.wellSurface,
         border = BorderStroke(1.dp, ext.hairline),
         modifier = Modifier.fillMaxWidth(),
@@ -259,7 +259,7 @@ internal fun RoutingDnsPillarPane(
     val activeRouting = state.document.activeRoutingProfile()
     val dns = state.document.dns
 
-    OpticalCard(cornerRadius = 20.dp) {
+    OpticalCard(cornerRadius = 16.dp) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("路由方案", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             FlowRow(
@@ -290,7 +290,7 @@ internal fun RoutingDnsPillarPane(
                 }
             }
             Surface(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = ext.wellSurface,
                 border = BorderStroke(1.dp, ext.hairline),
                 modifier = Modifier.fillMaxWidth(),

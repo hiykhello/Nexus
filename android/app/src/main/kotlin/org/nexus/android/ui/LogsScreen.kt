@@ -90,7 +90,7 @@ fun LogsScreen(
 
     LaunchedEffect(visibleLogs.size, pauseAutoScroll) {
         if (!pauseAutoScroll && visibleLogs.isNotEmpty()) {
-            listState.animateScrollToItem(visibleLogs.lastIndex)
+            listState.scrollToItem(visibleLogs.lastIndex)
         }
     }
 
@@ -202,7 +202,7 @@ fun LogsScreen(
         } else {
             Surface(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
                 color = ext.wellSurface,
                 border = BorderStroke(1.dp, ext.hairline),
             ) {

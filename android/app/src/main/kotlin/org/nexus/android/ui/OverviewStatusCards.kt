@@ -2,9 +2,8 @@ package org.nexus.android.ui
 
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,7 +51,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.nexus.android.R
-import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 import kotlin.math.roundToInt
 
@@ -64,8 +62,8 @@ internal fun sampleRuntimeMemoryText(): String {
 
 /**
  * Nexus 2-segment proportion bar:
- * 8dp full-pill rounded bar rendered purely in the Draw phase (`drawBehind`) so 1Hz telemetry
- * animations never trigger Composition or Layout invalidations.
+ * 8dp full-pill rounded bar rendered directly in the Draw phase (`drawBehind`) with 0ms functional
+ * telemetry updates (no spring lag on 1Hz data ticks).
  */
 @Composable
 internal fun NexusProportionBar(
@@ -88,16 +86,6 @@ internal fun NexusProportionBar(
         secondPct <= 0 -> 1f
         else -> (firstPct / 100f).coerceIn(0.06f, 0.94f)
     }
-    val animFirstState = animateFloatAsState(
-        targetValue = targetFirst,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "propFirst",
-    )
-    val animGapState = animateFloatAsState(
-        targetValue = if (hasBoth) 1f else 0f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "propGap",
-    )
     val trackColor = ext.insetSurface
 
     Box(
@@ -108,9 +96,9 @@ internal fun NexusProportionBar(
             .drawBehind {
                 drawRect(color = trackColor)
                 if (total > 0L && size.width > 0f) {
-                    val gapPx = 2.dp.toPx() * animGapState.value.coerceIn(0f, 1f)
+                    val gapPx = if (hasBoth) 2.dp.toPx() else 0f
                     val usable = (size.width - gapPx).coerceAtLeast(0f)
-                    val firstFrac = animFirstState.value.coerceIn(0f, 1f)
+                    val firstFrac = targetFirst.coerceIn(0f, 1f)
                     val firstW = usable * firstFrac
                     val secondW = usable * (1f - firstFrac)
                     if (firstW > 0.5f) {
@@ -126,7 +114,7 @@ internal fun NexusProportionBar(
 }
 
 /**
- * Animated Overview Bento customization bar for card visibility and ordering.
+ * Animated Overview Bento customization bar for card visibility and ordering (capped <= 180ms ease-out).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -138,17 +126,23 @@ internal fun DashboardCustomizeBar(
 ) {
     val ext = NexusTheme.colors
     val haptic = LocalHapticFeedback.current
+    val reducedMotion = isReducedMotionEnabled()
+    val enterDuration = if (reducedMotion) 0 else 180
+    val exitDuration = if (reducedMotion) 0 else 150
     val accent = MaterialTheme.colorScheme.primary
+
     AnimatedVisibility(
         visible = visible,
-        enter = expandVertically() + fadeIn(),
-        exit = shrinkVertically() + fadeOut(),
+        enter = expandVertically(tween(enterDuration, easing = FastOutSlowInEasing)) +
+            fadeIn(tween(enterDuration, easing = FastOutSlowInEasing)),
+        exit = shrinkVertically(tween(exitDuration, easing = FastOutSlowInEasing)) +
+            fadeOut(tween(exitDuration, easing = FastOutSlowInEasing)),
         modifier = modifier,
     ) {
         OpticalCard(
-            cornerRadius = 18.dp,
-            borderColor = accent.copy(alpha = 0.48f),
-            accentTint = accent.copy(alpha = 0.06f),
+            cornerRadius = 16.dp,
+            borderColor = accent.copy(alpha = 0.45f),
+            accentTint = accent.copy(alpha = 0.05f),
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
@@ -205,10 +199,10 @@ internal fun DashboardCustomizeBar(
                             },
                             modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 36.dp),
                             shape = RoundedCornerShape(999.dp),
-                            color = if (active) accent.copy(alpha = if (ext.isDark) 0.24f else 0.14f) else ext.wellSurface,
+                            color = if (active) accent.copy(alpha = if (ext.isDark) 0.22f else 0.14f) else ext.wellSurface,
                             border = BorderStroke(
                                 width = 1.dp,
-                                color = if (active) accent.copy(alpha = 0.65f) else ext.hairline,
+                                color = if (active) accent.copy(alpha = 0.60f) else ext.hairline,
                             ),
                         ) {
                             Row(
@@ -242,51 +236,33 @@ internal fun DashboardCustomizeBar(
 }
 
 /**
- * 2-column smoked-graphite mini-Bento status pair:
- * - Left (`网络状态`): live 4-bar signal + active exit & latency (tap triggers probe / opens Groups)
- * - Right (`连接与流量`): runtime memory + active connections + 2-segment DL/UL `NexusProportionBar`
+ * 2-column flat M3 tonal mini-Bento status pair (zero duplication with Hero Card):
+ * - Left (`路由与 DNS`): active routing profile & DNS/FakeIP status (tap opens Diagnostics/Config)
+ * - Right (`活跃连接`): active connection count + honestly labeled app memory + DL/UL proportion bar
  */
 @Composable
 internal fun OverviewStatusMiniPair(
     running: Boolean,
-    activeExit: ActiveExitSummary,
+    routingProfileName: String = "",
+    dnsSummaryText: String = "",
+    outboundMode: String = "rule",
     memoryText: String,
     activeSessions: Long,
     downloadBytes: Long,
     uploadBytes: Long,
-    isProbing: Boolean,
-    onNetworkClick: () -> Unit,
+    onRoutingClick: () -> Unit,
     onConnectionsClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
     val haptic = LocalHapticFeedback.current
-    val isTimeout = activeExit.state.equals("timeout", ignoreCase = true) ||
-        activeExit.state.equals("unreachable", ignoreCase = true) ||
-        activeExit.latencyMs == 0L
-    val latencyColor = when {
-        !running || activeExit.latencyMs < 0L -> ext.muted
-        isTimeout -> ext.danger
-        activeExit.latencyMs < 80L -> ext.success
-        activeExit.latencyMs < 180L -> ext.warning
-        activeExit.latencyMs < 350L -> ext.slow
-        else -> ext.danger
+    val modeLabel = when (outboundMode) {
+        "global" -> "全局代理"
+        "direct" -> "全局直连"
+        else -> routingProfileName.ifEmpty { "智能分流" }
     }
-    val networkSub = when {
-        !running -> "点击选择节点"
-        isProbing -> "探测延迟"
-        isTimeout -> "超时"
-        activeExit.latencyMs > 0L -> "${activeExit.latencyMs} ms"
-        else -> "未测速"
-    }
-    val qualityLabel = when {
-        !running -> "待连接"
-        isProbing -> "测速中…"
-        isTimeout -> "超时"
-        activeExit.latencyMs in 1L..79L -> "极佳"
-        activeExit.latencyMs in 80L..179L -> "良好"
-        activeExit.latencyMs >= 180L -> "波动"
-        else -> "就绪"
+    val dnsLine = dnsSummaryText.ifEmpty {
+        if (running) "FakeIP · 生效中" else "点击查看规则"
     }
 
     Row(
@@ -294,39 +270,34 @@ internal fun OverviewStatusMiniPair(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         StatusMiniBentoTile(
-            title = "网络状态",
-            trailingIconRes = R.drawable.ic_speed,
-            trailingTint = if (running) ext.success else MaterialTheme.colorScheme.onSurfaceVariant,
-            trailingLabel = "",
-            onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onNetworkClick() },
+            title = "路由与 DNS",
+            trailingIconRes = R.drawable.ic_rule,
+            trailingTint = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onRoutingClick() },
             modifier = Modifier.weight(1f).fillMaxHeight(),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                SignalBarsIndicator(if (running) activeExit.latencyMs else -1L, if (running) activeExit.state else "unknown")
-                Text(
-                    text = qualityLabel,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(
+                text = modeLabel,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Spacer(Modifier.weight(1f))
             Text(
-                text = if (running) "${activeExit.memberName.ifEmpty { "自动" }} · $networkSub" else networkSub,
-                style = NexusNumericStyles.monoBadge,
-                color = if (running) latencyColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                text = dnsLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
 
         StatusMiniBentoTile(
-            title = "连接与流量",
-            trailingIconRes = null,
-            trailingTint = MaterialTheme.colorScheme.onSurfaceVariant,
-            trailingLabel = memoryText.ifEmpty { "--" },
+            title = "活跃连接",
+            trailingIconRes = R.drawable.ic_nav_connections,
+            trailingTint = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onConnectionsClick() },
             modifier = Modifier.weight(1f).fillMaxHeight(),
         ) {
@@ -344,14 +315,16 @@ internal fun OverviewStatusMiniPair(
                     maxLines = 1,
                     softWrap = false,
                 )
-                Text(
-                    text = "活跃连接",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(bottom = 2.dp),
-                )
+                if (memoryText.isNotEmpty()) {
+                    Text(
+                        text = "应用 $memoryText",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 2.dp),
+                    )
+                }
             }
             Spacer(Modifier.weight(1f))
             NexusProportionBar(
@@ -368,9 +341,8 @@ internal fun OverviewStatusMiniPair(
 @Composable
 private fun StatusMiniBentoTile(
     title: String,
-    @DrawableRes trailingIconRes: Int?,
+    @DrawableRes trailingIconRes: Int,
     trailingTint: Color,
-    trailingLabel: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     body: @Composable ColumnScope.() -> Unit,
@@ -380,54 +352,38 @@ private fun StatusMiniBentoTile(
     Surface(
         onClick = onClick,
         interactionSource = interactionSource,
-        modifier = modifier.liquidPress(interactionSource = interactionSource, pressedScale = 0.96f),
-        shape = RoundedCornerShape(20.dp),
-        color = Color.Transparent,
+        modifier = modifier.liquidPress(interactionSource = interactionSource, pressedScale = 0.97f),
+        shape = RoundedCornerShape(16.dp),
+        color = ext.cardSurface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(1.dp, ext.hairline),
     ) {
-        OpticalCard(
-            modifier = Modifier.fillMaxHeight(),
-            cornerRadius = 20.dp,
-            borderColor = Color.Transparent,
-            borderWidth = 0.dp,
+        Column(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (trailingLabel.isNotEmpty()) {
-                        Text(
-                            text = trailingLabel,
-                            style = NexusNumericStyles.monoBadge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            softWrap = false,
-                        )
-                    } else if (trailingIconRes != null) {
-                        Icon(
-                            painter = painterResource(trailingIconRes),
-                            contentDescription = null,
-                            tint = trailingTint,
-                            modifier = Modifier.size(15.dp),
-                        )
-                    }
-                }
-                body()
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    painter = painterResource(trailingIconRes),
+                    contentDescription = null,
+                    tint = trailingTint,
+                    modifier = Modifier.size(15.dp),
+                )
             }
+            body()
         }
     }
 }

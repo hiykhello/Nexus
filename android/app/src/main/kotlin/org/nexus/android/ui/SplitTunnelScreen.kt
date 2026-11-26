@@ -141,11 +141,13 @@ fun SplitTunnelScreen(
                         }
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "分应用分流控制",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
+                        if (onBack != null) {
+                            Text(
+                                text = "分应用分流控制",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                         val modeDesc = when (perAppMode) {
                             AndroidPerAppMode.OFF -> "当前已关闭分应用，全部应用经 VPN 隧道"
                             AndroidPerAppMode.EXCLUDE -> "已选择 ${excludedPackages.size} 个应用直连绕过 VPN 隧道"
@@ -161,8 +163,8 @@ fun SplitTunnelScreen(
                 OpticalSegmentedControl(
                     options = listOf(
                         AndroidPerAppMode.OFF.wire to "关闭",
-                        AndroidPerAppMode.EXCLUDE.wire to "排除所选",
-                        AndroidPerAppMode.INCLUDE.wire to "仅代理所选",
+                        AndroidPerAppMode.EXCLUDE.wire to "排除",
+                        AndroidPerAppMode.INCLUDE.wire to "仅代理",
                     ),
                     selectedKey = perAppMode.wire,
                     onSelect = { key ->
@@ -223,7 +225,7 @@ fun SplitTunnelScreen(
                 border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.45f)),
             ) {
                 Text(
-                    text = "当前「仅代理所选」未勾选任何应用，第三方应用均不会经过 VPN；请在下方勾选需要代理的应用。",
+                    text = "当前「仅代理」未勾选任何应用，第三方应用均不会经过 VPN；请在下方勾选需要代理的应用。",
                     style = MaterialTheme.typography.bodySmall,
                     color = ext.warning,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
@@ -269,7 +271,8 @@ fun SplitTunnelScreen(
         OutlinedTextField(
             value = filter,
             onValueChange = { filter = it },
-            placeholder = { Text("搜索应用名称或包名...") },
+            placeholder = { Text("搜索应用名称或包名…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            shape = RoundedCornerShape(999.dp),
             leadingIcon = {
                 Icon(
                     painter = painterResource(R.drawable.ic_search),
@@ -357,7 +360,7 @@ private fun SplitTunnelAppRow(
 
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 14.dp,
+        cornerRadius = 16.dp,
         borderColor = if (checked) MaterialTheme.colorScheme.primary else ext.hairline,
         accentTint = if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else Color.Transparent,
         onClick = { onToggle(!checked) },

@@ -1,9 +1,9 @@
 package org.nexus.android.ui
 
 import androidx.annotation.DrawableRes
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,8 +38,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -53,8 +53,8 @@ import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
 /**
- * Optical Precision card container: subtle vertical elevation gradient, crisp 1dp hairline border,
- * and a directional 1dp top-edge specular highlight (`topSpeculum`).
+ * Clean flat Material 3 tonal card container with a crisp 1dp hairline border and optional subtle
+ * state tint composited onto `surfaceContainerLow` (zero gradients or synthetic specular bars).
  */
 @Composable
 fun OpticalCard(
@@ -68,6 +68,11 @@ fun OpticalCard(
 ) {
     val ext = NexusTheme.colors
     val shape = RoundedCornerShape(cornerRadius)
+    val containerColor = if (accentTint != Color.Transparent) {
+        accentTint.compositeOver(ext.cardSurface)
+    } else {
+        ext.cardSurface
+    }
     val clickModifier = if (onClick != null) {
         Modifier.clip(shape).clickable(onClick = onClick)
     } else {
@@ -76,54 +81,26 @@ fun OpticalCard(
     Surface(
         modifier = modifier.then(clickModifier),
         shape = shape,
-        color = Color.Transparent,
+        color = containerColor,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(borderWidth, borderColor),
+        border = if (borderWidth > 0.dp && borderColor != Color.Transparent) {
+            BorderStroke(borderWidth, borderColor)
+        } else {
+            null
+        },
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(ext.cardGradientTop, ext.cardGradientBottom),
-                    ),
-                )
-                .then(
-                    if (accentTint != Color.Transparent) {
-                        Modifier.background(
-                            Brush.verticalGradient(
-                                listOf(accentTint, Color.Transparent),
-                            ),
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .height(1.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color.Transparent, ext.topSpeculum, ext.topSpeculum, Color.Transparent),
-                        ),
-                    ),
-            )
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                content = content,
-            )
-        }
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            content = content,
+        )
     }
 }
 
 /**
- * Zero-subcomposition segmented control:
+ * Zero-subcomposition flat Material 3 segmented control:
  * - No `BoxWithConstraints`
  * - Sliding indicator animation read strictly inside Draw phase (`drawWithCache` -> `onDrawBehind`)
- * - Meets 44-48dp comfortable touch target height
+ * - Critically damped 140ms ease-out slide (instant when system reduced-motion is active)
  */
 @Composable
 fun OpticalSegmentedControl(
@@ -135,6 +112,7 @@ fun OpticalSegmentedControl(
 ) {
     val ext = NexusTheme.colors
     val haptic = LocalHapticFeedback.current
+    val reducedMotion = isReducedMotionEnabled()
     val count = options.size.coerceAtLeast(1)
     val selectedIdx = options.indexOfFirst { it.first == selectedKey }.coerceAtLeast(0)
     val pillShape = RoundedCornerShape(999.dp)
@@ -145,9 +123,9 @@ fun OpticalSegmentedControl(
 
     val animatedIndexState = animateFloatAsState(
         targetValue = selectedIdx.toFloat(),
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioLowBouncy,
-            stiffness = Spring.StiffnessMediumLow,
+        animationSpec = tween(
+            durationMillis = if (reducedMotion) 0 else 140,
+            easing = FastOutSlowInEasing,
         ),
         label = "segIndex",
     )
@@ -166,28 +144,16 @@ fun OpticalSegmentedControl(
                     val slotW = size.width / count.toFloat()
                     val h = size.height
                     val cr = CornerRadius(h * 0.5f, h * 0.5f)
-                    val strokePx = 1.15.dp.toPx()
+                    val strokePx = 1.dp.toPx()
                     val halfStroke = strokePx * 0.5f
                     val innerCr = CornerRadius((h * 0.5f - halfStroke).coerceAtLeast(0f))
-                    val topLift = lerp(primaryContainer, Color.White, if (ext.isDark) 0.14f else 0.30f)
-                    val bottomDepth = lerp(primaryContainer, primary, if (ext.isDark) 0.20f else 0.12f)
-                    val fillBrush = Brush.verticalGradient(
-                        0.0f to topLift,
-                        0.5f to primaryContainer,
-                        1.0f to bottomDepth,
-                    )
                     val rimStroke = Stroke(width = strokePx)
-                    val rimColor = if (ext.isDark) {
-                        Color.White.copy(alpha = 0.28f)
-                    } else {
-                        primary.copy(alpha = 0.35f)
-                    }
-                    val topGlossColor = Color.White.copy(alpha = if (ext.isDark) 0.32f else 0.70f)
+                    val rimColor = primary.copy(alpha = if (ext.isDark) 0.36f else 0.28f)
                     onDrawBehind {
                         val idx = animatedIndexState.value.coerceIn(0f, (count - 1).toFloat())
                         val left = slotW * idx
                         drawRoundRect(
-                            brush = fillBrush,
+                            color = primaryContainer,
                             topLeft = Offset(left, 0f),
                             size = Size(slotW, h),
                             cornerRadius = cr,
@@ -198,13 +164,6 @@ fun OpticalSegmentedControl(
                             size = Size((slotW - strokePx).coerceAtLeast(0f), (h - strokePx).coerceAtLeast(0f)),
                             cornerRadius = innerCr,
                             style = rimStroke,
-                        )
-                        val inset = (h * 0.35f).coerceAtMost(slotW * 0.25f)
-                        drawLine(
-                            color = topGlossColor,
-                            start = Offset(left + inset, strokePx),
-                            end = Offset((left + slotW - inset).coerceAtLeast(left + inset), strokePx),
-                            strokeWidth = strokePx,
                         )
                     }
                 },
@@ -382,7 +341,7 @@ fun MetricStatCard(
 ) {
     OpticalCard(
         modifier = modifier,
-        cornerRadius = 14.dp,
+        cornerRadius = 16.dp,
         onClick = onClick,
     ) {
         Column(

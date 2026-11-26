@@ -1,13 +1,11 @@
 package org.nexus.android.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -129,7 +127,7 @@ private fun SpeedWaveTile(
 ) {
     val ext = NexusTheme.colors
     val fontScale = LocalDensity.current.fontScale
-    val tileShape = RoundedCornerShape(20.dp)
+    val tileShape = RoundedCornerShape(16.dp)
     val linePath = remember { Path() }
     val areaPath = remember { Path() }
     val scratch = remember { WaveScratchBuffers() }
@@ -187,7 +185,7 @@ private fun SpeedWaveTile(
             .fillMaxWidth()
             .then(aspectMinHeightModifier),
         shape = tileShape,
-        color = Color.Transparent,
+        color = ext.cardSurface,
         border = BorderStroke(
             width = 1.dp,
             color = if (running) accentColor.copy(alpha = 0.24f) else ext.hairline,
@@ -198,7 +196,6 @@ private fun SpeedWaveTile(
                 .fillMaxWidth()
                 .clip(tileShape)
                 .clipToBounds()
-                .background(Brush.verticalGradient(listOf(ext.cardGradientTop, ext.cardGradientBottom)))
                 .drawWithCache {
                     val bleedPx = 2.dp.toPx()
                     val clampedScale = fontScale.coerceIn(1f, 2.2f)
@@ -252,17 +249,6 @@ private fun SpeedWaveTile(
                     }
                 },
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .height(1.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(Color.Transparent, ext.topSpeculum, ext.topSpeculum, Color.Transparent),
-                        ),
-                    ),
-            )
             val extraWaveClearance = ((fontScale - 1f).coerceIn(0f, 1.2f) * 32f).dp
             Column(
                 modifier = Modifier

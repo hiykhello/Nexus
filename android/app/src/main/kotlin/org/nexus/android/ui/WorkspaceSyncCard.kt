@@ -75,7 +75,7 @@ internal fun WebDavSyncCard(
         }
     }
 
-    OpticalCard(cornerRadius = 20.dp, modifier = modifier.fillMaxWidth()) {
+    OpticalCard(cornerRadius = 16.dp, modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("端到端加密 WebDAV 同步", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -156,7 +156,7 @@ internal fun WebDavSyncCard(
 
             state.syncConflict?.let { conflict ->
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = ext.warningContainer,
                     border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.55f)),
                     modifier = Modifier.fillMaxWidth(),
@@ -215,7 +215,7 @@ internal fun UdpProbeCard(
     val scope = rememberCoroutineScope()
     val ext = NexusTheme.colors
 
-    OpticalCard(cornerRadius = 20.dp, modifier = modifier.fillMaxWidth()) {
+    OpticalCard(cornerRadius = 16.dp, modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("UDP 连通性与 NAT 探测", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -240,7 +240,7 @@ internal fun UdpProbeCard(
             state.udpProbeResult?.let { res ->
                 val accent = if (res.ok) ext.success else ext.danger
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = ext.wellSurface,
                     border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
                     modifier = Modifier.fillMaxWidth(),
