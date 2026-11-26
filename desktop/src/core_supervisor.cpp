@@ -24,6 +24,7 @@ module;
 #ifdef __APPLE__
 #include <libproc.h>
 #include <mach-o/dyld.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/un.h>
@@ -180,6 +181,8 @@ namespace desktop {
         return query_win_working_set_bytes(::GetCurrentProcess());
 #elif defined(__linux__)
         return read_proc_memory_bytes("/proc/self/smaps_rollup", "/proc/self/statm");
+#elif defined(__APPLE__)
+        return query_macos_phys_footprint_bytes(::getpid());
 #else
         return 0;
 #endif
@@ -207,6 +210,14 @@ namespace desktop {
             auto statm_res = std::format_to_n(statm_path, sizeof(statm_path) - 1, "/proc/{}/statm", static_cast<long>(pid));
             *statm_res.out = '\0';
             return read_proc_memory_bytes(smaps_path, statm_path);
+#elif defined(__APPLE__)
+            pid_t pid = -1;
+            {
+                std::scoped_lock lk(self.impl_->state_mu);
+                if (self.impl_->stopping) return 0;
+                pid = self.impl_->signal_pid > 0 ? self.impl_->signal_pid : self.impl_->pid;
+            }
+            return query_macos_phys_footprint_bytes(pid);
 #else
             return 0;
 #endif

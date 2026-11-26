@@ -12,9 +12,10 @@
   - `ConnectionOwnerResolver`：API 29+ `ConnectivityManager.getConnectionOwnerUid` + UID→包名 LRU 缓存
   - `NexusControlClient`：AF_UNIX `NEXUS/1` 控制与本地 HTTP `/v1/` + `/metrics` 双通道客户端
   - `CoreProcessSupervisor`：`nativeLibraryDir/libnexus.so` 原生子进程托管、配置预校验、滚动日志缓冲与指数退避重启
-  - `ProfileRepository` / `ShareLinkParser`：多档案与订阅管理、分享链接解析及 `0600` 凭据隔离
+  - `NexusClientDatabase`（SQLite 3 WAL Schema v1，零第三方依赖）：统一持久化 `subscriptions`、`profiles` + `profile_payloads`（垂直拆分 `ON DELETE CASCADE`）、`routing_profiles`、`workspace_meta`、`node_telemetry`、`traffic_ledger` 与 `host_kv`；`0600` 权限锁定并支持 `shrinkMemory()` 低内存回收
+  - `SecretFileIO` / `ShareLinkParser` / `WorkspaceSyncBridge` / `WebDavSyncClient`：`0600` 凭据与同步密钥隔离（WebDAV 密码与 E2EE 同步口令绝不落入 SQLite 或 `workspace.json`）、`nexus://share/v1/` 便携分享与 E2EE WebDAV 同步
   - `CoreArtifactVerifier`：内核 ELF64 / SHA-256 校验与离线规则集扫描
-  - `NexusVpnService`：进程内 `VpnService` + 独立隔离原生子进程（`libnexus.so`）、`specialUse` 前台服务、`onRevoke()` 优雅退场与省电策略
+  - `NexusVpnService`：进程内 `VpnService` + 独立隔离原生子进程（`libnexus.so`）、`specialUse` 前台服务、`onRevoke()` 优雅退场与省电/低内存策略
 - `:app`：Material 3 Adaptive Jetpack Compose UI（`NexusTheme` 深浅色与 Edge-to-Edge、`OverviewScreen` / `GroupsScreen` / `ConnectionsScreen` / `SplitTunnelScreen` / `ConfigScreen` / `LogsScreen`）、`TileService` 下拉快捷开关与 `BootReceiver`。
 
 ## 构建与预览

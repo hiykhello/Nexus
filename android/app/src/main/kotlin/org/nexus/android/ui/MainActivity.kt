@@ -1,7 +1,6 @@
 package org.nexus.android.ui
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.InetAddresses
@@ -21,32 +20,43 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.nexus.android.bridge.core.CoreProcessSupervisor
 import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
 import org.nexus.android.bridge.ipc.NexusControlClient
 import org.nexus.android.bridge.ipc.OutboundJsonParser
-import org.nexus.android.bridge.model.AndroidKdlBuilder
 import org.nexus.android.bridge.model.RuntimeSocketPaths
 import org.nexus.android.bridge.owner.ConnectionOwnerResolver
-import org.nexus.android.bridge.profile.ProfileRepository
 import org.nexus.android.bridge.vpn.NexusVpnService
 import org.nexus.android.bridge.vpn.VpnTunnelState
 import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.AndroidRunMode
+import org.nexus.android.bridge.workspace.NexusClientDatabase
+import org.nexus.android.bridge.workspace.ProfileItem
+import org.nexus.android.bridge.workspace.ProfileKind
 import org.nexus.android.ui.theme.NexusTheme
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
     private lateinit var configFile: File
     private lateinit var socketPaths: RuntimeSocketPaths
-    private lateinit var profiles: ProfileRepository
+    private lateinit var db: NexusClientDatabase
     private lateinit var supervisor: CoreProcessSupervisor
     private lateinit var controlClient: NexusControlClient
     private lateinit var workspaceCoordinator: WorkspaceCoordinator
     private lateinit var syncCoordinator: WorkspaceSyncCoordinator
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val trimInFlight = AtomicBoolean(false)
+    private val dashSaveMutex = Mutex()
+    @Volatile private var pendingDashVisibility: DashboardCardVisibility? = null
     private var ownerResolver: ConnectionOwnerResolver? = null
     private var askedNotificationPermission = false
     private var pendingStartConfigPath: String? = null
@@ -69,7 +79,7 @@ class MainActivity : ComponentActivity() {
 
         configFile = File(filesDir, "config.kdl")
         socketPaths = RuntimeSocketPaths(noBackupFilesDir)
-        profiles = ProfileRepository(filesDir)
+        db = NexusClientDatabase.open(this)
         supervisor = CoreProcessSupervisor(this)
         controlClient = NexusControlClient(
             unixSocketPath = socketPaths.controlSocket.absolutePath,
@@ -79,23 +89,24 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ownerResolver = ConnectionOwnerResolver(applicationContext).apply { start() }
         }
-        val prefs = getSharedPreferences("nexus_prefs", Context.MODE_PRIVATE)
-        workspaceCoordinator = WorkspaceCoordinator(filesDir, socketPaths, prefs, supervisor, controlClient)
+        workspaceCoordinator = WorkspaceCoordinator(filesDir, socketPaths, db, supervisor, controlClient)
         syncCoordinator = WorkspaceSyncCoordinator(workspaceCoordinator, socketPaths, supervisor, controlClient)
 
         setContent {
             NexusTheme {
                 val scope = rememberCoroutineScope()
-                var dashVisibility by remember { mutableStateOf(DashboardLayoutPrefs.load(prefs)) }
+                var dashVisibility by remember { mutableStateOf(DashboardCardVisibility()) }
                 var loadedKdl by remember { mutableStateOf("") }
                 var workspaceState by remember { mutableStateOf(WorkspaceUiState()) }
                 var composeLaunchError by remember { mutableStateOf("") }
 
                 LaunchedEffect(configFile) {
-                    loadedKdl = withContext(Dispatchers.IO) {
+                    val (kdl, dash) = withContext(Dispatchers.IO) {
                         if (!configFile.exists()) writeConfigAtomically(defaultAndroidKdl(socketPaths))
-                        configFile.readText()
+                        configFile.readText() to DashboardLayoutPrefs.load(db)
                     }
+                    loadedKdl = kdl
+                    dashVisibility = dash
                     workspaceState = workspaceCoordinator.loadInitialState()
                 }
 
@@ -219,7 +230,8 @@ class MainActivity : ComponentActivity() {
                     dashVisibility = dashVisibility,
                     onDashVisibilityChange = { next ->
                         dashVisibility = next
-                        DashboardLayoutPrefs.save(prefs, next)
+                        pendingDashVisibility = next
+                        ioScope.launch { dashSaveMutex.withLock { pendingDashVisibility?.let { DashboardLayoutPrefs.save(db, it) } } }
                     },
                     workspaceState = workspaceState,
                     workspaceActions = workspaceActions,
@@ -293,7 +305,8 @@ class MainActivity : ComponentActivity() {
                         null to msg
                     },
                     onSaveProfileSnapshot = { name, kdl ->
-                        withContext(Dispatchers.IO) { profiles.saveProfile(name, kdl).name.let { "已保存档案 $it" } }
+                        val item = ProfileItem(id = "", remarks = name, kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = kdl)
+                        workspaceCoordinator.addProfile(item, running).let { (next, msg) -> applyWorkspace(next); msg }
                     },
                     onValidateKdl = { text -> validateDraft(text) },
                     onSaveAndReload = { text -> saveAndReload(text) },
@@ -394,15 +407,7 @@ class MainActivity : ComponentActivity() {
         if (prep != null) vpnPermissionLauncher.launch(prep) else startVpnService()
     }
 
-    private fun startVpnService() {
-        val targetPath = pendingStartConfigPath ?: socketPaths.composedConfigFile.takeIf { it.isFile }?.absolutePath
-            ?: configFile.absolutePath
-        val intent = Intent(this, NexusVpnService::class.java)
-            .setAction(NexusVpnService.ACTION_START)
-            .putExtra(NexusVpnService.EXTRA_CONFIG_PATH, targetPath)
-            .putExtra(NexusVpnService.EXTRA_FAKE_IPV6_POOL, pendingFakeIpv6Pool)
-        startForegroundService(intent)
-    }
+    private fun startVpnService() = dispatchVpnAction(NexusVpnService.ACTION_START)
 
     private fun stopVpnService() {
         startService(Intent(this, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_STOP))
@@ -410,31 +415,38 @@ class MainActivity : ComponentActivity() {
 
     private fun restartVpnService(runMode: AndroidRunMode) {
         if (runMode == AndroidRunMode.VPN) {
-            val prep = VpnService.prepare(this)
-            if (prep != null) {
-                vpnPermissionLauncher.launch(prep)
-                return
-            }
+            VpnService.prepare(this)?.let { vpnPermissionLauncher.launch(it); return }
         }
-        val targetPath = pendingStartConfigPath ?: socketPaths.composedConfigFile.takeIf { it.isFile }?.absolutePath
-            ?: configFile.absolutePath
-        val intent = Intent(this, NexusVpnService::class.java)
-            .setAction(NexusVpnService.ACTION_RESTART)
-            .putExtra(NexusVpnService.EXTRA_CONFIG_PATH, targetPath)
-            .putExtra(NexusVpnService.EXTRA_FAKE_IPV6_POOL, pendingFakeIpv6Pool)
-        startForegroundService(intent)
+        dispatchVpnAction(NexusVpnService.ACTION_RESTART)
+    }
+
+    private fun dispatchVpnAction(action: String) {
+        val targetPath = pendingStartConfigPath ?: socketPaths.composedConfigFile.takeIf { it.isFile }?.absolutePath ?: configFile.absolutePath
+        startForegroundService(
+            Intent(this, NexusVpnService::class.java)
+                .setAction(action)
+                .putExtra(NexusVpnService.EXTRA_CONFIG_PATH, targetPath)
+                .putExtra(NexusVpnService.EXTRA_FAKE_IPV6_POOL, pendingFakeIpv6Pool),
+        )
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (::db.isInitialized && trimInFlight.compareAndSet(false, true)) {
+            ioScope.launch { try { runCatching { db.shrinkMemory() } } finally { trimInFlight.set(false) } }
+        }
     }
 
     override fun onDestroy() {
-        ownerResolver?.close()
-        ownerResolver = null
+        ioScope.cancel()
+        ownerResolver?.close(); ownerResolver = null
         super.onDestroy()
     }
 
     private suspend fun resolveOwnerPackage(conn: ActiveConnectionSnapshot): String? = withContext(Dispatchers.IO) {
         val resolver = ownerResolver ?: return@withContext null
-        val src = splitHostPort(conn.source) ?: return@withContext null
-        val dst = splitHostPort(conn.target) ?: return@withContext null
+        val src = AndroidHostConfig.parseHostPort(conn.source) ?: return@withContext null
+        val dst = AndroidHostConfig.parseHostPort(conn.target) ?: return@withContext null
         if (!InetAddresses.isNumericAddress(src.first) || !InetAddresses.isNumericAddress(dst.first)) return@withContext null
         val proto = if (conn.protocol.contains("udp", ignoreCase = true)) OsConstants.IPPROTO_UDP else OsConstants.IPPROTO_TCP
         val info = runCatching {
@@ -443,26 +455,18 @@ class MainActivity : ComponentActivity() {
         if (info.packageNames.isNotEmpty()) "${info.packageNames.joinToString(", ")} (UID ${info.uid})" else "UID ${info.uid}"
     }
 
-    private fun splitHostPort(endpoint: String): Pair<String, Int>? {
-        val trimmed = endpoint.trim()
-        if (trimmed.isEmpty()) return null
-        val (host, portStr) = if (trimmed.startsWith("[")) {
-            val end = trimmed.indexOf(']')
-            if (end <= 1 || end + 2 > trimmed.length || trimmed[end + 1] != ':') return null
-            trimmed.substring(1, end) to trimmed.substring(end + 2)
-        } else {
-            val colon = trimmed.lastIndexOf(':')
-            if (colon <= 0) return null
-            trimmed.substring(0, colon) to trimmed.substring(colon + 1)
-        }
-        val port = portStr.toIntOrNull() ?: return null
-        return if (port in 1..65535) host to port else null
-    }
-
     companion object {
+        private fun escapeKdlString(raw: String): String = buildString(raw.length) {
+            for (ch in raw) when (ch) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                else -> if (ch.code >= 0x20 && ch.code != 0x7F && ch != '\u0085' && ch != '\u2028' && ch != '\u2029') append(ch)
+            }
+        }
+
         private fun androidControlDirective(paths: RuntimeSocketPaths): String {
-            val ctrlSock = AndroidKdlBuilder.escapeKdlString(paths.controlSocket.absolutePath)
-            val tokenFile = AndroidKdlBuilder.escapeKdlString(paths.controlTokenFile.absolutePath)
+            val ctrlSock = escapeKdlString(paths.controlSocket.absolutePath)
+            val tokenFile = escapeKdlString(paths.controlTokenFile.absolutePath)
             return """control socket="$ctrlSock" http-listen="127.0.0.1:9090" bearer-token-file="$tokenFile" metrics=#true"""
         }
 

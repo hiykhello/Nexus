@@ -246,53 +246,6 @@ namespace desktop {
         return write_file_0600_atomic(path, workspace_to_json(doc));
     }
 
-    auto migrate_legacy_profiles_into_workspace(
-        WorkspaceDocument& doc,
-        std::filesystem::path const& cfg_dir,
-        std::string& active_profile_id) -> std::size_t {
-        std::unordered_set<std::string> existing_ids;
-        for (auto const& p : doc.profiles) existing_ids.insert(p.id);
-
-        std::size_t added = 0;
-        std::error_code ec;
-        auto const legacy_dir = cfg_dir / "profiles";
-        std::string legacy_active = std::string(trim_ws(read_file_str(cfg_dir / "active-profile")));
-        if (std::filesystem::is_directory(legacy_dir, ec)) {
-            std::vector<std::filesystem::path> files;
-            for (auto const& ent : std::filesystem::directory_iterator(legacy_dir, ec)) {
-                if (ent.is_regular_file(ec) && ent.path().extension() == ".kdl") files.push_back(ent.path());
-            }
-            std::ranges::sort(files);
-            for (auto const& fp : files) {
-                auto stem = fp.stem().string();
-                auto id = "legacy-" + sanitize_workspace_id(stem);
-                if (existing_ids.contains(id)) continue;
-                auto kdl = read_file_str(fp);
-                if (kdl.empty()) continue;
-                doc.profiles.push_back({
-                    .id = id, .remarks = stem, .subscription_id = "manual",
-                    .is_from_sub = false, .kind = "full_custom_kdl", .full_custom_kdl = std::move(kdl),
-                });
-                existing_ids.insert(id);
-                if (active_profile_id.empty() && stem == legacy_active) active_profile_id = id;
-                ++added;
-            }
-        }
-        if (doc.profiles.empty()) {
-            auto const legacy_cfg = cfg_dir / "config.kdl";
-            if (auto kdl = read_file_str(legacy_cfg); !kdl.empty()) {
-                std::string const id = "legacy-default";
-                doc.profiles.push_back({
-                    .id = id, .remarks = "Default", .subscription_id = "manual",
-                    .is_from_sub = false, .kind = "full_custom_kdl", .full_custom_kdl = std::move(kdl),
-                });
-                if (active_profile_id.empty()) active_profile_id = id;
-                ++added;
-            }
-        }
-        return added;
-    }
-
     auto is_safe_subscription_link(std::string_view url) noexcept -> bool {
         auto sv = trim_ws(url);
         if (sv.empty() || sv.size() > 2048) return false;

@@ -1,20 +1,20 @@
 package org.nexus.android.ui
 
-import android.content.SharedPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.nexus.android.bridge.core.CoreProcessSupervisor
 import org.nexus.android.bridge.ipc.NexusControlClient
-import org.nexus.android.bridge.model.AndroidKdlOps
+import org.nexus.android.bridge.model.EndpointParser
 import org.nexus.android.bridge.model.RuntimeSocketPaths
 import org.nexus.android.bridge.model.ShareLinkParser
-import org.nexus.android.bridge.profile.ProfileRepository
+import org.nexus.android.bridge.profile.SecretFileIO
 import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.AndroidHostConfigStore
 import org.nexus.android.bridge.workspace.ComposeResult
 import org.nexus.android.bridge.workspace.DnsConfig
+import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.bridge.workspace.ProfileItem
 import org.nexus.android.bridge.workspace.ProfileKind
 import org.nexus.android.bridge.workspace.ProfileReplacement
@@ -25,34 +25,35 @@ import org.nexus.android.bridge.workspace.TelemetryStore
 import org.nexus.android.bridge.workspace.WorkspaceComposer
 import org.nexus.android.bridge.workspace.WorkspaceDefaults
 import org.nexus.android.bridge.workspace.WorkspaceStore
+import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Coordinates Layer 1 `workspace.json`, Layer 3 `host.json`, Layer 4 `telemetry.json`,
- * Core `nexus workspace compose`, TUN zero-restart live switching, and subscription refresh.
+ * Coordinates unified SQLite 3 (WAL) client storage (`NexusClientDatabase`), Core
+ * `nexus workspace compose`, TUN zero-restart live switching, and subscription refresh.
  */
 class WorkspaceCoordinator(
     private val filesDir: File,
     private val socketPaths: RuntimeSocketPaths,
-    private val prefs: SharedPreferences,
+    val db: NexusClientDatabase,
     private val supervisor: CoreProcessSupervisor,
     private val controlClient: NexusControlClient,
 ) {
-    val workspaceStore = WorkspaceStore(filesDir)
-    val hostStore = AndroidHostConfigStore(File(filesDir, "host.json"))
-    val telemetryStore = TelemetryStore(socketPaths.telemetryFile)
+    val workspaceStore = WorkspaceStore(filesDir, db)
+    val hostStore = AndroidHostConfigStore(File(filesDir, "host.json"), db)
+    val telemetryStore = TelemetryStore(socketPaths.telemetryFile, db)
     val composer = WorkspaceComposer(supervisor)
     private val hostMutex = Mutex()
+    private val composeMutex = Mutex()
 
     @Volatile
     private var lastCompose: ComposeResult = ComposeResult(ok = false)
 
     suspend fun loadInitialState(): WorkspaceUiState = withContext(Dispatchers.IO) {
-        workspaceStore.migrateLegacyProfilesIfNeeded(filesDir)
         val doc = workspaceStore.loadOrInit()
-        val host = hostMutex.withLock { loadOrMigrateHostLocked() }
+        val host = hostMutex.withLock { hostStore.load(socketPaths) }
         val telemetry = telemetryStore.load()
         val activeId = telemetry.activeProfileId.takeIf { id -> doc.profiles.any { it.id == id } }
             ?: doc.profiles.firstOrNull()?.id.orEmpty()
@@ -67,38 +68,30 @@ class WorkspaceCoordinator(
         )
     }
 
-    private fun loadOrMigrateHostLocked(): AndroidHostConfig {
-        if (hostStore.file.isFile) return hostStore.load(socketPaths)
-        val legacyExcluded = prefs.getStringSet("excluded_packages", emptySet()).orEmpty().sorted()
-        val legacyBoot = prefs.getBoolean("auto_start_on_boot", false)
-        val base = AndroidHostConfig().boundToPaths(socketPaths)
-        return hostStore.save(
-            base.copy(
-                android = base.android.copy(
-                    perAppPackages = legacyExcluded,
-                    autoStartOnBoot = legacyBoot,
-                ),
-            ),
-        )
-    }
-
     suspend fun composeForLaunch(activeProfileId: String): ComposeResult = withContext(Dispatchers.IO) {
-        hostMutex.withLock {
-            val host = hostStore.load(socketPaths)
-            hostStore.save(host)
+        composeMutex.withLock {
+            val doc = workspaceStore.loadOrInit()
+            val resolvedId = activeProfileId.takeIf { id -> doc.profiles.any { it.id == id } }
+                ?: doc.profiles.firstOrNull()?.id.orEmpty()
+            val composeWsFile = socketPaths.composeWorkspaceFile
+            val composeHostFile = socketPaths.composeHostFile
+            try {
+                workspaceStore.writeCoreInputFile(composeWsFile, doc)
+                hostMutex.withLock { hostStore.writeCoreHostFile(composeHostFile, socketPaths) }
+                val res = composer.composeWorkspace(
+                    workspaceFile = composeWsFile,
+                    hostFile = composeHostFile,
+                    secretsDir = socketPaths.secretsDir,
+                    activeProfileId = resolvedId,
+                    emitKdlFile = socketPaths.composedConfigFile,
+                )
+                if (res.ok) lastCompose = res
+                res
+            } finally {
+                WorkspaceSyncBridge.wipeAndDelete(composeWsFile)
+                WorkspaceSyncBridge.wipeAndDelete(composeHostFile)
+            }
         }
-        val doc = workspaceStore.loadOrInit()
-        val resolvedId = activeProfileId.takeIf { id -> doc.profiles.any { it.id == id } }
-            ?: doc.profiles.firstOrNull()?.id.orEmpty()
-        val res = composer.composeWorkspace(
-            workspaceFile = workspaceStore.workspaceFile,
-            hostFile = hostStore.file,
-            secretsDir = socketPaths.secretsDir,
-            activeProfileId = resolvedId,
-            emitKdlFile = socketPaths.composedConfigFile,
-        )
-        if (res.ok) lastCompose = res
-        res
     }
 
     suspend fun selectProfile(
@@ -216,11 +209,11 @@ class WorkspaceCoordinator(
             runCatching {
                 val (payload, headers) = fetchSubscriptionPayload(sub)
                 val parsedHeaders = SubscriptionInfoParser.parseHeaders(headers)
-                val lines = ProfileRepository.decodeSubscriptionLines(payload)
+                val lines = SecretFileIO.decodeSubscriptionLines(payload)
                 val parsedNodes = lines.mapNotNull { ShareLinkParser.parse(it).getOrNull() }
                     .mapIndexed { idx, p ->
                         WorkspaceDefaults.fromParsedOutbound(
-                            id = "${sub.id}-${idx + 1}-${ProfileRepository.sanitizeId(p.tag)}",
+                            id = "${sub.id}-${idx + 1}-${SecretFileIO.sanitizeId(p.tag)}",
                             parsed = p,
                             subscriptionId = sub.id,
                             isFromSub = true,
@@ -332,18 +325,14 @@ class WorkspaceCoordinator(
     }
 
     /**
-     * Serialized atomic read-modify-write for Layer 3 `host.json` preventing concurrent lost updates.
+     * Serialized atomic read-modify-write for Layer 3 host config preventing concurrent lost updates.
      */
     suspend fun mutateHost(transform: (AndroidHostConfig) -> AndroidHostConfig): Pair<WorkspaceUiState, String> {
         withContext(Dispatchers.IO) {
             hostMutex.withLock {
-                val latest = loadOrMigrateHostLocked()
+                val latest = hostStore.load(socketPaths)
                 val bound = transform(latest).boundToPaths(socketPaths)
                 hostStore.save(bound)
-                prefs.edit()
-                    .putStringSet("excluded_packages", bound.android.perAppPackages.toSet())
-                    .putBoolean("auto_start_on_boot", bound.android.autoStartOnBoot)
-                    .apply()
             }
         }
         return loadInitialState() to "已保存本机网络与 VPN 设置"
@@ -413,7 +402,7 @@ class WorkspaceCoordinator(
                     current = URL(current, loc)
                 } else {
                     require(code in 200..299) { "HTTP $code" }
-                    val bytes = conn.inputStream.use { ProfileRepository.readBoundedBytes(it, 2 * 1024 * 1024) }
+                    val bytes = conn.inputStream.use { SecretFileIO.readBoundedBytes(it, 2 * 1024 * 1024) }
                     val hdrs = conn.headerFields.filterKeys { it != null }
                     return String(bytes, Charsets.UTF_8) to hdrs
                 }
@@ -430,14 +419,14 @@ class WorkspaceCoordinator(
             action: String,
             outbound: String,
         ): RoutingRuleItem {
-            val clean = AndroidKdlOps.stripPortAndBrackets(targetHost)
+            val clean = EndpointParser.stripPortAndBrackets(targetHost)
             val targetType = when {
                 action == "reject" -> "block"
                 action == "bypass" || outbound.equals("direct", ignoreCase = true) -> "direct"
                 else -> "proxy"
             }
-            val isV4 = AndroidKdlOps.isIpv4Literal(clean)
-            val isV6 = AndroidKdlOps.isIpv6Literal(clean)
+            val isV4 = EndpointParser.isIpv4Literal(clean)
+            val isV6 = EndpointParser.isIpv6Literal(clean)
             val isIp = isV4 || isV6
             val cidr = when {
                 isV4 -> "$clean/32"

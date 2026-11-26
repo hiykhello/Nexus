@@ -2,7 +2,7 @@ package org.nexus.android.bridge.workspace
 
 import org.json.JSONObject
 import org.nexus.android.bridge.model.RuntimeSocketPaths
-import org.nexus.android.bridge.profile.ProfileRepository
+import org.nexus.android.bridge.profile.SecretFileIO
 import java.io.File
 
 enum class AndroidRunMode(val wire: String) {
@@ -99,7 +99,7 @@ data class AndroidHostConfig(
         ),
     )
 
-    fun toJson(indentSpaces: Int = 2): String {
+    fun toJson(indentSpaces: Int = 2, includeSecrets: Boolean = false): String {
         val root = JSONObject().apply {
             put("schema_version", HostCommonConfig.SCHEMA_VERSION)
             put("platform", common.platform.ifBlank { "android" })
@@ -138,8 +138,10 @@ data class AndroidHostConfig(
                 put("dynamic_color", android.dynamicColor)
                 put("webdav_url", android.webdavUrl)
                 put("webdav_username", android.webdavUsername)
-                put("webdav_password", android.webdavPassword)
-                put("sync_passphrase", android.syncPassphrase)
+                if (includeSecrets) {
+                    put("webdav_password", android.webdavPassword)
+                    put("sync_passphrase", android.syncPassphrase)
+                }
                 put("sync_device_label", android.syncDeviceLabel)
                 put("last_synced_etag", android.lastSyncedEtag)
                 put("last_synced_revision", android.lastSyncedRevision)
@@ -272,20 +274,74 @@ data class VpnPerAppPlan(
     val disallowedPackages: List<String>,
 )
 
-class AndroidHostConfigStore(val file: File) {
+class AndroidHostConfigStore(
+    val file: File,
+    val db: NexusClientDatabase = NexusClientDatabase.inMemory(),
+    val secretFile: File = File(file.parentFile ?: File("."), ".sync-secrets.json"),
+) {
     fun load(paths: RuntimeSocketPaths? = null): AndroidHostConfig {
-        val loaded = if (file.isFile) {
-            runCatching { AndroidHostConfig.fromJson(file.readText(Charsets.UTF_8)) }.getOrDefault(AndroidHostConfig())
-        } else {
-            AndroidHostConfig()
+        var rawKv = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG)
+        if (rawKv == null && file.isFile) {
+            val legacy = runCatching { AndroidHostConfig.fromJson(file.readText(Charsets.UTF_8)) }.getOrNull()
+            if (legacy != null) {
+                val inserted = db.setHostKvIfAbsent(
+                    NexusClientDatabase.KV_ANDROID_HOST_CONFIG,
+                    legacy.toJson(indentSpaces = 0, includeSecrets = false),
+                )
+                if (inserted) {
+                    val hasSecrets = legacy.android.webdavPassword.isNotEmpty() || legacy.android.syncPassphrase.isNotEmpty()
+                    if (hasSecrets && !secretFile.isFile) {
+                        writeSyncSecrets(legacy.android.webdavPassword, legacy.android.syncPassphrase)
+                    }
+                    if (hasSecrets) {
+                        runCatching {
+                            SecretFileIO.atomicWriteSecret0600(file, legacy.toJson(indentSpaces = 2, includeSecrets = false))
+                        }
+                    }
+                }
+                rawKv = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG)
+            }
         }
-        return if (paths != null) loaded.boundToPaths(paths) else loaded
+        val base = rawKv?.let { runCatching { AndroidHostConfig.fromJson(it) }.getOrNull() } ?: AndroidHostConfig()
+        val (davPw, syncPass) = readSyncSecrets()
+        val merged = base.copy(
+            android = base.android.copy(
+                webdavPassword = davPw,
+                syncPassphrase = syncPass,
+            ),
+        )
+        return if (paths != null) merged.boundToPaths(paths) else merged
     }
 
     fun save(config: AndroidHostConfig): AndroidHostConfig {
-        file.parentFile?.mkdirs()
-        // Strict 0600 atomic write because host.json holds local WebDAV & sync credentials.
-        ProfileRepository.atomicWriteSecret0600(file, config.toJson(indentSpaces = 2))
+        db.setHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG, config.toJson(indentSpaces = 0, includeSecrets = false))
+        writeSyncSecrets(config.android.webdavPassword, config.android.syncPassphrase)
         return config
+    }
+
+    fun writeCoreHostFile(targetFile: File, paths: RuntimeSocketPaths): File {
+        val cfg = load(paths)
+        SecretFileIO.atomicWriteSecret0600(targetFile, cfg.toJson(indentSpaces = 2, includeSecrets = false))
+        return targetFile
+    }
+
+    private fun readSyncSecrets(): Pair<String, String> {
+        if (!secretFile.isFile) return "" to ""
+        return runCatching {
+            val obj = JSONObject(secretFile.readText(Charsets.UTF_8))
+            obj.optString("webdav_password", "") to obj.optString("sync_passphrase", "")
+        }.getOrDefault("" to "")
+    }
+
+    private fun writeSyncSecrets(webdavPassword: String, syncPassphrase: String) {
+        if (webdavPassword.isEmpty() && syncPassphrase.isEmpty()) {
+            WorkspaceSyncBridge.wipeAndDelete(secretFile)
+            return
+        }
+        val payload = JSONObject().apply {
+            put("webdav_password", webdavPassword)
+            put("sync_passphrase", syncPassphrase)
+        }.toString(2) + "\n"
+        SecretFileIO.atomicWriteSecret0600(secretFile, payload)
     }
 }

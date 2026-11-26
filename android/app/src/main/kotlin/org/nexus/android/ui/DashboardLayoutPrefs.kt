@@ -1,7 +1,9 @@
 package org.nexus.android.ui
 
-import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
+import org.json.JSONArray
+import org.json.JSONObject
+import org.nexus.android.bridge.workspace.NexusClientDatabase
 
 /**
  * Persistent Overview dashboard card visibility + custom order model.
@@ -154,16 +156,30 @@ data class DashboardCardVisibility(
 }
 
 object DashboardLayoutPrefs {
-    fun load(prefs: SharedPreferences): DashboardCardVisibility =
-        DashboardCardVisibility.fromPersisted(
-            hidden = prefs.getStringSet(DashboardCardVisibility.PREF_HIDDEN_CARDS, emptySet()).orEmpty(),
-            rawOrder = prefs.getString(DashboardCardVisibility.PREF_CARD_ORDER, null),
-        )
+    fun load(db: NexusClientDatabase): DashboardCardVisibility {
+        val raw = db.getHostKv(NexusClientDatabase.KV_DASHBOARD_LAYOUT) ?: return DashboardCardVisibility()
+        return runCatching {
+            val obj = JSONObject(raw)
+            val hiddenArr = obj.optJSONArray(DashboardCardVisibility.PREF_HIDDEN_CARDS)
+            val hidden = buildSet {
+                if (hiddenArr != null) {
+                    for (i in 0 until hiddenArr.length()) {
+                        val s = hiddenArr.optString(i, "")
+                        if (s.isNotEmpty()) add(s)
+                    }
+                }
+            }
+            val rawOrder = obj.optString(DashboardCardVisibility.PREF_CARD_ORDER, "")
+                .takeIf { it.isNotBlank() }
+            DashboardCardVisibility.fromPersisted(hidden = hidden, rawOrder = rawOrder)
+        }.getOrDefault(DashboardCardVisibility())
+    }
 
-    fun save(prefs: SharedPreferences, state: DashboardCardVisibility) {
-        prefs.edit()
-            .putStringSet(DashboardCardVisibility.PREF_HIDDEN_CARDS, state.toHiddenKeySet())
-            .putString(DashboardCardVisibility.PREF_CARD_ORDER, state.toSerializedOrder())
-            .apply()
+    fun save(db: NexusClientDatabase, state: DashboardCardVisibility) {
+        val obj = JSONObject().apply {
+            put(DashboardCardVisibility.PREF_HIDDEN_CARDS, JSONArray().apply { state.toHiddenKeySet().forEach { put(it) } })
+            put(DashboardCardVisibility.PREF_CARD_ORDER, state.toSerializedOrder())
+        }
+        db.setHostKv(NexusClientDatabase.KV_DASHBOARD_LAYOUT, obj.toString())
     }
 }

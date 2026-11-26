@@ -206,17 +206,18 @@ namespace desktop_ui_helpers {
         std::optional<std::chrono::steady_clock::time_point>& core_started_at;
         std::filesystem::path const& cfg_dir;
         std::filesystem::path const& config_path;
-        std::filesystem::path const& prefs_path;
         std::string const& fallback_sock;
         std::atomic<bool>& lifecycle_busy;
         std::function<void()>& sync_tray;
+        std::function<void()> persist_prefs;
+        std::function<void(bool)> on_tun_state_changed;
     };
 
     inline auto bind_tun_callbacks(TunFlowContext& ctx) -> void {
         probe_tun_privilege_async(ctx.weak_ui, ctx.worker, ctx.supervisor.binary_path());
 
         ctx.ui.on_tray_prefs_changed([&ctx] {
-            (void)desktop::save_ui_prefs(ctx.prefs_path, capture_prefs_from_ui(ctx.ui));
+            if (ctx.persist_prefs) ctx.persist_prefs();
             if (ctx.sync_tray) ctx.sync_tray();
         });
 
@@ -317,6 +318,7 @@ namespace desktop_ui_helpers {
                         apply_kdl_to_ui_state(*s, kdl);
                         if (!synced_sock.empty()) s->set_control_endpoint(slint::SharedString(synced_sock));
                         s->set_tun_enabled(true);
+                        if (ctx.on_tun_state_changed) ctx.on_tun_state_changed(true);
                         if (was_running) {
                             s->set_core_running(true);
                             ctx.core_started_at = std::chrono::steady_clock::now();
@@ -376,6 +378,7 @@ namespace desktop_ui_helpers {
                     apply_tun_probe_to_ui(*s, probe);
                     apply_kdl_to_ui_state(*s, kdl);
                     s->set_tun_enabled(false);
+                    if (ctx.on_tun_state_changed) ctx.on_tun_state_changed(false);
                     s->set_core_running(running_after);
                     if (restarted) {
                         if (running_after) {

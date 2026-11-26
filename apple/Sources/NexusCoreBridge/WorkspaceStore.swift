@@ -13,55 +13,88 @@ public enum WorkspaceStoreError: Error, LocalizedError, Equatable, Sendable {
     }
 }
 
-/// Swift 6 actor managing atomic `0600` persistence for Layer 1 canonical `workspace.json`.
+/// Swift 6 actor managing Layer 1 canonical Workspace persistence backed by `NexusClientDatabase`
+/// (`nexus-client.db`, SQLite 3 WAL) with one-shot legacy `workspace.json` import.
 public actor WorkspaceStore {
     public nonisolated let rootDirectory: URL
     public nonisolated let workspaceFileURL: URL
+    public nonisolated let database: NexusClientDatabase
+    private var loadTask: Task<WorkspaceDocument, Error>?
 
-    public init(rootDirectory: URL, fileName: String = "workspace.json") {
+    public init(
+        rootDirectory: URL,
+        database: NexusClientDatabase? = nil,
+        fileName: String = "workspace.json"
+    ) {
         self.rootDirectory = rootDirectory
         self.workspaceFileURL = rootDirectory.appendingPathComponent(fileName)
+        self.database = database ?? NexusClientDatabase(rootDirectory: rootDirectory)
     }
 
-    public func loadOrInit() throws -> WorkspaceDocument {
-        if !FileManager.default.fileExists(atPath: workspaceFileURL.path) {
+    public func loadOrInit() async throws -> WorkspaceDocument {
+        if let inflight = loadTask {
+            return try await inflight.value
+        }
+        let db = database
+        let legacyURL = workspaceFileURL
+        let task = Task<WorkspaceDocument, Error> {
+            if let stored = try await db.loadWorkspace() {
+                return stored
+            }
+            if FileManager.default.fileExists(atPath: legacyURL.path) {
+                let text = try String(contentsOf: legacyURL, encoding: .utf8)
+                let migrated = try WorkspaceDocument.decodeCanonicalJSON(text)
+                return try await db.saveWorkspaceIfEmpty(migrated)
+            }
             let initial = WorkspaceDocument(
                 schemaVersion: WorkspaceDocument.currentSchemaVersion,
                 revision: 1,
                 updatedAtMs: Self.nowEpochMs(),
                 routingProfiles: WorkspaceDocument.defaultRoutingProfiles()
             )
-            return try save(initial, bumpRevision: false)
+            return try await db.saveWorkspaceIfEmpty(initial)
         }
-        let text = try String(contentsOf: workspaceFileURL, encoding: .utf8)
-        return try WorkspaceDocument.decodeCanonicalJSON(text)
+        loadTask = task
+        defer { if loadTask == task { loadTask = nil } }
+        return try await task.value
     }
 
     @discardableResult
-    public func save(_ doc: WorkspaceDocument, bumpRevision: Bool = true) throws -> WorkspaceDocument {
+    public func save(_ doc: WorkspaceDocument, bumpRevision: Bool = true) async throws -> WorkspaceDocument {
+        loadTask = nil
         var persisted = doc
         persisted.schemaVersion = WorkspaceDocument.currentSchemaVersion
         persisted.revision = bumpRevision ? max(1, doc.revision + 1) : max(1, doc.revision)
         persisted.updatedAtMs = Self.nowEpochMs()
-        let encoded = try persisted.encodeCanonicalJSON(pretty: true)
-        try Self.atomicWrite0600(data: Data(encoded.utf8), to: workspaceFileURL)
+        try await database.saveWorkspace(persisted)
         return persisted
     }
 
-    public func exportPortableJSON(_ doc: WorkspaceDocument? = nil) throws -> String {
+    public func listProfileSummaries(
+        subscriptionId: String? = nil,
+        kind: WorkspaceProfileKind? = nil
+    ) async throws -> [ProfileSummaryRecord] {
+        try await database.listProfileSummaries(subscriptionId: subscriptionId, kind: kind)
+    }
+
+    public func exportPortableJSON(_ doc: WorkspaceDocument? = nil) async throws -> String {
         let target: WorkspaceDocument
         if let doc {
             target = doc
         } else {
-            target = try loadOrInit()
+            target = try await loadOrInit()
         }
         return try target.encodeCanonicalJSON(pretty: true)
     }
 
     @discardableResult
-    public func importPortableJSON(_ rawJSON: String, bumpRevision: Bool = true) throws -> WorkspaceDocument {
+    public func importPortableJSON(_ rawJSON: String, bumpRevision: Bool = true) async throws -> WorkspaceDocument {
         let decoded = try WorkspaceDocument.decodeCanonicalJSON(rawJSON)
-        return try save(decoded, bumpRevision: bumpRevision)
+        return try await save(decoded, bumpRevision: bumpRevision)
+    }
+
+    public func shrinkMemory() async throws {
+        try await database.shrinkMemory()
     }
 
     public static func sanitizeID(_ raw: String) -> String {
@@ -93,6 +126,7 @@ public actor WorkspaceStore {
     }
 
     /// Atomic POSIX `0600` write with `O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC` and `F_FULLFSYNC` on Darwin.
+    /// Retained for transient secret files and pre-pull local encrypted-sync backups.
     public static func atomicWrite0600(data: Data, to destination: URL) throws {
         let parent = destination.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)

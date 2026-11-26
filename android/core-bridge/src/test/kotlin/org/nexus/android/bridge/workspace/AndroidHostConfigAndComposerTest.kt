@@ -14,7 +14,8 @@ class AndroidHostConfigAndComposerTest {
     fun hostConfigJsonRoundTripStaysIsolatedFromWorkspace() {
         val dir = Files.createTempDirectory("nexus-host-test").toFile()
         try {
-            val store = AndroidHostConfigStore(File(dir, "host.json"))
+            val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
+            val store = AndroidHostConfigStore(File(dir, "host.json"), db)
             val cfg = AndroidHostConfig(
                 common = HostCommonConfig(workers = 4, logLevel = "debug", maxSelectorMembers = 64),
                 android = AndroidHostSection(
@@ -36,9 +37,9 @@ class AndroidHostConfigAndComposerTest {
             store.save(cfg)
             val loaded = store.load()
             assertEquals(cfg, loaded)
-            val raw = store.file.readText()
-            assertTrue(raw.contains("\"run_mode\": \"proxy_only\""))
-            assertTrue(raw.contains("\"exclude_self_from_vpn\": false"))
+            val raw = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG) ?: ""
+            assertTrue(raw.contains("\"run_mode\":\"proxy_only\"") || raw.contains("\"run_mode\": \"proxy_only\""))
+            assertTrue(raw.contains("\"exclude_self_from_vpn\":false") || raw.contains("\"exclude_self_from_vpn\": false"))
             assertFalse(raw.contains("\"profiles\""))
         } finally {
             dir.deleteRecursively()

@@ -39,7 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.nexus.android.R
 import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
-import org.nexus.android.bridge.model.AndroidKdlOps
+import org.nexus.android.bridge.model.EndpointParser
 import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 import java.util.Locale
@@ -96,7 +96,7 @@ fun ConnectionDetailContent(
     val targetDisplay = detail.target.ifEmpty {
         if (detail.destinationPort > 0) "${detail.path}:${detail.destinationPort}" else detail.path
     }
-    val ruleHost = AndroidKdlOps.stripPortAndBrackets(targetDisplay)
+    val ruleHost = EndpointParser.stripPortAndBrackets(targetDisplay)
     val resolvedPkg = extractOwnerPackageName(ownerPackage) ?: extractOwnerPackageName(detail.processPath)
     val alreadyBypassed = resolvedPkg != null && excludedPackages.contains(resolvedPkg)
     val shortApp = formatShortAppLabel(resolvedPkg, detail.processPath)

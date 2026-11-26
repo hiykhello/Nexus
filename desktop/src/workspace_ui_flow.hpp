@@ -26,8 +26,8 @@ namespace desktop_ui_helpers {
         ctx.doc.profiles.push_back(std::move(*built));
         ++ctx.doc.revision;
         ctx.telemetry.active_profile_id = new_id;
-        (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-        (void)desktop::save_telemetry_store(ctx.telemetry_path, ctx.telemetry);
+        (void)persist_workspace_db(ctx);
+        (void)persist_telemetry_db(ctx);
         ctx.ui.set_share_link_input(slint::SharedString(""));
         ctx.ui.set_active_profile(slint::SharedString(new_remarks));
         sync_workspace_to_ui(ctx);
@@ -35,9 +35,11 @@ namespace desktop_ui_helpers {
     }
 
     inline auto refresh_workspace_from_disk(WorkspaceUiContext& ctx) -> void {
-        if (auto loaded = desktop::load_workspace(ctx.workspace_path); loaded) ctx.doc = std::move(*loaded);
-        ctx.host = desktop::load_desktop_host_config(ctx.host_path, ctx.cfg_dir, ctx.fallback_sock);
-        ctx.telemetry = desktop::load_telemetry_store(ctx.telemetry_path);
+        if (ctx.db) {
+            if (auto loaded = ctx.db->load_workspace(); loaded) ctx.doc = std::move(*loaded);
+            ctx.host = desktop::load_host_config_from_db(*ctx.db, ctx.cfg_dir, ctx.secrets_dir, ctx.fallback_sock);
+            if (auto tel = ctx.db->load_telemetry(); tel) ctx.telemetry = std::move(*tel);
+        }
         auto notices = desktop::normalize_desktop_host_config(ctx.host, is_en_ui(ctx.ui));
         sync_workspace_to_ui(ctx);
         sync_webdav_fields_to_ui(ctx);
@@ -47,20 +49,23 @@ namespace desktop_ui_helpers {
     }
 
     inline auto bind_workspace_callbacks(WorkspaceUiContext& ctx) -> void {
-        ctx.workspace_path = ctx.cfg_dir / "workspace.json";
-        ctx.host_path = ctx.cfg_dir / "host.json";
-        ctx.telemetry_path = ctx.cfg_dir / "telemetry.json";
+        auto const runtime_dir = ctx.cfg_dir / "runtime";
+        std::error_code ec;
+        std::filesystem::create_directories(runtime_dir, ec);
+        ctx.workspace_path = runtime_dir / "compose-workspace.json";
+        ctx.host_path = runtime_dir / "compose-host.json";
         ctx.secrets_dir = ctx.cfg_dir / "secrets";
 
-        auto loaded = desktop::load_workspace(ctx.workspace_path);
-        ctx.doc = loaded ? std::move(*loaded) : desktop::make_default_workspace();
-        ctx.host = desktop::load_desktop_host_config(ctx.host_path, ctx.cfg_dir, ctx.fallback_sock);
-        ctx.telemetry = desktop::load_telemetry_store(ctx.telemetry_path);
-
-        if (desktop::migrate_legacy_profiles_into_workspace(ctx.doc, ctx.cfg_dir, ctx.telemetry.active_profile_id) > 0) {
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-            (void)desktop::save_telemetry_store(ctx.telemetry_path, ctx.telemetry);
+        if (ctx.db) {
+            auto loaded = ctx.db->load_workspace();
+            ctx.doc = loaded ? std::move(*loaded) : desktop::make_default_workspace();
+            ctx.host = desktop::load_host_config_from_db(*ctx.db, ctx.cfg_dir, ctx.secrets_dir, ctx.fallback_sock);
+            if (auto tel = ctx.db->load_telemetry(); tel) ctx.telemetry = std::move(*tel);
+        } else {
+            ctx.doc = desktop::make_default_workspace();
+            ctx.host = desktop::make_default_desktop_host_config(ctx.cfg_dir, ctx.fallback_sock);
         }
+
         auto notices = desktop::normalize_desktop_host_config(ctx.host, is_en_ui(ctx.ui));
         sync_workspace_to_ui(ctx);
         bind_workspace_sync_callbacks(ctx);
@@ -75,9 +80,10 @@ namespace desktop_ui_helpers {
             if (!found) return;
 
             ctx.telemetry.active_profile_id = id;
-            (void)desktop::save_telemetry_store(ctx.telemetry_path, ctx.telemetry);
+            (void)persist_telemetry_db(ctx);
             ctx.ui.set_active_profile(slint::SharedString(found->remarks.empty() ? found->id : found->remarks));
             sync_workspace_to_ui(ctx);
+            if (ctx.sync_tray) ctx.sync_tray();
 
             auto live_tag = desktop::resolve_live_switch_tag(ctx.doc, id);
             auto decision = desktop::decide_tun_live_switch(
@@ -114,8 +120,9 @@ namespace desktop_ui_helpers {
             std::string label = built->remarks;
             ctx.doc.profiles.push_back(std::move(*built));
             ++ctx.doc.revision;
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+            (void)persist_workspace_db(ctx);
             sync_workspace_to_ui(ctx);
+            if (ctx.sync_tray) ctx.sync_tray();
             push_toast(ctx.ui, tr(en, "已添加到工作区: ", "Added to workspace: ") + label, "success");
         });
 
@@ -126,9 +133,10 @@ namespace desktop_ui_helpers {
             for (auto const& p : ctx.doc.profiles) live.insert(p.id);
             (void)desktop::prune_telemetry_entries(ctx.telemetry, live);
             ++ctx.doc.revision;
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-            (void)desktop::save_telemetry_store(ctx.telemetry_path, ctx.telemetry);
+            (void)persist_workspace_db(ctx);
+            (void)persist_telemetry_db(ctx);
             sync_workspace_to_ui(ctx);
+            if (ctx.sync_tray) ctx.sync_tray();
         });
 
         ws.on_add_subscription([&ctx](slint::SharedString rem_s, slint::SharedString url_s, slint::SharedString prev_s, slint::SharedString next_s) {
@@ -151,7 +159,7 @@ namespace desktop_ui_helpers {
             sub.next_profile_id = std::string(trim_ascii_ws(std::string_view(next_s)));
             ctx.doc.subscriptions.push_back(std::move(sub));
             ++ctx.doc.revision;
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+            (void)persist_workspace_db(ctx);
             sync_workspace_to_ui(ctx);
             push_toast(ctx.ui, tr(en, "已保存订阅: ", "Saved subscription: ") + rem, "success");
         });
@@ -162,7 +170,7 @@ namespace desktop_ui_helpers {
                     s.prev_profile_id = std::string(trim_ascii_ws(std::string_view(prev_s)));
                     s.next_profile_id = std::string(trim_ascii_ws(std::string_view(next_s)));
                     ++ctx.doc.revision;
-                    (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+                    (void)persist_workspace_db(ctx);
                     sync_workspace_to_ui(ctx);
                     recompose_active_workspace(ctx);
                     break;
@@ -175,14 +183,14 @@ namespace desktop_ui_helpers {
             if (id == "manual") return;
             std::erase_if(ctx.doc.subscriptions, [&](auto const& s) { return s.id == id; });
             ++ctx.doc.revision;
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+            (void)persist_workspace_db(ctx);
             sync_workspace_to_ui(ctx);
         });
 
         ws.on_select_routing_profile([&ctx](slint::SharedString rid) {
             for (auto& rp : ctx.doc.routing_profiles) rp.is_active = (rp.id == std::string_view(rid));
             ++ctx.doc.revision;
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+            (void)persist_workspace_db(ctx);
             sync_workspace_to_ui(ctx);
             recompose_active_workspace(ctx);
         });
@@ -210,7 +218,7 @@ namespace desktop_ui_helpers {
                 r.desktop_process = std::move(procs);
                 rp.rules.push_back(std::move(r));
                 ++ctx.doc.revision;
-                (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+                (void)persist_workspace_db(ctx);
                 sync_workspace_to_ui(ctx);
                 recompose_active_workspace(ctx);
                 break;
@@ -225,7 +233,7 @@ namespace desktop_ui_helpers {
             ctx.doc.dns.simple.fake_ip_enabled = fakeip;
             ctx.doc.dns.raw_kdl = std::string(raw_kdl);
             ++ctx.doc.revision;
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+            (void)persist_workspace_db(ctx);
             sync_workspace_to_ui(ctx);
             recompose_active_workspace(ctx);
         });
@@ -247,7 +255,7 @@ namespace desktop_ui_helpers {
             g.set_host_strict_route_notice(slint::SharedString(notices.empty() ? "" : notices.front()));
             if (!notices.empty()) push_toast(ctx.ui, notices.front(), "warn");
             if (!ctx.doc.profiles.empty()) recompose_active_workspace(ctx);
-            else if (notices.empty()) push_toast(ctx.ui, tr(en, "已保存本机宿主设置 (host.json)", "Saved Desktop Host settings (host.json)"), "success");
+            else if (notices.empty()) push_toast(ctx.ui, tr(en, "已保存本机宿主设置 (SQLite)", "Saved Desktop Host settings (SQLite)"), "success");
         });
 
         ws.on_export_portable_workspace([&ctx] {
@@ -284,9 +292,10 @@ namespace desktop_ui_helpers {
             if (ctx.telemetry.active_profile_id.empty() && !ctx.doc.profiles.empty()) {
                 ctx.telemetry.active_profile_id = ctx.doc.profiles.front().id;
             }
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-            (void)desktop::save_telemetry_store(ctx.telemetry_path, ctx.telemetry);
+            (void)persist_workspace_db(ctx);
+            (void)persist_telemetry_db(ctx);
             sync_workspace_to_ui(ctx);
+            if (ctx.sync_tray) ctx.sync_tray();
             auto msg = tr(en, "已导入便携工作区（本机宿主与遥测保持隔离）", "Imported portable workspace (host & telemetry untouched)");
             g.set_portable_status_ok(true);
             g.set_portable_status(slint::SharedString(msg));

@@ -6,10 +6,12 @@ namespace desktop_ui_helpers {
         nexus_ui::AppWindow& ui;
         slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui;
         desktop::AsyncWorker& worker;
+        desktop::AsyncWorker& probe_worker;
         desktop::CoreSupervisor& supervisor;
         desktop::IpcClient& ipc;
         desktop::HttpControlClient& http_ctrl;
-        desktop::ProfileStore& profile_store;
+        desktop::ClientDatabase* client_db;
+        desktop::TelemetryStoreData& telemetry;
         std::filesystem::path const& cfg_dir;
         std::filesystem::path const& config_path;
         std::string const& fallback_sock;
@@ -25,23 +27,28 @@ namespace desktop_ui_helpers {
         slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui,
         bool& window_visible,
         std::function<void()>& sync_tray,
+        std::function<void()>& on_window_shown,
+        std::function<void()>& on_window_hidden,
         std::atomic<bool>& quit_once) -> desktop::TrayCallbacks {
         return {
-            .on_show = [weak_ui, &window_visible, &sync_tray] {
-                on_ui_thread(weak_ui, [&window_visible, &sync_tray](auto& s) {
+            .on_show = [weak_ui, &window_visible, &sync_tray, &on_window_shown] {
+                on_ui_thread(weak_ui, [&window_visible, &sync_tray, &on_window_shown](auto& s) {
                     s->window().show();
                     window_visible = true;
+                    if (on_window_shown) on_window_shown();
                     if (sync_tray) sync_tray();
                 });
             },
-            .on_toggle_window = [weak_ui, &window_visible, &sync_tray] {
-                on_ui_thread(weak_ui, [&window_visible, &sync_tray](auto& s) {
+            .on_toggle_window = [weak_ui, &window_visible, &sync_tray, &on_window_shown, &on_window_hidden] {
+                on_ui_thread(weak_ui, [&window_visible, &sync_tray, &on_window_shown, &on_window_hidden](auto& s) {
                     if (window_visible && s->window().is_visible()) {
                         s->window().hide();
                         window_visible = false;
+                        if (on_window_hidden) on_window_hidden();
                     } else {
                         s->window().show();
                         window_visible = true;
+                        if (on_window_shown) on_window_shown();
                     }
                     if (sync_tray) sync_tray();
                 });
@@ -196,42 +203,64 @@ namespace desktop_ui_helpers {
             });
         });
 
-        auto push_profiles = [&ctx] {
-            sync_profiles_to_ui(ctx.ui, ctx.profile_store);
-            if (ctx.sync_tray) ctx.sync_tray();
-        };
-        ctx.ui.on_refresh_profiles([push_profiles] { push_profiles(); });
-        ctx.ui.on_create_profile([&ctx, push_profiles](slint::SharedString name) {
-            if (auto saved = ctx.profile_store.save_profile(std::string_view(name), std::string_view(ctx.ui.get_kdl_text()))) {
-                push_profiles();
-                auto msg = tr(is_en_ui(ctx.ui), "已保存配置档案: ", "Saved profile: ") + saved->id;
-                ctx.ui.set_status_summary(slint::SharedString(msg));
-                push_toast(ctx.ui, msg, "success");
-            }
-        });
-        ctx.ui.on_activate_profile([&ctx, push_profiles](slint::SharedString id) {
-            std::string target(id);
-            for (auto const& e : ctx.profile_store.list()) {
-                if (e.id == target) {
-                    (void)ctx.profile_store.set_active(target);
-                    auto text = read_file_text(e.kdl_path);
-                    apply_kdl_to_ui_state(ctx.ui, text);
-                    ctx.ui.set_active_profile(slint::SharedString(e.name));
-                    push_profiles();
-                    ctx.ui.invoke_save_and_reload(slint::SharedString(text));
-                    break;
+        // Wave 25 ad-hoc endpoint connectivity probe via POST /v1/outbounds/{tag}/probe (runs on dedicated probe_worker)
+        ctx.ui.on_probe_connectivity([&ctx] {
+            if (!ctx.supervisor.running() || ctx.ui.get_conn_probe_busy()) return;
+            std::string tag(ctx.ui.get_selected_group());
+            if (tag.empty()) tag = "proxy";
+            std::string active_pid = ctx.telemetry.active_profile_id;
+            ctx.ui.set_conn_probe_busy(true);
+            bool posted = ctx.probe_worker.post([&ctx, tag = std::move(tag), active_pid = std::move(active_pid)]() mutable {
+                auto run_one = [&](std::string_view url, bool& used_direct) -> desktop::OutboundProbeResult {
+                    auto rep = ctx.http_ctrl.probe_outbound(tag, url, 4000, "http");
+                    if (!rep.ok && rep.status_code == 404 && tag != "direct") {
+                        used_direct = true;
+                        rep = ctx.http_ctrl.probe_outbound("direct", url, 4000, "http");
+                    }
+                    return rep.ok ? desktop::parse_outbound_probe_json(rep.body) : desktop::OutboundProbeResult{};
+                };
+                bool g_direct = false, c_direct = false, h_direct = false;
+                auto r_google = run_one("https://www.gstatic.com/generate_204", g_direct);
+                auto r_cf = run_one("https://cp.cloudflare.com/generate_204", c_direct);
+                auto r_gh = run_one("https://api.github.com", h_direct);
+                int g_ms = r_google.ok ? static_cast<int>(std::max<std::int64_t>(1, r_google.latency_ms)) : 0;
+                int c_ms = r_cf.ok ? static_cast<int>(std::max<std::int64_t>(1, r_cf.latency_ms)) : 0;
+                int h_ms = r_gh.ok ? static_cast<int>(std::max<std::int64_t>(1, r_gh.latency_ms)) : 0;
+                auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                bool const record_active = !g_direct && tag != "direct" && !active_pid.empty();
+                if (record_active && ctx.client_db) {
+                    std::int64_t prev_ewma = -1;
+                    if (auto rows = ctx.client_db->load_node_telemetry(); rows) {
+                        for (auto const& r : *rows) {
+                            if (r.profile_id == active_pid) { prev_ewma = r.ewma_ms; break; }
+                        }
+                    }
+                    std::int64_t const next_ewma = g_ms > 0
+                        ? (prev_ewma > 0 ? (prev_ewma * 7 + static_cast<std::int64_t>(g_ms) * 3) / 10 : static_cast<std::int64_t>(g_ms))
+                        : prev_ewma;
+                    (void)ctx.client_db->upsert_node_telemetry({
+                        active_pid, static_cast<std::int64_t>(g_ms), next_ewma, r_google.status_code,
+                        r_google.ok ? "healthy" : (r_google.state.empty() ? "timeout" : r_google.state), now_ms,
+                    });
                 }
-            }
+                on_ui_thread(ctx.weak_ui, [&ctx, record_active, active_pid = std::move(active_pid), now_ms, g_ms, c_ms, h_ms](auto& s) {
+                    if (record_active) {
+                        bool updated = false;
+                        for (auto& e : ctx.telemetry.entries) {
+                            if (e.profile_id == active_pid) { e.delay_ms = g_ms; e.last_tested_ms = now_ms; updated = true; break; }
+                        }
+                        if (!updated) ctx.telemetry.entries.push_back({.profile_id = active_pid, .delay_ms = g_ms, .last_tested_ms = now_ms});
+                    }
+                    s->set_conn_google_ms(g_ms);
+                    s->set_conn_cf_ms(c_ms);
+                    s->set_conn_github_ms(h_ms);
+                    s->set_conn_probe_busy(false);
+                });
+            });
+            if (!posted) ctx.ui.set_conn_probe_busy(false);
         });
-        ctx.ui.on_delete_profile([&ctx, push_profiles](slint::SharedString id) {
-            auto was_active = ctx.profile_store.active_id();
-            if (ctx.profile_store.remove_profile(std::string_view(id))) {
-                if (was_active == desktop::ProfileStore::sanitize_id(std::string_view(id))) {
-                    ctx.ui.set_active_profile(slint::SharedString(""));
-                }
-                push_profiles();
-            }
-        });
+
         ctx.ui.on_reload_config_from_disk([&ctx] {
             bool en = is_en_ui(ctx.ui);
             ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "正在从磁盘读取并校验...", "Reading & validating config from disk...")));
@@ -387,8 +416,7 @@ namespace desktop_ui_helpers {
         });
     }
 
-    inline auto bind_dash_layout_callbacks(nexus_ui::AppWindow& ui, std::filesystem::path const& prefs_path) -> void {
-        auto persist = [&ui, &prefs_path] { (void)desktop::save_ui_prefs(prefs_path, capture_prefs_from_ui(ui)); };
+    inline auto bind_dash_layout_callbacks(nexus_ui::AppWindow& ui, std::function<void()> persist) -> void {
         ui.on_dash_prefs_changed(persist);
         ui.on_reorder_dash_section([&ui, persist](int from_id, int to_id) {
             auto ord = read_dash_order_model(ui.get_dash_section_order());
@@ -412,6 +440,7 @@ namespace desktop_ui_helpers {
             ui.set_dash_show_speed(true); ui.set_dash_show_quick_nodes(true);
             ui.set_dash_show_network(true); ui.set_dash_show_memory(true);
             ui.set_dash_show_traffic(true); ui.set_dash_show_ports(true);
+            ui.set_dash_show_connectivity(true);
             ui.set_dash_section_order(make_dash_order_model({0, 1, 2, 3}));
             ui.set_dash_info_order(make_dash_order_model({0, 1, 2, 3}));
             ui.set_dash_deck_swapped(false);

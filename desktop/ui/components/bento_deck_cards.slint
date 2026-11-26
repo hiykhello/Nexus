@@ -105,8 +105,8 @@ export component OutboundModeCard inherits Rectangle {
     HorizontalLayout {
         padding-left: root.compact ? 10px : 16px;
         padding-right: 10px;
-        padding-top: 9px;
-        padding-bottom: 9px;
+        padding-top: 7px;
+        padding-bottom: 7px;
         spacing: 12px;
 
         if !root.compact : HorizontalLayout {
@@ -125,8 +125,8 @@ export component OutboundModeCard inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
             min-width: 0px;
-            height: 40px;
-            border-radius: 20px;
+            height: 38px;
+            border-radius: 19px;
             border-width: 1px;
             border-color: Theme.well-border;
             background: Theme.well-bg;
@@ -309,15 +309,15 @@ export component LocalPortsCompactCard inherits Rectangle {
             copy-endpoint(ep) => { root.copy-endpoint(ep); }
         }
         CompactPortRow {
-            label: "SOCKS"; enabled: root.socks-proxy-enabled; host: root.socks-proxy-host; port <=> root.socks-proxy-port; default-port: "1080"; live: root.core-running && root.socks-proxy-enabled;
-            toggled(on) => { root.socks-proxy-enabled = on; root.apply-inbound-proxy-config("socks5", on, root.socks-proxy-host, root.socks-proxy-port); }
-            port-committed => { root.apply-inbound-proxy-config("socks5", root.socks-proxy-enabled, root.socks-proxy-host, root.socks-proxy-port); }
+            label: I18n.t("备用", "2nd"); enabled: root.socks-proxy-enabled; host: root.socks-proxy-host; port <=> root.socks-proxy-port; default-port: "1080"; live: root.core-running && root.socks-proxy-enabled;
+            toggled(on) => { root.socks-proxy-enabled = on; root.apply-inbound-proxy-config("second", on, root.socks-proxy-host, root.socks-proxy-port); }
+            port-committed => { root.apply-inbound-proxy-config("second", root.socks-proxy-enabled, root.socks-proxy-host, root.socks-proxy-port); }
             copy-endpoint(ep) => { root.copy-endpoint(ep); }
         }
         CompactPortRow {
-            label: "HTTP"; enabled: root.http-proxy-enabled; host: root.http-proxy-host; port <=> root.http-proxy-port; default-port: "8080"; live: root.core-running && root.http-proxy-enabled;
-            toggled(on) => { root.http-proxy-enabled = on; root.apply-inbound-proxy-config("http", on, root.http-proxy-host, root.http-proxy-port); }
-            port-committed => { root.apply-inbound-proxy-config("http", root.http-proxy-enabled, root.http-proxy-host, root.http-proxy-port); }
+            label: I18n.t("局域网", "LAN"); enabled: root.http-proxy-enabled; host: root.http-proxy-host; port <=> root.http-proxy-port; default-port: "7891"; live: root.core-running && root.http-proxy-enabled;
+            toggled(on) => { root.http-proxy-enabled = on; root.apply-inbound-proxy-config("lan", on, root.http-proxy-host != "127.0.0.1" && root.http-proxy-host != "" ? root.http-proxy-host : "0.0.0.0", root.http-proxy-port); }
+            port-committed => { root.apply-inbound-proxy-config("lan", root.http-proxy-enabled, root.http-proxy-host != "127.0.0.1" && root.http-proxy-host != "" ? root.http-proxy-host : "0.0.0.0", root.http-proxy-port); }
             copy-endpoint(ep) => { root.copy-endpoint(ep); }
         }
     }

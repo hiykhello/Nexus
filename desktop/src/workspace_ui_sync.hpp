@@ -18,10 +18,10 @@ namespace desktop_ui_helpers {
         std::filesystem::path const& config_path;
         std::string const& fallback_sock;
         std::function<void()>& sync_tray;
+        desktop::ClientDatabase* db = nullptr;
 
         std::filesystem::path workspace_path;
         std::filesystem::path host_path;
-        std::filesystem::path telemetry_path;
         std::filesystem::path secrets_dir;
 
         desktop::WorkspaceDocument doc;
@@ -31,6 +31,99 @@ namespace desktop_ui_helpers {
         std::vector<std::string> running_selector_members;
         std::vector<std::string> last_secret_files;
     };
+
+    inline auto persist_workspace_db(WorkspaceUiContext& ctx) -> bool {
+        if (ctx.db) return ctx.db->save_workspace(ctx.doc).has_value();
+        return desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+    }
+
+    inline auto persist_host_db(WorkspaceUiContext& ctx) -> bool {
+        if (ctx.db) return desktop::save_host_config_to_db(*ctx.db, ctx.secrets_dir, ctx.host);
+        if (!desktop::save_sync_secrets(ctx.secrets_dir, {ctx.host.webdav_password, ctx.host.sync_passphrase, ctx.host.lan_password})) {
+            return false;
+        }
+        desktop::DesktopHostConfig stripped = ctx.host;
+        stripped.webdav_password.clear();
+        stripped.sync_passphrase.clear();
+        stripped.lan_password.clear();
+        return desktop::save_desktop_host_config(ctx.host_path, stripped);
+    }
+
+    inline auto persist_telemetry_db(WorkspaceUiContext& ctx) -> bool {
+        if (ctx.db) return ctx.db->save_telemetry(ctx.telemetry).has_value();
+        return true;
+    }
+
+    struct ScopedTempJson {
+        std::filesystem::path path;
+        bool ok = false;
+        ScopedTempJson() = default;
+        ScopedTempJson(ScopedTempJson const&) = delete;
+        auto operator=(ScopedTempJson const&) -> ScopedTempJson& = delete;
+        ScopedTempJson(ScopedTempJson&& o) noexcept : path(std::move(o.path)), ok(o.ok) { o.path.clear(); o.ok = false; }
+        auto operator=(ScopedTempJson&& o) noexcept -> ScopedTempJson& {
+            if (this != &o) { wipe_and_remove(); path = std::move(o.path); ok = o.ok; o.path.clear(); o.ok = false; }
+            return *this;
+        }
+        ~ScopedTempJson() { wipe_and_remove(); }
+        auto wipe_and_remove() noexcept -> void {
+            if (path.empty()) return;
+            std::error_code ec;
+            auto st = std::filesystem::symlink_status(path, ec);
+            if (!ec && std::filesystem::is_regular_file(st) && !std::filesystem::is_symlink(st)) {
+                auto sz = std::filesystem::file_size(path, ec);
+                if (!ec && sz > 0 && sz <= 16ULL * 1024ULL * 1024ULL) {
+                    std::ofstream out(path, std::ios::binary | std::ios::in | std::ios::out);
+                    if (out) {
+                        std::string zeros(static_cast<std::size_t>(std::min<std::uintmax_t>(sz, 4096)), '\0');
+                        std::uintmax_t rem = sz;
+                        while (rem > 0) {
+                            auto chunk = static_cast<std::streamsize>(std::min<std::uintmax_t>(rem, zeros.size()));
+                            out.write(zeros.data(), chunk);
+                            rem -= static_cast<std::uintmax_t>(chunk);
+                        }
+                        out.flush();
+                    }
+                }
+            }
+            std::filesystem::remove(path, ec);
+            path.clear();
+        }
+    };
+
+    inline auto next_temp_compose_path(std::filesystem::path const& cfg_dir, std::string_view prefix) -> std::filesystem::path {
+        static std::atomic<std::uint64_t> seq{0};
+        auto const dir = cfg_dir / "runtime";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+#ifndef _WIN32
+        (void)::chmod(dir.c_str(), 0700);
+        auto const pid = static_cast<std::uint64_t>(::getpid());
+#else
+        auto const pid = static_cast<std::uint64_t>(::GetCurrentProcessId());
+#endif
+        std::random_device rd;
+        std::uint64_t const rnd = (static_cast<std::uint64_t>(rd()) << 32) ^ static_cast<std::uint64_t>(rd());
+        return dir / std::format("{}-{}-{:016x}-{}.json", prefix, pid, rnd, seq.fetch_add(1, std::memory_order_relaxed));
+    }
+
+    inline auto make_temp_compose_workspace(std::filesystem::path const& cfg_dir, desktop::WorkspaceDocument const& doc) -> ScopedTempJson {
+        ScopedTempJson f{};
+        f.path = next_temp_compose_path(cfg_dir, "compose-ws");
+        f.ok = desktop::save_workspace_atomic(f.path, doc);
+        return f;
+    }
+
+    inline auto make_temp_compose_host(std::filesystem::path const& cfg_dir, desktop::DesktopHostConfig const& host) -> ScopedTempJson {
+        // Strip WebDAV/E2EE secrets before writing transient Core composer host JSON.
+        desktop::DesktopHostConfig core_host = host;
+        core_host.webdav_password.clear();
+        core_host.sync_passphrase.clear();
+        ScopedTempJson f{};
+        f.path = next_temp_compose_path(cfg_dir, "compose-host");
+        f.ok = desktop::save_desktop_host_config(f.path, core_host);
+        return f;
+    }
 
     inline auto format_quota_human(std::int64_t used, std::int64_t total) -> std::string {
         if (total <= 0) return used > 0 ? format_bytes_human(static_cast<std::uint64_t>(used)) : std::string{};
@@ -142,6 +235,33 @@ namespace desktop_ui_helpers {
         ws.set_host_tun_mtu(slint::SharedString(std::to_string(ctx.host.tun_mtu)));
         ws.set_host_tun_strict_route(ctx.host.tun_strict_route);
         ws.set_host_sys_proxy_mode(slint::SharedString(ctx.host.system_proxy_mode));
+
+        // Sync overview quick-profiles deck + Quick-Settings tile bar directly from unified SQLite workspace/host state.
+        sync_profiles_to_ui(ctx.ui, ctx.doc, ctx.telemetry.active_profile_id);
+        std::string active_label;
+        for (auto const& p : ctx.doc.profiles) {
+            if (p.id == ctx.telemetry.active_profile_id) { active_label = p.remarks.empty() ? p.id : p.remarks; break; }
+        }
+        ctx.ui.set_active_profile(slint::SharedString(active_label));
+        ctx.ui.set_mixed_proxy_enabled(ctx.host.enable_mixed);
+        if (auto hp = parse_host_port_literal(ctx.host.mixed_listen); hp) {
+            ctx.ui.set_mixed_proxy_host(slint::SharedString(hp->first));
+            ctx.ui.set_mixed_proxy_port(slint::SharedString(std::to_string(hp->second)));
+        }
+        ctx.ui.set_socks_proxy_enabled(!ctx.host.second_local_listen.empty());
+        if (auto shp = parse_host_port_literal(ctx.host.second_local_listen); shp) {
+            ctx.ui.set_socks_proxy_host(slint::SharedString(shp->first));
+            ctx.ui.set_socks_proxy_port(slint::SharedString(std::to_string(shp->second)));
+        }
+        ctx.ui.set_http_proxy_enabled(!ctx.host.lan_listen.empty());
+        ctx.ui.set_lan_share_enabled(!ctx.host.lan_listen.empty());
+        if (auto lhp = parse_host_port_literal(ctx.host.lan_listen); lhp) {
+            ctx.ui.set_http_proxy_host(slint::SharedString(lhp->first));
+            ctx.ui.set_http_proxy_port(slint::SharedString(std::to_string(lhp->second)));
+            ctx.ui.set_lan_share_subtitle(slint::SharedString(":" + std::to_string(lhp->second)));
+        } else {
+            ctx.ui.set_lan_share_subtitle(slint::SharedString(ctx.host.lan_listen));
+        }
     }
 
     inline auto resolve_effective_active_profile_id(WorkspaceUiContext const& ctx) -> std::string {
@@ -153,8 +273,8 @@ namespace desktop_ui_helpers {
 
     inline auto persist_workspace_and_host(WorkspaceUiContext& ctx, bool en) -> std::vector<std::string> {
         auto notices = desktop::normalize_desktop_host_config(ctx.host, en);
-        (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-        (void)desktop::save_desktop_host_config(ctx.host_path, ctx.host);
+        (void)persist_workspace_db(ctx);
+        (void)persist_host_db(ctx);
         return notices;
     }
 
@@ -167,11 +287,29 @@ namespace desktop_ui_helpers {
         if (target_profile_id.empty()) target_profile_id = resolve_effective_active_profile_id(ctx);
         if (target_profile_id.empty()) return;
         (void)persist_workspace_and_host(ctx, en);
+        auto doc_snap = ctx.doc;
+        auto host_snap = ctx.host;
         ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "正在由核心编译工作区...", "Composing workspace via Core...")));
 
-        ctx.worker.post([&ctx, id = std::move(target_profile_id), prefer_persistent, en]() mutable {
+        ctx.worker.post([&ctx, doc_snap = std::move(doc_snap), host_snap = std::move(host_snap), id = std::move(target_profile_id), prefer_persistent, en]() mutable {
+            auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
+            auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
+            if (!ws_tmp.ok || !host_tmp.ok) {
+                ws_tmp.wipe_and_remove();
+                host_tmp.wipe_and_remove();
+                auto err = tr(en, "写入临时编译输入文件失败", "Failed to write temporary compose inputs");
+                on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
+                    s->set_diagnostic_ok(false);
+                    s->set_diagnostic_message(slint::SharedString(err));
+                    push_toast(*s, err, "error");
+                    if (ctx.sync_tray) ctx.sync_tray();
+                });
+                return;
+            }
             auto composed = desktop::compose_workspace_via_core(
-                ctx.supervisor.binary_path(), ctx.workspace_path, ctx.host_path, ctx.secrets_dir, id, {});
+                ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.secrets_dir, id, {});
+            ws_tmp.wipe_and_remove();
+            host_tmp.wipe_and_remove();
             if (!composed.ok || composed.kdl.empty()) {
                 auto err = composed.errors.empty() ? tr(en, "核心编译工作区失败", "Workspace compose failed") : composed.errors.front();
                 on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
@@ -279,10 +417,32 @@ namespace desktop_ui_helpers {
         }
         auto active_id = resolve_effective_active_profile_id(ctx);
         (void)persist_workspace_and_host(ctx, en);
+        auto doc_snap = ctx.doc;
+        auto host_snap = ctx.host;
         bool posted = ctx.worker.post([&ctx, run_toggle = std::forward<ToggleFn>(run_toggle),
+                                       doc_snap = std::move(doc_snap), host_snap = std::move(host_snap),
                                        active_id = std::move(active_id), prefer_persistent, en]() mutable {
+            auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
+            auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
+            if (!ws_tmp.ok || !host_tmp.ok) {
+                ws_tmp.wipe_and_remove();
+                host_tmp.wipe_and_remove();
+                auto err = tr(en, "写入临时编译输入文件失败", "Failed to write temporary compose inputs");
+                on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
+                    s->set_core_toggling(false);
+                    s->set_diagnostic_ok(false);
+                    s->set_diagnostic_message(slint::SharedString(err));
+                    s->set_status_summary(slint::SharedString(err));
+                    push_toast(*s, err, "error");
+                    if (ctx.sync_tray) ctx.sync_tray();
+                    ctx.lifecycle_busy.store(false, std::memory_order_release);
+                });
+                return;
+            }
             auto composed = desktop::compose_workspace_via_core(
-                ctx.supervisor.binary_path(), ctx.workspace_path, ctx.host_path, ctx.secrets_dir, active_id, {});
+                ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.secrets_dir, active_id, {});
+            ws_tmp.wipe_and_remove();
+            host_tmp.wipe_and_remove();
             if (!composed.ok || composed.kdl.empty()) {
                 auto err = composed.errors.empty() ? tr(en, "核心编译工作区失败", "Workspace compose failed") : composed.errors.front();
                 on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {

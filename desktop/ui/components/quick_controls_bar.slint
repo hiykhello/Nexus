@@ -1,0 +1,298 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { GlassSpeculum } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+component QuickTileItem inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> subtitle: "";
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <bool> is-toggle: true;
+    in property <bool> show-switch: true;
+    callback clicked();
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 54px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: ta.has-hover && root.enabled ? Theme.hairline-strong : Theme.card-border;
+    background: ta.pressed && root.enabled ? Theme.well-bg : ta.has-hover && root.enabled ? Theme.row-hover-bg : Theme.card-surface;
+    drop-shadow-blur: 8px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+    opacity: root.enabled ? 1.0 : 0.56;
+    transform-scale: root.enabled && ta.pressed ? 0.98 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    GlassSpeculum { corner-inset: 14px; }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+
+    property <bool> show-full-switch: root.is-toggle && root.show-switch;
+
+    HorizontalLayout {
+        padding-left: root.show-full-switch ? 10px : 8px;
+        padding-right: root.show-full-switch ? 10px : 8px;
+        spacing: root.show-full-switch ? 8px : 6px;
+
+        Rectangle {
+            horizontal-stretch: 0;
+            width: root.show-full-switch ? 30px : 26px;
+            height: root.show-full-switch ? 30px : 26px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 9px;
+            border-width: 1px;
+            border-color: root.active ? Theme.accent.with-alpha(Theme.dark ? 0.36 : 0.28) : Theme.well-border;
+            background: root.active ? Theme.accent.with-alpha(Theme.dark ? 0.18 : 0.12) : Theme.well-bg;
+            Image {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: root.show-full-switch ? 16px : 14px;
+                height: root.show-full-switch ? 16px : 14px;
+                source: root.icon;
+                colorize: root.active ? Theme.accent : Theme.text-secondary;
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.label;
+                font-size: root.show-full-switch ? 12px : 11px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                overflow: elide;
+            }
+            if root.subtitle != "" : Text {
+                text: root.subtitle;
+                font-size: 10px;
+                font-weight: 600;
+                font-family: Theme.mono-font;
+                color: root.active ? Theme.accent : Theme.text-muted;
+                overflow: elide;
+            }
+        }
+
+        if root.show-full-switch : VerticalLayout {
+            horizontal-stretch: 0;
+            alignment: center;
+            NexusSwitch { enabled: root.enabled; checked: root.active; interactive: false; }
+        }
+
+        if root.is-toggle && !root.show-full-switch : Rectangle {
+            horizontal-stretch: 0;
+            width: 7px;
+            height: 7px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3.5px;
+            background: root.active ? Theme.accent : Theme.offline-fg;
+            opacity: root.active ? 1.0 : 0.35;
+        }
+    }
+}
+
+// Single-row Android Quick-Settings Tile Bar (System Proxy, TUN Mode, Mixed Port, LAN Share, Copy Proxy Env)
+export component QuickSettingsTileBar inherits HorizontalLayout {
+    in property <bool> core-running: false;
+    in property <bool> system-proxy-supported: true;
+    in property <bool> system-proxy-enabled: false;
+    in property <string> sys-proxy-port: "";
+    in property <bool> tun-enabled: false;
+    in property <bool> mixed-proxy-enabled: true;
+    in property <string> mixed-proxy-port: "7890";
+    in property <bool> lan-share-enabled: false;
+    in property <string> lan-share-subtitle: "";
+    in property <bool> compact: false;
+    in property <bool> wide: true;
+
+    callback toggle-system-proxy(bool);
+    callback toggle-tun(bool);
+    callback toggle-mixed-port(bool);
+    callback toggle-lan-share(bool);
+    callback copy-proxy-env();
+
+    vertical-stretch: 0;
+    height: 54px;
+    spacing: root.compact ? Theme.space-sm : Theme.space-md;
+
+    QuickTileItem {
+        icon: @image-url("../icons/connections.svg");
+        label: root.system-proxy-supported ? I18n.t("系统代理", "System Proxy") : I18n.t("代理不可用", "Proxy N/A");
+        subtitle: !root.system-proxy-supported ? ""
+            : root.system-proxy-enabled ? (root.sys-proxy-port != "" ? root.sys-proxy-port : I18n.t("已开启", "On"))
+            : I18n.t("未开启", "Off");
+        enabled: root.core-running && root.system-proxy-supported;
+        active: root.system-proxy-enabled;
+        show-switch: root.wide;
+        clicked => { root.toggle-system-proxy(!root.system-proxy-enabled); }
+    }
+
+    QuickTileItem {
+        icon: @image-url("../icons/bolt.svg");
+        label: I18n.t("TUN 模式", "TUN Mode");
+        subtitle: root.tun-enabled ? I18n.t("全局接管", "Active") : I18n.t("未开启", "Off");
+        enabled: root.core-running;
+        active: root.tun-enabled;
+        show-switch: root.wide;
+        clicked => { root.toggle-tun(!root.tun-enabled); }
+    }
+
+    QuickTileItem {
+        icon: @image-url("../icons/groups.svg");
+        label: I18n.t("混合端口", "Mixed Port");
+        subtitle: root.mixed-proxy-enabled
+            ? ":\{root.mixed-proxy-port != "" ? root.mixed-proxy-port : "7890"}"
+            : I18n.t("已关闭", "Off");
+        active: root.mixed-proxy-enabled;
+        show-switch: root.wide;
+        clicked => { root.toggle-mixed-port(!root.mixed-proxy-enabled); }
+    }
+
+    QuickTileItem {
+        icon: @image-url("../icons/external-link.svg");
+        label: I18n.t("局域网共享", "LAN Share");
+        subtitle: root.lan-share-enabled
+            ? (root.lan-share-subtitle != "" ? root.lan-share-subtitle : I18n.t("已开启", "On"))
+            : I18n.t("仅本机", "Local");
+        active: root.lan-share-enabled;
+        show-switch: root.wide;
+        clicked => { root.toggle-lan-share(!root.lan-share-enabled); }
+    }
+
+    QuickTileItem {
+        icon: @image-url("../icons/copy.svg");
+        label: I18n.t("终端代理", "Proxy Env");
+        subtitle: I18n.t("复制命令", "Copy Cmd");
+        is-toggle: false;
+        show-switch: root.wide;
+        clicked => { root.copy-proxy-env(); }
+    }
+}
+
+component EndpointProbeChip inherits Rectangle {
+    in property <string> name;
+    in property <int> latency-ms: -1; // -1 = idle, 0 = failed/timeout, >0 = healthy ms
+
+    property <bool> failed: root.latency-ms == 0;
+    property <color> fg: Theme.latency-fg(root.latency-ms, root.failed ? "timeout" : "healthy");
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 30px;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.well-border;
+    background: Theme.well-bg;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 5px;
+        Rectangle {
+            horizontal-stretch: 0;
+            width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+            background: root.latency-ms < 0 ? Theme.offline-fg : root.fg;
+            opacity: root.latency-ms < 0 ? 0.45 : 1.0;
+        }
+        Text {
+            horizontal-stretch: 1; min-width: 0px;
+            text: root.name;
+            font-size: 11px; font-weight: 600; color: Theme.text-secondary;
+            vertical-alignment: center; overflow: elide;
+        }
+        Text {
+            horizontal-stretch: 0;
+            text: root.latency-ms > 0 ? "\{root.latency-ms}ms" : root.failed ? I18n.t("超时", "Err") : "--";
+            font-size: 11px; font-weight: 700; font-family: Theme.mono-font;
+            color: root.latency-ms < 0 ? Theme.text-muted : root.fg;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Lightweight Connectivity Mini-Card backed by Wave 25 POST /v1/outbounds/{tag}/probe
+export component ConnectivityMiniCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> probing: false;
+    in property <int> google-ms: -1;
+    in property <int> cf-ms: -1;
+    in property <int> github-ms: -1;
+    in property <bool> compact: false;
+
+    callback probe-connectivity();
+
+    horizontal-stretch: 3;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 54px;
+    border-radius: 18px;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    drop-shadow-blur: 10px;
+    drop-shadow-offset-y: 2px;
+    drop-shadow-color: Theme.card-shadow;
+
+    GlassSpeculum { corner-inset: 14px; }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 8px;
+
+        if !root.compact : HorizontalLayout {
+            horizontal-stretch: 0;
+            spacing: 5px;
+            Image {
+                width: 14px; height: 14px; y: (parent.height - self.height) / 2;
+                source: @image-url("../icons/bolt.svg");
+                colorize: Theme.text-secondary;
+            }
+            Text {
+                text: I18n.t("连通性", "Connectivity");
+                font-size: 12px; font-weight: 700; color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            spacing: 6px;
+            y: (parent.height - 30px) / 2;
+            height: 30px;
+
+            EndpointProbeChip { name: "Google"; latency-ms: root.google-ms; }
+            EndpointProbeChip { name: "CF"; latency-ms: root.cf-ms; }
+            EndpointProbeChip { name: "GitHub"; latency-ms: root.github-ms; }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 0;
+            alignment: center;
+            IconActionButton {
+                size: 28px;
+                icon: root.probing ? @image-url("../icons/loader.svg") : @image-url("../icons/bolt.svg");
+                label: I18n.t("探测连通性", "Test Connectivity");
+                enabled: root.core-running && !root.probing;
+                clicked => { root.probe-connectivity(); }
+            }
+        }
+    }
+}

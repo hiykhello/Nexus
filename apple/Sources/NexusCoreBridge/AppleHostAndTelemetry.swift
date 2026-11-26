@@ -111,7 +111,7 @@ public struct AppleDesktopHostSection: Codable, Sendable, Equatable {
     }
 }
 
-/// Layer 3 Apple local host adapter configuration (`host.json`, v1, NEVER synced).
+/// Layer 3 Apple local host adapter configuration (v1, NEVER synced; persisted in SQLite `host_kv`).
 /// WebDAV passwords and E2EE sync passphrases are stored exclusively in `KeychainTokenStore`.
 public struct AppleHostConfig: Codable, Sendable, Equatable {
     public static let currentSchemaVersion = 1
@@ -209,7 +209,7 @@ public struct AppleHostConfig: Codable, Sendable, Equatable {
     }
 }
 
-/// Layer 4 ephemeral local telemetry & crash-sentinel models (`telemetry.json`, NEVER synced).
+/// Layer 4 ephemeral local telemetry & crash-sentinel models (NEVER synced; persisted in SQLite).
 public struct ProfileTelemetryEntry: Codable, Sendable, Equatable {
     public var latencyMs: Int64
     public var lastTestedMs: Int64
@@ -284,62 +284,129 @@ public struct TelemetryDocument: Codable, Sendable, Equatable {
     }
 }
 
-/// Swift 6 actor managing Layer 4 ephemeral local telemetry (`telemetry.json`, NEVER synced).
+/// Swift 6 actor managing Layer 3 host adapter persistence backed by `NexusClientDatabase.host_kv`
+/// with one-shot legacy `host.json` import. Keychain remains the sole store for credentials/passphrases.
+public actor HostConfigStore {
+    public static let hostKVKey = "host_config"
+
+    public nonisolated let database: NexusClientDatabase
+    public nonisolated let legacyHostFileURL: URL
+    private var loadTask: Task<AppleHostConfig, Error>?
+
+    public init(
+        rootDirectory: URL,
+        database: NexusClientDatabase? = nil,
+        legacyFileName: String = "host.json"
+    ) {
+        self.database = database ?? NexusClientDatabase(rootDirectory: rootDirectory)
+        self.legacyHostFileURL = rootDirectory.appendingPathComponent(legacyFileName)
+    }
+
+    public func loadOrInit(defaultPlatform: AppleHostPlatform = .desktopMacOS) async throws -> AppleHostConfig {
+        if let inflight = loadTask {
+            return try await inflight.value
+        }
+        let db = database
+        let legacyURL = legacyHostFileURL
+        let task = Task<AppleHostConfig, Error> {
+            if let raw = try await db.getHostKV(Self.hostKVKey),
+               let data = raw.data(using: .utf8)
+            {
+                return try JSONDecoder().decode(AppleHostConfig.self, from: data)
+            }
+            let candidate: AppleHostConfig
+            if FileManager.default.fileExists(atPath: legacyURL.path) {
+                let data = try Data(contentsOf: legacyURL)
+                candidate = try JSONDecoder().decode(AppleHostConfig.self, from: data)
+            } else {
+                candidate = AppleHostConfig(platform: defaultPlatform)
+            }
+            let json = try candidate.encodeCanonicalJSON(pretty: false)
+            let stored = try await db.setHostKVIfAbsent(Self.hostKVKey, value: json)
+            guard let storedData = stored.data(using: .utf8) else { throw WorkspaceSchemaError.invalidJSON }
+            return try JSONDecoder().decode(AppleHostConfig.self, from: storedData)
+        }
+        loadTask = task
+        defer { if loadTask == task { loadTask = nil } }
+        return try await task.value
+    }
+
+    @discardableResult
+    public func save(_ config: AppleHostConfig) async throws -> AppleHostConfig {
+        loadTask = nil
+        let json = try config.encodeCanonicalJSON(pretty: false)
+        try await database.setHostKV(Self.hostKVKey, value: json)
+        return config
+    }
+}
+
+/// Swift 6 actor managing Layer 4 ephemeral local telemetry backed by `NexusClientDatabase`
+/// (`node_telemetry`, `traffic_ledger`, `host_kv["telemetry_state"]`) with one-shot legacy `telemetry.json` import.
 public actor TelemetryStore {
     public nonisolated let fileURL: URL
+    public nonisolated let database: NexusClientDatabase
+    private var legacyChecked = false
+    private var legacyImportTask: Task<Void, Never>?
 
-    public init(fileURL: URL) {
+    public init(
+        rootDirectory: URL,
+        database: NexusClientDatabase? = nil,
+        legacyFileName: String = "telemetry.json"
+    ) {
+        self.fileURL = rootDirectory.appendingPathComponent(legacyFileName)
+        self.database = database ?? NexusClientDatabase(rootDirectory: rootDirectory)
+    }
+
+    public init(fileURL: URL, database: NexusClientDatabase? = nil) {
         self.fileURL = fileURL
+        self.database = database ?? NexusClientDatabase(rootDirectory: fileURL.deletingLastPathComponent())
     }
 
-    public func load() -> TelemetryDocument {
-        guard let data = try? Data(contentsOf: fileURL),
-              let doc = try? JSONDecoder().decode(TelemetryDocument.self, from: data)
-        else {
-            return TelemetryDocument()
-        }
+    public func load() async -> TelemetryDocument {
+        await importLegacyIfNeeded()
+        return (try? await database.loadTelemetry()) ?? TelemetryDocument()
+    }
+
+    @discardableResult
+    public func save(_ doc: TelemetryDocument) async throws -> TelemetryDocument {
+        legacyChecked = true
+        try await database.saveTelemetry(doc)
         return doc
     }
 
     @discardableResult
-    public func save(_ doc: TelemetryDocument) throws -> TelemetryDocument {
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try enc.encode(doc)
-        try WorkspaceStore.atomicWrite0600(data: data, to: fileURL)
-        return doc
-    }
-
-    @discardableResult
-    public func setActiveProfileId(_ profileId: String) throws -> TelemetryDocument {
-        var doc = load()
+    public func setActiveProfileId(_ profileId: String) async throws -> TelemetryDocument {
+        var doc = await load()
         doc.activeProfileId = profileId
-        return try save(doc)
+        return try await save(doc)
     }
 
     @discardableResult
-    public func setOutboundMode(_ mode: String) throws -> TelemetryDocument {
-        var doc = load()
+    public func setOutboundMode(_ mode: String) async throws -> TelemetryDocument {
+        var doc = await load()
         let allowed: Set<String> = ["rule", "global", "direct"]
         doc.outboundMode = allowed.contains(mode) ? mode : "rule"
-        return try save(doc)
+        return try await save(doc)
     }
 
     @discardableResult
-    public func recordUnexpectedCrash(reason: String, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)) throws -> TelemetryDocument {
-        var doc = load()
+    public func recordUnexpectedCrash(
+        reason: String,
+        nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
+    ) async throws -> TelemetryDocument {
+        var doc = await load()
         doc.unreadUnexpectedCrash = true
         doc.lastCrashTimestampMs = nowMs
         doc.lastCrashReason = String(reason.prefix(256))
-        return try save(doc)
+        return try await save(doc)
     }
 
     @discardableResult
-    public func clearUnexpectedCrash() throws -> TelemetryDocument {
-        var doc = load()
+    public func clearUnexpectedCrash() async throws -> TelemetryDocument {
+        var doc = await load()
         guard doc.unreadUnexpectedCrash else { return doc }
         doc.unreadUnexpectedCrash = false
-        return try save(doc)
+        return try await save(doc)
     }
 
     @discardableResult
@@ -347,12 +414,46 @@ public actor TelemetryStore {
         profileId: String,
         latencyMs: Int64,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
-    ) throws -> TelemetryDocument {
-        var doc = load()
-        var entry = doc.profiles[profileId] ?? ProfileTelemetryEntry()
-        entry.latencyMs = latencyMs
-        entry.lastTestedMs = nowMs
-        doc.profiles[profileId] = entry
-        return try save(doc)
+    ) async throws -> TelemetryDocument {
+        await importLegacyIfNeeded()
+        try await database.updateNodeLatency(profileId: profileId, latencyMs: latencyMs, testedAt: nowMs)
+        return await load()
+    }
+
+    public func recordTrafficDelta(bucketHour: Int64, profileId: String, uploadBytes: Int64, downloadBytes: Int64) async throws {
+        await importLegacyIfNeeded()
+        try await database.recordTrafficDelta(
+            bucketHour: bucketHour,
+            profileId: profileId,
+            uploadBytes: uploadBytes,
+            downloadBytes: downloadBytes
+        )
+    }
+
+    public func queryTrafficLedger(sinceHour: Int64 = 0, profileId: String? = nil) async throws -> [TrafficLedgerRecord] {
+        await importLegacyIfNeeded()
+        return try await database.queryTrafficLedger(sinceHour: sinceHour, profileId: profileId)
+    }
+
+    private func importLegacyIfNeeded() async {
+        if legacyChecked { return }
+        if let inflight = legacyImportTask {
+            await inflight.value
+            return
+        }
+        let db = database
+        let legacyURL = fileURL
+        let task = Task {
+            guard (try? await db.hasTelemetryData()) == false,
+                  FileManager.default.fileExists(atPath: legacyURL.path),
+                  let data = try? Data(contentsOf: legacyURL),
+                  let legacy = try? JSONDecoder().decode(TelemetryDocument.self, from: data)
+            else { return }
+            _ = try? await db.importLegacyTelemetryIfEmpty(legacy)
+        }
+        legacyImportTask = task
+        await task.value
+        legacyChecked = true
+        legacyImportTask = nil
     }
 }

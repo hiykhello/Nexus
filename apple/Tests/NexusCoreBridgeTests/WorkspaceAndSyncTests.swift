@@ -196,9 +196,14 @@ final class WorkspaceAndSyncTests: XCTestCase {
         XCTAssertEqual(initial.schemaVersion, 1)
         XCTAssertEqual(initial.revision, 1)
 
-        let attrs = try FileManager.default.attributesOfItem(atPath: store.workspaceFileURL.path)
+        let attrs = try FileManager.default.attributesOfItem(atPath: store.database.dbURL.path)
         let perms = (attrs[.posixPermissions] as? NSNumber)?.intValue
         XCTAssertEqual(perms, 0o600)
+
+        let secretURL = dir.appendingPathComponent("probe.secret")
+        try WorkspaceStore.atomicWrite0600(data: Data("top-secret".utf8), to: secretURL)
+        let secAttrs = try FileManager.default.attributesOfItem(atPath: secretURL.path)
+        XCTAssertEqual((secAttrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
 
         // 5-tier multi-pass replacement: earlier weak candidate must NOT steal ID from later Tier-1 exact match.
         let existingA = makeSampleNode(id: "id-a", remarks: "Tokyo", server: "jp.example.com", port: 443, path: "/v1")

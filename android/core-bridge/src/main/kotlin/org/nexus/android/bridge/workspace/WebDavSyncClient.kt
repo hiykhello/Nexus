@@ -2,7 +2,7 @@ package org.nexus.android.bridge.workspace
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.nexus.android.bridge.profile.ProfileRepository
+import org.nexus.android.bridge.profile.SecretFileIO
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -227,7 +227,7 @@ class WebDavSyncClient {
                     code == 401 || code == 403 -> ProbeResult.Failed("WebDAV 认证失败 (HTTP $code)")
                     code in 200..299 -> {
                         val body = if (fetchBody) {
-                            conn.inputStream.use { String(ProfileRepository.readBoundedBytes(it, MAX_ENVELOPE_BYTES), Charsets.UTF_8) }
+                            conn.inputStream.use { String(SecretFileIO.readBoundedBytes(it, MAX_ENVELOPE_BYTES), Charsets.UTF_8) }
                         } else ""
                         ProbeResult.Found(parseEnvelopeMeta(body, etag))
                     }
@@ -363,12 +363,21 @@ class WebDavSyncClient {
             maxBackups: Int = MAX_PRE_PULL_BACKUPS,
         ): File? {
             if (localWorkspaceFile == null || !localWorkspaceFile.isFile || backupDir == null) return null
+            val content = localWorkspaceFile.readText(Charsets.UTF_8)
+            return createPrePullBackupJson(content, backupDir, maxBackups)
+        }
+
+        fun createPrePullBackupJson(
+            workspaceJson: String,
+            backupDir: File?,
+            maxBackups: Int = MAX_PRE_PULL_BACKUPS,
+        ): File? {
+            if (workspaceJson.isBlank() || backupDir == null) return null
             backupDir.mkdirs()
             val seq = backupSeq.incrementAndGet() % 1_000_000L
             val name = String.format(Locale.US, "workspace.backup-%013d-%06d.json", System.currentTimeMillis(), seq)
             val backup = File(backupDir, name)
-            val content = localWorkspaceFile.readText(Charsets.UTF_8)
-            ProfileRepository.atomicWriteSecret0600(backup, content)
+            SecretFileIO.atomicWriteSecret0600(backup, workspaceJson)
             val keep = maxBackups.coerceAtLeast(1)
             val existing = backupDir.listFiles { f ->
                 f.isFile && f.name.startsWith("workspace.backup-") && f.name.endsWith(".json")

@@ -180,7 +180,7 @@ class WorkspaceSyncAndProbeTest {
 
             val backups = File(dir, "backups")
             val created = (1..8).mapNotNull {
-                WebDavSyncClient.createPrePullBackup(store.workspaceFile, backups, maxBackups = 5)
+                WebDavSyncClient.createPrePullBackupJson(store.exportPortableJson(), backups, maxBackups = 5)
             }
             assertEquals(8, created.size)
             val remaining = backups.listFiles { f -> f.isFile && f.name.startsWith("workspace.backup-") }.orEmpty().sortedBy { it.name }
@@ -196,7 +196,8 @@ class WorkspaceSyncAndProbeTest {
     fun passphraseAndWebDavCredsStayIn0600HostJsonAndNeverLeakToWorkspace() = runBlocking {
         val dir = Files.createTempDirectory("nexus-iso-test").toFile()
         try {
-            val hostStore = AndroidHostConfigStore(File(dir, "host.json"))
+            val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
+            val hostStore = AndroidHostConfigStore(File(dir, "host.json"), db)
             val secretPass = "super-secret-sync-passphrase-99"
             val secretDavPw = "dav-app-password-88"
             hostStore.save(
@@ -212,7 +213,13 @@ class WorkspaceSyncAndProbeTest {
                     ),
                 ),
             )
-            assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(hostStore.file.toPath()))
+            // Secrets live strictly in 0600 secretFile, NEVER in SQLite host_kv and NEVER in workspace.json
+            assertTrue(hostStore.secretFile.isFile)
+            assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(hostStore.secretFile.toPath()))
+            val rawHostKv = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG).orEmpty()
+            assertFalse("SQLite host_kv must NEVER contain sync passphrase", rawHostKv.contains(secretPass))
+            assertFalse("SQLite host_kv must NEVER contain WebDAV password", rawHostKv.contains(secretDavPw))
+
             val loadedHost = hostStore.load()
             assertEquals(secretPass, loadedHost.android.syncPassphrase)
             assertEquals(secretDavPw, loadedHost.android.webdavPassword)

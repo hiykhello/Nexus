@@ -253,6 +253,59 @@ namespace desktop {
         return json_stringify(JsonValue(std::move(root)), true);
     }
 
+    auto desktop_host_to_nonsecret_json(DesktopHostConfig const& cfg) -> std::string {
+        DesktopHostConfig copy = cfg;
+        copy.webdav_password.clear();
+        copy.sync_passphrase.clear();
+        copy.lan_password.clear();
+        return desktop_host_to_json(copy);
+    }
+
+    auto desktop_host_to_core_json(DesktopHostConfig const& cfg) -> std::string {
+        DesktopHostConfig copy = cfg;
+        copy.webdav_password.clear();
+        copy.sync_passphrase.clear();
+        return desktop_host_to_json(copy);
+    }
+
+    auto load_sync_secrets(std::filesystem::path const& secrets_dir) -> SyncSecrets {
+        SyncSecrets out{};
+        if (secrets_dir.empty()) return out;
+        auto const path = secrets_dir / "sync-creds.json";
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return out;
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        auto parsed = json_parse(ss.str());
+        if (!parsed || !parsed->is_object()) return out;
+        auto const& obj = std::get<JsonObject>(parsed->data);
+        out.webdav_password = json_get_string(obj, "webdav_password", "");
+        out.sync_passphrase = json_get_string(obj, "sync_passphrase", "");
+        out.lan_password = json_get_string(obj, "lan_password", "");
+        return out;
+    }
+
+    auto save_sync_secrets(std::filesystem::path const& secrets_dir, SyncSecrets const& secrets) -> bool {
+        if (secrets_dir.empty()) return false;
+        std::error_code ec;
+        std::filesystem::create_directories(secrets_dir, ec);
+#ifndef _WIN32
+        (void)::chmod(secrets_dir.c_str(), 0700);
+#endif
+        auto const path = secrets_dir / "sync-creds.json";
+        if (secrets.webdav_password.empty() && secrets.sync_passphrase.empty() && secrets.lan_password.empty()) {
+            std::filesystem::remove(path, ec);
+            return true;
+        }
+        JsonObject obj{
+            {"schema_version", static_cast<std::int64_t>(1)},
+            {"webdav_password", secrets.webdav_password},
+            {"sync_passphrase", secrets.sync_passphrase},
+            {"lan_password", secrets.lan_password},
+        };
+        return write_file_atomic_host(path, json_stringify(JsonValue(std::move(obj)), false));
+    }
+
     auto desktop_host_from_json(std::string_view text) -> std::expected<DesktopHostConfig, std::string> {
         auto parsed = json_parse(text);
         if (!parsed) return std::unexpected(parsed.error());

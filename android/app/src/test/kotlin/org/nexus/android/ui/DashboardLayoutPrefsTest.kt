@@ -106,5 +106,10 @@ class DashboardLayoutPrefsTest {
         assertEquals(custom.showKpiGrid, restored.showKpiGrid)
         assertEquals(custom.sanitizedOrder, restored.sanitizedOrder)
         assertTrue(restored.hasCustomLayout)
+
+        val db = org.nexus.android.bridge.workspace.NexusClientDatabase.inMemory()
+        DashboardLayoutPrefs.save(db, custom)
+        val loadedFromDb = DashboardLayoutPrefs.load(db)
+        assertEquals(custom, loadedFromDb)
     }
 }

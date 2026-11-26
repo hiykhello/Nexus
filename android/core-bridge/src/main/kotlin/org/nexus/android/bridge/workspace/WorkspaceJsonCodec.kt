@@ -48,7 +48,7 @@ object WorkspaceJsonCodec {
         )
     }
 
-    private fun encodeProfile(p: ProfileItem): JSONObject = JSONObject().apply {
+    internal fun encodeProfile(p: ProfileItem): JSONObject = JSONObject().apply {
         put("id", p.id)
         put("remarks", p.remarks)
         put("subscription_id", p.subscriptionId)
@@ -65,7 +65,7 @@ object WorkspaceJsonCodec {
         }
     }
 
-    private fun decodeProfile(obj: JSONObject): ProfileItem {
+    internal fun decodeProfile(obj: JSONObject): ProfileItem {
         val kind = ProfileKind.fromWire(obj.optString("kind", ProfileKind.NODE.wire))
         return ProfileItem(
             id = obj.optString("id", "").trim(),
@@ -241,7 +241,7 @@ object WorkspaceJsonCodec {
         toleranceMs = obj.optInt("tolerance_ms", 50),
     )
 
-    private fun encodeSubscription(s: SubscriptionItem): JSONObject = JSONObject().apply {
+    internal fun encodeSubscription(s: SubscriptionItem): JSONObject = JSONObject().apply {
         put("id", s.id)
         put("remarks", s.remarks)
         put("url", s.url)
@@ -266,7 +266,7 @@ object WorkspaceJsonCodec {
         })
     }
 
-    private fun decodeSubscription(obj: JSONObject): SubscriptionItem {
+    internal fun decodeSubscription(obj: JSONObject): SubscriptionItem {
         val uObj = obj.optJSONObject("usage")
         return SubscriptionItem(
             id = obj.optString("id", ""),
@@ -296,7 +296,7 @@ object WorkspaceJsonCodec {
         )
     }
 
-    private fun encodeRoutingProfile(rp: RoutingProfileItem): JSONObject = JSONObject().apply {
+    internal fun encodeRoutingProfile(rp: RoutingProfileItem): JSONObject = JSONObject().apply {
         put("id", rp.id)
         put("name", rp.name)
         put("is_active", rp.isActive)
@@ -305,7 +305,7 @@ object WorkspaceJsonCodec {
         put("rules", JSONArray().apply { rp.rules.forEach { put(encodeRoutingRule(it)) } })
     }
 
-    private fun decodeRoutingProfile(obj: JSONObject): RoutingProfileItem = RoutingProfileItem(
+    internal fun decodeRoutingProfile(obj: JSONObject): RoutingProfileItem = RoutingProfileItem(
         id = obj.optString("id", "default"),
         name = obj.optString("name", "Default"),
         isActive = obj.optBoolean("is_active", false),
@@ -350,7 +350,7 @@ object WorkspaceJsonCodec {
         tlsFragment = obj.optBoolean("tls_fragment", false),
     )
 
-    private fun encodeDns(d: DnsConfig): JSONObject = JSONObject().apply {
+    internal fun encodeDns(d: DnsConfig): JSONObject = JSONObject().apply {
         put("mode", d.mode)
         put("simple", JSONObject().apply {
             val s = d.simple
@@ -373,7 +373,7 @@ object WorkspaceJsonCodec {
         put("raw_kdl", d.rawKdl)
     }
 
-    private fun decodeDns(obj: JSONObject): DnsConfig {
+    internal fun decodeDns(obj: JSONObject): DnsConfig {
         val sObj = obj.optJSONObject("simple")
         val simple = if (sObj != null) {
             val hostsMap = linkedMapOf<String, String>()
@@ -415,7 +415,7 @@ object WorkspaceJsonCodec {
         )
     }
 
-    private fun encodeRuleSetAsset(a: RuleSetAsset): JSONObject = JSONObject().apply {
+    internal fun encodeRuleSetAsset(a: RuleSetAsset): JSONObject = JSONObject().apply {
         put("tag", a.tag)
         put("source_type", a.sourceType)
         put("format", a.format)
@@ -425,7 +425,7 @@ object WorkspaceJsonCodec {
         put("update_interval_ms", a.updateIntervalMs)
     }
 
-    private fun decodeRuleSetAsset(obj: JSONObject): RuleSetAsset = RuleSetAsset(
+    internal fun decodeRuleSetAsset(obj: JSONObject): RuleSetAsset = RuleSetAsset(
         tag = obj.optString("tag", ""),
         sourceType = obj.optString("source_type", "local"),
         format = obj.optString("format", "nxmm"),
@@ -435,14 +435,14 @@ object WorkspaceJsonCodec {
         updateIntervalMs = obj.optLong("update_interval_ms", 0L),
     )
 
-    private fun encodeFullTemplate(ft: FullTemplateConfig): JSONObject = JSONObject().apply {
+    internal fun encodeFullTemplate(ft: FullTemplateConfig): JSONObject = JSONObject().apply {
         put("enabled", ft.enabled)
         put("template_kdl", ft.templateKdl)
         put("append_proxies_only", ft.appendProxiesOnly)
         put("proxy_detour", ft.proxyDetour)
     }
 
-    private fun decodeFullTemplate(obj: JSONObject): FullTemplateConfig = FullTemplateConfig(
+    internal fun decodeFullTemplate(obj: JSONObject): FullTemplateConfig = FullTemplateConfig(
         enabled = obj.optBoolean("enabled", false),
         templateKdl = obj.optString("template_kdl", ""),
         appendProxiesOnly = obj.optBoolean("append_proxies_only", false),

@@ -128,27 +128,6 @@ namespace {
         std::filesystem::remove_all(dir, ec);
     }
 
-    auto test_legacy_kdl_migration() -> void {
-        auto dir = make_temp_dir("migrate");
-        std::filesystem::create_directories(dir / "profiles");
-        {
-            std::ofstream(dir / "profiles" / "office.kdl") << "schema-version 2\n// office\n";
-            std::ofstream(dir / "profiles" / "home.kdl") << "schema-version 2\n// home\n";
-            std::ofstream(dir / "active-profile") << "office\n";
-        }
-        auto doc = desktop::make_default_workspace();
-        std::string active;
-        auto migrated = desktop::migrate_legacy_profiles_into_workspace(doc, dir, active);
-        expect(migrated == 2, "migrated both legacy KDL profiles");
-        expect(active == "legacy-office", "legacy active profile preserved");
-        expect(doc.profiles[0].kind == "full_custom_kdl" && doc.profiles[1].kind == "full_custom_kdl",
-            "migrated profiles use full_custom_kdl kind");
-        expect(desktop::migrate_legacy_profiles_into_workspace(doc, dir, active) == 0, "migration is idempotent");
-
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
-    }
-
     auto test_5tier_replacement_uniqueness_and_fail_closed_gc() -> void {
         auto dir = make_temp_dir("subreplace");
         auto sec_dir = dir / "secrets";
@@ -354,7 +333,6 @@ namespace {
 auto main() -> int {
     try {
         test_workspace_5kind_roundtrip_and_0600();
-        test_legacy_kdl_migration();
         test_5tier_replacement_uniqueness_and_fail_closed_gc();
         test_subscription_header_parser();
         test_host_bearer_token_strict_route_and_telemetry();

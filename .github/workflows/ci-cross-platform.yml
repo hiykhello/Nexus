@@ -129,7 +129,7 @@ jobs:
           )
           echo Using MSVC environment: %VCVARS%
           call "%VCVARS%" x64 || exit /b 1
-          cmake -S desktop -B target/desktop-win -G Ninja -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DNEXUS_DESKTOP_BUILD_UI=OFF -DNEXUS_DESKTOP_BUILD_TESTS=ON || exit /b 1
+          cmake -S desktop -B target/desktop-win -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_BUILD_TYPE=Release -DNEXUS_DESKTOP_BUILD_UI=OFF -DNEXUS_DESKTOP_BUILD_TESTS=ON || exit /b 1
           cmake --build target/desktop-win --parallel || exit /b 1
           ctest --test-dir target/desktop-win --output-on-failure || exit /b 1
 

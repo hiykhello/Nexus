@@ -8,10 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.nexus.android.bridge.ipc.NexusControlClient
 import org.nexus.android.bridge.ipc.OutboundJsonParser
-import org.nexus.android.bridge.profile.ProfileRepository
 import org.nexus.android.bridge.model.OutboundScheme
 import org.nexus.android.bridge.model.ShareLinkParser
+import org.nexus.android.bridge.profile.SecretFileIO
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.Base64
 
 class CoreProtocolTest {
@@ -124,34 +126,20 @@ class CoreProtocolTest {
     }
 
     @Test
-    fun decodesBase64SubscriptionAndIsolatesSecrets() {
+    fun decodesBase64SubscriptionAndWritesStrict0600Secrets() {
         val raw = "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@node1.example.com:443?security=reality&pbk=abcd#Node%201\n" +
             "trojan://topsecretpass@node2.example.com:443?sni=node2.example.com#Node%202\n"
         val encoded = Base64.getEncoder().encodeToString(raw.toByteArray(Charsets.UTF_8))
-        val lines = ProfileRepository.decodeSubscriptionLines(encoded)
+        val lines = SecretFileIO.decodeSubscriptionLines(encoded)
         assertEquals(2, lines.size)
+        assertEquals("Node-1", SecretFileIO.sanitizeId("Node 1"))
 
         val tmpRoot = File(System.getProperty("java.io.tmpdir"), "nexus-sub-test-${System.nanoTime()}").apply { mkdirs() }
         try {
-            val repo = ProfileRepository(tmpRoot)
-            val kdl = repo.buildKdlFromSubscriptionPayload(encoded)
-            assertTrue(kdl.contains("""outbound "Node-1" type="vless""""))
-            assertTrue(kdl.contains("""outbound "Node-2" type="trojan""""))
-            assertTrue(kdl.contains("""outbound "proxy" type="selector""""))
-            assertFalse(kdl.contains("control socket="))
-            assertFalse(kdl.contains("aaaaaaaa-bbbb"))
-            assertFalse(kdl.contains("topsecretpass"))
-
-            val controlLine =
-                """control socket="/data/c.sock" http-listen="127.0.0.1:9090" bearer-token-file="/data/c.tok" metrics=#true"""
-            val kdlWithControl = repo.buildKdlFromSubscriptionPayload(
-                payload = encoded,
-                profileId = "sub1",
-                controlDirective = controlLine,
-            )
-            assertTrue(kdlWithControl.contains(controlLine))
-            assertTrue(kdlWithControl.contains("""outbound "Node-1" type="vless""""))
-            assertTrue(kdlWithControl.contains("""outbound "proxy" type="selector""""))
+            val secret = File(tmpRoot, "node1.secret")
+            SecretFileIO.atomicWriteSecret0600(secret, "topsecretpass")
+            assertEquals("topsecretpass", secret.readText(Charsets.UTF_8))
+            assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(secret.toPath()))
         } finally {
             tmpRoot.deleteRecursively()
         }

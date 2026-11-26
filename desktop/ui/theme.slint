@@ -131,35 +131,35 @@ export global Theme {
     out property <color> proto-direct-fg: dark ? #34d399 : #047857;
     out property <color> proto-direct-bg: dark ? #10b98120 : #dcfce7;
 
-    // Ascending Neutral Graphite Dark (chroma <= 3, HCT tones 6 -> 10 -> 15 -> 21 -> 27) & Crisp Light
-    out property <color> surface-bg: (dark ? #101114 : #eef0f5).with-alpha(window-opacity);
-    out property <brush> sidebar-bg: (dark ? #17191f : #f6f7fa).with-alpha(min(1.0, surface-opacity + 0.04));
-    out property <color> sidebar-card-bg: (dark ? #17191f : #f6f7fa).with-alpha(min(1.0, surface-opacity + 0.04));
+    // Calm Matte Charcoal Dark & Crisp Alabaster Light surfaces
+    out property <color> surface-bg: (dark ? #111318 : #f0f2f6).with-alpha(window-opacity);
+    out property <brush> sidebar-bg: (dark ? #171920 : #f7f8fb).with-alpha(min(1.0, surface-opacity + 0.04));
+    out property <color> sidebar-card-bg: (dark ? #171920 : #f7f8fb).with-alpha(min(1.0, surface-opacity + 0.04));
     out property <color> sidebar-border: glass-active
-        ? (dark ? #ffffff1f : #0f172a18)
-        : (dark ? #2a2d36 : #d5dbe6);
-    out property <color> sidebar-shadow: dark ? #0000006e : #0f172a12;
+        ? (dark ? #ffffff18 : #0f172a14)
+        : (dark ? #282c36 : #d5dbe6);
+    out property <color> sidebar-shadow: dark ? #00000054 : #0f172a0e;
     out property <color> resize-handle: dark ? #525866 : #94a3b8;
 
-    // L1 Elevated Card (tone 15 dark / crisp alabaster light)
-    out property <color> card-bg: (dark ? #202229 : #fcfdff).with-alpha(min(1.0, surface-opacity + 0.08));
+    // L1 Matte Elevated Card (calm neutral charcoal dark / crisp alabaster light + subtle 1px border)
+    out property <color> card-bg: (dark ? #1c1e25 : #fcfdff).with-alpha(min(1.0, surface-opacity + 0.08));
     out property <brush> card-surface: @linear-gradient(
         180deg,
-        (dark ? #23252d : #fcfdff).with-alpha(min(1.0, surface-opacity + 0.08)) 0%,
-        (dark ? #1e2027 : #f8f9fc).with-alpha(min(1.0, surface-opacity + 0.06)) 100%
+        (dark ? #1e2028 : #fcfdff).with-alpha(min(1.0, surface-opacity + 0.08)) 0%,
+        (dark ? #1a1c23 : #f8f9fc).with-alpha(min(1.0, surface-opacity + 0.06)) 100%
     );
-    out property <color> overlay-bg: (dark ? #22242c : #ffffff).with-alpha(0.96);
+    out property <color> overlay-bg: (dark ? #20222a : #ffffff).with-alpha(0.96);
     // L2 Block (tone 21 dark — ALWAYS steps UP inside L1 cards; soft cool tint in light)
-    out property <color> well-bg: (dark ? #2b2e37 : #eef1f6).with-alpha(glass-active ? min(0.96, max(0.82, surface-opacity + 0.06)) : 1.0);
+    out property <color> well-bg: (dark ? #262932 : #eef1f6).with-alpha(glass-active ? min(0.96, max(0.84, surface-opacity + 0.06)) : 1.0);
     // L3 Inset (tone 27 dark — progress tracks, switch off-tracks, glyph wells, nested chips inside blocks)
-    out property <color> inset-bg: (dark ? #373b46 : #e2e6ee).with-alpha(glass-active ? min(0.98, max(0.86, surface-opacity + 0.08)) : 1.0);
-    // Structure by tonal fill, softened inner borders (never noisy wireframe boxes)
-    out property <color> well-border: dark ? #ffffff0e : #0f172a16;
+    out property <color> inset-bg: (dark ? #323642 : #e2e6ee).with-alpha(glass-active ? min(0.98, max(0.86, surface-opacity + 0.08)) : 1.0);
+    // Structure by tonal fill, crisp subtle 1px borders
+    out property <color> well-border: dark ? #ffffff10 : #0f172a14;
     out property <color> hairline-subtle: dark ? #ffffff12 : #0f172a12;
-    out property <color> hairline-strong: dark ? #ffffff22 : #0f172a20;
-    out property <color> top-speculum: dark ? #ffffff24 : #ffffffeb;
-    out property <color> card-shadow: dark ? #00000058 : #0f172a0d;
-    out property <color> card-hover-shadow: dark ? #0000007a : #0f172a18;
+    out property <color> hairline-strong: dark ? #ffffff24 : #0f172a20;
+    out property <color> top-speculum: dark ? #ffffff16 : #ffffffd8;
+    out property <color> card-shadow: dark ? #00000044 : #0f172a0a;
+    out property <color> card-hover-shadow: dark ? #00000064 : #0f172a14;
 
     out property <brush> pill-surface: @linear-gradient(
         180deg,

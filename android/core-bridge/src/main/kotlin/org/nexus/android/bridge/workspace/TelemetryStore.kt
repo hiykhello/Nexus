@@ -20,27 +20,26 @@ data class TelemetryDocument(
 )
 
 /**
- * Layer 4 ephemeral local telemetry & crash-sentinel store (`telemetry.json`, NEVER synced).
+ * Layer 4 ephemeral local telemetry & crash-sentinel store backed by `NexusClientDatabase`
+ * (`node_telemetry`, `traffic_ledger`, and `host_kv`), with one-shot migration from legacy
+ * `telemetry.json` when the database has no telemetry rows yet.
  */
-class TelemetryStore(val file: File) {
+class TelemetryStore(
+    val file: File,
+    val db: NexusClientDatabase = NexusClientDatabase.inMemory(),
+) {
     fun load(): TelemetryDocument {
-        if (!file.isFile) return TelemetryDocument()
-        return runCatching { decode(file.readText(Charsets.UTF_8)) }.getOrDefault(TelemetryDocument())
+        if (!db.hasTelemetryState() && file.isFile) {
+            val migrated = runCatching { decode(file.readText(Charsets.UTF_8)) }.getOrNull()
+            if (migrated != null) {
+                db.importLegacyTelemetryIfEmpty(migrated)
+            }
+        }
+        return db.loadTelemetry()
     }
 
     fun save(doc: TelemetryDocument): TelemetryDocument {
-        file.parentFile?.mkdirs()
-        val tmp = File(file.parentFile, ".${file.name}.${System.nanoTime()}.tmp")
-        try {
-            tmp.writeText(encode(doc), Charsets.UTF_8)
-            if (!tmp.renameTo(file)) {
-                file.writeText(encode(doc), Charsets.UTF_8)
-                tmp.delete()
-            }
-        } catch (t: Throwable) {
-            runCatching { tmp.delete() }
-            throw t
-        }
+        db.saveTelemetry(doc)
         return doc
     }
 
@@ -71,12 +70,16 @@ class TelemetryStore(val file: File) {
     }
 
     fun updateLatency(profileId: String, latencyMs: Long): TelemetryDocument {
-        val cur = load()
-        val prev = cur.profiles[profileId] ?: ProfileTelemetryEntry()
-        val nextMap = cur.profiles.toMutableMap()
-        nextMap[profileId] = prev.copy(latencyMs = latencyMs, lastTestedMs = System.currentTimeMillis())
-        return save(cur.copy(profiles = nextMap))
+        db.updateNodeLatency(profileId, latencyMs, System.currentTimeMillis())
+        return load()
     }
+
+    fun recordTrafficDelta(bucketHour: Long, profileId: String, uploadBytes: Long, downloadBytes: Long) {
+        db.recordTrafficDelta(bucketHour, profileId, uploadBytes, downloadBytes)
+    }
+
+    fun queryTrafficLedger(sinceHour: Long = 0L): List<TrafficLedgerEntry> =
+        db.queryTrafficLedger(sinceHour)
 
     companion object {
         fun encode(doc: TelemetryDocument): String {

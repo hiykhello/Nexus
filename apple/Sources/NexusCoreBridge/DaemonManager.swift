@@ -153,7 +153,7 @@ public struct LaunchDaemonPlistSpec: Sendable, Equatable {
 public struct PrivilegedDaemonController: Sendable {
     public static let defaultPlistName = "org.nexus.apple.daemon.plist"
     public static let defaultLabel = "org.nexus.apple.daemon"
-    public static let elevationModeDefaultsKey = "org.nexus.apple.tunElevationMode"
+    public static let elevationModeHostKVKey = "tun_elevation_mode"
 
     public let plistName: String
 
@@ -200,17 +200,22 @@ public struct PrivilegedDaemonController: Sendable {
         return mode == .persistentDaemon || effectiveState.isRegisteredOrPending
     }
 
-    public static func loadSavedElevationMode(defaults: UserDefaults = .standard) -> TunElevationMode {
-        guard let raw = defaults.string(forKey: elevationModeDefaultsKey),
-              let mode = TunElevationMode(rawValue: raw)
+    public static func loadSavedElevationMode(from database: NexusClientDatabase) async -> TunElevationMode {
+        guard let rawJSON = try? await database.getHostKV(elevationModeHostKVKey),
+              let data = rawJSON.data(using: .utf8),
+              let mode = try? JSONDecoder().decode(TunElevationMode.self, from: data)
         else {
             return .persistentDaemon
         }
         return mode
     }
 
-    public static func saveElevationMode(_ mode: TunElevationMode, defaults: UserDefaults = .standard) {
-        defaults.set(mode.rawValue, forKey: elevationModeDefaultsKey)
+    public static func saveElevationMode(_ mode: TunElevationMode, to database: NexusClientDatabase) async throws {
+        let data = try JSONEncoder().encode(mode)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw NexusDatabaseError.invalidUTF8
+        }
+        try await database.setHostKV(elevationModeHostKVKey, value: json)
     }
 
     public func register() throws {

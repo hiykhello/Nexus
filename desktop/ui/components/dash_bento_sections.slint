@@ -3,9 +3,9 @@ import { Theme } from "../theme.slint";
 import { OutboundMemberItem, ProfileItem } from "../types.slint";
 import { DragHandleOverlay, SectionDragHeader } from "dash_drag_chrome.slint";
 import { DashInfoGrid, DeckCardSlot } from "dash_slot_cards.slint";
-import { BentoSwitchTile } from "bento_cards.slint";
 import { OutboundModeCard } from "bento_deck_cards.slint";
 import { HeroCommandCard } from "hero_command_card.slint";
+import { ConnectivityMiniCard } from "quick_controls_bar.slint";
 import { SpeedWaveCard } from "speed_wave_card.slint";
 
 // Single-template Reorderable Bento Section Slot (1x Slint codegen via `for sec-id in dash-section-order`)
@@ -76,6 +76,11 @@ export component DashSectionSlot inherits VerticalLayout {
     in property <bool> dash-show-memory: true;
     in property <bool> dash-show-traffic: true;
     in property <bool> dash-show-ports: true;
+    in property <bool> dash-show-connectivity: true;
+    in property <bool> conn-probe-busy: false;
+    in property <int> conn-google-ms: -1;
+    in property <int> conn-cf-ms: -1;
+    in property <int> conn-github-ms: -1;
     in property <[int]> dash-info-order: [0, 1, 2, 3];
     in property <bool> deck-swapped: false;
 
@@ -84,6 +89,7 @@ export component DashSectionSlot inherits VerticalLayout {
     callback switch-outbound-mode(string);
     callback apply-inbound-proxy-config(string, bool, string, string);
     callback toggle-tun(bool);
+    callback probe-connectivity();
     callback reload-config();
     callback clear-cache();
     callback copy-text(string);
@@ -211,22 +217,26 @@ export component DashSectionSlot inherits VerticalLayout {
         }
     }
 
-    // ===== SECTION 1: Outbound Mode + System Proxy + TUN =====
+    // ===== SECTION 1: Outbound Mode + Optional Wave 25 Connectivity Mini-Card =====
     if root.shown && root.section-id == 1 && !root.is-compact : Rectangle {
-        vertical-stretch: 0; height: 58px;
+        vertical-stretch: 0; height: 54px;
         HorizontalLayout {
             spacing: Theme.space-md;
-            OutboundModeCard { horizontal-stretch: 2; preferred-width: 0px; min-width: 0px; compact: !root.is-wide; mode: root.outbound-mode; mode-selected(m) => { root.switch-outbound-mode(m); } }
-            BentoSwitchTile {
-                preferred-width: 0px; icon: @image-url("../icons/connections.svg");
-                label: root.system-proxy-supported ? I18n.t("系统代理", "System Proxy") : I18n.t("代理不可用", "Proxy N/A");
-                subtitle: !root.system-proxy-supported ? "" : root.system-proxy-enabled ? root.sys-proxy-port : I18n.t("未开启", "Off");
-                enabled: root.core-running && root.system-proxy-supported; active: root.system-proxy-enabled; toggled(on) => { root.toggle-system-proxy(on); }
+            OutboundModeCard {
+                horizontal-stretch: 2; preferred-width: 0px; min-width: 0px;
+                height: 54px;
+                compact: !root.is-wide && root.dash-show-connectivity;
+                mode: root.outbound-mode;
+                mode-selected(m) => { root.switch-outbound-mode(m); }
             }
-            BentoSwitchTile {
-                preferred-width: 0px; icon: @image-url("../icons/bolt.svg"); badge-color: Theme.telemetry-up;
-                label: I18n.t("TUN 模式", "TUN Mode"); subtitle: I18n.t("全局接管", "Full Device");
-                enabled: root.core-running; active: root.tun-enabled; toggled(on) => { root.toggle-tun(on); }
+            if root.dash-show-connectivity : ConnectivityMiniCard {
+                core-running: root.core-running;
+                probing: root.conn-probe-busy;
+                google-ms: root.conn-google-ms;
+                cf-ms: root.conn-cf-ms;
+                github-ms: root.conn-github-ms;
+                compact: !root.is-wide;
+                probe-connectivity => { root.probe-connectivity(); }
             }
         }
         if root.editing : DragHandleOverlay {
@@ -240,20 +250,15 @@ export component DashSectionSlot inherits VerticalLayout {
         vertical-stretch: 0;
         VerticalLayout {
             spacing: Theme.space-sm;
-            OutboundModeCard { compact: true; mode: root.outbound-mode; mode-selected(m) => { root.switch-outbound-mode(m); } }
-            HorizontalLayout {
-                height: 58px; spacing: Theme.space-sm;
-                BentoSwitchTile {
-                    preferred-width: 0px; compact: true; icon: @image-url("../icons/connections.svg");
-                    label: root.system-proxy-supported ? I18n.t("系统代理", "System Proxy") : I18n.t("代理不可用", "Proxy N/A");
-                    subtitle: !root.system-proxy-supported ? "" : root.system-proxy-enabled ? root.sys-proxy-port : I18n.t("未开启", "Off");
-                    enabled: root.core-running && root.system-proxy-supported; active: root.system-proxy-enabled; toggled(on) => { root.toggle-system-proxy(on); }
-                }
-                BentoSwitchTile {
-                    preferred-width: 0px; compact: true; icon: @image-url("../icons/bolt.svg"); badge-color: Theme.telemetry-up;
-                    label: I18n.t("TUN 模式", "TUN Mode"); subtitle: I18n.t("全局接管", "Full Device");
-                    enabled: root.core-running; active: root.tun-enabled; toggled(on) => { root.toggle-tun(on); }
-                }
+            OutboundModeCard { height: 54px; compact: true; mode: root.outbound-mode; mode-selected(m) => { root.switch-outbound-mode(m); } }
+            if root.dash-show-connectivity : ConnectivityMiniCard {
+                core-running: root.core-running;
+                probing: root.conn-probe-busy;
+                google-ms: root.conn-google-ms;
+                cf-ms: root.conn-cf-ms;
+                github-ms: root.conn-github-ms;
+                compact: true;
+                probe-connectivity => { root.probe-connectivity(); }
             }
         }
         if root.editing : DragHandleOverlay {

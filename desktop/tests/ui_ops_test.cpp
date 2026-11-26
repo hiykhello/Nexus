@@ -35,12 +35,10 @@ namespace {
         expect(!parsed0.mixed.enabled && parsed0.socks5.enabled && parsed0.socks5.port == 2080 && !parsed0.http.enabled,
             "initial socks5-only parse");
 
-        auto r1 = desktop::upsert_managed_inbound(cfg, "mixed", true, "127.0.0.1", 7891);
-        expect(r1.first && r1.second.contains("type=\"mixed\"") && r1.second.contains("port=7891"), "upsert mixed");
-        auto r2 = desktop::upsert_managed_inbound(r1.second, "http", true, "127.0.0.1", 8081);
-        expect(r2.first && r2.second.contains("type=\"http\"") && r2.second.contains("port=8081"), "coexisting http");
-
-        auto parsed1 = desktop::parse_inbound_endpoints(r2.second);
+        std::string multi = cfg +
+            "inbound \"m\" type=\"mixed\" {\n    listen host=\"127.0.0.1\" port=7891\n}\n"
+            "inbound \"h\" type=\"http\" {\n    listen host=\"127.0.0.1\" port=8081\n}\n";
+        auto parsed1 = desktop::parse_inbound_endpoints(multi);
         expect(parsed1.mixed.enabled && parsed1.mixed.port == 7891 &&
                parsed1.socks5.enabled && parsed1.socks5.port == 2080 &&
                parsed1.http.enabled && parsed1.http.port == 8081,
@@ -49,10 +47,9 @@ namespace {
         auto sel1 = desktop::select_system_proxy_endpoint(parsed1);
         expect(sel1.has_value() && sel1->first == "127.0.0.1" && sel1->second == 7891, "prefer mixed for system proxy");
 
-        auto r3 = desktop::upsert_managed_inbound(r2.second, "mixed", false, "127.0.0.1", 7891);
-        expect(r3.first && !r3.second.contains("type=\"mixed\"") && r3.second.contains("type=\"socks5\""), "disable mixed preserves user socks5");
-        auto parsed2 = desktop::parse_inbound_endpoints(r3.second);
-        auto sel2 = desktop::select_system_proxy_endpoint(parsed2);
+        desktop::CoexistingInbounds http_only = parsed1;
+        http_only.mixed.enabled = false;
+        auto sel2 = desktop::select_system_proxy_endpoint(http_only);
         expect(sel2.has_value() && sel2->second == 8081, "fallback to http when mixed disabled");
 
         desktop::CoexistingInbounds wild{};
@@ -61,8 +58,6 @@ namespace {
         wild.http.port = 8888;
         auto sel_w = desktop::select_system_proxy_endpoint(wild);
         expect(sel_w.has_value() && sel_w->first == "127.0.0.1" && sel_w->second == 8888, "normalize wildcard host");
-
-        expect(!desktop::upsert_managed_inbound(cfg, "mixed", true, "bad host", 7890).first, "reject unsafe host");
     }
 
     auto test_outbound_mode_and_merge() -> void {
@@ -71,17 +66,6 @@ namespace {
             "role \"client\"\n"
             "outbound \"direct\" type=\"direct\"\n"
             "routing { default-outbound \"edge-grp\"; }\n";
-
-        expect(desktop::detect_outbound_mode(cfg) == "rule", "initial rule mode");
-        auto d = desktop::apply_outbound_mode(cfg, "direct");
-        expect(d.first && d.second.contains("default-outbound \"direct\"") &&
-               desktop::detect_outbound_mode(d.second) == "direct", "switch to direct");
-        auto back = desktop::apply_outbound_mode(d.second, "rule");
-        expect(back.first && back.second.contains("default-outbound \"edge-grp\"") &&
-               desktop::detect_outbound_mode(back.second) == "rule", "restore original default-outbound");
-        auto g = desktop::apply_outbound_mode(back.second, "global", "proxy");
-        expect(g.first && g.second.contains("default-outbound \"proxy\"") &&
-               desktop::detect_outbound_mode(g.second) == "global", "switch to global group and detect global");
 
         auto merged = desktop::merge_raw_kdl_snippet(cfg, "  outbound \"x\" type=\"direct\"  \n");
         expect(merged.ends_with("outbound \"x\" type=\"direct\"\n"), "clean snippet merge");
@@ -155,25 +139,22 @@ namespace {
         std::string cfg =
             "schema-version 1\n"
             "role \"client\"\n"
+            "inbound \"local-mixed\" type=\"mixed\" { listen host=\"127.0.0.1\" port=17890; authentication \"none\"; }\n"
+            "inbound \"local-socks5\" type=\"socks5\" { listen host=\"127.0.0.1\" port=11080; authentication \"none\"; }\n"
+            "inbound \"local-http\" type=\"http\" { listen host=\"127.0.0.1\" port=18080; authentication \"none\"; }\n"
             "outbound \"direct\" type=\"direct\"\n"
             "routing { default-outbound \"direct\"; }\n";
-        auto c1 = desktop::upsert_managed_inbound(cfg, "mixed", true, "127.0.0.1", 17890);
-        auto c2 = desktop::upsert_managed_inbound(c1.second, "socks5", true, "127.0.0.1", 11080);
-        auto c3 = desktop::upsert_managed_inbound(c2.second, "http", true, "127.0.0.1", 18080);
-        expect(c1.first && c2.first && c3.first, "generate coexisting managed inbounds");
 
         auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-live-coexist.kdl";
         {
             std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-            out << c3.second;
+            out << cfg;
         }
         desktop::CoreSupervisor sup(bin);
         auto val = sup.validate_config(tmp);
         expect(val.ok, "real nexus validates coexisting mixed+socks5+http inbounds: " + val.message);
 
-        auto m = desktop::apply_outbound_mode(c3.second, "direct");
-        expect(m.first, "apply direct outbound mode with managed comment");
-        auto with_rule = desktop::insert_route_rule_kdl(m.second, "rule action=\"route\" outbound=\"direct\" {\n    domain-suffix \"example.com\"\n}");
+        auto with_rule = desktop::insert_route_rule_kdl(cfg, "rule action=\"route\" outbound=\"direct\" {\n    domain-suffix \"example.com\"\n}");
         expect(with_rule.first, "insert valid tcp-program route rule");
         {
             std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
@@ -182,7 +163,7 @@ namespace {
         auto val_m = sup.validate_config(tmp);
         std::error_code ec;
         std::filesystem::remove(tmp, ec);
-        expect(val_m.ok, "real nexus validates outbound mode comment + tcp-program rule: " + val_m.message);
+        expect(val_m.ok, "real nexus validates tcp-program rule insertion: " + val_m.message);
     }
 
     auto test_system_proxy_controller() -> void {

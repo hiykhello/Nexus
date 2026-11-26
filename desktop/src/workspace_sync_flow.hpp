@@ -37,11 +37,18 @@ namespace desktop_ui_helpers {
             push_toast(ctx.ui, msg, "error");
             return;
         }
-        (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
+        auto doc_snap = ctx.doc;
         ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "正在导入 nexus:// 便携分享包...", "Importing nexus:// share bundle...")));
-        ctx.worker.post([&ctx, uri = std::move(uri), en]() mutable {
-            auto res = desktop::import_share_via_core(
-                ctx.supervisor.binary_path(), ctx.workspace_path, uri, "manual", {}, ctx.secrets_dir);
+        ctx.worker.post([&ctx, doc_snap = std::move(doc_snap), uri = std::move(uri), en]() mutable {
+            auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
+            desktop::ShareImportResult res{};
+            if (ws_tmp.ok) {
+                res = desktop::import_share_via_core(
+                    ctx.supervisor.binary_path(), ws_tmp.path, uri, "manual", {}, ctx.secrets_dir);
+            } else {
+                res.errors.push_back(tr(en, "写入临时工作区文件失败", "Failed to write temporary workspace input"));
+            }
+            ws_tmp.wipe_and_remove();
             for (volatile char& ch : uri) ch = '\0';
             uri.clear();
             on_ui_thread(ctx.weak_ui, [&ctx, res = std::move(res), en](auto& s) mutable {
@@ -62,10 +69,11 @@ namespace desktop_ui_helpers {
                 ctx.doc.updated_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count();
                 if (!res.imported_ids.empty()) ctx.telemetry.active_profile_id = res.imported_ids.front();
-                (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-                (void)desktop::save_telemetry_store(ctx.telemetry_path, ctx.telemetry);
+                (void)persist_workspace_db(ctx);
+                (void)persist_telemetry_db(ctx);
                 s->set_share_link_input(slint::SharedString(""));
                 sync_workspace_to_ui(ctx);
+                if (ctx.sync_tray) ctx.sync_tray();
                 auto msg = tr(en, "已导入便携分享包 (", "Imported share bundle (") + std::to_string(res.imported_ids.size()) + ")";
                 push_toast(*s, msg, "success");
                 recompose_active_workspace(ctx);
@@ -81,10 +89,17 @@ namespace desktop_ui_helpers {
             bool const en = is_en_ui(ctx.ui);
             std::string id(id_s);
             if (id.empty()) return;
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-            ctx.worker.post([&ctx, id = std::move(id), en]() mutable {
-                std::array<std::string, 1> ids{id};
-                auto res = desktop::export_share_via_core(ctx.supervisor.binary_path(), ctx.workspace_path, ids);
+            auto doc_snap = ctx.doc;
+            ctx.worker.post([&ctx, doc_snap = std::move(doc_snap), id = std::move(id), en]() mutable {
+                auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
+                desktop::ShareExportResult res{};
+                if (ws_tmp.ok) {
+                    std::array<std::string, 1> ids{id};
+                    res = desktop::export_share_via_core(ctx.supervisor.binary_path(), ws_tmp.path, ids);
+                } else {
+                    res.errors.push_back(tr(en, "写入临时工作区文件失败", "Failed to write temporary workspace input"));
+                }
+                ws_tmp.wipe_and_remove();
                 bool copied = (res.ok && !res.uri.empty()) && copy_text_to_clipboard(res.uri);
                 on_ui_thread(ctx.weak_ui, [res = std::move(res), copied, en](auto& s) {
                     if (res.ok && !res.uri.empty()) {
@@ -121,8 +136,8 @@ namespace desktop_ui_helpers {
                     return;
                 }
             }
-            bool ok = desktop::save_desktop_host_config(ctx.host_path, ctx.host);
-            auto msg = ok ? tr(en, "已将 WebDAV 与同步口令保存至本机 0600 host.json", "Saved WebDAV & passphrase to local 0600 host.json")
+            bool ok = persist_host_db(ctx);
+            auto msg = ok ? tr(en, "已保存同步配置（凭据隔离存于 0600 密钥文件）", "Saved sync settings (credentials isolated in 0600 secret file)")
                           : tr(en, "保存同步凭据失败", "Failed to save sync settings");
             auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             g.set_sync_status_ok(ok);
@@ -152,16 +167,24 @@ namespace desktop_ui_helpers {
                 push_toast(ctx.ui, v.error(), "error");
                 return;
             }
-            (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-            (void)desktop::save_desktop_host_config(ctx.host_path, ctx.host);
+            (void)persist_workspace_db(ctx);
+            (void)persist_host_db(ctx);
+            auto doc_snap = ctx.doc;
             g.set_sync_busy(true);
             g.set_sync_conflict_active(false);
             desktop::WebDavConfig dav{ctx.host.webdav_url, ctx.host.webdav_username, ctx.host.webdav_password,
                                       ctx.host.webdav_last_etag, ctx.host.webdav_last_revision};
             std::string pass = ctx.host.sync_passphrase, dev = ctx.host.sync_device_label;
             std::int64_t rev = ctx.doc.revision;
-            bool posted = ctx.worker.post([&ctx, dav = std::move(dav), pass = std::move(pass), dev = std::move(dev), rev, force_overwrite, en]() mutable {
-                auto sealed = desktop::seal_sync_via_core(ctx.supervisor.binary_path(), ctx.workspace_path, pass, dev, ctx.secrets_dir);
+            bool posted = ctx.worker.post([&ctx, doc_snap = std::move(doc_snap), dav = std::move(dav), pass = std::move(pass), dev = std::move(dev), rev, force_overwrite, en]() mutable {
+                auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
+                desktop::SyncSealResult sealed{};
+                if (ws_tmp.ok) {
+                    sealed = desktop::seal_sync_via_core(ctx.supervisor.binary_path(), ws_tmp.path, pass, dev, ctx.secrets_dir);
+                } else {
+                    sealed.errors.push_back(tr(en, "写入临时工作区文件失败", "Failed to write temporary workspace input"));
+                }
+                ws_tmp.wipe_and_remove();
                 for (volatile char& ch : pass) ch = '\0';
                 pass.clear();
                 if (!sealed.ok || sealed.envelope_json.empty()) {
@@ -180,7 +203,7 @@ namespace desktop_ui_helpers {
                     if (pushed.status == desktop::WebDavSyncStatus::ok) {
                         ctx.host.webdav_last_etag = pushed.remote_etag;
                         ctx.host.webdav_last_revision = pushed.remote_revision;
-                        (void)desktop::save_desktop_host_config(ctx.host_path, ctx.host);
+                        (void)persist_host_db(ctx);
                         auto msg = tr(en, "已加密上传工作区快照 (rev ", "Uploaded E2EE snapshot (rev ") + std::to_string(pushed.remote_revision) + ")";
                         st.set_sync_status_ok(true); st.set_sync_status(slint::SharedString(msg));
                         st.set_sync_conflict_active(false);
@@ -217,7 +240,7 @@ namespace desktop_ui_helpers {
                 push_toast(ctx.ui, v.error(), "error");
                 return;
             }
-            (void)desktop::save_desktop_host_config(ctx.host_path, ctx.host);
+            (void)persist_host_db(ctx);
             g.set_sync_busy(true);
             g.set_sync_conflict_active(false);
             desktop::WebDavConfig dav{ctx.host.webdav_url, ctx.host.webdav_username, ctx.host.webdav_password,
@@ -266,14 +289,16 @@ namespace desktop_ui_helpers {
                         push_toast(*s, parsed.error(), "error");
                         return;
                     }
-                    std::error_code bec;
-                    if (std::filesystem::is_regular_file(ctx.workspace_path, bec) && !bec &&
-                        std::filesystem::file_size(ctx.workspace_path, bec) > 0 && !bec &&
-                        desktop::backup_workspace_file_0600(ctx.workspace_path, backups_dir, 5).empty()) {
-                        auto err = tr(en, "创建本地备份失败，已中止覆盖", "Failed to create local backup; pull aborted");
-                        st.set_sync_status_ok(false); st.set_sync_status(slint::SharedString(err));
-                        push_toast(*s, err, "error");
-                        return;
+                    if (!ctx.doc.profiles.empty()) {
+                        auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, ctx.doc);
+                        bool backed_up = ws_tmp.ok && !desktop::backup_workspace_file_0600(ws_tmp.path, backups_dir, 5).empty();
+                        ws_tmp.wipe_and_remove();
+                        if (!backed_up) {
+                            auto err = tr(en, "创建本地备份失败，已中止覆盖", "Failed to create local backup; pull aborted");
+                            st.set_sync_status_ok(false); st.set_sync_status(slint::SharedString(err));
+                            push_toast(*s, err, "error");
+                            return;
+                        }
                     }
                     ctx.doc = std::move(*parsed);
                     std::unordered_set<std::string> live;
@@ -282,10 +307,11 @@ namespace desktop_ui_helpers {
                     if (ctx.telemetry.active_profile_id.empty() && !ctx.doc.profiles.empty()) ctx.telemetry.active_profile_id = ctx.doc.profiles.front().id;
                     ctx.host.webdav_last_etag = pulled.remote_etag;
                     ctx.host.webdav_last_revision = ctx.doc.revision;
-                    (void)desktop::save_workspace_atomic(ctx.workspace_path, ctx.doc);
-                    (void)desktop::save_desktop_host_config(ctx.host_path, ctx.host);
-                    (void)desktop::save_telemetry_store(ctx.telemetry_path, ctx.telemetry);
+                    (void)persist_workspace_db(ctx);
+                    (void)persist_host_db(ctx);
+                    (void)persist_telemetry_db(ctx);
                     sync_workspace_to_ui(ctx);
+                    if (ctx.sync_tray) ctx.sync_tray();
                     auto msg = tr(en, "已解密并恢复远端工作区 (rev ", "Restored E2EE workspace (rev ") +
                                std::to_string(ctx.host.webdav_last_revision) + ")";
                     st.set_sync_status_ok(true); st.set_sync_status(slint::SharedString(msg));

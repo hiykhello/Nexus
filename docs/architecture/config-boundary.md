@@ -92,57 +92,37 @@ Parses share URIs, base64 lists, or external subscription documents through `pro
 
 Each node's `kdl` is dedented to a standalone top-level `outbound` block ready to save directly into `nodes/<id>.kdl`. Multi-secret protocols (`tuic`, `wireguard`, `hysteria2` with salamander) populate all written `0600` credential paths in `secret_files` (with `secret_file` retaining the first path), and any node that fails validation removes partially written secrets before returning.
 
-## 3. Shared Portable On-Disk Library Schema
+## 3. Unified Client SQLite 3 (WAL) Storage Schema (`v1`, `nexus-client.db`)
 
-Both Desktop and Android store portable user libraries using the same `library.json` v1 index and directory layout:
+Desktop, Android, and Apple clients use one unified cross-platform SQLite 3 (WAL) database (`nexus-client.db`, `PRAGMA user_version = 1`) as primary persistence for portable workspace documents, ephemeral telemetry, traffic ledgers, and non-secret host preferences, while continuing to materialize canonical Layer 1 `workspace.json` (`0600`) and Layer 3 `host.json` (`0600`) when invoking the shared Core compiler (`nexus workspace compose` / `nexus_core_compose_workspace`) or E2EE sync (`seal-sync` / `open-sync`).
 
-```text
-<library-root>/
-  library.json          # v1 metadata index (active mode/ids, subscriptions, nodes)
-  nodes/<id>.kdl        # single standalone outbound block per node
-  routings/<id>.kdl     # single routing block (builtins: bypass-lan-cn, global, direct)
-  dns/<id>.kdl          # single dns block (builtins: balanced, direct, fakeip)
-  custom/<id>.kdl       # untouched full KDL profiles
-  secrets/<id>.secret   # 0600 credential files referenced by nodes/<id>.kdl
+### 3.1 Connection PRAGMAs
+Every client opens `nexus-client.db` (mode `0600` on POSIX) with:
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
+PRAGMA temp_store = MEMORY;
+PRAGMA mmap_size = 0;
+PRAGMA cache_size = -2000;
 ```
+When hiding to tray or backgrounding, clients execute `PRAGMA shrink_memory; PRAGMA wal_checkpoint(PASSIVE);` alongside OS heap reclamation (`malloc_trim(0)` on Linux glibc, `_heapmin()` + `SetProcessWorkingSetSize` on Windows, `malloc_zone_pressure_relief` on macOS).
 
-`library.json` schema (version `1`):
-```json
-{
-  "version": 1,
-  "active_mode": "pillars",
-  "active_subscription_id": "manual",
-  "active_node_id": "",
-  "active_routing_id": "bypass-lan-cn",
-  "active_dns_id": "balanced",
-  "active_custom_id": "",
-  "subscriptions": [
-    {
-      "id": "manual",
-      "name": "Manual",
-      "url": "",
-      "auto_update_min": 0,
-      "filter_include": "",
-      "filter_exclude": "",
-      "updated_epoch_s": 0
-    }
-  ],
-  "nodes": [
-    {
-      "id": "node-1",
-      "subscription_id": "manual",
-      "name": "HK Edge",
-      "protocol": "vless",
-      "host": "198.51.100.10",
-      "port": 443,
-      "latency_ms": -1,
-      "pinned": false,
-      "secret_file": "",
-      "updated_epoch_s": 0
-    }
-  ]
-}
-```
+### 3.2 Schema v1 Tables (8 Tables + Vertical Split)
+1. **`subscriptions`** — `(id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL DEFAULT 0)`
+2. **`profiles`** — `(id TEXT PRIMARY KEY, kind TEXT NOT NULL, subscription_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL, protocol TEXT NOT NULL DEFAULT '', server TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, pinned INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)` with indexes on `(subscription_id, sort_order)`, `(kind)`, `(protocol)`, and `(pinned)` for fast index-only list rendering without loading large KDL/TLS payloads.
+3. **`profile_payloads`** — `(profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE, payload_json TEXT NOT NULL)` — vertical split holding full polymorphic profile JSON (node config, custom outbound KDL, policy group, proxy chain, or full custom KDL), automatically pruned via `ON DELETE CASCADE`.
+4. **`routing_profiles`** — `(id TEXT PRIMARY KEY, name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, payload_json TEXT NOT NULL, updated_at INTEGER NOT NULL DEFAULT 0)`
+5. **`workspace_meta`** — `(key TEXT PRIMARY KEY, value_json TEXT NOT NULL)` storing `schema_version`, `dns`, `rule_set_assets`, `full_template`, `active_routing_id`, `sync_revision`, and `updated_at_ms`.
+6. **`node_telemetry`** — `(profile_id TEXT PRIMARY KEY, latency_ms INTEGER NOT NULL DEFAULT -1, ewma_ms INTEGER NOT NULL DEFAULT -1, status_code INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT '', tested_at INTEGER NOT NULL DEFAULT 0)` (host-local, never synced).
+7. **`traffic_ledger`** — `(bucket_hour INTEGER NOT NULL, profile_id TEXT NOT NULL, upload_bytes INTEGER NOT NULL DEFAULT 0, download_bytes INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (bucket_hour, profile_id))` (host-local hourly counters, never synced).
+8. **`host_kv`** — `(key TEXT PRIMARY KEY, value_json TEXT NOT NULL)` (host-local settings such as `desktop_host`, `ui_prefs`, `sidebar_collapsed`, `active_profile_id`; NEVER synced).
+
+### 3.3 Credential Isolation Invariant
+- WebDAV passwords, E2EE sync passphrases, and local proxy passwords **MUST NEVER** be stored in SQLite (`host_kv` or any table) or in portable `workspace.json`.
+- Desktop isolates sync/LAN credentials strictly in `<config-dir>/secrets/sync-creds.json` (`0600` atomic write); Android stores them in Keystore-backed `EncryptedSharedPreferences`; Apple stores them in Keychain.
+- One-shot idempotent import migrates existing legacy `workspace.json` / `host.json` / `telemetry.json` / `ui-prefs.conf` into `nexus-client.db` on first startup when the database is empty.
 
 ## 4. Unified Single-Source Core Workspace Compiler (`v1`)
 

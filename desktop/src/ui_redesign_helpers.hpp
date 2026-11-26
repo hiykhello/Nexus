@@ -184,7 +184,8 @@ namespace desktop_ui_helpers {
         desktop::CoreSupervisor const& supervisor,
         std::vector<desktop::OutboundGroupSnapshot> const& cached_groups,
         std::unordered_set<std::string> const& pinned_members,
-        desktop::ProfileStore& profile_store,
+        desktop::WorkspaceDocument const& workspace_doc,
+        std::string_view active_profile_id,
         desktop::CoexistingInbounds const& inbounds,
         bool window_visible,
         bool is_en) -> desktop::TraySnapshot {
@@ -233,11 +234,9 @@ namespace desktop_ui_helpers {
             }
         }
 
-        auto active_pid = profile_store.active_id();
-        auto entries = profile_store.list();
-        snap.profiles.reserve(entries.size());
-        for (auto const& e : entries) {
-            snap.profiles.push_back({e.id, e.name, e.id == active_pid});
+        snap.profiles.reserve(workspace_doc.profiles.size());
+        for (auto const& p : workspace_doc.profiles) {
+            snap.profiles.push_back({p.id, p.remarks.empty() ? p.id : p.remarks, p.id == active_profile_id});
         }
         return snap;
     }

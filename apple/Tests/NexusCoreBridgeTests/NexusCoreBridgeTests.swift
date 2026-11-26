@@ -328,7 +328,7 @@ final class NexusCoreBridgeTests: XCTestCase {
         XCTAssertEqual(finalState, .idle)
     }
 
-    func testTunElevationModeCodablePersistenceAndDaemonState() throws {
+    func testTunElevationModeCodablePersistenceAndDaemonState() async throws {
         XCTAssertEqual(TunElevationMode.allCases, [.persistentDaemon, .sessionOnly])
         for mode in TunElevationMode.allCases {
             let encoded = try JSONEncoder().encode(mode)
@@ -340,15 +340,20 @@ final class NexusCoreBridgeTests: XCTestCase {
         XCTAssertTrue(TunElevationMode.persistentDaemon.displayName.contains("LaunchDaemon"))
         XCTAssertTrue(TunElevationMode.sessionOnly.displayName.contains("仅本次会话"))
 
-        let suiteName = "org.nexus.apple.tests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let dbDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nexus-daemon-db-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dbDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dbDir) }
+        let db = NexusClientDatabase(rootDirectory: dbDir)
 
-        XCTAssertEqual(PrivilegedDaemonController.loadSavedElevationMode(defaults: defaults), .persistentDaemon)
-        PrivilegedDaemonController.saveElevationMode(.sessionOnly, defaults: defaults)
-        XCTAssertEqual(PrivilegedDaemonController.loadSavedElevationMode(defaults: defaults), .sessionOnly)
-        PrivilegedDaemonController.saveElevationMode(.persistentDaemon, defaults: defaults)
-        XCTAssertEqual(PrivilegedDaemonController.loadSavedElevationMode(defaults: defaults), .persistentDaemon)
+        let initialMode = await PrivilegedDaemonController.loadSavedElevationMode(from: db)
+        XCTAssertEqual(initialMode, .persistentDaemon)
+        try await PrivilegedDaemonController.saveElevationMode(.sessionOnly, to: db)
+        let sessionMode = await PrivilegedDaemonController.loadSavedElevationMode(from: db)
+        XCTAssertEqual(sessionMode, .sessionOnly)
+        try await PrivilegedDaemonController.saveElevationMode(.persistentDaemon, to: db)
+        let restoredMode = await PrivilegedDaemonController.loadSavedElevationMode(from: db)
+        XCTAssertEqual(restoredMode, .persistentDaemon)
 
         XCTAssertTrue(DaemonRegistrationState.enabled.isRegisteredOrPending)
         XCTAssertTrue(DaemonRegistrationState.requiresApproval.isRegisteredOrPending)

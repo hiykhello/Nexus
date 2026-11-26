@@ -321,23 +321,55 @@ namespace desktop {
         return out;
     }
 
+    auto parse_outbound_probe_json(std::string_view json) -> OutboundProbeResult {
+        OutboundProbeResult out{};
+        auto obj_start = json.find('{');
+        if (obj_start == std::string_view::npos) { out.error = "empty probe response"; return out; }
+        auto obj_end = find_matching(json, obj_start, '{', '}');
+        if (obj_end == std::string_view::npos) { out.error = "malformed probe JSON"; return out; }
+        auto obj = json.substr(obj_start, obj_end - obj_start + 1);
+        out.outbound = extract_json_string(obj, "outbound");
+        out.resolved_outbound = extract_json_string(obj, "resolved_outbound");
+        out.state = extract_json_string(obj, "state");
+        out.latency_ms = extract_json_i64(obj, "latency_ms", -1);
+        out.status_code = static_cast<int>(extract_json_i64(obj, "status_code", 0));
+        out.url = extract_json_string(obj, "url");
+        out.error = extract_json_string(obj, "message");
+        if (out.error.empty()) out.error = extract_json_string(obj, "error");
+        out.ok = (out.state == "healthy" || out.state == "ok" || out.state == "up") && out.latency_ms >= 0;
+        return out;
+    }
+
     auto HttpControlClient::request(this HttpControlClient const& self,
                                     std::string_view method,
                                     std::string_view path,
-                                    std::string_view body) -> HttpReply {
-        if (self.host_.empty() || self.port_ == 0 || method.empty() || path.empty() || path.front() != '/' ||
+                                    std::string_view body,
+                                    std::optional<std::chrono::milliseconds> timeout_override) -> HttpReply {
+        std::string host;
+        std::uint16_t port = 0;
+        std::string bearer_token;
+        std::chrono::milliseconds base_timeout{2000};
+        {
+            std::scoped_lock lk(self.mu_);
+            host = self.host_;
+            port = self.port_;
+            bearer_token = self.bearer_token_;
+            base_timeout = self.timeout_;
+        }
+        auto const eff_timeout = timeout_override.value_or(base_timeout);
+        if (host.empty() || port == 0 || method.empty() || path.empty() || path.front() != '/' ||
             has_header_forbidden(method, true) || has_header_forbidden(path, true) ||
-            has_header_forbidden(self.host_, true) || has_header_forbidden(self.bearer_token_, false)) {
+            has_header_forbidden(host, true) || has_header_forbidden(bearer_token, false)) {
             return {false, 0, "invalid HTTP control request"};
         }
-        std::string host_hdr = (self.host_.contains(':') && !self.host_.starts_with('['))
-            ? std::format("[{}]:{}", self.host_, self.port_)
-            : std::format("{}:{}", self.host_, self.port_);
+        std::string host_hdr = (host.contains(':') && !host.starts_with('['))
+            ? std::format("[{}]:{}", host, port)
+            : std::format("{}:{}", host, port);
         std::string req = std::format(
             "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
             method, path, host_hdr);
-        if (!self.bearer_token_.empty()) {
-            req += std::format("Authorization: Bearer {}\r\n", self.bearer_token_);
+        if (!bearer_token.empty()) {
+            req += std::format("Authorization: Bearer {}\r\n", bearer_token);
         }
         if (!body.empty()) {
             req += std::format("Content-Type: application/json\r\nContent-Length: {}\r\n", body.size());
@@ -356,8 +388,8 @@ namespace desktop {
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
         addrinfo* res = nullptr;
-        auto port_str = std::to_string(self.port_);
-        if (::getaddrinfo(self.host_.c_str(), port_str.c_str(), &hints, &res) != 0 || !res) {
+        auto port_str = std::to_string(port);
+        if (::getaddrinfo(host.c_str(), port_str.c_str(), &hints, &res) != 0 || !res) {
             return {false, 0, "failed to resolve control host"};
         }
 
@@ -366,7 +398,7 @@ namespace desktop {
         for (addrinfo* ai = res; ai != nullptr; ai = ai->ai_next) {
             SOCKET s = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
             if (s == INVALID_SOCKET) continue;
-            DWORD ms = static_cast<DWORD>(self.timeout_.count());
+            DWORD ms = static_cast<DWORD>(eff_timeout.count());
             ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char const*>(&ms), sizeof(ms));
             ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<char const*>(&ms), sizeof(ms));
             if (::connect(s, ai->ai_addr, static_cast<int>(ai->ai_addrlen)) == 0) {
@@ -393,8 +425,8 @@ namespace desktop {
             (void)::setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
 #endif
             timeval tv{};
-            tv.tv_sec = static_cast<time_t>(self.timeout_.count() / 1000);
-            tv.tv_usec = static_cast<suseconds_t>((self.timeout_.count() % 1000) * 1000);
+            tv.tv_sec = static_cast<time_t>(eff_timeout.count() / 1000);
+            tv.tv_usec = static_cast<suseconds_t>((eff_timeout.count() % 1000) * 1000);
             ::setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             ::setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
             int rc = 0;

@@ -12,7 +12,7 @@ import NexusSharedUI
 final class NexusAppModel {
     var isRunning = false
     var backend: AppleTunnelBackend = .launchDaemonUtun
-    @ObservationIgnored private var _storedTunElevationMode: TunElevationMode
+    @ObservationIgnored private var _storedTunElevationMode: TunElevationMode = .persistentDaemon
     var tunElevationMode: TunElevationMode {
         get {
             access(keyPath: \.tunElevationMode)
@@ -22,7 +22,12 @@ final class NexusAppModel {
             guard newValue != _storedTunElevationMode else { return }
             withMutation(keyPath: \.tunElevationMode) {
                 _storedTunElevationMode = newValue
-                PrivilegedDaemonController.saveElevationMode(newValue)
+            }
+            let db = clientDatabase
+            let previous = elevationSaveTask
+            elevationSaveTask = Task {
+                _ = await previous?.value
+                try? await PrivilegedDaemonController.saveElevationMode(newValue, to: db)
             }
         }
     }
@@ -65,12 +70,14 @@ final class NexusAppModel {
     private let session: ControlSocketSession
     private let httpControl: HttpControlClient
     private let daemonController = PrivilegedDaemonController()
+    private let clientDatabase: NexusClientDatabase
     private var networkGeneration: UInt64 = 0
     private var monitorTask: Task<Void, Never>?
+    private var elevationSaveTask: Task<Void, Never>?
 
     init() {
         let sockPath = "/var/run/org.nexus.apple/c.sock"
-        self._storedTunElevationMode = PrivilegedDaemonController.loadSavedElevationMode()
+        self.clientDatabase = NexusClientDatabase(rootDirectory: Self.defaultWorkspaceDirectory())
         self.session = ControlSocketSession(socketPath: sockPath)
         self.httpControl = HttpControlClient(baseURL: URL(string: "http://127.0.0.1:9090")!)
         self.daemonState = daemonController.status()
@@ -118,9 +125,16 @@ final class NexusAppModel {
     }
 
     func loadWorkspaceState(rootDirectory: URL? = nil) async {
+        if rootDirectory == nil, let pending = elevationSaveTask { await pending.value }
         let baseDir = rootDirectory ?? Self.defaultWorkspaceDirectory()
-        let wsStore = WorkspaceStore(rootDirectory: baseDir)
-        let telStore = TelemetryStore(fileURL: baseDir.appendingPathComponent("telemetry.json"))
+        let db = rootDirectory.map { NexusClientDatabase(rootDirectory: $0) } ?? clientDatabase
+        let wsStore = WorkspaceStore(rootDirectory: baseDir, database: db)
+        let telStore = TelemetryStore(rootDirectory: baseDir, database: db)
+        let saveToken = elevationSaveTask
+        let savedMode = await PrivilegedDaemonController.loadSavedElevationMode(from: db)
+        if (rootDirectory != nil || elevationSaveTask == saveToken), savedMode != _storedTunElevationMode {
+            withMutation(keyPath: \.tunElevationMode) { _storedTunElevationMode = savedMode }
+        }
         if let loaded = try? await wsStore.loadOrInit() {
             workspace = loaded
         }
@@ -353,6 +367,7 @@ private struct NexusSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .task { await model.loadWorkspaceState() }
     }
 }
 #elseif os(iOS)

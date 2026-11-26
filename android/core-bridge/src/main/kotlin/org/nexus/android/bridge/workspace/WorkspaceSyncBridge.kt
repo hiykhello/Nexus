@@ -2,7 +2,7 @@ package org.nexus.android.bridge.workspace
 
 import org.json.JSONObject
 import org.nexus.android.bridge.core.CoreProcessSupervisor
-import org.nexus.android.bridge.profile.ProfileRepository
+import org.nexus.android.bridge.profile.SecretFileIO
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.UUID
@@ -177,7 +177,7 @@ class WorkspaceSyncBridge(
         ): T {
             dir.mkdirs()
             val file = File(dir, ".nexus-pass-${UUID.randomUUID()}.secret")
-            ProfileRepository.atomicWriteSecret0600(file, passphrase)
+            SecretFileIO.atomicWriteSecret0600(file, passphrase)
             return try {
                 block(file)
             } finally {

@@ -5,7 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.IpPrefix
@@ -27,11 +26,12 @@ import org.nexus.android.bridge.ipc.NexusControlClient
 import org.nexus.android.bridge.model.RuntimeSocketPaths
 import org.nexus.android.bridge.net.CidrRouteCalculator
 import org.nexus.android.bridge.net.DefaultNetworkMonitor
-import org.nexus.android.bridge.profile.ProfileRepository
+import org.nexus.android.bridge.profile.SecretFileIO
 import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.AndroidHostConfigStore
 import org.nexus.android.bridge.workspace.AndroidHostSection
 import org.nexus.android.bridge.workspace.AndroidRunMode
+import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.bridge.workspace.TelemetryStore
 import org.nexus.android.bridge.workspace.WorkspaceStore
 import java.io.File
@@ -62,7 +62,6 @@ private data class LaunchRequest(
     val isConfigDir: Boolean,
     val hostOverrideFile: File?,
     val fakeIpv6Pool: String,
-    val legacyExcludedOverride: List<String>?,
 )
 
 /**
@@ -73,6 +72,8 @@ private data class LaunchRequest(
 class NexusVpnService : VpnService() {
     private lateinit var supervisor: CoreProcessSupervisor
     private lateinit var paths: RuntimeSocketPaths
+    private lateinit var db: NexusClientDatabase
+    private lateinit var workspaceStore: WorkspaceStore
     private lateinit var hostStore: AndroidHostConfigStore
     private lateinit var telemetryStore: TelemetryStore
     private lateinit var lifecycleExecutor: ExecutorService
@@ -84,55 +85,62 @@ class NexusVpnService : VpnService() {
     private var screenMonitor: ScreenStateMonitor? = null
     private var serviceScope: CoroutineScope? = null
     private val networkGeneration = AtomicLong(0L)
+    @Volatile
+    private var lastRunMode: AndroidRunMode = AndroidRunMode.VPN
 
     override fun onCreate() {
         super.onCreate()
         supervisor = CoreProcessSupervisor(this)
         paths = RuntimeSocketPaths(noBackupFilesDir)
-        hostStore = AndroidHostConfigStore(File(filesDir, "host.json"))
-        telemetryStore = TelemetryStore(paths.telemetryFile)
+        db = NexusClientDatabase.open(this)
+        workspaceStore = WorkspaceStore(filesDir, db)
+        hostStore = AndroidHostConfigStore(File(filesDir, "host.json"), db)
+        telemetryStore = TelemetryStore(paths.telemetryFile, db)
         lifecycleExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "nexus-vpn-lifecycle").apply { isDaemon = true }
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> {
-                val req = resolveLaunchRequest(intent)
-                if (!validateLaunchTarget(req)) return START_NOT_STICKY
-                val host = loadEffectiveHost(req.legacyExcludedOverride)
-                promoteForeground(host.android.runMode)
-                submitLifecycle { startTunnelLocked(req, host) }
-                return START_STICKY
-            }
-            ACTION_STOP -> {
-                submitLifecycle { stopTunnelLocked(stopSelfAfter = true, preserveError = false) }
-                return START_NOT_STICKY
-            }
-            ACTION_RESTART -> {
-                val req = resolveLaunchRequest(intent)
-                if (!validateLaunchTarget(req)) return START_NOT_STICKY
-                val host = loadEffectiveHost(req.legacyExcludedOverride)
-                promoteForeground(host.android.runMode)
-                submitLifecycle {
-                    stopTunnelLocked(stopSelfAfter = false, preserveError = false)
-                    startTunnelLocked(req, host)
-                }
-                return START_STICKY
-            }
-            else -> {
-                val req = resolveLaunchRequest(null)
-                if (!req.configTarget.exists()) {
-                    stopSelf()
-                    return START_NOT_STICKY
-                }
-                val host = loadEffectiveHost(null)
-                promoteForeground(host.android.runMode)
-                submitLifecycle { startTunnelLocked(req, host) }
-                return START_STICKY
-            }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = when (intent?.action) {
+        ACTION_START -> {
+            launchForegroundWithHost(resolveLaunchRequest(intent), stopBeforeStart = false, silentMissing = false)
+            START_STICKY
         }
+        ACTION_STOP -> {
+            submitLifecycle { stopTunnelLocked(stopSelfAfter = true, preserveError = false) }
+            START_NOT_STICKY
+        }
+        ACTION_RESTART -> {
+            launchForegroundWithHost(resolveLaunchRequest(intent), stopBeforeStart = true, silentMissing = false)
+            START_STICKY
+        }
+        else -> {
+            launchForegroundWithHost(resolveLaunchRequest(null), stopBeforeStart = false, silentMissing = true)
+            START_STICKY
+        }
+    }
+
+    private fun launchForegroundWithHost(req: LaunchRequest, stopBeforeStart: Boolean, silentMissing: Boolean) {
+        val initialMode = lastRunMode
+        promoteForeground(initialMode)
+        submitLifecycle {
+            if (silentMissing && !req.configTarget.exists()) {
+                runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+                stopSelf()
+                return@submitLifecycle
+            }
+            if (!silentMissing && !validateLaunchTarget(req)) return@submitLifecycle
+            val host = hostStore.load(paths)
+            lastRunMode = host.android.runMode
+            if (host.android.runMode != initialMode) promoteForeground(host.android.runMode)
+            if (stopBeforeStart) stopTunnelLocked(stopSelfAfter = false, preserveError = false)
+            startTunnelLocked(req, host)
+        }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        submitLifecycle { runCatching { db.shrinkMemory() } }
     }
 
     override fun onRevoke() {
@@ -164,13 +172,11 @@ class NexusVpnService : VpnService() {
         val isDir = intent?.getBooleanExtra(EXTRA_CONFIG_IS_DIR, false) ?: false
         val ovPath = intent?.getStringExtra(EXTRA_HOST_OVERRIDE_PATH)?.takeIf { it.isNotBlank() }
         val fakeIpv6 = intent?.getStringExtra(EXTRA_FAKE_IPV6_POOL).orEmpty()
-        val legacyExcluded = intent?.getStringArrayListExtra(EXTRA_EXCLUDED_PACKAGES)
         return LaunchRequest(
             configTarget = File(cfgPath),
             isConfigDir = isDir,
             hostOverrideFile = ovPath?.let { File(it) },
             fakeIpv6Pool = fakeIpv6,
-            legacyExcludedOverride = legacyExcluded,
         )
     }
 
@@ -186,32 +192,16 @@ class NexusVpnService : VpnService() {
         return false
     }
 
-    private fun loadEffectiveHost(legacyExcludedOverride: List<String>?): AndroidHostConfig {
-        val loaded = hostStore.load(paths)
-        if (loaded.android.perAppPackages.isNotEmpty() || hostStore.file.isFile) return loaded
-        val legacy = legacyExcludedOverride ?: loadPersistedExcludedPackages()
-        return if (legacy.isNotEmpty()) {
-            loaded.copy(android = loaded.android.copy(perAppPackages = legacy))
-        } else {
-            loaded
-        }
-    }
-
     private fun submitLifecycle(task: () -> Unit) {
         runCatching { lifecycleExecutor.execute(task) }
             .onFailure { err -> if (err !is RejectedExecutionException) throw err }
-    }
-
-    private fun loadPersistedExcludedPackages(): List<String> {
-        val prefs = getSharedPreferences("nexus_prefs", Context.MODE_PRIVATE)
-        return prefs.getStringSet("excluded_packages", emptySet()).orEmpty().toList()
     }
 
     private fun writeSessionBearerToken(): String {
         val bytes = ByteArray(24)
         SecureRandom().nextBytes(bytes)
         val token = bytes.joinToString("") { "%02x".format(it) }
-        ProfileRepository.atomicWriteSecret0600(paths.controlTokenFile, "$token\n")
+        SecretFileIO.atomicWriteSecret0600(paths.controlTokenFile, "$token\n")
         return token
     }
 
@@ -301,7 +291,7 @@ class NexusVpnService : VpnService() {
                 }
                 val effectiveFakeIpv6 = req.fakeIpv6Pool.ifBlank {
                     runCatching {
-                        val ws = WorkspaceStore(filesDir).loadOrInit()
+                        val ws = workspaceStore.loadOrInit()
                         if (AndroidHostConfig.needsFakeIpv6Route(ws, host)) ws.dns.simple.fakeIpV6Pool else ""
                     }.getOrDefault("")
                 }
@@ -349,12 +339,14 @@ class NexusVpnService : VpnService() {
 
             val screen = ScreenStateMonitor(this) { interactive, idle ->
                 _dozeMode.value = idle
-                _powerSaveMode.value = ScreenStateMonitor.shouldPausePolling(
+                val paused = ScreenStateMonitor.shouldPausePolling(
                     interactive = interactive,
                     deviceIdle = idle,
                     screenOffPauseStats = host.screenOffPauseStats,
                     dozePauseEnabled = host.dozePauseEnabled,
                 )
+                _powerSaveMode.value = paused
+                if (paused) submitLifecycle { runCatching { db.shrinkMemory() } }
                 requestTileSync()
             }.also { it.start() }
             screenMonitor = screen
@@ -388,6 +380,7 @@ class NexusVpnService : VpnService() {
         runCatching { tunFdServer?.close() }; tunFdServer = null
         runCatching { tunInterface?.close() }; tunInterface = null
         runCatching { protectServer?.close() }; protectServer = null
+        runCatching { db.shrinkMemory() }
         _startedAtMs.value = 0L; _runningState.value = false
         if (!preserveError) {
             _lastError.value = ""
@@ -451,7 +444,6 @@ class NexusVpnService : VpnService() {
         const val EXTRA_CONFIG_IS_DIR = "org.nexus.android.extra.CONFIG_IS_DIR"
         const val EXTRA_HOST_OVERRIDE_PATH = "org.nexus.android.extra.HOST_OVERRIDE_PATH"
         const val EXTRA_FAKE_IPV6_POOL = "org.nexus.android.extra.FAKE_IPV6_POOL"
-        const val EXTRA_EXCLUDED_PACKAGES = "org.nexus.android.extra.EXCLUDED_PACKAGES"
 
         private const val CHANNEL_ID = "nexus_vpn_channel"
         private const val NOTIFICATION_ID = 9001

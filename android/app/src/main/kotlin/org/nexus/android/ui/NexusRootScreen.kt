@@ -42,7 +42,6 @@ import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
 import org.nexus.android.bridge.ipc.MetricsSummary
 import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
-import org.nexus.android.bridge.model.AndroidKdlOps
 import org.nexus.android.bridge.vpn.VpnTunnelState
 
 private const val MAX_SPARKLINE_SAMPLES = 32
@@ -130,12 +129,10 @@ internal fun NexusRootScreen(
     }
 
     val currentTab = tabs[selectedTab.coerceIn(0, tabs.lastIndex)]
-    val outboundMode = remember(workspaceState.outboundMode, kdlText) {
-        workspaceState.outboundMode.ifBlank { AndroidKdlOps.detectOutboundMode(kdlText) }
+    val outboundMode = remember(workspaceState.outboundMode) {
+        workspaceState.outboundMode.ifBlank { "rule" }
     }
-    val hasRemoteOutbound = remember(workspaceState.hasAnyRemoteProfile, kdlText) {
-        workspaceState.hasAnyRemoteProfile || AndroidKdlOps.hasRemoteOutbound(kdlText)
-    }
+    val hasRemoteOutbound = workspaceState.hasAnyRemoteProfile
 
     suspend fun syncPrimaryGroup(preferredTag: String = "") {
         val loaded = onFetchGroups()

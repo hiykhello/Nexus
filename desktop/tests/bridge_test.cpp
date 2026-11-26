@@ -13,7 +13,6 @@ import desktop.core_supervisor;
 import desktop.firewall_helper;
 import desktop.http_control;
 import desktop.ipc_client;
-import desktop.profile_store;
 import desktop.service_installer;
 import desktop.share_link;
 import desktop.single_instance;
@@ -286,6 +285,15 @@ namespace {
         expect(logs.latest_seq == 12 && logs.evicted == 2 && logs.entries.size() == 2 &&
                logs.entries[0].seq == 11 && logs.entries[0].domain == "core" && logs.entries[1].level == "trace",
                "Logs JSON parser");
+        auto probe_ok = desktop::parse_outbound_probe_json(
+            R"({"outbound":"proxy","resolved_outbound":"hk-01","state":"healthy","latency_ms":42,"status_code":204,"url":"https://www.gstatic.com/generate_204"})");
+        expect(probe_ok.ok && probe_ok.outbound == "proxy" && probe_ok.resolved_outbound == "hk-01" &&
+               probe_ok.latency_ms == 42 && probe_ok.status_code == 204,
+               "Wave 25 outbound probe healthy JSON parser");
+        auto probe_fail = desktop::parse_outbound_probe_json(
+            R"({"outbound":"proxy","resolved_outbound":"hk-01","state":"timeout","latency_ms":null,"url":"https://api.github.com"})");
+        expect(!probe_fail.ok && probe_fail.state == "timeout" && probe_fail.latency_ms == -1,
+               "Wave 25 outbound probe timeout JSON parser");
     }
 
     auto test_firewall_and_diagnostic_guard() -> void {
@@ -308,22 +316,6 @@ namespace {
         expect(proxy.diagnostic_mode(), "diagnostic mode active");
         expect(!proxy.enable("127.0.0.1", 10808), "diagnostic mode refuses system proxy mutation");
         expect(!proxy.active(), "system proxy remains inactive under diagnostic mode");
-    }
-
-    auto test_profile_store() -> void {
-        auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-profile-store-test";
-        std::error_code ec;
-        std::filesystem::remove_all(tmp, ec);
-        desktop::ProfileStore store(tmp);
-        auto saved = store.save_profile("HK Edge!", "schema-version 1\n");
-        expect(saved.has_value() && saved->id == "HK-Edge", "save sanitized profile");
-        expect(store.set_active("HK-Edge") && store.active_id() == "HK-Edge", "persist active profile");
-        auto secret_path = store.write_secret("HK Edge", "super-secret-key");
-        expect(secret_path.has_value() && std::filesystem::exists(*secret_path), "write private secret file");
-        auto list = store.list();
-        expect(list.size() == 1 && list[0].id == "HK-Edge", "list saved profiles");
-        expect(store.remove_profile("HK-Edge") && store.list().empty(), "remove profile");
-        std::filesystem::remove_all(tmp, ec);
     }
 
     auto test_service_installer() -> void {
@@ -482,7 +474,6 @@ auto main() -> int {
         test_tray_controller();
         test_http_control_parsers();
         test_firewall_and_diagnostic_guard();
-        test_profile_store();
         test_service_installer();
 #ifndef _WIN32
         test_live_nexus_control_plane();

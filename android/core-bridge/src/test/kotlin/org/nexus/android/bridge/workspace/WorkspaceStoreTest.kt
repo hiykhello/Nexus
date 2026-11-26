@@ -181,29 +181,35 @@ class WorkspaceStoreTest {
     }
 
     @Test
-    fun storeWrites0600AndMigratesLegacyProfilesOnce() {
+    fun storePersistsToSqliteAndOneShotMigratesLegacyWorkspaceJson() {
         val dir = Files.createTempDirectory("nexus-ws-test").toFile()
         try {
-            val legacyDir = File(dir, "profiles").apply { mkdirs() }
-            File(legacyDir, "Tokyo-Core.kdl").writeText("schema-version 1\nrole \"client\"\n", Charsets.UTF_8)
-            File(legacyDir, "HK-Gaming.kdl").writeText("schema-version 1\nrole \"client\"\n", Charsets.UTF_8)
+            val legacyJson = WorkspaceJsonCodec.encode(
+                WorkspaceDocument(
+                    revision = 4L,
+                    profiles = listOf(
+                        ProfileItem(id = "n-tokyo", remarks = "Tokyo-Core", kind = ProfileKind.NODE, node = NodeConfig(protocol = "vless", server = "jp.example.com", port = 443)),
+                        ProfileItem(id = "fk-hk", remarks = "HK-Gaming", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = "schema-version 1\nrole \"client\"\n"),
+                    ),
+                ),
+            )
+            File(dir, "workspace.json").writeText(legacyJson, Charsets.UTF_8)
 
-            val store = WorkspaceStore(dir)
-            val first = store.migrateLegacyProfilesIfNeeded(dir)
-            assertFalse(first.skippedAlreadyMigrated)
-            assertEquals(2, first.migratedProfileIds.size)
+            val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
+            val store = WorkspaceStore(dir, db)
+            val migrated = store.loadOrInit()
+            assertEquals(4L, migrated.revision)
+            assertEquals(2, migrated.profiles.size)
 
-            val loaded = store.loadOrInit()
-            assertEquals(2, loaded.profiles.size)
-            assertTrue(loaded.profiles.all { it.kind == ProfileKind.FULL_CUSTOM_KDL })
+            // Subsequent saves go to SQLite without needing workspace.json rewrites
+            val saved = store.save(migrated.copy(profiles = migrated.profiles.take(1)))
+            assertEquals(5L, saved.revision)
+            assertEquals(1, store.loadOrInit().profiles.size)
 
-            val perms = Files.getPosixFilePermissions(store.workspaceFile.toPath())
+            // On-demand Core input file is written 0600
+            val coreInput = store.writeCoreInputFile(File(dir, "compose-ws.json"))
+            val perms = Files.getPosixFilePermissions(coreInput.toPath())
             assertEquals(PosixFilePermissions.fromString("rw-------"), perms)
-
-            // Second run must be an idempotent no-op
-            val second = store.migrateLegacyProfilesIfNeeded(dir)
-            assertTrue(second.skippedAlreadyMigrated)
-            assertEquals(2, store.loadOrInit().profiles.size)
         } finally {
             dir.deleteRecursively()
         }

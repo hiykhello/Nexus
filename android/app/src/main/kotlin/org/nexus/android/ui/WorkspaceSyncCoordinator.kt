@@ -5,7 +5,7 @@ import kotlinx.coroutines.withContext
 import org.nexus.android.bridge.core.CoreProcessSupervisor
 import org.nexus.android.bridge.ipc.NexusControlClient
 import org.nexus.android.bridge.model.RuntimeSocketPaths
-import org.nexus.android.bridge.profile.ProfileRepository
+import org.nexus.android.bridge.profile.SecretFileIO
 import org.nexus.android.bridge.workspace.SyncOutcome
 import org.nexus.android.bridge.workspace.UdpProbeClient
 import org.nexus.android.bridge.workspace.UdpProbeKind
@@ -32,19 +32,26 @@ class WorkspaceSyncCoordinator(
     private val backupDir = File(socketPaths.rootDir, "backups")
 
     suspend fun exportShareUri(profileId: String): Pair<String?, String> {
-        val res = syncBridge.exportShare(coordinator.workspaceStore.workspaceFile, listOf(profileId))
-        return if (res.ok && res.uri.isNotBlank()) {
-            res.uri to "已生成便携分享链接（含 ${res.exportedCount} 个关联档案）"
-        } else {
-            null to "分享导出失败: ${res.errors.firstOrNull() ?: "不支持完整自定义档案"}"
+        val tmpWs = File(socketPaths.rootDir, ".export-ws-${System.nanoTime()}.json")
+        return try {
+            withContext(Dispatchers.IO) { coordinator.workspaceStore.writeCoreInputFile(tmpWs) }
+            val res = syncBridge.exportShare(tmpWs, listOf(profileId))
+            if (res.ok && res.uri.isNotBlank()) {
+                res.uri to "已生成便携分享链接（含 ${res.exportedCount} 个关联档案）"
+            } else {
+                null to "分享导出失败: ${res.errors.firstOrNull() ?: "不支持完整自定义档案"}"
+            }
+        } finally {
+            WorkspaceSyncBridge.wipeAndDelete(tmpWs)
         }
     }
 
     suspend fun importShareUri(uri: String, running: Boolean): Pair<WorkspaceUiState, String> {
-        val wsFile = coordinator.workspaceStore.workspaceFile
+        val tmpWs = File(socketPaths.rootDir, ".import-in-${System.nanoTime()}.json")
         val tmpOut = File(socketPaths.rootDir, ".import-share-${System.nanoTime()}.json")
         return try {
-            val res = syncBridge.importShare(wsFile, uri, outWorkspaceFile = tmpOut)
+            withContext(Dispatchers.IO) { coordinator.workspaceStore.writeCoreInputFile(tmpWs) }
+            val res = syncBridge.importShare(tmpWs, uri, outWorkspaceFile = tmpOut)
             if (!res.ok) {
                 return coordinator.loadInitialState() to "导入 nexus:// 失败: ${res.errors.firstOrNull() ?: "格式无效"}"
             }
@@ -74,6 +81,7 @@ class WorkspaceSyncCoordinator(
             }
             coordinator.loadInitialState() to "已导入 ${res.importedIds.size} 个 nexus:// 档案$reloadWarn"
         } finally {
+            WorkspaceSyncBridge.wipeAndDelete(tmpWs)
             WorkspaceSyncBridge.wipeAndDelete(tmpOut)
         }
     }
@@ -84,10 +92,12 @@ class WorkspaceSyncCoordinator(
         if (a.webdavUrl.isBlank()) return Triple(state, null, "请先填写 HTTPS WebDAV 地址")
         if (a.syncPassphrase.isBlank()) return Triple(state, null, "请先填写端到端同步口令")
 
+        val tmpWs = File(socketPaths.rootDir, ".seal-ws-${System.nanoTime()}.json")
         val envFile = File(socketPaths.rootDir, ".seal-env-${System.nanoTime()}.enc")
         return try {
+            withContext(Dispatchers.IO) { coordinator.workspaceStore.writeCoreInputFile(tmpWs, state.document) }
             val sealed = syncBridge.sealSync(
-                workspaceFile = coordinator.workspaceStore.workspaceFile,
+                workspaceFile = tmpWs,
                 passphrase = a.syncPassphrase,
                 deviceLabel = a.syncDeviceLabel.ifBlank { "Android" },
                 outEnvelopeFile = envFile,
@@ -131,7 +141,8 @@ class WorkspaceSyncCoordinator(
                 is SyncOutcome.Error -> Triple(state, null, outcome.message)
             }
         } finally {
-            runCatching { envFile.delete() }
+            WorkspaceSyncBridge.wipeAndDelete(tmpWs)
+            WorkspaceSyncBridge.wipeAndDelete(envFile)
         }
     }
 
@@ -169,7 +180,7 @@ class WorkspaceSyncCoordinator(
                 val wsOut = File(socketPaths.rootDir, ".pull-ws-${System.nanoTime()}.json")
                 try {
                     withContext(Dispatchers.IO) {
-                        ProfileRepository.atomicWriteSecret0600(envFile, outcome.envelopeJson)
+                        SecretFileIO.atomicWriteSecret0600(envFile, outcome.envelopeJson)
                     }
                     val opened = syncBridge.openSync(envFile, a.syncPassphrase, wsOut)
                     if (!opened.ok) {
@@ -184,7 +195,10 @@ class WorkspaceSyncCoordinator(
                     val (backupFile, imported) = runCatching {
                         withContext(Dispatchers.IO) {
                             WorkspaceJsonCodec.decode(decryptedJson)
-                            val backup = WebDavSyncClient.createPrePullBackup(coordinator.workspaceStore.workspaceFile, backupDir)
+                            val backup = WebDavSyncClient.createPrePullBackupJson(
+                                coordinator.workspaceStore.exportPortableJson(),
+                                backupDir,
+                            )
                             val saved = coordinator.workspaceStore.importPortableJson(decryptedJson, bumpRevision = false)
                             backup to saved
                         }

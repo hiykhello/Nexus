@@ -77,6 +77,7 @@ namespace desktop_ui_helpers {
         ui.set_dash_show_speed(p.dash_show_speed); ui.set_dash_show_quick_nodes(p.dash_show_quick_nodes);
         ui.set_dash_show_network(p.dash_show_network); ui.set_dash_show_ports(p.dash_show_ports);
         ui.set_dash_show_traffic(p.dash_show_traffic); ui.set_dash_show_memory(p.dash_show_memory);
+        ui.set_dash_show_connectivity(p.dash_show_connectivity);
         ui.set_dash_section_order(make_dash_order_model(p.dash_section_order)); ui.set_dash_info_order(make_dash_order_model(p.dash_info_order)); ui.set_dash_deck_swapped(p.dash_deck_swapped);
     }
 
@@ -109,6 +110,7 @@ namespace desktop_ui_helpers {
         p.dash_show_speed = ui.get_dash_show_speed(); p.dash_show_quick_nodes = ui.get_dash_show_quick_nodes();
         p.dash_show_network = ui.get_dash_show_network(); p.dash_show_ports = ui.get_dash_show_ports();
         p.dash_show_traffic = ui.get_dash_show_traffic(); p.dash_show_memory = ui.get_dash_show_memory();
+        p.dash_show_connectivity = ui.get_dash_show_connectivity();
         p.dash_section_order = read_dash_order_model(ui.get_dash_section_order()); p.dash_info_order = read_dash_order_model(ui.get_dash_info_order()); p.dash_deck_swapped = ui.get_dash_deck_swapped();
         return p;
     }
@@ -345,7 +347,6 @@ namespace desktop_ui_helpers {
         ui.set_tun_enabled(kdl_has_tun_inbound(kdl));
         if (!kdl.empty()) {
             sync_inbounds_to_ui(ui, desktop::parse_inbound_endpoints(kdl));
-            ui.set_outbound_mode(slint::SharedString(desktop::detect_outbound_mode(kdl)));
         }
     }
 
@@ -355,21 +356,25 @@ namespace desktop_ui_helpers {
         nexus_ui::AppWindow& ui,
         std::vector<desktop::OutboundGroupSnapshot> const& cached_groups,
         std::unordered_set<std::string> const& pinned_members,
-        desktop::ProfileStore& profile_store,
+        desktop::WorkspaceDocument const& workspace_doc,
+        std::string_view active_profile_id,
         bool window_visible) -> void {
         tray.update_snapshot(build_tray_snapshot(
-            ui, supervisor, cached_groups, pinned_members, profile_store,
+            ui, supervisor, cached_groups, pinned_members, workspace_doc, active_profile_id,
             read_inbounds_from_ui(ui), window_visible, is_en_ui(ui)));
         ui.set_tray_native_active(tray.native_backend_active());
     }
 
-    inline auto sync_profiles_to_ui(nexus_ui::AppWindow& ui, desktop::ProfileStore& store) -> void {
-        auto entries = store.list();
-        auto active = store.active_id();
+    inline auto sync_profiles_to_ui(
+        nexus_ui::AppWindow& ui,
+        desktop::WorkspaceDocument const& doc,
+        std::string_view active_profile_id) -> void {
         std::vector<nexus_ui::ProfileItem> items;
-        items.reserve(entries.size());
-        for (auto const& e : entries)
-            items.push_back({slint::SharedString(e.id), slint::SharedString(e.name), e.id == active});
+        items.reserve(doc.profiles.size());
+        for (auto const& p : doc.profiles) {
+            items.push_back({slint::SharedString(p.id), slint::SharedString(p.remarks.empty() ? p.id : p.remarks),
+                             p.id == active_profile_id});
+        }
         ui.set_profiles(std::make_shared<slint::VectorModel<nexus_ui::ProfileItem>>(std::move(items)));
     }
 
@@ -384,9 +389,12 @@ namespace desktop_ui_helpers {
         std::atomic<bool>& in_flight,
         bool en,
         bool refresh_groups_too,
-        std::function<void()> on_tray_sync = {}) -> void {
+        std::function<void()> on_tray_sync = {},
+        std::function<void(std::uint64_t, std::uint64_t)> on_traffic_totals = {}) -> void {
         if (in_flight.exchange(true, std::memory_order_acq_rel)) return;
-        bool posted = worker.post([&, weak_ui, en, refresh_groups_too, on_tray_sync = std::move(on_tray_sync)]() mutable {
+        bool posted = worker.post([&, weak_ui, en, refresh_groups_too,
+                                   on_tray_sync = std::move(on_tray_sync),
+                                   on_traffic_totals = std::move(on_traffic_totals)]() mutable {
             auto reply = http_ctrl.metrics();
             std::optional<std::vector<desktop::OutboundGroupSnapshot>> grp_snap;
             if (refresh_groups_too) {
@@ -397,8 +405,12 @@ namespace desktop_ui_helpers {
             std::optional<desktop::MetricsSnapshot> m;
             if (reply.ok) m = desktop::parse_openmetrics_summary(reply.body);
             on_ui_thread(weak_ui, [&cached_groups, &pinned_members, &member_models, &rate_tracker, m, grp_snap = std::move(grp_snap),
-                                   en, on_tray_sync = std::move(on_tray_sync)](auto& s) mutable {
-                if (m) apply_metrics_to_ui(*s, *m, rate_tracker.record(m->upload_bytes, m->download_bytes), en);
+                                   en, on_tray_sync = std::move(on_tray_sync),
+                                   on_traffic_totals = std::move(on_traffic_totals)](auto& s) mutable {
+                if (m) {
+                    apply_metrics_to_ui(*s, *m, rate_tracker.record(m->upload_bytes, m->download_bytes), en);
+                    if (on_traffic_totals) on_traffic_totals(m->upload_bytes, m->download_bytes);
+                }
                 if (grp_snap) {
                     push_group_snapshot_to_ui(*s, cached_groups, std::move(*grp_snap), std::string(s->get_selected_group()),
                                               member_models, std::string_view(s->get_member_filter()), std::string_view(s->get_member_sort()), &pinned_members);

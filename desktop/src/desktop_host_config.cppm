@@ -69,8 +69,21 @@ export namespace desktop {
     [[nodiscard]] auto normalize_desktop_host_config(DesktopHostConfig& cfg, bool is_en = false)
         -> std::vector<std::string>;
 
+    struct SyncSecrets {
+        std::string webdav_password;
+        std::string sync_passphrase;
+        std::string lan_password;
+    };
+
     [[nodiscard]] auto desktop_host_to_json(DesktopHostConfig const& cfg) -> std::string;
+    // Serializes DesktopHostConfig with all secrets stripped (safe for SQLite host_kv).
+    [[nodiscard]] auto desktop_host_to_nonsecret_json(DesktopHostConfig const& cfg) -> std::string;
+    // Serializes DesktopHostConfig for Core composer (strips WebDAV/E2EE secrets, keeps LAN auth if configured).
+    [[nodiscard]] auto desktop_host_to_core_json(DesktopHostConfig const& cfg) -> std::string;
     [[nodiscard]] auto desktop_host_from_json(std::string_view text) -> std::expected<DesktopHostConfig, std::string>;
+
+    [[nodiscard]] auto load_sync_secrets(std::filesystem::path const& secrets_dir) -> SyncSecrets;
+    [[nodiscard]] auto save_sync_secrets(std::filesystem::path const& secrets_dir, SyncSecrets const& secrets) -> bool;
 
     [[nodiscard]] auto load_desktop_host_config(
         std::filesystem::path const& path,

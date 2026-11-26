@@ -27,6 +27,7 @@ export namespace desktop {
         bool dash_show_ports = true;
         bool dash_show_traffic = true;
         bool dash_show_memory = true;
+        bool dash_show_connectivity = true;
         std::array<int, 4> dash_section_order = {0, 1, 2, 3};
         std::array<int, 4> dash_info_order = {0, 1, 2, 3};
         bool dash_deck_swapped = false;
@@ -38,6 +39,9 @@ export namespace desktop {
     auto reorder_dash_slots(std::array<int, 4>& order, int from_id, int to_id) -> bool;
 
     [[nodiscard]] auto detect_system_locale() -> std::string;
+
+    [[nodiscard]] auto ui_prefs_to_json(UiPrefs const& prefs) -> std::string;
+    [[nodiscard]] auto ui_prefs_from_json(std::string_view text) -> std::expected<UiPrefs, std::string>;
 
     [[nodiscard]] auto load_ui_prefs(std::filesystem::path const& path) -> UiPrefs;
 

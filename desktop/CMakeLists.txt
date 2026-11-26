@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 4.5 FATAL_ERROR)
-project(nexus-desktop LANGUAGES CXX)
+if(CMAKE_HOST_WIN32 AND (NOT DEFINED CMAKE_C_COMPILER OR CMAKE_C_COMPILER STREQUAL "") AND DEFINED CMAKE_CXX_COMPILER)
+    get_filename_component(_nexus_cxx_name "${CMAKE_CXX_COMPILER}" NAME_WE)
+    string(TOLOWER "${_nexus_cxx_name}" _nexus_cxx_lower)
+    if(_nexus_cxx_lower STREQUAL "cl")
+        set(CMAKE_C_COMPILER "${CMAKE_CXX_COMPILER}" CACHE FILEPATH "C compiler matched to MSVC cl" FORCE)
+    endif()
+endif()
+project(nexus-desktop LANGUAGES C CXX)
+
+if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    message(FATAL_ERROR
+        "MSVC C++ build requires the MSVC C compiler (pass -DCMAKE_C_COMPILER=cl); got ${CMAKE_C_COMPILER_ID}.")
+endif()
 
 if(MSVC)
     set(CMAKE_CXX_STANDARD 23)
@@ -14,15 +26,38 @@ option(NEXUS_DESKTOP_BUILD_UI "Build Slint v1.19.0 GUI executable" ON)
 option(NEXUS_DESKTOP_BUILD_TESTS "Build C++26 desktop bridge unit tests" ON)
 option(NEXUS_SLINT_FETCH "Fetch Slint v1.19.0 from source if no prebuilt Slint C++ SDK is found" OFF)
 
+# Vendored public-domain SQLite 3 amalgamation (compiled as pure C static library)
+add_library(nexus-sqlite3 STATIC ../3rdparty/vendor/sqlite3/sqlite3.c)
+target_include_directories(nexus-sqlite3 PUBLIC ../3rdparty/vendor/sqlite3)
+target_compile_definitions(nexus-sqlite3 PUBLIC
+    SQLITE_THREADSAFE=1
+    SQLITE_ENABLE_FTS5
+    SQLITE_ENABLE_JSON1
+    SQLITE_DEFAULT_WAL_SYNCHRONOUS=1
+)
+target_compile_options(nexus-sqlite3 PRIVATE
+    $<$<C_COMPILER_ID:MSVC>:/w>
+    $<$<NOT:$<C_COMPILER_ID:MSVC>>:-w>
+)
+if(UNIX)
+    find_package(Threads REQUIRED)
+    target_link_libraries(nexus-sqlite3 PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+    if(NOT APPLE)
+        target_link_libraries(nexus-sqlite3 PUBLIC m)
+    endif()
+endif()
+
 set(NEXUS_BRIDGE_IMPLS
     src/async_worker.cpp
+    src/client_db.cpp
+    src/client_db_ops.cpp
+    src/client_db_stores.cpp
     src/core_supervisor.cpp
     src/desktop_host_config.cpp
     src/firewall_helper.cpp
     src/http_control.cpp
     src/kdl_ops.cpp
     src/mini_json.cpp
-    src/profile_store.cpp
     src/service_installer.cpp
     src/share_link.cpp
     src/single_instance.cpp
@@ -52,6 +87,7 @@ target_sources(nexus-desktop-bridge
     PUBLIC
         FILE_SET CXX_MODULES FILES
             src/async_worker.cppm
+            src/client_db.cppm
             src/core_supervisor.cppm
             src/desktop_host_config.cppm
             src/firewall_helper.cppm
@@ -59,7 +95,6 @@ target_sources(nexus-desktop-bridge
             src/ipc_client.cppm
             src/kdl_ops.cppm
             src/mini_json.cppm
-            src/profile_store.cppm
             src/service_installer.cppm
             src/share_link.cppm
             src/single_instance.cppm
@@ -76,6 +111,7 @@ target_sources(nexus-desktop-bridge
             src/workspace_store.cppm
             src/workspace_sync.cppm
 )
+target_link_libraries(nexus-desktop-bridge PRIVATE nexus-sqlite3)
 if(MSVC)
     target_compile_features(nexus-desktop-bridge PUBLIC cxx_std_23)
     target_compile_options(nexus-desktop-bridge PUBLIC /utf-8)
@@ -198,4 +234,13 @@ if(NEXUS_DESKTOP_BUILD_TESTS)
     endif()
     target_link_libraries(nexus-desktop-workspace-sync-tests PRIVATE nexus-desktop-bridge)
     add_test(NAME nexus-desktop-workspace-sync-tests COMMAND nexus-desktop-workspace-sync-tests)
+
+    add_executable(nexus-desktop-client-db-tests tests/client_db_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-client-db-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-client-db-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-client-db-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-client-db-tests COMMAND nexus-desktop-client-db-tests)
 endif()

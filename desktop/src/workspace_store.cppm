@@ -21,13 +21,6 @@ export namespace desktop {
     [[nodiscard]] auto load_workspace(std::filesystem::path const& path) -> std::expected<WorkspaceDocument, std::string>;
     [[nodiscard]] auto save_workspace_atomic(std::filesystem::path const& path, WorkspaceDocument const& doc) -> bool;
 
-    // One-shot idempotent migration of legacy profiles/*.kdl (and config.kdl fallback) into full_custom_kdl entries.
-    // Returns number of newly migrated profiles.
-    auto migrate_legacy_profiles_into_workspace(
-        WorkspaceDocument& doc,
-        std::filesystem::path const& cfg_dir,
-        std::string& active_profile_id) -> std::size_t;
-
     // Parses Subscription-Userinfo, Profile-Title (base64:/percent-encoded), Profile-Web-Page-Url, Support-Url.
     // Rejects unsafe URL schemes (only http://, https://, tg:// allowed).
     [[nodiscard]] auto parse_subscription_headers(

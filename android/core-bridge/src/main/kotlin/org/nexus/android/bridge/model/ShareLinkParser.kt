@@ -331,7 +331,18 @@ object ShareLinkParser {
         appendLine("}")
     }
 
-    private fun q(v: String): String = "\"${AndroidKdlBuilder.escapeKdlString(v)}\""
+    private fun q(v: String): String = "\"${escapeKdlString(v)}\""
+
+    private fun escapeKdlString(raw: String): String = buildString(raw.length) {
+        for (ch in raw) {
+            when (ch) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n', '\r', '\t', '\u0008', '\u000C', '\u0085', '\u2028', '\u2029' -> Unit
+                else -> if (ch.code >= 0x20 && ch.code != 0x7F) append(ch)
+            }
+        }
+    }
 
     private fun decodePercent(s: String): String = URLDecoder.decode(s.replace("+", "%2B"), Charsets.UTF_8.name())
 

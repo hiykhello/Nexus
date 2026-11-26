@@ -276,6 +276,15 @@ namespace desktop::detail {
         if (auto const pss = read_proc_smaps_rollup_pss_bytes(smaps_path); pss > 0) return pss;
         return read_proc_statm_rss_bytes(statm_path);
     }
+#elif defined(__APPLE__)
+    inline auto query_macos_phys_footprint_bytes(pid_t pid) noexcept -> std::uint64_t {
+        if (pid <= 0) return 0;
+        rusage_info_v2 rusage{};
+        if (::proc_pid_rusage(pid, RUSAGE_INFO_V2, reinterpret_cast<rusage_info_t*>(&rusage)) == 0) {
+            return static_cast<std::uint64_t>(rusage.ri_phys_footprint);
+        }
+        return 0;
+    }
 #endif
 
 #ifdef _WIN32

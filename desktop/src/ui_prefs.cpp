@@ -8,6 +8,7 @@ module;
 module desktop.ui_prefs;
 
 import std;
+import desktop.mini_json;
 
 namespace desktop {
     namespace {
@@ -141,6 +142,7 @@ namespace desktop {
             else if (key == "dash_show_ports") prefs.dash_show_ports = (val == "1" || val == "true");
             else if (key == "dash_show_traffic") prefs.dash_show_traffic = (val == "1" || val == "true");
             else if (key == "dash_show_memory") prefs.dash_show_memory = (val == "1" || val == "true");
+            else if (key == "dash_show_connectivity") prefs.dash_show_connectivity = (val == "1" || val == "true");
             else if (key == "dash_section_order") prefs.dash_section_order = parse_dash_order(val);
             else if (key == "dash_info_order") prefs.dash_info_order = parse_dash_order(val);
             else if (key == "dash_deck_swapped") prefs.dash_deck_swapped = (val == "1" || val == "true");
@@ -183,6 +185,7 @@ namespace desktop {
             "dash_show_ports={}\n"
             "dash_show_traffic={}\n"
             "dash_show_memory={}\n"
+            "dash_show_connectivity={}\n"
             "dash_section_order={},{},{},{}\n"
             "dash_info_order={},{},{},{}\n"
             "dash_deck_swapped={}\n"
@@ -207,6 +210,7 @@ namespace desktop {
             prefs.dash_show_ports ? "true" : "false",
             prefs.dash_show_traffic ? "true" : "false",
             prefs.dash_show_memory ? "true" : "false",
+            prefs.dash_show_connectivity ? "true" : "false",
             sec[0], sec[1], sec[2], sec[3],
             info[0], info[1], info[2], info[3],
             prefs.dash_deck_swapped ? "true" : "false",
@@ -223,5 +227,114 @@ namespace desktop {
             return false;
         }
         return true;
+    }
+
+    auto ui_prefs_to_json(UiPrefs const& prefs) -> std::string {
+        auto sec = sanitize_dash_order(prefs.dash_section_order);
+        auto info = sanitize_dash_order(prefs.dash_info_order);
+        std::string_view click_action = (prefs.tray_click_action == "toggle" ||
+            prefs.tray_click_action == "show" || prefs.tray_click_action == "toggle_proxy")
+            ? std::string_view(prefs.tray_click_action) : std::string_view("toggle");
+        JsonArray sec_arr, info_arr;
+        for (int v : sec) sec_arr.emplace_back(static_cast<std::int64_t>(v));
+        for (int v : info) info_arr.emplace_back(static_cast<std::int64_t>(v));
+        JsonObject root{
+            {"theme", prefs.theme_preference},
+            {"accent", prefs.accent_preset},
+            {"material", prefs.material_preset},
+            {"window_opacity", static_cast<double>(std::clamp(prefs.window_opacity, 0.15f, 1.0f))},
+            {"surface_opacity", static_cast<double>(std::clamp(prefs.surface_opacity, 0.15f, 1.0f))},
+            {"blur_enabled", prefs.blur_enabled},
+            {"ambient_glow", prefs.ambient_glow},
+            {"reduced_motion", prefs.reduced_motion},
+            {"language", prefs.language},
+            {"outbound_mode", prefs.outbound_mode},
+            {"sidebar_width", static_cast<double>(std::clamp(prefs.sidebar_width, 148.0f, 240.0f))},
+            {"sidebar_collapsed", prefs.sidebar_collapsed},
+            {"close_to_tray", prefs.close_to_tray},
+            {"start_minimized", prefs.start_minimized},
+            {"tray_show_nodes", prefs.tray_show_nodes},
+            {"tray_show_speed", prefs.tray_show_speed},
+            {"tray_click_action", std::string(click_action)},
+            {"dash_show_speed", prefs.dash_show_speed},
+            {"dash_show_quick_nodes", prefs.dash_show_quick_nodes},
+            {"dash_show_network", prefs.dash_show_network},
+            {"dash_show_ports", prefs.dash_show_ports},
+            {"dash_show_traffic", prefs.dash_show_traffic},
+            {"dash_show_memory", prefs.dash_show_memory},
+            {"dash_show_connectivity", prefs.dash_show_connectivity},
+            {"dash_section_order", JsonValue(std::move(sec_arr))},
+            {"dash_info_order", JsonValue(std::move(info_arr))},
+            {"dash_deck_swapped", prefs.dash_deck_swapped},
+            {"tun_elevate_persistent", prefs.tun_elevate_persistent},
+        };
+        return json_stringify(JsonValue(std::move(root)), false);
+    }
+
+    auto ui_prefs_from_json(std::string_view text) -> std::expected<UiPrefs, std::string> {
+        auto parsed = json_parse(text);
+        if (!parsed) return std::unexpected(parsed.error());
+        if (!parsed->is_object()) return std::unexpected("ui_prefs JSON must be an object");
+        auto const& o = std::get<JsonObject>(parsed->data);
+        auto get_f = [&](std::string_view k, float fb, float lo, float hi) -> float {
+            if (auto const* v = json_find(o, k)) {
+                double d = fb;
+                if (std::holds_alternative<double>(v->data)) d = std::get<double>(v->data);
+                else if (std::holds_alternative<std::int64_t>(v->data)) d = static_cast<double>(std::get<std::int64_t>(v->data));
+                if (std::isfinite(d)) return std::clamp(static_cast<float>(d), lo, hi);
+            }
+            return fb;
+        };
+        auto get_ord = [&](std::string_view k) -> std::array<int, 4> {
+            std::array<int, 4> out{0, 1, 2, 3};
+            if (auto const* v = json_find(o, k); v && v->is_array()) {
+                auto const& arr = std::get<JsonArray>(v->data);
+                if (arr.size() == 4) {
+                    for (std::size_t i = 0; i < 4; ++i) {
+                        if (std::holds_alternative<std::int64_t>(arr[i].data))
+                            out[i] = static_cast<int>(std::get<std::int64_t>(arr[i].data));
+                        else return {0, 1, 2, 3};
+                    }
+                    return sanitize_dash_order(out);
+                }
+            }
+            return {0, 1, 2, 3};
+        };
+        UiPrefs p{};
+        auto th = json_get_string(o, "theme", "system");
+        if (th == "system" || th == "light" || th == "dark") p.theme_preference = std::move(th);
+        auto ac = json_get_string(o, "accent", "ocean");
+        if (ac == "ocean" || ac == "emerald" || ac == "violet" || ac == "amber" || ac == "rose") p.accent_preset = std::move(ac);
+        auto mt = json_get_string(o, "material", "frosted");
+        if (mt == "solid" || mt == "frosted" || mt == "crystal") p.material_preset = std::move(mt);
+        p.window_opacity = get_f("window_opacity", p.window_opacity, 0.15f, 1.0f);
+        p.surface_opacity = get_f("surface_opacity", p.surface_opacity, 0.15f, 1.0f);
+        p.blur_enabled = json_get_bool(o, "blur_enabled", p.blur_enabled);
+        p.ambient_glow = json_get_bool(o, "ambient_glow", p.ambient_glow);
+        p.reduced_motion = json_get_bool(o, "reduced_motion", p.reduced_motion);
+        auto lg = json_get_string(o, "language", "system");
+        if (lg == "system" || lg == "zh-cn" || lg == "en-us") p.language = std::move(lg);
+        auto om = json_get_string(o, "outbound_mode", "rule");
+        if (om == "rule" || om == "global" || om == "direct") p.outbound_mode = std::move(om);
+        p.sidebar_width = get_f("sidebar_width", p.sidebar_width, 148.0f, 240.0f);
+        p.sidebar_collapsed = json_get_bool(o, "sidebar_collapsed", p.sidebar_collapsed);
+        p.close_to_tray = json_get_bool(o, "close_to_tray", p.close_to_tray);
+        p.start_minimized = json_get_bool(o, "start_minimized", p.start_minimized);
+        p.tray_show_nodes = json_get_bool(o, "tray_show_nodes", p.tray_show_nodes);
+        p.tray_show_speed = json_get_bool(o, "tray_show_speed", p.tray_show_speed);
+        auto tc = json_get_string(o, "tray_click_action", "toggle");
+        p.tray_click_action = (tc == "toggle" || tc == "show" || tc == "toggle_proxy") ? std::move(tc) : std::string("toggle");
+        p.dash_show_speed = json_get_bool(o, "dash_show_speed", p.dash_show_speed);
+        p.dash_show_quick_nodes = json_get_bool(o, "dash_show_quick_nodes", p.dash_show_quick_nodes);
+        p.dash_show_network = json_get_bool(o, "dash_show_network", p.dash_show_network);
+        p.dash_show_ports = json_get_bool(o, "dash_show_ports", p.dash_show_ports);
+        p.dash_show_traffic = json_get_bool(o, "dash_show_traffic", p.dash_show_traffic);
+        p.dash_show_memory = json_get_bool(o, "dash_show_memory", p.dash_show_memory);
+        p.dash_show_connectivity = json_get_bool(o, "dash_show_connectivity", p.dash_show_connectivity);
+        p.dash_section_order = get_ord("dash_section_order");
+        p.dash_info_order = get_ord("dash_info_order");
+        p.dash_deck_swapped = json_get_bool(o, "dash_deck_swapped", p.dash_deck_swapped);
+        p.tun_elevate_persistent = json_get_bool(o, "tun_elevate_persistent", p.tun_elevate_persistent);
+        return p;
     }
 }

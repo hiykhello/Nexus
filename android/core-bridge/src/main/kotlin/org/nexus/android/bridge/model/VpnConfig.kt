@@ -2,42 +2,6 @@ package org.nexus.android.bridge.model
 
 import java.io.File
 
-enum class Ipv6Mode {
-    DUAL_STACK,
-    BLOCK_LEAK,
-    BYPASS,
-}
-
-enum class PerAppMode {
-    ALL_APPS,
-    ALLOW_LIST,
-    DISALLOW_LIST,
-}
-
-enum class MeteredMode {
-    FOLLOW_UNDERLYING,
-    FORCE_UNMETERED,
-    FORCE_METERED,
-}
-
-data class VpnProfileConfig(
-    val sessionName: String = "Nexus",
-    val inet4Address: String = "172.19.0.1/30",
-    val inet6Address: String = "fdfe:dcba:9876::1/126",
-    val dnsServers: List<String> = listOf("172.19.0.2", "fdfe:dcba:9876::2"),
-    val mtu: Int = 9000,
-    val routeExcludePrivate: Boolean = true,
-    val routeExcludeCidrs: List<String> = emptyList(),
-    val ipv6Mode: Ipv6Mode = Ipv6Mode.DUAL_STACK,
-    val perAppMode: PerAppMode = PerAppMode.DISALLOW_LIST,
-    val packages: Set<String> = emptySet(),
-    val httpProxyPort: Int? = null,
-    val httpProxyBypassDomains: List<String> = listOf("localhost", "127.0.0.1", "::1"),
-    val meteredMode: MeteredMode = MeteredMode.FOLLOW_UNDERLYING,
-    val memoryBudgetMiB: Int = 48,
-    val userKdlConfig: String = "",
-)
-
 /**
  * Runtime paths inside context.noBackupFilesDir.
  * Short filenames keep sockaddr_un.sun_path comfortably below the 108-byte Linux limit.
@@ -52,6 +16,8 @@ data class RuntimeSocketPaths(
     val controlTokenFile: File = File(rootDir, "control.token")
     val runtimeConfigFile: File = File(rootDir, "runtime.kdl")
     val composedConfigFile: File = File(rootDir, "composed.kdl")
+    val composeWorkspaceFile: File = File(rootDir, "compose-workspace.json")
+    val composeHostFile: File = File(rootDir, "compose-host.json")
     val telemetryFile: File = File(rootDir, "telemetry.json")
     val secretsDir: File = File(rootDir, "secrets")
     val stateDir: File = File(rootDir, "state")
@@ -103,4 +69,33 @@ data class NetworkSnapshot(
             metered == other.metered &&
             privateDns == other.privateDns
     }
+}
+
+/**
+ * Pure host:port / IPv4 / IPv6 target endpoint parser used by connection inspection and quick rules.
+ */
+object EndpointParser {
+    fun stripPortAndBrackets(raw: String): String {
+        val t = raw.trim()
+        if (t.startsWith("[")) {
+            val close = t.indexOf(']')
+            if (close > 1) return t.substring(1, close)
+        }
+        val firstColon = t.indexOf(':')
+        val lastColon = t.lastIndexOf(':')
+        return if (firstColon > 0 && firstColon == lastColon && t.substring(lastColon + 1).all { it.isDigit() }) {
+            t.substring(0, lastColon)
+        } else {
+            t
+        }
+    }
+
+    fun isIpv4Literal(host: String): Boolean {
+        val parts = host.split('.')
+        if (parts.size != 4) return false
+        return parts.all { p -> p.isNotEmpty() && p.all { it.isDigit() } && (p.toIntOrNull() in 0..255) }
+    }
+
+    fun isIpv6Literal(host: String): Boolean =
+        host.contains(':') && host.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' || it == ':' }
 }

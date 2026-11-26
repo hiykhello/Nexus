@@ -4,33 +4,10 @@ import std;
 
 namespace desktop {
     namespace {
-        constexpr std::string_view kSavedDefaultMarker = "// nexus-desktop saved-default-outbound ";
-
         auto trim_ws(std::string_view sv) -> std::string_view {
             while (!sv.empty() && std::isspace(static_cast<unsigned char>(sv.front()))) sv.remove_prefix(1);
             while (!sv.empty() && std::isspace(static_cast<unsigned char>(sv.back()))) sv.remove_suffix(1);
             return sv;
-        }
-
-        auto is_safe_kdl_token(std::string_view sv) -> bool {
-            if (sv.empty()) return false;
-            for (unsigned char ch : sv) {
-                if (ch < 0x20 || ch == 0x7F || std::isspace(ch) || ch == '"' || ch == '\\' || ch == '{' || ch == '}' || ch == ';') return false;
-            }
-            return true;
-        }
-
-        auto strip_managed_block(std::string& doc, std::string_view start_marker, std::string_view end_marker) -> bool {
-            auto start = doc.find(start_marker);
-            if (start == std::string::npos) return false;
-            while (start > 0 && (doc[start - 1] == ' ' || doc[start - 1] == '\t')) --start;
-            auto end = doc.find(end_marker, start);
-            if (end == std::string::npos) return false;
-            doc.erase(start, (end + end_marker.size()) - start);
-            while (start < doc.size() && start > 0 && doc[start] == '\n' && doc[start - 1] == '\n') {
-                doc.erase(start, 1);
-            }
-            return true;
         }
 
         auto find_matching_brace(std::string_view sv, std::size_t open_pos) -> std::size_t {
@@ -59,9 +36,7 @@ namespace desktop {
                 }
                 if (ch == '"') { in_quote = true; continue; }
                 if (ch == '{') ++depth;
-                else if (ch == '}') {
-                    if (--depth == 0) return i;
-                }
+                else if (ch == '}' && --depth == 0) return i;
             }
             return std::string_view::npos;
         }
@@ -205,58 +180,10 @@ namespace desktop {
             }
         }
 
-        auto find_inbounds_container_close(std::string_view kdl) -> std::size_t {
-            std::size_t pos = 0;
-            while (pos < kdl.size()) {
-                auto hit = kdl.find("inbounds", pos);
-                if (hit == std::string_view::npos) return std::string_view::npos;
-                bool at_start = hit == 0 || kdl[hit - 1] == '\n' || std::isspace(static_cast<unsigned char>(kdl[hit - 1]));
-                auto after = trim_ws(kdl.substr(hit + 8));
-                if (at_start && after.starts_with("{")) {
-                    auto open = kdl.find('{', hit);
-                    return open != std::string_view::npos ? find_matching_brace(kdl, open) : std::string_view::npos;
-                }
-                pos = hit + 8;
-            }
-            return std::string_view::npos;
-        }
-
         auto normalize_client_host(std::string_view host) -> std::string {
             auto t = trim_ws(host);
             if (t.empty() || t == "0.0.0.0" || t == "::" || t == "[::]") return "127.0.0.1";
             return std::string(t);
-        }
-
-        auto read_saved_default_outbound(std::string_view kdl) -> std::optional<std::string> {
-            auto pos = kdl.find(kSavedDefaultMarker);
-            if (pos == std::string_view::npos) return std::nullopt;
-            pos += kSavedDefaultMarker.size();
-            auto eol = kdl.find('\n', pos);
-            auto val = trim_ws(eol == std::string_view::npos ? kdl.substr(pos) : kdl.substr(pos, eol - pos));
-            return is_safe_kdl_token(val) ? std::optional<std::string>(val) : std::nullopt;
-        }
-
-        auto find_default_outbound_span(std::string_view kdl) -> std::optional<std::pair<std::size_t, std::size_t>> {
-            auto rpos = kdl.find("routing");
-            while (rpos != std::string_view::npos) {
-                bool at_start = rpos == 0 || kdl[rpos - 1] == '\n';
-                auto rest = trim_ws(kdl.substr(rpos + 7));
-                if (at_start && rest.starts_with("{")) {
-                    auto open = kdl.find('{', rpos);
-                    auto close = find_matching_brace(kdl, open);
-                    if (close == std::string_view::npos) return std::nullopt;
-                    auto inner = kdl.substr(open, close - open);
-                    auto dpos = inner.find("default-outbound");
-                    if (dpos == std::string_view::npos) return std::nullopt;
-                    auto q1 = inner.find('"', dpos + 16);
-                    if (q1 == std::string_view::npos) return std::nullopt;
-                    auto q2 = inner.find('"', q1 + 1);
-                    if (q2 == std::string_view::npos) return std::nullopt;
-                    return std::pair{open + q1 + 1, open + q2};
-                }
-                rpos = kdl.find("routing", rpos + 7);
-            }
-            return std::nullopt;
         }
     }
 
@@ -277,47 +204,6 @@ namespace desktop {
         return out;
     }
 
-    auto upsert_managed_inbound(std::string_view kdl,
-                                std::string_view proto,
-                                bool enabled,
-                                std::string_view host,
-                                std::uint16_t port) -> std::pair<bool, std::string> {
-        if (proto != "mixed" && proto != "socks5" && proto != "http") {
-            return {false, "不支持的入站协议"};
-        }
-        std::string start_marker = std::format("// nexus-desktop managed-inbound {}\n", proto);
-        std::string end_marker = std::format("// /nexus-desktop managed-inbound {}\n", proto);
-        std::string out(kdl);
-        strip_managed_block(out, start_marker, end_marker);
-        if (!enabled) {
-            return {true, std::move(out)};
-        }
-        auto clean_host = trim_ws(host);
-        if (!is_safe_kdl_token(clean_host) || port == 0) {
-            return {false, "入站监听地址或端口无效"};
-        }
-        bool in_container = find_inbounds_container_close(out) != std::string_view::npos;
-        std::string pad = in_container ? "    " : "";
-        std::string block = std::format(
-            "{}// nexus-desktop managed-inbound {}\n"
-            "{}inbound \"local-{}\" type=\"{}\" {{\n"
-            "{}    listen host=\"{}\" port={}\n"
-            "{}    authentication \"none\"\n"
-            "{}}}\n"
-            "{}// /nexus-desktop managed-inbound {}\n",
-            pad, proto, pad, proto, proto, pad, clean_host, port, pad, pad, pad, proto);
-
-        if (auto close_pos = find_inbounds_container_close(out); close_pos != std::string_view::npos) {
-            if (close_pos > 0 && out[close_pos - 1] != '\n') block.insert(block.begin(), '\n');
-            out.insert(close_pos, block);
-            return {true, std::move(out)};
-        }
-        if (!out.empty() && out.back() != '\n') out.push_back('\n');
-        if (!out.empty()) out.push_back('\n');
-        out.append(block);
-        return {true, std::move(out)};
-    }
-
     auto select_system_proxy_endpoint(CoexistingInbounds const& inb)
         -> std::optional<std::pair<std::string, std::uint16_t>> {
         if (inb.mixed.enabled && inb.mixed.port > 0) {
@@ -330,48 +216,6 @@ namespace desktop {
             return std::pair{normalize_client_host(inb.socks5.host), inb.socks5.port};
         }
         return std::nullopt;
-    }
-
-    auto apply_outbound_mode(std::string_view kdl,
-                             std::string_view mode,
-                             std::string_view proxy_group) -> std::pair<bool, std::string> {
-        if (mode != "rule" && mode != "global" && mode != "direct") {
-            return {false, "无效的出站模式"};
-        }
-        auto span = find_default_outbound_span(kdl);
-        if (!span) {
-            return {false, "当前配置缺少 routing { default-outbound ... } 节点"};
-        }
-        std::string current(kdl.substr(span->first, span->second - span->first));
-        auto saved = read_saved_default_outbound(kdl);
-        std::string target;
-        if (mode == "direct") target = "direct";
-        else if (mode == "global") target = is_safe_kdl_token(proxy_group) ? std::string(proxy_group) : "proxy";
-        else target = saved ? *saved : (current == "direct" ? "proxy" : current);
-
-        std::string out(kdl);
-        out.replace(span->first, span->second - span->first, target);
-        if (mode != "rule" && !saved && current != "direct" && is_safe_kdl_token(current)) {
-            if (!out.empty() && out.back() != '\n') out.push_back('\n');
-            out += std::format("{}{}\n", kSavedDefaultMarker, current);
-        } else if (mode == "rule" && saved) {
-            if (auto m = out.find(kSavedDefaultMarker); m != std::string::npos) {
-                auto eol = out.find('\n', m);
-                out.erase(m, eol == std::string::npos ? out.size() - m : (eol - m + 1));
-            }
-        }
-        return {true, std::move(out)};
-    }
-
-    auto detect_outbound_mode(std::string_view kdl) -> std::string {
-        auto span = find_default_outbound_span(kdl);
-        auto saved = read_saved_default_outbound(kdl);
-        if (span && saved) {
-            auto cur = kdl.substr(span->first, span->second - span->first);
-            if (cur == "direct") return "direct";
-            return "global";
-        }
-        return "rule";
     }
 
     auto escape_kdl_string(std::string_view text) -> std::string {

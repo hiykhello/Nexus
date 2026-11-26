@@ -66,8 +66,22 @@ export namespace desktop {
         std::uint64_t download_bytes = 0;
     };
 
+    struct OutboundProbeResult {
+        bool ok = false;
+        std::string outbound;
+        std::string resolved_outbound;
+        std::string state;
+        std::int64_t latency_ms = -1;
+        int status_code = 0;
+        std::string url;
+        std::string error;
+    };
+
     // Parses OpenMetrics /metrics output emitted by Nexus (Batch 95C).
     [[nodiscard]] auto parse_openmetrics_summary(std::string_view text) -> MetricsSnapshot;
+
+    // Parses JSON emitted by POST /v1/outbounds/{tag}/probe (Wave 25).
+    [[nodiscard]] auto parse_outbound_probe_json(std::string_view json) -> OutboundProbeResult;
 
     // Parses JSON emitted by GET /v1/outbounds.
     [[nodiscard]] auto parse_outbounds_json(std::string_view json) -> std::vector<OutboundGroupSnapshot>;
@@ -117,6 +131,7 @@ export namespace desktop {
 
     // Minimal zero-dependency HTTP/1.1 client for Nexus /v1/* and /metrics endpoints.
     class HttpControlClient {
+        mutable std::mutex mu_;
         std::string host_;
         std::uint16_t port_;
         std::string bearer_token_;
@@ -126,20 +141,29 @@ export namespace desktop {
         HttpControlClient(std::string host, std::uint16_t port, std::string bearer_token = {})
             : host_(std::move(host)), port_(port), bearer_token_(std::move(bearer_token)) {}
 
-        [[nodiscard]] auto host(this HttpControlClient const& self) noexcept -> std::string_view { return self.host_; }
-        [[nodiscard]] auto port(this HttpControlClient const& self) noexcept -> std::uint16_t { return self.port_; }
+        [[nodiscard]] auto host(this HttpControlClient const& self) -> std::string {
+            std::scoped_lock lk(self.mu_);
+            return self.host_;
+        }
+        [[nodiscard]] auto port(this HttpControlClient const& self) noexcept -> std::uint16_t {
+            std::scoped_lock lk(self.mu_);
+            return self.port_;
+        }
         auto set_endpoint(this HttpControlClient& self, std::string host, std::uint16_t port) -> void {
+            std::scoped_lock lk(self.mu_);
             self.host_ = std::move(host);
             self.port_ = port;
         }
         auto set_bearer_token(this HttpControlClient& self, std::string token) -> void {
+            std::scoped_lock lk(self.mu_);
             self.bearer_token_ = std::move(token);
         }
 
         [[nodiscard]] auto request(this HttpControlClient const& self,
                                    std::string_view method,
                                    std::string_view path,
-                                   std::string_view body = {}) -> HttpReply;
+                                   std::string_view body = {},
+                                   std::optional<std::chrono::milliseconds> timeout_override = std::nullopt) -> HttpReply;
 
         [[nodiscard]] auto health(this HttpControlClient const& self) -> HttpReply {
             return self.request("GET", "/v1/health");
@@ -162,6 +186,16 @@ export namespace desktop {
         }
         [[nodiscard]] auto probe_group(this HttpControlClient const& self, std::string_view tag) -> HttpReply {
             return self.request("POST", std::format("/v1/groups/{}/probe", url_encode(tag)), "{}");
+        }
+        [[nodiscard]] auto probe_outbound(this HttpControlClient const& self,
+                                          std::string_view tag,
+                                          std::string_view url = "https://www.gstatic.com/generate_204",
+                                          std::uint32_t timeout_ms = 4000,
+                                          std::string_view mode = "http") -> HttpReply {
+            auto payload = std::format("{{\"url\":\"{}\",\"timeout_ms\":{},\"mode\":\"{}\"}}",
+                json_escape(url), timeout_ms, json_escape(mode));
+            auto wait = std::chrono::milliseconds(std::clamp<std::uint64_t>(timeout_ms, 500u, 30000u) + 2500u);
+            return self.request("POST", std::format("/v1/outbounds/{}/probe", url_encode(tag)), payload, wait);
         }
         [[nodiscard]] auto reload(this HttpControlClient const& self) -> HttpReply {
             return self.request("POST", "/v1/reload");

@@ -63,22 +63,17 @@ export component HeroCommandCard inherits Rectangle {
     border-color:
         root.is-error ? Theme.error-border
         : root.is-degraded ? Theme.warn-border
-        : root.is-connected ? Theme.success-border
         : Theme.card-border;
-    background:
-        root.is-error ? @linear-gradient(135deg, Theme.error-fg.with-alpha(Theme.dark ? 0.14 : 0.08) 0%, Theme.card-bg 58%)
-        : root.is-degraded ? @linear-gradient(135deg, Theme.warn-fg.with-alpha(Theme.dark ? 0.14 : 0.08) 0%, Theme.card-bg 58%)
-        : root.is-connected ? @linear-gradient(135deg, Theme.success-fg.with-alpha(Theme.dark ? 0.12 : 0.07) 0%, Theme.card-bg 56%)
-        : Theme.card-surface;
-    drop-shadow-blur: 16px;
-    drop-shadow-offset-y: 3px;
+    background: Theme.card-surface;
+    drop-shadow-blur: 12px;
+    drop-shadow-offset-y: 2px;
     drop-shadow-color: Theme.card-shadow;
     clip: true;
     animate border-color { duration: Motion.fast; }
 
     GlassSpeculum {}
 
-    // Crisp geometric faceted Prism watermark sized 100% inside card with comfortable vertical margins
+    // Subtle neutral matte Prism watermark (accent reserved cleanly for the primary orb)
     Path {
         property <length> wm-size: root.compact ? 114px : 136px;
         x: parent.width - self.width - (root.wide ? 26px : 16px);
@@ -87,9 +82,9 @@ export component HeroCommandCard inherits Rectangle {
         height: self.wm-size;
         viewbox-width: 120;
         viewbox-height: 120;
-        fill: (root.is-connected ? Theme.success-fg : Theme.accent).with-alpha(Theme.dark ? 0.055 : 0.065);
-        stroke: (root.is-connected ? Theme.success-fg : Theme.accent).with-alpha(Theme.dark ? 0.12 : 0.13);
-        stroke-width: 1.2px;
+        fill: Theme.offline-fg.with-alpha(Theme.dark ? 0.035 : 0.04);
+        stroke: Theme.offline-fg.with-alpha(Theme.dark ? 0.08 : 0.09);
+        stroke-width: 1.1px;
         commands: "M 60 6 L 112 96 L 60 112 L 8 96 Z M 60 6 L 60 76 M 8 96 L 60 76 L 112 96 M 60 28 L 88 82 L 60 72 L 32 82 Z";
     }
 
@@ -298,17 +293,17 @@ export component HeroCommandCard inherits Rectangle {
                 width: root.orb-size + (root.wide ? 24px : 10px);
                 height: root.orb-size + (root.wide ? 24px : 10px);
 
-                // Soft multi-layer outer radial Emerald / Cobalt bloom
+                // Subtle calm orb halo (reserved cleanly for the primary action button)
                 Rectangle {
-                    property <length> bloom-d: root.orb-size + 52px;
+                    property <length> bloom-d: root.orb-size + 28px;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                     width: self.bloom-d;
                     height: self.bloom-d;
                     border-radius: self.bloom-d / 2;
                     background: root.core-running
-                        ? @radial-gradient(circle, #10b98166 0%, #10b98122 48%, transparent 72%)
-                        : @radial-gradient(circle, Theme.accent.with-alpha(Theme.dark ? 0.36 : 0.24) 0%, Theme.accent.with-alpha(0.10) 48%, transparent 72%);
+                        ? @radial-gradient(circle, #10b98130 0%, transparent 70%)
+                        : @radial-gradient(circle, Theme.accent.with-alpha(Theme.dark ? 0.22 : 0.16) 0%, transparent 70%);
                 }
 
                 // Breathing ambient ring when connected

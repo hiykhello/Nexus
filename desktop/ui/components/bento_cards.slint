@@ -48,6 +48,7 @@ export component DashCustomizeBar inherits VerticalLayout {
     in-out property <bool> show-memory: true;
     in-out property <bool> show-traffic: true;
     in-out property <bool> show-ports: true;
+    in-out property <bool> show-connectivity: true;
 
     callback open-profiles();
     callback prefs-changed();
@@ -155,6 +156,7 @@ export component DashCustomizeBar inherits VerticalLayout {
                 WidgetToggleChip { label: I18n.t("内存占用", "Memory"); active: root.show-memory; toggled => { root.show-memory = !root.show-memory; root.prefs-changed(); } }
                 WidgetToggleChip { label: I18n.t("连接与流量", "Traffic"); active: root.show-traffic; toggled => { root.show-traffic = !root.show-traffic; root.prefs-changed(); } }
                 WidgetToggleChip { label: I18n.t("本地端口", "Ports"); active: root.show-ports; toggled => { root.show-ports = !root.show-ports; root.prefs-changed(); } }
+                WidgetToggleChip { label: I18n.t("连通性", "Connectivity"); active: root.show-connectivity; toggled => { root.show-connectivity = !root.show-connectivity; root.prefs-changed(); } }
                 WidgetToggleChip { label: I18n.t("快捷切换", "Quick Nodes"); active: root.show-quick-nodes; toggled => { root.show-quick-nodes = !root.show-quick-nodes; root.prefs-changed(); } }
             }
         }
@@ -176,11 +178,11 @@ export component BentoSwitchTile inherits Rectangle {
     height: 58px;
     border-radius: 20px;
     border-width: 1px;
-    border-color: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.50 : 0.36) : ta.has-hover && root.enabled ? Theme.hairline-strong : Theme.card-border;
-    background: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.14 : 0.08) : (ta.has-hover && root.enabled) ? Theme.row-hover-bg : Theme.card-surface;
-    drop-shadow-blur: root.active || (ta.has-hover && root.enabled) ? 14px : 10px;
+    border-color: ta.has-hover && root.enabled ? Theme.hairline-strong : Theme.card-border;
+    background: (ta.has-hover && root.enabled) ? Theme.row-hover-bg : Theme.card-surface;
+    drop-shadow-blur: 10px;
     drop-shadow-offset-y: 2px;
-    drop-shadow-color: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.22 : 0.14) : Theme.card-shadow;
+    drop-shadow-color: Theme.card-shadow;
     opacity: root.enabled ? 1.0 : 0.55;
     transform-scale: root.enabled && ta.pressed ? 0.975 : 1.0;
     animate border-color { duration: Motion.fast; }

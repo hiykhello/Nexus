@@ -18,7 +18,9 @@ import org.nexus.android.bridge.vpn.NexusVpnService
 import org.nexus.android.bridge.vpn.VpnTunnelState
 import org.nexus.android.bridge.workspace.AndroidHostConfigStore
 import org.nexus.android.bridge.workspace.AndroidRunMode
+import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.bridge.workspace.TelemetryStore
+import org.nexus.android.bridge.workspace.WorkspaceStore
 import org.nexus.android.ui.MainActivity
 import java.io.File
 
@@ -98,16 +100,16 @@ class NexusTileService : TileService() {
     private fun readTileDiskMeta(): Triple<Boolean, String, AndroidRunMode> {
         val paths = RuntimeSocketPaths(noBackupFilesDir)
         val configExists = paths.composedConfigFile.isFile || File(filesDir, "config.kdl").isFile
+        val db = NexusClientDatabase.open(this)
         val runMode = runCatching {
-            AndroidHostConfigStore(File(filesDir, "host.json")).load().android.runMode
+            AndroidHostConfigStore(File(filesDir, "host.json"), db).load().android.runMode
         }.getOrDefault(AndroidRunMode.VPN)
-        val telemetryActive = runCatching { TelemetryStore(paths.telemetryFile).load().activeProfileId }.getOrDefault("")
-        val activeFile = File(filesDir, ".active_profile")
-        val profile = telemetryActive.ifBlank {
-            runCatching {
-                activeFile.takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() }
-            }.getOrNull() ?: "默认配置"
-        }
+        val activeId = runCatching { TelemetryStore(paths.telemetryFile, db).load().activeProfileId }.getOrDefault("")
+        val profile = runCatching {
+            val summaries = WorkspaceStore(filesDir, db).listProfileSummaries()
+            val matched = summaries.firstOrNull { it.id == activeId } ?: summaries.firstOrNull()
+            matched?.name?.ifBlank { matched.id } ?: activeId.ifBlank { "默认配置" }
+        }.getOrDefault(activeId.ifBlank { "默认配置" })
         return Triple(configExists, profile, runMode)
     }
 
