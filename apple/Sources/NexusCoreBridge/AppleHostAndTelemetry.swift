@@ -23,6 +23,8 @@ public struct AppleDesktopHostSection: Codable, Sendable, Equatable {
     public var tunStrictRoute: Bool
     public var tunRouteExclude: [String]
     public var tunRouteExcludePrivate: Bool
+    public var tunHttpProxyEnabled: Bool
+    public var tunHttpProxyBypass: [String]
     public var bindInterface: String
     public var inet4BindAddress: String
     public var inet6BindAddress: String
@@ -43,6 +45,8 @@ public struct AppleDesktopHostSection: Codable, Sendable, Equatable {
         case tunStrictRoute = "tun_strict_route"
         case tunRouteExclude = "tun_route_exclude"
         case tunRouteExcludePrivate = "tun_route_exclude_private"
+        case tunHttpProxyEnabled = "tun_http_proxy_enabled"
+        case tunHttpProxyBypass = "tun_http_proxy_bypass"
         case bindInterface = "bind_interface"
         case inet4BindAddress = "inet4_bind_address"
         case inet6BindAddress = "inet6_bind_address"
@@ -64,6 +68,8 @@ public struct AppleDesktopHostSection: Codable, Sendable, Equatable {
         tunStrictRoute: Bool = false,
         tunRouteExclude: [String] = [],
         tunRouteExcludePrivate: Bool = true,
+        tunHttpProxyEnabled: Bool = false,
+        tunHttpProxyBypass: [String] = [],
         bindInterface: String = "",
         inet4BindAddress: String = "",
         inet6BindAddress: String = ""
@@ -83,6 +89,8 @@ public struct AppleDesktopHostSection: Codable, Sendable, Equatable {
         self.tunStrictRoute = tunStrictRoute
         self.tunRouteExclude = tunRouteExclude
         self.tunRouteExcludePrivate = tunRouteExcludePrivate
+        self.tunHttpProxyEnabled = tunHttpProxyEnabled
+        self.tunHttpProxyBypass = tunHttpProxyBypass
         self.bindInterface = bindInterface
         self.inet4BindAddress = inet4BindAddress
         self.inet6BindAddress = inet6BindAddress
@@ -105,6 +113,8 @@ public struct AppleDesktopHostSection: Codable, Sendable, Equatable {
         self.tunStrictRoute = try c.decodeIfPresent(Bool.self, forKey: .tunStrictRoute) ?? false
         self.tunRouteExclude = try c.decodeIfPresent([String].self, forKey: .tunRouteExclude) ?? []
         self.tunRouteExcludePrivate = try c.decodeIfPresent(Bool.self, forKey: .tunRouteExcludePrivate) ?? true
+        self.tunHttpProxyEnabled = try c.decodeIfPresent(Bool.self, forKey: .tunHttpProxyEnabled) ?? false
+        self.tunHttpProxyBypass = try c.decodeIfPresent([String].self, forKey: .tunHttpProxyBypass) ?? []
         self.bindInterface = try c.decodeIfPresent(String.self, forKey: .bindInterface) ?? ""
         self.inet4BindAddress = try c.decodeIfPresent(String.self, forKey: .inet4BindAddress) ?? ""
         self.inet6BindAddress = try c.decodeIfPresent(String.self, forKey: .inet6BindAddress) ?? ""

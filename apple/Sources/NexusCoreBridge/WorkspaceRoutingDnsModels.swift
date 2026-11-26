@@ -87,6 +87,8 @@ public struct WorkspaceRoutingProfile: Codable, Sendable, Equatable, Identifiabl
     public var isActive: Bool
     public var domainStrategy: String
     public var defaultOutbound: String
+    public var autoDetectInterface: Bool
+    public var findProcess: Bool
     public var rules: [WorkspaceRoutingRule]
 
     enum CodingKeys: String, CodingKey {
@@ -94,6 +96,8 @@ public struct WorkspaceRoutingProfile: Codable, Sendable, Equatable, Identifiabl
         case isActive = "is_active"
         case domainStrategy = "domain_strategy"
         case defaultOutbound = "default_outbound"
+        case autoDetectInterface = "auto_detect_interface"
+        case findProcess = "find_process"
     }
 
     public init(
@@ -102,6 +106,8 @@ public struct WorkspaceRoutingProfile: Codable, Sendable, Equatable, Identifiabl
         isActive: Bool = false,
         domainStrategy: String = "as-is",
         defaultOutbound: String = "proxy",
+        autoDetectInterface: Bool = false,
+        findProcess: Bool = false,
         rules: [WorkspaceRoutingRule] = []
     ) {
         self.id = id
@@ -109,6 +115,8 @@ public struct WorkspaceRoutingProfile: Codable, Sendable, Equatable, Identifiabl
         self.isActive = isActive
         self.domainStrategy = domainStrategy
         self.defaultOutbound = defaultOutbound
+        self.autoDetectInterface = autoDetectInterface
+        self.findProcess = findProcess
         self.rules = rules
     }
 
@@ -119,6 +127,8 @@ public struct WorkspaceRoutingProfile: Codable, Sendable, Equatable, Identifiabl
         self.isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
         self.domainStrategy = try c.decodeIfPresent(String.self, forKey: .domainStrategy) ?? "as-is"
         self.defaultOutbound = try c.decodeIfPresent(String.self, forKey: .defaultOutbound) ?? "proxy"
+        self.autoDetectInterface = try c.decodeIfPresent(Bool.self, forKey: .autoDetectInterface) ?? false
+        self.findProcess = try c.decodeIfPresent(Bool.self, forKey: .findProcess) ?? false
         self.rules = try c.decodeIfPresent([WorkspaceRoutingRule].self, forKey: .rules) ?? []
     }
 }

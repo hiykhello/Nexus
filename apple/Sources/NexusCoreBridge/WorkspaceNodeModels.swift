@@ -12,11 +12,12 @@ public struct WorkspaceTlsConfig: Codable, Sendable, Equatable {
     public var realityShortId: String
     public var echMode: String
     public var echConfig: String
+    public var echQueryServerName: String
+    public var fragment: Bool
+    public var recordFragment: Bool
 
     enum CodingKeys: String, CodingKey {
-        case enabled
-        case sni
-        case fingerprint
+        case enabled, sni, fingerprint, fragment
         case keyExchange = "key_exchange"
         case caPem = "ca_pem"
         case certSha256 = "cert_sha256"
@@ -24,6 +25,8 @@ public struct WorkspaceTlsConfig: Codable, Sendable, Equatable {
         case realityShortId = "reality_short_id"
         case echMode = "ech_mode"
         case echConfig = "ech_config"
+        case echQueryServerName = "ech_query_server_name"
+        case recordFragment = "record_fragment"
     }
 
     public init(
@@ -36,7 +39,10 @@ public struct WorkspaceTlsConfig: Codable, Sendable, Equatable {
         realityPublicKey: String = "",
         realityShortId: String = "",
         echMode: String = "",
-        echConfig: String = ""
+        echConfig: String = "",
+        echQueryServerName: String = "",
+        fragment: Bool = false,
+        recordFragment: Bool = false
     ) {
         self.enabled = enabled
         self.sni = sni
@@ -48,6 +54,9 @@ public struct WorkspaceTlsConfig: Codable, Sendable, Equatable {
         self.realityShortId = realityShortId
         self.echMode = echMode
         self.echConfig = echConfig
+        self.echQueryServerName = echQueryServerName
+        self.fragment = fragment
+        self.recordFragment = recordFragment
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +71,9 @@ public struct WorkspaceTlsConfig: Codable, Sendable, Equatable {
         self.realityShortId = try c.decodeIfPresent(String.self, forKey: .realityShortId) ?? ""
         self.echMode = try c.decodeIfPresent(String.self, forKey: .echMode) ?? ""
         self.echConfig = try c.decodeIfPresent(String.self, forKey: .echConfig) ?? ""
+        self.echQueryServerName = try c.decodeIfPresent(String.self, forKey: .echQueryServerName) ?? ""
+        self.fragment = try c.decodeIfPresent(Bool.self, forKey: .fragment) ?? false
+        self.recordFragment = try c.decodeIfPresent(Bool.self, forKey: .recordFragment) ?? false
     }
 }
 
@@ -75,16 +87,22 @@ public struct WorkspaceTransportConfig: Codable, Sendable, Equatable {
     public var xhttpMode: String
     public var xhttpProtocol: String
     public var headers: [String: String]
+    public var maxEarlyData: Int
+    public var earlyDataHeaderName: String
+    public var grpcIdleTimeoutMs: Int
+    public var grpcPingTimeoutMs: Int
+    public var grpcPermitWithoutStream: Bool
 
     enum CodingKeys: String, CodingKey {
-        case type
-        case host
-        case path
+        case type, host, path, authority, headers
         case serviceName = "service_name"
-        case authority
         case xhttpMode = "xhttp_mode"
         case xhttpProtocol = "xhttp_protocol"
-        case headers
+        case maxEarlyData = "max_early_data"
+        case earlyDataHeaderName = "early_data_header_name"
+        case grpcIdleTimeoutMs = "grpc_idle_timeout_ms"
+        case grpcPingTimeoutMs = "grpc_ping_timeout_ms"
+        case grpcPermitWithoutStream = "grpc_permit_without_stream"
     }
 
     public static func normalizeType(_ raw: String) -> String {
@@ -100,7 +118,12 @@ public struct WorkspaceTransportConfig: Codable, Sendable, Equatable {
         authority: String = "",
         xhttpMode: String = "",
         xhttpProtocol: String = "",
-        headers: [String: String] = [:]
+        headers: [String: String] = [:],
+        maxEarlyData: Int = 0,
+        earlyDataHeaderName: String = "",
+        grpcIdleTimeoutMs: Int = 0,
+        grpcPingTimeoutMs: Int = 0,
+        grpcPermitWithoutStream: Bool = false
     ) {
         self.type = Self.normalizeType(type)
         self.host = host
@@ -110,6 +133,11 @@ public struct WorkspaceTransportConfig: Codable, Sendable, Equatable {
         self.xhttpMode = xhttpMode
         self.xhttpProtocol = xhttpProtocol
         self.headers = headers
+        self.maxEarlyData = max(0, min(8192, maxEarlyData))
+        self.earlyDataHeaderName = earlyDataHeaderName
+        self.grpcIdleTimeoutMs = max(0, grpcIdleTimeoutMs)
+        self.grpcPingTimeoutMs = max(0, grpcPingTimeoutMs)
+        self.grpcPermitWithoutStream = grpcPermitWithoutStream
     }
 
     public init(from decoder: Decoder) throws {
@@ -122,6 +150,11 @@ public struct WorkspaceTransportConfig: Codable, Sendable, Equatable {
         self.xhttpMode = try c.decodeIfPresent(String.self, forKey: .xhttpMode) ?? ""
         self.xhttpProtocol = try c.decodeIfPresent(String.self, forKey: .xhttpProtocol) ?? ""
         self.headers = try c.decodeIfPresent([String: String].self, forKey: .headers) ?? [:]
+        self.maxEarlyData = max(0, min(8192, try c.decodeIfPresent(Int.self, forKey: .maxEarlyData) ?? 0))
+        self.earlyDataHeaderName = try c.decodeIfPresent(String.self, forKey: .earlyDataHeaderName) ?? ""
+        self.grpcIdleTimeoutMs = max(0, try c.decodeIfPresent(Int.self, forKey: .grpcIdleTimeoutMs) ?? 0)
+        self.grpcPingTimeoutMs = max(0, try c.decodeIfPresent(Int.self, forKey: .grpcPingTimeoutMs) ?? 0)
+        self.grpcPermitWithoutStream = try c.decodeIfPresent(Bool.self, forKey: .grpcPermitWithoutStream) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -134,6 +167,11 @@ public struct WorkspaceTransportConfig: Codable, Sendable, Equatable {
         try c.encode(xhttpMode, forKey: .xhttpMode)
         try c.encode(xhttpProtocol, forKey: .xhttpProtocol)
         try c.encode(headers, forKey: .headers)
+        if maxEarlyData > 0 { try c.encode(maxEarlyData, forKey: .maxEarlyData) }
+        if !earlyDataHeaderName.isEmpty { try c.encode(earlyDataHeaderName, forKey: .earlyDataHeaderName) }
+        if grpcIdleTimeoutMs > 0 { try c.encode(grpcIdleTimeoutMs, forKey: .grpcIdleTimeoutMs) }
+        if grpcPingTimeoutMs > 0 { try c.encode(grpcPingTimeoutMs, forKey: .grpcPingTimeoutMs) }
+        if grpcPermitWithoutStream { try c.encode(grpcPermitWithoutStream, forKey: .grpcPermitWithoutStream) }
     }
 }
 
@@ -368,6 +406,7 @@ public struct WorkspacePolicyGroupConfig: Codable, Sendable, Equatable {
     public var probeUrl: String
     public var probeIntervalMs: Int64
     public var toleranceMs: Int
+    public var interruptExistConnections: Bool
 
     enum CodingKeys: String, CodingKey {
         case strategy
@@ -378,6 +417,7 @@ public struct WorkspacePolicyGroupConfig: Codable, Sendable, Equatable {
         case probeUrl = "probe_url"
         case probeIntervalMs = "probe_interval_ms"
         case toleranceMs = "tolerance_ms"
+        case interruptExistConnections = "interrupt_exist_connections"
     }
 
     public init(
@@ -388,7 +428,8 @@ public struct WorkspacePolicyGroupConfig: Codable, Sendable, Equatable {
         excludeRegex: String = "",
         probeUrl: String = "https://www.gstatic.com/generate_204",
         probeIntervalMs: Int64 = 300_000,
-        toleranceMs: Int = 50
+        toleranceMs: Int = 50,
+        interruptExistConnections: Bool = false
     ) {
         self.strategy = strategy
         self.memberIds = memberIds
@@ -398,6 +439,7 @@ public struct WorkspacePolicyGroupConfig: Codable, Sendable, Equatable {
         self.probeUrl = probeUrl
         self.probeIntervalMs = probeIntervalMs
         self.toleranceMs = toleranceMs
+        self.interruptExistConnections = interruptExistConnections
     }
 
     public init(from decoder: Decoder) throws {
@@ -410,6 +452,7 @@ public struct WorkspacePolicyGroupConfig: Codable, Sendable, Equatable {
         self.probeUrl = try c.decodeIfPresent(String.self, forKey: .probeUrl) ?? "https://www.gstatic.com/generate_204"
         self.probeIntervalMs = try c.decodeIfPresent(Int64.self, forKey: .probeIntervalMs) ?? 300_000
         self.toleranceMs = try c.decodeIfPresent(Int.self, forKey: .toleranceMs) ?? 50
+        self.interruptExistConnections = try c.decodeIfPresent(Bool.self, forKey: .interruptExistConnections) ?? false
     }
 }
 

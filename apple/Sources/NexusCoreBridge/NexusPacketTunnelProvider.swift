@@ -48,6 +48,7 @@ public struct PacketTunnelLaunchConfig: Sendable, Codable, Equatable {
     public let dataDirectoryRelativePath: String
     public let httpControlPort: UInt16
     public let memoryBudgetMiB: Int
+    public let httpProxy: AppleTunnelHttpProxyConfig?
 
     public init(
         appGroupIdentifier: String = "group.org.nexus.apple",
@@ -55,7 +56,8 @@ public struct PacketTunnelLaunchConfig: Sendable, Codable, Equatable {
         controlSocketRelativePath: String = "control.sock",
         dataDirectoryRelativePath: String = "data",
         httpControlPort: UInt16 = 9090,
-        memoryBudgetMiB: Int = 36
+        memoryBudgetMiB: Int = 36,
+        httpProxy: AppleTunnelHttpProxyConfig? = nil
     ) {
         self.appGroupIdentifier = appGroupIdentifier
         self.configRelativePath = configRelativePath
@@ -63,6 +65,7 @@ public struct PacketTunnelLaunchConfig: Sendable, Codable, Equatable {
         self.dataDirectoryRelativePath = dataDirectoryRelativePath
         self.httpControlPort = httpControlPort
         self.memoryBudgetMiB = memoryBudgetMiB
+        self.httpProxy = httpProxy
     }
 
     public func resolveContainerPaths(fileManager: FileManager = .default) -> (config: URL, controlSocket: URL, dataDirectory: URL)? {
@@ -123,7 +126,7 @@ open class NexusPacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendabl
     private func startTunnelSession() async throws {
         let launch = decodeLaunchConfig()
         activeLaunchConfig = launch
-        let profile = AppleTunnelProfile(mtu: AppleTunnelProfile.maxSafeMtu)
+        let profile = AppleTunnelProfile(mtu: AppleTunnelProfile.maxSafeMtu, httpProxy: launch.httpProxy)
         let settings = TunnelSettingsBuilder.build(from: profile)
         try await setTunnelNetworkSettings(settings)
 
