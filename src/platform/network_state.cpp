@@ -167,6 +167,145 @@ namespace platform::network {
             }
         }
 
+        struct GenlHeader { std::uint8_t cmd = 0, version = 0; std::uint16_t reserved = 0; };
+        struct WextPoint { void* pointer = nullptr; std::uint16_t length = 0, flags = 0; };
+        struct WextReq { char name[16]{}; union { WextPoint essid; abi::sockaddr ap; } u{}; };
+        static_assert(sizeof(GenlHeader) == 4 && sizeof(WextPoint) == sizeof(void*) * 2 && sizeof(WextReq) == 32);
+
+        auto valid_wifi_bssid(MacAddress const& mac) noexcept -> bool {
+            bool nz = false, nff = false;
+            for (auto b : mac) { nz |= (b != 0); nff |= (b != 0xff); }
+            return nz && nff;
+        }
+
+        auto clean_wifi_ssid(std::string_view raw) -> std::optional<std::string> {
+            while (!raw.empty() && raw.back() == '\0') raw.remove_suffix(1);
+            return (!raw.empty() && raw.size() <= 32) ? std::optional(std::string(raw)) : std::nullopt;
+        }
+
+        auto is_linux_wireless(std::string_view ifname) noexcept -> bool {
+            if (ifname.empty() || ifname.size() > 15 || ifname.contains("..")) return false;
+            for (unsigned char c : ifname)
+                if (!(std::isalnum(c) || c == '-' || c == '_' || c == '.')) return false;
+            for (std::string_view suffix : {"/wireless", "/phy80211"}) {
+                char path[64]{};
+                std::size_t pos = 0;
+                for (std::string_view part : {std::string_view("/sys/class/net/"), ifname, suffix}) {
+                    std::memcpy(path + pos, part.data(), part.size());
+                    pos += part.size();
+                }
+                if (int fd = abi::open(path, 0); fd >= 0) { (void)abi::close(fd); return true; }
+            }
+            return false;
+        }
+
+        auto read_linux_wifi_nl80211(std::uint32_t ifindex, std::optional<std::string>& ssid,
+            std::optional<MacAddress>& bssid) noexcept -> void {
+            int fd = abi::socket(abi::AF_NETLINK, abi::SOCK_RAW | abi::SOCK_NONBLOCK | abi::SOCK_CLOEXEC, 16);
+            if (fd < 0) return;
+            struct FdGuard { int f; ~FdGuard() { if (f >= 0) (void)abi::close(f); } } guard{fd};
+            abi::sockaddr_nl local{.nl_family = static_cast<unsigned short>(abi::AF_NETLINK)};
+            if (abi::bind(fd, reinterpret_cast<abi::sockaddr const*>(&local), sizeof(local)) != 0) return;
+
+            auto align4 = [](std::size_t n) noexcept { return (n + 3u) & ~std::size_t{3}; };
+            auto exchange = [&](std::uint16_t type, std::uint16_t flags, std::uint8_t cmd, std::uint32_t seq,
+                std::uint16_t attr_type, std::span<std::byte const> attr_data, auto&& on_attrs) noexcept -> bool {
+                std::array<std::byte, 128> req{};
+                std::size_t alen = sizeof(abi::rtattr) + attr_data.size();
+                std::size_t total = sizeof(abi::nlmsghdr) + sizeof(GenlHeader) + align4(alen);
+                if (total > req.size()) return false;
+                abi::nlmsghdr hdr{static_cast<std::uint32_t>(total), type, flags, seq, 0};
+                GenlHeader gh{cmd, 1, 0};
+                abi::rtattr rta{static_cast<unsigned short>(alen), attr_type};
+                std::memcpy(req.data(), &hdr, sizeof(hdr));
+                std::memcpy(req.data() + sizeof(hdr), &gh, sizeof(gh));
+                std::memcpy(req.data() + sizeof(hdr) + sizeof(gh), &rta, sizeof(rta));
+                std::memcpy(req.data() + sizeof(hdr) + sizeof(gh) + sizeof(rta), attr_data.data(), attr_data.size());
+                abi::sockaddr_nl kernel{.nl_family = static_cast<unsigned short>(abi::AF_NETLINK)};
+                if (abi::sendto(fd, req.data(), total, 0, reinterpret_cast<abi::sockaddr const*>(&kernel), sizeof(kernel))
+                    != static_cast<std::ptrdiff_t>(total)) return false;
+
+                std::array<std::uint8_t, 8192> rx{};
+                bool const dump = (flags & abi::NLM_F_DUMP) == abi::NLM_F_DUMP;
+                for (int round = 0; round < 16; ++round) {
+                    abi::pollfd pfd{fd, 1, 0};
+                    if (abi::poll(&pfd, 1, 5) <= 0) return false;
+                    auto n = abi::recvfrom(fd, rx.data(), rx.size(), 0, nullptr, nullptr);
+                    if (n <= 0) return false;
+                    for (std::size_t off = 0, end = static_cast<std::size_t>(n); off + sizeof(abi::nlmsghdr) <= end;) {
+                        abi::nlmsghdr rh{};
+                        std::memcpy(&rh, rx.data() + off, sizeof(rh));
+                        if (rh.nlmsg_len < sizeof(abi::nlmsghdr) || off + rh.nlmsg_len > end) break;
+                        auto payload = std::span<std::uint8_t const>(rx.data() + off + sizeof(abi::nlmsghdr),
+                            rh.nlmsg_len - sizeof(abi::nlmsghdr));
+                        off += align4(rh.nlmsg_len);
+                        if (rh.nlmsg_seq != seq) continue;
+                        if (rh.nlmsg_type == abi::NLMSG_ERROR) return false;
+                        if (rh.nlmsg_type == abi::NLMSG_DONE) return true;
+                        if (payload.size() > sizeof(GenlHeader))
+                            (void)nl::attributes(payload.subspan(sizeof(GenlHeader)), on_attrs);
+                        if (!dump) return true;
+                    }
+                }
+                return false;
+            };
+
+            std::uint16_t nl80211_id = 0;
+            constexpr char family_name[] = "nl80211";
+            (void)exchange(16, static_cast<std::uint16_t>(abi::NLM_F_REQUEST), 3, 1, 2,
+                std::as_bytes(std::span(family_name)), [&](nl::Attribute a) -> std::expected<void, nl::Failure> {
+                    if (a.type == 1 && a.bytes.size() == sizeof(std::uint16_t))
+                        std::memcpy(&nl80211_id, a.bytes.data(), sizeof(nl80211_id));
+                    return {};
+                });
+            if (!nl80211_id) return;
+
+            auto idx_bytes = std::as_bytes(std::span(&ifindex, 1));
+            (void)exchange(nl80211_id, static_cast<std::uint16_t>(abi::NLM_F_REQUEST), 5, 2, 3, idx_bytes,
+                [&](nl::Attribute a) -> std::expected<void, nl::Failure> {
+                    if (a.type == 52 && !ssid) {
+                        std::string_view sv(reinterpret_cast<char const*>(a.bytes.data()), a.bytes.size());
+                        try { ssid = clean_wifi_ssid(sv); } catch (...) {}
+                    }
+                    return {};
+                });
+            (void)exchange(nl80211_id, static_cast<std::uint16_t>(abi::NLM_F_REQUEST | abi::NLM_F_DUMP), 17, 3, 3,
+                idx_bytes, [&](nl::Attribute a) -> std::expected<void, nl::Failure> {
+                    if (a.type == 6 && !bssid && a.bytes.size() == 6) {
+                        MacAddress mac{};
+                        std::memcpy(mac.data(), a.bytes.data(), 6);
+                        if (valid_wifi_bssid(mac)) bssid = mac;
+                    }
+                    return {};
+                });
+        }
+
+        auto read_linux_wifi_wext(std::string_view ifname, std::optional<std::string>& ssid,
+            std::optional<MacAddress>& bssid) noexcept -> void {
+            if (ifname.empty() || ifname.size() > 15) return;
+            int fd = abi::socket(abi::AF_INET, 2 | abi::SOCK_CLOEXEC, 0);
+            if (fd < 0) return;
+            struct FdGuard { int f; ~FdGuard() { if (f >= 0) (void)abi::close(f); } } guard{fd};
+            if (!ssid) {
+                char buf[33]{};
+                WextReq req{};
+                std::memcpy(req.name, ifname.data(), ifname.size());
+                req.u.essid = {buf, 32, 0};
+                if (abi::ioctl(fd, 0x8B1BUL, &req) == 0 && req.u.essid.length > 0 && req.u.essid.length <= 32) {
+                    try { ssid = clean_wifi_ssid({buf, req.u.essid.length}); } catch (...) {}
+                }
+            }
+            if (!bssid) {
+                WextReq req{};
+                std::memcpy(req.name, ifname.data(), ifname.size());
+                if (abi::ioctl(fd, 0x8B15UL, &req) == 0) {
+                    MacAddress mac{};
+                    std::memcpy(mac.data(), req.u.ap.sa_data, 6);
+                    if (valid_wifi_bssid(mac)) bssid = mac;
+                }
+            }
+        }
+
         auto read_route(nl::Message message, std::vector<Route>& routes) -> std::expected<void, nl::Failure> {
             auto header = nl::native<abi::rtmsg>(message.payload);
             if (message.header.nlmsg_type != abi::RTM_NEWROUTE || !header) return nl::fail(nl::Error::protocol);
@@ -284,6 +423,8 @@ namespace platform::network {
                 return std::unexpected(to_monitor_failure(changed.error()));
             }
             if (*changed) continue;
+            for (auto& link : candidate->links)
+                if (link.kind.empty() && is_linux_wireless(link.name)) link.kind = "wlan";
             std::ranges::sort(candidate->links, {}, &Link::index);
             if (std::ranges::adjacent_find(candidate->links, {}, &Link::index) != candidate->links.end())
                 return fail_monitor(MonitorError::protocol);
@@ -298,9 +439,15 @@ namespace platform::network {
                 candidate->default_interface_index = best_route->index;
                 if (auto const* link = candidate->find_link(best_route->index)) {
                     auto kind = infer_network_type(*link);
+                    if (kind == NetworkType::other && is_linux_wireless(link->name)) kind = NetworkType::wifi;
                     candidate->default_network_type = kind;
                     candidate->network_is_expensive = kind == NetworkType::cellular;
                     candidate->network_is_constrained = false;
+                    if (kind == NetworkType::wifi) {
+                        read_linux_wifi_nl80211(link->index, candidate->wifi_ssid, candidate->wifi_bssid);
+                        if (!candidate->wifi_ssid || !candidate->wifi_bssid)
+                            read_linux_wifi_wext(link->name, candidate->wifi_ssid, candidate->wifi_bssid);
+                    }
                 }
             }
             candidate->generation = ++generation_;

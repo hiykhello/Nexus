@@ -44,6 +44,7 @@ export namespace cli {
     [[nodiscard]] auto run_udp_probe(UdpProbeOptions const& opts) -> UdpProbeResult;
     [[nodiscard]] auto serialize_udp_probe_json(UdpProbeResult const& res) -> std::string;
     auto nexus_tools_udp_probe(int argc, char** argv) -> int;
+    auto nexus_tools_fetch(int argc, char** argv) -> int;
 
     auto nexus_generate(int argc, char** argv) -> int;
     auto nexus_tools(int argc, char** argv) -> int;

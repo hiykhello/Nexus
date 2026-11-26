@@ -13,7 +13,8 @@ export namespace config {
     struct OutboundProbeSettings {
         std::string url;
         OutboundProbeMode mode = OutboundProbeMode::http;
-        std::uint32_t interval_ms = 300000, timeout_ms = 5000, tolerance_ms = 0;
+        std::uint32_t interval_ms = 300000, timeout_ms = 5000, tolerance_ms = 0, idle_timeout_ms = 0;
+        std::uint8_t probe_concurrency = 4;
         std::vector<OutboundStatusRange> expected_status;
         std::string ca_file;
         std::string server_name;
@@ -22,7 +23,7 @@ export namespace config {
     struct OutboundSelector {
         OutboundGroupMode mode = OutboundGroupMode::select;
         OutboundProbeSettings probe;
-        bool uses_probe = false, uses_balance = false;
+        bool uses_probe = false, uses_balance = false, interrupt_exist_connections = false;
         std::string name;
         std::vector<std::string> members;
         std::vector<std::string> use_providers;
@@ -36,6 +37,7 @@ export namespace config {
         bool metrics = false;
         bool ipv6 = false;
         std::string dashboard_root;
+        std::vector<std::string> cors_allow_origins;
         auto operator==(ControlHttpConfig const&) const -> bool = default;
     };
 }

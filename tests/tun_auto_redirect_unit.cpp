@@ -114,9 +114,123 @@ routing {{ default-outbound "direct"; }}
         for (auto spec:{"auto-redirect #true","auto-route #true; auto-redirect #true; device-fd 4",
              "auto-route #true; auto-redirect #true; strict-route #false",
              "auto-route #true; auto-redirect #true; connect-ip-outbound \"peer\"",
-             "auto-route #true; auto-redirect #true; route-address-set \"rs\"",
              "auto-route #true; auto-redirect #true; auto-redirect #false","auto-redirect \"true\""})
             check(!parse(spec),spec);
+
+        // Wave 30D: auto-redirect combined with route-address-set, route-address, TPROXY mark, MAC filters, gso
+        auto combined=config::parse_kdl(R"kdl(schema-version 1
+role "client"
+inbound "tun" type="tun" {
+    inet4-address "198.51.100.1/32"
+    inet6-address "2001:db8:1::1/128"
+    auto-route #true
+    auto-redirect #true
+    auto-redirect-tproxy-mark 0x4444
+    auto-redirect-tproxy-port 15444
+    include-mac-address "aa:bb:cc:dd:ee:01"
+    exclude-mac-address "11-22-33-44-55-66"
+    route-address "192.0.2.0/24"
+    route-address "192.0.2.42/24"
+    route-address-set "rs"
+    gso #true
+}
+outbound "direct" type="direct"
+routing {
+    rule-set "rs" format="kdl" path="rs.kdl"
+    default-outbound "direct"
+}
+)kdl");
+        check(combined.has_value(),"auto-redirect + route-address-set + route-address + tproxy-mark + MAC + gso accepted");
+        auto const& ct=*combined->inbounds[0].tun;
+        check(ct.gso && ct.route_includes.size()==1 && ct.route_address_sets.size()==1 &&
+            ct.extra.auto_redirect_tproxy_mark==0x4444u && ct.extra.auto_redirect_tproxy_port==15444u &&
+            ct.extra.include_mac_addresses.size()==1 && ct.extra.include_mac_addresses[0][5]==0x01u &&
+            ct.extra.exclude_mac_addresses.size()==1 && ct.extra.exclude_mac_addresses[0][0]==0x11u,
+            "parsed Wave 30D TUN fields and deduplicated equivalent route-address CIDRs");
+        check(!parse("auto-route #true; include-mac-address \"aa:bb:cc:dd:ee:01\""),"MAC filter requires auto-redirect");
+        check(!parse("auto-route #true; auto-redirect #true; include-mac-address \"bad\""),"invalid MAC rejected");
+        check(!parse("auto-route #true; auto-redirect-tproxy-mark 0x4444"),"tproxy-mark requires auto-redirect");
+        check(!parse("auto-route #true; auto-redirect #true; auto-redirect-tproxy-mark 0"),"zero tproxy-mark rejected");
+        check(!parse("auto-route #true; auto-redirect-tproxy-port 15444"),"tproxy-port requires auto-redirect");
+        check(!parse("auto-route #true; auto-redirect #true; auto-redirect-tproxy-port 0"),"zero tproxy-port rejected");
+
+        // Wave 30D: include-package & mutual exclusion with exclude-package & >64 packages/CIDRs
+        std::string pkgs;
+        for (int i=0;i<80;++i) pkgs+=std::format("include-package \"com.example.app{}\"\n",i);
+        auto inc_pkg=parse(pkgs);
+        check(inc_pkg && inc_pkg->inbounds[0].tun->include_packages.size()==80,"include-package supports >64 up to 256");
+        check(!parse("include-package \"com.example.a\"; exclude-package \"com.example.b\""),"include/exclude-package mutually exclusive");
+        check(!parse("auto-route #true; strict-route #true; include-package \"com.example.a\""),"include-package rejected with strict-route");
+        check(parse("vnet-hdr #true")->inbounds[0].tun->gso,"vnet-hdr alias sets gso");
+
+        // Wave 30D: >64 direct route-address and route-exclude CIDRs + duplicate CIDR deduplication
+        std::string many_cidrs="auto-route #true; strict-route #true\n";
+        for (int i=0;i<90;++i) {
+            many_cidrs+=std::format("route-address \"198.18.{}.0/24\"\n",i);
+            many_cidrs+=std::format("route-exclude \"198.19.{}.0/24\"\n",i);
+        }
+        many_cidrs+="route-address \"198.18.0.0/24\"\nroute-exclude \"198.19.0.5/24\"\n";
+        auto big_cfg=parse(many_cidrs);
+        check(big_cfg && big_cfg->inbounds[0].tun->route_includes.size()==90 &&
+            big_cfg->inbounds[0].tun->route_excludes.size()==90,">64 route-address/route-exclude parsed and deduplicated");
+
+        // Wave 30D: nftables interval sets (>64 excludes + includes), UDP TPROXY lo-order, iiftype ether, atomic replace
+        std::vector<nft::Prefix> big_exc, big_inc;
+        for (int i=0;i<80;++i) {
+            big_exc.push_back({4,24,{198,19,static_cast<std::uint8_t>(i),0}});
+            big_inc.push_back({4,24,{198,18,static_cast<std::uint8_t>(i),0}});
+        }
+        std::array<std::array<std::uint8_t,6>,1> inc_mac{{{0xaa,0xbb,0xcc,0xdd,0xee,0x01}}};
+        std::array<std::array<std::uint8_t,6>,1> exc_mac{{{0x11,0x22,0x33,0x44,0x55,0x66}}};
+        nft::Redirect full_rd{
+            .port=32123,.ipv4=true,.ipv6=true,.intercept_dns=true,.socket_mark=42,
+            .excludes=big_exc,.includes=big_inc,.tproxy_mark=0x4444u,.tproxy_port=15444u,
+            .include_macs=inc_mac,.exclude_macs=exc_mac
+        };
+        auto enc_full=nft::encode("nexus_auto_redirect_w30d",&full_rd,129,false);
+        check(enc_full.has_value(),"encode full Wave 30D nftables");
+        auto full_cmds=commands(*enc_full);
+        check(std::ranges::count(full_cmds,0xa09)==2,"NEWSET emitted for excl_v4 and incl_v4");
+        check(std::ranges::count(full_cmds,0xa0c)>=2,"NEWSETELEM emitted for interval sets");
+        check(std::ranges::count(full_cmds,0xa03)==4,"4 chains emitted (output, prerouting, tproxy_output, tproxy_prerouting)");
+        auto has_bytes=[](std::span<std::uint8_t const> hay, std::string_view needle) {
+            auto n=std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(needle.data()),needle.size());
+            return std::ranges::search(hay,n).begin()!=hay.end();
+        };
+        check(has_bytes(enc_full->bytes,"lookup") && has_bytes(enc_full->bytes,"tproxy") &&
+            has_bytes(enc_full->bytes,"incl_v4") && has_bytes(enc_full->bytes,"excl_v4"),
+            "nftables encodes lookup sets and tproxy expressions");
+        check(std::ranges::search(enc_full->bytes,inc_mac[0]).begin()!=enc_full->bytes.end() &&
+            std::ranges::search(enc_full->bytes,exc_mac[0]).begin()!=enc_full->bytes.end(),
+            "nftables encodes include/exclude Ethernet MAC bytes");
+        // Verify tproxy_prerouting places marked loopback tproxy rule BEFORE iifname=="lo" bypass, and MAC rules guard with iiftype==ARPHRD_ETHER
+        std::size_t tp_lo_divert=999, tp_lo_bypass=999, tp_idx=0;
+        bool saw_iiftype_guard=false;
+        constexpr std::array<std::uint8_t,16> lo_name{'l','o'};
+        constexpr std::array<std::uint8_t,4> iiftype_attr{0,0,0,8}; // NFT_META_IIFTYPE (NFT_META_IFTYPE == 8) big-endian u32
+        for (std::size_t pos=0;pos<enc_full->bytes.size();) {
+            auto msg=std::span(enc_full->bytes).subspan(pos);
+            auto size=read<std::uint32_t>(msg,0);
+            auto type=read<std::uint16_t>(msg,4);
+            auto body=msg.first(size);
+            if (type==0xa06 && has_bytes(body,"tproxy_prerouting")) {
+                bool is_tp=has_bytes(body,std::string_view("tproxy\0",7));
+                bool is_lo=std::ranges::search(body,lo_name).begin()!=body.end();
+                if (is_tp && is_lo && tp_lo_divert==999) tp_lo_divert=tp_idx;
+                if (!is_tp && is_lo && tp_lo_bypass==999) tp_lo_bypass=tp_idx;
+                if (std::ranges::search(body,inc_mac[0]).begin()!=body.end() &&
+                    std::ranges::search(body,iiftype_attr).begin()!=body.end()) saw_iiftype_guard=true;
+                ++tp_idx;
+            }
+            pos+=size;
+        }
+        check(tp_lo_divert<tp_lo_bypass,"tproxy_prerouting marked-lo tproxy precedes iifname==lo bypass");
+        check(saw_iiftype_guard,"include_macs rule includes meta iiftype ether guard");
+        auto enc_repl=nft::encode("nexus_auto_redirect_w30d",&full_rd,129,true);
+        check(enc_repl.has_value(),"encode atomic replace nftables");
+        auto repl_cmds=commands(*enc_repl);
+        check(repl_cmds.size()>3 && repl_cmds[1]==0xa02 && repl_cmds[2]==0xa00,
+            "atomic replace emits DELTABLE then NEWTABLE in one batch");
 
         // FakeIP IPv4 CIDR validation rejects /31 and /32 while accepting /30
         auto parse_fakeip=[](std::string_view cidr) {

@@ -357,6 +357,22 @@ namespace config {
         }
         if (!policy::dependency_order(nodes,dependencies))
             return std::unexpected("outbound or DNS dependency cycle (detour, DNS server or policy view)");
+        std::vector<policy::DependencyEdge> inbound_edges;
+        for (std::size_t i=0;i<config.inbounds.size();++i) {
+            auto const& detour=config.inbounds[i].listen.detour;
+            if (!detour) continue;
+            auto target=std::ranges::find(config.inbounds,*detour,&InboundConfig::name);
+            if (target==config.inbounds.end())
+                return std::unexpected("unknown inbound detour target: "+*detour);
+            auto idx=static_cast<std::size_t>(target-config.inbounds.begin());
+            if (idx==i) return std::unexpected("inbound cannot detour to itself: "+*detour);
+            if (target->type==Inbound::tun)
+                return std::unexpected("inbound detour target cannot be a TUN inbound: "+*detour);
+            config.inbounds[i].detour_index=idx;
+            inbound_edges.push_back({i,idx});
+        }
+        if (!inbound_edges.empty() && !policy::dependency_order(config.inbounds.size(),inbound_edges))
+            return std::unexpected("inbound detour cycle");
         return {};
     }
 }

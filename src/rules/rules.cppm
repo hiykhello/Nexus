@@ -25,15 +25,16 @@ export namespace rules {
     private:
         enum class Kind {
             suffix, domain, keyword, wildcard, inbound, auth_user, process_name, process_path,
-            domain_regex, process_path_regex, source_interface, ip, source_ip, ip_version,
+            domain_regex, process_path_regex, package_name_regex, source_interface, ip, source_ip, ip_version,
             ip_is_private, source_private, ip_is_cgnat, source_cgnat, ip_accept_any, source_ip_accept_any,
             port, source_port, source_uid, source_gid, source_user, package_name,
             network, network_type, network_is_expensive, network_is_constrained,
-            wifi_ssid, wifi_bssid, default_interface_ip,
+            wifi_ssid, wifi_bssid, default_interface_ip, network_interface_ip,
             query_type, protocol, client, tls_ech, dscp, source_mac, gateway_mac, route_mode,
             all, any, negate
         };
         struct IpPredicate { std::array<std::uint8_t, 16> address; unsigned prefix, family; };
+        struct NetworkInterfaceIp { std::array<std::uint8_t, 16> address; std::uint8_t prefix, family; NetworkType type; };
         struct PortPredicate { std::uint16_t first, last; };
         struct ChildRange { std::uint32_t first, count, any_index = std::numeric_limits<std::uint32_t>::max(); };
         struct Entry {
@@ -41,6 +42,7 @@ export namespace rules {
             // Only trivial payloads share storage; kind selects the active one.
             union {
                 IpPredicate ip{};
+                NetworkInterfaceIp net_if_ip;
                 PortPredicate port;
                 Network network;
                 Protocol protocol;
@@ -100,6 +102,7 @@ export namespace rules {
         std::shared_ptr<MmapMatcher const> mmap_;
         [[nodiscard]] static auto text_rule_kind(std::string_view type) noexcept -> std::optional<Kind>;
         [[nodiscard]] static auto parse_cidr_entry(std::string_view value) noexcept -> IpPredicate;
+        [[nodiscard]] static auto parse_net_if_cidr(std::string_view value) noexcept -> NetworkInterfaceIp;
         [[nodiscard]] static auto prepare(MatchInput) -> std::expected<Prepared, Error>;
         [[nodiscard]] auto evaluate(std::size_t, Prepared const&) const noexcept -> Truth;
         [[nodiscard]] static auto eval_mmap(MmapMatcher const&, Matcher const*, Prepared const&, bool) noexcept -> Truth;

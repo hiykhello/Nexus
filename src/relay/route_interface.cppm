@@ -132,6 +132,28 @@ namespace relay {
 #endif
         return snapshot;
     }
+    export struct GroupTagMap {
+        std::vector<std::string> selector_names;
+        std::vector<std::optional<std::size_t>> indexed_rule_groups;
+        std::vector<std::optional<std::size_t>> ordered_rule_groups;
+        std::optional<std::size_t> default_group;
+        std::vector<std::optional<std::size_t>> unique_outbound_group;
+
+        [[nodiscard]] auto resolve(bool ordered, std::optional<std::size_t> rule, std::size_t outbound) const noexcept
+            -> std::optional<std::size_t> {
+            if (rule) {
+                auto const& vec = ordered ? ordered_rule_groups : indexed_rule_groups;
+                if (*rule < vec.size() && vec[*rule]) return vec[*rule];
+            } else if (default_group) {
+                return default_group;
+            }
+            if (outbound < unique_outbound_group.size()) return unique_outbound_group[outbound];
+            return {};
+        }
+        [[nodiscard]] auto name(std::size_t idx) const noexcept -> std::string_view {
+            return idx < selector_names.size() ? std::string_view(selector_names[idx]) : std::string_view{};
+        }
+    };
     export struct RouteSnapshot {
         rules::RouteMatcher matcher;
         std::optional<OrderedTcpPolicy> ordered;
@@ -140,6 +162,7 @@ namespace relay {
         std::optional<std::bitset<256>> tunnel_references{};
         std::shared_ptr<dns::detail::TransportSnapshot const> dns_transports;
         std::shared_ptr<DnsRuntimeSnapshot const> dns_runtime{};
+        std::shared_ptr<GroupTagMap const> group_tags{};
         bool dns_disabled = false;
     };
     export using RouteSnapshots = utility::atomic_shared_ptr<std::vector<RouteSnapshot> const>;

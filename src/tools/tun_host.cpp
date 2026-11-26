@@ -65,6 +65,8 @@ import corosio;
 namespace cli::tun_enabled {
     namespace {
         using Clock = std::chrono::steady_clock;
+        std::mutex g_active_tun_mutex;
+        std::unordered_map<relay::Server const*, TunHost*> g_active_tun_hosts;
     }
 
     struct TunHost::Impl {
@@ -158,7 +160,7 @@ namespace cli::tun_enabled {
         std::atomic_bool stop_flag{false}, draining_flag{false}, failed_flag{false};
         std::atomic<std::size_t> active_flows{0};
         std::optional<std::string> failure_msg;
-        std::mutex failure_mutex;
+        std::mutex failure_mutex, policy_mutex;
         std::thread worker;
 
         Impl(relay::Server& src, config::TunInbound opts,bool supervised)
@@ -268,32 +270,23 @@ namespace cli::tun_enabled {
             auto filtering=udp::Filtering::address_port_dependent;
             if (cfg.udp_filtering==config::TunUdpFiltering::address_dependent) filtering=udp::Filtering::address_dependent;
             if (cfg.udp_filtering==config::TunUdpFiltering::endpoint_independent) filtering=udp::Filtering::endpoint_independent;
-            udp::RetirementHandler r4{this, [](void* ctx, udp::FlowId id) noexcept {
-                auto* h = static_cast<Impl*>(ctx);
-                if (auto it = h->udp4_direct.find(id); it != h->udp4_direct.end())
-                    h->events.unwatch_udp(it->second->socket.native_handles());
-                h->udp4_direct.erase(id);
+            auto make_retire = [this]<bool V6>() noexcept -> udp::RetirementHandler {
+                return {this, [](void* ctx, udp::FlowId id) noexcept {
+                    auto* h = static_cast<Impl*>(ctx);
+                    auto& dir = [&]() -> auto& { if constexpr (V6) return h->udp6_direct; else return h->udp4_direct; }();
+                    auto& prx = [&]() -> auto& { if constexpr (V6) return h->udp6_proxy; else return h->udp4_proxy; }();
+                    if (auto it = dir.find(id); it != dir.end()) h->events.unwatch_udp(it->second->socket.native_handles());
+                    dir.erase(id);
 #ifdef NEXUS_ENABLE_FAKEIP
-                if (auto it = h->udp4_aliases.find(id); it != h->udp4_aliases.end())
-                    h->events.unwatch_udp(it->second->socket.native_handles());
-                TunFakeIpOps::retire_udp_alias(h->udp4_aliases,id);
+                    auto& ali = [&]() -> auto& { if constexpr (V6) return h->udp6_aliases; else return h->udp4_aliases; }();
+                    if (auto it = ali.find(id); it != ali.end()) h->events.unwatch_udp(it->second->socket.native_handles());
+                    TunFakeIpOps::retire_udp_alias(ali, id);
 #endif
-                if (auto it = h->udp4_proxy.find(id); it != h->udp4_proxy.end())
-                    for (auto const& flow:it->second) { flow->failed=true; flow->work.set(); flow->tunnel->cancel(); }
-            }};
-            udp::RetirementHandler r6{this, [](void* ctx, udp::FlowId id) noexcept {
-                auto* h = static_cast<Impl*>(ctx);
-                if (auto it = h->udp6_direct.find(id); it != h->udp6_direct.end())
-                    h->events.unwatch_udp(it->second->socket.native_handles());
-                h->udp6_direct.erase(id);
-#ifdef NEXUS_ENABLE_FAKEIP
-                if (auto it = h->udp6_aliases.find(id); it != h->udp6_aliases.end())
-                    h->events.unwatch_udp(it->second->socket.native_handles());
-                TunFakeIpOps::retire_udp_alias(h->udp6_aliases,id);
-#endif
-                if (auto it = h->udp6_proxy.find(id); it != h->udp6_proxy.end())
-                    for (auto const& flow:it->second) { flow->failed=true; flow->work.set(); flow->tunnel->cancel(); }
-            }};
+                    if (auto it = prx.find(id); it != prx.end())
+                        for (auto const& flow : it->second) { flow->failed = true; flow->work.set(); flow->tunnel->cancel(); }
+                }};
+            };
+            auto r4 = make_retire.template operator()<false>(), r6 = make_retire.template operator()<true>();
             udp::Limits ul{cfg.tcp_flows, 32, cfg.udp_idle_ms};
             auto reply_mtu=cfg.udp_reply_fragment ? std::size_t{65575} : cfg.mtu;
             if (cfg.udp_reply_fragment && !udp_reply_fragments.seed())
@@ -308,11 +301,7 @@ namespace cli::tun_enabled {
         auto start_bridge(std::shared_ptr<platform::ExternalTunBridge> bridge) -> std::expected<std::string,std::string> {
             if (stop_flag.load(std::memory_order_acquire) || std::exchange(start_attempted,true))
                 return std::unexpected("TUN startup already attempted");
-            struct Rollback {
-                Impl& host;
-                bool started=false;
-                ~Rollback() {if (!started) host.stop();}
-            } rollback{*this};
+            struct Rollback { Impl& host; bool started=false; ~Rollback() {if (!started) host.stop();} } rollback{*this};
             routing.inherit_routing(parent, 0, 1, cfg.socket_mark);
             if (auto ok=routing.prepare_routing(1,false);!ok) return std::unexpected(ok.error().message());
             if (auto ok=routing.activate_context();!ok) return std::unexpected(ok.error().message());
@@ -321,22 +310,15 @@ namespace cli::tun_enabled {
             if (auto err = init_engines_and_spawn(); !err) return std::unexpected(err.error());
             bridge_handle = std::move(bridge);
             events.start(routing.executor_context(), -1);
-            bridge_handle->set_wake_callback([](void* ctx) noexcept {
-                static_cast<TunEventWait*>(ctx)->notify_async();
-            }, &events);
+            bridge_handle->set_wake_callback([](void* ctx) noexcept { static_cast<TunEventWait*>(ctx)->notify_async(); }, &events);
             worker = std::thread([this] { pump_loop(); });
             rollback.started=true;
             return *started;
         }
-
         auto start(std::optional<packet::PlatformTun> supplied={}) -> std::expected<std::string,std::string> {
             if (stop_flag.load(std::memory_order_acquire) || std::exchange(start_attempted,true))
                 return std::unexpected("TUN startup already attempted");
-            struct Rollback {
-                Impl& host;
-                bool started=false;
-                ~Rollback() {if (!started) host.stop();}
-            } rollback{*this};
+            struct Rollback { Impl& host; bool started=false; ~Rollback() {if (!started) host.stop();} } rollback{*this};
 #if defined(__linux__)
             if (supplied && (supplied->native_handle()<0 || cfg.inet4_address || cfg.inet6_address ||
                 cfg.auto_route || cfg.strict_route || (!cfg.interface_name.empty() && cfg.interface_name!=supplied->name())))
@@ -385,7 +367,9 @@ namespace cli::tun_enabled {
             try {
                 while (!stop_flag.load(std::memory_order_acquire)) {
                     if ((device.has_policy_health() || cfg.auto_redirect) && Clock::now() >= next_policy_check) {
-                        if (!device.check_policy_health() || (cfg.auto_redirect && !routing.healthy())) {
+                        bool policy_ok = true;
+                        { std::lock_guard lock(policy_mutex); policy_ok = device.check_policy_health(); }
+                        if (!policy_ok || (cfg.auto_redirect && !routing.healthy())) {
                             record_failure("TUN strict-route policy changed");
                             break;
                         }
@@ -438,13 +422,9 @@ namespace cli::tun_enabled {
                         events.drain_wake();
                     }
                 }
-            } catch (std::bad_alloc const&) {
-                record_failure("TUN out of memory");
-            } catch (std::exception const& ex) {
-                record_failure(std::string("TUN runtime error: ") + ex.what());
-            } catch (...) {
-                record_failure("TUN unexpected error");
-            }
+            } catch (std::bad_alloc const&) { record_failure("TUN out of memory"); }
+            catch (std::exception const& ex) { record_failure(std::string("TUN runtime error: ") + ex.what()); }
+            catch (...) { record_failure("TUN unexpected error"); }
             active_flows.store(0, std::memory_order_release);
             for (auto& [id, s] : tcp4_flows) { s->closed = true; s->wake(); }
             for (auto& [id, s] : tcp6_flows) { s->closed = true; s->wake(); }
@@ -452,25 +432,23 @@ namespace cli::tun_enabled {
                 for (auto& [id,slots]:*flows)
                     for (auto const& flow:slots) { flow->failed=true; flow->work.set(); flow->tunnel->cancel(); }
             if (bridge_handle) bridge_handle->set_wake_callback(nullptr, nullptr);
-            events.stop();
-            routing.stop();
+            events.stop(); routing.stop();
 #ifdef NEXUS_ENABLE_FAKEIP
-            udp4_aliases.clear();
-            udp6_aliases.clear();
+            udp4_aliases.clear(); udp6_aliases.clear();
 #endif
-            udp_replies.clear();
-            udp4_direct.clear(); udp6_direct.clear();
+            udp_replies.clear(); udp4_direct.clear(); udp6_direct.clear();
             release_device();
         }
-
         auto release_device() noexcept -> void {
-            std::string err;
-            bool had = failed_flag.load(std::memory_order_acquire);
+            std::string err; bool had = failed_flag.load(std::memory_order_acquire);
             device.release(err, had);
-            if (!err.empty() && !failed_flag.load(std::memory_order_acquire))
-                record_failure(std::move(err));
+            if (!err.empty() && !failed_flag.load(std::memory_order_acquire)) record_failure(std::move(err));
         }
-
+        auto update_route_sets(config::TunInbound const& next_tun) -> std::expected<void, std::string> {
+            std::lock_guard lock(policy_mutex);
+            if (stop_flag.load(std::memory_order_acquire)) return std::unexpected("TUN host is stopping");
+            return device.update_route_sets(next_tun);
+        }
         auto stop() noexcept -> void {
             stop_flag.store(true, std::memory_order_release);
             if (bridge_handle) bridge_handle->set_wake_callback(nullptr, nullptr);
@@ -479,21 +457,42 @@ namespace cli::tun_enabled {
             else { events.stop(); routing.stop(); release_device(); }
         }
     };
-
     TunHost::TunHost(relay::Server& src, config::TunInbound opts, bool supervised, packet::TunRedirectOptions redirect)
         : impl_(std::make_unique<Impl>(src, std::move(opts), supervised)) { impl_->redirect = redirect; }
     TunHost::~TunHost() { stop(); }
-    auto TunHost::start() -> std::expected<std::string, std::string> { return impl_->start(); }
-    auto TunHost::start(packet::PlatformTun device) -> std::expected<std::string, std::string> { return impl_->start(std::move(device)); }
+    auto TunHost::start() -> std::expected<std::string, std::string> {
+        auto r = impl_->start();
+        if (r) { std::lock_guard lock(g_active_tun_mutex); g_active_tun_hosts[&impl_->parent] = this; }
+        return r;
+    }
+    auto TunHost::start(packet::PlatformTun device) -> std::expected<std::string, std::string> {
+        auto r = impl_->start(std::move(device));
+        if (r) { std::lock_guard lock(g_active_tun_mutex); g_active_tun_hosts[&impl_->parent] = this; }
+        return r;
+    }
     auto TunHost::start(std::shared_ptr<platform::ExternalTunBridge> bridge) -> std::expected<std::string, std::string> {
-        return impl_->start_bridge(std::move(bridge));
+        auto r = impl_->start_bridge(std::move(bridge));
+        if (r) { std::lock_guard lock(g_active_tun_mutex); g_active_tun_hosts[&impl_->parent] = this; }
+        return r;
     }
     auto TunHost::healthy() const noexcept -> bool { return !impl_->failed_flag.load(std::memory_order_acquire); }
     auto TunHost::queue_outbound_probe(std::shared_ptr<relay::OutboundProbe> probe) -> bool { return impl_->routing.queue_outbound_probe(std::move(probe)); }
     auto TunHost::failure() const -> std::optional<std::string> { std::lock_guard lock(impl_->failure_mutex); return impl_->failure_msg; }
+    auto TunHost::update_route_sets(config::TunInbound const& next_tun) -> std::expected<void, std::string> { return impl_ ? impl_->update_route_sets(next_tun) : std::unexpected("TUN host not initialized"); }
     auto TunHost::begin_drain() noexcept -> void { if (impl_) impl_->draining_flag.store(true, std::memory_order_release); }
-    auto TunHost::drained() const noexcept -> bool {
-        return !impl_ || !impl_->worker.joinable() || impl_->active_flows.load(std::memory_order_acquire) == 0;
+    auto TunHost::drained() const noexcept -> bool { return !impl_ || !impl_->worker.joinable() || impl_->active_flows.load(std::memory_order_acquire) == 0; }
+    auto TunHost::stop() noexcept -> void {
+        if (impl_) {
+            { std::lock_guard lock(g_active_tun_mutex); if (auto it = g_active_tun_hosts.find(&impl_->parent); it != g_active_tun_hosts.end() && it->second == this) g_active_tun_hosts.erase(it); }
+            impl_->stop();
+        }
     }
-    auto TunHost::stop() noexcept -> void { if (impl_) impl_->stop(); }
+    auto update_active_tun_host_route_sets(relay::Server const* server, config::TunInbound const& next_tun) -> std::expected<bool, std::string> {
+        std::lock_guard lock(g_active_tun_mutex);
+        auto it = g_active_tun_hosts.find(server);
+        if (it == g_active_tun_hosts.end() || !it->second) return false;
+        auto ok = it->second->update_route_sets(next_tun);
+        if (!ok) return std::unexpected(std::move(ok.error()));
+        return true;
+    }
 }

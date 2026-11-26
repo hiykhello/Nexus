@@ -30,6 +30,10 @@ export namespace cli {
         auto begin_drain() noexcept -> void;
         auto drained() noexcept -> bool;
         auto checkpoint() noexcept -> void;
+        auto clear_live_cache() noexcept -> void;
+#ifdef NEXUS_ENABLE_FAKEIP
+        auto flush_fakeip_unpinned() noexcept -> std::optional<std::size_t>;
+#endif
         auto reclaim_memory(bool hard) noexcept -> void;
         auto stop() noexcept -> void;
     };

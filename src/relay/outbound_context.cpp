@@ -136,6 +136,7 @@ namespace relay {
         if(!session.tunnel)co_return PacketConnectResult::failed;
         auto result=co_await session.tunnel->connect_until(target,deadline);
         if(result==TunnelConnectResult::connected && !session.closed)co_return PacketConnectResult::connected;
+        if(!session.closed) session.record_dial_failure(outbound);
         session.tunnel->cancel();
         session.tunnel={};
         if(result==TunnelConnectResult::timeout)co_return PacketConnectResult::timeout;

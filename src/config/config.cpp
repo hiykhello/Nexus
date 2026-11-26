@@ -20,6 +20,7 @@ namespace config {
     auto parse_dns(g::KdlNode const&) -> std::expected<DnsRouting,std::string>;
     auto parse_tcp_dial_option(g::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
     auto parse_direct_dial(g::KdlNode const&,Config&) -> std::expected<void,std::string>;
+    auto apply_routing_defaults(Config&) -> std::expected<void,std::string>;
     auto parse_trojan_inbound(g::KdlNode const&) -> std::expected<InboundConfig,std::string>;
     auto parse_trojan_outbound(g::KdlNode const&) -> std::expected<TrojanOutbound,std::string>;
     auto validate_trojan(Config&,std::string_view,std::optional<std::string> const&) -> std::expected<void,std::string>;
@@ -203,6 +204,7 @@ namespace config {
                         return tun_endpoints_overlap(entry.tun,parsed_inbound.tun_inbound);
                     if (!entry.unix_path.empty() || !parsed_inbound.unix_path.empty())
                         return entry.unix_path==parsed_inbound.unix_path;
+                    if (entry.listen.netns!=parsed_inbound.listen.netns) return false;
                     if (entry.port!=*port || entry.listen_ipv6!=parsed_inbound.listen_ipv6) return false;
                     auto left_tcp=uses_tcp(entry.type,entry.naive,entry.http,entry.transparent_udp);
                     auto left_udp=uses_udp(entry.type,entry.naive,entry.http,entry.transparent_udp);
@@ -217,13 +219,13 @@ namespace config {
                 entry.unix_path=std::move(parsed_inbound.unix_path);
                 entry.udp_advertise_ip=parsed_inbound.udp_advertise_ip;
                 entry.naive=std::move(parsed_inbound.naive_inbound);
-                entry.http=std::move(parsed_inbound.http_inbound);
+                entry.http=std::move(parsed_inbound.http_inbound); entry.listen=std::move(parsed_inbound.listen);
                 if (auto limits=parse_user_limits(entry,limit); !limits)
                     return std::unexpected(limits.error());
                 if (!inbound_seen) {
                     result.port=*port; result.inbound=result.inbounds.back().type;
                     result.listen_ipv6=result.inbounds.back().listen_ipv6;
-                    result.password_auth=result.inbounds.back().password_auth;
+                    result.password_auth=result.inbounds.back().password_auth; result.listen=result.inbounds.back().listen;
                 }
                 inbound_seen = true;
             } else if (node.name == "outbound") {
@@ -408,6 +410,8 @@ namespace config {
             auto const& ctx=*static_cast<RefCheck const*>(p);
             return referenced_outbound(ctx.cfg,ctx.r,n);
         },&ref_ctx); !valid) return std::unexpected(valid.error());
+        result.defaults=std::move(route->defaults);
+        if (auto applied=apply_routing_defaults(result); !applied) return std::unexpected(applied.error());
         auto outbound=[&](std::string const& name) -> std::optional<std::size_t> {
             return outbound_index(result,*direct,block,name);
         };

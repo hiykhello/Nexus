@@ -11,8 +11,87 @@ import control_api;
 import control_api.types;
 import platform.network_state;
 import relay;
+import rules;
 
 export namespace cli::run_detail {
+    inline auto ordered_action_name(config::OrderedTcpAction action) noexcept -> std::string_view {
+        switch (action) {
+        case config::OrderedTcpAction::sniff: return "sniff";
+        case config::OrderedTcpAction::resolve: return "resolve";
+        case config::OrderedTcpAction::route: return "route";
+        case config::OrderedTcpAction::reject: return "reject";
+        case config::OrderedTcpAction::route_options: return "route-options";
+        case config::OrderedTcpAction::hijack_dns: return "hijack-dns";
+        case config::OrderedTcpAction::bypass: return "bypass";
+        }
+        return "route";
+    }
+
+    inline auto summarize_rule_predicate(rules::Rule const& rule) -> std::string {
+        if (rule.children.empty())
+            return rule.value.empty() ? rule.type : std::format("{}={}", rule.type, rule.value);
+        std::string out = rule.type + "(";
+        for (std::size_t i = 0; i < rule.children.size() && i < 4; ++i) {
+            if (i) out += ", ";
+            out += summarize_rule_predicate(rule.children[i]);
+        }
+        if (rule.children.size() > 4) out += std::format(", +{} more", rule.children.size() - 4);
+        out.push_back(')');
+        return out;
+    }
+
+    inline auto build_rules_snapshot(config::Config const& cfg) -> std::vector<control_api::RuleMetric> {
+        std::vector<control_api::RuleMetric> out;
+        auto default_target = cfg.default_outbound_name.empty()
+            ? (cfg.default_outbound == 1 ? std::string("block") : cfg.direct_outbound_name)
+            : cfg.default_outbound_name;
+        if (cfg.ordered_tcp) {
+            out.reserve(cfg.ordered_tcp->rules.size() + 1);
+            for (std::size_t i = 0; i < cfg.ordered_tcp->rules.size(); ++i) {
+                auto const& r = cfg.ordered_tcp->rules[i];
+                control_api::RuleMetric rm{};
+                rm.index = i + 1;
+                rm.action = std::string(ordered_action_name(r.action));
+                if (r.outbound_name) rm.target = *r.outbound_name;
+                else if (r.action == config::OrderedTcpAction::reject) rm.target = "reject";
+                else if (r.action == config::OrderedTcpAction::hijack_dns) rm.target = "dns";
+                if (r.set_tag) {
+                    rm.type = "rule-set";
+                    rm.summary = "rule-set=" + *r.set_tag;
+                } else if (!r.predicates.rules.empty()) {
+                    rm.type = r.predicates.rules.front().type;
+                    rm.summary = summarize_rule_predicate(r.predicates.rules.front());
+                } else {
+                    rm.type = "match-all";
+                    rm.summary = "any";
+                }
+                if (r.domain != config::OrderedTcpDomain::explicit_target) {
+                    auto const* src = r.domain == config::OrderedTcpDomain::fakeip ? "fakeip"
+                        : (r.domain == config::OrderedTcpDomain::reverse_dns ? "reverse" : "sniffed");
+                    rm.summary += std::format(" domain-source={}", src);
+                }
+                if (rm.summary.size() > 192) { rm.summary.resize(189); rm.summary += "..."; }
+                out.push_back(std::move(rm));
+            }
+            out.push_back({cfg.ordered_tcp->rules.size() + 1, "final",
+                cfg.default_outbound == 1 ? "reject" : "route", default_target, "default-outbound"});
+            return out;
+        }
+        out.reserve(cfg.routes.size() + 1);
+        for (std::size_t i = 0; i < cfg.routes.size(); ++i) {
+            auto const& r = cfg.routes[i];
+            auto target = r.outbound_name.empty()
+                ? (r.outbound == 1 ? std::string("block") : cfg.direct_outbound_name)
+                : r.outbound_name;
+            auto summary = !r.file.path.empty() ? r.file.path
+                : (!r.file.url.empty() ? r.file.url : std::string("inline"));
+            out.push_back({i + 1, "rule-set", r.outbound == 1 ? "reject" : "route", std::move(target), std::move(summary)});
+        }
+        out.push_back({cfg.routes.size() + 1, "final",
+            cfg.default_outbound == 1 ? "reject" : "route", std::move(default_target), "default-outbound"});
+        return out;
+    }
+
     template<class Listeners>
     auto build_control_api_snapshot(
         Listeners const& listeners,
@@ -31,6 +110,7 @@ export namespace cli::run_detail {
         bool need_listeners = control_api::has_field(fields, control_api::SnapshotFields::listeners);
         bool need_connections = control_api::has_field(fields, control_api::SnapshotFields::connections);
         bool need_groups = control_api::has_field(fields, control_api::SnapshotFields::groups);
+        bool need_rules = control_api::has_field(fields, control_api::SnapshotFields::rules);
         if (need_meta) {
             if (route_mode) {
                 snap.route_mode = std::string(route_mode->mode_name());
@@ -105,6 +185,7 @@ export namespace cli::run_detail {
                 snap.groups.push_back(std::move(gm));
             }
         }
+        if (need_rules && running) snap.rules = build_rules_snapshot(*running);
         return snap;
     }
 }

@@ -25,10 +25,12 @@ namespace platform::nftables {
             reinterpret_cast<sockaddr const*>(&kernel),sizeof kernel);
         if (sent<0) return error();
         if (static_cast<std::size_t>(sent)!=request.bytes.size()) return std::make_error_code(std::errc::io_error);
-        std::bitset<512> acknowledgements;
         auto first=sequence_;
         sequence_=request.end;
-        auto remaining=sequence_-first-2;
+        auto span_len=sequence_-first;
+        if (span_len<2) return std::make_error_code(std::errc::protocol_error);
+        std::vector<std::uint8_t> acknowledgements(span_len,0);
+        auto remaining=span_len-2;
         while (Clock::now()<deadline) {
             auto delay=std::chrono::ceil<std::chrono::milliseconds>(deadline-Clock::now()).count();
             pollfd descriptor{socket_,POLLIN,0};
@@ -63,8 +65,8 @@ namespace platform::nftables {
                     std::memcpy(&ack,buffer.data()+offset+NLMSG_HDRLEN,sizeof ack);
                     if (ack.error) return {-ack.error,std::generic_category()};
                     auto index=header.nlmsg_seq-first;
-                    if (index && index<sequence_-first-1 && !acknowledgements.test(index)) {
-                        acknowledgements.set(index);
+                    if (index && index<span_len-1 && !acknowledgements[index]) {
+                        acknowledgements[index]=1;
                         --remaining;
                     }
                 }
@@ -81,10 +83,13 @@ namespace platform::nftables {
         std::array<std::uint64_t,2> token{};
         if (auto random=secure_random(std::as_writable_bytes(std::span(token)));!random) return random.error();
         name_=std::format("nexus_auto_redirect_{:016x}{:016x}",token[0],token[1]);
-        auto messages=encode(name_,&redirect,sequence_);
+        auto messages=encode(name_,&redirect,sequence_,false);
         if (!messages) return messages.error();
         socket_=::socket(AF_NETLINK,SOCK_RAW|SOCK_NONBLOCK|SOCK_CLOEXEC,NETLINK_NETFILTER);
         if (socket_<0) return error();
+        int buf_sz=4*1024*1024;
+        (void)::setsockopt(socket_,SOL_SOCKET,SO_SNDBUF,&buf_sz,sizeof buf_sz);
+        (void)::setsockopt(socket_,SOL_SOCKET,SO_RCVBUF,&buf_sz,sizeof buf_sz);
         sockaddr_nl local{.nl_family=AF_NETLINK};
         if (::bind(socket_,reinterpret_cast<sockaddr*>(&local),sizeof local)<0) {
             auto ec=error(); close_socket(); return ec;
@@ -93,6 +98,13 @@ namespace platform::nftables {
         if (result) { close_socket(); owned_=false; return result; }
         owned_=true;
         return {};
+    }
+
+    auto Table::replace(Redirect const& redirect,Clock::time_point deadline) -> std::error_code {
+        if (!owned_ || socket_<0) return std::make_error_code(std::errc::not_connected);
+        auto messages=encode(name_,&redirect,sequence_,true);
+        if (!messages) return messages.error();
+        return exchange(*messages,deadline);
     }
 
     auto Table::stop(Clock::time_point deadline) -> std::error_code {

@@ -26,8 +26,12 @@ export namespace cli::tun_enabled {
         [[nodiscard]] auto healthy() const noexcept -> bool;
         [[nodiscard]] auto queue_outbound_probe(std::shared_ptr<relay::OutboundProbe>) -> bool;
         [[nodiscard]] auto failure() const -> std::optional<std::string>;
+        [[nodiscard]] auto update_route_sets(config::TunInbound const& next_tun) -> std::expected<void, std::string>;
         auto begin_drain() noexcept -> void;
         [[nodiscard]] auto drained() const noexcept -> bool;
         auto stop() noexcept -> void;
     };
+
+    [[nodiscard]] auto update_active_tun_host_route_sets(relay::Server const* server,
+        config::TunInbound const& next_tun) -> std::expected<bool, std::string>;
 }

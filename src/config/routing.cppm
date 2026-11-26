@@ -6,6 +6,7 @@ import config;
 import config.kdl_common;
 import config.rule_set_parse;
 import platform.ip_address;
+import platform.socket_options;
 import rules;
 import rules.kdl_predicate;
 
@@ -42,6 +43,7 @@ export namespace config::routing_detail {
         std::optional<std::string> default_outbound;
         std::optional<std::string> default_http_client;
         std::optional<PendingOrderedTcp> ordered_tcp;
+        RoutingDefaults defaults{};
     };
 
     inline auto referenced_outbound(Config const& config, Route const& route, std::string_view name) -> bool {
@@ -103,8 +105,84 @@ export namespace config::routing_detail {
         if (node.tag || !node.arguments.empty() || !node.properties.empty())
             return error("routing takes no arguments or properties");
         Route route;
+        bool auto_detect_seen = false, default_iface_seen = false, default_mark_seen = false;
+        bool default_resolver_seen = false, default_strategy_seen = false, default_net_type_seen = false, find_process_seen = false;
+        auto parse_net_type = [](std::string_view name) noexcept -> std::optional<platform::network::Type> {
+            using enum platform::network::Type;
+            if (name == "ethernet") return ethernet;
+            if (name == "wifi") return wifi;
+            if (name == "cellular") return cellular;
+            if (name == "vpn") return vpn;
+            if (name == "other") return other;
+            return {};
+        };
         for (auto const& child : node.children) {
-            if (child.name == "rule-set") {
+            if (child.name == "auto-detect-interface" || child.name == "find-process") {
+                auto flag = boolean(child);
+                auto& seen = child.name == "auto-detect-interface" ? auto_detect_seen : find_process_seen;
+                if (seen || !flag) return error("invalid or duplicate routing " + child.name);
+                if (child.name == "auto-detect-interface") route.defaults.auto_detect_interface = *flag;
+                else route.defaults.find_process = *flag;
+                seen = true;
+            } else if (child.name == "default-interface") {
+                auto value = scalar(child);
+                platform::SocketBinding validator;
+                if (default_iface_seen || !value || value->empty() || value->size() >= validator.bind_interface.size() || value->contains('\0'))
+                    return error("invalid or duplicate routing default-interface");
+                std::ranges::copy(*value, validator.bind_interface.begin());
+                if (validator.interface_name() != *value || !validator.valid())
+                    return error("invalid routing default-interface name");
+                route.defaults.default_interface = *value;
+                default_iface_seen = true;
+            } else if (child.name == "default-mark") {
+                auto value = integer(child);
+                if (default_mark_seen || !value || *value > std::numeric_limits<std::uint32_t>::max())
+                    return error("invalid or duplicate routing default-mark");
+                route.defaults.default_mark = static_cast<std::uint32_t>(*value);
+                default_mark_seen = true;
+            } else if (child.name == "default-domain-resolver") {
+                auto value = scalar(child);
+                if (default_resolver_seen || !value || !valid_name(*value))
+                    return error("invalid or duplicate routing default-domain-resolver");
+                route.defaults.default_domain_resolver = *value;
+                default_resolver_seen = true;
+            } else if (child.name == "default-network-type") {
+                auto value = scalar(child);
+                auto parsed = value ? parse_net_type(*value) : std::nullopt;
+                if (default_net_type_seen || !parsed)
+                    return error("invalid or duplicate routing default-network-type");
+                route.defaults.default_network_type = *parsed;
+                default_net_type_seen = true;
+            } else if (child.name == "default-network-strategy") {
+                auto value = argument(child);
+                auto fb_prop = text_property(child, "fallback");
+                auto delay_prop = property(child, "fallback-delay-ms");
+                auto delay_val = delay_prop ? integer(*delay_prop) : std::nullopt;
+                std::size_t expected_props = std::size_t{bool(fb_prop)} + bool(delay_prop);
+                if (default_strategy_seen || !value || !child.children.empty() || child.properties.size() != expected_props)
+                    return error("invalid or duplicate routing default-network-strategy");
+                using enum platform::network::Strategy;
+                platform::network::Strategy strat;
+                if (*value == "require") strat = require;
+                else if (*value == "prefer") strat = prefer;
+                else if (*value == "fallback") strat = fallback;
+                else if (*value == "hybrid") strat = hybrid;
+                else return error("routing default-network-strategy must be require, prefer, fallback or hybrid");
+                std::optional<platform::network::Type> fb_type;
+                if (fb_prop) {
+                    fb_type = parse_net_type(*fb_prop);
+                    if (!fb_type || strat == require) return error("invalid routing default-network-strategy fallback");
+                }
+                if (delay_prop && (!delay_val || *delay_val > 60000 || (strat != hybrid && !*delay_val)))
+                    return error("invalid routing default-network-strategy fallback-delay-ms");
+                auto delay = delay_val ? std::chrono::milliseconds(*delay_val) :
+                    (strat == hybrid ? std::chrono::milliseconds(0) :
+                     strat == fallback ? std::chrono::milliseconds(500) : std::chrono::milliseconds(300));
+                route.defaults.default_network_strategy = platform::network::Policy{
+                    strat, route.defaults.default_network_type.value_or(platform::network::Type::ethernet),
+                    fb_type, {}, delay};
+                default_strategy_seen = true;
+            } else if (child.name == "rule-set") {
                 auto parsed = parse_rule_set_spec(child);
                 if (!parsed || route.files.size() >= 256 ||
                     std::ranges::any_of(route.files, [&](auto const& file) { return file.name == parsed->first; }))
@@ -356,6 +434,11 @@ export namespace config::routing_detail {
                     return error("one default-outbound is required");
                 route.default_outbound = *value;
             } else return error("unsupported routing node: " + child.name);
+        }
+        if (route.defaults.default_network_strategy && route.defaults.default_network_type) {
+            route.defaults.default_network_strategy->preferred = *route.defaults.default_network_type;
+            if (route.defaults.default_network_strategy->fallback == route.defaults.default_network_strategy->preferred)
+                return error("routing default-network-type cannot equal default-network-strategy fallback");
         }
         if (!route.default_outbound) return error("routing requires default-outbound");
         for (auto const& rule : route.rules)

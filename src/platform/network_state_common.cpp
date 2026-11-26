@@ -7,12 +7,13 @@ namespace platform::network {
     }
 
     auto infer_network_type(Link const& link) noexcept -> NetworkType {
-        if (link.kind == "wlan" || link.name.starts_with("wlan") || link.name.starts_with("wl"))
+        if (link.kind == "wlan" || link.kind == "wifi" || link.name.starts_with("wlan") || link.name.starts_with("wl"))
             return NetworkType::wifi;
         if (link.kind == "wwan" || link.name.starts_with("wwan") || link.name.starts_with("rmnet") ||
-            link.name.starts_with("ccmni") || link.name.starts_with("usb"))
+            link.name.starts_with("ccmni") || link.name.starts_with("pdp_ip") || link.name.starts_with("usb"))
             return NetworkType::cellular;
-        if (link.kind == "veth" || link.kind == "bridge" || link.name.starts_with("eth") || link.name.starts_with("en"))
+        if (link.kind == "eth" || link.kind == "veth" || link.kind == "bridge" ||
+            link.name.starts_with("eth") || link.name.starts_with("en"))
             return NetworkType::ethernet;
         return NetworkType::other;
     }

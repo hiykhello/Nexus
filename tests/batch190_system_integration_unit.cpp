@@ -3,9 +3,12 @@
 #include <unistd.h>
 
 import std;
+import cli.proxy_group_health;
+import config;
 import corosio;
 import logging;
 import logging.cli;
+import platform.network_state;
 import platform.system_proxy;
 import platform.service_manager;
 import relay;
@@ -233,6 +236,190 @@ namespace {
         releaser.join();
         std::filesystem::remove_all(ldir, ec);
     }
+
+    auto test_wave30b_groups_and_network() -> void {
+        using Clock = std::chrono::steady_clock;
+        // 1. KDL parsing for interrupt-exist-connections, idle-timeout-ms, probe-concurrency
+        char const* valid_kdl = R"(
+schema-version 1
+role "client"
+inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "n1" type="socks5" { server host="127.0.0.1" port=2001; }
+outbound "n2" type="socks5" { server host="127.0.0.1" port=2002; }
+outbound "n3" type="socks5" { server host="127.0.0.1" port=2003; }
+outbound "n4" type="socks5" { server host="127.0.0.1" port=2004; }
+outbound "n5" type="socks5" { server host="127.0.0.1" port=2005; }
+outbound "n6" type="socks5" { server host="127.0.0.1" port=2006; }
+outbound "man" type="selector" {
+    member "n1"; member "n2"; selected "n1";
+    interrupt-exist-connections #true;
+}
+outbound "auto" type="url-test" {
+    member "n1"; member "n2"; member "n3"; member "n4"; member "n5"; member "n6";
+    probe-url "http://127.0.0.1:80/ping";
+    probe-interval-ms 500;
+    idle-timeout-ms 100;
+    probe-concurrency 4;
+    interrupt-exist-connections #true;
+}
+outbound "lb" type="load-balance" {
+    member "n1"; member "n2"; member "n3";
+    probe-url "http://127.0.0.1:80/ping";
+    probe-interval-ms 500;
+    probe-concurrency 2;
+    interrupt-exist-connections #true;
+}
+routing {
+    rules {
+        - domain "man.example" to="man"
+        - domain "lb.example" to="lb"
+    }
+    default-outbound "auto"
+}
+)";
+        auto parsed = config::parse_kdl(valid_kdl);
+        if (!parsed) std::cerr << "parse error: " << parsed.error() << '\n';
+        require(parsed.has_value(), "30B valid outbound groups KDL");
+        auto cfg = std::move(*parsed);
+        require(cfg.selectors.size() == 3 &&
+            cfg.selectors[0].interrupt_exist_connections &&
+            cfg.selectors[1].interrupt_exist_connections &&
+            cfg.selectors[1].probe.idle_timeout_ms == 100 &&
+            cfg.selectors[1].probe.probe_concurrency == 4 &&
+            cfg.selectors[2].probe.probe_concurrency == 2,
+            "30B parsed group options match");
+
+        // Invalid probe-concurrency / idle-timeout-ms rejected
+        auto bad1 = config::parse_kdl(R"(
+schema-version 1
+role "client"
+inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 0; }
+routing { default-outbound "g"; }
+)");
+        require(!bad1.has_value(), "30B reject probe-concurrency 0");
+        auto bad2 = config::parse_kdl(R"(
+schema-version 1
+role "client"
+inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 17; }
+routing { default-outbound "g"; }
+)");
+        require(!bad2.has_value(), "30B reject probe-concurrency 17");
+        auto bad3 = config::parse_kdl(R"(
+schema-version 1
+role "client"
+inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "g" type="selector" { member "direct"; idle-timeout-ms 1000; }
+routing { default-outbound "g"; }
+)");
+        require(!bad3.has_value(), "30B reject idle-timeout-ms on selector");
+
+        // 2. Concurrent member probing (4 at once on 6-member group)
+        auto t0 = Clock::now();
+        auto health_res = cli::run_detail::OutboundGroupHealth::create(cfg, t0);
+        require(health_res.has_value(), "30B OutboundGroupHealth::create");
+        auto health = std::move(*health_res);
+        std::vector<std::shared_ptr<relay::OutboundProbe>> q;
+        auto enqueue = [&](std::shared_ptr<relay::OutboundProbe> p) { q.push_back(std::move(p)); return true; };
+        auto sel0 = health.poll(enqueue, cfg, std::uint64_t{1}, t0);
+        require(!sel0.has_value() && q.size() == 4, "30B concurrent probe launches 4 members simultaneously");
+        require(health.observe(cfg, 1, 0, std::uint64_t{1}).probing &&
+            health.observe(cfg, 1, 3, std::uint64_t{1}).probing &&
+            !health.observe(cfg, 1, 4, std::uint64_t{1}).probing,
+            "30B observe reports all 4 concurrent probes active");
+        // Complete first 2 probes (n1=50ms, n2=15ms) -> next poll launches remaining 2 (n5, n6)
+        q[0]->result.store(52, std::memory_order_release);
+        q[1]->result.store(17, std::memory_order_release);
+        auto sel1 = health.poll(enqueue, cfg, std::uint64_t{1}, t0 + std::chrono::milliseconds(20));
+        require(!sel1.has_value() && q.size() == 6, "30B concurrent probe refills window to finish remaining 2 members");
+        q[2]->result.store(42, std::memory_order_release);
+        q[3]->result.store(32, std::memory_order_release);
+        q[4]->result.store(62, std::memory_order_release);
+        q[5]->result.store(72, std::memory_order_release);
+        auto sel2 = health.poll(enqueue, cfg, std::uint64_t{1}, t0 + std::chrono::milliseconds(40));
+        require(sel2.has_value() && sel2->group == 1 && sel2->member == "n2", "30B concurrent round picks fastest member n2");
+
+        // 3. idle-timeout-ms pauses probing after idle_timeout_ms and resumes immediately on group activity
+        // Complete lb group round first so cursor returns to auto
+        q.clear();
+        (void)health.poll(enqueue, cfg, std::uint64_t{1}, t0 + std::chrono::milliseconds(40));
+        require(q.size() == 2, "30B lb group respects probe-concurrency 2");
+        q[0]->result.store(22, std::memory_order_release);
+        q[1]->result.store(25, std::memory_order_release);
+        (void)health.poll(enqueue, cfg, std::uint64_t{1}, t0 + std::chrono::milliseconds(45));
+        require(q.size() == 3, "30B lb group probes 3rd member");
+        q[2]->result.store(30, std::memory_order_release);
+        (void)health.poll(enqueue, cfg, std::uint64_t{1}, t0 + std::chrono::milliseconds(50));
+
+        q.clear();
+        auto t_idle = t0 + std::chrono::milliseconds(600);
+        auto idle_sel = health.poll(enqueue, cfg, std::uint64_t{1}, t_idle);
+        require(!idle_sel.has_value() && q.empty() && health.is_idle_paused(1),
+            "30B idle-timeout-ms pauses probing with no group traffic");
+        health.note_group_activity("auto", t_idle + std::chrono::milliseconds(10));
+        require(!health.is_idle_paused(1), "30B note_group_activity clears idle pause");
+        // Advance cursor back to auto (past lb which is still within interval)
+        (void)health.poll(enqueue, cfg, std::uint64_t{1}, t_idle + std::chrono::milliseconds(10));
+        if (q.empty()) (void)health.poll(enqueue, cfg, std::uint64_t{1}, t_idle + std::chrono::milliseconds(10));
+        require(!q.empty(), "30B probing resumes immediately after group activity");
+
+        // 4. Dial-failure instant failover (url-test + load-balance + GroupRuntimeHooks wake)
+        static std::atomic<int> wake_count{0};
+        relay::GroupRuntimeHooks hooks(+[]() noexcept { wake_count.fetch_add(1, std::memory_order_relaxed); });
+        hooks.mark_active(1);
+        require(hooks.last_active_ms(1) > 0, "30B GroupRuntimeHooks records active timestamp");
+        hooks.record_dial_failure("auto", 2);
+        std::vector<relay::GroupDialFailure> drained;
+        hooks.drain_dial_failures(drained);
+        require(wake_count.load() == 1 && drained.size() == 1 && drained[0].group_tag == "auto" && drained[0].outbound == 2,
+            "30B GroupRuntimeHooks queues dial failure & wakes host");
+        auto failover = health.record_dial_failure(cfg, "auto", "n1", std::uint64_t{1}, t_idle + std::chrono::milliseconds(20));
+        require(failover.has_value() && failover->group == 1 && failover->member == "n2",
+            "30B url-test dial failure immediately fails over from n1 to healthy n2");
+        auto obs_n1 = health.observe(cfg, 1, 0, std::uint64_t{1});
+        require(obs_n1.state == "down" && obs_n1.breaker_open, "30B failed member marked down with breaker open");
+
+        auto lb_fail = health.record_dial_failure(cfg, "lb", "n1", std::uint64_t{1}, t_idle + std::chrono::milliseconds(20));
+        require(lb_fail.has_value() && lb_fail->balance_changed && lb_fail->demoted_members.size() == 1 && lb_fail->demoted_members[0] == 0,
+            "30B load-balance dial failure demotes failed member immediately");
+
+        // 5. TrafficRegistry group_tag tracking + close_group_sessions + concurrent Server probe queue
+        auto srv = relay::Server::create();
+        require(srv.has_value() && (*srv)->enable_traffic_stats(8), "30B Server with traffic stats");
+        corosio::io_context io;
+        relay::Session s1(io), s2(io), s3(io), s4(io);
+        s1.traffic = (*srv)->track_traffic(relay::TrafficProtocol::socks5, relay::ConnectPath::tunnel, {}, 443, true);
+        s2.traffic = (*srv)->track_traffic(relay::TrafficProtocol::socks5, relay::ConnectPath::tunnel, {}, 443, true);
+        s3.traffic = (*srv)->track_traffic(relay::TrafficProtocol::socks5, relay::ConnectPath::tunnel, {}, 443, true);
+        s4.traffic = (*srv)->track_traffic(relay::TrafficProtocol::socks5, relay::ConnectPath::tunnel, {}, 443, true);
+        s1.set_traffic_group("auto"); s1.record_traffic_route({relay::TrafficRouteMode::indexed, 2, {}, {}, {}}, relay::ConnectPath::tunnel);
+        s2.set_traffic_group("man");  s2.record_traffic_route({relay::TrafficRouteMode::indexed, 2, {}, {}, {}}, relay::ConnectPath::tunnel);
+        s3.set_traffic_group("auto"); s3.record_traffic_route({relay::TrafficRouteMode::indexed, 3, {}, {}, {}}, relay::ConnectPath::tunnel);
+        s4.record_traffic_route({relay::TrafficRouteMode::indexed, 2, {}, {}, {}}, relay::ConnectPath::tunnel);
+        auto tsnap = (*srv)->traffic_snapshot();
+        require(tsnap.active.size() == 4 && std::ranges::any_of(tsnap.active, [](auto const& c) { return c.group_tag == "auto"; }),
+            "30B TrafficSnapshot carries group_tag");
+        auto closed = (*srv)->close_group_sessions("auto", std::size_t{2});
+        require(closed == 1 && s1.traffic.close_requested() && !s2.traffic.close_requested() &&
+            !s3.traffic.close_requested() && !s4.traffic.close_requested(),
+            "30B close_group_sessions closes only matching (group_tag, outbound) and skips untagged sessions");
+        for (int i = 0; i < 16; ++i)
+            require((*srv)->queue_outbound_probe(std::make_shared<relay::OutboundProbe>()), "30B Server queues up to 16 concurrent probes");
+        require(!(*srv)->queue_outbound_probe(std::make_shared<relay::OutboundProbe>()), "30B Server bounds concurrent probe queue at 16");
+
+        // 6. GroupTagMap + find_process propagation
+        auto gtag = cli::run_detail::build_group_tag_map(cfg);
+        require(gtag && gtag->default_group == std::size_t{1} && gtag->name(1) == "auto", "30B GroupTagMap maps default group");
+        relay::Session p(io), c(io);
+        p.find_process = true; p.group_hooks = &hooks; p.group_tag = "auto";
+        relay::init_multiplexed_child(c, p, Clock::now() + std::chrono::seconds(5));
+        require(c.find_process && c.group_hooks == &hooks && c.group_tag == "auto", "30B child inherits find_process & group hooks");
+    }
 }
 
 int main() {
@@ -240,6 +427,7 @@ int main() {
     test_service_manager();
     test_c_api_parity();
     test_batch169_runtime_resilience();
-    std::cout << "BATCH 190 SYSTEM INTEGRATION & PACKAGING TESTS PASSED\n";
+    test_wave30b_groups_and_network();
+    std::cout << "BATCH 190 SYSTEM INTEGRATION & WAVE 30B TESTS PASSED\n";
     return 0;
 }

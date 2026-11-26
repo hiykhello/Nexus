@@ -19,15 +19,16 @@ export namespace packet {
         bool network_claimed_=false;
         bool network_claimable_=true;
         bool restore_blocking_=false;
+        bool vnet_hdr_=false;
         int orig_status_flags_=0;
         std::uint64_t generation_=1;
         // Zero is a terminal exhausted state; a generation is never reused.
         auto invalidate() noexcept -> void { if (generation_) generation_=generation_==std::numeric_limits<std::uint64_t>::max() ? 0 : generation_+1; }
         [[nodiscard]] auto inspect() const -> std::expected<TunIdentity,TunFailure>;
         LinuxTun(int fd,std::array<char,16> name,bool network_claimable=true,
-            bool restore_blocking=false,int orig_status_flags=0) noexcept
+            bool restore_blocking=false,int orig_status_flags=0,bool vnet_hdr=false) noexcept
             : fd_(fd),name_(name),network_claimable_(network_claimable),
-              restore_blocking_(restore_blocking),orig_status_flags_(orig_status_flags) {}
+              restore_blocking_(restore_blocking),vnet_hdr_(vnet_hdr),orig_status_flags_(orig_status_flags) {}
     public:
         // Sealed proof of this newly created, nonpersistent owner's identity.
         // Borrowing consumers must stop before the owner moves or closes.
@@ -74,6 +75,7 @@ export namespace packet {
             -> std::expected<LinuxTun,TunFailure>;
         [[nodiscard]] auto native_handle() const noexcept -> int { return fd_; }
         [[nodiscard]] auto name() const noexcept -> std::string_view;
+        [[nodiscard]] auto vnet_hdr() const noexcept -> bool { return vnet_hdr_; }
         auto close() noexcept -> void;
     };
 }

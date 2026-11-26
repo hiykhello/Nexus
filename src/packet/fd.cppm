@@ -108,17 +108,21 @@ export namespace packet {
         int fd_;
         MemoryLink* link_;
         std::size_t mtu_;
+        bool vnet_hdr_ = false;
         Bytes buffer_;
         std::size_t input_size_ = 0;
         std::optional<QueuedPacket> output_;
-        FdPump(int fd, MemoryLink& link, std::size_t mtu);
+        std::vector<Bytes> pending_rx_;
+        std::size_t pending_rx_head_ = 0;
+        FdPump(int fd, MemoryLink& link, std::size_t mtu, bool vnet_hdr = false);
     public:
         ~FdPump();
         FdPump(FdPump&&) noexcept;
         auto operator=(FdPump&&) noexcept -> FdPump&;
         FdPump(FdPump const&) = delete;
         auto operator=(FdPump const&) -> FdPump& = delete;
-        [[nodiscard]] static auto create(int fd,MemoryLink& link,std::size_t mtu) -> std::expected<FdPump,FdFailure>;
+        [[nodiscard]] static auto create(int fd,MemoryLink& link,std::size_t mtu,bool vnet_hdr=false) -> std::expected<FdPump,FdFailure>;
+        [[nodiscard]] auto vnet_hdr() const noexcept -> bool { return vnet_hdr_; }
         using OutputValidator=bool (*)(void*,QueuedPacket const&) noexcept;
         [[nodiscard]] auto step(OutputValidator validator=nullptr,void* context=nullptr) -> FdStep;
         [[nodiscard]] auto step_output(OutputValidator validator=nullptr,void* context=nullptr) -> FdStep;

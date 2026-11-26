@@ -15,15 +15,17 @@ export namespace packet {
         auto operator==(TunUidRange const &) const -> bool = default;
     };
     struct TunRedirectOptions {
-        std::uint16_t port=0;
+        std::uint16_t port=0, tproxy_port=0;
         bool tcp_dns=false, udp_dns=false, exclude_mptcp=false;
         std::array<TunAddress,2> protected_destinations{};
         std::uint8_t protected_count=0;
-        std::uint32_t input_mark=0, output_mark=0, reset_mark=0;
+        std::uint32_t input_mark=0, output_mark=0, reset_mark=0, tproxy_mark=0;
         std::array<TunUidRange,16> include_uids{}, exclude_uids{};
         std::uint8_t include_uid_count=0, exclude_uid_count=0;
         std::array<std::array<char,16>,8> include_interfaces{}, exclude_interfaces{};
         std::uint8_t include_if_count=0, exclude_if_count=0;
+        std::array<std::array<std::uint8_t,6>,16> include_macs{}, exclude_macs{};
+        std::uint8_t include_mac_count=0, exclude_mac_count=0;
     };
     struct TunNetworkOptions {
         std::uint32_t mtu = 1420;

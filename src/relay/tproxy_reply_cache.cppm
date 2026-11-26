@@ -11,8 +11,11 @@ module;
 
 module relay:tproxy_reply_cache;
 import std;
+import config.listen_types;
 import containers.cache_index;
 import net.udp_socket;
+import platform.socket_options;
+import relay.listener_options;
 import :types;
 
 namespace relay::tproxy_detail {
@@ -54,17 +57,27 @@ namespace relay::tproxy_detail {
         ~Socket() { close(); }
         auto close() noexcept -> void { if (fd >= 0) ::close(std::exchange(fd, -1)); }
 
-        auto bind(net::UdpEndpoint const& local, bool receive, bool reuse, std::optional<std::uint32_t> mark = {})
+        auto bind(net::UdpEndpoint const& local, bool receive, bool reuse, std::optional<std::uint32_t> mark = {},
+            config::ListenOptions const* listen = nullptr)
             -> std::error_code {
             bool ipv6 = local.family == 6;
-            fd = ::socket(ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
             auto error = [] { return std::error_code(errno, std::generic_category()); };
-            if (fd < 0) return error();
+            if (listen && !listen->netns.empty()) {
+                auto opened = platform::open_physical_socket(ipv6, true, false, listen->netns);
+                if (!opened) return opened.error();
+                fd = *opened;
+            } else {
+                fd = ::socket(ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+                if (fd < 0) return error();
+            }
             int one = 1;
             auto set = [&](int level, int name, auto value) {
                 return ::setsockopt(fd, level, name, &value, sizeof(value)) == 0;
             };
             auto level = ipv6 ? IPPROTO_IPV6 : IPPROTO_IP;
+            if (receive && listen && listen->configured()) {
+                if (auto ec = apply_udp_listen_options(fd, *listen, ipv6)) { close(); return ec; }
+            }
             if (!set(level, ipv6 ? IPV6_TRANSPARENT : IP_TRANSPARENT, one) ||
                 (ipv6 && !set(IPPROTO_IPV6, IPV6_V6ONLY, one)) ||
                 (receive && (!set(level, ipv6 ? IPV6_RECVORIGDSTADDR : IP_RECVORIGDSTADDR, one) ||
@@ -72,7 +85,7 @@ namespace relay::tproxy_detail {
                              !set(level, ipv6 ? IPV6_RECVTCLASS : IP_RECVTOS, one))) ||
                 (receive && reuse && !set(SOL_SOCKET, SO_REUSEPORT, one)) ||
                 (!receive && !set(SOL_SOCKET, SO_REUSEADDR, one)) ||
-                (mark && !set(SOL_SOCKET, SO_MARK, *mark))) {
+                (mark && !(receive && listen && listen->routing_mark) && !set(SOL_SOCKET, SO_MARK, *mark))) {
                 auto ec = error();
                 close();
                 return ec;

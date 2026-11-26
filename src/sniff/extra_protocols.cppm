@@ -30,6 +30,102 @@ export namespace sniff {
         return ExtraSniffStatus::matched;
     }
 
+    struct TcpDnsResult {
+        ExtraSniffStatus status = ExtraSniffStatus::not_recognized;
+        std::optional<std::string_view> domain{};
+    };
+
+    // RFC 1035 TCP DNS query: 2-byte big-endian length prefix + DNS query message.
+    [[nodiscard]] inline auto inspect_dns_tcp(std::span<std::uint8_t const> wire,
+                                              std::span<std::uint8_t> scratch) noexcept -> TcpDnsResult {
+        if (wire.size() < 2) return {ExtraSniffStatus::need_more};
+        std::size_t msg_len = (std::size_t{wire[0]} << 8) | wire[1];
+        if (msg_len < 12 || msg_len > 4096) return {ExtraSniffStatus::not_recognized};
+        auto hdr = wire.subspan(2);
+        if (hdr.size() > 2) {
+            bool is_response = (hdr[2] & 0x80u) != 0;
+            unsigned opcode = (hdr[2] >> 3) & 0x0fu;
+            bool aa = (hdr[2] & 0x04u) != 0;
+            bool tc = (hdr[2] & 0x02u) != 0;
+            if (is_response || opcode != 0 || aa || tc) return {ExtraSniffStatus::not_recognized};
+        }
+        if (hdr.size() > 3) {
+            bool ra = (hdr[3] & 0x80u) != 0;
+            bool z = (hdr[3] & 0x40u) != 0;
+            unsigned rcode = hdr[3] & 0x0fu;
+            if (ra || z || rcode != 0) return {ExtraSniffStatus::not_recognized};
+        }
+        if (hdr.size() > 5) {
+            unsigned qd = (unsigned(hdr[4]) << 8) | hdr[5];
+            if (qd == 0 || qd > 8) return {ExtraSniffStatus::not_recognized};
+        }
+        if (hdr.size() > 7 && ((unsigned(hdr[6]) << 8) | hdr[7]) != 0) return {ExtraSniffStatus::not_recognized};
+        if (hdr.size() > 9 && ((unsigned(hdr[8]) << 8) | hdr[9]) != 0) return {ExtraSniffStatus::not_recognized};
+        if (hdr.size() > 11 && ((unsigned(hdr[10]) << 8) | hdr[11]) > 8) return {ExtraSniffStatus::not_recognized};
+        if (wire.size() < 2 + msg_len) return {ExtraSniffStatus::need_more};
+
+        auto msg = wire.subspan(2, msg_len);
+        unsigned qdcount = (unsigned(msg[4]) << 8) | msg[5];
+        unsigned arcount = (unsigned(msg[10]) << 8) | msg[11];
+        std::size_t pos = 12;
+        std::optional<std::string_view> extracted;
+
+        auto parse_name = [&](bool capture, bool allow_ptr) noexcept -> bool {
+            std::size_t out_len = 0;
+            bool valid_host = true;
+            std::size_t labels = 0;
+            for (;;) {
+                if (pos >= msg.size() || ++labels > 128) return false;
+                std::uint8_t len = msg[pos++];
+                if (len == 0) break;
+                if ((len & 0xc0u) == 0xc0u) {
+                    if (!allow_ptr || pos >= msg.size()) return false;
+                    std::size_t ptr = (std::size_t(len & 0x3fu) << 8) | msg[pos++];
+                    if (ptr < 12 || ptr >= pos - 2) return false;
+                    break;
+                }
+                if (len > 63 || len > msg.size() - pos) return false;
+                if (capture && valid_host) {
+                    if (out_len > 0) {
+                        if (out_len >= scratch.size() || out_len >= 253) valid_host = false;
+                        else scratch[out_len++] = '.';
+                    }
+                    if (valid_host && (msg[pos] == '-' || msg[pos + len - 1] == '-')) valid_host = false;
+                    for (std::size_t i = 0; i < len && valid_host; ++i) {
+                        unsigned char c = msg[pos + i];
+                        if (c >= 'A' && c <= 'Z') c = static_cast<unsigned char>(c + ('a' - 'A'));
+                        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) { valid_host = false; break; }
+                        if (out_len >= scratch.size() || out_len >= 253) { valid_host = false; break; }
+                        scratch[out_len++] = c;
+                    }
+                }
+                pos += len;
+            }
+            if (capture && valid_host && out_len > 0)
+                extracted = std::string_view(reinterpret_cast<char const*>(scratch.data()), out_len);
+            return true;
+        };
+
+        for (unsigned q = 0; q < qdcount; ++q) {
+            if (!parse_name(q == 0, q != 0)) return {ExtraSniffStatus::not_recognized};
+            if (pos + 4 > msg.size()) return {ExtraSniffStatus::not_recognized};
+            unsigned qtype = (unsigned(msg[pos]) << 8) | msg[pos + 1];
+            unsigned qclass = (unsigned(msg[pos + 2]) << 8) | msg[pos + 3];
+            if (qtype == 0 || qclass == 0) return {ExtraSniffStatus::not_recognized};
+            pos += 4;
+        }
+        for (unsigned a = 0; a < arcount; ++a) {
+            if (!parse_name(false, true)) return {ExtraSniffStatus::not_recognized};
+            if (pos + 10 > msg.size()) return {ExtraSniffStatus::not_recognized};
+            std::size_t rdlen = (std::size_t{msg[pos + 8]} << 8) | msg[pos + 9];
+            pos += 10;
+            if (rdlen > msg.size() - pos) return {ExtraSniffStatus::not_recognized};
+            pos += rdlen;
+        }
+        if (pos != msg.size()) return {ExtraSniffStatus::not_recognized};
+        return {ExtraSniffStatus::matched, extracted};
+    }
+
     [[nodiscard]] inline auto inspect_dtls_udp(std::span<std::uint8_t const> pkt) noexcept -> bool {
         if (pkt.size() < 13) return false;
         if (pkt[0] != 0x16 || pkt[1] != 0xfe || (pkt[2] != 0xfd && pkt[2] != 0xff)) return false;

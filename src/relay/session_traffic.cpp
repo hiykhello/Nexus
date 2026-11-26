@@ -161,12 +161,42 @@ namespace relay {
         return slot;
     }
 
+    auto GroupRuntimeHooks::mark_active(std::size_t group_index) noexcept -> void {
+        if (group_index >= kMaxGroups) return;
+        auto now = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+        last_active_ms_[group_index].store(now, std::memory_order_relaxed);
+    }
+
+    auto GroupRuntimeHooks::last_active_ms(std::size_t group_index) const noexcept -> std::int64_t {
+        return group_index < kMaxGroups ? last_active_ms_[group_index].load(std::memory_order_relaxed) : 0;
+    }
+
+    auto GroupRuntimeHooks::record_dial_failure(std::string_view group_tag, std::size_t outbound) noexcept -> void {
+        try {
+            {
+                std::lock_guard lock(mutex_);
+                if (failures_.size() >= kMaxFailures) failures_.pop_front();
+                failures_.push_back({std::string(group_tag), outbound});
+            }
+            if (wake_) wake_();
+        } catch (...) {}
+    }
+
+    auto GroupRuntimeHooks::drain_dial_failures(std::vector<GroupDialFailure>& out) -> void {
+        std::lock_guard lock(mutex_);
+        while (!failures_.empty()) {
+            out.push_back(std::move(failures_.front()));
+            failures_.pop_front();
+        }
+    }
+
     auto TrafficRegistry::remove(Slot& slot) noexcept -> void {
         std::lock_guard lock(mutex_);
         auto bytes = slot.bytes();
         finished_.upload += bytes.upload;
         finished_.download += bytes.download;
         slot.connection.process_path = std::string{};
+        slot.connection.group_tag = std::string{};
         auto* last = active_.back();
         active_[slot.active_index] = last;
         last->active_index = slot.active_index;
@@ -174,12 +204,23 @@ namespace relay {
         free_.push_back(&slot);
     }
 
-    auto TrafficRegistry::record_route(Slot& slot, TrafficRoute route, ConnectPath path) noexcept -> void {
+    auto TrafficRegistry::record_route(Slot& slot, TrafficRoute route, ConnectPath path,
+        std::string_view group_tag) noexcept -> void {
         // The slot's executor is the sole writer and snapshots read under the lock.
-        if (slot.connection.route == route && slot.path.load(std::memory_order_relaxed) == path) return;
+        if (slot.connection.route == route && slot.path.load(std::memory_order_relaxed) == path &&
+            (group_tag.empty() || slot.connection.group_tag == group_tag)) return;
         std::lock_guard lock(mutex_);
         slot.connection.route = route;
+        if (!group_tag.empty()) {
+            try { slot.connection.group_tag.assign(group_tag); } catch (...) {}
+        }
         slot.path.store(path, std::memory_order_relaxed);
+    }
+
+    auto TrafficRegistry::record_group(Slot& slot, std::string_view group_tag) noexcept -> void {
+        if (group_tag.empty()) return;
+        std::lock_guard lock(mutex_);
+        try { slot.connection.group_tag.assign(group_tag); } catch (...) {}
     }
 
     auto TrafficRegistry::snapshot() const -> TrafficSnapshot {
@@ -205,6 +246,27 @@ namespace relay {
         if (!(*slot)->connection.can_close) return TrafficCloseRequest::unavailable;
         (*slot)->close_requested.store(true, std::memory_order_relaxed);
         return TrafficCloseRequest::queued;
+    }
+
+    auto TrafficRegistry::close_group_sessions(std::string_view group_tag, std::optional<std::size_t> outbound)
+        -> std::size_t {
+        std::lock_guard lock(mutex_);
+        std::size_t closed = 0;
+        for (auto* slot : active_) {
+            if (!slot->connection.can_close) continue;
+            bool match = false;
+            if (!group_tag.empty()) {
+                match = slot->connection.group_tag == group_tag &&
+                    (!outbound || (slot->connection.route && slot->connection.route->outbound == *outbound));
+            } else if (outbound && slot->connection.route && slot->connection.route->outbound == *outbound) {
+                match = true;
+            }
+            if (match) {
+                slot->close_requested.store(true, std::memory_order_relaxed);
+                ++closed;
+            }
+        }
+        return closed;
     }
 
     TrafficRegistration::TrafficRegistration(TrafficRegistration&& other) noexcept
@@ -252,8 +314,44 @@ namespace relay {
                 transparent_datagram, route_snapshot ? route_snapshot->generation : 1, inbound.value_or(std::string_view{}));
     }
 
+    auto Session::set_traffic_group(std::string_view tag) noexcept -> void {
+        group_tag = tag;
+        if (traffic.slot_) traffic.registry_->record_group(*traffic.slot_, tag);
+    }
+
     auto Session::record_traffic_route(TrafficRoute route, ConnectPath path) noexcept -> void {
-        if (traffic.slot_) traffic.registry_->record_route(*traffic.slot_, route, path);
+        std::string_view resolved_group = group_tag;
+        if (route_snapshot && route_snapshot->group_tags) {
+            if (auto gidx = route_snapshot->group_tags->resolve(
+                    route.mode == TrafficRouteMode::ordered, route.rule, route.outbound)) {
+                resolved_group = route_snapshot->group_tags->name(*gidx);
+                group_tag = resolved_group;
+                if (group_hooks) group_hooks->mark_active(*gidx);
+            }
+        }
+        if (traffic.slot_) traffic.registry_->record_route(*traffic.slot_, route, path, resolved_group);
+    }
+
+    auto Session::record_dial_failure(TrafficRoute const& route) noexcept -> void {
+        if (!group_hooks || route.outbound < 2) return;
+        std::string_view tag = group_tag;
+        if (route_snapshot && route_snapshot->group_tags) {
+            if (auto gidx = route_snapshot->group_tags->resolve(
+                    route.mode == TrafficRouteMode::ordered, route.rule, route.outbound)) {
+                tag = route_snapshot->group_tags->name(*gidx);
+            }
+        }
+        group_hooks->record_dial_failure(tag, route.outbound);
+    }
+
+    auto Session::record_dial_failure(std::size_t outbound) noexcept -> void {
+        if (!group_hooks || outbound < 2) return;
+        std::string_view tag = group_tag;
+        if (tag.empty() && route_snapshot && route_snapshot->group_tags) {
+            if (auto gidx = route_snapshot->group_tags->resolve(false, {}, outbound))
+                tag = route_snapshot->group_tags->name(*gidx);
+        }
+        group_hooks->record_dial_failure(tag, outbound);
     }
 
     auto Session::record_datagram_route(bool ordered, net::UdpSelection const& selection) noexcept -> void {
@@ -296,6 +394,31 @@ namespace relay {
         registration.begin(source, port, protocol, Clock::now(), can_close);
         registration.select_path(path);
         return registration;
+    }
+
+    auto Server::set_find_process(bool enabled) noexcept -> void {
+        find_process_enabled = enabled;
+        for (auto& w : workers) w->set_find_process(enabled);
+    }
+
+    auto Server::set_group_hooks(std::shared_ptr<GroupRuntimeHooks> hooks) noexcept -> void {
+        group_hooks = std::move(hooks);
+        for (auto& w : workers) w->set_group_hooks(group_hooks);
+    }
+
+    auto Server::close_group_sessions(std::string_view group_tag, std::optional<std::size_t> outbound) -> std::size_t {
+        std::size_t closed = 0;
+        if (traffic) closed += traffic->close_group_sessions(group_tag, outbound);
+        if (workers.empty()) {
+            if (closed > 0) process_traffic_closes();
+            return closed;
+        }
+        for (auto const& worker : workers) {
+            if (worker->traffic && worker->traffic != traffic)
+                closed += worker->traffic->close_group_sessions(group_tag, outbound);
+            worker->context.stop();
+        }
+        return closed;
     }
 
     auto Server::request_traffic_close(std::uint64_t id) -> TrafficCloseRequest {

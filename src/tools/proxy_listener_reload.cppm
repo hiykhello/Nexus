@@ -44,6 +44,7 @@ export namespace cli::run_detail {
         std::shared_ptr<relay::ShadowsocksUserDirectory> ssmapi_users{};
         corosio::io_context* shared_io = nullptr;
         config::TorServiceConfig const* tor_service = nullptr;
+        std::shared_ptr<relay::GroupRuntimeHooks> group_hooks{};
     };
 
     struct ListenerReload {
@@ -77,7 +78,7 @@ export namespace cli::run_detail {
             -> std::expected<void, std::string> {
             auto [listeners, reload_config, dns_generation, dns_messages, route_snapshots, group_route_files,
                 group_health, snell_replay, network, reload_identity, log, reverse_cache, remote_rulesets, runtime_mode,
-                memory_shed, ssmapi_users, shared_io, tor_service] = running;
+                memory_shed, ssmapi_users, shared_io, tor_service, group_hooks] = running;
             auto workers = reload_config->workers;
             if (!precomputed) {
                 auto parsed_ids = config::reload_identities(input);
@@ -176,7 +177,9 @@ export namespace cli::run_detail {
             for (auto const& entry : config->inbounds) {
                 auto server = (workers == 1 && shared_io) ? relay::Server::create_shared(*shared_io) : relay::Server::create();
                 if (!server) return std::unexpected(server.error().message());
-                if (uses_transparent_metadata(entry)) (*server)->set_network_monitor(monitor);
+                if (monitor) (*server)->set_network_monitor(monitor);
+                if (config->defaults.find_process) (*server)->set_find_process(true);
+                if (group_hooks) (*server)->set_group_hooks(group_hooks);
                 if (memory_shed) (*server)->set_memory_shed(memory_shed);
                 if (ssmapi_users) (*server)->set_shadowsocks_dynamic_users(ssmapi_users);
                 auto index = candidate.listeners.size();
@@ -213,6 +216,7 @@ export namespace cli::run_detail {
                 listener.packet_slots = packet_slots;
                 candidate.listeners.push_back(std::move(listener));
             }
+            wire_listener_detours(*config, candidate.listeners);
             if (auto result = configure_native_udp(*candidate_udp, *config, *files, candidate.listeners, *protections, traffic_stats);
                 !result) return result;
             if (has_udp && !candidate_udp->bind_shared_dns(*candidate.dns, candidate.listeners.size(), tcp_readers))
@@ -261,6 +265,7 @@ export namespace cli::run_detail {
             udp = std::move(candidate_udp);
             retired->deadline = std::chrono::steady_clock::now() + listener_grace;
             for (auto& listener : listeners) listener.server->begin_drain();
+            clear_listener_detours(listeners);
             retired->listeners.swap(listeners);
             retired->dns = std::move(dns_generation);
             if (reuse_dns_binding) dns_messages.replace_program(*candidate.messages);

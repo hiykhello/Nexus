@@ -22,7 +22,13 @@ namespace cli::tun_enabled {
         using Clock=std::chrono::steady_clock;
         using namespace std::chrono_literals;
         constexpr int child_socket=3;
+        constexpr std::size_t kAddrChunk=1024;
         using FileDescriptor = platform::UniqueFd;
+
+        struct RouteUpdateHeader {
+            char tag='U';
+            std::uint32_t exclude_count=0, include_count=0;
+        };
 
         auto wait_events(int fd,short wanted,Clock::time_point deadline) noexcept -> short {
             pollfd item{fd,wanted,0};
@@ -33,6 +39,31 @@ namespace cli::tun_enabled {
                 if (errno!=EINTR) return POLLERR;
             }
             return 0;
+        }
+
+        auto send_addrs(int channel,std::span<packet::TunAddress const> list) noexcept -> bool {
+            for (std::size_t off=0; off<list.size(); off+=kAddrChunk) {
+                auto n=std::min(kAddrChunk,list.size()-off);
+                auto bytes=n*sizeof(packet::TunAddress);
+                if (::send(channel,list.data()+off,bytes,MSG_NOSIGNAL)!=static_cast<ssize_t>(bytes)) return false;
+            }
+            return true;
+        }
+
+        auto recv_addrs(int channel,std::uint32_t count,std::vector<packet::TunAddress>& out,Clock::time_point deadline) -> bool {
+            out.clear();
+            if (count>packet::max_tun_excludes) return false;
+            out.resize(count);
+            std::size_t got=0;
+            while (got<count) {
+                if (!wait_events(channel,POLLIN,deadline)) return false;
+                auto want=std::min(kAddrChunk,count-got);
+                auto bytes=want*sizeof(packet::TunAddress);
+                auto n=::recv(channel,out.data()+got,bytes,MSG_TRUNC);
+                if (n!=static_cast<ssize_t>(bytes)) return false;
+                got+=want;
+            }
+            return true;
         }
 
         auto send_fd(int channel,int fd) noexcept -> bool {
@@ -81,10 +112,8 @@ namespace cli::tun_enabled {
         }
 
         auto channel_is_private(int fd) noexcept -> bool {
-            int type=0;
-            socklen_t size=sizeof type;
-            sockaddr_storage address{};
-            socklen_t address_size=sizeof address;
+            int type=0; socklen_t size=sizeof type;
+            sockaddr_storage address{}; socklen_t address_size=sizeof address;
             return ::getsockopt(fd,SOL_SOCKET,SO_TYPE,&type,&size)==0 && type==SOCK_SEQPACKET &&
                 ::getpeername(fd,reinterpret_cast<sockaddr*>(&address),&address_size)==0 &&
                 address.ss_family==AF_UNIX && address_size==sizeof(sa_family_t);
@@ -94,10 +123,7 @@ namespace cli::tun_enabled {
             posix_spawn_file_actions_t actions;
             if (::posix_spawn_file_actions_init(&actions)) return false;
             posix_spawnattr_t attributes;
-            if (::posix_spawnattr_init(&attributes)) {
-                (void)::posix_spawn_file_actions_destroy(&actions);
-                return false;
-            }
+            if (::posix_spawnattr_init(&attributes)) { (void)::posix_spawn_file_actions_destroy(&actions); return false; }
             char executable[]="/proc/self/exe";
             char action[]="--internal-tun-network-owner";
             char* argv[]{executable,action,nullptr};
@@ -112,12 +138,58 @@ namespace cli::tun_enabled {
             (void)::posix_spawn_file_actions_destroy(&actions);
             return started;
         }
+
+        struct NftStorage {
+            std::vector<platform::nftables::Prefix> excluded, included, protected_list, local_destinations;
+            std::vector<platform::nftables::UidRange> inc_uids, exc_uids;
+            platform::nftables::Redirect options{};
+        };
+
+        auto build_nft_redirect(StrictTunHeader const& hdr, std::span<packet::TunAddress const> excludes,
+            std::span<packet::TunAddress const> includes, std::span<packet::TunAddress const> local_dests) -> NftStorage {
+            NftStorage st;
+            auto to_pfx=[](std::span<packet::TunAddress const> in) {
+                std::vector<platform::nftables::Prefix> out;
+                out.reserve(in.size());
+                for (auto const& a : in) out.push_back({a.family,a.prefix,a.bytes});
+                return out;
+            };
+            st.excluded=to_pfx(excludes);
+            st.included=to_pfx(includes);
+            st.protected_list=to_pfx(std::span(hdr.redirect.protected_destinations).first(hdr.redirect.protected_count));
+            st.local_destinations=to_pfx(local_dests);
+            for (auto const& u : std::span(hdr.redirect.include_uids).first(hdr.redirect.include_uid_count))
+                st.inc_uids.push_back({u.min,u.max});
+            for (auto const& u : std::span(hdr.redirect.exclude_uids).first(hdr.redirect.exclude_uid_count))
+                st.exc_uids.push_back({u.min,u.max});
+            auto& o=st.options;
+            o.port=hdr.redirect.port; o.intercept_dns=hdr.redirect.tcp_dns;
+            o.exclude_mptcp=hdr.redirect.exclude_mptcp; o.socket_mark=hdr.policy.mark;
+            o.include_mark=hdr.policy.include_mark; o.exclude_mark=hdr.policy.exclude_mark;
+            for (auto const& addr : std::span(hdr.network.addresses).first(hdr.network.address_count)) {
+                o.ipv4|=addr.family==4; o.ipv6|=addr.family==6;
+            }
+            o.excludes=st.excluded; o.includes=st.included;
+            o.protected_destinations=st.protected_list; o.local_destinations=st.local_destinations;
+            o.input_mark=hdr.redirect.input_mark; o.output_mark=hdr.redirect.output_mark;
+            o.reset_mark=hdr.redirect.reset_mark; o.tproxy_mark=hdr.redirect.tproxy_mark;
+            o.tproxy_port=hdr.redirect.tproxy_port ? hdr.redirect.tproxy_port : hdr.redirect.port;
+            o.include_uids=st.inc_uids; o.exclude_uids=st.exc_uids;
+            o.include_interfaces=std::span(hdr.redirect.include_interfaces).first(hdr.redirect.include_if_count);
+            o.exclude_interfaces=std::span(hdr.redirect.exclude_interfaces).first(hdr.redirect.exclude_if_count);
+            o.include_macs=std::span(hdr.redirect.include_macs).first(hdr.redirect.include_mac_count);
+            o.exclude_macs=std::span(hdr.redirect.exclude_macs).first(hdr.redirect.exclude_mac_count);
+            return st;
+        }
     }
 
     StrictTunOwner::~StrictTunOwner() {(void)stop();}
 
     auto StrictTunOwner::start(StrictTunRequest const& request) -> std::expected<packet::LinuxTun,std::string> {
+        std::lock_guard lock(io_mutex_);
         if (pid_>=0) return std::unexpected("TUN network owner already started");
+        if (request.excludes.size()>packet::max_tun_excludes || request.includes.size()>packet::max_tun_excludes)
+            return std::unexpected("TUN route limit exceeded");
         int descriptors[2];
         if (::socketpair(AF_UNIX,SOCK_SEQPACKET | SOCK_CLOEXEC,0,descriptors))
             return std::unexpected("cannot create TUN network owner channel");
@@ -127,23 +199,54 @@ namespace cli::tun_enabled {
         (void)::close(child.release());
         pid_=pid;
         socket_=local.release();
-        struct Rollback { StrictTunOwner& owner; bool ok=false; ~Rollback() { if (!ok) (void)owner.stop(); } } rollback{*this};
-        auto amount=::send(socket_,&request,sizeof request,MSG_NOSIGNAL);
-        if (amount!=sizeof request || !wait_events(socket_,POLLIN,Clock::now()+(request.dns_stub.front() ? 19s : 12s)))
-            return std::unexpected("TUN strict-route installation failed or timed out");
+        auto cleanup_fail=[&](std::string msg) -> std::expected<packet::LinuxTun,std::string> {
+            if (socket_>=0) (void)::close(std::exchange(socket_,-1));
+            if (pid_>=0) { int s=0; ::kill(pid_,SIGKILL); while(::waitpid(pid_,&s,0)<0 && errno==EINTR){} pid_=-1; }
+            return std::unexpected(std::move(msg));
+        };
+        StrictTunHeader hdr{
+            .name=request.name,.dns_stub=request.dns_stub,.network=request.network,.policy=request.policy,
+            .exclude_count=static_cast<std::uint32_t>(request.excludes.size()),
+            .include_count=static_cast<std::uint32_t>(request.includes.size()),
+            .multi_queue=request.multi_queue,.vnet_hdr=request.vnet_hdr,.redirect=request.redirect
+        };
+        static_assert(std::is_trivially_copyable_v<StrictTunHeader>);
+        if (::send(socket_,&hdr,sizeof hdr,MSG_NOSIGNAL)!=sizeof hdr ||
+            !send_addrs(socket_,request.excludes) || !send_addrs(socket_,request.includes) ||
+            !wait_events(socket_,POLLIN,Clock::now()+(request.dns_stub.front() ? 19s : 12s)))
+            return cleanup_fail("TUN strict-route installation failed or timed out");
         int redirect_error=0;
         FileDescriptor fd(receive_fd(socket_,redirect_error));
-        if (redirect_error) return std::unexpected("TUN auto-redirect NETLINK_NETFILTER: "+
+        if (redirect_error) return cleanup_fail("TUN auto-redirect NETLINK_NETFILTER: "+
             std::error_code(redirect_error,std::generic_category()).message());
-        if (fd.get()<0) return std::unexpected("TUN strict-route installation failed");
+        if (fd.get()<0) return cleanup_fail("TUN strict-route installation failed");
         auto tun=packet::LinuxTun::attach(fd.get(),packet::TunFdOwnership::adopt);
-        if (!tun) return std::unexpected("cannot adopt TUN network owner's device");
+        if (!tun) return cleanup_fail("cannot adopt TUN network owner's device");
         (void)fd.release();
-        rollback.ok=true;
         return std::move(*tun);
     }
 
+    auto StrictTunOwner::update_routes(std::span<packet::TunAddress const> excludes,
+        std::span<packet::TunAddress const> includes) -> std::expected<void,std::string> {
+        std::lock_guard lock(io_mutex_);
+        if (socket_<0 || pid_<0) return std::unexpected("TUN network owner not running");
+        if (excludes.size()>packet::max_tun_excludes || includes.size()>packet::max_tun_excludes)
+            return std::unexpected("TUN route limit exceeded");
+        RouteUpdateHeader hdr{'U',static_cast<std::uint32_t>(excludes.size()),static_cast<std::uint32_t>(includes.size())};
+        if (::send(socket_,&hdr,sizeof hdr,MSG_NOSIGNAL)!=sizeof hdr ||
+            !send_addrs(socket_,excludes) || !send_addrs(socket_,includes))
+            return std::unexpected("failed sending TUN route-set update");
+        if (!wait_events(socket_,POLLIN,Clock::now()+5s))
+            return std::unexpected("TUN route-set update timed out");
+        std::uint8_t status=1;
+        if (::recv(socket_,&status,sizeof status,MSG_TRUNC)!=sizeof status || status!=0)
+            return std::unexpected("TUN live route-set update rejected by kernel owner");
+        return {};
+    }
+
     auto StrictTunOwner::healthy() const noexcept -> bool {
+        std::unique_lock lock(io_mutex_, std::try_to_lock);
+        if (!lock.owns_lock()) return true; // route update in progress
         if (socket_<0) return false;
         pollfd item{socket_,POLLIN,0};
         auto result=::poll(&item,1,0);
@@ -151,10 +254,10 @@ namespace cli::tun_enabled {
     }
 
     auto StrictTunOwner::stop() noexcept -> bool {
+        std::lock_guard lock(io_mutex_);
         if (socket_>=0) (void)::close(std::exchange(socket_,-1));
         if (pid_<0) return true;
-        int status=0;
-        pid_t done;
+        int status=0; pid_t done;
         auto deadline=Clock::now()+9s;
         do {
             done=::waitpid(pid_,&status,WNOHANG);
@@ -174,100 +277,85 @@ namespace cli::tun_enabled {
     auto run_strict_tun_owner() -> int {
         FileDescriptor channel(child_socket);
         if (!channel_is_private(channel.get()) || !wait_events(channel.get(),POLLIN,Clock::now()+2s)) return 2;
-        StrictTunRequest request{};
-        static_assert(std::is_trivially_copyable_v<StrictTunRequest>);
-        if (::recv(channel.get(),&request,sizeof request,MSG_TRUNC)!=sizeof request ||
-            request.name.back()!=0 || request.dns_stub.back()!=0 ||
-            request.exclude_count>request.excludes.size() || request.include_count>request.includes.size() ||
-            std::size_t(request.exclude_count)+request.include_count>packet::max_tun_excludes ||
-            (request.redirect.port && request.include_count) ||
-            request.network.route_count || !packet::tun_network_detail::validate(request.network)) return 2;
-        if (request.redirect.protected_count>request.redirect.protected_destinations.size() ||
-            request.redirect.include_uid_count>request.redirect.include_uids.size() ||
-            request.redirect.exclude_uid_count>request.redirect.exclude_uids.size() ||
-            request.redirect.include_if_count>request.redirect.include_interfaces.size() ||
-            request.redirect.exclude_if_count>request.redirect.exclude_interfaces.size()) return 2;
-        auto protected_destinations=std::span(request.redirect.protected_destinations).first(request.redirect.protected_count);
-        for (auto const& entry:protected_destinations)
-            if (!packet::tun_network_detail::valid(entry,true)) return 2;
-        auto includes=std::span(request.includes).first(request.include_count);
-        for (auto const& entry:includes)
-            if (!packet::tun_network_detail::valid(entry,true)) return 2;
-        auto tun=packet::LinuxTun::create(request.name.data(),{.multi_queue=request.multi_queue});
+        StrictTunHeader hdr{};
+        static_assert(std::is_trivially_copyable_v<StrictTunHeader>);
+        if (::recv(channel.get(),&hdr,sizeof hdr,MSG_TRUNC)!=sizeof hdr ||
+            hdr.name.back()!=0 || hdr.dns_stub.back()!=0 ||
+            hdr.exclude_count>packet::max_tun_excludes || hdr.include_count>packet::max_tun_excludes ||
+            hdr.network.route_count || !packet::tun_network_detail::validate(hdr.network)) return 2;
+        if (hdr.redirect.protected_count>hdr.redirect.protected_destinations.size() ||
+            hdr.redirect.include_uid_count>hdr.redirect.include_uids.size() ||
+            hdr.redirect.exclude_uid_count>hdr.redirect.exclude_uids.size() ||
+            hdr.redirect.include_if_count>hdr.redirect.include_interfaces.size() ||
+            hdr.redirect.exclude_if_count>hdr.redirect.exclude_interfaces.size() ||
+            hdr.redirect.include_mac_count>hdr.redirect.include_macs.size() ||
+            hdr.redirect.exclude_mac_count>hdr.redirect.exclude_macs.size()) return 2;
+        std::vector<packet::TunAddress> excludes, includes;
+        auto recv_deadline=Clock::now()+4s;
+        if (!recv_addrs(channel.get(),hdr.exclude_count,excludes,recv_deadline) ||
+            !recv_addrs(channel.get(),hdr.include_count,includes,recv_deadline)) return 2;
+        for (auto const& e : std::span(hdr.redirect.protected_destinations).first(hdr.redirect.protected_count))
+            if (!packet::tun_network_detail::valid(e,true)) return 2;
+        for (auto const& e : includes) if (!packet::tun_policy_detail::valid_policy_prefix(e,true)) return 2;
+        auto tun=packet::LinuxTun::create(hdr.name.data(),{.vnet_hdr=hdr.vnet_hdr,.multi_queue=hdr.multi_queue});
         if (!tun) return 2;
         auto token=tun->claim_network();
         if (!token) return 2;
         std::optional<packet::TunNetworkLease<>> network;
-        if (!packet::TunNetworkLease<>::emplace_into(network,std::move(*token),request.network)) return 2;
+        if (!packet::TunNetworkLease<>::emplace_into(network,std::move(*token),hdr.network)) return 2;
         if (!network->start(Clock::now()+4s)) { (void)network->stop(Clock::now()+3s); return 2; }
         packet::TunDefaultPolicy<> policy;
         auto deadline=Clock::now()+3s;
-        auto excludes=std::span(request.excludes).first(request.exclude_count);
-        if (!policy.start(*network,request.policy,deadline,deadline+2s,excludes,request.redirect,includes)) {
-            (void)policy.stop(Clock::now()+3s);
-            (void)network->stop(Clock::now()+3s);
-            return 2;
+        if (!policy.start(*network,hdr.policy,deadline,deadline+2s,excludes,hdr.redirect,includes)) {
+            (void)policy.stop(Clock::now()+3s); (void)network->stop(Clock::now()+3s); return 2;
         }
         bool drift=false;
         TunResolvedLease resolver;
-        if (request.dns_stub.front()) {
+        if (hdr.dns_stub.front()) {
             auto until=Clock::now()+3s;
-            auto claimed=start_tun_resolved(*network,request.dns_stub.data(),until,until+2s);
+            auto claimed=start_tun_resolved(*network,hdr.dns_stub.data(),until,until+2s);
             if (!claimed) {
-                (void)policy.stop(Clock::now()+3s);
-                (void)network->stop(Clock::now()+3s);
+                (void)policy.stop(Clock::now()+3s); (void)network->stop(Clock::now()+3s);
                 return claimed.error()==TunResolvedError::rejected && policy.drained() && network->drained() ? 2 : 1;
             }
             resolver=std::move(*claimed);
         }
         platform::nftables::Table firewall;
-        if (request.redirect.port) {
-            platform::nftables::Redirect options{
-                .port=request.redirect.port,.intercept_dns=request.redirect.tcp_dns,
-                .exclude_mptcp=request.redirect.exclude_mptcp,.socket_mark=request.policy.mark,
-                .include_mark=request.policy.include_mark,.exclude_mark=request.policy.exclude_mark
-            };
-            for (auto const& addr:std::span(request.network.addresses).first(request.network.address_count)) {
-                options.ipv4|=addr.family==4;
-                options.ipv6|=addr.family==6;
-            }
-            auto prefixes=[](std::span<packet::TunAddress const> input) {
-                std::vector<platform::nftables::Prefix> list;
-                for (auto const& addr:input) list.push_back({addr.family,addr.prefix,addr.bytes});
-                return list;
-            };
-            auto excluded=prefixes(excludes);
-            auto protected_list=prefixes(protected_destinations);
-            auto local_destinations=prefixes(policy.local_destinations());
-            options.excludes=excluded;
-            options.protected_destinations=protected_list;
-            options.local_destinations=local_destinations;
-            options.input_mark=request.redirect.input_mark;
-            options.output_mark=request.redirect.output_mark;
-            options.reset_mark=request.redirect.reset_mark;
-            std::vector<platform::nftables::UidRange> inc_uids, exc_uids;
-            for (auto const& u : std::span(request.redirect.include_uids).first(request.redirect.include_uid_count))
-                inc_uids.push_back({u.min, u.max});
-            for (auto const& u : std::span(request.redirect.exclude_uids).first(request.redirect.exclude_uid_count))
-                exc_uids.push_back({u.min, u.max});
-            options.include_uids=inc_uids;
-            options.exclude_uids=exc_uids;
-            options.include_interfaces=std::span(request.redirect.include_interfaces).first(request.redirect.include_if_count);
-            options.exclude_interfaces=std::span(request.redirect.exclude_interfaces).first(request.redirect.exclude_if_count);
-            if (auto error=firewall.start(options,Clock::now()+2s)) {
+        if (hdr.redirect.port) {
+            auto st=build_nft_redirect(hdr,excludes,includes,policy.local_destinations());
+            if (auto error=firewall.start(st.options,Clock::now()+2s)) {
                 auto detail=error.value();
                 (void)::send(channel.get(),&detail,sizeof detail,MSG_NOSIGNAL);
                 if (resolver) (void)resolver->stop(Clock::now()+2s);
-                (void)policy.stop(Clock::now()+3s);
-                (void)network->stop(Clock::now()+3s);
+                (void)policy.stop(Clock::now()+3s); (void)network->stop(Clock::now()+3s);
                 return policy.drained() && network->drained() ? 2 : 1;
             }
         }
         if (send_fd(channel.get(),tun->native_handle())) {
-            while (!wait_events(channel.get(),POLLIN,Clock::now()+100ms)) {
+            for (;;) {
+                auto ev=wait_events(channel.get(),POLLIN,Clock::now()+100ms);
+                if (ev) {
+                    RouteUpdateHeader upd{};
+                    auto n=::recv(channel.get(),&upd,sizeof upd,MSG_DONTWAIT|MSG_TRUNC);
+                    if (n==sizeof upd && upd.tag=='U') {
+                        std::vector<packet::TunAddress> next_exc, next_inc;
+                        std::uint8_t rc=1;
+                        if (recv_addrs(channel.get(),upd.exclude_count,next_exc,Clock::now()+3s) &&
+                            recv_addrs(channel.get(),upd.include_count,next_inc,Clock::now()+3s)) {
+                            bool ok=policy.update_routes(next_exc,next_inc,Clock::now()+3s).has_value();
+                            if (ok && hdr.redirect.port) {
+                                auto st=build_nft_redirect(hdr,next_exc,next_inc,policy.local_destinations());
+                                ok=!firewall.replace(st.options,Clock::now()+2s);
+                            }
+                            if (ok) { excludes=std::move(next_exc); includes=std::move(next_inc); rc=0; }
+                        }
+                        (void)::send(channel.get(),&rc,sizeof rc,MSG_NOSIGNAL);
+                        continue;
+                    }
+                    break;
+                }
                 bool healthy=policy.check().has_value();
-                if (healthy && resolver)
-                    healthy=resolver->poll(Clock::now(),Clock::now()+200ms);
+                if (healthy && resolver) healthy=resolver->poll(Clock::now(),Clock::now()+200ms);
                 if (!healthy) {
                     drift=true;
                     (void)::shutdown(channel.get(),SHUT_WR);

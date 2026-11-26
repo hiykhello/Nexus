@@ -1,6 +1,7 @@
 module rules.convert_external;
 import std;
 import rules.regex;
+import rules.srs_domain;
 
 namespace rules {
     namespace {
@@ -176,7 +177,7 @@ namespace rules {
             std::string rtype = "default", mode;
             bool invert = false;
             std::vector<Rule> logical_children;
-            std::array<std::vector<Rule>, 10> groups;
+            std::array<std::vector<Rule>, 23> groups;
             auto take_node = [&](std::size_t n = 1) -> std::expected<void, Error> {
                 if (nodes + n > max_rules) return std::unexpected(Error{ErrorCode::limit, "rule count exceeds limit"});
                 nodes += n;
@@ -184,8 +185,8 @@ namespace rules {
             };
             auto group_for_key = [](std::string_view k) noexcept -> std::size_t {
                 if (k == "network") return 0;
-                if (k == "domain" || k == "domain_suffix" || k == "domain_keyword" || k == "domain_regex" || k == "ip_cidr")
-                    return 1;
+                if (k == "domain" || k == "domain_suffix" || k == "domain_keyword" || k == "domain_regex" ||
+                    k == "ip_cidr" || k == "adguard_domain") return 1;
                 if (k == "source_port" || k == "source_port_range") return 2;
                 if (k == "port" || k == "port_range") return 3;
                 if (k == "source_ip_cidr") return 4;
@@ -193,7 +194,14 @@ namespace rules {
                 if (k == "process_name") return 6;
                 if (k == "process_path") return 7;
                 if (k == "process_path_regex") return 8;
-                return 9;
+                if (k == "package_name") return 9;
+                if (k == "package_name_regex") return 10;
+                if (k == "wifi_ssid") return 11;
+                if (k == "wifi_bssid") return 12;
+                if (k == "network_type") return 13;
+                if (k == "default_interface_address") return 16;
+                if (k == "protocol") return 21;
+                return 22;
             };
             if (!p.take('}')) {
                 for (;;) {
@@ -206,6 +214,36 @@ namespace rules {
                         auto v = p.read_string(); if (!v) return std::unexpected(std::move(v.error())); mode = std::move(*v);
                     } else if (*key == "invert") {
                         auto v = p.read_bool(); if (!v) return std::unexpected(std::move(v.error())); invert = *v;
+                    } else if (*key == "network_is_expensive" || *key == "network_is_constrained") {
+                        auto v = p.read_bool(); if (!v) return std::unexpected(std::move(v.error()));
+                        if (*v) {
+                            if (auto ok = take_node(); !ok) return std::unexpected(std::move(ok.error()));
+                            bool exp = *key == "network_is_expensive";
+                            groups[exp ? 14 : 15].push_back({exp ? "network-is-expensive" : "network-is-constrained", "true", {}});
+                        }
+                    } else if (*key == "network_interface_address") {
+                        if (!p.take('{')) return JsonParser::fail("expected JSON object for network_interface_address");
+                        if (!p.take('}')) {
+                            for (;;) {
+                                auto ifk = p.read_string(); if (!ifk) return std::unexpected(std::move(ifk.error()));
+                                if (!p.take(':')) return JsonParser::fail("expected ':' in network_interface_address");
+                                lower_ascii(*ifk);
+                                auto nt = parse_network_type(*ifk);
+                                auto vals = p.read_string_or_list(false);
+                                if (!vals) return std::unexpected(std::move(vals.error()));
+                                if (!nt) {
+                                    if (!lenient) return std::unexpected(Error{ErrorCode::schema, "invalid network_interface_address type: " + *ifk});
+                                } else {
+                                    auto slot = 17u + static_cast<unsigned>(*nt);
+                                    for (auto const& cidr : *vals) {
+                                        if (auto ok = take_node(); !ok) return std::unexpected(std::move(ok.error()));
+                                        groups[slot].push_back({"network-interface-address", *ifk + ":" + cidr, {}});
+                                    }
+                                }
+                                if (p.take('}')) break;
+                                if (!p.take(',')) return JsonParser::fail("expected ',' or '}' in network_interface_address");
+                            }
+                        }
                     } else if (*key == "rules") {
                         if (!p.take('[')) return JsonParser::fail("expected JSON logical rules array");
                         if (!p.take(']')) {
@@ -218,11 +256,14 @@ namespace rules {
                             }
                         }
                     } else if (*key == "domain" || *key == "domain_suffix" || *key == "domain_keyword" ||
-                               *key == "domain_regex" || *key == "ip_cidr" || *key == "source_ip_cidr" ||
-                               *key == "port" || *key == "port_range" || *key == "source_port" ||
-                               *key == "source_port_range" || *key == "network" || *key == "protocol" ||
-                               *key == "query_type" || *key == "process_name" || *key == "process_path" ||
-                               *key == "process_path_regex" || *key == "source_interface") {
+                               *key == "domain_regex" || *key == "adguard_domain" || *key == "ip_cidr" ||
+                               *key == "source_ip_cidr" || *key == "port" || *key == "port_range" ||
+                               *key == "source_port" || *key == "source_port_range" || *key == "network" ||
+                               *key == "protocol" || *key == "query_type" || *key == "process_name" ||
+                               *key == "process_path" || *key == "process_path_regex" || *key == "package_name" ||
+                               *key == "package_name_regex" || *key == "wifi_ssid" || *key == "wifi_bssid" ||
+                               *key == "network_type" || *key == "default_interface_address" ||
+                               *key == "source_interface") {
                         bool ints = (*key == "port" || *key == "source_port" || *key == "query_type");
                         auto vals = p.read_string_or_list(ints);
                         if (!vals) return std::unexpected(std::move(vals.error()));
@@ -233,6 +274,12 @@ namespace rules {
                             if (mapped == "domain-suffix") {
                                 if (auto ok = take_node(val.starts_with('.') ? 4 : 1); !ok) return std::unexpected(std::move(ok.error()));
                                 items.push_back(make_suffix_rule(std::move(val)));
+                            } else if (mapped == "adguard-domain") {
+                                auto conv = srs_detail::convert_adguard_domain_line(val, lenient);
+                                if (!conv) return std::unexpected(std::move(conv.error()));
+                                if (!*conv) continue;
+                                if (auto ok = take_node((*conv)->type == "and" ? 4u : 1u); !ok) return std::unexpected(std::move(ok.error()));
+                                items.push_back(std::move(**conv));
                             } else if (mapped == "port-range" || mapped == "source-port-range") {
                                 auto colon = val.find(':');
                                 if (colon != std::string::npos) {
@@ -247,10 +294,16 @@ namespace rules {
                                 if (!q) { if (lenient) continue; return std::unexpected(Error{ErrorCode::schema, "unsupported query_type: " + val}); }
                                 if (auto ok = take_node(); !ok) return std::unexpected(std::move(ok.error()));
                                 items.push_back(Rule{"query-type", std::move(*q), {}});
-                            } else if ((mapped == "domain-regex" || mapped == "process-path-regex") && lenient && !BoundedRegex::compile(val)) {
+                            } else if (mapped == "wifi-bssid") {
+                                auto mac = srs_detail::normalize_bssid(val);
+                                if (!mac) { if (lenient) continue; return std::unexpected(Error{ErrorCode::schema, "invalid wifi_bssid: " + val}); }
+                                if (auto ok = take_node(); !ok) return std::unexpected(std::move(ok.error()));
+                                items.push_back(Rule{"wifi-bssid", std::move(*mac), {}});
+                            } else if ((mapped == "domain-regex" || mapped == "process-path-regex" || mapped == "package-name-regex") &&
+                                       lenient && !BoundedRegex::compile(val)) {
                                 continue;
                             } else {
-                                if (mapped == "domain" || mapped == "domain-keyword") lower_ascii(val);
+                                if (mapped == "domain" || mapped == "domain-keyword" || mapped == "network-type") lower_ascii(val);
                                 if (auto ok = take_node(); !ok) return std::unexpected(std::move(ok.error()));
                                 items.push_back(Rule{std::move(mapped), std::move(val), {}});
                             }

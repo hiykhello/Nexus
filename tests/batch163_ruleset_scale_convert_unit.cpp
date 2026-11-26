@@ -79,8 +79,8 @@ int main() {
         constexpr std::string_view jlenient = R"({
             "version": 3,
             "rules": [
-                {"package_name": "com.ignored", "wifi_ssid": "corp"},
-                {"domain_suffix": ["Example.NET"], "wifi_bssid": "00:11:22:33:44:55"}
+                {"future_unsupported_field": "x"},
+                {"domain_suffix": ["Example.NET"], "future_extra": 123}
             ]
         })";
         check(!parse_rule_input(jlenient, InputFormat::json, false, false), "strict JSON rejects unknown fields");
@@ -112,16 +112,16 @@ int main() {
         check(merged && merged->rules.size() == 7, "merge deduplicates cleanly");
     }
 
-    // 4. Lenient SRS skipping unsupported item 19 (network_is_expensive) + uppercase normalization
+    // 4. SRS v3 item 19 (network_is_expensive) decoded in both modes + lenient uppercase normalization
     {
         std::vector<std::uint8_t> srs{
             2, // 2 rules
-            0, 19, 255, 0, // rule 0: only network_is_expensive -> dropped cleanly in lenient mode
-            0, 3, 1, 3, 'D', 'N', 'S', 19, 255, 0 // rule 1: keyword "DNS" + network_is_expensive
+            0, 19, 255, 0, // rule 0: network_is_expensive
+            0, 3, 1, 3, 'D', 'N', 'S', 19, 255, 0 // rule 1: uppercase keyword "DNS" + network_is_expensive
         };
-        check(!decode_srs_payload(srs, false, false), "strict SRS rejects item 19");
+        check(!decode_srs_payload(srs, false, false), "strict SRS still rejects uppercase keyword");
         auto ok = decode_srs_payload(srs, false, true);
-        check(ok && ok->rules.size() == 1 && ok->rules[0].value == "dns", "lenient SRS lowercases & skips unsupported items");
+        check(ok && ok->rules.size() == 2 && ok->rules[0].type == "network-is-expensive", "lenient SRS lowercases & decodes item 19");
     }
 
     if (!failures) std::cout << "Batch 163 rule-set scale & conversion tests passed\n";

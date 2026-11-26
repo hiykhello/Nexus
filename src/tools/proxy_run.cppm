@@ -94,7 +94,8 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     cli::NtpRuntime ntp_runtime; cli::OptionalServicesRuntime services_runtime;
     std::shared_ptr<relay::ShadowsocksUserDirectory> ssmapi_users;
     cli::SelectorState selector_state;
-    std::shared_ptr<::platform::network::Monitor> network;
+    std::shared_ptr<::platform::network::Monitor> network; std::shared_ptr<relay::GroupRuntimeHooks> group_hooks;
+    std::uint64_t last_network_generation = 0; bool need_interrupt_traffic = false;
     std::string control_socket;
     std::optional<std::uint32_t> control_read_uid;
     ControlOperations control_operations; RuntimeRouteModeController route_mode;
@@ -145,8 +146,13 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         control_http_config=config->control_http;
         ntp_config=config->ntp; services_config=config->services;
         auto observe_neighbors=std::ranges::any_of(config->inbounds,uses_transparent_metadata);
-        if (config->direct_network || !control_socket.empty() || observe_neighbors)
+        if (config->direct_network || config->defaults.auto_detect_interface || config->defaults.default_network_strategy ||
+            !control_socket.empty() || control_http_config || observe_neighbors || !config->routes.empty() ||
+            config->ordered_tcp.has_value() || config->dns.has_value() || !config->selectors.empty())
             network=std::make_shared<::platform::network::Monitor>(observe_neighbors);
+        if (!config->selectors.empty()) group_hooks=std::make_shared<relay::GroupRuntimeHooks>(&notify_proxy_wakeup);
+        need_interrupt_traffic = config->defaults.find_process || std::ranges::any_of(config->selectors,
+            [](auto const& g) { return g.interrupt_exist_connections; });
         if (config->direct_network) {
             auto& binding=config->direct_tcp_options.binding;
             binding.network=std::make_shared<::platform::network::InterfaceSelection>(
@@ -154,11 +160,9 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         }
         shutdown_grace=std::chrono::milliseconds(config->shutdown_grace_ms.value_or(0));
         cli::RuleFileInput rule_input(run_args.config_path);
-        if (auto fetched=remote_rulesets.fetch_initial(*config,*input,rule_input); !fetched)
-            return log_failure(logs,logging::Domain::route,"remote rule-set failed",fetched.error());
+        if (auto fetched=remote_rulesets.fetch_initial(*config,*input,rule_input); !fetched) return log_failure(logs,logging::Domain::route,"remote rule-set failed",fetched.error());
         if (config->dns) {
-            auto loaded=load_dns_rules(*config->dns,rule_input);
-            if (!loaded) {return log_failure(logs,logging::Domain::core,"proxy configuration failed",loaded.error());}
+            if (auto loaded=load_dns_rules(*config->dns,rule_input); !loaded) return log_failure(logs,logging::Domain::core,"proxy configuration failed",loaded.error());
             if (config->dns->reverse_mapping) reverse_cache=make_reverse_cache();
         }
         auto dns_transports=cli::prepare_dns_transports(*config);
@@ -176,7 +180,9 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         udp->resize(listeners.size(),std::ranges::any_of(config->inbounds,[](auto const& entry) { return entry.shadowsocks.has_value(); }));
         auto configure=[&](relay::Server& server, std::size_t index) -> int {
             auto const& entry=config->inbounds[index];
-            if (uses_transparent_metadata(entry)) server.set_network_monitor(network);
+            if (network) server.set_network_monitor(network);
+            if (config->defaults.find_process) server.set_find_process(true);
+            if (group_hooks) server.set_group_hooks(group_hooks);
             auto remember=[&](std::span<std::uint8_t const> key,std::span<relay::ShadowsocksUserKey const> users) {
                 udp->remember(index,key,users);
             };
@@ -322,7 +328,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     refresh_network();
     auto admission_now=std::chrono::steady_clock::now();
     for (auto const& listener:listeners) listener.server->publish_principal_bytes(admission_now);
-    if (auto started=host.start(workers,traffic_stats || control.active() || http_control.active(),listener_reload.tcp_admission); !started) {
+    if (auto started=host.start(workers,traffic_stats || control.active() || http_control.active() || need_interrupt_traffic,listener_reload.tcp_admission); !started) {
         if (stopped.load(std::memory_order_relaxed)) return 0;
         return log_failure(logs,logging::Domain::proxy,"proxy startup failed",started.error());
     }
@@ -343,8 +349,8 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         }
         if (listener_reload.tcp_admission && (key!=reload_identity || !route_snapshots || udp->has_listeners())) {
             auto r=listener_reload.apply({listeners,reload_config,dns_generation,dns_messages,route_snapshots,
-                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr},run_args.config_path,input,std::string(key),
-                traffic_stats || control.active() || http_control.active(),group_health.has_value(),udp,selector_state.choices(),
+                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr,group_hooks},run_args.config_path,input,std::string(key),
+                traffic_stats || control.active() || http_control.active() || need_interrupt_traffic,group_health.has_value(),udp,selector_state.choices(),
                 provider_sync_trigger || proxy_providers.has_providers(), std::move(*ids));
             if (r) { reload_source.assign(input); route_mode.sync(reload_config); if (control.active() || http_control.active()) route_outbound_names=cli::outbound_names(*reload_config); }
             return r;
@@ -393,21 +399,17 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         -> std::expected<bool,std::string> {
         if (!route_snapshots || !group_route_files || udp->has_listeners()) return std::unexpected("selection-unavailable");
         bool durable=true;
-        if (persist) {
-            auto save=[&]() -> std::expected<void,std::string> {
-                auto persisted=selector_state.select(group,member);
-                if (!persisted) return std::unexpected(std::move(persisted.error()));
-                durable=*persisted;
-                return {};
-            };
-            auto published=publish_group_routes(listeners,*route_snapshots,candidate,*group_route_files,false,
-                functional::function_ref<std::expected<void,std::string>()>{save},group_health ? &*group_health : nullptr);
-            if (!published) return std::unexpected(std::move(published.error()));
-            return durable;
-        }
-        auto published=publish_group_routes(listeners,*route_snapshots,candidate,*group_route_files,false,{},group_health ? &*group_health : nullptr);
+        auto save=[&]() -> std::expected<void,std::string> {
+            auto persisted=selector_state.select(group,member);
+            if (!persisted) return std::unexpected(std::move(persisted.error()));
+            durable=*persisted; return {};
+        };
+        auto published=persist ? publish_group_routes(listeners,*route_snapshots,candidate,*group_route_files,false,
+            functional::function_ref<std::expected<void,std::string>()>{save},group_health ? &*group_health : nullptr) :
+            publish_group_routes(listeners,*route_snapshots,candidate,*group_route_files,false,{},group_health ? &*group_health : nullptr);
         if (!published) return std::unexpected(std::move(published.error()));
-        return true;
+        if (reload_config) (void)interrupt_group_sessions(listeners, *reload_config, candidate);
+        return persist ? durable : true;
     };
     auto manage=[&](cli::ControlRole role,std::span<std::string_view const> command) -> std::expected<std::string,std::string> {
         if (command.front()=="log-level") return logs.control(role==cli::ControlRole::administrator,command.subspan(1));
@@ -418,9 +420,10 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             group_health ? &*group_health : nullptr,role,control_operations,control,reverse_cache.get(),&route_mode,&outbound_prober,
             bool(route_snapshots || listener_reload.tcp_admission));
     };
-    WinStopEventGuard win_stop;
+    WinStopEventGuard win_stop; std::vector<relay::GroupDialFailure> dial_failures;
     while (!stopped.load(std::memory_order_relaxed) && !win_stop.signaled() && host.healthy()) {
         refresh_network();
+        handle_network_generation_change(listeners, dns_messages, reverse_cache, group_health, control_operations, network, last_network_generation);
         control.poll(manage);
         if (http_control.active()) {
             http_control.poll(
@@ -450,26 +453,21 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         }
         if(group_health) {
             try {
-                auto snapshot=reload_config->direct_network && network ? network->get() : nullptr;
-                auto picked=group_health->poll([&](std::shared_ptr<relay::OutboundProbe> probe) {
-                    return queue_probe_on_listeners(listeners, tun, hy2, tuic, std::move(probe));
-                },*reload_config,snapshot ? std::optional(snapshot->generation) : std::nullopt);
-                if(picked) {
-                    std::expected<void,std::string> published;
-                    if(picked->balance_changed) published=publish_group_routes(listeners,*route_snapshots,*reload_config,*group_route_files,false,{},&*group_health);
-                    else {
-                        auto requested=*reload_config; requested.selectors[picked->group].selected=picked->member;
-                        auto next=config::reselect_outbounds(*reload_config,requested);
-                        published=next ? publish_group_routes(listeners,*route_snapshots,*next,*group_route_files,false,{},&*group_health) :
-                            std::expected<void,std::string>(std::unexpected(std::move(next.error())));
-                        if(published) *reload_config=std::move(*next);
-                    }
-                    if(published) { control_operations.published(); control_operations.record(ControlOperations::EventKind::selector_changed); route_mode.sync(reload_config); }
-                    else log_failure(logs,logging::Domain::route,"outbound probe selection failed",published.error());
+                if (group_hooks) group_health->sync_activity(*group_hooks);
+                auto snapshot = network ? network->get() : nullptr;
+                auto net_gen = snapshot ? std::optional(snapshot->generation) : std::nullopt;
+                auto publish_sel = [&](OutboundGroupHealth::Selection const& sel) {
+                    auto ok = apply_group_health_selection(listeners, *route_snapshots, *reload_config, *group_route_files, *group_health, sel);
+                    if (ok) { control_operations.published(); control_operations.record(ControlOperations::EventKind::selector_changed); route_mode.sync(reload_config); }
+                    else log_failure(logs,logging::Domain::route,"outbound probe selection failed",ok.error());
+                };
+                if (group_hooks) {
+                    dial_failures.clear(); group_hooks->drain_dial_failures(dial_failures);
+                    for (auto const& f : dial_failures)
+                        if (auto sel = group_health->record_dial_failure_by_index(*reload_config, f.group_tag, f.outbound, net_gen)) publish_sel(*sel);
                 }
-            } catch(std::bad_alloc const&) {
-                logs.emit(logging::Level::error,logging::Domain::route,108,{},"outbound probe selection: out of memory");
-            }
+                if (auto picked = group_health->poll([&](std::shared_ptr<relay::OutboundProbe> probe) { return queue_probe_on_listeners(listeners, tun, hy2, tuic, std::move(probe)); }, *reload_config, net_gen)) publish_sel(*picked);
+            } catch(std::bad_alloc const&) { logs.emit(logging::Level::error,logging::Domain::route,108,{},"outbound probe selection: out of memory"); }
         }
         if (outbound_prober.has_pending()) outbound_prober.poll([&](std::shared_ptr<relay::OutboundProbe> probe) {
             return queue_probe_on_listeners(listeners, tun, hy2, tuic, std::move(probe));

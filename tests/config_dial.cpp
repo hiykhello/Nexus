@@ -1,5 +1,6 @@
 import std;
 import config;
+import platform.socket_options;
 
 namespace {
     auto parse(std::string_view protocol,std::string_view fields,std::string_view extra={}) {
@@ -99,4 +100,218 @@ auto main() -> int {
         }
     }
     std::println("All five outbound types: keepalive, physical binding and UDP fragmentation configuration, limits, malformed addresses, duplicates and detour ownership passed");
+
+    // Global routing defaults: inheritance vs explicit outbound override, resolver binding, detour skip, validation.
+    {
+        auto inherited = config::parse_kdl(R"(schema-version 1
+role "client"
+dns {
+    server "boot" type="udp" host="127.0.0.1" port=5353
+    server "alt" type="udp" host="127.0.0.2" port=5353
+    final "boot"
+}
+inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "entry" type="shadowsocks" {
+    server host="entry.example" port=443
+    method "2022-blake3-aes-128-gcm"
+    key-file "/key"
+}
+outbound "custom" type="shadowsocks" {
+    server host="custom.example" port=443
+    method "2022-blake3-aes-128-gcm"
+    key-file "/key"
+    bind-interface "eth1"
+    routing-mark 99
+    domain-resolver "alt"
+}
+outbound "ipnode" type="shadowsocks" {
+    server host="127.0.0.1" port=444
+    method "2022-blake3-aes-128-gcm"
+    key-file "/key"
+}
+outbound "layered" type="vless" {
+    server host="inner.example" port=443
+    authentication { uuid-file "/uuid"; }
+    tls { server-name "cover.example"; ca-file "/ca"; verify #true; }
+    detour "entry"
+}
+routing {
+    default-interface "lo"
+    default-mark 0x4242
+    default-domain-resolver "boot"
+    find-process #true
+    rules {
+        - domain "a.example" to="custom"
+        - domain "b.example" to="ipnode"
+        - domain "c.example" to="layered"
+    }
+    default-outbound "entry"
+}
+)");
+        if (!inherited) { std::cerr << "routing defaults inherit: " << inherited.error() << '\n'; return 40; }
+        if (inherited->defaults.default_interface != "lo" || inherited->defaults.default_mark != 0x4242u ||
+            inherited->defaults.default_domain_resolver != "boot" || inherited->defaults.default_domain_resolver_index != 0 ||
+            !inherited->defaults.find_process || inherited->defaults.auto_detect_interface) return 41;
+        if (inherited->direct_tcp_options.binding.interface_name() != "lo" ||
+            inherited->direct_tcp_options.binding.routing_mark != 0x4242u) return 42;
+        auto const& entry_ob = inherited->shadowsocks_outbounds[0].config;
+        auto const& custom_ob = inherited->shadowsocks_outbounds[1].config;
+        auto const& ip_ob = inherited->shadowsocks_outbounds[2].config;
+        auto const& layered_ob = inherited->vless_outbounds[0].config;
+        if (entry_ob.tcp_options.binding.interface_name() != "lo" || entry_ob.tcp_options.binding.routing_mark != 0x4242u ||
+            entry_ob.bootstrap_resolver != "boot" || entry_ob.bootstrap_index != 0) return 43;
+        if (custom_ob.tcp_options.binding.interface_name() != "eth1" || custom_ob.tcp_options.binding.routing_mark != 99u ||
+            custom_ob.bootstrap_resolver != "alt" || custom_ob.bootstrap_index != 1) return 44;
+        if (ip_ob.tcp_options.binding.interface_name() != "lo" || ip_ob.bootstrap_resolver.has_value() ||
+            ip_ob.bootstrap_index.has_value()) return 45;
+        if (layered_ob.tcp_options.configured() || layered_ob.bootstrap_resolver != "boot" ||
+            layered_ob.bootstrap_index != 0 || layered_ob.detour_index != 3) return 46;
+
+        auto auto_hybrid = config::parse_kdl(R"(schema-version 1
+role "client"
+inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "direct" type="direct"
+outbound "node" type="shadowsocks" {
+    server host="127.0.0.1" port=443
+    method "2022-blake3-aes-128-gcm"
+    key-file "/key"
+}
+routing {
+    auto-detect-interface #true
+    default-network-strategy "hybrid"
+    default-network-type "wifi"
+    default-outbound "node"
+}
+)");
+        if (!auto_hybrid) { std::cerr << "auto/hybrid: " << auto_hybrid.error() << '\n'; return 47; }
+        if (!auto_hybrid->defaults.auto_detect_interface || !auto_hybrid->defaults.default_network_strategy ||
+            auto_hybrid->defaults.default_network_strategy->strategy != platform::network::Strategy::hybrid ||
+            auto_hybrid->defaults.default_network_strategy->preferred != platform::network::Type::wifi) return 48;
+        if (!auto_hybrid->direct_network || auto_hybrid->direct_network->strategy != platform::network::Strategy::hybrid ||
+            !auto_hybrid->direct_tcp_options.binding.auto_detect_interface ||
+            auto_hybrid->direct_tcp_options.binding.network_strategy != platform::network::Strategy::hybrid) return 49;
+        auto const& node_b = auto_hybrid->shadowsocks_outbounds[0].config.tcp_options.binding;
+        if (!node_b.auto_detect_interface || node_b.network_strategy != platform::network::Strategy::hybrid ||
+            node_b.network_type != platform::network::Type::wifi) return 50;
+
+        auto direct_hybrid = parse("direct", R"(network strategy="hybrid" type="ethernet" { interface "eth0" type="ethernet"; interface "wlan0" type="wifi"; };)");
+        if (!direct_hybrid || !direct_hybrid->direct_network ||
+            direct_hybrid->direct_network->strategy != platform::network::Strategy::hybrid ||
+            direct_hybrid->direct_network->fallback_delay.count() != 0) return 51;
+
+        for (auto bad_routing : {
+            R"(default-interface ""; default-outbound "direct";)",
+            R"(default-interface "abcdefghijklmnop"; default-outbound "direct";)",
+            R"(default-interface "lo"; default-interface "lo"; default-outbound "direct";)",
+            R"(default-mark -1; default-outbound "direct";)",
+            R"(default-mark 4294967296; default-outbound "direct";)",
+            R"(default-domain-resolver "missing"; default-outbound "direct";)",
+            R"(default-network-strategy "bogus"; default-outbound "direct";)",
+            R"(default-network-type "satellite"; default-outbound "direct";)",
+            R"(default-network-strategy "prefer" fallback="wifi"; default-network-type "wifi"; default-outbound "direct";)",
+            R"(auto-detect-interface 1; default-outbound "direct";)",
+            R"(find-process "yes"; default-outbound "direct";)"}) {
+            auto bad = config::parse_kdl(std::format(R"(schema-version 1
+role "client"
+inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
+outbound "direct" type="direct"
+routing {{ {} }}
+)", bad_routing));
+            if (bad) { std::cerr << "expected failure for routing: " << bad_routing << '\n'; return 52; }
+        }
+    }
+
+    // Shared Inbound ListenOptions across TCP/UDP inbound types & detour validation.
+    {
+        auto multi = config::parse_kdl(R"(schema-version 1
+role "server"
+inbounds {
+    inbound "socks-in" type="socks5" {
+        listen host="127.0.0.1" port=1080
+        authentication "none"
+        bind-interface "lo"
+        routing-mark 0x101
+        netns "/var/run/netns/demo"
+        tcp-fast-open #true
+        multipath-tcp #true
+        tcp-keepalive idle-s=30 interval-s=10 count=4
+        reuse-addr #true
+        udp-fragment #false
+        udp-timeout-ms 45000
+        detour "mixed-in"
+    }
+    inbound "mixed-in" type="mixed" {
+        listen host="127.0.0.1" port=1081
+        authentication "none"
+        tcp-keepalive { idle-s 60; interval-s 15; count 5; }
+        reuse-addr #false
+    }
+    inbound "http-in" type="http" {
+        listen host="127.0.0.1" port=8080
+        authentication "none"
+        tcp-fast-open #false
+        tcp-keepalive #false
+    }
+    inbound "ss-in" type="shadowsocks" {
+        listen host="127.0.0.1" port=8388
+        method "2022-blake3-aes-128-gcm"
+        key-file "/key"
+        bind-interface "lo"
+        udp-fragment #true
+        udp-timeout-ms 90000
+    }
+    inbound "fudp-in" type="fixed-udp" {
+        listen host="127.0.0.1" port=5353
+        target host="127.0.0.1" port=5354
+        reuse-addr #true
+        udp-fragment #true
+        udp-timeout-ms 15000
+    }
+    inbound "tproxy-in" type="tproxy" {
+        listen host="127.0.0.1" port=12345
+        udp #true
+        routing-mark 0x202
+        udp-fragment #false
+    }
+}
+outbound "direct" type="direct"
+routing { default-outbound "direct"; }
+)");
+        if (!multi) { std::cerr << "listen options multi: " << multi.error() << '\n'; return 60; }
+        auto const& l0 = multi->inbounds[0].listen;
+        if (l0.bind_interface != "lo" || l0.routing_mark != 0x101u || l0.netns != "/var/run/netns/demo" ||
+            l0.tcp_fast_open != true || l0.multipath_tcp != true || l0.tcp_keepalive != true ||
+            l0.tcp_keepalive_idle_s != 30u || l0.tcp_keepalive_interval_s != 10u || l0.tcp_keepalive_count != 4u ||
+            l0.reuse_addr != true || l0.udp_fragment != false || l0.udp_timeout_ms != 45000u ||
+            l0.detour != "mixed-in" || multi->inbounds[0].detour_index != 1 || multi->listen != l0) return 61;
+        auto const& l1 = multi->inbounds[1].listen;
+        if (l1.tcp_keepalive != true || l1.tcp_keepalive_idle_s != 60u || l1.tcp_keepalive_interval_s != 15u ||
+            l1.tcp_keepalive_count != 5u || l1.reuse_addr != false) return 62;
+        if (multi->inbounds[2].listen.tcp_fast_open != false || multi->inbounds[2].listen.tcp_keepalive != false) return 63;
+        if (!multi->inbounds[3].shadowsocks || multi->inbounds[3].shadowsocks->listen.bind_interface != "lo" ||
+            multi->inbounds[3].shadowsocks->listen.udp_fragment != true) return 64;
+        if (!multi->inbounds[4].fixed_udp || multi->inbounds[4].fixed_udp->idle_timeout_ms != 15000u ||
+            multi->inbounds[4].fixed_udp->listen.udp_fragment != true) return 65;
+        if (multi->inbounds[5].listen.routing_mark != 0x202u || multi->inbounds[5].listen.udp_fragment != false) return 66;
+
+        for (auto bad_in : {
+            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "missing"; })",
+            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "a"; })",
+            R"(inbounds { inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; detour "b"; }; inbound "b" type="mixed" { listen host="127.0.0.1" port=1081; authentication "none"; detour "a"; }; })",
+            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; bind-interface "a/b"; })",
+            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; netns "relative/path"; })",
+            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; tcp-keepalive #false idle-s=10; })",
+            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; udp-timeout-ms 500; })",
+            R"(inbound "a" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; reuse-addr #true; reuse-addr #false; })"}) {
+            auto bad = config::parse_kdl(std::format(R"(schema-version 1
+role "client"
+{}
+outbound "direct" type="direct"
+routing {{ default-outbound "direct"; }}
+)", bad_in));
+            if (bad) { std::cerr << "expected failure for inbound: " << bad_in << '\n'; return 67; }
+        }
+        std::println("Global routing defaults inheritance and shared inbound ListenOptions/detour validation passed");
+    }
 }

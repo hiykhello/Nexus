@@ -55,7 +55,8 @@ export namespace rules {
                 auto value=value_string(argument,rule.type!="rule-set" && rule.type!="protocol" &&
                     rule.type!="source-mac" && rule.type!="gateway-mac" && rule.type!="wifi-bssid" &&
                     rule.type!="wifi-ssid" && rule.type!="source-user" && rule.type!="package-name" &&
-                    rule.type!="client" && rule.type!="network-type" && rule.type!="default-interface-address");
+                    rule.type!="package-name-regex" && rule.type!="client" && rule.type!="network-type" &&
+                    rule.type!="default-interface-address" && rule.type!="network-interface-address");
                 if (!value) return invalid("invalid inline predicate value");
                 if (has_value) rule.value.push_back(',');
                 rule.value+=*value;

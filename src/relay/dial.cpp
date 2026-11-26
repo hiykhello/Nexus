@@ -286,6 +286,7 @@ namespace relay {
                         session.record_traffic_route(*route,ConnectPath::tunnel);
                         co_return 0;
                     }
+                    session.record_dial_failure(*route);
                     if (connected_tunnel==TunnelConnectResult::timeout) {
                         session.tunnel={};
                         error=std::make_error_code(std::errc::timed_out);

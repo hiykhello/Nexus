@@ -129,6 +129,13 @@ namespace rules {
                 if (addr.size != 4 && addr.size != 16)
                     return std::unexpected(Error{ErrorCode::invalid_query, "invalid default interface address"});
         }
+        if (input.network_interface_addresses) {
+            if (input.network_interface_addresses->size() > 64)
+                return std::unexpected(Error{ErrorCode::invalid_query, "too many network interface addresses"});
+            for (auto const& item : *input.network_interface_addresses)
+                if (item.type > NetworkType::other || (item.address.size != 4 && item.address.size != 16))
+                    return std::unexpected(Error{ErrorCode::invalid_query, "invalid network interface address"});
+        }
         if (input.process_paths && input.process_paths->size() > 64)
             return std::unexpected(Error{ErrorCode::invalid_query, "too many process paths"});
         if (input.source_port && !*input.source_port)
@@ -200,6 +207,9 @@ namespace rules {
         case Kind::domain_regex:
             if (!input.input.domain) return input.domain_absent ? Truth::no : Truth::unknown;
             return regexes_[entry.regex].search(*input.input.domain, true) ? Truth::yes : Truth::no;
+        case Kind::package_name_regex:
+            if (!input.input.package_name) return Truth::unknown;
+            return regexes_[entry.regex].search(*input.input.package_name) ? Truth::yes : Truth::no;
         case Kind::process_path_regex: {
             bool has_valid = false, saw_oversized = false;
             auto check_one = [&](std::string_view path) noexcept -> bool {
@@ -259,6 +269,17 @@ namespace rules {
             for (auto const& addr : *input.input.default_interface_addresses) {
                 auto fam = addr.size == 4 ? af_inet : af_inet6;
                 if (cidr_matches_addr(entry.ip.address, entry.ip.prefix, entry.ip.family, addr.bytes, fam, input.match_mapped_ipv4))
+                    return Truth::yes;
+            }
+            return Truth::no;
+        }
+        case Kind::network_interface_ip: {
+            if (!input.input.network_interface_addresses) return Truth::unknown;
+            for (auto const& item : *input.input.network_interface_addresses) {
+                if (item.type != entry.net_if_ip.type) continue;
+                auto fam = item.address.size == 4 ? af_inet : af_inet6;
+                if (cidr_matches_addr(entry.net_if_ip.address, entry.net_if_ip.prefix, entry.net_if_ip.family,
+                                      item.address.bytes, fam, input.match_mapped_ipv4))
                     return Truth::yes;
             }
             return Truth::no;

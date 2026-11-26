@@ -35,6 +35,8 @@ export namespace control_api::http_detail {
         std::vector<std::string> stream_filters;
         std::chrono::milliseconds stream_interval{100};
         std::uint64_t pending_probe_id = 0;
+        std::uint64_t pending_dns_query_id = 0;
+        std::string cors_origin;
         StreamClock::time_point deadline{};
         StreamClock::time_point probe_hard_deadline{};
         StreamClock::time_point next_stream_poll{};
@@ -42,6 +44,7 @@ export namespace control_api::http_detail {
 
         [[nodiscard]] auto is_streaming() const noexcept -> bool { return stream != StreamKind::none; }
         [[nodiscard]] auto has_pending_probe() const noexcept -> bool { return pending_probe_id != 0; }
+        [[nodiscard]] auto has_pending_dns_query() const noexcept -> bool { return pending_dns_query_id != 0; }
     };
 
     struct ParsedHttpRequest {
@@ -115,7 +118,15 @@ export namespace control_api::http_detail {
     inline auto setup_sse_peer(Peer& peer, StreamKind kind, std::string_view query,
         StreamClock::time_point now, StreamSnapshotFn fetch_snap) -> void {
         peer.stream = kind;
-        peer.out.assign(kSseHeaders);
+        if (!peer.cors_origin.empty()) {
+            peer.out = std::format(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n"
+                "Access-Control-Allow-Origin: {}\r\nVary: Origin\r\n"
+                "Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+                peer.cors_origin);
+        } else {
+            peer.out.assign(kSseHeaders);
+        }
         peer.out_offset = 0;
         peer.writing = true;
         peer.last_sse_write = now;
@@ -286,7 +297,12 @@ export namespace control_api::http_detail {
         StreamClock::time_point now, StreamCommandFn command) -> void {
         auto started = invoke_outbound_probe(path, body, command);
         if (!started) {
-            peer.out = std::move(started.error());
+            auto resp = std::move(started.error());
+            if (!peer.cors_origin.empty()) {
+                if (auto pos = resp.find("\r\n\r\n"); pos != std::string::npos)
+                    resp.insert(pos, std::format("\r\nAccess-Control-Allow-Origin: {}\r\nVary: Origin", peer.cors_origin));
+            }
+            peer.out = std::move(resp);
             peer.out_offset = 0;
             peer.writing = true;
             return;
@@ -303,7 +319,12 @@ export namespace control_api::http_detail {
         std::array<std::string_view, 2> args{"probe-result", id_str};
         auto res = command(args);
         if (!res) {
-            peer.out = probe_error_response(res.error());
+            auto resp = probe_error_response(res.error());
+            if (!peer.cors_origin.empty()) {
+                if (auto pos = resp.find("\r\n\r\n"); pos != std::string::npos)
+                    resp.insert(pos, std::format("\r\nAccess-Control-Allow-Origin: {}\r\nVary: Origin", peer.cors_origin));
+            }
+            peer.out = std::move(resp);
             peer.out_offset = 0;
             peer.pending_probe_id = 0;
             peer.writing = true;
@@ -316,7 +337,12 @@ export namespace control_api::http_detail {
             peer.next_stream_poll = now + kProbePollInterval;
             return;
         }
-        peer.out = build_http_response(200, "OK", "application/json", render_probe_result_json(parsed));
+        auto resp = build_http_response(200, "OK", "application/json", render_probe_result_json(parsed));
+        if (!peer.cors_origin.empty()) {
+            if (auto pos = resp.find("\r\n\r\n"); pos != std::string::npos)
+                resp.insert(pos, std::format("\r\nAccess-Control-Allow-Origin: {}\r\nVary: Origin", peer.cors_origin));
+        }
+        peer.out = std::move(resp);
         peer.out_offset = 0;
         peer.pending_probe_id = 0;
         peer.writing = true;
@@ -363,7 +389,7 @@ export namespace control_api::http_detail {
         if (peers.empty()) return std::nullopt;
         std::chrono::milliseconds min_wait(100);
         for (auto const& p : peers) {
-            if ((!p.is_streaming() && !p.has_pending_probe()) || p.out_offset < p.out.size())
+            if ((!p.is_streaming() && !p.has_pending_probe() && !p.has_pending_dns_query()) || p.out_offset < p.out.size())
                 return std::chrono::milliseconds(5);
             auto rem = std::chrono::duration_cast<std::chrono::milliseconds>(p.next_stream_poll - now);
             min_wait = std::min(min_wait, std::max(rem, std::chrono::milliseconds(1)));

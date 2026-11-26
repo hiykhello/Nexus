@@ -22,7 +22,7 @@ namespace relay {
 
     auto Session::inspect_source_owner(rules::RouteMatcher const& policy, std::optional<io::endpoint> original) -> void {
         auto const* program = ordered_tcp ? &ordered_tcp->program : nullptr;
-        auto needs_process = policy.uses_process() || (program && program->uses_process());
+        auto needs_process = find_process || policy.uses_process() || (program && program->uses_process());
         auto needs_uid = policy.uses_source_uid() || (program && program->uses_source_uid());
         if (!needs_process && !needs_uid) return;
 

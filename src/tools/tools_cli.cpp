@@ -21,10 +21,14 @@ module;
 
 module cli.gen_tools;
 import std;
+import cli.stun_rfc5780;
 import crypto;
+import encoding.json;
 import platform.ip_address;
 import platform.unique_fd;
 import sniff.stun;
+
+extern "C" auto nexus_tools_fetch_entry(int argc, char** argv) -> int;
 
 namespace cli {
     namespace {
@@ -202,22 +206,41 @@ namespace cli {
         return std::unexpected("STUN probe failed or timed out");
     }
 
+    auto nexus_tools_fetch(int argc, char** argv) -> int {
+        return ::nexus_tools_fetch_entry(argc, argv);
+    }
+
     auto nexus_tools(int argc, char** argv) -> int {
         auto usage = [] {
             std::cerr << "usage:\n  nexus tools connect <host:port> [--timeout-ms N]\n"
-                      << "  nexus tools stun [--server host:port] [--timeout-ms N]\n"
+                      << "  nexus tools stun [--server host:port] [--timeout-ms N] [--full] [--json]\n"
+                      << "  nexus tools fetch <url> [--config path] [--outbound tag] [--method GET|HEAD|POST] [--body text] [--header \"K: V\"] [--http auto|1.1|2|3] [--timeout-ms N] [--json]\n"
                       << "  nexus tools udp-probe --kind <ntp|dns|stun> [--target host:port] [--socks5 host:port] [--timeout-ms 3000] [--attempts 2] [--json]\n";
         };
         if (argc < 2 || std::string_view(argv[1]) == "--help") { usage(); return argc < 2 ? 2 : 0; }
         std::string_view sub = argv[1];
         if (sub == "udp-probe") return nexus_tools_udp_probe(argc - 1, argv + 1);
+        if (sub == "fetch") return nexus_tools_fetch(argc - 1, argv + 1);
+        auto parse_u32 = [](std::string_view s) -> std::optional<std::uint32_t> {
+            std::uint32_t v = 0;
+            auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+            if (ec != std::errc{} || end != s.data() + s.size() || !v) return std::nullopt;
+            return v;
+        };
         std::uint32_t timeout_ms = 5000;
         if (sub == "connect") {
-            if (argc < 3) { usage(); return 2; }
+            if (argc < 3 || std::string_view(argv[2]) == "--help") {
+                std::cerr << "usage: nexus tools connect <host:port> [--timeout-ms N]\n";
+                return (argc >= 3 && std::string_view(argv[2]) == "--help") ? 0 : 2;
+            }
             auto hp = parse_host_port(argv[2]);
             if (!hp) { std::cerr << "invalid host:port\n"; return 2; }
-            for (int i = 3; i + 1 < argc; i += 2) {
-                if (std::string_view(argv[i]) == "--timeout-ms") timeout_ms = static_cast<std::uint32_t>(std::stoul(argv[i + 1]));
+            for (int i = 3; i < argc; ++i) {
+                if (std::string_view(argv[i]) == "--timeout-ms" && i + 1 < argc) {
+                    auto v = parse_u32(argv[++i]);
+                    if (!v) { std::cerr << "invalid --timeout-ms\n"; return 2; }
+                    timeout_ms = *v;
+                } else { std::cerr << "unknown option: " << argv[i] << '\n'; return 2; }
             }
             auto rtt = probe_tcp_connect(hp->first, hp->second, timeout_ms);
             if (!rtt) { std::cerr << rtt.error() << '\n'; return 1; }
@@ -226,16 +249,41 @@ namespace cli {
         }
         if (sub == "stun") {
             std::string_view srv = "stun.cloudflare.com:3478";
-            for (int i = 2; i + 1 < argc; i += 2) {
+            bool full = false, as_json = false;
+            for (int i = 2; i < argc; ++i) {
                 std::string_view opt = argv[i];
-                if (opt == "--server") srv = argv[i + 1];
-                else if (opt == "--timeout-ms") timeout_ms = static_cast<std::uint32_t>(std::stoul(argv[i + 1]));
+                if (opt == "--help") {
+                    std::cout << "usage: nexus tools stun [--server host:port] [--timeout-ms N] [--full] [--json]\n";
+                    return 0;
+                }
+                if (opt == "--full") { full = true; continue; }
+                if (opt == "--json") { as_json = true; continue; }
+                if (opt == "--server" && i + 1 < argc) { srv = argv[++i]; continue; }
+                if (opt == "--timeout-ms" && i + 1 < argc) {
+                    auto v = parse_u32(argv[++i]);
+                    if (!v) { std::cerr << "invalid --timeout-ms\n"; return 2; }
+                    timeout_ms = *v;
+                    continue;
+                }
+                std::cerr << "unknown stun option: " << opt << '\n';
+                return 2;
             }
             auto hp = parse_host_port(srv);
             if (!hp) { std::cerr << "invalid STUN host:port\n"; return 2; }
+            if (full) {
+                auto rep = stun::probe_nat_behavior(hp->first, hp->second, timeout_ms);
+                if (!rep) { std::cerr << rep.error() << '\n'; return 1; }
+                std::cout << (as_json ? stun::format_report_json(*rep) : stun::format_report_text(*rep));
+                return 0;
+            }
             auto res = probe_stun_server(hp->first, hp->second, timeout_ms);
             if (!res) { std::cerr << res.error() << '\n'; return 1; }
-            std::cout << *res << '\n';
+            if (as_json) {
+                std::cout << std::format("{{\"server\":{},\"result\":{}}}\n",
+                    encoding::json_quote(srv), encoding::json_quote(*res));
+            } else {
+                std::cout << *res << '\n';
+            }
             return 0;
         }
         std::cerr << "unknown tools subcommand: " << sub << '\n';

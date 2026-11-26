@@ -29,6 +29,7 @@ export namespace cli {
 
     class RuleFileInput {
         std::filesystem::path config_path_;
+        std::filesystem::path cache_dir_;
         std::map<std::string,std::string,std::less<>> files_;
         std::map<std::string,std::shared_ptr<rules::MmapMatcher const>,std::less<>> mmaps_;
         bool allow_unfetched_remote_=false;
@@ -36,6 +37,8 @@ export namespace cli {
         explicit RuleFileInput(std::string_view config_path,bool allow_unfetched_remote=false)
             : config_path_(config_path),allow_unfetched_remote_(allow_unfetched_remote) {}
         auto seed(std::string key,std::string content) -> void { files_.insert_or_assign(std::move(key),std::move(content)); }
+        auto set_cache_dir(std::filesystem::path dir) -> void { cache_dir_=std::move(dir); }
+        [[nodiscard]] auto cache_dir() const noexcept -> std::filesystem::path const& { return cache_dir_; }
         [[nodiscard]] auto allows_unfetched_remote() const noexcept -> bool { return allow_unfetched_remote_; }
         [[nodiscard]] auto read(std::string const& path) -> std::expected<std::string_view,std::string>;
         [[nodiscard]] auto open_mapped(std::string const& path) -> std::expected<std::shared_ptr<rules::MmapMatcher const>,std::string>;

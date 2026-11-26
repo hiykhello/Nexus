@@ -3,6 +3,7 @@
 export module cli.proxy_control;
 import std;
 import cli.control;
+import cli.dns_live_query;
 import cli.proxy_control_operations;
 import cli.proxy_group_health;
 import cli.proxy_mode;
@@ -65,6 +66,7 @@ export namespace cli::run_detail {
         auto command = args.front();
         if (role == ControlRole::reader && command != "status" && command != "operation" &&
             command != "events" && command != "diagnostics" && command != "probe-result" &&
+            command != "dns-query-result" &&
             !(command == "mode" && args.size() == 1)) return std::unexpected("permission-denied");
         if (command == "mode")
             return route_mode ? route_mode->handle_command(running, role, args, operations) : std::unexpected("mode-unavailable");
@@ -107,12 +109,32 @@ export namespace cli::run_detail {
             if (!running || !reload_supported) return std::unexpected("reload-unavailable");
             return operations.queue_reload();
         }
+        if (command == "flush-fakeip" && args.size() == 1) {
+            auto flushed = LiveDnsQueryHub::instance().flush_active_fakeip();
+            if (!flushed) return std::unexpected("fakeip-unavailable");
+            operations.published();
+            operations.record(ControlOperations::EventKind::cache_cleared);
+            return std::format("flushed={}\n", *flushed);
+        }
+        if (command == "dns-query" && (args.size() == 3 || args.size() == 4)) {
+            auto qtype = control_number(args[2]);
+            if (!qtype || !*qtype || *qtype > 65535u) return std::unexpected("invalid-qtype");
+            std::string server = args.size() == 4 ? std::string(args[3]) : std::string{};
+            return LiveDnsQueryHub::instance().enqueue(running, std::string(args[1]),
+                static_cast<std::uint16_t>(*qtype), std::move(server));
+        }
+        if (command == "dns-query-result" && args.size() == 2) {
+            auto id = control_number(args[1]);
+            if (!id || !*id) return std::unexpected("invalid-id");
+            return LiveDnsQueryHub::instance().result(*id);
+        }
         if (command == "clear-cache" && (args.size() == 1 || args.size() == 2)) {
             auto target = args.size() == 2 ? args[1] : std::string_view("all");
-            if (target != "all" && target != "dns" && target != "rulesets")
+            if (target != "all" && target != "dns" && target != "rulesets" && target != "fakeip")
                 return std::unexpected("invalid-cache-target");
             bool clear_dns = (target == "all" || target == "dns");
             bool clear_rules = (target == "all" || target == "rulesets");
+            bool clear_fakeip = (target == "all" || target == "fakeip");
             if (running) {
                 auto options = running->state.value_or(config::StateOptions{});
                 if (!options.cache_directory.empty()) {
@@ -132,9 +154,21 @@ export namespace cli::run_detail {
                     if (!done) return std::unexpected(std::string(::state::describe(done.error().stage)));
                 }
             }
-            if (clear_dns && reverse_cache) (void)reverse_cache->clear();
+            if (clear_dns) {
+                if (reverse_cache) (void)reverse_cache->clear();
+                LiveDnsQueryHub::instance().clear_active_dns_caches();
+            }
+            std::optional<std::size_t> fakeip_flushed;
+            if (clear_fakeip) {
+                fakeip_flushed = LiveDnsQueryHub::instance().flush_active_fakeip();
+                if (target == "fakeip" && !fakeip_flushed)
+                    return std::unexpected("fakeip-unavailable");
+            }
             operations.published();
             operations.record(ControlOperations::EventKind::cache_cleared);
+            if (fakeip_flushed)
+                return std::format("cleared={} fakeip-flushed={}\n",
+                    target == "all" ? "dns,rulesets,fakeip" : target, *fakeip_flushed);
             return std::format("cleared={}\n", target == "all" ? "dns,rulesets" : target);
         }
         if (command == "network-change" && (args.size() == 1 || args.size() == 2)) {

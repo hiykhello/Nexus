@@ -2,6 +2,7 @@
 export module cli.rule_fetch_cache;
 import std;
 import cli.rule_fetch_url;
+import cli.route_files_nxmm;
 import config;
 import crypto;
 import http.connect;
@@ -185,5 +186,11 @@ export namespace cli::rule_fetch_detail {
         if (!ready) return std::unexpected(std::string(::state::describe(ready.error().stage)));
         options.cache.emplace(options.cache_root, limits);
         return {};
+    }
+
+    inline auto prewarm_srs_cache_sidecar(std::filesystem::path const& cache_root, ::rules::InputFormat format,
+                                          std::string_view body) noexcept -> void {
+        if (format == ::rules::InputFormat::srs && !cache_root.empty())
+            cli::nxmm_detail::prewarm_srs_sidecar(cache_root, body);
     }
 }

@@ -5,7 +5,7 @@ import sniff.tls;
 export import sniff.extra;
 
 export namespace sniff {
-    enum class TcpProtocol { unknown,http,tls,ssh,bittorrent,rdp };
+    enum class TcpProtocol { unknown,http,tls,ssh,bittorrent,rdp,dns };
     enum class TcpStatus { need_more,matched,not_recognized,malformed,too_large,truncated };
     enum class TcpNameKind { unknown,domain,numeric,ambiguous,unsupported,tls_no_sni,tls_outer_ech };
     struct TcpStep { TcpStatus status;std::size_t consumed=0;TcpProtocol protocol=TcpProtocol::unknown;
@@ -113,23 +113,40 @@ export namespace sniff {
                 }
             } else if(selected_) {
                 auto bytes=wire();
+                bool any_need_more=false;
                 auto bt=allows(TcpProtocol::bittorrent) ? inspect_bittorrent_tcp(bytes) : ExtraSniffStatus::not_recognized;
                 if (bt==ExtraSniffStatus::matched) {
                     status_=TcpStatus::matched;protocol_=TcpProtocol::bittorrent;client_="bittorrent";
-                } else if (bt==ExtraSniffStatus::not_recognized) {
+                } else {
+                    any_need_more |= (bt==ExtraSniffStatus::need_more);
                     std::string_view text{reinterpret_cast<char const*>(bytes.data()),bytes.size()};
                     std::optional<std::string_view> ssh_client;
                     auto ssh=allows(TcpProtocol::ssh) ? inspect_ssh(text,ssh_client) : TcpStatus::not_recognized;
-                    if (ssh!=TcpStatus::not_recognized) {
+                    if (ssh==TcpStatus::matched) {
+                        status_=TcpStatus::matched;protocol_=TcpProtocol::ssh;client_=ssh_client;
+                    } else if (ssh==TcpStatus::malformed || ssh==TcpStatus::too_large) {
                         status_=ssh;
-                        if (ssh==TcpStatus::matched) {protocol_=TcpProtocol::ssh;client_=ssh_client;}
                     } else {
+                        any_need_more |= (ssh==TcpStatus::need_more);
                         auto rdp=allows(TcpProtocol::rdp) ? inspect_rdp_tcp(bytes) : ExtraSniffStatus::not_recognized;
                         if (rdp==ExtraSniffStatus::matched) {
                             status_=TcpStatus::matched;protocol_=TcpProtocol::rdp;
-                        } else if (rdp==ExtraSniffStatus::not_recognized) {
-                            if (allows(TcpProtocol::http)) inspect_http(text);
-                            else status_=TcpStatus::not_recognized;
+                        } else {
+                            any_need_more |= (rdp==ExtraSniffStatus::need_more);
+                            auto dns=allows(TcpProtocol::dns) ? inspect_dns_tcp(bytes,scratch_) : TcpDnsResult{};
+                            if (dns.status==ExtraSniffStatus::matched) {
+                                status_=TcpStatus::matched;protocol_=TcpProtocol::dns;
+                                domain_=dns.domain;
+                                name_kind_=domain_ ? TcpNameKind::domain : TcpNameKind::unknown;
+                            } else {
+                                any_need_more |= (dns.status==ExtraSniffStatus::need_more);
+                                if (allows(TcpProtocol::http)) {
+                                    inspect_http(text);
+                                    if (status_==TcpStatus::not_recognized && any_need_more) status_=TcpStatus::need_more;
+                                } else if (!any_need_more) {
+                                    status_=TcpStatus::not_recognized;
+                                }
+                            }
                         }
                     }
                 }

@@ -8,6 +8,10 @@ import packet.tun_network_types;
 export import cli.tun_network_owner;
 
 export namespace cli::tun_enabled {
+    [[nodiscard]] inline auto update_active_tun_route_sets(relay::Server const* server,
+        config::TunInbound const& next_tun) -> std::expected<bool, std::string> {
+        return update_active_tun_host_route_sets(server, next_tun);
+    }
     class Runtime {
         struct Entry {
             config::TunInbound config;

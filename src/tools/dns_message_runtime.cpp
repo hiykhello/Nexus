@@ -1,12 +1,3 @@
-module;
-#include <cerrno>
-#include <cstdio>
-#include <cstring>
-#include <fcntl.h>
-#include <sys/file.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 module cli.dns_message_runtime;
 import std;
 import functional;
@@ -34,6 +25,7 @@ import state.dns_cache;
 import state.serde;
 import cli.dns_cache_state;
 import cli.dns_cache_unified;
+import cli.dns_live_query;
 
 namespace cli {
 #ifdef NEXUS_ENABLE_FAKEIP
@@ -142,6 +134,13 @@ namespace cli {
         bool polling_=false, paused_=false, stopping_=false, draining_=false;
         std::atomic<bool> healthy_{true},drained_{false};
         std::atomic<std::uint8_t> reclaim_requested_{0};
+        struct PendingLiveQuery {
+            std::string name; std::uint16_t qtype = 1; std::string server; std::uint32_t timeout_ms = 5000;
+            LiveDnsCompletion finish;
+        };
+        std::shared_ptr<LiveDnsHookGate> live_hook_gate_;
+        std::mutex live_query_mu_;
+        std::deque<PendingLiveQuery> live_queries_;
         AsyncDnsCheckpointer checkpointer_;
 
         auto executor() noexcept -> corosio::io_context& {
@@ -170,46 +169,30 @@ namespace cli {
                         dns::reap_idle_https_queries(io, std::chrono::steady_clock::time_point::max());
                         if (rl >= 2 && program_ && program_->cache) program_->cache->clear_entries();
                     }
-                    if (now>=next_maintenance) {
-                        dns_tls_maintenance_.poll(io,now);
-                        next_maintenance=now+std::chrono::seconds(1);
-                    }
+                    drain_live_queries(io);
+                    if (now>=next_maintenance) { dns_tls_maintenance_.poll(io,now); next_maintenance=now+std::chrono::seconds(1); }
                     if (now>=next_flush) {
                         save_checkpoint();
-                        next_flush=now+std::chrono::milliseconds(
-                            program_ ? program_->routing.cache_flush_interval_ms : 60000u);
+                        next_flush=now+std::chrono::milliseconds(program_ ? program_->routing.cache_flush_interval_ms : 60000u);
                     }
                     healthy_.store(tcp_->healthy() && (!udp_ || udp_->healthy()),std::memory_order_release);
                     if (draining_) {
                         if (udp_ && udp_->drained()) udp_.reset();
                         drained_.store(!udp_ && tcp_->drained(),std::memory_order_release);
                     }
-                } catch (...) {
-                    healthy_.store(false,std::memory_order_release);
-                    lock.lock();
-                    break;
-                }
-                lock.lock();
-                polling_=false;
-                worker_changed_.notify_all();
+                } catch (...) { healthy_.store(false,std::memory_order_release); lock.lock(); break; }
+                lock.lock(); polling_=false; worker_changed_.notify_all();
             }
-            polling_=false;
-            worker_changed_.notify_all();
-            ex.on_work_finished();
+            polling_=false; worker_changed_.notify_all(); ex.on_work_finished();
         }
 
-        // Transfer exclusive use of the context to the control thread for a
-        // lifecycle mutation. stop() interrupts the backend's blocking wait.
+        // Transfer exclusive use of the context to the control thread for a lifecycle mutation.
         auto synchronize(functional::function_ref<void()> action) -> void {
             std::unique_lock lock(worker_mutex_);
             paused_=true;
-            if (polling_) {
-                executor().stop();
-                worker_changed_.wait(lock,[this] {return !polling_;});
-            }
+            if (polling_) { executor().stop(); worker_changed_.wait(lock,[this] {return !polling_;}); }
             action();
-            paused_=false;
-            worker_changed_.notify_all();
+            paused_=false; worker_changed_.notify_all();
         }
 
         static auto endpoint(config::DnsListen const& listen) -> corosio::endpoint {
@@ -288,26 +271,18 @@ namespace cli {
             program->upstreams.reserve(routing.servers.size());
             for (auto const& entry : routing.servers) {
                 dns::MessageUpstream upstream{};
-                if (entry.kind!=config::DnsServerKind::standard) {
-                    upstream.port=53;
-                    upstream.endpoint=endpoint({{127,0,0,1},false,53});
-                } else if (!entry.upstream) upstream.local=&program->local;
+                if (entry.kind!=config::DnsServerKind::standard) { upstream.port=53; upstream.endpoint=endpoint({{127,0,0,1},false,53}); }
+                else if (!entry.upstream) upstream.local=&program->local;
                 else {
-                    auto const& value=*entry.upstream;
-                    upstream.tcp=value.tcp;
-                    upstream.host=value.host;
-                    upstream.port=value.port;
-                    upstream.resolver=value.resolver;
-                    if (value.host.empty()) upstream.endpoint=endpoint({value.address,value.ipv6,value.port});
+                    auto const& v=*entry.upstream;
+                    upstream.tcp=v.tcp; upstream.host=v.host; upstream.port=v.port; upstream.resolver=v.resolver;
+                    if (v.host.empty()) upstream.endpoint=endpoint({v.address,v.ipv6,v.port});
                 }
                 upstream.protection=protection[program->upstreams.size()];
                 program->upstreams.push_back(std::move(upstream));
             }
 #ifdef NEXUS_ENABLE_FAKEIP
-            if (routing.fakeip) {
-                auto configured=program->configure_fakeip(*routing.fakeip,previous);
-                if (!configured) return configured;
-            }
+            if (routing.fakeip) { if (auto configured=program->configure_fakeip(*routing.fakeip,previous); !configured) return configured; }
 #endif
             if (!routing.unified_cache_root.empty()) {
                 try {program->unified_cache.emplace(routing,program->upstreams);}
@@ -318,16 +293,14 @@ namespace cli {
                 if (previous && previous->program_ && previous->program_->routing.message_cache_directory==path) {
                     auto const& running=*previous->program_;
                     program->cache_state=running.cache_state;
-                    if (endpoint(*running.routing.listen)==endpoint(*routing.listen) &&
-                        program->cache_scope->identity==running.cache_scope->identity)
+                    if (endpoint(*running.routing.listen)==endpoint(*routing.listen) && program->cache_scope->identity==running.cache_scope->identity)
                         program->cache=running.cache;
                 } else {
                     auto opened=DnsCacheState::open(path);
                     if (!opened) return std::unexpected(std::move(opened.error()));
                     program->cache_state=std::move(*opened);
-                    auto restored=program->cache_state->restore(*program->cache,*program->cache_scope);
-                    if (!restored) logs_.emit(logging::Level::warn,logging::Domain::dns,120,{},
-                        "DNS message cache restore failed: {}",logs_.private_text(restored.error()));
+                    if (auto restored=program->cache_state->restore(*program->cache,*program->cache_scope); !restored)
+                        logs_.emit(logging::Level::warn,logging::Domain::dns,120,{},"DNS message cache restore failed: {}",logs_.private_text(restored.error()));
                 }
             }
             program->reverse_cache=std::move(reverse);
@@ -337,9 +310,7 @@ namespace cli {
         }
 
 #ifdef NEXUS_ENABLE_FAKEIP
-        auto fakeip() const -> std::shared_ptr<dns::FakeIpShared> {
-            return program_ ? program_->fakeip : nullptr;
-        }
+        auto fakeip() const -> std::shared_ptr<dns::FakeIpShared> { return program_ ? program_->fakeip : nullptr; }
 #endif
         auto start(bool admit) -> std::expected<void,std::string> {
             if (!program_) return {};
@@ -349,10 +320,8 @@ namespace cli {
             auto source=[this] {return snapshot();};
             if (program_->proxy_routes) {
                 if (!routes_) return std::unexpected("DNS listener has no routing executor");
-                auto prepared=routes_->prepare_routing(1);
-                if (!prepared) return std::unexpected(prepared.error().message());
-                auto activated=routes_->activate_context();
-                if (!activated) return std::unexpected(activated.error().message());
+                if (auto p=routes_->prepare_routing(1); !p) return std::unexpected(p.error().message());
+                if (auto a=routes_->activate_context(); !a) return std::unexpected(a.error().message());
             } else {
 #if BOOST_COROSIO_HAVE_LIBURING
                 context_.emplace(corosio::uring);
@@ -362,35 +331,21 @@ namespace cli {
             }
             auto& io=routes_ ? routes_->executor_context() : *context_;
             auto timeout=std::chrono::seconds(10);
-            std::span<config::DnsRule const> rules;
-            std::span<dns::MessageUpstream const> upstreams;
-            tcp_=std::make_unique<dns::MessageTcpListener>(
-                io,rules,upstreams,0,256,timeout,128,nullptr,false,nullptr,nullptr,source);
-            udp_=std::make_unique<dns::MessageUdpListener>(
-                io,rules,upstreams,0,256,timeout,nullptr,false,nullptr,nullptr,source);
+            std::span<config::DnsRule const> rules; std::span<dns::MessageUpstream const> upstreams;
+            tcp_=std::make_unique<dns::MessageTcpListener>(io,rules,upstreams,0,256,timeout,128,nullptr,false,nullptr,nullptr,source);
+            udp_=std::make_unique<dns::MessageUdpListener>(io,rules,upstreams,0,256,timeout,nullptr,false,nullptr,nullptr,source);
             if (auto error=tcp_->start(address,&admitted_)) {stop();return std::unexpected("DNS TCP listen: "+error.message());}
             if (auto error=udp_->start(address,&admitted_)) {stop();return std::unexpected("DNS UDP listen: "+error.message());}
-            try {
-                worker_=std::thread([this] {drive();});
-            } catch (std::system_error const& error) {
-                stop();
-                return std::unexpected("DNS executor: "+error.code().message());
-            }
+            try { worker_=std::thread([this] {drive();}); }
+            catch (std::system_error const& error) { stop(); return std::unexpected("DNS executor: "+error.code().message()); }
+            register_live_hooks();
             return {};
         }
 
-        auto admit() noexcept -> void {
-            std::lock_guard lock(worker_mutex_);
-            if (admitted_) return;
-            admitted_=true;
-            worker_changed_.notify_all();
-        }
-
+        auto admit() noexcept -> void { std::lock_guard lock(worker_mutex_); if (!std::exchange(admitted_, true)) worker_changed_.notify_all(); }
         auto same_binding(Impl const& other) const noexcept -> bool {
-            return tcp_ && program_ && other.program_ &&
-                endpoint(*program_->routing.listen)==endpoint(*other.program_->routing.listen);
+            return tcp_ && program_ && other.program_ && endpoint(*program_->routing.listen)==endpoint(*other.program_->routing.listen);
         }
-
         auto replace_program(Impl& candidate) noexcept -> void {
             synchronize([&] {
                 if (program_ && candidate.program_ && program_->cache!=candidate.program_->cache) {
@@ -401,7 +356,6 @@ namespace cli {
                 program_=std::move(candidate.program_);
             });
         }
-
         auto has_listeners() const noexcept -> bool {return bool(tcp_);}
 
         auto save_checkpoint() noexcept -> void {
@@ -441,11 +395,55 @@ namespace cli {
             if (polling_) executor().stop();
         }
 
+        auto drain_live_queries(corosio::io_context& io) -> void {
+            std::deque<PendingLiveQuery> batch;
+            { std::lock_guard qlk(live_query_mu_); batch.swap(live_queries_); }
+            for (auto& q : batch) {
+                auto snap = snapshot();
+                if (!program_ || !snap.resolver) { q.finish(std::unexpected("dns-unavailable")); continue; }
+                std::size_t fb = snap.resolver->fallback;
+                bool forced = false;
+                if (!q.server.empty()) {
+                    auto it = std::ranges::find(program_->routing.servers, q.server, &config::DnsServer::name);
+                    if (it == program_->routing.servers.end()) { q.finish(std::unexpected("unknown-server")); continue; }
+                    fb = static_cast<std::size_t>(it - program_->routing.servers.begin());
+                    forced = true;
+                }
+                live_dns_detail::dispatch_runtime_live_query(io, std::move(snap), fb, forced,
+                    std::move(q.name), q.qtype, q.timeout_ms, std::move(q.finish));
+            }
+        }
+        auto clear_live_cache() noexcept -> void { reclaim_memory(true); }
+#ifdef NEXUS_ENABLE_FAKEIP
+        auto flush_fakeip_unpinned() noexcept -> std::optional<std::size_t> {
+            return (program_ && program_->fakeip) ? std::optional(program_->fakeip->flush_unpinned()) : std::nullopt;
+        }
+#endif
+        auto register_live_hooks() -> void {
+            live_hook_gate_ = std::make_shared<LiveDnsHookGate>();
+            LiveDnsHooks h{.owner = this, .gate = live_hook_gate_, .clear_cache = [this] { clear_live_cache(); }};
+#ifdef NEXUS_ENABLE_FAKEIP
+            h.flush_fakeip = [this] { return flush_fakeip_unpinned(); };
+#endif
+            h.submit_query = [this](std::uint64_t, std::string name, std::uint16_t qtype, std::string server,
+                std::uint32_t timeout_ms, LiveDnsCompletion finish) -> bool {
+                if (!tcp_) return false;
+                { std::lock_guard qlk(live_query_mu_); live_queries_.push_back({std::move(name), qtype, std::move(server), timeout_ms, std::move(finish)}); }
+                std::lock_guard wlk(worker_mutex_);
+                if (polling_) executor().stop();
+                return true;
+            };
+            LiveDnsQueryHub::instance().register_hooks(std::move(h));
+        }
+
         auto stop() noexcept -> void {
+            LiveDnsQueryHub::instance().unregister_hooks(this);
+            if (live_hook_gate_) { live_hook_gate_->deactivate_and_drain(); live_hook_gate_.reset(); }
             if (worker_.joinable()) {
                 { std::lock_guard lock(worker_mutex_); stopping_=true; if (polling_) executor().stop(); worker_changed_.notify_all(); }
                 worker_.join();
             }
+            { std::lock_guard qlk(live_query_mu_); live_queries_.clear(); }
             if (program_ && (tcp_ || udp_)) program_->cache->stop_refreshes();
             if (tcp_) tcp_->stop(); if (udp_) udp_->stop();
             checkpointer_.stop();
@@ -462,31 +460,28 @@ namespace cli {
         }
     };
 
-    DnsMessageRuntime::DnsMessageRuntime(logging::Runtime const& logs)
-        :impl_(std::make_unique<Impl>(logs)) {}
-    DnsMessageRuntime::~DnsMessageRuntime()=default;
-    auto DnsMessageRuntime::checkpoint() noexcept -> void {impl_->checkpoint();}
-    auto DnsMessageRuntime::reclaim_memory(bool hard) noexcept -> void {impl_->reclaim_memory(hard);}
-
-    auto DnsMessageRuntime::prepare(config::Config const& value,std::span<DnsProtection const> protection,
-        dns::MessageRuleSource source,DnsMessageRuntime const* previous,std::shared_ptr<dns::ReverseCache> reverse) -> std::expected<void,std::string> {
-        return impl_->prepare(value,protection,std::move(source),previous ? previous->impl_.get() : nullptr,std::move(reverse));
-    }
+    DnsMessageRuntime::DnsMessageRuntime(logging::Runtime const& logs) : impl_(std::make_unique<Impl>(logs)) {}
+    DnsMessageRuntime::~DnsMessageRuntime() = default;
+    auto DnsMessageRuntime::checkpoint() noexcept -> void { impl_->checkpoint(); }
+    auto DnsMessageRuntime::clear_live_cache() noexcept -> void { impl_->clear_live_cache(); }
 #ifdef NEXUS_ENABLE_FAKEIP
-    auto DnsMessageRuntime::fakeip() const -> std::shared_ptr<dns::FakeIpShared> {return impl_->fakeip();}
+    auto DnsMessageRuntime::fakeip() const -> std::shared_ptr<dns::FakeIpShared> { return impl_->fakeip(); }
+    auto DnsMessageRuntime::flush_fakeip_unpinned() noexcept -> std::optional<std::size_t> { return impl_->flush_fakeip_unpinned(); }
 #endif
-    auto DnsMessageRuntime::start(bool admit) -> std::expected<void,std::string> {return impl_->start(admit);}
-    auto DnsMessageRuntime::admit() noexcept -> void {impl_->admit();}
-    auto DnsMessageRuntime::same_binding(DnsMessageRuntime const& other) const noexcept -> bool {
-        return impl_->same_binding(*other.impl_);
+    auto DnsMessageRuntime::reclaim_memory(bool hard) noexcept -> void { impl_->reclaim_memory(hard); }
+    auto DnsMessageRuntime::prepare(config::Config const& value, std::span<DnsProtection const> protection,
+        dns::MessageRuleSource source, DnsMessageRuntime const* previous, std::shared_ptr<dns::ReverseCache> reverse)
+        -> std::expected<void, std::string> {
+        return impl_->prepare(value, protection, std::move(source), previous ? previous->impl_.get() : nullptr, std::move(reverse));
     }
-    auto DnsMessageRuntime::replace_program(DnsMessageRuntime& candidate) noexcept -> void {
-        impl_->replace_program(*candidate.impl_);
-    }
-    auto DnsMessageRuntime::swap(DnsMessageRuntime& other) noexcept -> void {impl_.swap(other.impl_);}
-    auto DnsMessageRuntime::has_listeners() const noexcept -> bool {return impl_->has_listeners();}
-    auto DnsMessageRuntime::healthy() const noexcept -> bool {return impl_->healthy();}
-    auto DnsMessageRuntime::begin_drain() noexcept -> void {impl_->begin_drain();}
-    auto DnsMessageRuntime::drained() noexcept -> bool {return impl_->drained();}
-    auto DnsMessageRuntime::stop() noexcept -> void {impl_->stop();}
+    auto DnsMessageRuntime::start(bool admit) -> std::expected<void, std::string> { return impl_->start(admit); }
+    auto DnsMessageRuntime::admit() noexcept -> void { impl_->admit(); }
+    auto DnsMessageRuntime::same_binding(DnsMessageRuntime const& other) const noexcept -> bool { return impl_->same_binding(*other.impl_); }
+    auto DnsMessageRuntime::replace_program(DnsMessageRuntime& candidate) noexcept -> void { impl_->replace_program(*candidate.impl_); }
+    auto DnsMessageRuntime::swap(DnsMessageRuntime& other) noexcept -> void { impl_.swap(other.impl_); }
+    auto DnsMessageRuntime::has_listeners() const noexcept -> bool { return impl_->has_listeners(); }
+    auto DnsMessageRuntime::healthy() const noexcept -> bool { return impl_->healthy(); }
+    auto DnsMessageRuntime::begin_drain() noexcept -> void { impl_->begin_drain(); }
+    auto DnsMessageRuntime::drained() noexcept -> bool { return impl_->drained(); }
+    auto DnsMessageRuntime::stop() noexcept -> void { impl_->stop(); }
 }

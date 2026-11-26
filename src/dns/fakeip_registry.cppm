@@ -42,5 +42,7 @@ export namespace dns {
         // Null success denotes an address outside every registered range.
         [[nodiscard]] auto acquire(std::uint32_t address,std::uint64_t view,std::chrono::steady_clock::time_point now)
             -> std::expected<std::unique_ptr<FakeIpTarget>,FakeIpRegistryError>;
+        // Evicts all unpinned entries across active pools while preserving pinned leases.
+        auto flush_unpinned() noexcept -> std::size_t;
     };
 }

@@ -32,6 +32,7 @@ import sniff.stun;
 import dns.message;
 import capy;
 import corosio;
+import relay.listener_options;
 
 namespace relay {
     namespace {
@@ -438,12 +439,10 @@ namespace relay {
             : server_(server), socket_(server.executor_context()), target_host_(std::move(host)),
               target_port_(port), target_addr_(addr), idle_timeout_(idle_ms) { flows_.reserve(64); }
 
-        auto start(io::endpoint ep, bool& active_flag) -> std::expected<std::uint16_t, std::error_code> {
+        auto start(io::endpoint ep, bool& active_flag, config::ListenOptions const& listen_opts) -> std::expected<std::uint16_t, std::error_code> {
             server_active_flag_ = &active_flag;
-            bool v6 = ep.address().is_v6();
-            if (auto ec = socket_.open(v6 ? io::family::v6 : io::family::v4)) return std::unexpected(ec);
-            if (v6) (void)socket_.set_option(io::socket_option::v6_only(true));
-            if (auto ec = socket_.bind(ep)) { socket_.close(); return std::unexpected(ec); }
+            if (listen_opts.udp_timeout_ms) idle_timeout_ = std::chrono::milliseconds(*listen_opts.udp_timeout_ms);
+            if (auto ec = open_and_bind_udp_listener(socket_, ep, listen_opts)) { socket_.close(); return std::unexpected(ec); }
             auto bound = socket_.local_endpoint().port();
             down_writer_active_ = true;
             auto finish = [self = this]() noexcept { --self->active_tasks_; self->sync_active_flag(); };
@@ -484,7 +483,7 @@ namespace relay {
     auto Server::start_fixed_udp(io::endpoint ep) -> std::expected<std::uint16_t, std::error_code> {
         if (!fixed_udp_inbound) return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         if (auto active = activate_context(); !active) { stop(); return std::unexpected(active.error()); }
-        auto bound = fixed_udp_inbound->start(ep, accept_task_active);
+        auto bound = fixed_udp_inbound->start(ep, accept_task_active, listen_options);
         if (!bound) { stop(); return std::unexpected(bound.error()); }
         bound_listener = io::endpoint(ep.address(), *bound); inbound_type = Inbound::fixed_udp;
         running = true; accepting = true;

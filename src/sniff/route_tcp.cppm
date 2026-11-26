@@ -90,6 +90,10 @@ export namespace sniff {
         std::optional<TcpReadResult> sniff;
         bool override_destination_with_sniff=false;
     };
+    [[nodiscard]] inline constexpr auto is_server_first_port(std::uint16_t port) noexcept -> bool {
+        return port==25 || port==110 || port==143 || port==587;
+    }
+
     // Program, cursor, socket, sniffer and all input views outlive this task.
     // The owner must replay sniffer.wire() and any unaccepted prefetched tail
     // exactly once after routing. Resolve remains an explicit pending action;
@@ -122,6 +126,14 @@ export namespace sniff {
             if(step.action.kind==rules::ProgramActionKind::resolve)co_return finish(RouteTcpStop::resolve,step);
             if(step.action.kind==rules::ProgramActionKind::route_options)co_return finish(RouteTcpStop::options,step);
             if(step.action.kind!=rules::ProgramActionKind::sniff)co_return finish(RouteTcpStop::state_error,step);
+            if(step.action.sniff_protocols==0 && input.port && is_server_first_port(*input.port)) {
+                input.sniffed_domain.reset();
+                input.client.reset();
+                input.tls_ech.reset();
+                input.protocol.reset();
+                if(!cursor.complete(step))co_return finish(RouteTcpStop::state_error,step);
+                continue;
+            }
             if(step.action.sniff_protocols!=0) {
                 std::uint32_t mask=0;
                 auto allow=[&](rules::Protocol rp,TcpProtocol tp) {
@@ -132,6 +144,7 @@ export namespace sniff {
                 allow(rules::Protocol::ssh,TcpProtocol::ssh);
                 allow(rules::Protocol::bittorrent,TcpProtocol::bittorrent);
                 allow(rules::Protocol::rdp,TcpProtocol::rdp);
+                allow(rules::Protocol::dns,TcpProtocol::dns);
                 sniffer.set_allowed_protocols(mask);
             }
             if(step.action.sniff_override_destination) override_destination=true;
@@ -168,6 +181,10 @@ export namespace sniff {
             case TcpProtocol::rdp:
                 input.protocol=rules::Protocol::rdp;
                 input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)]=true;
+                break;
+            case TcpProtocol::dns:
+                input.protocol=rules::Protocol::dns;
+                if(!input.sniffed_domain) input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)]=true;
                 break;
             case TcpProtocol::unknown: input.protocol.reset();break;
             }

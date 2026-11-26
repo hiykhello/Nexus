@@ -47,12 +47,59 @@ namespace config {
         auto metrics_prop = property(node, "metrics");
         auto dash_prop = property(node, "dashboard-root");
         auto dash_root = text_property(node, "dashboard-root");
+        auto cors_prop = property(node, "cors-allow-origin");
+        auto cors_text = text_property(node, "cors-allow-origin");
         auto uid = reader ? kdl::integer(*reader) : std::nullopt;
         auto expected_props = std::size_t{bool(socket)} + bool(reader) + bool(state) + bool(http_prop) +
-            bool(token_prop) + bool(metrics_prop) + bool(dash_prop);
+            bool(token_prop) + bool(metrics_prop) + bool(dash_prop) + bool(cors_prop);
+        bool has_cors_children = !node.children.empty();
         if (!config.control_socket.empty() || config.control_http || node.tag || !node.arguments.empty() ||
-            !node.children.empty() || node.properties.size() != expected_props || (!socket && !http_prop))
+            node.properties.size() != expected_props || (!socket && !http_prop))
             return error("control requires socket and/or http-listen");
+        std::vector<std::string> cors_origins;
+        auto add_cors_origin = [&](std::string_view raw) -> std::expected<void, std::string> {
+            while (!raw.empty() && (raw.front() == ' ' || raw.front() == '\t')) raw.remove_prefix(1);
+            while (!raw.empty() && (raw.back() == ' ' || raw.back() == '\t')) raw.remove_suffix(1);
+            if (raw.empty() || raw.size() > 256 ||
+                std::ranges::any_of(raw, [](unsigned char c) { return c <= 0x20 || c >= 0x7f; }))
+                return error("control cors-allow-origin contains an invalid origin");
+            if (raw != "*") {
+                std::string_view rest;
+                if (raw.starts_with("http://")) rest = raw.substr(7);
+                else if (raw.starts_with("https://")) rest = raw.substr(8);
+                else return error("control cors-allow-origin must be '*' or an http(s):// origin");
+                if (rest.empty() || rest.contains('/') || rest.contains('?') || rest.contains('#'))
+                    return error("control cors-allow-origin must be an exact origin without path");
+            }
+            if (cors_origins.size() >= 32)
+                return error("control cors-allow-origin exceeds 32 entries");
+            if (std::ranges::find(cors_origins, raw) == cors_origins.end())
+                cors_origins.emplace_back(raw);
+            return {};
+        };
+        if (cors_prop) {
+            if (!cors_text || cors_text->empty())
+                return error("control cors-allow-origin must be a non-empty string");
+            std::string_view rem(*cors_text);
+            for (;;) {
+                auto comma = rem.find(',');
+                auto part = comma == std::string_view::npos ? rem : rem.substr(0, comma);
+                if (auto ok = add_cors_origin(part); !ok) return ok;
+                if (comma == std::string_view::npos) break;
+                rem.remove_prefix(comma + 1);
+            }
+        }
+        for (auto const& child : node.children) {
+            if (child.name != "cors-allow-origin" || child.tag || !child.properties.empty() ||
+                !child.children.empty() || child.arguments.empty())
+                return error("control only supports cors-allow-origin child nodes");
+            for (auto const& arg : child.arguments) {
+                if (arg.tag) return error("control cors-allow-origin must be a string");
+                auto const* s = std::get_if<std::string>(&arg.data);
+                if (!s) return error("control cors-allow-origin must be a string");
+                if (auto ok = add_cors_origin(*s); !ok) return ok;
+            }
+        }
         if (socket && (!socket->starts_with('/') || socket->ends_with('/') || socket->contains('\0')))
             return error("control socket must be an absolute path");
         if (state && (!directory || !absolute_path(*directory) || directory->ends_with('/')))
@@ -89,9 +136,10 @@ namespace config {
                 metrics_on = *b;
             }
             config.control_http = ControlHttpConfig{std::move(host_lit), parsed.port,
-                token_file ? *token_file : std::string{}, metrics_on, ipv6, dash_root ? *dash_root : std::string{}};
-        } else if (token_prop || metrics_prop || dash_prop) {
-            return error("control bearer-token-file, metrics and dashboard-root require http-listen");
+                token_file ? *token_file : std::string{}, metrics_on, ipv6,
+                dash_root ? *dash_root : std::string{}, std::move(cors_origins)};
+        } else if (token_prop || metrics_prop || dash_prop || cors_prop || has_cors_children) {
+            return error("control bearer-token-file, metrics, dashboard-root and cors-allow-origin require http-listen");
         }
         if (socket) config.control_socket = *socket;
         if (uid) config.control_read_uid = static_cast<std::uint32_t>(*uid);

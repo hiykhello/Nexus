@@ -137,6 +137,10 @@ export namespace dns {
         [[nodiscard]] auto retire(std::uint32_t first) -> std::expected<void,FakeIpRegistryError> {
             std::lock_guard guard(state_->mutex); return state_->registry.retire(first);
         }
+        auto flush_unpinned() noexcept -> std::size_t {
+            std::lock_guard guard(state_->mutex);
+            return state_->registry.flush_unpinned();
+        }
         [[nodiscard]] auto contains(std::uint32_t address) const -> std::expected<bool,FakeIpRegistryError> {
             std::lock_guard guard(state_->mutex);
             if (!state_->sealed) return std::unexpected(FakeIpRegistryError::unsealed);

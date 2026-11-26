@@ -19,13 +19,6 @@ export namespace config {
         std::uint32_t timeout_ms = 5000;
     };
 
-    struct FixedUdpInbound {
-        std::string listen_host, target_host;
-        std::array<std::uint8_t, 16> listen_address{};
-        std::uint16_t target_port = 0;
-        std::uint32_t idle_timeout_ms = 60000;
-    };
-
     struct PortRange {
         std::uint16_t first = 0, last = 0;
         auto operator==(PortRange const&) const -> bool = default;
@@ -71,27 +64,8 @@ export namespace config {
     enum class NaiveProtocol : std::uint8_t { h2, h3, both };
     enum class HttpProxyVersion : std::uint8_t { h1, auto_h2, h2, h3 };
 
-    struct HttpInbound {
-        bool has_tls = false, http2 = true, http3 = false, connect_udp = false;
-        std::string listen_host, certificate_file, private_key_file;
-        std::array<std::uint8_t, 16> listen_address{};
-        std::uint32_t handshake_timeout_ms = 10000, idle_timeout_ms = 60000;
-        std::size_t native_bytes = 8 * 1024 * 1024;
-    };
-
     struct NaiveUser {
         std::string name, username, password_file;
-    };
-
-    struct NaiveInbound {
-        std::string listen_host, certificate_file, private_key_file;
-        std::array<std::uint8_t, 16> listen_address{};
-        std::vector<NaiveUser> users;
-        NaiveProtocol protocol = NaiveProtocol::h2;
-        bool padding = true;
-        std::uint16_t fallback_status = 404;
-        std::uint32_t handshake_timeout_ms = 10000, idle_timeout_ms = 60000;
-        std::size_t native_bytes = 8 * 1024 * 1024;
     };
 
     struct NaiveOutbound {
@@ -196,19 +170,6 @@ export namespace config {
         platform::TcpSocketOptions tcp_options;
     };
     struct NamedOpenConnectOutbound { std::string name; OpenConnectOutbound config; };
-
-    struct TunUidRange {
-        std::uint32_t min = 0, max = 0;
-        auto operator==(TunUidRange const&) const -> bool = default;
-    };
-
-    struct TunInboundExtra {
-        std::optional<std::uint32_t> auto_redirect_input_mark, auto_redirect_output_mark, auto_redirect_reset_mark;
-        std::vector<TunUidRange> include_uids, exclude_uids;
-        std::vector<std::uint32_t> include_android_users;
-        std::vector<std::string> include_interfaces, exclude_interfaces;
-        bool device_fd_skip_ioctl = false, bridge_mode = false;
-    };
 
     struct OrderedTcpActionExtra {
         std::optional<rules::DnsRuleStrategy> resolve_strategy{};

@@ -31,6 +31,7 @@ import std;
 import functional;
 import relay.dns_backend;
 import relay.dns_state;
+import relay.listener_options;
 import corosio;
 import :tcp_listener_helpers;
 
@@ -90,60 +91,106 @@ namespace relay {
 
     auto Server::RetainedListener::close() noexcept -> void { if (fd>=0) ::close(std::exchange(fd,-1)); }
 
-    auto Server::accept_loop() -> capy::task<> {
-        auto dispatch_peer = [&](io::tcp_socket&& accepted) {
-            if (shedding_memory()) return;
-            auto lease = quota.try_acquire();
-            if (!lease) return;
-            auto session = std::make_unique<Session>(context);
-            session->client = std::move(accepted);
+    auto Server::set_listen_options(config::ListenOptions options) -> std::expected<void, std::string> {
+        if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty())
+            return std::unexpected("stop the server before changing listen options");
+        if (!options.valid()) return std::unexpected("invalid listen options");
+        listen_options = std::move(options);
+        return {};
+    }
+
+    auto Server::ensure_detour_handle() -> std::shared_ptr<DetourHandle> {
+        if (!self_detour) {
+            self_detour = std::make_shared<DetourHandle>();
+            std::lock_guard lk(self_detour->mu);
+            self_detour->server = this; self_detour->io = &context;
+            self_detour->ep = bound_listener; self_detour->active = running && !drain_requested.load(std::memory_order_acquire);
+        }
+        return self_detour;
+    }
+    auto Server::publish_detour(bool active) noexcept -> void {
+        if (!self_detour) return;
+        std::lock_guard lk(self_detour->mu);
+        self_detour->active = active; self_detour->ep = active ? bound_listener : io::endpoint{};
+        self_detour->server = active ? this : nullptr; if (active) self_detour->io = &context;
+    }
+    auto Server::set_detour_target(Server* target) noexcept -> void {
+        if (target && target != this) {
+            try { detour_target = target->ensure_detour_handle(); detour_enabled = true; }
+            catch (...) { detour_target.reset(); detour_enabled = false; }
+        } else { detour_target.reset(); detour_enabled = false; }
+    }
+    auto Server::dispatch_accepted(io::tcp_socket&& accepted) -> void {
+        if (shedding_memory()) return;
+        if (detour_enabled) {
+            if (auto handle = detour_target.lock()) {
+                std::unique_lock lk(handle->mu);
+                if (!handle->active || !handle->server) return;
+                if (handle->io == &context) { auto* srv = handle->server; lk.unlock(); srv->dispatch_accepted(std::move(accepted)); return; }
+                auto ep = handle->ep; lk.unlock();
+                if (!ep.port()) return;
+                auto lease = quota.try_acquire(); if (!lease) return;
+                auto session = std::make_unique<Session>(context); session->client = std::move(accepted);
+                attach_session(*session, std::move(*lease));
+                auto run = [](std::unique_ptr<Session> s, io::endpoint t) -> capy::task<> {
+                    s->relaying = true;
+                    co_await relay_detour_stream(s->client, s->target, t, s->closed, s->touched, [p = s.get()]() noexcept { p->close(); });
+                    s->close();
+                };
+                capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(run(std::move(session), ep));
+            }
+            return;
+        }
+        auto lease = quota.try_acquire();
+        if (!lease) return;
+        auto session = std::make_unique<Session>(context); session->client = std::move(accepted);
 #if defined(__linux__)
-            platform::enable_tcp_quickack(session->client.native_handle());
+        platform::enable_tcp_quickack(session->client.native_handle());
 #else
-            platform::tune_tcp_low_latency(session->client.native_handle());
+        platform::tune_tcp_low_latency(session->client.native_handle());
 #endif
-            session->udp_advertise = udp_advertise;
-            attach_session(*session, std::move(*lease));
+        session->udp_advertise = udp_advertise; attach_session(*session, std::move(*lease));
 #ifdef NEXUS_TEST_ROOT_LAUNCH
-            nexus_test_root_launch(0);
+        nexus_test_root_launch(0);
 #endif
-            auto launch = [&]() -> capy::task<> {
+        auto launch = [&]() -> capy::task<> {
 #ifdef NEXUS_TEST_ROOT_LAUNCH
-                struct RestoreFrameAllocator { std::pmr::memory_resource* previous; ~RestoreFrameAllocator() { capy::set_current_frame_allocator(previous); } } restore{capy::get_current_frame_allocator()};
-                nexus_test_root_launch(1);
+            struct RestoreFrameAllocator { std::pmr::memory_resource* previous; ~RestoreFrameAllocator() { capy::set_current_frame_allocator(previous); } } restore{capy::get_current_frame_allocator()};
+            nexus_test_root_launch(1);
 #endif
-                return serve_session(std::move(session));
-            };
-            bool custom_inbound = false;
+            return serve_session(std::move(session));
+        };
+        bool custom_inbound = false;
 #ifdef NEXUS_ENABLE_SNELL
-            custom_inbound |= inbound_type == Inbound::snell;
+        custom_inbound |= inbound_type == Inbound::snell;
 #endif
 #ifdef NEXUS_ENABLE_ANYTLS
-            custom_inbound |= inbound_type == Inbound::anytls;
+        custom_inbound |= inbound_type == Inbound::anytls;
 #endif
 #ifdef NEXUS_ENABLE_SHADOWTLS
-            custom_inbound |= inbound_type == Inbound::shadowtls;
+        custom_inbound |= inbound_type == Inbound::shadowtls;
 #endif
 #ifdef NEXUS_ENABLE_TROJAN
-            custom_inbound |= inbound_type == Inbound::trojan;
+        custom_inbound |= inbound_type == Inbound::trojan;
 #endif
 #ifdef NEXUS_ENABLE_VLESS
-            custom_inbound |= inbound_type == Inbound::vless;
+        custom_inbound |= inbound_type == Inbound::vless;
 #endif
 #ifdef NEXUS_ENABLE_SS2022
-            custom_inbound |= inbound_type == Inbound::shadowsocks;
+        custom_inbound |= inbound_type == Inbound::shadowsocks;
 #endif
 #ifdef NEXUS_ENABLE_NAIVE
-            custom_inbound |= inbound_type == Inbound::naive || (inbound_type == Inbound::http && (http_modern_tcp_enabled || borrowed_http_modern_inbound));
+        custom_inbound |= inbound_type == Inbound::naive || (inbound_type == Inbound::http && (http_modern_tcp_enabled || borrowed_http_modern_inbound));
 #endif
-            if (custom_inbound) { capy::run_async(context.get_executor(), [] {}, session_error(*session))(launch()); return; }
+        if (custom_inbound) { capy::run_async(context.get_executor(), [] {}, session_error(*session))(launch()); return; }
 #ifdef NEXUS_TEST_ROOT_LAUNCH
-            capy::run_async(context.get_executor(), session->stop.get_token(), nexus_test_root_resource(), [] {}, session_error(*session))(launch());
+        capy::run_async(context.get_executor(), session->stop.get_token(), nexus_test_root_resource(), [] {}, session_error(*session))(launch());
 #else
-            capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(launch());
+        capy::run_async(context.get_executor(), session->stop.get_token(), [] {}, session_error(*session))(launch());
 #endif
-        };
+    }
 
+    auto Server::accept_loop() -> capy::task<> {
         auto cleanup = [&]() noexcept { staged_listener.close(); if (admission) admission->detach(this); };
         if (admission) {
             while (accepting) {
@@ -151,16 +198,13 @@ namespace relay {
                 if (published > listener_generation) { cleanup(); accepting = false; co_return; }
                 if (published == listener_generation) break;
                 auto [delay_error] = co_await io::delay(1ms);
-                if (delay_error) {
-                    if (accepting) { record_failure({FailureKind::accept, delay_error}); running = false; }
-                    cleanup(); accepting = false; co_return;
-                }
+                if (delay_error) { if (accepting) { record_failure({FailureKind::accept, delay_error}); running = false; publish_detour(false); } cleanup(); accepting = false; co_return; }
             }
             if (!accepting) { cleanup(); co_return; }
             if (int fd = std::exchange(staged_listener.fd, -1); fd >= 0) {
                 if (auto error = listener->assign(fd)) {
                     ::close(fd);
-                    if (accepting) { record_failure({FailureKind::accept, error}); running = false; }
+                    if (accepting) { record_failure({FailureKind::accept, error}); running = false; publish_detour(false); }
                     cleanup(); accepting = false; co_return;
                 }
             }
@@ -169,8 +213,7 @@ namespace relay {
             if (admission && admission->generation.load(std::memory_order_acquire) != listener_generation) break;
             auto [error, accepted] = co_await listener->accept();
             if (!error && accepting) {
-                if (!admission || admission->generation.load(std::memory_order_acquire) == listener_generation)
-                    dispatch_peer(std::move(accepted));
+                if (!admission || admission->generation.load(std::memory_order_acquire) == listener_generation) dispatch_accepted(std::move(accepted));
                 continue;
             }
             if (!accepting) break;
@@ -183,7 +226,7 @@ namespace relay {
             if (error) { if (running) record_failure({FailureKind::accept, error}); break; }
         }
         cleanup();
-        if (accepting) { running = false; if (listener) listener->close(); }
+        if (accepting) { running = false; publish_detour(false); if (listener) listener->close(); }
         accepting = false;
     }
 
@@ -264,71 +307,24 @@ namespace relay {
                 owner.staged_listener.close();
                 if (owner.admission) owner.admission->detach(&owner);
                 if (owner.shared_context) { owner.stop(); return; }
-                owner.running=false;
+                owner.running=false; owner.publish_detour(false);
 #ifdef NEXUS_TPROXY_UDP
                 owner.stop_transparent_udp();
 #endif
-                owner.stop_outbound_contexts();
-                owner.context.restart(); (void)owner.context.run();
-                owner.finish_outbound_contexts();
+                owner.stop_outbound_contexts(); owner.context.restart(); (void)owner.context.run(); owner.finish_outbound_contexts();
 #ifdef NEXUS_TPROXY_UDP
                 owner.transparent_udp.reset();
 #endif
             }
         } startup{*this};
         if(auto active=activate_context();!active)return std::unexpected(active.error());
-        auto bind_listener=[&]() -> std::error_code {
-            auto ipv6=endpoint.address().is_v6();
-            if (auto error=listener->open(ipv6 ? io::family::v6 : io::family::v4)) return error;
-            if (admission) {
-                int enabled=1;
-                if (::setsockopt(listener->native_handle(),SOL_SOCKET,SO_REUSEADDR,&enabled,sizeof(enabled))<0)
-                    return {errno,std::generic_category()};
-            }
-#if defined(__linux__)
-            // Inherited by accepted child sockets on Linux; avoids per-accept setsockopt.
-            int nodelay = 1;
-            (void)::setsockopt(listener->native_handle(), IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-#ifdef TCP_USER_TIMEOUT
-            std::uint32_t user_timeout = 20000;
-            (void)::setsockopt(listener->native_handle(), IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout, sizeof(user_timeout));
-#endif
-#endif
-            if (inbound==Inbound::tproxy) {
-#if defined(IP_TRANSPARENT) && defined(IPV6_TRANSPARENT)
-                int enabled=1;
-                if (::setsockopt(listener->native_handle(),ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
-                    ipv6 ? IPV6_TRANSPARENT : IP_TRANSPARENT,&enabled,sizeof(enabled))<0)
-                    return {errno,std::generic_category()};
-#else
-                return std::make_error_code(std::errc::operation_not_supported);
-#endif
-            }
-            if (redirect_socket_mark) {
-#if defined(SO_MARK)
-                if (::setsockopt(listener->native_handle(),SOL_SOCKET,SO_MARK,
-                        &*redirect_socket_mark,sizeof(std::uint32_t))<0)
-                    return {errno,std::generic_category()};
-#else
-                return std::make_error_code(std::errc::operation_not_supported);
-#endif
-            }
-            if (ipv6)
-                if (auto error=listener->set_option(corosio::socket_option::v6_only(!tun_redirect_dual_stack))) return error;
-            if (reuse)
-                if (auto error=listener->set_option(corosio::socket_option::reuse_port(true))) return error;
-            return listener->bind(endpoint);
-        };
         if (shared_fd<0) {
-            if (auto error=bind_listener()) {
-                listener->close();
-                return std::unexpected(error);
-            }
+            if (auto error=open_and_bind_tcp_listener(*listener,endpoint,listen_options,inbound==Inbound::tproxy,
+                    reuse,bool(admission),tun_redirect_dual_stack,redirect_socket_mark)) { listener->close(); return std::unexpected(error); }
             endpoint=listener->local_endpoint();
         }
         if (admission) {
-            // Keep fd staged until generation is published so io_uring multishot
-            // accept does not steal connections from the previous generation.
+            // Keep fd staged until generation is published so io_uring multishot accept does not steal connections.
             RetainedListener socket;
             if (shared_fd>=0) {
                 socket.fd=::fcntl(shared_fd,F_DUPFD_CLOEXEC,0);
@@ -337,29 +333,19 @@ namespace relay {
                 auto [error,fd]=listener->release();
                 if (error) return std::unexpected(error);
                 socket.fd=fd;
-                if (::listen(fd,SOMAXCONN)<0)
-                    return std::unexpected(std::error_code(errno,std::generic_category()));
+                if (::listen(fd,SOMAXCONN)<0) return std::unexpected(std::error_code(errno,std::generic_category()));
             }
-            staged_listener=std::move(socket);
-            admission->attach(listener_generation,this,threaded);
-        } else if (auto error=listener->listen(SOMAXCONN)) {
-            listener->close(); return std::unexpected(error);
-        }
-        this->inbound_type = inbound;
-        bound_listener = endpoint;
+            staged_listener=std::move(socket); admission->attach(listener_generation,this,threaded);
+        } else if (auto error=listener->listen(SOMAXCONN)) { listener->close(); return std::unexpected(error); }
+        this->inbound_type = inbound; bound_listener = endpoint;
         auto const bound_port = bound_listener.port();
 #ifdef NEXUS_TPROXY_UDP
         if (inbound==Inbound::tproxy && transparent_datagrams) {
-            if (auto error=start_transparent_udp(bound_listener,reuse)) {
-                listener->close();
-                return std::unexpected(error);
-            }
+            if (auto error=start_transparent_udp(bound_listener,reuse)) { listener->close(); return std::unexpected(error); }
         }
 #endif
-        this->running = true;
-        sessions.reserve(64);
-        accepting = true;
-        accept_task_active = true;
+        this->running = true; publish_detour(true);
+        sessions.reserve(64); accepting = true; accept_task_active = true;
         try {
 #ifdef NEXUS_TEST_START_THROW
             nexus_test_start_throw();
@@ -367,10 +353,10 @@ namespace relay {
             capy::run_async(this->context.get_executor(), [state=this]() noexcept { state->accept_task_active=false; },
                 [state=this](std::exception_ptr) noexcept {
                 try { state->record_failure({FailureKind::accept_task,{}}); } catch (...) {}
-                state->running=false; state->accepting=false; state->accept_task_active=false; state->close_listener();
+                state->running=false; state->publish_detour(false); state->accepting=false; state->accept_task_active=false; state->close_listener();
             })(this->accept_loop());
         } catch (...) {
-            this->running=false; accepting=false; accept_task_active=false; close_listener(); throw;
+            this->running=false; publish_detour(false); accepting=false; accept_task_active=false; close_listener(); throw;
         }
         startup.done=true;
         return bound_port;
@@ -405,7 +391,8 @@ namespace relay {
 #endif
         auto endpoint=listener_endpoint(port,ipv6,address);
         if (previous && (previous==this || previous->admission!=gate || !previous->healthy() ||
-            previous->bound_listener!=endpoint || previous->retained_listeners.size()!=count ||
+            previous->bound_listener!=endpoint || previous->listen_options!=listen_options ||
+            previous->retained_listeners.size()!=count ||
             std::ranges::any_of(previous->retained_listeners,[](auto const& r) { return r.fd<0; }) ||
             ((previous->inbound_type==Inbound::tproxy)!=(inbound==Inbound::tproxy))))
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
@@ -491,7 +478,7 @@ namespace relay {
                 bound=*result; endpoint=io::endpoint(endpoint.address(),bound);
                 state.workers.push_back(std::move(worker));
             }
-            state.bound_listener=endpoint; state.inbound_type=inbound; state.running=true;
+            state.bound_listener=endpoint; state.inbound_type=inbound; state.running=true; state.publish_detour(true);
             for (auto& worker : state.workers) state.threads.emplace_back([&state,ptr=worker.get()] { state.run_worker_thread(ptr); });
         } catch (std::system_error const& error) { stop(); return std::unexpected(error.code()); }
         catch (...) { stop(); throw; }

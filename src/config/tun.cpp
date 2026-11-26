@@ -19,18 +19,30 @@ namespace config {
             });
         }
 
-        auto valid_cidr(std::string_view text, bool ipv6) -> bool {
+        auto canonical_cidr_key(std::string_view text, bool ipv6) -> std::optional<std::array<std::uint8_t, 18>> {
             auto slash = text.find('/');
-            if (slash == std::string_view::npos || text.find('/', slash + 1) != std::string_view::npos) return false;
+            if (slash == std::string_view::npos || text.find('/', slash + 1) != std::string_view::npos) return std::nullopt;
             auto ip = text.substr(0, slash), pfx = text.substr(slash + 1);
-            if (ip.empty() || pfx.empty() || pfx.size() > 3) return false;
-            if (pfx.size() > 1 && pfx.front() == '0') return false;
+            if (ip.empty() || pfx.empty() || pfx.size() > 3 || (pfx.size() > 1 && pfx.front() == '0')) return std::nullopt;
             unsigned bits = 0;
             auto [end, ec] = std::from_chars(pfx.data(), pfx.data() + pfx.size(), bits);
-            if (ec != std::errc{} || end != pfx.data() + pfx.size()) return false;
-            if (ipv6) return dns_ipv6(ip).has_value() && bits >= 1 && bits <= 128;
-            return dns_ipv4(ip).has_value() && bits >= 1 && bits <= 32;
+            if (ec != std::errc{} || end != pfx.data() + pfx.size() || bits < 1 || bits > (ipv6 ? 128u : 32u)) return std::nullopt;
+            std::array<std::uint8_t, 18> key{static_cast<std::uint8_t>(ipv6 ? 6 : 4), static_cast<std::uint8_t>(bits)};
+            if (ipv6) { auto a = dns_ipv6(ip); if (!a) return std::nullopt; std::ranges::copy(*a, key.begin() + 2); }
+            else { auto a = dns_ipv4(ip); if (!a) return std::nullopt; std::ranges::copy(*a, key.begin() + 2); }
+            std::size_t n = ipv6 ? 16 : 4, keep = bits / 8, rem = bits % 8;
+            if (keep < n && rem) key[2 + keep] &= static_cast<std::uint8_t>(255u << (8 - rem));
+            for (std::size_t i = keep + (rem != 0); i < n; ++i) key[2 + i] = 0;
+            return key;
         }
+        auto valid_cidr(std::string_view text, bool ipv6) -> bool { return canonical_cidr_key(text, ipv6).has_value(); }
+        struct CidrKeyHash {
+            auto operator()(std::array<std::uint8_t, 18> const& k) const noexcept -> std::size_t {
+                std::size_t h = 14695981039346656037ull;
+                for (auto b : k) h = (h ^ b) * 1099511628211ull;
+                return h;
+            }
+        };
 
         auto parse_uid_range(Value const& value) -> std::optional<TunUidRange> {
             if (auto u = integer(value)) {
@@ -47,9 +59,23 @@ namespace config {
             auto a = std::string_view(*text).substr(0, sep), b = std::string_view(*text).substr(sep + 1);
             auto [e1, c1] = std::from_chars(a.data(), a.data() + a.size(), lo);
             auto [e2, c2] = std::from_chars(b.data(), b.data() + b.size(), hi);
-            if (c1 != std::errc{} || e1 != a.data() + a.size() || c2 != std::errc{} || e2 != b.data() + b.size() || lo > hi)
-                return std::nullopt;
+            if (c1 != std::errc{} || e1 != a.data() + a.size() || c2 != std::errc{} || e2 != b.data() + b.size() || lo > hi) return std::nullopt;
             return TunUidRange{lo, hi};
+        }
+
+        auto parse_mac_address(std::string_view text) -> std::optional<std::array<std::uint8_t, 6>> {
+            if (text.size() != 17 || (text[2] != ':' && text[2] != '-')) return std::nullopt;
+            std::array<std::uint8_t, 6> out{};
+            auto hex = [](char c) -> int {
+                return (c >= '0' && c <= '9') ? (c - '0') : (c >= 'a' && c <= 'f') ? (c - 'a' + 10) : (c >= 'A' && c <= 'F') ? (c - 'A' + 10) : -1;
+            };
+            for (std::size_t i = 0; i < 6; ++i) {
+                if (i > 0 && text[i * 3 - 1] != text[2]) return std::nullopt;
+                int hi = hex(text[i * 3]), lo = hex(text[i * 3 + 1]);
+                if (hi < 0 || lo < 0) return std::nullopt;
+                out[i] = static_cast<std::uint8_t>((hi << 4) | lo);
+            }
+            return out;
         }
     }
 
@@ -60,11 +86,11 @@ namespace config {
             return error("invalid TUN inbound");
         InboundConfig result{*tag, 0, Inbound::tun};
         TunInbound cfg;
-        bool if_seen = false, v4_seen = false, v6_seen = false, mtu_seen = false;
-        bool auto_seen = false, strict_seen = false, stack_seen = false;
-        bool flows_seen = false, buf_seen = false, udp_seen = false, mark_seen = false, nat_seen = false;
-        bool filter_seen=false,reject_seen=false,dns_tcp_seen=false,reply_fragment_seen=false;
-        bool private_seen=false, redirect_seen=false, mptcp_seen=false, mq_seen=false, mode_seen=false;
+        bool if_seen=false,v4_seen=false,v6_seen=false,mtu_seen=false,auto_seen=false,strict_seen=false,stack_seen=false;
+        bool flows_seen=false,buf_seen=false,udp_seen=false,mark_seen=false,nat_seen=false,filter_seen=false;
+        bool reject_seen=false,dns_tcp_seen=false,reply_fragment_seen=false,private_seen=false,redirect_seen=false;
+        bool mptcp_seen=false,mq_seen=false,mode_seen=false,gso_seen=false;
+        std::unordered_set<std::array<std::uint8_t,18>,CidrKeyHash> seen_includes, seen_excludes;
 
         for (auto const& child : node.children) {
             if (child.name == "interface-name") {
@@ -114,12 +140,14 @@ namespace config {
                 if (private_seen || !value) return error("invalid TUN route-exclude-private");
                 cfg.route_exclude_private=*value;
                 private_seen=true;
-            } else if (child.name=="route-exclude") {
+            } else if (child.name=="route-exclude" || child.name=="route-address") {
+                bool is_inc = child.name=="route-address";
+                auto& dst = is_inc ? cfg.route_includes : cfg.route_excludes;
+                auto& seen = is_inc ? seen_includes : seen_excludes;
                 auto value=scalar(child);
-                if (!value || cfg.route_excludes.size()==64 ||
-                    !valid_cidr(*value,value->find(':')!=std::string::npos))
-                    return error("invalid TUN route-exclude");
-                cfg.route_excludes.push_back(*value);
+                auto key = value ? canonical_cidr_key(*value, value->find(':')!=std::string::npos) : std::nullopt;
+                if (!key || dst.size()>=65536) return error("invalid TUN "+child.name);
+                if (seen.insert(*key).second) dst.push_back(*value);
             } else if (child.name=="route-address-set" || child.name=="route-exclude-address-set") {
                 auto& dst = child.name=="route-address-set" ? cfg.route_address_sets : cfg.route_exclude_address_sets;
                 auto value=scalar(child);
@@ -222,26 +250,44 @@ namespace config {
                 auto value=boolean(child);
                 if (mq_seen || !value) return error("invalid TUN multi-queue");
                 cfg.multi_queue=*value; mq_seen=true;
-            } else if (child.name=="exclude-package") {
+            } else if (child.name=="gso" || child.name=="vnet-hdr") {
+                auto value=boolean(child);
+                if (gso_seen || !value) return error("invalid TUN "+child.name);
+                cfg.gso=*value; gso_seen=true;
+            } else if (child.name=="exclude-package" || child.name=="include-package") {
+                auto& dst = child.name=="include-package" ? cfg.include_packages : cfg.exclude_packages;
                 auto value=scalar(child);
                 auto valid_pkg=[](std::string_view p) {
                     return !p.empty() && p.size()<=128 && p.contains('.') && std::ranges::all_of(p,[](unsigned char c) {
                         return (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='.' || c=='_';
                     });
                 };
-                if (!value || !valid_pkg(*value) || cfg.exclude_packages.size()>=64 ||
-                    std::ranges::contains(cfg.exclude_packages,*value))
-                    return error("invalid or duplicate TUN exclude-package");
-                cfg.exclude_packages.push_back(*value);
+                if (!value || !valid_pkg(*value) || dst.size()>=256 || std::ranges::contains(dst,*value))
+                    return error("invalid or duplicate TUN "+child.name);
+                dst.push_back(*value);
             } else if (child.name == "auto-redirect-input-mark" || child.name == "auto-redirect-output-mark" ||
-                       child.name == "auto-redirect-reset-mark") {
+                       child.name == "auto-redirect-reset-mark" || child.name == "auto-redirect-tproxy-mark") {
                 auto& dst = child.name == "auto-redirect-input-mark" ? cfg.extra.auto_redirect_input_mark
                     : child.name == "auto-redirect-output-mark" ? cfg.extra.auto_redirect_output_mark
-                    : cfg.extra.auto_redirect_reset_mark;
+                    : child.name == "auto-redirect-reset-mark" ? cfg.extra.auto_redirect_reset_mark
+                    : cfg.extra.auto_redirect_tproxy_mark;
                 auto v = child.arguments.size() == 1 ? integer(child.arguments.front()) : std::nullopt;
-                if (dst || child.tag || !child.properties.empty() || !child.children.empty() || !v || *v > 0xffffffffULL)
+                if (dst || child.tag || !child.properties.empty() || !child.children.empty() || !v || *v > 0xffffffffULL ||
+                    (child.name == "auto-redirect-tproxy-mark" && *v == 0))
                     return error("invalid TUN " + child.name);
                 dst = static_cast<std::uint32_t>(*v);
+            } else if (child.name == "auto-redirect-tproxy-port") {
+                auto v = child.arguments.size() == 1 ? integer(child.arguments.front()) : std::nullopt;
+                if (cfg.extra.auto_redirect_tproxy_port || child.tag || !child.properties.empty() || !child.children.empty() || !v || *v < 1 || *v > 65535)
+                    return error("invalid TUN auto-redirect-tproxy-port");
+                cfg.extra.auto_redirect_tproxy_port = static_cast<std::uint16_t>(*v);
+            } else if (child.name == "include-mac-address" || child.name == "exclude-mac-address") {
+                auto& dst = child.name == "include-mac-address" ? cfg.extra.include_mac_addresses : cfg.extra.exclude_mac_addresses;
+                auto v = scalar(child);
+                auto mac = v ? parse_mac_address(*v) : std::nullopt;
+                if (!mac || dst.size() >= 16 || std::ranges::contains(dst, *mac))
+                    return error("invalid or duplicate TUN " + child.name);
+                dst.push_back(*mac);
             } else if (child.name == "include-uid" || child.name == "exclude-uid") {
                 auto& dst = child.name == "include-uid" ? cfg.extra.include_uids : cfg.extra.exclude_uids;
                 if (child.tag || !child.properties.empty() || !child.children.empty() || child.arguments.size() != 1 || dst.size() >= 16)
@@ -268,8 +314,12 @@ namespace config {
         }
         if (cfg.extra.bridge_mode && (cfg.strict_route || cfg.auto_route || cfg.connect_ip_outbound || cfg.device_fd || cfg.auto_redirect))
             return error("TUN device-mode bridge cannot be combined with system routing or device-fd");
-        if ((cfg.extra.auto_redirect_input_mark || cfg.extra.auto_redirect_output_mark || cfg.extra.auto_redirect_reset_mark) && !cfg.auto_redirect)
+        if ((cfg.extra.auto_redirect_input_mark || cfg.extra.auto_redirect_output_mark ||
+             cfg.extra.auto_redirect_reset_mark || cfg.extra.auto_redirect_tproxy_mark ||
+             cfg.extra.auto_redirect_tproxy_port) && !cfg.auto_redirect)
             return error("TUN auto-redirect marks require auto-redirect");
+        if ((!cfg.extra.include_mac_addresses.empty() || !cfg.extra.exclude_mac_addresses.empty()) && !cfg.auto_redirect)
+            return error("TUN MAC filters require auto-redirect");
         if ((!cfg.extra.include_uids.empty() || !cfg.extra.exclude_uids.empty() ||
              !cfg.extra.include_android_users.empty() || !cfg.extra.include_interfaces.empty() ||
              !cfg.extra.exclude_interfaces.empty()) && !cfg.auto_redirect && !cfg.strict_route)
@@ -278,25 +328,23 @@ namespace config {
             return error("TUN include-uid + include-android-user exceeds 16 entries");
         if (cfg.exclude_mptcp && !cfg.auto_redirect)
             return error("TUN exclude-mptcp requires auto-redirect");
-        if (!cfg.exclude_packages.empty() && cfg.strict_route)
-            return error("TUN strict-route is not supported on mobile exclude-package configurations");
+        if (!cfg.include_packages.empty() && !cfg.exclude_packages.empty())
+            return error("TUN include-package and exclude-package are mutually exclusive");
+        if ((!cfg.exclude_packages.empty() || !cfg.include_packages.empty()) && cfg.strict_route)
+            return error("TUN strict-route is not supported on mobile package-filter configurations");
         if (cfg.auto_redirect) {
             if (!cfg.auto_route || cfg.device_fd || cfg.connect_ip_outbound || (strict_seen && !cfg.strict_route))
                 return error("TUN auto-redirect requires auto-route and managed routed TUN strict-route");
-            if (!cfg.route_address_sets.empty() || !cfg.route_includes.empty())
-                return error("TUN auto-redirect cannot be combined with route-address-set");
             cfg.strict_route=true;
         }
         if (cfg.device_fd) {
-            if (cfg.strict_route)
-                return error("TUN strict-route is not permitted with external mobile/platform device-fd");
+            if (cfg.strict_route) return error("TUN strict-route is not permitted with external mobile/platform device-fd");
             if (cfg.connect_ip_outbound || v4_seen || v6_seen || cfg.auto_route)
                 return error("TUN device-fd requires host-managed addresses and routes on a routed TUN inbound");
             if (!if_seen) cfg.interface_name.clear();
         }
 #if !defined(__linux__)
-        if (cfg.strict_route)
-            return error("TUN strict-route is only supported on Linux hosts");
+        if (cfg.strict_route) return error("TUN strict-route is only supported on Linux hosts");
 #endif
         if (cfg.connect_ip_outbound) {
             if (cfg.connect_ip_routes.empty() || v4_seen || v6_seen || auto_seen || strict_seen ||
@@ -304,38 +352,26 @@ namespace config {
                 return error("CONNECT-IP TUN requires explicit connect-ip-route entries and uses peer address assignment");
             if (!mtu_seen) cfg.mtu = 1280;
         } else if (!cfg.connect_ip_routes.empty()) return error("connect-ip-route requires connect-ip-outbound");
-        if (cfg.strict_route && !cfg.auto_route)
-            return error("TUN strict-route requires auto-route");
-        if (cfg.host_dns_resolved && !cfg.strict_route)
-            return error("TUN host-dns requires strict-route");
+        if (cfg.strict_route && !cfg.auto_route) return error("TUN strict-route requires auto-route");
+        if (cfg.host_dns_resolved && !cfg.strict_route) return error("TUN host-dns requires strict-route");
 #if defined(__linux__)
-        if (!cfg.route_excludes.empty() && (!cfg.strict_route || cfg.connect_ip_outbound))
-            return error("TUN route-exclude requires routed TUN strict-route");
-        if (!cfg.route_exclude_address_sets.empty() && (!cfg.strict_route || cfg.connect_ip_outbound))
-            return error("TUN route-exclude-address-set requires routed TUN strict-route");
-        if (!cfg.route_address_sets.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
-            return error("TUN route-address-set requires routed TUN auto-route");
-        if ((private_seen || cfg.include_routing_mark || cfg.exclude_routing_mark) &&
-            (!cfg.strict_route || cfg.connect_ip_outbound))
-            return error("TUN mark filters and route-exclude-private require routed TUN strict-route");
+        constexpr bool kExcludeNeedsStrict = true;
 #else
-        if (!cfg.route_excludes.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
-            return error("TUN route-exclude requires routed TUN auto-route");
-        if (!cfg.route_exclude_address_sets.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
-            return error("TUN route-exclude-address-set requires routed TUN auto-route");
-        if (!cfg.route_address_sets.empty() && (!cfg.auto_route || cfg.connect_ip_outbound))
-            return error("TUN route-address-set requires routed TUN auto-route");
-        if ((private_seen || cfg.include_routing_mark || cfg.exclude_routing_mark) &&
-            (!cfg.auto_route || cfg.connect_ip_outbound))
-            return error("TUN route-exclude-private requires routed TUN auto-route");
+        constexpr bool kExcludeNeedsStrict = false;
 #endif
-        for (auto const& prefix : cfg.route_excludes)
-            if (!(prefix.contains(':') ? cfg.inet6_address : cfg.inet4_address))
-                return error("TUN route-exclude requires an address in the same family");
-        if (cfg.auto_route && !cfg.inet4_address && !cfg.inet6_address)
-            return error("TUN auto-route requires inet4-address or inet6-address");
-        if (cfg.inet6_address && cfg.mtu < 88)
-            return error("TUN IPv6 mtu must be 88..65535");
+        bool route_ok = !cfg.connect_ip_outbound && (kExcludeNeedsStrict ? cfg.strict_route : cfg.auto_route);
+        if (!cfg.route_excludes.empty() && !route_ok) return error("TUN route-exclude requires routed TUN strict-route");
+        if (!cfg.route_exclude_address_sets.empty() && !route_ok) return error("TUN route-exclude-address-set requires routed TUN strict-route");
+        if ((!cfg.route_address_sets.empty() || !cfg.route_includes.empty()) && (!cfg.auto_route || cfg.connect_ip_outbound))
+            return error("TUN route-address requires routed TUN auto-route");
+        if ((private_seen || cfg.include_routing_mark || cfg.exclude_routing_mark) && !route_ok)
+            return error("TUN mark filters and route-exclude-private require routed TUN strict-route");
+        for (auto const& p : cfg.route_excludes) if (!(p.contains(':') ? cfg.inet6_address : cfg.inet4_address))
+            return error("TUN route-exclude requires an address in the same family");
+        for (auto const& p : cfg.route_includes) if (!(p.contains(':') ? cfg.inet6_address : cfg.inet4_address))
+            return error("TUN route-address requires an address in the same family");
+        if (cfg.auto_route && !cfg.inet4_address && !cfg.inet6_address) return error("TUN auto-route requires inet4-address or inet6-address");
+        if (cfg.inet6_address && cfg.mtu < 88) return error("TUN IPv6 mtu must be 88..65535");
         result.tun = std::move(cfg);
         return result;
     }

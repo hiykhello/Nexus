@@ -201,6 +201,9 @@ export namespace relay {
         io::endpoint bound_listener;
         bool tun_redirect_dual_stack = false, redirect_tcp_dns = false;
         std::optional<std::uint32_t> redirect_socket_mark;
+        struct DetourHandle { std::mutex mu; Server* server = nullptr; io::io_context* io = nullptr; io::endpoint ep{}; bool active = false; };
+        config::ListenOptions listen_options{};
+        std::shared_ptr<DetourHandle> self_detour; std::weak_ptr<DetourHandle> detour_target; bool detour_enabled = false;
         std::optional<socks5::Request> fixed_tcp_target;
         io::endpoint udp_advertise;
         std::string fixed_unix_target;
@@ -209,34 +212,36 @@ export namespace relay {
         std::shared_ptr<std::atomic_bool const> memory_shed;
         std::atomic<std::uint8_t> memory_reclaim_requested{0};
         std::shared_ptr<ShadowsocksUserDirectory> ss_dynamic_users;
+        std::shared_ptr<GroupRuntimeHooks> group_hooks;
+        bool find_process_enabled = false;
         Inbound inbound_type = Inbound::socks5;
         std::vector<std::unique_ptr<Server>> workers;
         std::vector<std::thread> threads;
         std::atomic_bool stopping{false}, failed{false};
         bool outbound_contexts_started = false;
-        // Prerequisites first; stop and finish in reverse so borrowed lower
-        // transports outlive the factories which own their leases.
         std::array<std::uint16_t, 256> outbound_context_order{};
         std::uint16_t outbound_context_count = 0;
-        auto start_outbound_contexts() -> bool;
-        auto stop_outbound_contexts() noexcept -> void;
-        auto finish_outbound_contexts() noexcept -> void;
-        auto reap_outbound_contexts() noexcept -> void;
+        auto start_outbound_contexts() -> bool; auto stop_outbound_contexts() noexcept -> void;
+        auto finish_outbound_contexts() noexcept -> void; auto reap_outbound_contexts() noexcept -> void;
         [[nodiscard]] auto outbound_contexts_quiesced() const noexcept -> bool;
         auto apply_memory_reclaim(std::uint8_t level) noexcept -> void;
         mutable std::mutex failure_mutex;
         std::optional<RuntimeFailure> failure_state;
         auto record_failure(RuntimeFailure value) -> void;
         auto get_failure() const -> std::optional<RuntimeFailure>;
-        utility::atomic_shared_ptr<OutboundProbe> pending_probe;
+        static constexpr std::size_t kMaxConcurrentProbes = 16;
+        std::mutex probe_mutex;
+        std::deque<std::shared_ptr<OutboundProbe>> pending_probes;
+        std::atomic<std::size_t> active_probes{0};
         dns::TlsQueryMaintenance dns_tls_maintenance;
-        bool probe_running = false;
         auto close_listener() noexcept -> void; auto retire_acceptor() noexcept -> void;
         auto probe_http(Session&, OutboundProbe&) -> capy::task<bool>;
         auto probe_https(Session&, OutboundProbe&) -> capy::task<bool>;
         auto probe_h2_ping(Session&, OutboundProbe&) -> capy::task<std::optional<std::uint32_t>>;
         auto run_probe(std::shared_ptr<OutboundProbe>) -> capy::task<>;
         auto accept_loop() -> capy::task<>; auto accept_unix() -> capy::task<>;
+        auto ensure_detour_handle() -> std::shared_ptr<DetourHandle>; auto publish_detour(bool active) noexcept -> void;
+        auto dispatch_accepted(io::tcp_socket&& accepted) -> void;
         auto serve_session(std::unique_ptr<Session> session) -> capy::task<>;
         auto start_one(io::endpoint endpoint, Inbound inbound, bool reuse, int shared_fd = -1, bool threaded = false) -> std::expected<std::uint16_t, std::error_code>;
         auto run_worker_thread(Server* ptr) -> void;
@@ -276,11 +281,11 @@ export namespace relay {
         [[nodiscard]] auto track_traffic(TrafficProtocol, ConnectPath, std::optional<net::UdpEndpoint> source,
             std::uint16_t destination_port, bool can_close = false) const -> TrafficRegistration;
         [[nodiscard]] auto traffic_snapshot() const -> TrafficSnapshot;
-        // The control thread queues the close. The owning executor drains it.
         [[nodiscard]] auto request_traffic_close(std::uint64_t id) -> TrafficCloseRequest;
+        [[nodiscard]] auto close_group_sessions(std::string_view group_tag, std::optional<std::size_t> outbound = {}) -> std::size_t;
+        auto set_find_process(bool enabled) noexcept -> void;
+        auto set_group_hooks(std::shared_ptr<GroupRuntimeHooks> hooks) noexcept -> void;
         auto process_traffic_closes() -> void;
-        // The control thread requests that executor owners stop admitting new
-        // work. Existing sessions progress until completion or forced stop.
         auto begin_drain() noexcept -> void;
         [[nodiscard]] auto drained() const noexcept -> bool;
         [[nodiscard]] auto queue_outbound_probe(std::shared_ptr<OutboundProbe>) -> bool;
@@ -341,15 +346,9 @@ export namespace relay {
 #endif
 #endif
 
-        // Matching predicates block; nonmatching IP requests use direct TCP.
-        // The policy can be replaced only while the server is stopped.
-        [[nodiscard]] auto set_block_rules(std::string_view data, RuleFormat format)
-            -> std::expected<void, std::string>;
-        // Install one ordered predicate set and its action; absent data means default only.
-        [[nodiscard]] auto set_route(std::optional<std::string_view> data, RuleFormat format,
-            RouteAction action, RouteAction fallback) -> std::expected<void, std::string>;
-        [[nodiscard]] auto set_routes(std::span<RouteRule const> rules, RouteAction fallback)
-            -> std::expected<void, std::string>;
+        [[nodiscard]] auto set_block_rules(std::string_view data, RuleFormat format) -> std::expected<void, std::string>;
+        [[nodiscard]] auto set_route(std::optional<std::string_view> data, RuleFormat format, RouteAction action, RouteAction fallback) -> std::expected<void, std::string>;
+        [[nodiscard]] auto set_routes(std::span<RouteRule const> rules, RouteAction fallback) -> std::expected<void, std::string>;
         // Outbound 0 is direct, 1 is block, and prepared tunnel instances start at 2.
         [[nodiscard]] auto set_indexed_routes(std::span<IndexedRouteRule const> rules, std::size_t fallback,
             std::optional<std::string_view> inbound = {})
@@ -389,10 +388,11 @@ export namespace relay {
         [[nodiscard]] auto set_reverse_cache(std::shared_ptr<dns::ReverseCache> owner)
             -> std::expected<void, std::error_code>;
         [[nodiscard]] auto reverse_cache_ptr() const noexcept -> dns::ReverseCache* { return reverse_cache.get(); }
-        // The deadline starts at acceptance and includes target resolution when
-        // the outbound is known before DNS. Reconfigure only while stopped.
         [[nodiscard]] auto set_direct_connect_timeout(std::uint32_t timeout_ms) -> std::expected<void, std::string>;
         [[nodiscard]] auto set_direct_tcp_options(TcpSocketOptions options) -> std::expected<void, std::string>;
+        [[nodiscard]] auto set_listen_options(config::ListenOptions options) -> std::expected<void, std::string>;
+        auto set_detour_target(Server* target) noexcept -> void;
+        [[nodiscard]] auto listening_endpoint() const noexcept -> io::endpoint { return bound_listener; }
         // Replace the complete dependency set while stopped. Index 0 means
         // direct; tunnel indexes start at 2. Cycles and block are rejected.
         [[nodiscard]] auto set_outbound_detours(std::span<OutboundDetour const>) -> std::expected<void, std::string>;
@@ -478,9 +478,7 @@ export namespace relay {
         [[nodiscard]] auto set_fixed_tcp_target(std::string_view host, std::uint16_t port) -> bool;
         [[nodiscard]] auto set_fixed_udp_target(std::string_view host, std::uint16_t port, std::uint32_t idle_ms = 60000) -> bool;
         [[nodiscard]] auto start(std::uint16_t port, Inbound inbound = Inbound::socks5, unsigned workers = 1, bool ipv6 = false, std::optional<std::array<std::uint8_t, 16>> address = {}) -> std::expected<std::uint16_t, std::error_code>;
-        // A prepared listener queues connections until its generation is
-        // published. For an unchanged bind, previous supplies the same kernel
-        // listen queues and retains all of its already admitted sessions.
+        // Staged listener queues connections until generation is published; previous reuses listen fds on unchanged bind.
         [[nodiscard]] auto stage_tcp(std::shared_ptr<TcpAdmission> admission, std::uint64_t generation,
             std::uint16_t port, Inbound inbound, unsigned workers, bool ipv6,
             std::optional<std::array<std::uint8_t, 16>> address, Server const* previous = nullptr)

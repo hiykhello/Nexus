@@ -93,5 +93,7 @@ export namespace dns {
         // After a send may have reached the network, extend protection from
         // completion before releasing one publication pin. Failure keeps it.
         [[nodiscard]] auto finish_publication(FakeIpLease lease,Clock::time_point now) -> std::expected<void,FakeIpError>;
+        // Evicts all unpinned mappings while preserving active pinned connections.
+        auto flush_unpinned() noexcept -> std::size_t;
     };
 }

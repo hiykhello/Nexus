@@ -10,6 +10,7 @@ import control_api.ssmapi_bridge;
 import control_api.types;
 import control_api.http_format;
 import control_api.http_stream;
+import control_api.http_extra_routes;
 import control_api.dashboard_static;
 import crypto;
 import metrics;
@@ -35,6 +36,7 @@ namespace control_api {
         SsmApiBridge ssmapi;
         std::filesystem::path dashboard_root;
         std::vector<std::uint8_t> token;
+        std::vector<std::string> cors_allow_origins;
         std::vector<Peer> peers;
         std::uint64_t authorized = 0, unauthorized = 0, expired = 0;
 
@@ -72,22 +74,32 @@ namespace control_api {
             auto header_end = raw.find("\r\n\r\n");
             if (header_end == std::string_view::npos) return json_error(400, "Bad Request", "bad-request", "malformed HTTP");
             auto req = parse_http_request_head(raw, header_end);
-            if (!req.valid) return json_error(400, "Bad Request", "bad-request", "invalid request line");
+            if (!req.valid) return json_error(400, "Bad Request", "invalid-request", "invalid request line");
             auto [method, path, query, headers, body, _] = req;
             auto target = query.empty() ? std::string(path) : (std::string(path) + "?" + std::string(query));
             bool is_ssmapi = ssmapi_enabled && (path == ssmapi_prefix || path.starts_with(ssmapi_prefix + "/"));
             bool is_api = is_ssmapi || path == "/v1" || path.starts_with("/v1/") || path == "/metrics";
             if (!is_api && !dashboard_root.empty())
                 return serve_dashboard_request(dashboard_root, method, path);
+            auto req_origin = extract_header_value(headers, "origin");
+            auto matched_cors = match_cors_origin(cors_allow_origins, req_origin);
+            auto with_cors = [&](std::string resp) -> std::string {
+                return matched_cors ? inject_cors_headers(std::move(resp), *matched_cors) : std::move(resp);
+            };
+            if (is_api && method == "OPTIONS" && !cors_allow_origins.empty()) {
+                if (!matched_cors)
+                    return json_error(403, "Forbidden", "cors-origin-denied", "origin is not allowed");
+                return cors_preflight_response(*matched_cors);
+            }
             if (!check_auth(headers, query))
-                return json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token");
+                return with_cors(json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token"));
 
             if (is_ssmapi) {
                 if (auto res = ssmapi.dispatch(ssmapi_prefix, method, target, body)) {
                     auto const* reason = res->first == 201 ? "Created" : res->first == 204 ? "No Content" :
                         res->first == 400 ? "Bad Request" : res->first == 404 ? "Not Found" : "OK";
-                    return build_http_response(res->first, reason, "application/json",
-                        res->second.empty() ? std::string{} : res->second + "\n");
+                    return with_cors(build_http_response(res->first, reason, "application/json",
+                        res->second.empty() ? std::string{} : res->second + "\n"));
                 }
             }
 
@@ -96,30 +108,35 @@ namespace control_api {
             };
 
             if (method == "GET" && path == "/v1/health")
-                return build_http_response(200, "OK", "application/json",
-                    std::format("{{\"status\":\"ok\",\"instance\":{}}}\n", json_escape(fetch(SnapshotFields::meta).instance)));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    std::format("{{\"status\":\"ok\",\"instance\":{}}}\n", json_escape(fetch(SnapshotFields::meta).instance))));
             if (method == "GET" && path == "/v1/status")
-                return build_http_response(200, "OK", "application/json",
-                    render_status_json(fetch(SnapshotFields::meta | SnapshotFields::listeners)));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    render_status_json(fetch(SnapshotFields::meta | SnapshotFields::listeners))));
             if (method == "GET" && path == "/v1/mode")
-                return build_http_response(200, "OK", "application/json", render_mode_json(fetch(SnapshotFields::meta)));
+                return with_cors(build_http_response(200, "OK", "application/json", render_mode_json(fetch(SnapshotFields::meta))));
             if (method == "GET" && path == "/v1/outbounds")
-                return build_http_response(200, "OK", "application/json",
-                    render_outbounds_json(fetch(SnapshotFields::meta | SnapshotFields::groups)));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    render_outbounds_json(fetch(SnapshotFields::meta | SnapshotFields::groups))));
+            if (method == "GET" && path == "/v1/rules")
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    render_rules_json(fetch(SnapshotFields::rules))));
+            if (method == "GET" && path == "/v1/dns/query")
+                return with_cors(handle_direct_dns_query(query, command));
             if (method == "GET" && path == "/v1/connections")
-                return build_http_response(200, "OK", "application/json",
-                    render_connections_json(fetch(SnapshotFields::connections)));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    render_connections_json(fetch(SnapshotFields::connections))));
             if (method == "GET" && path.starts_with("/v1/connections/")) {
                 auto id_str = path.substr(16);
                 std::uint64_t cid = 0;
                 auto [end, ec] = std::from_chars(id_str.data(), id_str.data() + id_str.size(), cid);
                 if (id_str.empty() || id_str.contains('/') || ec != std::errc{} || end != id_str.data() + id_str.size() || !cid)
-                    return json_error(400, "Bad Request", "invalid-id", "expected numeric connection id");
+                    return with_cors(json_error(400, "Bad Request", "invalid-id", "expected numeric connection id"));
                 auto snap = fetch(SnapshotFields::connections, cid);
                 auto it = std::ranges::find(snap.connections, cid, &ConnectionMetric::id);
                 if (it == snap.connections.end())
-                    return json_error(404, "Not Found", "unknown-connection", "connection not found");
-                return build_http_response(200, "OK", "application/json", render_connection_detail_json(*it));
+                    return with_cors(json_error(404, "Not Found", "unknown-connection", "connection not found"));
+                return with_cors(build_http_response(200, "OK", "application/json", render_connection_detail_json(*it)));
             }
             if (method == "GET" && path == "/v1/logs") {
                 auto owned = build_log_command_args(query);
@@ -127,12 +144,12 @@ namespace control_api {
                 args.reserve(owned.size());
                 for (auto const& s : owned) args.emplace_back(s);
                 auto res = command(args);
-                if (!res) return json_error(400, "Bad Request", res.error(), res.error());
-                return build_http_response(200, "OK", "application/json", render_logs_json(*res));
+                if (!res) return with_cors(json_error(400, "Bad Request", res.error(), res.error()));
+                return with_cors(build_http_response(200, "OK", "application/json", render_logs_json(*res)));
             }
             if (method == "GET" && path == "/v1/diagnostics")
-                return build_http_response(200, "OK", "application/json",
-                    render_diagnostics_json(fetch(SnapshotFields::meta | SnapshotFields::listeners | SnapshotFields::connections)));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    render_diagnostics_json(fetch(SnapshotFields::meta | SnapshotFields::listeners | SnapshotFields::connections))));
             if (method == "GET" && path == "/v1/events") {
                 std::string_view cursor = "0";
                 if (query.starts_with("cursor=")) {
@@ -142,21 +159,21 @@ namespace control_api {
                 }
                 std::array<std::string_view, 2> args{"events", cursor};
                 auto res = command(args);
-                if (!res) return json_error(400, "Bad Request", res.error(), res.error());
-                return build_http_response(200, "OK", "application/json", render_events_json(*res));
+                if (!res) return with_cors(json_error(400, "Bad Request", res.error(), res.error()));
+                return with_cors(build_http_response(200, "OK", "application/json", render_events_json(*res)));
             }
             if (method == "GET" && path == "/metrics") {
                 if (!metrics_enabled || !metrics::available())
-                    return json_error(404, "Not Found", "metrics-disabled", "OpenMetrics endpoint is disabled");
-                return build_http_response(200, "OK",
+                    return with_cors(json_error(404, "Not Found", "metrics-disabled", "OpenMetrics endpoint is disabled"));
+                return with_cors(build_http_response(200, "OK",
                     "application/openmetrics-text; version=1.0.0; charset=utf-8",
-                    metrics::render_openmetrics(fetch(SnapshotFields::meta | SnapshotFields::listeners | SnapshotFields::groups)));
+                    metrics::render_openmetrics(fetch(SnapshotFields::meta | SnapshotFields::listeners | SnapshotFields::groups))));
             }
             if (method == "PUT" && path == "/v1/mode") {
                 auto mode = extract_json_string(body, "mode");
                 auto outbound = extract_json_string(body, "outbound");
                 if (!mode || mode->empty())
-                    return json_error(400, "Bad Request", "invalid-body", "expected {\"mode\":\"...\"}");
+                    return with_cors(json_error(400, "Bad Request", "invalid-body", "expected {\"mode\":\"...\"}"));
                 std::expected<std::string, std::string> res;
                 if (outbound && !outbound->empty()) {
                     std::array<std::string_view, 3> args{"mode", *mode, *outbound};
@@ -167,55 +184,48 @@ namespace control_api {
                 }
                 if (!res) {
                     int code = res.error() == "invalid-mode" ? 400 : (res.error() == "unknown-outbound" ? 404 : 409);
-                    return json_error(code, code == 400 ? "Bad Request" : (code == 404 ? "Not Found" : "Conflict"),
-                        res.error(), res.error());
+                    return with_cors(json_error(code, code == 400 ? "Bad Request" : (code == 404 ? "Not Found" : "Conflict"),
+                        res.error(), res.error()));
                 }
-                return build_http_response(200, "OK", "application/json", render_mode_json(fetch(SnapshotFields::meta)));
+                return with_cors(build_http_response(200, "OK", "application/json", render_mode_json(fetch(SnapshotFields::meta))));
             }
             if (method == "PUT" && path.starts_with("/v1/groups/")) {
                 auto tag = url_decode_once(path.substr(11));
                 auto member = extract_json_string(body, "member");
                 if (!tag || tag->empty() || !member || member->empty())
-                    return json_error(400, "Bad Request", "invalid-body", "expected {\"member\":\"...\"}");
+                    return with_cors(json_error(400, "Bad Request", "invalid-body", "expected {\"member\":\"...\"}"));
                 std::array<std::string_view, 3> args{"select", *tag, *member};
                 auto res = command(args);
                 if (!res) {
                     int code = res.error() == "unknown-group" ? 404 : 409;
-                    return json_error(code, code == 404 ? "Not Found" : "Conflict", res.error(), res.error());
+                    return with_cors(json_error(code, code == 404 ? "Not Found" : "Conflict", res.error(), res.error()));
                 }
-                return build_http_response(200, "OK", "application/json",
+                return with_cors(build_http_response(200, "OK", "application/json",
                     std::format("{{\"group\":{},\"selected\":{},\"result\":{}}}\n",
-                        json_escape(*tag), json_escape(*member), json_escape(*res)));
+                        json_escape(*tag), json_escape(*member), json_escape(*res))));
             }
             if (method == "POST" && path == "/v1/log-level") {
                 auto level = extract_json_string(body, "level");
                 auto domain = extract_json_string(body, "domain").value_or("global");
                 if (!level || level->empty() || domain.empty())
-                    return json_error(400, "Bad Request", "invalid-body", "expected {\"level\":\"...\"}");
+                    return with_cors(json_error(400, "Bad Request", "invalid-body", "expected {\"level\":\"...\"}"));
                 std::array<std::string_view, 3> args{"log-level", domain, *level};
                 auto res = command(args);
-                if (!res) return json_error(400, "Bad Request", "invalid-log-level", res.error());
-                return build_http_response(200, "OK", "application/json",
-                    std::format("{{\"domain\":{},\"level\":{}}}\n", json_escape(domain), json_escape(*level)));
+                if (!res) return with_cors(json_error(400, "Bad Request", "invalid-log-level", res.error()));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    std::format("{{\"domain\":{},\"level\":{}}}\n", json_escape(domain), json_escape(*level))));
             }
             if (method == "POST" && path == "/v1/reload") {
                 std::array<std::string_view, 1> args{"reload"};
                 auto res = command(args);
-                if (!res) return json_error(409, "Conflict", res.error(), res.error());
-                return build_http_response(202, "Accepted", "application/json",
-                    std::format("{{\"state\":\"pending\",\"detail\":{}}}\n", json_escape(*res)));
+                if (!res) return with_cors(json_error(409, "Conflict", res.error(), res.error()));
+                return with_cors(build_http_response(202, "Accepted", "application/json",
+                    std::format("{{\"state\":\"pending\",\"detail\":{}}}\n", json_escape(*res))));
             }
-            if (method == "POST" && path == "/v1/state/clear-cache") {
-                auto target = extract_json_string(body, "target").value_or("all");
-                if (target != "all" && target != "dns" && target != "rulesets")
-                    return json_error(400, "Bad Request", "invalid-target", "expected target in {\"all\",\"dns\",\"rulesets\"}");
-                std::array<std::string_view, 2> args{"clear-cache", target};
-                auto res = command(args);
-                if (!res) return json_error(409, "Conflict", res.error(), res.error());
-                return build_http_response(200, "OK", "application/json",
-                    std::format("{{\"target\":{},\"cleared\":true,\"detail\":{}}}\n",
-                        json_escape(target), json_escape(*res)));
-            }
+            if (method == "POST" && path == "/v1/cache/fakeip/flush")
+                return with_cors(handle_fakeip_flush(command));
+            if (method == "POST" && path == "/v1/state/clear-cache")
+                return with_cors(handle_clear_cache(query, body, command));
             if (method == "POST" && path == "/v1/network-change") {
                 auto gen = extract_json_string(body, "generation");
                 std::expected<std::string, std::string> res;
@@ -226,53 +236,53 @@ namespace control_api {
                     std::array<std::string_view, 1> args{"network-change"};
                     res = command(args);
                 }
-                if (!res) return json_error(409, "Conflict", res.error(), res.error());
-                return build_http_response(200, "OK", "application/json",
-                    std::format("{{\"accepted\":true,\"detail\":{}}}\n", json_escape(*res)));
+                if (!res) return with_cors(json_error(409, "Conflict", res.error(), res.error()));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    std::format("{{\"accepted\":true,\"detail\":{}}}\n", json_escape(*res))));
             }
             if (is_outbound_probe_route(method, path))
-                return handle_direct_outbound_probe(path, body, command);
+                return with_cors(handle_direct_outbound_probe(path, body, command));
             if (method == "POST" && path.size() > 17 && path.starts_with("/v1/groups/") && path.ends_with("/probe")) {
                 auto raw_tag = path.substr(11, path.size() - 17);
                 auto tag = url_decode_once(raw_tag);
                 if (!tag || tag->empty())
-                    return json_error(400, "Bad Request", "invalid-group", "expected group name");
+                    return with_cors(json_error(400, "Bad Request", "invalid-group", "expected group name"));
                 std::array<std::string_view, 2> args{"probe", *tag};
                 auto res = command(args);
                 if (!res) {
                     int code = res.error() == "unknown-group" ? 404 : 409;
-                    return json_error(code, code == 404 ? "Not Found" : "Conflict", res.error(), res.error());
+                    return with_cors(json_error(code, code == 404 ? "Not Found" : "Conflict", res.error(), res.error()));
                 }
-                return build_http_response(202, "Accepted", "application/json",
-                    std::format("{{\"group\":{},\"probe\":\"triggered\"}}\n", json_escape(*tag)));
+                return with_cors(build_http_response(202, "Accepted", "application/json",
+                    std::format("{{\"group\":{},\"probe\":\"triggered\"}}\n", json_escape(*tag))));
             }
             if (method == "DELETE" && path == "/v1/connections") {
                 std::array<std::string_view, 1> args{"close-all"};
                 auto res = command(args);
-                if (!res) return json_error(409, "Conflict", res.error(), res.error());
+                if (!res) return with_cors(json_error(409, "Conflict", res.error(), res.error()));
                 std::string_view count = "0";
                 if (res->starts_with("closed=")) {
                     count = std::string_view(*res).substr(7);
                     while (!count.empty() && (count.back() == '\n' || count.back() == '\r')) count.remove_suffix(1);
                 }
-                return build_http_response(200, "OK", "application/json",
-                    std::format("{{\"closed\":{}}}\n", count.empty() ? "0" : count));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    std::format("{{\"closed\":{}}}\n", count.empty() ? "0" : count)));
             }
             if (method == "DELETE" && path.starts_with("/v1/connections/")) {
                 auto id = path.substr(16);
                 if (id.empty() || id.contains('/'))
-                    return json_error(400, "Bad Request", "invalid-id", "expected numeric connection id");
+                    return with_cors(json_error(400, "Bad Request", "invalid-id", "expected numeric connection id"));
                 std::array<std::string_view, 2> args{"close-any", id};
                 auto res = command(args);
                 if (!res) {
                     int code = res.error() == "unknown-connection" ? 404 : (res.error() == "invalid-id" ? 400 : 409);
-                    return json_error(code, code == 404 ? "Not Found" : (code == 400 ? "Bad Request" : "Conflict"),
-                        res.error(), res.error());
+                    return with_cors(json_error(code, code == 404 ? "Not Found" : (code == 400 ? "Bad Request" : "Conflict"),
+                        res.error(), res.error()));
                 }
-                return build_http_response(200, "OK", "application/json",
-                    std::format("{{\"id\":{},\"closed\":true}}\n", json_escape(id)));
+                return with_cors(build_http_response(200, "OK", "application/json",
+                    std::format("{{\"id\":{},\"closed\":true}}\n", json_escape(id))));
             }
-            return json_error(404, "Not Found", "not-found", "unknown control endpoint");
+            return with_cors(json_error(404, "Not Found", "not-found", "unknown control endpoint"));
         }
     };
 
@@ -292,6 +302,7 @@ namespace control_api {
         }
         auto impl = std::make_unique<Impl>();
         impl->metrics_enabled = cfg.metrics;
+        impl->cors_allow_origins = cfg.cors_allow_origins;
         if (!cfg.dashboard_root.empty()) {
             auto root = init_dashboard_root(cfg.dashboard_root);
             if (!root) return std::unexpected(std::move(root.error()));
@@ -367,7 +378,7 @@ namespace control_api {
         for (auto it = impl.peers.begin(); it != impl.peers.end();) {
             if (now >= it->deadline) { ++impl.expired; it = impl.peers.erase(it); continue; }
             bool done = false;
-            if (!it->writing && !it->has_pending_probe()) {
+            if (!it->writing && !it->has_pending_probe() && !it->has_pending_dns_query()) {
                 char buf[2048];
                 std::size_t n = 0;
                 auto status = recv_nonblocking(it->fd, buf, n);
@@ -384,17 +395,26 @@ namespace control_api {
                             else if (it->in.size() >= hdr_end + 4 + *content_len) {
                                 auto raw_req = std::string_view(it->in).substr(0, hdr_end + 4 + *content_len);
                                 auto req = parse_http_request_head(raw_req, hdr_end);
+                                if (req.valid) {
+                                    if (auto mc = match_cors_origin(impl.cors_allow_origins, extract_header_value(req.headers, "origin")))
+                                        it->cors_origin = std::string(*mc);
+                                }
                                 auto skind = req.valid ? detect_stream_kind(req.method, req.path, req.query) : StreamKind::none;
                                 if (skind != StreamKind::none) {
                                     if (!impl.check_auth(req.headers, req.query)) {
-                                        it->out = json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token");
+                                        it->out = inject_cors_headers(json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token"), it->cors_origin);
                                         it->writing = true;
                                     } else setup_sse_peer(*it, skind, req.query, now, fetch);
                                 } else if (req.valid && is_outbound_probe_route(req.method, req.path)) {
                                     if (!impl.check_auth(req.headers, req.query)) {
-                                        it->out = json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token");
+                                        it->out = inject_cors_headers(json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token"), it->cors_origin);
                                         it->writing = true;
                                     } else start_deferred_probe(*it, req.path, req.body, now, command);
+                                } else if (req.valid && req.method == "GET" && req.path == "/v1/dns/query") {
+                                    if (!impl.check_auth(req.headers, req.query)) {
+                                        it->out = inject_cors_headers(json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token"), it->cors_origin);
+                                        it->writing = true;
+                                    } else start_deferred_dns_query(*it, req.query, now, command);
                                 } else {
                                     it->out = impl.handle_request(raw_req, snapshot, command);
                                     if (it->out.size() > kMaxWriteBytes)
@@ -410,6 +430,8 @@ namespace control_api {
             }
             if (!done && it->has_pending_probe() && now >= it->next_stream_poll)
                 poll_deferred_probe(*it, now, command);
+            if (!done && it->has_pending_dns_query() && now >= it->next_stream_poll)
+                poll_deferred_dns_query(*it, now, command);
             if (!done && it->is_streaming() && it->out_offset >= it->out.size() && now >= it->next_stream_poll)
                 tick_sse_peer(*it, now, fetch, command);
             if (!done && it->writing)

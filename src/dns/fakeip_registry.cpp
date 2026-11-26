@@ -78,4 +78,11 @@ namespace dns {
         }
         return std::unique_ptr<FakeIpTarget>{};
     }
+    auto FakeIpRegistry::flush_unpinned() noexcept -> std::size_t {
+        std::size_t flushed=0;
+        for (auto& range:ranges_) {
+            if (range.active && range.pool) flushed+=range.pool->flush_unpinned();
+        }
+        return flushed;
+    }
 }

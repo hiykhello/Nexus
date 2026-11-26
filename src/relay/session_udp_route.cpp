@@ -312,6 +312,15 @@ namespace relay {
                                 } else if (allowed(rules::Protocol::stun) && sniff::stun_datagram(packet->data)) {
                                     input.protocol = rules::Protocol::stun;
                                     input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)] = true;
+                                } else if (allowed(rules::Protocol::dtls) && sniff::inspect_dtls_udp(packet->data)) {
+                                    input.protocol = rules::Protocol::dtls;
+                                    input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)] = true;
+                                } else if (allowed(rules::Protocol::ntp) && sniff::inspect_ntp_udp(packet->data)) {
+                                    input.protocol = rules::Protocol::ntp;
+                                    input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)] = true;
+                                } else if (allowed(rules::Protocol::bittorrent) && sniff::inspect_bittorrent_udp(packet->data)) {
+                                    input.protocol = rules::Protocol::bittorrent;
+                                    input.domain_absent[static_cast<std::size_t>(rules::DomainSource::sniffed)] = true;
                                 } else if (allowed(rules::Protocol::quic)) {
                                     auto to_ms = action.action.sniff_timeout_ms ? std::chrono::milliseconds(action.action.sniff_timeout_ms) : policy.sniff_timeout;
                                     auto quic = co_await udp_inspect_quic(session, ingress, resolution, to_ms);

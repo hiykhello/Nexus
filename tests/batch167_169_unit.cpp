@@ -85,6 +85,9 @@ namespace {
         expect(started.has_value() && mon.started(), "monitor start succeeds on host");
         auto snap = mon.get();
         expect(snap && snap->generation >= 1 && !snap->links.empty(), "monitor snapshot populated");
+        expect(infer_network_type({.name = "wlp3s0", .kind = "wlan"}) == NetworkType::wifi, "infer wifi");
+        expect(infer_network_type({.name = "pdp_ip0"}) == NetworkType::cellular, "infer cellular");
+        expect(infer_network_type({.name = "en0", .kind = "eth"}) == NetworkType::ethernet, "infer ethernet");
         auto polled = mon.poll(Clock::now() + std::chrono::milliseconds(50));
         expect(polled.has_value() && !*polled, "clean poll returns false");
         mon.stop();
@@ -93,11 +96,18 @@ namespace {
         Snapshot synthetic{};
         synthetic.links = {
             {.index = 10, .flags = constants::iff_up | constants::iff_lower_up, .name = "eth0"},
-            {.index = 20, .flags = constants::iff_up | constants::iff_lower_up, .name = "wlan0"},
+            {.index = 20, .flags = constants::iff_up | constants::iff_lower_up, .name = "wlan0", .kind = "wlan"},
         };
+        synthetic.default_interface_index = 20;
+        synthetic.default_network_type = NetworkType::wifi;
+        synthetic.wifi_ssid = "CorpWiFi";
+        synthetic.wifi_bssid = MacAddress{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x01};
         Address a1{.index = 10, .family = constants::af_inet, .prefix = 24, .scope = constants::rt_scope_universe};
         Address a2{.index = 20, .family = constants::af_inet, .prefix = 24, .scope = constants::rt_scope_universe};
+        a2.local = {192, 168, 1, 50};
         synthetic.addresses = {a1, a2};
+        expect(synthetic.wifi_ssid == "CorpWiFi" && synthetic.wifi_bssid && (*synthetic.wifi_bssid)[5] == 0x01 &&
+            synthetic.default_interface_addresses().size() == 1, "synthetic wifi snapshot metadata");
         Route r1{.table = constants::rt_table_main, .priority = 50, .index = 10, .family = constants::af_inet, .type = constants::rtn_unicast};
         Route r2{.table = constants::rt_table_main, .priority = 200, .index = 20, .family = constants::af_inet, .type = constants::rtn_unicast};
         synthetic.routes = {r1, r2};

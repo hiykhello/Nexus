@@ -82,6 +82,8 @@ namespace cli::tun_enabled {
         redirect.input_mark = extra.auto_redirect_input_mark.value_or(0);
         redirect.output_mark = extra.auto_redirect_output_mark.value_or(0);
         redirect.reset_mark = extra.auto_redirect_reset_mark.value_or(0);
+        redirect.tproxy_mark = extra.auto_redirect_tproxy_mark.value_or(0);
+        redirect.tproxy_port = extra.auto_redirect_tproxy_port.value_or(0);
         for (auto const& r : extra.include_uids)
             if (redirect.include_uid_count < redirect.include_uids.size())
                 redirect.include_uids[redirect.include_uid_count++] = {r.min, r.max};
@@ -104,6 +106,12 @@ namespace cli::tun_enabled {
                 std::ranges::copy_n(ifn.data(), std::min<std::size_t>(ifn.size(), 15),
                     redirect.exclude_interfaces[redirect.exclude_if_count++].begin());
         }
+        for (auto const& mac : extra.include_mac_addresses)
+            if (redirect.include_mac_count < redirect.include_macs.size())
+                redirect.include_macs[redirect.include_mac_count++] = mac;
+        for (auto const& mac : extra.exclude_mac_addresses)
+            if (redirect.exclude_mac_count < redirect.exclude_macs.size())
+                redirect.exclude_macs[redirect.exclude_mac_count++] = mac;
         bool has_hijack_dns=config.ordered_tcp &&
             std::ranges::any_of(config.ordered_tcp->rules,[](auto const& rule) {
                 return rule.action==config::OrderedTcpAction::hijack_dns;

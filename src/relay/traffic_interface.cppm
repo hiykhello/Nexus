@@ -31,6 +31,24 @@ namespace relay {
         net::UdpEndpoint target;
         auto operator==(TrafficRoute const&) const -> bool = default;
     };
+    export struct GroupDialFailure {
+        std::string group_tag;
+        std::size_t outbound = 0;
+    };
+    export class GroupRuntimeHooks {
+        static constexpr std::size_t kMaxGroups = 128;
+        static constexpr std::size_t kMaxFailures = 64;
+        std::array<std::atomic<std::int64_t>, kMaxGroups> last_active_ms_{};
+        mutable std::mutex mutex_;
+        std::deque<GroupDialFailure> failures_;
+        void (*wake_)() noexcept = nullptr;
+    public:
+        explicit GroupRuntimeHooks(void (*wake)() noexcept = nullptr) noexcept : wake_(wake) {}
+        auto mark_active(std::size_t group_index) noexcept -> void;
+        [[nodiscard]] auto last_active_ms(std::size_t group_index) const noexcept -> std::int64_t;
+        auto record_dial_failure(std::string_view group_tag, std::size_t outbound) noexcept -> void;
+        auto drain_dial_failures(std::vector<GroupDialFailure>& out) -> void;
+    };
     export struct ActiveConnection {
         std::uint64_t id = 0;
         std::optional<net::UdpEndpoint> source;
@@ -43,6 +61,7 @@ namespace relay {
         std::optional<std::uint32_t> source_uid;
         std::string process_path;
         std::string inbound_name;
+        std::string group_tag;
         std::optional<TransparentDatagram> transparent_datagram;
         std::uint64_t route_generation = 0;
         std::optional<TrafficRoute> route;
@@ -64,9 +83,11 @@ namespace relay {
         explicit TrafficRegistry(std::size_t);
         auto add(ActiveConnection) -> Slot*;
         auto remove(Slot&) noexcept -> void;
-        auto record_route(Slot&, TrafficRoute, ConnectPath) noexcept -> void;
+        auto record_route(Slot&, TrafficRoute, ConnectPath, std::string_view group_tag = {}) noexcept -> void;
+        auto record_group(Slot&, std::string_view group_tag) noexcept -> void;
         auto snapshot() const -> TrafficSnapshot;
         auto request_close(std::uint64_t id) -> TrafficCloseRequest;
+        auto close_group_sessions(std::string_view group_tag, std::optional<std::size_t> outbound = {}) -> std::size_t;
     private:
         mutable std::mutex mutex_;
         std::vector<Slot> slots_;

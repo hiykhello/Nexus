@@ -166,4 +166,21 @@ namespace dns {
         e.reusable=std::max(e.reusable,now+duration);
         --e.pins; return {};
     }
+    auto FakeIpPool::flush_unpinned() noexcept -> std::size_t {
+        std::size_t flushed=0;
+        bool any_pinned=false;
+        for (std::size_t i=0;i<entries_.size();++i) {
+            auto& e=entries_[i];
+            if (!e.generation) continue;
+            if (e.pins) { any_pinned=true; continue; }
+            index_erase(static_cast<std::uint32_t>(i));
+            e.domain.clear();
+            e.view=0;
+            e.generation=0;
+            e.reusable={};
+            ++flushed;
+        }
+        if (!any_pinned) cursor_=0;
+        return flushed;
+    }
 }

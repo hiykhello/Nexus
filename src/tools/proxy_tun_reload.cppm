@@ -9,6 +9,7 @@ import cli.proxy_group_health;
 import cli.proxy_listener;
 import cli.proxy_selector_state;
 import cli.route_files;
+import cli.tun_enabled;
 import config;
 import dns.policy;
 import dns.reverse;
@@ -222,6 +223,12 @@ export namespace cli::run_detail {
 #endif
             auto files = cli::load_route_files(next_cfg, rule_input);
             if (!files) return std::unexpected(std::move(files.error()));
+            struct PendingTunUpdate {
+                std::size_t index;
+                config::TunInbound tun;
+                AppliedRouteSets sets;
+            };
+            std::vector<PendingTunUpdate> pending_tun_updates;
             for (std::size_t i = 0; i < next_cfg.inbounds.size(); ++i) {
                 auto const& in = next_cfg.inbounds[i];
                 if (!in.tun || (in.tun->route_address_sets.empty() && in.tun->route_exclude_address_sets.empty()))
@@ -231,7 +238,8 @@ export namespace cli::run_detail {
                 if (i >= applied_route_sets.size() ||
                     copy.route_includes != applied_route_sets[i].includes ||
                     copy.route_excludes != applied_route_sets[i].excludes) {
-                    return std::unexpected("changing TUN kernel route address sets requires restart");
+                    AppliedRouteSets next_sets{copy.route_includes, copy.route_excludes};
+                    pending_tun_updates.push_back({i, std::move(copy), std::move(next_sets)});
                 }
             }
 
@@ -283,6 +291,15 @@ export namespace cli::run_detail {
                 next->push_back(std::move(*candidate));
             }
 
+            for (auto const& upd : pending_tun_updates) {
+                auto applied = cli::tun_enabled::update_active_tun_route_sets(
+                    rt.listeners[upd.index].server.get(), upd.tun);
+                if (!applied) return std::unexpected("TUN live route-set update failed: " + applied.error());
+                if (!*applied) return std::unexpected("changing TUN kernel route address sets requires restart");
+            }
+            if (applied_route_sets.size() < next_cfg.inbounds.size())
+                applied_route_sets.resize(next_cfg.inbounds.size());
+            for (auto& upd : pending_tun_updates) applied_route_sets[upd.index] = std::move(upd.sets);
             rt.route_snapshots->store(std::move(next), std::memory_order_release);
             if (candidate_messages) rt.dns_messages.replace_program(*candidate_messages);
             rt.reload_identity = std::move(ids.full);

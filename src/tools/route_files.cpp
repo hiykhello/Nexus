@@ -9,6 +9,7 @@ import rulefile;
 import rules;
 import rules.rule_input;
 import cli.tun_route_sets;
+import cli.route_files_nxmm;
 
 namespace cli {
     namespace {
@@ -243,25 +244,6 @@ namespace cli {
     }
 
     namespace {
-        auto action_for(config::OrderedTcpRule const& rule) noexcept -> rules::ProgramActionKind {
-            using A = config::OrderedTcpAction; using K = rules::ProgramActionKind;
-            switch (rule.action) {
-            case A::sniff: return K::sniff; case A::resolve: return K::resolve; case A::route: return K::route;
-            case A::bypass: return rule.outbound_name ? K::route : K::bypass;
-            case A::route_options: return K::route_options; case A::hijack_dns: return K::hijack_dns; case A::reject: return K::reject;
-            }
-            std::unreachable();
-        }
-
-        auto domain_source(config::OrderedTcpDomain domain) noexcept -> rules::DomainSource {
-            using D = config::OrderedTcpDomain; using S = rules::DomainSource;
-            switch (domain) {
-            case D::explicit_target: return S::explicit_target; case D::sniffed: return S::sniffed;
-            case D::fakeip: return S::fakeip; case D::reverse_dns: return S::reverse_dns;
-            }
-            std::unreachable();
-        }
-
         auto resolve_rule_path(std::filesystem::path const& config_path, std::string_view path)
             -> std::expected<std::filesystem::path, std::string> {
             std::filesystem::path target(path);
@@ -284,7 +266,8 @@ namespace cli {
             auto const& route=config.routes[index];
             auto idx = indices[index];
             auto mm = idx < data_mmaps.size() ? data_mmaps[idx] : nullptr;
-            result.push_back({data[idx], relay_rule_format(route.file.format), route.outbound,
+            auto fmt = mm ? relay::RuleFormat::nxmm : relay_rule_format(route.file.format);
+            result.push_back({data[idx], fmt, route.outbound,
                               route.file.ip_cidr_match_source, std::move(mm)});
         }
         return result;
@@ -341,7 +324,9 @@ namespace cli {
         RouteFiles result;
         if(config.routes.empty() && !config.ordered_tcp)return result;
 
-        std::size_t total=0;
+        std::filesystem::path cache_dir = !input.cache_dir().empty() ? input.cache_dir() :
+            (config.state && !config.state->cache_directory.empty() ? std::filesystem::path(config.state->cache_directory) : std::filesystem::path{});
+        std::size_t total_inline=0, total_mapped=0;
         std::vector<std::string> keys;
         auto read=[&](config::BlockRules const& file, bool allow_mmap) -> std::expected<std::size_t,std::string> {
             if (file.inline_rules) {
@@ -351,15 +336,25 @@ namespace cli {
                 keys.emplace_back();
                 return keys.size()-1;
             }
-            auto const& key=!file.url.empty() ? file.url : file.path;
+            auto key=!file.url.empty() ? file.url : file.path;
+            if ((file.format==config::RuleFormat::srs || file.format==config::RuleFormat::nxmm) && file.ip_cidr_match_source)
+                key.append("#src");
             auto previous=std::ranges::find(keys,key);
             if(previous!=keys.end())return static_cast<std::size_t>(previous-keys.begin());
             std::string content;
             std::shared_ptr<rules::MmapMatcher const> mapped;
             if (!file.url.empty()) {
                 auto seeded=input.read(file.url);
-                if (seeded) content.assign(*seeded);
-                else if (input.allows_unfetched_remote()) {
+                if (seeded) {
+                    if (allow_mmap && file.format==config::RuleFormat::nxmm) {
+                        auto mm=rules::MmapMatcher::open_bytes(std::string(*seeded));
+                        if (!mm) return std::unexpected(std::move(mm.error()));
+                        mapped=std::make_shared<rules::MmapMatcher const>(std::move(*mm));
+                    } else if (allow_mmap && file.format==config::RuleFormat::srs && !cache_dir.empty()) {
+                        mapped=nxmm_detail::try_mmap_srs_sidecar(cache_dir,*seeded,file.ip_cidr_match_source);
+                        if (!mapped) content.assign(*seeded);
+                    } else content.assign(*seeded);
+                } else if (input.allows_unfetched_remote()) {
                     content="schema-version 2\nkind \"predicate\"\ndomain \"remote-placeholder.invalid\"\n";
                 } else return std::unexpected("remote rule-set "+file.url+": "+seeded.error());
             } else if (allow_mmap && file.format == config::RuleFormat::nxmm) {
@@ -369,11 +364,18 @@ namespace cli {
             } else {
                 auto data=input.read(file.path);
                 if(!data)return std::unexpected(std::move(data.error()));
-                content.assign(*data);
+                if (allow_mmap && file.format==config::RuleFormat::srs && !cache_dir.empty())
+                    mapped=nxmm_detail::try_mmap_srs_sidecar(cache_dir,*data,file.ip_cidr_match_source);
+                if (!mapped) content.assign(*data);
             }
-            total += mapped ? mapped->byte_size() : content.size();
-            if(total>8*1024*1024)return std::unexpected("routing rules exceed 8 MiB total");
-            keys.push_back(key);
+            if (mapped) {
+                total_mapped += mapped->byte_size();
+                if (total_mapped > rules::max_input_bytes) return std::unexpected("mapped routing rules exceed 32 MiB total");
+            } else {
+                total_inline += content.size();
+                if (total_inline > 8*1024*1024) return std::unexpected("routing rules exceed 8 MiB total");
+            }
+            keys.push_back(std::move(key));
             result.data.emplace_back(std::move(content));
             result.data_mmaps.emplace_back(std::move(mapped));
             return keys.size()-1;
@@ -386,107 +388,16 @@ namespace cli {
         }
         // The parser makes the indexed rules and ordered program mutually exclusive.
         if(config.ordered_tcp) {
-            auto load=[&](config::BlockRules const& file) -> std::expected<rules::RuleSet,std::string> {
-                if (file.inline_rules) {
-                    if (file.inline_rules->rules.empty()) return std::unexpected("tcp-program rule-set must not be empty");
-                    return *file.inline_rules;
-                }
-                if (!file.url.empty() && input.allows_unfetched_remote()) {
-                    auto seeded=input.read(file.url);
-                    if (!seeded) {
-                        rules::RuleSet placeholder{.version=2};
-                        placeholder.rules.push_back({"domain","remote-placeholder.invalid",{}});
-                        return placeholder;
-                    }
-                }
-                auto index=read(file, false);
-                if (!index) return std::unexpected(std::move(index.error()));
-                auto set=rules::parse_rule_input(result.data[*index],rule_input_format(file.format),file.ip_cidr_match_source);
-                if (!set) return std::unexpected(std::move(set.error().message));
-                if (set->rules.empty()) return std::unexpected("tcp-program rule-set must not be empty");
-                return std::move(*set);
-            };
-            std::map<std::string_view,rules::RuleSet> loaded;
-            std::set<std::string_view> used;
-            std::optional<std::string> load_error;
-            std::size_t budget=rules::max_rules;
-            auto lookup=[&](std::string_view tag) -> rules::RuleSet const* {
-                used.insert(tag);
-                auto previous=loaded.find(tag);
-                if (previous!=loaded.end()) return &previous->second;
-                auto const& sets=config.ordered_tcp->sets;
-                auto found=std::ranges::find_if(sets,[&](auto const& item){return item.first==tag;});
-                if (found==sets.end()) return nullptr;
-                auto parsed=load(found->second);
-                if (!parsed) {load_error=std::move(parsed.error());return nullptr;}
-                return &loaded.emplace(found->first,std::move(*parsed)).first->second;
-            };
-            for(auto const& rule:config.ordered_tcp->rules) {
-                auto source=&rule.predicates;
-                std::optional<rules::RuleSet> mapped;
-                if (rule.file) {
-                    if (rule.set_tag && !rule.file->ip_cidr_match_source) {
-                        source=lookup(*rule.set_tag);
-                        if (!source) return std::unexpected(load_error.value_or("unknown ordered rule-set"));
-                    } else {
-                        if (rule.set_tag) used.insert(*rule.set_tag);
-                        auto parsed=load(*rule.file);
-                        if (!parsed) return std::unexpected(std::move(parsed.error()));
-                        mapped.emplace(std::move(*parsed));
-                        source=&*mapped;
-                    }
-                }
-                auto predicates=rules::expand_rule_sets(*source,lookup,budget);
-                if (!predicates) return std::unexpected(load_error.value_or(predicates.error().message));
-                result.ordered.push_back({std::move(*predicates),
-                    {action_for(rule),rule.outbound,rule.connect_timeout_ms,rule.route_only,
-                     rule.reject_method,rule.reject_no_drop,rule.tls_record_fragment,
-                     rule.tls_fragment_min,rule.tls_fragment_max,rule.tcp_prefix,rule.tcp_prefix_len,
-                     rule.udp_timeout_ms,rule.udp_adaptive_timeout,rule.override_address,
-                     rule.override_port,rule.tls_fragment_fallback_delay_ms,
-                     rule.extra.resolve_strategy,rule.extra.resolve_server,rule.extra.resolve_disable_cache,
-                     rule.extra.resolve_rewrite_ttl,rule.extra.resolve_client_subnet,
-                     rule.extra.sniff_protocols,rule.extra.sniff_override_destination,
-                     rule.extra.sniff_timeout_ms,rule.extra.udp_disable_domain_unmapping},
-                    domain_source(rule.domain)});
-            }
-            for (auto const& in : config.inbounds) {
-                if (!in.tun) continue;
-                for (auto const* list : {&in.tun->route_address_sets, &in.tun->route_exclude_address_sets}) {
-                    for (auto const& tag : *list) {
-                        if (std::ranges::contains(result.tun_cidrs, tag, &std::pair<std::string, std::vector<std::string>>::first))
-                            continue;
-                        auto const* src = lookup(tag);
-                        if (!src) return std::unexpected(load_error.value_or("unknown TUN rule-set: " + tag));
-                        std::vector<std::string> cidrs;
-                        cli::detail::collect_ip_cidrs(*src, cidrs, true, true);
-                        result.tun_cidrs.emplace_back(tag, std::move(cidrs));
-                    }
-                }
-            }
-            for (auto const& [tag,file]:config.ordered_tcp->sets)
-                if (!used.contains(tag)) return std::unexpected("unreferenced rule-set: "+tag);
-            result.data.clear();
+            auto has_seed=[&](std::string const& url) -> bool { return input.read(url).has_value(); };
+            if (auto ok=nxmm_detail::load_ordered_program(config,input.allows_unfetched_remote(),
+                    read,has_seed,result.data,result.data_mmaps,result.ordered,result.tun_cidrs); !ok)
+                return std::unexpected(std::move(ok.error()));
         }
         return result;
     }
 
     auto apply_tun_route_sets(config::TunInbound& tun, RouteFiles const& files) -> std::expected<void, std::string> {
-        auto add_from = [&](std::vector<std::string> const& tags, std::vector<std::string>& dst, std::size_t cap)
-            -> std::expected<void, std::string> {
-            for (auto const& tag : tags) {
-                auto it = std::ranges::find(files.tun_cidrs, tag, &std::pair<std::string, std::vector<std::string>>::first);
-                if (it == files.tun_cidrs.end()) continue;
-                for (auto const& cidr : it->second) {
-                    if (!(cidr.contains(':') ? tun.inet6_address : tun.inet4_address)) continue;
-                    if (!std::ranges::contains(dst, cidr) && dst.size() < cap) dst.push_back(cidr);
-                }
-            }
-            return {};
-        };
-        if (auto ok = add_from(tun.route_address_sets, tun.route_includes, 64); !ok) return ok;
-        if (auto ok = add_from(tun.route_exclude_address_sets, tun.route_excludes, 64); !ok) return ok;
-        return {};
+        return nxmm_detail::apply_tun_route_sets_impl(tun, files.tun_cidrs);
     }
 
     auto load_route_files(config::Config const& config,std::string_view config_path,bool allow_unfetched_remote) -> std::expected<RouteFiles,std::string> {

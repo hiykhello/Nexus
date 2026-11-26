@@ -20,6 +20,7 @@ namespace config {
     auto parse_tun_inbound(g::KdlNode const&) -> std::expected<InboundConfig, std::string>;
     auto parse_naive_inbound(g::KdlNode const&) -> std::expected<InboundConfig, std::string>;
     auto parse_inbound_multiplex(g::KdlNode const&) -> std::expected<InboundMultiplexConfig, std::string>;
+    auto extract_listen_options(g::KdlNode const&, ListenOptions&) -> std::expected<g::KdlNode, std::string>;
 
     auto fixed_tcp_inbound(Node const& node, Config& result) -> std::expected<std::uint16_t, std::string> {
         auto name = argument(node);
@@ -106,11 +107,42 @@ namespace config {
         return listen_port;
     }
 
-    auto inbound(Node const& node, Config& result) -> std::expected<std::uint16_t, std::string> {
-        auto name = argument(node);
-        auto type = text_property(node, "type");
-        if (type && *type == "fixed-tcp") return fixed_tcp_inbound(node, result);
-        if (type && *type == "fixed-udp") return fixed_udp_inbound(node, result);
+    auto inbound(Node const& raw_node, Config& result) -> std::expected<std::uint16_t, std::string> {
+        auto name = argument(raw_node);
+        auto type = text_property(raw_node, "type");
+        ListenOptions listen_opts{};
+        Node filtered_node;
+        Node const* active = &raw_node;
+        if (type && *type != "tun") {
+            auto extracted = extract_listen_options(raw_node, listen_opts);
+            if (!extracted) return std::unexpected(std::move(extracted.error()));
+            filtered_node = std::move(*extracted);
+            active = &filtered_node;
+        }
+        auto const& node = *active;
+        auto finish = [&](std::expected<std::uint16_t, std::string> port) -> std::expected<std::uint16_t, std::string> {
+            if (!port) return port;
+            result.listen = listen_opts;
+            if (result.vless_inbound) result.vless_inbound->listen = listen_opts;
+            if (result.shadowsocks_inbound) result.shadowsocks_inbound->listen = listen_opts;
+            if (result.trojan_inbound) result.trojan_inbound->listen = listen_opts;
+            if (result.anytls_inbound) result.anytls_inbound->listen = listen_opts;
+            if (result.snell_inbound) result.snell_inbound->listen = listen_opts;
+            if (result.hysteria2_inbound) result.hysteria2_inbound->listen = listen_opts;
+            if (result.masque_inbound) result.masque_inbound->listen = listen_opts;
+            if (result.shadowtls_inbound) result.shadowtls_inbound->listen = listen_opts;
+            if (result.tuic_inbound) result.tuic_inbound->listen = listen_opts;
+            if (result.fixed_udp_inbound) {
+                result.fixed_udp_inbound->listen = listen_opts;
+                if (listen_opts.udp_timeout_ms && result.fixed_udp_inbound->idle_timeout_ms == 60000)
+                    result.fixed_udp_inbound->idle_timeout_ms = *listen_opts.udp_timeout_ms;
+            }
+            if (result.http_inbound) result.http_inbound->listen = listen_opts;
+            if (result.naive_inbound) result.naive_inbound->listen = listen_opts;
+            return port;
+        };
+        if (type && *type == "fixed-tcp") return finish(fixed_tcp_inbound(node, result));
+        if (type && *type == "fixed-udp") return finish(fixed_udp_inbound(node, result));
         if (type && (*type == "redirect" || *type == "tproxy")) {
             if (!name || !valid_name(*name) || node.properties.size() != 1 || node.children.empty() || node.children.size() > 2)
                 return error("transparent inbound requires one numeric listen endpoint");
@@ -136,25 +168,25 @@ namespace config {
                     return error("tproxy udp requires one boolean");
                 result.transparent_udp = std::get<bool>(udp.arguments[0].data);
             }
-            return static_cast<std::uint16_t>(*number);
+            return finish(static_cast<std::uint16_t>(*number));
         }
         if (type && *type == "masque") {
             auto entry = parse_masque_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::masque; result.listen_ipv6 = entry->listen_ipv6;
-            result.masque_inbound = std::move(entry->masque); return entry->port;
+            result.masque_inbound = std::move(entry->masque); return finish(entry->port);
         }
         if (type && *type == "shadowtls") {
             auto entry = parse_shadowtls_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::shadowtls; result.listen_ipv6 = entry->listen_ipv6;
-            result.shadowtls_inbound = std::move(entry->shadowtls); return entry->port;
+            result.shadowtls_inbound = std::move(entry->shadowtls); return finish(entry->port);
         }
         if (type && *type == "tuic") {
             auto entry = parse_tuic_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::tuic; result.listen_ipv6 = entry->listen_ipv6;
-            result.tuic_inbound = std::move(entry->tuic); return entry->port;
+            result.tuic_inbound = std::move(entry->tuic); return finish(entry->port);
         }
         if (type && *type == "tun") {
             auto entry = parse_tun_inbound(node);
@@ -165,31 +197,31 @@ namespace config {
             auto entry = parse_snell_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::snell; result.listen_ipv6 = entry->listen_ipv6;
-            result.snell_inbound = std::move(entry->snell); return entry->port;
+            result.snell_inbound = std::move(entry->snell); return finish(entry->port);
         }
         if (type && *type == "hysteria2") {
             auto entry = parse_hysteria2_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::hysteria2; result.listen_ipv6 = entry->listen_ipv6;
-            result.hysteria2_inbound = std::move(entry->hysteria2); return entry->port;
+            result.hysteria2_inbound = std::move(entry->hysteria2); return finish(entry->port);
         }
         if (type && *type == "anytls") {
             auto entry = parse_anytls_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::anytls; result.listen_ipv6 = entry->listen_ipv6;
-            result.anytls_inbound = std::move(entry->anytls); return entry->port;
+            result.anytls_inbound = std::move(entry->anytls); return finish(entry->port);
         }
         if (type && *type == "trojan") {
             auto entry = parse_trojan_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::trojan; result.listen_ipv6 = entry->listen_ipv6;
-            result.trojan_inbound = std::move(entry->trojan); return entry->port;
+            result.trojan_inbound = std::move(entry->trojan); return finish(entry->port);
         }
         if (type && *type == "naive") {
             auto entry = parse_naive_inbound(node);
             if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::naive; result.listen_ipv6 = entry->listen_ipv6;
-            result.naive_inbound = std::move(entry->naive); return entry->port;
+            result.naive_inbound = std::move(entry->naive); return finish(entry->port);
         }
         if (!name || !valid_name(*name) || node.properties.size() != 1 || !type ||
             (*type != "socks5" && *type != "mixed" && *type != "http" && *type != "vless" && *type != "shadowsocks"))
@@ -433,6 +465,6 @@ namespace config {
             *type == "vless" ? Inbound::vless : *type == "shadowsocks" ? Inbound::shadowsocks : Inbound::socks5;
         if (*type == "vless") result.vless_inbound = std::move(vless);
         if (*type == "shadowsocks") result.shadowsocks_inbound = std::move(ss);
-        return port;
+        return finish(port);
     }
 }

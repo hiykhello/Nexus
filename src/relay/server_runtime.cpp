@@ -61,6 +61,8 @@ namespace relay {
     Server::Server(io::io_context& external_context)
         : owned_context(std::nullopt), context(external_context), shared_context(true), listener(std::in_place, external_context) {}
     Server::~Server() {
+        publish_detour(false);
+        detour_target.reset(); detour_enabled = false;
         if(!listener)return;
 #if defined(NEXUS_TEST_VLESS_ABANDON) || defined(NEXUS_TEST_SS_ABANDON) || defined(NEXUS_TEST_TUNNEL_PROFILE) || defined(NEXUS_TEST_DNS_OWNER) || defined(NEXUS_TEST_FAKEIP_ABANDON)
         // Exercise member destruction with suspended tasks in the test target.
@@ -104,9 +106,12 @@ namespace relay {
 
     auto Server::queue_outbound_probe(std::shared_ptr<OutboundProbe> probe) -> bool {
         auto& owner=workers.empty() ? *this : *workers.front();
-        std::shared_ptr<OutboundProbe> empty;
-        if (!owner.pending_probe.compare_exchange_strong(empty,std::move(probe),
-            std::memory_order_release,std::memory_order_relaxed)) return false;
+        {
+            std::lock_guard lock(owner.probe_mutex);
+            if (owner.pending_probes.size()+owner.active_probes.load(std::memory_order_acquire)>=kMaxConcurrentProbes)
+                return false;
+            owner.pending_probes.push_back(std::move(probe));
+        }
         if (!workers.empty()) owner.context.stop();
         return true;
     }
@@ -139,19 +144,26 @@ namespace relay {
     }
 
     auto Server::start_pending_probe() -> void {
-        if (probe_running || !running || drain_requested.load(std::memory_order_relaxed)) return;
-        auto probe=pending_probe.exchange({},std::memory_order_acq_rel);
-        if (!probe) return;
-        probe_running=true;
-        try {
-            capy::run_async(context.get_executor(),[this] {probe_running=false;},
-                [this,probe](std::exception_ptr) noexcept {
-                    probe->result.store(1,std::memory_order_release);
-                    probe_running=false;
-                })(run_probe(probe));
-        } catch (...) {
-            probe->result.store(1,std::memory_order_release);
-            probe_running=false;
+        if (!running || drain_requested.load(std::memory_order_relaxed)) return;
+        while (active_probes.load(std::memory_order_relaxed)<kMaxConcurrentProbes) {
+            std::shared_ptr<OutboundProbe> probe;
+            {
+                std::lock_guard lock(probe_mutex);
+                if (pending_probes.empty()) break;
+                probe=std::move(pending_probes.front());
+                pending_probes.pop_front();
+            }
+            active_probes.fetch_add(1,std::memory_order_acq_rel);
+            try {
+                capy::run_async(context.get_executor(),[this] {active_probes.fetch_sub(1,std::memory_order_acq_rel);},
+                    [this,probe](std::exception_ptr) noexcept {
+                        probe->result.store(1,std::memory_order_release);
+                        active_probes.fetch_sub(1,std::memory_order_acq_rel);
+                    })(run_probe(probe));
+            } catch (...) {
+                probe->result.store(1,std::memory_order_release);
+                active_probes.fetch_sub(1,std::memory_order_acq_rel);
+            }
         }
     }
 
@@ -169,6 +181,7 @@ namespace relay {
 
     auto Server::begin_drain() noexcept -> void {
         if (drain_requested.exchange(true,std::memory_order_acq_rel)) return;
+        publish_detour(false);
         retained_listeners.clear();
         if (!workers.empty()) {
             for (auto& worker : workers) worker->context.stop();
@@ -187,8 +200,13 @@ namespace relay {
 #ifdef NEXUS_TPROXY_UDP
         stop_transparent_udp();
 #endif
-        if (auto probe=pending_probe.exchange({},std::memory_order_acq_rel))
-            probe->result.store(1,std::memory_order_release);
+        {
+            std::lock_guard lock(probe_mutex);
+            while (!pending_probes.empty()) {
+                pending_probes.front()->result.store(1,std::memory_order_release);
+                pending_probes.pop_front();
+            }
+        }
     }
 
     auto Server::drained() const noexcept -> bool {
@@ -264,7 +282,7 @@ namespace relay {
             if (!session.done && !session.closed && ((!session.transport_owner && (expired || now >= session.lifetime_deadline)) ||
                 session.traffic.close_requested())) session.close();
         });
-        if (drain_requested.load(std::memory_order_relaxed) && sessions.empty() && !probe_running &&
+        if (drain_requested.load(std::memory_order_relaxed) && sessions.empty() && active_probes.load(std::memory_order_acquire)==0 &&
             !(inbound_type == Inbound::fixed_udp && accept_task_active)
 #ifdef NEXUS_ENABLE_NAIVE
             && modern_h3_drained()
@@ -292,6 +310,8 @@ namespace relay {
 
     auto Server::stop() noexcept -> void {
         auto& state = *this;
+        publish_detour(false);
+        detour_target.reset(); detour_enabled = false;
         retained_listeners.clear();
         if (!state.workers.empty()) {
             state.stopping=true;
@@ -308,8 +328,13 @@ namespace relay {
         state.running = false;
         state.accepting = false;
         if (state.admission) state.admission->detach(&state);
-        if (auto probe=state.pending_probe.exchange({},std::memory_order_acq_rel))
-            probe->result.store(1,std::memory_order_release);
+        {
+            std::lock_guard lock(state.probe_mutex);
+            while (!state.pending_probes.empty()) {
+                state.pending_probes.front()->result.store(1,std::memory_order_release);
+                state.pending_probes.pop_front();
+            }
+        }
         state.close_listener();
 #ifdef NEXUS_ENABLE_XHTTP_VLESS
         state.stop_xhttp3();
@@ -355,7 +380,7 @@ namespace relay {
                        )
 #endif
                     ;
-                return state.sessions.empty() && !state.accept_task_active && !state.probe_running &&
+                return state.sessions.empty() && !state.accept_task_active && state.active_probes.load(std::memory_order_acquire)==0 &&
                        dns_ok && state.outbound_contexts_quiesced();
             };
             for (int iter = 0; iter < 500 && !self_drained(); ++iter) {

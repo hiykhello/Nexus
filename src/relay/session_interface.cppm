@@ -225,8 +225,14 @@ namespace relay {
         auto select_traffic_path(ConnectPath path) noexcept -> void {
             traffic.select_path(path);
         }
+        auto set_traffic_group(std::string_view tag) noexcept -> void;
         auto record_traffic_route(TrafficRoute, ConnectPath) noexcept -> void;
         auto record_datagram_route(bool ordered, net::UdpSelection const&) noexcept -> void;
+        auto record_dial_failure(TrafficRoute const&) noexcept -> void;
+        auto record_dial_failure(std::size_t outbound) noexcept -> void;
+        std::string_view group_tag;
+        GroupRuntimeHooks* group_hooks = nullptr;
+        bool find_process = false;
         auto count_traffic(bool upstream, std::size_t bytes) noexcept -> void {
             traffic.count(upstream, bytes);
             if (user_accounting) {
@@ -391,6 +397,9 @@ namespace relay {
         child.splice_pipes = parent.splice_pipes;
         child.splice_pipe_pool = parent.splice_pipe_pool;
         child.network_monitor = parent.network_monitor;
+        child.group_hooks = parent.group_hooks;
+        child.group_tag = parent.group_tag;
+        child.find_process = parent.find_process;
         child.source_uid = parent.source_uid;
         child.source_gid = parent.source_gid;
         child.source_interface = parent.source_interface;

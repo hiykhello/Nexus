@@ -49,6 +49,7 @@ namespace rules {
                 .wifi_ssid = input.wifi_ssid,
                 .wifi_bssid = input.wifi_bssid,
                 .default_interface_addresses = input.default_interface_addresses,
+                .network_interface_addresses = input.network_interface_addresses,
                 .source_gid = input.source_gid,
                 .source_user = input.source_user,
                 .package_name = input.package_name,
@@ -109,6 +110,7 @@ namespace rules {
         RouteProgram program;
         RuleSet flattened{.version = 2};
         program.instructions_.reserve(rules.size());
+        bool tail_proc = false, tail_uid = false;
         for (auto const& rule : rules) {
             auto const& act = rule.action;
             auto kind = act.kind;
@@ -166,6 +168,24 @@ namespace rules {
             if (rule.domain_source != DomainSource::explicit_target && rule.domain_source != DomainSource::fakeip &&
                 rule.domain_source != DomainSource::reverse_dns && rule.domain_source != DomainSource::sniffed)
                 return std::unexpected(Error{ErrorCode::invalid_rule, "invalid domain source"});
+            if (rule.mmap) {
+                if (!rule.predicates.rules.empty())
+                    return std::unexpected(Error{ErrorCode::invalid_rule, "mmap program rule cannot also carry inline predicates"});
+                std::shared_ptr<Matcher const> tail;
+                if (rule.mmap->tail_beve_bytes() > 0) {
+                    auto dec = parse_beve(rule.mmap->tail_beve());
+                    if (!dec) return std::unexpected(std::move(dec.error()));
+                    auto cm = Matcher::compile(*dec);
+                    if (!cm) return std::unexpected(std::move(cm.error()));
+                    tail_proc |= cm->uses_process_;
+                    tail_uid |= cm->uses_source_uid_;
+                    tail = std::make_shared<Matcher const>(std::move(*cm));
+                }
+                auto off = flattened.rules.size();
+                program.instructions_.push_back({off, off, act, rule.domain_source, rule.mmap, std::move(tail),
+                    rule.mmap_match_source || rule.mmap->ip_cidr_match_source()});
+                continue;
+            }
             for (auto const& predicate : rule.predicates.rules)
                 if (!count(count, predicate, 1)) return std::unexpected(Error{ErrorCode::limit, "program rule count exceeds limit"});
             auto normalized = normalize_set(rule.predicates);
@@ -177,6 +197,8 @@ namespace rules {
         }
         auto compiled = Matcher::compile(flattened);
         if (!compiled) return std::unexpected(std::move(compiled.error()));
+        compiled->uses_process_ |= tail_proc;
+        compiled->uses_source_uid_ |= tail_uid;
         program.matcher_ = std::move(*compiled);
         return program;
     }
@@ -376,6 +398,7 @@ namespace rules {
             .network_type = input.network_type, .network_is_expensive = input.network_is_expensive,
             .network_is_constrained = input.network_is_constrained, .wifi_ssid = input.wifi_ssid,
             .wifi_bssid = input.wifi_bssid, .default_interface_addresses = input.default_interface_addresses,
+            .network_interface_addresses = input.network_interface_addresses,
             .source_gid = input.source_gid, .source_user = input.source_user,
             .package_name = input.package_name, .client = input.client,
             .process_paths = input.process_paths

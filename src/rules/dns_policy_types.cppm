@@ -59,6 +59,7 @@ export namespace policy {
         std::optional<std::string_view> wifi_ssid{};
         std::optional<rules::MacAddress> wifi_bssid{};
         std::span<rules::ProgramAddress const> default_interface_addresses{};
+        std::span<rules::NetworkInterfaceAddress const> network_interface_addresses{};
         std::optional<std::uint32_t> source_uid{};
         std::optional<std::uint32_t> source_gid{};
         std::optional<std::string_view> source_user{};

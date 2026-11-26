@@ -112,8 +112,8 @@ namespace config {
         if (type == "load-balance") result.mode = OutboundGroupMode::load_balance;
         auto automatic = result.mode == OutboundGroupMode::fallback || result.mode == OutboundGroupMode::url_test;
         auto can_probe = automatic || result.mode == OutboundGroupMode::load_balance;
-        std::optional<std::uint64_t> interval, timeout, tolerance;
-        bool mode_seen = false, status_seen = false;
+        std::optional<std::uint64_t> interval, timeout, tolerance, idle_timeout, concurrency;
+        bool mode_seen = false, status_seen = false, interrupt_seen = false;
         for (auto const& child : node.children) {
             if (child.name == "member" || (result.mode == OutboundGroupMode::select && child.name == "selected")) {
                 auto value = scalar(child);
@@ -129,6 +129,11 @@ namespace config {
                     std::ranges::find(result.use_providers, *value) == result.use_providers.end())
                     result.use_providers.push_back(*value);
                 else return error("duplicate or excessive outbound group provider");
+            } else if (child.name == "interrupt-exist-connections" && !interrupt_seen) {
+                auto enabled = boolean(child);
+                if (!enabled) return error("invalid outbound group interrupt-exist-connections");
+                result.interrupt_exist_connections = *enabled;
+                interrupt_seen = true;
             } else if (can_probe && child.name == "probe-url" && result.probe.url.empty()) {
                 auto url = scalar(child);
                 if (!url || (!url->starts_with("http://") && !url->starts_with("https://")) || url->size() > 1024)
@@ -169,6 +174,14 @@ namespace config {
                 timeout = integer(child);
                 if (!timeout || *timeout < 100 || *timeout > 10000)
                     return error("invalid outbound probe-timeout-ms");
+            } else if (can_probe && child.name == "idle-timeout-ms" && !idle_timeout) {
+                idle_timeout = integer(child);
+                if (!idle_timeout || *idle_timeout > 86400000)
+                    return error("invalid outbound probe idle-timeout-ms");
+            } else if (can_probe && child.name == "probe-concurrency" && !concurrency) {
+                concurrency = integer(child);
+                if (!concurrency || *concurrency < 1 || *concurrency > 16)
+                    return error("invalid outbound probe-concurrency");
             } else if (result.mode == OutboundGroupMode::url_test && child.name == "tolerance-ms" && !tolerance) {
                 tolerance = integer(child);
                 if (!tolerance || *tolerance > 10000) return error("invalid url-test tolerance-ms");
@@ -181,7 +194,7 @@ namespace config {
             std::ranges::find(result.members, result.selected) == result.members.end())
             return error("selector selected outbound must be a member");
         if (automatic && result.probe.url.empty()) return error("outbound group requires probe-url");
-        if (result.probe.url.empty() && (mode_seen || status_seen || !result.probe.ca_file.empty() || !result.probe.server_name.empty() || interval || timeout))
+        if (result.probe.url.empty() && (mode_seen || status_seen || !result.probe.ca_file.empty() || !result.probe.server_name.empty() || interval || timeout || idle_timeout || concurrency))
             return error("outbound probe options require probe-url");
         if (!result.probe.url.empty() && result.probe.mode == OutboundProbeMode::h2_ping && !result.probe.expected_status.empty())
             return error("outbound probe-expected-status is only valid with http probe-mode");
@@ -191,6 +204,8 @@ namespace config {
         if (interval) result.probe.interval_ms = static_cast<std::uint32_t>(*interval);
         if (timeout) result.probe.timeout_ms = static_cast<std::uint32_t>(*timeout);
         if (tolerance) result.probe.tolerance_ms = static_cast<std::uint32_t>(*tolerance);
+        if (idle_timeout) result.probe.idle_timeout_ms = static_cast<std::uint32_t>(*idle_timeout);
+        if (concurrency) result.probe.probe_concurrency = static_cast<std::uint8_t>(*concurrency);
         return result;
     }
 }

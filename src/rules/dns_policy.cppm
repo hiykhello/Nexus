@@ -56,9 +56,10 @@ export namespace policy {
             type=="source-port-range" || type=="source-interface" || type=="inbound" || type=="auth-user" ||
             type=="network-type" || type=="network-is-expensive" || type=="network-is-constrained" ||
             type=="wifi-ssid" || type=="wifi-bssid" || type=="default-interface-address" ||
-            type=="source-uid" || type=="source-gid" || type=="source-user" ||
-            type=="process-name" || type=="process-path" || type=="process-path-regex" ||
-            type=="package-name" || type=="route-mode" || type=="client";
+            type=="network-interface-address" || type=="source-uid" || type=="source-gid" ||
+            type=="source-user" || type=="process-name" || type=="process-path" ||
+            type=="process-path-regex" || type=="package-name" || type=="package-name-regex" ||
+            type=="route-mode" || type=="client";
     }
 
     inline auto dns_context_requirements(std::span<DnsRule const> entries) noexcept -> DnsContextRequirements {
@@ -67,10 +68,11 @@ export namespace policy {
             result.source |= type!="source-interface" && type.starts_with("source-");
             result.auth_user |= type=="auth-user";
             result.source_uid |= type=="source-uid" || type=="source-gid" || type=="source-user";
-            result.process |= type=="process-name" || type=="process-path" || type=="process-path-regex" || type=="package-name";
+            result.process |= type=="process-name" || type=="process-path" || type=="process-path-regex" ||
+                type=="package-name" || type=="package-name-regex";
             result.network_state |= type=="network-type" || type=="network-is-expensive" ||
                 type=="network-is-constrained" || type=="wifi-ssid" || type=="wifi-bssid" ||
-                type=="default-interface-address";
+                type=="default-interface-address" || type=="network-interface-address";
         };
         for (auto const& rule:entries) {
             for (auto const& field:rule.context) mark(field.type);
@@ -95,9 +97,11 @@ export namespace policy {
             source |= node.type!="source-interface" && node.type.starts_with("source-");
             auth |= node.type=="auth-user";
             uid |= node.type=="source-uid" || node.type=="source-gid" || node.type=="source-user";
-            proc |= node.type=="process-name" || node.type=="process-path" || node.type=="process-path-regex" || node.type=="package-name";
+            proc |= node.type=="process-name" || node.type=="process-path" || node.type=="process-path-regex" ||
+                node.type=="package-name" || node.type=="package-name-regex";
             net |= node.type=="network-type" || node.type=="network-is-expensive" || node.type=="network-is-constrained" ||
-                node.type=="wifi-ssid" || node.type=="wifi-bssid" || node.type=="default-interface-address";
+                node.type=="wifi-ssid" || node.type=="wifi-bssid" || node.type=="default-interface-address" ||
+                node.type=="network-interface-address";
             response |= node.type=="ip-cidr" || node.type=="ip-is-private" || node.type=="ip-is-cgnat" ||
                 node.type=="ip-accept-any" || node.type=="ip-version";
             return is_dns_context_predicate(node.type) || node.type=="domain" || node.type=="domain-suffix" ||
@@ -268,6 +272,9 @@ export namespace policy {
             .default_interface_addresses=context.default_interface_addresses.empty() ?
                 std::optional<std::span<rules::ProgramAddress const>>{} :
                 std::optional<std::span<rules::ProgramAddress const>>{context.default_interface_addresses},
+            .network_interface_addresses=context.network_interface_addresses.empty() ?
+                std::optional<std::span<rules::NetworkInterfaceAddress const>>{} :
+                std::optional<std::span<rules::NetworkInterfaceAddress const>>{context.network_interface_addresses},
             .source_gid=context.source_gid, .source_user=context.source_user,
             .package_name=context.package_name, .client=context.client,
             .process_paths=context.process_paths,

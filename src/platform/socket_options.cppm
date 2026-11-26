@@ -27,11 +27,12 @@ export namespace platform {
 
     namespace network {
         enum class Type : std::uint8_t { ethernet, wifi, cellular, vpn, other };
-        enum class Strategy : std::uint8_t { require, prefer, fallback };
+        enum class Strategy : std::uint8_t { require, prefer, fallback, hybrid };
 
         struct Interface {
             std::string name;
             Type type;
+            auto operator==(Interface const&) const -> bool = default;
         };
 
         struct Policy {
@@ -40,6 +41,7 @@ export namespace platform {
             std::optional<Type> fallback;
             std::vector<Interface> interfaces;
             std::chrono::milliseconds fallback_delay{300};
+            auto operator==(Policy const&) const -> bool = default;
         };
 
         struct FallbackMemory {
@@ -93,6 +95,7 @@ export namespace platform {
             containers::inplace_vector<std::uint8_t, 16> tiers;
             std::chrono::milliseconds fallback_delay{};
             bool parallel_fallback = false;
+            bool hybrid_race = false;
             std::shared_ptr<FallbackMemory> fallback_memory;
             [[nodiscard]] auto first() const noexcept -> std::uint32_t {
                 return indices.empty() ? 0 : indices.front();
@@ -118,6 +121,9 @@ export namespace platform {
         std::shared_ptr<network::InterfaceSelection const> network;
         std::uint32_t interface_index = 0;
         std::string network_namespace, protect_path;
+        bool auto_detect_interface = false;
+        std::optional<network::Strategy> network_strategy;
+        std::optional<network::Type> network_type;
         [[nodiscard]] auto interface_name() const noexcept -> std::string_view {
             auto end = std::ranges::find(bind_interface, '\0');
             return {bind_interface.data(), static_cast<std::size_t>(end - bind_interface.begin())};
@@ -126,7 +132,7 @@ export namespace platform {
             return !network_namespace.empty() || !protect_path.empty() || bind_interface.front() || network ||
                 interface_index || inet4_bind_address || inet6_bind_address || routing_mark ||
                 udp_bind_port.has_value() || reuse_addr.has_value() || udp_fragment.has_value() ||
-                has_protect_fd_callback();
+                auto_detect_interface || network_strategy.has_value() || has_protect_fd_callback();
         }
         [[nodiscard]] auto separate_families() const noexcept -> bool {
             return network || inet4_bind_address || inet6_bind_address;
@@ -136,7 +142,7 @@ export namespace platform {
                 return path.empty() || (path.front() == '/' && path.size() < capacity && path.find('\0') == path.npos);
             };
             if (!absolute_path(network_namespace, 4096) || !absolute_path(protect_path, 108) ||
-                (network && !network_namespace.empty())) return false;
+                ((network || auto_detect_interface) && !network_namespace.empty())) return false;
             auto name = interface_name();
             if ((!name.empty() && (network || interface_index)) || (network && interface_index)) return false;
             if (name.size() == bind_interface.size() || name == "." || name == ".." ||

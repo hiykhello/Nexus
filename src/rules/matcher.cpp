@@ -110,6 +110,13 @@ namespace rules {
         return out;
     }
 
+    auto Matcher::parse_net_if_cidr(std::string_view value) noexcept -> Matcher::NetworkInterfaceIp {
+        auto colon = value.find(':');
+        auto ip = parse_cidr_entry(value.substr(colon + 1));
+        return {ip.address, static_cast<std::uint8_t>(ip.prefix), static_cast<std::uint8_t>(ip.family),
+                *parse_network_type(value.substr(0, colon))};
+    }
+
     auto Matcher::compile(RuleSet const& set) -> std::expected<Matcher, Error> {
         Matcher result;
         auto normalized = normalize_matcher_set(set, result.regexes_);
@@ -142,14 +149,18 @@ namespace rules {
                 result.text_arena_.append(rule.value);
                 result.text_spans_.emplace_back(off, len);
                 entry.text = std::string_view(result.text_arena_.data() + off, len);
-            } else if (rule.type == "domain-regex" || rule.type == "process-path-regex") {
-                entry.kind = rule.type == "domain-regex" ? Kind::domain_regex : Kind::process_path_regex;
+            } else if (rule.type == "domain-regex" || rule.type == "process-path-regex" || rule.type == "package-name-regex") {
+                entry.kind = rule.type == "domain-regex" ? Kind::domain_regex :
+                    rule.type == "process-path-regex" ? Kind::process_path_regex : Kind::package_name_regex;
                 entry.regex = regex_index++;
-                result.uses_process_ |= entry.kind == Kind::process_path_regex;
+                result.uses_process_ |= entry.kind == Kind::process_path_regex || entry.kind == Kind::package_name_regex;
             } else if (rule.type == "ip-cidr" || rule.type == "source-ip-cidr" || rule.type == "default-interface-address") {
                 entry.kind = rule.type == "ip-cidr" ? Kind::ip :
                     rule.type == "source-ip-cidr" ? Kind::source_ip : Kind::default_interface_ip;
                 entry.ip = parse_cidr_entry(rule.value);
+            } else if (rule.type == "network-interface-address") {
+                entry.kind = Kind::network_interface_ip;
+                entry.net_if_ip = parse_net_if_cidr(rule.value);
             } else if (rule.type == "ip-version") {
                 entry.kind = Kind::ip_version;
                 entry.ip_version = rule.value == "4" ? 4 : 6;

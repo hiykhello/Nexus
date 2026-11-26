@@ -9,7 +9,8 @@ export namespace control_api {
         listeners = 1u << 1,
         connections = 1u << 2,
         groups = 1u << 3,
-        all = (1u << 4) - 1,
+        rules = 1u << 4,
+        all = (1u << 5) - 1,
     };
 
     [[nodiscard]] constexpr auto operator|(SnapshotFields a, SnapshotFields b) noexcept -> SnapshotFields {
@@ -65,6 +66,14 @@ export namespace control_api {
         bool can_close = false;
     };
 
+    struct RuleMetric {
+        std::size_t index = 0;
+        std::string type;
+        std::string action;
+        std::string target;
+        std::string summary;
+    };
+
     struct ControlSnapshot {
         std::string instance;
         unsigned workers = 1;
@@ -76,6 +85,7 @@ export namespace control_api {
         std::vector<ListenerMetric> listeners;
         std::vector<GroupMetric> groups;
         std::vector<ConnectionMetric> connections;
+        std::vector<RuleMetric> rules;
         std::string route_mode = "rule";
         std::string global_outbound;
     };

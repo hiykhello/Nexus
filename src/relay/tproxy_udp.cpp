@@ -277,14 +277,14 @@ namespace relay {
         {
             flows_.reserve(flow_limit);
         }
-        auto start(corosio::endpoint endpoint,bool reuse) -> std::error_code {
+        auto start(corosio::endpoint endpoint,bool reuse,config::ListenOptions const* listen = nullptr) -> std::error_code {
             listen_.family=endpoint.is_v6() ? 6 : 4;
             listen_.port=endpoint.port();
             if (endpoint.is_v6()) std::ranges::copy(endpoint.address().to_v6().to_bytes(),listen_.address.begin());
             else std::ranges::copy(endpoint.address().to_v4().to_bytes(),listen_.address.begin());
             listen_any_=std::ranges::all_of(listen_.address,[](auto byte) {return byte==0;});
             reply_cache_.refresh_netns();
-            return socket_.bind(listen_,true,reuse);
+            return socket_.bind(listen_,true,reuse,mark_,listen);
         }
         auto poll() -> std::error_code {
             if (dead_flows_) {
@@ -351,8 +351,9 @@ namespace relay {
     };
 
     auto Server::start_transparent_udp(corosio::endpoint listen,bool reuse) -> std::error_code {
-        auto owner=std::make_shared<TransparentUdp>(*this,direct_tcp_options.binding.routing_mark);
-        if(auto error=owner->start(listen,reuse)) return error;
+        auto mark=listen_options.routing_mark ? listen_options.routing_mark : direct_tcp_options.binding.routing_mark;
+        auto owner=std::make_shared<TransparentUdp>(*this,mark);
+        if(auto error=owner->start(listen,reuse,&listen_options)) return error;
         transparent_udp=std::move(owner);
         return {};
     }

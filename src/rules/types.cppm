@@ -1,5 +1,6 @@
 export module rules:types;
 import std;
+import :mmap;
 
 export namespace rules {
     enum class ErrorCode { syntax, schema, limit, invalid_rule, invalid_query };
@@ -107,6 +108,7 @@ export namespace rules {
     };
 
     struct ProgramAddress { std::array<std::uint8_t, 16> bytes{}; std::uint8_t size = 0; };
+    struct NetworkInterfaceAddress { NetworkType type = NetworkType::other; ProgramAddress address{}; };
 
     struct MatchInput {
         std::optional<std::string_view> domain;
@@ -136,6 +138,7 @@ export namespace rules {
         std::optional<std::string_view> wifi_ssid;
         std::optional<MacAddress> wifi_bssid;
         std::optional<std::span<ProgramAddress const>> default_interface_addresses;
+        std::optional<std::span<NetworkInterfaceAddress const>> network_interface_addresses;
         std::optional<std::uint32_t> source_gid;
         std::optional<std::string_view> source_user;
         std::optional<std::string_view> package_name;
@@ -227,6 +230,7 @@ export namespace rules {
         std::optional<std::string_view> wifi_ssid;
         std::optional<MacAddress> wifi_bssid;
         std::optional<std::span<ProgramAddress const>> default_interface_addresses;
+        std::optional<std::span<NetworkInterfaceAddress const>> network_interface_addresses;
         std::optional<std::uint32_t> source_gid;
         std::optional<std::string_view> source_user;
         std::optional<std::string_view> package_name;
@@ -238,6 +242,8 @@ export namespace rules {
         RuleSet predicates;
         ProgramAction action;
         DomainSource domain_source = DomainSource::explicit_target;
+        std::shared_ptr<MmapMatcher const> mmap{};
+        bool mmap_match_source = false;
     };
 
     struct ProgramStep {

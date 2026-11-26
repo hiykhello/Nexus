@@ -23,6 +23,7 @@ export namespace cli::run_detail {
         std::optional<std::array<std::uint8_t, 16>> address;
         bool routed_tun = false;
         std::size_t packet_slots = 0;
+        config::ListenOptions listen{};
     };
 
     inline auto convert_inbound(config::Inbound type) -> relay::Inbound {
@@ -84,6 +85,7 @@ export namespace cli::run_detail {
         }
         listener.routed_tun = entry.tun && !entry.tun->connect_ip_outbound;
         if (listener.routed_tun) listener.packet_slots = 2 * entry.tun->tcp_flows;
+        listener.listen = entry.listen;
         return listener;
     }
 
@@ -127,7 +129,7 @@ export namespace cli::run_detail {
     }
 
     inline auto same_tcp_binding(Listener const& first, Listener const& second) noexcept -> bool {
-        if (first.port != second.port || first.ipv6 != second.ipv6) return false;
+        if (first.port != second.port || first.ipv6 != second.ipv6 || first.listen != second.listen) return false;
         std::array<std::uint8_t, 16> loopback{};
         if (first.ipv6) loopback.back() = 1;
         else { loopback.front() = 127; loopback[3] = 1; }
@@ -147,6 +149,7 @@ export namespace cli::run_detail {
         std::unique_ptr<DnsMessageRuntime> messages;
         functional::move_only_function<bool()> poll_udp;
         std::chrono::steady_clock::time_point deadline;
+        ~RetiredTcpGeneration() { for (auto& l : listeners) if (l.server) l.server->set_detour_target(nullptr); }
 
         auto poll(bool shared_driven = false) -> bool {
             if (std::chrono::steady_clock::now() >= deadline) return true;
@@ -178,6 +181,10 @@ export namespace cli::run_detail {
             }
             if (!server.set_principal_policy(principals.prepare(entry.name, limits)))
                 return std::unexpected("cannot set principal policy");
+        }
+        if (entry.listen.configured()) {
+            if (auto ok = server.set_listen_options(entry.listen); !ok)
+                return std::unexpected("listen options: " + ok.error());
         }
         if (config.sessions_per_listener && !server.set_session_limit(*config.sessions_per_listener)) {
             return std::unexpected("cannot set session limit");
@@ -291,6 +298,17 @@ export namespace cli::run_detail {
         return {};
     }
 
+    inline auto wire_listener_detours(config::Config const& cfg, std::vector<Listener>& listeners) noexcept -> void {
+        for (std::size_t i = 0; i < cfg.inbounds.size() && i < listeners.size(); ++i) {
+            if (cfg.inbounds[i].detour_index && *cfg.inbounds[i].detour_index < listeners.size())
+                listeners[i].server->set_detour_target(listeners[*cfg.inbounds[i].detour_index].server.get());
+        }
+    }
+
+    inline auto clear_listener_detours(std::vector<Listener>& listeners) noexcept -> void {
+        for (auto& l : listeners) if (l.server) l.server->set_detour_target(nullptr);
+    }
+
     inline auto init_run_listeners(config::Config const& cfg, unsigned workers, std::vector<Listener>& listeners,
         std::unique_ptr<corosio::io_context>& shared_io) -> std::expected<void, std::string> {
         auto is_ord = [](config::InboundConfig const& e) { return !e.hysteria2 && !e.masque && !e.tuic && !e.tun; };
@@ -313,6 +331,7 @@ export namespace cli::run_detail {
             if (!next) return std::unexpected(next.error().message());
             listeners.push_back(make_listener(std::move(*next), entry));
         }
+        wire_listener_detours(cfg, listeners);
         return {};
     }
 }

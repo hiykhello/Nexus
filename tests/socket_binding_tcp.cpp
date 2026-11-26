@@ -1,5 +1,8 @@
 import std;
 import net.tcp_connect;
+import platform.network_state;
+import platform.network_selection;
+import capy;
 import corosio;
 
 namespace io = ::corosio;
@@ -123,13 +126,142 @@ namespace {
         return d1 > now + std::chrono::milliseconds(100) && d1 < far &&
             d2 > now + std::chrono::milliseconds(100) && d2 < far;
     }
+
+    auto test_auto_detect_and_hybrid() -> bool {
+        using namespace platform::network;
+        namespace abi = platform::network::constants;
+        Snapshot snap{};
+        snap.links = {
+            {.index = 1, .flags = abi::iff_up | abi::iff_lower_up, .name = "lo"},
+            {.index = 2, .flags = abi::iff_up | abi::iff_lower_up, .name = "eth0"},
+            {.index = 3, .flags = abi::iff_up | abi::iff_lower_up, .name = "wlan0"},
+            {.index = 4, .flags = abi::iff_up, .name = "eth1"}, // no carrier
+        };
+        Address a2v4{.index = 2, .family = abi::af_inet, .prefix = 24, .scope = abi::rt_scope_universe};
+        a2v4.local[0] = 192; a2v4.local[1] = 168; a2v4.local[2] = 1; a2v4.local[3] = 2;
+        Address a3v4{.index = 3, .family = abi::af_inet, .prefix = 24, .scope = abi::rt_scope_universe};
+        a3v4.local[0] = 10; a3v4.local[3] = 2;
+        Address a3v6{.index = 3, .family = abi::af_inet6, .prefix = 64, .scope = abi::rt_scope_universe};
+        a3v6.local[0] = 0x20; a3v6.local[1] = 0x01; a3v6.local[15] = 2;
+        snap.addresses = {a2v4, a3v4, a3v6};
+        snap.routes = {
+            {.table = abi::rt_table_main, .priority = 50, .index = 4, .family = abi::af_inet, .type = abi::rtn_unicast}, // down carrier ignored
+            {.table = abi::rt_table_main, .priority = 200, .index = 3, .family = abi::af_inet, .type = abi::rtn_unicast},
+            {.table = abi::rt_table_main, .priority = 100, .index = 2, .family = abi::af_inet, .type = abi::rtn_unicast},
+            {.table = abi::rt_table_main, .priority = 100, .index = 3, .family = abi::af_inet6, .type = abi::rtn_unicast},
+        };
+        if (net::select_default_egress_interface(snap, false) != 2) return false;
+        if (net::select_default_egress_interface(snap, true) != 3) return false;
+
+        Policy hybrid_auto{Strategy::hybrid, Type::wifi, std::nullopt, {}, std::chrono::milliseconds(0)};
+        auto hc = select_interfaces(snap, hybrid_auto, false);
+        if (!hc.hybrid_race || !hc.parallel_fallback || hc.indices.size() != 2 || hc.indices[0] != 3 || hc.indices[1] != 2)
+            return false;
+
+        // Live connect_tcp_candidates with auto_detect_interface (loopback safe) and hybrid concurrent race.
+        auto ctx = io::make_io_context(false);
+        io::tcp_acceptor srv(ctx);
+        if (srv.open(io::family::v4) || srv.bind(io::endpoint(io::ipv4_address::loopback(), 0)) || srv.listen(8))
+            return false;
+        auto ep = srv.local_endpoint();
+        bool ok_auto = false, ok_hybrid = false, ok_deadline = false, ok_cancel = false;
+        auto run_client = [&]() -> capy::task<> {
+            std::array<io::endpoint, 1> eps{ep};
+            bool prep_failed = false;
+            auto cond = [](std::error_code const&, io::endpoint const&) { return true; };
+            {
+                io::tcp_socket sock(ctx);
+                platform::TcpSocketOptions opt;
+                opt.binding.auto_detect_interface = true;
+                auto [ec, got] = co_await net::connect_tcp_candidates(
+                    sock, eps, cond, opt, prep_failed, std::chrono::steady_clock::now() + std::chrono::seconds(2));
+                ok_auto = !ec && !prep_failed && got == ep && sock.is_open();
+                sock.close();
+            }
+            {
+                io::tcp_socket sock(ctx);
+                platform::TcpSocketOptions opt;
+                opt.binding.network = std::make_shared<InterfaceSelection>([](bool) noexcept -> InterfaceCandidates {
+                    InterfaceCandidates c{};
+                    c.indices.push_back(999999); c.tiers.push_back(0); // non-existent interface
+                    c.indices.push_back(0); c.tiers.push_back(1);      // unbound succeeds concurrently
+                    c.hybrid_race = true;
+                    c.parallel_fallback = true;
+                    return c;
+                });
+                auto [ec, got] = co_await net::connect_tcp_candidates(
+                    sock, eps, cond, opt, prep_failed, std::chrono::steady_clock::now() + std::chrono::seconds(2));
+                ok_hybrid = !ec && !prep_failed && got == ep && sock.is_open();
+                sock.close();
+            }
+            // Hybrid stagger delay clamped to tight deadline (must not sleep full 5s fallback_delay).
+            {
+                io::tcp_socket sock(ctx);
+                platform::TcpSocketOptions opt;
+                opt.binding.network = std::make_shared<InterfaceSelection>([](bool) noexcept -> InterfaceCandidates {
+                    InterfaceCandidates c{};
+                    c.indices.push_back(999998); c.tiers.push_back(0);
+                    c.indices.push_back(999999); c.tiers.push_back(1);
+                    c.fallback_delay = std::chrono::milliseconds(5000);
+                    c.hybrid_race = true;
+                    return c;
+                });
+                auto t0 = std::chrono::steady_clock::now();
+                auto [ec, got] = co_await net::connect_tcp_candidates(
+                    sock, eps, cond, opt, prep_failed, t0 + std::chrono::milliseconds(80));
+                auto elapsed = std::chrono::steady_clock::now() - t0;
+                ok_deadline = bool(ec) && elapsed < std::chrono::milliseconds(1000);
+                sock.close();
+            }
+            srv.close();
+        };
+        auto accept_two = [&]() -> capy::task<> {
+            for (int i = 0; i < 2; ++i) {
+                auto [ec, peer] = co_await srv.accept();
+                if (ec) break;
+                peer.close();
+            }
+        };
+        // External stop_token cancellation propagates capy::cond::canceled from hybrid race.
+        std::stop_source cancel_src;
+        auto cancel_race = [&]() -> capy::task<> {
+            std::array<io::endpoint, 1> eps{ep};
+            bool prep_failed = false;
+            io::tcp_socket sock(ctx);
+            platform::TcpSocketOptions opt;
+            opt.binding.network = std::make_shared<InterfaceSelection>([](bool) noexcept -> InterfaceCandidates {
+                InterfaceCandidates c{};
+                c.indices.push_back(999998); c.tiers.push_back(0);
+                c.indices.push_back(999999); c.tiers.push_back(1);
+                c.fallback_delay = std::chrono::milliseconds(5000);
+                c.hybrid_race = true;
+                return c;
+            });
+            auto [ec, got] = co_await net::connect_tcp_candidates(
+                sock, eps, [](std::error_code const&, io::endpoint const&) { return true; },
+                opt, prep_failed, std::chrono::steady_clock::now() + std::chrono::seconds(5));
+            ok_cancel = (ec == capy::cond::canceled);
+            sock.close();
+        };
+        auto trigger_cancel = [&]() -> capy::task<> {
+            (void)co_await corosio::delay(std::chrono::milliseconds(20));
+            cancel_src.request_stop();
+        };
+        capy::run_async(ctx.get_executor(), [] {}, [](std::exception_ptr) noexcept {})(accept_two());
+        capy::run_async(ctx.get_executor(), [] {}, [](std::exception_ptr) noexcept {})(run_client());
+        capy::run_async(ctx.get_executor(), cancel_src.get_token(), [] {}, [](std::exception_ptr) noexcept {})(cancel_race());
+        capy::run_async(ctx.get_executor(), [] {}, [](std::exception_ptr) noexcept {})(trigger_cancel());
+        (void)ctx.run_for(std::chrono::seconds(3));
+        return ok_auto && ok_hybrid && ok_deadline && ok_cancel;
+    }
 }
 
 auto main() -> int {
     if (!test_interface_plan()) return 1;
+    if (!test_auto_detect_and_hybrid()) return 2;
     for (bool uring:{false,true}) {
         if (uring && !io::has_uring) continue;
         for (bool ipv6:{false,true}) if (!run(uring,ipv6)) return 1;
     }
-    std::println("TCP keepalive and physical bindings, no-port/source/mark/interface/reuse, defaults and explicit failures passed: two address families, {} backend(s)",io::has_uring ? 2 : 1);
+    std::println("TCP keepalive and physical bindings, no-port/source/mark/interface/reuse, auto-detect, hybrid race and explicit failures passed: two address families, {} backend(s)",io::has_uring ? 2 : 1);
 }

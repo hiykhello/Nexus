@@ -220,6 +220,7 @@ static auto fetch_once(int argc,char** argv,WatchState* watch=nullptr) -> int {
         metadata.expires_at=now+86400;
         auto stored=options->cache->store(*key,cached.clear_epoch,std::move(metadata),body);
         if (!stored) return cache_error(stored.error());
+        prewarm_srs_cache_sidecar(options->cache_root,*format,body);
         if (unchanged) {
             auto published=::rulefile::read_regular_file(argv[5]);
             if (published && *published==body) return 0;
@@ -411,6 +412,7 @@ namespace {
             ::state::RulesetMetadata meta{.etag=tag,.last_modified=last_modified,.response_target=url->target,
                 .fetched_at=now,.expires_at=now+86400};
             (void)disk_cache->store(*key,cached.clear_epoch,std::move(meta),result->body);
+            prewarm_srs_cache_sidecar(config.state->cache_directory,format,result->body);
         }
         return cli::ManagedRulesetFetchResult{std::move(result->body),std::move(tag),false};
     }

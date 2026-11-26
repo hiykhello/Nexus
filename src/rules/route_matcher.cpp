@@ -33,7 +33,8 @@ namespace rules {
                     auto visit=[&](auto&& self,Rule const& node) -> void {
                         ns |= (node.type.starts_with("source-") && node.type!="source-mac") ||
                             node.type=="process-name" || node.type=="process-path" ||
-                            node.type=="process-path-regex" || node.type=="package-name";
+                            node.type=="process-path-regex" || node.type=="package-name" ||
+                            node.type=="package-name-regex";
                         na |= node.type=="auth-user"; ni |= node.type=="inbound";
                         np |= node.type=="protocol" || node.type=="tls-ech" || node.type=="client";
                         for (auto const& c : node.children) self(self, c);
@@ -58,7 +59,8 @@ namespace rules {
             auto visit=[&](auto&& self,Rule const& node) -> void {
                 needs_source |= (node.type.starts_with("source-") && node.type!="source-mac") ||
                     node.type=="process-name" || node.type=="process-path" ||
-                    node.type=="process-path-regex" || node.type=="package-name";
+                    node.type=="process-path-regex" || node.type=="package-name" ||
+                    node.type=="package-name-regex";
                 needs_auth |= node.type=="auth-user";
                 needs_inbound |= node.type=="inbound";
                 needs_protocol |= node.type=="protocol" || node.type=="tls-ech" || node.type=="client";

@@ -23,38 +23,17 @@ import platform.uring_buf_ring;
 
 export namespace cli::tun_enabled {
     struct PumpStepSummary {
-        bool input_delivered = false;
-        bool output_delivered = false;
-        bool fatal_error = false;
+        bool input_delivered = false, output_delivered = false, fatal_error = false;
         std::string error_detail;
     };
 
     [[nodiscard]] inline auto build_tun_route_plan(config::TunInbound const& cfg)
         -> std::expected<packet::TunRoutePlan, std::string> {
-        packet::TunRoutePlanInput in;
-        in.mtu = cfg.mtu;
-        in.auto_route = cfg.auto_route;
-        in.route_exclude_private = cfg.route_exclude_private;
-        if (cfg.inet4_address) {
-            auto parsed = packet::parse_tun_cidr(*cfg.inet4_address);
-            if (!parsed || parsed->family != 4) return std::unexpected("invalid inet4-address");
-            in.inet4 = *parsed;
-        }
-        if (cfg.inet6_address) {
-            auto parsed = packet::parse_tun_cidr(*cfg.inet6_address);
-            if (!parsed || parsed->family != 6) return std::unexpected("invalid inet6-address");
-            in.inet6 = *parsed;
-        }
-        for (auto const& text : cfg.route_includes) {
-            auto parsed = packet::parse_tun_cidr(text);
-            if (!parsed) return std::unexpected("invalid TUN route-include: " + text);
-            in.includes.push_back(*parsed);
-        }
-        for (auto const& text : cfg.route_excludes) {
-            auto parsed = packet::parse_tun_cidr(text);
-            if (!parsed) return std::unexpected("invalid TUN route-exclude: " + text);
-            in.excludes.push_back(*parsed);
-        }
+        packet::TunRoutePlanInput in{.mtu = cfg.mtu, .auto_route = cfg.auto_route, .route_exclude_private = cfg.route_exclude_private};
+            if (cfg.inet4_address) { auto p = packet::parse_tun_cidr(*cfg.inet4_address); if (!p || p->family != 4) return std::unexpected("invalid inet4-address"); in.inet4 = *p; }
+            if (cfg.inet6_address) { auto p = packet::parse_tun_cidr(*cfg.inet6_address); if (!p || p->family != 6) return std::unexpected("invalid inet6-address"); in.inet6 = *p; }
+            for (auto const& text : cfg.route_includes) { auto p = packet::parse_tun_cidr(text); if (!p) return std::unexpected("invalid TUN route-include: " + text); in.includes.push_back(*p); }
+            for (auto const& text : cfg.route_excludes) { auto p = packet::parse_tun_cidr(text); if (!p) return std::unexpected("invalid TUN route-exclude: " + text); in.excludes.push_back(*p); }
 #if defined(__APPLE__)
         return packet::plan_darwin_tun_network(in, cfg.interface_name);
 #elif defined(_WIN32)
@@ -73,19 +52,65 @@ export namespace cli::tun_enabled {
             auto [end, ec] = std::from_chars(ps.data(), ps.data() + ps.size(), pfx);
             auto parsed = platform::parse_ip_address(text.substr(0, slash));
             if (ec != std::errc{} || end != ps.data() + ps.size() || pfx < 1u || pfx > max_pfx ||
-                !parsed || (parsed->size == 16) != ipv6)
-                return std::nullopt;
+                !parsed || (parsed->size == 16) != ipv6) return std::nullopt;
             packet::TunAddress out{.family = static_cast<std::uint8_t>(ipv6 ? 6 : 4), .prefix = static_cast<std::uint8_t>(pfx)};
             std::copy_n(parsed->bytes.begin(), parsed->size, out.bytes.begin());
             return out;
         }
 
         inline auto mask_network(packet::TunAddress addr) noexcept -> packet::TunAddress {
-            std::size_t n = addr.family == 6 ? 16 : 4;
-            std::size_t keep = addr.prefix / 8, rem = addr.prefix % 8;
+            std::size_t n = addr.family == 6 ? 16 : 4, keep = addr.prefix / 8, rem = addr.prefix % 8;
             if (keep < n && rem) addr.bytes[keep] &= static_cast<std::uint8_t>(255u << (8 - rem));
             for (std::size_t i = keep + (rem != 0); i < n; ++i) addr.bytes[i] = 0;
             return addr;
+        }
+
+        struct TunAddrHash {
+            auto operator()(packet::TunAddress const& a) const noexcept -> std::size_t {
+                std::size_t h = (std::size_t(a.family) << 8) ^ a.prefix;
+                for (auto b : a.bytes) h = h * 1315423911u ^ b;
+                return h;
+            }
+        };
+
+        inline auto collect_linux_route_cidrs(config::TunInbound const& cfg, bool reject_dup_excludes,
+            std::vector<packet::TunAddress>& excludes, std::vector<packet::TunAddress>& includes)
+            -> std::expected<void, std::string> {
+            excludes.clear(); includes.clear();
+            std::unordered_set<packet::TunAddress, TunAddrHash> seen_inc, seen_exc;
+            for (auto const& text : cfg.route_includes) {
+                auto pfx = parse_cidr_addr(text, text.contains(':'));
+                if (!pfx || !(pfx->family == 4 ? cfg.inet4_address : cfg.inet6_address)) continue;
+                auto norm = mask_network(*pfx);
+                if (!seen_inc.insert(norm).second) continue;
+                if (includes.size() >= packet::max_tun_excludes) return std::unexpected("TUN route-include limit exceeded");
+                includes.push_back(norm);
+            }
+            for (auto const& text : cfg.route_excludes) {
+                auto pfx = parse_cidr_addr(text, text.contains(':'));
+                if (!pfx || !(pfx->family == 4 ? cfg.inet4_address : cfg.inet6_address))
+                    return std::unexpected("invalid TUN route-exclude");
+                auto norm = mask_network(*pfx);
+                if (!seen_exc.insert(norm).second) {
+                    if (reject_dup_excludes) return std::unexpected("duplicate TUN route-exclude");
+                    continue;
+                }
+                if (excludes.size() >= packet::max_tun_excludes) return std::unexpected("TUN route-exclude limit exceeded");
+                excludes.push_back(norm);
+            }
+            if (cfg.route_exclude_private) {
+                constexpr std::array priv{
+                    packet::TunAddress{4,{10},8}, packet::TunAddress{4,{172,16},12}, packet::TunAddress{4,{192,168},16},
+                    packet::TunAddress{4,{100,64},10}, packet::TunAddress{4,{169,254},16},
+                    packet::TunAddress{6,{0xfc},7}, packet::TunAddress{6,{0xfe,0x80},10}
+                };
+                for (auto const& p : priv) {
+                    if (!(p.family == 4 ? cfg.inet4_address : cfg.inet6_address) || !seen_exc.insert(p).second) continue;
+                    if (excludes.size() >= packet::max_tun_excludes) return std::unexpected("TUN route-exclude limit exceeded");
+                    excludes.push_back(p);
+                }
+            }
+            return {};
         }
 
         inline auto is_fatal_io_error(std::error_code ec) noexcept -> bool {
@@ -95,8 +120,7 @@ export namespace cli::tun_enabled {
                    ec == std::errc::network_down || ec == std::errc::permission_denied;
         }
 
-        template<class T>
-        inline auto classify_tun_failure(T const& val, std::string& detail) -> bool {
+        template<class T> inline auto classify_tun_failure(T const& val, std::string& detail) -> bool {
             if constexpr (std::same_as<T, std::error_code>) {
                 if (!is_fatal_io_error(val)) return false;
                 detail = "TUN device I/O error: " + val.message(); return true;
@@ -114,8 +138,7 @@ export namespace cli::tun_enabled {
             } else return false;
         }
 
-        template<class Step>
-        inline auto summarize_step(Step const& s) -> PumpStepSummary {
+        template<class Step> inline auto summarize_step(Step const& s) -> PumpStepSummary {
             PumpStepSummary out{s.input_delivered, s.output_delivered, false, {}};
             if (s.input_error && classify_tun_failure(*s.input_error, out.error_detail)) out.fatal_error = true;
             else if (s.output_error && classify_tun_failure(*s.output_error, out.error_detail)) out.fatal_error = true;
@@ -182,16 +205,13 @@ export namespace cli::tun_enabled {
             return false;
 #endif
         }
-
         [[nodiscard]] auto start_bridge(std::shared_ptr<platform::ExternalTunBridge> b,
             packet::MemoryLink& link, std::uint16_t mtu) -> std::expected<std::string, std::string> {
             if (!b) return std::unexpected("TUN bridge handle is null");
             auto p = packet::TunDevicePump<platform::ExternalTunBridge>::create(*b, link, mtu);
             if (!p) return std::unexpected("failed initializing TUN bridge pump");
-            bridge = std::move(b);
-            bridge_pump.emplace(std::move(*p));
-            active_name = std::string(bridge->device_name());
-            return active_name;
+            bridge = std::move(b); bridge_pump.emplace(std::move(*p));
+            return active_name = std::string(bridge->device_name());
         }
 
 #if defined(__linux__)
@@ -214,72 +234,40 @@ export namespace cli::tun_enabled {
             }
             auto& nopts = request.network;
             nopts.mtu = cfg.mtu;
-            if (cfg.inet4_address) {
-                auto address = detail::parse_cidr_addr(*cfg.inet4_address, false);
-                if (!address) return std::unexpected("invalid inet4-address");
-                nopts.addresses[nopts.address_count++] = *address;
-                if (!cfg.strict_route && address->prefix < 32) nopts.routes[nopts.route_count++] = detail::mask_network(*address);
+            auto add_fam = [&](std::optional<std::string> const& cidr, bool ipv6) -> std::expected<void, std::string> {
+                if (!cidr) return {};
+                auto addr = detail::parse_cidr_addr(*cidr, ipv6);
+                if (!addr) return std::unexpected(ipv6 ? "invalid inet6-address" : "invalid inet4-address");
+                nopts.addresses[nopts.address_count++] = *addr;
+                if (!cfg.strict_route && addr->prefix < (ipv6 ? 128 : 32)) nopts.routes[nopts.route_count++] = detail::mask_network(*addr);
                 if (cfg.auto_route && !cfg.strict_route && cfg.route_includes.empty()) {
-                    nopts.routes[nopts.route_count++] = {4, {0}, 1};
-                    nopts.routes[nopts.route_count++] = {4, {128}, 1};
+                    std::uint8_t fam = ipv6 ? 6 : 4;
+                    nopts.routes[nopts.route_count++] = {fam, {0}, 1};
+                    nopts.routes[nopts.route_count++] = {fam, {128}, 1};
                 }
-            }
-            if (cfg.inet6_address) {
-                auto address = detail::parse_cidr_addr(*cfg.inet6_address, true);
-                if (!address) return std::unexpected("invalid inet6-address");
-                nopts.addresses[nopts.address_count++] = *address;
-                if (!cfg.strict_route && address->prefix < 128) nopts.routes[nopts.route_count++] = detail::mask_network(*address);
-                if (cfg.auto_route && !cfg.strict_route && cfg.route_includes.empty()) {
-                    nopts.routes[nopts.route_count++] = {6, {0}, 1};
-                    nopts.routes[nopts.route_count++] = {6, {128}, 1};
-                }
-            }
-            for (auto const& text : cfg.route_includes) {
-                auto pfx = detail::parse_cidr_addr(text, text.contains(':'));
-                if (!pfx || !(pfx->family == 4 ? cfg.inet4_address : cfg.inet6_address)) continue;
-                auto norm = detail::mask_network(*pfx);
-                if (cfg.strict_route) {
-                    if (std::ranges::contains(std::span(request.includes).first(request.include_count), norm)) continue;
-                    if (request.include_count >= request.includes.size()) return std::unexpected("TUN route-include limit exceeded");
-                    request.includes[request.include_count++] = norm;
-                } else if (nopts.route_count < nopts.routes.size() &&
-                           !std::ranges::contains(std::span(nopts.routes).first(nopts.route_count), norm))
-                    nopts.routes[nopts.route_count++] = norm;
-            }
+                return {};
+            };
+            if (auto ok = add_fam(cfg.inet4_address, false); !ok) return std::unexpected(std::move(ok.error()));
+            if (auto ok = add_fam(cfg.inet6_address, true); !ok) return std::unexpected(std::move(ok.error()));
             if (cfg.strict_route) {
                 if (cfg.interface_name.size() >= request.name.size()) return std::unexpected("invalid TUN interface-name");
                 std::ranges::copy(cfg.interface_name, request.name.begin());
                 if (cfg.socket_mark) request.policy.mark = *cfg.socket_mark;
                 request.policy.include_mark = cfg.include_routing_mark;
                 request.policy.exclude_mark = cfg.exclude_routing_mark;
-                for (auto const& text : cfg.route_excludes) {
-                    auto prefix = detail::parse_cidr_addr(text, text.contains(':'));
-                    if (!prefix || request.exclude_count == request.excludes.size())
-                        return std::unexpected("invalid TUN route-exclude");
-                    auto normalized = detail::mask_network(*prefix);
-                    if (std::ranges::contains(std::span(request.excludes).first(request.exclude_count), normalized))
-                        return std::unexpected("duplicate TUN route-exclude");
-                    request.excludes[request.exclude_count++] = normalized;
+                request.policy.dynamic_route_table = !cfg.route_address_sets.empty() || !cfg.route_exclude_address_sets.empty();
+                if (auto ok = detail::collect_linux_route_cidrs(cfg, false, request.excludes, request.includes); !ok)
+                    return std::unexpected(std::move(ok.error()));
+            } else {
+                for (auto const& text : cfg.route_includes) {
+                    auto pfx = detail::parse_cidr_addr(text, text.contains(':'));
+                    if (!pfx || !(pfx->family == 4 ? cfg.inet4_address : cfg.inet6_address)) continue;
+                    auto norm = detail::mask_network(*pfx);
+                    if (nopts.route_count < nopts.routes.size() && !std::ranges::contains(std::span(nopts.routes).first(nopts.route_count), norm))
+                        nopts.routes[nopts.route_count++] = norm;
                 }
-                if (cfg.route_exclude_private) {
-                    constexpr std::array private_routes{
-                        packet::TunAddress{4, {10}, 8}, packet::TunAddress{4, {172, 16}, 12},
-                        packet::TunAddress{4, {192, 168}, 16}, packet::TunAddress{4, {100, 64}, 10},
-                        packet::TunAddress{4, {169, 254}, 16}, packet::TunAddress{6, {0xfc}, 7},
-                        packet::TunAddress{6, {0xfe, 0x80}, 10}
-                    };
-                    for (auto const& prefix : private_routes) {
-                        if (!(prefix.family == 4 ? cfg.inet4_address : cfg.inet6_address)) continue;
-                        if (std::ranges::contains(std::span(request.excludes).first(request.exclude_count), prefix)) continue;
-                        if (request.exclude_count >= request.excludes.size())
-                            return std::unexpected("TUN route-exclude limit exceeded");
-                        request.excludes[request.exclude_count++] = prefix;
-                    }
-                }
-                if (std::size_t(request.exclude_count) + request.include_count > packet::max_tun_excludes)
-                    return std::unexpected("TUN route-include + route-exclude limit exceeded");
             }
-            request.multi_queue = cfg.multi_queue;
+            request.multi_queue = cfg.multi_queue; request.vnet_hdr = cfg.gso;
             return request;
         }
 
@@ -294,7 +282,7 @@ export namespace cli::tun_enabled {
                 if (!started) return std::unexpected(std::move(started.error()));
                 platform_tun.emplace(std::move(*started));
             } else {
-                auto t = packet::LinuxTun::create(cfg.interface_name, {.multi_queue = cfg.multi_queue});
+                auto t = packet::LinuxTun::create(cfg.interface_name, {.vnet_hdr = cfg.gso, .multi_queue = cfg.multi_queue});
                 if (!t) return std::unexpected("failed creating TUN device " + cfg.interface_name);
                 platform_tun.emplace(std::move(*t));
             }
@@ -307,19 +295,21 @@ export namespace cli::tun_enabled {
                 if (auto st = lease->start(Clock::now() + std::chrono::seconds(5)); !st) {
                     auto err = std::format("failed starting TUN interface (code={} stage={} sys={})",
                         static_cast<int>(st.error().code), static_cast<int>(st.error().stage), st.error().system.message());
-                    lease.reset();
-                    return std::unexpected(std::move(err));
+                    lease.reset(); return std::unexpected(std::move(err));
                 }
             }
-            auto p = packet::FdPump::create(platform_tun->native_handle(), link, cfg.mtu);
+            bool use_vnet = platform_tun->vnet_hdr();
+            auto p = packet::FdPump::create(platform_tun->native_handle(), link, cfg.mtu, use_vnet);
             if (!p) return std::unexpected("failed initializing TUN packet pump");
             fd_pump.emplace(std::move(*p));
 #if defined(__linux__) && defined(NEXUS_ENABLE_IO_URING)
-            auto bsz = std::max<std::uint32_t>(cfg.mtu + 64u, 4096u);
-            if (auto r = platform::UringMultishotLoop::create({.ring_entries = 32, .buffer_size = bsz, .buffer_group_id = 1, .sq_entries = 64}))
-                if (r->arm_read_multishot(platform_tun->native_handle(), 1) && r->submit()) {
-                    uring_rx.emplace(std::move(*r)); uring_link = &link; uring_mtu = cfg.mtu;
-                }
+            if (!use_vnet) {
+                auto bsz = std::max<std::uint32_t>(cfg.mtu + 64u, 4096u);
+                if (auto r = platform::UringMultishotLoop::create({.ring_entries = 32, .buffer_size = bsz, .buffer_group_id = 1, .sq_entries = 64}))
+                    if (r->arm_read_multishot(platform_tun->native_handle(), 1) && r->submit()) {
+                        uring_rx.emplace(std::move(*r)); uring_link = &link; uring_mtu = cfg.mtu;
+                    }
+            }
 #endif
             active_name = std::string(platform_tun->name());
             if (cfg.strict_route && !network_owner) pending_strict_request = request;
@@ -328,18 +318,45 @@ export namespace cli::tun_enabled {
 
         [[nodiscard]] auto activate_strict_policy() -> std::expected<void, std::string> {
             if (!pending_strict_request) return {};
-            auto req = std::move(*pending_strict_request);
-            pending_strict_request.reset();
+            auto req = std::move(*pending_strict_request); pending_strict_request.reset();
             if (!lease) return std::unexpected("TUN strict-route requires an address");
             using Clock = std::chrono::steady_clock;
             default_policy.emplace();
-            auto deadline = Clock::now() + std::chrono::seconds(3);
-            auto excludes = std::span(req.excludes).first(req.exclude_count);
-            auto includes = std::span(req.includes).first(req.include_count);
-            auto installed = default_policy->start(*lease, req.policy, deadline, deadline + std::chrono::seconds(2),
-                excludes, req.redirect, includes);
-            if (!installed) return std::unexpected(std::format("TUN strict-route installation failed (code={})",
-                static_cast<int>(installed.error().code)));
+            auto dl = Clock::now() + std::chrono::seconds(3);
+            auto ok = default_policy->start(*lease, req.policy, dl, dl + std::chrono::seconds(2), req.excludes, req.redirect, req.includes);
+            if (!ok) return std::unexpected(std::format("TUN strict-route installation failed (code={})", static_cast<int>(ok.error().code)));
+            return {};
+        }
+
+        [[nodiscard]] auto update_route_sets(config::TunInbound const& next_cfg) -> std::expected<void, std::string> {
+            using Clock = std::chrono::steady_clock;
+            if (network_owner || default_policy) {
+                std::vector<packet::TunAddress> excludes, includes;
+                if (auto ok = detail::collect_linux_route_cidrs(next_cfg, false, excludes, includes); !ok) return ok;
+                if (network_owner) return network_owner->update_routes(excludes, includes);
+                auto upd = default_policy->update_routes(excludes, includes, Clock::now() + std::chrono::seconds(3));
+                if (!upd) return std::unexpected(std::format("TUN policy update failed (code={})", static_cast<int>(upd.error().code)));
+                return {};
+            }
+            if (lease) {
+                auto opts = lease->network_options(); opts.route_count = 0;
+                for (std::size_t i = 0; i < opts.address_count; ++i) {
+                    auto const& a = opts.addresses[i];
+                    if ((a.family == 4 && a.prefix < 32) || (a.family == 6 && a.prefix < 128)) opts.routes[opts.route_count++] = detail::mask_network(a);
+                }
+                if (next_cfg.route_includes.empty() && next_cfg.auto_route) {
+                    if (next_cfg.inet4_address) { opts.routes[opts.route_count++] = {4,{0},1}; opts.routes[opts.route_count++] = {4,{128},1}; }
+                    if (next_cfg.inet6_address) { opts.routes[opts.route_count++] = {6,{0},1}; opts.routes[opts.route_count++] = {6,{128},1}; }
+                } else for (auto const& text : next_cfg.route_includes) {
+                    auto pfx = detail::parse_cidr_addr(text, text.contains(':'));
+                    if (!pfx || !(pfx->family == 4 ? next_cfg.inet4_address : next_cfg.inet6_address)) continue;
+                    auto norm = detail::mask_network(*pfx);
+                    if (opts.route_count >= opts.routes.size()) return std::unexpected("non-strict TUN route limit exceeded");
+                    if (!std::ranges::contains(std::span(opts.routes).first(opts.route_count), norm)) opts.routes[opts.route_count++] = norm;
+                }
+                auto rep = lease->replace(opts, Clock::now() + std::chrono::seconds(3), Clock::now() + std::chrono::seconds(5));
+                if (!rep) return std::unexpected(std::format("TUN route replace failed (code={})", static_cast<int>(rep.error().code)));
+            }
             return {};
         }
 #else
@@ -357,12 +374,10 @@ export namespace cli::tun_enabled {
                 if (!plan) return std::unexpected(plan.error());
 #if defined(__APPLE__)
                 darwin_network.emplace();
-                if (auto st = darwin_network->start(active_name, *plan); !st)
-                    return std::unexpected("failed configuring Darwin utun routes: " + st.error().message());
+                if (auto st = darwin_network->start(active_name, *plan); !st) return std::unexpected("failed configuring Darwin utun routes: " + st.error().message());
 #elif defined(_WIN32)
                 windows_network.emplace();
-                if (auto st = windows_network->start(platform_tun->luid(), *plan); !st)
-                    return std::unexpected("failed configuring Wintun network: " + st.error().message());
+                if (auto st = windows_network->start(platform_tun->luid(), *plan); !st) return std::unexpected("failed configuring Wintun network: " + st.error().message());
 #endif
             }
             auto p = packet::TunDevicePump<packet::PlatformTun>::create(*platform_tun, link, cfg.mtu);
@@ -370,10 +385,10 @@ export namespace cli::tun_enabled {
             dev_pump.emplace(std::move(*p));
             return active_name;
         }
+        [[nodiscard]] auto update_route_sets(config::TunInbound const&) -> std::expected<void, std::string> { return {}; }
 #endif
 
-        template<class Validator>
-        [[nodiscard]] auto step(Validator validator, void* ctx) -> PumpStepSummary {
+        template<class Validator> [[nodiscard]] auto step(Validator validator, void* ctx) -> PumpStepSummary {
             if (bridge_pump) return detail::summarize_step(bridge_pump->step(validator, ctx));
 #if defined(__linux__)
 #if defined(__linux__) && defined(NEXUS_ENABLE_IO_URING)
@@ -383,38 +398,22 @@ export namespace cli::tun_enabled {
                 if (tx.fatal_error) return tx;
                 prev_tx = tx.output_delivered;
                 std::string fatal_detail;
-                auto recycle_ev = [&](platform::MultishotEvent& ev) noexcept {
-                    if (ev.has_buffer) { (void)uring_rx->recycle(ev.buffer_id); ev.has_buffer = false; }
-                };
-                auto rearm_or_disable = [&]() noexcept {
-                    if (uring_rx && (!uring_rx->arm_read_multishot(platform_tun->native_handle(), 1) || !uring_rx->submit()))
-                        disable_uring_rx();
-                };
+                auto recycle_ev = [&](platform::MultishotEvent& ev) noexcept { if (ev.has_buffer) { (void)uring_rx->recycle(ev.buffer_id); ev.has_buffer = false; } };
+                auto rearm_or_disable = [&]() noexcept { if (uring_rx && (!uring_rx->arm_read_multishot(platform_tun->native_handle(), 1) || !uring_rx->submit())) disable_uring_rx(); };
                 auto handle_ev = [&](platform::MultishotEvent& ev) -> int {
-                    if (ev.result == 0) {
-                        recycle_ev(ev); fatal_detail = "TUN device closed"; disable_uring_rx(); return -2;
-                    }
+                    if (ev.result == 0) { recycle_ev(ev); fatal_detail = "TUN device closed"; disable_uring_rx(); return -2; }
                     if (ev.result < 0) {
-                        recycle_ev(ev);
-                        int e = -ev.result;
+                        recycle_ev(ev); int e = -ev.result;
                         if (e == EINVAL || e == EOPNOTSUPP) { disable_uring_rx(); return 0; }
                         if (e == ENOBUFS) { rearm_or_disable(); return 0; }
-                        if (auto ec = std::error_code(e, std::generic_category()); detail::is_fatal_io_error(ec)) {
-                            fatal_detail = "TUN device I/O error: " + ec.message(); disable_uring_rx(); return -2;
-                        }
-                        if (ev.needs_rearm) rearm_or_disable();
-                        return 0;
+                        if (auto ec = std::error_code(e, std::generic_category()); detail::is_fatal_io_error(ec)) { fatal_detail = "TUN device I/O error: " + ec.message(); disable_uring_rx(); return -2; }
+                        if (ev.needs_rearm) rearm_or_disable(); return 0;
                     }
                     if (!ev.has_buffer) { if (ev.needs_rearm) rearm_or_disable(); return 0; }
-                    if (static_cast<std::size_t>(ev.result) > uring_mtu) {
-                        recycle_ev(ev); if (ev.needs_rearm) rearm_or_disable(); return 0;
-                    }
-                    auto view = uring_rx->buffer_view(ev.buffer_id, static_cast<std::size_t>(ev.result));
-                    auto ok = uring_link->send(packet::Side::first, view);
+                    if (static_cast<std::size_t>(ev.result) > uring_mtu) { recycle_ev(ev); if (ev.needs_rearm) rearm_or_disable(); return 0; }
+                    auto ok = uring_link->send(packet::Side::first, uring_rx->buffer_view(ev.buffer_id, static_cast<std::size_t>(ev.result)));
                     if (!ok && ok.error() == packet::DeviceError::queue_full) return -1;
-                    recycle_ev(ev);
-                    if (ok) prev_rx = true;
-                    if (ev.needs_rearm) rearm_or_disable();
+                    recycle_ev(ev); if (ok) prev_rx = true; if (ev.needs_rearm) rearm_or_disable();
                     return ok ? 1 : 0;
                 };
                 auto drain_pending = [&]() -> int {
@@ -432,10 +431,7 @@ export namespace cli::tun_enabled {
                 if (uring_rx) {
                     auto n = uring_rx->poll_events(uring_pending, 0, 0);
                     if (!n) disable_uring_rx();
-                    else {
-                        uring_head = 0; uring_tail = *n;
-                        if (drain_pending() == -2) return {prev_rx, prev_tx, true, std::move(fatal_detail)};
-                    }
+                    else { uring_head = 0; uring_tail = *n; if (drain_pending() == -2) return {prev_rx, prev_tx, true, std::move(fatal_detail)}; }
                 }
                 if (uring_rx) return {prev_rx, prev_tx, false, {}};
             }
@@ -463,8 +459,7 @@ export namespace cli::tun_enabled {
         }
 
         auto release(std::string& error_out, bool& had_error) noexcept -> void {
-            bridge_pump.reset();
-            bridge.reset();
+            bridge_pump.reset(); bridge.reset();
 #if defined(__linux__)
             using Clock = std::chrono::steady_clock;
 #if defined(__linux__) && defined(NEXUS_ENABLE_IO_URING)
@@ -478,10 +473,7 @@ export namespace cli::tun_enabled {
             }
             if (lease) { (void)lease->stop(Clock::now() + std::chrono::seconds(3)); lease.reset(); }
             if (platform_tun) { platform_tun->close(); platform_tun.reset(); }
-            if (network_owner) {
-                if (!network_owner->stop() && !had_error) { error_out = "TUN strict-route cleanup could not be verified"; had_error = true; }
-                network_owner.reset();
-            }
+            if (network_owner) { if (!network_owner->stop() && !had_error) { error_out = "TUN strict-route cleanup could not be verified"; had_error = true; } network_owner.reset(); }
 #else
             dev_pump.reset();
 #if defined(__APPLE__)

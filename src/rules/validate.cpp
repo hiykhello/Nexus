@@ -185,7 +185,7 @@ namespace rules {
                 if (rule.value.size()>253 || !rule.value.starts_with("*.") ||
                     !valid_domain(std::string_view(rule.value).substr(2))) return invalid("invalid domain wildcard");
                 for (auto& c:rule.value) if (c>='A' && c<='Z') c=static_cast<char>(c+('a'-'A'));
-            } else if (rule.type=="domain-regex" || rule.type=="process-path-regex") {
+            } else if (rule.type=="domain-regex" || rule.type=="process-path-regex" || rule.type=="package-name-regex") {
                 auto program=BoundedRegex::compile(rule.value);
                 if (!program) return invalid(std::string(program.error()));
                 state.regex_states+=program->state_count();
@@ -194,6 +194,11 @@ namespace rules {
                 if (state.programs) state.programs->push_back(std::move(*program));
             } else if (rule.type=="ip-cidr" || rule.type=="source-ip-cidr" || rule.type=="default-interface-address") {
                 if (!valid_cidr(rule.value)) return invalid("invalid IPv4/IPv6 CIDR");
+            } else if (rule.type=="network-interface-address") {
+                auto colon=rule.value.find(':');
+                if (colon==std::string::npos || !parse_network_type(std::string_view(rule.value).substr(0,colon)) ||
+                    !valid_cidr(rule.value.substr(colon+1)))
+                    return invalid("invalid network-interface-address");
             } else if (rule.type=="ip-version") {
                 if (rule.value!="4" && rule.value!="6") return invalid("invalid IP version");
             } else if (rule.type=="ip-is-private" || rule.type=="source-ip-is-private" ||

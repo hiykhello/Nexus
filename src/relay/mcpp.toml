@@ -111,7 +111,7 @@ sources = [
     "dns_routing.cppm", "dns_state.cppm", "dns_state.cpp",
     "session_quota.cppm", "principal_limits.cppm", "stream_relay.cppm",
     "types.cppm", "tunnel_facade.cppm", "route_interface.cppm", "traffic_interface.cppm", "relay_pool.cppm", "shadowsocks_users.cppm", "session_interface.cppm", "internal_decls.cppm", "server_interface.cppm", "relay.cppm",
-    "host.cppm", "relay.cpp", "tcp_listener_helpers.cppm", "tcp_listener.cpp", "unix_listener.cpp", "fixed_udp_inbound.cpp", "server_runtime.cpp",
+    "host.cppm", "relay.cpp", "listener_options.cppm", "tcp_listener_helpers.cppm", "tcp_listener.cpp", "unix_listener.cpp", "fixed_udp_inbound.cpp", "server_runtime.cpp",
     "routing_context.cpp",
     "session_internal.cppm", "session_udp_types.cppm", "session_udp_alias_tunnel.cppm",
     "session_traffic.cpp", "session.cpp", "session_direct_relay.cpp", "session_socks4.cpp", "session_http.cpp", "session_redirect.cpp",

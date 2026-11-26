@@ -14,6 +14,7 @@ namespace packet {
         : fd_(std::exchange(other.fd_,-1)),name_(std::exchange(other.name_,{})),
           network_claimed_(std::exchange(other.network_claimed_,false)),network_claimable_(other.network_claimable_),
           restore_blocking_(std::exchange(other.restore_blocking_,false)),
+          vnet_hdr_(std::exchange(other.vnet_hdr_,false)),
           orig_status_flags_(std::exchange(other.orig_status_flags_,0)) {
         other.invalidate();
     }
@@ -26,6 +27,7 @@ namespace packet {
             network_claimed_=std::exchange(other.network_claimed_,false);
             network_claimable_=other.network_claimable_;
             restore_blocking_=std::exchange(other.restore_blocking_,false);
+            vnet_hdr_=std::exchange(other.vnet_hdr_,false);
             orig_status_flags_=std::exchange(other.orig_status_flags_,0);
             other.invalidate();
         }
@@ -93,26 +95,43 @@ namespace packet {
     auto LinuxTun::create(std::string_view name, TunCreateOptions options) -> std::expected<LinuxTun,TunFailure> {
         if (name.size()>=IFNAMSIZ || name.find('\0')!=name.npos || name.find('%')!=name.npos)
             return std::unexpected(TunFailure{TunError::invalid_name});
-        int fd=::open("/dev/net/tun",O_RDWR|O_NONBLOCK|O_CLOEXEC);
-        if (fd<0) return std::unexpected(TunFailure{std::error_code{errno,std::generic_category()}});
-        ifreq request{};
-        std::copy(name.begin(),name.end(),request.ifr_name);
-        request.ifr_flags=IFF_TUN|IFF_NO_PI|IFF_TUN_EXCL;
-        if (options.vnet_hdr) request.ifr_flags|=IFF_VNET_HDR;
-        if (options.multi_queue) request.ifr_flags|=IFF_MULTI_QUEUE;
-        if (::ioctl(fd,TUNSETIFF,&request)<0) {
-            auto error=std::error_code{errno,std::generic_category()}; ::close(fd);
-            return std::unexpected(TunFailure{error});
-        }
+        auto open_with = [&](bool try_vnet) -> std::expected<std::pair<int, std::array<char,16>>, TunFailure> {
+            int fd=::open("/dev/net/tun",O_RDWR|O_NONBLOCK|O_CLOEXEC);
+            if (fd<0) return std::unexpected(TunFailure{std::error_code{errno,std::generic_category()}});
+            ifreq request{};
+            std::copy(name.begin(),name.end(),request.ifr_name);
+            request.ifr_flags=IFF_TUN|IFF_NO_PI|IFF_TUN_EXCL;
+            if (try_vnet) request.ifr_flags|=IFF_VNET_HDR;
+            if (options.multi_queue) request.ifr_flags|=IFF_MULTI_QUEUE;
+            if (::ioctl(fd,TUNSETIFF,&request)<0) {
+                auto error=std::error_code{errno,std::generic_category()}; ::close(fd);
+                return std::unexpected(TunFailure{error});
+            }
+            if (try_vnet) {
+                int hdr_sz = 10; // sizeof(virtio_net_hdr)
+                if (::ioctl(fd, TUNSETVNETHDRSZ, &hdr_sz) < 0) {
+                    auto error=std::error_code{errno,std::generic_category()}; ::close(fd);
+                    return std::unexpected(TunFailure{error});
+                }
+                unsigned int offload = TUN_F_CSUM | TUN_F_TSO4 | TUN_F_TSO6;
+                if (::ioctl(fd, TUNSETOFFLOAD, offload) < 0)
+                    (void)::ioctl(fd, TUNSETOFFLOAD, 0u);
+            }
+            std::array<char,16> assigned{};
+            std::copy_n(request.ifr_name,IFNAMSIZ-1,assigned.begin());
+            return std::pair{fd, assigned};
+        };
+        bool active_vnet = false;
+        std::expected<std::pair<int, std::array<char,16>>, TunFailure> opened = std::unexpected(TunFailure{TunError::invalid_device});
         if (options.vnet_hdr) {
-            int hdr_sz = 10; // sizeof(virtio_net_hdr)
-            (void)::ioctl(fd, TUNSETVNETHDRSZ, &hdr_sz);
-            unsigned int offload = TUN_F_CSUM | TUN_F_TSO4 | TUN_F_TSO6;
-            (void)::ioctl(fd, TUNSETOFFLOAD, offload);
+            opened = open_with(true);
+            if (opened) active_vnet = true;
+            else opened = open_with(false); // Graceful fallback if kernel rejects IFF_VNET_HDR
+        } else {
+            opened = open_with(false);
         }
-        std::array<char,16> assigned{};
-        std::copy_n(request.ifr_name,IFNAMSIZ-1,assigned.begin());
-        return LinuxTun(fd,assigned);
+        if (!opened) return std::unexpected(opened.error());
+        return LinuxTun(opened->first,opened->second,true,false,0,active_vnet);
     }
 
     auto LinuxTun::attach(int fd,TunFdOwnership ownership) -> std::expected<LinuxTun,TunFailure> {
@@ -140,14 +159,20 @@ namespace packet {
             if (changed_nonblock) (void)::fcntl(fd,F_SETFL,status);
         };
         std::array<char,16> assigned{};
+        bool has_vnet = false;
         ifreq request{};
         if (::ioctl(fd,TUNGETIFF,&request)<0) {
             if (verify_tun_ioctl) { restore_flags(); return std::unexpected(system_error()); }
             constexpr std::string_view fallback_name="tun-android";
             std::copy_n(fallback_name.begin(),fallback_name.size(),assigned.begin());
         } else {
-            if ((request.ifr_flags&(IFF_TUN|IFF_TAP|IFF_NO_PI|IFF_VNET_HDR))!=(IFF_TUN|IFF_NO_PI))
+            if ((request.ifr_flags&(IFF_TUN|IFF_TAP|IFF_NO_PI))!=(IFF_TUN|IFF_NO_PI))
                 { restore_flags(); return std::unexpected(TunFailure{TunError::invalid_device}); }
+            if (request.ifr_flags & IFF_VNET_HDR) {
+                int hdr_sz = 0, desired = 10;
+                has_vnet = (::ioctl(fd, TUNGETVNETHDRSZ, &hdr_sz) == 0 && hdr_sz == desired) ||
+                    (::ioctl(fd, TUNSETVNETHDRSZ, &desired) == 0);
+            }
             std::copy_n(request.ifr_name,IFNAMSIZ-1,assigned.begin());
         }
         int out_fd=fd;
@@ -161,6 +186,6 @@ namespace packet {
             }
         }
         bool restore_on_close=(ownership==TunFdOwnership::borrow && changed_nonblock);
-        return LinuxTun(out_fd,assigned,false,restore_on_close,status);
+        return LinuxTun(out_fd,assigned,false,restore_on_close,status,has_vnet);
     }
 }

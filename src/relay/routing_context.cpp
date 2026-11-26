@@ -265,6 +265,7 @@ namespace relay {
 
     auto Server::attach_session(Session& session,SessionQuota::Lease&& lease,std::shared_ptr<RouteSnapshot const> snapshot)->void {
         session.network_monitor=network_monitor.get(); session.populate_network_metadata();
+        session.find_process=find_process_enabled; session.group_hooks=group_hooks.get();
         session.dns=dns.get(); session.local_dns=local_dns.get(); session.reverse_cache=reverse_cache.get();
 #ifdef NEXUS_ENABLE_FAKEIP
         session.fakeip=fakeip.get(); session.fakeip_view=fakeip_view;
@@ -403,6 +404,8 @@ namespace relay {
                                  std::optional<std::uint32_t> direct_mark)->void {
         if(running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty())throw std::logic_error("stop before inheriting routing");
                 this->network_monitor=parent.network_monitor;
+                this->find_process_enabled=parent.find_process_enabled;
+                this->group_hooks=parent.group_hooks;
                 this->policy=parent.policy;
                 this->ordered_tcp=parent.ordered_tcp;
                 this->route_snapshots=parent.route_snapshots;
@@ -418,6 +421,7 @@ namespace relay {
                 this->ss_dynamic_users=parent.ss_dynamic_users;
                 this->direct_connect_timeout_ms=parent.direct_connect_timeout_ms;
                 this->direct_tcp_options=parent.direct_tcp_options;
+                this->listen_options=parent.listen_options; this->detour_target=parent.detour_target; this->detour_enabled=parent.detour_enabled;
 #ifdef NEXUS_TPROXY_UDP
                 this->transparent_datagrams=parent.transparent_datagrams;
 #endif

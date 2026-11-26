@@ -11,6 +11,10 @@ export namespace platform::routing {
         std::uint8_t length=0;
         auto operator==(DestinationPrefix const&) const -> bool = default;
     };
+    struct UidRange {
+        std::uint32_t start=0,end=0;
+        auto operator==(UidRange const&) const -> bool = default;
+    };
     struct Rule {
         std::uint8_t family=0,action=0,protocol=0;
         std::uint32_t table=0,priority=0,mark=0,mask=0,flags=0;
@@ -19,6 +23,8 @@ export namespace platform::routing {
         std::optional<DestinationPrefix> destination;
         std::optional<std::uint8_t> ip_protocol;
         std::optional<std::array<std::uint16_t,2>> destination_ports;
+        std::optional<UidRange> uid_range;
+        std::optional<std::array<char,16>> iifname;
         auto operator==(Rule const&) const -> bool = default;
     };
     [[nodiscard]] inline auto parse_rule(n::Message message) -> std::expected<Rule,n::Failure> {
@@ -70,6 +76,15 @@ export namespace platform::routing {
                 port_mask=true;
                 // Newer kernels report the implicit exact-match mask.
                 result.complex|=*value!=std::numeric_limits<std::uint16_t>::max();
+            } else if (attribute.type==a::FRA_UID_RANGE) {
+                auto range=n::scalar<UidRange>(attribute);
+                if (!range || result.uid_range || range->start>range->end) return n::fail(n::Error::protocol);
+                result.uid_range=*range;
+            } else if (attribute.type==a::FRA_IIFNAME) {
+                auto name=n::text(attribute,15);
+                if (!name || name->empty() || result.iifname) return n::fail(n::Error::protocol);
+                result.iifname.emplace();
+                std::ranges::copy(*name,result.iifname->begin());
             } else result.complex=true;
             return {};
         });
@@ -94,6 +109,11 @@ export namespace platform::routing {
         if(rule.mask || rule.mark) {request.scalar(a::FRA_FWMARK,rule.mark);request.scalar(a::FRA_FWMASK,rule.mask);}
         if(rule.ip_protocol)request.scalar(a::FRA_IP_PROTO,*rule.ip_protocol);
         if(rule.destination_ports)request.scalar(a::FRA_DPORT_RANGE,*rule.destination_ports);
+        if(rule.uid_range)request.scalar(a::FRA_UID_RANGE,*rule.uid_range);
+        if(rule.iifname) {
+            auto len=std::char_traits<char>::length(rule.iifname->data());
+            request.string(a::FRA_IIFNAME,std::string_view(rule.iifname->data(),len));
+        }
         if(rule.suppress_prefix)request.scalar(a::FRA_SUPPRESS_PREFIXLEN,*rule.suppress_prefix);
         return request;
     }

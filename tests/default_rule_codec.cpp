@@ -23,6 +23,15 @@ auto main() -> int {
             auto flagged=request;flagged.scalar(a::FRA_FWMASK|a::NLA_F_NESTED,rule.mask);require(!r::parse_rule(message(flagged)),5);
             r::Rule guard=rule;guard.action=a::FR_ACT_UNREACHABLE;guard.table=0;guard.flags=0;
             auto guarded=r::parse_rule(message(r::rule_request(guard,true)));require(guarded && *guarded==guard,6);
+            // Wave 30D: FRA_UID_RANGE and FRA_IIFNAME roundtrip & malformed rejection
+            r::Rule filtered{.family=static_cast<std::uint8_t>(family),.action=a::FR_ACT_TO_TBL,.protocol=186,
+                .table=60000,.priority=10010,.uid_range=r::UidRange{1000,1999},
+                .iifname=std::array<char,16>{'w','l','a','n','0'}};
+            auto f_req=r::rule_request(filtered,true);require(f_req.valid(),8);
+            auto f_parsed=r::parse_rule(message(f_req));
+            require(f_parsed && *f_parsed==filtered && !f_parsed->complex,9);
+            auto bad_uid=f_req;bad_uid.scalar(a::FRA_UID_RANGE,r::UidRange{2000,1000});require(!r::parse_rule(message(bad_uid)),10);
+            auto dup_iif=f_req;dup_iif.string(a::FRA_IIFNAME,"eth0");require(!r::parse_rule(message(dup_iif)),11);
             p::GatewayRouteRecord route;route.destination.family=family;route.table=60001;route.index=42;route.priority=12;route.protocol=186;route.scope=a::RT_SCOPE_UNIVERSE;route.type=a::RTN_UNICAST;
             route.gateway.emplace();(*route.gateway)[family==4?3:15]=1;
             if(family==4)(*route.gateway)[0]=192;else(*route.gateway)[0]=0x20;
