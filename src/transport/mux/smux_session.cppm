@@ -7,8 +7,13 @@ import mux.smux_wire;
 import mux.smux_streams;
 
 export namespace mux::smux {
+    template<class SessionT> class Stream;
+
     template<class Lower>
     class Session {
+    public:
+        using StreamHandle = Stream<Session>;
+    private:
         struct PendingCtrl {
             Command cmd = Command::fin;
             std::uint32_t sid = 0;

@@ -53,7 +53,7 @@ export namespace cli::run_detail {
             memory_shed = std::move(flag);
             for (auto& listener : listeners) listener.server->set_memory_shed(memory_shed);
         }
-        auto make_watchdog_hooks() -> ServiceHooks {
+        auto make_watchdog_hooks(std::shared_ptr<void> acme_credential = {}) -> ServiceHooks {
             auto shed = std::make_shared<std::atomic_bool>(false);
             attach_memory_shed(shed);
             return {
@@ -61,6 +61,7 @@ export namespace cli::run_detail {
                     for (auto& listener : listeners) listener.server->request_memory_reclaim(lvl);
                     dns.reclaim_memory(lvl >= 2);
                 }},
+                .acme = {{}, std::move(acme_credential)},
                 .tor = {[this](config::TorServiceConfig const& cfg) -> std::expected<std::size_t, std::string> {
                     std::size_t idx = 0;
                     for (auto& listener : listeners) {

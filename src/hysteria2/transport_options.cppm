@@ -23,10 +23,13 @@ export namespace hysteria2 {
         quic::ReceiveWindows receive_windows;
         std::vector<PortRange> port_ranges;
         std::chrono::milliseconds hop_interval{0};
+        std::chrono::milliseconds hop_interval_max{0};
         auto valid() const noexcept -> bool {
             bool hop_ok = port_ranges.empty()
-                ? hop_interval.count() == 0
+                ? (hop_interval.count() == 0 && hop_interval_max.count() == 0)
                 : (hop_interval >= std::chrono::milliseconds(500) && hop_interval <= std::chrono::hours(24) &&
+                   (hop_interval_max.count() == 0 ||
+                    (hop_interval_max >= hop_interval && hop_interval_max <= std::chrono::hours(24))) &&
                    std::ranges::all_of(port_ranges, [](PortRange r) { return r.first != 0 && r.first <= r.last; }));
             return hop_ok && handshake_timeout.count()>0 && handshake_timeout<=std::chrono::hours(1) && idle_timeout.count()>0 && idle_timeout<=std::chrono::hours(24) &&
                 native_bytes>=65536 && native_bytes<=1024ull*1024*1024 && receive_windows.valid(native_bytes) &&

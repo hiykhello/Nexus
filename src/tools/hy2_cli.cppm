@@ -18,6 +18,7 @@ export namespace cli::hy2_enabled {
             std::optional<hysteria2::SalamanderKey> salamander;
             std::vector<std::string> names;
             hysteria2::TransportOptions options;
+            config::Hysteria2Masquerade masquerade;
             std::array<std::uint8_t,16> listen_address{};
             std::unique_ptr<relay::Hysteria2Host> host;
             explicit Profile(tls::ServerCredential&& value):credential(std::move(value)){}

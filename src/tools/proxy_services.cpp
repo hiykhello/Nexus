@@ -24,6 +24,7 @@ namespace cli {
         if (cfg.acme) {
             auto h = init_acme_service(*cfg.acme, logs, std::move(hooks.acme));
             if (!h) { stop(); return std::unexpected(std::move(h.error())); }
+            acme_credential_ = acme_credential_provider_erased(*h);
             services_.push_back(std::move(*h));
         }
         if (auto ok = add(cfg.reverse_tunnel, init_reverse_tunnel_service); !ok) return ok;
@@ -44,6 +45,7 @@ namespace cli {
     }
 
     auto OptionalServicesRuntime::stop() noexcept -> void {
+        acme_credential_.reset();
         while (!services_.empty()) services_.pop_back();
     }
 }

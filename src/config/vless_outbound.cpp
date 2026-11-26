@@ -9,6 +9,8 @@ namespace config {
 
     auto parse_tcp_dial_option(Node const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
     auto parse_quic_ech_field(Node const&,QuicEchOptions&) -> bool;
+    auto parse_outbound_tls_fragment(Node const&,OutboundTlsFragment&) -> std::expected<void,std::string>;
+    auto parse_alpn_list(Node const&,std::vector<std::string>&) -> std::expected<void,std::string>;
     auto parse_vless_transport(Node const&,bool) -> std::expected<std::variant<HttpUpgradeTransport,GrpcTransport,xhttp::Profile>,std::string>;
     auto parse_outbound_multiplex(Node const&) -> std::expected<MultiplexConfig,std::string>;
 
@@ -73,7 +75,7 @@ namespace config {
                 result.uuid_file=*path; auth_seen=true;
             } else if (child.name == "tls") {
                 if (tls_seen || child.tag || !child.arguments.empty() || !child.properties.empty()) return error("invalid vless tls");
-                bool name_seen=false, ca_seen=false, verify_seen=false, key_exchange_seen=false, reality_seen=false, fingerprint_seen=false, record_size_seen=false;
+                bool name_seen=false, ca_seen=false, verify_seen=false, key_exchange_seen=false, reality_seen=false, fingerprint_seen=false, record_size_seen=false, frag_seen=false;
                 for (auto const& field : child.children) {
                     if (field.name=="server-name") {
                         auto value=scalar(field);
@@ -121,6 +123,11 @@ namespace config {
                         if (record_size_seen || field.tag || !field.properties.empty() || !field.children.empty() || !value || *value<64 || *value>16385)
                             return error("vless tls record-size-limit must be 64..16385");
                         result.record_size_limit=static_cast<std::uint16_t>(*value);record_size_seen=true;
+                    } else if (field.name=="tls-fragment") {
+                        if (std::exchange(frag_seen,true)) return error("duplicate vless tls-fragment");
+                        if (auto ok=parse_outbound_tls_fragment(field,result.tls_fragment); !ok) return std::unexpected(ok.error());
+                    } else if (field.name=="alpn") {
+                        if (auto ok=parse_alpn_list(field,result.alpn); !ok) return std::unexpected(ok.error());
                     } else if (field.name=="verify") {
                         if (verify_seen || field.tag || !field.properties.empty() || !field.children.empty() || field.arguments.size()!=1 ||
                             field.arguments[0].tag || !std::holds_alternative<bool>(field.arguments[0].data) || !std::get<bool>(field.arguments[0].data))
@@ -144,6 +151,9 @@ namespace config {
             fast_open.value_or(false) || result.fingerprint==TlsFingerprint::tls12 ||
             (result.xhttp->endpoint.version==xhttp::HttpVersion::http3 && (!tls_seen || result.reality))))
             return error("invalid VLESS XHTTP TLS, flow or socket options");
+        if (result.xhttp && result.xhttp->endpoint.version==xhttp::HttpVersion::http3 &&
+            (result.tls_fragment.enabled || result.tls_fragment.record_fragment))
+            return error("VLESS XHTTP HTTP/3 cannot use TCP TLS fragmentation");
         if ((result.ech.dns || !result.ech.config_file.empty()) && result.fingerprint==TlsFingerprint::tls12)
             return error("VLESS ECH requires TLS 1.3");
         if (result.fingerprint==TlsFingerprint::tls12 &&

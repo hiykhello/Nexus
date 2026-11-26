@@ -168,7 +168,7 @@ namespace relay {
             default_authority = "[" + default_authority + "]";
         auto request = grpc::RequestProfile::create(transport.service_name, transport.authority.empty() ? default_authority : transport.authority, true);
         auto response = transport.response_policy == GrpcTransport::ResponsePolicy::standard ? grpc::ResponsePolicy::standard : grpc::ResponsePolicy::sing_box_lite;
-        grpc::Limits limits{transport.input_window, transport.message_bytes, transport.hunk_bytes, transport.output_bytes, transport.output_messages, transport.library_bytes};
+        grpc::Limits limits{transport.input_window, transport.message_bytes, transport.hunk_bytes, transport.output_bytes, transport.output_messages, transport.library_bytes, transport.idle_timeout_ms, transport.ping_timeout_ms, transport.permit_without_stream};
         if (!request || !grpc::Session::create(grpc::Role::client, *request, response, limits))
             return std::unexpected("invalid gRPC TLS/request/limits");
         auto profile = std::make_unique<v::Profile>(std::string(host), port, *user, std::move(*shaped), std::move(*request), response, limits, transport.max_sessions, bootstrap, timeout, options, transport.tcp_fast_open, std::move(*ech_profile));

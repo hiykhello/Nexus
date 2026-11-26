@@ -10,6 +10,8 @@ namespace config {
     auto dns_hostname(std::string_view) -> bool;
     auto parse_tcp_dial_option(glaze::KdlNode const&, TcpSocketOptions&) -> std::expected<bool, std::string>;
     auto parse_quic_ech_field(glaze::KdlNode const&, QuicEchOptions&) -> bool;
+    auto parse_outbound_tls_fragment(glaze::KdlNode const&, OutboundTlsFragment&) -> std::expected<void, std::string>;
+    auto parse_alpn_list(glaze::KdlNode const&, std::vector<std::string>&) -> std::expected<void, std::string>;
     auto validate_quic_ech(QuicEchOptions const&, std::string_view, bool) -> std::expected<void, std::string>;
 
     namespace {
@@ -30,7 +32,7 @@ namespace config {
         auto parse_naive_tls_block(Node const& child, NaiveOutbound& cfg) -> std::expected<void, std::string> {
             if (child.tag || !child.arguments.empty() || !child.properties.empty() || child.children.empty())
                 return error("invalid NaiveProxy TLS block");
-            bool verify = false, kx_seen = false, fp_seen = false;
+            bool verify = false, kx_seen = false, fp_seen = false, frag_seen = false;
             for (auto const& field : child.children) {
                 auto val = scalar(field);
                 if (field.name == "server-name" && cfg.server_name.empty() && val && endpoint_name(*val))
@@ -51,6 +53,11 @@ namespace config {
                     if (!parsed) return error("invalid NaiveProxy TLS fingerprint");
                     cfg.fingerprint = *parsed;
                     fp_seen = true;
+                } else if (field.name == "tls-fragment") {
+                    if (std::exchange(frag_seen, true)) return error("duplicate NaiveProxy TLS tls-fragment");
+                    if (auto ok = parse_outbound_tls_fragment(field, cfg.tls_fragment); !ok) return ok;
+                } else if (field.name == "alpn") {
+                    if (auto ok = parse_alpn_list(field, cfg.alpn); !ok) return ok;
                 } else if (field.name == "verify" && !verify && boolean(field) == true) {
                     verify = true;
                 } else if (!parse_quic_ech_field(field, cfg.ech)) {
@@ -169,6 +176,8 @@ namespace config {
         if (cfg.protocol == NaiveProtocol::h3) {
             if (cfg.fingerprint == TlsFingerprint::tls12)
                 return error("NaiveProxy H3/QUIC cannot use tls12 fingerprint");
+            if (cfg.tls_fragment.enabled || cfg.tls_fragment.record_fragment)
+                return error("NaiveProxy H3/QUIC cannot use TCP TLS fragmentation");
             if (cfg.tcp_fast_open.value_or(false) || cfg.tcp_options.tcp_configured())
                 return error("TCP-only dial options are not valid for NaiveProxy H3/QUIC");
         }

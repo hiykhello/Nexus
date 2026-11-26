@@ -12,6 +12,10 @@ export namespace websocket {
     using Clock=std::chrono::steady_clock;
     using Violation=httpupgrade::Status;
     using UpgradeFailure=httpupgrade::Status;
+    struct UpgradeReady {
+        std::size_t prefetched=0;
+        std::vector<std::uint8_t> early_data;
+    };
 
     namespace detail {
         inline auto base64(std::span<std::uint8_t const> bytes) -> std::string {
@@ -31,6 +35,40 @@ export namespace websocket {
             return result;
         }
 
+        inline auto decode_base64url(std::string_view input,std::size_t max_bytes)
+            -> std::optional<std::vector<std::uint8_t>> {
+            if (input.empty()) return std::vector<std::uint8_t>{};
+            std::size_t pad=0;
+            while (!input.empty() && input.back()=='=') {
+                if (++pad>2) return {};
+                input.remove_suffix(1);
+            }
+            if (input.empty() || (input.size()%4)==1) return {};
+            auto const expected=(input.size()*3)/4;
+            if (expected>max_bytes) return {};
+            std::vector<std::uint8_t> out;
+            out.reserve(expected);
+            std::uint32_t acc=0;
+            int bits=0;
+            for (char c:input) {
+                int v=-1;
+                if (c>='A' && c<='Z') v=c-'A';
+                else if (c>='a' && c<='z') v=c-'a'+26;
+                else if (c>='0' && c<='9') v=c-'0'+52;
+                else if (c=='-') v=62;
+                else if (c=='_') v=63;
+                else return {};
+                acc=(acc<<6)|static_cast<std::uint32_t>(v);
+                bits+=6;
+                if (bits>=8) {
+                    bits-=8;
+                    out.push_back(static_cast<std::uint8_t>((acc>>bits)&0xffu));
+                }
+            }
+            if (bits>=6 || (bits>0 && (acc&((1u<<bits)-1u))!=0)) return {};
+            return out;
+        }
+
         inline auto proof(std::string_view key) -> std::optional<std::string> {
             constexpr std::string_view guid="258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
             std::array<char,24+guid.size()> input;
@@ -44,14 +82,21 @@ export namespace websocket {
             return base64(hash);
         }
 
-        inline auto validation(std::string_view wire,bool client,std::string_view expected)
-            -> std::optional<std::string_view> {
+        struct ValidationResult {
+            std::string_view token;
+            std::optional<std::string_view> early_header_value;
+        };
+
+        inline auto validation(std::string_view wire,bool client,std::string_view expected,
+            std::string_view early_header_name={}) -> std::optional<ValidationResult> {
             using httpupgrade::detail::equal_ci;
             std::optional<std::string_view> token;
+            std::optional<std::string_view> early_val;
             bool version=false;
-            http::HeaderFieldCursor fields(http::inspect_header(wire).field_lines);
+            std::string_view remaining=http::inspect_header(wire).field_lines;
+            std::size_t count=0;
             for (;;) {
-                auto entry=fields.next();
+                auto entry=httpupgrade::detail::next_ws_header(remaining,count,client ? std::string_view{} : early_header_name);
                 if (entry.status==http::HeaderFieldStatus::end) break;
                 if (entry.status!=http::HeaderFieldStatus::field) return {};
                 auto [name,value]=entry.field;
@@ -61,15 +106,18 @@ export namespace websocket {
                 } else if (!client && equal_ci(name,"sec-websocket-version")) {
                     if (version || value!="13") return {};
                     version=true;
+                } else if (!client && !early_header_name.empty() && equal_ci(name,early_header_name)) {
+                    if (early_val) return {};
+                    early_val=value;
                 } else if (client && name.size()>=14 && equal_ci(name.substr(0,14),"sec-websocket-")) {
                     return {};
                 }
             }
             if (!token) return {};
-            if (client) return *token==expected ? token : std::nullopt;
+            if (client) return *token==expected ? std::optional<ValidationResult>{{*token,{}}} : std::nullopt;
             std::array<std::uint8_t,16> decoded;
             if (!version || !encoding::decode_base64_exact({token->data(),token->size()},decoded)) return {};
-            return token;
+            return ValidationResult{*token,early_val};
         }
 
         template<class Stream>
@@ -85,8 +133,9 @@ export namespace websocket {
     }
 
     template<class Stream>
-    auto upgrade(Stream& stream,httpupgrade::Profile const& profile,Clock::time_point deadline)
-        -> capy::task<std::expected<std::size_t,UpgradeFailure>> {
+    auto upgrade_early(Stream& stream,httpupgrade::Profile const& profile,Clock::time_point deadline,
+        std::span<std::uint8_t const> client_early={})
+        -> capy::task<std::expected<UpgradeReady,UpgradeFailure>> {
         struct Guard { Stream& stream; bool accepted=false; ~Guard() {if (!accepted) stream.cancel();} } guard{stream};
         auto client=profile.is_client();
         std::optional<std::string> expected;
@@ -96,6 +145,14 @@ export namespace websocket {
             auto key=detail::base64(random);
             expected=detail::proof(key);
             auto fields="Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: "+key+"\r\n";
+            if (!client_early.empty()) {
+                auto const hdr=profile.effective_early_data_header();
+                auto encoded=encoding::encode_base64url(client_early,false);
+                fields.append(hdr);
+                fields.append(": ");
+                fields.append(encoded);
+                fields.append("\r\n");
+            }
             if (!expected || !co_await detail::write_upgrade(stream,profile,fields,deadline))
                 co_return std::unexpected(Violation::closed);
         }
@@ -116,10 +173,22 @@ export namespace websocket {
             if (!size || !*size || *size>packet.size()) co_return std::unexpected(Violation::truncated);
             header.append(reinterpret_cast<char const*>(packet.data()),*size);
         }
-        auto value=detail::validation(header,client,expected ? std::string_view(*expected) : std::string_view{});
-        if (!value) co_return std::unexpected(Violation::upgrade);
+        auto const early_hdr=profile.effective_early_data_header();
+        auto validated=detail::validation(header,client,expected ? std::string_view(*expected) : std::string_view{},early_hdr);
+        if (!validated) co_return std::unexpected(Violation::upgrade);
+        std::vector<std::uint8_t> server_early;
         if (!client) {
-            auto accept=detail::proof(*value);
+            if (validated->early_header_value && !validated->early_header_value->empty()) {
+                bool const explicit_cfg=profile.max_early_data()>0 || !profile.early_data_header_name().empty();
+                std::size_t const cap=profile.max_early_data()>0 ? profile.max_early_data() : httpupgrade::max_ws_early_data_bytes;
+                auto decoded=detail::decode_base64url(*validated->early_header_value,cap);
+                if (!decoded) {
+                    if (explicit_cfg) co_return std::unexpected(Violation::upgrade);
+                } else {
+                    server_early=std::move(*decoded);
+                }
+            }
+            auto accept=detail::proof(validated->token);
             if (!accept) co_return std::unexpected(Violation::upgrade);
             auto fields="Sec-WebSocket-Accept: "+*accept+"\r\n";
             if (!co_await detail::write_upgrade(stream,profile,fields,deadline)) co_return std::unexpected(Violation::closed);
@@ -128,6 +197,14 @@ export namespace websocket {
         if (!stream.prepend_owned(std::vector<std::uint8_t>(data+consumed,data+header.size())))
             co_return std::unexpected(Violation::closed);
         guard.accepted=true;
-        co_return header.size()-consumed;
+        co_return UpgradeReady{header.size()-consumed,std::move(server_early)};
+    }
+
+    template<class Stream>
+    auto upgrade(Stream& stream,httpupgrade::Profile const& profile,Clock::time_point deadline)
+        -> capy::task<std::expected<std::size_t,UpgradeFailure>> {
+        auto ready=co_await upgrade_early(stream,profile,deadline);
+        if (!ready) co_return std::unexpected(ready.error());
+        co_return ready->prefetched;
     }
 }

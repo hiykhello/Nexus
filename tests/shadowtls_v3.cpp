@@ -6,7 +6,8 @@ namespace st = shadowtls;
 namespace c = ::crypto;
 
 namespace {
-    auto make_client_hello(std::string_view password, std::span<std::uint8_t const, 28> random28) -> std::vector<std::uint8_t> {
+    auto make_client_hello(std::string_view password, std::span<std::uint8_t const, 28> random28,
+                           std::string_view sni = {}) -> std::vector<std::uint8_t> {
         std::vector<std::uint8_t> body;
         body.push_back(st::tls_handshake_client_hello);
         body.push_back(0); body.push_back(0); body.push_back(0); // handshake length filled below
@@ -14,8 +15,23 @@ namespace {
         for (std::uint8_t i = 0; i < 32; ++i) body.push_back(static_cast<std::uint8_t>(0x10 + i));
         body.push_back(32);                                       // session_id length = 32
         body.resize(body.size() + 32, 0);
-        // cipher_suites (2 bytes + 1 suite) + compression (1 + 1) + minimal extensions (2)
-        body.insert(body.end(), {0x00, 0x02, 0x13, 0x01, 0x01, 0x00, 0x00, 0x00});
+        // cipher_suites (2 bytes + 1 suite) + compression (1 + 1)
+        body.insert(body.end(), {0x00, 0x02, 0x13, 0x01, 0x01, 0x00});
+        std::vector<std::uint8_t> exts;
+        if (!sni.empty()) {
+            // Put a dummy grease/supported_versions ext before SNI to test extension walking.
+            exts.insert(exts.end(), {0x00, 43, 0x00, 0x03, 0x02, 0x03, 0x04});
+            auto const nl = static_cast<std::uint16_t>(sni.size());
+            auto const ll = static_cast<std::uint16_t>(3 + nl);
+            auto const el = static_cast<std::uint16_t>(2 + ll);
+            exts.insert(exts.end(), {0x00, 0x00, static_cast<std::uint8_t>(el >> 8), static_cast<std::uint8_t>(el),
+                                     static_cast<std::uint8_t>(ll >> 8), static_cast<std::uint8_t>(ll),
+                                     0x00, static_cast<std::uint8_t>(nl >> 8), static_cast<std::uint8_t>(nl)});
+            exts.insert(exts.end(), sni.begin(), sni.end());
+        }
+        body.push_back(static_cast<std::uint8_t>(exts.size() >> 8));
+        body.push_back(static_cast<std::uint8_t>(exts.size()));
+        body.insert(body.end(), exts.begin(), exts.end());
         std::size_t hs_len = body.size() - 4;
         body[1] = static_cast<std::uint8_t>(hs_len >> 16);
         body[2] = static_cast<std::uint8_t>(hs_len >> 8);
@@ -156,5 +172,68 @@ int main() {
     if (!alert || (*alert)[0] != st::tls_record_alert ||
         client_stream->decode(*alert).status != st::VerifiedStream::DecodeStatus::alert_closed) return 21;
 
-    std::println("ShadowTLS v3 ClientHello HMAC, TLS 1.3 ServerHello, handshake mask/cutover and chained verified records passed");
+    // 5. ClientHello SNI extraction, wildcard-sni SSRF validation, and handshake target selection.
+    if (st::extract_client_hello_sni(ch).has_value()) return 22;
+    auto ch_sni = make_client_hello(pass, random28, "API.Example.COM");
+    auto got_sni = st::extract_client_hello_sni(ch_sni);
+    if (!got_sni || *got_sni != "api.example.com") return 23;
+    auto trunc_sni = ch_sni;
+    trunc_sni.pop_back();
+    if (st::extract_client_hello_sni(trunc_sni).has_value()) return 24;
+
+    if (!st::valid_wildcard_sni_host("www.example.com") || !st::valid_wildcard_sni_host("sub-1.cdn.example.org"))
+        return 25;
+    for (std::string_view bad : {
+        "", "localhost", "foo.localhost", "printer.local", "box.localdomain", "meta.internal",
+        "gw.home.arpa", "1.0.0.127.in-addr.arpa", "127.0.0.1", "169.254.169.254", "10.0.0.1",
+        "0177.0.0.1", "::1", "[::1]", ".example.com", "example.com.", "a..b.com", "-a.com", "a-.com",
+        "bad_host.com", "singlelabel"
+    }) {
+        if (st::valid_wildcard_sni_host(bad)) return 26;
+    }
+
+    std::array<st::SniHandshakeEntry, 2> sni_map{{
+        {"api.example.com", "127.0.0.1", 9444},
+        {"cdn.example.com", "127.0.0.1", 9445},
+    }};
+    // Explicit SNI map always wins (authed or unauthed).
+    auto t1 = st::select_handshake_target("API.Example.COM", false, "default.test", 443, sni_map, st::WildcardSniMode::off);
+    if (t1 != st::HandshakeEndpoint{"127.0.0.1", 9444, false}) return 27;
+    // wildcard-sni "authed": allows authed public SNI, denies unauthed -> default.
+    auto t2 = st::select_handshake_target("other.example.com", true, "default.test", 443, sni_map, st::WildcardSniMode::authed);
+    if (t2 != st::HandshakeEndpoint{"other.example.com", 443, true}) return 28;
+    auto t3 = st::select_handshake_target("other.example.com", false, "default.test", 443, sni_map, st::WildcardSniMode::authed);
+    if (t3 != st::HandshakeEndpoint{"default.test", 443, false}) return 29;
+    // wildcard-sni "all": allows unauthed public SNI, rejects SSRF SNI -> default.
+    auto t4 = st::select_handshake_target("other.example.com", false, "default.test", 8443, sni_map, st::WildcardSniMode::all);
+    if (t4 != st::HandshakeEndpoint{"other.example.com", 8443, true}) return 30;
+    auto t5 = st::select_handshake_target("169.254.169.254", true, "default.test", 8443, sni_map, st::WildcardSniMode::all);
+    if (t5 != st::HandshakeEndpoint{"default.test", 8443, false}) return 31;
+    auto t6 = st::select_handshake_target("redis.local", true, "default.test", 8443, sni_map, st::WildcardSniMode::all);
+    if (t6 != st::HandshakeEndpoint{"default.test", 8443, false}) return 32;
+
+    // 6. IP-level SSRF checks (IPv4 + IPv6 incl. fec0::/10 site-local & 64:ff9b::/96 NAT64 embedded private IPv4).
+    if (!st::is_blocked_wildcard_ipv4({127, 0, 0, 1}) || !st::is_blocked_wildcard_ipv4({169, 254, 169, 254}) ||
+        !st::is_blocked_wildcard_ipv4({10, 0, 0, 1}) || !st::is_blocked_wildcard_ipv4({100, 64, 0, 1}) ||
+        st::is_blocked_wildcard_ipv4({1, 1, 1, 1}) || st::is_blocked_wildcard_ipv4({93, 184, 216, 34}))
+        return 33;
+    auto mk6 = [](std::array<std::uint8_t, 16> a) { return a; };
+    if (!st::is_blocked_wildcard_ipv6(mk6({0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0})) ||       // ::
+        !st::is_blocked_wildcard_ipv6(mk6({0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1})) ||       // ::1
+        !st::is_blocked_wildcard_ipv6(mk6({0xfe,0x80,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1})) || // fe80::1
+        !st::is_blocked_wildcard_ipv6(mk6({0xfe,0xc0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1})) || // fec0::1 (site-local)
+        !st::is_blocked_wildcard_ipv6(mk6({0xfe,0xff,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1})) || // fec0::/10 upper bound
+        !st::is_blocked_wildcard_ipv6(mk6({0xfd,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1})) ||    // fc00::/7 ULA
+        !st::is_blocked_wildcard_ipv6(mk6({0,0,0,0, 0,0,0,0, 0,0,0xff,0xff, 127,0,0,1})) ||          // ::ffff:127.0.0.1
+        !st::is_blocked_wildcard_ipv6(mk6({0,0x64,0xff,0x9b, 0,0,0,0, 0,0,0,0, 127,0,0,1})) ||       // 64:ff9b::127.0.0.1
+        !st::is_blocked_wildcard_ipv6(mk6({0,0x64,0xff,0x9b, 0,0,0,0, 0,0,0,0, 169,254,169,254})) || // 64:ff9b::169.254.169.254
+        !st::is_blocked_wildcard_ipv6(mk6({0,0x64,0xff,0x9b, 0,0,0,0, 0,0,0,0, 10,0,0,1})) ||        // 64:ff9b::10.0.0.1
+        !st::is_blocked_wildcard_ipv6(mk6({0,0x64,0xff,0x9b, 0,1,0,0, 0,0,0,0, 1,1,1,1})))           // 64:ff9b:1::/48 local NAT64
+        return 34;
+    if (st::is_blocked_wildcard_ipv6(mk6({0x26,0x06,0x47,0x00, 0x47,0x00,0,0, 0,0,0,0, 0,0,0x11,0x11})) ||
+        st::is_blocked_wildcard_ipv6(mk6({0,0,0,0, 0,0,0,0, 0,0,0xff,0xff, 1,1,1,1})) ||
+        st::is_blocked_wildcard_ipv6(mk6({0,0x64,0xff,0x9b, 0,0,0,0, 0,0,0,0, 1,1,1,1})))            // 64:ff9b::1.1.1.1 (public)
+        return 35;
+
+    std::println("ShadowTLS v3 ClientHello HMAC/SNI, wildcard-sni SSRF validation, handshake routing and chained verified records passed");
 }

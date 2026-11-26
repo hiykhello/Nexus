@@ -64,7 +64,7 @@ namespace cli {
             auto const& outbound=named.config;
             std::optional<relay::Reality> reality;
             if (outbound.reality) reality=relay::Reality{outbound.reality->public_key,outbound.reality->short_id};
-            auto prepared=server.add_vless(outbound.host,outbound.port,outbound.uuid_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),outbound.bootstrap_index,reality,outbound.vision,outbound.connect_timeout_ms,outbound.tcp_options,outbound.transport,outbound.grpc,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.packetaddr,outbound.fixed_udp,outbound.xhttp,outbound.certificate_sha256,outbound.ech);
+            auto prepared=server.add_vless(outbound.host,outbound.port,outbound.uuid_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),outbound.bootstrap_index,reality,outbound.vision,outbound.connect_timeout_ms,outbound.tcp_options,outbound.transport,outbound.grpc,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.packetaddr,outbound.fixed_udp,outbound.xhttp,outbound.certificate_sha256,outbound.ech,outbound.tls_fragment,outbound.alpn);
             if (!prepared) { return std::unexpected("configuration: "+prepared.error()); }
             if (outbound.multiplex && outbound.multiplex->enabled) {
                 if (auto wrapped=server.wrap_outbound_multiplex(*prepared,*outbound.multiplex); !wrapped)
@@ -102,7 +102,7 @@ namespace cli {
         for (auto const& named:config.trojan_outbounds) {
             auto const& outbound=named.config;
             auto prepared=server.add_trojan(outbound.host,outbound.port,outbound.password_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),
-                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc,outbound.ech);
+                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc,outbound.ech,outbound.tls_fragment,outbound.alpn);
             if (!prepared) { return std::unexpected("Trojan configuration: "+prepared.error()); }
             if (outbound.multiplex && outbound.multiplex->enabled) {
                 if (auto wrapped=server.wrap_outbound_multiplex(*prepared,*outbound.multiplex); !wrapped)
@@ -114,7 +114,7 @@ namespace cli {
             auto const& options=named.config.pool;
             relay::AnyTlsOptions pool{options.max_sessions,options.min_idle,std::chrono::milliseconds(options.idle_timeout_ms),std::chrono::milliseconds(options.check_interval_ms)};
             auto prepared=server.add_anytls(outbound.host,outbound.port,outbound.password_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),
-                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,pool,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc,outbound.ech);
+                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,pool,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc,outbound.ech,outbound.tls_fragment,outbound.alpn);
             if (!prepared) { return std::unexpected("AnyTLS configuration: "+prepared.error()); }
         }
         for (auto const& named:config.hysteria2_outbounds) {
@@ -124,7 +124,7 @@ namespace cli {
                 outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,transport.handshake_timeout_ms,
                 transport.idle_timeout_ms,transport.native_bytes,transport.udp,
                 transport.salamander_password_file ? std::optional<std::string_view>(*transport.salamander_password_file) : std::nullopt,
-                transport.max_udp_payload_size,transport.disable_path_mtu_discovery,transport.send_bps,transport.receive_bps,transport.disable_compensation,outbound.fingerprint,transport.lazy_tcp_response,outbound.ech,transport.receive_windows,outbound.certificate_sha256,transport.port_ranges,transport.hop_interval_ms);
+                transport.max_udp_payload_size,transport.disable_path_mtu_discovery,transport.send_bps,transport.receive_bps,transport.disable_compensation,outbound.fingerprint,transport.lazy_tcp_response,outbound.ech,transport.receive_windows,outbound.certificate_sha256,transport.port_ranges,transport.hop_interval_ms,transport.hop_interval_max_ms);
             if (!prepared) { return std::unexpected("Hysteria2 configuration: "+prepared.error()); }
         }
         for (auto const& named:config.snell_outbounds) {
@@ -144,7 +144,7 @@ namespace cli {
                 return std::unexpected("ShadowTLS configuration: "+r.error()); }
         }
         for (auto const& n : config.tuic_outbounds) { auto const& t = n.config;
-            if (auto r = server.add_tuic(t.host, t.port, t.uuid_file, t.password_file, t.server_name, t.ca_file, to_kx(t.key_exchange), t.fingerprint, t.congestion_control, t.udp_over_stream, t.heartbeat_ms, t.handshake_timeout_ms, t.idle_timeout_ms, t.native_bytes, t.bootstrap_index, t.connect_timeout_ms, t.tcp_options, t.ech, t.certificate_sha256); !r) {
+            if (auto r = server.add_tuic(t.host, t.port, t.uuid_file, t.password_file, t.server_name, t.ca_file, to_kx(t.key_exchange), t.fingerprint, t.congestion_control, t.udp_over_stream, t.heartbeat_ms, t.handshake_timeout_ms, t.idle_timeout_ms, t.native_bytes, t.bootstrap_index, t.connect_timeout_ms, t.tcp_options, t.ech, t.certificate_sha256, t.zero_rtt_handshake); !r) {
                 return std::unexpected("TUIC configuration: "+r.error()); }
         }
         for (auto const& n : config.masque_outbounds) { auto const& m = n.config;

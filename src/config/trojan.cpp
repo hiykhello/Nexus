@@ -1,6 +1,7 @@
 module config;
 import std;
 import glaze;
+import platform.ip_address;
 
 namespace config {
     auto parse_tcp_dial_option(glaze::KdlNode const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
@@ -9,6 +10,8 @@ namespace config {
     auto dns_hostname(std::string_view) -> bool;
     auto parse_quic_ech_field(glaze::KdlNode const&, QuicEchOptions&) -> bool;
     auto validate_quic_ech(QuicEchOptions const&, std::string_view, bool) -> std::expected<void, std::string>;
+    auto parse_outbound_tls_fragment(glaze::KdlNode const&, OutboundTlsFragment&) -> std::expected<void, std::string>;
+    auto parse_alpn_list(glaze::KdlNode const&, std::vector<std::string>&) -> std::expected<void, std::string>;
     auto parse_vless_transport(glaze::KdlNode const&,bool)
         -> std::expected<std::variant<HttpUpgradeTransport,GrpcTransport,xhttp::Profile>,std::string>;
     auto parse_outbound_multiplex(glaze::KdlNode const&) -> std::expected<MultiplexConfig,std::string>;
@@ -30,10 +33,50 @@ namespace config {
             if (auto number=std::get_if<std::int64_t>(&value.data); number && *number>=0) return static_cast<std::uint64_t>(*number);
             return {};
         }
+        auto boolean(Node const& node) -> std::optional<bool> {
+            if (node.tag || !node.properties.empty() || !node.children.empty() || node.arguments.size()!=1 || node.arguments[0].tag) return {};
+            auto flag=std::get_if<bool>(&node.arguments[0].data);
+            return flag ? std::optional(*flag) : std::nullopt;
+        }
         auto name(std::string_view value) -> bool { return !value.empty() && value.size()<=255 && value.find('\0')==value.npos; }
         auto path(std::string_view value) -> bool { return !value.empty() && value.front()=='/' && value.find('\0')==value.npos; }
         auto endpoint(std::string_view value) -> bool {
             return !value.empty() && value.size()<=253 && std::ranges::all_of(value,[](unsigned char c) { return c>=33 && c<=126; });
+        }
+        auto parse_host_port_target(std::string_view spec) -> std::optional<FallbackTarget> {
+            if (spec.empty() || spec.size()>260) return {};
+            for (unsigned char c : spec) if (c<33 || c>126) return {};
+            auto parsed=platform::split_host_port(spec,true);
+            if (!parsed || !endpoint(parsed->host) || !parsed->port) return {};
+            return FallbackTarget{std::string(parsed->host),parsed->port};
+        }
+        auto parse_fallback_node(Node const& node,std::size_t arg_idx,std::string_view label) -> std::expected<FallbackTarget,std::string> {
+            if (node.tag || !node.children.empty()) return error("invalid "+std::string(label));
+            if (node.properties.empty() && node.arguments.size()==arg_idx+1) {
+                auto raw=text(node.arguments[arg_idx]);
+                auto parsed=raw ? parse_host_port_target(*raw) : std::nullopt;
+                if (!parsed) return error("invalid "+std::string(label)+" endpoint");
+                return *parsed;
+            }
+            if (node.arguments.size()==arg_idx && node.properties.size()==2) {
+                auto host=string_property(node,"host"); auto pv=property(node,"port");
+                auto port=pv ? integer(*pv) : std::nullopt;
+                if (!host || !endpoint(*host) || !port || !*port || *port>65535)
+                    return error("invalid "+std::string(label)+" endpoint");
+                return FallbackTarget{*host,static_cast<std::uint16_t>(*port)};
+            }
+            return error("invalid "+std::string(label)+" syntax");
+        }
+        auto parse_alpn_fallback_entry(Node const& node,std::string_view alpn_raw,std::size_t target_idx,
+            std::vector<std::pair<std::string,FallbackTarget>>& out) -> std::expected<void,std::string> {
+            if (out.size()>=16 || alpn_raw.empty() || alpn_raw.size()>255 ||
+                !std::ranges::all_of(alpn_raw,[](unsigned char c) { return c>=33 && c<=126; }) ||
+                std::ranges::any_of(out,[&](auto const& kv) { return kv.first==alpn_raw; }))
+                return error("invalid or duplicate Trojan fallback-for-alpn");
+            auto target=parse_fallback_node(node,target_idx,"Trojan fallback-for-alpn");
+            if (!target) return std::unexpected(target.error());
+            out.emplace_back(std::string(alpn_raw),std::move(*target));
+            return {};
         }
     }
     auto parse_password_tls_inbound(Node const& node,std::string_view kind,Inbound mode,std::string_view extra={}) -> std::expected<InboundConfig,std::string> {
@@ -46,7 +89,7 @@ namespace config {
         std::array<std::uint8_t,16> listen_address{};
         bool listen=false,auth=false,tls=false;
         for (auto const& child:node.children) {
-            if(!extra.empty() && child.name==extra)continue;
+            if((!extra.empty() && child.name==extra) || (mode==Inbound::hysteria2 && child.name=="masquerade"))continue;
             if (child.name=="listen") {
                 auto host=string_property(child,"host"); auto value=property(child,"port");
                 auto port=value ? integer(*value) : std::nullopt;
@@ -75,15 +118,52 @@ namespace config {
                 auth=true;
             } else if (child.name=="tls") {
                 if (tls || child.tag || !child.arguments.empty() || !child.properties.empty()) return error("invalid "+label+" TLS");
+                bool reload_seen=false;
                 for (auto const& field:child.children) {
-                    auto file=scalar(field);
-                    if (!file || !path(*file)) return error(label+" TLS requires absolute file paths");
-                    if (field.name=="certificate-file" && config.certificate_file.empty()) config.certificate_file=*file;
-                    else if (field.name=="private-key-file" && config.private_key_file.empty()) config.private_key_file=*file;
-                    else return error("unsupported or duplicate "+label+" TLS field");
+                    if (field.name=="alpn") {
+                        if (auto ok=parse_alpn_list(field,config.alpn); !ok) return std::unexpected(ok.error());
+                    } else if (field.name=="cert-hot-reload") {
+                        auto flag=boolean(field);
+                        if (reload_seen || !flag) return error("invalid "+label+" TLS cert-hot-reload");
+                        config.cert_hot_reload=*flag; reload_seen=true;
+                    } else if (field.name=="certificate-provider") {
+                        auto prov=scalar(field);
+                        if (!config.certificate_provider.empty() || !prov || !name(*prov))
+                            return error("invalid or duplicate "+label+" TLS certificate-provider");
+                        config.certificate_provider=*prov;
+                    } else {
+                        auto file=scalar(field);
+                        if (!file || !path(*file)) return error(label+" TLS requires absolute file paths");
+                        if (field.name=="certificate-file" && config.certificate_file.empty()) config.certificate_file=*file;
+                        else if (field.name=="private-key-file" && config.private_key_file.empty()) config.private_key_file=*file;
+                        else if (field.name=="ech-key-file" && config.ech_key_file.empty()) config.ech_key_file=*file;
+                        else return error("unsupported or duplicate "+label+" TLS field");
+                    }
                 }
-                if (config.certificate_file.empty() || config.private_key_file.empty()) return error(label+" TLS requires certificate and key");
+                bool const has_files=!config.certificate_file.empty() || !config.private_key_file.empty();
+                bool const has_prov=!config.certificate_provider.empty();
+                if ((has_files && has_prov) || (!has_prov && (config.certificate_file.empty() || config.private_key_file.empty())))
+                    return error(label+" TLS requires certificate and key or certificate-provider");
+                if (has_prov && config.cert_hot_reload)
+                    return error(label+" TLS cert-hot-reload cannot be combined with certificate-provider");
                 tls=true;
+            } else if (child.name=="fallback" && mode==Inbound::trojan) {
+                if (config.fallback) return error("duplicate Trojan fallback");
+                auto parsed=parse_fallback_node(child,0,"Trojan fallback");
+                if (!parsed) return std::unexpected(parsed.error());
+                config.fallback=std::move(*parsed);
+            } else if (child.name=="fallback-for-alpn" && mode==Inbound::trojan) {
+                if (!child.children.empty()) {
+                    if (child.tag || !child.arguments.empty() || !child.properties.empty())
+                        return error("invalid Trojan fallback-for-alpn block");
+                    for (auto const& entry:child.children) {
+                        if (auto ok=parse_alpn_fallback_entry(entry,entry.name,0,config.fallback_for_alpn); !ok) return std::unexpected(ok.error());
+                    }
+                } else {
+                    auto alpn=child.arguments.empty() ? nullptr : text(child.arguments.front());
+                    if (!alpn) return error("invalid Trojan fallback-for-alpn");
+                    if (auto ok=parse_alpn_fallback_entry(child,*alpn,1,config.fallback_for_alpn); !ok) return std::unexpected(ok.error());
+                }
             } else if (child.name=="transport" && (mode==Inbound::trojan || mode==Inbound::anytls)) {
                 if (config.transport || config.grpc) return error("duplicate "+label+" transport");
                 auto parsed=parse_vless_transport(child,false);
@@ -99,15 +179,21 @@ namespace config {
             } else return error("unsupported "+label+" inbound field: "+child.name);
         }
         if (!listen || !auth || !tls) return error(label+" inbound requires listen, authentication and TLS");
-        if (mode==Inbound::hysteria2) result.hysteria2=Hysteria2Inbound{std::move(config),{},std::move(listen_host),listen_address};
-        else if (mode==Inbound::anytls) result.anytls=std::move(config);
+        if (mode==Inbound::hysteria2) {
+            Hysteria2Inbound hy2{std::move(config),{},std::move(listen_host),listen_address};
+            hy2.certificate_provider=hy2.connection.certificate_provider;
+            hy2.ech_key_file=hy2.connection.ech_key_file;
+            hy2.alpn=hy2.connection.alpn;
+            hy2.cert_hot_reload=hy2.connection.cert_hot_reload;
+            result.hysteria2=std::move(hy2);
+        } else if (mode==Inbound::anytls) result.anytls=std::move(config);
         else result.trojan=std::move(config);
         return result;
     }
     auto parse_password_tls_outbound(Node const& node,std::string_view kind,std::string_view extra) -> std::expected<PasswordTlsOutbound,std::string> {
         std::string label(kind);
         PasswordTlsOutbound result;
-        bool server=false,auth=false,tls=false,timeout=false;
+        bool server=false,auth=false,tls=false,timeout=false,frag=false;
         for (auto const& child:node.children) {
             if (!extra.empty() && child.name==extra) continue;
             if (child.name=="server") {
@@ -129,7 +215,13 @@ namespace config {
                     auto value=scalar(field);
                     if (field.name=="server-name" && result.server_name.empty() && value && endpoint(*value)) result.server_name=*value;
                     else if (field.name=="ca-file" && result.ca_file.empty() && value && path(*value)) result.ca_file=*value;
-                    else if (field.name=="certificate-sha256") {
+                    else if (field.name=="alpn") {
+                        if (auto ok=parse_alpn_list(field,result.alpn); !ok) return std::unexpected(ok.error());
+                    } else if (field.name=="tls-fragment") {
+                        if (kind=="Hysteria2") return error("tls-fragment is not valid for Hysteria2 QUIC");
+                        if (std::exchange(frag,true)) return error("duplicate "+label+" tls-fragment");
+                        if (auto ok=parse_outbound_tls_fragment(field,result.tls_fragment); !ok) return std::unexpected(ok.error());
+                    } else if (field.name=="certificate-sha256") {
                         if (field.tag || !field.properties.empty() || !field.children.empty() ||
                             field.arguments.empty() || field.arguments.size()>16-result.certificate_sha256.size())
                             return error("certificate-sha256 requires up to 16 hexadecimal fingerprints");
@@ -177,6 +269,10 @@ namespace config {
                     return error("TLS 1.2 fingerprint requires a Trojan or AnyTLS TCP outbound with X25519");
                 if (!verify || result.server_name.empty()) return error(label+" requires authenticated TLS");
                 tls=true;
+            } else if (child.name=="tls-fragment") {
+                if (kind=="Hysteria2") return error("tls-fragment is not valid for Hysteria2 QUIC");
+                if (std::exchange(frag,true)) return error("duplicate "+label+" tls-fragment");
+                if (auto ok=parse_outbound_tls_fragment(child,result.tls_fragment); !ok) return std::unexpected(ok.error());
             } else if (child.name=="connect-timeout-ms") {
                 auto value=child.arguments.size()==1 ? integer(child.arguments[0]) : std::nullopt;
                 if (timeout || child.tag || !child.properties.empty() || !child.children.empty() || !value || !*value || *value>3600000) return error("invalid "+label+" connect-timeout-ms");

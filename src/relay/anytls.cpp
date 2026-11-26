@@ -278,7 +278,7 @@ namespace relay {
         };
     }
     auto make_anytls_factory(std::string_view host,std::uint16_t port,std::string_view password_file,std::string_view server_name,
-        std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout,TcpSocketOptions options,AnyTlsOptions pool_options,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,std::span<std::array<std::uint8_t,32> const> pins,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc_cfg,QuicEchOptions const& ech,bool dns_available)
+        std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout,TcpSocketOptions options,AnyTlsOptions pool_options,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,std::span<std::array<std::uint8_t,32> const> pins,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc_cfg,QuicEchOptions const& ech,bool dns_available,config::OutboundTlsFragment const& tls_fragment,std::span<std::string const> custom_alpn)
         -> std::expected<TunnelFactory,std::string> {
         auto pool=pool_options;
         if (host.empty() || host.size()>253 || !port || std::ranges::any_of(host,[](unsigned char c) { return c<33 || c>126; }) ||
@@ -304,10 +304,15 @@ namespace relay {
             grpc_prof=std::move(*compiled);
         }
         constexpr std::array<std::string_view,1> alpn_h1{"http/1.1"}, alpn_h2{"h2"};
-        std::span<std::string_view const> alpn = grpc_prof ? std::span<std::string_view const>(alpn_h2) : hu_prof ? std::span<std::string_view const>(alpn_h1) : std::span<std::string_view const>{};
+        std::vector<std::string_view> alpn_custom;
+        alpn_custom.reserve(custom_alpn.size());
+        for (auto const& proto : custom_alpn) alpn_custom.emplace_back(proto);
+        std::span<std::string_view const> alpn = !alpn_custom.empty() ? std::span<std::string_view const>(alpn_custom) :
+            grpc_prof ? std::span<std::string_view const>(alpn_h2) : hu_prof ? std::span<std::string_view const>(alpn_h1) : std::span<std::string_view const>{};
         auto profile_tls=tls::ClientProfile::load(server_name,ca_file,exchange==TlsKeyExchange::x25519 ? 0x001d : 0x11ec,exchange==TlsKeyExchange::x25519_mlkem768_only,alpn);
         if (!profile_tls) return std::unexpected(profile_tls.error());
         profile_tls->certificate_pins.assign(pins.begin(),pins.end());
+        profile_tls->tls_fragment={.enabled=tls_fragment.enabled,.record_fragment=tls_fragment.record_fragment,.min_bytes=tls_fragment.min_bytes,.max_bytes=tls_fragment.max_bytes,.fallback_delay_ms=tls_fragment.fallback_delay_ms};
         auto shape=tls::parse_fingerprint(config::tls_fingerprint_name(fingerprint));
         if (!shape) return std::unexpected("invalid TLS fingerprint configuration");
         auto shaped=tls::ShapedClientProfile::create(std::move(*profile_tls),*shape,record_size_limit);

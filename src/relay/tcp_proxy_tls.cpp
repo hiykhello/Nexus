@@ -39,10 +39,23 @@ namespace relay {
                     return std::unexpected("HTTP CONNECT ECH requires TLS 1.3");
                 auto ech = quic_ech::Profile::load(tls_cfg.ech, tls_cfg.server_name, dns_available);
                 if (!ech) return std::unexpected(ech.error());
-                constexpr std::array<std::string_view, 1> protocols{"http/1.1"};
+                constexpr std::array<std::string_view, 1> default_protocols{"http/1.1"};
+                std::vector<std::string_view> custom_protocols;
+                custom_protocols.reserve(tls_cfg.alpn.size());
+                for (auto const& proto : tls_cfg.alpn) custom_protocols.emplace_back(proto);
+                auto protocols = custom_protocols.empty()
+                    ? std::span<std::string_view const>(default_protocols)
+                    : std::span<std::string_view const>(custom_protocols);
                 auto identity = tls::ClientProfile::load(tls_cfg.server_name, tls_cfg.ca_file, 0x001d, false, protocols);
                 if (!identity) return std::unexpected(identity.error());
                 identity->certificate_pins = tls_cfg.certificate_sha256;
+                identity->tls_fragment = {
+                    .enabled = tls_cfg.tls_fragment.enabled,
+                    .record_fragment = tls_cfg.tls_fragment.record_fragment,
+                    .min_bytes = tls_cfg.tls_fragment.min_bytes,
+                    .max_bytes = tls_cfg.tls_fragment.max_bytes,
+                    .fallback_delay_ms = tls_cfg.tls_fragment.fallback_delay_ms,
+                };
                 auto fp = tls::parse_fingerprint(config::tls_fingerprint_name(tls_cfg.fingerprint));
                 if (!fp) return std::unexpected("invalid HTTP CONNECT TLS fingerprint");
                 auto shaped = tls::ShapedClientProfile::create(std::move(*identity), *fp);

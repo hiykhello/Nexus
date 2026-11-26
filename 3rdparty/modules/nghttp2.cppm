@@ -105,6 +105,7 @@ export namespace nghttp2 {
     using ::nghttp2_session_get_stream_effective_recv_data_length;
     using ::nghttp2_session_get_remote_window_size;
     using ::NGHTTP2_SETTINGS;
+    using ::NGHTTP2_PING;
     using ::NGHTTP2_FLAG_ACK;
     using ::NGHTTP2_FLAG_END_HEADERS;
     using ::nghttp2_check_method;

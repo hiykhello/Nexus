@@ -1,5 +1,6 @@
 export module relay.hysteria2_host;
 import std;
+import config;
 import relay;
 import relay.hysteria2_business;
 import hysteria2.credential;
@@ -29,19 +30,20 @@ export namespace relay {
             Server routing{RoutingOnly{}};
             Hysteria2Business hooks;
             hysteria2::Listener<Hysteria2Business,16,16,16384> listener;
-            static auto inherit(Server&,Server&,std::size_t,std::size_t,std::span<hysteria2::Password const>,std::span<std::string const>) -> Hysteria2Business;
-            Worker(Server&,std::size_t,std::size_t,std::span<hysteria2::Password const>,std::span<std::string const>,tls::ServerCredential const&,hysteria2::TransportOptions);
+            static auto inherit(Server&,Server&,std::size_t,std::size_t,std::span<hysteria2::Password const>,std::span<std::string const>,config::Hysteria2Masquerade const&) -> Hysteria2Business;
+            Worker(Server&,std::size_t,std::size_t,std::span<hysteria2::Password const>,std::span<std::string const>,tls::ServerCredential const&,hysteria2::TransportOptions,config::Hysteria2Masquerade const&);
             ~Worker();
         };
         Server& parent_;tls::ServerCredential const& credential_;std::span<hysteria2::Password const> passwords_;
         std::span<std::string const> names_;hysteria2::TransportOptions options_;
+        config::Hysteria2Masquerade masquerade_;
         std::vector<std::unique_ptr<Worker>> workers_;std::vector<std::thread> threads_;
         std::atomic_bool stop_{false},failed_{false};
         mutable std::mutex failure_mutex_;std::optional<Hysteria2RuntimeFailure> failure_;
         auto record(Hysteria2RuntimeFailure) noexcept -> void;
         auto loop(Worker&) noexcept -> void;
     public:
-        Hysteria2Host(Server&,tls::ServerCredential const&,std::span<hysteria2::Password const>,std::span<std::string const>,hysteria2::TransportOptions options={});
+        Hysteria2Host(Server&,tls::ServerCredential const&,std::span<hysteria2::Password const>,std::span<std::string const>,hysteria2::TransportOptions options={},config::Hysteria2Masquerade masquerade={});
         Hysteria2Host(Hysteria2Host const&)=delete;auto operator=(Hysteria2Host const&) -> Hysteria2Host& = delete;
         ~Hysteria2Host();
         auto start(std::uint16_t,bool,unsigned) -> std::expected<std::uint16_t,Hysteria2HostFailure>;

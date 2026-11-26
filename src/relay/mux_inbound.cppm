@@ -19,6 +19,7 @@ import mux.smux_wire;
 import mux.sing_wire;
 import mux.smux_streams;
 import mux.smux_session;
+import mux.h2mux_session;
 import relay.stream_relay;
 import :types;
 import :route_interface;
@@ -31,7 +32,8 @@ namespace relay::mux_in {
     auto read_session_request(Stream& s) -> capy::task<std::optional<mux::sing::SessionRequest>> {
         std::array<std::uint8_t, 2> head{};
         if (!co_await mux::sing::read_exact(s, head)) co_return std::nullopt;
-        if (head[0] > mux::sing::version_1 || head[1] != mux::sing::proto_smux) co_return std::nullopt;
+        if (head[0] > mux::sing::version_1 ||
+            (head[1] != mux::sing::proto_smux && head[1] != mux::sing::proto_h2mux)) co_return std::nullopt;
         bool padded = false;
         if (head[0] == mux::sing::version_1) {
             std::array<std::uint8_t, 1> pflag{};
@@ -88,8 +90,8 @@ namespace relay::mux_in {
 
     template<class SessionT>
     struct SingMuxServerStream {
-        using SmuxStream = mux::smux::Stream<SessionT>;
-        SmuxStream stream;
+        using VirtualStream = typename SessionT::StreamHandle;
+        VirtualStream stream;
         Session& parent;
         bool response_written = false;
 
@@ -240,11 +242,9 @@ namespace relay::mux_in {
         auto await_resume() const noexcept -> void {}
     };
 
-    template<class Lower>
-    auto run_mux_server(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
-        Lower& lower, std::uint32_t max_streams) -> capy::task<> {
-        mux::smux::Limits limits{.max_streams = std::clamp<std::size_t>(max_streams, 1, 1024)};
-        mux::smux::Session<Lower> mux(lower, false, mux::smux::version_2, limits);
+    template<class MuxSession>
+    auto drive_mux_server(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+        MuxSession& mux) -> capy::task<> {
         std::stop_callback stop_cb(parent.stop.get_token(), [&]() noexcept { mux.cancel(); });
         if (parent.closed) co_return;
         std::size_t active_children = 0;
@@ -289,6 +289,19 @@ namespace relay::mux_in {
             if (ec && active_children > 0) co_await YieldOnce{};
         }
     }
+
+    template<class Lower>
+    auto run_mux_server(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+        Lower& lower, std::uint8_t proto, std::uint32_t max_streams) -> capy::task<> {
+        auto const capped = std::clamp<std::size_t>(max_streams, 1, 1024);
+        if (proto == mux::sing::proto_h2mux) {
+            mux::h2mux::Session<Lower> mux(lower, false, mux::h2mux::Limits{.max_streams = capped});
+            co_await drive_mux_server(parent, context, policy, mux);
+        } else {
+            mux::smux::Session<Lower> mux(lower, false, mux::smux::version_2, mux::smux::Limits{.max_streams = capped});
+            co_await drive_mux_server(parent, context, policy, mux);
+        }
+    }
 }
 
 namespace relay {
@@ -301,9 +314,9 @@ namespace relay {
         session.touched = Clock::now();
         if (req->padding) {
             mux::sing::PaddingStream<Stream> padded(underlying);
-            co_await mux_in::run_mux_server(session, context, policy, padded, cfg.max_streams);
+            co_await mux_in::run_mux_server(session, context, policy, padded, req->protocol, cfg.max_streams);
         } else {
-            co_await mux_in::run_mux_server(session, context, policy, underlying, cfg.max_streams);
+            co_await mux_in::run_mux_server(session, context, policy, underlying, req->protocol, cfg.max_streams);
         }
     }
 }

@@ -24,6 +24,7 @@ import quic.tls_server;
 import net.datagram_driver;
 import tls.profiles;
 import tls.server_credential;
+import tls.ech_server;
 import nghttp3;
 import ngtcp2;
 import memory.budget;
@@ -111,7 +112,8 @@ namespace relay {
     }
 
     static auto load_xhttp_inbound(std::string_view certificate,std::string_view key,std::span<std::string const> users,
-        std::span<std::string const> names,xhttp::Profile transport,std::optional<RealityInbound> reality)
+        std::span<std::string const> names,xhttp::Profile transport,std::optional<RealityInbound> reality,
+        InboundTlsRuntime const& tls_rt = {})
         -> std::expected<std::unique_ptr<vless_xhttp::InboundProfile>,std::string> {
         using namespace vless_xhttp;
         if (!transport.limits.valid() || !xhttp::valid_padding(transport.padding) || transport.download)
@@ -124,10 +126,22 @@ namespace relay {
             if (names[i].empty() || names[i].size()>255 || names[i].contains('\0') ||
                 std::find(names.begin(),names.begin()+i,names[i])!=names.begin()+i)
                 return std::unexpected("invalid or duplicate VLESS user name");
-        auto secure=reality || !certificate.empty();
+        auto secure=reality || !certificate.empty() || bool(tls_rt.atomic_credential);
         auto pki_tcp=secure && !reality && transport.endpoint.version!=xhttp::HttpVersion::http3;
-        auto auth=pki_tcp ? vless::ServerProfile::load(certificate,key,users) : vless::ServerProfile::load_users(users);
+        auto auth=pki_tcp
+            ? (tls_rt.atomic_credential
+                ? vless::ServerProfile::load_dynamic(std::static_pointer_cast<tls::AtomicServerCredential>(tls_rt.atomic_credential),users)
+                : vless::ServerProfile::load(certificate,key,users))
+            : vless::ServerProfile::load_users(users);
         if (!auth) return std::unexpected(auth.error());
+        if (pki_tcp) {
+            if (!tls_rt.alpn.empty()) auth->set_alpn(tls_rt.alpn);
+            if (!tls_rt.ech_key_file.empty()) {
+                auto ech=tls::load_ech_server_keys_file(tls_rt.ech_key_file);
+                if (!ech) return std::unexpected("XHTTP VLESS ECH key: "+ech.error());
+                auth->set_ech_keys(std::move(*ech));
+            }
+        }
         auto budget=std::make_shared<memory::Budget>(transport.limits.buffer_bytes+128u*transport.limits.buffered_posts);
         auto profile=std::unique_ptr<InboundProfile>(new InboundProfile{std::move(*auth),std::move(transport),
             {names.begin(),names.end()},std::move(budget),{},secure,{}});
@@ -140,9 +154,9 @@ namespace relay {
     }
 
     auto make_vless_xhttp_inbound_factory(std::string_view certificate,std::string_view key,std::span<std::string const> users,
-        std::span<std::string const> names,xhttp::Profile transport,std::optional<RealityInbound> reality)
+        std::span<std::string const> names,xhttp::Profile transport,std::optional<RealityInbound> reality,InboundTlsRuntime const& tls_rt)
         -> std::expected<InboundFactory,std::string> {
-        auto profile=load_xhttp_inbound(certificate,key,users,names,std::move(transport),std::move(reality));
+        auto profile=load_xhttp_inbound(certificate,key,users,names,std::move(transport),std::move(reality),tls_rt);
         if (!profile) return std::unexpected(profile.error());
         return InboundFactory{[profile=std::move(*profile)](Session& session,corosio::io_context& context,rules::RouteMatcher const& policy) {
             return vless_xhttp::serve(session,context,policy,*profile);
@@ -151,11 +165,17 @@ namespace relay {
 
     auto Server::prepare_xhttp3(std::string_view certificate,std::string_view key,std::span<std::string const> users,
         std::span<std::string const> names,xhttp::Profile transport) -> std::expected<void,std::string> {
-        auto profile=load_xhttp_inbound(certificate,key,users,names,std::move(transport),{});
+        auto profile=load_xhttp_inbound(certificate,key,users,names,std::move(transport),{},inbound_tls_runtime);
         if (!profile) return std::unexpected(profile.error());
-        auto credential=tls::load_server_credential(certificate,key);
-        if (!credential) return std::unexpected(credential.error());
-        xhttp3_inbound=std::make_shared<Xhttp3Inbound>(*this,std::move(*profile),std::move(*credential));
+        std::string alpn=!inbound_tls_runtime.alpn.empty() ? inbound_tls_runtime.alpn.front() : "h3";
+        if (inbound_tls_runtime.atomic_credential) {
+            auto atomic=std::static_pointer_cast<tls::AtomicServerCredential>(inbound_tls_runtime.atomic_credential);
+            xhttp3_inbound=std::make_shared<Xhttp3Inbound>(*this,std::move(*profile),std::nullopt,std::move(atomic),std::move(alpn));
+        } else {
+            auto credential=tls::load_server_credential(certificate,key);
+            if (!credential) return std::unexpected(credential.error());
+            xhttp3_inbound=std::make_shared<Xhttp3Inbound>(*this,std::move(*profile),std::move(*credential),nullptr,std::move(alpn));
+        }
         vless_xhttp_inbound=true;
         return {};
     }

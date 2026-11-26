@@ -1,9 +1,43 @@
 export module acme.types;
 import std;
+import crypto;
 import functional;
 
 export namespace acme {
     enum class ChallengeType : std::uint8_t { http01, tls_alpn01, dns01 };
+
+    struct EabCredentials {
+        std::string kid;
+        std::vector<std::uint8_t> hmac_key;
+
+        EabCredentials() = default;
+        EabCredentials(std::string k, std::vector<std::uint8_t> key)
+            : kid(std::move(k)), hmac_key(std::move(key)) {}
+        EabCredentials(EabCredentials const&) = default;
+        auto operator=(EabCredentials const& other) -> EabCredentials& {
+            if (this != &other) {
+                cleanse();
+                kid = other.kid;
+                hmac_key = other.hmac_key;
+            }
+            return *this;
+        }
+        EabCredentials(EabCredentials&& other) noexcept
+            : kid(std::move(other.kid)), hmac_key(std::move(other.hmac_key)) {}
+        auto operator=(EabCredentials&& other) noexcept -> EabCredentials& {
+            if (this != &other) {
+                cleanse();
+                kid = std::move(other.kid);
+                hmac_key = std::move(other.hmac_key);
+            }
+            return *this;
+        }
+        ~EabCredentials() { cleanse(); }
+
+        auto cleanse() noexcept -> void {
+            if (!hmac_key.empty()) crypto::cleanse(hmac_key);
+        }
+    };
 
     struct AcmeConfig {
         std::string directory_url;
@@ -13,6 +47,7 @@ export namespace acme {
         std::filesystem::path state_dir;
         std::int64_t renew_before_seconds = 30 * 24 * 3600;
         std::uint32_t max_poll_attempts = 10;
+        std::optional<EabCredentials> eab;
     };
 
     struct AcmeDirectory {
@@ -51,6 +86,7 @@ export namespace acme {
         std::string_view url;
         std::string_view content_type;
         std::string_view body;
+        std::vector<std::pair<std::string, std::string>> headers{};
     };
 
     struct HttpResponse {

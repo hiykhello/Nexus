@@ -201,6 +201,7 @@ export namespace relay {
         io::endpoint bound_listener;
         bool tun_redirect_dual_stack = false, redirect_tcp_dns = false;
         std::optional<std::uint32_t> redirect_socket_mark;
+        InboundTlsRuntime inbound_tls_runtime{};
         struct DetourHandle { std::mutex mu; Server* server = nullptr; io::io_context* io = nullptr; io::endpoint ep{}; bool active = false; };
         config::ListenOptions listen_options{};
         std::shared_ptr<DetourHandle> self_detour; std::weak_ptr<DetourHandle> detour_target; bool detour_enabled = false;
@@ -392,6 +393,7 @@ export namespace relay {
         [[nodiscard]] auto set_direct_tcp_options(TcpSocketOptions options) -> std::expected<void, std::string>;
         [[nodiscard]] auto set_listen_options(config::ListenOptions options) -> std::expected<void, std::string>;
         auto set_detour_target(Server* target) noexcept -> void;
+        auto set_inbound_tls_runtime(InboundTlsRuntime rt) -> void { inbound_tls_runtime = std::move(rt); }
         [[nodiscard]] auto listening_endpoint() const noexcept -> io::endpoint { return bound_listener; }
         // Replace the complete dependency set while stopped. Index 0 means
         // direct; tunnel indexes start at 2. Cycles and block are rejected.
@@ -403,7 +405,7 @@ export namespace relay {
             -> std::expected<void, std::string>;
         [[nodiscard]] auto add_vless(std::string_view host, std::uint16_t port,
             std::string_view uuid_file, std::string_view server_name, std::string_view ca_file,
-            TlsKeyExchange key_exchange = TlsKeyExchange::x25519, std::optional<std::size_t> bootstrap = {}, std::optional<Reality> reality = {}, bool vision = false, std::uint32_t timeout_ms = 10000, TcpSocketOptions tcp_options = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, bool packetaddr = false, bool fixed_udp = false, std::optional<xhttp::Profile> xhttp = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, QuicEchOptions const& ech = {})
+            TlsKeyExchange key_exchange = TlsKeyExchange::x25519, std::optional<std::size_t> bootstrap = {}, std::optional<Reality> reality = {}, bool vision = false, std::uint32_t timeout_ms = 10000, TcpSocketOptions tcp_options = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, bool packetaddr = false, bool fixed_udp = false, std::optional<xhttp::Profile> xhttp = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, QuicEchOptions const& ech = {}, config::OutboundTlsFragment const& tls_fragment = {}, std::span<std::string const> alpn = {})
             -> std::expected<std::size_t, std::string>;
         // The caller retains responsibility for securely handling the input PSK.
         [[nodiscard]] auto add_shadowsocks(std::string_view host, std::uint16_t port, std::span<std::uint8_t const> key,
@@ -419,19 +421,19 @@ export namespace relay {
         [[nodiscard]] auto wrap_outbound_multiplex(std::size_t outbound_index, config::MultiplexConfig const& cfg) -> std::expected<void, std::string>;
         [[nodiscard]] auto add_trojan(std::string_view host, std::uint16_t port, std::string_view password_file,
             std::string_view server_name, std::string_view ca_file, TlsKeyExchange exchange = TlsKeyExchange::x25519,
-            std::optional<std::size_t> bootstrap = {}, std::uint32_t timeout_ms = 10000, TcpSocketOptions options = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {})
+            std::optional<std::size_t> bootstrap = {}, std::uint32_t timeout_ms = 10000, TcpSocketOptions options = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {}, config::OutboundTlsFragment const& tls_fragment = {}, std::span<std::string const> alpn = {})
             -> std::expected<std::size_t, std::string>;
         [[nodiscard]] auto add_anytls(std::string_view host, std::uint16_t port, std::string_view password_file,
             std::string_view server_name, std::string_view ca_file, TlsKeyExchange exchange = TlsKeyExchange::x25519,
-            std::optional<std::size_t> bootstrap = {}, std::uint32_t timeout_ms = 10000, TcpSocketOptions options = {}, AnyTlsOptions pool = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {})
+            std::optional<std::size_t> bootstrap = {}, std::uint32_t timeout_ms = 10000, TcpSocketOptions options = {}, AnyTlsOptions pool = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {}, config::OutboundTlsFragment const& tls_fragment = {}, std::span<std::string const> alpn = {})
             -> std::expected<std::size_t, std::string>;
         [[nodiscard]] auto add_snell(std::string_view host, std::uint16_t port, std::string_view psk_file, std::optional<std::string_view> user_file, std::optional<std::size_t> bootstrap, std::uint32_t timeout_ms, TcpSocketOptions options, bool fast_open = false, bool http_obfs = false, std::string_view obfs_host = {}, std::string_view obfs_uri = {}, bool reuse = false) -> std::expected<std::size_t, std::string>;
         [[nodiscard]] auto add_hysteria2(std::string_view host, std::uint16_t port, std::string_view password_file, std::string_view server_name,
             std::string_view ca_file, TlsKeyExchange exchange, std::optional<std::size_t> bootstrap, std::uint32_t timeout_ms,
             TcpSocketOptions options, std::uint32_t handshake_ms, std::uint32_t idle_ms, std::size_t native_bytes, bool udp,
-            std::optional<std::string_view> salamander_file = {}, std::optional<std::size_t> max_udp_payload_size = {}, bool disable_path_mtu_discovery = false, std::uint64_t send_bps = 0, std::uint64_t receive_bps = 0, bool disable_compensation = false, TlsFingerprint fingerprint = TlsFingerprint::native, bool lazy_tcp_response = false, QuicEchOptions const& ech = {}, quic::ReceiveWindows windows = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::span<config::PortRange const> port_ranges = {}, std::uint32_t hop_interval_ms = 0) -> std::expected<std::size_t, std::string>;
+            std::optional<std::string_view> salamander_file = {}, std::optional<std::size_t> max_udp_payload_size = {}, bool disable_path_mtu_discovery = false, std::uint64_t send_bps = 0, std::uint64_t receive_bps = 0, bool disable_compensation = false, TlsFingerprint fingerprint = TlsFingerprint::native, bool lazy_tcp_response = false, QuicEchOptions const& ech = {}, quic::ReceiveWindows windows = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::span<config::PortRange const> port_ranges = {}, std::uint32_t hop_interval_ms = 0, std::uint32_t hop_interval_max_ms = 0) -> std::expected<std::size_t, std::string>;
         [[nodiscard]] auto prepare_trojan_inbound(std::string_view certificate, std::string_view key,
-            std::span<std::string const> password_files, std::span<std::string const> names = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, std::optional<config::InboundMultiplexConfig> multiplex = {}) -> std::expected<void, std::string>;
+            std::span<std::string const> password_files, std::span<std::string const> names = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, std::optional<config::InboundMultiplexConfig> multiplex = {}, std::optional<config::FallbackTarget> fallback = {}, std::span<std::pair<std::string, config::FallbackTarget> const> fallback_for_alpn = {}) -> std::expected<void, std::string>;
         [[nodiscard]] auto prepare_snell_inbound(std::string_view psk, std::optional<std::string_view> user, std::uint32_t replay_window_seconds, std::shared_ptr<SnellReplayRegistry> registry, bool http_obfs = false) -> std::expected<void, std::string>;
         [[nodiscard]] auto prepare_anytls_inbound(std::string_view certificate, std::string_view key,
             std::span<std::string const> password_files, std::span<std::string const> names = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}) -> std::expected<void, std::string>;
@@ -442,13 +444,13 @@ export namespace relay {
             TlsFingerprint fingerprint = TlsFingerprint::native, bool strict_tls13 = true, std::span<std::array<std::uint8_t, 32> const> pins = {}) -> std::expected<std::size_t, std::string>;
         [[nodiscard]] auto prepare_shadowtls_inbound(std::string_view handshake_host, std::uint16_t handshake_port,
             std::string_view target_host, std::uint16_t target_port, std::span<std::string const> password_files,
-            std::span<std::string const> names = {}, bool strict_tls13 = true) -> std::expected<void, std::string>;
+            std::span<std::string const> names = {}, bool strict_tls13 = true, std::span<std::pair<std::string, config::FallbackTarget> const> handshake_for_server_name = {}, std::string_view wildcard_sni = {}) -> std::expected<void, std::string>;
         [[nodiscard]] auto add_tuic(std::string_view host, std::uint16_t port, std::string_view uuid_file, std::string_view password_file,
             std::string_view server_name, std::string_view ca_file, TlsKeyExchange exchange = TlsKeyExchange::x25519,
             TlsFingerprint fingerprint = TlsFingerprint::native, std::string_view cc = "cubic", bool udp_over_stream = false,
             std::uint32_t heartbeat_ms = 10000, std::uint32_t handshake_ms = 10000, std::uint32_t idle_ms = 60000,
             std::size_t native_bytes = 8 * 1024 * 1024, std::optional<std::size_t> bootstrap = {},
-            std::uint32_t timeout_ms = 10000, TcpSocketOptions options = {}, QuicEchOptions const& ech = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}) -> std::expected<std::size_t, std::string>;
+            std::uint32_t timeout_ms = 10000, TcpSocketOptions options = {}, QuicEchOptions const& ech = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, bool zero_rtt_handshake = false) -> std::expected<std::size_t, std::string>;
         [[nodiscard]] auto add_masque(std::string_view host, std::uint16_t port, std::string_view authority, std::string_view bearer_file,
             std::string_view server_name, std::string_view ca_file, TlsKeyExchange exchange = TlsKeyExchange::x25519,
             TlsFingerprint fingerprint = TlsFingerprint::native, std::uint32_t handshake_ms = 10000, std::uint32_t idle_ms = 300000,

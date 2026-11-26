@@ -8,6 +8,7 @@ import hysteria2.stream_state;
 import hysteria2.tcp_channel;
 import hysteria2.transport_options;
 import hysteria2.salamander;
+import http.header;
 import quic.cid_registry;
 import quic.datagram_port;
 import quic.datagram_session;
@@ -41,6 +42,9 @@ export namespace hysteria2 {
             Hooks& hooks;Registry& registry;quic::SessionHandle owner;capy::async_event& work;
             std::optional<std::size_t> user;
             auto changed() noexcept -> void {work.set();}
+            auto has_masquerade() const noexcept -> bool requires requires { hooks.has_masquerade(); } {
+                return hooks.has_masquerade();
+            }
             auto authenticate(ClientAuthView request) noexcept -> bool {
                 static_assert(noexcept(hooks.authenticate(request)));auto selected=hooks.authenticate(request);
                 if(user)return selected==user;
@@ -156,6 +160,19 @@ export namespace hysteria2 {
                 auto result=bundle_.app.respond(stream_,status,message);listener_.driver_.notify();return result.has_value();
             }
         };
+        class MasqueradeRequest {
+            Listener& listener_;Bundle& bundle_;StreamHandle stream_;
+        public:
+            MasqueradeRequest(Listener& listener,Bundle& bundle,StreamHandle stream) noexcept
+                :listener_(listener),bundle_(bundle),stream_(stream){}
+            auto headers() const noexcept -> std::span<http::HeaderField const> {return bundle_.app.http3_request_headers(stream_);}
+            auto stop_token() const noexcept -> std::stop_token {return bundle_.stop.get_token();}
+            auto respond(std::uint16_t status,std::span<std::pair<std::string,std::string> const> extra_headers,
+                std::vector<std::uint8_t> body,bool omit_body=false) -> bool {
+                auto ok=bundle_.app.respond_http3(stream_,status,extra_headers,std::move(body),omit_body);
+                listener_.driver_.notify();return ok;
+            }
+        };
     private:
         corosio::io_context& context_;Hooks& hooks_;tls::ServerCredential const& credential_;TransportOptions options_;
         corosio::udp_socket socket_;corosio::endpoint local_;capy::async_event work_;
@@ -198,6 +215,14 @@ export namespace hysteria2 {
             auto& owner=*lifetime.listener;Request request(owner,*lifetime.bundle,lifetime.stream);
             co_await owner.hooks_.serve(request);
         }
+        static auto serve_masquerade(Business lifetime) -> capy::task<> {
+            auto& owner=*lifetime.listener;
+            if constexpr (requires(MasqueradeRequest& r) { owner.hooks_.serve_masquerade(r); }) {
+                MasqueradeRequest request(owner,*lifetime.bundle,lifetime.stream);
+                co_await owner.hooks_.serve_masquerade(request);
+            }
+            co_return;
+        }
         static auto maintain(Monitor lifetime) -> capy::task<> {
             auto& owner=*lifetime.listener;
             while(!owner.stopped_){
@@ -216,6 +241,21 @@ export namespace hysteria2 {
                                     (void)bundle->app.reset(handle);parent->driver_.notify();parent->work_.set();
                                 })(serve(Business(owner,*entry,handle)));
                         }catch(...){(void)entry->app.reset(handle);throw;}
+                    }
+                    if constexpr (requires(MasqueradeRequest& r) { owner.hooks_.serve_masquerade(r); }) {
+                        while(auto pending=entry->app.pending_masquerade()){
+                            if(!entry->app.claim_masquerade(*pending))break;
+                            auto handle=*pending;
+                            try {
+                                capy::run_async(owner.context_.get_executor(),entry->stop.get_token(),
+                                    [parent=&owner,bundle=&*entry,handle]() noexcept {
+                                        bundle->app.finish_masquerade(handle);parent->driver_.notify();parent->work_.set();
+                                    },
+                                    [parent=&owner,bundle=&*entry,handle](std::exception_ptr) noexcept {
+                                        bundle->app.finish_masquerade(handle);parent->driver_.notify();parent->work_.set();
+                                    })(serve_masquerade(Business(owner,*entry,handle)));
+                            }catch(...){entry->app.finish_masquerade(handle);throw;}
+                        }
                     }
                 }
                 owner.port_.maintain();owner.driver_.notify();

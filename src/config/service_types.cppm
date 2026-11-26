@@ -46,6 +46,12 @@ export namespace config {
         std::uint16_t tls_alpn_listen_port = 0;
         std::string ca_file;
         std::uint32_t check_interval_ms = 3600000;
+        std::string dns01_provider;
+        std::string dns01_api_token_file;
+        std::string dns01_access_key_id_file;
+        std::string dns01_access_key_secret_file;
+        std::string eab_kid;
+        std::string eab_hmac_file;
         auto operator==(AcmeServiceConfig const&) const -> bool = default;
     };
 

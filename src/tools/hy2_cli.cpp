@@ -45,11 +45,12 @@ namespace cli::hy2_enabled {
             profile->options.salamander_password=profile->salamander->bytes();
         }
         if(!profile->options.valid())return std::unexpected("invalid Hysteria2 transport options");
+        profile->masquerade=cfg.masquerade;
         profiles_[index]=std::move(profile);return {};
     }
     auto Runtime::start(std::size_t index,relay::Server& server,std::uint16_t port,bool ipv6,unsigned workers)->std::expected<std::uint16_t,std::string> {
         if(index>=profiles_.size() || !profiles_[index])return std::unexpected("Hysteria2 profile missing");
-        auto& profile=*profiles_[index];profile.host=std::make_unique<relay::Hysteria2Host>(server,profile.credential,profile.passwords,profile.names,profile.options);
+        auto& profile=*profiles_[index];profile.host=std::make_unique<relay::Hysteria2Host>(server,profile.credential,profile.passwords,profile.names,profile.options,profile.masquerade);
         corosio::endpoint endpoint;
         if (ipv6) endpoint={corosio::ipv6_address(profile.listen_address),port};
         else {

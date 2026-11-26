@@ -29,7 +29,7 @@ export namespace quic {
         std::uint64_t last_time_=0;
         int terminal_=0;
         bool started_=false,server_=false,busy_=false,stop_requested_=false,remote_parameters_=false,tls_finished_=false;
-        bool client_tls_started_=false;
+        bool client_tls_started_=false,server_early_accepted_=false;
         struct Call { Connection& owner; ~Call() { owner.busy_=false; if (owner.stop_requested_) owner.stop(); } };
         template<class Function> static auto guarded(Function&& function) noexcept -> int {
             try { return std::forward<Function>(function)(); }
@@ -103,7 +103,15 @@ export namespace quic {
             };
             result.recv_stream_data=[](Native*,std::uint32_t flags,std::int64_t stream,std::uint64_t offset,std::uint8_t const* data,std::size_t size,void* owner,void* stream_owner) noexcept -> int {
                 auto& self=*static_cast<Connection*>(owner);
-                return guarded([&] { return !self.tls_finished_ || (flags&stream_data_flag_0rtt) ? err_callback_failure : self.application_.stream_data(self,flags,stream,offset,std::span(data,size),stream_owner); });
+                return guarded([&] {
+                    if (flags&stream_data_flag_0rtt) {
+                        if (!self.server_ || !self.server_early_accepted_) return err_callback_failure;
+                        if constexpr (requires { self.application_.early_stream_data(self,flags,stream,offset,std::span(data,size),stream_owner); })
+                            return self.application_.early_stream_data(self,flags,stream,offset,std::span(data,size),stream_owner);
+                        return err_callback_failure;
+                    }
+                    return !self.tls_finished_ ? err_callback_failure : self.application_.stream_data(self,flags,stream,offset,std::span(data,size),stream_owner);
+                });
             };
             result.acked_stream_data_offset=[](Native*,std::int64_t stream,std::uint64_t offset,std::uint64_t size,void* owner,void* stream_owner) noexcept -> int {
                 auto& self=*static_cast<Connection*>(owner);
@@ -135,7 +143,15 @@ export namespace quic {
             };
             result.recv_datagram=[](Native*,std::uint32_t flags,std::uint8_t const* data,std::size_t size,void* owner) noexcept -> int {
                 auto& self=*static_cast<Connection*>(owner);
-                return guarded([&] { return !self.tls_finished_ || (flags&datagram_flag_0rtt) ? err_callback_failure : self.application_.datagram(self,std::span(data,size)); });
+                return guarded([&] {
+                    if (flags&datagram_flag_0rtt) {
+                        if (!self.server_ || !self.server_early_accepted_) return err_callback_failure;
+                        if constexpr (requires { self.application_.early_datagram(self,std::span(data,size)); })
+                            return self.application_.early_datagram(self,std::span(data,size));
+                        return err_callback_failure;
+                    }
+                    return !self.tls_finished_ ? err_callback_failure : self.application_.datagram(self,std::span(data,size));
+                });
             };
             result.get_new_connection_id2=[](Native*,ngtcp2_cid* id,ngtcp2_stateless_reset_token* token,std::size_t size,void* owner) noexcept -> int {
                 auto& self=*static_cast<Connection*>(owner);
@@ -187,7 +203,7 @@ export namespace quic {
                 error=protection_.install_retry(*connection_);
                 // Start an eligible client before the first write so ngtcp2
                 // can open its early stream and coalesce it with the Initial.
-                if constexpr(requires {handshake_.resumption_policy().early_suite();}) {
+                if constexpr(requires {handshake_.resumption_policy().early_suite();} || requires {handshake_.supports_early_data();}) {
                     if (!error) error=guarded([&] {return start_client_tls();});
                 }
             }
@@ -279,16 +295,25 @@ export namespace quic {
             auto error=ngtcp2_abi::ngtcp2_conn_decode_and_set_0rtt_transport_params(
                 connection_,parameters.data(),parameters.size());
             if (!error) error=protection_.install_client_early_secret(*connection_,suite,secret);
-            if (!error) application_.allow_early_data();
+            if (!error) { if constexpr (requires { application_.allow_early_data(); }) application_.allow_early_data(); }
+            return error;
+        }
+        auto install_server_early_data(PacketSuite suite,std::span<std::uint8_t const> secret) -> int {
+            if (!connection_ || !server_) return ngtcp2::err_invalid_argument;
+            auto error=protection_.install_early_secret(*connection_,suite,secret);
+            if (!error) {
+                server_early_accepted_=true;
+                if constexpr (requires { application_.accept_server_early_data(); }) application_.accept_server_early_data();
+            }
             return error;
         }
         auto resolve_client_early_data(bool accepted) -> int {
             if (accepted) {
-                application_.accept_early_data();
+                if constexpr (requires { application_.accept_early_data(); }) application_.accept_early_data();
                 return 0;
             }
             auto error=ngtcp2_abi::ngtcp2_conn_tls_early_data_rejected(connection_);
-            if (!error) application_.reject_early_data();
+            if (!error) { if constexpr (requires { application_.reject_early_data(); }) application_.reject_early_data(); }
             return error;
         }
         auto early_transport_parameters(std::span<std::uint8_t> output) -> std::span<std::uint8_t const> {

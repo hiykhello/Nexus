@@ -124,6 +124,9 @@ export namespace quic {
             } catch (std::bad_alloc const&) { return ngtcp2::err_nomem; }
             catch (...) { return ngtcp2::err_callback_failure; }
         }
+        auto install_early_secret(Native& conn,PacketSuite suite,std::span<std::uint8_t const> secret) -> int {
+            return install_client_early_secret(conn,suite,secret);
+        }
         auto install_client_early_secret(Native& conn,PacketSuite suite,std::span<std::uint8_t const> secret) -> int {
             using namespace ngtcp2_abi;
             auto slot=acquire(suite,secret);

@@ -50,6 +50,72 @@ export namespace shadowtls {
         std::span<std::uint8_t const> record,
         std::span<std::string_view const> passwords) -> std::optional<std::size_t>;
 
+    // Extract lowercased TLS SNI hostname from a complete ClientHello record.
+    [[nodiscard]] auto extract_client_hello_sni(
+        std::span<std::uint8_t const> record) -> std::optional<std::string>;
+
+    // Strict SSRF-hardened DNS hostname validator for wildcard-sni dynamic dialing.
+    [[nodiscard]] auto valid_wildcard_sni_host(std::string_view sni) noexcept -> bool;
+
+    // IP-level SSRF filters for wildcard-sni resolved endpoints (blocks loopback, RFC1918,
+    // CGNAT, link-local/IMDS, ULA, site-local fec0::/10, multicast, and IPv4-mapped / NAT64 64:ff9b::/96 private IPs).
+    [[nodiscard]] inline auto is_blocked_wildcard_ipv4(std::array<std::uint8_t, 4> const& b) noexcept -> bool {
+        return b[0] == 0 || b[0] == 10 || b[0] == 127 ||
+            (b[0] == 100 && (b[1] & 0xc0u) == 64) ||
+            (b[0] == 169 && b[1] == 254) ||
+            (b[0] == 172 && (b[1] & 0xf0u) == 16) ||
+            (b[0] == 192 && b[1] == 168) ||
+            (b[0] == 192 && b[1] == 0 && b[2] == 0) ||
+            b[0] >= 224;
+    }
+
+    [[nodiscard]] inline auto is_blocked_wildcard_ipv6(std::array<std::uint8_t, 16> const& b) noexcept -> bool {
+        bool all_zero = true, loopback = true, v4_mapped = true, nat64_wk_zero = true;
+        for (std::size_t i = 0; i < 16; ++i) {
+            if (b[i]) all_zero = false;
+            if (i < 15 && b[i]) loopback = false;
+            if (i < 10 && b[i]) v4_mapped = false;
+            if (i >= 4 && i < 12 && b[i]) nat64_wk_zero = false;
+        }
+        if (all_zero || (loopback && b[15] == 1) || b[0] == 0xffu) return true;
+        if (b[0] == 0xfeu && ((b[1] & 0xc0u) == 0x80u || (b[1] & 0xc0u) == 0xc0u)) return true; // fe80::/10 & fec0::/10
+        if ((b[0] & 0xfeu) == 0xfcu) return true;                                                // fc00::/7 ULA
+        if (v4_mapped && b[10] == 0xffu && b[11] == 0xffu)                                       // ::ffff:0:0/96
+            return is_blocked_wildcard_ipv4({b[12], b[13], b[14], b[15]});
+        if (b[0] == 0x00u && b[1] == 0x64u && b[2] == 0xffu && b[3] == 0x9bu) {
+            if (nat64_wk_zero) return is_blocked_wildcard_ipv4({b[12], b[13], b[14], b[15]});    // 64:ff9b::/96
+            if (b[4] == 0x00u && b[5] == 0x01u) return true;                                     // 64:ff9b:1::/48 local NAT64
+        }
+        return false;
+    }
+
+    enum class WildcardSniMode : std::uint8_t { off, authed, all };
+
+    [[nodiscard]] auto parse_wildcard_sni_mode(std::string_view text) noexcept -> std::optional<WildcardSniMode>;
+
+    struct HandshakeEndpoint {
+        std::string host;
+        std::uint16_t port = 0;
+        bool is_wildcard = false;
+        auto operator==(HandshakeEndpoint const&) const -> bool = default;
+    };
+
+    struct SniHandshakeEntry {
+        std::string server_name;
+        std::string host;
+        std::uint16_t port = 0;
+    };
+
+    // Select ShadowTLS v3 handshake backend from ClientHello SNI, explicit per-SNI map,
+    // wildcard-sni policy, and authentication status.
+    [[nodiscard]] auto select_handshake_target(
+        std::optional<std::string_view> sni,
+        bool authenticated,
+        std::string_view default_host,
+        std::uint16_t default_port,
+        std::span<SniHandshakeEntry const> sni_map,
+        WildcardSniMode wildcard_mode) -> HandshakeEndpoint;
+
     // Extract ServerHello.random (32 bytes) from a complete TLS Handshake record.
     [[nodiscard]] auto extract_server_random(
         std::span<std::uint8_t const> record) noexcept -> std::optional<std::array<std::uint8_t, tls_random_size>>;

@@ -46,14 +46,26 @@ export namespace tuic::detail {
                         app.early_datagrams_.pop_front();
                         if (auto err = app.process_packet_wire(pkt, false)) return err;
                     }
+                    while (!app.early_.server_early_uni_packets.empty()) {
+                        auto pkt = std::move(app.early_.server_early_uni_packets.front());
+                        app.early_.server_early_uni_packets.pop_front();
+                        if (auto err = app.process_packet_wire(pkt, true)) return err;
+                    }
                     app.signal();
                     return 0;
                 }
                 app.auth_failed_ = true;
                 app.early_datagrams_.clear();
+                app.early_.server_early_uni_packets.clear();
                 return ngtcp2::err_callback_failure;
             }
-            if (!app.authenticated_) return ngtcp2::err_callback_failure;
+            if (!app.authenticated_) {
+                if (app.server_ && !app.auth_failed_ && cmd == static_cast<std::uint8_t>(Command::packet)) {
+                    (void)app.early_.buffer_server_uni_packet(s.rx);
+                    return 0;
+                }
+                return ngtcp2::err_callback_failure;
+            }
             if (cmd == static_cast<std::uint8_t>(Command::dissociate)) {
                 auto dissoc = decode_dissociate(s.rx);
                 if (!dissoc) return ngtcp2::err_callback_failure;

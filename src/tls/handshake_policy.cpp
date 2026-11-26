@@ -27,7 +27,8 @@ namespace tls {
         return {};
     }
 
-    auto encode_encrypted_extensions(std::span<std::uint8_t const> alpn,std::optional<std::span<std::uint8_t const>> quic_parameters)
+    auto encode_encrypted_extensions(std::span<std::uint8_t const> alpn,std::optional<std::span<std::uint8_t const>> quic_parameters,
+        std::span<std::uint8_t const> ech_retry_configs)
         -> std::expected<std::vector<std::uint8_t>,HandshakePolicyError> {
         using E=HandshakePolicyError;
         if (alpn.size()>255 || (quic_parameters && alpn.empty())) return std::unexpected(E::invalid_alpn);
@@ -35,6 +36,10 @@ namespace tls {
         if (quic_parameters) {
             if (quic_parameters->size()>65535-4-extension_size) return std::unexpected(E::too_large);
             extension_size+=4+quic_parameters->size();
+        }
+        if (!ech_retry_configs.empty()) {
+            if (ech_retry_configs.size()<2 || ech_retry_configs.size()>65535-4-extension_size) return std::unexpected(E::too_large);
+            extension_size+=4+ech_retry_configs.size();
         }
         std::vector<std::uint8_t> message(6+extension_size);
         auto put16=[&](std::size_t pos,std::size_t value) { message[pos]=static_cast<std::uint8_t>(value>>8); message[pos+1]=static_cast<std::uint8_t>(value); };
@@ -47,7 +52,11 @@ namespace tls {
         }
         if (quic_parameters) {
             put16(offset,0x39); put16(offset+2,quic_parameters->size());
-            std::ranges::copy(*quic_parameters,message.begin()+offset+4);
+            std::ranges::copy(*quic_parameters,message.begin()+offset+4); offset+=4+quic_parameters->size();
+        }
+        if (!ech_retry_configs.empty()) {
+            put16(offset,0xfe0d); put16(offset+2,ech_retry_configs.size());
+            std::ranges::copy(ech_retry_configs,message.begin()+offset+4);
         }
         return message;
     }

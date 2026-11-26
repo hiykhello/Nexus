@@ -28,8 +28,9 @@ export namespace grpc {
             std::int32_t last_accepted=0,output_stream=0;
             std::optional<std::int32_t> peer_last;
             bool draining=false,frame_complete=false,output_final=false;
+            KeepaliveState keepalive;
             MultiplexPolicy(Role value,RequestProfile const& request,ResponsePolicy response,Limits bound)
-                :role(value),profile(request),response_policy(response),limits(bound) {}
+                :role(value),profile(request),response_policy(response),limits(bound),keepalive(bound) {}
             static auto core_error(http2::detail::CoreError error,int code=0) noexcept -> Failure {
                 return GrpcPolicy::core_error(error,code);
             }
@@ -74,16 +75,22 @@ export namespace grpc {
             template<class Core> auto reject_headers(Core& core,std::int32_t id,http2::detail::CoreError error) noexcept -> int {
                 auto* stream=find(id);return stream?reject(core,*stream,core_error(error)):0;
             }
+            auto has_active_streams() const noexcept -> bool {
+                return std::ranges::any_of(streams,[](auto const& value){return value&&!value->closed_;});
+            }
             template<class Core> auto begin(Core& core,h2::nghttp2_frame const& frame) noexcept -> int {
                 if(role==Role::server&&frame.headers.cat==h2::NGHTTP2_HCAT_REQUEST){
+                    bool const was_empty=!has_active_streams();
                     if(draining||!add(frame.hd.stream_id)){
                         auto rc=h2::nghttp2_submit_rst_stream(core.native(),0,frame.hd.stream_id,h2::NGHTTP2_REFUSED_STREAM);
                         return rc?core_fail(http2::detail::CoreError::http2,rc):h2::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
                     }
+                    keepalive.on_stream_opened(was_empty);
                 }
                 return 0;
             }
             template<class Core> auto frame(Core& core,h2::nghttp2_frame const& frame) noexcept -> int {
+                keepalive.on_rx(frame);
                 if(frame.hd.type==h2::NGHTTP2_GOAWAY){
                     if(frame.goaway.error_code)return core_fail(http2::detail::CoreError::http2,static_cast<int>(frame.goaway.error_code));
                     peer_last=peer_last?std::min(*peer_last,frame.goaway.last_stream_id):frame.goaway.last_stream_id;
@@ -115,6 +122,7 @@ export namespace grpc {
                 output_stream=frame.hd.stream_id;frame_complete=false;return 0;
             }
             template<class Core> auto data(Core& core,std::uint8_t flags,std::int32_t id,std::span<std::uint8_t const> bytes) noexcept -> int {
+                keepalive.on_activity();
                 auto* stream=find(id);
                 if(stream&&!stream->failure_)return scoped(core,*stream,stream->data(core,flags,id,bytes));
                 auto rc=h2::nghttp2_session_consume_connection(core.native(),bytes.size());
@@ -220,7 +228,7 @@ export namespace grpc {
                 else if(!h2::nghttp2_session_check_request_allowed(core_.native()))state().draining=true;
                 return std::unexpected(Failure{Error::http2,id});
             }
-            state().streams[added->slot]->stream_=id;added->id=id;return *added;
+            state().streams[added->slot]->stream_=id;added->id=id;state().keepalive.on_stream_opened(active==0);return *added;
         }
         auto accept() noexcept -> std::optional<RpcTicket> {
             if(!core_.usable()||state().role!=Role::server)return {};
@@ -291,5 +299,20 @@ export namespace grpc {
         auto retained_output_bytes(RpcTicket ticket) noexcept -> std::size_t {auto* value=state().ticket(ticket);return value?value->outgoing_reserved_:0;}
         auto uncredited_bytes(RpcTicket ticket) noexcept -> std::size_t {auto* value=state().ticket(ticket);return value?value->uncredited_:0;}
         auto library_peak() const noexcept -> std::size_t{return core_.library_peak();}
+        auto keepalive_enabled() const noexcept -> bool{return state().keepalive.enabled();}
+        auto next_keepalive_deadline() const noexcept -> std::optional<std::chrono::steady_clock::time_point>{
+            return core_.usable()?state().keepalive.next_deadline(state().has_active_streams()):std::nullopt;
+        }
+        auto ping_in_flight_deadline() const noexcept -> std::optional<std::chrono::steady_clock::time_point>{
+            return core_.usable()?state().keepalive.in_flight_deadline():std::nullopt;
+        }
+        auto check_keepalive(std::chrono::steady_clock::time_point now) noexcept -> std::expected<bool,Failure>{
+            if(!core_.usable())return std::unexpected(core_.failure().value_or(Failure{Error::state}));
+            auto res=state().keepalive.check(core_.native(),state().has_active_streams(),now);
+            if(!res){if(!state().connection_failure)state().connection_failure=res.error();abort_failed();}
+            return res;
+        }
+        auto pings_sent() const noexcept -> std::size_t{return state().keepalive.pings_sent;}
+        auto ping_acks_received() const noexcept -> std::size_t{return state().keepalive.ping_acks;}
     };
 }

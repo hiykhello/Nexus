@@ -67,6 +67,8 @@ export namespace grpc {
         auto failure() const noexcept -> std::optional<Failure>{return driver_.failure();}
         auto transport_ended() const noexcept -> bool{return driver_.protocol().transport_ended();}
         auto remote_status() const noexcept -> std::optional<std::uint32_t>{return driver_.protocol().remote_status();}
+        auto pings_sent() const noexcept -> std::size_t{return driver_.protocol().pings_sent();}
+        auto ping_acks_received() const noexcept -> std::size_t{return driver_.protocol().ping_acks_received();}
         auto run(){return driver_.run();}
         auto retire_connection() noexcept -> std::expected<void,Failure> {
             auto result=driver_.protocol().retire_connection();

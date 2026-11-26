@@ -59,9 +59,10 @@ namespace tls {
                     result.application_settings.assign(data.begin(),data.end());
                     break;
                 case 0xfe0d:
-                    // A GREASE offer may receive retry configs. Never save or use them.
+                    // Outer ECH / GREASE offer may receive retry configs (ECHConfigList).
                     if (offered->data.size()<42 || offered->data[0]!=0 || data.size()<2 ||
                         u16(data,0)!=data.size()-2) return std::unexpected(E::malformed);
+                    result.ech_retry_configs.assign(data.begin(),data.end());
                     break;
                 case 28:
                     if (quic) return std::unexpected(E::unsupported);

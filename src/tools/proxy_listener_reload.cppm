@@ -4,6 +4,7 @@ module;
 
 export module cli.proxy_listener_reload;
 import std;
+import cli.cert_reloader;
 import cli.control;
 import cli.dns_message_runtime;
 import cli.dns_transports;
@@ -45,6 +46,8 @@ export namespace cli::run_detail {
         corosio::io_context* shared_io = nullptr;
         config::TorServiceConfig const* tor_service = nullptr;
         std::shared_ptr<relay::GroupRuntimeHooks> group_hooks{};
+        std::shared_ptr<void> acme_credential{};
+        cli::CertReloaderHub* cert_reloaders = nullptr;
     };
 
     struct ListenerReload {
@@ -78,7 +81,7 @@ export namespace cli::run_detail {
             -> std::expected<void, std::string> {
             auto [listeners, reload_config, dns_generation, dns_messages, route_snapshots, group_route_files,
                 group_health, snell_replay, network, reload_identity, log, reverse_cache, remote_rulesets, runtime_mode,
-                memory_shed, ssmapi_users, shared_io, tor_service, group_hooks] = running;
+                memory_shed, ssmapi_users, shared_io, tor_service, group_hooks, acme_credential, cert_reloaders] = running;
             auto workers = reload_config->workers;
             if (!precomputed) {
                 auto parsed_ids = config::reload_identities(input);
@@ -135,6 +138,7 @@ export namespace cli::run_detail {
             if (!files) return std::unexpected(std::move(files.error()));
             auto indexed = files->indexed(*config);
             TcpGeneration candidate;
+            cli::CertReloaderHub candidate_cert_reloaders;
             auto candidate_replay = snell_replay;
             auto candidate_udp = std::make_shared<UdpRuntime>();
             if (ssmapi_users) candidate_udp->set_dynamic_users(ssmapi_users);
@@ -187,7 +191,7 @@ export namespace cli::run_detail {
                     candidate_udp->remember(index, key, users);
                 };
                 if (auto result = configure_listener(**server, *config, entry, *protections, *files, indexed,
-                        candidate_replay, remember, principals); !result)
+                        candidate_replay, remember, principals, acme_credential, &candidate_cert_reloaders, &log); !result)
                     return std::unexpected("invalid TCP listener " + entry.name + ": " + result.error());
                 if (tor_service) {
                     if (auto added = (*server)->add_tor(*tor_service); !added)
@@ -277,6 +281,7 @@ export namespace cli::run_detail {
             }
             retired_tcp.push_back(std::move(retired));
             listeners.swap(candidate.listeners);
+            if (cert_reloaders) *cert_reloaders = std::move(candidate_cert_reloaders);
             dns_generation = std::move(candidate.dns);
             route_snapshots = std::move(candidate.routes);
             reload_identity = std::move(identity);

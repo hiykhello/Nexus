@@ -35,6 +35,11 @@ export namespace tls {
         template<class... Recovery>
         static inline auto create(ServerHandshakeSecrets&& input,ServerCredential const& credential,std::array<crypto::Bytes,4>& messages,std::optional<TrafficSecrets>& output_secrets,std::span<std::uint8_t const> selected_alpn={},
         std::optional<std::span<std::uint8_t const>> quic_parameters={},Recovery&... recovery) -> std::expected<RawServerFlight,RawServerError>{
+            return create_with_ech_retry(std::move(input),credential,messages,output_secrets,selected_alpn,quic_parameters,{},recovery...);
+        }
+        template<class... Recovery>
+        static inline auto create_with_ech_retry(ServerHandshakeSecrets&& input,ServerCredential const& credential,std::array<crypto::Bytes,4>& messages,std::optional<TrafficSecrets>& output_secrets,std::span<std::uint8_t const> selected_alpn,
+        std::optional<std::span<std::uint8_t const>> quic_parameters,std::span<std::uint8_t const> ech_retry_configs,Recovery&... recovery) -> std::expected<RawServerFlight,RawServerError>{
         using Policy=RecoveryPolicy<Recovery...>;
         auto raw=std::move(input); auto& keys=raw.secrets; auto cert=credential.certificate();
         constexpr auto list_limit=ServerCredential::max_certificate_list_size;
@@ -50,7 +55,7 @@ export namespace tls {
             if (!hello || hello->cipher_suite!=keys.cipher_suite || !cipher_spec(keys.cipher_suite)) return std::unexpected(RawServerError{ServerFlightError::crypto_error});
         }
         crypto::Bytes{}.swap(raw.server_hello);
-        auto extensions=encode_encrypted_extensions(selected_alpn,quic_parameters);
+        auto extensions=encode_encrypted_extensions(selected_alpn,quic_parameters,ech_retry_configs);
         if (!extensions) return std::unexpected(RawServerError{ServerFlightError::invalid_state,static_cast<std::uint8_t>(extensions.error()==HandshakePolicyError::invalid_alpn ? 120 : 80)});
         if (!keys.transcript.append(*extensions)) return std::unexpected(RawServerError{ServerFlightError::crypto_error});
         if ([&]() __attribute__((always_inline)) {if constexpr(Policy::enabled)return !recovery_policy(recovery...).selected();else return true;}()) {

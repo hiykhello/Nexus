@@ -25,6 +25,7 @@ namespace config {
                 if (seen_proto || !v) return error("invalid multiplex protocol");
                 if (*v == "smux" || *v == "smux-v2") cfg.protocol = MultiplexProtocol::smux_v2;
                 else if (*v == "smux-v1") cfg.protocol = MultiplexProtocol::smux_v1;
+                else if (*v == "h2mux") cfg.protocol = MultiplexProtocol::h2mux;
                 else return error("unsupported multiplex protocol: " + *v);
                 seen_proto = true;
             } else if (child.name == "max-connections") {

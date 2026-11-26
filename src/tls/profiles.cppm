@@ -20,6 +20,7 @@ export namespace tls {
         bool hybrid_only=false;
         std::vector<std::string> alpn;
         std::vector<std::array<std::uint8_t,32>> certificate_pins;
+        OutboundFragmentOptions tls_fragment{};
 
         auto handshake(std::uint64_t now,std::uint64_t deadline,std::int64_t verification_time,
             std::span<std::uint8_t const> target={},quic::EchConfig const* ech=nullptr) const -> std::expected<ClientHandshakeIo,std::string>;
@@ -54,10 +55,12 @@ export namespace tls {
     };
 
     auto make_server_handshake(ServerCredential const& credential,std::uint64_t now,std::uint64_t deadline,
-        std::shared_ptr<memory::Budget> budget={},std::string_view required_alpn={})
+        std::shared_ptr<memory::Budget> budget={},std::string_view required_alpn={},
+        std::shared_ptr<EchServerKeys const> ech_keys={})
         -> std::expected<ServerHandshakeIo,std::string>;
     auto make_server_handshake(ServerCredential const& credential,std::uint64_t now,std::uint64_t deadline,
-        std::shared_ptr<memory::Budget> budget,std::span<std::string_view const> alpn_preferences,bool allow_no_alpn=true)
+        std::shared_ptr<memory::Budget> budget,std::span<std::string_view const> alpn_preferences,bool allow_no_alpn=true,
+        std::shared_ptr<EchServerKeys const> ech_keys={})
         -> std::expected<ServerHandshakeIo,std::string>;
     auto load_server_credential(std::string_view certificate_path,std::string_view private_key_path)
         -> std::expected<ServerCredential,std::string>;
@@ -87,6 +90,7 @@ namespace tls {
         auto io=ClientHandshakeIo::create(std::move(*hello),groups,anchors,ip ? PeerNameKind::ip : PeerNameKind::dns,
             identity,verification_time,now,deadline,target,certificate_pins,ech);
         if (!io) return std::unexpected("invalid TLS handshake deadline");
+        io->set_fragment_options(tls_fragment);
         return std::move(*io);
     }
 
@@ -110,6 +114,7 @@ namespace tls {
             session->set_certificate_pins(certificate_pins);
             auto io=ClientHandshakeIo::create(std::move(*session),now,deadline);
             if (!io) return std::unexpected("invalid TLS handshake deadline");
+            io->set_fragment_options(tls_fragment);
             return std::move(*io);
         }
         auto fp=fingerprint;
@@ -120,6 +125,7 @@ namespace tls {
         auto io=ClientHandshakeIo::create(std::move(shape->hello),shape->initial_groups(),anchors,
             ip ? PeerNameKind::ip : PeerNameKind::dns,name,verification_time,now,deadline,target,certificate_pins,ech);
         if (!io) return std::unexpected("invalid TLS handshake deadline");
+        io->set_fragment_options(tls_fragment);
         return std::move(*io);
     }
 
@@ -168,7 +174,7 @@ namespace tls {
     }
 
     auto make_server_handshake(ServerCredential const& credential,std::uint64_t now,std::uint64_t deadline,
-        std::shared_ptr<memory::Budget> budget,std::string_view required_alpn)
+        std::shared_ptr<memory::Budget> budget,std::string_view required_alpn,std::shared_ptr<EchServerKeys const> ech_keys)
         -> std::expected<ServerHandshakeIo,std::string> {
         std::optional<memory::Budget::Reservation> reservation;
         if (budget) {
@@ -183,11 +189,13 @@ namespace tls {
             std::move(budget),std::move(reservation));
         if (!handshake) return std::unexpected(handshake.error()==ServerHandshakeIoError::budget_exceeded ?
             "TLS handshake budget exceeded" : "invalid TLS handshake options");
+        if (ech_keys) handshake->set_ech_keys(std::move(ech_keys));
         return std::move(*handshake);
     }
 
     auto make_server_handshake(ServerCredential const& credential,std::uint64_t now,std::uint64_t deadline,
-        std::shared_ptr<memory::Budget> budget,std::span<std::string_view const> alpn_preferences,bool allow_no_alpn)
+        std::shared_ptr<memory::Budget> budget,std::span<std::string_view const> alpn_preferences,bool allow_no_alpn,
+        std::shared_ptr<EchServerKeys const> ech_keys)
         -> std::expected<ServerHandshakeIo,std::string> {
         std::optional<memory::Budget::Reservation> reservation;
         if (budget) {
@@ -202,6 +210,7 @@ namespace tls {
             ServerCredential::max_certificate_list_size,std::move(budget),std::move(reservation));
         if (!handshake) return std::unexpected(handshake.error()==ServerHandshakeIoError::budget_exceeded ?
             "TLS handshake budget exceeded" : "invalid TLS handshake options");
+        if (ech_keys) handshake->set_ech_keys(std::move(ech_keys));
         return std::move(*handshake);
     }
 

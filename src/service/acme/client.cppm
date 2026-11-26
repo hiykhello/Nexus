@@ -10,7 +10,8 @@ export namespace acme {
     [[nodiscard]] auto fetch_nonce(std::string_view new_nonce_url, HttpExchangeFn http)
         -> std::expected<std::string, std::string>;
     [[nodiscard]] auto register_account(AcmeDirectory const& dir, EcAccountKey const& key,
-                                        std::string_view email, std::string& nonce, HttpExchangeFn http)
+                                        std::string_view email, std::string& nonce, HttpExchangeFn http,
+                                        EabCredentials const* eab = nullptr)
         -> std::expected<std::string, std::string>;
     [[nodiscard]] auto create_order(AcmeDirectory const& dir, EcAccountKey const& key, std::string_view kid,
                                     std::span<std::string const> domains, std::string& nonce, HttpExchangeFn http)

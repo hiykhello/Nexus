@@ -39,6 +39,7 @@ import cli.route_files;
 import cli.proxy_ntp;
 import cli.proxy_providers;
 import cli.proxy_services;
+import cli.cert_reloader;
 import http.connect;
 import socks5;
 export import cli.proxy_run_state;
@@ -91,7 +92,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     cli::LocalControl control; control_api::HttpControlServer http_control;
     std::optional<config::ControlHttpConfig> control_http_config;
     std::optional<config::NtpConfig> ntp_config; config::ServicesConfig services_config{};
-    cli::NtpRuntime ntp_runtime; cli::OptionalServicesRuntime services_runtime;
+    cli::NtpRuntime ntp_runtime; cli::OptionalServicesRuntime services_runtime; cli::CertReloaderHub cert_reloaders; std::shared_ptr<void> acme_credential;
     std::shared_ptr<relay::ShadowsocksUserDirectory> ssmapi_users;
     cli::SelectorState selector_state;
     std::shared_ptr<::platform::network::Monitor> network; std::shared_ptr<relay::GroupRuntimeHooks> group_hooks;
@@ -144,7 +145,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         control_socket=config->control_socket;
         control_read_uid=config->control_read_uid;
         control_http_config=config->control_http;
-        ntp_config=config->ntp; services_config=config->services;
+        ntp_config=config->ntp; services_config=config->services; if (services_config.acme) acme_credential=cli::make_atomic_credential_erased();
         auto observe_neighbors=std::ranges::any_of(config->inbounds,uses_transparent_metadata);
         if (config->direct_network || config->defaults.auto_detect_interface || config->defaults.default_network_strategy ||
             !control_socket.empty() || control_http_config || observe_neighbors || !config->routes.empty() ||
@@ -187,7 +188,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
                 udp->remember(index,key,users);
             };
             if (auto result=configure_listener(server,*config,entry,*dns_transports,*route_files,indexed_routes,
-                    snell_replay,remember,listener_reload.principals); !result)
+                    snell_replay,remember,listener_reload.principals,acme_credential,&cert_reloaders,&logs); !result)
                 return log_failure(logs,logging::Domain::proxy,"listener configuration failed",result.error());
             if(auto configured=hy2.configure(index,entry);!configured){return log_failure(logs,logging::Domain::core,"Hysteria2 configuration",configured.error());}
             if(auto configured=masque.configure(index,entry);!configured){return log_failure(logs,logging::Domain::core,"MASQUE configuration",configured.error());}
@@ -314,7 +315,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         return log_failure(logs,logging::Domain::control,"ssmapi requires control-http listener");
     control_wake.attach(shared_io.get(), control.listen_native_fd(), http_control.listen_native_fd());
     if (auto started=ntp_runtime.start(ntp_config,logs); !started) return log_failure(logs,logging::Domain::core,"ntp startup failed",started.error());
-    if (auto started=services_runtime.start(services_config,logs,host.make_watchdog_hooks()); !started) return log_failure(logs,logging::Domain::core,"optional services startup failed",started.error());
+    if (auto started=services_runtime.start(services_config,logs,host.make_watchdog_hooks(acme_credential)); !started) return log_failure(logs,logging::Domain::core,"optional services startup failed",started.error());
     using NetworkClock=::platform::network::Clock;
     NetworkClock::time_point retry_network{};
     auto refresh_network=[&] {
@@ -349,7 +350,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         }
         if (listener_reload.tcp_admission && (key!=reload_identity || !route_snapshots || udp->has_listeners())) {
             auto r=listener_reload.apply({listeners,reload_config,dns_generation,dns_messages,route_snapshots,
-                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr,group_hooks},run_args.config_path,input,std::string(key),
+                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr,group_hooks,acme_credential,&cert_reloaders},run_args.config_path,input,std::string(key),
                 traffic_stats || control.active() || http_control.active() || need_interrupt_traffic,group_health.has_value(),udp,selector_state.choices(),
                 provider_sync_trigger || proxy_providers.has_providers(), std::move(*ids));
             if (r) { reload_source.assign(input); route_mode.sync(reload_config); if (control.active() || http_control.active()) route_outbound_names=cli::outbound_names(*reload_config); }
@@ -481,7 +482,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     }
     control_wake.detach();
     proxy_providers.stop(); remote_rulesets.stop();
-    services_runtime.stop(); ntp_runtime.stop();
+    services_runtime.stop(); cert_reloaders.stop(); ntp_runtime.stop();
     http_control.stop(); control.stop();
     logs.emit(logging::Level::info,logging::Domain::core,104,{.generation=listener_reload.listener_generation},"proxy draining");
     auto failed=!host.healthy(), udp_failed=udp->failed();

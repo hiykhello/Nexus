@@ -41,6 +41,10 @@ export namespace tls {
         [[nodiscard]] auto take_application_records() -> std::expected<ApplicationRecords,ServerFlightError>;
         template<class... Recovery>
         static inline auto create(ServerHandshakeKeys&& input,ServerCredential const& credential,std::span<std::uint8_t const> selected_alpn={},Recovery&... recovery) -> std::expected<ServerFlight,ServerFlightError>{
+            return create_with_ech_retry(std::move(input),credential,selected_alpn,{},recovery...);
+        }
+        template<class... Recovery>
+        static inline auto create_with_ech_retry(ServerHandshakeKeys&& input,ServerCredential const& credential,std::span<std::uint8_t const> selected_alpn,std::span<std::uint8_t const> ech_retry_configs,Recovery&... recovery) -> std::expected<ServerFlight,ServerFlightError>{
         using Policy=RecoveryPolicy<Recovery...>;
         auto keys=std::move(input);
         if (keys.server_hello.size()<4) return std::unexpected(ServerFlightError::crypto_error);
@@ -52,8 +56,8 @@ export namespace tls {
         }
         std::array<crypto::Bytes,4> messages;
         std::optional<TrafficSecrets> secrets;
-        auto raw=RawServerFlight::create(ServerHandshakeSecrets{std::move(keys.server_hello),keys.signature_scheme,
-            HandshakeSecrets{suite,keys.hash,std::move(keys.transcript),std::move(keys.handshake_secret),std::move(keys.client_traffic),std::move(keys.server_traffic)}},credential,messages,secrets,selected_alpn,{},recovery...);
+        auto raw=RawServerFlight::create_with_ech_retry(ServerHandshakeSecrets{std::move(keys.server_hello),keys.signature_scheme,
+            HandshakeSecrets{suite,keys.hash,std::move(keys.transcript),std::move(keys.handshake_secret),std::move(keys.client_traffic),std::move(keys.server_traffic)}},credential,messages,secrets,selected_alpn,{},ech_retry_configs,recovery...);
         if (!raw) return std::unexpected(raw.error().kind);
         auto spec=cipher_spec(secrets->cipher_suite);
         auto layers=traffic_records(secrets->cipher_suite,secrets->client.view(),secrets->server.view(),true);

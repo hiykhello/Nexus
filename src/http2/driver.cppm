@@ -89,13 +89,22 @@ export namespace http2::detail {
             ReaderGuard guard{*this};std::array<std::uint8_t,output_bytes> output{};
             while(!canceled_&&!finished_){
                 if(expired(deadline_)){stop(policy_.transport_failure(true));break;}
+                if constexpr(requires{protocol_->check_keepalive(DriverClock::now());}){
+                    if(protocol_->keepalive_enabled()&&!policy_.finish_after_drain(*protocol_)){
+                        auto ka=protocol_->check_keepalive(DriverClock::now());
+                        if(!ka){stop(ka.error());break;}
+                    }
+                }
                 if constexpr(requires{policy_.output_failure(*protocol_);})
                     if(auto failure=policy_.output_failure(*protocol_)){stop(*failure);break;}
                 auto size=protocol_->output(output);if(!size){stop(size.error());break;}
                 if(*size){
                     drained_=false;
-                    if(!co_await lower_.send(std::span(output).first(*size),deadline_)||expired(deadline_)){
-                        stop(policy_.transport_failure(expired(deadline_)));break;
+                    auto send_dl=deadline_;
+                    if constexpr(requires{protocol_->ping_in_flight_deadline();})
+                        if(auto pd=protocol_->ping_in_flight_deadline())send_dl=limit(pd);
+                    if(!co_await lower_.send(std::span(output).first(*size),send_dl)||expired(send_dl)){
+                        stop(policy_.transport_failure(expired(send_dl)));break;
                     }
                     if constexpr(requires{policy_.after_write(*this);})policy_.after_write(*this);
                     changed_.set();continue;
@@ -112,6 +121,19 @@ export namespace http2::detail {
                     output_closed_=true;changed_.set();
                     while(!finished_&&!canceled_){changed_.clear();if(!co_await wait(changed_,{}))break;}
                     break;
+                }
+                if constexpr(requires{protocol_->next_keepalive_deadline();}){
+                    if(protocol_->keepalive_enabled()){
+                        if(auto next=protocol_->next_keepalive_deadline()){
+                            work_.clear();
+                            auto effective=limit(*next);
+                            auto [err]=co_await corosio::timeout(work_.wait(),*effective);
+                            if(canceled_||finished_)break;
+                            if(expired(deadline_)){stop(policy_.transport_failure(true));break;}
+                            if(err&&err!=capy::cond::timeout){stop(policy_.canceled_failure());break;}
+                            continue;
+                        }
+                    }
                 }
                 work_.clear();if(!co_await wait(work_,{}))break;
             }

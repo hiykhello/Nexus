@@ -54,6 +54,19 @@ export namespace config {
 
     enum class Inbound { socks5, mixed, vless, shadowsocks, trojan, anytls, hysteria2, snell, masque, shadowtls, tuic, tun, redirect, tproxy, http, naive, fixed_tcp, fixed_udp };
 
+    struct FallbackTarget {
+        std::string host;
+        std::uint16_t port = 0;
+        auto operator==(FallbackTarget const&) const -> bool = default;
+    };
+    struct Hysteria2Masquerade {
+        std::string type;
+        std::string target;
+        std::uint16_t status_code = 200;
+        std::vector<std::pair<std::string, std::string>> headers;
+        bool rewrite_host = true;
+        auto operator==(Hysteria2Masquerade const&) const -> bool = default;
+    };
     struct PasswordAuth {
         std::string username;
         std::string password_file;
@@ -64,6 +77,8 @@ export namespace config {
         std::string host, path = "/";
         std::vector<Header> headers;
         bool websocket = false;
+        std::uint32_t max_early_data = 0;
+        std::string early_data_header_name;
     };
     struct GrpcTransport {
         enum class ResponsePolicy { standard, sing_box_lite };
@@ -72,6 +87,8 @@ export namespace config {
         std::size_t input_window = 2 * 1024 * 1024, message_bytes = 1024 * 1024 + 64, hunk_bytes = 1024 * 1024;
         std::size_t output_bytes = 2 * 1024 * 1024, output_messages = 64, library_bytes = 4 * 1024 * 1024, max_sessions = 64;
         bool tcp_fast_open = false;
+        std::uint32_t idle_timeout_ms = 0, ping_timeout_ms = 0;
+        bool permit_without_stream = false;
     };
     struct VlessInbound {
         struct Reality {
@@ -92,6 +109,9 @@ export namespace config {
         std::optional<xhttp::Profile> xhttp;
         std::optional<InboundMultiplexConfig> multiplex;
         ListenOptions listen{};
+        std::string certificate_provider, ech_key_file;
+        std::vector<std::string> alpn;
+        bool cert_hot_reload = false;
     };
     struct ShadowsocksUser { std::string name, key_file; };
     struct ShadowsocksInbound {
@@ -108,6 +128,11 @@ export namespace config {
         std::optional<GrpcTransport> grpc;
         std::optional<InboundMultiplexConfig> multiplex;
         ListenOptions listen{};
+        std::string certificate_provider, ech_key_file;
+        std::vector<std::string> alpn;
+        bool cert_hot_reload = false;
+        std::optional<FallbackTarget> fallback;
+        std::vector<std::pair<std::string, FallbackTarget>> fallback_for_alpn;
     };
     using TrojanUser = PasswordTlsUser;
     using TrojanInbound = PasswordTlsInbound;
@@ -132,7 +157,7 @@ export namespace config {
         bool ignore_client_bandwidth = false, disable_compensation = false, lazy_tcp_response = false;
         quic::ReceiveWindows receive_windows;
         std::vector<PortRange> port_ranges;
-        std::uint32_t hop_interval_ms = 0;
+        std::uint32_t hop_interval_ms = 0, hop_interval_max_ms = 0;
     };
     struct Hysteria2Inbound {
         PasswordTlsInbound connection;
@@ -140,6 +165,10 @@ export namespace config {
         std::string listen_host;
         std::array<std::uint8_t, 16> listen_address{};
         ListenOptions listen{};
+        std::string certificate_provider, ech_key_file;
+        std::vector<std::string> alpn;
+        bool cert_hot_reload = false;
+        Hysteria2Masquerade masquerade{};
     };
     struct MasqueDestination {
         std::array<std::uint8_t, 16> network{};
@@ -158,6 +187,9 @@ export namespace config {
         std::size_t native_bytes = 8 * 1024 * 1024;
         std::optional<MasqueIpInbound> ip;
         ListenOptions listen{};
+        std::string certificate_provider, ech_key_file;
+        std::vector<std::string> alpn;
+        bool cert_hot_reload = false;
     };
     struct ShadowTlsInbound {
         std::string handshake_host;
@@ -168,6 +200,8 @@ export namespace config {
         bool strict_tls13 = true;
         std::array<std::uint8_t, 16> listen_address{};
         ListenOptions listen{};
+        std::vector<std::pair<std::string, FallbackTarget>> handshake_for_server_name;
+        std::string wildcard_sni;
     };
     struct TuicUser { std::string name, uuid_file, password_file; };
     struct TuicInbound {
@@ -179,6 +213,10 @@ export namespace config {
         std::size_t native_bytes = 8 * 1024 * 1024;
         bool udp = true;
         ListenOptions listen{};
+        std::string certificate_provider, ech_key_file;
+        std::vector<std::string> alpn;
+        bool cert_hot_reload = false;
+        bool zero_rtt_handshake = false;
     };
     struct FixedUdpInbound {
         std::string listen_host, target_host;
@@ -194,6 +232,9 @@ export namespace config {
         std::uint32_t handshake_timeout_ms = 10000, idle_timeout_ms = 60000;
         std::size_t native_bytes = 8 * 1024 * 1024;
         ListenOptions listen{};
+        std::string certificate_provider, ech_key_file;
+        std::vector<std::string> alpn;
+        bool cert_hot_reload = false;
     };
     struct NaiveInbound {
         std::string listen_host, certificate_file, private_key_file;
@@ -205,6 +246,9 @@ export namespace config {
         std::uint32_t handshake_timeout_ms = 10000, idle_timeout_ms = 60000;
         std::size_t native_bytes = 8 * 1024 * 1024;
         ListenOptions listen{};
+        std::string certificate_provider, ech_key_file;
+        std::vector<std::string> alpn;
+        bool cert_hot_reload = false;
     };
     struct UserLimits {
         std::string name;

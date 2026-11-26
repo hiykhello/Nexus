@@ -344,7 +344,7 @@ namespace relay {
     }
 
     auto Server::add_vless(std::string_view host, std::uint16_t port, std::string_view uuid_file,
-                           std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms,TcpSocketOptions tcp_options,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,bool packetaddr,bool fixed_udp,std::optional<xhttp::Profile> xhttp,std::span<std::array<std::uint8_t,32> const> pins,QuicEchOptions const& ech) -> std::expected<std::size_t, std::string> {
+                           std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms,TcpSocketOptions tcp_options,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,bool packetaddr,bool fixed_udp,std::optional<xhttp::Profile> xhttp,std::span<std::array<std::uint8_t,32> const> pins,QuicEchOptions const& ech,config::OutboundTlsFragment const& tls_fragment,std::span<std::string const> alpn) -> std::expected<std::size_t, std::string> {
         if (this->running || (this->listener && this->listener->is_open()) || !this->sessions.empty() || !this->workers.empty())
             return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_VLESS
@@ -361,14 +361,14 @@ namespace relay {
                 std::move(*xhttp),fingerprint,record_size_limit,reality,pins,ech,this->dns_routing.has_value()) :
 #endif
             make_vless_factory(host,port,uuid_file,server_name,ca_file,key_exchange,bootstrap,reality,vision,timeout_ms,tcp_options,
-                std::move(transport),std::move(grpc),fast_open,fingerprint,record_size_limit,packetaddr,fixed_udp,pins,ech,this->dns_routing.has_value());
+                std::move(transport),std::move(grpc),fast_open,fingerprint,record_size_limit,packetaddr,fixed_udp,pins,ech,this->dns_routing.has_value(),tls_fragment,alpn);
         if (!factory) return std::unexpected(factory.error());
         auto index=this->outbounds.size()+2;
         this->outbounds.push_back(std::move(*factory));
         if (bootstrap && (!this->max_bootstrap_index || *bootstrap>*this->max_bootstrap_index)) this->max_bootstrap_index=bootstrap;
         return index;
 #else
-        (void)host; (void)port; (void)uuid_file; (void)server_name; (void)ca_file; (void)key_exchange; (void)bootstrap; (void)reality; (void)vision; (void)timeout_ms; (void)tcp_options; (void)transport; (void)grpc; (void)fast_open; (void)fingerprint; (void)record_size_limit; (void)packetaddr; (void)fixed_udp; (void)xhttp; (void)pins; (void)ech;
+        (void)host; (void)port; (void)uuid_file; (void)server_name; (void)ca_file; (void)key_exchange; (void)bootstrap; (void)reality; (void)vision; (void)timeout_ms; (void)tcp_options; (void)transport; (void)grpc; (void)fast_open; (void)fingerprint; (void)record_size_limit; (void)packetaddr; (void)fixed_udp; (void)xhttp; (void)pins; (void)ech; (void)tls_fragment; (void)alpn;
         return std::unexpected("VLESS outbound is not yet available in this build");
 #endif
     }
@@ -431,9 +431,9 @@ namespace relay {
 #endif
         auto prepared=
 #ifdef NEXUS_ENABLE_XHTTP_VLESS
-            xhttp ? make_vless_xhttp_inbound_factory(certificate,key,users,names,std::move(*xhttp),std::move(reality)) :
+            xhttp ? make_vless_xhttp_inbound_factory(certificate,key,users,names,std::move(*xhttp),std::move(reality),inbound_tls_runtime) :
 #endif
-            make_vless_inbound_factory(certificate,key,users,vision,std::move(reality),names,std::move(transport),std::move(grpc),std::move(multiplex));
+            make_vless_inbound_factory(certificate,key,users,vision,std::move(reality),names,std::move(transport),std::move(grpc),std::move(multiplex),inbound_tls_runtime);
         if (!prepared) return std::unexpected(prepared.error());
 #ifdef NEXUS_ENABLE_XHTTP_VLESS
         xhttp3_inbound.reset();

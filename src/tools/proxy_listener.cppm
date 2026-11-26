@@ -1,6 +1,7 @@
 // Listener configuration shared by initial startup and staged TCP reloads.
 export module cli.proxy_listener;
 import std;
+import cli.cert_reloader;
 import cli.dns_message_runtime;
 import cli.dns_transports;
 import cli.outbounds;
@@ -9,6 +10,8 @@ import cli.route_files;
 import config;
 import corosio;
 import functional;
+import logging;
+import logging.cli;
 import relay;
 import relay.principal_limits;
 import rulefile;
@@ -164,11 +167,33 @@ export namespace cli::run_detail {
         }
     };
 
+    inline auto prepare_inbound_tls(relay::Server& server, std::string_view cert_file, std::string_view key_file,
+        std::string_view provider, std::vector<std::string> const& alpn, std::string_view ech_key_file,
+        bool cert_hot_reload, std::shared_ptr<void> const& acme_credential,
+        cli::CertReloaderHub* cert_reloaders, logging::Runtime const* logs) -> std::expected<void, std::string> {
+        relay::InboundTlsRuntime rt{};
+        rt.alpn = alpn;
+        rt.ech_key_file.assign(ech_key_file);
+        if (!provider.empty()) {
+            if (provider != "acme" || !acme_credential)
+                return std::unexpected("TLS certificate-provider '" + std::string(provider) + "' is unavailable");
+            rt.atomic_credential = acme_credential;
+        } else if (cert_hot_reload) {
+            if (!cert_reloaders) return std::unexpected("TLS cert-hot-reload runtime unavailable");
+            auto watched = cert_reloaders->watch(std::string(cert_file), std::string(key_file), logs);
+            if (!watched) return std::unexpected("TLS cert-hot-reload: " + watched.error());
+            rt.atomic_credential = std::move(*watched);
+        }
+        server.set_inbound_tls_runtime(std::move(rt));
+        return {};
+    }
+
     inline auto configure_listener(relay::Server& server, config::Config const& config, config::InboundConfig const& entry,
         std::vector<DnsProtection> const& dns_transports, RouteFiles const& route_files, auto const& indexed_routes,
         std::shared_ptr<relay::SnellReplayRegistry>& snell_replay,
         functional::function_ref<void(std::span<std::uint8_t const>, std::span<relay::ShadowsocksUserKey const>)> remember_ss,
-        relay::PrincipalRegistry& principals) -> std::expected<void, std::string> {
+        relay::PrincipalRegistry& principals, std::shared_ptr<void> const& acme_credential = {},
+        cli::CertReloaderHub* cert_reloaders = nullptr, logging::Runtime const* logs = nullptr) -> std::expected<void, std::string> {
         if (!entry.user_limits.empty()) {
             constexpr auto unlimited = std::numeric_limits<std::size_t>::max();
             std::vector<relay::PrincipalLimits> limits;
@@ -205,7 +230,8 @@ export namespace cli::run_detail {
             std::vector<std::string> files, names;
             for (auto const& u : entry.shadowtls->users) { files.push_back(u.password_file); names.push_back(u.username); }
             auto prepared = server.prepare_shadowtls_inbound(entry.shadowtls->handshake_host, entry.shadowtls->handshake_port,
-                entry.shadowtls->target_host, entry.shadowtls->target_port, files, names, entry.shadowtls->strict_tls13);
+                entry.shadowtls->target_host, entry.shadowtls->target_port, files, names, entry.shadowtls->strict_tls13,
+                entry.shadowtls->handshake_for_server_name, entry.shadowtls->wildcard_sni);
             if (!prepared) { return std::unexpected("ShadowTLS inbound: " + prepared.error()); }
         }
         if (entry.shadowsocks) {
@@ -236,6 +262,10 @@ export namespace cli::run_detail {
         }
         if (entry.vless) {
             if (entry.vless->xhttp && config.workers != 1) return std::unexpected("VLESS XHTTP inbound requires one worker");
+            if (auto tls_ok = prepare_inbound_tls(server, entry.vless->certificate_file, entry.vless->private_key_file,
+                    entry.vless->certificate_provider, entry.vless->alpn, entry.vless->ech_key_file,
+                    entry.vless->cert_hot_reload, acme_credential, cert_reloaders, logs); !tls_ok)
+                return std::unexpected("VLESS inbound: " + tls_ok.error());
             std::vector<std::string> users;
             std::vector<std::string> names;
             for (auto const& user : entry.vless->users) { users.push_back(user.uuid_file); names.push_back(user.name); }
@@ -263,20 +293,37 @@ export namespace cli::run_detail {
             if (!result) { return std::unexpected("authentication: " + result.error()); }
         }
         if (entry.http && entry.http->has_tls) {
+            if (auto tls_ok = prepare_inbound_tls(server, entry.http->certificate_file, entry.http->private_key_file,
+                    entry.http->certificate_provider, entry.http->alpn, entry.http->ech_key_file,
+                    entry.http->cert_hot_reload, acme_credential, cert_reloaders, logs); !tls_ok)
+                return std::unexpected("HTTP TLS inbound: " + tls_ok.error());
             auto prepared = server.prepare_http_modern_inbound(*entry.http);
             if (!prepared) { return std::unexpected("HTTP TLS inbound: " + prepared.error()); }
         }
         if (entry.naive) {
+            if (auto tls_ok = prepare_inbound_tls(server, entry.naive->certificate_file, entry.naive->private_key_file,
+                    entry.naive->certificate_provider, entry.naive->alpn, entry.naive->ech_key_file,
+                    entry.naive->cert_hot_reload, acme_credential, cert_reloaders, logs); !tls_ok)
+                return std::unexpected("NaiveProxy inbound: " + tls_ok.error());
             auto prepared = server.prepare_naive_inbound(*entry.naive);
             if (!prepared) { return std::unexpected("NaiveProxy inbound: " + prepared.error()); }
         }
         if (entry.trojan) {
+            if (auto tls_ok = prepare_inbound_tls(server, entry.trojan->certificate_file, entry.trojan->private_key_file,
+                    entry.trojan->certificate_provider, entry.trojan->alpn, entry.trojan->ech_key_file,
+                    entry.trojan->cert_hot_reload, acme_credential, cert_reloaders, logs); !tls_ok)
+                return std::unexpected("Trojan inbound: " + tls_ok.error());
             std::vector<std::string> users, names;
             for (auto const& user : entry.trojan->users) { users.push_back(user.password_file); names.push_back(user.name); }
-            auto prepared = server.prepare_trojan_inbound(entry.trojan->certificate_file, entry.trojan->private_key_file, users, names, entry.trojan->transport, entry.trojan->grpc, entry.trojan->multiplex);
+            auto prepared = server.prepare_trojan_inbound(entry.trojan->certificate_file, entry.trojan->private_key_file, users, names,
+                entry.trojan->transport, entry.trojan->grpc, entry.trojan->multiplex, entry.trojan->fallback, entry.trojan->fallback_for_alpn);
             if (!prepared) { return std::unexpected("Trojan inbound: " + prepared.error()); }
         }
         if (entry.anytls) {
+            if (auto tls_ok = prepare_inbound_tls(server, entry.anytls->certificate_file, entry.anytls->private_key_file,
+                    entry.anytls->certificate_provider, entry.anytls->alpn, entry.anytls->ech_key_file,
+                    entry.anytls->cert_hot_reload, acme_credential, cert_reloaders, logs); !tls_ok)
+                return std::unexpected("AnyTLS inbound: " + tls_ok.error());
             std::vector<std::string> users, names;
             for (auto const& user : entry.anytls->users) { users.push_back(user.password_file); names.push_back(user.name); }
             auto prepared = server.prepare_anytls_inbound(entry.anytls->certificate_file, entry.anytls->private_key_file, users, names, entry.anytls->transport, entry.anytls->grpc);

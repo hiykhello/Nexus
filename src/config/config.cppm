@@ -52,6 +52,7 @@ export namespace config {
         TlsFingerprint fingerprint=TlsFingerprint::native;
         std::optional<std::uint16_t> record_size_limit;
         bool packetaddr=false,fixed_udp=false; std::optional<MultiplexConfig> multiplex; QuicEchOptions ech;
+        OutboundTlsFragment tls_fragment{}; std::vector<std::string> alpn;
     };
     struct NamedVlessOutbound { std::string name; VlessOutbound config; };
     struct ShadowsocksOutbound {
@@ -82,6 +83,7 @@ export namespace config {
         std::optional<bool> tcp_fast_open;
         QuicEchOptions ech;
         std::optional<HttpUpgradeTransport> transport; std::optional<GrpcTransport> grpc; std::optional<MultiplexConfig> multiplex;
+        OutboundTlsFragment tls_fragment{}; std::vector<std::string> alpn;
     };
     using TrojanOutbound=PasswordTlsOutbound;
     struct NamedTrojanOutbound { std::string name; TrojanOutbound config; };
@@ -117,6 +119,8 @@ export namespace config {
         std::optional<std::size_t> bootstrap_index,detour_index;
         TcpSocketOptions tcp_options;
         QuicEchOptions ech;
+        std::vector<std::string> alpn;
+        bool zero_rtt_handshake=false;
     };
     struct NamedTuicOutbound {std::string name;TuicOutbound config;};
     struct MasqueOutbound {
@@ -136,6 +140,7 @@ export namespace config {
         std::optional<std::size_t> bootstrap_index,detour_index;
         TcpSocketOptions tcp_options;
         QuicEchOptions ech;
+        std::vector<std::string> alpn;
     };
     struct NamedMasqueOutbound {std::string name;MasqueOutbound config;};
     struct WireGuardOutbound {
@@ -155,7 +160,7 @@ export namespace config {
     struct NamedWireGuardOutbound {std::string name;WireGuardOutbound config;};
     struct NamedTailscaleOutbound { std::string name, endpoint_file; };
     enum class TcpProxyProtocol { socks5, http_connect, socks4, socks4a };
-    struct TcpProxyTls { std::string server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256; TlsFingerprint fingerprint = TlsFingerprint::native; QuicEchOptions ech{}; };
+    struct TcpProxyTls { std::string server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256; TlsFingerprint fingerprint = TlsFingerprint::native; QuicEchOptions ech{}; OutboundTlsFragment tls_fragment{}; std::vector<std::string> alpn; };
     struct TcpProxyOutbound {
         TcpProxyProtocol protocol=TcpProxyProtocol::socks5;
         bool udp=false;

@@ -2,6 +2,7 @@ export module websocket.stream;
 import std;
 import websocket.handshake;
 import httpupgrade;
+import http.header;
 import tls.byte_stream;
 import tls.corosio_application;
 import tls.application_io;
@@ -49,7 +50,13 @@ export namespace websocket {
             using Result=std::expected<std::size_t,ByteStreamError>;
             Lower& lower_;
             capy::async_mutex writer_;
+            capy::async_event upgrade_ready_;
+            std::optional<httpupgrade::Profile> deferred_profile_;
+            Clock::time_point deferred_deadline_{};
+            std::vector<std::uint8_t> early_rx_;
+            std::size_t early_rx_pos_=0;
             bool client_;
+            bool pending_upgrade_=false,upgrading_=false,upgrade_failed_=false;
             std::uint64_t remaining_=0,position_=0;
             std::array<std::uint8_t,4> mask_{};
             bool fragmented_=false,output_closed_=false,input_closed_=false,reading_=false;
@@ -57,6 +64,62 @@ export namespace websocket {
             auto fail(ByteStreamError error) -> std::unexpected<ByteStreamError> {
                 lower_.cancel();
                 return std::unexpected(error);
+            }
+
+            auto max_fit_early_bytes() const noexcept -> std::size_t {
+                if (!deferred_profile_) return 0;
+                constexpr std::size_t kWsOverhead=80; // Sec-WebSocket-Version + Key + CRLFs
+                auto const base=deferred_profile_->wire().size()+kWsOverhead+deferred_profile_->effective_early_data_header().size()+4;
+                if (base>=http::max_header_bytes) return 0;
+                auto const avail=std::min<std::size_t>(http::max_header_bytes-base,httpupgrade::max_ws_early_header_line_bytes-deferred_profile_->effective_early_data_header().size()-4);
+                return std::min<std::size_t>(deferred_profile_->max_early_data(),(avail*3)/4);
+            }
+
+            // Caller MUST hold writer_ lock.
+            auto finish_deferred_upgrade_locked(std::span<std::uint8_t const> early,ApplicationDeadline deadline)
+                -> capy::task<bool> {
+                if (!pending_upgrade_) co_return !upgrade_failed_;
+                upgrading_=true;
+                struct Reset { bool& flag; ~Reset() { flag=false; } } reset{upgrading_};
+                auto dl=deferred_deadline_;
+                if (deadline && *deadline<dl) dl=*deadline;
+                auto ready=co_await websocket::upgrade_early(lower_,*deferred_profile_,dl,early);
+                pending_upgrade_=false;
+                deferred_profile_.reset();
+                if (!ready) {
+                    upgrade_failed_=true;
+                    upgrade_ready_.set();
+                    co_return false;
+                }
+                upgrade_ready_.set();
+                co_return true;
+            }
+
+            auto ensure_upgraded_for_read(ApplicationDeadline deadline) -> capy::task<bool> {
+                while (pending_upgrade_) {
+                    upgrade_ready_.clear();
+                    if (!pending_upgrade_) break;
+                    if (!upgrading_) {
+                        auto flush_dl=Clock::now()+std::chrono::milliseconds(50);
+                        auto wait_dl=deadline ? std::min(*deadline,flush_dl) : flush_dl;
+                        auto [err]=co_await corosio::timeout(upgrade_ready_.wait(),wait_dl);
+                        if (!pending_upgrade_) break;
+                        if (err && err!=capy::cond::timeout) co_return false;
+                        if (deadline && Clock::now()>=*deadline) co_return false;
+                        if (!upgrading_) {
+                            auto op=writer_.scoped_lock();
+                            auto [lerr,lock]=deadline ? co_await corosio::timeout(std::move(op),*deadline) : co_await std::move(op);
+                            if (lerr) co_return false;
+                            if (pending_upgrade_ && !co_await finish_deferred_upgrade_locked({},deadline)) co_return false;
+                            break;
+                        }
+                    } else {
+                        auto op=upgrade_ready_.wait();
+                        auto [err]=deadline ? co_await corosio::timeout(std::move(op),*deadline) : co_await std::move(op);
+                        if (err) co_return false;
+                    }
+                }
+                co_return !upgrade_failed_;
             }
 
             auto exact(std::span<std::uint8_t> bytes,ApplicationDeadline deadline,ReadTimeoutPolicy policy)
@@ -139,13 +202,31 @@ export namespace websocket {
             }
 
         public:
-            BinaryFrames(Lower& lower,bool client) :lower_(lower),client_(client) {}
+            BinaryFrames(Lower& lower,bool client,std::vector<std::uint8_t> early_rx={})
+                :lower_(lower),early_rx_(std::move(early_rx)),client_(client) {}
+
+            BinaryFrames(Lower& lower,httpupgrade::Profile profile,Clock::time_point deadline)
+                :lower_(lower),deferred_profile_(std::move(profile)),deferred_deadline_(deadline),
+                 client_(true),pending_upgrade_(true) {}
+
+            auto cancel() noexcept -> void {
+                if (pending_upgrade_) {
+                    pending_upgrade_=false;
+                    upgrade_failed_=true;
+                    upgrade_ready_.set();
+                }
+            }
 
             auto send(std::span<std::uint8_t const> data,ApplicationDeadline deadline) -> capy::task<bool> {
                 auto operation=writer_.scoped_lock();
                 auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) :
                     co_await std::move(operation);
-                if (error || output_closed_) co_return false;
+                if (error || output_closed_ || upgrade_failed_) co_return false;
+                if (pending_upgrade_) {
+                    auto const early_len=std::min(data.size(),max_fit_early_bytes());
+                    if (!co_await finish_deferred_upgrade_locked(data.first(early_len),deadline)) co_return false;
+                    data=data.subspan(early_len);
+                }
                 while (!data.empty()) {
                     auto size=std::min<std::size_t>(data.size(),16384);
                     if (!co_await emit(2,data.first(size),deadline)) co_return false;
@@ -155,8 +236,18 @@ export namespace websocket {
             }
 
             auto close_output(ApplicationDeadline deadline) -> capy::task<bool> {
+                auto operation=writer_.scoped_lock();
+                auto [error,lock]=deadline ? co_await corosio::timeout(std::move(operation),*deadline) :
+                    co_await std::move(operation);
+                if (error) co_return false;
+                if (pending_upgrade_) {
+                    if (!co_await finish_deferred_upgrade_locked({},deadline)) co_return false;
+                }
+                if (output_closed_) co_return true;
+                output_closed_=true;
                 static constexpr std::array<std::uint8_t,2> normal{3,232};
-                return control(8,normal,deadline);
+                if (!co_await emit(8,normal,deadline)) co_return false;
+                co_return co_await lower_.close_output(deadline);
             }
 
             auto read(std::span<std::uint8_t> output,ApplicationDeadline deadline,ReadTimeoutPolicy policy)
@@ -165,6 +256,20 @@ export namespace websocket {
                 if (output.empty() || input_closed_) co_return 0;
                 reading_=true;
                 struct Reset {bool& reading;~Reset() {reading=false;}} reset{reading_};
+                if (pending_upgrade_) {
+                    if (!co_await ensure_upgraded_for_read(deadline)) {
+                        if (deadline && Clock::now()>=*deadline && policy==ReadTimeoutPolicy::preserve_connection)
+                            co_return std::unexpected(ByteStreamError::timeout);
+                        co_return fail(ByteStreamError::io);
+                    }
+                }
+                if (early_rx_pos_<early_rx_.size()) {
+                    auto const count=std::min(output.size(),early_rx_.size()-early_rx_pos_);
+                    std::copy_n(early_rx_.data()+early_rx_pos_,count,output.begin());
+                    early_rx_pos_+=count;
+                    if (early_rx_pos_==early_rx_.size()) { early_rx_.clear(); early_rx_.shrink_to_fit(); early_rx_pos_=0; }
+                    co_return count;
+                }
                 while (!remaining_) {
                     auto frame=co_await header(deadline,policy);
                     if (!frame) co_return std::unexpected(frame.error());
@@ -216,16 +321,53 @@ export namespace websocket {
         std::unique_ptr<detail::BinaryFrames<Lower>> frames_;
     public:
         explicit VlessByteStream(tls::detail::ApplicationConnection<Socket>& connection) :lower_(connection) {}
-        auto cancel() noexcept -> void {lower_.cancel();}
+        auto cancel() noexcept -> void {if (frames_) frames_->cancel(); lower_.cancel();}
         auto prepend_owned(std::vector<std::uint8_t>&& bytes) -> bool {return lower_.prepend_owned(std::move(bytes));}
         auto release_reader() noexcept -> tls::detail::ApplicationStreamReader<Socket>* {
             return frames_ ? nullptr : lower_.release_reader();
         }
         auto activate_websocket(httpupgrade::Profile const& profile,Clock::time_point deadline)
             -> capy::task<std::expected<std::size_t,UpgradeFailure>> {
-            auto ready=co_await websocket::upgrade(lower_,profile,deadline);
-            if (ready) frames_=std::make_unique<detail::BinaryFrames<Lower>>(lower_,profile.is_client());
-            co_return ready;
+            if (profile.is_client() && profile.max_early_data()>0) {
+                frames_=std::make_unique<detail::BinaryFrames<Lower>>(lower_,profile,deadline);
+                co_return std::size_t{0};
+            }
+            auto ready=co_await websocket::upgrade_early(lower_,profile,deadline);
+            if (!ready) co_return std::unexpected(ready.error());
+            auto const count=ready->prefetched+ready->early_data.size();
+            frames_=std::make_unique<detail::BinaryFrames<Lower>>(lower_,profile.is_client(),std::move(ready->early_data));
+            co_return count;
+        }
+        auto read(std::span<std::uint8_t> data,ApplicationDeadline deadline={},
+            ReadTimeoutPolicy policy=ReadTimeoutPolicy::cancel_connection) {
+            return frames_ ? frames_->read(data,deadline,policy) : lower_.read(data,deadline,policy);
+        }
+        auto send(std::span<std::uint8_t const> data,ApplicationDeadline deadline={}) {
+            return frames_ ? frames_->send(data,deadline) : lower_.send(data,deadline);
+        }
+        auto close_output(ApplicationDeadline deadline={}) {
+            return frames_ ? frames_->close_output(deadline) : lower_.close_output(deadline);
+        }
+    };
+
+    template<class Lower>
+    class GenericStream {
+        Lower& lower_;
+        std::unique_ptr<detail::BinaryFrames<Lower>> frames_;
+    public:
+        explicit GenericStream(Lower& lower) noexcept :lower_(lower) {}
+        auto cancel() noexcept -> void {if (frames_) frames_->cancel(); lower_.cancel();}
+        auto activate_websocket(httpupgrade::Profile const& profile,Clock::time_point deadline)
+            -> capy::task<std::expected<std::size_t,UpgradeFailure>> {
+            if (profile.is_client() && profile.max_early_data()>0) {
+                frames_=std::make_unique<detail::BinaryFrames<Lower>>(lower_,profile,deadline);
+                co_return std::size_t{0};
+            }
+            auto ready=co_await websocket::upgrade_early(lower_,profile,deadline);
+            if (!ready) co_return std::unexpected(ready.error());
+            auto const count=ready->prefetched+ready->early_data.size();
+            frames_=std::make_unique<detail::BinaryFrames<Lower>>(lower_,profile.is_client(),std::move(ready->early_data));
+            co_return count;
         }
         auto read(std::span<std::uint8_t> data,ApplicationDeadline deadline={},
             ReadTimeoutPolicy policy=ReadTimeoutPolicy::cancel_connection) {

@@ -17,6 +17,7 @@ import http2.server_streams;
 import http2.driver;
 import tls.profiles;
 import tls.server_credential;
+import tls.ech_server;
 import tls.server_handshake_io;
 import tls.corosio_server_handshake;
 import tls.corosio_application;
@@ -118,10 +119,28 @@ namespace relay::http_modern_detail {
             };
             auto deadline = session.started + std::chrono::milliseconds(profile.handshake_timeout_ms);
             session.handshake_deadline = std::max(session.handshake_deadline, deadline);
+            std::optional<tls::ServerCredential> dyn_cred;
+            tls::ServerCredential const* active_cred = nullptr;
+            if (profile.atomic_credential) {
+                auto cur = profile.atomic_credential->clone_current();
+                if (!cur) co_return;
+                dyn_cred.emplace(std::move(*cur));
+                active_cred = &*dyn_cred;
+            } else if (profile.credential) {
+                active_cred = &*profile.credential;
+            } else {
+                co_return;
+            }
             std::array<std::string_view, 2> both{"h2", "http/1.1"};
             std::array<std::string_view, 1> h1only{"http/1.1"};
+            std::vector<std::string_view> custom_alpn;
             auto prefs = profile.http2 ? std::span<std::string_view const>(both) : std::span<std::string_view const>(h1only);
-            auto hs = tls::make_server_handshake(profile.credential, ms(session.started), ms(deadline), {}, prefs, true);
+            if (!profile.alpn.empty()) {
+                custom_alpn.reserve(profile.alpn.size());
+                for (auto const& p : profile.alpn) custom_alpn.push_back(p);
+                prefs = custom_alpn;
+            }
+            auto hs = tls::make_server_handshake(*active_cred, ms(session.started), ms(deadline), {}, prefs, true, profile.ech_keys);
             if (!hs) co_return;
             auto accepted = co_await tls::detail::server_handshake(session.client, *hs, {});
             if (!accepted || session.closed) co_return;
@@ -168,12 +187,26 @@ namespace relay::http_modern_detail {
 }
 
 namespace relay {
-    auto make_http_modern_inbound_factory(config::HttpInbound const& cfg, std::optional<Credentials> const& creds)
+    auto make_http_modern_inbound_factory(config::HttpInbound const& cfg, std::optional<Credentials> const& creds, InboundTlsRuntime const& tls_rt)
         -> std::expected<InboundFactory, std::string> {
-        auto cred = tls::load_server_credential(cfg.certificate_file, cfg.private_key_file);
-        if (!cred) return std::unexpected("HTTP TLS credential: " + cred.error());
-        auto profile = std::make_unique<http_modern_detail::HttpModernProfile>(
-            http_modern_detail::HttpModernProfile{std::move(*cred), creds, cfg.http2, cfg.handshake_timeout_ms});
+        auto profile = std::make_unique<http_modern_detail::HttpModernProfile>();
+        if (tls_rt.atomic_credential) {
+            profile->atomic_credential = std::static_pointer_cast<tls::AtomicServerCredential>(tls_rt.atomic_credential);
+        } else {
+            auto cred = tls::load_server_credential(cfg.certificate_file, cfg.private_key_file);
+            if (!cred) return std::unexpected("HTTP TLS credential: " + cred.error());
+            profile->credential.emplace(std::move(*cred));
+        }
+        profile->alpn = !cfg.alpn.empty() ? cfg.alpn : tls_rt.alpn;
+        auto const& ech_path = !cfg.ech_key_file.empty() ? cfg.ech_key_file : tls_rt.ech_key_file;
+        if (!ech_path.empty()) {
+            auto ech = tls::load_ech_server_keys_file(ech_path);
+            if (!ech) return std::unexpected("HTTP TLS ECH key: " + ech.error());
+            profile->ech_keys = std::move(*ech);
+        }
+        profile->creds = creds;
+        profile->http2 = cfg.http2;
+        profile->handshake_timeout_ms = cfg.handshake_timeout_ms;
         return InboundFactory{[profile = std::move(profile)](Session& s, corosio::io_context& ctx, rules::RouteMatcher const& policy) {
             return http_modern_detail::serve_http_modern(s, ctx, policy, *profile);
         }};

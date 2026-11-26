@@ -24,16 +24,16 @@ namespace relay {
 
     auto Server::prepare_shadowtls_inbound(std::string_view handshake_host,std::uint16_t handshake_port,
         std::string_view target_host,std::uint16_t target_port,std::span<std::string const> password_files,
-        std::span<std::string const> names,bool strict_tls13) -> std::expected<void,std::string> {
+        std::span<std::string const> names,bool strict_tls13,std::span<std::pair<std::string,config::FallbackTarget> const> handshake_for_server_name,std::string_view wildcard_sni) -> std::expected<void,std::string> {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return std::unexpected("stop the server before changing authentication");
 #ifdef NEXUS_ENABLE_SHADOWTLS
-        auto prepared=make_shadowtls_inbound_factory(handshake_host,handshake_port,target_host,target_port,password_files,names,strict_tls13);
+        auto prepared=make_shadowtls_inbound_factory(handshake_host,handshake_port,target_host,target_port,password_files,names,strict_tls13,handshake_for_server_name,wildcard_sni);
         if (!prepared) return std::unexpected(prepared.error());
         shadowtls_inbound=std::move(*prepared);
         return {};
 #else
         (void)handshake_host; (void)handshake_port; (void)target_host; (void)target_port;
-        (void)password_files; (void)names; (void)strict_tls13;
+        (void)password_files; (void)names; (void)strict_tls13; (void)handshake_for_server_name; (void)wildcard_sni;
         return std::unexpected("ShadowTLS inbound is not available in this build");
 #endif
     }

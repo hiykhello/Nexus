@@ -117,15 +117,23 @@ namespace config {
                 auto hlh = opt_str_prop(child, "http-listen-host", cfg.http_listen_host);
                 auto alh = opt_str_prop(child, "tls-alpn-listen-host", cfg.tls_alpn_listen_host);
                 auto caf = opt_str_prop(child, "ca-file", cfg.ca_file);
+                auto dp = opt_str_prop(child, "dns01-provider", cfg.dns01_provider);
+                auto dt = opt_str_prop(child, "dns01-api-token-file", cfg.dns01_api_token_file);
+                auto dak = opt_str_prop(child, "dns01-access-key-id-file", cfg.dns01_access_key_id_file);
+                auto das = opt_str_prop(child, "dns01-access-key-secret-file", cfg.dns01_access_key_secret_file);
+                auto ek = opt_str_prop(child, "eab-kid", cfg.eab_kid);
+                auto eh = opt_str_prop(child, "eab-hmac-file", cfg.eab_hmac_file);
                 std::uint64_t hlp = cfg.http_listen_port, alp = cfg.tls_alpn_listen_port;
                 std::uint64_t rbs = static_cast<std::uint64_t>(cfg.renew_before_seconds), cim = cfg.check_interval_ms;
                 auto hlp_s = opt_u64_prop(child, "http-listen-port", hlp);
                 auto alp_s = opt_u64_prop(child, "tls-alpn-listen-port", alp);
                 auto rbs_s = opt_u64_prop(child, "renew-before-seconds", rbs);
                 auto cim_s = opt_u64_prop(child, "check-interval-ms", cim);
-                if (!dir || !em || !ch || !sd || !hlh || !alh || !caf || !hlp_s || !alp_s || !rbs_s || !cim_s)
+                if (!dir || !em || !ch || !sd || !hlh || !alh || !caf || !dp || !dt || !dak || !das || !ek || !eh ||
+                    !hlp_s || !alp_s || !rbs_s || !cim_s)
                     return error("invalid acme property");
-                expected += *dir + *em + *ch + *sd + *hlh + *alh + *caf + *hlp_s + *alp_s + *rbs_s + *cim_s;
+                expected += *dir + *em + *ch + *sd + *hlh + *alh + *caf + *dp + *dt + *dak + *das + *ek + *eh +
+                            *hlp_s + *alp_s + *rbs_s + *cim_s;
                 if (child.properties.size() != expected || cfg.directory_url.empty() || cfg.state_dir.empty() ||
                     !cfg.state_dir.starts_with('/') || hlp > 65535 || alp > 65535 || !cim)
                     return error("acme requires directory-url and absolute state-dir");
@@ -136,12 +144,52 @@ namespace config {
                 cfg.renew_before_seconds = static_cast<std::int64_t>(rbs);
                 cfg.check_interval_ms = static_cast<std::uint32_t>(std::min<std::uint64_t>(cim, 86400000));
                 for (auto const& d : child.children) {
-                    auto dom = scalar(d);
-                    if (d.name != "domain" || !dom || dom->empty() || cfg.domains.size() >= 32)
-                        return error("invalid acme domain entry");
-                    cfg.domains.push_back(*dom);
+                    auto val = scalar(d);
+                    if (!val || val->empty()) return error("invalid acme child entry: " + d.name);
+                    if (d.name == "domain") {
+                        if (cfg.domains.size() >= 32) return error("invalid acme domain entry");
+                        cfg.domains.push_back(*val);
+                    } else if (d.name == "dns01-provider" && cfg.dns01_provider.empty()) {
+                        cfg.dns01_provider = *val;
+                    } else if (d.name == "dns01-api-token-file" && cfg.dns01_api_token_file.empty()) {
+                        cfg.dns01_api_token_file = *val;
+                    } else if (d.name == "dns01-access-key-id-file" && cfg.dns01_access_key_id_file.empty()) {
+                        cfg.dns01_access_key_id_file = *val;
+                    } else if (d.name == "dns01-access-key-secret-file" && cfg.dns01_access_key_secret_file.empty()) {
+                        cfg.dns01_access_key_secret_file = *val;
+                    } else if (d.name == "eab-kid" && cfg.eab_kid.empty()) {
+                        cfg.eab_kid = *val;
+                    } else if (d.name == "eab-hmac-file" && cfg.eab_hmac_file.empty()) {
+                        cfg.eab_hmac_file = *val;
+                    } else {
+                        return error("invalid or duplicate acme entry: " + d.name);
+                    }
                 }
                 if (cfg.domains.empty()) return error("acme requires at least one domain");
+                if (!cfg.dns01_provider.empty()) {
+                    if (cfg.challenge != "dns-01")
+                        return error("acme dns01-provider requires challenge=\"dns-01\"");
+                    if (cfg.dns01_provider != "file" && cfg.dns01_provider != "cloudflare" && cfg.dns01_provider != "alidns")
+                        return error("acme dns01-provider must be file, cloudflare or alidns");
+                }
+                if (cfg.dns01_provider == "cloudflare") {
+                    if (!absolute_path(cfg.dns01_api_token_file) || !cfg.dns01_access_key_id_file.empty() || !cfg.dns01_access_key_secret_file.empty())
+                        return error("acme cloudflare dns01-provider requires absolute dns01-api-token-file");
+                } else if (cfg.dns01_provider == "alidns") {
+                    if (!absolute_path(cfg.dns01_access_key_id_file) || !absolute_path(cfg.dns01_access_key_secret_file) || !cfg.dns01_api_token_file.empty())
+                        return error("acme alidns dns01-provider requires absolute dns01-access-key-id-file and dns01-access-key-secret-file");
+                } else if (!cfg.dns01_api_token_file.empty() || !cfg.dns01_access_key_id_file.empty() || !cfg.dns01_access_key_secret_file.empty()) {
+                    return error("acme dns01 credential files require dns01-provider cloudflare or alidns");
+                }
+                if (cfg.eab_kid.empty() != cfg.eab_hmac_file.empty())
+                    return error("acme eab-kid and eab-hmac-file must be configured together");
+                if (!cfg.eab_kid.empty()) {
+                    bool ok_kid = cfg.eab_kid.size() <= 256 && std::ranges::none_of(cfg.eab_kid, [](unsigned char c) {
+                        return c <= 0x20 || c >= 0x7f || c == '"' || c == '\\';
+                    });
+                    if (!ok_kid || !absolute_path(cfg.eab_hmac_file))
+                        return error("invalid acme eab-kid or eab-hmac-file");
+                }
                 out.acme = std::move(cfg);
             } else if (child.name == "reverse-tunnel") {
                 if (out.reverse_tunnel || child.tag || !child.arguments.empty() || !child.children.empty())
@@ -234,5 +282,68 @@ namespace config {
             }
         }
         return {};
+    }
+
+    auto parse_alpn_list(g::KdlNode const&, std::vector<std::string>&) -> std::expected<void, std::string>;
+
+    auto parse_shared_inbound_tls_field(g::KdlNode const& field, std::string& provider, std::string& ech_key,
+        std::vector<std::string>& alpn, bool& cert_hot_reload, bool& reload_seen) -> std::expected<bool, std::string> {
+        if (field.name == "certificate-provider") {
+            auto v = scalar(field);
+            if (!provider.empty() || !v || !valid_name(*v))
+                return error("invalid or duplicate TLS certificate-provider");
+            provider = *v;
+            return true;
+        }
+        if (field.name == "ech-key-file") {
+            auto v = scalar(field);
+            if (!ech_key.empty() || !v || !absolute_path(*v))
+                return error("TLS ech-key-file requires one absolute path");
+            ech_key = *v;
+            return true;
+        }
+        if (field.name == "alpn") {
+            if (auto ok = parse_alpn_list(field, alpn); !ok) return std::unexpected(ok.error());
+            return true;
+        }
+        if (field.name == "cert-hot-reload") {
+            auto v = boolean(field);
+            if (reload_seen || !v) return error("invalid or duplicate TLS cert-hot-reload");
+            cert_hot_reload = *v;
+            reload_seen = true;
+            return true;
+        }
+        return false;
+    }
+
+    auto extract_delegated_inbound_tls(g::KdlNode const& input, std::string& provider, std::string& ech_key,
+        std::vector<std::string>& alpn, bool& cert_hot_reload) -> std::expected<g::KdlNode, std::string> {
+        g::KdlNode copy = input;
+        bool reload_seen = false;
+        for (auto& child : copy.children) {
+            if (child.name != "tls" || child.tag || !child.arguments.empty() || !child.properties.empty()) continue;
+            std::vector<g::KdlNode> kept;
+            bool has_cert = false, has_key = false;
+            for (auto const& field : child.children) {
+                auto matched = parse_shared_inbound_tls_field(field, provider, ech_key, alpn, cert_hot_reload, reload_seen);
+                if (!matched) return std::unexpected(matched.error());
+                if (*matched) continue;
+                if (field.name == "certificate-file") has_cert = true;
+                if (field.name == "private-key-file") has_key = true;
+                kept.push_back(field);
+            }
+            if (!provider.empty()) {
+                if (has_cert || has_key)
+                    return error("TLS certificate-provider cannot be combined with certificate-file or private-key-file");
+                if (cert_hot_reload)
+                    return error("TLS cert-hot-reload cannot be combined with certificate-provider");
+                g::KdlNode cf{.name = "certificate-file"}; cf.arguments.push_back(g::KdlValue{.data = std::string("/__provider__")});
+                g::KdlNode kf{.name = "private-key-file"}; kf.arguments.push_back(g::KdlValue{.data = std::string("/__provider__")});
+                kept.push_back(std::move(cf)); kept.push_back(std::move(kf));
+            }
+            child.children = std::move(kept);
+            break;
+        }
+        return copy;
     }
 }

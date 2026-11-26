@@ -373,6 +373,52 @@ namespace config {
         }
         if (!inbound_edges.empty() && !policy::dependency_order(config.inbounds.size(),inbound_edges))
             return std::unexpected("inbound detour cycle");
+        auto check_cert_provider = [&](std::string_view provider) -> std::expected<void, std::string> {
+            if (provider.empty()) return {};
+            if (provider != "acme" || !config.services.acme.has_value())
+                return std::unexpected("TLS certificate-provider references unconfigured ACME service: " + std::string(provider));
+            return {};
+        };
+        auto reject_quic_tls = [](std::string_view kind, std::string_view provider, bool hot_reload,
+            std::string_view ech, std::vector<std::string> const& alpn) -> std::expected<void, std::string> {
+            if (!provider.empty()) return std::unexpected(std::string(kind) + " inbound does not support TLS certificate-provider");
+            if (hot_reload) return std::unexpected(std::string(kind) + " inbound does not support TLS cert-hot-reload");
+            if (!ech.empty()) return std::unexpected(std::string(kind) + " inbound does not support TLS ech-key-file");
+            if (!alpn.empty()) return std::unexpected(std::string(kind) + " inbound does not support custom TLS alpn");
+            return {};
+        };
+        for (auto const& in : config.inbounds) {
+            if (in.vless) {
+                if (auto ok = check_cert_provider(in.vless->certificate_provider); !ok) return ok;
+                if (in.vless->xhttp && in.vless->xhttp->endpoint.version == xhttp::HttpVersion::http3 && !in.vless->ech_key_file.empty())
+                    return std::unexpected("VLESS XHTTP HTTP/3 inbound does not support TLS ech-key-file");
+            }
+            if (in.trojan) { if (auto ok = check_cert_provider(in.trojan->certificate_provider); !ok) return ok; }
+            if (in.anytls) { if (auto ok = check_cert_provider(in.anytls->certificate_provider); !ok) return ok; }
+            if (in.hysteria2) {
+                auto const& cp = !in.hysteria2->certificate_provider.empty() ? in.hysteria2->certificate_provider : in.hysteria2->connection.certificate_provider;
+                auto const& ech = !in.hysteria2->ech_key_file.empty() ? in.hysteria2->ech_key_file : in.hysteria2->connection.ech_key_file;
+                auto const& alpn = !in.hysteria2->alpn.empty() ? in.hysteria2->alpn : in.hysteria2->connection.alpn;
+                bool reload = in.hysteria2->cert_hot_reload || in.hysteria2->connection.cert_hot_reload;
+                if (auto ok = reject_quic_tls("Hysteria2", cp, reload, ech, alpn); !ok) return ok;
+            }
+            if (in.tuic) {
+                if (auto ok = reject_quic_tls("TUIC", in.tuic->certificate_provider, in.tuic->cert_hot_reload, in.tuic->ech_key_file, in.tuic->alpn); !ok) return ok;
+            }
+            if (in.masque) {
+                if (auto ok = reject_quic_tls("MASQUE", in.masque->certificate_provider, in.masque->cert_hot_reload, in.masque->ech_key_file, in.masque->alpn); !ok) return ok;
+            }
+            if (in.http) {
+                if (auto ok = check_cert_provider(in.http->certificate_provider); !ok) return ok;
+                if (in.http->has_tls && in.http->http3 && !in.http->ech_key_file.empty())
+                    return std::unexpected("HTTP/3 inbound does not support TLS ech-key-file");
+            }
+            if (in.naive) {
+                if (auto ok = check_cert_provider(in.naive->certificate_provider); !ok) return ok;
+                if (in.naive->protocol != NaiveProtocol::h2 && !in.naive->ech_key_file.empty())
+                    return std::unexpected("NaiveProxy HTTP/3 inbound does not support TLS ech-key-file");
+            }
+        }
         return {};
     }
 }

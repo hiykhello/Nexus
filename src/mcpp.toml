@@ -28,7 +28,7 @@ blake3 = { sources = ["../3rdparty/modules/blake3.cppm"] }
 state = { implies = ["blake3"], sources = ["state/*.cpp", "state/*.cppm"] }
 memory-budget = { sources = ["memory/budget.cppm", "memory/watchdog.cppm", "memory/watchdog.cpp"] }
 ntp = { sources = ["service/ntp/sntp.cppm", "service/ntp/sntp.cpp"] }
-acme = { implies = ["tls"], sources = ["service/acme/types.cppm", "service/acme/jws.cppm", "service/acme/jws.cpp", "service/acme/store.cppm", "service/acme/store.cpp", "service/acme/client.cppm", "service/acme/client.cpp"] }
+acme = { implies = ["tls"], sources = ["service/acme/types.cppm", "service/acme/jws.cppm", "service/acme/jws.cpp", "service/acme/store.cppm", "service/acme/store.cpp", "service/acme/client.cppm", "service/acme/client.cpp", "service/acme/dns01_providers.cppm", "service/acme/dns01_providers.cpp"] }
 tls = { implies = ["memory-budget", "unified-stream"], flags = [
     { glob = "tls/record.cpp", cxxflags = ["-O3"] },
     { glob = "tls/tls12_record.cpp", cxxflags = ["-O3"] },
@@ -82,7 +82,7 @@ quic-sniff = { implies = ["quic-crypto"], defines = ["NEXUS_QUIC_SNIFF"], source
 quic-native = { sources = ["../3rdparty/modules/ngtcp2.cppm"] }
 quic-transport = { implies = ["quic-native", "quic-crypto", "memory-budget"], sources = ["quic/packet_protection.cppm", "quic/connection.cppm", "quic/transport_parameters.cppm", "quic/transport_parameters.cpp", "quic/transport_memory.cppm"] }
 quic-tls = { implies = ["quic-transport", "tls"], sources = ["quic/tls_common.cppm", "quic/tls_client.cppm", "quic/tls_server.cppm"] }
-quic-resumption = { implies = ["quic-tls", "tls-resumption"], defines = ["NEXUS_QUIC_RESUMPTION"], sources = ["quic/resumption.cppm", "quic/optional_client_resumption.cppm", "!quic/optional_client_resumption_disabled.cppm"] }
+quic-resumption = { implies = ["quic-tls", "tls-resumption"], defines = ["NEXUS_QUIC_RESUMPTION"], sources = ["quic/resumption.cppm", "quic/server_early_data.cppm", "quic/optional_client_resumption.cppm", "!quic/optional_client_resumption_disabled.cppm"] }
 http3-core = { implies = ["quic-core"], sources = ["../3rdparty/modules/nghttp3.cppm", "quic/http3.cppm", "quic/http3_headers.cppm"] }
 masque-core = { implies = ["quic-core"], sources = ["masque/datagram.cppm", "masque/capsule.cppm", "masque/ip_control.cppm", "masque/ip_receiver.cppm", "masque/ip_packet.cppm", "masque/ip_packet.cpp", "masque/connect_ip.cppm", "masque/http3.cppm"] }
 masque-session = { implies = ["masque-core", "http3-core", "quic-transport"], sources = ["masque/udp_session.cppm", "masque/session.cppm"] }
@@ -104,6 +104,7 @@ http2 = { implies = ["memory-budget"], sources = [
 http2-tls = { implies = ["http2", "tls"], sources = ["http2/tls_server.cppm"] }
 grpc = { implies = ["http2"], sources = ["transport/grpc/session.cppm", "transport/grpc/stream_operations.cppm", "transport/grpc/stream.cppm", "transport/grpc/multiplex.cppm", "transport/grpc/multiplex_channel.cppm"] }
 grpc-tls = { implies = ["grpc", "tls"], sources = ["transport/grpc/connection.cppm"] }
+h2mux = { implies = ["http2"], sources = ["transport/mux/h2mux_policy.cppm", "transport/mux/h2mux_session.cppm"] }
 test-http2-allocator = { implies = ["http2"], defines = ["NEXUS_TEST_HTTP2_ALLOCATOR"] }
 # Exercise the real stream-rotation path near ID exhaustion in a dedicated graph.
 test-xudp-rotation = { implies = ["vless"], defines = ["NEXUS_TEST_XUDP_ROTATION"] }
@@ -114,7 +115,7 @@ ss2022 = { sources = ["shadowsocks/*.cpp", "shadowsocks/*.cppm"], implies = ["bl
 shadowtls = { sources = ["shadowtls/v3.cppm", "shadowtls/v3.cpp"] }
 shadowtls-runtime = { implies = ["shadowtls", "tls"], sources = ["shadowtls/stream.cppm"] }
 tuic-core = { implies = ["tls"], sources = ["tuic/wire.cppm", "tuic/wire.cpp"] }
-tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "byte-ring"], sources = ["tuic/transport_options.cppm", "tuic/stream_output.cppm", "tuic/stream_input.cppm", "tuic/application.cppm", "tuic/stream.cppm", "tuic/client.cppm", "tuic/client_profile.cpp", "tuic/server.cppm",
+tuic = { implies = ["tuic-core", "quic-tls", "quic-retry", "byte-ring"], sources = ["tuic/transport_options.cppm", "tuic/stream_output.cppm", "tuic/stream_input.cppm", "tuic/early_data.cppm", "tuic/application.cppm", "tuic/stream.cppm", "tuic/client.cppm", "tuic/client_profile.cpp", "tuic/server.cppm",
     "quic/optional_client_resumption_disabled.cppm"] }
 masque-client = { implies = ["masque-session", "quic-tls", "quic-shared-port", "hysteria2-support"], sources = ["masque/client_profile.cppm", "masque/client_profile.cpp", "masque/client_hooks.cppm", "masque/client_http.cppm", "masque/client_session.cppm", "quic/optional_client_resumption_disabled.cppm"] }
 naive = { implies = ["http2", "masque-client", "masque-server", "quic-retry", "packet-stream-socket"], sources = ["naive/*.cpp", "naive/*.cppm"] }

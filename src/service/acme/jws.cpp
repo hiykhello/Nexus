@@ -16,6 +16,7 @@ module;
 
 module acme.jws;
 import std;
+import crypto;
 import encoding.base64;
 
 namespace acme {
@@ -79,6 +80,39 @@ namespace acme {
 
     auto base64url_encode(std::span<std::uint8_t const> bytes) -> std::string {
         return encoding::encode_base64url(bytes, false);
+    }
+
+    auto base64url_decode(std::string_view text) -> std::expected<std::vector<std::uint8_t>, std::string> {
+        auto is_ws = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+        while (!text.empty() && is_ws(text.front())) text.remove_prefix(1);
+        while (!text.empty() && is_ws(text.back())) text.remove_suffix(1);
+        if (text.empty() || text.size() % 4 == 1)
+            return std::unexpected("invalid base64url length");
+        auto url_digit = [](char c) -> int {
+            if (c >= 'A' && c <= 'Z') return c - 'A';
+            if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+            if (c >= '0' && c <= '9') return c - '0' + 52;
+            if (c == '-') return 62;
+            if (c == '_') return 63;
+            return -1;
+        };
+        std::vector<std::uint8_t> out;
+        out.reserve((text.size() * 3) / 4);
+        std::uint32_t acc = 0;
+        int bits = 0;
+        for (char c : text) {
+            int d = url_digit(c);
+            if (d < 0) return std::unexpected("invalid base64url character");
+            acc = (acc << 6) | static_cast<std::uint32_t>(d);
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out.push_back(static_cast<std::uint8_t>((acc >> bits) & 0xffu));
+            }
+        }
+        if (bits > 0 && (acc & ((1u << bits) - 1u)) != 0)
+            return std::unexpected("non-canonical base64url trailing bits");
+        return out;
     }
 
     auto sha256_bytes(std::span<std::uint8_t const> bytes) -> std::expected<std::array<std::uint8_t, 32>, std::string> {
@@ -170,6 +204,28 @@ namespace acme {
         if (!sig) return std::unexpected(sig.error());
         return std::format("{{\"protected\":\"{}\",\"payload\":\"{}\",\"signature\":\"{}\"}}",
                            prot_b64, pay_b64, base64url_encode(*sig));
+    }
+
+    auto sign_eab_jws(EcAccountKey const& account_key, std::string_view new_account_url,
+                      std::string_view eab_kid, std::span<std::uint8_t const> eab_hmac_key)
+        -> std::expected<std::string, std::string> {
+        if (new_account_url.empty() || eab_kid.empty() || eab_hmac_key.empty() ||
+            !valid_jws_header_value(new_account_url) || !valid_jws_header_value(eab_kid))
+            return std::unexpected("invalid ACME EAB parameters");
+        // RFC 8555 §7.3.4: External Account Binding JWS (HS256 over account JWK).
+        auto protected_json = std::format("{{\"alg\":\"HS256\",\"kid\":\"{}\",\"url\":\"{}\"}}",
+                                          eab_kid, new_account_url);
+        auto payload_json = account_key.jwk_json();
+        auto prot_b64 = base64url_encode(
+            std::span(reinterpret_cast<std::uint8_t const*>(protected_json.data()), protected_json.size()));
+        auto pay_b64 = base64url_encode(
+            std::span(reinterpret_cast<std::uint8_t const*>(payload_json.data()), payload_json.size()));
+        auto signing_input = prot_b64 + "." + pay_b64;
+        auto mac = crypto::hmac(crypto::Hash::sha256, eab_hmac_key,
+            std::span(reinterpret_cast<std::uint8_t const*>(signing_input.data()), signing_input.size()));
+        if (!mac) return std::unexpected("ACME EAB HS256 signing failed");
+        return std::format("{{\"protected\":\"{}\",\"payload\":\"{}\",\"signature\":\"{}\"}}",
+                           prot_b64, pay_b64, base64url_encode(*mac));
     }
 
     auto generate_csr_p256(std::span<std::string const> domains) -> std::expected<GeneratedCsr, std::string> {

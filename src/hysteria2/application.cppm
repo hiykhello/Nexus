@@ -153,6 +153,50 @@ export namespace hysteria2 {
             auto* state=get(id);if(!server_ || !state || state->phase!=StreamPhase::request || stopping_)return false;
             state->phase=StreamPhase::routing;state->business_owned=true;return true;
         }
+        auto pending_masquerade() noexcept -> std::optional<StreamHandle> {
+            for (auto& state:streams_) if (state && !state->tcp && state->masquerade_pending && state->phase==StreamPhase::masquerade) return handle(*state);
+            return {};
+        }
+        auto claim_masquerade(StreamHandle id) noexcept -> bool {
+            auto* state=get(id);if(!server_ || !state || !state->masquerade_pending || state->phase!=StreamPhase::masquerade || stopping_)return false;
+            state->masquerade_pending=false;state->business_owned=true;return true;
+        }
+        auto http3_request_headers(StreamHandle id) const noexcept -> std::span<http::HeaderField const> {
+            if (id.slot>=Streams || !streams_[id.slot] || streams_[id.slot]->generation!=id.generation) return {};
+            return streams_[id.slot]->headers.fields();
+        }
+        auto respond_http3(StreamHandle id,std::uint16_t status,std::span<std::pair<std::string,std::string> const> extra_headers,
+            std::vector<std::uint8_t> body,bool omit_body=false) -> bool {
+            auto* state=get(id);
+            if (!server_ || !state || state->tcp || state->phase!=StreamPhase::masquerade || state->transport_closed || stopping_ || !http3_.active()) return false;
+            std::uint16_t code=(status>=200 && status<=599) ? status : std::uint16_t{502};
+            bool no_body_status=(code==204 || code==304);
+            auto status_str=std::to_string(code);
+            auto len_str=std::to_string(no_body_status ? std::size_t{0} : body.size());
+            std::vector<nghttp3::nghttp3_nv> nvs;
+            nvs.reserve(2+extra_headers.size());
+            auto push=[&](std::string_view k,std::string_view v) { nvs.push_back({reinterpret_cast<std::uint8_t const*>(k.data()),reinterpret_cast<std::uint8_t const*>(v.data()),k.size(),v.size(),nghttp3::nv_flag_none}); };
+            push(":status",status_str);
+            if (code!=204) push("content-length",len_str);
+            for (auto const& [k,v] : extra_headers) if (!k.empty() && k.front()!=':' && !k.starts_with("hysteria-") && k!="content-length") push(k,v);
+            bool send_body=!omit_body && !no_body_status && !body.empty();
+            if (send_body) state->http3_body.emplace(Http3ResponseBody{std::move(body),0,0}); else state->http3_body.reset();
+            if (http3_.response(state->id,nvs,send_body)) { state->http3_body.reset(); return false; }
+            state->phase=StreamPhase::closed; signal(); return true;
+        }
+        auto finish_masquerade(StreamHandle id) noexcept -> void {
+            auto* state=get(id); if (!state) return;
+            state->business_owned=false; state->masquerade_pending=false;
+            if (state->transport_closed) {
+                auto remote=server_ && (state->id&3)==0; streams_[id.slot].reset();
+                if (remote && transport_ && transport_->active()) ngtcp2::ngtcp2_conn_extend_max_streams_bidi(transport_->native(),1);
+                return;
+            }
+            if (state->phase==StreamPhase::masquerade && !stopping_ && http3_.active()) {
+                std::array<http::HeaderField,2> fallback{{{":status","502"},{"content-length","0"}}};
+                (void)http3_.response(state->id,fields(fallback)); state->phase=StreamPhase::closed; signal();
+            }
+        }
         auto phase(StreamHandle id) noexcept -> std::optional<StreamPhase> { auto* state=get(id); return state ? std::optional(state->phase) : std::nullopt; }
         auto address(StreamHandle id) noexcept -> std::string_view { auto* state=get(id); return state ? state->address() : std::string_view{}; }
         auto acknowledged(StreamHandle id) noexcept -> bool { auto* state=get(id); return state && !state->output.size() && (!state->output_fin || state->fin_accepted); }
@@ -288,7 +332,11 @@ export namespace hysteria2 {
                 signal();if(state->abandoned || !state->business_owned || !state->tcp)(void)release(handle(*state));return 0;
             }
             auto error=http3_.active() ? http3_.close_stream(flags,id,rx,tx) : 0;
-            if (state) streams_[handle(*state).slot].reset();
+            if (state) {
+                state->http3_body.reset();
+                if (state->business_owned) { state->transport_closed=true; state->phase=StreamPhase::closed; return error; }
+                streams_[handle(*state).slot].reset();
+            }
             if (server_ && (id&3)==0) ngtcp2::ngtcp2_conn_extend_max_streams_bidi(transport_->native(),1);
             return error;
         }
@@ -357,18 +405,44 @@ export namespace hysteria2 {
                 }
                 return error;
             }
+            if constexpr (requires { hooks_.has_masquerade(); }) {
+                if (hooks_.has_masquerade()) {
+                    state->phase=StreamPhase::masquerade;
+                    state->masquerade_pending=true;
+                    state->business_owned=true;
+                    signal();
+                    return 0;
+                }
+            }
             std::array<http::HeaderField,2> cover{{{":status","404"},{"content-length","0"}}}; return owner.response(id,fields(cover));
         }
         auto data(Http3&,std::int64_t id,std::span<std::uint8_t const> bytes,void*) -> int { return credit(id,bytes.size()); }
         auto deferred_consume(Http3&,std::int64_t id,std::size_t count,void*) -> int { return credit(id,count); }
-        auto data_acked(Http3&,std::int64_t,std::uint64_t,void*) -> int { return 0; }
+        auto data_acked(Http3&,std::int64_t id,std::uint64_t size,void*) -> int {
+            if (auto* state=find(id); state && state->http3_body) {
+                state->http3_body->acked+=size;
+                if (state->http3_body->acked>=state->http3_body->bytes.size()) state->http3_body.reset();
+            }
+            return 0;
+        }
         auto end_stream(Http3&,std::int64_t,void*) -> int { return 0; }
         auto stream_closed(Http3&,std::uint32_t,std::int64_t,std::uint64_t,std::uint64_t,void*) -> int { return 0; }
         auto stop_sending(Http3&,std::int64_t id,std::uint64_t code,void*) -> int { return ngtcp2::ngtcp2_conn_shutdown_stream_read(transport_->native(),0,id,code); }
         auto reset_stream(Http3&,std::int64_t id,std::uint64_t code,void*) -> int { return ngtcp2::ngtcp2_conn_shutdown_stream_write(transport_->native(),0,id,code); }
         auto shutdown(Http3&,std::int64_t) -> int { return 0; }
         auto settings(Http3&,nghttp3::nghttp3_settings const&) -> int { return 0; }
-        auto read_data(Http3&,std::int64_t,std::span<nghttp3::nghttp3_vec>,std::uint32_t&,void*) -> nghttp3::nghttp3_ssize { return nghttp3::err_wouldblock; }
+        auto read_data(Http3&,std::int64_t id,std::span<nghttp3::nghttp3_vec> vectors,std::uint32_t& flags,void*) -> nghttp3::nghttp3_ssize {
+            auto* state=find(id);
+            if (!state || !state->http3_body) return nghttp3::err_wouldblock;
+            auto& body=*state->http3_body;
+            auto remaining=body.bytes.size()-body.sent;
+            if (!remaining) { flags|=nghttp3::data_flag_eof; return 0; }
+            auto chunk=std::min<std::size_t>(remaining,16384);
+            vectors[0]={body.bytes.data()+body.sent,chunk};
+            body.sent+=chunk;
+            if (body.sent==body.bytes.size()) flags|=nghttp3::data_flag_eof;
+            return 1;
+        }
         auto output(std::span<std::uint8_t> output,std::uint64_t now,ngtcp2::ngtcp2_path* path=nullptr) -> std::expected<std::size_t,int> {
             time_=now; if (stopping_) return std::unexpected(ngtcp2::err_callback_failure);
             auto first=output_turn_++%3;

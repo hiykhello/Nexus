@@ -129,12 +129,19 @@ namespace acme {
     }
 
     auto register_account(AcmeDirectory const& dir, EcAccountKey const& key,
-                          std::string_view email, std::string& nonce, HttpExchangeFn http)
+                          std::string_view email, std::string& nonce, HttpExchangeFn http,
+                          EabCredentials const* eab)
         -> std::expected<std::string, std::string> {
         if (!email.empty() && !valid_json_text(email)) return std::unexpected("invalid ACME contact email");
+        std::string eab_part;
+        if (eab && (!eab->kid.empty() || !eab->hmac_key.empty())) {
+            auto eab_jws = sign_eab_jws(key, dir.new_account, eab->kid, eab->hmac_key);
+            if (!eab_jws) return std::unexpected(eab_jws.error());
+            eab_part = std::format(",\"externalAccountBinding\":{}", *eab_jws);
+        }
         std::string payload = email.empty()
-            ? "{\"termsOfServiceAgreed\":true}"
-            : std::format("{{\"contact\":[\"mailto:{}\"],\"termsOfServiceAgreed\":true}}", email);
+            ? std::format("{{\"termsOfServiceAgreed\":true{}}}", eab_part)
+            : std::format("{{\"contact\":[\"mailto:{}\"],\"termsOfServiceAgreed\":true{}}}", email, eab_part);
         auto resp = post_jws(key, dir.new_account, payload, {}, dir, nonce, http);
         if (!resp) return std::unexpected(resp.error());
         if (resp->status < 200 || resp->status >= 300 || resp->location.empty())
@@ -186,7 +193,7 @@ namespace acme {
         if (!nonce_res) return std::unexpected(nonce_res.error());
         std::string nonce = std::move(*nonce_res);
 
-        auto kid = register_account(*dir, key, cfg.email, nonce, http);
+        auto kid = register_account(*dir, key, cfg.email, nonce, http, cfg.eab ? &*cfg.eab : nullptr);
         if (!kid) return std::unexpected(kid.error());
         auto order = create_order(*dir, key, *kid, cfg.domains, nonce, http);
         if (!order) return std::unexpected(order.error());
@@ -198,13 +205,14 @@ namespace acme {
             ~Cleanup() { if (h.cleanup) (*h.cleanup)(); }
         } cleanup_guard{hooks};
 
+        auto strip_wild = [](std::string_view s) { return s.starts_with("*.") ? s.substr(2) : s; };
         for (auto const& [authz_domain, ch] : *challenges) {
             auto matched = std::ranges::find_if(cfg.domains, [&](std::string const& d) {
-                return iequal_ascii(d, authz_domain);
+                return iequal_ascii(d, authz_domain) || iequal_ascii(strip_wild(d), authz_domain);
             });
             if (matched == cfg.domains.end())
                 return std::unexpected("ACME authorization domain mismatch: " + authz_domain);
-            std::string_view domain = *matched;
+            std::string_view domain = strip_wild(*matched);
             if (cfg.challenge == ChallengeType::http01 && hooks.publish_http01) {
                 if (!(*hooks.publish_http01)(ch.token, ch.key_authorization)) return std::unexpected("HTTP-01 hook failed");
             } else if (cfg.challenge == ChallengeType::tls_alpn01 && hooks.publish_alpn01) {

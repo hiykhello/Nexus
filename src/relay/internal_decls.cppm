@@ -29,21 +29,21 @@ import :session_interface;
 
 namespace relay {
 #ifdef NEXUS_ENABLE_VLESS
-    auto make_vless_inbound_factory(std::string_view certificate, std::string_view key, std::span<std::string const> users, bool vision, std::optional<RealityInbound> reality, std::span<std::string const> names, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, std::optional<config::InboundMultiplexConfig> multiplex = {})
+    auto make_vless_inbound_factory(std::string_view certificate, std::string_view key, std::span<std::string const> users, bool vision, std::optional<RealityInbound> reality, std::span<std::string const> names, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, std::optional<config::InboundMultiplexConfig> multiplex = {}, InboundTlsRuntime const& tls_rt = {})
         -> std::expected<InboundFactory, std::string>;
     auto make_vless_factory(std::string_view host, std::uint16_t port, std::string_view uuid_file,
-        std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms, TcpSocketOptions tcp_options = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, bool packetaddr = false, bool fixed_udp = false, std::span<std::array<std::uint8_t, 32> const> pins = {}, QuicEchOptions const& ech = {}, bool dns_available = false) -> std::expected<TunnelFactory, std::string>;
+        std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms, TcpSocketOptions tcp_options = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, bool packetaddr = false, bool fixed_udp = false, std::span<std::array<std::uint8_t, 32> const> pins = {}, QuicEchOptions const& ech = {}, bool dns_available = false, config::OutboundTlsFragment const& tls_fragment = {}, std::span<std::string const> alpn = {}) -> std::expected<TunnelFactory, std::string>;
     auto make_vless_layer_factory(std::string_view uuid_file,
         std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<Reality> reality,
         bool vision, std::uint32_t timeout_ms, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}) -> std::expected<TunnelLayerFactory, std::string>;
     auto make_vless_grpc_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view, TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, GrpcTransport, TlsFingerprint, std::optional<std::uint16_t>, std::span<std::array<std::uint8_t, 32> const> pins = {}, QuicEchOptions const& ech = {}, bool dns_available = false) -> std::expected<TunnelFactory, std::string>;
-    auto make_vless_grpc_inbound_factory(std::string_view, std::string_view, std::span<std::string const>, std::span<std::string const>, GrpcTransport) -> std::expected<InboundFactory, std::string>;
+    auto make_vless_grpc_inbound_factory(std::string_view, std::string_view, std::span<std::string const>, std::span<std::string const>, GrpcTransport, InboundTlsRuntime const& tls_rt = {}) -> std::expected<InboundFactory, std::string>;
 #ifdef NEXUS_ENABLE_XHTTP_VLESS
     auto make_vless_xhttp_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view, TlsKeyExchange,
         std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, xhttp::Profile, TlsFingerprint, std::optional<std::uint16_t>, std::optional<Reality>, std::span<std::array<std::uint8_t, 32> const> pins = {}, QuicEchOptions const& ech = {}, bool dns_available = false)
         -> std::expected<TunnelFactory, std::string>;
     auto make_vless_xhttp_inbound_factory(std::string_view, std::string_view, std::span<std::string const>,
-        std::span<std::string const>, xhttp::Profile, std::optional<RealityInbound>) -> std::expected<InboundFactory, std::string>;
+        std::span<std::string const>, xhttp::Profile, std::optional<RealityInbound>, InboundTlsRuntime const& tls_rt = {}) -> std::expected<InboundFactory, std::string>;
 #endif
 #endif
 
@@ -59,14 +59,14 @@ namespace relay {
 #endif
 #ifdef NEXUS_ENABLE_TROJAN
     auto make_trojan_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view,
-        TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {}, bool dns_available = false) -> std::expected<TunnelFactory, std::string>;
-    auto make_trojan_inbound_factory(std::string_view, std::string_view, std::span<std::string const>, std::span<std::string const>, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, std::optional<config::InboundMultiplexConfig> multiplex = {})
+        TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {}, bool dns_available = false, config::OutboundTlsFragment const& tls_fragment = {}, std::span<std::string const> alpn = {}) -> std::expected<TunnelFactory, std::string>;
+    auto make_trojan_inbound_factory(std::string_view, std::string_view, std::span<std::string const>, std::span<std::string const>, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, std::optional<config::InboundMultiplexConfig> multiplex = {}, std::optional<config::FallbackTarget> fallback = {}, std::span<std::pair<std::string, config::FallbackTarget> const> fallback_for_alpn = {}, InboundTlsRuntime const& tls_rt = {})
         -> std::expected<InboundFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_ANYTLS
     auto make_anytls_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view,
-        TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, AnyTlsOptions, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {}, bool dns_available = false) -> std::expected<TunnelFactory, std::string>;
-    auto make_anytls_inbound_factory(std::string_view, std::string_view, std::span<std::string const>, std::span<std::string const>, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {})
+        TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, AnyTlsOptions, bool fast_open = false, TlsFingerprint fingerprint = TlsFingerprint::native, std::optional<std::uint16_t> record_size_limit = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, QuicEchOptions const& ech = {}, bool dns_available = false, config::OutboundTlsFragment const& tls_fragment = {}, std::span<std::string const> alpn = {}) -> std::expected<TunnelFactory, std::string>;
+    auto make_anytls_inbound_factory(std::string_view, std::string_view, std::span<std::string const>, std::span<std::string const>, std::optional<HttpUpgradeTransport> transport = {}, std::optional<GrpcTransport> grpc = {}, InboundTlsRuntime const& tls_rt = {})
         -> std::expected<InboundFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_SNELL
@@ -74,18 +74,18 @@ namespace relay {
     auto make_snell_factory(std::string_view, std::uint16_t, std::string_view, std::optional<std::string_view>, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, bool fast_open = false, bool http_obfs = false, std::string_view obfs_host = {}, std::string_view obfs_uri = {}, bool reuse = false) -> std::expected<TunnelFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_HY2_CLIENT
-    auto make_hysteria2_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view, TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, std::uint32_t, std::uint32_t, std::size_t, bool, std::optional<std::string_view>, std::optional<std::size_t>, bool, std::uint64_t, std::uint64_t, bool, TlsFingerprint = TlsFingerprint::native, bool lazy_tcp_response = false, QuicEchOptions const& ech = {}, bool dns_available = false, quic::ReceiveWindows windows = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::span<config::PortRange const> port_ranges = {}, std::uint32_t hop_interval_ms = 0) -> std::expected<TunnelFactory, std::string>;
+    auto make_hysteria2_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view, TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, std::uint32_t, std::uint32_t, std::size_t, bool, std::optional<std::string_view>, std::optional<std::size_t>, bool, std::uint64_t, std::uint64_t, bool, TlsFingerprint = TlsFingerprint::native, bool lazy_tcp_response = false, QuicEchOptions const& ech = {}, bool dns_available = false, quic::ReceiveWindows windows = {}, std::span<std::array<std::uint8_t, 32> const> pins = {}, std::span<config::PortRange const> port_ranges = {}, std::uint32_t hop_interval_ms = 0, std::uint32_t hop_interval_max_ms = 0) -> std::expected<TunnelFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_SHADOWTLS
     auto make_shadowtls_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view,
         TlsKeyExchange, std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, TlsFingerprint = TlsFingerprint::native, bool strict_tls13 = true, std::span<std::array<std::uint8_t, 32> const> pins = {}) -> std::expected<TunnelFactory, std::string>;
     auto make_shadowtls_inbound_factory(std::string_view, std::uint16_t, std::string_view, std::uint16_t,
-        std::span<std::string const>, std::span<std::string const>, bool strict_tls13 = true) -> std::expected<InboundFactory, std::string>;
+        std::span<std::string const>, std::span<std::string const>, bool strict_tls13 = true, std::span<std::pair<std::string, config::FallbackTarget> const> handshake_for_server_name = {}, std::string_view wildcard_sni = {}) -> std::expected<InboundFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_TUIC
     auto make_tuic_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view, std::string_view,
         TlsKeyExchange, TlsFingerprint, std::string_view, bool, std::uint32_t, std::uint32_t, std::uint32_t, std::size_t,
-        std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, QuicEchOptions const&, bool, std::span<std::array<std::uint8_t, 32> const> pins = {}) -> std::expected<TunnelFactory, std::string>;
+        std::optional<std::size_t>, std::uint32_t, TcpSocketOptions, QuicEchOptions const&, bool, std::span<std::array<std::uint8_t, 32> const> pins = {}, bool zero_rtt_handshake = false) -> std::expected<TunnelFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_MASQUE_OUTBOUND
     auto make_masque_factory(std::string_view, std::uint16_t, std::string_view, std::string_view, std::string_view, std::string_view,
@@ -104,8 +104,8 @@ namespace relay {
 #ifdef NEXUS_ENABLE_NAIVE
     auto make_naive_factory(config::NaiveOutbound const&, bool dns_available = false) -> std::expected<TunnelFactory, std::string>;
     auto make_http_modern_factory(config::TcpProxyOutbound const&, bool dns_available = false) -> std::expected<TunnelFactory, std::string>;
-    auto make_naive_h2_inbound_factory(config::NaiveInbound const&) -> std::expected<InboundFactory, std::string>;
-    auto make_http_modern_inbound_factory(config::HttpInbound const&, std::optional<Credentials> const&) -> std::expected<InboundFactory, std::string>;
+    auto make_naive_h2_inbound_factory(config::NaiveInbound const&, InboundTlsRuntime const& tls_rt = {}) -> std::expected<InboundFactory, std::string>;
+    auto make_http_modern_inbound_factory(config::HttpInbound const&, std::optional<Credentials> const&, InboundTlsRuntime const& tls_rt = {}) -> std::expected<InboundFactory, std::string>;
 #endif
 #ifdef NEXUS_ENABLE_OPENVPN
     auto make_openvpn_factory(config::OpenVpnOutbound const&) -> std::expected<TunnelFactory, std::string>;

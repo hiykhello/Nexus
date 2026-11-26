@@ -1,6 +1,7 @@
 export module tls.corosio_client;
 import std;
 import tls.client_handshake_io;
+import tls.outbound_fragment;
 import platform.socket_options;
 import tls.application_io;
 import tls.corosio_application;
@@ -20,11 +21,27 @@ export namespace tls::detail {
         -> capy::task<capy::results<std::optional<AsyncHandshakeError>>> {
         using LoopResult = capy::results<std::optional<AsyncHandshakeError>>;
         auto now=[] { return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); };
+        bool first_flight_sent=false;
+        auto deadline=std::chrono::steady_clock::time_point(std::chrono::milliseconds(handshake.deadline()));
         while (!handshake.complete()) {
             auto tick=handshake.tick(now());
             if (!tick) co_return LoopResult{std::error_code{}, std::optional<AsyncHandshakeError>(tick.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : AsyncHandshakeError::protocol)};
             if (!handshake.pending_output().empty()) {
                 auto pending=handshake.pending_output();
+                if (!first_flight_sent && handshake.fragment_options().active() && is_client_hello_record(pending)) {
+                    auto error=co_await write_fragmented_client_hello(socket,pending,handshake.fragment_options(),deadline);
+                    if (error) {
+                        if (capy::is_timeout(error)) { (void)handshake.cancel(); co_return LoopResult{error, std::optional<AsyncHandshakeError>(AsyncHandshakeError::timeout)}; }
+                        auto tick2=handshake.tick(now());
+                        if (!tick2) co_return LoopResult{error, std::optional<AsyncHandshakeError>(tick2.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : AsyncHandshakeError::protocol)};
+                        (void)handshake.cancel(); co_return LoopResult{error, std::optional<AsyncHandshakeError>(AsyncHandshakeError::transport)};
+                    }
+                    first_flight_sent=true;
+                    auto written=handshake.written(pending.size(),now());
+                    if (!written) co_return LoopResult{std::error_code{}, std::optional<AsyncHandshakeError>(written.error()==ClientHandshakeIoError::timeout ? AsyncHandshakeError::timeout : AsyncHandshakeError::protocol)};
+                    continue;
+                }
+                first_flight_sent=true;
                 auto [error,n]=co_await socket.write_some(capy::const_buffer(pending.data(),pending.size()));
                 if (error || n==0 || n>pending.size()) {
                     if (capy::is_timeout(error)) { (void)handshake.cancel(); co_return LoopResult{error, std::optional<AsyncHandshakeError>(AsyncHandshakeError::timeout)}; }

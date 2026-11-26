@@ -29,6 +29,7 @@ export namespace tuic::detail {
             return self.storage_->view(self.sent_, static_cast<std::size_t>(self.end_ - self.sent_));
         }
         auto submit(this StreamOutput& self, std::size_t size) noexcept -> void { self.sent_ += size; }
+        auto rewind_unsent(this StreamOutput& self) noexcept -> void { self.sent_ = self.released_; }
         auto acknowledge(this StreamOutput& self, std::uint64_t offset, std::uint64_t size) noexcept -> bool {
             if (offset != self.released_ || size > self.sent_ - self.released_) return false;
             self.released_ += size;

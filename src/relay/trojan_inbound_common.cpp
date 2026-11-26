@@ -76,9 +76,10 @@ namespace relay::trojan_in {
     }
 
     auto serve_trojan_stream(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
-        TrojanInboundProfile const& profile, TrojanInboundRef& incoming, Clock::time_point deadline)
+        TrojanInboundProfile const& profile, TrojanInboundRef& incoming, Clock::time_point deadline,
+        std::optional<trojan::detail::AcceptedRequest> pre_accepted)
         -> capy::task<> {
-        auto accepted = co_await incoming.read_request(deadline);
+        auto accepted = pre_accepted ? std::move(pre_accepted) : co_await incoming.read_request(deadline);
         if (!accepted || session.closed || accepted->user >= profile.users.size()) co_return;
         if (!profile.names.empty() && !session.admit_principal(profile.names[accepted->user])) co_return;
         if (accepted->request.command == trojan::Command::udp) {

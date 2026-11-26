@@ -13,6 +13,8 @@ import grpc.connection;
 import tls.corosio_server_handshake;
 import tls.corosio_application;
 import tls.byte_stream;
+import tls.server_credential;
+import tls.ech_server;
 import vless;
 import vless.server_profile;
 import vless.tls_server;
@@ -179,15 +181,24 @@ namespace relay {
         }
     }
     auto make_vless_grpc_inbound_factory(std::string_view certificate,std::string_view key,std::span<std::string const> users,
-        std::span<std::string const> names,GrpcTransport transport) -> std::expected<InboundFactory,std::string> {
+        std::span<std::string const> names,GrpcTransport transport,InboundTlsRuntime const& tls_rt) -> std::expected<InboundFactory,std::string> {
         namespace v=grpc_vless_inbound;
         if (!names.empty() && names.size()!=users.size()) return std::unexpected("VLESS user names do not match UUIDs");
         for (std::size_t i=0;i<names.size();++i) if (names[i].empty() || names[i].size()>255 || names[i].contains('\0') ||
             std::find(names.begin(),names.begin()+i,names[i])!=names.begin()+i) return std::unexpected("invalid or duplicate VLESS user name");
         if (transport.response_policy!=GrpcTransport::ResponsePolicy::standard || transport.authority.empty()) return std::unexpected("invalid gRPC inbound policy/authority");
-        auto profile=vless::ServerProfile::load(certificate,key,users);auto request=grpc::RequestProfile::create(transport.service_name,transport.authority,true);
-        grpc::Limits limits{transport.input_window,transport.message_bytes,transport.hunk_bytes,transport.output_bytes,transport.output_messages,transport.library_bytes};
+        auto profile=tls_rt.atomic_credential
+            ? vless::ServerProfile::load_dynamic(std::static_pointer_cast<tls::AtomicServerCredential>(tls_rt.atomic_credential),users)
+            : vless::ServerProfile::load(certificate,key,users);
+        auto request=grpc::RequestProfile::create(transport.service_name,transport.authority,true);
+        grpc::Limits limits{transport.input_window,transport.message_bytes,transport.hunk_bytes,transport.output_bytes,transport.output_messages,transport.library_bytes,transport.idle_timeout_ms,transport.ping_timeout_ms,transport.permit_without_stream};
         if (!profile || !request || !grpc::Session::create(grpc::Role::server,*request,grpc::ResponsePolicy::standard,limits)) return std::unexpected("invalid gRPC VLESS inbound profile");
+        if (!tls_rt.alpn.empty()) profile->set_alpn(tls_rt.alpn);
+        if (!tls_rt.ech_key_file.empty()) {
+            auto ech=tls::load_ech_server_keys_file(tls_rt.ech_key_file);
+            if (!ech) return std::unexpected("gRPC VLESS ECH key: "+ech.error());
+            profile->set_ech_keys(std::move(*ech));
+        }
         auto owned=std::make_unique<v::Profile>(std::move(*profile),std::move(*request),limits,std::vector<std::string>(names.begin(),names.end()));
         return InboundFactory{[profile=std::move(owned)](Session& session,corosio::io_context& context,rules::RouteMatcher const& policy) {
             return v::serve(session,context,policy,*profile);

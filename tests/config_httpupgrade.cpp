@@ -48,5 +48,36 @@ auto main() -> int {
     for (unsigned i=0;i<65;++i) headers+="header \"X-Test\" \"value\";\n";
     headers+='}';
     if (document(headers,{}) || document({},headers)) return 6;
-    std::println("VLESS HTTPUpgrade owned configuration, direction-specific paths, defaults, bounds and unsupported combinations passed");
+    // WebSocket Early Data (max-early-data, early-data-header-name, ?ed=<N>)
+    auto ws_ed=document(
+        R"(transport "websocket" { path "/ws"; max-early-data 2048; early-data-header-name "Sec-WebSocket-Protocol"; })",
+        R"(transport "websocket" { host "ws.example"; path "/ws?ed=4096"; })");
+    if (!ws_ed) { std::cerr<<ws_ed.error()<<'\n'; return 7; }
+    auto const& ws_in=ws_ed->inbounds[0].vless->transport;
+    auto const& ws_out=ws_ed->vless_outbounds[0].config.transport;
+    if (!ws_in || !ws_out || !ws_in->websocket || !ws_out->websocket ||
+        ws_in->max_early_data!=2048 || ws_in->early_data_header_name!="Sec-WebSocket-Protocol" ||
+        ws_out->path!="/ws" || ws_out->max_early_data!=4096 || !ws_out->early_data_header_name.empty()) return 8;
+    auto ws_ed_q=document(
+        R"(transport "websocket" { path "/ws?foo=1&ed=1024&bar=2"; })",
+        R"(transport "websocket" { path "/ws?ed=8192"; early-data-header-name "X-Early-Data"; })");
+    if (!ws_ed_q || ws_ed_q->inbounds[0].vless->transport->path!="/ws?foo=1&bar=2" ||
+        ws_ed_q->inbounds[0].vless->transport->max_early_data!=1024 ||
+        ws_ed_q->vless_outbounds[0].config.transport->path!="/ws" ||
+        ws_ed_q->vless_outbounds[0].config.transport->max_early_data!=8192 ||
+        ws_ed_q->vless_outbounds[0].config.transport->early_data_header_name!="X-Early-Data") return 9;
+    for (auto bad:{
+        R"(transport "httpupgrade" { max-early-data 2048; })",
+        R"(transport "httpupgrade" { early-data-header-name "Sec-WebSocket-Protocol"; })",
+        R"(transport "websocket" { max-early-data 8193; })",
+        R"(transport "websocket" { max-early-data -1; })",
+        R"(transport "websocket" { max-early-data 1024; max-early-data 2048; })",
+        R"(transport "websocket" { early-data-header-name "Host"; })",
+        R"(transport "websocket" { early-data-header-name "Sec-WebSocket-Key"; })",
+        R"(transport "websocket" { path "/ws?ed=9000"; })",
+        R"(transport "websocket" { path "/ws?ed=abc"; })",
+        R"(transport "websocket" { path "/ws?ed=1&ed=2"; })"}) {
+        if (document(bad,{}) || document({},bad)) { std::cerr<<"accepted invalid WS early-data field: "<<bad<<'\n'; return 10; }
+    }
+    std::println("VLESS HTTPUpgrade/WebSocket owned configuration, early-data fields, ?ed=, bounds and rejection passed");
 }

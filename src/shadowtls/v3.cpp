@@ -121,6 +121,154 @@ namespace shadowtls {
         return matched;
     }
 
+    auto extract_client_hello_sni(std::span<std::uint8_t const> record) -> std::optional<std::string> {
+        if (record.size() < tls_header_size + 4 || record[0] != tls_record_handshake ||
+            record[1] != 3 || record[tls_header_size] != tls_handshake_client_hello)
+            return {};
+        auto const rec_len = (static_cast<std::size_t>(record[3]) << 8) | record[4];
+        if (tls_header_size + rec_len > record.size() || rec_len < 4) return {};
+        auto const hs_len = (static_cast<std::size_t>(record[tls_header_size + 1]) << 16) |
+                            (static_cast<std::size_t>(record[tls_header_size + 2]) << 8) |
+                            static_cast<std::size_t>(record[tls_header_size + 3]);
+        auto const limit = tls_header_size + 4 + hs_len;
+        if (limit > tls_header_size + rec_len) return {};
+        auto u16 = [&](std::size_t p) noexcept -> std::size_t {
+            return (static_cast<std::size_t>(record[p]) << 8) | record[p + 1];
+        };
+        std::size_t pos = tls_header_size + 4;
+        if (pos + 34 > limit) return {}; // legacy_version(2) + random(32)
+        pos += 34;
+        if (pos >= limit) return {};
+        auto const sid_len = static_cast<std::size_t>(record[pos++]);
+        if (sid_len > 32 || pos + sid_len + 2 > limit) return {};
+        pos += sid_len;
+        auto const cs_len = u16(pos);
+        pos += 2;
+        if (cs_len < 2 || (cs_len & 1u) != 0 || pos + cs_len + 1 > limit) return {};
+        pos += cs_len;
+        auto const cm_len = static_cast<std::size_t>(record[pos++]);
+        if (cm_len == 0 || pos + cm_len > limit) return {};
+        pos += cm_len;
+        if (pos == limit) return {};
+        if (pos + 2 > limit) return {};
+        auto const ext_total = u16(pos);
+        pos += 2;
+        if (pos + ext_total > limit) return {};
+        auto const ext_end = pos + ext_total;
+        while (pos + 4 <= ext_end) {
+            auto const ext_type = u16(pos);
+            auto const ext_len = u16(pos + 2);
+            pos += 4;
+            if (pos + ext_len > ext_end) return {};
+            if (ext_type == 0) {
+                if (ext_len < 2) return {};
+                auto const list_len = u16(pos);
+                auto p = pos + 2;
+                if (p + list_len > pos + ext_len) return {};
+                auto const list_end = p + list_len;
+                while (p + 3 <= list_end) {
+                    auto const name_type = record[p];
+                    auto const name_len = u16(p + 1);
+                    p += 3;
+                    if (p + name_len > list_end) return {};
+                    if (name_type == 0) {
+                        if (name_len == 0 || name_len > 253) return {};
+                        std::string out;
+                        out.reserve(name_len);
+                        for (std::size_t i = 0; i < name_len; ++i) {
+                            auto const c = record[p + i];
+                            if (c < 33 || c > 126) return {};
+                            out.push_back((c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c));
+                        }
+                        return out;
+                    }
+                    p += name_len;
+                }
+                return {};
+            }
+            pos += ext_len;
+        }
+        return {};
+    }
+
+    auto valid_wildcard_sni_host(std::string_view sni) noexcept -> bool {
+        if (sni.empty() || sni.size() > 253 || sni.front() == '.' || sni.back() == '.') return false;
+        auto is_alnum = [](unsigned char c) noexcept {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        };
+        auto is_alpha = [](unsigned char c) noexcept {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        };
+        std::size_t labels = 0, label_len = 0;
+        bool last_alpha = false;
+        unsigned char prev = 0;
+        std::array<char, 254> lower{};
+        for (std::size_t i = 0; i < sni.size(); ++i) {
+            unsigned char const c = static_cast<unsigned char>(sni[i]);
+            lower[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c);
+            if (c == '.') {
+                if (label_len == 0 || !is_alnum(prev)) return false;
+                ++labels;
+                label_len = 0;
+                last_alpha = false;
+                prev = c;
+                continue;
+            }
+            if (label_len == 0) {
+                if (!is_alnum(c)) return false;
+            } else if (!is_alnum(c) && c != '-') {
+                return false;
+            }
+            if (++label_len > 63) return false;
+            if (is_alpha(c)) last_alpha = true;
+            prev = c;
+        }
+        if (label_len == 0 || !is_alnum(prev)) return false;
+        ++labels;
+        // Require at least 2 labels and an alphabetic char in TLD (blocks single-label & all IPv4 literals).
+        if (labels < 2 || !last_alpha) return false;
+        std::string_view norm(lower.data(), sni.size());
+        constexpr std::array<std::string_view, 11> kBlockedSuffixes{
+            ".localhost", ".local", ".localdomain", ".internal", ".home.arpa",
+            ".arpa", ".lan", ".home", ".corp", ".intranet", ".invalid",
+        };
+        for (auto suffix : kBlockedSuffixes) {
+            if (norm.size() > suffix.size() && norm.ends_with(suffix)) return false;
+        }
+        return true;
+    }
+
+    auto parse_wildcard_sni_mode(std::string_view text) noexcept -> std::optional<WildcardSniMode> {
+        if (text.empty() || text == "off") return WildcardSniMode::off;
+        if (text == "authed") return WildcardSniMode::authed;
+        if (text == "all") return WildcardSniMode::all;
+        return {};
+    }
+
+    auto select_handshake_target(
+        std::optional<std::string_view> sni,
+        bool authenticated,
+        std::string_view default_host,
+        std::uint16_t default_port,
+        std::span<SniHandshakeEntry const> sni_map,
+        WildcardSniMode wildcard_mode) -> HandshakeEndpoint {
+        if (sni && !sni->empty()) {
+            std::string norm;
+            norm.reserve(sni->size());
+            for (unsigned char c : *sni)
+                norm.push_back((c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c));
+            for (auto const& entry : sni_map) {
+                if (entry.server_name == norm)
+                    return {entry.host, entry.port, false};
+            }
+            bool const allow_wildcard = wildcard_mode == WildcardSniMode::all ||
+                (wildcard_mode == WildcardSniMode::authed && authenticated);
+            if (allow_wildcard && valid_wildcard_sni_host(norm))
+                return {std::move(norm), default_port, true};
+        }
+        return {std::string(default_host), default_port, false};
+    }
+
     auto extract_server_random(
         std::span<std::uint8_t const> record) noexcept -> std::optional<std::array<std::uint8_t, tls_random_size>> {
         static constexpr std::array<std::uint8_t, tls_random_size> kHrrSentinel{

@@ -46,6 +46,7 @@ namespace relay {
         struct Bundle {
             ModernHttp3Inbound& owner;
             Session parent;
+            std::optional<tls::ServerCredential> dynamic_credential;
             Tls tls;
             Hooks hooks;
             quic::NativeMemory<> memory;
@@ -53,8 +54,10 @@ namespace relay {
             Native session;
             bool working = false;
 
-            Bundle(ModernHttp3Inbound& listener, Registry& reg, quic::SessionHandle id, Endpoint const& peer, SessionQuota::Lease lease)
-                : owner(listener), parent(owner.context_), tls(owner.credential_, "h3"),
+            Bundle(ModernHttp3Inbound& listener, Registry& reg, quic::SessionHandle id, Endpoint const& peer,
+                   SessionQuota::Lease lease, std::optional<tls::ServerCredential> dyn_cred)
+                : owner(listener), parent(owner.context_), dynamic_credential(std::move(dyn_cred)),
+                  tls(dynamic_credential ? *dynamic_credential : *owner.credential_, owner.alpn_),
                   hooks(reg, id, owner.driver_.changed()), memory(owner.transport_.native_bytes),
                   app(tls, hooks, true, memory.http3()), session(tls, app, owner.local_) {
                 owner.server_.attach_session(parent, std::move(lease));
@@ -110,7 +113,9 @@ namespace relay {
 
         Server& server_;
         corosio::io_context& context_;
-        tls::ServerCredential credential_;
+        std::optional<tls::ServerCredential> credential_;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential_;
+        std::string alpn_{"h3"};
         hysteria2::TransportOptions transport_;
         std::vector<naive::UserCredential> users_;
         std::optional<Credentials> http_creds_;
@@ -123,18 +128,25 @@ namespace relay {
         Driver driver_{socket_, port_};
         bool draining_ = false, stopped_ = false, running_ = false, used_ = false;
 
-        ModernHttp3Inbound(Server& s, tls::ServerCredential cred, hysteria2::TransportOptions opts,
+        ModernHttp3Inbound(Server& s, std::optional<tls::ServerCredential> cred,
+                           std::shared_ptr<tls::AtomicServerCredential> atomic_cred, std::string alpn,
+                           hysteria2::TransportOptions opts,
                            std::vector<naive::UserCredential> users, std::optional<Credentials> http_creds,
                            bool is_naive, bool padding, bool connect_udp, std::uint16_t fallback_status)
-            : server_(s), context_(s.executor_context()), credential_(std::move(cred)), transport_(opts),
-              users_(std::move(users)), http_creds_(std::move(http_creds)),
+            : server_(s), context_(s.executor_context()), credential_(std::move(cred)),
+              atomic_credential_(std::move(atomic_cred)), alpn_(alpn.empty() ? "h3" : std::move(alpn)),
+              transport_(opts), users_(std::move(users)), http_creds_(std::move(http_creds)),
               is_naive_(is_naive), padding_(padding), connect_udp_(connect_udp), fallback_status_(fallback_status),
               socket_(context_) {}
 
         auto clone_fresh() -> std::unique_ptr<ModernHttp3Inbound, void(*)(ModernHttp3Inbound*)> {
-            auto cred = credential_.clone();
-            if (!cred) return {nullptr, +[](ModernHttp3Inbound*) {}};
-            auto* p = new ModernHttp3Inbound(server_, std::move(*cred), transport_, users_, http_creds_,
+            std::optional<tls::ServerCredential> cred;
+            if (credential_) {
+                auto cloned = credential_->clone();
+                if (!cloned) return {nullptr, +[](ModernHttp3Inbound*) {}};
+                cred.emplace(std::move(*cloned));
+            }
+            auto* p = new ModernHttp3Inbound(server_, std::move(cred), atomic_credential_, alpn_, transport_, users_, http_creds_,
                                              is_naive_, padding_, connect_udp_, fallback_status_);
             return {p, +[](ModernHttp3Inbound* ptr) noexcept { delete ptr; }};
         }
@@ -366,7 +378,15 @@ namespace relay {
         q::ngtcp2_cid cid{};
         q::ngtcp2_cid_init(&cid, source.data(), source.size());
         try {
-            entry.emplace(listener, reg, id, peer, std::move(*lease));
+            std::optional<tls::ServerCredential> dyn_cred;
+            if (listener.atomic_credential_) {
+                auto cur = listener.atomic_credential_->clone_current();
+                if (!cur) return std::unexpected(q::err_callback_failure);
+                dyn_cred.emplace(std::move(*cur));
+            } else if (!listener.credential_) {
+                return std::unexpected(q::err_callback_failure);
+            }
+            entry.emplace(listener, reg, id, peer, std::move(*lease), std::move(dyn_cred));
             auto result = entry->session.start(true, initial.scid, cid, peer, *settings, *params, entry->memory.transport(), now);
             if (result) { entry.reset(); return std::unexpected(result); }
             listener.start_bundle(id, *entry);

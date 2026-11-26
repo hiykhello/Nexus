@@ -457,6 +457,14 @@ routing { default "v"; })kdl";
                 min_only->vless_outbounds[0].config.multiplex->min_streams == 32 &&
                 min_only->vless_outbounds[0].config.multiplex->max_streams == 0,
                 "min-streams without max-streams leaves max-streams unbounded");
+        auto h2_cfg = config::parse_kdl(wrap_out(R"(protocol "h2mux"; padding #true; max-connections 2; max-streams 32;)"));
+        require(h2_cfg.has_value() && h2_cfg->vless_outbounds.size() == 1 &&
+                h2_cfg->vless_outbounds[0].config.multiplex &&
+                h2_cfg->vless_outbounds[0].config.multiplex->protocol == config::MultiplexProtocol::h2mux &&
+                h2_cfg->vless_outbounds[0].config.multiplex->padding &&
+                h2_cfg->vless_outbounds[0].config.multiplex->max_connections == 2 &&
+                h2_cfg->vless_outbounds[0].config.multiplex->max_streams == 32,
+                "h2mux outbound multiplex KDL");
         for (std::string_view bad : {R"(protocol "yamux";)", R"(min-streams 8; max-streams 4;)", R"(min-streams 32; max-streams 16;)", R"(max-connections 0;)", R"(unknown-key #true;)"})
             require(!config::parse_kdl(wrap_out(bad)).has_value(), "invalid outbound mux rejected");
         constexpr std::string_view bad_in = R"kdl(schema-version 1

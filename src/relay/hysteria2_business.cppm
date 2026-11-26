@@ -1,6 +1,8 @@
 export module relay.hysteria2_business;
 import std;
+import config;
 import relay;
+import relay.hysteria2_masquerade;
 import relay.session_quota;
 import relay.principal_limits;
 import relay.dns_state;
@@ -31,6 +33,8 @@ export namespace relay {
         Server& server;
         std::span<hysteria2::Password const> passwords;
         std::span<std::string const> names;
+        config::Hysteria2Masquerade masquerade;
+        auto has_masquerade() const noexcept -> bool { return !masquerade.type.empty(); }
         auto admit(quic::SessionHandle,corosio::endpoint const&) noexcept -> std::optional<ConnectionState> {
             return server.acquire_session();
         }
@@ -56,9 +60,15 @@ export namespace relay {
         auto stopping(quic::SessionHandle) noexcept -> void;
         auto drained(quic::SessionHandle) const noexcept -> bool;
         auto closed(quic::SessionHandle,std::optional<int>) noexcept -> void;
-        Hysteria2Business(Server&,std::span<hysteria2::Password const>,std::span<std::string const>);
+        Hysteria2Business(Server&,std::span<hysteria2::Password const>,std::span<std::string const>,config::Hysteria2Masquerade={});
         Hysteria2Business(Hysteria2Business const&)=delete;
         ~Hysteria2Business();
+        template<class MasqRequest>
+        auto serve_masquerade(MasqRequest& request) -> capy::task<> {
+            auto parsed=hysteria2_masquerade::parse_request(request.headers());
+            auto resp=co_await hysteria2_masquerade::serve(server.executor_context(),masquerade,parsed,request.stop_token());
+            (void)request.respond(resp.status,resp.headers,std::move(resp.body),resp.omit_body);
+        }
         template<class Request>
         auto serve(Request& request) -> capy::task<> {
             auto user=request.user();

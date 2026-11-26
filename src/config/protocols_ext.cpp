@@ -16,6 +16,14 @@ namespace config {
     auto validate_proxy_providers(Config&) -> std::expected<void,std::string>;
 
     auto parse_quic_ech_field(kdl::Node const& field, QuicEchOptions& options) -> bool {
+        if (field.name == "ech-query-server-name") {
+            auto name = kdl::scalar(field);
+            if (!options.query_server_name.empty() || !name || name->size() > 253 ||
+                !dns_hostname(*name) || dns_ipv4(*name))
+                return false;
+            options.query_server_name = *name;
+            return true;
+        }
         if (options.dns || !options.config_file.empty()) return false;
         if (field.name == "ech-dns" && kdl::boolean(field) == true) { options.dns = true; return true; }
         if (field.name != "ech-config-file") return false;
@@ -27,6 +35,12 @@ namespace config {
 
     auto validate_quic_ech(QuicEchOptions const& ech, std::string_view name, bool has_dns)
         -> std::expected<void, std::string> {
+        if (!ech.query_server_name.empty()) {
+            if (!ech.dns) return kdl::error("ech-query-server-name requires ech-dns");
+            if (ech.query_server_name.size() > 253 || !dns_hostname(ech.query_server_name) ||
+                dns_ipv4(ech.query_server_name))
+                return kdl::error("invalid ech-query-server-name");
+        }
         if ((ech.dns || !ech.config_file.empty()) && (!dns_hostname(name) || dns_ipv4(name)))
             return kdl::error("QUIC ECH requires a DNS server-name");
         if (ech.dns) {
@@ -58,7 +72,8 @@ namespace config {
 
         auto parse_quic_tls_block(Node const& child, std::string& sni, std::string& ca,
                                   TlsKeyExchange& exchange, TlsFingerprint& fp, QuicEchOptions& ech,
-                                  std::vector<std::array<std::uint8_t,32>>& pins, std::string_view label)
+                                  std::vector<std::array<std::uint8_t,32>>& pins,
+                                  std::vector<std::string>& alpn, std::string_view label)
             -> std::expected<void, std::string> {
             if (child.tag || !child.arguments.empty() || !child.properties.empty())
                 return error("invalid " + std::string(label) + " TLS");
@@ -69,6 +84,17 @@ namespace config {
                 else if (field.name == "ca-file" && ca.empty() && val && absolute_path(*val)) ca = *val;
                 else if (field.name == "certificate-sha256") {
                     if (auto ok = parse_certificate_sha256(field, pins); !ok) return std::unexpected(ok.error());
+                } else if (field.name == "alpn") {
+                    if (field.tag || !field.properties.empty() || !field.children.empty() || field.arguments.empty())
+                        return error("invalid " + std::string(label) + " TLS alpn");
+                    for (auto const& arg : field.arguments) {
+                        auto tok = string(arg);
+                        if (!tok || tok->empty() || tok->size() > 255 ||
+                            !std::ranges::all_of(*tok, [](unsigned char c) { return c >= 33 && c <= 126; }) ||
+                            alpn.size() >= 16 || std::ranges::contains(alpn, *tok))
+                            return error("invalid or duplicate " + std::string(label) + " TLS alpn");
+                        alpn.push_back(*tok);
+                    }
                 } else if (field.name == "key-exchange" && !kx_seen && val) {
                     if (*val == "x25519") exchange = TlsKeyExchange::x25519;
                     else if (*val == "x25519-mlkem768") exchange = TlsKeyExchange::x25519_mlkem768;
@@ -89,153 +115,14 @@ namespace config {
             return {};
         }
 
-        auto parse_ip_listen(Node const& child, std::array<std::uint8_t, 16>& addr, bool& ipv6,
-                             std::string* out_host, std::string_view label) -> std::expected<std::uint16_t, std::string> {
-            auto host = text_property(child, "host");
-            auto val = property(child, "port");
-            auto port = val ? integer(*val) : std::nullopt;
-            if (child.tag || !child.arguments.empty() || !child.children.empty() || child.properties.size() != 2 ||
-                !host || !port || !*port || *port > 65535)
-                return error("invalid " + std::string(label) + " listen");
-            if (auto ip4 = dns_ipv4(*host)) { std::ranges::copy(*ip4, addr.begin()); ipv6 = false; }
-            else if (auto ip6 = dns_ipv6(*host)) { addr = *ip6; ipv6 = true; }
-            else return error(std::string(label) + " listen requires numeric IP without zone");
-            if (out_host) *out_host = *host;
-            return static_cast<std::uint16_t>(*port);
-        }
-
         auto parse_cc_name(std::string_view v) -> bool {
             return v == "cubic" || v == "reno" || v == "bbr";
         }
     }
 
-    auto parse_shadowtls_inbound(Node const& node) -> std::expected<InboundConfig, std::string> {
-        auto tag = argument(node);
-        auto type = text_property(node, "type");
-        if (!tag || !valid_name(*tag) || node.properties.size() != 1 || !type || *type != "shadowtls")
-            return error("invalid ShadowTLS inbound");
-        InboundConfig result{*tag, 0, Inbound::shadowtls};
-        ShadowTlsInbound cfg;
-        bool listen = false, hs = false, tgt = false, auth = false, strict_seen = false;
-        for (auto const& child : node.children) {
-            if (child.name == "listen") {
-                if (listen) return error("duplicate ShadowTLS listen");
-                auto p = parse_ip_listen(child, cfg.listen_address, result.listen_ipv6, nullptr, "ShadowTLS");
-                if (!p) return std::unexpected(p.error());
-                result.port = *p; listen = true;
-            } else if (child.name == "handshake") {
-                if (hs) return error("duplicate ShadowTLS handshake");
-                if (auto ok = parse_endpoint_node(child, cfg.handshake_host, cfg.handshake_port, "ShadowTLS handshake"); !ok)
-                    return std::unexpected(ok.error());
-                hs = true;
-            } else if (child.name == "target") {
-                if (tgt) return error("duplicate ShadowTLS target");
-                if (auto ok = parse_endpoint_node(child, cfg.target_host, cfg.target_port, "ShadowTLS target"); !ok)
-                    return std::unexpected(ok.error());
-                tgt = true;
-            } else if (child.name == "authentication") {
-                if (auth || child.tag || !child.arguments.empty() || !child.properties.empty())
-                    return error("invalid ShadowTLS authentication");
-                for (auto const& u : child.children) {
-                    auto uname = argument(u), pfile = text_property(u, "password-file");
-                    if (u.name != "user" || !uname || !valid_name(*uname) || !pfile || !absolute_path(*pfile) ||
-                        u.properties.size() != 1 || !u.children.empty() || cfg.users.size() >= 64 ||
-                        std::ranges::any_of(cfg.users, [&](auto const& x) { return x.username == *uname; }))
-                        return error("invalid or duplicate ShadowTLS user");
-                    cfg.users.push_back({*uname, *pfile});
-                }
-                if (cfg.users.empty()) return error("ShadowTLS requires at least one user");
-                auth = true;
-            } else if (child.name == "strict-tls13") {
-                auto v = boolean(child);
-                if (strict_seen || !v) return error("invalid ShadowTLS strict-tls13");
-                cfg.strict_tls13 = *v; strict_seen = true;
-            } else return error("unsupported ShadowTLS inbound field: " + child.name);
-        }
-        if (!listen || !hs || !tgt || !auth)
-            return error("ShadowTLS inbound requires listen, handshake, target and authentication");
-        result.shadowtls = std::move(cfg);
-        return result;
-    }
-
-    auto parse_shadowtls_outbound(Node const& node) -> std::expected<ShadowTlsOutbound, std::string> {
-        auto parsed = parse_password_tls_outbound(node, "Trojan", "strict-tls13");
-        if (!parsed) return std::unexpected(parsed.error());
-        ShadowTlsOutbound out{std::move(*parsed), true};
-        bool strict_seen = false;
-        for (auto const& child : node.children) {
-            if (child.name != "strict-tls13") continue;
-            auto v = boolean(child);
-            if (strict_seen || !v) return error("invalid ShadowTLS strict-tls13");
-            out.strict_tls13 = *v; strict_seen = true;
-        }
-        return out;
-    }
-
-    auto parse_tuic_inbound(Node const& node) -> std::expected<InboundConfig, std::string> {
-        auto tag = argument(node);
-        auto type = text_property(node, "type");
-        if (!tag || !valid_name(*tag) || node.properties.size() != 1 || !type || *type != "tuic")
-            return error("invalid TUIC inbound");
-        InboundConfig result{*tag, 0, Inbound::tuic};
-        TuicInbound cfg;
-        bool listen = false, auth = false, tls = false, cc = false, udp = false, hs_t = false, idle_t = false, mem = false;
-        for (auto const& child : node.children) {
-            if (child.name == "listen") {
-                if (listen) return error("duplicate TUIC listen");
-                auto p = parse_ip_listen(child, cfg.listen_address, result.listen_ipv6, &cfg.listen_host, "TUIC");
-                if (!p) return std::unexpected(p.error());
-                result.port = *p; listen = true;
-            } else if (child.name == "authentication") {
-                if (auth || child.tag || !child.arguments.empty() || !child.properties.empty())
-                    return error("invalid TUIC authentication");
-                for (auto const& u : child.children) {
-                    auto uname = argument(u), ufile = text_property(u, "uuid-file"), pfile = text_property(u, "password-file");
-                    if (u.name != "user" || !uname || !valid_name(*uname) || !ufile || !absolute_path(*ufile) ||
-                        !pfile || !absolute_path(*pfile) || u.properties.size() != 2 || !u.children.empty() ||
-                        cfg.users.size() >= 64 || std::ranges::any_of(cfg.users, [&](auto const& x) { return x.name == *uname; }))
-                        return error("invalid or duplicate TUIC user");
-                    cfg.users.push_back({*uname, *ufile, *pfile});
-                }
-                if (cfg.users.empty()) return error("TUIC requires at least one user");
-                auth = true;
-            } else if (child.name == "tls") {
-                if (tls || child.tag || !child.arguments.empty() || !child.properties.empty()) return error("invalid TUIC TLS");
-                for (auto const& f : child.children) {
-                    auto v = scalar(f);
-                    if (!v || !absolute_path(*v)) return error("TUIC TLS requires absolute paths");
-                    if (f.name == "certificate-file" && cfg.certificate_file.empty()) cfg.certificate_file = *v;
-                    else if (f.name == "private-key-file" && cfg.private_key_file.empty()) cfg.private_key_file = *v;
-                    else return error("unsupported or duplicate TUIC TLS field");
-                }
-                if (cfg.certificate_file.empty() || cfg.private_key_file.empty()) return error("TUIC TLS requires cert and key");
-                tls = true;
-            } else if (child.name == "congestion-control") {
-                auto v = scalar(child);
-                if (cc || !v || !parse_cc_name(*v)) return error("invalid TUIC congestion-control");
-                cfg.congestion_control = *v; cc = true;
-            } else if (child.name == "udp") {
-                auto v = boolean(child); if (udp || !v) return error("invalid TUIC udp flag");
-                cfg.udp = *v; udp = true;
-            } else if (child.name == "handshake-timeout-ms") {
-                auto v = integer(child); if (hs_t || !v || !*v || *v > 3600000) return error("invalid TUIC handshake-timeout-ms");
-                cfg.handshake_timeout_ms = static_cast<std::uint32_t>(*v); hs_t = true;
-            } else if (child.name == "idle-timeout-ms") {
-                auto v = integer(child); if (idle_t || !v || !*v || *v > 86400000) return error("invalid TUIC idle-timeout-ms");
-                cfg.idle_timeout_ms = static_cast<std::uint32_t>(*v); idle_t = true;
-            } else if (child.name == "native-bytes") {
-                auto v = integer(child); if (mem || !v || *v < 65536 || *v > 1024ull * 1024 * 1024) return error("invalid TUIC native-bytes");
-                cfg.native_bytes = static_cast<std::size_t>(*v); mem = true;
-            } else return error("unsupported TUIC inbound field: " + child.name);
-        }
-        if (!listen || !auth || !tls) return error("TUIC inbound requires listen, authentication and TLS");
-        result.tuic = std::move(cfg);
-        return result;
-    }
-
     auto parse_tuic_outbound(Node const& node) -> std::expected<TuicOutbound, std::string> {
         TuicOutbound cfg;
-        bool server = false, auth = false, tls = false, cc = false, uos = false, hb = false, hs_t = false, idle_t = false, mem = false, to = false;
+        bool server = false, auth = false, tls = false, cc = false, uos = false, hb = false, hs_t = false, idle_t = false, mem = false, to = false, zrt = false;
         for (auto const& child : node.children) {
             if (child.name == "server") {
                 if (server) return error("duplicate TUIC server");
@@ -254,7 +141,7 @@ namespace config {
                 auth = true;
             } else if (child.name == "tls") {
                 if (tls) return error("duplicate TUIC TLS");
-                if (auto ok = parse_quic_tls_block(child, cfg.server_name, cfg.ca_file, cfg.key_exchange, cfg.fingerprint, cfg.ech, cfg.certificate_sha256, "TUIC"); !ok)
+                if (auto ok = parse_quic_tls_block(child, cfg.server_name, cfg.ca_file, cfg.key_exchange, cfg.fingerprint, cfg.ech, cfg.certificate_sha256, cfg.alpn, "TUIC"); !ok)
                     return std::unexpected(ok.error());
                 tls = true;
             } else if (child.name == "congestion-control") {
@@ -263,6 +150,9 @@ namespace config {
             } else if (child.name == "udp-over-stream") {
                 auto v = boolean(child); if (uos || !v) return error("invalid TUIC udp-over-stream");
                 cfg.udp_over_stream = *v; uos = true;
+            } else if (child.name == "zero-rtt-handshake") {
+                auto v = boolean(child); if (zrt || !v) return error("invalid TUIC zero-rtt-handshake");
+                cfg.zero_rtt_handshake = *v; zrt = true;
             } else if (child.name == "heartbeat-ms") {
                 auto v = integer(child); if (hb || !v || !*v || *v > 3600000) return error("invalid TUIC heartbeat-ms");
                 cfg.heartbeat_ms = static_cast<std::uint32_t>(*v); hb = true;
@@ -317,7 +207,7 @@ namespace config {
                 cfg.bearer_file = *f; auth = true;
             } else if (child.name == "tls") {
                 if (tls) return error("duplicate MASQUE TLS");
-                if (auto ok = parse_quic_tls_block(child, cfg.server_name, cfg.ca_file, cfg.key_exchange, cfg.fingerprint, cfg.ech, cfg.certificate_sha256, "MASQUE"); !ok)
+                if (auto ok = parse_quic_tls_block(child, cfg.server_name, cfg.ca_file, cfg.key_exchange, cfg.fingerprint, cfg.ech, cfg.certificate_sha256, cfg.alpn, "MASQUE"); !ok)
                     return std::unexpected(ok.error());
                 tls = true;
             } else if (child.name == "handshake-timeout-ms") {

@@ -26,7 +26,9 @@ export namespace tls {
         return std::span<std::uint8_t const>(parameters->data);
     }
     // A present QUIC parameter span emits extension 0x39 even if it is empty.
+    // A non-empty ech_retry_configs span emits extension 0xfe0d (ECHConfigList).
     // The caller has already validated ALPN and extension offers against CH.
     [[nodiscard]] auto encode_encrypted_extensions(std::span<std::uint8_t const> alpn,
-        std::optional<std::span<std::uint8_t const>> quic_parameters={}) -> std::expected<std::vector<std::uint8_t>,HandshakePolicyError>;
+        std::optional<std::span<std::uint8_t const>> quic_parameters={},
+        std::span<std::uint8_t const> ech_retry_configs={}) -> std::expected<std::vector<std::uint8_t>,HandshakePolicyError>;
 }

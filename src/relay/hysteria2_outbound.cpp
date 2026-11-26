@@ -382,7 +382,7 @@ namespace relay {
         std::uint32_t handshake_ms,std::uint32_t idle_ms,std::size_t native_bytes,bool udp,
         std::optional<std::string_view> salamander_file,std::optional<std::size_t> max_udp_payload_size,bool disable_path_mtu_discovery,std::uint64_t send_bps,std::uint64_t receive_bps,bool disable_compensation,TlsFingerprint fingerprint,bool lazy_tcp_response,
         QuicEchOptions const& ech, bool dns_available,quic::ReceiveWindows windows,std::span<std::array<std::uint8_t,32> const> pins,
-        std::span<config::PortRange const> port_ranges,std::uint32_t hop_interval_ms) -> std::expected<TunnelFactory,std::string> {
+        std::span<config::PortRange const> port_ranges,std::uint32_t hop_interval_ms,std::uint32_t hop_interval_max_ms) -> std::expected<TunnelFactory,std::string> {
         if (host.empty() || !port || !timeout || timeout>3600000 || !options.valid() || options.keepalive_configured() || options.bind_address_no_port.has_value() || options.multipath_tcp.has_value())
             return std::unexpected("invalid or unsupported Hysteria2 dial options");
         auto shape=tls::parse_fingerprint(config::tls_fingerprint_name(fingerprint));
@@ -393,6 +393,7 @@ namespace relay {
         transport.congestion={send_bps,receive_bps,false,disable_compensation};
         for (auto const& r : port_ranges) transport.port_ranges.push_back({r.first,r.last});
         transport.hop_interval=std::chrono::milliseconds(hop_interval_ms);
+        transport.hop_interval_max=std::chrono::milliseconds(hop_interval_max_ms);
         auto ech_profile = quic_ech::Profile::load(ech, server_name, dns_available);
         if (!ech_profile) return std::unexpected(ech_profile.error());
         auto client=h::ClientProfile::load(server_name,ca_file,password_file,group,exchange==TlsKeyExchange::x25519_mlkem768_only,transport,salamander_file,*shape,pins);

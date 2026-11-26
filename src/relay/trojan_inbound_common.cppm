@@ -10,6 +10,7 @@ import rules;
 import httpupgrade;
 import tls.byte_stream;
 import tls.server_credential;
+import tls.ech_server;
 import tls.corosio_application;
 import trojan;
 import trojan.auth;
@@ -20,12 +21,17 @@ import :transport_helpers;
 
 namespace relay::trojan_in {
     struct TrojanInboundProfile {
-        tls::ServerCredential credential;
+        std::optional<tls::ServerCredential> credential;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential;
+        std::vector<std::string> alpn;
+        std::shared_ptr<tls::EchServerKeys const> ech_keys;
         std::vector<trojan::PasswordKey> users;
         std::vector<std::string> names;
         std::optional<httpupgrade::Profile> transport;
         std::optional<transport_detail::GrpcSettings> grpc;
         std::optional<config::InboundMultiplexConfig> multiplex;
+        std::optional<config::FallbackTarget> fallback;
+        std::vector<std::pair<std::string, config::FallbackTarget>> fallback_for_alpn;
     };
 
     PRO_DEF_MEM_DISPATCH(TrojanInReadRequest, read_request);
@@ -65,7 +71,8 @@ namespace relay::trojan_in {
     };
 
     auto serve_trojan_stream(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
-        TrojanInboundProfile const& profile, TrojanInboundRef& incoming, Clock::time_point deadline)
+        TrojanInboundProfile const& profile, TrojanInboundRef& incoming, Clock::time_point deadline,
+        std::optional<trojan::detail::AcceptedRequest> pre_accepted = {})
         -> capy::task<>;
 
     auto serve_trojan_grpc(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,

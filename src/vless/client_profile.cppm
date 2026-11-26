@@ -9,6 +9,7 @@ import tls.certificate_trust;
 import tls.client_handshake_io;
 import tls.encrypted_extensions;
 import tls.fingerprint;
+import tls.outbound_fragment;
 import tls.tls12_client;
 import httpupgrade;
 import platform.ip_address;
@@ -31,6 +32,8 @@ export namespace vless::detail {
         std::optional<std::uint16_t> record_size_limit;
         std::vector<std::array<std::uint8_t,32>> certificate_pins;
         bool packetaddr=false,fixed_udp=false;
+        tls::OutboundFragmentOptions tls_fragment{};
+        std::vector<std::string> custom_alpn;
 
         [[nodiscard]] auto accepts_alpn(tls::EncryptedExtensions const* negotiated) const noexcept -> bool {
             return !transport || (negotiated && negotiated->alpn &&
@@ -49,7 +52,12 @@ export namespace vless::detail {
             auto groups=key_exchange==config::TlsKeyExchange::x25519_mlkem768_only ? std::span<std::uint16_t const>{hybrid_only} :
                 use_hybrid ? std::span<std::uint16_t const>{hybrid} : std::span<std::uint16_t const>{classical};
             constexpr std::array<std::string_view,1> h1{"http/1.1"};
-            auto alpn=transport ? std::span<std::string_view const>(h1) : application_protocols;
+            std::array<std::string_view,16> custom_alpn_views{};
+            std::size_t custom_alpn_count=std::min(custom_alpn.size(),custom_alpn_views.size());
+            for (std::size_t i=0;i<custom_alpn_count;++i) custom_alpn_views[i]=custom_alpn[i];
+            auto alpn=!application_protocols.empty() ? application_protocols :
+                custom_alpn_count ? std::span<std::string_view const>(custom_alpn_views).first(custom_alpn_count) :
+                transport ? std::span<std::string_view const>(h1) : std::span<std::string_view const>{};
             // Reality authenticates its cover name through SNI. Only ordinary
             // PKI TLS can use a numeric address as the certificate identity.
             auto ip=reality ? std::optional<platform::IpAddress>{} : platform::parse_ip_address(server_name);
@@ -66,6 +74,7 @@ export namespace vless::detail {
                 session->set_certificate_pins(certificate_pins);
                 auto io=tls::ClientHandshakeIo::create(std::move(*session),now,deadline);
                 if (!io) return std::unexpected("invalid TLS handshake deadline");
+                io->set_fragment_options(tls_fragment);
                 return std::move(*io);
             }
             if (fingerprint!=config::TlsFingerprint::native || record_size_limit) {
@@ -93,6 +102,7 @@ export namespace vless::detail {
                     if (!session) return std::unexpected("invalid Reality client configuration");
                     auto io=tls::ClientHandshakeIo::create(std::move(*session),now,deadline);
                     if (!io) return std::unexpected("invalid TLS handshake deadline");
+                    io->set_fragment_options(tls_fragment);
                     return std::move(*io);
                 }
                 auto name=ip ? ip->view() : std::span(reinterpret_cast<std::uint8_t const*>(server_name.data()),server_name.size());
@@ -102,6 +112,7 @@ export namespace vless::detail {
                     ip ? tls::PeerNameKind::ip : tls::PeerNameKind::dns,name,verification_time,now,deadline,
                     vision || !verification_time ? std::span<std::uint8_t const>{} : target,certificate_pins,ech);
                 if (!io) return std::unexpected("invalid TLS handshake deadline");
+                io->set_fragment_options(tls_fragment);
                 return std::move(*io);
             }
             auto hello=tls::make_client_hello(sni,alpn,groups);
@@ -113,6 +124,7 @@ export namespace vless::detail {
                 if (!session) return std::unexpected("invalid Reality client configuration");
                 auto io=tls::ClientHandshakeIo::create(std::move(*session),now,deadline);
                 if (!io) return std::unexpected("invalid TLS handshake deadline");
+                io->set_fragment_options(tls_fragment);
                 return std::move(*io);
             }
             auto identity=ip ? crypto::Bytes(ip->view().begin(),ip->view().end()) : crypto::Bytes(server_name.begin(),server_name.end());
@@ -122,6 +134,7 @@ export namespace vless::detail {
                 ip ? tls::PeerNameKind::ip : tls::PeerNameKind::dns,identity,verification_time,now,deadline,
                 vision || !verification_time ? std::span<std::uint8_t const>{} : target,certificate_pins,ech);
             if (!io) return std::unexpected("invalid TLS handshake deadline");
+            io->set_fragment_options(tls_fragment);
             return std::move(*io);
         }
 
@@ -146,6 +159,14 @@ export namespace vless::detail {
             profile.certificate_pins=config.certificate_sha256;
             profile.packetaddr=config.packetaddr;
             profile.fixed_udp=config.fixed_udp;
+            profile.tls_fragment={
+                .enabled=config.tls_fragment.enabled,
+                .record_fragment=config.tls_fragment.record_fragment,
+                .min_bytes=config.tls_fragment.min_bytes,
+                .max_bytes=config.tls_fragment.max_bytes,
+                .fallback_delay_ms=config.tls_fragment.fallback_delay_ms,
+            };
+            profile.custom_alpn=config.alpn;
             if (config.transport) {
                 if (config.vision || config.reality) return std::unexpected("HTTPUpgrade requires ordinary VLESS TLS");
                 auto const& options=*config.transport;
@@ -155,7 +176,7 @@ export namespace vless::detail {
                 std::string default_host=config.server_name;
                 if (options.host.empty()) if (auto ip=platform::parse_ip_address(default_host);ip && ip->size==16)
                     default_host="["+default_host+"]";
-                auto compiled=httpupgrade::Profile::client(options.host.empty() ? default_host : options.host,options.path,headers,options.websocket);
+                auto compiled=httpupgrade::Profile::client(options.host.empty() ? default_host : options.host,options.path,headers,options.websocket,options.max_early_data,options.early_data_header_name);
                 if (!compiled) return std::unexpected("invalid HTTPUpgrade client profile");
                 profile.transport.emplace(std::move(*compiled));
             }

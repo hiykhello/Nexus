@@ -9,9 +9,13 @@ export namespace vless {
     // and a retained key reference; the snapshot outlives calls to these methods.
     class ServerProfile {
         std::optional<tls::ServerCredential> credential_;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential_;
+        std::vector<std::string> alpn_;
+        std::shared_ptr<tls::EchServerKeys const> ech_keys_;
         std::vector<UserId> users_;
-        ServerProfile(std::optional<tls::ServerCredential>&& credential,std::vector<UserId>&& users)
-            : credential_(std::move(credential)),users_(std::move(users)) {}
+        ServerProfile(std::optional<tls::ServerCredential>&& credential,std::vector<UserId>&& users,
+            std::shared_ptr<tls::AtomicServerCredential> atomic_credential={})
+            : credential_(std::move(credential)),atomic_credential_(std::move(atomic_credential)),users_(std::move(users)) {}
     public:
         ServerProfile(ServerProfile const&)=delete;
         auto operator=(ServerProfile const&) -> ServerProfile& = delete;
@@ -54,6 +58,15 @@ export namespace vless {
             if (!credential) return std::unexpected("invalid or mismatched TLS credential");
             return ServerProfile(std::move(*credential),std::move(users));
         }
+        // Dynamic TLS credential (ACME or static hot-reload) resolved per handshake.
+        [[nodiscard]] static auto load_dynamic(std::shared_ptr<tls::AtomicServerCredential> credential,
+            std::span<std::string const> user_paths) -> std::expected<ServerProfile,std::string> {
+            if (!credential) return std::unexpected("TLS credential provider unavailable");
+            auto loaded=load_users(user_paths);
+            if (!loaded) return std::unexpected(std::move(loaded.error()));
+            loaded->atomic_credential_=std::move(credential);
+            return std::move(*loaded);
+        }
         // Reality provides its own per-session TLS credential.
         [[nodiscard]] static auto load_users(std::span<std::string const> paths) -> std::expected<ServerProfile,std::string> {
             if (paths.empty() || paths.size()>64) return std::unexpected("invalid VLESS users");
@@ -68,22 +81,48 @@ export namespace vless {
             if (!ServerHandshake::create(users)) return std::unexpected("invalid VLESS users");
             return ServerProfile({},std::move(users));
         }
+        auto set_alpn(std::vector<std::string> alpn) -> void { alpn_=std::move(alpn); }
+        auto set_ech_keys(std::shared_ptr<tls::EchServerKeys const> keys) noexcept -> void { ech_keys_=std::move(keys); }
         [[nodiscard]] auto tls_handshake(std::uint64_t now,std::uint64_t deadline,std::shared_ptr<memory::Budget> budget={},std::string_view required_alpn={}) const
             -> std::expected<tls::ServerHandshakeIo,std::string> {
-            if (!credential_) return std::unexpected("TLS credential unavailable");
-            // Reserve before clone allocates. The reservation follows the
-            // credential and is released only after its storage is destroyed.
             std::optional<memory::Budget::Reservation> certificate_reservation;
-            if (budget) {
-                auto size=credential_->certificate().size();
-                for (auto const& certificate:credential_->chain()) size+=certificate.size()+sizeof(crypto::Bytes);
-                certificate_reservation=memory::Budget::reserve(budget,size);
-                if (!certificate_reservation) return std::unexpected("TLS handshake budget exceeded");
+            std::optional<tls::ServerCredential> cloned;
+            if (atomic_credential_) {
+                auto cur=atomic_credential_->clone_current();
+                if (!cur) return std::unexpected("TLS credential unavailable");
+                if (budget) {
+                    auto size=cur->certificate().size();
+                    for (auto const& certificate:cur->chain()) size+=certificate.size()+sizeof(crypto::Bytes);
+                    certificate_reservation=memory::Budget::reserve(budget,size);
+                    if (!certificate_reservation) return std::unexpected("TLS handshake budget exceeded");
+                }
+                cloned.emplace(std::move(*cur));
+            } else if (credential_) {
+                // Reserve before clone allocates. The reservation follows the
+                // credential and is released only after its storage is destroyed.
+                if (budget) {
+                    auto size=credential_->certificate().size();
+                    for (auto const& certificate:credential_->chain()) size+=certificate.size()+sizeof(crypto::Bytes);
+                    certificate_reservation=memory::Budget::reserve(budget,size);
+                    if (!certificate_reservation) return std::unexpected("TLS handshake budget exceeded");
+                }
+                auto cur=credential_->clone();
+                if (!cur) return std::unexpected("cannot retain TLS credential");
+                cloned.emplace(std::move(*cur));
+            } else {
+                return std::unexpected("TLS credential unavailable");
             }
-            auto credential=credential_->clone();
-            if (!credential) return std::unexpected("cannot retain TLS credential");
-            auto handshake=tls::ServerHandshakeIo::create(std::move(*credential),now,deadline,required_alpn,tls::ServerCredential::max_certificate_list_size,std::move(budget),std::move(certificate_reservation));
+            std::expected<tls::ServerHandshakeIo,tls::ServerHandshakeIoError> handshake=std::unexpected(tls::ServerHandshakeIoError::invalid_state);
+            if (!alpn_.empty()) {
+                std::vector<std::string_view> prefs;
+                prefs.reserve(alpn_.size());
+                for (auto const& p:alpn_) prefs.push_back(p);
+                handshake=tls::ServerHandshakeIo::create_alpn(std::move(*cloned),now,deadline,prefs,true,tls::ServerCredential::max_certificate_list_size,std::move(budget),std::move(certificate_reservation));
+            } else {
+                handshake=tls::ServerHandshakeIo::create(std::move(*cloned),now,deadline,required_alpn,tls::ServerCredential::max_certificate_list_size,std::move(budget),std::move(certificate_reservation));
+            }
             if (!handshake) return std::unexpected(handshake.error()==tls::ServerHandshakeIoError::budget_exceeded ? "TLS handshake budget exceeded" : "invalid TLS handshake options");
+            if (ech_keys_) handshake->set_ech_keys(ech_keys_);
             return std::move(*handshake);
         }
         [[nodiscard]] auto vless_handshake() const -> std::expected<ServerHandshake,std::string> {

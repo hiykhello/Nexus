@@ -8,6 +8,7 @@ import http.header;
 import http2.client_types;
 import http2.headers;
 import tls.server_credential;
+import tls.ech_server;
 import tls.byte_stream;
 import rules;
 import socks5;
@@ -21,7 +22,10 @@ import :naive_inbound_helpers;
 
 namespace relay::http_modern_detail {
     struct HttpModernProfile {
-        tls::ServerCredential credential;
+        std::optional<tls::ServerCredential> credential;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential;
+        std::vector<std::string> alpn;
+        std::shared_ptr<tls::EchServerKeys const> ech_keys;
         std::optional<Credentials> creds;
         bool http2 = true;
         std::uint32_t handshake_timeout_ms = 10000;

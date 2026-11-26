@@ -31,7 +31,7 @@ namespace relay {
         bool want_tcp = (cfg.protocol == config::NaiveProtocol::h2 || cfg.protocol == config::NaiveProtocol::both);
         bool want_h3 = (cfg.protocol == config::NaiveProtocol::h3 || cfg.protocol == config::NaiveProtocol::both);
         if (want_tcp) {
-            auto prepared = make_naive_h2_inbound_factory(cfg);
+            auto prepared = make_naive_h2_inbound_factory(cfg, inbound_tls_runtime);
             if (!prepared) return std::unexpected(prepared.error());
             naive_inbound = std::move(*prepared);
         } else {
@@ -67,7 +67,7 @@ namespace relay {
         bool want_tcp = cfg.http2 || !cfg.http3;
         bool want_h3 = cfg.http3;
         if (want_tcp) {
-            auto prepared = make_http_modern_inbound_factory(cfg, credentials);
+            auto prepared = make_http_modern_inbound_factory(cfg, credentials, inbound_tls_runtime);
             if (!prepared) return std::unexpected(prepared.error());
             http_modern_inbound = std::move(*prepared);
         } else {

@@ -8,6 +8,7 @@ import tls.server_hello;
 import tls.handshake;
 import tls.hybrid;
 import tls.traffic_records;
+import tls.ech_server;
 export import tls.resumption_policy;
 import std;
 export namespace tls {
@@ -36,7 +37,7 @@ export namespace tls {
             if (wire.size()<4 || wire[0]!=type || ((std::size_t{wire[1]}<<16)|(std::size_t{wire[2]}<<8)|wire[3])!=wire.size()-4)return {};return wire.subspan(4);
         }
     }
-    template<class... Recovery>
+    template<bool EchAccepted=false,class... Recovery>
     inline auto make_server_secrets(std::span<std::uint8_t const> client_wire, std::span<std::uint16_t const> schemes,
         std::span<std::uint8_t const> first_wire, std::span<std::uint8_t const> retry_wire, PeerSignaturePolicy policy,std::span<std::uint16_t const> permitted_ciphers,HandshakeTransport transport,Recovery&... recovery)
         -> std::expected<ServerHandshakeSecrets,ServerKeyError>{
@@ -89,6 +90,15 @@ export namespace tls {
         if (!crypto::random_bytes(hello.random) || hello.is_retry()) return std::unexpected(ServerKeyError::crypto_error);
         auto encoded_body=hello.encode(); if (!encoded_body) return std::unexpected(ServerKeyError::crypto_error);
         auto wire=HandshakeDecoder::encode(2,*encoded_body,65535); if (!wire) return std::unexpected(ServerKeyError::crypto_error);
+        if constexpr (EchAccepted) {
+            auto confirmed=apply_ech_accept_confirmation(
+                retry_wire.empty() ? client_wire : first_wire,
+                retry_wire,
+                retry_wire.empty() ? std::span<std::uint8_t const>{} : client_wire,
+                *wire);
+            if (!confirmed) return std::unexpected(ServerKeyError::crypto_error);
+            *wire=std::move(*confirmed);
+        }
         if (!retry_wire.empty()) {
             auto first_body=detail::server_key_message_body(first_wire,1), retry_body=detail::server_key_message_body(retry_wire,2);
             if (!first_body || !retry_body) return std::unexpected(ServerKeyError::invalid_hello);
@@ -165,6 +175,33 @@ export namespace tls {
         using PskPolicy=RecoveryPolicy<Recovery...>;
         auto secrets=server_handshake_secrets_retry(first,retry,second,schemes,{},HandshakeTransport::tcp,recovery...);
         if (!secrets)return std::unexpected(secrets.error());return server_record_keys(std::move(*secrets));
+    }
+    template<class... Recovery>
+    inline auto server_retry_hello_ech(std::span<std::uint8_t const> first,std::span<std::uint16_t const> schemes,Recovery&... recovery)
+        -> std::expected<crypto::Bytes,ServerKeyError> {
+        auto raw=server_retry_hello(first,schemes,{},HandshakeTransport::tcp,recovery...);
+        if (!raw) return std::unexpected(raw.error());
+        auto confirmed=apply_ech_hrr_confirmation(first,*raw);
+        if (!confirmed) return std::unexpected(ServerKeyError::crypto_error);
+        return std::move(*confirmed);
+    }
+    template<class... Recovery>
+    inline auto server_handshake_keys_ech(std::span<std::uint8_t const> client,std::span<std::uint16_t const> schemes,
+        PeerSignaturePolicy signature_policy=PeerSignaturePolicy::require_offered,Recovery&... recovery) -> std::expected<ServerHandshakeKeys,ServerKeyError> {
+        auto secrets=make_server_secrets<true>(client,schemes,{},{},signature_policy,{},HandshakeTransport::tcp,recovery...);
+        if (!secrets) return std::unexpected(secrets.error());
+        return server_record_keys(std::move(*secrets));
+    }
+    template<class... Recovery>
+    inline auto server_handshake_keys_retry_ech(std::span<std::uint8_t const> first,std::span<std::uint8_t const> retry,
+        std::span<std::uint8_t const> second,std::span<std::uint16_t const> schemes,Recovery&... recovery) -> std::expected<ServerHandshakeKeys,ServerKeyError> {
+        if (first.empty() || retry.empty()) return std::unexpected(ServerKeyError::invalid_hello);
+        auto expected=server_retry_hello_ech(first,schemes,recovery...);
+        if (!expected) return std::unexpected(expected.error());
+        if (!std::ranges::equal(*expected,retry)) return std::unexpected(ServerKeyError::invalid_hello);
+        auto secrets=make_server_secrets<true>(second,schemes,first,retry,PeerSignaturePolicy::require_offered,{},HandshakeTransport::tcp,recovery...);
+        if (!secrets) return std::unexpected(secrets.error());
+        return server_record_keys(std::move(*secrets));
     }
     [[nodiscard]] auto server_retry_hello(std::span<std::uint8_t const> first,std::span<std::uint16_t const> schemes,
         std::span<std::uint16_t const> permitted_ciphers) -> std::expected<crypto::Bytes,ServerKeyError>;

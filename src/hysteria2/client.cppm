@@ -171,7 +171,7 @@ export namespace hysteria2 {
                 std::vector<std::pair<std::uint16_t,std::uint16_t>> ranges;
                 ranges.reserve(profile_.transport().port_ranges.size());
                 for (auto const& r : profile_.transport().port_ranges) ranges.emplace_back(r.first,r.last);
-                wire_.configure_hopping(peer.port(),ranges,profile_.transport().hop_interval,now);
+                wire_.configure_hopping(peer.port(),ranges,profile_.transport().hop_interval,now,profile_.transport().hop_interval_max);
             }
             reservation.committed=true;
             owner_=*reserved;started_=true;driver_.notify();return {};

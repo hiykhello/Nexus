@@ -37,6 +37,7 @@ export namespace cli {
 
     struct AcmeHooks {
         functional::move_only_function<void(std::string_view cert_pem, std::string_view key_pem) noexcept> on_credential_updated;
+        std::shared_ptr<void> shared_credential{};
     };
 
     struct TorHooks {
@@ -60,6 +61,7 @@ export namespace cli {
 
     class OptionalServicesRuntime {
         std::vector<ServiceHandle> services_;
+        std::shared_ptr<void> acme_credential_;
     public:
         OptionalServicesRuntime() = default;
         ~OptionalServicesRuntime() { stop(); }
@@ -74,6 +76,7 @@ export namespace cli {
         auto poll(std::uint64_t now_ms, logging::Runtime&) noexcept -> void;
         auto stop() noexcept -> void;
         [[nodiscard]] auto active_count() const noexcept -> std::size_t { return services_.size(); }
+        [[nodiscard]] auto acme_credential_erased() const noexcept -> std::shared_ptr<void> { return acme_credential_; }
     };
 
     auto init_watchdog_service(config::MemoryWatchdogConfig const&, logging::Runtime&, WatchdogHooks hooks = {})
@@ -99,6 +102,7 @@ export namespace cli {
     [[nodiscard]] auto acme_alpn01_port(ServiceHandle const&) noexcept -> std::uint16_t;
     [[nodiscard]] auto acme_credential_generation(ServiceHandle const&) noexcept -> std::uint64_t;
     [[nodiscard]] auto acme_has_valid_credential(ServiceHandle const&) noexcept -> bool;
+    [[nodiscard]] auto acme_credential_provider_erased(ServiceHandle const&) noexcept -> std::shared_ptr<void>;
     [[nodiscard]] auto acme_dns01_record(ServiceHandle const&, std::string_view domain) -> std::optional<std::string>;
     [[nodiscard]] auto tor_signal_newnym(ServiceHandle&) -> std::expected<void, std::string>;
     [[nodiscard]] auto tor_query_bootstrap(ServiceHandle&) -> std::expected<int, std::string>;

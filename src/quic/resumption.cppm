@@ -116,6 +116,28 @@ export namespace quic {
         [[nodiscard]] auto resumed() const noexcept -> bool {return Base::complete() && recovery_.complete() && recovery_.selected();}
         auto cancel() noexcept -> void {Base::cancel(recovery_);}
     };
+    // Ticket retaining QUIC 0-RTT transport parameters and cipher suite.
+    class TransportTicket : public tls::ResumptionTicket {
+        containers::inplace_vector<std::uint8_t,256> parameters_;
+        std::uint16_t suite_=0;
+        TransportTicket(tls::ResumptionTicket&& ticket,std::uint16_t suite,std::span<std::uint8_t const> parameters)
+            : tls::ResumptionTicket(std::move(ticket)),suite_(suite) {
+            if (parameters.size()<=parameters_.capacity()) parameters_.append_range(parameters);
+        }
+    public:
+        template<bool Quic>
+        [[nodiscard]] static auto from_message(std::span<std::uint8_t const> body,crypto::Hash hash,
+            std::span<std::uint8_t const> master,tls::TicketBinding const& binding,std::uint64_t now,
+            std::uint16_t suite,std::span<std::uint8_t const> parameters) -> std::expected<TransportTicket,tls::PskError> {
+            static_assert(Quic);
+            auto ticket=tls::ResumptionTicket::from_message<Quic>(body,hash,master,binding,now);
+            if (!ticket) return std::unexpected(ticket.error());
+            return TransportTicket(std::move(*ticket),suite,parameters);
+        }
+        [[nodiscard]] auto parameters() const noexcept -> std::span<std::uint8_t const> { return parameters_; }
+        [[nodiscard]] auto suite() const noexcept -> std::uint16_t { return suite_; }
+    };
+
     // Shared by named outbound profiles spanning several worker executors.
     template<class Cache=tls::ResumptionCache<>>
     class SharedResumptionCache {
@@ -170,6 +192,19 @@ export namespace quic {
         }
         auto cancel(this SelectableTlsClient& self) noexcept -> void {
             std::visit([](auto& tls) noexcept {tls.cancel();},self.tls_);
+        }
+        [[nodiscard]] auto supports_early_data(this SelectableTlsClient const&) noexcept -> bool
+            requires tls::EarlyDataPolicy<tls::PskClientPolicy<typename Cache::Ticket,tls::PskSteadyClock,Cache&>> {
+            return true;
+        }
+        [[nodiscard]] auto resumed(this SelectableTlsClient const& self) noexcept -> bool {
+            auto const* resuming=std::get_if<Resuming>(&self.tls_);
+            return resuming && resuming->resumed();
+        }
+        [[nodiscard]] auto early_offered(this SelectableTlsClient const& self) noexcept -> bool
+            requires tls::EarlyDataPolicy<tls::PskClientPolicy<typename Cache::Ticket,tls::PskSteadyClock,Cache&>> {
+            auto const* resuming=std::get_if<Resuming>(&self.tls_);
+            return resuming && resuming->resumption_policy().offered_early();
         }
         template<class Connection>
         auto start(this SelectableTlsClient& self,Connection& connection) -> int {

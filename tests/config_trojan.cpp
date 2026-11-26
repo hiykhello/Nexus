@@ -57,5 +57,66 @@ dns { server "dns" type="udp" host="127.0.0.1"; }
     for (auto extra:{"tcp-fast-open 1;","tcp-fast-open #true; tcp-fast-open #false;",
                      "tcp-fast-open #true; detour \"direct\";"})
         if (document(inbound,plain+extra)) return 8;
-    std::println("Trojan TLS, authentication, IPv6, dial fields, references and dependency validation passed");
+
+    // Trojan inbound fallback & fallback-for-alpn (both host:port shorthand and host/port properties + block).
+    auto fb_in = R"(trojan "edge-in" {
+ listen host="127.0.0.1" port=443;
+ authentication { user "alice" password-file="/tmp/alice"; }
+ tls { certificate-file "/tmp/cert"; private-key-file "/tmp/key"; alpn "h2" "http/1.1"; cert-hot-reload #true; ech-key-file "/tmp/ech.key"; }
+ fallback "127.0.0.1:8080";
+ fallback-for-alpn "h2" "127.0.0.1:8081";
+ fallback-for-alpn "http/1.1" host="127.0.0.1" port=8082;
+})";
+    auto fb_out = R"(server host="remote.test" port=443;
+authentication { password-file "/tmp/secret"; }
+tls {
+ server-name "remote.test"; ca-file "/tmp/ca"; verify #true;
+ alpn "h2" "http/1.1";
+ tls-fragment { record-fragment #true; min 12; max 64; fallback-delay-ms 400; }
+}
+)";
+    auto fb = document(fb_in, fb_out);
+    if (!fb || !fb->inbounds[0].trojan || !fb->inbounds[0].trojan->fallback ||
+        fb->inbounds[0].trojan->fallback->host != "127.0.0.1" || fb->inbounds[0].trojan->fallback->port != 8080 ||
+        fb->inbounds[0].trojan->fallback_for_alpn.size() != 2 ||
+        fb->inbounds[0].trojan->fallback_for_alpn[0].first != "h2" ||
+        fb->inbounds[0].trojan->fallback_for_alpn[0].second.port != 8081 ||
+        fb->inbounds[0].trojan->fallback_for_alpn[1].first != "http/1.1" ||
+        fb->inbounds[0].trojan->fallback_for_alpn[1].second.port != 8082 ||
+        fb->inbounds[0].trojan->alpn.size() != 2 || !fb->inbounds[0].trojan->cert_hot_reload ||
+        fb->inbounds[0].trojan->ech_key_file != "/tmp/ech.key" ||
+        fb->trojan_outbounds[0].config.alpn.size() != 2 ||
+        !fb->trojan_outbounds[0].config.tls_fragment.enabled ||
+        !fb->trojan_outbounds[0].config.tls_fragment.record_fragment ||
+        fb->trojan_outbounds[0].config.tls_fragment.min_bytes != 12 ||
+        fb->trojan_outbounds[0].config.tls_fragment.max_bytes != 64 ||
+        fb->trojan_outbounds[0].config.tls_fragment.fallback_delay_ms != 400)
+        return 9;
+
+    // Block form for fallback-for-alpn + host/port fallback + tls-fragment #true shorthand.
+    auto fb_block = document(R"(trojan "edge-in" {
+ listen host="127.0.0.1" port=443;
+ authentication { user "alice" password-file="/tmp/alice"; }
+ tls { certificate-file "/tmp/cert"; private-key-file "/tmp/key"; }
+ fallback host="127.0.0.1" port=9000;
+ fallback-for-alpn { "h2" "127.0.0.1:9001"; "http/1.1" host="127.0.0.1" port=9002; }
+})", R"(server host="remote.test" port=443;
+authentication { password-file "/tmp/secret"; }
+tls { server-name "remote.test"; ca-file "/tmp/ca"; verify #true; tls-fragment #true; }
+)");
+    if (!fb_block || !fb_block->inbounds[0].trojan->fallback || fb_block->inbounds[0].trojan->fallback->port != 9000 ||
+        fb_block->inbounds[0].trojan->fallback_for_alpn.size() != 2 ||
+        !fb_block->trojan_outbounds[0].config.tls_fragment.enabled ||
+        fb_block->trojan_outbounds[0].config.tls_fragment.record_fragment)
+        return 10;
+
+    // Reject duplicate fallback, duplicate ALPN, invalid port, and conflicting certificate-provider + cert-file.
+    for (auto bad_in : {
+        R"(trojan "e" { listen host="127.0.0.1" port=443; authentication { user "a" password-file="/tmp/a"; } tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; } fallback "127.0.0.1:80"; fallback "127.0.0.1:81"; })",
+        R"(trojan "e" { listen host="127.0.0.1" port=443; authentication { user "a" password-file="/tmp/a"; } tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; } fallback-for-alpn "h2" "127.0.0.1:80"; fallback-for-alpn "h2" "127.0.0.1:81"; })",
+        R"(trojan "e" { listen host="127.0.0.1" port=443; authentication { user "a" password-file="/tmp/a"; } tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; } fallback "127.0.0.1:0"; })",
+        R"(trojan "e" { listen host="127.0.0.1" port=443; authentication { user "a" password-file="/tmp/a"; } tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; certificate-provider "acme1"; } })",
+    }) if (document(bad_in, outbound)) return 11;
+
+    std::println("Trojan TLS, authentication, IPv6, dial fields, fallback/ALPN, tls-fragment, references and dependency validation passed");
 }

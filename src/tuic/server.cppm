@@ -11,6 +11,7 @@ import quic.transport_memory;
 import quic.retry_admission;
 import quic.retry_token;
 import quic.tls_server;
+import quic.optional_client_resumption;
 import tls.server_credential;
 import net.datagram_driver;
 import ngtcp2;
@@ -58,21 +59,40 @@ export namespace tuic {
         };
 
     public:
-        using App = Application<quic::TlsServer, SessionHooks, Streams, Window>;
-        using NativeSession = quic::DatagramSession<quic::TlsServer, App>;
+#ifdef NEXUS_QUIC_RESUMPTION
+        using TicketStore = quic::EarlyDataTicketStore<64>;
+        using ServerTls = quic::EarlyDataTlsServer<TicketStore>;
+#else
+        using ServerTls = quic::TlsServer;
+#endif
+        using App = Application<ServerTls, SessionHooks, Streams, Window>;
+        using NativeSession = quic::DatagramSession<ServerTls, App>;
 
     private:
         struct Bundle {
+#ifdef NEXUS_QUIC_RESUMPTION
+            std::unique_ptr<ServerTls> tls;
+#else
             quic::TlsServer tls;
+#endif
             SessionHooks hooks;
             quic::NativeTransportMemory<> memory;
             App app;
             NativeSession session;
             corosio::endpoint initial_peer;
+#ifdef NEXUS_QUIC_RESUMPTION
+            Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,corosio::endpoint peer,std::unique_ptr<ServerTls> server_tls)
+                : tls(std::move(server_tls)), hooks{parent, reg, id, parent.hooks_, id.slot},
+                  memory(parent.options_.native_bytes), app(*tls, hooks, parent.users_),
+                  session(*tls,app,parent.local_),initial_peer(peer) {
+                app.set_issue_tickets(parent.options_.zero_rtt_handshake);
+            }
+#else
             Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,corosio::endpoint peer)
                 : tls(parent.credential_, "h3"), hooks{parent, reg, id, parent.hooks_, id.slot},
                   memory(parent.options_.native_bytes), app(tls, hooks, parent.users_),
                   session(tls,app,parent.local_),initial_peer(peer) {}
+#endif
         };
 
         struct Factory {
@@ -81,6 +101,7 @@ export namespace tuic {
             Listener& listener;
             quic::RetryAdmission<> retry;
             std::optional<quic::RetryClaims> permit;
+            bool direct_admit = false;
             std::optional<ControlFailure> error;
             std::array<std::optional<Bundle>, Sessions> bundles;
 
@@ -89,6 +110,16 @@ export namespace tuic {
             auto admit(ngtcp2::ngtcp2_pkt_hd const& initial, corosio::endpoint const& peer,
                        Clock::time_point now, std::size_t bytes) noexcept -> bool {
                 permit.reset();
+                direct_admit = false;
+#ifdef NEXUS_QUIC_RESUMPTION
+                if (listener.options_.zero_rtt_handshake) {
+                    if (bytes < 1200 || initial.version != 1 || initial.type != ngtcp2::NGTCP2_PKT_INITIAL ||
+                        initial.dcid.datalen < 8 || initial.dcid.datalen > 20 || initial.scid.datalen > 20 || !peer.port())
+                        return false;
+                    direct_admit = true;
+                    return true;
+                }
+#endif
                 auto res = retry.inspect(initial, peer, now, bytes);
                 if (!res) { if (!error) error = res.error(); return false; }
                 permit = *res;
@@ -104,7 +135,7 @@ export namespace tuic {
             auto control_next_expiry() const noexcept { return retry.next_expiry(); }
             auto control_expire(Clock::time_point now) noexcept { return retry.expire(now); }
             auto control_request_stop() noexcept -> void { retry.request_stop(); }
-            auto control_stop() noexcept -> void { permit.reset(); retry.stop(); }
+            auto control_stop() noexcept -> void { permit.reset(); direct_admit = false; retry.stop(); }
             auto control_drained() const noexcept -> bool { return retry.drained(); }
 
             auto create(quic::SessionHandle owner, Registry& reg, std::span<std::uint8_t const> source,
@@ -112,23 +143,39 @@ export namespace tuic {
                         Clock::time_point now) noexcept -> std::expected<Session*, int> {
                 namespace n = ::ngtcp2;
                 try {
-                    if (!permit || !std::ranges::equal(permit->retry.bytes(), std::span(initial.dcid.data).first(initial.dcid.datalen)))
-                        return std::unexpected(n::err_callback_failure);
-                    auto verified = *permit;
-                    permit.reset();
+                    bool const use_direct = std::exchange(direct_admit, false);
+                    std::optional<quic::RetryClaims> verified;
+                    if (!use_direct) {
+                        if (!permit || !std::ranges::equal(permit->retry.bytes(), std::span(initial.dcid.data).first(initial.dcid.datalen)))
+                            return std::unexpected(n::err_callback_failure);
+                        verified = *permit;
+                        permit.reset();
+                    }
                     auto& entry = bundles[owner.slot];
                     if (entry) return std::unexpected(n::err_callback_failure);
-                    entry.emplace(listener,reg,owner,peer);
+#ifdef NEXUS_QUIC_RESUMPTION
+                    auto server_tls = ServerTls::create(listener.credential_, "h3", listener.ticket_store_,
+                        listener.options_.zero_rtt_handshake);
+                    if (!server_tls) return std::unexpected(n::err_callback_failure);
+                    entry.emplace(listener, reg, owner, peer, std::move(*server_tls));
+#else
+                    entry.emplace(listener, reg, owner, peer);
+#endif
                     n::ngtcp2_settings settings{};
                     n::ngtcp2_transport_params params{};
                     apply_tuic_quic_config(listener.options_, Streams, Window, settings, params);
-                    n::ngtcp2_cid_init(&params.original_dcid, verified.original.data.data(), verified.original.size);
-                    params.original_dcid_present = 1;
-                    params.retry_scid = initial.dcid;
-                    params.retry_scid_present = 1;
-                    settings.token = initial.token;
-                    settings.tokenlen = initial.tokenlen;
-                    settings.token_type = n::NGTCP2_TOKEN_TYPE_RETRY;
+                    if (verified) {
+                        n::ngtcp2_cid_init(&params.original_dcid, verified->original.data.data(), verified->original.size);
+                        params.original_dcid_present = 1;
+                        params.retry_scid = initial.dcid;
+                        params.retry_scid_present = 1;
+                        settings.token = initial.token;
+                        settings.tokenlen = initial.tokenlen;
+                        settings.token_type = n::NGTCP2_TOKEN_TYPE_RETRY;
+                    } else {
+                        params.original_dcid = initial.dcid;
+                        params.original_dcid_present = 1;
+                    }
                     n::ngtcp2_cid cid{};
                     n::ngtcp2_cid_init(&cid, source.data(), source.size());
                     auto code = entry->session.start(true, initial.scid, cid, peer, settings, params, entry->memory.transport(), now);
@@ -164,6 +211,9 @@ export namespace tuic {
         tls::ServerCredential const& credential_;
         std::span<UserCredential const> users_;
         ClientTransportOptions options_;
+#ifdef NEXUS_QUIC_RESUMPTION
+        TicketStore ticket_store_;
+#endif
         Hooks& hooks_;
         Factory factory_{*this};
         Port port_{factory_};
@@ -188,6 +238,10 @@ export namespace tuic {
             auto& b = *factory_.bundles[h.slot];
             return b.hooks.owner == h ? &b.app : nullptr;
         }
+#ifdef NEXUS_QUIC_RESUMPTION
+        auto clear_tickets() noexcept -> void { ticket_store_.clear(); }
+        [[nodiscard]] auto ticket_count() const noexcept -> std::size_t { return ticket_store_.size(); }
+#endif
 
         auto initial_peer(quic::SessionHandle h) const noexcept -> std::optional<corosio::endpoint> {
             if (h.slot>=Sessions) return {};

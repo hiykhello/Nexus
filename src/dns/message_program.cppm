@@ -65,16 +65,148 @@ export namespace dns {
 #ifdef NEXUS_DNS_FAKEIP
         FakeIpPublication publication_;
 #endif
+        static auto read_u16_be(std::span<std::uint8_t const> s, std::size_t off) noexcept -> std::uint16_t {
+            return static_cast<std::uint16_t>((std::uint16_t{s[off]} << 8) | s[off + 1]);
+        }
+        static auto valid_ech_public_name(std::string_view name) noexcept -> bool {
+            if (name.empty() || name.size() > 253 || name.back() == '.') return false;
+            std::size_t start = 0;
+            for (std::size_t i = 0; i <= name.size(); ++i) {
+                if (i == name.size() || name[i] == '.') {
+                    if (i == start || i - start > 63 || name[start] == '-' || name[i - 1] == '-') return false;
+                    start = i + 1;
+                } else {
+                    char c = name[i];
+                    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-'))
+                        return false;
+                }
+            }
+            return true;
+        }
+        static auto skip_uncompressed_name(std::span<std::uint8_t const> data, std::size_t& off) noexcept -> bool {
+            std::size_t total = 0;
+            while (off < data.size()) {
+                auto len = data[off++];
+                if (len == 0) return true;
+                if (len > 63 || len > data.size() - off || total + len + 1 > 255) return false;
+                off += len;
+                total += len + 1;
+            }
+            return false;
+        }
         static auto record_reverse_answer(ReverseCache& reverse,std::uint64_t view,QueryMessage const& query,
             std::span<std::uint8_t const> wire) noexcept -> void {
-            if (query.question.klass!=1 || (query.question.type!=1 && query.question.type!=28)) return;
-            auto parsed=parse_addresses(wire,query.id,query.question,query.edns.has_value());
-            if (!parsed || parsed->addresses.empty() || !parsed->ttl || !*parsed->ttl) return;
+            if (query.question.klass!=1) return;
             auto now_ms=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                 Clock::now().time_since_epoch()).count());
+            if (query.question.type==65 || query.question.type==64) {
+                (void)record_https_ech_reverse(reverse,view,query,wire,now_ms);
+                return;
+            }
+            if (query.question.type!=1 && query.question.type!=28) return;
+            auto parsed=parse_addresses(wire,query.id,query.question,query.edns.has_value());
+            if (!parsed || parsed->addresses.empty() || !parsed->ttl || !*parsed->ttl) return;
             (void)reverse.record(view,query.question.name,parsed->addresses,*parsed->ttl,now_ms,reverse.token());
         }
     public:
+        [[nodiscard]] static auto extract_https_ech_public_name(std::span<std::uint8_t const> ech_config_list) noexcept
+            -> std::optional<std::string_view> {
+            if (ech_config_list.size() < 2) return std::nullopt;
+            auto list_len = std::size_t{read_u16_be(ech_config_list, 0)};
+            if (list_len == 0 || list_len != ech_config_list.size() - 2) return std::nullopt;
+            std::size_t pos = 2;
+            while (pos < ech_config_list.size()) {
+                if (ech_config_list.size() - pos < 4) return std::nullopt;
+                auto version = read_u16_be(ech_config_list, pos);
+                auto contents_len = std::size_t{read_u16_be(ech_config_list, pos + 2)};
+                pos += 4;
+                if (contents_len > ech_config_list.size() - pos) return std::nullopt;
+                auto c = ech_config_list.subspan(pos, contents_len);
+                pos += contents_len;
+                if (version != 0xfe0d) continue;
+                // ECHConfigContents: id(1), kem_id(2), pk_len(2), pk, cs_len(2), cs, max_name(1), pub_len(1), pub, ext_len(2), ext
+                if (c.size() < 9) return std::nullopt;
+                std::size_t off = 3; // skip id + kem_id
+                auto pk_len = std::size_t{read_u16_be(c, off)}; off += 2;
+                if (pk_len == 0 || pk_len > c.size() - off || c.size() - (off + pk_len) < 2) return std::nullopt;
+                off += pk_len;
+                auto cs_len = std::size_t{read_u16_be(c, off)}; off += 2;
+                if (cs_len == 0 || (cs_len % 4) != 0 || cs_len > c.size() - off || c.size() - (off + cs_len) < 4)
+                    return std::nullopt;
+                off += cs_len;
+                off += 1; // maximum_name_length
+                auto name_len = std::size_t{c[off++]};
+                if (name_len == 0 || name_len > c.size() - off || c.size() - (off + name_len) < 2) return std::nullopt;
+                std::string_view pub_name(reinterpret_cast<char const*>(c.data() + off), name_len);
+                off += name_len;
+                auto ext_len = std::size_t{read_u16_be(c, off)}; off += 2;
+                if (ext_len != c.size() - off) return std::nullopt;
+                if (!valid_ech_public_name(pub_name)) return std::nullopt;
+                return pub_name;
+            }
+            return std::nullopt;
+        }
+        static auto record_https_ech_reverse(ReverseCache& reverse,std::uint64_t view,QueryMessage const& query,
+            std::span<std::uint8_t const> wire,std::uint64_t now_ms) noexcept -> std::size_t {
+            if (query.question.klass != 1 || (query.question.type != 65 && query.question.type != 64)) return 0;
+            auto parsed = parse_response(wire, query.id, query.question);
+            if (!parsed || parsed->rcode != 0) return 0;
+            auto tok = reverse.token();
+            std::size_t recorded = 0;
+            for (auto const& rec : parsed->records) {
+                if (rec.section != Section::answer || rec.klass != 1 || !rec.ttl ||
+                    (rec.type != 65 && rec.type != 64)) continue;
+                if (rec.data_offset > parsed->wire.size() || rec.data_length > parsed->wire.size() - rec.data_offset)
+                    continue;
+                auto rdata = std::span<std::uint8_t const>(parsed->wire).subspan(rec.data_offset, rec.data_length);
+                if (rdata.size() < 3) continue;
+                auto priority = read_u16_be(rdata, 0);
+                if (priority == 0) continue; // AliasMode carries no SvcParams.
+                std::size_t off = 2;
+                if (!skip_uncompressed_name(rdata, off)) continue;
+                std::optional<std::string_view> pub_name;
+                std::array<Address, 32> hints{};
+                std::size_t hint_count = 0;
+                std::optional<std::uint16_t> prev_key;
+                bool malformed = false;
+                while (off < rdata.size()) {
+                    if (rdata.size() - off < 4) { malformed = true; break; }
+                    auto key = read_u16_be(rdata, off);
+                    auto len = std::size_t{read_u16_be(rdata, off + 2)};
+                    off += 4;
+                    if ((prev_key && key <= *prev_key) || len > rdata.size() - off) { malformed = true; break; }
+                    prev_key = key;
+                    auto val = rdata.subspan(off, len);
+                    off += len;
+                    if (key == 5) {
+                        pub_name = extract_https_ech_public_name(val);
+                    } else if (key == 4 && len > 0 && (len % 4) == 0) {
+                        for (std::size_t p = 0; p < len && hint_count < hints.size(); p += 4) {
+                            Address a{}; a.size = 4;
+                            std::copy_n(val.data() + p, 4, a.bytes.begin());
+                            hints[hint_count++] = a;
+                        }
+                    } else if (key == 6 && len > 0 && (len % 16) == 0) {
+                        for (std::size_t p = 0; p < len && hint_count < hints.size(); p += 16) {
+                            Address a{}; a.size = 16;
+                            std::copy_n(val.data() + p, 16, a.bytes.begin());
+                            hints[hint_count++] = a;
+                        }
+                    }
+                }
+                if (malformed || !pub_name) continue;
+                if (reverse.record_ech_public_name(view, rec.name, *pub_name, rec.ttl, now_ms, tok) == ReverseRecord::stored)
+                    ++recorded;
+                if (query.question.name != rec.name &&
+                    reverse.record_ech_public_name(view, query.question.name, *pub_name, rec.ttl, now_ms, tok) == ReverseRecord::stored)
+                    ++recorded;
+                for (std::size_t i = 0; i < hint_count; ++i) {
+                    if (reverse.record_ech_public_name(view, hints[i], *pub_name, rec.ttl, now_ms, tok) == ReverseRecord::stored)
+                        ++recorded;
+                }
+            }
+            return recorded;
+        }
         MessageProgram(corosio::io_context& context,std::span<policy::DnsRule const> rules,
             std::span<MessageUpstream const> upstreams,std::size_t fallback,MessageCache* cache=nullptr,bool disable_cache=false,
             std::span<ResponseRaceMode const> modes={},InputBudget* override_budget=nullptr,

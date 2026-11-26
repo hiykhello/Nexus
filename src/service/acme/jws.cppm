@@ -4,6 +4,7 @@ export import acme.types;
 
 export namespace acme {
     [[nodiscard]] auto base64url_encode(std::span<std::uint8_t const> bytes) -> std::string;
+    [[nodiscard]] auto base64url_decode(std::string_view text) -> std::expected<std::vector<std::uint8_t>, std::string>;
     [[nodiscard]] auto sha256_bytes(std::span<std::uint8_t const> bytes) -> std::expected<std::array<std::uint8_t, 32>, std::string>;
 
     class EcAccountKey {
@@ -26,6 +27,9 @@ export namespace acme {
 
     [[nodiscard]] auto sign_jws(EcAccountKey const& key, std::string_view url, std::string_view nonce,
                                 std::string_view payload_json, std::string_view kid = {}) -> std::expected<std::string, std::string>;
+    [[nodiscard]] auto sign_eab_jws(EcAccountKey const& account_key, std::string_view new_account_url,
+                                    std::string_view eab_kid, std::span<std::uint8_t const> eab_hmac_key)
+        -> std::expected<std::string, std::string>;
 
     struct GeneratedCsr {
         std::string csr_der_base64url;

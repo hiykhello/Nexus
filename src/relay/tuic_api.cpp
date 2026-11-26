@@ -7,12 +7,12 @@ namespace relay {
         std::string_view server_name,std::string_view ca_file,TlsKeyExchange exchange,TlsFingerprint fingerprint,
         std::string_view cc,bool udp_over_stream,std::uint32_t heartbeat_ms,std::uint32_t handshake_ms,
         std::uint32_t idle_ms,std::size_t native_bytes,std::optional<std::size_t> bootstrap,
-        std::uint32_t timeout_ms,TcpSocketOptions options,QuicEchOptions const& ech,std::span<std::array<std::uint8_t,32> const> pins) -> std::expected<std::size_t,std::string> {
+        std::uint32_t timeout_ms,TcpSocketOptions options,QuicEchOptions const& ech,std::span<std::array<std::uint8_t,32> const> pins,bool zero_rtt_handshake) -> std::expected<std::size_t,std::string> {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_TUIC
         if (outbounds.size()>=256) return std::unexpected("too many tunnel outbounds");
         if (bootstrap && (!dns_routing || *bootstrap>=dns_routing->resolver_count())) return std::unexpected("invalid bootstrap resolver");
-        auto factory=make_tuic_factory(host,port,uuid_file,password_file,server_name,ca_file,exchange,fingerprint,cc,udp_over_stream,heartbeat_ms,handshake_ms,idle_ms,native_bytes,bootstrap,timeout_ms,options,ech,dns_routing.has_value(),pins);
+        auto factory=make_tuic_factory(host,port,uuid_file,password_file,server_name,ca_file,exchange,fingerprint,cc,udp_over_stream,heartbeat_ms,handshake_ms,idle_ms,native_bytes,bootstrap,timeout_ms,options,ech,dns_routing.has_value(),pins,zero_rtt_handshake);
         if (!factory) return std::unexpected(factory.error());
         auto index=outbounds.size()+2; outbounds.push_back(std::move(*factory));
         if (bootstrap && (!max_bootstrap_index || *bootstrap>*max_bootstrap_index)) max_bootstrap_index=bootstrap;
@@ -20,7 +20,7 @@ namespace relay {
 #else
         (void)host; (void)port; (void)uuid_file; (void)password_file; (void)server_name; (void)ca_file;
         (void)exchange; (void)fingerprint; (void)cc; (void)udp_over_stream; (void)heartbeat_ms; (void)handshake_ms;
-        (void)idle_ms; (void)native_bytes; (void)bootstrap; (void)timeout_ms; (void)options; (void)ech; (void)pins;
+        (void)idle_ms; (void)native_bytes; (void)bootstrap; (void)timeout_ms; (void)options; (void)ech; (void)pins; (void)zero_rtt_handshake;
         return std::unexpected("TUIC outbound is not available in this build");
 #endif
     }

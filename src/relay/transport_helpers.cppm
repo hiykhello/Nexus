@@ -19,8 +19,8 @@ namespace relay::transport_detail {
         for (auto const& h : cfg.headers) fields.push_back({h.name, h.value});
         auto host = cfg.host.empty() ? fallback_host : std::string_view(cfg.host);
         auto built = client
-            ? httpupgrade::Profile::client(host, cfg.path, fields, cfg.websocket)
-            : httpupgrade::Profile::server(cfg.host, cfg.path, fields, cfg.websocket);
+            ? httpupgrade::Profile::client(host, cfg.path, fields, cfg.websocket, cfg.max_early_data, cfg.early_data_header_name)
+            : httpupgrade::Profile::server(cfg.host, cfg.path, fields, cfg.websocket, cfg.max_early_data, cfg.early_data_header_name);
         if (!built) return std::unexpected("invalid HTTPUpgrade/WebSocket transport profile");
         return std::move(*built);
     }
@@ -49,7 +49,8 @@ namespace relay::transport_detail {
         auto resp = cfg.response_policy == GrpcTransport::ResponsePolicy::standard
             ? grpc::ResponsePolicy::standard : grpc::ResponsePolicy::sing_box_lite;
         grpc::Limits lim{cfg.input_window, cfg.message_bytes, cfg.hunk_bytes,
-                         cfg.output_bytes, cfg.output_messages, cfg.library_bytes};
+                         cfg.output_bytes, cfg.output_messages, cfg.library_bytes,
+                         cfg.idle_timeout_ms, cfg.ping_timeout_ms, cfg.permit_without_stream};
         if (!req || !grpc::Session::create(client ? grpc::Role::client : grpc::Role::server, *req, resp, lim))
             return std::unexpected("invalid gRPC request/limits");
         return GrpcSettings{std::move(*req), resp, lim, cfg.max_sessions, cfg.tcp_fast_open};

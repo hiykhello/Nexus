@@ -97,5 +97,7 @@ export namespace grpc {
         auto accept() noexcept -> std::optional<RpcTicket>{return driver_.protocol().accept();}
         auto wait_change(Deadline deadline={}){return driver_.wait_change(deadline);}
         auto shutdown(){auto value=driver_.protocol().shutdown();driver_.wake();return value;}
+        auto pings_sent() const noexcept -> std::size_t{return driver_.protocol().pings_sent();}
+        auto ping_acks_received() const noexcept -> std::size_t{return driver_.protocol().ping_acks_received();}
     };
 }

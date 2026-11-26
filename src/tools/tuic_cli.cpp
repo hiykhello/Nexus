@@ -30,6 +30,7 @@ namespace cli::tuic_enabled {
         profile->options.cc = cfg.congestion_control == "bbr" ? tuic::CongestionControl::bbr :
                               cfg.congestion_control == "reno" ? tuic::CongestionControl::reno :
                               tuic::CongestionControl::cubic;
+        profile->options.zero_rtt_handshake = cfg.zero_rtt_handshake;
         for (auto const& u : cfg.users) {
             auto raw_uuid = rulefile::read_password_file(u.uuid_file);
             if (!raw_uuid) return std::unexpected("TUIC UUID: " + raw_uuid.error());

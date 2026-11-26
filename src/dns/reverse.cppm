@@ -22,11 +22,20 @@ export namespace dns {
         static constexpr std::uint16_t no_name=std::numeric_limits<std::uint16_t>::max();
         struct Slot { Key key{}; std::uint64_t expires=0; std::uint16_t name=no_name; State state=State::empty; };
         struct NameEntry { ReverseName name{}; std::uint16_t next=no_name; };
+        struct EchSlot { std::uint64_t view=0, hash=0, expires=0; std::uint16_t entry=no_name; State state=State::empty; };
+        struct EchEntry {
+            std::array<std::uint8_t,253> key{};
+            std::uint8_t key_size=0, key_kind=0;
+            ReverseName public_name{};
+            std::uint16_t next=no_name;
+        };
         mutable std::mutex mutex_;
         std::vector<Slot> slots_, scratch_;
         std::vector<NameEntry> names_;
-        std::uint16_t free_name_=no_name;
-        std::size_t capacity_, count_=0, deleted_=0, storage_bytes_=0;
+        std::vector<EchSlot> ech_slots_, ech_scratch_;
+        std::vector<EchEntry> ech_entries_;
+        std::uint16_t free_name_=no_name, free_ech_=no_name;
+        std::size_t capacity_, ech_capacity_=0, count_=0, deleted_=0, ech_count_=0, ech_deleted_=0, storage_bytes_=0;
         std::uint64_t generation_, epoch_=1, watermark_=0, suspended_until_=0;
         // Conservative lower bound on every occupied expiry. It may lag after
         // removals, but must never exceed any live expiry.
@@ -96,6 +105,133 @@ export namespace dns {
                 names_[i].next=i+1<names_.size() ? static_cast<std::uint16_t>(i+1) : no_name;
             free_name_=names_.empty() ? no_name : 0;
         }
+        auto release_ech(std::uint16_t index) noexcept -> void {
+            if (index==no_name) return;
+            ech_entries_[index].next=free_ech_; free_ech_=index;
+        }
+        auto reset_ech() noexcept -> void {
+            for (std::size_t i=0;i<ech_entries_.size();++i)
+                ech_entries_[i].next=i+1<ech_entries_.size() ? static_cast<std::uint16_t>(i+1) : no_name;
+            free_ech_=ech_entries_.empty() ? no_name : 0;
+        }
+        auto ech_hash(std::uint64_t view,std::uint8_t kind,std::span<std::uint8_t const> bytes) const noexcept -> std::uint64_t {
+            auto v0=hash_key_[0]^0x736f6d6570736575ULL, v1=hash_key_[1]^0x646f72616e646f6dULL;
+            auto v2=hash_key_[0]^0x6c7967656e657261ULL, v3=hash_key_[1]^0x7465646279746573ULL;
+            auto round=[&] {
+                v0+=v1; v1=std::rotl(v1,13); v1^=v0; v0=std::rotl(v0,32);
+                v2+=v3; v3=std::rotl(v3,16); v3^=v2;
+                v0+=v3; v3=std::rotl(v3,21); v3^=v0;
+                v2+=v1; v1=std::rotl(v1,17); v1^=v2; v2=std::rotl(v2,32);
+            };
+            auto block=[&](std::uint64_t word) { v3^=word; round(); round(); v0^=word; };
+            block(view);
+            std::size_t off=0;
+            for (;off+8<=bytes.size();off+=8) {
+                std::uint64_t w=0;
+                for (unsigned i=0;i<8;++i) w|=std::uint64_t(bytes[off+i])<<(8*i);
+                block(w);
+            }
+            std::uint64_t tail=(std::uint64_t(bytes.size()+1)<<56)|kind;
+            for (std::size_t i=0;off+i<bytes.size();++i) tail|=std::uint64_t(bytes[off+i])<<(8*(i+1));
+            block(tail);
+            v2^=0xff; round(); round(); round(); round();
+            return v0^v1^v2^v3;
+        }
+        auto ech_matches(EchSlot const& slot,std::uint64_t view,std::uint64_t h,std::uint8_t kind,
+                         std::span<std::uint8_t const> bytes) const noexcept -> bool {
+            if (slot.view!=view || slot.hash!=h || slot.entry==no_name) return false;
+            auto const& e=ech_entries_[slot.entry];
+            return e.key_kind==kind && e.key_size==bytes.size() &&
+                   std::equal(bytes.begin(),bytes.end(),e.key.begin());
+        }
+        auto ech_erase(EchSlot& slot) noexcept -> void {
+            release_ech(slot.entry); slot.entry=no_name;
+            slot.state=State::deleted; --ech_count_; ++ech_deleted_;
+        }
+        auto ech_compact() noexcept -> void {
+            std::fill(ech_scratch_.begin(),ech_scratch_.end(),EchSlot{});
+            for (auto const& slot:ech_slots_) {
+                if (slot.state!=State::occupied) continue;
+                if (slot.expires<=watermark_) { release_ech(slot.entry); --ech_count_; continue; }
+                auto idx=static_cast<std::size_t>(slot.hash%ech_scratch_.size());
+                while (ech_scratch_[idx].state==State::occupied) idx=(idx+1)%ech_scratch_.size();
+                ech_scratch_[idx]=slot;
+            }
+            ech_slots_.swap(ech_scratch_); ech_deleted_=0;
+        }
+        auto ech_find(std::uint64_t view,std::uint64_t h,std::uint8_t kind,std::span<std::uint8_t const> bytes) noexcept
+            -> std::pair<std::optional<std::size_t>,std::optional<std::size_t>> {
+            auto start=static_cast<std::size_t>(h%ech_slots_.size());
+            std::optional<std::size_t> free;
+            for (std::size_t i=0;i<ech_slots_.size();++i) {
+                auto idx=(start+i)%ech_slots_.size(); auto& slot=ech_slots_[idx];
+                if (slot.state==State::occupied && slot.expires<=watermark_) ech_erase(slot);
+                if (slot.state==State::empty) return {{},free ? free : std::optional<std::size_t>(idx)};
+                if (slot.state==State::deleted) { if (!free) free=idx; continue; }
+                if (ech_matches(slot,view,h,kind,bytes)) return {idx,free};
+            }
+            return {{},free};
+        }
+        auto ech_evict_one() noexcept -> void {
+            std::size_t oldest=ech_slots_.size(); std::uint64_t min_exp=std::numeric_limits<std::uint64_t>::max();
+            for (std::size_t i=0;i<ech_slots_.size();++i) {
+                auto& s=ech_slots_[i];
+                if (s.state!=State::occupied) continue;
+                if (s.expires<=watermark_) { ech_erase(s); return; }
+                if (s.expires<min_exp) { min_exp=s.expires; oldest=i; }
+            }
+            if (oldest<ech_slots_.size()) ech_erase(ech_slots_[oldest]);
+        }
+        auto record_ech_key(std::uint64_t view,std::uint8_t kind,std::span<std::uint8_t const> key_bytes,
+                            std::string_view public_name,std::uint32_t ttl,std::uint64_t now,ReverseToken token) noexcept -> ReverseRecord {
+            if (!name_valid(public_name) || key_bytes.empty() || key_bytes.size()>253) return ReverseRecord::invalid;
+            std::lock_guard lock(mutex_);
+            if (disabled_ || !ech_capacity_) return ReverseRecord::unavailable;
+            if (token.generation!=generation_ || token.epoch!=epoch_) return ReverseRecord::stale;
+            advance(now);
+            auto duration=std::uint64_t(ttl)*1000;
+            auto expires=now>std::numeric_limits<std::uint64_t>::max()-duration ? std::numeric_limits<std::uint64_t>::max() : now+duration;
+            if (!ttl || expires<=watermark_) return ReverseRecord::ignored;
+            if (ech_deleted_>ech_capacity_/2) ech_compact();
+            auto h=ech_hash(view,kind,key_bytes);
+            auto [found,free]=ech_find(view,h,kind,key_bytes);
+            if (!found) {
+                if (ech_count_>=ech_capacity_ || !free) {
+                    ech_evict_one();
+                    if (ech_deleted_>ech_capacity_/2) ech_compact();
+                    std::tie(found,free)=ech_find(view,h,kind,key_bytes);
+                }
+                if (!free || free_ech_==no_name) return ReverseRecord::unavailable;
+                auto& slot=ech_slots_[*free];
+                if (slot.state==State::deleted) --ech_deleted_;
+                auto idx=free_ech_; free_ech_=ech_entries_[idx].next;
+                auto& e=ech_entries_[idx];
+                e=EchEntry{}; e.key_kind=kind; e.key_size=static_cast<std::uint8_t>(key_bytes.size());
+                std::copy(key_bytes.begin(),key_bytes.end(),e.key.begin());
+                e.public_name.size=static_cast<std::uint8_t>(public_name.size());
+                std::transform(public_name.begin(),public_name.end(),e.public_name.bytes.begin(),lower);
+                slot=EchSlot{view,h,expires,idx,State::occupied}; ++ech_count_;
+                return ReverseRecord::stored;
+            }
+            auto& slot=ech_slots_[*found];
+            auto& e=ech_entries_[slot.entry];
+            e.public_name=ReverseName{};
+            e.public_name.size=static_cast<std::uint8_t>(public_name.size());
+            std::transform(public_name.begin(),public_name.end(),e.public_name.bytes.begin(),lower);
+            slot.expires=expires;
+            return ReverseRecord::stored;
+        }
+        auto lookup_ech_key(std::uint64_t view,std::uint8_t kind,std::span<std::uint8_t const> key_bytes,std::uint64_t now) noexcept
+            -> std::optional<ReverseName> {
+            std::lock_guard lock(mutex_);
+            advance(now);
+            if (disabled_ || !ech_capacity_) return {};
+            if (ech_deleted_>ech_capacity_/2) ech_compact();
+            auto h=ech_hash(view,kind,key_bytes);
+            auto [found,free]=ech_find(view,h,kind,key_bytes); (void)free;
+            if (!found) return {};
+            return ech_entries_[ech_slots_[*found].entry].public_name;
+        }
         auto erase(Slot& slot) noexcept -> void {
             release_name(slot.name); slot.name=no_name;
             slot.state=State::deleted; --count_; ++deleted_;
@@ -149,7 +285,13 @@ export namespace dns {
             scratch_.resize(capacity*2+1);
             names_.resize(capacity);
             reset_names();
-            storage_bytes_=(slots_.capacity()+scratch_.capacity())*sizeof(Slot)+names_.capacity()*sizeof(NameEntry);
+            ech_capacity_=std::min<std::size_t>(capacity,256);
+            ech_slots_.resize(ech_capacity_*2+1);
+            ech_scratch_.resize(ech_capacity_*2+1);
+            ech_entries_.resize(ech_capacity_);
+            reset_ech();
+            storage_bytes_=(slots_.capacity()+scratch_.capacity())*sizeof(Slot)+names_.capacity()*sizeof(NameEntry)+
+                (ech_slots_.capacity()+ech_scratch_.capacity())*sizeof(EchSlot)+ech_entries_.capacity()*sizeof(EchEntry);
         }
         ReverseCache(ReverseCache const&)=delete;
         auto operator=(ReverseCache const&) -> ReverseCache& = delete;
@@ -161,10 +303,11 @@ export namespace dns {
         auto clear() -> bool {
             std::lock_guard lock(mutex_);
             if (epoch_==std::numeric_limits<std::uint64_t>::max()) { disabled_=true; return false; }
-            ++epoch_; count_=0; deleted_=0; suspended_until_=0;
+            ++epoch_; count_=0; deleted_=0; ech_count_=0; ech_deleted_=0; suspended_until_=0;
             earliest_expiry_=std::numeric_limits<std::uint64_t>::max();
             for (auto& slot:slots_) slot=Slot{};
-            reset_names();
+            for (auto& slot:ech_slots_) slot=EchSlot{};
+            reset_names(); reset_ech();
             return true;
         }
         [[nodiscard]] auto record(std::uint64_t view,std::string_view name,std::span<Address const> addresses,
@@ -229,6 +372,36 @@ export namespace dns {
             auto [found,free]=find(key); (void)free;
             if (!found || slots_[*found].name==no_name) return {};
             return names_[slots_[*found].name].name;
+        }
+        [[nodiscard]] auto record_ech_public_name(std::uint64_t view,std::string_view domain,std::string_view public_name,
+                                                  std::uint32_t ttl,std::uint64_t now,ReverseToken token) noexcept -> ReverseRecord {
+            if (!domain.empty() && domain.back()=='.') domain.remove_suffix(1);
+            if (!public_name.empty() && public_name.back()=='.') public_name.remove_suffix(1);
+            if (!name_valid(domain)) return ReverseRecord::invalid;
+            std::array<std::uint8_t,253> key{};
+            for (std::size_t i=0;i<domain.size();++i) key[i]=static_cast<std::uint8_t>(lower(domain[i]));
+            return record_ech_key(view,1,std::span<std::uint8_t const>(key.data(),domain.size()),public_name,ttl,now,token);
+        }
+        [[nodiscard]] auto record_ech_public_name(std::uint64_t view,Address address,std::string_view public_name,
+                                                  std::uint32_t ttl,std::uint64_t now,ReverseToken token) noexcept -> ReverseRecord {
+            auto normalized=canonical(address);
+            if (!normalized) return ReverseRecord::invalid;
+            if (!public_name.empty() && public_name.back()=='.') public_name.remove_suffix(1);
+            return record_ech_key(view,2,std::span<std::uint8_t const>(normalized->bytes.data(),normalized->size),public_name,ttl,now,token);
+        }
+        [[nodiscard]] auto lookup_ech_public_name(std::uint64_t view,std::string_view domain,std::uint64_t now) noexcept
+            -> std::optional<ReverseName> {
+            if (!domain.empty() && domain.back()=='.') domain.remove_suffix(1);
+            if (!name_valid(domain)) return {};
+            std::array<std::uint8_t,253> key{};
+            for (std::size_t i=0;i<domain.size();++i) key[i]=static_cast<std::uint8_t>(lower(domain[i]));
+            return lookup_ech_key(view,1,std::span<std::uint8_t const>(key.data(),domain.size()),now);
+        }
+        [[nodiscard]] auto lookup_ech_public_name(std::uint64_t view,Address address,std::uint64_t now,std::uint32_t scope=0) noexcept
+            -> std::optional<ReverseName> {
+            auto normalized=canonical(address);
+            if (!normalized || scope) return {};
+            return lookup_ech_key(view,2,std::span<std::uint8_t const>(normalized->bytes.data(),normalized->size),now);
         }
     };
 

@@ -21,6 +21,24 @@ namespace config {
     auto parse_naive_inbound(g::KdlNode const&) -> std::expected<InboundConfig, std::string>;
     auto parse_inbound_multiplex(g::KdlNode const&) -> std::expected<InboundMultiplexConfig, std::string>;
     auto extract_listen_options(g::KdlNode const&, ListenOptions&) -> std::expected<g::KdlNode, std::string>;
+    auto parse_shared_inbound_tls_field(g::KdlNode const&, std::string&, std::string&, std::vector<std::string>&, bool&, bool&)
+        -> std::expected<bool, std::string>;
+    auto extract_delegated_inbound_tls(g::KdlNode const&, std::string&, std::string&, std::vector<std::string>&, bool&)
+        -> std::expected<g::KdlNode, std::string>;
+    namespace {
+        struct LocalSharedTls {
+            std::string certificate_provider, ech_key_file;
+            std::vector<std::string> alpn;
+            bool cert_hot_reload = false, reload_seen = false;
+        };
+        auto apply_shared_tls(auto& dst, LocalSharedTls&& s) -> void {
+            if (!s.certificate_provider.empty()) { dst.certificate_file.clear(); dst.private_key_file.clear(); }
+            dst.certificate_provider = std::move(s.certificate_provider);
+            dst.ech_key_file = std::move(s.ech_key_file);
+            dst.alpn = std::move(s.alpn);
+            dst.cert_hot_reload = s.cert_hot_reload;
+        }
+    }
 
     auto fixed_tcp_inbound(Node const& node, Config& result) -> std::expected<std::uint16_t, std::string> {
         auto name = argument(node);
@@ -123,22 +141,16 @@ namespace config {
         auto finish = [&](std::expected<std::uint16_t, std::string> port) -> std::expected<std::uint16_t, std::string> {
             if (!port) return port;
             result.listen = listen_opts;
-            if (result.vless_inbound) result.vless_inbound->listen = listen_opts;
-            if (result.shadowsocks_inbound) result.shadowsocks_inbound->listen = listen_opts;
-            if (result.trojan_inbound) result.trojan_inbound->listen = listen_opts;
-            if (result.anytls_inbound) result.anytls_inbound->listen = listen_opts;
-            if (result.snell_inbound) result.snell_inbound->listen = listen_opts;
-            if (result.hysteria2_inbound) result.hysteria2_inbound->listen = listen_opts;
-            if (result.masque_inbound) result.masque_inbound->listen = listen_opts;
-            if (result.shadowtls_inbound) result.shadowtls_inbound->listen = listen_opts;
-            if (result.tuic_inbound) result.tuic_inbound->listen = listen_opts;
+            auto set_l = [&](auto& opt) { if (opt) opt->listen = listen_opts; };
+            set_l(result.vless_inbound); set_l(result.shadowsocks_inbound); set_l(result.trojan_inbound);
+            set_l(result.anytls_inbound); set_l(result.snell_inbound); set_l(result.hysteria2_inbound);
+            set_l(result.masque_inbound); set_l(result.shadowtls_inbound); set_l(result.tuic_inbound);
+            set_l(result.http_inbound); set_l(result.naive_inbound);
             if (result.fixed_udp_inbound) {
                 result.fixed_udp_inbound->listen = listen_opts;
                 if (listen_opts.udp_timeout_ms && result.fixed_udp_inbound->idle_timeout_ms == 60000)
                     result.fixed_udp_inbound->idle_timeout_ms = *listen_opts.udp_timeout_ms;
             }
-            if (result.http_inbound) result.http_inbound->listen = listen_opts;
-            if (result.naive_inbound) result.naive_inbound->listen = listen_opts;
             return port;
         };
         if (type && *type == "fixed-tcp") return finish(fixed_tcp_inbound(node, result));
@@ -171,55 +183,61 @@ namespace config {
             return finish(static_cast<std::uint16_t>(*number));
         }
         if (type && *type == "masque") {
-            auto entry = parse_masque_inbound(node);
+            LocalSharedTls stls;
+            auto stripped = extract_delegated_inbound_tls(node, stls.certificate_provider, stls.ech_key_file, stls.alpn, stls.cert_hot_reload);
+            if (!stripped) return std::unexpected(stripped.error());
+            auto entry = parse_masque_inbound(*stripped);
             if (!entry) return std::unexpected(entry.error());
+            apply_shared_tls(*entry->masque, std::move(stls));
             result.inbound = Inbound::masque; result.listen_ipv6 = entry->listen_ipv6;
             result.masque_inbound = std::move(entry->masque); return finish(entry->port);
         }
         if (type && *type == "shadowtls") {
-            auto entry = parse_shadowtls_inbound(node);
-            if (!entry) return std::unexpected(entry.error());
+            auto entry = parse_shadowtls_inbound(node); if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::shadowtls; result.listen_ipv6 = entry->listen_ipv6;
             result.shadowtls_inbound = std::move(entry->shadowtls); return finish(entry->port);
         }
         if (type && *type == "tuic") {
-            auto entry = parse_tuic_inbound(node);
-            if (!entry) return std::unexpected(entry.error());
+            auto entry = parse_tuic_inbound(node); if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::tuic; result.listen_ipv6 = entry->listen_ipv6;
             result.tuic_inbound = std::move(entry->tuic); return finish(entry->port);
         }
         if (type && *type == "tun") {
-            auto entry = parse_tun_inbound(node);
-            if (!entry) return std::unexpected(entry.error());
+            auto entry = parse_tun_inbound(node); if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::tun; result.tun_inbound = std::move(entry->tun); return entry->port;
         }
         if (type && *type == "snell") {
-            auto entry = parse_snell_inbound(node);
-            if (!entry) return std::unexpected(entry.error());
+            auto entry = parse_snell_inbound(node); if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::snell; result.listen_ipv6 = entry->listen_ipv6;
             result.snell_inbound = std::move(entry->snell); return finish(entry->port);
         }
         if (type && *type == "hysteria2") {
-            auto entry = parse_hysteria2_inbound(node);
-            if (!entry) return std::unexpected(entry.error());
+            auto entry = parse_hysteria2_inbound(node); if (!entry) return std::unexpected(entry.error());
+            auto& h = *entry->hysteria2;
+            if (h.certificate_provider.empty()) h.certificate_provider = h.connection.certificate_provider;
+            if (h.ech_key_file.empty()) h.ech_key_file = h.connection.ech_key_file;
+            if (h.alpn.empty()) h.alpn = h.connection.alpn;
+            h.cert_hot_reload = h.cert_hot_reload || h.connection.cert_hot_reload;
             result.inbound = Inbound::hysteria2; result.listen_ipv6 = entry->listen_ipv6;
             result.hysteria2_inbound = std::move(entry->hysteria2); return finish(entry->port);
         }
         if (type && *type == "anytls") {
-            auto entry = parse_anytls_inbound(node);
-            if (!entry) return std::unexpected(entry.error());
+            auto entry = parse_anytls_inbound(node); if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::anytls; result.listen_ipv6 = entry->listen_ipv6;
             result.anytls_inbound = std::move(entry->anytls); return finish(entry->port);
         }
         if (type && *type == "trojan") {
-            auto entry = parse_trojan_inbound(node);
-            if (!entry) return std::unexpected(entry.error());
+            auto entry = parse_trojan_inbound(node); if (!entry) return std::unexpected(entry.error());
             result.inbound = Inbound::trojan; result.listen_ipv6 = entry->listen_ipv6;
             result.trojan_inbound = std::move(entry->trojan); return finish(entry->port);
         }
         if (type && *type == "naive") {
-            auto entry = parse_naive_inbound(node);
+            LocalSharedTls stls;
+            auto stripped = extract_delegated_inbound_tls(node, stls.certificate_provider, stls.ech_key_file, stls.alpn, stls.cert_hot_reload);
+            if (!stripped) return std::unexpected(stripped.error());
+            auto entry = parse_naive_inbound(*stripped);
             if (!entry) return std::unexpected(entry.error());
+            apply_shared_tls(*entry->naive, std::move(stls));
             result.inbound = Inbound::naive; result.listen_ipv6 = entry->listen_ipv6;
             result.naive_inbound = std::move(entry->naive); return finish(entry->port);
         }
@@ -261,19 +279,24 @@ namespace config {
                 port = static_cast<std::uint16_t>(*number);
                 listen_seen = true;
             } else if (*type == "http" && child.name == "tls") {
-                if (tls_seen || child.tag || !child.arguments.empty() || !child.properties.empty())
-                    return error("invalid HTTP inbound TLS");
+                if (tls_seen || child.tag || !child.arguments.empty() || !child.properties.empty()) return error("invalid HTTP inbound TLS");
+                LocalSharedTls stls;
                 for (auto const& f : child.children) {
+                    auto matched = parse_shared_inbound_tls_field(f, stls.certificate_provider, stls.ech_key_file, stls.alpn, stls.cert_hot_reload, stls.reload_seen);
+                    if (!matched) return std::unexpected(matched.error());
+                    if (*matched) continue;
                     auto v = scalar(f);
                     if (!v || !absolute_path(*v)) return error("HTTP TLS requires absolute file paths");
                     if (f.name == "certificate-file" && http_cfg.certificate_file.empty()) http_cfg.certificate_file = *v;
                     else if (f.name == "private-key-file" && http_cfg.private_key_file.empty()) http_cfg.private_key_file = *v;
                     else return error("unsupported or duplicate HTTP TLS field");
                 }
-                if (http_cfg.certificate_file.empty() || http_cfg.private_key_file.empty())
-                    return error("HTTP TLS requires certificate-file and private-key-file");
-                http_cfg.has_tls = true;
-                tls_seen = true;
+                if (!stls.certificate_provider.empty()) {
+                    if (!http_cfg.certificate_file.empty() || !http_cfg.private_key_file.empty() || stls.cert_hot_reload)
+                        return error("HTTP TLS certificate-provider cannot be combined with static cert/key or cert-hot-reload");
+                } else if (http_cfg.certificate_file.empty() || http_cfg.private_key_file.empty())
+                    return error("HTTP TLS requires certificate-file and private-key-file or certificate-provider");
+                apply_shared_tls(http_cfg, std::move(stls)); http_cfg.has_tls = true; tls_seen = true;
             } else if (*type == "http" && (child.name == "http2" || child.name == "http3" || child.name == "connect-udp")) {
                 auto v = boolean(child);
                 if (!v) return error("invalid HTTP inbound protocol flag");
@@ -349,6 +372,7 @@ namespace config {
                 auth_seen = true;
             } else if (child.name == "tls" && *type == "vless") {
                 if (tls_seen || child.tag || !child.arguments.empty() || !child.properties.empty()) return error("invalid vless tls");
+                LocalSharedTls stls;
                 for (auto const& field : child.children) {
                     if (field.name == "reality") {
                         if (vless.reality || field.tag || !field.arguments.empty() || !field.properties.empty())
@@ -391,10 +415,7 @@ namespace config {
                             else if (item.name == "short-id" && value->size() <= 16 && value->size() % 2 == 0 && reality.short_ids.size() < 64) {
                                 std::array<std::uint8_t, 8> id{};
                                 auto hex = [](char c) -> int {
-                                    if (c >= '0' && c <= '9') return c - '0';
-                                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-                                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-                                    return -1;
+                                    return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
                                 };
                                 for (std::size_t i = 0; i < value->size() / 2; ++i) {
                                     auto a = hex((*value)[2 * i]), b = hex((*value)[2 * i + 1]);
@@ -411,16 +432,24 @@ namespace config {
                         vless.reality = std::move(reality);
                         continue;
                     }
+                    auto matched = parse_shared_inbound_tls_field(field, stls.certificate_provider, stls.ech_key_file, stls.alpn, stls.cert_hot_reload, stls.reload_seen);
+                    if (!matched) return std::unexpected(matched.error());
+                    if (*matched) continue;
                     auto path = scalar(field);
                     if (!path || !absolute_path(*path)) return error("vless tls requires absolute file paths");
                     if (field.name == "certificate-file" && vless.certificate_file.empty()) vless.certificate_file = *path;
                     else if (field.name == "private-key-file" && vless.private_key_file.empty()) vless.private_key_file = *path;
                     else return error("unsupported or duplicate vless tls field");
                 }
-                if (vless.reality ? (!vless.certificate_file.empty() || !vless.private_key_file.empty()) :
-                                    (vless.certificate_file.empty() || vless.private_key_file.empty()))
-                    return error("vless tls requires either a certificate and key or Reality");
-                tls_seen = true;
+                if (vless.reality) {
+                    if (!vless.certificate_file.empty() || !vless.private_key_file.empty() || !stls.certificate_provider.empty() || stls.cert_hot_reload)
+                        return error("vless tls cannot combine Reality with certificate files or certificate-provider");
+                } else if (!stls.certificate_provider.empty()) {
+                    if (!vless.certificate_file.empty() || !vless.private_key_file.empty() || stls.cert_hot_reload)
+                        return error("vless tls certificate-provider cannot be combined with static cert/key or cert-hot-reload");
+                } else if (vless.certificate_file.empty() || vless.private_key_file.empty())
+                    return error("vless tls requires certificate and key, certificate-provider, or Reality");
+                apply_shared_tls(vless, std::move(stls)); tls_seen = true;
             } else if (child.name == "authentication") {
                 auto mode = argument(child);
                 if (auth_seen || !mode || !child.children.empty()) return error("invalid authentication");

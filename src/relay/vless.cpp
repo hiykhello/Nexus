@@ -440,7 +440,7 @@ namespace relay {
     }
 
     auto make_vless_factory(std::string_view host, std::uint16_t port, std::string_view uuid_file,
-                            std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms, TcpSocketOptions tcp_options, std::optional<HttpUpgradeTransport> transport, std::optional<GrpcTransport> grpc, bool fast_open, TlsFingerprint fingerprint, std::optional<std::uint16_t> record_size_limit, bool packetaddr, bool fixed_udp, std::span<std::array<std::uint8_t, 32> const> pins, QuicEchOptions const& ech, bool dns_available)
+                            std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms, TcpSocketOptions tcp_options, std::optional<HttpUpgradeTransport> transport, std::optional<GrpcTransport> grpc, bool fast_open, TlsFingerprint fingerprint, std::optional<std::uint16_t> record_size_limit, bool packetaddr, bool fixed_udp, std::span<std::array<std::uint8_t, 32> const> pins, QuicEchOptions const& ech, bool dns_available, config::OutboundTlsFragment const& tls_fragment, std::span<std::string const> alpn)
         -> std::expected<TunnelFactory, std::string> {
         if (packetaddr && fixed_udp) return std::unexpected("conflicting VLESS packet encodings");
         if ((packetaddr || fixed_udp) && (vision || grpc))
@@ -468,6 +468,7 @@ namespace relay {
         config.vision = vision; config.transport = std::move(transport); config.fingerprint = fingerprint; config.record_size_limit = record_size_limit;
         if (reality) config.reality = config::VlessOutbound::Reality{reality->public_key, reality->short_id};
         config.packetaddr = packetaddr; config.fixed_udp = fixed_udp;
+        config.tls_fragment = tls_fragment; config.alpn.assign(alpn.begin(), alpn.end());
         auto profile = Profile::load(config);
         if (!profile) return std::unexpected(profile.error());
         auto shared = std::make_unique<OwnedProfile>(std::move(*profile), bootstrap, timeout_ms, tcp_options, std::move(*ech_profile));

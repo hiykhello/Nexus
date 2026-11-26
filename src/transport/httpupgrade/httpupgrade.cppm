@@ -4,6 +4,9 @@ import http.header;
 
 export namespace httpupgrade {
     inline constexpr std::size_t max_path_bytes=4096,max_host_bytes=512,max_extra_fields=64;
+    inline constexpr std::uint32_t max_ws_early_data_bytes=8192;
+    inline constexpr std::size_t max_ws_early_header_line_bytes=12288;
+    inline constexpr std::string_view default_ws_early_data_header="Sec-WebSocket-Protocol";
     enum class Status { incomplete,accepted,malformed,too_large,method,path,host,upgrade,body,status,truncated,closed };
     struct Field { std::string name,value; };
     struct Parsed { Status status=Status::incomplete; std::size_t consumed=0; };
@@ -13,6 +16,63 @@ export namespace httpupgrade {
                 auto lower=[](char c) { return c>='A' && c<='Z' ? char(c+('a'-'A')) : c; };
                 return lower(x)==lower(y);
             });
+        }
+        inline auto valid_early_data_header(std::string_view name) noexcept -> bool {
+            if (name.empty() || name.size()>128 || !std::ranges::all_of(name,http::header_token)) return false;
+            return !equal_ci(name,"host") && !equal_ci(name,"connection") && !equal_ci(name,"upgrade") &&
+                !equal_ci(name,"content-length") && !equal_ci(name,"transfer-encoding") && !equal_ci(name,"expect") &&
+                !equal_ci(name,"trailer") && !equal_ci(name,"proxy-connection") &&
+                !equal_ci(name,"sec-websocket-key") && !equal_ci(name,"sec-websocket-version") &&
+                !equal_ci(name,"sec-websocket-accept") && !equal_ci(name,"sec-websocket-extensions");
+        }
+        inline auto extract_ed_query(std::string_view input,std::string& cleaned,std::optional<std::uint32_t>& out_ed) -> bool {
+            cleaned.assign(input);
+            auto q=input.find('?');
+            if (q==std::string_view::npos) return true;
+            auto query=input.substr(q+1);
+            std::string rebuilt;
+            bool found=false;
+            std::size_t pos=0;
+            while (pos<=query.size()) {
+                auto amp=query.find('&',pos);
+                auto part=amp==std::string_view::npos ? query.substr(pos) : query.substr(pos,amp-pos);
+                if (part.starts_with("ed=")) {
+                    if (found) return false;
+                    auto val=part.substr(3);
+                    std::uint32_t parsed=0;
+                    auto [end,ec]=std::from_chars(val.data(),val.data()+val.size(),parsed);
+                    if (val.empty() || ec!=std::errc{} || end!=val.data()+val.size() || parsed>max_ws_early_data_bytes)
+                        return false;
+                    out_ed=parsed;
+                    found=true;
+                } else if (!part.empty()) {
+                    if (!rebuilt.empty()) rebuilt.push_back('&');
+                    rebuilt.append(part);
+                }
+                if (amp==std::string_view::npos) break;
+                pos=amp+1;
+            }
+            if (found) {
+                cleaned.resize(q);
+                if (!rebuilt.empty()) { cleaned.push_back('?'); cleaned.append(rebuilt); }
+            }
+            return true;
+        }
+        inline auto next_ws_header(std::string_view& remaining,std::size_t& count,
+            std::string_view early_header) noexcept -> http::HeaderFieldStep {
+            if (remaining.empty()) return {http::HeaderFieldStatus::end,{}};
+            auto end=remaining.find("\r\n");
+            if (end==remaining.npos || count>=http::max_header_fields) return {http::HeaderFieldStatus::malformed,{}};
+            auto field=http::split_header_field(remaining.substr(0,end));
+            if (!field) return {http::HeaderFieldStatus::malformed,{}};
+            auto const line_cap=(!early_header.empty() && equal_ci(field->name,early_header))
+                ? max_ws_early_header_line_bytes : http::max_header_line_bytes;
+            if (end>line_cap) return {http::HeaderFieldStatus::malformed,{}};
+            field->value=http::trim_header_ows(field->value);
+            if (!http::valid_header_field_value(field->value)) return {http::HeaderFieldStatus::malformed,{}};
+            remaining.remove_prefix(end+2);
+            ++count;
+            return {http::HeaderFieldStatus::field,*field};
         }
         inline auto hex(char c) noexcept -> int {
             if (c>='0' && c<='9') return c-'0';
@@ -97,11 +157,15 @@ export namespace httpupgrade {
             }
             wire.append("\r\n"); return wire.size()<=http::max_header_bytes;
         }
-        inline auto fields(http::HeaderView const& header,bool request,std::string_view host,bool websocket) noexcept -> Status {
+        inline auto fields(http::HeaderView const& header,bool request,std::string_view host,bool websocket,
+            std::string_view early_header={}) noexcept -> Status {
             bool host_seen=false,connection=false,upgrade=false,length=false;
-            http::HeaderFieldCursor cursor(header.field_lines);
+            std::string_view remaining=header.field_lines;
+            std::size_t count=0;
             for (;;) {
-                auto next=cursor.next();
+                auto next=websocket && request
+                    ? next_ws_header(remaining,count,early_header.empty() ? default_ws_early_data_header : early_header)
+                    : next_ws_header(remaining,count,{});
                 if (next.status==http::HeaderFieldStatus::end) break;
                 if (next.status!=http::HeaderFieldStatus::field) return Status::malformed;
                 auto [name,value]=next.field;
@@ -127,26 +191,55 @@ export namespace httpupgrade {
     }
     // Client target is an origin-form request target, including optional query
     // and percent encoding. Server path is the decoded path; query is ignored.
-    // The configured host is matched exactly, as in the fixed sing-box peer.
+    // The configured host is matched exactly.
     class Profile {
         bool client_=false,websocket_=false;
-        std::string host_,path_,wire_;
+        std::string host_,path_,wire_,early_data_header_name_;
+        std::uint32_t max_early_data_=0;
     public:
-        static auto client(std::string_view host,std::string_view target="/",std::span<Field const> headers={},bool websocket=false) -> std::expected<Profile,Status> {
+        static auto client(std::string_view host,std::string_view target="/",std::span<Field const> headers={},bool websocket=false,
+            std::uint32_t max_early_data=0,std::string_view early_data_header_name={}) -> std::expected<Profile,Status> {
             if (!detail::valid_host(host)) return std::unexpected(Status::host);
             if (!detail::valid_target(target)) return std::unexpected(Status::path);
             if (!detail::valid_extra_fields(headers)) return std::unexpected(Status::malformed);
-            Profile result; result.client_=true; result.websocket_=websocket; result.host_=host; result.path_=target;
-            result.wire_="GET "; result.wire_.append(target); result.wire_.append(" HTTP/1.1\r\nHost: "); result.wire_.append(host);
+            if (!websocket && (max_early_data>0 || !early_data_header_name.empty())) return std::unexpected(Status::malformed);
+            if (max_early_data>max_ws_early_data_bytes) return std::unexpected(Status::malformed);
+            if (!early_data_header_name.empty() && !detail::valid_early_data_header(early_data_header_name))
+                return std::unexpected(Status::malformed);
+            std::string clean_target(target);
+            if (websocket) {
+                std::optional<std::uint32_t> query_ed;
+                if (!detail::extract_ed_query(target,clean_target,query_ed)) return std::unexpected(Status::path);
+                if (query_ed && max_early_data==0) max_early_data=*query_ed;
+                auto const eff_hdr=early_data_header_name.empty() ? default_ws_early_data_header : early_data_header_name;
+                if (max_early_data>0) {
+                    for (auto const& f:headers) if (detail::equal_ci(f.name,eff_hdr)) return std::unexpected(Status::malformed);
+                }
+            }
+            Profile result; result.client_=true; result.websocket_=websocket; result.host_=host; result.path_=clean_target;
+            result.max_early_data_=max_early_data; result.early_data_header_name_=early_data_header_name;
+            result.wire_="GET "; result.wire_.append(clean_target); result.wire_.append(" HTTP/1.1\r\nHost: "); result.wire_.append(host);
             result.wire_.append("\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n");
             if (!detail::append_fields(result.wire_,headers)) return std::unexpected(Status::too_large);
             return result;
         }
-        static auto server(std::string_view host={},std::string_view path="/",std::span<Field const> headers={},bool websocket=false) -> std::expected<Profile,Status> {
+        static auto server(std::string_view host={},std::string_view path="/",std::span<Field const> headers={},bool websocket=false,
+            std::uint32_t max_early_data=0,std::string_view early_data_header_name={}) -> std::expected<Profile,Status> {
             if (!host.empty() && !detail::valid_host(host)) return std::unexpected(Status::host);
             if (!detail::valid_path(path)) return std::unexpected(Status::path);
             if (!detail::valid_extra_fields(headers)) return std::unexpected(Status::malformed);
-            Profile result; result.websocket_=websocket; result.host_=host; result.path_=path;
+            if (!websocket && (max_early_data>0 || !early_data_header_name.empty())) return std::unexpected(Status::malformed);
+            if (max_early_data>max_ws_early_data_bytes) return std::unexpected(Status::malformed);
+            if (!early_data_header_name.empty() && !detail::valid_early_data_header(early_data_header_name))
+                return std::unexpected(Status::malformed);
+            std::string clean_path(path);
+            if (websocket) {
+                std::optional<std::uint32_t> query_ed;
+                if (!detail::extract_ed_query(path,clean_path,query_ed)) return std::unexpected(Status::path);
+                if (query_ed && max_early_data==0) max_early_data=*query_ed;
+            }
+            Profile result; result.websocket_=websocket; result.host_=host; result.path_=clean_path;
+            result.max_early_data_=max_early_data; result.early_data_header_name_=early_data_header_name;
             result.wire_="HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n";
             if (!detail::append_fields(result.wire_,headers)) return std::unexpected(Status::too_large);
             return result;
@@ -156,6 +249,11 @@ export namespace httpupgrade {
         auto host() const noexcept -> std::string_view { return host_; }
         auto path() const noexcept -> std::string_view { return path_; }
         auto wire() const noexcept -> std::string_view { return wire_; }
+        auto max_early_data() const noexcept -> std::uint32_t { return max_early_data_; }
+        auto early_data_header_name() const noexcept -> std::string_view { return early_data_header_name_; }
+        auto effective_early_data_header() const noexcept -> std::string_view {
+            return early_data_header_name_.empty() ? default_ws_early_data_header : std::string_view(early_data_header_name_);
+        }
     };
     inline auto parse_request(std::string_view input,Profile const& profile,bool websocket=false) noexcept -> Parsed {
         if (profile.is_client()) return {Status::malformed};
@@ -170,7 +268,7 @@ export namespace httpupgrade {
         auto target=header.first.substr(first+1,second-first-1);
         if (!detail::valid_target(target)) return {Status::malformed};
         if (!detail::path_matches(target,profile.path())) return {Status::path};
-        auto status=detail::fields(header,true,profile.host(),websocket);
+        auto status=detail::fields(header,true,profile.host(),websocket,profile.effective_early_data_header());
         return {status,status==Status::accepted ? header.consumed : 0};
     }
     inline auto parse_response(std::string_view input,bool websocket=false) noexcept -> Parsed {

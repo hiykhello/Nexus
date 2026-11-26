@@ -1,5 +1,6 @@
 export module tls.server_handshake_io;
 export import tls.server_flight;
+export import tls.ech_server;
 export import memory.budget;
 import tls.client_hello_stream;
 import tls.record_stream;
@@ -27,6 +28,13 @@ export namespace tls {
         bool ccs_seen_=false, encrypted_seen_=false;
         PeerSignaturePolicy signature_policy_=PeerSignaturePolicy::require_offered;
         std::uint64_t now_, deadline_;
+        EchServerContext ech_{};
+        std::array<char,253> negotiated_sni_buf_{};
+        std::uint8_t negotiated_sni_len_=0;
+        auto set_negotiated_sni(std::string_view sni) noexcept -> void {
+            negotiated_sni_len_=static_cast<std::uint8_t>(std::min(sni.size(),negotiated_sni_buf_.size()));
+            if (negotiated_sni_len_) std::copy_n(sni.data(),negotiated_sni_len_,negotiated_sni_buf_.data());
+        }
         ServerHandshakeIo(ServerCredential&& credential, ClientHelloStream&& hello, std::uint64_t now, std::uint64_t deadline) noexcept;
         auto fail(ServerHandshakeIoError error) -> std::unexpected<ServerHandshakeIoError>;
         auto check_time(std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;
@@ -84,6 +92,11 @@ export namespace tls {
             if (state_!=State::hello || !credential_ || credential_->scheme()!=0x0807) return false;
             signature_policy_=PeerSignaturePolicy::authenticated_ed25519; return true;
         }
+        auto set_ech_keys(std::shared_ptr<EchServerKeys const> keys) noexcept -> void {
+            if (state_==State::hello) ech_=EchServerContext(std::move(keys));
+        }
+        [[nodiscard]] auto ech_accepted() const noexcept -> bool { return ech_.accepted(); }
+        [[nodiscard]] auto negotiated_sni() const noexcept -> std::string_view { return {negotiated_sni_buf_.data(),negotiated_sni_len_}; }
         [[nodiscard]] auto pending_output() const noexcept -> std::span<std::uint8_t const>;
         // Exceptions while advancing input or output invalidate the adapter.
         [[nodiscard]] auto written(std::size_t count, std::uint64_t now) -> std::expected<void,ServerHandshakeIoError>;
@@ -119,6 +132,18 @@ export namespace tls {
             if (result->compatibility_ccs) ccs_seen_=true;
             auto consumed=result->consumed; if (!result->hello) return ServerHandshakeIoFeed{consumed};
             encoded_local=std::move(encoded_hello_reservation_);
+            if (ech_.has_keys()) {
+                auto ech_res=ech_.process_client_hello(*result->hello,result->message,state_==State::retry_hello);
+                if (ech_res.status==EchProcessStatus::protocol_error) return fail(ServerHandshakeIoError::protocol_error);
+                if (ech_res.status==EchProcessStatus::crypto_error) return fail(ServerHandshakeIoError::crypto_error);
+                set_negotiated_sni(ech_res.sni);
+                if (ech_res.status==EchProcessStatus::accepted && ech_res.inner_hello) {
+                    *result->hello=std::move(*ech_res.inner_hello);
+                    result->message=std::move(ech_res.inner_message);
+                }
+            } else {
+                set_negotiated_sni(extract_client_hello_sni_view(*result->hello));
+            }
             if (state_==State::hello && !alpn_preferences_.empty()) {
                 required_alpn_.clear();
                 if (auto ext=result->hello->extension(16)) {
@@ -172,8 +197,11 @@ export namespace tls {
                 handshake_keys_local=memory::Budget::reserve(budget_,handshake_key_scratch_charge);
                 if (!handshake_keys_local) return fail(ServerHandshakeIoError::budget_exceeded);
             }
-            auto keys=state_==State::hello ? server_handshake_keys(result->message,schemes,signature_policy_,recovery...) :
-                server_handshake_keys_retry(first_hello_,retry_hello_,result->message,schemes,recovery...);
+            auto keys=state_==State::hello
+                ? (ech_.accepted() ? server_handshake_keys_ech(result->message,schemes,signature_policy_,recovery...)
+                                   : server_handshake_keys(result->message,schemes,signature_policy_,recovery...))
+                : (ech_.accepted() ? server_handshake_keys_retry_ech(first_hello_,retry_hello_,result->message,schemes,recovery...)
+                                   : server_handshake_keys_retry(first_hello_,retry_hello_,result->message,schemes,recovery...));
             if (!keys && signature_policy_==PeerSignaturePolicy::require_offered && state_==State::hello && keys.error()==ServerKeyError::retry_required) {
                 handshake_keys_local.reset();
                 finished_keys_local.reset();
@@ -182,7 +210,8 @@ export namespace tls {
                     retry_hello_reservation_=memory::Budget::reserve(budget_,16384);
                     if (!retry_hello_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
                 }
-                auto retry=server_retry_hello(result->message,schemes,recovery...);
+                auto retry=ech_.accepted() ? server_retry_hello_ech(result->message,schemes,recovery...)
+                                           : server_retry_hello(result->message,schemes,recovery...);
                 if (!retry) return fail(retry.error()==ServerKeyError::crypto_error ? ServerHandshakeIoError::crypto_error : ServerHandshakeIoError::protocol_error);
                 generated_hello_scratch.reset();
                 if (retry->size()>16384) { crypto::Bytes{}.swap(*retry); return fail(ServerHandshakeIoError::protocol_error); }
@@ -204,6 +233,8 @@ export namespace tls {
             auto& hello=keys->server_hello; if (hello.size()>16384) return fail(ServerHandshakeIoError::protocol_error);
             std::optional<memory::Budget::Reservation> flight_scratch;
             std::optional<memory::Budget::Reservation> application_keys;
+            auto retry_configs=ech_.retry_configs();
+            auto ech_ext_bytes=retry_configs.empty() ? std::size_t{0} : 4+retry_configs.size();
             if (budget_) {
                 hello_reservation_=memory::Budget::reserve(budget_,hello.size()+5);
                 if (!hello_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
@@ -213,7 +244,7 @@ export namespace tls {
                 // Certificate, EncryptedExtensions, CertificateVerify and Finished;
                 // each unpadded TLS record adds 22 bytes. Certificate and signature
                 // sizes are already limited by the credential implementation.
-                auto plaintext=certificate+8+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+8+*signature+52;
+                auto plaintext=certificate+8+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+ech_ext_bytes+8+*signature+52;
                 auto count=(plaintext+16383)/16384;
                 flight_reservation_=memory::Budget::reserve(budget_,plaintext+(22+sizeof(crypto::Bytes))*count);
                 if (!flight_reservation_) return fail(ServerHandshakeIoError::budget_exceeded);
@@ -221,7 +252,7 @@ export namespace tls {
                 // and encoded message, fragment array, sealing temporaries and
                 // small encoded messages. Output records are charged separately.
                 // Vector capacities and crypto-library temporaries remain outside it.
-                auto scratch=2*(certificate+8)+16384+flight_seal_scratch_charge+flight_key_scratch_charge+(8+*signature)+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+52;
+                auto scratch=2*(certificate+8)+16384+flight_seal_scratch_charge+flight_key_scratch_charge+(8+*signature)+(required_alpn_.empty() ? 6 : 13+required_alpn_.size())+ech_ext_bytes+52;
                 flight_scratch=memory::Budget::reserve(budget_,scratch);
                 if (!flight_scratch) return fail(ServerHandshakeIoError::budget_exceeded);
                 finished_decoder_reservation_=memory::Budget::reserve(budget_,ServerFlight::finished_decoder_charge);
@@ -233,7 +264,7 @@ export namespace tls {
             server_hello_[0]=22; server_hello_[1]=3; server_hello_[2]=3;
             server_hello_[3]=static_cast<std::uint8_t>(hello.size()>>8); server_hello_[4]=static_cast<std::uint8_t>(hello.size());
             std::ranges::copy(hello,server_hello_.begin()+5);
-            auto flight=ServerFlight::create(std::move(*keys),*credential_,required_alpn_,recovery...); if (!flight) return fail(flight.error()==ServerFlightError::crypto_error ? ServerHandshakeIoError::crypto_error : ServerHandshakeIoError::protocol_error);
+            auto flight=ServerFlight::create_with_ech_retry(std::move(*keys),*credential_,required_alpn_,retry_configs,recovery...); if (!flight) return fail(flight.error()==ServerFlightError::crypto_error ? ServerHandshakeIoError::crypto_error : ServerHandshakeIoError::protocol_error);
             handshake_keys_local.reset();
             if (application_keys && !flight->retain_application_key_reservation(std::move(*application_keys))) return fail(ServerHandshakeIoError::protocol_error);
             generated_hello_reservation.reset();

@@ -208,10 +208,23 @@ namespace relay {
         if (!fp) return std::unexpected("invalid NaiveProxy TLS fingerprint");
         std::uint16_t kx = cfg.key_exchange == config::TlsKeyExchange::x25519 ? 0x001d : 0x11ec;
         bool hybrid_only = cfg.key_exchange == config::TlsKeyExchange::x25519_mlkem768_only;
-        std::array<std::string_view, 1> alpn{cfg.protocol == config::NaiveProtocol::h3 ? "h3" : "h2"};
+        std::vector<std::string_view> alpn;
+        if (!cfg.alpn.empty()) {
+            alpn.reserve(cfg.alpn.size());
+            for (auto const& proto : cfg.alpn) alpn.emplace_back(proto);
+        } else {
+            alpn.push_back(cfg.protocol == config::NaiveProtocol::h3 ? "h3" : "h2");
+        }
         auto tls_id = tls::ClientProfile::load(cfg.server_name, cfg.ca_file, kx, hybrid_only, alpn);
         if (!tls_id) return std::unexpected(tls_id.error());
         tls_id->certificate_pins = cfg.certificate_sha256;
+        tls_id->tls_fragment = {
+            .enabled = cfg.tls_fragment.enabled,
+            .record_fragment = cfg.tls_fragment.record_fragment,
+            .min_bytes = cfg.tls_fragment.min_bytes,
+            .max_bytes = cfg.tls_fragment.max_bytes,
+            .fallback_delay_ms = cfg.tls_fragment.fallback_delay_ms,
+        };
         if (cfg.protocol == config::NaiveProtocol::h3) {
             hysteria2::TransportOptions opts{std::chrono::milliseconds(cfg.handshake_timeout_ms),
                                             std::chrono::milliseconds(cfg.idle_timeout_ms), cfg.native_bytes, false};
@@ -247,12 +260,22 @@ namespace relay {
         auto fp = tls::parse_fingerprint(config::tls_fingerprint_name(cfg.tls->fingerprint));
         if (!fp) return std::unexpected("invalid HTTP proxy TLS fingerprint");
         std::vector<std::string_view> alpn;
-        if (cfg.http_version == config::HttpProxyVersion::h3) alpn.push_back("h3");
+        if (!cfg.tls->alpn.empty()) {
+            alpn.reserve(cfg.tls->alpn.size());
+            for (auto const& proto : cfg.tls->alpn) alpn.emplace_back(proto);
+        } else if (cfg.http_version == config::HttpProxyVersion::h3) alpn.push_back("h3");
         else if (cfg.http_version == config::HttpProxyVersion::auto_h2) { alpn.push_back("h2"); alpn.push_back("http/1.1"); }
         else alpn.push_back("h2");
         auto tls_id = tls::ClientProfile::load(cfg.tls->server_name, cfg.tls->ca_file, 0x001d, false, alpn);
         if (!tls_id) return std::unexpected(tls_id.error());
         tls_id->certificate_pins = cfg.tls->certificate_sha256;
+        tls_id->tls_fragment = {
+            .enabled = cfg.tls->tls_fragment.enabled,
+            .record_fragment = cfg.tls->tls_fragment.record_fragment,
+            .min_bytes = cfg.tls->tls_fragment.min_bytes,
+            .max_bytes = cfg.tls->tls_fragment.max_bytes,
+            .fallback_delay_ms = cfg.tls->tls_fragment.fallback_delay_ms,
+        };
         if (cfg.http_version == config::HttpProxyVersion::h3) {
             hysteria2::TransportOptions opts{std::chrono::milliseconds(cfg.handshake_timeout_ms),
                                             std::chrono::milliseconds(cfg.idle_timeout_ms), cfg.native_bytes, cfg.udp};

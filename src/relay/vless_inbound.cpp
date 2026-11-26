@@ -19,6 +19,8 @@ import reality.fallback;
 import tls.corosio_server_handshake;
 import tls.corosio_application;
 import tls.client_flight;
+import tls.server_credential;
+import tls.ech_server;
 import capy;
 import corosio;
 import relay.stream_relay;
@@ -299,12 +301,12 @@ namespace relay {
             fail();
         }
     }
-    auto make_vless_inbound_factory(std::string_view certificate,std::string_view key,std::span<std::string const> users, bool vision, std::optional<RealityInbound> reality_config,std::span<std::string const> names,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc,std::optional<config::InboundMultiplexConfig> multiplex)
+    auto make_vless_inbound_factory(std::string_view certificate,std::string_view key,std::span<std::string const> users, bool vision, std::optional<RealityInbound> reality_config,std::span<std::string const> names,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc,std::optional<config::InboundMultiplexConfig> multiplex,InboundTlsRuntime const& tls_rt)
         -> std::expected<InboundFactory,std::string> {
         if (grpc) {
             if (transport || vision || reality_config) return std::unexpected("gRPC requires ordinary VLESS TLS and one transport");
 #ifdef NEXUS_ENABLE_GRPC_VLESS
-            return make_vless_grpc_inbound_factory(certificate,key,users,names,std::move(*grpc));
+            return make_vless_grpc_inbound_factory(certificate,key,users,names,std::move(*grpc),tls_rt);
 #else
             return std::unexpected("gRPC VLESS transport is not available in this build");
 #endif
@@ -317,15 +319,23 @@ namespace relay {
                 std::find(names.begin(),names.begin()+i,names[i])!=names.begin()+i)
                 return std::unexpected("invalid or duplicate VLESS user name");
         }
-        auto profile=reality_config ? vless::ServerProfile::load_users(users) : vless::ServerProfile::load(certificate,key,users);
+        auto profile=reality_config ? vless::ServerProfile::load_users(users)
+            : tls_rt.atomic_credential ? vless::ServerProfile::load_dynamic(std::static_pointer_cast<tls::AtomicServerCredential>(tls_rt.atomic_credential),users)
+            : vless::ServerProfile::load(certificate,key,users);
         if (!profile) return std::unexpected(profile.error());
+        if (!tls_rt.alpn.empty()) profile->set_alpn(tls_rt.alpn);
+        if (!tls_rt.ech_key_file.empty()) {
+            auto ech=tls::load_ech_server_keys_file(tls_rt.ech_key_file);
+            if (!ech) return std::unexpected("VLESS ECH key: "+ech.error());
+            profile->set_ech_keys(std::move(*ech));
+        }
         auto shared=std::make_unique<OwnedProfile>(std::move(*profile));
         shared->multiplex=std::move(multiplex);
         if (transport) {
             std::vector<httpupgrade::Field> headers;
             headers.reserve(transport->headers.size());
             for (auto const& field:transport->headers) headers.push_back({field.name,field.value});
-            auto compiled=httpupgrade::Profile::server(transport->host,transport->path,headers,transport->websocket);
+            auto compiled=httpupgrade::Profile::server(transport->host,transport->path,headers,transport->websocket,transport->max_early_data,transport->early_data_header_name);
             if (!compiled) return std::unexpected("invalid HTTPUpgrade server profile");
             shared->transport.emplace(std::move(*compiled));
         }

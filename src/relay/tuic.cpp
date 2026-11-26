@@ -383,7 +383,7 @@ namespace relay {
         TlsKeyExchange exchange, TlsFingerprint fingerprint, std::string_view cc, bool udp_over_stream,
         std::uint32_t heartbeat_ms, std::uint32_t handshake_ms, std::uint32_t idle_ms, std::size_t native_bytes,
         std::optional<std::size_t> bootstrap, std::uint32_t timeout_ms, TcpSocketOptions options,
-        QuicEchOptions const& ech, bool dns_available, std::span<std::array<std::uint8_t,32> const> pins) -> std::expected<TunnelFactory, std::string> {
+        QuicEchOptions const& ech, bool dns_available, std::span<std::array<std::uint8_t,32> const> pins, bool zero_rtt_handshake) -> std::expected<TunnelFactory, std::string> {
         if (host.empty() || !port || !timeout_ms || timeout_ms > 3600000 || !options.valid())
             return std::unexpected("invalid TUIC dial options");
         auto fp = tls::parse_fingerprint(config::tls_fingerprint_name(fingerprint));
@@ -392,7 +392,7 @@ namespace relay {
             std::chrono::milliseconds(handshake_ms), std::chrono::milliseconds(idle_ms),
             std::chrono::milliseconds(heartbeat_ms), native_bytes,
             cc == "bbr" ? tuic::CongestionControl::bbr : cc == "reno" ? tuic::CongestionControl::reno : tuic::CongestionControl::cubic,
-            udp_over_stream};
+            udp_over_stream, zero_rtt_handshake};
         auto ech_profile = quic_ech::Profile::load(ech, server_name, dns_available);
         if (!ech_profile) return std::unexpected(ech_profile.error());
         auto client = tuic::ClientProfile::load(

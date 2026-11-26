@@ -99,4 +99,70 @@ namespace config {
             if (e.config.tls) if (auto ok = fill(e.config.tls->ca_file, "HTTP CONNECT"); !ok) return ok;
         return {};
     }
+
+    auto parse_outbound_tls_fragment(Node const& node, OutboundTlsFragment& out) -> std::expected<void, std::string> {
+        if (node.tag || !node.properties.empty())
+            return error("invalid tls-fragment configuration");
+        if (node.children.empty()) {
+            auto flag = boolean(node);
+            if (!flag) return error("tls-fragment requires a boolean or child block");
+            out = OutboundTlsFragment{};
+            out.enabled = *flag;
+            return {};
+        }
+        if (!node.arguments.empty())
+            return error("tls-fragment block takes no positional arguments");
+        OutboundTlsFragment parsed{};
+        parsed.enabled = true;
+        bool enabled_seen = false, record_seen = false, min_seen = false, max_seen = false, delay_seen = false;
+        for (auto const& child : node.children) {
+            if (child.name == "enabled") {
+                auto v = boolean(child);
+                if (std::exchange(enabled_seen, true) || !v) return error("invalid tls-fragment enabled flag");
+                parsed.enabled = *v;
+            } else if (child.name == "record-fragment") {
+                auto v = boolean(child);
+                if (std::exchange(record_seen, true) || !v) return error("invalid tls-fragment record-fragment flag");
+                parsed.record_fragment = *v;
+            } else if (child.name == "min" || child.name == "min-bytes") {
+                auto v = integer(child);
+                if (std::exchange(min_seen, true) || !v || *v < 1 || *v > 16384)
+                    return error("tls-fragment min must be 1..16384");
+                parsed.min_bytes = static_cast<std::uint16_t>(*v);
+            } else if (child.name == "max" || child.name == "max-bytes") {
+                auto v = integer(child);
+                if (std::exchange(max_seen, true) || !v || *v < 1 || *v > 16384)
+                    return error("tls-fragment max must be 1..16384");
+                parsed.max_bytes = static_cast<std::uint16_t>(*v);
+            } else if (child.name == "fallback-delay-ms") {
+                auto v = integer(child);
+                if (std::exchange(delay_seen, true) || !v || *v > 30000)
+                    return error("tls-fragment fallback-delay-ms must be 0..30000");
+                parsed.fallback_delay_ms = static_cast<std::uint32_t>(*v);
+            } else {
+                return error("unsupported tls-fragment field: " + child.name);
+            }
+        }
+        if (parsed.min_bytes > parsed.max_bytes)
+            return error("tls-fragment min must not exceed max");
+        out = parsed;
+        return {};
+    }
+
+    auto parse_alpn_list(Node const& node, std::vector<std::string>& out) -> std::expected<void, std::string> {
+        if (node.tag || !node.properties.empty() || !node.children.empty() || node.arguments.empty())
+            return error("alpn requires 1..16 protocol string arguments");
+        for (auto const& arg : node.arguments) {
+            auto text = string(arg);
+            if (!text || text->empty() || text->size() > 255 || text->find('\0') != std::string::npos ||
+                std::ranges::any_of(*text, [](unsigned char c) { return c < 33 || c > 126; }))
+                return error("alpn protocol must be 1..255 printable ASCII bytes");
+            if (std::ranges::contains(out, *text))
+                return error("duplicate alpn protocol: " + *text);
+            if (out.size() >= 16)
+                return error("at most 16 alpn protocols are allowed");
+            out.push_back(*text);
+        }
+        return {};
+    }
 }

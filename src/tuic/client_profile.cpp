@@ -76,7 +76,8 @@ namespace tuic {
             auto now=std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
             auto setup=quic::ClientResumptionSetup<Tickets>::create(std::move(shaped->hello),shaped->initial_groups(),
-                anchors_,ip ? tls::PeerNameKind::ip : tls::PeerNameKind::dns,identity,now,"h3",tickets_,quic::ticket_peer_scope(peer));
+                anchors_,ip ? tls::PeerNameKind::ip : tls::PeerNameKind::dns,identity,now,"h3",tickets_,
+                quic::ticket_peer_scope(peer),options_.zero_rtt_handshake);
             if (!setup) return std::unexpected("cannot initialize TUIC TLS recovery");
             return std::make_unique<Tls>(std::move(*setup));
         }

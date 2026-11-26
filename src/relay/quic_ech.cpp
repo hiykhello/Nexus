@@ -31,7 +31,11 @@ namespace relay {
         auto Profile::load(config::QuicEchOptions const& options, std::string_view name, bool dns_available)
             -> std::expected<Profile, std::string> {
             Profile profile;
-            if (!options.dns && options.config_file.empty()) return profile;
+            if (!options.dns && options.config_file.empty()) {
+                if (!options.query_server_name.empty())
+                    return std::unexpected("ECH query-server-name requires ech-dns");
+                return profile;
+            }
             std::string normalized(name);
             if (!dns::canonicalize_name(normalized) || normalized == "." ||
                 platform::parse_ip_address(name) || platform::parse_ip_address(normalized))
@@ -41,12 +45,22 @@ namespace relay {
 #ifdef NEXUS_DNS_RESPONSE
                 if (!dns_available || !options.config_file.empty())
                     return std::unexpected("QUIC ECH discovery requires DNS and a single configuration source");
-                profile.dns_name = std::move(normalized);
+                if (!options.query_server_name.empty()) {
+                    std::string query_norm(options.query_server_name);
+                    if (!dns::canonicalize_name(query_norm) || query_norm == "." ||
+                        platform::parse_ip_address(options.query_server_name) || platform::parse_ip_address(query_norm))
+                        return std::unexpected("ECH query-server-name must be a valid DNS hostname");
+                    profile.dns_name = std::move(query_norm);
+                } else {
+                    profile.dns_name = std::move(normalized);
+                }
 #else
                 (void)dns_available;
                 return std::unexpected("QUIC ECH discovery requires the dns-response feature");
 #endif
             } else {
+                if (!options.query_server_name.empty())
+                    return std::unexpected("ECH query-server-name cannot be combined with ech-config-file");
                 auto loaded = quic::read_ech_config(options.config_file);
                 if (!loaded) return std::unexpected(std::move(loaded.error()));
                 profile.config.emplace(std::move(*loaded));
@@ -113,7 +127,8 @@ namespace relay {
                 std::optional<quic::EchConfig> config;
             };
 
-            auto service_binding(Bytes data, std::string_view owner, std::string_view origin, std::uint16_t port,
+            auto service_binding(Bytes data, std::string_view owner, std::string_view query_origin,
+                                 std::string_view inner_origin, std::uint16_t port,
                                  Transport transport) -> std::optional<Binding> {
                 if (data.size() < 3) return {};
                 auto priority = read16(data);
@@ -121,7 +136,7 @@ namespace relay {
                 auto target = take_target(data);
                 if (!target) return {};
                 if (!priority) return Binding{0, {}};
-                bool compatible = *target == "." || *target == owner || *target == origin;
+                bool compatible = *target == "." || *target == owner || *target == query_origin || *target == inner_origin;
                 bool alpn_has_tcp = false;
                 std::optional<std::uint16_t> previous;
                 std::bitset<7> present;
@@ -175,12 +190,12 @@ namespace relay {
                 if (!present[5]) return Binding{priority, {}};
                 auto config = quic::select_ech_config(ech);
                 if (!config && config.error() == quic::EchConfigError::malformed) return {};
-                if (!compatible || !config || same_dns_name(config->public_name, origin)) return Binding{priority, {}};
+                if (!compatible || !config || same_dns_name(config->public_name, inner_origin)) return Binding{priority, {}};
                 return Binding{priority, std::move(*config)};
             }
 
-            auto select_binding(dns::Response const& response, std::string_view owner, std::string_view origin,
-                                std::uint16_t type, std::uint16_t port, Transport transport)
+            auto select_binding(dns::Response const& response, std::string_view owner, std::string_view query_origin,
+                                std::string_view inner_origin, std::uint16_t type, std::uint16_t port, Transport transport)
                 -> std::optional<quic::EchConfig> {
                 if (response.rcode) return {};
                 std::optional<Binding> best;
@@ -188,7 +203,7 @@ namespace relay {
                     if (record.section != dns::Section::answer || record.type != type || record.klass != 1 ||
                         record.name != owner) continue;
                     auto data = Bytes(response.wire).subspan(record.data_offset, record.data_length);
-                    auto candidate = service_binding(data, owner, origin, port, transport);
+                    auto candidate = service_binding(data, owner, query_origin, inner_origin, port, transport);
                     if (!candidate || !candidate->priority) return {};
                     if (candidate->config && (!best || best->priority > candidate->priority)) best = std::move(candidate);
                 }
@@ -237,7 +252,7 @@ namespace relay {
                 auto response = co_await resolve_response_owned(session, context, slot, selected, name_copy, type,
                     deadline, snapshot, disable_cache, nullptr, name_copy, {});
                 if (!response) continue;
-                if (auto found = select_binding(response->response, query_name, dns_name, type, port, transport))
+                if (auto found = select_binding(response->response, query_name, dns_name, server_name, type, port, transport))
                     co_return found;
             }
 #else

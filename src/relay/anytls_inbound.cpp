@@ -21,6 +21,8 @@ import grpc.connection;
 import platform.ip_address;
 import tls.profiles;
 import tls.server_credential;
+import tls.server_handshake_io;
+import tls.ech_server;
 import tls.byte_stream;
 import tls.corosio_application;
 import tls.corosio_server_handshake;
@@ -44,7 +46,10 @@ namespace relay {
         using TlsStream = websocket::VlessByteStream<corosio::tcp_socket>;
 
         struct Profile {
-            tls::ServerCredential credential;
+            std::optional<tls::ServerCredential> credential;
+            std::shared_ptr<tls::AtomicServerCredential> atomic_credential;
+            std::vector<std::string> alpn;
+            std::shared_ptr<tls::EchServerKeys const> ech_keys;
             std::vector<anytls::PasswordKey> users;
             std::vector<std::string> names;
             std::optional<httpupgrade::Profile> transport;
@@ -294,8 +299,28 @@ namespace relay {
             auto start = milliseconds(parent.started), end = milliseconds(deadline);
             if (start < 0 || end <= start) co_return;
             auto budget = std::make_shared<memory::Budget>(8u * 1024 * 1024);
-            std::string_view req_alpn = profile.grpc ? "h2" : profile.transport ? "http/1.1" : "";
-            auto handshake = tls::make_server_handshake(profile.credential, start, end, budget, req_alpn);
+            std::optional<tls::ServerCredential> dyn_cred;
+            tls::ServerCredential const* active_cred = nullptr;
+            if (profile.atomic_credential) {
+                auto cur = profile.atomic_credential->clone_current();
+                if (!cur) co_return;
+                dyn_cred.emplace(std::move(*cur));
+                active_cred = &*dyn_cred;
+            } else if (profile.credential) {
+                active_cred = &*profile.credential;
+            } else {
+                co_return;
+            }
+            std::expected<tls::ServerHandshakeIo, std::string> handshake = std::unexpected(std::string{});
+            if (!profile.alpn.empty()) {
+                std::vector<std::string_view> prefs;
+                prefs.reserve(profile.alpn.size());
+                for (auto const& p : profile.alpn) prefs.push_back(p);
+                handshake = tls::make_server_handshake(*active_cred, start, end, budget, prefs, true, profile.ech_keys);
+            } else {
+                std::string_view req_alpn = profile.grpc ? "h2" : profile.transport ? "http/1.1" : "";
+                handshake = tls::make_server_handshake(*active_cred, start, end, budget, req_alpn, profile.ech_keys);
+            }
             if (!handshake) co_return;
             auto established = co_await tls::detail::server_handshake(parent.client, *handshake, budget);
             if (!established || parent.closed) co_return;
@@ -351,7 +376,8 @@ namespace relay {
 
     auto make_anytls_inbound_factory(std::string_view certificate, std::string_view key,
         std::span<std::string const> passwords, std::span<std::string const> names,
-        std::optional<HttpUpgradeTransport> transport, std::optional<GrpcTransport> grpc_cfg)
+        std::optional<HttpUpgradeTransport> transport, std::optional<GrpcTransport> grpc_cfg,
+        InboundTlsRuntime const& tls_rt)
         -> std::expected<InboundFactory, std::string> {
         if (passwords.empty() || passwords.size() > 64 || (!names.empty() && names.size() != passwords.size()))
             return std::unexpected("invalid AnyTLS users");
@@ -360,9 +386,20 @@ namespace relay {
             if (names[i].empty() || names[i].size() > 255 || names[i].find('\0') != std::string::npos ||
                 std::ranges::contains(names.first(i), names[i]))
                 return std::unexpected("invalid or duplicate AnyTLS user name");
-        auto credential = tls::load_server_credential(certificate, key);
-        if (!credential) return std::unexpected(credential.error());
-        auto profile = std::make_unique<Profile>(std::move(*credential));
+        auto profile = std::make_unique<Profile>();
+        if (tls_rt.atomic_credential) {
+            profile->atomic_credential = std::static_pointer_cast<tls::AtomicServerCredential>(tls_rt.atomic_credential);
+        } else {
+            auto credential = tls::load_server_credential(certificate, key);
+            if (!credential) return std::unexpected(credential.error());
+            profile->credential.emplace(std::move(*credential));
+        }
+        profile->alpn = tls_rt.alpn;
+        if (!tls_rt.ech_key_file.empty()) {
+            auto ech = tls::load_ech_server_keys_file(tls_rt.ech_key_file);
+            if (!ech) return std::unexpected("AnyTLS ECH key: " + ech.error());
+            profile->ech_keys = std::move(*ech);
+        }
         if (transport) {
             auto compiled = transport_detail::compile_httpupgrade(*transport, false, {});
             if (!compiled) return std::unexpected(compiled.error());

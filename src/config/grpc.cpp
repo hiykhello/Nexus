@@ -23,7 +23,7 @@ namespace config {
         }
         if (type!="grpc") return std::unexpected("transport must be httpupgrade, websocket, grpc or xhttp");
         GrpcTransport result;
-        containers::inplace_vector<std::string_view,10> seen;
+        containers::inplace_vector<std::string_view,16> seen;
         for (auto const& field:node.children) {
             if (field.tag || !field.properties.empty() || !field.children.empty() || field.arguments.size()!=1 || field.arguments[0].tag ||
                 std::ranges::find(seen,field.name)!=seen.end() || seen.size()==seen.capacity()) return std::unexpected("invalid or duplicate gRPC field");
@@ -44,6 +44,19 @@ namespace config {
                     if (!outbound || (*value!="standard" && *value!="sing-box-lite")) return std::unexpected("invalid gRPC response policy");
                     result.response_policy=*value=="standard" ? GrpcTransport::ResponsePolicy::standard : GrpcTransport::ResponsePolicy::sing_box_lite;
                 }
+                continue;
+            }
+            if (field.name=="permit-without-stream") {
+                auto flag=std::get_if<bool>(&field.arguments[0].data);
+                if (!flag) return std::unexpected("boolean gRPC permit-without-stream required");
+                result.permit_without_stream=*flag;
+                continue;
+            }
+            if (field.name=="idle-timeout-ms" || field.name=="ping-timeout-ms") {
+                auto value=kdl::integer(field.arguments[0]);
+                if (!value || *value>3600000) return std::unexpected("invalid gRPC keepalive timeout");
+                if (field.name=="idle-timeout-ms") result.idle_timeout_ms=static_cast<std::uint32_t>(*value);
+                else result.ping_timeout_ms=static_cast<std::uint32_t>(*value);
                 continue;
             }
             auto value=kdl::integer(field.arguments[0]);

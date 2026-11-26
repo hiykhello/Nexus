@@ -13,6 +13,7 @@ export namespace tuic {
         std::size_t native_bytes = 8 * 1024 * 1024;
         CongestionControl cc = CongestionControl::cubic;
         bool udp_over_stream = false;
+        bool zero_rtt_handshake = false;
         auto valid() const noexcept -> bool {
             return handshake_timeout.count() > 0 && handshake_timeout <= std::chrono::hours(1) &&
                 idle_timeout.count() > 0 && idle_timeout <= std::chrono::hours(24) &&

@@ -14,6 +14,8 @@ export namespace grpc {
     struct Limits {
         std::size_t input_window=2*1024*1024,message_bytes=max_hunk_bytes+64,hunk_bytes=max_hunk_bytes;
         std::size_t output_bytes=2*1024*1024,output_messages=64,library_bytes=4*1024*1024;
+        std::uint32_t idle_timeout_ms=0,ping_timeout_ms=0;
+        bool permit_without_stream=false;
     };
     struct Pull { std::size_t size=0; bool eof=false; };
     namespace detail {
@@ -21,8 +23,63 @@ export namespace grpc {
         return limits.hunk_bytes&&limits.hunk_bytes<=max_hunk_bytes&&limits.message_bytes<=max_message_bytes&&
             limits.message_bytes>=limits.hunk_bytes+4&&limits.input_window>=limits.message_bytes+5&&
             limits.input_window<=std::size_t(std::numeric_limits<std::int32_t>::max())&&limits.output_bytes>=5&&
-            limits.output_messages&&limits.output_messages<=64&&limits.library_bytes;
+            limits.output_messages&&limits.output_messages<=64&&limits.library_bytes&&
+            limits.idle_timeout_ms<=3600000&&limits.ping_timeout_ms<=3600000;
     }
+    struct KeepaliveState {
+        std::uint32_t idle_timeout_ms=0,ping_timeout_ms=0;
+        bool permit_without_stream=false,ping_in_flight=false;
+        std::array<std::uint8_t,8> ping_opaque{};
+        std::uint64_t ping_seq=0;
+        std::chrono::steady_clock::time_point last_rx=std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point ping_deadline{};
+        std::size_t pings_sent=0,ping_acks=0;
+        KeepaliveState() noexcept = default;
+        explicit KeepaliveState(Limits const& limits) noexcept
+            : idle_timeout_ms(limits.idle_timeout_ms),ping_timeout_ms(limits.ping_timeout_ms),
+              permit_without_stream(limits.permit_without_stream),last_rx(std::chrono::steady_clock::now()) {}
+        auto enabled() const noexcept -> bool { return idle_timeout_ms>0; }
+        auto on_rx(h2::nghttp2_frame const& frame) noexcept -> void {
+            last_rx=std::chrono::steady_clock::now();
+            if (frame.hd.type==h2::NGHTTP2_PING && (frame.hd.flags&h2::NGHTTP2_FLAG_ACK) &&
+                ping_in_flight && std::memcmp(frame.ping.opaque_data,ping_opaque.data(),8)==0) {
+                ping_in_flight=false;
+                ++ping_acks;
+            }
+        }
+        auto on_activity() noexcept -> void { last_rx=std::chrono::steady_clock::now(); }
+        auto on_stream_opened(bool was_empty) noexcept -> void {
+            if (was_empty && !ping_in_flight) last_rx=std::chrono::steady_clock::now();
+        }
+        auto next_deadline(bool active_streams) const noexcept -> std::optional<std::chrono::steady_clock::time_point> {
+            if (!enabled()) return {};
+            if (ping_in_flight) return ping_deadline;
+            if (!permit_without_stream && !active_streams) return {};
+            return last_rx+std::chrono::milliseconds(idle_timeout_ms);
+        }
+        auto in_flight_deadline() const noexcept -> std::optional<std::chrono::steady_clock::time_point> {
+            return ping_in_flight ? std::optional{ping_deadline} : std::nullopt;
+        }
+        auto check(h2::nghttp2_session* native,bool active_streams,std::chrono::steady_clock::time_point now) noexcept
+            -> std::expected<bool,Failure> {
+            if (!enabled() || !native) return false;
+            if (ping_in_flight) {
+                if (now>=ping_deadline) return std::unexpected(Failure{Error::timeout});
+                return false;
+            }
+            if (!permit_without_stream && !active_streams) return false;
+            if (now<last_rx+std::chrono::milliseconds(idle_timeout_ms)) return false;
+            auto seq=++ping_seq;
+            for (std::size_t i=0;i<8;++i) ping_opaque[i]=static_cast<std::uint8_t>((seq>>(i*8))&0xffu);
+            auto rc=h2::nghttp2_submit_ping(native,h2::NGHTTP2_FLAG_NONE,ping_opaque.data());
+            if (rc) return std::unexpected(Failure{Error::http2,rc});
+            ping_in_flight=true;
+            auto const pt=ping_timeout_ms ? ping_timeout_ms : 15000u;
+            ping_deadline=now+std::chrono::milliseconds(pt);
+            ++pings_sent;
+            return true;
+        }
+    };
     struct MessageLimits {
         std::size_t input_window,message_bytes,hunk_bytes,output_bytes,output_messages;
         explicit MessageLimits(Limits value) noexcept
@@ -54,8 +111,9 @@ export namespace grpc {
         std::string final_status_="0";
         bool ready_=false,remote_end_=false,local_end_=false,closed_=false;
         bool close_requested_=false,deferred_=false,trailer_submitted_=false;
+        KeepaliveState keepalive_;
         GrpcPolicy(Role role,RequestProfile const& profile,ResponsePolicy policy,Limits limits)
-            : role_(role),profile_(profile),limits_(limits),response_(policy),decoder_(limits.message_bytes,limits.hunk_bytes) {}
+            : role_(role),profile_(profile),limits_(limits),response_(policy),decoder_(limits.message_bytes,limits.hunk_bytes),keepalive_(limits) {}
         auto fail(Error error,int code=0) noexcept -> int {
             if (!failure_) failure_=Failure{error,code}; return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
         }
@@ -141,6 +199,7 @@ export namespace grpc {
         }
         template<class Core> auto frame(Core& core,h2::nghttp2_frame const& frame_value) noexcept -> int {
             auto& self=*this; auto* frame=&frame_value;
+            self.keepalive_.on_rx(*frame);
             if (frame->hd.type==h2::NGHTTP2_GOAWAY) {
                 if (frame->goaway.error_code || (self.role_==Role::client && self.stream_ && frame->goaway.last_stream_id<self.stream_))
                     return self.fail(Error::goaway,static_cast<int>(frame->goaway.error_code));
@@ -169,6 +228,7 @@ export namespace grpc {
         }
         template<class Core> auto data(Core&,std::uint8_t,std::int32_t stream,std::span<std::uint8_t const> input) noexcept -> int {
             auto& self=*this; auto* bytes=input.data(); auto size=input.size();
+            self.keepalive_.on_activity();
             if (stream!=self.stream_) return 0;
             if (!self.ready_ || self.remote_end_) return self.fail(Error::headers);
             if (size>self.limits_.input_window-self.uncredited_) return self.fail(Error::limit);
@@ -312,5 +372,21 @@ export namespace grpc {
         auto close_output(std::uint32_t status=0) noexcept -> std::expected<void,Failure> { return core_.policy().close_output(core_,status); }
         auto pull(std::span<std::uint8_t> bytes) noexcept -> std::expected<Pull,Failure> { return core_.policy().pull(core_,bytes); }
         auto finish_input() noexcept -> std::expected<void,Failure> { return core_.policy().finish_input(core_); }
+        auto keepalive_enabled() const noexcept -> bool { return state().keepalive_.enabled(); }
+        auto has_active_streams() const noexcept -> bool { return state().stream_!=0 && !state().closed_; }
+        auto next_keepalive_deadline() const noexcept -> std::optional<std::chrono::steady_clock::time_point> {
+            return core_.usable() ? state().keepalive_.next_deadline(has_active_streams()) : std::nullopt;
+        }
+        auto ping_in_flight_deadline() const noexcept -> std::optional<std::chrono::steady_clock::time_point> {
+            return core_.usable() ? state().keepalive_.in_flight_deadline() : std::nullopt;
+        }
+        auto check_keepalive(std::chrono::steady_clock::time_point now) noexcept -> std::expected<bool,Failure> {
+            if (!core_.usable()) return std::unexpected(failure().value_or(Failure{Error::state}));
+            auto res=core_.policy().keepalive_.check(core_.native(),has_active_streams(),now);
+            if (!res) core_.policy().fail(res.error().error,res.error().code);
+            return res;
+        }
+        auto pings_sent() const noexcept -> std::size_t { return state().keepalive_.pings_sent; }
+        auto ping_acks_received() const noexcept -> std::size_t { return state().keepalive_.ping_acks; }
     };
 }

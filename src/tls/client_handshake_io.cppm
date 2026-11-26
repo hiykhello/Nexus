@@ -1,5 +1,6 @@
 export module tls.client_handshake_io;
 export import tls.client_session_handshake;
+export import tls.outbound_fragment;
 import tls.tls12_client;
 import tls.psk_client_policy;
 import tls.record_stream;
@@ -25,6 +26,7 @@ export namespace tls {
         std::size_t offset_=0;
         bool finished_output_=false, overflow_output_=false;
         std::uint64_t now_, deadline_;
+        OutboundFragmentOptions fragment_{};
         ClientHandshakeIo(ClientSessionHandshake&& handshake, crypto::Bytes&& output, std::uint64_t now, std::uint64_t deadline) noexcept;
         ClientHandshakeIo(std::unique_ptr<Tls12Client>,crypto::Bytes&&,std::uint64_t,std::uint64_t) noexcept;
         auto check_time(std::uint64_t now) -> std::expected<void,ClientHandshakeIoError>;
@@ -52,6 +54,8 @@ export namespace tls {
         [[nodiscard]] auto finish_input(std::uint64_t now) -> std::expected<void,ClientHandshakeIoError>;
         [[nodiscard]] auto complete() const noexcept -> bool { return state_==State::complete; }
         [[nodiscard]] auto deadline() const noexcept -> std::uint64_t { return deadline_; }
+        auto set_fragment_options(OutboundFragmentOptions opts) noexcept -> void { fragment_ = opts; }
+        [[nodiscard]] auto fragment_options() const noexcept -> OutboundFragmentOptions const& { return fragment_; }
         [[nodiscard]] auto negotiated() const noexcept -> EncryptedExtensions const*;
         [[nodiscard]] auto take_application_records() -> std::expected<ApplicationRecords,ClientHandshakeIoError>;
     };

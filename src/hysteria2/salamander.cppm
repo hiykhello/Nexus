@@ -23,9 +23,25 @@ export namespace hysteria2 {
         std::optional<std::span<std::uint8_t const>> password_;
         std::vector<std::pair<std::uint16_t,std::uint16_t>> hop_ranges_;
         std::chrono::milliseconds hop_interval_{0};
+        std::chrono::milliseconds hop_interval_max_{0};
         std::uint16_t primary_port_=0, active_port_=0;
         net::DatagramClock::time_point next_hop_{};
         bool hopping_=false;
+
+        auto pick_hop_delay() const noexcept -> std::chrono::milliseconds {
+            if (hop_interval_max_ <= hop_interval_) return hop_interval_;
+            auto diff = static_cast<std::uint64_t>((hop_interval_max_ - hop_interval_).count());
+            std::uint64_t span = diff + 1;
+            std::uint64_t limit = (std::numeric_limits<std::uint64_t>::max() / span) * span;
+            for (unsigned attempt = 0; attempt < 16; ++attempt) {
+                std::array<std::uint8_t, 8> rnd{};
+                if (!crypto::random_bytes(rnd)) return hop_interval_;
+                std::uint64_t v = 0;
+                for (auto b : rnd) v = (v << 8) | b;
+                if (v < limit) return hop_interval_ + std::chrono::milliseconds(static_cast<std::int64_t>(v % span));
+            }
+            return hop_interval_;
+        }
 
         auto total_hop_ports() const noexcept -> std::uint64_t {
             std::uint64_t total=0;
@@ -60,16 +76,19 @@ export namespace hysteria2 {
         SalamanderPort(Port& port,std::optional<std::span<std::uint8_t const>> password) noexcept
             :port_(port),password_(password) {}
         auto configure_hopping(std::uint16_t primary,std::span<std::pair<std::uint16_t,std::uint16_t> const> ranges,
-            std::chrono::milliseconds interval,net::DatagramClock::time_point now) -> void {
+            std::chrono::milliseconds interval,net::DatagramClock::time_point now,
+            std::chrono::milliseconds interval_max=std::chrono::milliseconds{0}) -> void {
             if (ranges.empty() || interval.count()<=0) return;
             hop_ranges_.assign(ranges.begin(),ranges.end());
             hop_interval_=interval;
+            hop_interval_max_=interval_max>=interval ? interval_max : interval;
             primary_port_=primary;
             active_port_=pick_hop_port();
-            next_hop_=now+hop_interval_;
+            next_hop_=now+pick_hop_delay();
             hopping_=true;
         }
         [[nodiscard]] auto active_hop_port() const noexcept -> std::uint16_t { return hopping_ ? active_port_ : primary_port_; }
+        [[nodiscard]] auto next_hop_time() const noexcept -> net::DatagramClock::time_point { return next_hop_; }
         auto request_stop() noexcept -> void {port_.request_stop();}
         auto stop() noexcept -> void {port_.stop();}
         auto drain() noexcept -> void {port_.drain();}
@@ -82,7 +101,7 @@ export namespace hysteria2 {
         auto expire(net::DatagramClock::time_point now) -> std::expected<void,Failure> {
             if (hopping_ && now>=next_hop_) {
                 active_port_=pick_hop_port();
-                next_hop_=now+hop_interval_;
+                next_hop_=now+pick_hop_delay();
             }
             return port_.expire(now);
         }
@@ -105,7 +124,7 @@ export namespace hysteria2 {
             -> std::expected<std::optional<net::DatagramOutput>,Failure> {
             auto apply_hop=[this,now](std::expected<std::optional<net::DatagramOutput>,Failure>&& res) {
                 if (hopping_ && res && *res) {
-                    if (now>=next_hop_) { active_port_=pick_hop_port(); next_hop_=now+hop_interval_; }
+                    if (now>=next_hop_) { active_port_=pick_hop_port(); next_hop_=now+pick_hop_delay(); }
                     (**res).peer=corosio::endpoint((**res).peer.address(),active_port_);
                 }
                 return std::move(res);

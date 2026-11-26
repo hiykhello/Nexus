@@ -19,7 +19,7 @@ nexus.corosio-source = { version = "=0.3.13", patches = ["../../3rdparty/patches
 
 [features]
 default = ["dns-shared", "request-standard"]
-hy2-inbound = { implies = ["protocols/hysteria2-listener", "protocols/stream-datagrams"], sources = ["hysteria2_business.cppm", "hysteria2_business.cpp", "hysteria2_host.cppm", "hysteria2_host.cpp"] }
+hy2-inbound = { implies = ["protocols/hysteria2-listener", "protocols/stream-datagrams"], sources = ["hysteria2_masquerade.cppm", "hysteria2_business.cppm", "hysteria2_business.cpp", "hysteria2_host.cppm", "hysteria2_host.cpp"] }
 snell-outbound = { implies = ["protocols/snell"], defines = ["NEXUS_ENABLE_SNELL"], sources = ["snell.cpp", "snell_inbound.cpp"] }
 hy2-outbound = { implies = ["quic-ech", "protocols/hysteria2-client"], defines = ["NEXUS_ENABLE_HY2_CLIENT"], sources = ["hysteria2_outbound.cpp"] }
 shadowtls = { implies = ["protocols/shadowtls-runtime"], defines = ["NEXUS_ENABLE_SHADOWTLS"], sources = ["shadowtls.cpp", "shadowtls_inbound.cpp"] }
@@ -52,14 +52,15 @@ test-fakeip = { implies = ["fakeip", "dns/test-fakeip"], defines = ["NEXUS_TEST_
 test-fakeip-lifetime = { implies = ["test-fakeip"], sources = ["../../tests/proxy_fakeip_lifetime_impl.cpp"] }
 test-fakeip-abandon = { implies = ["test-fakeip"], defines = ["NEXUS_TEST_FAKEIP_ABANDON"] }
 io-uring = { implies = ["nexus.corosio-source/uring", "platform/io-uring"], defines = ["NEXUS_ENABLE_IO_URING"] }
-mux-inbound = { implies = ["protocols/stream-datagrams"], sources = ["mux_inbound.cppm"] }
+h2mux = { implies = ["protocols/h2mux"], defines = ["NEXUS_ENABLE_H2MUX"], sources = ["mux_h2_outbound.cpp"] }
+mux-inbound = { implies = ["protocols/stream-datagrams", "h2mux"], sources = ["mux_inbound.cppm"] }
 vless = { implies = ["quic-ech", "mux-inbound", "protocols/vless", "protocols/stream-datagrams"], defines = ["NEXUS_ENABLE_VLESS"], sources = ["reality_tcp_server.cppm", "vless.cpp", "vless_inbound.cpp", "vless_mux.cppm"] }
 grpc-vless = { implies = ["vless", "grpc-pool", "protocols/grpc-tls"], defines = ["NEXUS_ENABLE_GRPC_VLESS"], sources = ["grpc_vless.cpp", "grpc_vless_inbound.cpp"] }
 xhttp-vless = { implies = ["vless", "protocols/http2", "protocols/masque-client", "protocols/quic-retry"], defines = ["NEXUS_ENABLE_XHTTP_VLESS"], sources = ["xhttp_http1.cppm", "xhttp_http3_streams.cppm", "xhttp_http3_channel.cppm", "xhttp_http1_dial.cppm", "xhttp_http1_client.cppm", "xhttp_http2_client.cppm", "xhttp_http3_client.cppm", "xhttp_carrier.cppm", "xhttp_http2_pool.cppm", "xhttp_stream_client.cppm", "xhttp_inbound_types.cppm", "xhttp_http1_ingress.cppm", "xhttp_http2_server.cppm", "xhttp_http3_server.cppm", "xhttp_http3_listener.cppm", "xhttp_vless.cpp", "xhttp_vless_inbound.cpp"] }
 test-grpc-runtime = { implies = ["grpc-vless"], sources = ["../../tests/grpc_runtime_impl.cpp"] }
 test-grpc-startup = { implies = ["test-grpc-runtime"], sources = ["../../tests/grpc_startup_impl.cpp"] }
 test-grpc-lifecycle = { implies = ["test-grpc-runtime"], sources = ["../../tests/grpc_lifecycle_impl.cpp"] }
-trojan = { implies = ["quic-ech", "mux-inbound", "transport-helpers", "grpc-pool", "protocols/trojan"], defines = ["NEXUS_ENABLE_TROJAN"], sources = ["trojan_grpc.cppm", "trojan.cpp", "trojan_inbound_common.cppm", "trojan_inbound_common.cpp", "trojan_inbound_grpc.cpp", "trojan_inbound.cpp"] }
+trojan = { implies = ["quic-ech", "mux-inbound", "transport-helpers", "grpc-pool", "protocols/trojan"], defines = ["NEXUS_ENABLE_TROJAN"], sources = ["trojan_grpc.cppm", "trojan.cpp", "trojan_inbound_common.cppm", "trojan_inbound_common.cpp", "trojan_inbound_grpc.cpp", "trojan_fallback.cppm", "trojan_inbound.cpp"] }
 anytls = { implies = ["quic-ech", "transport-helpers", "grpc-pool", "protocols/anytls"], defines = ["NEXUS_ENABLE_ANYTLS"], sources = ["anytls_grpc.cppm", "anytls.cpp", "anytls_inbound.cpp"] }
 ss2022 = { implies = ["mux-inbound", "protocols/ss2022", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_SS2022"], sources = ["shadowsocks_native.cppm", "shadowsocks.cpp", "shadowsocks_inbound.cpp"] }
 test-dns-lifetime = { implies = ["dns/test-dns-lifetime"], defines = ["NEXUS_TEST_DNS_LIFETIME"], sources = ["../../tests/proxy_dns_lifetime_impl.cpp"] }

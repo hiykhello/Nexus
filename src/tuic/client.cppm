@@ -33,7 +33,7 @@ export namespace tuic {
         tls::Fingerprint fingerprint_ = tls::Fingerprint::native;
 
 #ifdef NEXUS_QUIC_RESUMPTION
-        using Tickets=quic::SharedResumptionCache<>;
+        using Tickets=quic::SharedResumptionCache<tls::ResumptionCache<8,quic::TransportTicket>>;
         mutable Tickets tickets_;
         std::vector<std::span<std::uint8_t const>> anchors_;
 #endif
@@ -254,13 +254,17 @@ export namespace tuic {
 
         auto ready(Clock::time_point deadline) -> capy::task<bool> {
             while (factory_.bundle && !factory_.bundle->app.stopping()) {
-                if (factory_.bundle->app.authenticated()) co_return true;
+                if (factory_.bundle->app.ready_for_traffic(profile_.transport().zero_rtt_handshake)) co_return true;
                 driver_.changed().clear();
                 auto [err] = co_await corosio::timeout(driver_.changed().wait(), deadline);
                 if (err || !driver_.running()) co_return false;
             }
             co_return false;
         }
+        [[nodiscard]] auto early_offered() const noexcept -> bool { return factory_.bundle && factory_.bundle->app.early_offered(); }
+        [[nodiscard]] auto early_accepted() const noexcept -> bool { return factory_.bundle && factory_.bundle->app.early_accepted(); }
+        [[nodiscard]] auto early_rejected() const noexcept -> bool { return factory_.bundle && factory_.bundle->app.early_rejected(); }
+        [[nodiscard]] auto authenticated() const noexcept -> bool { return factory_.bundle && factory_.bundle->app.authenticated(); }
 
         auto open_channel(TargetAddress const& target) -> std::expected<std::unique_ptr<Channel>, std::string> {
             if (!factory_.bundle) return std::unexpected("TUIC client not ready");

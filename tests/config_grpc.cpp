@@ -41,10 +41,19 @@ auto main() -> int {
         R"(transport "grpc" {unknown 1;};)",R"cfg(transport "grpc" {authority (x)"x";};)cfg"}) {
         if (parse(bad)) {std::println("accepted {}",bad);return 3;}
     }
-    auto incoming=parse(R"(transport "grpc" {service-name "nexus.Service";authority "localhost";};)",true);
+    auto incoming=parse(R"(transport "grpc" {service-name "nexus.Service";authority "localhost";idle-timeout-ms 15000;ping-timeout-ms 5000;permit-without-stream #true;};)",true);
     if (!incoming || incoming->inbounds.empty() || !incoming->inbounds.front().vless || !incoming->inbounds.front().vless->grpc) return 5;
+    auto const& ig=*incoming->inbounds.front().vless->grpc;
+    if (ig.idle_timeout_ms!=15000 || ig.ping_timeout_ms!=5000 || !ig.permit_without_stream) return 9;
+    auto out_ka=parse(R"(transport "grpc" {service-name "nexus.Service";authority "localhost";idle-timeout-ms 30000;ping-timeout-ms 10000;permit-without-stream #false;input-window 4096;message-bytes 2052;hunk-bytes 2048;output-bytes 8192;output-messages 4;library-bytes 1048576;max-sessions 2;};)");
+    if (!out_ka || !out_ka->vless_outbounds.front().config.grpc) return 10;
+    auto const& og=*out_ka->vless_outbounds.front().config.grpc;
+    if (og.idle_timeout_ms!=30000 || og.ping_timeout_ms!=10000 || og.permit_without_stream) return 11;
     for (auto bad:{R"(transport "grpc";)",R"(transport "grpc" {authority "localhost";response-policy "standard";};)",
         R"(transport "grpc" {authority "localhost";max-sessions 1;};)",R"(transport "grpc" {authority "localhost";};transport "httpupgrade";)",
-        R"(flow "xtls-rprx-vision"; transport "grpc" {authority "localhost";};)"}) if (parse(bad,true)) return 6;
-    std::println("gRPC configuration profile, physical dial inheritance, limits, malformed/duplicate/unsupported fields and mutually exclusive Vision/Upgrade passed");
+        R"(flow "xtls-rprx-vision"; transport "grpc" {authority "localhost";};)",
+        R"(transport "grpc" {authority "localhost";idle-timeout-ms -1;};)",
+        R"(transport "grpc" {authority "localhost";ping-timeout-ms 3600001;};)",
+        R"(transport "grpc" {authority "localhost";permit-without-stream 1;};)"}) if (parse(bad,true)) return 6;
+    std::println("gRPC configuration profile, keepalive PING fields, physical dial inheritance, limits, malformed/duplicate/unsupported fields and mutually exclusive Vision/Upgrade passed");
 }

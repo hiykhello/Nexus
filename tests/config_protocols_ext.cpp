@@ -195,5 +195,123 @@ routing { default-outbound "mq-ip"; }
         !mq_ip->masque_outbounds.front().config.local_v6)
         return 10;
 
-    std::println("ShadowTLS/TUIC/MASQUE/TUN/WireGuard KDL and uTLS fingerprint config validation passed");
+    // Wave 31E: ShadowTLS handshake-for-server-name (flat + block) & wildcard-sni.
+    auto stls_w31 = config::parse_kdl(R"(schema-version 1
+role "server"
+inbound "stls-in" type="shadowtls" {
+    listen host="127.0.0.1" port=8443
+    handshake host="127.0.0.1" port=9443
+    target host="127.0.0.1" port=10443
+    handshake-for-server-name "Alt.Example.COM" "127.0.0.1:9444"
+    handshake-for-server-name {
+        "cdn.example.com" host="127.0.0.1" port=9445
+        server "api.example.com" "127.0.0.1:9446"
+    }
+    wildcard-sni "authed"
+    authentication { user "u1" password-file="/tmp/p1"; }
+}
+outbound "direct" type="direct"
+routing { default-outbound "direct"; }
+)");
+    if (!stls_w31 || !stls_w31->inbounds.front().shadowtls) return 11;
+    auto const& s_in = *stls_w31->inbounds.front().shadowtls;
+    if (s_in.wildcard_sni != "authed" || s_in.handshake_for_server_name.size() != 3 ||
+        s_in.handshake_for_server_name[0].first != "alt.example.com" ||
+        s_in.handshake_for_server_name[0].second.port != 9444 ||
+        s_in.handshake_for_server_name[1].first != "cdn.example.com" ||
+        s_in.handshake_for_server_name[1].second.port != 9445 ||
+        s_in.handshake_for_server_name[2].first != "api.example.com" ||
+        s_in.handshake_for_server_name[2].second.port != 9446)
+        return 12;
+    // Reject invalid wildcard-sni, duplicate SNI (case-insensitive), and IPv4 SNI.
+    for (auto bad_s : {
+        R"(wildcard-sni "invalid")",
+        R"(wildcard-sni "all"; wildcard-sni "off")",
+        R"(handshake-for-server-name "a.example" "127.0.0.1:443"; handshake-for-server-name "A.EXAMPLE" "127.0.0.1:444")",
+        R"(handshake-for-server-name "127.0.0.1" "127.0.0.1:443")",
+    }) {
+        auto doc = std::format(R"(schema-version 1
+role "server"
+inbound "s" type="shadowtls" {{
+    listen host="127.0.0.1" port=8443; handshake host="127.0.0.1" port=9443; target host="127.0.0.1" port=10443;
+    authentication {{ user "u1" password-file="/tmp/p1"; }}
+    {};
+}}
+outbound "direct" type="direct"
+routing {{ default-outbound "direct"; }}
+)", bad_s);
+        if (config::parse_kdl(doc)) return 13;
+    }
+
+    // Wave 31E: TUIC zero-rtt-handshake (inbound + outbound), outbound alpn, and ech-query-server-name.
+    auto tuic_w31 = config::parse_kdl(R"(schema-version 1
+role "server"
+dns { server "d1" type="udp" host="127.0.0.1"; }
+inbound "tuic-in" type="tuic" {
+    listen host="127.0.0.1" port=8444
+    zero-rtt-handshake #true
+    authentication { user "u1" uuid-file="/tmp/u1" password-file="/tmp/p1"; }
+    tls { certificate-file "/tmp/cert.pem"; private-key-file "/tmp/key.pem"; }
+}
+outbound "direct" type="direct"
+outbound "tuic-out" type="tuic" {
+    server host="127.0.0.1" port=8444
+    zero-rtt-handshake #true
+    authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
+    tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; alpn "h3"; ech-dns #true; ech-query-server-name "cloudflare-ech.com"; verify #true; }
+}
+routing { default-outbound "tuic-out"; }
+)");
+    if (tuic_w31) {
+        if (!tuic_w31->inbounds.front().tuic->zero_rtt_handshake ||
+            !tuic_w31->tuic_outbounds.front().config.zero_rtt_handshake ||
+            tuic_w31->tuic_outbounds.front().config.alpn != std::vector<std::string>{"h3"} ||
+            tuic_w31->tuic_outbounds.front().config.ech.query_server_name != "cloudflare-ech.com")
+            return 14;
+    } else if (tuic_w31.error() != "ech-dns requires the dns-response feature") {
+        return 14;
+    }
+    // Order-independent ech-query-server-name BEFORE ech-dns #true.
+    auto ech_order = config::parse_kdl(R"(schema-version 1
+role "client"
+dns { server "d1" type="udp" host="127.0.0.1"; }
+inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }
+outbound "d" type="direct"
+outbound "tuic-out" type="tuic" {
+    server host="127.0.0.1" port=8444
+    zero-rtt-handshake #false
+    authentication { uuid-file "/tmp/u1"; password-file "/tmp/p1"; }
+    tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; ech-query-server-name "ech.example.net"; ech-dns #true; verify #true; }
+}
+routing { default-outbound "tuic-out"; }
+)");
+    if (ech_order) {
+        if (ech_order->tuic_outbounds.front().config.ech.query_server_name != "ech.example.net" ||
+            ech_order->tuic_outbounds.front().config.zero_rtt_handshake)
+            return 15;
+    } else if (ech_order.error() != "ech-dns requires the dns-response feature") {
+        return 15;
+    }
+    // Reject ech-query-server-name without ech-dns, IPv4 query name, or duplicate zero-rtt-handshake.
+    for (auto bad_ech : {
+        R"(ech-query-server-name "ech.example.net")",
+        R"(ech-dns #true; ech-query-server-name "127.0.0.1")",
+        R"(ech-dns #true; ech-query-server-name "a.test"; ech-query-server-name "b.test")",
+    }) {
+        auto doc = std::format(R"(schema-version 1
+role "client"
+dns {{ server "d1" type="udp" host="127.0.0.1"; }}
+inbound "socks" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
+outbound "d" type="direct"
+outbound "tuic-out" type="tuic" {{
+    server host="127.0.0.1" port=8444
+    authentication {{ uuid-file "/tmp/u1"; password-file "/tmp/p1"; }}
+    tls {{ server-name "tuic.example"; ca-file "/tmp/ca.pem"; {}; verify #true; }}
+}}
+routing {{ default-outbound "tuic-out"; }}
+)", bad_ech);
+        if (config::parse_kdl(doc)) return 16;
+    }
+
+    std::println("ShadowTLS/TUIC/MASQUE/TUN/WireGuard KDL, ECH query-server-name, zero-rtt-handshake and SNI config validation passed");
 }

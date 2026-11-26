@@ -28,6 +28,15 @@ export namespace config {
     struct QuicEchOptions {
         std::string config_file;
         bool dns = false;
+        std::string query_server_name;
+    };
+    struct OutboundTlsFragment {
+        bool enabled = false;
+        bool record_fragment = false;
+        std::uint16_t min_bytes = 10;
+        std::uint16_t max_bytes = 100;
+        std::uint32_t fallback_delay_ms = 500;
+        auto operator==(OutboundTlsFragment const&) const -> bool = default;
     };
     enum class TlsFingerprint : std::uint8_t {
         native, tls13_grease, tls13_randomized,
@@ -87,6 +96,8 @@ export namespace config {
         platform::TcpSocketOptions tcp_options;
         std::optional<bool> tcp_fast_open;
         QuicEchOptions ech;
+        OutboundTlsFragment tls_fragment{};
+        std::vector<std::string> alpn;
     };
     struct NamedNaiveOutbound { std::string name; NaiveOutbound config; };
 
@@ -106,7 +117,7 @@ export namespace config {
     };
     struct NamedSshOutbound { std::string name; SshOutbound config; };
 
-    enum class MultiplexProtocol : std::uint8_t { smux, smux_v1, smux_v2 };
+    enum class MultiplexProtocol : std::uint8_t { smux, smux_v1, smux_v2, h2mux };
     struct MultiplexConfig {
         bool enabled = false;
         MultiplexProtocol protocol = MultiplexProtocol::smux_v2;
@@ -147,6 +158,8 @@ export namespace config {
         std::optional<std::size_t> bootstrap_index, detour_index;
         std::uint32_t connect_timeout_ms = 10000;
         platform::TcpSocketOptions tcp_options;
+        OutboundTlsFragment tls_fragment{};
+        std::vector<std::string> alpn;
     };
     struct NamedOpenVpnOutbound { std::string name; OpenVpnOutbound config; };
 
@@ -168,6 +181,8 @@ export namespace config {
         std::optional<std::size_t> bootstrap_index, detour_index;
         std::uint32_t connect_timeout_ms = 10000;
         platform::TcpSocketOptions tcp_options;
+        OutboundTlsFragment tls_fragment{};
+        std::vector<std::string> alpn;
     };
     struct NamedOpenConnectOutbound { std::string name; OpenConnectOutbound config; };
 

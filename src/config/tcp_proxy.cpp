@@ -6,6 +6,8 @@ import glaze;
 namespace config {
     auto parse_tcp_dial_option(kdl::Node const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
     auto parse_quic_ech_field(kdl::Node const&,QuicEchOptions&) -> bool;
+    auto parse_outbound_tls_fragment(kdl::Node const&,OutboundTlsFragment&) -> std::expected<void,std::string>;
+    auto parse_alpn_list(kdl::Node const&,std::vector<std::string>&) -> std::expected<void,std::string>;
 
     namespace {
         auto parse_http_proxy_tls(kdl::Node const& node) -> std::optional<TcpProxyTls> {
@@ -13,7 +15,7 @@ namespace config {
             if (node.tag || !node.arguments.empty() || !node.properties.empty() || node.children.empty())
                 return std::nullopt;
             TcpProxyTls result;
-            bool verified=false,fp_seen=false;
+            bool verified=false,fp_seen=false,frag_seen=false;
             for (auto const& field:node.children) {
                 auto value=scalar(field);
                 if (field.name=="server-name" && result.server_name.empty() && value && endpoint_name(*value))
@@ -28,6 +30,12 @@ namespace config {
                     if (!fp) return std::nullopt;
                     result.fingerprint=*fp;
                     fp_seen=true;
+                }
+                else if (field.name=="tls-fragment") {
+                    if (std::exchange(frag_seen,true) || !parse_outbound_tls_fragment(field,result.tls_fragment)) return std::nullopt;
+                }
+                else if (field.name=="alpn") {
+                    if (!parse_alpn_list(field,result.alpn)) return std::nullopt;
                 }
                 else if (field.name=="verify" && boolean(field).value_or(false))
                     verified=true;
@@ -141,6 +149,8 @@ namespace config {
         if (result.http_version==HttpProxyVersion::h3) {
             if (result.tls && result.tls->fingerprint==TlsFingerprint::tls12)
                 return error("HTTP/3 proxy cannot use tls12 fingerprint");
+            if (result.tls && (result.tls->tls_fragment.enabled || result.tls->tls_fragment.record_fragment))
+                return error("HTTP/3 proxy cannot use TCP TLS fragmentation");
             if (result.tcp_options.tcp_fast_open.value_or(false) || result.tcp_options.tcp_configured())
                 return error("TCP-only dial options are not valid for HTTP/3");
         }

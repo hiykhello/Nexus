@@ -43,6 +43,7 @@ namespace relay {
             Xhttp3Inbound& owner;
             quic::SessionHandle id;
             Session parent;
+            std::optional<tls::ServerCredential> dynamic_credential;
             Tls tls;
             Hooks hooks;
             quic::NativeMemory<> memory;
@@ -50,8 +51,10 @@ namespace relay {
             Native session;
             bool working = false;
 
-            Bundle(Xhttp3Inbound& listener, Registry& registry, quic::SessionHandle handle, Endpoint const& peer, SessionQuota::Lease lease)
-                : owner(listener), id(handle), parent(owner.context_), tls(owner.credential_, "h3"),
+            Bundle(Xhttp3Inbound& listener, Registry& registry, quic::SessionHandle handle, Endpoint const& peer,
+                   SessionQuota::Lease lease, std::optional<tls::ServerCredential> dyn_cred)
+                : owner(listener), id(handle), parent(owner.context_), dynamic_credential(std::move(dyn_cred)),
+                  tls(dynamic_credential ? *dynamic_credential : *owner.credential_, owner.alpn_),
                   hooks(registry, handle, owner.driver_.changed()), memory(owner.transport_.native_bytes),
                   app(tls, hooks, true, memory.http3()), session(tls, app, owner.local_) {
                 owner.server_.attach_session(parent, std::move(lease));
@@ -147,7 +150,15 @@ namespace relay {
                 q::ngtcp2_cid cid{};
                 q::ngtcp2_cid_init(&cid, source.data(), source.size());
                 try {
-                    entry.emplace(listener, registry, id, peer, std::move(*lease));
+                    std::optional<tls::ServerCredential> dyn_cred;
+                    if (listener.atomic_credential_) {
+                        auto cur = listener.atomic_credential_->clone_current();
+                        if (!cur) return std::unexpected(q::err_callback_failure);
+                        dyn_cred.emplace(std::move(*cur));
+                    } else if (!listener.credential_) {
+                        return std::unexpected(q::err_callback_failure);
+                    }
+                    entry.emplace(listener, registry, id, peer, std::move(*lease), std::move(dyn_cred));
                     auto result = entry->session.start(true, initial.scid, cid, peer, *settings, *params, entry->memory.transport(), now);
                     if (result) { entry.reset(); return std::unexpected(result); }
                     listener.start_tasks(id, *entry);
@@ -170,7 +181,9 @@ namespace relay {
         Server& server_;
         corosio::io_context& context_;
         std::unique_ptr<Profile> profile_;
-        tls::ServerCredential credential_;
+        std::optional<tls::ServerCredential> credential_;
+        std::shared_ptr<tls::AtomicServerCredential> atomic_credential_;
+        std::string alpn_{"h3"};
         hysteria2::TransportOptions transport_;
         corosio::udp_socket socket_;
         Endpoint local_;
@@ -200,13 +213,16 @@ namespace relay {
             }
         }
     public:
-        Xhttp3Inbound(Server& server, std::unique_ptr<Profile> profile, tls::ServerCredential credential)
-            : server_(server), context_(server.executor_context()), profile_(std::move(profile)), credential_(std::move(credential)),
-              socket_(context_) { transport_.udp = false; }
+        Xhttp3Inbound(Server& server, std::unique_ptr<Profile> profile, std::optional<tls::ServerCredential> credential,
+                      std::shared_ptr<tls::AtomicServerCredential> atomic_credential = {}, std::string alpn = "h3")
+            : server_(server), context_(server.executor_context()), profile_(std::move(profile)),
+              credential_(std::move(credential)), atomic_credential_(std::move(atomic_credential)),
+              alpn_(alpn.empty() ? "h3" : std::move(alpn)), socket_(context_) { transport_.udp = false; }
         ~Xhttp3Inbound() { stop(); }
         auto restart_owner() -> std::shared_ptr<Xhttp3Inbound> {
             if (!stopped_) return {};
-            return std::make_shared<Xhttp3Inbound>(server_, std::move(profile_), std::move(credential_));
+            return std::make_shared<Xhttp3Inbound>(server_, std::move(profile_), std::move(credential_),
+                std::move(atomic_credential_), alpn_);
         }
         template<class Failure>
         auto start(Endpoint endpoint, Failure failure) -> std::expected<Endpoint, std::error_code> {

@@ -33,6 +33,11 @@ export namespace relay {
         std::uint64_t max_time_difference_seconds = 60;
         std::optional<std::size_t> fallback_resolver;
     };
+    struct InboundTlsRuntime {
+        std::shared_ptr<void> atomic_credential{};
+        std::vector<std::string> alpn{};
+        std::string ech_key_file{};
+    };
     struct MasqueIpOptions {
         bool enabled = false;
         std::string path = "/.well-known/masque/ip/*/*/";

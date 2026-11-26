@@ -54,51 +54,35 @@ namespace relay {
             SmuxProto proto;
             bool starting = false, running = false, canceled = false;
             Clock::time_point idle_since{};
-
             struct ReaderGuard {
                 std::shared_ptr<MuxCarrier> owner;
                 ~ReaderGuard() { if (owner) { owner->running = false; owner->cancel(); } }
             };
-
-            static auto reader(ReaderGuard guard) -> capy::task<> {
-                (void)co_await guard.owner->proto.run();
-            }
-
+            static auto reader(ReaderGuard guard) -> capy::task<> { (void)co_await guard.owner->proto.run(); }
             MuxCarrier(OutboundContext const& env, config::MultiplexConfig const& cfg, bool direct)
                 : state(env.context), lower(cfg.padding),
                   proto(lower, true, cfg.protocol == config::MultiplexProtocol::smux_v1
                         ? mux::smux::version_1 : mux::smux::version_2,
                         mux::smux::Limits{.max_streams = std::max<std::size_t>(
                             {cfg.max_streams > 0 ? cfg.max_streams : 64u, cfg.min_streams, 64u})}) {
-                state.dns = env.dns;
-                state.local_dns = env.local_dns;
+                state.dns = env.dns; state.local_dns = env.local_dns;
                 if (env.owner) state.route_snapshot = env.owner->current_route_snapshot();
                 state.tunnel_factories = env.factories;
                 state.direct_tcp_options = direct ? env.direct_options : nullptr;
                 state.direct_connect_timeout_ms = 10000;
             }
-
             auto cancel() noexcept -> void {
                 if (canceled) return;
-                canceled = true;
-                proto.cancel();
-                lower.cancel();
-                state.close();
+                canceled = true; proto.cancel(); lower.cancel(); state.close();
             }
-
             auto usable() const noexcept -> bool { return !canceled && proto.usable(); }
             auto drained() const noexcept -> bool { return !starting && !running && proto.drained(); }
-
             auto start_run(std::shared_ptr<MuxCarrier> const& self, corosio::io_context& ctx) -> void {
                 running = true;
                 try {
                     capy::run_async(ctx.get_executor(), [] {}, [self](std::exception_ptr) noexcept { self->cancel(); })(
                         reader(ReaderGuard{self}));
-                } catch (...) {
-                    running = false;
-                    cancel();
-                    throw;
-                }
+                } catch (...) { running = false; cancel(); throw; }
             }
         };
 
@@ -422,19 +406,28 @@ namespace relay {
         };
     }
 
+    auto make_h2mux_factory(TunnelFactory inner, config::MultiplexConfig cfg)
+        -> std::expected<TunnelFactory, std::string>;
+
     auto make_mux_factory(TunnelFactory inner, config::MultiplexConfig cfg)
         -> std::expected<TunnelFactory, std::string> {
         if (!cfg.enabled) return inner;
         if (cfg.max_connections == 0 || cfg.max_connections > 64 ||
             (cfg.max_streams > 0 && cfg.min_streams > cfg.max_streams))
             return std::unexpected("invalid multiplex pool limits");
+        if (cfg.protocol == config::MultiplexProtocol::h2mux) {
+#ifdef NEXUS_ENABLE_H2MUX
+            return make_h2mux_factory(std::move(inner), cfg);
+#else
+            return std::unexpected("h2mux multiplex requires http2 support in this build");
+#endif
+        }
         auto profile = std::make_shared<MuxProfile>(std::make_shared<TunnelFactory>(std::move(inner)), cfg);
         auto detour = profile->inner->detour;
-        auto detour_direct = profile->inner->detour_direct;
+        bool detour_direct = profile->inner->detour_direct;
         auto timeout_ms = profile->inner->timeout_ms;
-        auto requires_direct = profile->inner->requires_direct_socket;
-        bool dual_family = profile->inner->packet_dual_family;
-        bool fixed_peer = profile->inner->packet_fixed_peer;
+        bool requires_direct = profile->inner->requires_direct_socket;
+        bool dual_family = profile->inner->packet_dual_family, fixed_peer = profile->inner->packet_fixed_peer;
 
         TunnelFactory out{
             [profile](Session& session, io::io_context& context, bool local, TcpSocketOptions const*) -> pro::proxy<TunnelFacade> {
@@ -446,11 +439,9 @@ namespace relay {
                 auto* w = profile->find(context);
                 return w ? pro::make_proxy<TunnelFacade, MuxTunnel>(session, context, *profile, w, local) : pro::proxy<TunnelFacade>{};
             },
-            detour, requires_direct, detour_direct
-        };
+            detour, requires_direct, detour_direct};
         out.packet_dual_family = cfg.only_tcp ? dual_family : true;
         out.packet_fixed_peer = cfg.only_tcp ? fixed_peer : false;
-
         out.start_context = [profile](OutboundContext const& env, TunnelFactory const* d, bool dir) -> bool {
             if (profile->inner->start_context && !profile->inner->start_context(env, d, dir)) return false;
             std::lock_guard lock(profile->mutex);
@@ -482,7 +473,7 @@ namespace relay {
               for (auto& w : profile->workers) if (w && &w->env.context == &ctx) { w.reset(); break; } }
             if (profile->inner->finish_context) profile->inner->finish_context(ctx);
         };
-        return out;
+        return std::expected<TunnelFactory, std::string>(std::move(out));
     }
 
     auto Server::wrap_outbound_multiplex(std::size_t outbound_index, config::MultiplexConfig const& cfg) -> std::expected<void, std::string> {
