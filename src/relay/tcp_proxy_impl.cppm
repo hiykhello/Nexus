@@ -136,6 +136,12 @@ namespace relay::tcp_proxy_detail {
                 TcpProxyTunnel& tunnel;
                 ~Guard() { tunnel.starting_ = false; if (!tunnel.ready_) tunnel.cancel(); }
             } guard{*this};
+            if constexpr (TlsOps::supported) {
+                if (profile_.tls_profile) {
+                    auto ech_ready = co_await TlsOps::resolve_ech(session_, context_, transport_->tls, profile_, deadline, canceled_);
+                    if (ech_ready != TunnelConnectResult::connected) co_return ech_ready;
+                }
+            }
             auto prepared = co_await prepare(deadline);
             if (prepared != TunnelConnectResult::connected) co_return prepared;
             if (canceled_ || session_.closed) co_return TunnelConnectResult::failed;
@@ -295,7 +301,7 @@ namespace relay::tcp_proxy_detail {
             if (outbounds.size() >= 256) return std::unexpected("too many tunnel outbounds");
             if (config.bootstrap_index && (!dns_routing || *config.bootstrap_index >= dns_routing->resolver_count()))
                 return std::unexpected("invalid TCP proxy bootstrap resolver");
-            auto factory = make_http_modern_factory(config);
+            auto factory = make_http_modern_factory(config, dns_routing.has_value());
             if (!factory) return std::unexpected(factory.error());
             auto index = outbounds.size() + 2;
             outbounds.push_back(std::move(*factory));
@@ -325,7 +331,7 @@ namespace relay::tcp_proxy_detail {
             config.host, config.username, {}, config.port, config.protocol, config.udp, config.bootstrap_index,
             config.connect_timeout_ms, config.tcp_options});
         if (config.tls) {
-            auto loaded = TlsOps::load(*config.tls);
+            auto loaded = TlsOps::load(*config.tls, dns_routing.has_value());
             if (!loaded) return std::unexpected(loaded.error());
             profile->tls_profile.emplace(std::move(*loaded));
         }

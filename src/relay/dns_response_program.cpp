@@ -89,17 +89,18 @@ namespace relay {
                         if (!result) co_return std::unexpected(result.error());
                         co_return dns::AddressRaceValue{std::move(*result)};
                     }
-                    if (step_.action != policy::DnsAction::route || step_.server >= session_.dns->routing.servers.size())
+                    auto const* routing = active_dns_routing(session_);
+                    if (step_.action != policy::DnsAction::route || !routing || step_.server >= routing->servers.size())
                         co_return std::unexpected(Error::state);
                     if ((step_.strategy == rules::DnsRuleStrategy::ipv4_only && type_ == 28) ||
                         (step_.strategy == rules::DnsRuleStrategy::ipv6_only && type_ == 1))
                         co_return std::unexpected(Error::no_data);
-                    auto local = !session_.dns->routing.servers[step_.server].port;
+                    auto local = !routing->servers[step_.server].port;
                     auto name = local && candidate_ ? *candidate_ + "." : name_;
                     auto family = type_ == 1 ? dns::detail::AddressStrategy::ipv4_only : dns::detail::AddressStrategy::ipv6_only;
                     dns::detail::FamilyCachePolicy cache{};
                     cache[type_ == 1 ? 0 : 1] = step_.disable_cache || rewrite_possible_;
-                    auto sc = session_.dns->routing.independent_cache ? static_cast<std::uint32_t>(step_.rule + 1) : 0u;
+                    auto sc = routing->independent_cache ? static_cast<std::uint32_t>(step_.rule + 1) : 0u;
                     auto result = co_await resolve_dns_full(session_, context_, step_.server, std::move(name), port_, family, deadline_,
                         slot_.operation, slot_.cancel_operation, &slot_.canceled, snapshot_ ? &snapshot_ : nullptr, cache, step_.subnet.value_or(std::nullopt), sc);
                     if (canceled_ || session_.closed) co_return std::unexpected(Error::canceled);
@@ -141,7 +142,9 @@ namespace relay {
             std::optional<std::size_t> view_final, std::span<dns::ResponseRaceMode const> modes)
             -> capy::task<std::expected<std::vector<corosio::endpoint>, dns::detail::ResolveError>> {
             using Error = dns::detail::ResolveError;
-            auto const& routing = session.dns->routing;
+            auto const* routing_ptr = active_dns_routing(session);
+            if (!session.dns || !routing_ptr) co_return std::unexpected(Error::state);
+            auto const& routing = *routing_ptr;
             // A later response-dependent option can change the effective TTL
             // after an evaluate, so its earlier cache lookup must also bypass.
             auto rewrite_possible = std::ranges::any_of(session.dns_rules(), [](auto const& rule) { return rule.rewrite_ttl.has_value(); });
@@ -358,7 +361,8 @@ namespace relay {
         -> capy::task<std::expected<dns::detail::LocalResponseSelection, dns::detail::ResolveError>> {
         using Error = dns::detail::ResolveError;
         if (slot.canceled || session.closed) co_return std::unexpected(Error::canceled);
-        if (slot.operation || slot.cancel_operation || !session.dns || selected >= session.dns->routing.servers.size())
+        auto const* routing_ptr = dns_detail::active_dns_routing(session);
+        if (slot.operation || slot.cancel_operation || !session.dns || !routing_ptr || selected >= routing_ptr->servers.size())
             co_return std::unexpected(Error::state);
         auto fixed = candidate ? std::optional<std::string_view>(*candidate) : std::nullopt;
         dns_detail::ResponseOperation operation(session, context, selected, name, type, deadline, snapshot ? &snapshot : nullptr,

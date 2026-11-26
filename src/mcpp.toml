@@ -37,6 +37,7 @@ tls = { implies = ["memory-budget", "unified-stream"], flags = [
     { glob = "tls/client_flight.cpp", cxxflags = ["-O3"] },
 ], sources = [
     "tls/*.cpp", "tls/*.cppm", "tls/ktls/ktls_disabled.cppm", "tls/resumption/psk.cpp", "tls/resumption/psk.cppm", "tls/resumption/client_policy.cppm",
+    "quic/ech_config.cppm", "quic/ech_config.cpp", "quic/ech_client.cppm", "quic/ech_client.cpp",
 ] }
 http1-tls-client = { implies = ["tls"], sources = ["http/corosio_https.cppm"] }
 tls-resumption = { implies = ["tls"], sources = ["tls/resumption/client.cppm", "tls/resumption/server.cppm", "tls/resumption/server_policy.cppm"] }
@@ -80,7 +81,7 @@ quic-crypto = { implies = ["quic-core"], sources = ["quic/packet_keys.cppm", "qu
 quic-sniff = { implies = ["quic-crypto"], defines = ["NEXUS_QUIC_SNIFF"], sources = ["sniff/quic.cppm", "sniff/quic_datagrams.cppm", "sniff/udp_quic_enabled.cpp"] }
 quic-native = { sources = ["../3rdparty/modules/ngtcp2.cppm"] }
 quic-transport = { implies = ["quic-native", "quic-crypto", "memory-budget"], sources = ["quic/packet_protection.cppm", "quic/connection.cppm", "quic/transport_parameters.cppm", "quic/transport_parameters.cpp", "quic/transport_memory.cppm"] }
-quic-tls = { implies = ["quic-transport", "tls"], sources = ["quic/tls_common.cppm", "quic/tls_client.cppm", "quic/tls_server.cppm", "quic/ech_config.cppm", "quic/ech_config.cpp", "quic/ech_client.cppm", "quic/ech_client.cpp"] }
+quic-tls = { implies = ["quic-transport", "tls"], sources = ["quic/tls_common.cppm", "quic/tls_client.cppm", "quic/tls_server.cppm"] }
 quic-resumption = { implies = ["quic-tls", "tls-resumption"], defines = ["NEXUS_QUIC_RESUMPTION"], sources = ["quic/resumption.cppm", "quic/optional_client_resumption.cppm", "!quic/optional_client_resumption_disabled.cppm"] }
 http3-core = { implies = ["quic-core"], sources = ["../3rdparty/modules/nghttp3.cppm", "quic/http3.cppm", "quic/http3_headers.cppm"] }
 masque-core = { implies = ["quic-core"], sources = ["masque/datagram.cppm", "masque/capsule.cppm", "masque/ip_control.cppm", "masque/ip_receiver.cppm", "masque/ip_packet.cppm", "masque/ip_packet.cpp", "masque/connect_ip.cppm", "masque/http3.cppm"] }
@@ -132,7 +133,7 @@ crypto = { path = "crypto" }
 nexus.argon2-source = { version = "=20190702-nexus.2", embed = true }
 
 [feature-deps.tls]
-crypto = { path = "crypto", features = ["ecdh"] }
+crypto = { path = "crypto", features = ["ecdh", "hpke"] }
 
 [feature-deps.tls-certificate-compression]
 zlib-system = { path = "../3rdparty/mcpp-zlib" }

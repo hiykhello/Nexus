@@ -24,6 +24,7 @@ import :session_interface;
 import :internal_decls;
 import :transport_helpers;
 import :grpc_pool;
+import :quic_ech;
 
 namespace relay::trojan_grpc {
     using Mode = grpc_pool::Mode;
@@ -42,6 +43,7 @@ namespace relay::trojan_grpc {
         std::uint32_t timeout_ms;
         TcpSocketOptions options;
         bool fast_open;
+        quic_ech::Profile ech;
         std::mutex mutex;
         std::array<std::unique_ptr<Worker>, 17> physical;
         std::array<std::unique_ptr<Worker>, 17> layered;
@@ -50,7 +52,7 @@ namespace relay::trojan_grpc {
     };
 
     inline auto endpoint_spec(Profile const& p) noexcept -> grpc_pool::EndpointSpec {
-        return {p.host, p.port, p.bootstrap, p.tls, p.request, p.response, p.limits, p.max_sessions};
+        return {p.host, p.port, p.bootstrap, p.tls, p.request, p.response, p.limits, p.max_sessions, &p.ech};
     }
 
     struct Worker {

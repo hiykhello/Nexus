@@ -12,6 +12,8 @@ import dns.policy;
 import dns.local_config;
 import dns.tls_query;
 import net.datagram_frame;
+import relay.dns_backend;
+import relay.dns_routing;
 import sniff.tcp;
 import sniff.route_tcp;
 import :types;
@@ -92,6 +94,44 @@ namespace relay {
         explicit DnsRuleSnapshot(std::vector<policy::DnsRule> values, std::optional<std::uint64_t> policy_view = {})
             : rules(std::move(values)), view(policy_view) {}
     };
+    export struct DnsRuntimeSnapshot {
+        DnsRouting routing;
+        std::uint64_t generation = 1;
+#if defined(NEXUS_DNS_SHARED) || defined(NEXUS_TEST_DNS_COORDINATOR)
+        std::shared_ptr<dns_hp_experiment::ViewRegistry> view_registry;
+        std::vector<dns_hp_experiment::ViewRegistry::Profile> profiles;
+#endif
+        [[nodiscard]] auto endpoint(std::size_t index) const -> corosio::endpoint {
+            auto const& server = routing.servers[index];
+            if (server.ipv6) return corosio::endpoint(corosio::ipv6_address(server.address), server.port);
+            corosio::ipv4_address::bytes_type bytes{};
+            std::copy_n(server.address.begin(), 4, bytes.begin());
+            return corosio::endpoint(corosio::ipv4_address(bytes), server.port);
+        }
+    };
+    export [[nodiscard]] inline auto compile_dns_runtime_snapshot(DnsRouting routing, std::uint64_t generation)
+        -> std::expected<std::shared_ptr<DnsRuntimeSnapshot const>, std::string> {
+        if (routing.servers.empty() || routing.final >= routing.servers.size())
+            return std::unexpected("invalid DNS routing configuration");
+        if (generation == 0 || generation >= dns::detail::TransportSnapshot::generation_limit)
+            return std::unexpected("DNS runtime generation exhausted");
+        auto snapshot = std::make_shared<DnsRuntimeSnapshot>(DnsRuntimeSnapshot{std::move(routing), generation});
+#if defined(NEXUS_DNS_SHARED) || defined(NEXUS_TEST_DNS_COORDINATOR)
+        try {
+            snapshot->view_registry = std::make_shared<dns_hp_experiment::ViewRegistry>(64, 1024 * 1024, 4096);
+            snapshot->profiles.reserve(snapshot->routing.servers.size());
+            for (std::size_t i = 0; i < snapshot->routing.servers.size(); ++i) {
+                auto profile = snapshot->view_registry->register_profile(snapshot->routing, i);
+                if (!profile) return std::unexpected("cannot register reloaded DNS server profile");
+                snapshot->profiles.push_back(*profile);
+            }
+            snapshot->view_registry->seal();
+        } catch (std::bad_alloc const&) {
+            return std::unexpected("DNS reload: out of memory");
+        }
+#endif
+        return snapshot;
+    }
     export struct RouteSnapshot {
         rules::RouteMatcher matcher;
         std::optional<OrderedTcpPolicy> ordered;
@@ -99,6 +139,8 @@ namespace relay {
         std::uint64_t generation = 1;
         std::optional<std::bitset<256>> tunnel_references{};
         std::shared_ptr<dns::detail::TransportSnapshot const> dns_transports;
+        std::shared_ptr<DnsRuntimeSnapshot const> dns_runtime{};
+        bool dns_disabled = false;
     };
     export using RouteSnapshots = utility::atomic_shared_ptr<std::vector<RouteSnapshot> const>;
     export struct OrderedRuleInput {

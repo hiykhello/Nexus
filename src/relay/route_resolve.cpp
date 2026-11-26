@@ -1,4 +1,5 @@
 module relay;
+import :dns_internal;
 import std;
 import sniff.tcp;
 import sniff.tcp_io;
@@ -384,22 +385,24 @@ namespace relay {
             reservation=dns::default_listener_query_budget().acquire(*cost);
             if (!reservation) co_return std::nullopt;
         }
+        auto const* routing_ptr = dns_detail::active_dns_routing(session);
+        if (!routing_ptr) co_return std::nullopt;
+        auto const& routing = *routing_ptr;
         auto& state=*session.dns;
         dns::MessageLocalSource local(session.local_dns->source);
         std::vector<dns::MessageUpstream> upstreams;
-        upstreams.reserve(state.routing.servers.size());
-        auto* transports=session.dns_transports();
-        for(std::size_t i=0;i<state.routing.servers.size();++i) {
-            auto const& server=state.routing.servers[i];
-            dns::MessageUpstream upstream{.tcp=server.tcp,.host=server.host,.port=server.port,.resolver=server.resolver,.protection=transports ? transports->queries[i] : server.protection};
+        upstreams.reserve(routing.servers.size());
+        for(std::size_t i=0;i<routing.servers.size();++i) {
+            auto const& server=routing.servers[i];
+            dns::MessageUpstream upstream{.tcp=server.tcp,.host=server.host,.port=server.port,.resolver=server.resolver,.protection=dns_detail::active_dns_protection(session,i)};
             if(!server.port)upstream.local=&local;
-            else if(server.host.empty())upstream.endpoint=state.endpoint(i);
+            else if(server.host.empty())upstream.endpoint=dns_detail::active_dns_endpoint(session,i);
             upstreams.push_back(std::move(upstream));
         }
         auto view=session.route_snapshot && session.route_snapshot->dns ?
             session.route_snapshot->dns->view : std::nullopt;
-        dns::MessageProgram program(context,session.dns_rules(),upstreams,state.routing.final,
-            state.wire_cache(),state.routing.disable_cache,{},nullptr,view,session.reverse_cache,state.routing.independent_cache);
+        dns::MessageProgram program(context,session.dns_rules(),upstreams,routing.final,
+            state.wire_cache(),routing.disable_cache,{},nullptr,view,session.reverse_cache,routing.independent_cache);
         struct CancelRegistration {
             Session& session;
             ~CancelRegistration(){session.dns_operation=nullptr;session.cancel_dns=nullptr;}

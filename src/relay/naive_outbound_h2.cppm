@@ -13,6 +13,7 @@ import tls.profiles;
 import tls.byte_stream;
 import tls.corosio_application;
 import tls.connector;
+import quic.ech_config;
 import capy;
 import corosio;
 import :types;
@@ -21,6 +22,7 @@ import :tunnel_facade;
 import :route_interface;
 import :session_interface;
 import :internal_decls;
+import :quic_ech;
 import :naive_outbound_h3;
 
 namespace relay::naive_out_detail {
@@ -64,6 +66,11 @@ namespace relay::naive_out_detail {
     class H2TlsConnector {
         using Inner = tls::detail::UnifiedConnector<H2Resolver, H2Lower, tls::ShapedClientProfile>;
 
+        corosio::io_context& context_;
+        std::uint16_t port_;
+        std::optional<std::size_t> bootstrap_;
+        quic_ech::Profile const& ech_;
+        DnsSlot ech_dns_;
         Session state_;
         std::optional<Inner> inner_;
 
@@ -72,9 +79,9 @@ namespace relay::naive_out_detail {
 
         H2TlsConnector(tls::detail::TransportMode mode, OutboundContext const& env, std::string const& host,
                        std::uint16_t port, std::optional<std::size_t> bootstrap,
-                       tls::ShapedClientProfile const& tls_profile, TunnelFactory const* detour,
-                       TcpSocketOptions const& options)
-            : state_(env.context) {
+                       tls::ShapedClientProfile const& tls_profile, quic_ech::Profile const& ech,
+                       TunnelFactory const* detour, TcpSocketOptions const& options)
+            : context_(env.context), port_(port), bootstrap_(bootstrap), ech_(ech), state_(env.context) {
             state_.dns = env.dns;
             state_.local_dns = env.local_dns;
             if (env.owner) state_.route_snapshot = env.owner->current_route_snapshot();
@@ -87,7 +94,9 @@ namespace relay::naive_out_detail {
         }
         ~H2TlsConnector() { cancel(); }
         auto connect(Clock::time_point dl) -> capy::task<bool> {
-            co_return co_await inner_->start(dl) == tls::detail::ConnectResult::connected;
+            auto ech = co_await ech_.resolve(state_, context_, ech_dns_, bootstrap_, port_, dl, quic_ech::Transport::tcp);
+            if (state_.closed || !ech) co_return false;
+            co_return co_await inner_->start(dl, *ech ? &**ech : nullptr) == tls::detail::ConnectResult::connected;
         }
         auto application() noexcept -> tls::detail::ApplicationConnection<Socket>* { return inner_->application(); }
         auto negotiated_alpn() const noexcept -> std::string_view {
@@ -96,6 +105,7 @@ namespace relay::naive_out_detail {
             return std::string_view(reinterpret_cast<char const*>(neg->alpn->data()), neg->alpn->size());
         }
         auto cancel() noexcept -> void {
+            ech_dns_.cancel();
             if (inner_) inner_->cancel();
             state_.close();
         }
@@ -177,6 +187,7 @@ namespace relay::naive_out_detail {
         std::size_t max_sessions = 8;
         TcpSocketOptions options;
         tls::ShapedClientProfile tls;
+        quic_ech::Profile ech;
         std::mutex mutex;
         std::array<std::unique_ptr<H2Worker>, 17> physical;
         std::array<std::unique_ptr<H2Worker>, 17> layered;
@@ -186,11 +197,11 @@ namespace relay::naive_out_detail {
                   std::vector<std::pair<std::string, std::string>> eh,
                   bool pad, bool h1fb, bool fo, std::optional<std::size_t> bs,
                   std::uint32_t tms, std::size_t ms, TcpSocketOptions opts,
-                  tls::ShapedClientProfile tls_in)
+                  tls::ShapedClientProfile tls_in, quic_ech::Profile ech_in = {})
             : host(std::move(h)), port(p), auth_header(std::move(auth)),
               extra_headers(std::move(eh)), padding(pad), allow_h1_fallback(h1fb),
               fast_open(fo), bootstrap(bs), timeout_ms(tms), max_sessions(ms),
-              options(std::move(opts)), tls(std::move(tls_in)) {}
+              options(std::move(opts)), tls(std::move(tls_in)), ech(std::move(ech_in)) {}
 
         ~H2Profile() {
             if (!auth_header.empty())
@@ -217,7 +228,7 @@ namespace relay::naive_out_detail {
         auto slot = pool.reserve();
         if (!slot) co_return AcquireResult{.error = TunnelConnectResult::failed};
         auto conn = std::make_unique<Conn>(mode, environment, profile.host, profile.port,
-                                           profile.bootstrap, profile.tls, detour, options);
+                                           profile.bootstrap, profile.tls, profile.ech, detour, options);
         struct Reg {
             H2Worker& w;
             Reg(H2Worker& owner, Conn* c) noexcept : w(owner) { w.starting_conn = c; }

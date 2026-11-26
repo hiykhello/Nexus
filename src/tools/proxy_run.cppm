@@ -43,6 +43,7 @@ import http.connect;
 import socks5;
 export import cli.proxy_run_state;
 export import cli.proxy_group_health;
+export import cli.proxy_outbound_probe;
 export import cli.proxy_listener;
 export import cli.proxy_log;
 export import cli.proxy_host;
@@ -50,6 +51,7 @@ export import cli.proxy_control_wake;
 export import cli.proxy_dns_reload;
 export import cli.proxy_selector_state;
 export import cli.proxy_listener_reload;
+export import cli.proxy_tun_reload;
 export import cli.proxy_control_operations;
 export import cli.proxy_mode;
 export import cli.proxy_control;
@@ -81,7 +83,8 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
     std::unique_ptr<relay::SharedDnsGeneration> dns_generation; std::shared_ptr<relay::SnellReplayRegistry> snell_replay;
     std::vector<Listener> listeners; std::vector<std::string> route_outbound_names{"direct","block"};
     std::optional<config::Config> reload_config; std::string reload_identity, reload_source;
-    ListenerReload listener_reload; std::shared_ptr<relay::RouteSnapshots> route_snapshots;
+    ListenerReload listener_reload; TunLiveReload tun_live_reload; AdHocOutboundProber outbound_prober;
+    std::shared_ptr<relay::RouteSnapshots> route_snapshots;
     std::shared_ptr<dns::ReverseCache> reverse_cache; RemoteRulesetManager remote_rulesets; cli::ProxyProviderManager proxy_providers;
     std::optional<OutboundGroupHealth> group_health; std::optional<cli::RouteFiles> group_route_files;
     std::string_view reload_unavailable="no traffic rule files configured"; cli::DnsMessageRuntime dns_messages(logs);
@@ -243,7 +246,8 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         } else if ((!control_socket.empty() || control_http_config) && !specialized_listener && !config->selectors.empty()) {
             group_route_files.emplace(*route_files);
         }
-        auto supports_route_reload=!specialized_listener && (has_route_files || has_dns_rule_files ||
+        bool has_routed_tun = std::ranges::any_of(listeners, [](auto const& item) { return item.routed_tun; });
+        auto supports_route_reload=!specialized_listener && (has_route_files || has_dns_rule_files || has_routed_tun ||
             !config->selectors.empty() || remote_rulesets.has_remote() || proxy_providers.has_providers() ||
             (listener_reload.tcp_admission && config->dns && config->dns->fakeip));
         if (specialized_listener) reload_unavailable="configured inbound has an independent packet routing context";
@@ -255,6 +259,8 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
                 }
             }
             auto const& files=active_groups ? *group_route_files : *route_files;
+            if (has_routed_tun) if (auto rec = tun_live_reload.record_initial_route_sets(*config, files); !rec)
+                return log_failure(logs, logging::Domain::core, "TUN route-set", rec.error());
             auto result=publish_group_routes(listeners,*route_snapshots,*config,files);
             if(!result) {
                 return log_failure(logs,logging::Domain::core,"traffic routes",result.error());
@@ -276,7 +282,8 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         }
 #endif
         if (!control_socket.empty() || control_http_config) route_outbound_names=cli::outbound_names(*config);
-        if (route_snapshots || listener_reload.tcp_admission) reload_config.emplace(std::move(*config));
+        if (route_snapshots || listener_reload.tcp_admission || !control_socket.empty() || control_http_config)
+            reload_config.emplace(std::move(*config));
     }
     if (!is_cfg) {
         auto started=logs.start({});
@@ -329,20 +336,29 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             return init;
         auto ids=config::reload_identities(input);
         if (!ids) return std::unexpected(std::move(ids.error()));
-        auto key=std::move(ids->full);
-        if (!reload_config) {
+        auto const& key = ids->full;
+        if (!reload_config || (!route_snapshots && !listener_reload.tcp_admission)) {
             if (key!=reload_identity) return std::unexpected(std::string(reload_unavailable));
             return {};
         }
         if (listener_reload.tcp_admission && (key!=reload_identity || !route_snapshots || udp->has_listeners())) {
             auto r=listener_reload.apply({listeners,reload_config,dns_generation,dns_messages,route_snapshots,
-                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr},run_args.config_path,input,std::move(key),
+                group_route_files,group_health,snell_replay,network,reload_identity,logs,reverse_cache,remote_rulesets,route_mode.shared,host.memory_shed,ssmapi_users,shared_io.get(),host.tor_service ? &*host.tor_service : nullptr},run_args.config_path,input,std::string(key),
                 traffic_stats || control.active() || http_control.active(),group_health.has_value(),udp,selector_state.choices(),
                 provider_sync_trigger || proxy_providers.has_providers(), std::move(*ids));
             if (r) { reload_source.assign(input); route_mode.sync(reload_config); if (control.active() || http_control.active()) route_outbound_names=cli::outbound_names(*reload_config); }
             return r;
         }
-        if (key!=reload_identity) return std::unexpected("configuration change requires restart");
+        if (key!=reload_identity) {
+            if (route_snapshots && std::ranges::any_of(listeners, [](auto const& item) { return item.routed_tun; })) {
+                if (auto init = tun_live_reload.ensure_identity(reload_source); !init) return init;
+                auto r = tun_live_reload.apply({listeners,reload_config,dns_messages,route_snapshots,group_route_files,
+                    group_health,reload_identity,logs,reverse_cache,remote_rulesets},run_args.config_path,std::move(requested),std::move(*ids),selector_state.choices());
+                if (r) { reload_source.assign(input); route_mode.sync(reload_config); if (control.active() || http_control.active()) route_outbound_names=cli::outbound_names(*reload_config); }
+                return r;
+            }
+            return std::unexpected("configuration change requires restart");
+        }
         cli::RuleFileInput rule_input(run_args.config_path);
         remote_rulesets.seed_cached(rule_input);
         std::optional<config::Config> selection;
@@ -399,7 +415,8 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         auto generation=listener_reload.tcp_admission ? std::optional(listener_reload.listener_generation) : std::nullopt;
         auto snapshot=network ? network->get() : nullptr;
         return control_request(listeners,reload_config,workers,route_outbound_names,command,select,generation,snapshot.get(),
-            group_health ? &*group_health : nullptr,role,control_operations,control,reverse_cache.get(),&route_mode);
+            group_health ? &*group_health : nullptr,role,control_operations,control,reverse_cache.get(),&route_mode,&outbound_prober,
+            bool(route_snapshots || listener_reload.tcp_admission));
     };
     WinStopEventGuard win_stop;
     while (!stopped.load(std::memory_order_relaxed) && !win_stop.signaled() && host.healthy()) {
@@ -435,11 +452,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             try {
                 auto snapshot=reload_config->direct_network && network ? network->get() : nullptr;
                 auto picked=group_health->poll([&](std::shared_ptr<relay::OutboundProbe> probe) {
-                    auto const& first=listeners.front();
-                    if (first.routed_tun) return tun.queue_outbound_probe(0,std::move(probe));
-                    if (first.hy2) return hy2.queue_outbound_probe(0,std::move(probe));
-                    if (first.tuic) return tuic.queue_outbound_probe(0,std::move(probe));
-                    return first.server->queue_outbound_probe(std::move(probe));
+                    return queue_probe_on_listeners(listeners, tun, hy2, tuic, std::move(probe));
                 },*reload_config,snapshot ? std::optional(snapshot->generation) : std::nullopt);
                 if(picked) {
                     std::expected<void,std::string> published;
@@ -458,9 +471,12 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
                 logs.emit(logging::Level::error,logging::Domain::route,108,{},"outbound probe selection: out of memory");
             }
         }
+        if (outbound_prober.has_pending()) outbound_prober.poll([&](std::shared_ptr<relay::OutboundProbe> probe) {
+            return queue_probe_on_listeners(listeners, tun, hy2, tuic, std::move(probe));
+        });
         auto wait = compute_host_poll_wait(shared_io != nullptr, control_wake.has_events(), !shared_io && workers == 1,
             listeners.size(), control.next_poll_delay(), http_control.next_poll_delay(),
-            !listener_reload.retired_tcp.empty(), group_health.has_value() || services_runtime.active_count() > 0);
+            !listener_reload.retired_tcp.empty(), group_health.has_value() || outbound_prober.has_pending() || services_runtime.active_count() > 0);
         host.poll(wait);
         services_runtime.poll(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count()),logs);

@@ -9,6 +9,7 @@ import quic.cid_registry;
 import quic.native_memory;
 import quic.datagram_port;
 import quic.datagram_session;
+import quic.ech_config;
 import net.datagram_driver;
 import hysteria2.transport_options;
 import crypto;
@@ -188,7 +189,9 @@ export namespace naive {
             }
             std::array<std::uint8_t, 8> src_bytes{};
             std::array<std::uint8_t, 16> dst_bytes{};
-            auto tls = profile_.tls_client(*peer, nullptr);
+            quic::EchConfig const* ech_cfg = nullptr;
+            if constexpr (requires { connector_.resolved_ech(); }) ech_cfg = connector_.resolved_ech();
+            auto tls = profile_.tls_client(*peer, ech_cfg);
             auto settings = hysteria2::TransportProfile<kH3StreamCapacity, kH3Window>::settings(profile_.transport());
             auto params = hysteria2::TransportProfile<kH3StreamCapacity, kH3Window>::parameters(profile_.transport());
             if (!crypto::random_bytes(src_bytes) || !crypto::random_bytes(dst_bytes) ||

@@ -2,11 +2,14 @@
 module relay;
 import :tcp_proxy_handshake;
 import :tcp_proxy_impl;
+import :quic_ech;
 import std;
 import capy;
 import config;
 import corosio;
 import net.socket_stream;
+import platform.wall_clock;
+import quic.ech_config;
 import tls.byte_stream;
 import tls.client_handshake_io;
 import tls.corosio_client;
@@ -16,17 +19,26 @@ import tls.profiles;
 namespace relay {
     namespace tcp_proxy_detail {
         struct HttpConnectTlsOps {
-            using Profile = tls::ShapedClientProfile;
+            struct Profile {
+                tls::ShapedClientProfile tls;
+                quic_ech::Profile ech;
+            };
             static constexpr bool supported = true;
 
             template<class TlsSocket, class Stream>
             struct State {
+                DnsSlot ech_dns;
+                std::optional<quic::EchConfig> ech;
                 std::optional<net::ByteStreamAdapter<Stream>> tls_fast_open;
                 std::unique_ptr<tls::detail::ClientConnection<TlsSocket>> tls_client;
                 std::unique_ptr<tls::detail::ByteStream<TlsSocket>> tls_stream;
             };
 
-            static auto load(config::TcpProxyTls const& tls_cfg) -> std::expected<Profile, std::string> {
+            static auto load(config::TcpProxyTls const& tls_cfg, bool dns_available = false) -> std::expected<Profile, std::string> {
+                if ((tls_cfg.ech.dns || !tls_cfg.ech.config_file.empty()) && tls_cfg.fingerprint == config::TlsFingerprint::tls12)
+                    return std::unexpected("HTTP CONNECT ECH requires TLS 1.3");
+                auto ech = quic_ech::Profile::load(tls_cfg.ech, tls_cfg.server_name, dns_available);
+                if (!ech) return std::unexpected(ech.error());
                 constexpr std::array<std::string_view, 1> protocols{"http/1.1"};
                 auto identity = tls::ClientProfile::load(tls_cfg.server_name, tls_cfg.ca_file, 0x001d, false, protocols);
                 if (!identity) return std::unexpected(identity.error());
@@ -35,7 +47,20 @@ namespace relay {
                 if (!fp) return std::unexpected("invalid HTTP CONNECT TLS fingerprint");
                 auto shaped = tls::ShapedClientProfile::create(std::move(*identity), *fp);
                 if (!shaped) return std::unexpected(shaped.error());
-                return std::move(*shaped);
+                return Profile{std::move(*shaped), std::move(*ech)};
+            }
+
+            template<class TlsSocket, class Stream>
+            static auto resolve_ech(Session& session, corosio::io_context& context, State<TlsSocket, Stream>& state,
+                BasicTcpProxyProfile<Profile> const& profile, Clock::time_point deadline, bool const& canceled)
+                -> capy::task<TunnelConnectResult> {
+                if (!profile.tls_profile) co_return TunnelConnectResult::connected;
+                auto resolved = co_await profile.tls_profile->ech.resolve(
+                    session, context, state.ech_dns, profile.bootstrap, profile.port, deadline, quic_ech::Transport::tcp);
+                if (canceled || session.closed) co_return TunnelConnectResult::failed;
+                if (!resolved) co_return Clock::now() >= deadline ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
+                state.ech = std::move(*resolved);
+                co_return TunnelConnectResult::connected;
             }
 
             template<bool FastOpen, class Socket, class Stream, class TlsSocket>
@@ -47,11 +72,11 @@ namespace relay {
                 using std::chrono::milliseconds;
                 auto start = duration_cast<milliseconds>(Clock::now().time_since_epoch()).count();
                 auto end = duration_cast<milliseconds>(deadline.time_since_epoch()).count();
-                auto verified = duration_cast<std::chrono::seconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-                if (start < 0 || end <= start) co_return false;
-                auto handshake = profile.tls_profile->handshake(static_cast<std::uint64_t>(start),
-                    static_cast<std::uint64_t>(end), verified, std::span<std::uint8_t const>{});
+                auto verified = platform::calibrated_wall_seconds();
+                if (start < 0 || verified < 0 || end <= start) co_return false;
+                auto handshake = profile.tls_profile->tls.handshake(static_cast<std::uint64_t>(start),
+                    static_cast<std::uint64_t>(end), verified, std::span<std::uint8_t const>{},
+                    state.ech ? &*state.ech : nullptr);
                 if (!handshake) co_return false;
                 TlsSocket* socket = nullptr;
                 if constexpr (FastOpen) socket = &state.tls_fast_open.emplace(stream);
@@ -74,6 +99,7 @@ namespace relay {
 
             template<class TlsSocket, class Stream>
             static auto cancel(State<TlsSocket, Stream>& state) noexcept -> bool {
+                state.ech_dns.cancel();
                 if (state.tls_stream) {
                     state.tls_stream->cancel();
                     return true;

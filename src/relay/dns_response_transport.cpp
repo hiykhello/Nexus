@@ -106,12 +106,15 @@ namespace relay::dns_detail {
         -> capy::task<std::expected<RawSelection, dns::detail::ResolveError>> {
         using Error = dns::detail::ResolveError;
         if (session.closed || canceled) co_return std::unexpected(Error::canceled);
-        auto const& routing = session.dns->routing;
+        auto const* routing_ptr = active_dns_routing(session);
+        if (!session.dns || !routing_ptr || selected >= routing_ptr->servers.size())
+            co_return std::unexpected(Error::state);
+        auto const& routing = *routing_ptr;
         std::vector<std::size_t> chain;
         auto current = selected;
         while (routing.servers[current].resolver) { chain.push_back(current); current = *routing.servers[current].resolver; }
         std::vector<corosio::endpoint> upstreams;
-        if (routing.servers[current].port) upstreams.push_back(session.dns->endpoint(current));
+        if (routing.servers[current].port) upstreams.push_back(active_dns_endpoint(session, current));
         for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
             auto const& next = routing.servers[*it];
             auto resolved = co_await query_server_endpoints(session, context, current, upstreams, next.host, next.port,
@@ -125,8 +128,7 @@ namespace relay::dns_detail {
             co_return co_await response_local(session, context, name, type, deadline, retained, disabled,
                 dns_operation, cancel_dns, canceled, rotation_override, fixed_candidate, subnet);
         auto const& server = routing.servers[current];
-        auto* transports = session.dns_transports();
-        auto const& protection = transports ? transports->queries[current] : server.protection;
+        auto const& protection = active_dns_protection(session, current);
         for (auto const& upstream : upstreams) {
             if (!valid_destination(upstream)) continue;
             if (session.closed || canceled) co_return std::unexpected(Error::canceled);
@@ -138,11 +140,10 @@ namespace relay::dns_detail {
                 if (response.error() != Error::transport) co_return std::unexpected(response.error());
                 continue;
             }
-            if (!session.dns->response_coordinator || !session.dns->views || cancel_dns)
+            if (!session.dns->response_coordinator || cancel_dns)
                 co_return std::unexpected(Error::state);
-            auto view = session.dns->views->view(current, upstream, subnet);
+            auto view = active_dns_view(session, current, upstream, subnet);
             if (!view) co_return std::unexpected(Error::limit);
-            if (transports) *view = transports->address_view(*view);
             dns_hp_experiment::ResponseCoordinatorQuery operation(*session.dns->response_coordinator);
             struct Registration { void*& operation; void (*&cancel)(void*) noexcept; ~Registration() { cancel = nullptr; operation = nullptr; } } registration{dns_operation, cancel_dns};
             dns_operation = &operation;

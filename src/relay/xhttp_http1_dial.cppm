@@ -8,6 +8,7 @@ import tls.connector;
 import tls.corosio_application;
 import tls.fingerprint;
 import tls.profiles;
+import quic.ech_config;
 import vless;
 import vless.client_profile;
 import xhttp.config;
@@ -17,6 +18,7 @@ import :types;
 import :route_interface;
 import :session_interface;
 import :internal_decls;
+import :quic_ech;
 import :xhttp_http1;
 
 namespace relay::vless_xhttp {
@@ -26,11 +28,12 @@ namespace relay::vless_xhttp {
         xhttp::Endpoint endpoint;
         std::optional<tls::ShapedClientProfile> tls;
         std::optional<vless::detail::ClientProfile> reality;
+        quic_ech::Profile ech{};
         auto secure() const noexcept -> bool { return tls.has_value() || reality.has_value(); }
         auto handshake(std::uint64_t now, std::uint64_t until, std::int64_t time,
-            std::span<std::uint8_t const> target = {}) const {
+            std::span<std::uint8_t const> target = {}, quic::EchConfig const* ech_cfg = nullptr) const {
             std::array<std::string_view, 1> alpn{endpoint.version == xhttp::HttpVersion::http2 ? "h2" : "http/1.1"};
-            return reality ? reality->handshake(now, until, time, alpn) : tls->handshake(now, until, time, target);
+            return reality ? reality->handshake(now, until, time, alpn) : tls->handshake(now, until, time, target, ech_cfg);
         }
     };
 
@@ -79,24 +82,32 @@ namespace relay::vless_xhttp {
 
     class Connection {
         using Tls = tls::detail::PhysicalConnector<Resolver, Peer>;
+        Session& session_;
+        corosio::io_context& context_;
+        Peer const& peer_;
+        std::optional<std::size_t> bootstrap_;
+        DnsSlot ech_dns_;
         Socket socket_;
         Resolver resolver_;
         std::optional<Tls> tls_;
         TcpSocketOptions options_;
         xhttp::HttpVersion version_;
-        bool reality_;
+        bool reality_, canceled_ = false;
     public:
         std::optional<corosio::endpoint> connected_peer;
         Lower stream;
         Connection(Session& session, corosio::io_context& context, Peer const& peer,
                    std::optional<std::size_t> bootstrap, TcpSocketOptions const& options)
-            : socket_(context), resolver_{session, context, peer, bootstrap}, options_(options), version_(peer.endpoint.version),
+            : session_(session), context_(context), peer_(peer), bootstrap_(bootstrap),
+              socket_(context), resolver_{session, context, peer, bootstrap}, options_(options), version_(peer.endpoint.version),
               reality_(peer.reality.has_value()), stream(socket_) {
             if (peer.secure()) tls_.emplace(context, Resolver{session, context, peer, bootstrap, {}, &connected_peer}, peer, options_);
         }
         auto connect(Clock::time_point deadline) -> capy::task<bool> {
             if (tls_) {
-                if (co_await tls_->start(deadline) != tls::detail::ConnectResult::connected) co_return false;
+                auto ech = co_await peer_.ech.resolve(session_, context_, ech_dns_, bootstrap_, peer_.port, deadline, quic_ech::Transport::tcp);
+                if (canceled_ || session_.closed || !ech) co_return false;
+                if (co_await tls_->start(deadline, *ech ? &**ech : nullptr) != tls::detail::ConnectResult::connected) co_return false;
                 auto negotiated = tls_->negotiated();
                 if (!negotiated) co_return false;
                 if (version_ == xhttp::HttpVersion::http2) {
@@ -122,6 +133,8 @@ namespace relay::vless_xhttp {
             co_return !error;
         }
         auto cancel() noexcept -> void {
+            canceled_ = true;
+            ech_dns_.cancel();
             resolver_.cancel();
             if (tls_) tls_->cancel();
             stream.cancel();
@@ -130,14 +143,17 @@ namespace relay::vless_xhttp {
 
     inline auto make_peer(std::string_view host, std::uint16_t port, xhttp::Endpoint endpoint, std::string_view server_name,
             std::string_view ca, TlsKeyExchange exchange, TlsFingerprint fingerprint, std::optional<std::uint16_t> record_size,
-            std::optional<Reality> reality = {}, std::span<std::array<std::uint8_t, 32> const> pins = {})
+            std::optional<Reality> reality = {}, std::span<std::array<std::uint8_t, 32> const> pins = {},
+            QuicEchOptions const& ech = {}, bool dns_available = false)
         -> std::expected<Peer, std::string> {
+        if ((ech.dns || !ech.config_file.empty()) && (reality || server_name.empty() || fingerprint == TlsFingerprint::tls12))
+            return std::unexpected("XHTTP ECH requires ordinary TLS 1.3");
         if (endpoint.authority.empty()) {
             endpoint.authority = server_name.empty() ? host : server_name;
             if (auto ip = platform::parse_ip_address(endpoint.authority); ip && ip->size == 16)
                 endpoint.authority = "[" + endpoint.authority + "]";
         }
-        Peer peer{std::string(host), port, std::move(endpoint), {}, {}};
+        Peer peer{std::string(host), port, std::move(endpoint), {}, {}, {}};
         if (reality) {
             if (server_name.empty() || !ca.empty() || peer.endpoint.version == xhttp::HttpVersion::http3)
                 return std::unexpected("XHTTP Reality requires a TCP endpoint, an SNI name and no CA file");
@@ -151,6 +167,9 @@ namespace relay::vless_xhttp {
             return peer;
         }
         if (server_name.empty()) return peer;
+        auto ech_profile = quic_ech::Profile::load(ech, server_name, dns_available);
+        if (!ech_profile) return std::unexpected(ech_profile.error());
+        peer.ech = std::move(*ech_profile);
         std::array<std::string_view, 1> alpn{peer.endpoint.version == xhttp::HttpVersion::http3 ? "h3" :
             peer.endpoint.version == xhttp::HttpVersion::http2 ? "h2" : "http/1.1"};
         auto certificate = tls::ClientProfile::load(server_name, ca, exchange == TlsKeyExchange::x25519 ? 0x001d : 0x11ec,

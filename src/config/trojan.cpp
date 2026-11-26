@@ -8,6 +8,7 @@ namespace config {
     auto dns_ipv6(std::string_view) -> std::optional<std::array<std::uint8_t,16>>;
     auto dns_hostname(std::string_view) -> bool;
     auto parse_quic_ech_field(glaze::KdlNode const&, QuicEchOptions&) -> bool;
+    auto validate_quic_ech(QuicEchOptions const&, std::string_view, bool) -> std::expected<void, std::string>;
     auto parse_vless_transport(glaze::KdlNode const&,bool)
         -> std::expected<std::variant<HttpUpgradeTransport,GrpcTransport,xhttp::Profile>,std::string>;
     auto parse_outbound_multiplex(glaze::KdlNode const&) -> std::expected<MultiplexConfig,std::string>;
@@ -165,9 +166,12 @@ namespace config {
                         result.record_size_limit=static_cast<std::uint16_t>(*limit);record_size=true;
                     } else if (field.name=="verify" && !verify && !field.tag && field.properties.empty() && field.children.empty() &&
                         field.arguments.size()==1 && !field.arguments[0].tag && std::holds_alternative<bool>(field.arguments[0].data) && std::get<bool>(field.arguments[0].data)) verify=true;
-                    else if (kind != "Hysteria2" || !parse_quic_ech_field(field, result.ech))
+                    else if ((kind != "Hysteria2" && kind != "AnyTLS" && (kind != "Trojan" || extra == "strict-tls13")) ||
+                             !parse_quic_ech_field(field, result.ech))
                         return error("unsupported or duplicate "+label+" TLS field");
                 }
+                if ((result.ech.dns || !result.ech.config_file.empty()) && result.fingerprint==TlsFingerprint::tls12)
+                    return error(label+" ECH requires TLS 1.3");
                 if (result.fingerprint==TlsFingerprint::tls12 &&
                     (kind=="Hysteria2" || extra=="strict-tls13" || result.key_exchange!=TlsKeyExchange::x25519 || record_size))
                     return error("TLS 1.2 fingerprint requires a Trojan or AnyTLS TCP outbound with X25519");
@@ -214,6 +218,7 @@ namespace config {
         return parse_password_tls_outbound(node,"Trojan",{});
     }
     auto validate_password_tls_outbound(PasswordTlsOutbound& config,Config const& result,std::string_view kind) -> std::expected<void,std::string> {
+        if (auto ok=validate_quic_ech(config.ech,config.server_name,result.dns.has_value()); !ok) return ok;
         if (!config.bootstrap_resolver) return {};
         if (!result.dns || !dns_hostname(config.host) || dns_ipv4(config.host))
             return error(std::string(kind)+" bootstrap-resolver requires a configured DNS server and domain host");

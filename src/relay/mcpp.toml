@@ -25,16 +25,16 @@ hy2-outbound = { implies = ["quic-ech", "protocols/hysteria2-client"], defines =
 shadowtls = { implies = ["protocols/shadowtls-runtime"], defines = ["NEXUS_ENABLE_SHADOWTLS"], sources = ["shadowtls.cpp", "shadowtls_inbound.cpp"] }
 tuic = { implies = ["quic-ech", "protocols/tuic", "protocols/stream-datagrams", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_TUIC"], sources = ["tuic.cpp", "tuic_host.cppm", "tuic_inbound.cpp"] }
 masque-outbound = { implies = ["quic-ech", "l3-mux", "protocols/masque-client", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_MASQUE_OUTBOUND"], sources = ["masque_ip_addresses.cppm", "masque_common.cppm", "masque_ip_tunnel.cppm", "masque_outbound.cpp"] }
-quic-ech = { implies = ["protocols/quic-tls"], sources = ["quic_ech.cppm", "quic_ech.cpp"] }
+quic-ech = { implies = ["protocols/tls"], sources = ["quic_ech.cppm", "quic_ech.cpp"] }
 transport-helpers = { implies = ["protocols/websocket", "protocols/grpc-tls"], sources = ["transport_helpers.cppm"] }
-grpc-pool = { implies = ["protocols/grpc-tls"], sources = ["grpc_pool.cppm"] }
+grpc-pool = { implies = ["quic-ech", "protocols/grpc-tls"], sources = ["grpc_pool.cppm"] }
 l3-mux = { sources = ["l3_mux.cppm"] }
 l3-tunnel = { implies = ["l3-mux"], sources = ["l3_tunnel.cppm"] }
 wireguard = { implies = ["l3-tunnel", "protocols/wireguard", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_WIREGUARD"], sources = ["wireguard_detour.cppm", "wireguard_outbound.cpp"] }
 openvpn = { implies = ["l3-tunnel", "protocols/openvpn", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_OPENVPN"], sources = ["openvpn_transport.cppm", "openvpn_outbound.cpp"] }
 openconnect = { implies = ["l3-tunnel", "protocols/openconnect"], defines = ["NEXUS_ENABLE_OPENCONNECT"], sources = ["openconnect_outbound.cpp"] }
 ssh = { implies = ["protocols/ssh"], defines = ["NEXUS_ENABLE_SSH"], sources = ["ssh.cpp"] }
-naive = { implies = ["protocols/naive"], defines = ["NEXUS_ENABLE_NAIVE"], sources = ["naive_inbound_helpers.cppm", "http_modern_h1.cppm", "modern_h3_connect_udp.cppm", "modern_h3_inbound.cppm", "naive_outbound_h3.cppm", "naive_outbound_h2.cppm", "naive.cpp", "naive_inbound.cpp", "http_modern_inbound.cpp"] }
+naive = { implies = ["quic-ech", "protocols/naive"], defines = ["NEXUS_ENABLE_NAIVE"], sources = ["naive_inbound_helpers.cppm", "http_modern_h1.cppm", "modern_h3_connect_udp.cppm", "modern_h3_inbound.cppm", "naive_outbound_h3.cppm", "naive_outbound_h2.cppm", "naive.cpp", "naive_inbound.cpp", "http_modern_inbound.cpp"] }
 mesh-outbound = { implies = ["l3-tunnel", "protocols/wireguard"], sources = ["mesh_outbound.cpp"] }
 dns-response = { implies = ["dns-shared", "dns-group-core/dns-response", "policy/dns-response"], defines = ["NEXUS_DNS_RESPONSE"], sources = ["dns_response_transport.cpp", "dns_response_program.cpp"] }
 dns-shared = { defines = ["NEXUS_DNS_SHARED"], sources = ["dns_backend_group.cppm"] }
@@ -45,7 +45,7 @@ test-dns-group = { implies = ["test-dns-group-base"], defines = ["NEXUS_TEST_DNS
 test-dns-group-refresh = { implies = ["test-dns-group-base"], defines = ["NEXUS_TEST_DNS_GROUP_REFRESH"] }
 test-dns-group-start-fault = { implies = ["test-dns-group-refresh"], defines = ["NEXUS_TEST_START_THROW", "NEXUS_TEST_GROUP_REFRESH_CONSTRUCT_FAULT"] }
 tproxy-udp = { implies = ["protocols/stream-datagrams"], defines = ["NEXUS_TPROXY_UDP"], sources = ["tproxy_reply_cache.cppm", "tproxy_udp.cpp"] }
-http-connect-tls = { implies = ["protocols/tls"], sources = ["tcp_proxy_tls.cpp", "!tcp_proxy.cpp", "probe_h2_tls.cpp", "!probe_h2.cpp"] }
+http-connect-tls = { implies = ["quic-ech", "protocols/tls"], sources = ["tcp_proxy_tls.cpp", "!tcp_proxy.cpp", "probe_h2_tls.cpp", "!probe_h2.cpp"] }
 request-standard = { sources = ["request_backend_default.cppm"] }
 fakeip = { implies = ["dns/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources = ["request_backend_fakeip.cppm", "!request_backend_default.cppm"] }
 test-fakeip = { implies = ["fakeip", "dns/test-fakeip"], defines = ["NEXUS_TEST_FAKEIP"] }
@@ -53,14 +53,14 @@ test-fakeip-lifetime = { implies = ["test-fakeip"], sources = ["../../tests/prox
 test-fakeip-abandon = { implies = ["test-fakeip"], defines = ["NEXUS_TEST_FAKEIP_ABANDON"] }
 io-uring = { implies = ["nexus.corosio-source/uring", "platform/io-uring"], defines = ["NEXUS_ENABLE_IO_URING"] }
 mux-inbound = { implies = ["protocols/stream-datagrams"], sources = ["mux_inbound.cppm"] }
-vless = { implies = ["mux-inbound", "protocols/vless", "protocols/stream-datagrams"], defines = ["NEXUS_ENABLE_VLESS"], sources = ["reality_tcp_server.cppm", "vless.cpp", "vless_inbound.cpp", "vless_mux.cppm"] }
+vless = { implies = ["quic-ech", "mux-inbound", "protocols/vless", "protocols/stream-datagrams"], defines = ["NEXUS_ENABLE_VLESS"], sources = ["reality_tcp_server.cppm", "vless.cpp", "vless_inbound.cpp", "vless_mux.cppm"] }
 grpc-vless = { implies = ["vless", "grpc-pool", "protocols/grpc-tls"], defines = ["NEXUS_ENABLE_GRPC_VLESS"], sources = ["grpc_vless.cpp", "grpc_vless_inbound.cpp"] }
 xhttp-vless = { implies = ["vless", "protocols/http2", "protocols/masque-client", "protocols/quic-retry"], defines = ["NEXUS_ENABLE_XHTTP_VLESS"], sources = ["xhttp_http1.cppm", "xhttp_http3_streams.cppm", "xhttp_http3_channel.cppm", "xhttp_http1_dial.cppm", "xhttp_http1_client.cppm", "xhttp_http2_client.cppm", "xhttp_http3_client.cppm", "xhttp_carrier.cppm", "xhttp_http2_pool.cppm", "xhttp_stream_client.cppm", "xhttp_inbound_types.cppm", "xhttp_http1_ingress.cppm", "xhttp_http2_server.cppm", "xhttp_http3_server.cppm", "xhttp_http3_listener.cppm", "xhttp_vless.cpp", "xhttp_vless_inbound.cpp"] }
 test-grpc-runtime = { implies = ["grpc-vless"], sources = ["../../tests/grpc_runtime_impl.cpp"] }
 test-grpc-startup = { implies = ["test-grpc-runtime"], sources = ["../../tests/grpc_startup_impl.cpp"] }
 test-grpc-lifecycle = { implies = ["test-grpc-runtime"], sources = ["../../tests/grpc_lifecycle_impl.cpp"] }
-trojan = { implies = ["mux-inbound", "transport-helpers", "grpc-pool", "protocols/trojan"], defines = ["NEXUS_ENABLE_TROJAN"], sources = ["trojan_grpc.cppm", "trojan.cpp", "trojan_inbound_common.cppm", "trojan_inbound_common.cpp", "trojan_inbound_grpc.cpp", "trojan_inbound.cpp"] }
-anytls = { implies = ["transport-helpers", "grpc-pool", "protocols/anytls"], defines = ["NEXUS_ENABLE_ANYTLS"], sources = ["anytls_grpc.cppm", "anytls.cpp", "anytls_inbound.cpp"] }
+trojan = { implies = ["quic-ech", "mux-inbound", "transport-helpers", "grpc-pool", "protocols/trojan"], defines = ["NEXUS_ENABLE_TROJAN"], sources = ["trojan_grpc.cppm", "trojan.cpp", "trojan_inbound_common.cppm", "trojan_inbound_common.cpp", "trojan_inbound_grpc.cpp", "trojan_inbound.cpp"] }
+anytls = { implies = ["quic-ech", "transport-helpers", "grpc-pool", "protocols/anytls"], defines = ["NEXUS_ENABLE_ANYTLS"], sources = ["anytls_grpc.cppm", "anytls.cpp", "anytls_inbound.cpp"] }
 ss2022 = { implies = ["mux-inbound", "protocols/ss2022", "protocols/packet-stream-socket"], defines = ["NEXUS_ENABLE_SS2022"], sources = ["shadowsocks_native.cppm", "shadowsocks.cpp", "shadowsocks_inbound.cpp"] }
 test-dns-lifetime = { implies = ["dns/test-dns-lifetime"], defines = ["NEXUS_TEST_DNS_LIFETIME"], sources = ["../../tests/proxy_dns_lifetime_impl.cpp"] }
 test-dns-owner = { defines = ["NEXUS_TEST_DNS_OWNER"] }

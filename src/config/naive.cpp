@@ -9,6 +9,8 @@ namespace config {
     auto dns_ipv4(std::string_view) -> std::optional<std::array<std::uint8_t, 4>>;
     auto dns_hostname(std::string_view) -> bool;
     auto parse_tcp_dial_option(glaze::KdlNode const&, TcpSocketOptions&) -> std::expected<bool, std::string>;
+    auto parse_quic_ech_field(glaze::KdlNode const&, QuicEchOptions&) -> bool;
+    auto validate_quic_ech(QuicEchOptions const&, std::string_view, bool) -> std::expected<void, std::string>;
 
     namespace {
         using namespace config::kdl;
@@ -51,12 +53,14 @@ namespace config {
                     fp_seen = true;
                 } else if (field.name == "verify" && !verify && boolean(field) == true) {
                     verify = true;
-                } else {
+                } else if (!parse_quic_ech_field(field, cfg.ech)) {
                     return error("unsupported or duplicate NaiveProxy TLS field");
                 }
             }
             if (!verify || cfg.server_name.empty())
                 return error("NaiveProxy requires authenticated TLS with server-name and verify #true");
+            if ((cfg.ech.dns || !cfg.ech.config_file.empty()) && cfg.fingerprint == TlsFingerprint::tls12)
+                return error("NaiveProxy ECH requires TLS 1.3");
             return {};
         }
 
@@ -296,6 +300,8 @@ namespace config {
                     return error("NaiveProxy domain-resolver references unknown DNS server or view: " +
                                  *entry.config.bootstrap_resolver);
             }
+            if (auto ok = validate_quic_ech(entry.config.ech, entry.config.server_name, config.dns.has_value()); !ok)
+                return ok;
         }
         return {};
     }

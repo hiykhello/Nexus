@@ -12,6 +12,53 @@ import socks5;
 import state.core;
 
 export namespace cli::run_detail {
+    struct ParsedProbeTarget {
+        socks5::Request target;
+        std::string request;
+        bool use_tls = false;
+        std::string host;
+    };
+
+    inline auto parse_probe_target(std::string_view url, config::OutboundProbeMode = config::OutboundProbeMode::http)
+        -> std::expected<ParsedProbeTarget, std::string> {
+        bool use_tls = url.starts_with("https://");
+        if (url.size() > 2048 || (!use_tls && !url.starts_with("http://")) ||
+            std::ranges::any_of(url, [](unsigned char c) {
+                return c <= 0x20 || c >= 0x7f || c == '#' || c == '\\';
+            })) return std::unexpected("invalid outbound probe URL");
+        url.remove_prefix(use_tls ? 8 : 7);
+        auto separator = url.find_first_of("/?");
+        auto authority = url.substr(0, separator);
+        if (authority.empty() || authority.contains('@')) return std::unexpected("invalid outbound probe authority");
+        auto dial = std::string(authority);
+        if (!authority.contains(':') || authority.ends_with(']')) dial += use_tls ? ":443" : ":80";
+        auto parsed = http::parse_destination_authority(dial);
+        if (parsed.status != http::ConnectStatus::accepted) return std::unexpected("invalid outbound probe address");
+
+        socks5::Request request;
+        request.status = socks5::Status::accepted;
+        request.port = parsed.port;
+        std::string host_name;
+        if (parsed.kind == http::HostKind::domain) {
+            request.address_type = 3;
+            request.address_length = static_cast<std::uint8_t>(parsed.host.size());
+            std::ranges::copy(parsed.host, request.address.begin());
+            host_name = std::string(parsed.host);
+        } else {
+            request.address_type = parsed.kind == http::HostKind::ipv4 ? 1 : 4;
+            request.address_length = parsed.kind == http::HostKind::ipv4 ? 4 : 16;
+            std::ranges::copy(parsed.address, request.address.begin());
+            auto end = authority.starts_with('[') ? authority.find(']') : authority.rfind(':');
+            host_name = authority.starts_with('[') && end != authority.npos ?
+                std::string(authority.substr(1, end - 1)) :
+                std::string(end != authority.npos ? authority.substr(0, end) : authority);
+        }
+        auto path = separator == url.npos ? std::string_view("/") : url.substr(separator);
+        auto wire = "HEAD " + std::string(path.starts_with('/') ? "" : "/") + std::string(path) +
+            " HTTP/1.1\r\nHost: " + std::string(authority) + "\r\nConnection: close\r\n\r\n";
+        return ParsedProbeTarget{request, std::move(wire), use_tls, std::move(host_name)};
+    }
+
     class OutboundGroupHealth {
         using Clock = std::chrono::steady_clock;
         struct Member {
@@ -44,51 +91,9 @@ export namespace cli::run_detail {
         std::optional<std::size_t> pending_outbound_;
         std::optional<std::uint64_t> network_generation_, round_network_generation_, pending_network_generation_;
 
-        struct ParsedProbeTarget {
-            socks5::Request target;
-            std::string request;
-            bool use_tls = false;
-            std::string host;
-        };
-
-        static auto target(std::string_view url, config::OutboundProbeMode)
+        static auto target(std::string_view url, config::OutboundProbeMode mode)
             -> std::expected<ParsedProbeTarget, std::string> {
-            bool use_tls = url.starts_with("https://");
-            if ((!use_tls && !url.starts_with("http://")) ||
-                std::ranges::any_of(url, [](unsigned char c) {
-                    return c <= 0x20 || c >= 0x7f || c == '#' || c == '\\';
-                })) return std::unexpected("invalid outbound probe URL");
-            url.remove_prefix(use_tls ? 8 : 7);
-            auto separator = url.find_first_of("/?");
-            auto authority = url.substr(0, separator);
-            if (authority.empty() || authority.contains('@')) return std::unexpected("invalid outbound probe authority");
-            auto dial = std::string(authority);
-            if (!authority.contains(':') || authority.ends_with(']')) dial += use_tls ? ":443" : ":80";
-            auto parsed = http::parse_destination_authority(dial);
-            if (parsed.status != http::ConnectStatus::accepted) return std::unexpected("invalid outbound probe address");
-
-            socks5::Request request;
-            request.status = socks5::Status::accepted;
-            request.port = parsed.port;
-            std::string host_name;
-            if (parsed.kind == http::HostKind::domain) {
-                request.address_type = 3;
-                request.address_length = static_cast<std::uint8_t>(parsed.host.size());
-                std::ranges::copy(parsed.host, request.address.begin());
-                host_name = std::string(parsed.host);
-            } else {
-                request.address_type = parsed.kind == http::HostKind::ipv4 ? 1 : 4;
-                request.address_length = parsed.kind == http::HostKind::ipv4 ? 4 : 16;
-                std::ranges::copy(parsed.address, request.address.begin());
-                auto end = authority.starts_with('[') ? authority.find(']') : authority.rfind(':');
-                host_name = authority.starts_with('[') && end != authority.npos ?
-                    std::string(authority.substr(1, end - 1)) :
-                    std::string(end != authority.npos ? authority.substr(0, end) : authority);
-            }
-            auto path = separator == url.npos ? std::string_view("/") : url.substr(separator);
-            auto wire = "HEAD " + std::string(path.starts_with('/') ? "" : "/") + std::string(path) +
-                " HTTP/1.1\r\nHost: " + std::string(authority) + "\r\nConnection: close\r\n\r\n";
-            return ParsedProbeTarget{request, std::move(wire), use_tls, std::move(host_name)};
+            return parse_probe_target(url, mode);
         }
 
         auto find_job(std::size_t group) noexcept -> Job* {
@@ -432,6 +437,8 @@ export namespace cli::run_detail {
         auto active = snapshots.load(std::memory_order_acquire);
         auto generation = active && !active->empty() ? active->front().generation + 1 : 1;
         auto dns = config.dns && active && !active->empty() ? active->front().dns : nullptr;
+        auto dns_runtime = active && !active->empty() ? active->front().dns_runtime : nullptr;
+        bool dns_disabled = active && !active->empty() && active->front().dns_disabled;
         auto previous = active && !active->empty() ? active->front().dns_transports : nullptr;
         auto transports = prepare_dns_transport_snapshot(config, generation, previous, replace_dns_policy);
         if (!transports) return std::unexpected(std::move(transports.error()));
@@ -445,6 +452,8 @@ export namespace cli::run_detail {
             if (!candidate) return std::unexpected(std::move(candidate.error()));
             candidate->dns = dns;
             candidate->dns_transports = *transports;
+            candidate->dns_runtime = dns_runtime;
+            candidate->dns_disabled = dns_disabled;
             candidate->generation = generation;
             next->push_back(std::move(*candidate));
         }

@@ -375,8 +375,21 @@ namespace config {
             return entry.tun && entry.tun->strict_route;
         });
         if (found == config.inbounds.end()) return {};
-        if (config.inbounds.size() != 1)
-            return std::unexpected("TUN strict-route requires a single inbound");
+        auto is_loopback_proxy = [](InboundConfig const& entry) noexcept -> bool {
+            if (entry.type != Inbound::mixed && entry.type != Inbound::socks5 && entry.type != Inbound::http)
+                return false;
+            if (entry.transparent_udp || !entry.unix_path.empty()) return false;
+            if (!entry.listen_address) return true;
+            auto const& addr = *entry.listen_address;
+            if (entry.listen_ipv6)
+                return std::ranges::all_of(std::span(addr).first(15), [](auto b) { return b == 0; }) && addr[15] == 1;
+            return addr[0] == 127;
+        };
+        for (auto it = config.inbounds.begin(); it != config.inbounds.end(); ++it) {
+            if (it == found) continue;
+            if (!is_loopback_proxy(*it))
+                return std::unexpected("TUN strict-route permits only loopback mixed, socks5 or http coexisting inbounds");
+        }
         auto& tun = *found->tun;
         constexpr std::uint32_t default_mark = 0x6e780001;
         auto mark = tun.socket_mark.value_or(default_mark);

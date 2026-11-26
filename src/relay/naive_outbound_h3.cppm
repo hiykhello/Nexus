@@ -8,6 +8,7 @@ import crypto;
 import naive.h3_connect;
 import naive.h3_client;
 import masque.client_profile;
+import quic.ech_config;
 import net.connection_pool;
 import net.packet_stream_socket;
 import net.unified_datagram;
@@ -23,6 +24,7 @@ import :tunnel_facade;
 import :route_interface;
 import :session_interface;
 import :internal_decls;
+import :quic_ech;
 
 namespace relay::naive_out_detail {
     template<class Op>
@@ -101,41 +103,39 @@ namespace relay::naive_out_detail {
 
     struct UnifiedH3Connector {
         using Socket = net::UnifiedDatagramSocket;
-        Session state;
-        corosio::io_context& context;
-        std::string host;
-        std::uint16_t port;
+        Session state; corosio::io_context& context;
+        std::string host; std::uint16_t port;
         std::optional<std::size_t> bootstrap;
         TcpSocketOptions const& options;
         TunnelFactory const* factory = nullptr;
+        quic_ech::Profile const& ech;
         std::optional<NaiveQuicDetour> detour;
-        DnsSlot dns;
+        DnsSlot dns, ech_dns;
+        std::optional<quic::EchConfig> ech_cfg;
         bool canceled = false;
 
         UnifiedH3Connector(corosio::io_context& ctx, OutboundContext const& env,
                            std::string h, std::uint16_t p, std::optional<std::size_t> bs,
-                           TcpSocketOptions const& opts, TunnelFactory const* lower)
+                           TcpSocketOptions const& opts, TunnelFactory const* lower, quic_ech::Profile const& e)
             : state(ctx), context(ctx), host(std::move(h)), port(p), bootstrap(bs),
-              options(opts), factory(lower) {
-            state.dns = env.dns;
-            state.local_dns = env.local_dns;
+              options(opts), factory(lower), ech(e) {
+            state.dns = env.dns; state.local_dns = env.local_dns;
             if (env.owner) state.route_snapshot = env.owner->current_route_snapshot();
-            state.tunnel_factories = env.factories;
-            state.direct_tcp_options = env.direct_options;
+            state.tunnel_factories = env.factories; state.direct_tcp_options = env.direct_options;
             if (factory) detour.emplace(state, ctx);
         }
         ~UnifiedH3Connector() { cancel(); }
-
+        auto resolved_ech() const noexcept -> quic::EchConfig const* { return ech_cfg ? &*ech_cfg : nullptr; }
         auto cancel() noexcept -> void {
-            canceled = true;
-            dns.cancel();
+            canceled = true; ech_dns.cancel(); dns.cancel();
             if (detour) detour->cancel();
             state.close();
         }
-
-        auto prepare(Socket& socket, Clock::time_point deadline)
-            -> capy::task<std::optional<corosio::endpoint>> {
+        auto prepare(Socket& socket, Clock::time_point deadline) -> capy::task<std::optional<corosio::endpoint>> {
             auto& resolver_session = detour ? detour->session : state;
+            auto loaded_ech = co_await ech.resolve(resolver_session, context, ech_dns, bootstrap, port, deadline, quic_ech::Transport::quic);
+            if (canceled || !loaded_ech) co_return std::nullopt;
+            ech_cfg = std::move(*loaded_ech);
             auto eps = bootstrap
                 ? co_await resolve_bootstrap_owned(resolver_session, context, dns, *bootstrap, host, port, deadline)
                 : co_await resolve_local_owned(resolver_session, context, dns, host, port, deadline);
@@ -146,11 +146,9 @@ namespace relay::naive_out_detail {
                 if (factory) {
                     if (co_await detour->connect(*factory, context, socket, peer, deadline) == TunnelConnectResult::connected)
                         co_return peer;
-                    detour->cancel();
-                    break;
+                    detour->cancel(); break;
                 }
-                if (!socket.prepare_physical(peer, &options.binding, deadline))
-                    co_return peer;
+                if (!socket.prepare_physical(peer, &options.binding, deadline)) co_return peer;
             }
             co_return std::nullopt;
         }
@@ -160,25 +158,21 @@ namespace relay::naive_out_detail {
         using Conn = naive::OwnedH3ConnectClient<UnifiedH3Connector>;
         using Pool = net::ConnectionPool<Conn, true>;
 
-        OutboundContext environment;
-        std::string host;
-        std::uint16_t port;
+        OutboundContext environment; std::string host; std::uint16_t port;
         std::optional<std::size_t> bootstrap;
         masque::ClientProfile const& client_profile;
-        TcpSocketOptions options;
-        TunnelFactory const* detour;
-        bool enable_datagrams;
+        quic_ech::Profile const& ech;
+        TcpSocketOptions options; TunnelFactory const* detour; bool enable_datagrams;
         Pool pool;
-        capy::async_mutex starting;
-        capy::async_event stop_ev_;
+        capy::async_mutex starting; capy::async_event stop_ev_;
         Conn* starting_conn = nullptr;
         bool stopped = false, reaper_active_ = false;
 
         H3Worker(OutboundContext const& env, std::string h, std::uint16_t p,
-                 std::optional<std::size_t> bs, masque::ClientProfile const& mp,
+                 std::optional<std::size_t> bs, masque::ClientProfile const& mp, quic_ech::Profile const& e,
                  TcpSocketOptions opts, TunnelFactory const* lower, std::size_t max_sessions, bool dgram)
             : environment(env), host(std::move(h)), port(p), bootstrap(bs),
-              client_profile(mp), options(std::move(opts)), detour(lower), enable_datagrams(dgram),
+              client_profile(mp), ech(e), options(std::move(opts)), detour(lower), enable_datagrams(dgram),
               pool(net::PoolOptions{.max_sessions = max_sessions, .min_idle = 0,
                                     .idle_timeout = std::chrono::seconds(120)}) {}
 
@@ -235,7 +229,7 @@ namespace relay::naive_out_detail {
             auto slot = pool.reserve();
             if (!slot) co_return AcquireResult{.error = TunnelConnectResult::failed};
             auto conn = std::make_unique<Conn>(client_profile, enable_datagrams, environment.context,
-                environment, host, port, bootstrap, options, detour);
+                environment, host, port, bootstrap, options, detour, ech);
             struct Reg {
                 H3Worker& w;
                 Reg(H3Worker& owner, Conn* c) noexcept : w(owner) { w.starting_conn = c; }
@@ -266,6 +260,7 @@ namespace relay::naive_out_detail {
         std::size_t max_sessions = 8;
         TcpSocketOptions options;
         std::unique_ptr<masque::ClientProfile> client_profile;
+        quic_ech::Profile ech;
         std::mutex mutex;
         std::array<std::unique_ptr<H3Worker>, 17> physical;
         std::array<std::unique_ptr<H3Worker>, 17> layered;
@@ -274,11 +269,11 @@ namespace relay::naive_out_detail {
                   std::vector<std::pair<std::string, std::string>> eh,
                   bool pad, std::optional<std::size_t> bs, std::uint32_t tms,
                   std::size_t ms, TcpSocketOptions opts,
-                  std::unique_ptr<masque::ClientProfile> cp)
+                  std::unique_ptr<masque::ClientProfile> cp, quic_ech::Profile ech_in = {})
             : host(std::move(h)), port(p), auth_header(std::move(auth)),
               extra_headers(std::move(eh)), padding(pad), bootstrap(bs),
               timeout_ms(tms), max_sessions(ms), options(std::move(opts)),
-              client_profile(std::move(cp)) {}
+              client_profile(std::move(cp)), ech(std::move(ech_in)) {}
 
         ~H3Profile() {
             if (!auth_header.empty())

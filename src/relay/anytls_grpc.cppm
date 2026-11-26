@@ -30,6 +30,7 @@ import :session_interface;
 import :internal_decls;
 import :transport_helpers;
 import :grpc_pool;
+import :quic_ech;
 
 namespace relay::anytls_grpc {
     namespace a = anytls;
@@ -50,6 +51,7 @@ namespace relay::anytls_grpc {
         TcpSocketOptions options;
         a::PoolOptions pool;
         bool fast_open;
+        quic_ech::Profile ech;
         std::mutex mutex;
         std::array<std::unique_ptr<Worker>, 17> physical;
         std::array<std::unique_ptr<Worker>, 17> layered;
@@ -58,7 +60,7 @@ namespace relay::anytls_grpc {
     };
 
     inline auto endpoint_spec(Profile const& p) noexcept -> grpc_pool::EndpointSpec {
-        return {p.host, p.port, p.bootstrap, p.tls, p.request, p.response, p.limits, p.max_sessions};
+        return {p.host, p.port, p.bootstrap, p.tls, p.request, p.response, p.limits, p.max_sessions, &p.ech};
     }
 
     class GrpcAnyTlsConnection {

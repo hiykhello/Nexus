@@ -5,6 +5,7 @@ import glaze;
 
 namespace config {
     auto parse_tcp_dial_option(kdl::Node const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
+    auto parse_quic_ech_field(kdl::Node const&,QuicEchOptions&) -> bool;
 
     namespace {
         auto parse_http_proxy_tls(kdl::Node const& node) -> std::optional<TcpProxyTls> {
@@ -30,7 +31,7 @@ namespace config {
                 }
                 else if (field.name=="verify" && boolean(field).value_or(false))
                     verified=true;
-                else return std::nullopt;
+                else if (!parse_quic_ech_field(field,result.ech)) return std::nullopt;
             }
             if (!verified || result.server_name.empty()) return std::nullopt;
             return result;
@@ -130,6 +131,9 @@ namespace config {
             }
         }
         if (!result.port) return error("TCP proxy outbound requires a server");
+        if (result.tls && (result.tls->ech.dns || !result.tls->ech.config_file.empty()) &&
+            result.tls->fingerprint==TlsFingerprint::tls12)
+            return error("HTTP CONNECT ECH requires TLS 1.3");
         if (result.http_version!=HttpProxyVersion::h1 && !result.tls)
             return error("HTTP/2 and HTTP/3 proxy outbounds require TLS");
         if (protocol==TcpProxyProtocol::http_connect && result.udp && result.http_version!=HttpProxyVersion::h3)

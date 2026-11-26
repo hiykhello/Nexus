@@ -52,8 +52,11 @@ namespace relay {
         if (snapshot->dns_transports) {
             for (auto const& outbound : snapshot->dns_transports->outbounds)
                 if (outbound && matches_outbound(*outbound)) return true;
-        } else if (dns && std::ranges::any_of(dns->routing.servers,&DnsServer::proxy_detour)) {
-            return true;
+        } else if (!snapshot->dns_disabled) {
+            auto const* active_routing = snapshot->dns_runtime ? &snapshot->dns_runtime->routing :
+                (dns ? &dns->routing : nullptr);
+            if (active_routing && std::ranges::any_of(active_routing->servers, &DnsServer::proxy_detour))
+                return true;
         }
         if (auto const& runtime=owner->get_runtime_mode()) {
             auto mode=runtime->mode.load(std::memory_order_acquire);

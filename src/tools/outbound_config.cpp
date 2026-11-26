@@ -64,7 +64,7 @@ namespace cli {
             auto const& outbound=named.config;
             std::optional<relay::Reality> reality;
             if (outbound.reality) reality=relay::Reality{outbound.reality->public_key,outbound.reality->short_id};
-            auto prepared=server.add_vless(outbound.host,outbound.port,outbound.uuid_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),outbound.bootstrap_index,reality,outbound.vision,outbound.connect_timeout_ms,outbound.tcp_options,outbound.transport,outbound.grpc,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.packetaddr,outbound.fixed_udp,outbound.xhttp,outbound.certificate_sha256);
+            auto prepared=server.add_vless(outbound.host,outbound.port,outbound.uuid_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),outbound.bootstrap_index,reality,outbound.vision,outbound.connect_timeout_ms,outbound.tcp_options,outbound.transport,outbound.grpc,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.packetaddr,outbound.fixed_udp,outbound.xhttp,outbound.certificate_sha256,outbound.ech);
             if (!prepared) { return std::unexpected("configuration: "+prepared.error()); }
             if (outbound.multiplex && outbound.multiplex->enabled) {
                 if (auto wrapped=server.wrap_outbound_multiplex(*prepared,*outbound.multiplex); !wrapped)
@@ -102,7 +102,7 @@ namespace cli {
         for (auto const& named:config.trojan_outbounds) {
             auto const& outbound=named.config;
             auto prepared=server.add_trojan(outbound.host,outbound.port,outbound.password_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),
-                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc);
+                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc,outbound.ech);
             if (!prepared) { return std::unexpected("Trojan configuration: "+prepared.error()); }
             if (outbound.multiplex && outbound.multiplex->enabled) {
                 if (auto wrapped=server.wrap_outbound_multiplex(*prepared,*outbound.multiplex); !wrapped)
@@ -114,7 +114,7 @@ namespace cli {
             auto const& options=named.config.pool;
             relay::AnyTlsOptions pool{options.max_sessions,options.min_idle,std::chrono::milliseconds(options.idle_timeout_ms),std::chrono::milliseconds(options.check_interval_ms)};
             auto prepared=server.add_anytls(outbound.host,outbound.port,outbound.password_file,outbound.server_name,outbound.ca_file,to_kx(outbound.key_exchange),
-                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,pool,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc);
+                outbound.bootstrap_index,outbound.connect_timeout_ms,outbound.tcp_options,pool,outbound.tcp_fast_open.value_or(false),outbound.fingerprint,outbound.record_size_limit,outbound.certificate_sha256,outbound.transport,outbound.grpc,outbound.ech);
             if (!prepared) { return std::unexpected("AnyTLS configuration: "+prepared.error()); }
         }
         for (auto const& named:config.hysteria2_outbounds) {

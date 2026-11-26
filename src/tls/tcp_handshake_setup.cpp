@@ -35,15 +35,16 @@ namespace tls {
 
     auto ClientHandshakeIo::create(ClientHello hello,std::span<std::uint16_t const> groups,
         std::span<crypto::Bytes const> anchors,PeerNameKind kind,std::span<std::uint8_t const> peer_name,
-        std::int64_t verification_time,std::uint64_t now,std::uint64_t deadline,std::span<std::uint8_t const> target,std::span<std::array<std::uint8_t,32> const> pins)
+        std::int64_t verification_time,std::uint64_t now,std::uint64_t deadline,std::span<std::uint8_t const> target,std::span<std::array<std::uint8_t,32> const> pins,quic::EchConfig const* ech)
         -> std::expected<ClientHandshakeIo,ClientHandshakeIoError> {
         using Error=ClientHandshakeIoError;
         std::vector<std::span<std::uint8_t const>> trust;
         trust.reserve(anchors.size());
         for (auto const& anchor:anchors) trust.emplace_back(anchor);
         auto legacy=offers_legacy(hello);
+        if (ech && (legacy || kind!=PeerNameKind::dns)) return std::unexpected(Error::invalid_argument);
         std::unique_ptr<PskClientPolicy<>> recovery;
-        if (!target.empty() && pins.empty()) {
+        if (!ech && !target.empty() && pins.empty()) {
             crypto::Bytes scope{target.begin(),target.end()};
             if (auto* alpn=hello.extension(16)) scope.append_range(alpn->data);
             auto binding=make_ticket_binding(hello,trust,kind,peer_name,{},scope);
@@ -72,7 +73,8 @@ namespace tls {
             if (!policy) return std::unexpected(Error::invalid_argument);
             recovery=std::make_unique<PskClientPolicy<>>(std::move(*policy));
         }
-        auto session=recovery ? ClientSessionHandshake::create(std::move(hello),groups,trust,kind,peer_name,verification_time,*recovery) :
+        auto session=ech ? ClientSessionHandshake::create_ech(std::move(hello),groups,trust,kind,peer_name,verification_time,*ech) :
+            recovery ? ClientSessionHandshake::create(std::move(hello),groups,trust,kind,peer_name,verification_time,*recovery) :
             ClientSessionHandshake::create(std::move(hello),groups,trust,kind,peer_name,verification_time);
         if (!session) return std::unexpected(session.error()==ClientSessionHandshakeError::crypto_error ? Error::crypto_error : Error::invalid_argument);
         session->set_certificate_pins(pins);

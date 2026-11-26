@@ -309,7 +309,7 @@ namespace relay {
         std::optional<std::uint8_t> dscp = {}, std::uint32_t index = 0) noexcept -> rules::IngressMetadata;
 
     inline auto source_endpoint(Session& session, rules::RouteMatcher const& policy) -> std::optional<net::UdpEndpoint> {
-        return source_endpoint(session, policy.needs_source() || (session.dns && session.dns->context.source));
+        return source_endpoint(session, policy.needs_source() || session.dns_requirements().source);
     }
 
     // The root task owns the session. Capy's trampoline invokes this handler

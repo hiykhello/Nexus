@@ -37,6 +37,8 @@ import net.stream_relay;
 import net.tcp_connect;
 import net.tcp_fast_open_stream;
 import net.unified_stream;
+import quic.ech_config;
+import :quic_ech;
 #ifdef NEXUS_TEST_TUNNEL_PROFILE
 extern "C" void nexus_test_tunnel_profile_created();
 extern "C" void nexus_test_tunnel_profile_released();
@@ -80,11 +82,12 @@ namespace relay {
         }
         struct OwnedProfile {
             Profile value;
+            quic_ech::Profile ech;
             std::optional<std::size_t> bootstrap; std::uint32_t timeout_ms;
             TcpSocketOptions tcp_options;
             std::optional<io::endpoint> static_endpoint;
-            OwnedProfile(Profile&& profile, std::optional<std::size_t> bootstrap_, std::uint32_t timeout, TcpSocketOptions options = {})
-                : value(std::move(profile)), bootstrap(bootstrap_), timeout_ms(timeout), tcp_options(options),
+            OwnedProfile(Profile&& profile, std::optional<std::size_t> bootstrap_, std::uint32_t timeout, TcpSocketOptions options = {}, quic_ech::Profile ech_ = {})
+                : value(std::move(profile)), ech(std::move(ech_)), bootstrap(bootstrap_), timeout_ms(timeout), tcp_options(options),
                   static_endpoint(bootstrap_ ? std::nullopt : parse_static_endpoint(value.host, value.port)) {
 #ifdef NEXUS_TEST_TUNNEL_PROFILE
                 nexus_test_tunnel_profile_created();
@@ -112,8 +115,9 @@ namespace relay {
             Session& session_;
             io::io_context& context_;
             Profile const& profile_;
+            quic_ech::Profile const* ech_ = nullptr;
             Mode mode_;
-            DnsSlot local_dns_;
+            DnsSlot local_dns_, ech_dns_;
             std::optional<std::size_t> bootstrap_;
             std::optional<io::endpoint> static_endpoint_;
             std::uint32_t timeout_ms_;
@@ -131,13 +135,13 @@ namespace relay {
             std::unique_ptr<VisionRelay> vision_relay_;
             std::stop_source stop_;
 
-            auto make_handshake(Clock::time_point deadline) -> std::expected<tls::ClientHandshakeIo, TunnelConnectResult> {
+            auto make_handshake(Clock::time_point deadline, quic::EchConfig const* ech = nullptr) -> std::expected<tls::ClientHandshakeIo, TunnelConnectResult> {
                 auto deadline_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline.time_since_epoch()).count();
                 auto now = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
                 auto seconds = platform::calibrated_wall_seconds();
                 if (now < 0 || seconds < 0) return std::unexpected(TunnelConnectResult::failed);
                 if (deadline_ms <= now) return std::unexpected(TunnelConnectResult::timeout);
-                auto hs = profile_.handshake(static_cast<std::uint64_t>(now), static_cast<std::uint64_t>(deadline_ms), seconds);
+                auto hs = profile_.handshake(static_cast<std::uint64_t>(now), static_cast<std::uint64_t>(deadline_ms), seconds, {}, ech);
                 if (!hs) return std::unexpected(mode_ == Mode::layered ? TunnelConnectResult::failed : TunnelConnectResult::retryable);
                 return std::move(*hs);
             }
@@ -145,6 +149,14 @@ namespace relay {
                 client_.reset(); owner_.reset(); socket_.reset(); tcp_.reset(); fast_.reset();
             }
             auto connect_tls(Clock::time_point deadline) -> capy::task<TunnelConnectResult> {
+                std::optional<quic::EchConfig> ech;
+                if (ech_) {
+                    auto resolved_ech = co_await ech_->resolve(session_, context_, ech_dns_, bootstrap_, profile_.port, deadline, quic_ech::Transport::tcp);
+                    if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
+                    if (!resolved_ech) co_return Clock::now() >= deadline ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
+                    ech = std::move(*resolved_ech);
+                }
+                auto const* ech_ptr = ech ? &*ech : nullptr;
                 if (mode_ == Mode::layered) {
                     if (!lower_.tunnel && !lower_.factory) co_return TunnelConnectResult::failed;
                     socket_.bind(lower_stream_);
@@ -154,7 +166,7 @@ namespace relay {
                             auto connected = co_await lower_.connect(session_, deadline, candidates);
                             if (connected != TunnelConnectResult::connected) co_return connected;
                         }
-                        auto hs = make_handshake(deadline);
+                        auto hs = make_handshake(deadline, ech_ptr);
                         if (!hs) co_return hs.error();
                         owner_ = std::make_unique<tls::detail::ClientConnection<Socket>>(socket_, std::move(*hs));
                         auto connected = co_await owner_->start();
@@ -193,7 +205,7 @@ namespace relay {
                     candidates = *resolved;
                 }
                 if (mode_ == Mode::fast_open) {
-                    auto hs = make_handshake(deadline);
+                    auto hs = make_handshake(deadline, ech_ptr);
                     if (!hs) co_return TunnelConnectResult::failed;
                     fast_ = std::make_unique<net::FastOpenStream>(context_, std::move(*resolved), deadline, tcp_options_);
                     socket_.bind(*fast_);
@@ -208,7 +220,7 @@ namespace relay {
                 for (auto const& endpoint : candidates) {
                     if (stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                     if (!valid_destination(endpoint)) continue;
-                    auto hs = make_handshake(deadline);
+                    auto hs = make_handshake(deadline, ech_ptr);
                     if (!hs) co_return hs.error();
                     tcp_.emplace(context_);
                     bool prep_failed = false; std::error_code error;
@@ -319,23 +331,25 @@ namespace relay {
         public:
             VlessTunnel(Session& session, io::io_context& context, Profile const& profile,
                         std::optional<std::size_t> bootstrap, std::uint32_t timeout_ms, bool relay_local,
-                        TcpSocketOptions const& options, bool fast_open, std::optional<io::endpoint> static_endpoint = {})
-                : session_(session), context_(context), profile_(profile),
+                        TcpSocketOptions const& options, bool fast_open, std::optional<io::endpoint> static_endpoint = {},
+                        quic_ech::Profile const* ech = nullptr)
+                : session_(session), context_(context), profile_(profile), ech_(ech),
                   mode_(fast_open ? Mode::fast_open : Mode::physical),
                   bootstrap_(bootstrap), static_endpoint_(static_endpoint), timeout_ms_(timeout_ms), relay_local_(relay_local), tcp_options_(options) {}
             VlessTunnel(Session& session, pro::proxy<TunnelFacade>&& lower, Profile const& profile, std::uint32_t timeout_ms)
                 : session_(session), context_(static_cast<io::io_context&>(session.client.context())), profile_(profile), mode_(Mode::layered),
                   timeout_ms_(timeout_ms), relay_local_(true), lower_{std::move(lower)} {}
             VlessTunnel(Session& session, io::io_context& context, TunnelFactory const& detour, Profile const& profile,
-                        std::optional<std::size_t> bootstrap, std::uint32_t timeout_ms, bool relay_local)
-                : session_(session), context_(context), profile_(profile), mode_(Mode::layered),
+                        std::optional<std::size_t> bootstrap, std::uint32_t timeout_ms, bool relay_local,
+                        quic_ech::Profile const* ech = nullptr)
+                : session_(session), context_(context), profile_(profile), ech_(ech), mode_(Mode::layered),
                   bootstrap_(bootstrap), timeout_ms_(timeout_ms), relay_local_(relay_local),
                   lower_{{}, &context, &detour, profile.host, profile.port, bootstrap} {}
 #ifdef NEXUS_TEST_TUNNEL_PROFILE
             ~VlessTunnel() { nexus_test_tunnel_profile_destroy(); }
 #endif
             auto cancel() noexcept -> void {
-                stop_.request_stop(); local_dns_.cancel();
+                stop_.request_stop(); local_dns_.cancel(); ech_dns_.cancel();
                 if (relay_) relay_->cancel();
                 if (vision_relay_) vision_relay_->cancel();
                 if (client_) client_->cancel();
@@ -426,7 +440,7 @@ namespace relay {
     }
 
     auto make_vless_factory(std::string_view host, std::uint16_t port, std::string_view uuid_file,
-                            std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms, TcpSocketOptions tcp_options, std::optional<HttpUpgradeTransport> transport, std::optional<GrpcTransport> grpc, bool fast_open, TlsFingerprint fingerprint, std::optional<std::uint16_t> record_size_limit, bool packetaddr, bool fixed_udp, std::span<std::array<std::uint8_t, 32> const> pins)
+                            std::string_view server_name, std::string_view ca_file, TlsKeyExchange key_exchange, std::optional<std::size_t> bootstrap, std::optional<Reality> reality, bool vision, std::uint32_t timeout_ms, TcpSocketOptions tcp_options, std::optional<HttpUpgradeTransport> transport, std::optional<GrpcTransport> grpc, bool fast_open, TlsFingerprint fingerprint, std::optional<std::uint16_t> record_size_limit, bool packetaddr, bool fixed_udp, std::span<std::array<std::uint8_t, 32> const> pins, QuicEchOptions const& ech, bool dns_available)
         -> std::expected<TunnelFactory, std::string> {
         if (packetaddr && fixed_udp) return std::unexpected("conflicting VLESS packet encodings");
         if ((packetaddr || fixed_udp) && (vision || grpc))
@@ -435,11 +449,15 @@ namespace relay {
             if (transport || vision || reality) return std::unexpected("gRPC requires ordinary VLESS TLS and one transport");
             if (fast_open) grpc->tcp_fast_open = true;
 #ifdef NEXUS_ENABLE_GRPC_VLESS
-            return make_vless_grpc_factory(host, port, uuid_file, server_name, ca_file, key_exchange, bootstrap, timeout_ms, tcp_options, std::move(*grpc), fingerprint, record_size_limit, pins);
+            return make_vless_grpc_factory(host, port, uuid_file, server_name, ca_file, key_exchange, bootstrap, timeout_ms, tcp_options, std::move(*grpc), fingerprint, record_size_limit, pins, ech, dns_available);
 #else
             return std::unexpected("gRPC VLESS transport is not available in this build");
 #endif
         }
+        if ((ech.dns || !ech.config_file.empty()) && (reality || fingerprint == TlsFingerprint::tls12))
+            return std::unexpected("VLESS ECH requires ordinary TLS 1.3");
+        auto ech_profile = quic_ech::Profile::load(ech, server_name, dns_available);
+        if (!ech_profile) return std::unexpected(ech_profile.error());
         if (!timeout_ms || timeout_ms > 3600000) return std::unexpected("invalid connect timeout");
         if (!tcp_options.valid()) return std::unexpected("invalid TCP socket options");
         if (key_exchange != TlsKeyExchange::x25519 && key_exchange != TlsKeyExchange::x25519_mlkem768 && key_exchange != TlsKeyExchange::x25519_mlkem768_only)
@@ -452,17 +470,17 @@ namespace relay {
         config.packetaddr = packetaddr; config.fixed_udp = fixed_udp;
         auto profile = Profile::load(config);
         if (!profile) return std::unexpected(profile.error());
-        auto shared = std::make_unique<OwnedProfile>(std::move(*profile), bootstrap, timeout_ms, tcp_options);
+        auto shared = std::make_unique<OwnedProfile>(std::move(*profile), bootstrap, timeout_ms, tcp_options, std::move(*ech_profile));
         auto* layer_profile = shared.get();
         auto factory = TunnelFactory{[profile = std::move(shared), fast_open](Session& session, io::io_context& context, bool relay_local, TcpSocketOptions const* inherited) -> pro::proxy<TunnelFacade> {
             if (profile->timeout_ms > 10000)
                 session.handshake_deadline = std::max(session.handshake_deadline, session.started + std::chrono::milliseconds(profile->timeout_ms) + std::chrono::seconds(1));
             bool tfo = inherited ? inherited->tcp_fast_open.value_or(false) : fast_open;
             return pro::make_proxy<TunnelFacade, VlessTunnel>(session, context, profile->value, profile->bootstrap,
-                profile->timeout_ms, relay_local, inherited ? *inherited : profile->tcp_options, tfo, profile->static_endpoint);
+                profile->timeout_ms, relay_local, inherited ? *inherited : profile->tcp_options, tfo, profile->static_endpoint, &profile->ech);
         }, timeout_ms, [layer_profile](Session& session, io::io_context& context, TunnelFactory const& detour, bool relay_local) {
             return pro::make_proxy<TunnelFacade, VlessTunnel>(session, context, detour, layer_profile->value,
-                layer_profile->bootstrap, layer_profile->timeout_ms, relay_local);
+                layer_profile->bootstrap, layer_profile->timeout_ms, relay_local, &layer_profile->ech);
         }, std::nullopt, tcp_options.configured() || fast_open};
         factory.packet_dual_family = packetaddr;
         factory.packet_fixed_peer = fixed_udp;

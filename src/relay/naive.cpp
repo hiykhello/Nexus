@@ -44,6 +44,7 @@ import tls.connector;
 import tls.encrypted_extensions;
 import capy;
 import corosio;
+import :quic_ech;
 import :naive_outbound_h3;
 import :naive_outbound_h2;
 
@@ -146,7 +147,7 @@ namespace relay::naive_out_detail {
                 auto& arr = detour ? raw->layered : raw->physical;
                 auto it = std::ranges::find_if(arr, [](auto const& x) { return !x; });
                 if (it == arr.end()) return false;
-                auto w = std::make_unique<H3Worker>(env, raw->host, raw->port, raw->bootstrap, *raw->client_profile,
+                auto w = std::make_unique<H3Worker>(env, raw->host, raw->port, raw->bootstrap, *raw->client_profile, raw->ech,
                     opts, detour, raw->max_sessions, enable_datagrams);
                 w->start_reaper();
                 *it = std::move(w);
@@ -187,8 +188,12 @@ namespace relay::naive_out_detail {
 }
 
 namespace relay {
-    auto make_naive_factory(config::NaiveOutbound const& cfg) -> std::expected<TunnelFactory, std::string> {
+    auto make_naive_factory(config::NaiveOutbound const& cfg, bool dns_available) -> std::expected<TunnelFactory, std::string> {
         using namespace naive_out_detail;
+        if ((cfg.ech.dns || !cfg.ech.config_file.empty()) && cfg.fingerprint == config::TlsFingerprint::tls12)
+            return std::unexpected("NaiveProxy ECH requires TLS 1.3");
+        auto ech = quic_ech::Profile::load(cfg.ech, cfg.server_name, dns_available);
+        if (!ech) return std::unexpected(ech.error());
         auto pw = rulefile::read_password_file(cfg.password_file);
         if (!pw) return std::unexpected("NaiveProxy password-file: " + pw.error());
         struct Wipe {
@@ -210,7 +215,7 @@ namespace relay {
             auto mp = make_h3_client_profile(*tls_id, cfg.server_name, cfg.port, opts, *fp);
             auto owner = std::make_unique<H3Profile>(
                 cfg.host, cfg.port, std::move(auth), cfg.extra_headers, cfg.padding,
-                cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(mp));
+                cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(mp), std::move(*ech));
             return make_h3_factory(std::move(owner), cfg.connect_timeout_ms, cfg.tcp_options.configured(), false);
         }
         auto shaped = tls::ShapedClientProfile::create(std::move(*tls_id), *fp);
@@ -218,13 +223,17 @@ namespace relay {
         bool fo = cfg.tcp_fast_open.value_or(cfg.tcp_options.tcp_fast_open.value_or(false));
         auto owner = std::make_unique<H2Profile>(
             cfg.host, cfg.port, std::move(auth), cfg.extra_headers, cfg.padding, false, fo,
-            cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(*shaped));
+            cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(*shaped), std::move(*ech));
         return make_h2_factory(std::move(owner), cfg.connect_timeout_ms, cfg.tcp_options.configured() || fo, fo);
     }
 
-    auto make_http_modern_factory(config::TcpProxyOutbound const& cfg) -> std::expected<TunnelFactory, std::string> {
+    auto make_http_modern_factory(config::TcpProxyOutbound const& cfg, bool dns_available) -> std::expected<TunnelFactory, std::string> {
         using namespace naive_out_detail;
         if (!cfg.tls) return std::unexpected("HTTP/2 and HTTP/3 proxy outbounds require TLS");
+        if ((cfg.tls->ech.dns || !cfg.tls->ech.config_file.empty()) && cfg.tls->fingerprint == config::TlsFingerprint::tls12)
+            return std::unexpected("HTTP CONNECT ECH requires TLS 1.3");
+        auto ech = quic_ech::Profile::load(cfg.tls->ech, cfg.tls->server_name, dns_available);
+        if (!ech) return std::unexpected(ech.error());
         std::string auth;
         if (!cfg.username.empty()) {
             auto pw = rulefile::read_password_file(cfg.password_file);
@@ -247,7 +256,7 @@ namespace relay {
             auto mp = make_h3_client_profile(*tls_id, cfg.tls->server_name, cfg.port, opts, *fp);
             auto owner = std::make_unique<H3Profile>(
                 cfg.host, cfg.port, std::move(auth), std::vector<std::pair<std::string, std::string>>{}, false,
-                cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(mp));
+                cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(mp), std::move(*ech));
             return make_h3_factory(std::move(owner), cfg.connect_timeout_ms, cfg.tcp_options.configured(), cfg.udp);
         }
         auto shaped = tls::ShapedClientProfile::create(std::move(*tls_id), *fp);
@@ -256,7 +265,7 @@ namespace relay {
         auto owner = std::make_unique<H2Profile>(
             cfg.host, cfg.port, std::move(auth), std::vector<std::pair<std::string, std::string>>{}, false,
             cfg.http_version == config::HttpProxyVersion::auto_h2, fo,
-            cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(*shaped));
+            cfg.bootstrap_index, cfg.connect_timeout_ms, cfg.max_sessions, cfg.tcp_options, std::move(*shaped), std::move(*ech));
         return make_h2_factory(std::move(owner), cfg.connect_timeout_ms, cfg.tcp_options.configured(), fo);
     }
 }

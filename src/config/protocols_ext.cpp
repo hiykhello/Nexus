@@ -433,6 +433,8 @@ namespace config {
             if (name_exists(entry.name,config.tcp_proxy_outbounds,index)) return error("outbound names must be unique");
             if (!check_ref(ref_ctx,entry.name)) return error("TCP proxy must be referenced by routing or a detour");
             if (auto checked=check_boot(entry.config,"TCP proxy");!checked) return checked;
+            if (entry.config.tls)
+                if (auto ok = validate_quic_ech(entry.config.tls->ech, entry.config.tls->server_name, config.dns.has_value()); !ok) return ok;
         }
         for (std::size_t i = 0; i < config.shadowtls_outbounds.size(); ++i) {
             auto const& name = config.shadowtls_outbounds[i].name;

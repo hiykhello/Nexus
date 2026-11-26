@@ -198,7 +198,7 @@ export namespace config {
         std::optional<bool> tcp_fast_open;
         TlsFingerprint fingerprint=TlsFingerprint::native;
         std::optional<std::uint16_t> record_size_limit;
-        bool packetaddr=false,fixed_udp=false; std::optional<MultiplexConfig> multiplex;
+        bool packetaddr=false,fixed_udp=false; std::optional<MultiplexConfig> multiplex; QuicEchOptions ech;
     };
     struct NamedVlessOutbound { std::string name; VlessOutbound config; };
     struct ShadowsocksOutbound {
@@ -214,10 +214,6 @@ export namespace config {
         std::vector<std::string> identity_key_files; std::optional<MultiplexConfig> multiplex;
     };
     struct NamedShadowsocksOutbound { std::string name; ShadowsocksOutbound config; };
-    struct QuicEchOptions {
-        std::string config_file;
-        bool dns = false;
-    };
     struct PasswordTlsOutbound {
         std::string host; std::uint16_t port=0;
         std::string password_file,server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256;
@@ -306,7 +302,7 @@ export namespace config {
     struct NamedWireGuardOutbound {std::string name;WireGuardOutbound config;};
     struct NamedTailscaleOutbound { std::string name, endpoint_file; };
     enum class TcpProxyProtocol { socks5, http_connect, socks4, socks4a };
-    struct TcpProxyTls { std::string server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256; TlsFingerprint fingerprint = TlsFingerprint::native; };
+    struct TcpProxyTls { std::string server_name,ca_file; std::vector<std::array<std::uint8_t,32>> certificate_sha256; TlsFingerprint fingerprint = TlsFingerprint::native; QuicEchOptions ech{}; };
     struct TcpProxyOutbound {
         TcpProxyProtocol protocol=TcpProxyProtocol::socks5;
         bool udp=false;
@@ -488,7 +484,7 @@ export namespace config {
     [[nodiscard]] auto outbound_distribution(Config const&) -> std::shared_ptr<rules::OutboundDistribution const>;
     [[nodiscard]] auto selected_outbound(Config const&,std::string_view) noexcept -> std::string_view;
     inline constexpr std::size_t max_config_bytes = 1048576, max_tunnel_outbounds = 256;
-    enum class ReloadIdentity { full, dns_policy, process }; struct ReloadIdentities { std::string full, dns_policy, process; };
+    enum class ReloadIdentity { full, dns_policy, process, tun_live }; struct ReloadIdentities { std::string full, dns_policy, process, tun_live; };
     [[nodiscard]] auto reload_identity(std::string_view input,ReloadIdentity scope=ReloadIdentity::full) -> std::expected<std::string,std::string>;
     [[nodiscard]] auto reload_identities(std::string_view input) -> std::expected<ReloadIdentities,std::string>;
     [[nodiscard]] auto parse_kdl(std::string_view input) -> std::expected<Config, std::string>; [[nodiscard]] auto parse_provider_manifest(std::string_view input) -> std::expected<Config, std::string>;

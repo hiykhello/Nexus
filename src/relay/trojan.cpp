@@ -18,6 +18,7 @@ import tls.byte_stream;
 import tls.profiles;
 import tls.fingerprint;
 import tls.connector;
+import quic.ech_config;
 import net.connection_pool;
 import net.operation_token;
 import net.stream_relay;
@@ -25,6 +26,7 @@ import capy;
 import corosio;
 import :transport_helpers;
 import :grpc_pool;
+import :quic_ech;
 import :trojan_grpc;
 
 namespace relay {
@@ -65,6 +67,7 @@ namespace relay {
             bool fast_open;
             std::optional<httpupgrade::Profile> transport;
             std::optional<corosio::endpoint> static_endpoint;
+            quic_ech::Profile ech;
         };
         struct Resolver {
             Session& session; corosio::io_context& context; Profile const& profile; DnsSlot slot;
@@ -107,19 +110,21 @@ namespace relay {
             using WsStream=websocket::VlessByteStream<Socket>;
             using Client=trojan::detail::Client<Socket,WsStream>;
             Session& session_;
+            corosio::io_context& context_;
             Profile const& profile_;
             bool relay_local_,ready_=false;
             std::stop_source stop_;
+            DnsSlot ech_dns_;
             Connector connector_;
             std::unique_ptr<Client> client_;
         public:
             template<class... Args>
-            Tunnel(Session& session,Profile const& profile,bool relay_local,Args&&... args)
-                : session_(session),profile_(profile),relay_local_(relay_local),
+            Tunnel(Session& session,corosio::io_context& context,Profile const& profile,bool relay_local,Args&&... args)
+                : session_(session),context_(context),profile_(profile),relay_local_(relay_local),
                   connector_(std::forward<Args>(args)...) {}
             ~Tunnel() { cancel(); }
             auto cancel() noexcept -> void {
-                stop_.request_stop(); if (client_) client_->cancel();
+                stop_.request_stop(); ech_dns_.cancel(); if (client_) client_->cancel();
                 connector_.cancel();
                 if (ready_ && relay_local_) session_.client.cancel();
             }
@@ -146,7 +151,10 @@ namespace relay {
                        std::string_view domain={}) -> capy::task<TunnelConnectResult> {
                 if (ready_ || client_ || stop_.stop_requested() || session_.closed) co_return TunnelConnectResult::failed;
                 struct Guard { Tunnel& owner; bool done=false; ~Guard() { if (!done) owner.cancel(); } } guard{*this};
-                auto connected=co_await connector_.start(deadline);
+                auto ech=co_await profile_.ech.resolve(session_,context_,ech_dns_,profile_.bootstrap,profile_.port,deadline,quic_ech::Transport::tcp);
+                if (session_.closed || stop_.stop_requested()) co_return TunnelConnectResult::failed;
+                if (!ech) co_return Clock::now()>=deadline ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
+                auto connected=co_await connector_.start(deadline,*ech ? &**ech : nullptr);
                 if (session_.closed || stop_.stop_requested()) co_return TunnelConnectResult::failed;
                 if (connected!=Connected::connected) co_return result(connected);
                 auto* application=connector_.application();
@@ -212,11 +220,14 @@ namespace relay {
         };
     }
     auto make_trojan_factory(std::string_view host,std::uint16_t port,std::string_view password_file,std::string_view server_name,
-        std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout_ms,TcpSocketOptions options,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,std::span<std::array<std::uint8_t,32> const> pins,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc_cfg)
+        std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout_ms,TcpSocketOptions options,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,std::span<std::array<std::uint8_t,32> const> pins,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc_cfg,QuicEchOptions const& ech,bool dns_available)
         -> std::expected<TunnelFactory,std::string> {
         if (host.empty() || host.size()>253 || !port || std::ranges::any_of(host,[](unsigned char c) { return c<33 || c>126; })) return std::unexpected("invalid Trojan server");
         if (!timeout_ms || timeout_ms>3600000 || !options.valid()) return std::unexpected("invalid Trojan dial options");
         if (transport && grpc_cfg) return std::unexpected("Trojan accepts at most one transport");
+        if ((ech.dns || !ech.config_file.empty()) && fingerprint==TlsFingerprint::tls12) return std::unexpected("Trojan ECH requires TLS 1.3");
+        auto ech_profile=quic_ech::Profile::load(ech,server_name,dns_available);
+        if (!ech_profile) return std::unexpected(ech_profile.error());
         if (exchange!=TlsKeyExchange::x25519 && exchange!=TlsKeyExchange::x25519_mlkem768 && exchange!=TlsKeyExchange::x25519_mlkem768_only) return std::unexpected("invalid TLS key exchange");
         auto key=trojan::PasswordKey::load(password_file);
         if (!key) return std::unexpected(key.error());
@@ -244,18 +255,18 @@ namespace relay {
         if (grpc_prof) {
             auto gp=std::make_unique<trojan_grpc::Profile>(std::string(host),port,std::move(*key),std::move(*shaped),
                 std::move(grpc_prof->request),grpc_prof->response,grpc_prof->limits,grpc_prof->max_sessions,
-                bootstrap,timeout_ms,options,fast_open);
+                bootstrap,timeout_ms,options,fast_open,std::move(*ech_profile));
             return trojan_grpc::make_factory(std::move(gp));
         }
         auto static_ep = bootstrap ? std::nullopt : parse_static_endpoint(host, port);
-        auto profile=std::make_unique<Profile>(std::string(host),port,std::move(*key),std::move(*shaped),bootstrap,timeout_ms,options,fast_open,std::move(hu_prof),static_ep);
+        auto profile=std::make_unique<Profile>(std::string(host),port,std::move(*key),std::move(*shaped),bootstrap,timeout_ms,options,fast_open,std::move(hu_prof),static_ep,std::move(*ech_profile));
         auto* layered=profile.get();
         return TunnelFactory{[profile=std::move(profile)](Session& session,corosio::io_context& context,bool relay_local,TcpSocketOptions const* inherited) -> pro::proxy<TunnelFacade> {
             auto mode=(inherited ? inherited->tcp_fast_open.value_or(false) : profile->fast_open) ?
                 tls::detail::TransportMode::fast_open : tls::detail::TransportMode::physical;
-            return pro::make_proxy<TunnelFacade,Tunnel>(session,*profile,relay_local,mode,context,Resolver{session,context,*profile},profile->tls,inherited ? *inherited : profile->options);
+            return pro::make_proxy<TunnelFacade,Tunnel>(session,context,*profile,relay_local,mode,context,Resolver{session,context,*profile},profile->tls,inherited ? *inherited : profile->options);
         },timeout_ms,[layered](Session& session,corosio::io_context& context,TunnelFactory const& detour,bool relay_local) {
-            return pro::make_proxy<TunnelFacade,Tunnel>(session,*layered,relay_local,context,layered->tls,std::in_place,session,context,detour,*layered);
+            return pro::make_proxy<TunnelFacade,Tunnel>(session,context,*layered,relay_local,context,layered->tls,std::in_place,session,context,detour,*layered);
         },std::nullopt,options.configured() || fast_open};
     }
 }

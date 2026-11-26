@@ -112,7 +112,8 @@ namespace provider::ws_detail {
             std::string sni = t.sni.empty() ? n.server : t.sni;
             os << "    tls {\n";
             os << "      server-name " << kdl_quote(sni) << '\n';
-            if (allow_reality && !t.reality_public_key.empty()) {
+            bool using_reality = allow_reality && !t.reality_public_key.empty();
+            if (using_reality) {
                 auto pbk = normalize_reality_pbk(t.reality_public_key);
                 if (!pbk) return std::unexpected("invalid Reality public_key on " + std::string(tag));
                 os << "      reality {\n        public-key " << kdl_quote(*pbk) << '\n';
@@ -148,13 +149,16 @@ namespace provider::ws_detail {
                 if (auto kx = normalize_kx(t.key_exchange); !kx.empty())
                     os << "      key-exchange " << kdl_quote(kx) << '\n';
             }
+            bool using_tls12 = false;
             if (!t.fingerprint.empty()) {
                 auto fp = lower_ascii(t.fingerprint);
                 auto norm = normalize_fp(fp);
-                if (!norm.empty() && (allow_tls12 || norm != "tls12"))
+                if (!norm.empty() && (allow_tls12 || norm != "tls12")) {
                     os << "      fingerprint " << kdl_quote(norm) << '\n';
+                    using_tls12 = (norm == "tls12");
+                }
             }
-            if (allow_ech && is_valid_hostname(sni) && !platform::parse_ip_address(sni)) {
+            if (allow_ech && !using_reality && !using_tls12 && is_valid_hostname(sni) && !platform::parse_ip_address(sni)) {
                 auto em = lower_ascii(t.ech_mode);
                 if (em == "dns") os << "      ech-dns #true\n";
                 else if (!t.ech_config.empty() && (em.empty() || em == "config")) {
@@ -278,7 +282,7 @@ namespace provider::ws_detail {
             bool allow_reality = tr.empty() || (is_xhttp && !is_h3);
             if (n.tls.enabled || !is_xhttp || !n.tls.reality_public_key.empty() || is_h3) {
                 if (auto ok = emit_tls(ctx, os, n, tag, allow_reality,
-                        !is_vision && n.tls.reality_public_key.empty() && !is_xhttp, true, false); !ok)
+                        !is_vision && n.tls.reality_public_key.empty() && !is_xhttp, true, true); !ok)
                     return std::unexpected(ok.error());
             }
             emit_transport(os, n.transport, !is_vision);
@@ -288,7 +292,7 @@ namespace provider::ws_detail {
             auto pf = ctx.write_hashed_secret("pass", n.password);
             if (!pf) return std::unexpected(pf.error());
             os << "    authentication {\n      password-file " << kdl_quote(*pf) << "\n    }\n";
-            if (auto ok = emit_tls(ctx, os, n, tag, false, true, true, false); !ok) return std::unexpected(ok.error());
+            if (auto ok = emit_tls(ctx, os, n, tag, false, true, true, true); !ok) return std::unexpected(ok.error());
             emit_transport(os, n.transport, false);
             if (proto == "trojan") emit_multiplex(os, n.multiplex);
         } else if (proto == "shadowsocks") {
@@ -361,7 +365,7 @@ namespace provider::ws_detail {
             bool h3 = (np == "h3" || np == "quic");
             os << "    protocol " << kdl_quote(h3 ? "h3" : "h2") << '\n';
             os << "    authentication username=" << kdl_quote(n.username) << " password-file=" << kdl_quote(*pf) << '\n';
-            if (auto ok = emit_tls(ctx, os, n, tag, false, !h3, true, false); !ok) return std::unexpected(ok.error());
+            if (auto ok = emit_tls(ctx, os, n, tag, false, !h3, true, true); !ok) return std::unexpected(ok.error());
             os << "    padding #true\n";
         } else if (proto == "ssh") {
             std::vector<std::string> pins;
@@ -432,7 +436,7 @@ namespace provider::ws_detail {
             }
             if (proto == "socks5" && detour.empty()) os << "    udp #true\n";
             if (proto == "http-connect" && n.tls.enabled) {
-                if (auto ok = emit_tls(ctx, os, n, tag, false, true, false, false); !ok) return std::unexpected(ok.error());
+                if (auto ok = emit_tls(ctx, os, n, tag, false, true, false, true); !ok) return std::unexpected(ok.error());
             }
         } else if (proto == "shadowtls") {
             if (n.password.empty()) return std::unexpected("ShadowTLS missing password on " + std::string(tag));

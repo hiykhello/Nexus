@@ -39,7 +39,7 @@ export namespace tls {
             -> std::expected<ClientHandshakeIo,ClientHandshakeIoError>;
         [[nodiscard]] static auto create(ClientHello hello,std::span<std::uint16_t const> groups,
             std::span<crypto::Bytes const> anchors,PeerNameKind kind,std::span<std::uint8_t const> peer_name,
-            std::int64_t verification_time,std::uint64_t now,std::uint64_t deadline,std::span<std::uint8_t const> target={},std::span<std::array<std::uint8_t,32> const> pins={})
+            std::int64_t verification_time,std::uint64_t now,std::uint64_t deadline,std::span<std::uint8_t const> target={},std::span<std::array<std::uint8_t,32> const> pins={},quic::EchConfig const* ech=nullptr)
             -> std::expected<ClientHandshakeIo,ClientHandshakeIoError>;
         // Borrowed until the next non-const operation. Writes may complete in arbitrary pieces.
         [[nodiscard]] auto pending_output() const noexcept -> std::span<std::uint8_t const>;

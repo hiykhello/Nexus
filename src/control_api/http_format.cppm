@@ -10,127 +10,169 @@ export namespace control_api::http_detail {
         return encoding::json_quote(in);
     }
 
-    inline auto extract_json_string(std::string_view body, std::string_view key) -> std::optional<std::string> {
+    inline auto parse_json_string_at(std::string_view body, std::size_t& pos, std::string& out) -> bool {
+        auto skip_ws = [&]() noexcept {
+            while (pos < body.size() && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\r' || body[pos] == '\n'))
+                ++pos;
+        };
+        skip_ws();
+        if (pos >= body.size() || body[pos] != '"') return false;
+        ++pos;
+        out.clear();
+        while (pos < body.size()) {
+            unsigned char uc = static_cast<unsigned char>(body[pos++]);
+            if (uc == '"') return true;
+            if (uc < 0x20) return false;
+            if (uc != '\\') { out.push_back(static_cast<char>(uc)); continue; }
+            if (pos >= body.size()) return false;
+            char e = body[pos++];
+            switch (e) {
+            case '"': case '\\': case '/': out.push_back(e); break;
+            case 'b': out.push_back('\b'); break;
+            case 'f': out.push_back('\f'); break;
+            case 'n': out.push_back('\n'); break;
+            case 'r': out.push_back('\r'); break;
+            case 't': out.push_back('\t'); break;
+            case 'u': {
+                if (pos + 4 > body.size()) return false;
+                unsigned cp = 0;
+                auto [end, ec] = std::from_chars(body.data() + pos, body.data() + pos + 4, cp, 16);
+                if (ec != std::errc{} || end != body.data() + pos + 4) return false;
+                pos += 4;
+                if (cp >= 0xd800 && cp <= 0xdbff && pos + 6 <= body.size() && body[pos] == '\\' && body[pos + 1] == 'u') {
+                    unsigned lo = 0;
+                    auto [e2, ec2] = std::from_chars(body.data() + pos + 2, body.data() + pos + 6, lo, 16);
+                    if (ec2 == std::errc{} && e2 == body.data() + pos + 6 && lo >= 0xdc00 && lo <= 0xdfff) {
+                        cp = 0x10000u + (((cp - 0xd800u) << 10) | (lo - 0xdc00u));
+                        pos += 6;
+                    }
+                }
+                if (cp < 0x80) out.push_back(static_cast<char>(cp));
+                else if (cp < 0x800) { out.push_back(static_cast<char>(0xc0 | (cp >> 6))); out.push_back(static_cast<char>(0x80 | (cp & 0x3f))); }
+                else if (cp < 0x10000) { out.push_back(static_cast<char>(0xe0 | (cp >> 12))); out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f))); out.push_back(static_cast<char>(0x80 | (cp & 0x3f))); }
+                else { out.push_back(static_cast<char>(0xf0 | (cp >> 18))); out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3f))); out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f))); out.push_back(static_cast<char>(0x80 | (cp & 0x3f))); }
+                break;
+            }
+            default: return false;
+            }
+        }
+        return false;
+    }
+
+    inline auto skip_json_value_at(std::string_view body, std::size_t& pos, unsigned depth) -> bool {
+        if (depth > 32) return false;
+        auto skip_ws = [&]() noexcept {
+            while (pos < body.size() && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\r' || body[pos] == '\n'))
+                ++pos;
+        };
+        skip_ws();
+        if (pos >= body.size()) return false;
+        char c = body[pos];
+        if (c == '"') { std::string tmp; return parse_json_string_at(body, pos, tmp); }
+        if (c == '{') {
+            ++pos; skip_ws();
+            if (pos < body.size() && body[pos] == '}') { ++pos; return true; }
+            for (;;) {
+                std::string k;
+                if (!parse_json_string_at(body, pos, k)) return false;
+                skip_ws(); if (pos >= body.size() || body[pos++] != ':') return false;
+                if (!skip_json_value_at(body, pos, depth + 1)) return false;
+                skip_ws(); if (pos >= body.size()) return false;
+                if (body[pos] == '}') { ++pos; return true; }
+                if (body[pos++] != ',') return false;
+            }
+        }
+        if (c == '[') {
+            ++pos; skip_ws();
+            if (pos < body.size() && body[pos] == ']') { ++pos; return true; }
+            for (;;) {
+                if (!skip_json_value_at(body, pos, depth + 1)) return false;
+                skip_ws(); if (pos >= body.size()) return false;
+                if (body[pos] == ']') { ++pos; return true; }
+                if (body[pos++] != ',') return false;
+            }
+        }
+        if (body.substr(pos).starts_with("true")) { pos += 4; return true; }
+        if (body.substr(pos).starts_with("false")) { pos += 5; return true; }
+        if (body.substr(pos).starts_with("null")) { pos += 4; return true; }
+        if (c == '-' || (c >= '0' && c <= '9')) {
+            if (body[pos] == '-') ++pos;
+            if (pos >= body.size() || body[pos] < '0' || body[pos] > '9') return false;
+            while (pos < body.size() && body[pos] >= '0' && body[pos] <= '9') ++pos;
+            if (pos < body.size() && body[pos] == '.') {
+                ++pos;
+                if (pos >= body.size() || body[pos] < '0' || body[pos] > '9') return false;
+                while (pos < body.size() && body[pos] >= '0' && body[pos] <= '9') ++pos;
+            }
+            if (pos < body.size() && (body[pos] == 'e' || body[pos] == 'E')) {
+                ++pos;
+                if (pos < body.size() && (body[pos] == '+' || body[pos] == '-')) ++pos;
+                if (pos >= body.size() || body[pos] < '0' || body[pos] > '9') return false;
+                while (pos < body.size() && body[pos] >= '0' && body[pos] <= '9') ++pos;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    inline auto is_valid_json_object(std::string_view body) -> bool {
         std::size_t pos = 0;
         auto skip_ws = [&]() noexcept {
             while (pos < body.size() && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\r' || body[pos] == '\n'))
                 ++pos;
         };
-        auto parse_str = [&](std::string& out) -> bool {
-            skip_ws();
-            if (pos >= body.size() || body[pos] != '"') return false;
-            ++pos;
-            out.clear();
-            while (pos < body.size()) {
-                unsigned char uc = static_cast<unsigned char>(body[pos++]);
-                if (uc == '"') return true;
-                if (uc < 0x20) return false;
-                if (uc != '\\') { out.push_back(static_cast<char>(uc)); continue; }
-                if (pos >= body.size()) return false;
-                char e = body[pos++];
-                switch (e) {
-                case '"': case '\\': case '/': out.push_back(e); break;
-                case 'b': out.push_back('\b'); break;
-                case 'f': out.push_back('\f'); break;
-                case 'n': out.push_back('\n'); break;
-                case 'r': out.push_back('\r'); break;
-                case 't': out.push_back('\t'); break;
-                case 'u': {
-                    if (pos + 4 > body.size()) return false;
-                    unsigned cp = 0;
-                    auto [end, ec] = std::from_chars(body.data() + pos, body.data() + pos + 4, cp, 16);
-                    if (ec != std::errc{} || end != body.data() + pos + 4) return false;
-                    pos += 4;
-                    if (cp >= 0xd800 && cp <= 0xdbff && pos + 6 <= body.size() && body[pos] == '\\' && body[pos + 1] == 'u') {
-                        unsigned lo = 0;
-                        auto [e2, ec2] = std::from_chars(body.data() + pos + 2, body.data() + pos + 6, lo, 16);
-                        if (ec2 == std::errc{} && e2 == body.data() + pos + 6 && lo >= 0xdc00 && lo <= 0xdfff) {
-                            cp = 0x10000u + (((cp - 0xd800u) << 10) | (lo - 0xdc00u));
-                            pos += 6;
-                        }
-                    }
-                    if (cp < 0x80) out.push_back(static_cast<char>(cp));
-                    else if (cp < 0x800) { out.push_back(static_cast<char>(0xc0 | (cp >> 6))); out.push_back(static_cast<char>(0x80 | (cp & 0x3f))); }
-                    else if (cp < 0x10000) { out.push_back(static_cast<char>(0xe0 | (cp >> 12))); out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f))); out.push_back(static_cast<char>(0x80 | (cp & 0x3f))); }
-                    else { out.push_back(static_cast<char>(0xf0 | (cp >> 18))); out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3f))); out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f))); out.push_back(static_cast<char>(0x80 | (cp & 0x3f))); }
-                    break;
-                }
-                default: return false;
-                }
-            }
-            return false;
-        };
-        auto skip_val = [&](auto&& self, unsigned depth) -> bool {
-            if (depth > 32) return false;
-            skip_ws();
-            if (pos >= body.size()) return false;
-            char c = body[pos];
-            if (c == '"') { std::string tmp; return parse_str(tmp); }
-            if (c == '{') {
-                ++pos; skip_ws();
-                if (pos < body.size() && body[pos] == '}') { ++pos; return true; }
-                for (;;) {
-                    std::string k;
-                    if (!parse_str(k)) return false;
-                    skip_ws(); if (pos >= body.size() || body[pos++] != ':') return false;
-                    if (!self(self, depth + 1)) return false;
-                    skip_ws(); if (pos >= body.size()) return false;
-                    if (body[pos] == '}') { ++pos; return true; }
-                    if (body[pos++] != ',') return false;
-                }
-            }
-            if (c == '[') {
-                ++pos; skip_ws();
-                if (pos < body.size() && body[pos] == ']') { ++pos; return true; }
-                for (;;) {
-                    if (!self(self, depth + 1)) return false;
-                    skip_ws(); if (pos >= body.size()) return false;
-                    if (body[pos] == ']') { ++pos; return true; }
-                    if (body[pos++] != ',') return false;
-                }
-            }
-            if (body.substr(pos).starts_with("true")) { pos += 4; return true; }
-            if (body.substr(pos).starts_with("false")) { pos += 5; return true; }
-            if (body.substr(pos).starts_with("null")) { pos += 4; return true; }
-            if (c == '-' || (c >= '0' && c <= '9')) {
-                if (body[pos] == '-') ++pos;
-                if (pos >= body.size() || body[pos] < '0' || body[pos] > '9') return false;
-                while (pos < body.size() && body[pos] >= '0' && body[pos] <= '9') ++pos;
-                if (pos < body.size() && body[pos] == '.') {
-                    ++pos;
-                    if (pos >= body.size() || body[pos] < '0' || body[pos] > '9') return false;
-                    while (pos < body.size() && body[pos] >= '0' && body[pos] <= '9') ++pos;
-                }
-                if (pos < body.size() && (body[pos] == 'e' || body[pos] == 'E')) {
-                    ++pos;
-                    if (pos < body.size() && (body[pos] == '+' || body[pos] == '-')) ++pos;
-                    if (pos >= body.size() || body[pos] < '0' || body[pos] > '9') return false;
-                    while (pos < body.size() && body[pos] >= '0' && body[pos] <= '9') ++pos;
-                }
-                return true;
-            }
-            return false;
+        skip_ws();
+        if (pos >= body.size() || body[pos] != '{') return false;
+        if (!skip_json_value_at(body, pos, 0)) return false;
+        skip_ws();
+        return pos == body.size();
+    }
+
+    inline auto find_json_field_pos(std::string_view body, std::string_view key) -> std::optional<std::size_t> {
+        std::size_t pos = 0;
+        auto skip_ws = [&]() noexcept {
+            while (pos < body.size() && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\r' || body[pos] == '\n'))
+                ++pos;
         };
         skip_ws();
         if (pos >= body.size() || body[pos++] != '{') return {};
         skip_ws();
         if (pos < body.size() && body[pos] == '}') return {};
-        std::string cur_key, val;
+        std::string cur_key;
         for (;;) {
-            if (!parse_str(cur_key)) return {};
+            if (!parse_json_string_at(body, pos, cur_key)) return {};
             skip_ws();
             if (pos >= body.size() || body[pos++] != ':') return {};
             skip_ws();
-            if (cur_key == key) {
-                if (pos >= body.size() || body[pos] != '"') return {};
-                return parse_str(val) ? std::optional<std::string>(std::move(val)) : std::nullopt;
-            }
-            if (!skip_val(skip_val, 1)) return {};
+            if (cur_key == key) return pos;
+            if (!skip_json_value_at(body, pos, 1)) return {};
             skip_ws();
             if (pos >= body.size()) return {};
             if (body[pos] == '}') return {};
             if (body[pos++] != ',') return {};
         }
+    }
+
+    inline auto extract_json_string(std::string_view body, std::string_view key) -> std::optional<std::string> {
+        auto pos = find_json_field_pos(body, key);
+        if (!pos || *pos >= body.size() || body[*pos] != '"') return {};
+        std::string val;
+        return parse_json_string_at(body, *pos, val) ? std::optional<std::string>(std::move(val)) : std::nullopt;
+    }
+
+    inline auto extract_json_uint(std::string_view body, std::string_view key) -> std::optional<std::uint64_t> {
+        auto pos = find_json_field_pos(body, key);
+        if (!pos || *pos >= body.size()) return {};
+        std::size_t start = *pos, end = start;
+        if (body[end] < '0' || body[end] > '9') return {};
+        if (body[end] == '0' && end + 1 < body.size() && body[end + 1] >= '0' && body[end + 1] <= '9') return {};
+        while (end < body.size() && body[end] >= '0' && body[end] <= '9') ++end;
+        if (end < body.size() && body[end] != ',' && body[end] != '}' &&
+            body[end] != ' ' && body[end] != '\t' && body[end] != '\r' && body[end] != '\n') return {};
+        std::uint64_t value = 0;
+        auto [ptr, ec] = std::from_chars(body.data() + start, body.data() + end, value);
+        if (ec != std::errc{} || ptr != body.data() + end) return {};
+        return value;
     }
 
     inline auto url_decode_once(std::string_view in) -> std::optional<std::string> {

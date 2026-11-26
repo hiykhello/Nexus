@@ -2,6 +2,8 @@ export module tls.client_hello_driver;
 export import tls.client_handshake;
 export import tls.server_hello_stream;
 export import tls.client_hello_exchange;
+export import quic.ech_config;
+import quic.ech_client;
 import functional;
 import std;
 export namespace tls {
@@ -90,12 +92,15 @@ export namespace tls {
         PendingCertificateVerifier verifier_;
         bool authenticated_=false;
         ServerHelloStream stream_;
+        std::unique_ptr<quic::EchClient> ech_;
+        std::optional<crypto::Bytes> initial_outer_;
         static auto record(std::span<std::uint8_t const> wire,std::uint8_t version) -> std::expected<crypto::Bytes,ClientHelloDriverError> {
             if (wire.size()>16384)return std::unexpected(ClientHelloDriverError::invalid_hello);
             crypto::Bytes result{22,3,version,static_cast<std::uint8_t>(wire.size()>>8),static_cast<std::uint8_t>(wire.size())};
             result.insert(result.end(),wire.begin(),wire.end());return result;
         }
-        ClientHelloDriver(ClientHelloExchange&& exchange,ServerHelloStream&& stream) noexcept;
+        ClientHelloDriver(ClientHelloExchange&& exchange,ServerHelloStream&& stream,
+            std::unique_ptr<quic::EchClient> ech={},std::optional<crypto::Bytes> initial_outer={}) noexcept;
     public:
         ClientHelloDriver(ClientHelloDriver const&)=delete;
         auto operator=(ClientHelloDriver const&) -> ClientHelloDriver& = delete;
@@ -103,13 +108,15 @@ export namespace tls {
         auto operator=(ClientHelloDriver&&) noexcept -> ClientHelloDriver&;
         // initial_group is 0 for an empty key_share; otherwise an implemented X25519, ML-KEM or NIST group.
         [[nodiscard]] static auto create(ClientHello hello, std::uint16_t initial_group) -> std::expected<ClientHelloDriver,ClientHelloDriverError>;
+        [[nodiscard]] static auto create_ech(ClientHello hello, std::span<std::uint16_t const> groups,
+            quic::EchConfig const& ech) -> std::expected<ClientHelloDriver,ClientHelloDriverError>;
         // Called once before sending, with the exact first Hello and the private
         // X25519 key matching its standalone share if offered, otherwise the
         // X25519 component of the hybrid share. Only the session ID can be replaced. The
         // verifier is mandatory and retries retain that ID and verifier.
         template<class Authenticator>
         [[nodiscard]] auto authenticate_first(Authenticator&& authenticator) -> std::expected<void,ClientHelloDriverError> {
-            if (!exchange_.can_start() || authenticated_) return std::unexpected(ClientHelloDriverError::invalid_state);
+            if (!exchange_.can_start() || authenticated_ || ech_) return std::unexpected(ClientHelloDriverError::invalid_state);
             auto* key=exchange_.initial_key();
             if (!key) { exchange_.cancel(); return std::unexpected(ClientHelloDriverError::invalid_hello); }
             try {
@@ -126,6 +133,7 @@ export namespace tls {
         [[nodiscard]] auto can_start_authenticated() const noexcept -> bool { return exchange_.can_start() && authenticated_; }
         [[nodiscard]] auto take_authenticated_handshake() -> std::expected<ClientHandshake,ClientHelloDriverError>;
         [[nodiscard]] auto replace_session_id(std::span<std::uint8_t const> id) -> std::expected<void,ClientHelloDriverError> {
+            if (ech_) return std::unexpected(ClientHelloDriverError::invalid_state);
             return exchange_.replace_session_id(id);
         }
         [[nodiscard]] auto initial_record() const -> std::expected<crypto::Bytes,ClientHelloDriverError>;
@@ -146,13 +154,33 @@ export namespace tls {
         using Policy=RecoveryPolicy<Recovery...>;
         if (!exchange_.can_receive()) return std::unexpected(ClientHelloDriverError::invalid_state);
         try {
-            auto parsed=stream_.feed(input); if (!parsed) { exchange_.cancel(); return std::unexpected(ClientHelloDriverError::invalid_record); }
+            auto parsed=stream_.feed(input); if (!parsed) { exchange_.cancel(); ech_.reset(); return std::unexpected(ClientHelloDriverError::invalid_record); }
             ClientHelloDriverFeed result{parsed->consumed,{},false}; if (!parsed->message) return result;
-            auto received=exchange_.receive(*parsed->message,recovery...); if (!received) return std::unexpected(received.error());
-            if (received->server_hello) { result.server_hello=true; return result; }
+            if (ech_) {
+                auto transcript=exchange_.hello_transcript();
+                auto accepted=quic::verify_ech_acceptance(transcript.first,*parsed->message,transcript.retry,transcript.second);
+                if (!accepted) {
+                    exchange_.cancel(); ech_.reset();
+                    return std::unexpected(accepted.error()==quic::EchHandshakeError::crypto
+                        ? ClientHelloDriverError::crypto_error : ClientHelloDriverError::invalid_hello);
+                }
+            }
+            auto received=exchange_.receive(*parsed->message,recovery...); if (!received) { ech_.reset(); return std::unexpected(received.error()); }
+            if (received->server_hello) { ech_.reset(); result.server_hello=true; return result; }
+            if (ech_) {
+                auto sealed=ech_->seal(exchange_.current_hello(),true);
+                if (!sealed) {
+                    exchange_.cancel(); ech_.reset();
+                    return std::unexpected(sealed.error()==quic::EchHandshakeError::crypto
+                        ? ClientHelloDriverError::crypto_error : ClientHelloDriverError::invalid_hello);
+                }
+                auto outbound=record(*sealed,3);
+                if (!outbound) { exchange_.cancel(); ech_.reset(); return std::unexpected(outbound.error()); }
+                result.outbound=std::move(*outbound); return result;
+            }
             auto outbound=record(received->outbound,3); if (!outbound) { exchange_.cancel(); return std::unexpected(outbound.error()); }
             result.outbound=std::move(*outbound); return result;
-        } catch (...) { exchange_.cancel(); throw; }
+        } catch (...) { exchange_.cancel(); ech_.reset(); throw; }
         }
         template<class... Recovery>
         inline auto take_handshake(std::span<std::span<std::uint8_t const> const> anchors,PeerNameKind kind,std::span<std::uint8_t const> name,std::int64_t time,Recovery&... recovery) -> std::expected<ClientHandshake,ClientHelloDriverError>{
@@ -165,6 +193,6 @@ export namespace tls {
         if (!handshake) return std::unexpected(ClientHelloDriverError::invalid_hello);
         return std::move(*handshake);
         }
-        auto cancel() noexcept -> void {exchange_.cancel();verifier_=nullptr;authenticated_=false;}
+        auto cancel() noexcept -> void {exchange_.cancel();verifier_=nullptr;authenticated_=false;ech_.reset();initial_outer_.reset();}
     };
 }

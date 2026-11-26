@@ -11,6 +11,7 @@ import platform.socket_options;
 import quic.cid_registry;
 import quic.datagram_port;
 import quic.datagram_session;
+import quic.ech_config;
 import quic.native_memory;
 import tls.fingerprint;
 import tls.profiles;
@@ -22,6 +23,7 @@ import capy;
 import corosio;
 import :types;
 import :session_interface;
+import :quic_ech;
 import :xhttp_http1;
 import :xhttp_http3_streams;
 import :xhttp_http3_channel;
@@ -60,6 +62,9 @@ namespace relay::vless_xhttp {
         using Driver = net::DatagramDriver<Port>;
         CarrierDns dns_;
         Resolver resolver_;
+        Peer const& peer_cfg_;
+        std::optional<std::size_t> bootstrap_;
+        DnsSlot ech_dns_;
         platform::SocketBinding binding_;
         masque::ClientProfile profile_;
         corosio::io_context& context_;
@@ -90,7 +95,7 @@ namespace relay::vless_xhttp {
             result.udp = false;
             return result;
         }
-        auto start(corosio::endpoint peer, Clock::time_point deadline) -> bool {
+        auto start(corosio::endpoint peer, Clock::time_point deadline, quic::EchConfig const* ech) -> bool {
             if (net::prepare_udp_socket(socket_, peer, &binding_, deadline)) return false;
             local_ = socket_.local_endpoint();
             auto owner = port_.registry().reserve();
@@ -101,7 +106,7 @@ namespace relay::vless_xhttp {
                 bool active = true;
                 ~Unattached() { if (active) port.registry().release(owner); }
             } release{port_, *owner};
-            auto tls = profile_.tls_client(peer, nullptr);
+            auto tls = profile_.tls_client(peer, ech);
             auto settings = hysteria2::TransportProfile<16, h3_window>::settings(profile_.transport());
             auto params = hysteria2::TransportProfile<16, h3_window>::parameters(profile_.transport());
             if (!tls || !settings || !params) return false;
@@ -128,7 +133,8 @@ namespace relay::vless_xhttp {
         using Ticket = std::int64_t;
         Http3Carrier(Session& session, corosio::io_context& context, Peer const& peer,
             std::optional<std::size_t> bootstrap, TcpSocketOptions const& options_)
-            : dns_(session, context), resolver_{dns_.session, context, peer, bootstrap}, binding_(options_.binding),
+            : dns_(session, context), resolver_{dns_.session, context, peer, bootstrap}, peer_cfg_(peer), bootstrap_(bootstrap),
+              binding_(options_.binding),
               profile_(masque::ClientProfile::for_http(peer.tls->profile(), peer.endpoint.authority, options(), peer.tls->fingerprint())),
               context_(context), socket_(context) {}
         auto connect(std::shared_ptr<Http3Carrier> owner, corosio::io_context& context, Clock::time_point until)
@@ -137,10 +143,12 @@ namespace relay::vless_xhttp {
                 Http3Carrier& carrier;
                 ~Signal() { carrier.connecting_ = false; carrier.ready_.set(); }
             } signal{*this};
+            auto ech = co_await peer_cfg_.ech.resolve(dns_.session, context, ech_dns_, bootstrap_, peer_cfg_.port, until, quic_ech::Transport::quic);
+            if (stopped_ || !ech) { cancel(); co_return false; }
             auto endpoints = co_await resolver_(until);
             if (stopped_ || !endpoints || endpoints->empty()) co_return false;
             auto peer = std::ranges::find_if(*endpoints, [](auto const& endpoint) { return valid_destination(endpoint); });
-            if (peer == endpoints->end() || !start(*peer, until)) {
+            if (peer == endpoints->end() || !start(*peer, until, *ech ? &**ech : nullptr)) {
                 cancel();
                 co_return false;
             }
@@ -169,6 +177,7 @@ namespace relay::vless_xhttp {
         auto record_peer(Session& session) const noexcept -> void { if (peer_) session.record_physical_peer(*peer_); }
         auto cancel() noexcept -> void {
             if (std::exchange(stopped_, true)) return;
+            ech_dns_.cancel();
             resolver_.cancel();
             ready_.set();
             driver_.finish();

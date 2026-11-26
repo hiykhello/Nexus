@@ -275,20 +275,22 @@ def test_fail_closed_chains_and_sub_chaining(nexus: str, root: Path) -> None:
 
 
 def test_linux_strict_route_full_custom_and_template(nexus: str, root: Path) -> None:
-    # 1. desktop-linux strict-route suppresses mixed inbound with warning (numeric IP server required by Core)
+    # 1. desktop-linux strict-route allows loopback mixed coexistence and omits non-loopback lan_listen with warning
     ws_ip = {"schema_version": 1, "profiles": [make_node("ip1", "IP-Node", server="198.51.100.9")]}
     host_strict = {
         "schema_version": 1, "platform": "desktop-linux",
         "desktop": {
             "enable_mixed": True, "mixed_listen": "127.0.0.1:7890",
+            "lan_listen": "0.0.0.0:7891",
             "enable_tun": True, "tun_interface_name": "nx0", "tun_inet4": "198.18.0.1/30",
             "tun_auto_route": True, "tun_strict_route": True, "tun_route_exclude": ["10.0.0.0/8"],
         },
     }
     rc, res_st, _, _ = compose(nexus, root, "linux-strict", ws_ip, host_strict, active="ip1", emit_kdl=True)
     assert rc == 0 and res_st["ok"], res_st
-    assert 'type="mixed"' not in res_st["kdl"] and "strict-route #true" in res_st["kdl"], res_st["kdl"]
-    assert any("strict-route" in w for w in res_st["warnings"]), res_st["warnings"]
+    assert 'inbound "mixed-in" type="mixed"' in res_st["kdl"] and "strict-route #true" in res_st["kdl"], res_st["kdl"]
+    assert 'lan-in' not in res_st["kdl"], res_st["kdl"]
+    assert any("strict-route" in w and "lan_listen" in w for w in res_st["warnings"]), res_st["warnings"]
 
     # 2. full_custom_kdl + Android host override strips base TUN and injects Android TUN + control/state
     ws_fc = {

@@ -169,7 +169,7 @@ namespace relay {
 
     auto make_vless_xhttp_factory(std::string_view host,std::uint16_t port,std::string_view uuid,std::string_view server_name,
         std::string_view ca,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout,
-        TcpSocketOptions options,xhttp::Profile transport,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size,std::optional<Reality> reality,std::span<std::array<std::uint8_t,32> const> pins)
+        TcpSocketOptions options,xhttp::Profile transport,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size,std::optional<Reality> reality,std::span<std::array<std::uint8_t,32> const> pins,QuicEchOptions const& ech,bool dns_available)
         -> std::expected<TunnelFactory,std::string> {
         using namespace vless_xhttp;
         if (!timeout || timeout>3600000 || !options.valid() || !transport.limits.valid() ||
@@ -190,7 +190,7 @@ namespace relay {
         auto user=vless::parse_user_id(*secret);
         std::fill(secret->begin(),secret->end(),'\0');
         if (!user) return std::unexpected("invalid VLESS UUID");
-        auto up=make_peer(host,port,transport.endpoint,server_name,ca,exchange,fingerprint,record_size,reality,pins);
+        auto up=make_peer(host,port,transport.endpoint,server_name,ca,exchange,fingerprint,record_size,reality,pins,ech,dns_available);
         if (!up) return std::unexpected(up.error());
         std::optional<Peer> down;
         if (auto const& download=transport.download) {

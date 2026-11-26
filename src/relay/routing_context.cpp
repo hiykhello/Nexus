@@ -349,7 +349,7 @@ namespace relay {
         dns::resume_tls_queries(context);
         dns::resume_https_queries(context);
         if(!start_outbound_contexts())return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-        register_context_server(context, this, dns_routing && std::ranges::any_of(dns_routing->servers,&DnsServer::proxy_detour));
+        register_context_server(context, this, (dns_routing && std::ranges::any_of(dns_routing->servers,&DnsServer::proxy_detour)) || route_snapshots!=nullptr);
         context_registered=true;
         running=true;return {};
     }

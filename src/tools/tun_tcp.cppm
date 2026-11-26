@@ -201,7 +201,7 @@ export namespace cli::tun_enabled {
             session.source_interface = host.device_name();
             auto const& policy = session.route_snapshot ? session.route_snapshot->matcher : host.routing.routing_policy();
             if (auto owner = lookup_tun_owner(false, ep->source.address, ep->source.port, ep->target.address, ep->target.port,
-                    policy, host.routing.ordered_routing_policy())) {
+                    policy, session.ordered_tcp)) {
                 if (owner->uid) session.source_uid = owner->uid;
                 if (owner->gid) session.source_gid = owner->gid;
                 if (!owner->process_path.empty()) session.process_path = std::move(owner->process_path);

@@ -55,6 +55,7 @@ namespace config {
                                   bool (*)(void const*,std::string_view),void const*) -> std::expected<void,std::string>;
     auto validate_extra_outbounds(Config&,std::string_view,std::optional<std::string> const&,
                                   bool (*)(void const*,std::string_view),void const*) -> std::expected<void,std::string>;
+    auto validate_quic_ech(QuicEchOptions const&,std::string_view,bool) -> std::expected<void,std::string>;
     using namespace config::kdl;
     using routing_detail::Route;
     using routing_detail::NamedRouteFile;
@@ -377,6 +378,7 @@ namespace config {
                 outbound_config.bootstrap_index=result.dns->resolver_index(*outbound_config.bootstrap_resolver);
                 if (!outbound_config.bootstrap_index) return error("vless domain-resolver references unknown DNS server or view: "+*outbound_config.bootstrap_resolver);
             }
+            if (auto ok=validate_quic_ech(outbound_config.ech,outbound_config.server_name,result.dns.has_value()); !ok) return std::unexpected(ok.error());
             auto const& name=result.vless_outbounds[i].name;
             if (name==*direct || (block && name==*block) ||
                 std::ranges::any_of(std::span(result.vless_outbounds).first(i),[&](auto const& other) { return other.name==name; }))

@@ -6,6 +6,7 @@ import cli.control;
 import cli.proxy_control_operations;
 import cli.proxy_group_health;
 import cli.proxy_mode;
+import cli.proxy_outbound_probe;
 import cli.proxy_run_state;
 import config;
 import dns.reverse;
@@ -58,11 +59,12 @@ export namespace cli::run_detail {
         functional::function_ref<std::expected<bool, std::string>(config::Config const&, std::string_view, std::string_view, bool)> publish,
         std::optional<std::uint64_t> listener_generation, platform::network::Snapshot const* network,
         OutboundGroupHealth* health, ControlRole role, ControlOperations& operations, LocalControl const& control,
-        dns::ReverseCache* reverse_cache = nullptr, RuntimeRouteModeController* route_mode = nullptr)
+        dns::ReverseCache* reverse_cache = nullptr, RuntimeRouteModeController* route_mode = nullptr,
+        AdHocOutboundProber* prober = nullptr, bool reload_supported = true)
         -> std::expected<std::string, std::string> {
         auto command = args.front();
         if (role == ControlRole::reader && command != "status" && command != "operation" &&
-            command != "events" && command != "diagnostics" &&
+            command != "events" && command != "diagnostics" && command != "probe-result" &&
             !(command == "mode" && args.size() == 1)) return std::unexpected("permission-denied");
         if (command == "mode")
             return route_mode ? route_mode->handle_command(running, role, args, operations) : std::unexpected("mode-unavailable");
@@ -102,7 +104,7 @@ export namespace cli::run_detail {
                 info.authorized, info.unauthorized, info.expired, info.reply_failed);
         }
         if (command == "reload" && args.size() == 1) {
-            if (!running) return std::unexpected("reload-unavailable");
+            if (!running || !reload_supported) return std::unexpected("reload-unavailable");
             return operations.queue_reload();
         }
         if (command == "clear-cache" && (args.size() == 1 || args.size() == 2)) {
@@ -166,6 +168,27 @@ export namespace cli::run_detail {
             }
             if (closed > 0) operations.record(ControlOperations::EventKind::close_queued);
             return std::format("closed={}\n", closed);
+        }
+        if (command == "probe-outbound" && args.size() >= 2 && args.size() <= 5) {
+            if (!running || !prober) return std::unexpected("probe-unavailable");
+            std::string_view url = args.size() >= 3 ? args[2] : std::string_view{};
+            if (url == "-") url = {};
+            std::optional<std::uint32_t> timeout_ms;
+            if (args.size() >= 4 && args[3] != "-") {
+                auto parsed = control_number(args[3]);
+                if (!parsed || *parsed == 0 || *parsed > 3600000u) return std::unexpected("invalid-timeout");
+                timeout_ms = static_cast<std::uint32_t>(*parsed);
+            }
+            std::string_view mode = args.size() >= 5 ? args[4] : std::string_view{};
+            auto res = prober->enqueue(*running, args[1], url, timeout_ms, mode, listeners_support_outbound_probe(listeners));
+            if (res) operations.record(ControlOperations::EventKind::probe_triggered);
+            return res;
+        }
+        if (command == "probe-result" && args.size() == 2) {
+            if (!prober) return std::unexpected("probe-unavailable");
+            auto id = control_number(args[1]);
+            if (!id || !*id) return std::unexpected("invalid-id");
+            return prober->result(*id);
         }
         if (command == "probe" && args.size() == 2) {
             if (!running) return std::unexpected("unknown-group");

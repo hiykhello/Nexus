@@ -8,6 +8,7 @@ import net.tcp_connect;
 import net.tcp_fast_open_stream;
 import net.unified_stream;
 import platform.wall_clock;
+import quic.ech_config;
 import capy;
 import corosio;
 
@@ -16,8 +17,16 @@ export namespace tls::detail {
     using ConnectClock=std::chrono::steady_clock;
     template<class Profile>
     auto physical_handshake(Profile const& profile,std::uint64_t now,std::uint64_t deadline,
-        std::int64_t verification_time,corosio::endpoint const& endpoint) {
-        if constexpr (requires {profile.handshake(now,deadline,verification_time,std::span<std::uint8_t const>{});}) {
+        std::int64_t verification_time,corosio::endpoint const& endpoint,quic::EchConfig const* ech=nullptr) {
+        if constexpr (requires {profile.handshake(now,deadline,verification_time,std::span<std::uint8_t const>{},ech);}) {
+            std::array<std::uint8_t,19> target{};
+            target[0]=endpoint.is_v4() ? 4 : 6;
+            target[1]=static_cast<std::uint8_t>(endpoint.port()>>8);
+            target[2]=static_cast<std::uint8_t>(endpoint.port());
+            if (endpoint.is_v4()) std::ranges::copy(endpoint.address().to_v4().to_bytes(),target.begin()+3);
+            else std::ranges::copy(endpoint.address().to_v6().to_bytes(),target.begin()+3);
+            return profile.handshake(now,deadline,verification_time,std::span<std::uint8_t const>(target),ech);
+        } else if constexpr (requires {profile.handshake(now,deadline,verification_time,std::span<std::uint8_t const>{});}) {
             std::array<std::uint8_t,19> target{};
             target[0]=endpoint.is_v4() ? 4 : 6;
             target[1]=static_cast<std::uint8_t>(endpoint.port()>>8);
@@ -26,6 +35,13 @@ export namespace tls::detail {
             else std::ranges::copy(endpoint.address().to_v6().to_bytes(),target.begin()+3);
             return profile.handshake(now,deadline,verification_time,std::span<std::uint8_t const>(target));
         } else return profile.handshake(now,deadline,verification_time);
+    }
+    template<class Profile>
+    auto profile_handshake(Profile const& profile,std::uint64_t now,std::uint64_t deadline,
+        std::int64_t verification_time,quic::EchConfig const* ech=nullptr) {
+        if constexpr (requires {profile.handshake(now,deadline,verification_time,std::span<std::uint8_t const>{},ech);})
+            return profile.handshake(now,deadline,verification_time,std::span<std::uint8_t const>{},ech);
+        else return profile.handshake(now,deadline,verification_time);
     }
     // Resolver owns a cancellable query slot and returns all node candidates
     // under this one deadline. Protocol authentication starts after TLS.
@@ -50,7 +66,7 @@ export namespace tls::detail {
         auto negotiated() const noexcept -> EncryptedExtensions const* {
             return owner_ && owner_->client() ? owner_->client()->negotiated() : nullptr;
         }
-        auto start(ConnectClock::time_point deadline) -> capy::task<ConnectResult> {
+        auto start(ConnectClock::time_point deadline,quic::EchConfig const* ech=nullptr) -> capy::task<ConnectResult> {
             if (starting_ || owner_ || canceled_) co_return ConnectResult::failed;
             if (ConnectClock::now()>=deadline) co_return ConnectResult::timeout;
             starting_=true;
@@ -80,7 +96,7 @@ export namespace tls::detail {
                 auto seconds=platform::calibrated_wall_seconds();
                 if (seconds<0) co_return ConnectResult::failed;
                 if (now<0 || end<=now) co_return ConnectResult::timeout;
-                auto handshake=physical_handshake(profile_,static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),seconds,endpoint);
+                auto handshake=physical_handshake(profile_,static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),seconds,endpoint,ech);
                 if (!handshake) co_return ConnectResult::failed;
                 owner_=std::make_unique<OwnedClient>(context_,std::move(*handshake));
                 auto* interfaces=options_.binding.network ? &options_ : nullptr;
@@ -130,7 +146,7 @@ export namespace tls::detail {
         auto socket() noexcept -> Socket* { return owner_ && owner_->application() ? socket_.get() : nullptr; }
         auto application() noexcept -> ApplicationConnection<Socket>* { return owner_ ? owner_->application() : nullptr; }
         auto negotiated() const noexcept -> EncryptedExtensions const* { return owner_ ? owner_->negotiated() : nullptr; }
-        auto start(ConnectClock::time_point deadline) -> capy::task<ConnectResult> {
+        auto start(ConnectClock::time_point deadline,quic::EchConfig const* ech=nullptr) -> capy::task<ConnectResult> {
             if(starting_ || owner_ || canceled_)co_return ConnectResult::failed;
             if(ConnectClock::now()>=deadline)co_return ConnectResult::timeout;
             starting_=true;
@@ -144,7 +160,7 @@ export namespace tls::detail {
             auto seconds=platform::calibrated_wall_seconds();
             if(seconds<0)co_return ConnectResult::failed;
             if(now<0 || end<=now)co_return ConnectResult::timeout;
-            auto handshake=profile_.handshake(static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),seconds);
+            auto handshake=profile_handshake(profile_,static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),seconds,ech);
             if(!handshake)co_return ConnectResult::failed;
             lower_=std::make_unique<net::FastOpenStream>(context_,std::move(*endpoints),deadline,options_);
             socket_=std::make_unique<Socket>(*lower_);
@@ -177,7 +193,7 @@ export namespace tls::detail {
         auto cancel() noexcept -> void { canceled_=true; if (owner_) owner_->cancel(); lower_.cancel(); }
         auto application() noexcept -> ApplicationConnection<net::ByteStreamAdapter<Lower>>* { return owner_ ? owner_->application() : nullptr; }
         auto negotiated() const noexcept -> EncryptedExtensions const* {return owner_ ? owner_->negotiated() : nullptr;}
-        auto start(ConnectClock::time_point deadline) -> capy::task<ConnectResult> {
+        auto start(ConnectClock::time_point deadline,quic::EchConfig const* ech=nullptr) -> capy::task<ConnectResult> {
             if (starting_ || owner_ || canceled_) co_return ConnectResult::failed;
             if (ConnectClock::now()>=deadline) co_return ConnectResult::timeout;
             starting_=true;
@@ -191,7 +207,7 @@ export namespace tls::detail {
                 auto seconds=platform::calibrated_wall_seconds();
                 if (seconds<0) co_return ConnectResult::failed;
                 if (now<0 || end<=now) co_return ConnectResult::timeout;
-                auto handshake=profile_.handshake(static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),seconds);
+                auto handshake=profile_handshake(profile_,static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),seconds,ech);
                 if (!handshake) co_return ConnectResult::failed;
                 owner_=std::make_unique<ClientConnection<net::ByteStreamAdapter<Lower>>>(socket_,std::move(*handshake));
                 auto ready=co_await owner_->start();
@@ -221,15 +237,15 @@ export namespace tls::detail {
         std::unique_ptr<ClientConnection<net::UnifiedStreamSocket>> owner_;
         bool starting_=false,canceled_=false;
 
-        auto make_handshake(ConnectClock::time_point deadline,corosio::endpoint const* ep)
+        auto make_handshake(ConnectClock::time_point deadline,corosio::endpoint const* ep,quic::EchConfig const* ech=nullptr)
             -> std::expected<decltype(profile_.handshake(0,0,0)),ConnectResult> {
             auto now=std::chrono::duration_cast<std::chrono::milliseconds>(ConnectClock::now().time_since_epoch()).count();
             auto end=std::chrono::duration_cast<std::chrono::milliseconds>(deadline.time_since_epoch()).count();
             auto secs=platform::calibrated_wall_seconds();
             if (secs<0) return std::unexpected(ConnectResult::failed);
             if (now<0 || end<=now) return std::unexpected(ConnectResult::timeout);
-            auto hs=ep ? physical_handshake(profile_,static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),secs,*ep)
-                       : profile_.handshake(static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),secs);
+            auto hs=ep ? physical_handshake(profile_,static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),secs,*ep,ech)
+                       : profile_handshake(profile_,static_cast<std::uint64_t>(now),static_cast<std::uint64_t>(end),secs,ech);
             if (!hs) return std::unexpected(ConnectResult::failed);
             return std::move(hs);
         }
@@ -254,7 +270,7 @@ export namespace tls::detail {
         auto socket() noexcept -> Socket* { return owner_ && owner_->application() ? &socket_ : nullptr; }
         auto application() noexcept -> ApplicationConnection<Socket>* { return owner_ ? owner_->application() : nullptr; }
         auto negotiated() const noexcept -> EncryptedExtensions const* { return owner_ ? owner_->negotiated() : nullptr; }
-        auto start(ConnectClock::time_point deadline) -> capy::task<ConnectResult> {
+        auto start(ConnectClock::time_point deadline,quic::EchConfig const* ech=nullptr) -> capy::task<ConnectResult> {
             if (starting_ || owner_ || canceled_) co_return ConnectResult::failed;
             if (ConnectClock::now()>=deadline) co_return ConnectResult::timeout;
             starting_=true;
@@ -265,7 +281,7 @@ export namespace tls::detail {
                 for (;;) {
                     auto connected=co_await lower_->connect(deadline,candidates);
                     if (connected!=ConnectResult::connected || canceled_) co_return canceled_ ? ConnectResult::failed : connected;
-                    auto hs=make_handshake(deadline,nullptr);
+                    auto hs=make_handshake(deadline,nullptr,ech);
                     if (!hs) co_return hs.error();
                     owner_=std::make_unique<ClientConnection<Socket>>(socket_,std::move(**hs));
                     auto ready=co_await owner_->start();
@@ -295,7 +311,7 @@ export namespace tls::detail {
                 candidates=**resolved;
             }
             if (mode_==TransportMode::fast_open) {
-                auto hs=make_handshake(deadline,nullptr);
+                auto hs=make_handshake(deadline,nullptr,ech);
                 if (!hs) co_return hs.error();
                 std::vector<corosio::endpoint> fast_eps;
                 if (resolved) {
@@ -316,7 +332,7 @@ export namespace tls::detail {
             for (auto const& endpoint : candidates) {
                 if (!endpoint.port() || endpoint.address().is_unspecified()) continue;
                 if (canceled_) co_return ConnectResult::failed;
-                auto hs=make_handshake(deadline,&endpoint);
+                auto hs=make_handshake(deadline,&endpoint,ech);
                 if (!hs) co_return hs.error();
                 tcp_.emplace(context_);
                 bool prep_failed=false;

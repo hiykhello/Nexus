@@ -8,6 +8,7 @@ namespace config {
     using namespace config::kdl;
 
     auto parse_tcp_dial_option(Node const&,TcpSocketOptions&) -> std::expected<bool,std::string>;
+    auto parse_quic_ech_field(Node const&,QuicEchOptions&) -> bool;
     auto parse_vless_transport(Node const&,bool) -> std::expected<std::variant<HttpUpgradeTransport,GrpcTransport,xhttp::Profile>,std::string>;
     auto parse_outbound_multiplex(Node const&) -> std::expected<MultiplexConfig,std::string>;
 
@@ -125,10 +126,12 @@ namespace config {
                             field.arguments[0].tag || !std::holds_alternative<bool>(field.arguments[0].data) || !std::get<bool>(field.arguments[0].data))
                             return error("vless tls requires verify #true");
                         verify_seen=true;
-                    } else return error("unsupported vless tls node: " + field.name);
+                    } else if (!parse_quic_ech_field(field,result.ech)) return error("unsupported vless tls node: " + field.name);
                 }
                 if (!name_seen || (reality_seen ? (ca_seen || verify_seen || !result.certificate_sha256.empty()) : !verify_seen))
                     return error("invalid vless tls authentication configuration");
+                if (reality_seen && (result.ech.dns || !result.ech.config_file.empty()))
+                    return error("VLESS ECH cannot be combined with Reality");
                 tls_seen=true;
             } else {
                 auto option=parse_tcp_dial_option(child,result.tcp_options);
@@ -141,6 +144,8 @@ namespace config {
             fast_open.value_or(false) || result.fingerprint==TlsFingerprint::tls12 ||
             (result.xhttp->endpoint.version==xhttp::HttpVersion::http3 && (!tls_seen || result.reality))))
             return error("invalid VLESS XHTTP TLS, flow or socket options");
+        if ((result.ech.dns || !result.ech.config_file.empty()) && result.fingerprint==TlsFingerprint::tls12)
+            return error("VLESS ECH requires TLS 1.3");
         if (result.fingerprint==TlsFingerprint::tls12 &&
             (result.reality || result.vision || result.record_size_limit || result.key_exchange!=TlsKeyExchange::x25519))
             return error("VLESS TLS 1.2 requires ordinary TLS, X25519 and the default record size");

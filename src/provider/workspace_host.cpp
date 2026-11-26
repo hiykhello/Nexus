@@ -211,17 +211,30 @@ namespace provider::ws_detail {
             auto const& d = h.desktop;
             bool is_linux = (h.platform == "desktop-linux");
             bool linux_strict = is_linux && d.enable_tun && d.tun_strict_route;
-            if (linux_strict) {
-                if (d.enable_mixed || !d.second_local_listen.empty() || !d.lan_listen.empty())
-                    ctx.warnings.push_back("desktop-linux TUN strict-route requires a single inbound; mixed/local listeners omitted");
-            } else {
-                if (d.enable_mixed && !d.mixed_listen.empty())
-                    if (auto ok = emit_mixed("mixed-in", d.mixed_listen, {}, {}); !ok) return ok;
-                if (!d.second_local_listen.empty())
-                    if (auto ok = emit_mixed("local-in-2", d.second_local_listen, {}, {}); !ok) return ok;
-                if (!d.lan_listen.empty())
-                    if (auto ok = emit_mixed("lan-in", d.lan_listen, d.lan_username, d.lan_password); !ok) return ok;
-            }
+            auto emit_desktop_mixed = [&](std::string_view name, std::string_view label, std::string_view spec,
+                                          std::string_view user, std::string_view pass) -> std::expected<void, std::string> {
+                if (linux_strict) {
+                    if (auto hp = platform::split_host_port(spec, true)) {
+                        if (auto ip = platform::parse_ip_address(hp->host)) {
+                            bool loopback = ip->size == 4
+                                ? (ip->bytes[0] == 127)
+                                : (std::ranges::all_of(std::span(ip->bytes).first(15), [](auto b) { return b == 0; }) && ip->bytes[15] == 1);
+                            if (!loopback) {
+                                ctx.warnings.push_back("desktop-linux TUN strict-route permits only loopback coexisting listeners; non-loopback " +
+                                                       std::string(label) + " omitted");
+                                return {};
+                            }
+                        }
+                    }
+                }
+                return emit_mixed(name, spec, user, pass);
+            };
+            if (d.enable_mixed && !d.mixed_listen.empty())
+                if (auto ok = emit_desktop_mixed("mixed-in", "mixed_listen", d.mixed_listen, {}, {}); !ok) return ok;
+            if (!d.second_local_listen.empty())
+                if (auto ok = emit_desktop_mixed("local-in-2", "second_local_listen", d.second_local_listen, {}, {}); !ok) return ok;
+            if (!d.lan_listen.empty())
+                if (auto ok = emit_desktop_mixed("lan-in", "lan_listen", d.lan_listen, d.lan_username, d.lan_password); !ok) return ok;
             if (d.enable_tun) {
                 auto mtu = std::clamp<std::uint16_t>(d.tun_mtu ? d.tun_mtu : 1500, 68, 65535);
                 ins << "  inbound \"tun-in\" type=\"tun\" {\n    stack \"system\"\n";

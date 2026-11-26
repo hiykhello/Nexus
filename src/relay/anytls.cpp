@@ -25,6 +25,7 @@ import tls.byte_stream;
 import tls.connector;
 import tls.profiles;
 import tls.fingerprint;
+import quic.ech_config;
 import uot;
 import net.connection_pool;
 import net.operation_token;
@@ -32,6 +33,7 @@ import capy;
 import corosio;
 import :transport_helpers;
 import :grpc_pool;
+import :quic_ech;
 import :anytls_grpc;
 
 namespace relay {
@@ -51,6 +53,7 @@ namespace relay {
             a::PoolOptions pool;
             bool fast_open;
             std::optional<httpupgrade::Profile> transport;
+            quic_ech::Profile ech;
             std::mutex mutex;
             std::array<std::unique_ptr<Worker>,17> physical;
             std::array<std::unique_ptr<Worker>,17> layered;
@@ -89,21 +92,28 @@ namespace relay {
         // Each cached TLS connection owns its complete lower proxy state.
         // No member borrows the business Session that happened to request it.
         class Node {
+            corosio::io_context& context_;
+            Profile const& profile_;
+            DnsSlot ech_dns_;
             Session state_;
             std::optional<Connector> connector_;
             bool ktls_eligible_ = false;
         public:
             using Socket=typename Connector::Socket;
             Node(OutboundContext const& environment,Profile const& profile,TunnelFactory const* detour,TcpSocketOptions const& options,Mode mode)
-                : state_(environment.context), ktls_eligible_(!profile.transport && mode!=Mode::layered) {
+                : context_(environment.context), profile_(profile), state_(environment.context), ktls_eligible_(!profile.transport && mode!=Mode::layered) {
                 state_.dns=environment.dns; state_.local_dns=environment.local_dns;
+                if (environment.owner) state_.route_snapshot=environment.owner->current_route_snapshot();
                 state_.tunnel_factories=environment.factories; state_.direct_tcp_options=environment.direct_options;
                 if (mode==Mode::layered) connector_.emplace(environment.context,profile.tls,std::in_place,state_,environment,*detour,profile);
                 else connector_.emplace(mode,environment.context,Resolver{state_,environment.context,profile},profile.tls,options);
             }
             ~Node() { state_.close(); }
             auto start(Clock::time_point deadline) -> capy::task<Connected> {
-                auto connected = co_await connector_->start(deadline);
+                auto ech = co_await profile_.ech.resolve(state_, context_, ech_dns_, profile_.bootstrap, profile_.port, deadline, quic_ech::Transport::tcp);
+                if (state_.closed) co_return Connected::failed;
+                if (!ech) co_return Clock::now() >= deadline ? Connected::timeout : Connected::failed;
+                auto connected = co_await connector_->start(deadline, *ech ? &**ech : nullptr);
 #ifdef NEXUS_ENABLE_KTLS
                 if (connected == Connected::connected && ktls_eligible_ && connector_->application())
                     (void)connector_->application()->try_enable_ktls();
@@ -111,7 +121,7 @@ namespace relay {
                 co_return connected;
             }
             auto application() noexcept { return connector_->application(); }
-            auto cancel() noexcept -> void { connector_->cancel(); state_.close(); }
+            auto cancel() noexcept -> void { ech_dns_.cancel(); connector_->cancel(); state_.close(); }
         };
         struct Factory {
             using Connection=a::PooledConnection<Node>;
@@ -264,12 +274,15 @@ namespace relay {
         };
     }
     auto make_anytls_factory(std::string_view host,std::uint16_t port,std::string_view password_file,std::string_view server_name,
-        std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout,TcpSocketOptions options,AnyTlsOptions pool_options,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,std::span<std::array<std::uint8_t,32> const> pins,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc_cfg)
+        std::string_view ca_file,TlsKeyExchange exchange,std::optional<std::size_t> bootstrap,std::uint32_t timeout,TcpSocketOptions options,AnyTlsOptions pool_options,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,std::span<std::array<std::uint8_t,32> const> pins,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc_cfg,QuicEchOptions const& ech,bool dns_available)
         -> std::expected<TunnelFactory,std::string> {
         auto pool=pool_options;
         if (host.empty() || host.size()>253 || !port || std::ranges::any_of(host,[](unsigned char c) { return c<33 || c>126; }) ||
             !timeout || timeout>3600000 || !options.valid() || !pool.valid()) return std::unexpected("invalid AnyTLS dial options");
         if (transport && grpc_cfg) return std::unexpected("AnyTLS accepts at most one transport");
+        if ((ech.dns || !ech.config_file.empty()) && fingerprint==TlsFingerprint::tls12) return std::unexpected("AnyTLS ECH requires TLS 1.3");
+        auto ech_profile=quic_ech::Profile::load(ech,server_name,dns_available);
+        if (!ech_profile) return std::unexpected(ech_profile.error());
         if (exchange!=TlsKeyExchange::x25519 && exchange!=TlsKeyExchange::x25519_mlkem768 && exchange!=TlsKeyExchange::x25519_mlkem768_only)
             return std::unexpected("invalid TLS key exchange");
         auto key=a::PasswordKey::load(password_file);
@@ -298,10 +311,10 @@ namespace relay {
         if (grpc_prof) {
             auto gp=std::make_unique<anytls_grpc::Profile>(std::string(host),port,std::move(*key),std::move(*shaped),
                 std::move(grpc_prof->request),grpc_prof->response,grpc_prof->limits,grpc_prof->max_sessions,
-                bootstrap,timeout,options,pool,fast_open);
+                bootstrap,timeout,options,pool,fast_open,std::move(*ech_profile));
             return anytls_grpc::make_factory(std::move(gp));
         }
-        auto profile=std::make_unique<Profile>(std::string(host),port,std::move(*key),std::move(*shaped),bootstrap,timeout,options,pool,fast_open,std::move(hu_prof));
+        auto profile=std::make_unique<Profile>(std::string(host),port,std::move(*key),std::move(*shaped),bootstrap,timeout,options,pool,fast_open,std::move(hu_prof),std::move(*ech_profile));
         auto* borrowed=profile.get();
         TunnelFactory factory{[profile=std::move(profile)](Session& session,corosio::io_context& context,bool local,TcpSocketOptions const*) -> pro::proxy<TunnelFacade> {
             Worker* fast=nullptr;

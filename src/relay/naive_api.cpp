@@ -11,7 +11,7 @@ namespace relay {
         if (outbounds.size() >= 256) return std::unexpected("too many tunnel outbounds");
         if (cfg.bootstrap_index && (!dns_routing || *cfg.bootstrap_index >= dns_routing->resolver_count()))
             return std::unexpected("invalid bootstrap resolver");
-        auto factory = make_naive_factory(cfg);
+        auto factory = make_naive_factory(cfg, dns_routing.has_value());
         if (!factory) return std::unexpected(factory.error());
         auto index = outbounds.size() + 2;
         outbounds.push_back(std::move(*factory));

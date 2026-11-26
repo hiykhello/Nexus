@@ -20,6 +20,24 @@ namespace tls {
     auto ClientSessionHandshake::create(ClientHello hello, std::uint16_t group, std::span<std::span<std::uint8_t const> const> anchors, PeerNameKind kind, std::span<std::uint8_t const> name, std::int64_t time) -> std::expected<ClientSessionHandshake,ClientSessionHandshakeError> {
         return create(std::move(hello),group ? std::span<std::uint16_t const>(&group,1) : std::span<std::uint16_t const>{},anchors,kind,name,time);
     }
+    auto ClientSessionHandshake::create_ech(ClientHello hello, std::span<std::uint16_t const> groups,
+        std::span<std::span<std::uint8_t const> const> anchors, PeerNameKind kind,
+        std::span<std::uint8_t const> name, std::int64_t time, quic::EchConfig const& ech)
+        -> std::expected<ClientSessionHandshake,ClientSessionHandshakeError> {
+        if (anchors.empty() || anchors.size()>1024 || name.empty() || name.size()>253 || kind!=PeerNameKind::dns ||
+            std::ranges::any_of(name,[](auto c) { return c<=0x20 || c>=0x7f; }))
+            return std::unexpected(ClientSessionHandshakeError::invalid_configuration);
+        std::size_t total=0; std::vector<crypto::Bytes> copies;
+        for (auto cert:anchors) {
+            if (cert.empty() || cert.size()>1048576 || cert.size()>4194304-total)
+                return std::unexpected(ClientSessionHandshakeError::invalid_configuration);
+            total+=cert.size(); copies.emplace_back(cert.begin(),cert.end());
+        }
+        auto driver=ClientHelloDriver::create_ech(std::move(hello),groups,ech);
+        if (!driver) return std::unexpected(driver.error()==ClientHelloDriverError::crypto_error
+            ? ClientSessionHandshakeError::crypto_error : ClientSessionHandshakeError::invalid_configuration);
+        return ClientSessionHandshake(std::move(*driver),std::move(copies),crypto::Bytes(name.begin(),name.end()),kind,time);
+    }
 
     auto ClientSessionHandshake::initial_record() const -> std::expected<crypto::Bytes,ClientSessionHandshakeError> {
         if (state_!=State::initial) return std::unexpected(ClientSessionHandshakeError::invalid_state);

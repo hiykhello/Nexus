@@ -32,6 +32,10 @@ export namespace config {
     };
 
     enum class TlsKeyExchange { x25519, x25519_mlkem768, x25519_mlkem768_only };
+    struct QuicEchOptions {
+        std::string config_file;
+        bool dns = false;
+    };
     enum class TlsFingerprint : std::uint8_t {
         native, tls13_grease, tls13_randomized,
         chrome, firefox, safari, ios, android, edge, random, tls12
@@ -108,6 +112,7 @@ export namespace config {
         std::optional<std::size_t> bootstrap_index, detour_index;
         platform::TcpSocketOptions tcp_options;
         std::optional<bool> tcp_fast_open;
+        QuicEchOptions ech;
     };
     struct NamedNaiveOutbound { std::string name; NaiveOutbound config; };
 

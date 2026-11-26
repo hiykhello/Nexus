@@ -33,6 +33,10 @@ export namespace tls {
         [[nodiscard]] static auto create(ClientHello hello, std::uint16_t initial_group,
             std::span<std::span<std::uint8_t const> const> anchors, PeerNameKind kind,
             std::span<std::uint8_t const> name, std::int64_t time) -> std::expected<ClientSessionHandshake,ClientSessionHandshakeError>;
+        [[nodiscard]] static auto create_ech(ClientHello hello, std::span<std::uint16_t const> groups,
+            std::span<std::span<std::uint8_t const> const> anchors, PeerNameKind kind,
+            std::span<std::uint8_t const> name, std::int64_t time, quic::EchConfig const& ech)
+            -> std::expected<ClientSessionHandshake,ClientSessionHandshakeError>;
         [[nodiscard]] static auto create(ClientTlsConfig config) -> std::expected<ClientSessionHandshake,ClientSessionHandshakeError>;
         // The driver must have completed first-Hello authentication and own a
         // verifier. This entry point never falls back to the PKI configuration.

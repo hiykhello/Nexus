@@ -12,6 +12,7 @@ import tls.fingerprint;
 import tls.tls12_client;
 import httpupgrade;
 import platform.ip_address;
+import quic.ech_config;
 
 export namespace vless::detail {
     // Prepared once before accepting clients. The CA bundle is a snapshot; every
@@ -38,7 +39,8 @@ export namespace vless::detail {
 
         [[nodiscard]] auto handshake(std::uint64_t now, std::uint64_t deadline,
                                      std::int64_t verification_time,
-                                     std::span<std::string_view const> application_protocols={}) const
+                                     std::span<std::string_view const> application_protocols={},
+                                     quic::EchConfig const* ech=nullptr) const
             -> std::expected<tls::ClientHandshakeIo, std::string> {
             constexpr std::array<std::uint16_t,1> classical{0x001d};
             constexpr std::array<std::uint16_t,2> hybrid{0x11ec,0x001d};
@@ -51,8 +53,10 @@ export namespace vless::detail {
             // Reality authenticates its cover name through SNI. Only ordinary
             // PKI TLS can use a numeric address as the certificate identity.
             auto ip=reality ? std::optional<platform::IpAddress>{} : platform::parse_ip_address(server_name);
+            if (ech && (reality || ip)) return std::unexpected("VLESS ECH requires ordinary TLS with a DNS server-name");
             auto sni=ip ? std::optional<std::string_view>{} : std::optional<std::string_view>{server_name};
             if (fingerprint==config::TlsFingerprint::tls12) {
+                if (ech) return std::unexpected("VLESS ECH requires TLS 1.3");
                 if (reality || vision || use_hybrid || record_size_limit)
                     return std::unexpected("VLESS TLS 1.2 requires ordinary TLS, X25519 and the default record size");
                 auto identity=ip ? crypto::Bytes(ip->view().begin(),ip->view().end()) : crypto::Bytes(server_name.begin(),server_name.end());
@@ -70,7 +74,7 @@ export namespace vless::detail {
                 auto primary=use_hybrid ? std::uint16_t{0x11ec} : std::uint16_t{0x001d};
                 auto shape_config=tls::make_profile_fingerprint_config(*resolved,primary,
                     key_exchange==config::TlsKeyExchange::x25519_mlkem768_only,tls::HandshakeTransport::tcp,record_size_limit);
-                if (vision && !reality) shape_config.allow_tls12=false;
+                if ((vision && !reality) || ech) shape_config.allow_tls12=false;
                 if (reality && key_exchange==config::TlsKeyExchange::x25519_mlkem768 && !shape_config.group_count) {
                     shape_config.group_count=2;
                     shape_config.group_order={hybrid[0],hybrid[1]};
@@ -80,7 +84,7 @@ export namespace vless::detail {
                 // Reality authenticates the peer with an Ed25519 credential.
                 constexpr std::uint16_t ed25519=0x0807;
                 auto shape=tls::make_fingerprint_hello(sni,alpn,shape_config,tls::HandshakeTransport::tcp,{},
-                    reality ? std::optional{ed25519} : std::nullopt);
+                    reality ? std::optional{ed25519} : std::nullopt,ech!=nullptr);
                 if (!shape) return std::unexpected("invalid TLS fingerprint configuration");
                 if (reality) {
                     if (verification_time<0 || static_cast<std::uint64_t>(verification_time)>std::numeric_limits<std::uint32_t>::max()) return std::unexpected("invalid Reality time");
@@ -96,7 +100,7 @@ export namespace vless::detail {
                 auto target=std::span(reinterpret_cast<std::uint8_t const*>(scope.data()),scope.size());
                 auto io=tls::ClientHandshakeIo::create(std::move(shape->hello),shape->initial_groups(),anchors,
                     ip ? tls::PeerNameKind::ip : tls::PeerNameKind::dns,name,verification_time,now,deadline,
-                    vision || !verification_time ? std::span<std::uint8_t const>{} : target,certificate_pins);
+                    vision || !verification_time ? std::span<std::uint8_t const>{} : target,certificate_pins,ech);
                 if (!io) return std::unexpected("invalid TLS handshake deadline");
                 return std::move(*io);
             }
@@ -116,7 +120,7 @@ export namespace vless::detail {
             auto target=std::span(reinterpret_cast<std::uint8_t const*>(scope.data()),scope.size());
             auto io=tls::ClientHandshakeIo::create(std::move(*hello),groups,anchors,
                 ip ? tls::PeerNameKind::ip : tls::PeerNameKind::dns,identity,verification_time,now,deadline,
-                vision || !verification_time ? std::span<std::uint8_t const>{} : target,certificate_pins);
+                vision || !verification_time ? std::span<std::uint8_t const>{} : target,certificate_pins,ech);
             if (!io) return std::unexpected("invalid TLS handshake deadline");
             return std::move(*io);
         }

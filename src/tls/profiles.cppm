@@ -8,6 +8,7 @@ import tls.client_handshake_io;
 import tls.fingerprint;
 import tls.server_handshake_io;
 import platform.ip_address;
+export import quic.ech_config;
 
 export namespace tls {
     // Protocol-independent, immutable TLS configuration. File loading happens
@@ -21,12 +22,12 @@ export namespace tls {
         std::vector<std::array<std::uint8_t,32>> certificate_pins;
 
         auto handshake(std::uint64_t now,std::uint64_t deadline,std::int64_t verification_time,
-            std::span<std::uint8_t const> target={}) const -> std::expected<ClientHandshakeIo,std::string>;
+            std::span<std::uint8_t const> target={},quic::EchConfig const* ech=nullptr) const -> std::expected<ClientHandshakeIo,std::string>;
         // Explicit policy replaces the legacy key_share selection for this
         // attempt. It borrows this immutable identity and stores no policy in
         // the default profile, so native profile layout and behavior stay exact.
         auto handshake(std::uint64_t now,std::uint64_t deadline,std::int64_t verification_time,
-            FingerprintConfig const& fingerprint,std::span<std::uint8_t const> target={}) const
+            FingerprintConfig const& fingerprint,std::span<std::uint8_t const> target={},quic::EchConfig const* ech=nullptr) const
             -> std::expected<ClientHandshakeIo,std::string>;
         static auto load(std::string_view name,std::string_view ca,std::uint16_t key_share=0x001d,
             bool hybrid_only=false,std::span<std::string_view const> alpn={})
@@ -49,7 +50,7 @@ export namespace tls {
         [[nodiscard]] auto make_quic_hello(std::span<std::string_view const> alpn) const
             -> std::expected<FingerprintHello,std::string>;
         auto handshake(std::uint64_t now,std::uint64_t deadline,std::int64_t verification_time,
-            std::span<std::uint8_t const> target={}) const -> std::expected<ClientHandshakeIo,std::string>;
+            std::span<std::uint8_t const> target={},quic::EchConfig const* ech=nullptr) const -> std::expected<ClientHandshakeIo,std::string>;
     };
 
     auto make_server_handshake(ServerCredential const& credential,std::uint64_t now,std::uint64_t deadline,
@@ -66,7 +67,7 @@ module :private;
 
 namespace tls {
     auto ClientProfile::handshake(std::uint64_t now,std::uint64_t deadline,std::int64_t verification_time,
-        std::span<std::uint8_t const> target) const -> std::expected<ClientHandshakeIo,std::string> {
+        std::span<std::uint8_t const> target,quic::EchConfig const* ech) const -> std::expected<ClientHandshakeIo,std::string> {
         std::array<std::uint16_t,1> classical{key_share};
         constexpr std::array<std::uint16_t,1> hybrid_only_groups{0x11ec};
         constexpr std::array<std::uint16_t,2> hybrid{0x11ec,0x001d};
@@ -78,25 +79,28 @@ namespace tls {
         std::array<std::string_view,16> protocols{};
         for (std::size_t index=0;index<alpn.size();++index) protocols[index]=alpn[index];
         auto ip=platform::parse_ip_address(server_name);
+        if (ech && ip) return std::unexpected("TLS ECH requires a DNS server-name");
         auto sni=ip ? std::optional<std::string_view>{} : std::optional<std::string_view>{server_name};
         auto hello=make_client_hello(sni,std::span(protocols).first(alpn.size()),groups);
         if (!hello) return std::unexpected("invalid TLS server name or ClientHello");
         auto identity=ip ? crypto::Bytes(ip->view().begin(),ip->view().end()) : crypto::Bytes(server_name.begin(),server_name.end());
         auto io=ClientHandshakeIo::create(std::move(*hello),groups,anchors,ip ? PeerNameKind::ip : PeerNameKind::dns,
-            identity,verification_time,now,deadline,target,certificate_pins);
+            identity,verification_time,now,deadline,target,certificate_pins,ech);
         if (!io) return std::unexpected("invalid TLS handshake deadline");
         return std::move(*io);
     }
 
     auto ClientProfile::handshake(std::uint64_t now,std::uint64_t deadline,std::int64_t verification_time,
-        FingerprintConfig const& fingerprint,std::span<std::uint8_t const> target) const
+        FingerprintConfig const& fingerprint,std::span<std::uint8_t const> target,quic::EchConfig const* ech) const
         -> std::expected<ClientHandshakeIo,std::string> {
         if (alpn.size()>16) return std::unexpected("too many TLS application protocols");
         std::array<std::string_view,16> protocols{};
         for (std::size_t index=0;index<alpn.size();++index) protocols[index]=alpn[index];
         auto ip=platform::parse_ip_address(server_name);
+        if (ech && ip) return std::unexpected("TLS ECH requires a DNS server-name");
         auto sni=ip ? std::optional<std::string_view>{} : std::optional<std::string_view>{server_name};
         if (fingerprint.profile==Fingerprint::tls12) {
+            if (ech) return std::unexpected("TLS ECH requires TLS 1.3");
             if (key_share!=29 || hybrid_only || fingerprint.record_size_limit)
                 return std::unexpected("TLS 1.2 requires X25519 and the default record size");
             auto identity=ip ? crypto::Bytes(ip->view().begin(),ip->view().end()) : crypto::Bytes(server_name.begin(),server_name.end());
@@ -108,11 +112,13 @@ namespace tls {
             if (!io) return std::unexpected("invalid TLS handshake deadline");
             return std::move(*io);
         }
-        auto shape=make_fingerprint_hello(sni,std::span(protocols).first(alpn.size()),fingerprint);
+        auto fp=fingerprint;
+        if (ech) fp.allow_tls12=false;
+        auto shape=make_fingerprint_hello(sni,std::span(protocols).first(alpn.size()),fp,HandshakeTransport::tcp,{},{},ech!=nullptr);
         if (!shape) return std::unexpected("invalid TLS fingerprint configuration");
         auto name=ip ? ip->view() : std::span(reinterpret_cast<std::uint8_t const*>(server_name.data()),server_name.size());
         auto io=ClientHandshakeIo::create(std::move(shape->hello),shape->initial_groups(),anchors,
-            ip ? PeerNameKind::ip : PeerNameKind::dns,name,verification_time,now,deadline,target,certificate_pins);
+            ip ? PeerNameKind::ip : PeerNameKind::dns,name,verification_time,now,deadline,target,certificate_pins,ech);
         if (!io) return std::unexpected("invalid TLS handshake deadline");
         return std::move(*io);
     }
@@ -155,10 +161,10 @@ namespace tls {
     }
 
     auto ShapedClientProfile::handshake(std::uint64_t now,std::uint64_t deadline,std::int64_t verification_time,
-        std::span<std::uint8_t const> target) const -> std::expected<ClientHandshakeIo,std::string> {
-        if(selected_==Fingerprint::native && !record_size_limit_)return profile_.handshake(now,deadline,verification_time,target);
+        std::span<std::uint8_t const> target,quic::EchConfig const* ech) const -> std::expected<ClientHandshakeIo,std::string> {
+        if(selected_==Fingerprint::native && !record_size_limit_)return profile_.handshake(now,deadline,verification_time,target,ech);
         auto config=make_profile_fingerprint_config(selected_,profile_.key_share,profile_.hybrid_only,HandshakeTransport::tcp,record_size_limit_);
-        return profile_.handshake(now,deadline,verification_time,config,target);
+        return profile_.handshake(now,deadline,verification_time,config,target,ech);
     }
 
     auto make_server_handshake(ServerCredential const& credential,std::uint64_t now,std::uint64_t deadline,

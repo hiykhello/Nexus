@@ -122,6 +122,15 @@ namespace config {
         auto strip_process_scope(auto& doc) -> void {
             std::erase_if(doc, [](auto const& node) { return node.name == "dns"; });
         }
+        auto strip_tun_live_scope(auto& doc) -> void {
+            std::erase_if(doc, [](auto const& node) { return node.name == "routing"; });
+            for (auto& node : doc)
+                if (node.name == "dns")
+                    std::erase_if(node.children, [](auto const& field) {
+                        return field.name != "listen" && field.name != "fake-ip";
+                    });
+            std::erase_if(doc, [](auto const& node) { return node.name == "dns" && node.children.empty(); });
+        }
     }
 
     auto reload_identity(std::string_view input, ReloadIdentity scope) -> std::expected<std::string, std::string> {
@@ -130,8 +139,12 @@ namespace config {
         if (auto normalized = normalize_groups(*document); !normalized)
             return std::unexpected(std::move(normalized.error()));
         strip_reload_base(*document);
-        if (scope != ReloadIdentity::full) strip_dns_policy_scope(*document);
-        if (scope == ReloadIdentity::process) strip_process_scope(*document);
+        if (scope == ReloadIdentity::tun_live) {
+            strip_tun_live_scope(*document);
+        } else {
+            if (scope != ReloadIdentity::full) strip_dns_policy_scope(*document);
+            if (scope == ReloadIdentity::process) strip_process_scope(*document);
+        }
         auto encoded = g::write_kdl(*document);
         if (!encoded) return error("cannot compare reload configuration");
         return std::move(*encoded);
@@ -145,12 +158,16 @@ namespace config {
         strip_reload_base(*document);
         auto full = g::write_kdl(*document);
         if (!full) return error("cannot compare reload configuration");
+        auto tun_doc = *document;
+        strip_tun_live_scope(tun_doc);
+        auto tun_live = g::write_kdl(tun_doc);
+        if (!tun_live) return error("cannot compare reload configuration");
         strip_dns_policy_scope(*document);
         auto dns_policy = g::write_kdl(*document);
         if (!dns_policy) return error("cannot compare reload configuration");
         strip_process_scope(*document);
         auto process = g::write_kdl(*document);
         if (!process) return error("cannot compare reload configuration");
-        return ReloadIdentities{std::move(*full), std::move(*dns_policy), std::move(*process)};
+        return ReloadIdentities{std::move(*full), std::move(*dns_policy), std::move(*process), std::move(*tun_live)};
     }
 }

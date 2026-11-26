@@ -9,6 +9,7 @@ import grpc.session;
 import grpc.connection;
 import tls.profiles;
 import tls.connector;
+import quic.ech_config;
 import net.connection_pool;
 import net.operation_token;
 import capy;
@@ -19,6 +20,7 @@ import :tunnel_facade;
 import :route_interface;
 import :session_interface;
 import :internal_decls;
+import :quic_ech;
 
 namespace relay::grpc_pool {
     namespace g = grpc;
@@ -34,6 +36,7 @@ namespace relay::grpc_pool {
         g::ResponsePolicy response;
         g::Limits limits;
         std::size_t max_sessions;
+        quic_ech::Profile const* ech = nullptr;
     };
 
     struct Resolver {
@@ -76,13 +79,18 @@ namespace relay::grpc_pool {
 
     class Node {
         using Connector = tls::detail::UnifiedConnector<Resolver, Lower, tls::ShapedClientProfile>;
+        corosio::io_context& context_;
+        std::uint16_t port_;
+        std::optional<std::size_t> bootstrap_;
+        quic_ech::Profile const* ech_;
+        DnsSlot ech_dns_;
         Session state_;
         std::optional<Connector> connector_;
     public:
         using Socket = typename Connector::Socket;
         inline Node(OutboundContext const& environment, EndpointSpec const& spec, TunnelFactory const* detour,
              TcpSocketOptions const& options, Mode mode)
-            : state_(environment.context) {
+            : context_(environment.context), port_(spec.port), bootstrap_(spec.bootstrap), ech_(spec.ech), state_(environment.context) {
             state_.dns = environment.dns;
             state_.local_dns = environment.local_dns;
             if (environment.owner) state_.route_snapshot = environment.owner->current_route_snapshot();
@@ -97,13 +105,22 @@ namespace relay::grpc_pool {
                                    spec.tls, options);
         }
         inline ~Node() { state_.close(); }
-        inline auto start(Clock::time_point deadline) { return connector_->start(deadline); }
+        inline auto start(Clock::time_point deadline) -> capy::task<Connected> {
+            std::optional<quic::EchConfig> resolved_ech;
+            if (ech_) {
+                auto loaded = co_await ech_->resolve(state_, context_, ech_dns_, bootstrap_, port_, deadline, quic_ech::Transport::tcp);
+                if (state_.closed) co_return Connected::failed;
+                if (!loaded) co_return Clock::now() >= deadline ? Connected::timeout : Connected::failed;
+                resolved_ech = std::move(*loaded);
+            }
+            co_return co_await connector_->start(deadline, resolved_ech ? &*resolved_ech : nullptr);
+        }
         inline auto application() noexcept { return connector_->application(); }
         inline auto accepts_alpn() const noexcept -> bool {
             auto* selected = connector_->negotiated();
             return selected && selected->alpn && std::ranges::equal(*selected->alpn, std::string_view("h2"));
         }
-        inline auto cancel() noexcept -> void { connector_->cancel(); state_.close(); }
+        inline auto cancel() noexcept -> void { ech_dns_.cancel(); connector_->cancel(); state_.close(); }
     };
 
     using Connection = g::OwnedConnection<Node, g::detail::ByteStreamReadPolicy, 16>;

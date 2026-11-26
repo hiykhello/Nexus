@@ -20,6 +20,7 @@ import platform.ip_address;
 import capy;
 import corosio;
 import :grpc_pool;
+import :quic_ech;
 
 namespace relay {
     namespace grpc_vless {
@@ -31,6 +32,7 @@ namespace relay {
             tls::ShapedClientProfile tls; grpc::RequestProfile request; grpc::ResponsePolicy response;
             grpc::Limits limits; std::size_t max_sessions;
             std::optional<std::size_t> bootstrap; std::uint32_t timeout; TcpSocketOptions options; bool fast_open;
+            quic_ech::Profile ech;
             std::mutex mutex;
             std::array<std::unique_ptr<Worker>, 17> physical;
             std::array<std::unique_ptr<Worker>, 17> layered;
@@ -40,7 +42,7 @@ namespace relay {
         Profile::~Profile() = default;
 
         auto endpoint_spec(Profile const& p) noexcept -> grpc_pool::EndpointSpec {
-            return {p.host, p.port, p.bootstrap, p.tls, p.request, p.response, p.limits, p.max_sessions};
+            return {p.host, p.port, p.bootstrap, p.tls, p.request, p.response, p.limits, p.max_sessions, &p.ech};
         }
 
         auto initialize(Profile& profile, Mode mode, OutboundContext const& environment,
@@ -138,12 +140,16 @@ namespace relay {
     }
 
     auto make_vless_grpc_factory(std::string_view host, std::uint16_t port, std::string_view uuid, std::string_view server_name, std::string_view ca,
-        TlsKeyExchange exchange, std::optional<std::size_t> bootstrap, std::uint32_t timeout, TcpSocketOptions options, GrpcTransport transport, TlsFingerprint fingerprint, std::optional<std::uint16_t> record_size_limit, std::span<std::array<std::uint8_t, 32> const> pins)
+        TlsKeyExchange exchange, std::optional<std::size_t> bootstrap, std::uint32_t timeout, TcpSocketOptions options, GrpcTransport transport, TlsFingerprint fingerprint, std::optional<std::uint16_t> record_size_limit, std::span<std::array<std::uint8_t, 32> const> pins, QuicEchOptions const& ech, bool dns_available)
         -> std::expected<TunnelFactory, std::string> {
         namespace v = grpc_vless;
         if (host.empty() || host.size() > 253 || !port || std::ranges::any_of(host, [](unsigned char c) { return c < 33 || c > 126; }) ||
             !timeout || timeout > 3600000 || !options.valid() || !transport.max_sessions || transport.max_sessions > 256)
             return std::unexpected("invalid gRPC VLESS options");
+        if ((ech.dns || !ech.config_file.empty()) && fingerprint == TlsFingerprint::tls12)
+            return std::unexpected("VLESS ECH requires TLS 1.3");
+        auto ech_profile = quic_ech::Profile::load(ech, server_name, dns_available);
+        if (!ech_profile) return std::unexpected(ech_profile.error());
         if (exchange != TlsKeyExchange::x25519 && exchange != TlsKeyExchange::x25519_mlkem768 && exchange != TlsKeyExchange::x25519_mlkem768_only)
             return std::unexpected("invalid TLS key exchange");
         auto secret = rulefile::read_password_file(uuid); if (!secret) return std::unexpected("UUID file: " + secret.error());
@@ -164,7 +170,7 @@ namespace relay {
         grpc::Limits limits{transport.input_window, transport.message_bytes, transport.hunk_bytes, transport.output_bytes, transport.output_messages, transport.library_bytes};
         if (!request || !grpc::Session::create(grpc::Role::client, *request, response, limits))
             return std::unexpected("invalid gRPC TLS/request/limits");
-        auto profile = std::make_unique<v::Profile>(std::string(host), port, *user, std::move(*shaped), std::move(*request), response, limits, transport.max_sessions, bootstrap, timeout, options, transport.tcp_fast_open);
+        auto profile = std::make_unique<v::Profile>(std::string(host), port, *user, std::move(*shaped), std::move(*request), response, limits, transport.max_sessions, bootstrap, timeout, options, transport.tcp_fast_open, std::move(*ech_profile));
         auto* borrowed = profile.get();
         TunnelFactory factory{[profile = std::move(profile)](Session& session, corosio::io_context& context, bool local, TcpSocketOptions const*) -> pro::proxy<TunnelFacade> {
             v::Worker* fast = nullptr; { std::lock_guard lock(profile->mutex); fast = grpc_pool::find(*profile, v::Mode::fast_open, context); }

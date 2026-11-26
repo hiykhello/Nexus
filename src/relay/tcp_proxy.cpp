@@ -12,8 +12,13 @@ namespace relay {
             static constexpr bool supported = false;
             template<class TlsSocket, class Stream> struct State {};
 
-            static auto load(config::TcpProxyTls const&) -> std::expected<Profile, std::string> {
+            static auto load(config::TcpProxyTls const&, bool = false) -> std::expected<Profile, std::string> {
                 return std::unexpected("HTTP CONNECT TLS is unavailable in this build");
+            }
+            template<class TlsSocket, class Stream>
+            static auto resolve_ech(Session&, corosio::io_context&, State<TlsSocket, Stream>&,
+                BasicTcpProxyProfile<Profile> const&, Clock::time_point, bool const&) -> capy::task<TunnelConnectResult> {
+                co_return TunnelConnectResult::connected;
             }
             template<bool FastOpen, class Socket, class Stream, class TlsSocket>
             static auto handshake_and_connect(Session&, State<TlsSocket, Stream>&, Socket*, Stream&,
