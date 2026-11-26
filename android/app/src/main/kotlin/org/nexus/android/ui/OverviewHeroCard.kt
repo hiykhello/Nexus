@@ -22,7 +22,6 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -102,23 +101,6 @@ internal fun FiveStateHeroCard(
         isLive -> activeProfileName.ifEmpty { "默认配置" }
         else -> activeProfileName.ifEmpty { "未连接" }
     }
-    val latencyColor = when {
-        !isLive || activeExit.latencyMs < 0L -> ext.muted
-        activeExit.state.equals("timeout", ignoreCase = true) ||
-            activeExit.state.equals("unreachable", ignoreCase = true) ||
-            activeExit.latencyMs == 0L -> ext.danger
-        activeExit.latencyMs < 80L -> ext.success
-        activeExit.latencyMs < 180L -> ext.warning
-        activeExit.latencyMs < 350L -> ext.slow
-        else -> ext.danger
-    }
-    val latencyText = when {
-        activeExit.state.equals("timeout", ignoreCase = true) ||
-            activeExit.state.equals("unreachable", ignoreCase = true) ||
-            activeExit.latencyMs == 0L -> "超时"
-        activeExit.latencyMs > 0L -> "${activeExit.latencyMs} ms"
-        else -> ""
-    }
 
     OpticalCard(
         cornerRadius = 16.dp,
@@ -151,28 +133,6 @@ internal fun FiveStateHeroCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (isLive && activeExit.memberName.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable(onClick = onOpenGroups)
-                                    .padding(horizontal = 4.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
-                            ) {
-                                SignalBarsIndicator(latencyMs = activeExit.latencyMs, state = activeExit.state)
-                                if (latencyText.isNotEmpty()) {
-                                    Text(
-                                        text = latencyText,
-                                        style = NexusNumericStyles.monoBadge,
-                                        color = latencyColor,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                    )
-                                }
-                            }
-                        }
                     }
 
                     Text(
@@ -280,10 +240,10 @@ private fun HeroPowerButton(
     val (containerColor, contentColor) = when (heroState) {
         HeroConnectionState.CONNECTED -> ext.success to Color(0xFF04261B)
         HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> ext.warning to Color(0xFF2B1902)
-        HeroConnectionState.ERROR -> ext.danger to Color.White
+        HeroConnectionState.ERROR -> ext.danger to MaterialTheme.colorScheme.onError
         HeroConnectionState.STANDBY -> primary to onPrimary
     }
-    val resolvedContent = if (ext.isDark || heroState == HeroConnectionState.STANDBY) {
+    val resolvedContent = if (ext.isDark || heroState == HeroConnectionState.STANDBY || heroState == HeroConnectionState.ERROR) {
         contentColor
     } else {
         Color.White

@@ -105,6 +105,57 @@ class CoreProcessSupervisor(private val context: Context) {
         runBoundedCommand(args, timeoutSeconds = 10L, maxBytes = MAX_COMPOSE_OUTPUT_BYTES, emptyOkMsg = "")
     }
 
+    suspend fun explainRule(
+        configFile: File,
+        inbound: String,
+        target: String,
+        routeMode: String = "rule",
+    ): CoreValidationResult = withContext(Dispatchers.IO) {
+        if (!configFile.isFile) {
+            return@withContext CoreValidationResult(false, "配置尚未就绪")
+        }
+        val bin = binaryFile()
+        verifyCoreBinary(bin)?.let { return@withContext it }
+        val normalizedTarget = normalizeExplainAuthority(target)
+        if (normalizedTarget.isEmpty()) {
+            return@withContext CoreValidationResult(false, "无效的目标主机")
+        }
+        val safeMode = when (routeMode.trim().lowercase()) {
+            "global", "direct" -> routeMode.trim().lowercase()
+            else -> "rule"
+        }
+        val args = listOf(
+            bin.absolutePath,
+            "rule",
+            "explain",
+            configFile.absolutePath,
+            inbound.ifBlank { "tun-in" },
+            "tcp",
+            normalizedTarget,
+            "--oneline",
+            "route-mode=$safeMode",
+        )
+        runBoundedCommand(args, timeoutSeconds = 3L, maxBytes = MAX_VALIDATION_OUTPUT_BYTES, emptyOkMsg = "")
+    }
+
+    private fun normalizeExplainAuthority(raw: String): String {
+        val trimmed = raw.trim().substringAfter("://").substringBefore('/').trim()
+        if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() }) return ""
+        if (trimmed.startsWith("[")) {
+            return if (trimmed.contains("]:")) trimmed else "$trimmed:443"
+        }
+        val firstColon = trimmed.indexOf(':')
+        val lastColon = trimmed.lastIndexOf(':')
+        if (firstColon >= 0 && firstColon != lastColon) {
+            return "[$trimmed]:443"
+        }
+        return if (lastColon > 0 && trimmed.substring(lastColon + 1).toIntOrNull() in 1..65535) {
+            trimmed
+        } else {
+            "${trimmed.trimEnd(':')}:443"
+        }
+    }
+
     private fun runBoundedCommand(
         command: List<String>,
         timeoutSeconds: Long,

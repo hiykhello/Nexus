@@ -4,15 +4,23 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -33,8 +41,83 @@ import org.nexus.android.ui.theme.NexusTheme
 
 private val LOG_LEVELS = listOf("trace", "error", "warn", "info", "debug")
 private val CORE_LOG_LEVELS = listOf("error", "warn", "info", "debug", "trace")
+internal val LOG_DOMAIN_OPTIONS = listOf(
+    "all" to "全部",
+    "core" to "core",
+    "net" to "net",
+    "tls" to "tls",
+    "quic" to "quic",
+    "dns" to "dns",
+    "route" to "route",
+    "tun" to "tun",
+    "proxy" to "proxy",
+    "control" to "control",
+    "state" to "state",
+)
 private val LOG_TIMESTAMP_REGEX = Regex("^(\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,3})?)\\s+(.*)$")
 private val LOG_LEVEL_TAG_REGEX = Regex("^\\[(error|warn|warning|info|debug|trace)]\\s*(.*)$", RegexOption.IGNORE_CASE)
+private val LOG_DOMAIN_PREFIX_REGEX = Regex("^([a-zA-Z0-9_-]{2,20}):\\s+.*$")
+
+/**
+ * Extracts normalized log domain prefix (e.g. `dns`, `route`, `quic`, `core`, `control`)
+ * from either `[level] domain: message` or `HH:mm:ss [level] domain: message`.
+ */
+fun parseLogDomain(raw: String): String {
+    var rest = raw.trim()
+    LOG_TIMESTAMP_REGEX.matchEntire(rest)?.let { rest = it.groupValues[2].trimStart() }
+    LOG_LEVEL_TAG_REGEX.matchEntire(rest)?.let { rest = it.groupValues[2].trimStart() }
+    LOG_TIMESTAMP_REGEX.matchEntire(rest)?.let { rest = it.groupValues[2].trimStart() }
+    val domain = LOG_DOMAIN_PREFIX_REGEX.matchEntire(rest)?.groupValues?.get(1)?.lowercase().orEmpty()
+    return when (domain) {
+        "vpn" -> "tun"
+        "outbound", "probe" -> "proxy"
+        else -> domain
+    }
+}
+
+@Composable
+internal fun LogDomainFilterRow(
+    selectedDomain: String,
+    onSelectDomain: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val ext = NexusTheme.colors
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        items(items = LOG_DOMAIN_OPTIONS, key = { it.first }) { (key, label) ->
+            val selected = selectedDomain == key
+            FilterChip(
+                selected = selected,
+                onClick = { onSelectDomain(key) },
+                shape = RoundedCornerShape(999.dp),
+                label = {
+                    Text(
+                        text = label,
+                        style = if (key == "all") MaterialTheme.typography.labelMedium else NexusNumericStyles.monoBadge,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = ext.wellSurface,
+                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
+                border = FilterChipDefaults.filterChipBorder(
+                    enabled = true,
+                    selected = selected,
+                    borderColor = ext.hairline,
+                    selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                ),
+                modifier = Modifier.heightIn(min = 36.dp),
+            )
+        }
+    }
+}
 
 @Composable
 internal fun CoreLogLevelDropdownPill(
@@ -207,22 +290,29 @@ private fun parseLogEntry(raw: String): ParsedLogEntry {
 internal fun LogLineRow(line: String) {
     val ext = NexusTheme.colors
     val parsed = remember(line) { parseLogEntry(line) }
-    val (badgeBg, badgeFg, rowTint) = when (parsed.level) {
-        "ERR" -> Triple(ext.dangerContainer, ext.danger, ext.dangerContainer.copy(alpha = 0.28f))
-        "WRN" -> Triple(ext.warningContainer, ext.warning, ext.warningContainer.copy(alpha = 0.16f))
-        "INF" -> Triple(ext.telemetryDownloadContainer, ext.telemetryDownload, Color.Transparent)
-        "DBG" -> Triple(ext.mutedContainer, ext.muted, Color.Transparent)
-        else -> Triple(ext.mutedContainer, ext.muted, Color.Transparent)
+    val (badgeBg, badgeFg, railColor) = when (parsed.level) {
+        "ERR" -> Triple(ext.dangerContainer, ext.danger, ext.danger)
+        "WRN" -> Triple(ext.warningContainer, ext.warning, ext.warning)
+        "INF" -> Triple(ext.telemetryDownloadContainer, ext.telemetryDownload, ext.telemetryDownload.copy(alpha = 0.72f))
+        else -> Triple(ext.mutedContainer, ext.muted, ext.muted.copy(alpha = 0.40f))
     }
+    val rowTint = if (parsed.level == "ERR") ext.dangerContainer.copy(alpha = 0.16f) else Color.Transparent
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(rowTint, RoundedCornerShape(8.dp))
-            .padding(horizontal = 6.dp, vertical = 5.dp),
+            .height(IntrinsicSize.Min)
+            .background(rowTint, RoundedCornerShape(6.dp))
+            .padding(end = 6.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        Box(
+            modifier = Modifier
+                .width(2.dp)
+                .fillMaxHeight()
+                .background(railColor, CircleShape),
+        )
         Surface(
             modifier = Modifier.width(30.dp),
             shape = RoundedCornerShape(4.dp),

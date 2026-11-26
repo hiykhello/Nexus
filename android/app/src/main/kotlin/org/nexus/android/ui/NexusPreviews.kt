@@ -16,11 +16,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import org.nexus.android.apps.InstalledAppEntry
 import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
+import org.nexus.android.bridge.ipc.DnsAnswerRecord
+import org.nexus.android.bridge.ipc.DnsQueryResult
 import org.nexus.android.bridge.ipc.MetricsSummary
 import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
 import org.nexus.android.bridge.ipc.OutboundProbeResult
 import org.nexus.android.bridge.vpn.VpnTunnelState
+import org.nexus.android.bridge.workspace.AndroidThemePreset
 import org.nexus.android.bridge.workspace.NodeConfig
 import org.nexus.android.bridge.workspace.PolicyGroupConfig
 import org.nexus.android.bridge.workspace.ProfileItem
@@ -193,10 +196,14 @@ internal val PREVIEW_SAMPLE_WORKSPACE = WorkspaceUiState(
 )
 
 @Composable
-internal fun PreviewFrame(dark: Boolean, content: @Composable () -> Unit) {
+internal fun PreviewFrame(
+    dark: Boolean,
+    themePreset: AndroidThemePreset = if (dark) AndroidThemePreset.OBSIDIAN else AndroidThemePreset.PAPER,
+    content: @Composable () -> Unit,
+) {
     val nonTextFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { nonTextFocus.requestFocus() } }
-    NexusTheme(darkTheme = dark) {
+    NexusTheme(darkTheme = dark, themePreset = themePreset) {
         Surface {
             Box {
                 Box(modifier = Modifier.size(1.dp).focusRequester(nonTextFocus).focusable())
@@ -210,11 +217,12 @@ internal fun PreviewFrame(dark: Boolean, content: @Composable () -> Unit) {
 internal fun SampleRootPreview(
     dark: Boolean,
     running: Boolean,
+    themePreset: AndroidThemePreset = if (dark) AndroidThemePreset.OBSIDIAN else AndroidThemePreset.PAPER,
     tunnelState: VpnTunnelState = if (running) VpnTunnelState.RUNNING else VpnTunnelState.STOPPED,
     lastError: String = "",
     dashEditing: Boolean = false,
 ) {
-    NexusTheme(darkTheme = dark) {
+    NexusTheme(darkTheme = dark, themePreset = themePreset) {
         NexusRootScreen(
             running = running,
             tunnelState = tunnelState,
@@ -252,6 +260,53 @@ internal fun SampleRootPreview(
             previewQuickNodes = if (running) PREVIEW_SAMPLE_GROUPS.first().members else emptyList(),
             previewMemoryText = if (running) "9.4 MB" else "6.2 MB",
             previewDashEditing = dashEditing,
+            previewOnsetMarkers = if (running) listOf(SparklineOnset(sampleIndex = 14, label = "HK-01")) else emptyList(),
+            previewCachedGroups = if (running) PREVIEW_SAMPLE_GROUPS else emptyList(),
+        )
+    }
+}
+
+@Preview(name = "Phone Studio Amber Running", showBackground = true, widthDp = 412, heightDp = 915, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun OverviewStudioAmberPreview() = SampleRootPreview(
+    dark = true,
+    running = true,
+    themePreset = AndroidThemePreset.STUDIO_AMBER,
+)
+
+@Preview(name = "Quick Command Inline Diagnostic", showBackground = true, widthDp = 412, heightDp = 640, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun QuickCommandDiagnosticPreview() {
+    PreviewFrame(dark = true, themePreset = AndroidThemePreset.OBSIDIAN) {
+        QuickCommandContent(
+            initialQuery = "api.github.com",
+            running = true,
+            outboundMode = "rule",
+            groups = PREVIEW_SAMPLE_GROUPS,
+            onDismiss = {},
+            onSwitchMode = {},
+            onSelectNode = { _, _ -> },
+            onProbeAll = {},
+            onFlushFakeIp = {},
+            onClearCache = {},
+            onOpenSplitTunnel = {},
+            onCreateRuleForHost = { _, _, _ -> },
+            previewExplain = RuleExplainSummary(
+                dnsPolicy = "remote-doh",
+                routeRule = "geosite-dev",
+                action = "代理分流",
+                outbound = "Auto/HK-01",
+            ),
+            previewDns = DnsQueryResult(
+                ok = true,
+                name = "api.github.com",
+                type = "A",
+                rcode = 0,
+                rcodeName = "NOERROR",
+                ttl = 60L,
+                answers = listOf(DnsAnswerRecord("api.github.com", "A", 60L, "198.18.0.42")),
+                elapsedMs = 4L,
+            ),
         )
     }
 }
@@ -306,6 +361,7 @@ private fun ConnectionsExpandedPreview() {
             onCloseAllConnections = { true },
             onCreateRuleFromConnection = { host, _, _ -> "已为 $host 创建规则" },
             onBypassPackage = {},
+            onDiagnoseHost = {},
             windowSizeClass = NexusWindowSizeClass.EXPANDED,
             contentPadding = PaddingValues(16.dp),
             initialSelectedConnection = PREVIEW_SAMPLE_CONNECTIONS.first(),

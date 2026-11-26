@@ -26,6 +26,23 @@ enum class AndroidPerAppMode(val wire: String) {
     }
 }
 
+enum class AndroidThemePreset(val wire: String) {
+    SYSTEM("system"),
+    OBSIDIAN("obsidian"),
+    PAPER("paper"),
+    STUDIO_AMBER("studio_amber");
+
+    companion object {
+        fun fromWire(raw: String?): AndroidThemePreset =
+            when (raw?.trim()?.lowercase()) {
+                "obsidian", "dark" -> OBSIDIAN
+                "paper", "daylight", "light" -> PAPER
+                "studio_amber", "amber" -> STUDIO_AMBER
+                else -> SYSTEM
+            }
+    }
+}
+
 data class HostCommonConfig(
     val schemaVersion: Int = SCHEMA_VERSION,
     val platform: String = "android",
@@ -82,6 +99,7 @@ data class AndroidHostSection(
     val dozePauseEnabled: Boolean = true,
     val oomSoftLimitMb: Int = 50,
     val screenOffPauseStats: Boolean = true,
+    val themePreset: AndroidThemePreset = AndroidThemePreset.SYSTEM,
     val dynamicColor: Boolean = false,
     // E2EE WebDAV Sync settings (strictly local Layer 3 0600 host.json; NEVER in workspace.json)
     val webdavUrl: String = "",
@@ -152,6 +170,7 @@ data class AndroidHostConfig(
                 put("doze_pause_enabled", android.dozePauseEnabled)
                 put("oom_soft_limit_mb", android.oomSoftLimitMb)
                 put("screen_off_pause_stats", android.screenOffPauseStats)
+                put("theme_preset", android.themePreset.wire)
                 put("dynamic_color", android.dynamicColor)
                 put("webdav_url", android.webdavUrl)
                 put("webdav_username", android.webdavUsername)
@@ -215,6 +234,7 @@ data class AndroidHostConfig(
                     dozePauseEnabled = a.optBoolean("doze_pause_enabled", true),
                     oomSoftLimitMb = a.optInt("oom_soft_limit_mb", 50).coerceIn(16, 512),
                     screenOffPauseStats = a.optBoolean("screen_off_pause_stats", true),
+                    themePreset = AndroidThemePreset.fromWire(a.optString("theme_preset", AndroidThemePreset.SYSTEM.wire)),
                     dynamicColor = a.optBoolean("dynamic_color", false),
                     webdavUrl = a.optString("webdav_url", ""),
                     webdavUsername = a.optString("webdav_username", ""),

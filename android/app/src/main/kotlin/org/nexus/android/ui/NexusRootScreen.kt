@@ -26,6 +26,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -89,7 +96,9 @@ internal fun NexusRootScreen(
     onFetchLiveRules: suspend () -> List<LiveRuleSnapshot> = { emptyList() },
     onQueryDns: suspend (String, String, String) -> DnsQueryResult = { _, _, _ -> DnsQueryResult(false, errorMessage = "未连接") },
     onFlushFakeIp: suspend () -> FakeIpFlushResult = { FakeIpFlushResult(false, message = "未连接") },
+    onExplainRule: (suspend (target: String, routeMode: String) -> RuleExplainSummary?)? = null,
     onSetCoreLogLevel: (suspend (String) -> Boolean)? = null,
+    commandShortcutNonce: Int = 0,
     wsStream: ((channels: List<String>, since: Long, intervalMs: Int) -> Flow<WsEvent>)? = null,
     statusStream: (() -> Flow<LiveStatusSnapshot>)? = null,
     connectionsStream: (() -> Flow<List<ActiveConnectionSnapshot>>)? = null,
@@ -104,6 +113,8 @@ internal fun NexusRootScreen(
     previewQuickNodes: List<OutboundMemberSnapshot>? = null,
     previewMemoryText: String? = null,
     previewDashEditing: Boolean = false,
+    previewOnsetMarkers: List<SparklineOnset>? = null,
+    previewCachedGroups: List<OutboundGroupSnapshot>? = null,
 ) {
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -117,9 +128,18 @@ internal fun NexusRootScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showSplitTunnel by rememberSaveable { mutableStateOf(false) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
+    var showQuickCommand by remember { mutableStateOf(false) }
+    var quickCommandInitialQuery by remember { mutableStateOf("") }
     var diagnostic by remember { mutableStateOf("") }
     var dashEditing by rememberSaveable { mutableStateOf(previewDashEditing) }
     var isProbingOverview by remember { mutableStateOf(false) }
+
+    LaunchedEffect(commandShortcutNonce) {
+        if (commandShortcutNonce > 0) {
+            quickCommandInitialQuery = ""
+            showQuickCommand = true
+        }
+    }
 
     val currentTab = tabs[selectedTab.coerceIn(0, tabs.lastIndex)]
     val outboundMode = workspaceState.outboundMode.ifBlank { "rule" }
@@ -146,6 +166,8 @@ internal fun NexusRootScreen(
         previewActiveExit = previewActiveExit,
         previewQuickNodes = previewQuickNodes,
         previewMemoryText = previewMemoryText,
+        previewOnsetMarkers = previewOnsetMarkers,
+        previewCachedGroups = previewCachedGroups,
     )
 
     BackHandler(enabled = showSplitTunnel) { showSplitTunnel = false }
@@ -186,6 +208,10 @@ internal fun NexusRootScreen(
                     onOpenConfig = { selectedTab = NexusTab.CONFIG.ordinal },
                     onToggleDashEditing = { dashEditing = !dashEditing },
                     onCloseSplitTunnel = { showSplitTunnel = false },
+                    onOpenQuickCommand = {
+                        quickCommandInitialQuery = ""
+                        showQuickCommand = true
+                    },
                 )
             },
             bottomBar = {
@@ -261,20 +287,13 @@ internal fun NexusRootScreen(
                                     windowSizeClass = windowSizeClass,
                                     contentPadding = screenPadding,
                                     onStartStop = { onStartStop(running) },
-                                    onSwitchOutboundMode = { mode ->
-                                        scope.launch { diagnostic = onSwitchOutboundMode(mode) }
+                                    onSwitchOutboundMode = { m ->
+                                        scope.launch { diagnostic = onSwitchOutboundMode(m); if (running) telemetry.recordOnset(if (m == "global") "全局" else if (m == "direct") "直连" else "规则") }
                                     },
                                     onDashVisibilityChange = onDashVisibilityChange,
                                     onQuickPasteImport = { raw ->
                                         scope.launch {
-                                            diagnostic = importClipboardPayload(
-                                                raw = raw,
-                                                onImportWorkspaceShare = workspaceActions.onImportShareUri,
-                                                onImportWorkspaceBackup = workspaceActions.onImportWorkspaceJson,
-                                                onImportCustomConfig = onImportCustomConfig,
-                                                onImportSubscription = onImportSubscription,
-                                                onImportShareLink = onImportShareLink,
-                                            )
+                                            diagnostic = importClipboardPayload(raw, workspaceActions.onImportShareUri, workspaceActions.onImportWorkspaceJson, onImportCustomConfig, onImportSubscription, onImportShareLink)
                                             selectedTab = NexusTab.CONFIG.ordinal
                                         }
                                     },
@@ -283,7 +302,7 @@ internal fun NexusRootScreen(
                                         scope.launch {
                                             val ok = onSelectMember(tag, node.name)
                                             diagnostic = if (ok) "已切换至 ${node.name}" else "切换失败"
-                                            if (ok) telemetry.applyPrimaryGroups(onFetchGroups(), tag)
+                                            if (ok) { telemetry.recordOnset(node.name); telemetry.applyPrimaryGroups(onFetchGroups(), tag) }
                                         }
                                     },
                                     onProbeActiveGroup = {
@@ -291,13 +310,7 @@ internal fun NexusRootScreen(
                                         scope.launch {
                                             isProbingOverview = true
                                             val ok = onProbeGroup(tag)
-                                            if (ok) {
-                                                delay(650L)
-                                                telemetry.applyPrimaryGroups(onFetchGroups(), tag)
-                                                diagnostic = "测速已更新"
-                                            } else {
-                                                diagnostic = "测速失败"
-                                            }
+                                            if (ok) { delay(650L); telemetry.applyPrimaryGroups(onFetchGroups(), tag); diagnostic = "测速已更新" } else diagnostic = "测速失败"
                                             isProbingOverview = false
                                         }
                                     },
@@ -309,12 +322,20 @@ internal fun NexusRootScreen(
                                     onOpenDiagnostics = { showDiagnostics = true },
                                     routingProfileName = activeRouting.name,
                                     dnsSummaryText = dnsLabel,
+                                    runMode = workspaceState.host.android.runMode,
+                                    bypassLan = workspaceState.host.android.bypassLan,
+                                    fakeIpEnabled = dnsCfg.mode == "simple" && dnsCfg.simple.fakeIpEnabled,
+                                    onsetMarkers = telemetry.onsetMarkers,
                                 )
                             }
                             NexusTab.GROUPS -> GroupsScreen(
                                 onFetchGroups = onFetchGroups,
-                                onSelectMember = onSelectMember,
-                                onResetAuto = onResetAuto,
+                                onSelectMember = { g, m ->
+                                    onSelectMember(g, m).also { ok -> if (ok && running) telemetry.recordOnset(m) }
+                                },
+                                onResetAuto = { g ->
+                                    onResetAuto(g).also { ok -> if (ok && running) telemetry.recordOnset("自动") }
+                                },
                                 onProbeGroup = onProbeGroup,
                                 onProbeOutbound = onProbeOutbound,
                                 windowSizeClass = windowSizeClass,
@@ -341,6 +362,10 @@ internal fun NexusRootScreen(
                                 onBypassPackage = { pkg ->
                                     if (onBypassFromConnection != null) onBypassFromConnection(pkg)
                                     else onToggleExcluded(pkg, true)
+                                },
+                                onDiagnoseHost = { host ->
+                                    quickCommandInitialQuery = host
+                                    showQuickCommand = true
                                 },
                                 windowSizeClass = windowSizeClass,
                                 contentPadding = innerPadding,
@@ -381,51 +406,45 @@ internal fun NexusRootScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.K && (ev.isCtrlPressed || ev.isMetaPressed)) {
+                    quickCommandInitialQuery = ""
+                    showQuickCommand = true
+                    true
+                } else false
+            },
+    ) {
         when (windowSizeClass) {
-            NexusWindowSizeClass.EXPANDED -> {
-                PermanentNavigationDrawer(
-                    drawerContent = {
-                        ExpandedDrawerContent(
-                            tabs = tabs,
-                            selectedTab = selectedTab,
-                            showSplitTunnel = showSplitTunnel,
-                            heroState = heroState,
-                            downloadRateBps = telemetry.downloadRateBps,
-                            uploadRateBps = telemetry.uploadRateBps,
-                            onSelectTab = { idx ->
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                showSplitTunnel = false
-                                selectedTab = idx
-                            },
-                            onStartStop = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onStartStop(running)
-                            },
-                        )
-                    },
-                    content = scaffoldContent,
-                )
-            }
-            NexusWindowSizeClass.MEDIUM -> {
-                Row(modifier = Modifier.fillMaxSize()) {
-                    MediumNavigationRail(
+            NexusWindowSizeClass.EXPANDED -> PermanentNavigationDrawer(
+                drawerContent = {
+                    ExpandedDrawerContent(
                         tabs = tabs,
                         selectedTab = selectedTab,
                         showSplitTunnel = showSplitTunnel,
-                        running = running,
                         heroState = heroState,
-                        showQuickPower = showSplitTunnel || currentTab != NexusTab.OVERVIEW,
-                        onSelectTab = { idx ->
-                            showSplitTunnel = false
-                            selectedTab = idx
-                        },
-                        onStartStop = { onStartStop(running) },
+                        downloadRateBps = telemetry.downloadRateBps,
+                        uploadRateBps = telemetry.uploadRateBps,
+                        onSelectTab = { idx -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); showSplitTunnel = false; selectedTab = idx },
+                        onStartStop = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStartStop(running) },
                     )
-                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        scaffoldContent()
-                    }
-                }
+                },
+                content = scaffoldContent,
+            )
+            NexusWindowSizeClass.MEDIUM -> Row(modifier = Modifier.fillMaxSize()) {
+                MediumNavigationRail(
+                    tabs = tabs,
+                    selectedTab = selectedTab,
+                    showSplitTunnel = showSplitTunnel,
+                    running = running,
+                    heroState = heroState,
+                    showQuickPower = showSplitTunnel || currentTab != NexusTab.OVERVIEW,
+                    onSelectTab = { idx -> showSplitTunnel = false; selectedTab = idx },
+                    onStartStop = { onStartStop(running) },
+                )
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) { scaffoldContent() }
             }
             NexusWindowSizeClass.COMPACT -> scaffoldContent()
         }
@@ -444,6 +463,26 @@ internal fun NexusRootScreen(
             onClearCacheTarget = { target -> onClearCacheTarget?.invoke(target) ?: onClearCache() },
             onFeedback = { diagnostic = it },
             onDismiss = { showDiagnostics = false },
+        )
+    }
+
+    if (showQuickCommand) {
+        QuickCommandSheet(
+            initialQuery = quickCommandInitialQuery,
+            running = running,
+            outboundMode = outboundMode,
+            groups = telemetry.cachedGroups,
+            windowSizeClass = windowSizeClass,
+            onDismiss = { showQuickCommand = false },
+            onSwitchMode = { m -> scope.launch { diagnostic = onSwitchOutboundMode(m); if (running) telemetry.recordOnset(if (m == "global") "全局" else if (m == "direct") "直连" else "规则") } },
+            onSelectNode = { g, m -> scope.launch { if (onSelectMember(g, m)) { telemetry.recordOnset(m); telemetry.applyPrimaryGroups(onFetchGroups(), g); diagnostic = "已切换至 $m" } } },
+            onProbeAll = { findProbeableGroupTag(telemetry.cachedGroups, telemetry.activeExit.groupTag)?.let { t -> scope.launch { if (onProbeGroup(t)) { delay(650L); telemetry.applyPrimaryGroups(onFetchGroups(), t) } } } ?: run { diagnostic = "当前仅有手动选择组，请进入策略组对单个节点测速" } },
+            onFlushFakeIp = { scope.launch { diagnostic = onFlushFakeIp().message.ifBlank { "FakeIP 已刷新" } } },
+            onClearCache = { scope.launch { diagnostic = if (onClearCache()) "缓存已清空" else "清空失败" } },
+            onOpenSplitTunnel = { showSplitTunnel = true },
+            onCreateRuleForHost = { h, a, o -> scope.launch { diagnostic = onCreateRuleFromConnection(h, a, o) } },
+            onExplainRule = onExplainRule,
+            onQueryDns = { host -> onQueryDns(host, "A", "") },
         )
     }
 }

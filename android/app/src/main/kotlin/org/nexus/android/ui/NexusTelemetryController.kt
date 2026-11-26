@@ -39,6 +39,8 @@ internal class NexusTelemetryState(
     initialQuickNodes: List<OutboundMemberSnapshot>,
     initialMemoryText: String,
     initialUptimeMs: Long,
+    initialOnsetMarkers: List<SparklineOnset> = emptyList(),
+    initialCachedGroups: List<OutboundGroupSnapshot> = emptyList(),
 ) {
     var metrics by mutableStateOf(initialMetrics)
     var downloadRateBps by mutableLongStateOf(initialDownloadSamples.lastOrNull() ?: 0L)
@@ -48,14 +50,20 @@ internal class NexusTelemetryState(
     )
     var downloadSamples by mutableStateOf(initialDownloadSamples)
     var uploadSamples by mutableStateOf(initialUploadSamples)
+    var onsetMarkers by mutableStateOf(initialOnsetMarkers)
     var activeExit by mutableStateOf(initialActiveExit)
     var quickNodes by mutableStateOf(initialQuickNodes)
+    var cachedGroups by mutableStateOf(initialCachedGroups)
     var memoryText by mutableStateOf(initialMemoryText)
     var uptimeMs by mutableLongStateOf(initialUptimeMs)
     var ringLogs by mutableStateOf<List<UiLogLine>>(emptyList())
     var logsSseActive by mutableStateOf(false)
     var wsActive by mutableStateOf(false)
     var wsLiveConnections by mutableStateOf<List<ActiveConnectionSnapshot>?>(null)
+
+    fun recordOnset(label: String) {
+        onsetMarkers = appendOnsetMarker(onsetMarkers, downloadSamples.size, label)
+    }
 
     fun resetOffline() {
         downloadRateBps = 0L
@@ -64,20 +72,28 @@ internal class NexusTelemetryState(
         uptimeMs = 0L
         downloadSamples = List(MAX_SPARKLINE_SAMPLES) { 0L }
         uploadSamples = List(MAX_SPARKLINE_SAMPLES) { 0L }
+        onsetMarkers = emptyList()
         activeExit = ActiveExitSummary()
         quickNodes = emptyList()
+        cachedGroups = emptyList()
         logsSseActive = false
         wsActive = false
         wsLiveConnections = null
     }
 
     fun applyPrimaryGroups(loaded: List<OutboundGroupSnapshot>, preferredTag: String = activeExit.groupTag) {
+        cachedGroups = loaded
         val primary = loaded.firstOrNull { preferredTag.isNotEmpty() && it.tag == preferredTag } ?: loaded.firstOrNull()
         if (primary != null) {
             val sel = primary.members.firstOrNull { it.selected }
+            val nextMember = sel?.name ?: primary.active
+            val prevMember = activeExit.memberName
+            if (prevMember.isNotEmpty() && nextMember.isNotEmpty() && prevMember != nextMember) {
+                recordOnset(nextMember)
+            }
             activeExit = ActiveExitSummary(
                 groupTag = primary.tag,
-                memberName = sel?.name ?: primary.active,
+                memberName = nextMember,
                 latencyMs = sel?.latencyMs ?: -1L,
                 state = sel?.state ?: "unknown",
             )
@@ -114,6 +130,8 @@ internal fun rememberNexusTelemetryState(
     previewActiveExit: ActiveExitSummary? = null,
     previewQuickNodes: List<OutboundMemberSnapshot>? = null,
     previewMemoryText: String? = null,
+    previewOnsetMarkers: List<SparklineOnset>? = null,
+    previewCachedGroups: List<OutboundGroupSnapshot>? = null,
 ): NexusTelemetryState {
     val state = remember(
         previewMetrics,
@@ -122,6 +140,8 @@ internal fun rememberNexusTelemetryState(
         previewActiveExit,
         previewQuickNodes,
         previewMemoryText,
+        previewOnsetMarkers,
+        previewCachedGroups,
     ) {
         NexusTelemetryState(
             initialMetrics = previewMetrics ?: MetricsSummary(),
@@ -131,6 +151,8 @@ internal fun rememberNexusTelemetryState(
             initialQuickNodes = previewQuickNodes ?: emptyList(),
             initialMemoryText = previewMemoryText ?: sampleRuntimeMemoryText(),
             initialUptimeMs = if (running && startedAtMs > 0L) (System.currentTimeMillis() - startedAtMs).coerceAtLeast(0L) else 0L,
+            initialOnsetMarkers = previewOnsetMarkers ?: emptyList(),
+            initialCachedGroups = previewCachedGroups ?: emptyList(),
         )
     }
 
@@ -179,6 +201,7 @@ internal fun rememberNexusTelemetryState(
                     if (upRate > state.peakRateBps) state.peakRateBps = upRate
                     state.downloadSamples = state.downloadSamples.drop(1) + downRate
                     state.uploadSamples = state.uploadSamples.drop(1) + upRate
+                    state.onsetMarkers = shiftOnsetMarkers(state.onsetMarkers)
                 }
                 prevMetrics = latest
                 prevTimestampMs = now

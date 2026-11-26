@@ -70,13 +70,14 @@ fun LogsScreen(
     val ext = NexusTheme.colors
     val scope = rememberCoroutineScope()
     var pauseAutoScroll by rememberSaveable { mutableStateOf(false) }
+    var selectedDomain by rememberSaveable { mutableStateOf("all") }
     var levelMenuExpanded by remember { mutableStateOf(false) }
     var coreLevelMenuExpanded by remember { mutableStateOf(false) }
     var activeCoreLevel by rememberSaveable(coreLogLevel) { mutableStateOf(coreLogLevel) }
     var coreLevelNote by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    val visibleLogs = remember(logs, logSearch, logLevel) {
+    val visibleLogs = remember(logs, logSearch, logLevel, selectedDomain) {
         val q = logSearch.trim().lowercase()
         val lvlFilter = if (logLevel == "trace") "" else "[$logLevel]"
         logs.filter { entry ->
@@ -84,7 +85,8 @@ fun LogsScreen(
             val levelMatches = lvlFilter.isEmpty() ||
                 lower.contains(lvlFilter) ||
                 (logLevel == "warn" && lower.contains("[warning]"))
-            levelMatches && (q.isEmpty() || lower.contains(q))
+            val domainMatches = selectedDomain == "all" || parseLogDomain(entry.text) == selectedDomain
+            levelMatches && domainMatches && (q.isEmpty() || lower.contains(q))
         }
     }
 
@@ -175,6 +177,11 @@ fun LogsScreen(
             }
         }
 
+        LogDomainFilterRow(
+            selectedDomain = selectedDomain,
+            onSelectDomain = { selectedDomain = it },
+        )
+
         if (coreLevelNote.isNotEmpty()) {
             Surface(
                 shape = RoundedCornerShape(10.dp),
@@ -192,12 +199,20 @@ fun LogsScreen(
         }
 
         if (visibleLogs.isEmpty()) {
+            val hasFilter = logLevel != "trace" || selectedDomain != "all" || logSearch.isNotEmpty()
             EmptyStateCard(
                 title = "暂无日志",
-                subtitle = if (logLevel == "trace") "连接后将在此显示实时运行日志。" else "当前级别筛选下暂无日志。",
+                subtitle = if (!hasFilter) "连接后将在此显示实时运行日志。" else "当前筛选条件下暂无日志。",
                 iconRes = R.drawable.ic_nav_logs,
-                actionLabel = if (logLevel == "trace") "刷新" else "显示全部级别",
-                onAction = { if (logLevel == "trace") onRefreshLogs() else onLogLevelChange("trace") },
+                actionLabel = if (!hasFilter) "刷新" else "重置筛选",
+                onAction = {
+                    if (!hasFilter) onRefreshLogs()
+                    else {
+                        onLogLevelChange("trace")
+                        selectedDomain = "all"
+                        onLogSearchChange("")
+                    }
+                },
             )
         } else {
             Surface(
@@ -292,6 +307,27 @@ fun LogsScreen(
                                     color = if (pauseAutoScroll) ext.warning else ext.success,
                                     maxLines = 1,
                                     softWrap = false,
+                                )
+                            }
+                        }
+                        if (pauseAutoScroll && visibleLogs.isNotEmpty()) {
+                            Surface(
+                                onClick = {
+                                    pauseAutoScroll = false
+                                    scope.launch { listState.scrollToItem(visibleLogs.lastIndex) }
+                                },
+                                modifier = Modifier.minimumInteractiveComponentSize(),
+                                shape = RoundedCornerShape(999.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+                            ) {
+                                Text(
+                                    text = "跳至最新",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                                 )
                             }
                         }

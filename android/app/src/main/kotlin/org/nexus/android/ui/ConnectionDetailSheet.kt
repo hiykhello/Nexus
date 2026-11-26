@@ -21,6 +21,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,6 +64,7 @@ fun ConnectionDetailContent(
     onCloseConnection: (Long) -> Unit,
     onCreateRule: (targetHost: String, action: String, outbound: String) -> Unit,
     onBypassOwnerApp: (packageName: String) -> Unit,
+    onDiagnoseHost: ((host: String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
@@ -235,19 +237,35 @@ fun ConnectionDetailContent(
                     selectedKey = ruleTargetMode,
                     onSelect = { ruleTargetMode = it },
                 )
-                Button(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        val action = if (ruleTargetMode == "reject") "reject" else "route"
-                        val outbound = if (ruleTargetMode == "direct") "direct" else "proxy"
-                        onCreateRule(ruleHost, action, outbound)
-                    },
-                    shape = RoundedCornerShape(999.dp),
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) {
-                    Icon(painter = painterResource(R.drawable.ic_rule), contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("保存规则", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onDiagnoseHost != null) {
+                        OutlinedButton(
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onDiagnoseHost(ruleHost)
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        ) {
+                            Icon(painter = painterResource(R.drawable.ic_search), contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("诊断此域名", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            val action = if (ruleTargetMode == "reject") "reject" else "route"
+                            val outbound = if (ruleTargetMode == "direct") "direct" else "proxy"
+                            onCreateRule(ruleHost, action, outbound)
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    ) {
+                        Icon(painter = painterResource(R.drawable.ic_rule), contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("保存规则", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
                 }
             }
         }

@@ -2,6 +2,7 @@ package org.nexus.android.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -19,6 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -192,6 +198,7 @@ private fun CompactKpiPill(
 internal fun ConnectionItemCard(
     conn: ActiveConnectionSnapshot,
     selected: Boolean,
+    maxTotalBytes: Long = 0L,
     onInspect: () -> Unit,
     onClose: () -> Unit,
 ) {
@@ -201,6 +208,11 @@ internal fun ConnectionItemCard(
         if (conn.destinationPort > 0) "${conn.path}:${conn.destinationPort}" else conn.path
     }
     val ruleBadge = conn.routeRule.substringBefore("->").trim().take(22)
+    val connTotal = (conn.downloadBytes + conn.uploadBytes).coerceAtLeast(0L)
+    val shareFrac = if (maxTotalBytes > 0L && connTotal > 0L) {
+        (connTotal.toFloat() / maxTotalBytes.toFloat()).coerceIn(0.05f, 1f)
+    } else 0f
+    val rxFrac = if (connTotal > 0L) (conn.downloadBytes.toFloat() / connTotal.toFloat()).coerceIn(0f, 1f) else 0f
 
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
@@ -211,7 +223,7 @@ internal fun ConnectionItemCard(
         onClick = onInspect,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 10.dp, bottom = if (shareFrac > 0f) 6.dp else 10.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -277,6 +289,24 @@ internal fun ConnectionItemCard(
                     modifier = Modifier.size(18.dp),
                 )
             }
+        }
+        if (shareFrac > 0f) {
+            val trackColor = ext.insetSurface.copy(alpha = 0.65f)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+                    .height(2.dp)
+                    .clip(CircleShape)
+                    .drawBehind {
+                        drawRect(color = trackColor)
+                        val barW = size.width * shareFrac
+                        val rxW = barW * rxFrac
+                        val txW = (barW - rxW).coerceAtLeast(0f)
+                        if (rxW > 0.5f) drawRect(ext.telemetryDownload, Offset.Zero, Size(rxW, size.height))
+                        if (txW > 0.5f) drawRect(ext.telemetryUpload, Offset(rxW, 0f), Size(txW, size.height))
+                    },
+            )
         }
     }
 }

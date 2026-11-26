@@ -82,6 +82,7 @@ internal fun NexusTopAppBar(
     onOpenConfig: () -> Unit,
     onToggleDashEditing: () -> Unit,
     onCloseSplitTunnel: () -> Unit,
+    onOpenQuickCommand: (() -> Unit)? = null,
 ) {
     val ext = NexusTheme.colors
     val haptic = LocalHapticFeedback.current
@@ -144,10 +145,34 @@ internal fun NexusTopAppBar(
         actions = {
             if (!showSplitTunnel) {
                 Row(
-                    modifier = Modifier.padding(end = 12.dp),
+                    modifier = Modifier.padding(end = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    if (onOpenQuickCommand != null) {
+                        if (windowSizeClass == NexusWindowSizeClass.EXPANDED) {
+                            Surface(
+                                onClick = onOpenQuickCommand,
+                                modifier = Modifier.minimumInteractiveComponentSize(),
+                                shape = RoundedCornerShape(999.dp),
+                                color = ext.wellSurface,
+                                border = BorderStroke(1.dp, ext.hairlineStrong),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Icon(painterResource(R.drawable.ic_search), "快速命令与域名诊断", Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Ctrl+K", style = NexusNumericStyles.monoBadge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
+                                }
+                            }
+                        } else {
+                            IconButton(onClick = onOpenQuickCommand) {
+                                Icon(painterResource(R.drawable.ic_search), "快速命令与域名诊断", Modifier.size(20.dp))
+                            }
+                        }
+                    }
                     if (currentTab == NexusTab.OVERVIEW) {
                         val editInteraction = remember { MutableInteractionSource() }
                         Surface(

@@ -96,6 +96,7 @@ fun GroupsScreen(
     LaunchedEffect(Unit) { reload() }
 
     val activeGroup = groups.firstOrNull { it.tag == selectedTag }
+    val activeStats = remember(activeGroup) { computeGroupLatencyStats(activeGroup?.members.orEmpty()) }
     val filteredMembers = remember(activeGroup, searchQuery, sortMode, hideTimeout) {
         val raw = activeGroup?.members.orEmpty()
         val q = searchQuery.trim().lowercase()
@@ -325,6 +326,7 @@ fun GroupsScreen(
                             GroupMemberCard(
                                 member = member,
                                 isProbing = probingThis,
+                                groupMaxHealthyMs = activeStats.maxHealthyMs,
                                 onSelect = {
                                     val g = activeGroup?.tag ?: return@GroupMemberCard
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)

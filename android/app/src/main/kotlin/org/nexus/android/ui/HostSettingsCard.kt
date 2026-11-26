@@ -81,6 +81,13 @@ internal fun HostSettingsCard(
                 )
             }
 
+            ThemePresetSwatches(
+                selectedPreset = a.themePreset,
+                dynamicColor = a.dynamicColor,
+                onSelectPreset = { preset -> updateAndroid { it.copy(themePreset = preset) } },
+                onToggleDynamicColor = { enabled -> updateAndroid { it.copy(dynamicColor = enabled) } },
+            )
+
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("运行模式", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OpticalSegmentedControl(
@@ -220,13 +227,6 @@ internal fun HostSettingsCard(
                         subtitle = "低电耗或息屏时暂停高频流量统计以降低功耗",
                         checked = a.dozePauseEnabled && a.screenOffPauseStats,
                         onCheckedChange = { v -> updateAndroid { it.copy(dozePauseEnabled = v, screenOffPauseStats = v) } },
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = ext.hairline)
-                    HostToggleItem(
-                        title = "Material You 动态取色",
-                        subtitle = "Android 12+ 跟随壁纸主题色，关闭则使用默认配色",
-                        checked = a.dynamicColor,
-                        onCheckedChange = { v -> updateAndroid { it.copy(dynamicColor = v) } },
                     )
                 }
             }

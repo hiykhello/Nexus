@@ -3,15 +3,21 @@ package org.nexus.android.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color as AndroidColor
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,6 +46,7 @@ import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.AndroidRunMode
 import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.ui.theme.NexusTheme
+import org.nexus.android.ui.theme.resolveEffectiveDarkTheme
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
@@ -61,6 +68,18 @@ class MainActivity : ComponentActivity() {
     private var askedNotificationPermission = false
     private var pendingStartConfigPath: String? = null
     private var pendingFakeIpv6Pool: String = ""
+    private var commandShortcutNonce by mutableIntStateOf(0)
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN &&
+            event.keyCode == KeyEvent.KEYCODE_K &&
+            (event.isCtrlPressed || event.isMetaPressed)
+        ) {
+            commandShortcutNonce++
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     private val vpnPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -123,7 +142,22 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            NexusTheme(dynamicColor = workspaceState.host.android.dynamicColor) {
+            val themePreset = workspaceState.host.android.themePreset
+            val effectiveDark = resolveEffectiveDarkTheme(themePreset, isSystemInDarkTheme())
+            SideEffect {
+                val barStyle = if (effectiveDark) {
+                    SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+                }
+                enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+                window.isNavigationBarContrastEnforced = false
+            }
+
+            NexusTheme(
+                themePreset = themePreset,
+                dynamicColor = workspaceState.host.android.dynamicColor,
+            ) {
                 val running by NexusVpnService.runningState.collectAsStateWithLifecycle()
                 val tunnelState by NexusVpnService.tunnelState.collectAsStateWithLifecycle()
                 val startedAtMs by NexusVpnService.startedAtMs.collectAsStateWithLifecycle()
@@ -337,7 +371,16 @@ class MainActivity : ComponentActivity() {
                     onFetchLiveRules = { controlClient.fetchRules() },
                     onQueryDns = { name, type, server -> controlClient.queryDns(name, type, server) },
                     onFlushFakeIp = { controlClient.flushFakeIp() },
+                    onExplainRule = { target, routeMode ->
+                        val inbound = if (workspaceState.host.android.runMode == AndroidRunMode.PROXY_ONLY) "local-mixed" else "tun-in"
+                        if (!socketPaths.composedConfigFile.isFile && workspaceState.activeProfileId.isNotEmpty()) {
+                            workspaceCoordinator.composeForLaunch(workspaceState.activeProfileId)
+                        }
+                        val res = supervisor.explainRule(socketPaths.composedConfigFile, inbound, target, routeMode)
+                        if (res.ok) parseExplainOneline(res.output, running = running) else null
+                    },
                     onSetCoreLogLevel = { level -> controlClient.setLogLevel(level).ok },
+                    commandShortcutNonce = commandShortcutNonce,
                     wsStream = { channels, since, intervalMs -> wsClient.stream(channels = channels, since = since, intervalMs = intervalMs) },
                     statusStream = { sseClient.streamStatus(1_000) },
                     connectionsStream = { sseClient.streamConnections(1_500) },

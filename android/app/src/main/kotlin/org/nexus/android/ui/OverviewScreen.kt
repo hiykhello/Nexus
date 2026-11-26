@@ -45,6 +45,7 @@ import org.nexus.android.R
 import org.nexus.android.bridge.ipc.MetricsSummary
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
 import org.nexus.android.bridge.workspace.AndroidPerAppMode
+import org.nexus.android.bridge.workspace.AndroidRunMode
 import org.nexus.android.ui.theme.NexusTheme
 
 @Composable
@@ -87,6 +88,10 @@ fun OverviewScreen(
     onOpenDiagnostics: (() -> Unit)? = null,
     routingProfileName: String = "",
     dnsSummaryText: String = "",
+    runMode: AndroidRunMode = AndroidRunMode.VPN,
+    bypassLan: Boolean = true,
+    fakeIpEnabled: Boolean = false,
+    onsetMarkers: List<SparklineOnset> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -100,6 +105,28 @@ fun OverviewScreen(
     val onRoutingTileClick: () -> Unit = {
         onOpenDiagnostics?.invoke() ?: onOpenConfig()
     }
+    val renderTransitStrip: @Composable () -> Unit = {
+        RouteTransitStrip(
+            running = running,
+            runMode = runMode,
+            perAppMode = perAppMode,
+            excludedCount = excludedCount,
+            bypassLan = bypassLan,
+            outboundMode = outboundMode,
+            routingProfileName = routingProfileName,
+            fakeIpEnabled = fakeIpEnabled,
+            activeProfileName = activeProfileName,
+            activeExit = activeExit,
+            downloadRateBps = downloadRateBps,
+            uploadRateBps = uploadRateBps,
+            activeSessions = metrics.activeSessions,
+            windowSizeClass = windowSizeClass,
+            onOpenSplitTunnel = onOpenSplitTunnel,
+            onOpenRouting = onRoutingTileClick,
+            onOpenGroups = onOpenGroups,
+            onOpenConnections = onOpenConnections,
+        )
+    }
 
     val renderDashboardCard: @Composable (String) -> Unit = { cardId ->
         when (cardId) {
@@ -112,6 +139,7 @@ fun OverviewScreen(
                 uploadSamples = uploadSamples,
                 downloadTotalBytes = metrics.downloadBytes,
                 uploadTotalBytes = metrics.uploadBytes,
+                onsetMarkers = onsetMarkers,
             )
             DashboardCardVisibility.KEY_NETWORK_MEMORY -> OverviewStatusMiniPair(
                 running = running,
@@ -184,6 +212,7 @@ fun OverviewScreen(
         if (isTwoColumn) {
             val leftCards = orderedCards.withIndex().filter { (idx, _) -> idx == 2 || idx >= 4 }
             val rightCards = orderedCards.withIndex().filter { (idx, _) -> idx != 2 && idx < 4 }
+            item(key = "route_transit", contentType = "route_transit") { renderTransitStrip() }
             item(key = "bento_top", contentType = "bento_row") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -264,6 +293,7 @@ fun OverviewScreen(
                     onOpenGroups = onOpenGroups,
                 )
             }
+            item(key = "route_transit", contentType = "route_transit") { renderTransitStrip() }
             item(key = "mode", contentType = "mode") {
                 OutboundModeCard(
                     outboundMode = outboundMode,

@@ -86,6 +86,7 @@ fun ConnectionsScreen(
     onCloseAllConnections: suspend () -> Boolean,
     onCreateRuleFromConnection: suspend (targetHost: String, action: String, outbound: String) -> String,
     onBypassPackage: (packageName: String) -> Unit,
+    onDiagnoseHost: ((host: String) -> Unit)? = null,
     windowSizeClass: NexusWindowSizeClass,
     contentPadding: PaddingValues,
     initialSelectedConnection: ActiveConnectionSnapshot? = null,
@@ -178,6 +179,7 @@ fun ConnectionsScreen(
 
     val totalUpload = remember(filtered) { filtered.sumOf { it.uploadBytes } }
     val totalDownload = remember(filtered) { filtered.sumOf { it.downloadBytes } }
+    val maxConnBytes = remember(filtered) { filtered.maxOfOrNull { it.downloadBytes + it.uploadBytes } ?: 0L }
     val tcpCount = remember(filtered) { filtered.count { it.protocol.contains("tcp", ignoreCase = true) } }
     val udpCount = filtered.size - tcpCount
     val proxyPercent = remember(filtered) {
@@ -378,6 +380,7 @@ fun ConnectionsScreen(
                         ConnectionItemCard(
                             conn = conn,
                             selected = selectedId == conn.id,
+                            maxTotalBytes = maxConnBytes,
                             onInspect = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 if (twoPane && selectedId == conn.id) {
@@ -431,6 +434,7 @@ fun ConnectionsScreen(
                                 onCloseConnection = closeSingle,
                                 onCreateRule = createRule,
                                 onBypassOwnerApp = bypassApp,
+                                onDiagnoseHost = onDiagnoseHost,
                             )
                         }
                     }
@@ -458,6 +462,7 @@ fun ConnectionsScreen(
                 onCloseConnection = closeSingle,
                 onCreateRule = createRule,
                 onBypassOwnerApp = bypassApp,
+                onDiagnoseHost = onDiagnoseHost?.let { cb -> { h -> dismissDetail(); cb(h) } },
             )
             Spacer(Modifier.size(16.dp))
         }

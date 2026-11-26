@@ -90,6 +90,7 @@ fun SplitTunnelScreen(
 
     var filter by rememberSaveable { mutableStateOf("") }
     var includeSystem by rememberSaveable { mutableStateOf(false) }
+    var onlySelected by rememberSaveable { mutableStateOf(false) }
     var needsRestartBanner by rememberSaveable { mutableStateOf(false) }
 
     val apps by produceState(
@@ -99,12 +100,17 @@ fun SplitTunnelScreen(
         value = previewApps ?: InstalledAppsRepository(context).listInstalledApps(includeSystem = true)
     }
 
-    val visible = remember(apps, filter, includeSystem) {
+    val visible = remember(apps, filter, includeSystem, onlySelected, excludedPackages) {
         val q = filter.trim().lowercase()
         apps.filter { entry ->
-            (includeSystem || !entry.isSystemApp) &&
+            val isSel = excludedPackages.contains(entry.packageName)
+            (!onlySelected || isSel) &&
+                (includeSystem || !entry.isSystemApp || isSel) &&
                 (q.isEmpty() || entry.label.lowercase().contains(q) || entry.packageName.lowercase().contains(q))
-        }
+        }.sortedWith(
+            compareByDescending<InstalledAppEntry> { excludedPackages.contains(it.packageName) }
+                .thenBy { it.label.lowercase() },
+        )
     }
 
     val layoutDirection = LocalLayoutDirection.current
@@ -178,6 +184,11 @@ fun SplitTunnelScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    FilterChip(
+                        selected = onlySelected,
+                        onClick = { onlySelected = !onlySelected },
+                        label = { Text("仅看已选 (${excludedPackages.size})") },
+                    )
                     FilterChip(
                         selected = includeSystem,
                         onClick = { includeSystem = !includeSystem },

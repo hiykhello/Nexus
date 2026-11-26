@@ -17,8 +17,12 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -29,14 +33,6 @@ import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
 import org.nexus.android.ui.theme.NexusTheme
 
-private fun isMemberTimeout(member: OutboundMemberSnapshot): Boolean =
-    member.state.equals("timeout", ignoreCase = true) ||
-        member.state.equals("unreachable", ignoreCase = true) ||
-        member.latencyMs == 0L
-
-private fun isMemberHealthy(member: OutboundMemberSnapshot): Boolean =
-    !isMemberTimeout(member) && member.latencyMs > 0L
-
 @Composable
 internal fun GroupSummaryStrip(
     group: OutboundGroupSnapshot,
@@ -44,8 +40,7 @@ internal fun GroupSummaryStrip(
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
-    val total = group.members.size
-    val healthyCount = group.members.count { isMemberHealthy(it) }
+    val stats = remember(group) { computeGroupLatencyStats(group.members) }
     val activeMember = group.members.firstOrNull { it.selected }
     val modeLabel = when {
         group.manualOverride -> "手动"
@@ -105,13 +100,26 @@ internal fun GroupSummaryStrip(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
-                    if (activeMember != null) {
-                        SignalBarsIndicator(latencyMs = activeMember.latencyMs, state = activeMember.state)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        if (stats.p50Ms != null) {
+                            StatusPill(
+                                text = "P50 ${stats.p50Ms} ms",
+                                containerColor = ext.wellSurface,
+                                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                mono = true,
+                            )
+                        }
+                        if (activeMember != null) {
+                            SignalBarsIndicator(latencyMs = activeMember.latencyMs, state = activeMember.state)
+                        }
                     }
                     StatusPill(
-                        text = "$healthyCount/$total 可用",
-                        containerColor = if (healthyCount > 0) ext.successContainer else ext.mutedContainer,
-                        contentColor = if (healthyCount > 0) ext.success else ext.muted,
+                        text = "${stats.healthyCount}/${stats.total} 可用",
+                        containerColor = if (stats.healthyCount > 0) ext.successContainer else ext.mutedContainer,
+                        contentColor = if (stats.healthyCount > 0) ext.success else ext.muted,
                         mono = true,
                     )
                 }
@@ -121,6 +129,12 @@ internal fun GroupSummaryStrip(
                     modifier = Modifier.fillMaxWidth().height(2.dp),
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = ext.wellSurface,
+                )
+            } else {
+                LatencySpectrumBar(
+                    stats = stats,
+                    height = 3.dp,
+                    modifier = Modifier.padding(start = 15.dp, end = 15.dp, bottom = 10.dp),
                 )
             }
         }
@@ -134,7 +148,7 @@ internal fun GroupRailCard(
     onClick: () -> Unit,
 ) {
     val ext = NexusTheme.colors
-    val healthyCount = group.members.count { isMemberHealthy(it) }
+    val stats = remember(group) { computeGroupLatencyStats(group.members) }
     OpticalCard(
         cornerRadius = 16.dp,
         borderColor = if (selected) MaterialTheme.colorScheme.primary else ext.hairline,
@@ -144,7 +158,7 @@ internal fun GroupRailCard(
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -173,13 +187,15 @@ internal fun GroupRailCard(
                     )
                 }
             }
+            val p50Suffix = stats.p50Ms?.let { " · P50 ${it}ms" }.orEmpty()
             Text(
-                text = "${group.active.ifEmpty { "-" }} · $healthyCount/${group.members.size} 可用",
+                text = "${group.active.ifEmpty { "-" }} · ${stats.healthyCount}/${stats.total}$p50Suffix",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            LatencySpectrumBar(stats = stats, height = 2.dp)
         }
     }
 }
@@ -189,11 +205,21 @@ internal fun GroupMemberCard(
     member: OutboundMemberSnapshot,
     onSelect: () -> Unit,
     isProbing: Boolean = false,
+    groupMaxHealthyMs: Long = 0L,
     onProbe: (() -> Unit)? = null,
 ) {
     val ext = NexusTheme.colors
     val primary = MaterialTheme.colorScheme.primary
     val selected = member.selected
+    val meterFraction = computeMemberRelativeFraction(member.latencyMs, member.state, groupMaxHealthyMs)
+    val meterColor = when {
+        meterFraction <= 0f -> Color.Transparent
+        member.latencyMs < 80L -> ext.success
+        member.latencyMs < 180L -> ext.warning
+        member.latencyMs < 350L -> ext.slow
+        else -> ext.danger
+    }
+    val meterAlpha = if (ext.isDark) 0.08f else 0.06f
 
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
@@ -206,6 +232,15 @@ internal fun GroupMemberCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .drawBehind {
+                    if (!selected && meterFraction > 0f) {
+                        drawRect(
+                            color = meterColor.copy(alpha = meterAlpha),
+                            topLeft = Offset.Zero,
+                            size = Size(size.width * meterFraction, size.height),
+                        )
+                    }
+                }
                 .padding(start = 13.dp, end = if (onProbe != null) 4.dp else 13.dp, top = 11.dp, bottom = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),

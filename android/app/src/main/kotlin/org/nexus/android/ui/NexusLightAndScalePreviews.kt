@@ -13,6 +13,7 @@ import androidx.compose.ui.tooling.preview.PreviewFontScale
 import androidx.compose.ui.unit.dp
 import org.nexus.android.bridge.ipc.OutboundProbeResult
 import org.nexus.android.bridge.workspace.AndroidPerAppMode
+import org.nexus.android.bridge.workspace.AndroidThemePreset
 
 /**
  * Light-mode & `@PreviewFontScale` accessibility verification previews across all subpages.
@@ -20,6 +21,14 @@ import org.nexus.android.bridge.workspace.AndroidPerAppMode
 @PreviewFontScale
 @Composable
 private fun OverviewFontScalePreview() = SampleRootPreview(dark = true, running = true)
+
+@Preview(name = "Foldable Studio Amber 674dp", showBackground = true, widthDp = 674, heightDp = 841)
+@Composable
+private fun OverviewStudioAmberFoldablePreview() = SampleRootPreview(
+    dark = true,
+    running = true,
+    themePreset = AndroidThemePreset.STUDIO_AMBER,
+)
 
 @Preview(name = "Groups Phone Light", showBackground = true, widthDp = 412, heightDp = 915)
 @Composable
