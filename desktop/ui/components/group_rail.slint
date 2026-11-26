@@ -24,8 +24,8 @@ export component GroupRail inherits Rectangle {
     clip: true;
 
     VerticalLayout {
-        padding: 12px;
-        spacing: 10px;
+        padding: Theme.space-sm;
+        spacing: Theme.space-sm;
 
         HorizontalLayout {
             padding-left: 4px;
@@ -90,11 +90,12 @@ export component GroupRail inherits Rectangle {
                                 self.ensure-visible(Motion.reduced ? ScrollBehavior.instant : ScrollBehavior.smooth);
                             }
                         }
-                        height: 60px;
-                        border-radius: 14px;
-                        border-width: 1px;
+                        height: 58px;
+                        border-radius: Theme.radius-sm;
+                        border-width: gr-fs.has-focus ? 2px : 1px;
                         border-color:
-                            is-current ? Theme.accent.with-alpha(Theme.dark ? 0.78 : 0.62)
+                            gr-fs.has-focus ? Theme.accent
+                            : is-current ? Theme.accent.with-alpha(Theme.dark ? 0.78 : 0.62)
                             : item-ta.has-hover ? Theme.hairline-strong
                             : Theme.well-border;
                         background:
@@ -104,17 +105,31 @@ export component GroupRail inherits Rectangle {
                         animate border-color { duration: Motion.fast; }
                         animate background { duration: Motion.fast; }
 
+                        accessible-role: button;
+                        accessible-label: g.tag;
+                        accessible-action-default => { root.choose-group(g.tag); }
+
+                        gr-fs := FocusScope {
+                            key-pressed(ev) => {
+                                if (ev.text == Key.Return || ev.text == " ") {
+                                    root.choose-group(g.tag);
+                                    return accept;
+                                }
+                                reject
+                            }
+                        }
+
                         item-ta := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.choose-group(g.tag); }
                         }
 
                         VerticalLayout {
-                            padding-left: 12px;
-                            padding-right: 11px;
-                            padding-top: 9px;
-                            padding-bottom: 9px;
-                            spacing: 5px;
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            spacing: 4px;
 
                             HorizontalLayout {
                                 spacing: 6px;
@@ -132,10 +147,8 @@ export component GroupRail inherits Rectangle {
                                     horizontal-stretch: 0;
                                     height: 18px;
                                     y: (parent.height - self.height) / 2;
-                                    border-radius: 6px;
-                                    background: is-current
-                                        ? @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%)
-                                        : Theme.inset-bg;
+                                    border-radius: Theme.radius-xs;
+                                    background: is-current ? Theme.pill-active-bot : Theme.inset-bg;
                                     HorizontalLayout {
                                         padding-left: 6px;
                                         padding-right: 6px;
@@ -186,80 +199,70 @@ export component GroupRail inherits Rectangle {
             }
         }
 
-        // Anchored Group Health & Latency Summary Footer (eliminates bottom rail void!)
-        Rectangle {
+        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        // Borderless Typographic Group Health Summary Footer
+        VerticalLayout {
             vertical-stretch: 0;
-            border-radius: 14px;
-            border-width: 1px;
-            border-color: Theme.well-border;
-            background: Theme.well-bg;
+            padding-left: 4px;
+            padding-right: 4px;
+            padding-top: 4px;
+            padding-bottom: 2px;
+            spacing: Theme.space-sm;
 
-            VerticalLayout {
-                padding: 10px;
-                spacing: 8px;
+            HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: I18n.t("策略组健康度", "Group Health");
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: Theme.text-secondary;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Rectangle {
+                    width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+                    background: root.healthy-count > 0 ? Theme.success-fg : Theme.offline-fg;
+                }
+            }
 
-                HorizontalLayout {
-                    spacing: 6px;
+            ProportionBar {
+                first-ratio: root.total-count > 0 ? (root.healthy-count / root.total-count) : 0.0;
+                first-color: Theme.success-fg;
+                second-color: Theme.error-fg;
+                has-data: root.total-count > 0 && root.healthy-count > 0;
+                has-second: root.total-count > root.healthy-count;
+            }
+
+            HorizontalLayout {
+                spacing: 4px;
+
+                VerticalLayout {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
+                    Text { text: "\{root.total-count}"; font-size: 13px; font-weight: 800; font-family: Theme.mono-font; color: Theme.text-primary; horizontal-alignment: center; }
+                    Text { text: I18n.t("总节点", "Total"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
+                }
+
+                Rectangle { width: 1px; y: 4px; height: 22px; background: Theme.hairline-subtle; }
+
+                VerticalLayout {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
+                    Text { text: "\{root.healthy-count}"; font-size: 13px; font-weight: 800; font-family: Theme.mono-font; color: root.healthy-count > 0 ? Theme.success-fg : Theme.text-muted; horizontal-alignment: center; }
+                    Text { text: I18n.t("可用", "Ready"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
+                }
+
+                Rectangle { width: 1px; y: 4px; height: 22px; background: Theme.hairline-subtle; }
+
+                VerticalLayout {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
                     Text {
-                        horizontal-stretch: 1;
-                        text: I18n.t("策略组健康度", "Group Health");
-                        font-size: 11px;
-                        font-weight: 700;
-                        color: Theme.text-secondary;
-                        vertical-alignment: center;
-                        overflow: elide;
+                        text: root.fastest-latency-ms > 0 ? "\{root.fastest-latency-ms}ms" : "--";
+                        font-size: 12px; font-weight: 800; font-family: Theme.mono-font;
+                        color: root.fastest-latency-ms > 0 ? Theme.latency-fg(root.fastest-latency-ms, "healthy") : Theme.text-muted;
+                        horizontal-alignment: center;
                     }
-                    Rectangle {
-                        width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
-                        background: root.healthy-count > 0 ? Theme.success-fg : Theme.offline-fg;
-                    }
-                }
-
-                ProportionBar {
-                    first-ratio: root.total-count > 0 ? (root.healthy-count / root.total-count) : 0.0;
-                    first-color: Theme.success-fg;
-                    second-color: Theme.error-fg;
-                    has-data: root.total-count > 0 && root.healthy-count > 0;
-                    has-second: root.total-count > root.healthy-count;
-                }
-
-                HorizontalLayout {
-                    spacing: 5px;
-
-                    Rectangle {
-                        horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; height: 42px;
-                        border-radius: 9px; background: Theme.inset-bg;
-                        VerticalLayout {
-                            alignment: center; spacing: 1px;
-                            Text { text: "\{root.total-count}"; font-size: 13px; font-weight: 800; font-family: Theme.mono-font; color: Theme.text-primary; horizontal-alignment: center; }
-                            Text { text: I18n.t("总节点", "Total"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
-                        }
-                    }
-
-                    Rectangle {
-                        horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; height: 42px;
-                        border-radius: 9px; background: Theme.inset-bg;
-                        VerticalLayout {
-                            alignment: center; spacing: 1px;
-                            Text { text: "\{root.healthy-count}"; font-size: 13px; font-weight: 800; font-family: Theme.mono-font; color: root.healthy-count > 0 ? Theme.success-fg : Theme.text-muted; horizontal-alignment: center; }
-                            Text { text: I18n.t("可用", "Ready"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
-                        }
-                    }
-
-                    Rectangle {
-                        horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; height: 42px;
-                        border-radius: 9px; background: Theme.inset-bg;
-                        VerticalLayout {
-                            alignment: center; spacing: 1px;
-                            Text {
-                                text: root.fastest-latency-ms > 0 ? "\{root.fastest-latency-ms}ms" : "--";
-                                font-size: 12px; font-weight: 800; font-family: Theme.mono-font;
-                                color: root.fastest-latency-ms > 0 ? Theme.latency-fg(root.fastest-latency-ms, "healthy") : Theme.text-muted;
-                                horizontal-alignment: center;
-                            }
-                            Text { text: I18n.t("最快", "Best"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
-                        }
-                    }
+                    Text { text: I18n.t("最快", "Best"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
                 }
             }
         }
@@ -318,10 +321,8 @@ export component GroupSummaryStrip inherits Rectangle {
             horizontal-stretch: 0;
             height: 22px;
             y: (parent.height - self.height) / 2;
-            border-radius: 8px;
-            background: root.auto-mode
-                ? @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%)
-                : Theme.well-bg;
+            border-radius: Theme.radius-xs;
+            background: root.auto-mode ? Theme.pill-active-bot : Theme.well-bg;
             HorizontalLayout {
                 padding-left: 8px;
                 padding-right: 8px;
@@ -349,19 +350,22 @@ export component GroupSummaryStrip inherits Rectangle {
 
         if root.active-latency-ms > 0 : Rectangle {
             horizontal-stretch: 0;
+            min-width: 58px;
             height: 22px;
             y: (parent.height - self.height) / 2;
-            border-radius: 11px;
+            border-radius: Theme.radius-sm;
             background: Theme.latency-bg(root.active-latency-ms, "healthy");
             HorizontalLayout {
                 padding-left: 8px;
                 padding-right: 8px;
                 Text {
+                    horizontal-stretch: 1;
                     text: "\{root.active-latency-ms} ms";
                     font-size: 11px;
                     font-weight: 700;
                     font-family: Theme.mono-font;
                     color: Theme.latency-fg(root.active-latency-ms, "healthy");
+                    horizontal-alignment: right;
                     vertical-alignment: center;
                 }
             }

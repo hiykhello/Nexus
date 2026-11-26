@@ -8,6 +8,7 @@ import { ConnectionInspectorCard } from "connection_inspector.slint";
 import { ConnectionsKpiStrip } from "connections_kpi_strip.slint";
 import { EmptyStateCard, NexusInput, SlidingSegmentBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
+import { NexusButton } from "nexus_buttons.slint";
 
 export component ConnectionsPanel inherits VerticalLayout {
     in property <length> window-width: 1040px;
@@ -104,68 +105,25 @@ export component ConnectionsPanel inherits VerticalLayout {
             }
         }
 
-        // Pause-Refresh capsule preventing row jumping while inspecting
-        Rectangle {
-            horizontal-stretch: 0;
-            height: 32px;
-            border-radius: 16px;
-            border-width: 1px;
-            border-color: root.paused ? Theme.warn-border : pause-ta.has-hover ? Theme.hairline-strong : Theme.card-border;
-            background: root.paused ? Theme.warn-bg : pause-ta.has-hover ? Theme.row-hover-bg : Theme.row-bg;
-            transform-scale: pause-ta.pressed ? 0.96 : 1.0;
-            animate background { duration: Motion.fast; }
-            animate transform-scale { duration: Motion.micro; }
-            accessible-role: button;
-            accessible-label: root.paused ? I18n.t("已暂停", "Paused") : I18n.t("暂停", "Pause");
-            accessible-action-default => {
+        NexusButton {
+            has-icon: true;
+            icon: root.paused ? @image-url("../icons/play.svg") : @image-url("../icons/pause.svg");
+            label: root.paused ? I18n.t("已暂停", "Paused") : I18n.t("暂停", "Pause");
+            warn: root.paused;
+            clicked => {
                 root.paused = !root.paused;
                 if (!root.paused) { root.refresh-connections(); }
             }
-            pause-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    root.paused = !root.paused;
-                    if (!root.paused) { root.refresh-connections(); }
-                }
-            }
-            HorizontalLayout {
-                padding-left: 11px; padding-right: 12px; spacing: 5px;
-                Image {
-                    width: 13px; height: 13px; y: (parent.height - self.height) / 2;
-                    source: root.paused ? @image-url("../icons/play.svg") : @image-url("../icons/pause.svg");
-                    colorize: root.paused ? Theme.warn-fg : Theme.text-secondary;
-                }
-                Text {
-                    text: root.paused ? I18n.t("已暂停", "Paused") : I18n.t("暂停", "Pause");
-                    font-size: 12px; font-weight: 600;
-                    color: root.paused ? Theme.warn-fg : Theme.text-primary;
-                    vertical-alignment: center;
-                }
-            }
         }
 
-        // Soft rose Close-All capsule (icon + label on Wide, icon button on narrow)
-        if root.is-wide : Rectangle {
-            horizontal-stretch: 0;
-            height: 32px;
-            border-radius: 16px;
-            border-width: 1px;
-            border-color: Theme.error-border;
-            background: cls-all-ta.pressed ? Theme.error-fg.with-alpha(0.30) : cls-all-ta.has-hover ? Theme.error-fg.with-alpha(0.22) : Theme.error-bg;
-            transform-scale: cls-all-ta.pressed ? 0.96 : 1.0;
-            animate background { duration: Motion.fast; }
-            animate transform-scale { duration: Motion.micro; }
-            cls-all-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    root.clear-selection();
-                    root.close-all-connections();
-                }
-            }
-            HorizontalLayout {
-                padding-left: 11px; padding-right: 12px; spacing: 5px;
-                Image { width: 13px; height: 13px; y: (parent.height - self.height) / 2; source: @image-url("../icons/close-all.svg"); colorize: Theme.error-fg; }
-                Text { text: I18n.t("全部断开", "Close All"); font-size: 12px; font-weight: 700; color: Theme.error-fg; vertical-alignment: center; }
+        if root.is-wide : NexusButton {
+            has-icon: true;
+            icon: @image-url("../icons/close-all.svg");
+            label: I18n.t("全部断开", "Close All");
+            danger: true;
+            clicked => {
+                root.clear-selection();
+                root.close-all-connections();
             }
         }
 
@@ -182,7 +140,6 @@ export component ConnectionsPanel inherits VerticalLayout {
         IconActionButton {
             icon: @image-url("../icons/refresh.svg");
             label: I18n.t("刷新连接", "Refresh");
-            spin-on-click: true;
             clicked => { root.refresh-connections(); }
         }
     }
@@ -298,7 +255,6 @@ export component ConnectionsPanel inherits VerticalLayout {
                                 is-selected ? Theme.selected-bg
                                 : conn-ta.has-hover ? Theme.row-hover-bg
                                 : Math.mod(idx, 2) == 0 ? Theme.row-bg : Theme.row-alt-bg;
-                            animate background { duration: Motion.micro; }
 
                             ContextMenuArea {
                                 Menu {

@@ -9,19 +9,33 @@ component CardIconTrigger inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
+    forward-focus: fs;
     horizontal-stretch: 0;
     width: 24px;
     height: 24px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: ta.has-hover && root.enabled ? Theme.selected-border : Theme.well-border;
+    border-radius: Theme.radius-sm;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color: fs.has-focus ? Theme.accent : (ta.has-hover && root.enabled ? Theme.selected-border : Theme.well-border);
     background: ta.has-hover && root.enabled ? Theme.row-hover-bg : Theme.well-bg;
     opacity: root.enabled ? 1.0 : 0.45;
+    transform-scale: (ta.pressed && root.enabled) ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
     accessible-role: button;
     accessible-label: root.tip;
     accessible-action-default => { if (root.enabled) { root.clicked(); } }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
 
     ta := TouchArea {
         enabled: root.enabled;
@@ -67,19 +81,22 @@ component ProbeRow inherits HorizontalLayout {
 
     Rectangle {
         horizontal-stretch: 0;
+        min-width: 58px;
         height: 20px;
         y: (parent.height - self.height) / 2;
-        border-radius: 5px;
+        border-radius: Theme.radius-xs;
         background: Theme.latency-bg(root.ms, root.ms == 0 ? "timeout" : "");
         HorizontalLayout {
-            padding-left: 7px;
-            padding-right: 7px;
+            padding-left: 6px;
+            padding-right: 6px;
             Text {
+                horizontal-stretch: 1;
                 text: root.ms > 0 ? "\{root.ms} ms" : (root.ms == 0 ? I18n.t("超时", "Timeout") : "--");
                 font-size: 10px;
                 font-weight: 700;
                 font-family: Theme.mono-font;
                 color: Theme.latency-fg(root.ms, root.ms == 0 ? "timeout" : "");
+                horizontal-alignment: right;
                 vertical-alignment: center;
             }
         }
@@ -101,8 +118,8 @@ export component ServiceHealthCard inherits Rectangle {
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 13px;
-        spacing: 6px;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
 
         HorizontalLayout {
             vertical-stretch: 0;
@@ -147,26 +164,15 @@ export component RoutingSummaryCard inherits Rectangle {
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 13px;
-        spacing: 8px;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
         alignment: space-between;
 
-        HorizontalLayout {
-            vertical-stretch: 0;
-            spacing: 6px;
-            Text {
-                horizontal-stretch: 1;
-                text: I18n.t("分流规则", "Routing Rules");
-                font-size: 12px;
-                font-weight: 700;
-                color: Theme.text-primary;
-                vertical-alignment: center;
-            }
-            CardIconTrigger {
-                icon: @image-url("../icons/settings.svg");
-                tip: I18n.t("规则与 DNS 诊断", "Rules & DNS Diagnostics");
-                clicked => { root.open-rules(); }
-            }
+        Text {
+            text: I18n.t("分流规则", "Routing Rules");
+            font-size: 12px;
+            font-weight: 700;
+            color: Theme.text-primary;
         }
 
         VerticalLayout {
@@ -188,11 +194,27 @@ export component RoutingSummaryCard inherits Rectangle {
 
         Rectangle {
             height: 28px;
-            border-radius: 6px;
-            border-width: 1px;
-            border-color: diag-ta.has-hover ? Theme.selected-border : Theme.well-border;
+            border-radius: Theme.radius-sm;
+            border-width: diag-fs.has-focus ? 2px : 1px;
+            border-color: diag-fs.has-focus ? Theme.accent : (diag-ta.has-hover ? Theme.selected-border : Theme.well-border);
             background: diag-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+            transform-scale: diag-ta.pressed ? 0.97 : 1.0;
             animate background { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+            accessible-role: button;
+            accessible-label: I18n.t("规则测试与 DNS 查询", "Explain & Live DNS");
+            accessible-action-default => { root.open-rules(); }
+
+            diag-fs := FocusScope {
+                key-pressed(ev) => {
+                    if (ev.text == Key.Return || ev.text == " ") {
+                        root.open-rules();
+                        return accept;
+                    }
+                    reject
+                }
+            }
 
             diag-ta := TouchArea {
                 mouse-cursor: pointer;
@@ -200,8 +222,9 @@ export component RoutingSummaryCard inherits Rectangle {
             }
 
             HorizontalLayout {
-                padding-left: 9px;
-                padding-right: 9px;
+                padding-left: 8px;
+                padding-right: 6px;
+                spacing: 4px;
                 Text {
                     horizontal-stretch: 1;
                     text: I18n.t("规则测试与 DNS 查询", "Explain & Live DNS");
@@ -211,12 +234,12 @@ export component RoutingSummaryCard inherits Rectangle {
                     vertical-alignment: center;
                     overflow: elide;
                 }
-                Text {
-                    text: ">";
-                    font-size: 11px;
-                    font-weight: 700;
-                    color: Theme.text-muted;
-                    vertical-alignment: center;
+                Image {
+                    width: 12px;
+                    height: 12px;
+                    y: (parent.height - self.height) / 2;
+                    source: @image-url("../icons/chevron-right.svg");
+                    colorize: diag-ta.has-hover ? Theme.accent : Theme.text-muted;
                 }
             }
         }
@@ -229,13 +252,28 @@ component ModeOptionRow inherits Rectangle {
     in property <bool> active: false;
     callback selected();
 
+    forward-focus: fs;
     height: 36px;
     border-radius: Theme.radius-md;
-    border-width: 1px;
-    border-color: root.active ? Theme.selected-border : (ta.has-hover ? Theme.hairline-strong : Theme.well-border);
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color: fs.has-focus ? Theme.accent : (root.active ? Theme.selected-border : (ta.has-hover ? Theme.hairline-strong : Theme.well-border));
     background: root.active ? Theme.selected-bg : (ta.has-hover ? Theme.row-hover-bg : Theme.well-bg);
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.selected(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                root.selected();
+                return accept;
+            }
+            reject
+        }
+    }
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -285,8 +323,8 @@ export component OutboundModeCard inherits Rectangle {
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 13px;
-        spacing: 8px;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
 
         Text {
             text: I18n.t("出站模式", "Outbound Mode");
@@ -326,14 +364,29 @@ component GroupPillTile inherits Rectangle {
     in property <bool> selected: false;
     callback clicked();
 
+    forward-focus: fs;
     horizontal-stretch: 1;
     preferred-width: 0px;
     min-width: 0px;
     border-radius: Theme.radius-md;
-    border-width: 1px;
-    border-color: root.selected ? Theme.selected-border : (ta.has-hover ? Theme.hairline-strong : Theme.well-border);
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color: fs.has-focus ? Theme.accent : (root.selected ? Theme.selected-border : (ta.has-hover ? Theme.hairline-strong : Theme.well-border));
     background: root.selected ? Theme.selected-bg : (ta.has-hover ? Theme.row-hover-bg : Theme.well-bg);
     animate background { duration: Motion.fast; }
+
+    accessible-role: button;
+    accessible-label: root.group.tag;
+    accessible-action-default => { root.clicked(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -377,8 +430,8 @@ export component PolicyGroupsCard inherits Rectangle {
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 13px;
-        spacing: 8px;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
 
         HorizontalLayout {
             vertical-stretch: 0;

@@ -9,31 +9,28 @@ export component IconActionButton inherits Rectangle {
     in property <bool> primary: false;
     in property <bool> danger: false;
     in property <bool> success: false;
-    in property <bool> spin-on-click: false;
     in property <bool> enabled: true;
     in property <length> size: 32px;
     callback clicked();
 
-    private property <int> spin-turns: 0;
     private property <bool> tooltip-armed: false;
 
+    forward-focus: fs;
     width: root.size;
     height: root.size;
     border-radius: Theme.radius-md;
-    border-width: 1px;
+    border-width: fs.has-focus ? 2px : 1px;
     border-color:
-        root.success ? Theme.success-border
-        : root.primary ? Theme.pill-active-top.brighter(0.20)
+        fs.has-focus ? Theme.accent
+        : root.success ? Theme.success-border
+        : root.primary ? Theme.pill-active-top
         : root.danger && root.enabled && ta.has-hover ? Theme.error-border
         : root.active ? Theme.selected-border
         : ta.has-hover && root.enabled ? Theme.selected-border
         : Theme.card-border;
     background:
         root.success ? Theme.success-bg
-        : root.primary
-            ? (ta.pressed
-                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+        : root.primary ? (ta.pressed ? Theme.pill-active-bot.darker(0.12) : ta.has-hover ? Theme.pill-active-bot.brighter(0.06) : Theme.pill-active-bot)
         : root.danger && root.enabled && (ta.has-hover || ta.pressed) ? Theme.error-bg
         : root.active ? Theme.selected-bg
         : !root.enabled ? Theme.surface-bg
@@ -41,17 +38,27 @@ export component IconActionButton inherits Rectangle {
         : ta.has-hover ? Theme.row-hover-bg
         : Theme.row-bg;
     opacity: root.enabled ? 1.0 : 0.45;
-    transform-scale: ta.pressed && root.enabled ? 0.91 : 1.0;
+    transform-scale: ta.pressed && root.enabled ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => {
         if (root.enabled) {
-            if (root.spin-on-click) { root.spin-turns += 1; }
             root.clicked();
+        }
+    }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            reject
         }
     }
 
@@ -71,7 +78,12 @@ export component IconActionButton inherits Rectangle {
         mouse-cursor: root.enabled ? pointer : default;
         changed has-hover => {
             if (self.has-hover && root.label != "") {
-                root.tooltip-armed = true;
+                if (TooltipState.visible || TooltipState.warm) {
+                    root.tooltip-armed = false;
+                    TooltipState.show(root.label, root.absolute-position.x, root.absolute-position.y, root.width, root.height);
+                } else {
+                    root.tooltip-armed = true;
+                }
             } else {
                 root.tooltip-armed = false;
                 TooltipState.hide();
@@ -80,7 +92,6 @@ export component IconActionButton inherits Rectangle {
         clicked => {
             root.tooltip-armed = false;
             TooltipState.hide();
-            if (root.spin-on-click) { root.spin-turns += 1; }
             root.clicked();
         }
     }
@@ -91,8 +102,6 @@ export component IconActionButton inherits Rectangle {
         width: root.size <= 28px ? 14px : 16px;
         height: self.width;
         source: root.icon;
-        transform-rotation: 360deg * root.spin-turns;
-        animate transform-rotation { duration: Motion.slow; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
         colorize:
             root.success ? Theme.success-fg
             : root.primary ? Theme.pill-active-fg

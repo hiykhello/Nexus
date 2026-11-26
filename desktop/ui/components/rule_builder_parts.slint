@@ -1,55 +1,9 @@
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { NexusInput } from "glass_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusButton } from "nexus_buttons.slint";
 import { NexusSelect } from "nexus_select.slint";
-
-export component RuleChipButton inherits Rectangle {
-    in property <string> label;
-    in property <bool> active: false;
-    in property <bool> warn-accent: false;
-    in property <bool> enabled: true;
-    callback clicked();
-
-    height: 28px;
-    border-radius: Theme.radius-sm;
-    border-width: 1px;
-    border-color:
-        root.active ? (root.warn-accent ? Theme.warn-fg : Theme.selected-border)
-        : ta.has-hover && root.enabled ? Theme.hairline-strong
-        : Theme.well-border;
-    background:
-        root.active ? (root.warn-accent ? Theme.warn-bg : Theme.selected-bg)
-        : (root.enabled && ta.has-hover) ? Theme.row-hover-bg
-        : Theme.well-bg;
-    opacity: root.enabled ? 1.0 : 0.45;
-    transform-scale: root.enabled && ta.pressed ? 0.96 : 1.0;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-
-    ta := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: root.enabled ? pointer : default;
-        clicked => { root.clicked(); }
-    }
-
-    HorizontalLayout {
-        padding-left: 9px;
-        padding-right: 9px;
-        Text {
-            text: root.label;
-            font-size: 12px;
-            font-weight: root.active ? 700 : 500;
-            color:
-                root.active ? (root.warn-accent ? Theme.warn-fg : Theme.nav-active-fg)
-                : Theme.text-secondary;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-    }
-}
 
 export component ConditionRow inherits HorizontalLayout {
     in-out property <string> kind: "domain-suffix";
@@ -97,10 +51,9 @@ export component ConditionRow inherits HorizontalLayout {
             : I18n.t("输入匹配值 (如 example.com)", "Match value (e.g. example.com)");
     }
 
-    RuleChipButton {
-        width: 30px;
-        height: 32px;
-        label: "×";
+    IconActionButton {
+        icon: @image-url("../icons/x.svg");
+        label: I18n.t("移除条件", "Remove condition");
         enabled: root.removable;
         clicked => { root.remove-requested(); }
     }
@@ -143,60 +96,15 @@ export component RuleActionBar inherits VerticalLayout {
 
         Rectangle { horizontal-stretch: 1; }
 
-        Rectangle {
-            horizontal-stretch: 0;
-            height: 32px;
-            border-radius: 16px;
-            border-width: 1px;
-            border-color: reset-ta.has-hover ? Theme.hairline-strong : Theme.well-border;
-            background: reset-ta.pressed ? Theme.nav-active-bg : reset-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
-            transform-scale: reset-ta.pressed ? 0.96 : 1.0;
-            animate background { duration: Motion.fast; }
-            animate border-color { duration: Motion.fast; }
-            animate transform-scale { duration: Motion.micro; }
-
-            reset-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.reset(); }
-            }
-
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                Text {
-                    text: I18n.t("重置", "Reset");
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: Theme.text-secondary;
-                    vertical-alignment: center;
-                }
-            }
+        NexusButton {
+            label: I18n.t("重置", "Reset");
+            clicked => { root.reset(); }
         }
 
-        Rectangle {
-            horizontal-stretch: 0;
-            height: 32px;
-            border-radius: Theme.radius-md;
-            border-width: 1px;
-            border-color: Theme.pill-active-top;
-            background: commit-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot;
-
-            commit-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.commit(); }
-            }
-
-            HorizontalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                Text {
-                    text: root.button-text;
-                    font-size: 12px;
-                    font-weight: 700;
-                    color: Theme.pill-active-fg;
-                    vertical-alignment: center;
-                }
-            }
+        NexusButton {
+            label: root.button-text;
+            primary: true;
+            clicked => { root.commit(); }
         }
     }
 }

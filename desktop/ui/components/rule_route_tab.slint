@@ -2,8 +2,9 @@ import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
 import { RouteRuleDraft } from "../types.slint";
 import { NexusInput } from "glass_primitives.slint";
+import { NexusChip } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
-import { ConditionRow, RuleActionBar, RuleChipButton } from "rule_builder_parts.slint";
+import { ConditionRow, RuleActionBar } from "rule_builder_parts.slint";
 
 export component RuleRouteTab inherits VerticalLayout {
     in-out property <string> primary-kind: "domain-suffix";
@@ -75,75 +76,62 @@ export component RuleRouteTab inherits VerticalLayout {
 
     vertical-stretch: 0;
     alignment: start;
+    spacing: Theme.space-md;
 
-    Rectangle {
-        border-radius: 16px;
-        border-width: 1px;
-        border-color: Theme.card-border;
-        background: Theme.card-surface;
+    // 1. Match predicates (directly on modal overlay-bg — zero card-in-card nesting)
+    VerticalLayout {
+        spacing: Theme.space-sm;
 
-
-        VerticalLayout {
-            alignment: start;
-            padding: Theme.space-lg;
-            spacing: Theme.space-md;
-
-            // 1. Match predicates
-            VerticalLayout {
-                spacing: Theme.space-sm;
-
-                HorizontalLayout {
-                    spacing: 6px;
-                    RuleChipButton { label: I18n.t("多条件组合", "Predicates"); active: !root.use-rule-set; clicked => { root.use-rule-set = false; } }
-                    RuleChipButton { label: I18n.t("规则集", "Rule Set"); active: root.use-rule-set; clicked => { root.use-rule-set = true; } }
-                    Rectangle { horizontal-stretch: 1; }
-                    if !root.use-rule-set && root.cond-count < 4 : RuleChipButton { label: I18n.t("+ 条件", "+ Cond"); clicked => { root.cond-count += 1; } }
-                }
-
-                if !root.use-rule-set : ConditionRow { kind <=> root.primary-kind; value <=> root.primary-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(1); } }
-                if !root.use-rule-set && root.cond-count >= 2 : ConditionRow { kind <=> root.c2-kind; value <=> root.c2-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(2); } }
-                if !root.use-rule-set && root.cond-count >= 3 : ConditionRow { kind <=> root.c3-kind; value <=> root.c3-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(3); } }
-                if !root.use-rule-set && root.cond-count >= 4 : ConditionRow { kind <=> root.c4-kind; value <=> root.c4-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(4); } }
-
-                if root.use-rule-set : HorizontalLayout {
-                    spacing: Theme.space-sm;
-                    Text { text: I18n.t("规则集名", "Rule Set"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                    NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.rule-set-name; placeholder-text: "geosite-cn / geoip-cn"; }
-                }
-            }
-
-            Rectangle { height: 1px; background: Theme.hairline-subtle; }
-
-            // 2. Action & outbound target
-            VerticalLayout {
-                spacing: Theme.space-sm;
-
-                HorizontalLayout {
-                    spacing: 6px;
-                    RuleChipButton { label: I18n.t("代理 / 分流", "Route"); active: root.action-kind == "route"; clicked => { root.action-kind = "route"; } }
-                    RuleChipButton { label: I18n.t("直连绕过", "Direct"); active: root.action-kind == "bypass"; clicked => { root.action-kind = "bypass"; } }
-                    RuleChipButton { label: I18n.t("拦截拒绝", "Block"); warn-accent: true; active: root.action-kind == "reject"; clicked => { root.action-kind = "reject"; } }
-                    Rectangle { horizontal-stretch: 1; }
-                    if root.action-kind != "reject" : NexusSwitch { text: I18n.t("TLS 分片", "TLS Fragment"); checked <=> root.tls-fragment; }
-                }
-
-                if root.action-kind == "route" : HorizontalLayout {
-                    spacing: Theme.space-sm;
-                    Text { text: I18n.t("目标出站", "Outbound"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                    NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.target-outbound; placeholder-text: "proxy / direct / profile-id"; }
-                }
-            }
-
-            Rectangle { height: 1px; background: Theme.hairline-subtle; }
-
-            // 3. Action bar (Reset + Add Rule)
-            RuleActionBar {
-                button-text: I18n.t("添加规则", "Add Rule");
-                status-text: root.status-text;
-                status-ok: root.status-ok;
-                commit => { root.add-route-rule(root.current-draft()); }
-                reset => { root.reset-form(); }
-            }
+        HorizontalLayout {
+            spacing: 6px;
+            NexusChip { label: I18n.t("多条件组合", "Predicates"); active: !root.use-rule-set; clicked => { root.use-rule-set = false; } }
+            NexusChip { label: I18n.t("规则集", "Rule Set"); active: root.use-rule-set; clicked => { root.use-rule-set = true; } }
+            Rectangle { horizontal-stretch: 1; }
+            if !root.use-rule-set && root.cond-count < 4 : NexusChip { label: I18n.t("+ 条件", "+ Cond"); clicked => { root.cond-count += 1; } }
         }
+
+        if !root.use-rule-set : ConditionRow { kind <=> root.primary-kind; value <=> root.primary-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(1); } }
+        if !root.use-rule-set && root.cond-count >= 2 : ConditionRow { kind <=> root.c2-kind; value <=> root.c2-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(2); } }
+        if !root.use-rule-set && root.cond-count >= 3 : ConditionRow { kind <=> root.c3-kind; value <=> root.c3-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(3); } }
+        if !root.use-rule-set && root.cond-count >= 4 : ConditionRow { kind <=> root.c4-kind; value <=> root.c4-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(4); } }
+
+        if root.use-rule-set : HorizontalLayout {
+            spacing: Theme.space-sm;
+            Text { width: 68px; text: I18n.t("规则集名", "Rule Set"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.rule-set-name; placeholder-text: "geosite-cn / geoip-cn"; }
+        }
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+    // 2. Action & outbound target
+    VerticalLayout {
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            spacing: 6px;
+            NexusChip { label: I18n.t("代理 / 分流", "Route"); active: root.action-kind == "route"; clicked => { root.action-kind = "route"; } }
+            NexusChip { label: I18n.t("直连绕过", "Direct"); active: root.action-kind == "bypass"; clicked => { root.action-kind = "bypass"; } }
+            NexusChip { label: I18n.t("拦截拒绝", "Block"); warn-accent: true; active: root.action-kind == "reject"; clicked => { root.action-kind = "reject"; } }
+            Rectangle { horizontal-stretch: 1; }
+            if root.action-kind != "reject" : NexusSwitch { text: I18n.t("TLS 分片", "TLS Fragment"); checked <=> root.tls-fragment; }
+        }
+
+        if root.action-kind == "route" : HorizontalLayout {
+            spacing: Theme.space-sm;
+            Text { width: 68px; text: I18n.t("目标出站", "Outbound"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.target-outbound; placeholder-text: "proxy / direct / profile-id"; }
+        }
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+    // 3. Action bar (Reset + Add Rule)
+    RuleActionBar {
+        button-text: I18n.t("添加规则", "Add Rule");
+        status-text: root.status-text;
+        status-ok: root.status-ok;
+        commit => { root.add-route-rule(root.current-draft()); }
+        reset => { root.reset-form(); }
     }
 }

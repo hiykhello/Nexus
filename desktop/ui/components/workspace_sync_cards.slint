@@ -1,68 +1,26 @@
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
 import { NexusInput } from "glass_primitives.slint";
-
-component SyncActionButton inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    in property <bool> primary: false;
-    in property <bool> danger: false;
-    in property <bool> enabled: true;
-    callback clicked();
-    horizontal-stretch: 0;
-    height: 30px;
-    border-radius: Theme.radius-md;
-    border-width: 1px;
-    border-color:
-        root.danger ? Theme.error-border
-        : root.primary ? Theme.pill-active-top.brighter(0.20)
-        : ta.has-hover && root.enabled ? Theme.selected-border : Theme.card-border;
-    background:
-        root.danger ? (ta.has-hover && root.enabled ? Theme.error-bg.brighter(0.1) : Theme.error-bg)
-        : root.primary
-            ? (ta.pressed
-                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
-        : ta.pressed && root.enabled ? Theme.nav-active-bg : ta.has-hover && root.enabled ? Theme.row-hover-bg : Theme.row-bg;
-    opacity: root.enabled ? 1.0 : 0.48;
-    transform-scale: ta.pressed && root.enabled ? 0.96 : 1.0;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-    ta := TouchArea { enabled: root.enabled; mouse-cursor: root.enabled ? pointer : default; clicked => { root.clicked(); } }
-    HorizontalLayout {
-        padding-left: 10px; padding-right: 12px; spacing: 6px;
-        Image {
-            width: 13px; height: 13px; y: (parent.height - self.height) / 2;
-            source: root.icon;
-            colorize: root.danger ? Theme.error-fg : root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-        }
-        Text {
-            text: root.label; font-size: 12px; font-weight: 600;
-            color: root.danger ? Theme.error-fg : root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-            vertical-alignment: center;
-        }
-    }
-}
+import { NexusButton } from "nexus_buttons.slint";
 
 export component WorkspaceSyncCard inherits Rectangle {
     in property <length> grid-w: 600px;
     width: root.grid-w;
-    border-radius: 16px; border-width: 1px;
+    border-radius: Theme.radius-card; border-width: 1px;
     border-color: Theme.card-border; background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 12px; spacing: 8px;
+        padding: Theme.space-md; spacing: Theme.space-sm;
         HorizontalLayout {
             spacing: 8px;
             Text {
                 horizontal-stretch: 1; min-width: 0px;
-                text: I18n.t("端到端加密 WebDAV 同步 (nexus-sync-v1)", "E2EE WebDAV Sync (nexus-sync-v1)");
+                text: I18n.t("端到端加密 WebDAV 同步", "E2EE WebDAV Sync");
                 font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; overflow: elide;
             }
-            SyncActionButton {
+            NexusButton {
+                btn-height: 30px; has-icon: true;
                 icon: @image-url("../icons/save.svg");
                 label: I18n.t("保存凭据", "Save Creds");
                 enabled: !WorkspaceState.sync-busy;
@@ -107,13 +65,15 @@ export component WorkspaceSyncCard inherits Rectangle {
         }
         HorizontalLayout {
             spacing: 8px;
-            SyncActionButton {
+            NexusButton {
+                btn-height: 30px; has-icon: true;
                 icon: @image-url("../icons/external-link.svg");
                 label: WorkspaceState.sync-busy ? I18n.t("同步中...", "Syncing...") : I18n.t("上传加密快照", "Push Snapshot");
                 primary: true; enabled: !WorkspaceState.sync-busy;
                 clicked => { WorkspaceState.sync-push(false); }
             }
-            SyncActionButton {
+            NexusButton {
+                btn-height: 30px; has-icon: true;
                 icon: @image-url("../icons/download.svg");
                 label: I18n.t("拉取远端快照", "Pull Snapshot");
                 enabled: !WorkspaceState.sync-busy;
@@ -122,9 +82,9 @@ export component WorkspaceSyncCard inherits Rectangle {
             Rectangle { horizontal-stretch: 1; }
         }
         if WorkspaceState.sync-conflict-active : Rectangle {
-            border-radius: 12px; border-width: 1px; border-color: Theme.warn-border; background: Theme.warn-bg;
+            border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.warn-border; background: Theme.warn-bg;
             VerticalLayout {
-                padding: 10px; spacing: 8px;
+                padding: Theme.space-sm; spacing: Theme.space-sm;
                 Text {
                     text: WorkspaceState.sync-conflict-detail != ""
                         ? WorkspaceState.sync-conflict-detail
@@ -134,19 +94,22 @@ export component WorkspaceSyncCard inherits Rectangle {
                 }
                 HorizontalLayout {
                     spacing: 8px;
-                    SyncActionButton {
+                    NexusButton {
+                        btn-height: 30px; has-icon: true;
                         icon: @image-url("../icons/download.svg");
                         label: I18n.t("保留远端 (备份本地后覆盖)", "Keep Remote (Backup Local)");
                         primary: true; enabled: !WorkspaceState.sync-busy;
                         clicked => { WorkspaceState.sync-pull(true); }
                     }
-                    SyncActionButton {
+                    NexusButton {
+                        btn-height: 30px; has-icon: true;
                         icon: @image-url("../icons/alert-triangle.svg");
                         label: I18n.t("强制覆盖远端", "Force Overwrite Remote");
                         danger: true; enabled: !WorkspaceState.sync-busy;
                         clicked => { WorkspaceState.sync-push(true); }
                     }
-                    SyncActionButton {
+                    NexusButton {
+                        btn-height: 30px; has-icon: true;
                         icon: @image-url("../icons/x.svg");
                         label: I18n.t("取消", "Dismiss");
                         enabled: !WorkspaceState.sync-busy;
@@ -166,11 +129,11 @@ export component WorkspaceSyncCard inherits Rectangle {
 export component WorkspaceUdpProbeCard inherits Rectangle {
     in property <length> grid-w: 600px;
     width: root.grid-w;
-    border-radius: 16px; border-width: 1px;
+    border-radius: Theme.radius-card; border-width: 1px;
     border-color: Theme.card-border; background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 12px; spacing: 8px;
+        padding: Theme.space-md; spacing: Theme.space-sm;
         HorizontalLayout {
             spacing: 8px;
             Text {
@@ -181,19 +144,22 @@ export component WorkspaceUdpProbeCard inherits Rectangle {
         }
         HorizontalLayout {
             spacing: 8px;
-            SyncActionButton {
+            NexusButton {
+                btn-height: 30px; has-icon: true;
                 icon: @image-url("../icons/bolt.svg");
                 label: WorkspaceState.udp-probe-busy ? I18n.t("探测中...", "Probing...") : "STUN NAT";
                 primary: true; enabled: !WorkspaceState.udp-probe-busy;
                 clicked => { WorkspaceState.run-udp-probe("stun"); }
             }
-            SyncActionButton {
+            NexusButton {
+                btn-height: 30px; has-icon: true;
                 icon: @image-url("../icons/bolt.svg");
                 label: "DNS UDP";
                 enabled: !WorkspaceState.udp-probe-busy;
                 clicked => { WorkspaceState.run-udp-probe("dns"); }
             }
-            SyncActionButton {
+            NexusButton {
+                btn-height: 30px; has-icon: true;
                 icon: @image-url("../icons/bolt.svg");
                 label: "NTP UDP";
                 enabled: !WorkspaceState.udp-probe-busy;
@@ -202,11 +168,11 @@ export component WorkspaceUdpProbeCard inherits Rectangle {
             Rectangle { horizontal-stretch: 1; }
         }
         if WorkspaceState.udp-probe-result != "" : Rectangle {
-            border-radius: 10px; border-width: 1px;
+            border-radius: Theme.radius-md; border-width: 1px;
             border-color: WorkspaceState.udp-probe-ok ? Theme.success-border : Theme.error-border;
             background: WorkspaceState.udp-probe-ok ? Theme.success-bg : Theme.error-bg;
             HorizontalLayout {
-                padding: 8px;
+                padding: Theme.space-sm;
                 Text {
                     text: WorkspaceState.udp-probe-result; font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
                     color: WorkspaceState.udp-probe-ok ? Theme.success-fg : Theme.error-fg; wrap: word-wrap;

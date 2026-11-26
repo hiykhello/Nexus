@@ -1,89 +1,50 @@
 import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { NexusInput, NexusVScrollBar } from "glass_primitives.slint";
+import { NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { WorkspaceProfilesView, WorkspaceSubscriptionsView } from "workspace_panels.slint";
 import { WorkspaceRoutingDnsView } from "workspace_routing_dns_view.slint";
 import { WorkspaceHostPortableView } from "workspace_host_view.slint";
 
-component WorkspaceSubTabPill inherits Rectangle {
-    in property <string> label;
-    in property <bool> active: false;
-    callback clicked();
-
-    horizontal-stretch: 1;
-    height: 30px;
-    border-radius: 15px;
-    border-width: root.active ? 1px : 0px;
-    border-color: root.active ? Theme.accent.with-alpha(0.75) : transparent;
-    background: root.active ? Theme.accent : ta.has-hover ? Theme.row-hover-bg : transparent;
-    animate background { duration: Motion.fast; }
-
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-    Text {
-        text: root.label;
-        font-size: 12px; font-weight: root.active ? 700 : 600;
-        color: root.active ? Theme.pill-active-fg : Theme.text-secondary;
-        horizontal-alignment: center; vertical-alignment: center;
-    }
-}
-
 export component ProfilesPanel inherits VerticalLayout {
-    in-out property <string> share-link-input: "";
     in property <string> diagnostic-message: "";
     in property <bool> diagnostic-ok: true;
 
     callback refresh-profiles();
-    callback import-share-link(string);
+    callback open-add-outbound();
 
     spacing: Theme.space-md;
 
-    // Unified 4-Layer Workspace Sub-Tab Bar + Quick Share-URI Import
+    // Unified 4-Layer Workspace Sub-Tab Bar (zero duplicate Share-URI input; 8px concentric bar)
     HorizontalLayout {
         vertical-stretch: 0;
         padding-right: 18px;
         spacing: Theme.space-sm;
 
-        Rectangle {
+        SlidingSegmentBar {
             horizontal-stretch: 1;
-            min-width: 280px;
-            height: 36px;
-            border-radius: 18px;
-            border-width: 1px;
-            border-color: Theme.card-border;
-            background: Theme.card-surface;
-
-            HorizontalLayout {
-                padding: 3px; spacing: 3px;
-                WorkspaceSubTabPill { label: I18n.t("配置项", "Profiles"); active: WorkspaceState.active-subtab == 0; clicked => { WorkspaceState.active-subtab = 0; } }
-                WorkspaceSubTabPill { label: I18n.t("订阅", "Subs"); active: WorkspaceState.active-subtab == 1; clicked => { WorkspaceState.active-subtab = 1; } }
-                WorkspaceSubTabPill { label: I18n.t("路由与 DNS", "Route & DNS"); active: WorkspaceState.active-subtab == 2; clicked => { WorkspaceState.active-subtab = 2; } }
-                WorkspaceSubTabPill { label: I18n.t("本机设置", "Local"); active: WorkspaceState.active-subtab == 3; clicked => { WorkspaceState.active-subtab = 3; } }
+            max-width: 460px;
+            bar-height: 32px;
+            options: [
+                I18n.t("配置项", "Profiles"),
+                I18n.t("订阅", "Subs"),
+                I18n.t("路由与 DNS", "Route & DNS"),
+                I18n.t("本机设置", "Local"),
+            ];
+            current-index: WorkspaceState.active-subtab;
+            selected(idx) => {
+                WorkspaceState.active-subtab = idx;
+                sv.content-y = 0px;
             }
         }
 
-        NexusInput {
-            horizontal-stretch: 0;
-            width: root.width >= 820px ? 240px : 170px;
-            mono: true;
-            placeholder-text: I18n.t("粘贴分享链接导入...", "Paste share URI...");
-            text <=> root.share-link-input;
-            accepted => { if (root.share-link-input != "") { root.import-share-link(root.share-link-input); } }
-        }
-        IconActionButton {
-            icon: @image-url("../icons/download.svg");
-            label: I18n.t("导入", "Import");
-            primary: root.share-link-input != "";
-            enabled: root.share-link-input != "";
-            clicked => { if (root.share-link-input != "") { root.import-share-link(root.share-link-input); } }
-        }
+        Rectangle { horizontal-stretch: 1; }
+
         IconActionButton {
             icon: @image-url("../icons/refresh.svg");
             label: I18n.t("刷新", "Refresh");
-            spin-on-click: true;
             clicked => { root.refresh-profiles(); }
         }
     }
@@ -126,7 +87,11 @@ export component ProfilesPanel inherits VerticalLayout {
 
                 property <length> grid-w: max(0px, sv.visible-width - 18px);
 
-                if WorkspaceState.active-subtab == 0 : WorkspaceProfilesView { grid-w: grid-w; }
+                if WorkspaceState.active-subtab == 0 : WorkspaceProfilesView {
+                    grid-w: grid-w;
+                    viewport-h: sv.visible-height;
+                    open-add-outbound => { root.open-add-outbound(); }
+                }
                 if WorkspaceState.active-subtab == 1 : WorkspaceSubscriptionsView { grid-w: grid-w; }
                 if WorkspaceState.active-subtab == 2 : WorkspaceRoutingDnsView { grid-w: grid-w; }
                 if WorkspaceState.active-subtab == 3 : WorkspaceHostPortableView { grid-w: grid-w; }

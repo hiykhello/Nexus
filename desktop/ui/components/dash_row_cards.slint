@@ -8,11 +8,28 @@ component CardActionLink inherits Rectangle {
     in property <string> label;
     callback clicked();
 
+    forward-focus: fs;
     horizontal-stretch: 0;
     height: 22px;
     border-radius: Theme.radius-xs;
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: fs.has-focus ? Theme.accent : transparent;
     background: ta.has-hover ? Theme.row-hover-bg : transparent;
     animate background { duration: Motion.fast; }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -21,13 +38,21 @@ component CardActionLink inherits Rectangle {
 
     HorizontalLayout {
         padding-left: 6px;
-        padding-right: 6px;
+        padding-right: 4px;
+        spacing: 2px;
         Text {
             text: root.label;
             font-size: 11px;
             font-weight: 600;
             color: ta.has-hover ? Theme.accent : Theme.text-secondary;
             vertical-alignment: center;
+        }
+        Image {
+            width: 12px;
+            height: 12px;
+            y: (parent.height - self.height) / 2;
+            source: @image-url("../icons/chevron-right.svg");
+            colorize: ta.has-hover ? Theme.accent : Theme.text-muted;
         }
     }
 }
@@ -36,7 +61,7 @@ component ConnPreviewRow inherits Rectangle {
     in property <ActiveConnectionItem> item;
 
     height: 28px;
-    border-radius: 6px;
+    border-radius: Theme.radius-sm;
     background: Theme.well-bg;
 
     HorizontalLayout {
@@ -46,7 +71,12 @@ component ConnPreviewRow inherits Rectangle {
 
         Text {
             width: 36px;
-            text: root.item.protocol == "udp/quic" ? "QUIC" : root.item.protocol == "tcp/tls" ? "TLS" : root.item.protocol;
+            text:
+                root.item.protocol == "udp/quic" ? "QUIC"
+                : root.item.protocol == "tcp/tls" ? "TLS"
+                : root.item.protocol == "tcp" ? "TCP"
+                : root.item.protocol == "udp" ? "UDP"
+                : root.item.protocol;
             font-size: 10px;
             font-weight: 700;
             font-family: Theme.mono-font;
@@ -104,8 +134,8 @@ export component ConnectionsPreviewCard inherits Rectangle {
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 13px;
-        spacing: 8px;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
 
         HorizontalLayout {
             vertical-stretch: 0;
@@ -142,7 +172,7 @@ export component ConnectionsPreviewCard inherits Rectangle {
             Rectangle { horizontal-stretch: 1; }
 
             CardActionLink {
-                label: I18n.t("详情 >", "Details >");
+                label: I18n.t("详情", "Details");
                 clicked => { root.open-connections(); }
             }
         }
@@ -182,25 +212,53 @@ export component ConnectionsPreviewCard inherits Rectangle {
 component QuickSwitchTile inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
+    in property <bool> mono-subtitle: false;
     in property <bool> checked: false;
     in property <bool> enabled: true;
     callback toggled(bool);
 
+    forward-focus: fs;
     horizontal-stretch: 1;
     preferred-width: 0px;
     min-width: 0px;
-    height: 66px;
+    height: 64px;
     border-radius: Theme.radius-card;
-    border-width: 1px;
-    border-color: root.checked ? Theme.selected-border : Theme.card-border;
-    background: root.checked ? Theme.selected-bg : Theme.card-surface;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color:
+        fs.has-focus ? Theme.accent
+        : (ta.has-hover && root.enabled) ? Theme.hairline-strong
+        : Theme.card-border;
+    background: (ta.has-hover && root.enabled) ? Theme.row-hover-bg : Theme.card-surface;
+    opacity: root.enabled ? 1.0 : 0.55;
     animate border-color { duration: Motion.fast; }
     animate background { duration: Motion.fast; }
 
+    accessible-role: switch;
+    accessible-label: root.title;
+    accessible-checked: root.checked;
+    accessible-action-default => { if (root.enabled) { root.toggled(!root.checked); } }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) {
+                root.toggled(!root.checked);
+                return accept;
+            }
+            reject
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.toggled(!root.checked); }
+    }
+
     HorizontalLayout {
-        padding-left: 13px;
-        padding-right: 12px;
-        spacing: 8px;
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
 
         VerticalLayout {
             horizontal-stretch: 1;
@@ -218,7 +276,7 @@ component QuickSwitchTile inherits Rectangle {
             Text {
                 text: root.subtitle;
                 font-size: 11px;
-                font-family: Theme.mono-font;
+                font-family: root.mono-subtitle ? Theme.mono-font : "";
                 color: root.checked ? Theme.nav-active-fg : Theme.text-muted;
                 overflow: elide;
             }
@@ -229,8 +287,8 @@ component QuickSwitchTile inherits Rectangle {
             NexusSwitch {
                 checked: root.checked;
                 enabled: root.enabled;
+                interactive: false;
                 auto-toggle: false;
-                toggled => { root.toggled(!root.checked); }
             }
         }
     }
@@ -252,19 +310,21 @@ export component QuickSwitchRow inherits VerticalLayout {
     callback toggle-tun(bool);
 
     vertical-stretch: 0;
-    spacing: 10px;
+    spacing: Theme.space-sm;
 
     if !root.compact : HorizontalLayout {
-        spacing: 10px;
+        spacing: Theme.space-sm;
         QuickSwitchTile {
             title: I18n.t("端口代理", "Port Proxy");
             subtitle: root.mixed-enabled ? "Mixed :" + root.mixed-port : I18n.t("已关闭", "Disabled");
+            mono-subtitle: root.mixed-enabled;
             checked: root.mixed-enabled;
             toggled(on) => { root.toggle-mixed-port(on); }
         }
         QuickSwitchTile {
             title: I18n.t("局域网代理", "LAN Proxy");
             subtitle: root.lan-enabled ? (root.lan-subtitle != "" ? "0.0.0.0" + root.lan-subtitle : I18n.t("已开放", "Open")) : I18n.t("仅本机", "Local only");
+            mono-subtitle: root.lan-enabled && root.lan-subtitle != "";
             checked: root.lan-enabled;
             toggled(on) => { root.toggle-lan-share(on); }
         }
@@ -284,17 +344,19 @@ export component QuickSwitchRow inherits VerticalLayout {
     }
 
     if root.compact : GridLayout {
-        spacing: 8px;
+        spacing: Theme.space-sm;
         Row {
             QuickSwitchTile {
                 title: I18n.t("端口代理", "Port Proxy");
                 subtitle: root.mixed-enabled ? "Mixed :" + root.mixed-port : I18n.t("已关闭", "Disabled");
+                mono-subtitle: root.mixed-enabled;
                 checked: root.mixed-enabled;
                 toggled(on) => { root.toggle-mixed-port(on); }
             }
             QuickSwitchTile {
                 title: I18n.t("局域网代理", "LAN Proxy");
                 subtitle: root.lan-enabled ? (root.lan-subtitle != "" ? "0.0.0.0" + root.lan-subtitle : I18n.t("已开放", "Open")) : I18n.t("仅本机", "Local only");
+                mono-subtitle: root.lan-enabled && root.lan-subtitle != "";
                 checked: root.lan-enabled;
                 toggled(on) => { root.toggle-lan-share(on); }
             }

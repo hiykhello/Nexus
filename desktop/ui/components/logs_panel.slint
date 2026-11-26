@@ -8,7 +8,66 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 
+component LiveStreamToggle inherits Rectangle {
+    forward-focus: fs;
+    horizontal-stretch: 0;
+    height: 32px;
+    border-radius: Theme.radius-md;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color:
+        fs.has-focus ? Theme.accent
+        : !ControlInspectState.logs-stream-enabled ? Theme.card-border
+        : ControlInspectState.logs-stream-connected ? Theme.success-border
+        : Theme.selected-border;
+    background: !ControlInspectState.logs-stream-enabled ? Theme.row-bg : ControlInspectState.logs-stream-connected ? Theme.success-bg : Theme.selected-bg;
+    transform-scale: stream-ta.pressed ? 0.97 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+    accessible-role: button;
+    accessible-label: I18n.t("实时日志流", "Live Log Stream");
+    accessible-action-default => {
+        let next = !ControlInspectState.logs-stream-enabled;
+        ControlInspectState.logs-stream-enabled = next;
+        ControlInspectState.toggle-logs-stream(next);
+    }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                let next = !ControlInspectState.logs-stream-enabled;
+                ControlInspectState.logs-stream-enabled = next;
+                ControlInspectState.toggle-logs-stream(next);
+                return accept;
+            }
+            reject
+        }
+    }
+
+    stream-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            let next = !ControlInspectState.logs-stream-enabled;
+            ControlInspectState.logs-stream-enabled = next;
+            ControlInspectState.toggle-logs-stream(next);
+        }
+    }
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 10px; spacing: 6px;
+        Rectangle {
+            width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+            background: !ControlInspectState.logs-stream-enabled ? Theme.offline-fg : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.accent;
+        }
+        Text {
+            text: !ControlInspectState.logs-stream-enabled ? I18n.t("暂停", "Paused") : ControlInspectState.logs-stream-connected ? I18n.t("实时", "Live") : I18n.t("连接中", "Connecting");
+            font-size: 11px; font-weight: 700; font-family: Theme.mono-font;
+            color: !ControlInspectState.logs-stream-enabled ? Theme.text-muted : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.nav-active-fg;
+            vertical-alignment: center;
+        }
+    }
+}
+
 export component LogsPanel inherits VerticalLayout {
+    in property <length> window-width: 1040px;
     in property <[LogLineItem]> logs: [];
     in-out property <string> log-level: "info";
     in-out property <string> domain-filter: "all";
@@ -24,10 +83,12 @@ export component LogsPanel inherits VerticalLayout {
     callback export-logs();
     callback clear-logs();
 
+    property <bool> compact-bar: root.window-width < 900px;
+
     spacing: Theme.space-md;
 
-    // Single compact top toolbar: Search + Dropdown filters (显示级别 / 采集级别 / 模块) + Live Stream + Actions
-    HorizontalLayout {
+    // Wide (>=900px): Single compact toolbar
+    if !root.compact-bar : HorizontalLayout {
         vertical-stretch: 0;
         spacing: Theme.space-sm;
 
@@ -49,11 +110,7 @@ export component LogsPanel inherits VerticalLayout {
             options: ["all", "ERR", "WRN", "INF", "DBG"];
             current-value <=> root.sev-choice;
             selected(v) => {
-                let norm = v == "ERR" ? "error"
-                    : v == "WRN" ? "warn"
-                    : v == "INF" ? "info"
-                    : v == "DBG" ? "debug"
-                    : "all";
+                let norm = v == "ERR" ? "error" : v == "WRN" ? "warn" : v == "INF" ? "info" : v == "DBG" ? "debug" : "all";
                 root.sev-filter-changed(norm);
             }
         }
@@ -75,62 +132,64 @@ export component LogsPanel inherits VerticalLayout {
             selected(d) => { root.refresh-logs(); }
         }
 
-        Rectangle {
-            horizontal-stretch: 0;
-            height: 32px;
-            border-radius: 16px;
-            border-width: 1px;
-            border-color: !ControlInspectState.logs-stream-enabled ? Theme.card-border : ControlInspectState.logs-stream-connected ? Theme.success-border : Theme.selected-border;
-            background: !ControlInspectState.logs-stream-enabled ? Theme.row-bg : ControlInspectState.logs-stream-connected ? Theme.success-bg : Theme.selected-bg;
-            transform-scale: stream-ta.pressed ? 0.96 : 1.0;
-            animate background { duration: Motion.fast; }
-            animate transform-scale { duration: Motion.micro; }
-            accessible-role: button;
-            accessible-label: I18n.t("实时日志流", "Live Log Stream");
-            accessible-action-default => {
-                let next = !ControlInspectState.logs-stream-enabled;
-                ControlInspectState.logs-stream-enabled = next;
-                ControlInspectState.toggle-logs-stream(next);
+        LiveStreamToggle {}
+
+        IconActionButton { icon: @image-url("../icons/refresh.svg"); label: I18n.t("刷新", "Refresh"); clicked => { root.refresh-logs(); } }
+        IconActionButton { icon: @image-url("../icons/download.svg"); label: I18n.t("导出快照", "Export"); clicked => { root.export-logs(); } }
+        IconActionButton { icon: @image-url("../icons/trash.svg"); label: I18n.t("清空", "Clear"); danger: true; clicked => { root.clear-logs(); } }
+    }
+
+    // Compact (<900px, e.g. 780x560): 2 tidy rows so search input never squeezes to 140px
+    if root.compact-bar : VerticalLayout {
+        vertical-stretch: 0;
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            NexusInput {
+                horizontal-stretch: 1;
+                min-width: 160px;
+                search-icon: true;
+                text <=> root.search-text;
+                placeholder-text: I18n.t("搜索日志...", "Search logs...");
+                edited(q) => { root.search-changed(q); }
+                accepted => { root.refresh-logs(); }
             }
-            stream-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    let next = !ControlInspectState.logs-stream-enabled;
-                    ControlInspectState.logs-stream-enabled = next;
-                    ControlInspectState.toggle-logs-stream(next);
-                }
-            }
-            HorizontalLayout {
-                padding-left: 9px; padding-right: 10px; spacing: 5px;
-                Rectangle {
-                    width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
-                    background: !ControlInspectState.logs-stream-enabled ? Theme.offline-fg : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.accent;
-                }
-                Text {
-                    text: !ControlInspectState.logs-stream-enabled ? I18n.t("暂停", "Paused") : ControlInspectState.logs-stream-connected ? I18n.t("实时", "Live") : I18n.t("连接中", "Connecting");
-                    font-size: 11px; font-weight: 700; font-family: Theme.mono-font;
-                    color: !ControlInspectState.logs-stream-enabled ? Theme.text-muted : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.nav-active-fg;
-                    vertical-alignment: center;
-                }
-            }
+            LiveStreamToggle {}
+            IconActionButton { icon: @image-url("../icons/refresh.svg"); label: I18n.t("刷新", "Refresh"); clicked => { root.refresh-logs(); } }
+            IconActionButton { icon: @image-url("../icons/download.svg"); label: I18n.t("导出快照", "Export"); clicked => { root.export-logs(); } }
+            IconActionButton { icon: @image-url("../icons/trash.svg"); label: I18n.t("清空", "Clear"); danger: true; clicked => { root.clear-logs(); } }
         }
 
-        IconActionButton {
-            icon: @image-url("../icons/refresh.svg");
-            label: I18n.t("刷新", "Refresh");
-            spin-on-click: true;
-            clicked => { root.refresh-logs(); }
-        }
-        IconActionButton {
-            icon: @image-url("../icons/download.svg");
-            label: I18n.t("导出快照", "Export");
-            clicked => { root.export-logs(); }
-        }
-        IconActionButton {
-            icon: @image-url("../icons/trash.svg");
-            label: I18n.t("清空", "Clear");
-            danger: true;
-            clicked => { root.clear-logs(); }
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            NexusSelect {
+                horizontal-stretch: 1;
+                mono: false;
+                prefix: I18n.t("级别", "Lvl");
+                all-label: I18n.t("全部", "All");
+                options: ["all", "ERR", "WRN", "INF", "DBG"];
+                current-value <=> root.sev-choice;
+                selected(v) => {
+                    let norm = v == "ERR" ? "error" : v == "WRN" ? "warn" : v == "INF" ? "info" : v == "DBG" ? "debug" : "all";
+                    root.sev-filter-changed(norm);
+                }
+            }
+            NexusSelect {
+                horizontal-stretch: 1;
+                prefix: I18n.t("采集", "Cap");
+                options: ["error", "warn", "info", "debug", "trace"];
+                current-value <=> root.log-level;
+                selected(lvl) => { root.apply-log-level(lvl); }
+            }
+            NexusSelect {
+                horizontal-stretch: 1;
+                prefix: I18n.t("模块", "Mod");
+                all-label: I18n.t("全部", "All");
+                options: ["all", "core", "proxy", "route", "dns", "tun", "quic", "tls", "net", "state", "control"];
+                current-value <=> root.domain-filter;
+                selected(d) => { root.refresh-logs(); }
+            }
         }
     }
 

@@ -1,53 +1,7 @@
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
+import { NexusButton } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
-
-component PrivilegeActionChip inherits Rectangle {
-    in property <string> label;
-    in property <bool> danger: false;
-    in property <bool> enabled: true;
-    callback clicked();
-
-    horizontal-stretch: 0;
-    height: 26px;
-    border-radius: 13px;
-    border-width: 1px;
-    border-color:
-        !root.enabled ? Theme.well-border
-        : root.danger ? (ta.has-hover ? Theme.error-fg : Theme.error-border)
-        : (ta.has-hover ? Theme.accent : Theme.selected-border);
-    background:
-        !root.enabled ? Theme.well-bg
-        : root.danger ? (ta.pressed ? Theme.error-bg : ta.has-hover ? Theme.error-bg : Theme.well-bg)
-        : (ta.pressed ? Theme.selected-bg : ta.has-hover ? Theme.selected-bg : Theme.accent-soft);
-    opacity: root.enabled ? 1.0 : 0.52;
-    transform-scale: root.enabled && ta.pressed ? 0.96 : 1.0;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-
-    ta := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: root.enabled ? pointer : default;
-        clicked => { root.clicked(); }
-    }
-
-    HorizontalLayout {
-        padding-left: 11px;
-        padding-right: 11px;
-        Text {
-            text: root.label;
-            font-size: 11px;
-            font-weight: 700;
-            color:
-                !root.enabled ? Theme.text-muted
-                : root.danger ? Theme.error-fg
-                : Theme.nav-active-fg;
-            vertical-alignment: center;
-        }
-    }
-}
 
 export component TunPrivilegeCard inherits Rectangle {
     in-out property <bool> tun-elevate-persistent: true;
@@ -117,7 +71,8 @@ export component TunPrivilegeCard inherits Rectangle {
 
             if root.tun-persistent-granted : VerticalLayout {
                 alignment: center;
-                PrivilegeActionChip {
+                NexusButton {
+                    btn-height: 28px;
                     label: I18n.t("撤销持久授权", "Revoke Persistent");
                     danger: true;
                     enabled: !root.tun-privilege-busy;
@@ -127,8 +82,10 @@ export component TunPrivilegeCard inherits Rectangle {
 
             if !root.tun-persistent-granted && root.tun-elevate-persistent && root.tun-can-persist && root.tun-privilege-status != "ready_root" : VerticalLayout {
                 alignment: center;
-                PrivilegeActionChip {
+                NexusButton {
+                    btn-height: 28px;
                     label: I18n.t("预先授权", "Authorize Now");
+                    active: true;
                     enabled: !root.tun-privilege-busy;
                     clicked => { root.grant-tun-privilege(); }
                 }

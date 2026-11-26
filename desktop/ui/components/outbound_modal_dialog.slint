@@ -47,13 +47,13 @@ export component OutboundModalDialog inherits Rectangle {
 
                 HorizontalLayout {
                     horizontal-stretch: 0;
-                    spacing: 9px;
+                    spacing: Theme.space-sm;
 
                     Rectangle {
                         width: 28px;
                         height: 28px;
                         y: (parent.height - self.height) / 2;
-                        border-radius: 9px;
+                        border-radius: Theme.radius-md;
                         border-width: 1px;
                         border-color: Theme.accent.with-alpha(Theme.dark ? 0.42 : 0.30);
                         background: Theme.accent-soft;
@@ -80,7 +80,7 @@ export component OutboundModalDialog inherits Rectangle {
                         horizontal-stretch: 0;
                         height: 22px;
                         y: (parent.height - self.height) / 2;
-                        border-radius: 11px;
+                        border-radius: Theme.radius-sm;
                         border-width: 1px;
                         border-color: Theme.selected-border;
                         background: Theme.selected-bg;

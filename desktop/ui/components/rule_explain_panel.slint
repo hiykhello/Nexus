@@ -1,5 +1,4 @@
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
@@ -20,13 +19,13 @@ export component RuleExplainPanel inherits VerticalLayout {
 
     Rectangle {
         vertical-stretch: 0;
-        border-radius: Theme.radius-card;
-        border-width: 1px;
+        border-radius: root.embed-mode ? Theme.radius-card : 0px;
+        border-width: root.embed-mode ? 1px : 0px;
         border-color: Theme.card-border;
-        background: Theme.card-surface;
+        background: root.embed-mode ? Theme.card-surface : transparent;
 
         VerticalLayout {
-            padding: Theme.space-md;
+            padding: root.embed-mode ? Theme.space-md : 0px;
             spacing: Theme.space-sm;
 
             if root.embed-mode : Text {
@@ -106,7 +105,7 @@ export component RuleExplainPanel inherits VerticalLayout {
                             HorizontalLayout {
                                 padding-left: 7px; padding-right: 7px;
                                 Text {
-                                    text: "2. " + root.network-kind + " · " + root.target-authority;
+                                    text: "2. " + (root.network-kind == "udp" ? "UDP" : "TCP") + " · " + root.target-authority;
                                     font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
                                     color: root.network-kind == "udp" ? Theme.proto-quic-fg : Theme.proto-tls-fg;
                                     vertical-alignment: center; overflow: elide;

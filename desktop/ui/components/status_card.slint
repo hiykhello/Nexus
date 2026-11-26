@@ -73,19 +73,19 @@ export component StatusCard inherits VerticalLayout {
 
     property <bool> is-desktop-grid: root.window-width >= 960px;
 
-    padding: 12px;
-    spacing: 10px;
+    padding: Theme.space-md;
+    spacing: Theme.space-sm;
 
     // Desktop Precision 4-Row Zero-Scroll Bento Grid (>= 960px)
     if root.is-desktop-grid : VerticalLayout {
         vertical-stretch: 1;
-        spacing: 10px;
+        spacing: Theme.space-sm;
 
         // Row 1 (2fr : 1fr : 1fr): Status Hero | Upload | Download
         HorizontalLayout {
             vertical-stretch: 0;
             height: 150px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
 
             HeroStatusCard {
                 horizontal-stretch: 2;
@@ -139,7 +139,7 @@ export component StatusCard inherits VerticalLayout {
         HorizontalLayout {
             vertical-stretch: 1;
             min-height: 186px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
 
             ConnectionsPreviewCard {
                 horizontal-stretch: 2;
@@ -177,7 +177,7 @@ export component StatusCard inherits VerticalLayout {
         HorizontalLayout {
             vertical-stretch: 1;
             min-height: 184px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
 
             ServiceHealthCard {
                 horizontal-stretch: 1;
@@ -239,7 +239,7 @@ export component StatusCard inherits VerticalLayout {
 
     // Compact Stacked Layout (< 960px, e.g. 780x560)
     if !root.is-desktop-grid : VerticalLayout {
-        spacing: 10px;
+        spacing: Theme.space-sm;
         alignment: start;
 
         HeroStatusCard {
@@ -261,7 +261,7 @@ export component StatusCard inherits VerticalLayout {
 
         HorizontalLayout {
             height: 138px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
             SpeedMiniCard {
                 horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
                 title: I18n.t("实时上传", "Upload");
@@ -297,7 +297,7 @@ export component StatusCard inherits VerticalLayout {
 
         HorizontalLayout {
             height: 186px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
             AppPerfCard {
                 horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
                 pid-text: root.app-pid-text; cpu-text: root.app-cpu-text; cpu-ratio: root.app-cpu-ratio; memory-text: root.app-memory-text;
@@ -318,7 +318,7 @@ export component StatusCard inherits VerticalLayout {
 
         HorizontalLayout {
             height: 180px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
             ServiceHealthCard {
                 horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
                 core-running: root.core-running; probe-busy: root.conn-probe-busy;
@@ -334,7 +334,7 @@ export component StatusCard inherits VerticalLayout {
 
         HorizontalLayout {
             height: 164px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
             RoutingSummaryCard {
                 horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
                 routing-name: root.active-routing-name; rule-count: root.active-rule-count; outbound-mode: root.outbound-mode;

@@ -22,12 +22,12 @@ namespace desktop_ui_helpers {
         std::span<const double> samples,
         std::size_t capacity = 24,
         double min_scale_kib = 8.0,
-        double width = 240.0,
-        double height = 80.0) -> WavePathPair {
+        double width = 320.0,
+        double height = 44.0) -> WavePathPair {
         if (capacity < 2) capacity = 2;
         if (!(min_scale_kib > 0.0) || !std::isfinite(min_scale_kib)) min_scale_kib = 8.0;
-        if (!(width > 0.0) || !std::isfinite(width)) width = 240.0;
-        if (!(height > 4.0) || !std::isfinite(height)) height = 80.0;
+        if (!(width > 0.0) || !std::isfinite(width)) width = 320.0;
+        if (!(height > 4.0) || !std::isfinite(height)) height = 44.0;
 
         constexpr double kSigma = 1.5;
         constexpr std::size_t kRadius = 4;

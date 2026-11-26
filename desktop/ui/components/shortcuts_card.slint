@@ -1,112 +1,128 @@
 import { IconActionButton } from "icon_button.slint";
-import { RuleChipButton } from "rule_builder_parts.slint";
+import { NexusButton } from "nexus_buttons.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { KeyBinding, Shortcuts } from "../shortcuts.slint";
 import { Theme } from "../theme.slint";
 
-component ShortcutRow inherits Rectangle {
+component ShortcutRow inherits VerticalLayout {
     in property <string> label;
     in property <string> action-id;
     in property <KeyBinding> binding;
+    in property <bool> show-divider: true;
 
     property <bool> is-recording: Shortcuts.recording-action == root.action-id;
 
+    forward-focus: row-fs;
     vertical-stretch: 0;
-    height: 40px;
-    border-radius: Theme.radius-md;
-    border-width: 1px;
-    border-color: is-recording ? Theme.accent : Theme.well-border;
-    background:
-        is-recording ? Theme.selected-bg
-        : row-ta.has-hover ? Theme.row-hover-bg
-        : Theme.well-bg;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
 
-    row-ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { Shortcuts.start-recording(root.action-id); }
-    }
+    Rectangle {
+        height: 40px;
+        border-radius: Theme.radius-sm;
+        border-width: row-fs.has-focus ? 2px : 0px;
+        border-color: row-fs.has-focus ? Theme.accent : transparent;
+        background:
+            is-recording ? Theme.selected-bg
+            : row-ta.has-hover ? Theme.row-hover-bg
+            : transparent;
+        animate background { duration: Motion.fast; }
 
-    HorizontalLayout {
-        padding-left: Theme.space-md;
-        padding-right: Theme.space-sm;
-        padding-top: 5px;
-        padding-bottom: 5px;
-        spacing: Theme.space-sm;
+        accessible-role: button;
+        accessible-label: root.label;
+        accessible-action-default => { Shortcuts.start-recording(root.action-id); }
 
-        Text {
-            text: root.label;
-            font-size: 13px;
-            font-weight: 500;
-            color: Theme.text-primary;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            min-width: 0px;
-            overflow: elide;
+        row-fs := FocusScope {
+            key-pressed(ev) => {
+                if (ev.text == Key.Return || ev.text == " ") {
+                    Shortcuts.start-recording(root.action-id);
+                    return accept;
+                }
+                reject
+            }
         }
 
-        Rectangle {
-            width: 112px;
-            height: 26px;
-            y: (parent.height - self.height) / 2;
-            border-radius: Theme.radius-sm;
-            border-width: 1px;
-            border-color: is-recording ? Theme.accent : Theme.well-border;
-            background: is-recording ? Theme.accent-soft : Theme.inset-bg;
+        row-ta := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { Shortcuts.start-recording(root.action-id); }
+        }
 
-            key-ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { Shortcuts.start-recording(root.action-id); }
-            }
+        HorizontalLayout {
+            padding-left: Theme.space-sm;
+            padding-right: Theme.space-xs;
+            spacing: Theme.space-sm;
 
             Text {
-                width: 100%;
-                height: 100%;
-                text: is-recording ? I18n.t("按下按键...", "Press keys...") : Shortcuts.format-full(root.binding);
-                font-size: 11px;
-                font-weight: 700;
-                font-family: Theme.mono-font;
-                color:
-                    is-recording ? Theme.accent
-                    : root.binding.key == "" ? Theme.text-muted
-                    : Theme.text-primary;
-                horizontal-alignment: center;
+                text: root.label;
+                font-size: 13px;
+                font-weight: 500;
+                color: Theme.text-primary;
                 vertical-alignment: center;
+                horizontal-stretch: 1;
+                min-width: 0px;
                 overflow: elide;
             }
-        }
 
-        VerticalLayout {
-            alignment: center;
-            IconActionButton {
-                icon: @image-url("../icons/x.svg");
-                label: I18n.t("清除", "Clear");
-                enabled: root.binding.key != "";
-                size: 26px;
-                clicked => { Shortcuts.clear-action(root.action-id); }
+            Rectangle {
+                width: 112px;
+                height: 26px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: is-recording ? Theme.accent : Theme.well-border;
+                background: is-recording ? Theme.accent-soft : Theme.well-bg;
+
+                key-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Shortcuts.start-recording(root.action-id); }
+                }
+
+                Text {
+                    width: 100%;
+                    height: 100%;
+                    text: is-recording ? I18n.t("按下按键...", "Press keys...") : Shortcuts.format-full(root.binding);
+                    font-size: 11px;
+                    font-weight: 700;
+                    font-family: Theme.mono-font;
+                    color:
+                        is-recording ? Theme.accent
+                        : root.binding.key == "" ? Theme.text-muted
+                        : Theme.text-primary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                IconActionButton {
+                    icon: @image-url("../icons/x.svg");
+                    label: I18n.t("清除", "Clear");
+                    enabled: root.binding.key != "";
+                    size: 26px;
+                    clicked => { Shortcuts.clear-action(root.action-id); }
+                }
             }
         }
     }
+
+    if root.show-divider : Rectangle { height: 1px; background: Theme.hairline-subtle; }
 }
 
 component ShortcutsGroupA inherits VerticalLayout {
-    spacing: 8px;
     ShortcutRow { label: I18n.t("侧边栏", "Sidebar"); action-id: "toggle-sidebar"; binding: Shortcuts.toggle-sidebar; }
     ShortcutRow { label: I18n.t("热重载", "Reload"); action-id: "reload-config"; binding: Shortcuts.reload-config; }
     ShortcutRow { label: I18n.t("路由与 DNS", "Routing & DNS"); action-id: "open-rules"; binding: Shortcuts.open-rules; }
     ShortcutRow { label: I18n.t("退出", "Quit"); action-id: "quit-app"; binding: Shortcuts.quit-app; }
-    ShortcutRow { label: I18n.t("概览", "Dashboard"); action-id: "tab-overview"; binding: Shortcuts.tab-overview; }
+    ShortcutRow { label: I18n.t("概览", "Dashboard"); action-id: "tab-overview"; binding: Shortcuts.tab-overview; show-divider: false; }
 }
 
 component ShortcutsGroupB inherits VerticalLayout {
-    spacing: 8px;
     ShortcutRow { label: I18n.t("代理", "Proxies"); action-id: "tab-groups"; binding: Shortcuts.tab-groups; }
     ShortcutRow { label: I18n.t("连接", "Connections"); action-id: "tab-connections"; binding: Shortcuts.tab-connections; }
-    ShortcutRow { label: I18n.t("档案", "Profiles"); action-id: "tab-profiles"; binding: Shortcuts.tab-profiles; }
+    ShortcutRow { label: I18n.t("配置与订阅", "Profiles"); action-id: "tab-profiles"; binding: Shortcuts.tab-profiles; }
     ShortcutRow { label: I18n.t("日志", "Logs"); action-id: "tab-logs"; binding: Shortcuts.tab-logs; }
-    ShortcutRow { label: I18n.t("设置", "Settings"); action-id: "tab-settings"; binding: Shortcuts.tab-settings; }
+    ShortcutRow { label: I18n.t("设置", "Settings"); action-id: "tab-settings"; binding: Shortcuts.tab-settings; show-divider: false; }
 }
 
 export component ShortcutsCard inherits VerticalLayout {
@@ -155,7 +171,8 @@ export component ShortcutsCard inherits VerticalLayout {
                     font-size: 14px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center;
                 }
 
-                RuleChipButton {
+                NexusButton {
+                    btn-height: 28px;
                     label: I18n.t("恢复默认", "Reset");
                     clicked => { Shortcuts.reset-defaults(); }
                 }

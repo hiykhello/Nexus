@@ -35,21 +35,35 @@ component MiniActionChip inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
+    forward-focus: fs;
     horizontal-stretch: 1;
     preferred-width: 0px;
     min-width: 0px;
     height: 24px;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: root.enabled && ta.has-hover ? Theme.selected-border : Theme.well-border;
+    border-radius: Theme.radius-sm;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color: fs.has-focus ? Theme.accent : (root.enabled && ta.has-hover ? Theme.selected-border : Theme.well-border);
     background: root.enabled && ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
     opacity: root.enabled ? 1.0 : 0.48;
+    transform-scale: (root.enabled && ta.pressed) ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => { if (root.enabled) { root.clicked(); } }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
 
     ta := TouchArea {
         enabled: root.enabled;
@@ -82,8 +96,8 @@ export component AppPerfCard inherits Rectangle {
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 13px;
-        spacing: 10px;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
         alignment: space-between;
 
         HorizontalLayout {
@@ -104,13 +118,13 @@ export component AppPerfCard inherits Rectangle {
         }
 
         VerticalLayout {
-            spacing: 10px;
+            spacing: Theme.space-sm;
 
             VerticalLayout {
                 spacing: 4px;
                 HorizontalLayout {
                     Text { horizontal-stretch: 1; text: "CPU"; font-size: 11px; font-weight: 600; color: Theme.text-secondary; }
-                    Text { text: root.cpu-text; font-size: 13px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-primary; }
+                    Text { min-width: 44px; text: root.cpu-text; font-size: 13px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-primary; horizontal-alignment: right; }
                 }
                 Rectangle {
                     height: 5px;
@@ -128,23 +142,12 @@ export component AppPerfCard inherits Rectangle {
                 }
             }
 
-            Rectangle {
-                height: 50px;
-                border-radius: Theme.radius-md;
-                border-width: 1px;
-                border-color: Theme.well-border;
-                background: Theme.well-bg;
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        alignment: center;
-                        spacing: 2px;
-                        Text { text: I18n.t("私有内存", "Private Memory"); font-size: 10px; font-weight: 600; color: Theme.text-muted; }
-                        Text { text: root.memory-text; font-size: 16px; font-weight: 800; font-family: Theme.mono-font; color: Theme.text-primary; }
-                    }
-                }
+            Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+            VerticalLayout {
+                spacing: 2px;
+                Text { text: I18n.t("私有内存", "Private Memory"); font-size: 10px; font-weight: 600; color: Theme.text-muted; }
+                Text { text: root.memory-text; font-size: 18px; font-weight: 800; font-family: Theme.mono-font; color: Theme.text-primary; }
             }
         }
 
@@ -172,8 +175,8 @@ export component CorePerfCard inherits Rectangle {
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding: 13px;
-        spacing: 10px;
+        padding: Theme.space-md;
+        spacing: Theme.space-sm;
         alignment: space-between;
 
         HorizontalLayout {
@@ -199,13 +202,13 @@ export component CorePerfCard inherits Rectangle {
         }
 
         VerticalLayout {
-            spacing: 10px;
+            spacing: Theme.space-sm;
 
             VerticalLayout {
                 spacing: 4px;
                 HorizontalLayout {
                     Text { horizontal-stretch: 1; text: "CPU"; font-size: 11px; font-weight: 600; color: Theme.text-secondary; }
-                    Text { text: root.core-running ? root.cpu-text : "--"; font-size: 13px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-primary; }
+                    Text { min-width: 44px; text: root.core-running ? root.cpu-text : "--"; font-size: 13px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-primary; horizontal-alignment: right; }
                 }
                 Rectangle {
                     height: 5px;
@@ -223,28 +226,17 @@ export component CorePerfCard inherits Rectangle {
                 }
             }
 
-            Rectangle {
-                height: 50px;
-                border-radius: Theme.radius-md;
-                border-width: 1px;
-                border-color: Theme.well-border;
-                background: Theme.well-bg;
-                HorizontalLayout {
-                    padding-left: 10px;
-                    padding-right: 10px;
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        alignment: center;
-                        spacing: 2px;
-                        Text { text: I18n.t("私有内存", "Private Memory"); font-size: 10px; font-weight: 600; color: Theme.text-muted; }
-                        Text { text: root.core-running ? root.memory-text : "--"; font-size: 16px; font-weight: 800; font-family: Theme.mono-font; color: Theme.text-primary; }
-                    }
-                }
+            Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+            VerticalLayout {
+                spacing: 2px;
+                Text { text: I18n.t("私有内存", "Private Memory"); font-size: 10px; font-weight: 600; color: Theme.text-muted; }
+                Text { text: root.core-running ? root.memory-text : "--"; font-size: 18px; font-weight: 800; font-family: Theme.mono-font; color: Theme.text-primary; }
             }
         }
 
         HorizontalLayout {
-            spacing: 5px;
+            spacing: Theme.space-xs;
             MiniActionChip {
                 label: "FakeIP";
                 enabled: root.core-running;

@@ -8,12 +8,14 @@ component FooterActionButton inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
+    forward-focus: fs;
     horizontal-stretch: 0;
     height: 22px;
     border-radius: Theme.radius-xs;
-    border-width: 1px;
+    border-width: fs.has-focus ? 2px : 1px;
     border-color:
-        !root.enabled ? Theme.well-border
+        fs.has-focus ? Theme.accent
+        : !root.enabled ? Theme.well-border
         : root.tone == "accent" ? Theme.pill-active-top
         : root.tone == "danger" ? Theme.error-border
         : ta.has-hover ? Theme.hairline-strong : Theme.well-border;
@@ -23,12 +25,25 @@ component FooterActionButton inherits Rectangle {
         : root.tone == "danger" ? (ta.has-hover ? Theme.error-fg.with-alpha(0.24) : Theme.error-bg)
         : ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
     opacity: root.enabled ? 1.0 : 0.50;
+    transform-scale: (ta.pressed && root.enabled) ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => { if (root.enabled) { root.clicked(); } }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
 
     ta := TouchArea {
         enabled: root.enabled;

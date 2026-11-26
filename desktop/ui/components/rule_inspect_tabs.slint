@@ -1,59 +1,10 @@
 import { ListView } from "std-widgets.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { NexusInput } from "glass_primitives.slint";
-import { IconActionButton } from "icon_button.slint";
+import { NexusButton } from "nexus_buttons.slint";
 import { NexusSelect } from "nexus_select.slint";
-
-component InspectPillButton inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    in property <bool> primary: false;
-    in property <bool> enabled: true;
-    callback clicked();
-
-    horizontal-stretch: 0;
-    height: 30px;
-    border-radius: 15px;
-    border-width: 1px;
-    border-color: root.primary ? Theme.pill-active-top.brighter(0.20) : ta.has-hover && root.enabled ? Theme.selected-border : Theme.card-border;
-    background: root.primary
-        ? (ta.pressed
-            ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-            : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
-        : ta.pressed && root.enabled ? Theme.nav-active-bg : ta.has-hover && root.enabled ? Theme.row-hover-bg : Theme.well-bg;
-    opacity: root.enabled ? 1.0 : 0.50;
-    transform-scale: ta.pressed && root.enabled ? 0.96 : 1.0;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-
-    accessible-role: button;
-    accessible-label: root.label;
-    accessible-action-default => { if (root.enabled) { root.clicked(); } }
-
-    ta := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: root.enabled ? pointer : default;
-        clicked => { root.clicked(); }
-    }
-
-    HorizontalLayout {
-        padding-left: 10px; padding-right: 12px; spacing: 5px;
-        Image {
-            width: 13px; height: 13px; y: (parent.height - self.height) / 2;
-            source: root.icon;
-            colorize: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-        }
-        Text {
-            text: root.label; font-size: 12px; font-weight: root.primary ? 700 : 600;
-            color: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-            vertical-alignment: center;
-        }
-    }
-}
 
 export component LiveRulesTab inherits VerticalLayout {
     spacing: Theme.space-sm;
@@ -67,7 +18,8 @@ export component LiveRulesTab inherits VerticalLayout {
             edited(q) => { ControlInspectState.filter-live-rules(q); }
             accepted => { ControlInspectState.filter-live-rules(ControlInspectState.rules-filter); }
         }
-        InspectPillButton {
+        NexusButton {
+            has-icon: true;
             icon: ControlInspectState.rules-loading ? @image-url("../icons/loader.svg") : @image-url("../icons/refresh.svg");
             label: ControlInspectState.rules-loading ? I18n.t("读取中...", "Loading...") : I18n.t("刷新运行规则", "Refresh Rules");
             primary: true;
@@ -87,7 +39,7 @@ export component LiveRulesTab inherits VerticalLayout {
 
     Rectangle {
         height: 316px;
-        border-radius: 14px; border-width: 1px;
+        border-radius: Theme.radius-md; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
         clip: true;
 
@@ -144,98 +96,95 @@ export component LiveRulesTab inherits VerticalLayout {
 export component LiveDnsQueryTab inherits VerticalLayout {
     spacing: Theme.space-sm;
 
-    Rectangle {
-        border-radius: 14px; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
+    HorizontalLayout {
+        spacing: Theme.space-sm;
+        NexusInput {
+            horizontal-stretch: 1; min-width: 140px; mono: true;
+            text <=> ControlInspectState.dns-query-name;
+            placeholder-text: I18n.t("查询域名 (如 example.com)", "Domain to query (e.g. example.com)");
+            accepted => { ControlInspectState.run-dns-query(); }
+        }
+        NexusSelect {
+            width: 96px;
+            options: ["A", "AAAA", "CNAME", "TXT", "HTTPS", "SVCB", "MX", "SRV"];
+            current-value <=> ControlInspectState.dns-query-type;
+        }
+        NexusInput {
+            width: 126px; mono: true;
+            text <=> ControlInspectState.dns-query-server;
+            placeholder-text: I18n.t("上游标签(可选)", "Server (opt)");
+            accepted => { ControlInspectState.run-dns-query(); }
+        }
+        NexusButton {
+            has-icon: true;
+            icon: ControlInspectState.dns-query-busy ? @image-url("../icons/loader.svg") : @image-url("../icons/bolt.svg");
+            label: ControlInspectState.dns-query-busy ? I18n.t("解析中...", "Querying...") : I18n.t("立即解析", "Query");
+            primary: true;
+            enabled: !ControlInspectState.dns-query-busy && ControlInspectState.dns-query-name != "";
+            clicked => { ControlInspectState.run-dns-query(); }
+        }
+    }
 
-        VerticalLayout {
-            padding: 12px; spacing: 8px;
-            HorizontalLayout {
-                spacing: 8px;
-                NexusInput {
-                    horizontal-stretch: 1; min-width: 140px; mono: true;
-                    text <=> ControlInspectState.dns-query-name;
-                    placeholder-text: I18n.t("查询域名 (如 example.com)", "Domain to query (e.g. example.com)");
-                    accepted => { ControlInspectState.run-dns-query(); }
-                }
-                NexusSelect {
-                    width: 96px;
-                    options: ["A", "AAAA", "CNAME", "TXT", "HTTPS", "SVCB", "MX", "SRV"];
-                    current-value <=> ControlInspectState.dns-query-type;
-                }
-                NexusInput {
-                    width: 126px; mono: true;
-                    text <=> ControlInspectState.dns-query-server;
-                    placeholder-text: I18n.t("上游标签(可选)", "Server (opt)");
-                    accepted => { ControlInspectState.run-dns-query(); }
-                }
-                InspectPillButton {
-                    icon: ControlInspectState.dns-query-busy ? @image-url("../icons/loader.svg") : @image-url("../icons/bolt.svg");
-                    label: ControlInspectState.dns-query-busy ? I18n.t("解析中...", "Querying...") : I18n.t("立即解析", "Query");
-                    primary: true;
-                    enabled: !ControlInspectState.dns-query-busy && ControlInspectState.dns-query-name != "";
-                    clicked => { ControlInspectState.run-dns-query(); }
-                }
-            }
-
-            HorizontalLayout {
-                spacing: 8px;
-                InspectPillButton {
-                    icon: @image-url("../icons/trash.svg");
-                    label: I18n.t("清空 FakeIP 映射", "Flush FakeIP");
-                    enabled: !ControlInspectState.cache-action-busy;
-                    clicked => { ControlInspectState.flush-fakeip(); }
-                }
-                InspectPillButton {
-                    icon: @image-url("../icons/refresh.svg");
-                    label: I18n.t("清除 DNS 缓存", "Clear DNS Cache");
-                    enabled: !ControlInspectState.cache-action-busy;
-                    clicked => { ControlInspectState.clear-dns-cache(); }
-                }
-                Rectangle { horizontal-stretch: 1; }
-                if ControlInspectState.dns-query-rcode != "" : HorizontalLayout {
-                    spacing: 6px;
-                    Rectangle {
-                        height: 22px; y: (parent.height - self.height) / 2; border-radius: 6px;
-                        background: ControlInspectState.dns-query-rcode == "NOERROR" ? Theme.success-bg : Theme.warn-bg;
-                        HorizontalLayout {
-                            padding-left: 7px; padding-right: 7px;
-                            Text {
-                                text: ControlInspectState.dns-query-rcode;
-                                font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
-                                color: ControlInspectState.dns-query-rcode == "NOERROR" ? Theme.success-fg : Theme.warn-fg;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                    if ControlInspectState.dns-query-elapsed-ms >= 0 : Text {
-                        text: "\{ControlInspectState.dns-query-elapsed-ms} ms · TTL \{ControlInspectState.dns-query-ttl}s";
-                        font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
-                        color: Theme.text-secondary; vertical-alignment: center;
-                    }
-                }
-            }
-
-            if ControlInspectState.cache-action-status != "" : Text {
-                text: ControlInspectState.cache-action-status;
-                font-size: 11px; font-family: Theme.mono-font;
-                color: ControlInspectState.cache-action-ok ? Theme.success-fg : Theme.error-fg;
-                overflow: elide;
-            }
-            if ControlInspectState.dns-query-error != "" : Rectangle {
-                border-radius: Theme.radius-sm; border-width: 1px;
-                border-color: Theme.error-border; background: Theme.error-bg;
+    HorizontalLayout {
+        spacing: Theme.space-sm;
+        NexusButton {
+            has-icon: true;
+            icon: @image-url("../icons/trash.svg");
+            label: I18n.t("清空 FakeIP 映射", "Flush FakeIP");
+            enabled: !ControlInspectState.cache-action-busy;
+            clicked => { ControlInspectState.flush-fakeip(); }
+        }
+        NexusButton {
+            has-icon: true;
+            icon: @image-url("../icons/refresh.svg");
+            label: I18n.t("清除 DNS 缓存", "Clear DNS Cache");
+            enabled: !ControlInspectState.cache-action-busy;
+            clicked => { ControlInspectState.clear-dns-cache(); }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        if ControlInspectState.dns-query-rcode != "" : HorizontalLayout {
+            spacing: 6px;
+            Rectangle {
+                height: 22px; y: (parent.height - self.height) / 2; border-radius: Theme.radius-sm;
+                background: ControlInspectState.dns-query-rcode == "NOERROR" ? Theme.success-bg : Theme.warn-bg;
                 HorizontalLayout {
-                    padding: 8px;
-                    Text { text: ControlInspectState.dns-query-error; font-size: 11px; font-weight: 600; color: Theme.error-fg; wrap: word-wrap; }
+                    padding-left: 7px; padding-right: 7px;
+                    Text {
+                        text: ControlInspectState.dns-query-rcode;
+                        font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
+                        color: ControlInspectState.dns-query-rcode == "NOERROR" ? Theme.success-fg : Theme.warn-fg;
+                        vertical-alignment: center;
+                    }
                 }
+            }
+            if ControlInspectState.dns-query-elapsed-ms >= 0 : Text {
+                text: "\{ControlInspectState.dns-query-elapsed-ms} ms · TTL \{ControlInspectState.dns-query-ttl}s";
+                font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
+                color: Theme.text-secondary; vertical-alignment: center;
             }
         }
     }
 
+    if ControlInspectState.cache-action-status != "" : Text {
+        text: ControlInspectState.cache-action-status;
+        font-size: 11px; font-family: Theme.mono-font;
+        color: ControlInspectState.cache-action-ok ? Theme.success-fg : Theme.error-fg;
+        overflow: elide;
+    }
+    if ControlInspectState.dns-query-error != "" : Rectangle {
+        border-radius: Theme.radius-sm; border-width: 1px;
+        border-color: Theme.error-border; background: Theme.error-bg;
+        HorizontalLayout {
+            padding: 8px;
+            Text { text: ControlInspectState.dns-query-error; font-size: 11px; font-weight: 600; color: Theme.error-fg; wrap: word-wrap; }
+        }
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
     Rectangle {
         height: 214px;
-        border-radius: 14px; border-width: 1px;
+        border-radius: Theme.radius-md; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
         clip: true;
 

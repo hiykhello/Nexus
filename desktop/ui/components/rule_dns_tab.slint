@@ -2,8 +2,9 @@ import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
 import { DnsRuleDraft } from "../types.slint";
 import { NexusInput } from "glass_primitives.slint";
+import { NexusChip } from "nexus_buttons.slint";
 import { NexusSelect } from "nexus_select.slint";
-import { RuleActionBar, RuleChipButton } from "rule_builder_parts.slint";
+import { RuleActionBar } from "rule_builder_parts.slint";
 
 export component RuleDnsTab inherits VerticalLayout {
     in-out property <string> match-kind: "domain-suffix";
@@ -33,88 +34,75 @@ export component RuleDnsTab inherits VerticalLayout {
 
     vertical-stretch: 0;
     alignment: start;
+    spacing: Theme.space-md;
 
-    Rectangle {
-        border-radius: 16px;
-        border-width: 1px;
-        border-color: Theme.card-border;
-        background: Theme.card-surface;
+    VerticalLayout {
+        alignment: start;
+        spacing: Theme.space-sm;
 
+        Text {
+            text: I18n.t("匹配条件", "Match Predicates");
+            font-size: 13px; font-weight: 700; color: Theme.text-primary;
+        }
 
-        VerticalLayout {
-            alignment: start;
-            padding: Theme.space-lg;
-            spacing: Theme.space-md;
-
-            VerticalLayout {
-                alignment: start;
-                spacing: Theme.space-sm;
-
-                Text {
-                    text: I18n.t("匹配条件", "Match Predicates");
-                    font-size: 13px; font-weight: 700; color: Theme.text-primary;
-                }
-
-                HorizontalLayout {
-                    spacing: Theme.space-sm;
-                    NexusSelect {
-                        width: 148px;
-                        options: ["domain-suffix", "domain", "domain-keyword", "domain-wildcard", "domain-regex", "rule-set"];
-                        current-value <=> root.match-kind;
-                    }
-                    NexusInput {
-                        min-width: 80px;
-                        horizontal-stretch: 1;
-                        mono: true;
-                        text <=> root.match-value;
-                        placeholder-text: root.match-kind == "rule-set"
-                            ? I18n.t("规则集名称", "Rule-set name")
-                            : I18n.t("域名 / 后缀 (如 internal.corp)", "Domain / Suffix");
-                    }
-                }
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            NexusSelect {
+                width: 148px;
+                options: ["domain-suffix", "domain", "domain-keyword", "domain-wildcard", "domain-regex", "rule-set"];
+                current-value <=> root.match-kind;
             }
-
-            Rectangle { height: 1px; background: Theme.hairline-subtle; }
-
-            VerticalLayout {
-                alignment: start;
-                spacing: Theme.space-sm;
-
-                Text {
-                    text: I18n.t("解析策略", "Resolution Policy");
-                    font-size: 13px; font-weight: 700; color: Theme.text-primary;
-                }
-
-                FlexboxLayout {
-                    spacing: 6px;
-                    RuleChipButton {
-                        label: I18n.t("直连 DNS", "Direct DNS");
-                        active: root.action-kind == "direct";
-                        clicked => { root.action-kind = "direct"; root.target-server = "direct"; }
-                    }
-                    RuleChipButton {
-                        label: I18n.t("代理 DNS", "Remote DNS");
-                        active: root.action-kind == "proxy";
-                        clicked => { root.action-kind = "proxy"; root.target-server = "proxy"; }
-                    }
-                    RuleChipButton {
-                        label: I18n.t("拦截 (NXDOMAIN)", "Block (NXDOMAIN)");
-                        warn-accent: true;
-                        active: root.action-kind == "block";
-                        clicked => { root.action-kind = "block"; root.target-server = "block"; }
-                    }
-                }
-            }
-
-            Rectangle { height: 1px; background: Theme.hairline-subtle; }
-
-            RuleActionBar {
-                button-text: I18n.t("添加 DNS 规则", "Add DNS Rule");
-                status-text: root.status-text;
-                status-ok: root.status-ok;
-                commit => { root.add-dns-rule(root.current-draft()); }
-                reset => { root.reset-form(); }
+            NexusInput {
+                min-width: 80px;
+                horizontal-stretch: 1;
+                mono: true;
+                text <=> root.match-value;
+                placeholder-text: root.match-kind == "rule-set"
+                    ? I18n.t("规则集名称", "Rule-set name")
+                    : I18n.t("域名 / 后缀 (如 internal.corp)", "Domain / Suffix");
             }
         }
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+    VerticalLayout {
+        alignment: start;
+        spacing: Theme.space-sm;
+
+        Text {
+            text: I18n.t("解析策略", "Resolution Policy");
+            font-size: 13px; font-weight: 700; color: Theme.text-primary;
+        }
+
+        FlexboxLayout {
+            spacing: 6px;
+            NexusChip {
+                label: I18n.t("直连 DNS", "Direct DNS");
+                active: root.action-kind == "direct";
+                clicked => { root.action-kind = "direct"; root.target-server = "direct"; }
+            }
+            NexusChip {
+                label: I18n.t("代理 DNS", "Remote DNS");
+                active: root.action-kind == "proxy";
+                clicked => { root.action-kind = "proxy"; root.target-server = "proxy"; }
+            }
+            NexusChip {
+                label: I18n.t("拦截 (NXDOMAIN)", "Block (NXDOMAIN)");
+                warn-accent: true;
+                active: root.action-kind == "block";
+                clicked => { root.action-kind = "block"; root.target-server = "block"; }
+            }
+        }
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+    RuleActionBar {
+        button-text: I18n.t("添加 DNS 规则", "Add DNS Rule");
+        status-text: root.status-text;
+        status-ok: root.status-ok;
+        commit => { root.add-dns-rule(root.current-draft()); }
+        reset => { root.reset-form(); }
     }
 }

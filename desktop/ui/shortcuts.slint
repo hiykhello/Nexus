@@ -113,14 +113,6 @@ export global Shortcuts {
             + display-key(b.key)
     }
 
-    pure public function format-short(b: KeyBinding) -> string {
-        if (b.key == "") { return ""; }
-        (b.ctrl ? "^" : "")
-            + (b.alt ? "⌥" : "")
-            + (b.shift ? "⇧" : "")
-            + display-key(b.key)
-    }
-
     public function start-recording(action: string) {
         if (recording-action == action) {
             recording-action = "";

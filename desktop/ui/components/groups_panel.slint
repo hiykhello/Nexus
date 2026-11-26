@@ -9,57 +9,7 @@ import { EmptyStateCard, NexusInput, NexusVScrollBar } from "glass_primitives.sl
 import { GroupMemberCard } from "group_member_card.slint";
 import { GroupRail, GroupSummaryStrip } from "group_rail.slint";
 import { IconActionButton } from "icon_button.slint";
-
-component CapsulePillButton inherits Rectangle {
-    in property <image> icon;
-    in property <string> text;
-    in property <bool> active: false;
-    in property <bool> primary: false;
-    callback clicked();
-
-    height: 32px;
-    border-radius: 16px;
-    border-width: 1px;
-    border-color:
-        root.primary ? Theme.pill-active-top.brighter(0.20)
-        : root.active ? Theme.selected-border
-        : ta.has-hover ? Theme.hairline-strong : Theme.card-border;
-    background:
-        root.primary ? (ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot)
-        : root.active ? Theme.selected-bg
-        : ta.has-hover ? Theme.row-hover-bg
-        : Theme.row-bg;
-    animate border-color { duration: Motion.fast; }
-
-    accessible-role: button;
-    accessible-label: root.text;
-    accessible-action-default => { root.clicked(); }
-
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-
-    HorizontalLayout {
-        padding-left: 11px;
-        padding-right: 12px;
-        spacing: 5px;
-        Image {
-            width: 13px;
-            height: 13px;
-            y: (parent.height - self.height) / 2;
-            source: root.icon;
-            colorize: root.primary ? Theme.pill-active-fg : root.active ? Theme.nav-active-fg : Theme.text-secondary;
-        }
-        Text {
-            text: root.text;
-            font-size: 12px;
-            font-weight: root.primary || root.active ? 700 : 600;
-            color: root.primary ? Theme.pill-active-fg : root.active ? Theme.nav-active-fg : Theme.text-primary;
-            vertical-alignment: center;
-        }
-    }
-}
+import { NexusButton } from "nexus_buttons.slint";
 
 export component GroupsPanel inherits VerticalLayout {
     in property <length> window-width: 1040px;
@@ -98,23 +48,33 @@ export component GroupsPanel inherits VerticalLayout {
 
     spacing: Theme.space-md;
 
-    // Non-wide group selector strip (pill-rounded cards matching Wave 8 language)
+    // Non-wide group selector strip (unified 8px flat matte chips, 0ms instant switching)
     if !root.is-wide && root.groups.length > 0 : FlexboxLayout {
         vertical-stretch: 0;
         padding-right: 18px;
         spacing: Theme.space-sm;
         for g in root.groups : Rectangle {
             property <bool> is-current: g.tag == root.selected-group;
-            height: 34px;
-            border-radius: 17px;
-            border-width: 1px;
-            border-color: is-current ? Theme.pill-active-top.brighter(0.20) : Theme.card-border;
-            background: is-current
-                ? @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%)
-                : group-ta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
-            transform-scale: group-ta.pressed ? 0.97 : 1.0;
-            animate border-color { duration: Motion.fast; }
-            animate transform-scale { duration: Motion.micro; }
+            height: 32px;
+            border-radius: Theme.radius-md;
+            border-width: cg-fs.has-focus ? 2px : 1px;
+            border-color: cg-fs.has-focus ? Theme.accent : (is-current ? Theme.pill-active-top : Theme.card-border);
+            background: is-current ? Theme.pill-active-bot : (group-ta.has-hover ? Theme.row-hover-bg : Theme.card-surface);
+
+            accessible-role: button;
+            accessible-label: g.tag;
+            accessible-action-default => { sv.content-y = 0px; root.choose-group(g.tag); }
+
+            cg-fs := FocusScope {
+                key-pressed(ev) => {
+                    if (ev.text == Key.Return || ev.text == " ") {
+                        sv.content-y = 0px;
+                        root.choose-group(g.tag);
+                        return accept;
+                    }
+                    reject
+                }
+            }
 
             group-ta := TouchArea {
                 mouse-cursor: pointer;
@@ -148,7 +108,7 @@ export component GroupsPanel inherits VerticalLayout {
         VerticalLayout {
             horizontal-stretch: 1;
             min-width: 0px;
-            spacing: 10px;
+            spacing: Theme.space-sm;
 
             // Matte Toolbar (includes inline Probe action; no floating FAB!)
             HorizontalLayout {
@@ -166,9 +126,10 @@ export component GroupsPanel inherits VerticalLayout {
                     accepted => { root.filter-members(root.member-filter); }
                 }
 
-                CapsulePillButton {
+                NexusButton {
+                    has-icon: true;
                     icon: @image-url("../icons/sort.svg");
-                    text: root.sort-label;
+                    label: root.sort-label;
                     active: root.member-sort != "default";
                     clicked => {
                         let next = root.member-sort == "default" ? "latency"
@@ -178,9 +139,10 @@ export component GroupsPanel inherits VerticalLayout {
                     }
                 }
 
-                CapsulePillButton {
+                NexusButton {
+                    has-icon: true;
                     icon: @image-url("../icons/eye-off.svg");
-                    text: I18n.t("隐藏超时", "Hide Err");
+                    label: I18n.t("隐藏超时", "Hide Err");
                     active: root.hide-timeout;
                     clicked => {
                         root.hide-timeout = !root.hide-timeout;
@@ -188,16 +150,18 @@ export component GroupsPanel inherits VerticalLayout {
                     }
                 }
 
-                if root.selected-group != "" : CapsulePillButton {
+                if root.selected-group != "" : NexusButton {
+                    has-icon: true;
                     icon: @image-url("../icons/bolt.svg");
-                    text: root.probing ? I18n.t("测速中...", "Probing...") : I18n.t("测速", "Probe");
+                    label: root.probing ? I18n.t("测速中...", "Probing...") : I18n.t("测速", "Probe");
                     active: root.probing;
                     clicked => { if (!root.probing) { root.probe-group(root.selected-group); } }
                 }
 
-                CapsulePillButton {
+                NexusButton {
+                    has-icon: true;
                     icon: @image-url("../icons/plus.svg");
-                    text: I18n.t("新增", "Add");
+                    label: I18n.t("新增", "Add");
                     primary: true;
                     clicked => { root.open-add-outbound(); }
                 }
@@ -211,12 +175,11 @@ export component GroupsPanel inherits VerticalLayout {
                 IconActionButton {
                     icon: @image-url("../icons/refresh.svg");
                     label: I18n.t("刷新", "Refresh");
-                    spin-on-click: true;
                     clicked => { root.refresh-groups(); }
                 }
             }
 
-            if root.selected-group != "" : HorizontalLayout {
+            if root.is-wide && root.selected-group != "" : HorizontalLayout {
                 vertical-stretch: 0;
                 padding-right: 18px;
                 GroupSummaryStrip {
@@ -233,7 +196,7 @@ export component GroupsPanel inherits VerticalLayout {
                 }
             }
 
-            if root.probing && root.selected-group == "" : HorizontalLayout {
+            if root.probing && (!root.is-wide || root.selected-group == "") : HorizontalLayout {
                 vertical-stretch: 0;
                 padding-right: 18px;
                 Rectangle {
@@ -279,13 +242,15 @@ export component GroupsPanel inherits VerticalLayout {
 
                         if root.members.length == 0 : EmptyStateCard {
                             width: grid-w;
+                            height: max(self.preferred-height, sv.visible-height - 16px);
                             icon: @image-url("../icons/groups.svg");
                             title: I18n.t("暂无可用节点", "No nodes yet");
                             subtitle: I18n.t("连接后自动同步策略组，或导入分享链接添加节点", "Connect to sync groups, or import a share link");
-                            action-label: I18n.t("新增节点", "Add Node");
-                            secondary-action-label: I18n.t("导入链接", "Import URI");
-                            action-clicked => { root.open-add-outbound(); }
-                            secondary-action-clicked => { root.open-config-import(); }
+                            action-label: I18n.t("导入链接", "Import URI");
+                            primary-cta: false;
+                            secondary-action-label: I18n.t("新增节点", "Add Node");
+                            action-clicked => { root.open-config-import(); }
+                            secondary-action-clicked => { root.open-add-outbound(); }
                         }
 
                         if root.members.length > 0 : FlexboxLayout {

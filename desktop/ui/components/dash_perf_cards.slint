@@ -83,8 +83,8 @@ export component HeroStatusCard inherits Rectangle {
     background: Theme.card-surface;
 
     HorizontalLayout {
-        padding: 14px;
-        spacing: 14px;
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
 
         VerticalLayout {
             horizontal-stretch: 1;
@@ -185,19 +185,33 @@ export component HeroStatusCard inherits Rectangle {
                 border-radius: 28px;
                 border-width: 2px;
                 border-color:
-                    root.core-running ? Theme.success-fg
+                    pwr-fs.has-focus ? Theme.accent
+                    : root.core-running ? Theme.success-fg
                     : root.core-toggling ? Theme.warn-fg
                     : pwr-ta.has-hover ? Theme.accent : Theme.hairline-strong;
                 background:
                     root.core-running ? (pwr-ta.pressed ? Theme.success-fg.darker(0.15) : Theme.success-fg)
                     : pwr-ta.pressed ? Theme.well-bg
                     : pwr-ta.has-hover ? Theme.selected-bg : Theme.well-bg;
+                transform-scale: (pwr-ta.pressed && !root.core-toggling) ? 0.97 : 1.0;
                 animate background { duration: Motion.fast; }
                 animate border-color { duration: Motion.fast; }
+                animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
                 accessible-role: button;
                 accessible-label: root.core-running ? I18n.t("停止代理", "Stop Proxy") : I18n.t("启动代理", "Start Proxy");
                 accessible-action-default => { if (!root.core-toggling) { root.toggle-core(); } }
+
+                pwr-fs := FocusScope {
+                    enabled: !root.core-toggling;
+                    key-pressed(ev) => {
+                        if (!root.core-toggling && (ev.text == Key.Return || ev.text == " ")) {
+                            root.toggle-core();
+                            return accept;
+                        }
+                        reject
+                    }
+                }
 
                 pwr-ta := TouchArea {
                     enabled: !root.core-toggling;
@@ -206,7 +220,7 @@ export component HeroStatusCard inherits Rectangle {
                 }
 
                 Image {
-                    x: (parent.width - self.width) / 2;
+                    x: (parent.width - self.width) / 2 + (root.core-running ? 0px : 1.5px);
                     y: (parent.height - self.height) / 2;
                     width: 22px;
                     height: 22px;
@@ -235,11 +249,8 @@ export component SpeedMiniCard inherits Rectangle {
     clip: true;
 
     VerticalLayout {
-        padding-left: 13px;
-        padding-right: 13px;
-        padding-top: 11px;
-        padding-bottom: 10px;
-        spacing: 4px;
+        padding: Theme.space-md;
+        spacing: Theme.space-xs;
 
         HorizontalLayout {
             spacing: 6px;
@@ -261,18 +272,22 @@ export component SpeedMiniCard inherits Rectangle {
                 overflow: elide;
             }
             Text {
+                min-width: 88px;
                 text: I18n.t("峰值 ", "Peak ") + root.peak-text;
                 font-size: 10px;
                 font-family: Theme.mono-font;
                 color: Theme.text-muted;
+                horizontal-alignment: right;
                 vertical-alignment: center;
             }
         }
 
         HorizontalLayout {
-            spacing: 5px;
+            spacing: 4px;
             alignment: start;
             Text {
+                horizontal-stretch: 0;
+                min-width: 72px;
                 text: root.rate-value;
                 font-size: 22px;
                 font-weight: 800;
@@ -281,6 +296,8 @@ export component SpeedMiniCard inherits Rectangle {
                 vertical-alignment: bottom;
             }
             Text {
+                horizontal-stretch: 0;
+                min-width: 34px;
                 text: root.rate-unit;
                 font-size: 11px;
                 font-weight: 700;
@@ -288,6 +305,7 @@ export component SpeedMiniCard inherits Rectangle {
                 color: root.channel-color;
                 vertical-alignment: bottom;
             }
+            Rectangle { horizontal-stretch: 1; }
         }
 
         Text {
@@ -298,32 +316,42 @@ export component SpeedMiniCard inherits Rectangle {
             overflow: elide;
         }
 
-        Rectangle {
+        wave-well := Rectangle {
             vertical-stretch: 1;
             min-height: 36px;
-            border-radius: 6px;
-            background: Theme.well-bg;
+            border-radius: Theme.radius-xs;
+            background: Theme.well-bg.with-alpha(0.55);
             clip: true;
 
+            property <length> path-h: min(self.height, self.width * 48 / 320);
+
             if root.wave-area != "" : Path {
-                viewbox-width: 240;
-                viewbox-height: 84;
+                x: 0px;
+                y: wave-well.height - wave-well.path-h;
+                width: wave-well.width;
+                height: wave-well.path-h;
+                viewbox-width: 320;
+                viewbox-height: 48;
                 commands: root.wave-area;
                 fill: root.channel-color.with-alpha(Theme.dark ? 0.16 : 0.12);
             }
 
             if root.wave-line != "" : Path {
-                viewbox-width: 240;
-                viewbox-height: 84;
+                x: 0px;
+                y: wave-well.height - wave-well.path-h;
+                width: wave-well.width;
+                height: wave-well.path-h;
+                viewbox-width: 320;
+                viewbox-height: 48;
                 commands: root.wave-line;
                 stroke: root.channel-color;
                 stroke-width: 1.75px;
             }
 
             if root.wave-line == "" : Rectangle {
-                x: 8px;
-                y: parent.height - 6px;
-                width: max(0px, parent.width - 16px);
+                x: 0px;
+                y: parent.height - 4px;
+                width: parent.width;
                 height: 1.5px;
                 background: root.channel-color.with-alpha(0.32);
             }

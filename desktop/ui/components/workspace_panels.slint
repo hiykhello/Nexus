@@ -1,94 +1,32 @@
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState, WorkspaceProfileRow, WorkspaceSubRow } from "../workspace_state.slint";
 import { EmptyStateCard, NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
+import { NexusButton, NexusChip } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
-
-component PillOption inherits Rectangle {
-    in property <string> label;
-    in property <bool> active: false;
-    callback clicked();
-    horizontal-stretch: 0;
-    height: 26px;
-    border-radius: 13px;
-    border-width: 1px;
-    border-color: root.active ? Theme.accent.with-alpha(0.72) : ta.has-hover ? Theme.selected-border : Theme.well-border;
-    background: root.active ? Theme.selected-bg : ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    accessible-role: button;
-    accessible-label: root.label;
-    accessible-action-default => { root.clicked(); }
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-    HorizontalLayout {
-        padding-left: 10px; padding-right: 10px;
-        Text {
-            text: root.label; font-size: 11px; font-weight: root.active ? 700 : 600;
-            color: root.active ? Theme.nav-active-fg : Theme.text-secondary;
-            vertical-alignment: center;
-        }
-    }
-}
-
-component LabeledActionButton inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    in property <bool> primary: false;
-    callback clicked();
-    horizontal-stretch: 0;
-    height: 30px;
-    border-radius: Theme.radius-md;
-    border-width: 1px;
-    border-color: root.primary ? Theme.pill-active-top.brighter(0.20) : ta.has-hover ? Theme.selected-border : Theme.card-border;
-    background: root.primary
-        ? (ta.pressed
-            ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-            : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
-        : ta.pressed ? Theme.nav-active-bg : ta.has-hover ? Theme.row-hover-bg : Theme.row-bg;
-    transform-scale: ta.pressed ? 0.96 : 1.0;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-    accessible-role: button;
-    accessible-label: root.label;
-    accessible-action-default => { root.clicked(); }
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-    HorizontalLayout {
-        padding-left: 10px; padding-right: 12px; spacing: 6px;
-        Image {
-            width: 13px; height: 13px; y: (parent.height - self.height) / 2;
-            source: root.icon;
-            colorize: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-        }
-        Text {
-            text: root.label; font-size: 12px; font-weight: 600;
-            color: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-            vertical-alignment: center;
-        }
-    }
-}
 
 export component WorkspaceProfilesView inherits VerticalLayout {
     in property <length> grid-w: 600px;
+    in property <length> viewport-h: 480px;
+    callback open-add-outbound();
     spacing: Theme.space-sm;
 
     // 5-Kind Profile Creator Card
     Rectangle {
         width: root.grid-w;
-        border-radius: 16px; border-width: 1px;
+        border-radius: Theme.radius-card; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
         VerticalLayout {
-            padding: 12px; spacing: 8px;
+            padding: Theme.space-md; spacing: Theme.space-sm;
             FlexboxLayout {
                 spacing: 6px;
-                PillOption { label: I18n.t("节点", "Node"); active: WorkspaceState.draft-kind == "node"; clicked => { WorkspaceState.draft-kind = "node"; } }
-                PillOption { label: I18n.t("策略组", "Group"); active: WorkspaceState.draft-kind == "policy_group"; clicked => { WorkspaceState.draft-kind = "policy_group"; } }
-                PillOption { label: I18n.t("代理链", "Chain"); active: WorkspaceState.draft-kind == "proxy_chain"; clicked => { WorkspaceState.draft-kind = "proxy_chain"; } }
-                PillOption { label: I18n.t("自定义出站", "Custom Out"); active: WorkspaceState.draft-kind == "custom_outbound"; clicked => { WorkspaceState.draft-kind = "custom_outbound"; } }
-                PillOption { label: I18n.t("自定义配置", "Custom Config"); active: WorkspaceState.draft-kind == "full_custom_kdl"; clicked => { WorkspaceState.draft-kind = "full_custom_kdl"; } }
-                PillOption { label: I18n.t("导入 nexus://", "Import nexus://"); active: WorkspaceState.draft-kind == "nexus_share"; clicked => { WorkspaceState.draft-kind = "nexus_share"; } }
+                NexusChip { chip-height: 26px; label: I18n.t("节点", "Node"); active: WorkspaceState.draft-kind == "node"; clicked => { WorkspaceState.draft-kind = "node"; } }
+                NexusChip { chip-height: 26px; label: I18n.t("策略组", "Group"); active: WorkspaceState.draft-kind == "policy_group"; clicked => { WorkspaceState.draft-kind = "policy_group"; } }
+                NexusChip { chip-height: 26px; label: I18n.t("代理链", "Chain"); active: WorkspaceState.draft-kind == "proxy_chain"; clicked => { WorkspaceState.draft-kind = "proxy_chain"; } }
+                NexusChip { chip-height: 26px; label: I18n.t("自定义出站", "Custom Out"); active: WorkspaceState.draft-kind == "custom_outbound"; clicked => { WorkspaceState.draft-kind = "custom_outbound"; } }
+                NexusChip { chip-height: 26px; label: I18n.t("自定义配置", "Custom Config"); active: WorkspaceState.draft-kind == "full_custom_kdl"; clicked => { WorkspaceState.draft-kind = "full_custom_kdl"; } }
+                NexusChip { chip-height: 26px; label: I18n.t("导入 nexus://", "Import nexus://"); active: WorkspaceState.draft-kind == "nexus_share"; clicked => { WorkspaceState.draft-kind = "nexus_share"; } }
             }
             if WorkspaceState.draft-kind == "policy_group" : HorizontalLayout {
                 spacing: 8px;
@@ -140,11 +78,15 @@ export component WorkspaceProfilesView inherits VerticalLayout {
 
     if WorkspaceState.profiles.length == 0 : EmptyStateCard {
         width: root.grid-w;
+        height: max(self.preferred-height, root.viewport-h - 118px);
         icon: @image-url("../icons/profiles.svg");
-        title: I18n.t("暂无工作区配置项", "No workspace profiles yet");
-        subtitle: I18n.t("支持节点、策略组、代理链与自定义配置", "Supports Node, Policy Group, Proxy Chain & Custom Config");
-        action-label: I18n.t("添加默认直连配置", "Add Default Direct");
-        action-clicked => { WorkspaceState.create-profile("custom_outbound", "Direct", "outbound \"{{tag}}\" type=\"direct\" {}\n"); }
+        title: I18n.t("暂无配置项", "No profiles yet");
+        subtitle: I18n.t("粘贴分享链接导入、添加远端订阅，或通过向导创建节点", "Paste a share link above, add a subscription, or use the node wizard");
+        action-label: I18n.t("新建节点向导", "New Node Wizard");
+        primary-cta: false;
+        secondary-action-label: I18n.t("前往订阅", "Add Subscription");
+        action-clicked => { root.open-add-outbound(); }
+        secondary-action-clicked => { WorkspaceState.active-subtab = 1; }
     }
 
     if WorkspaceState.profiles.length > 0 : FlexboxLayout {
@@ -154,12 +96,10 @@ export component WorkspaceProfilesView inherits VerticalLayout {
             width: cell-w; height: 88px;
             Rectangle {
                 x: 0px; y: 0px; width: card-w; height: 76px;
-                border-radius: 16px; border-width: 1px;
-                border-color: item.active ? Theme.accent.with-alpha(Theme.dark ? 0.78 : 0.62) : pta.has-hover ? Theme.selected-border : Theme.card-border;
-                background: item.active
-                    ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.accent.with-alpha(Theme.dark ? 0.08 : 0.04) 100%)
-                    : pta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
-                        pta := TouchArea {
+                border-radius: Theme.radius-card; border-width: 1px;
+                border-color: item.active ? Theme.selected-border : pta.has-hover ? Theme.hairline-strong : Theme.card-border;
+                background: item.active ? Theme.selected-bg : pta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
+                pta := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { WorkspaceState.activate-profile(item.id); }
                 }
@@ -234,10 +174,10 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
     spacing: Theme.space-sm;
 
     Rectangle {
-        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
         VerticalLayout {
-            padding: 12px; spacing: 8px;
+            padding: Theme.space-md; spacing: Theme.space-sm;
             HorizontalLayout {
                 spacing: 8px;
                 NexusInput { horizontal-stretch: 28; preferred-width: 0px; min-width: 90px; text <=> WorkspaceState.sub-remarks; placeholder-text: I18n.t("订阅名称...", "Subscription name..."); }
@@ -262,15 +202,16 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
     }
 
     for sub in WorkspaceState.subscriptions : Rectangle {
-        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
         VerticalLayout {
-            padding: 12px; spacing: 6px;
+            padding: Theme.space-md; spacing: 6px;
             HorizontalLayout {
                 spacing: 8px;
                 Text { horizontal-stretch: 1; min-width: 0px; text: sub.remarks != "" ? sub.remarks : sub.id; font-size: 13px; font-weight: 700; color: Theme.text-primary; overflow: elide; vertical-alignment: center; }
                 Text { text: I18n.t("\{sub.node-count} 节点", "\{sub.node-count} nodes"); font-size: 11px; font-family: Theme.mono-font; color: Theme.text-muted; vertical-alignment: center; }
-                PillOption {
+                NexusChip {
+                    chip-height: 26px;
                     label: I18n.t("订阅链", "Chain");
                     active: WorkspaceState.edit-chain-sub-id == sub.id;
                     clicked => {
@@ -308,7 +249,8 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
                 spacing: 8px;
                 NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-prev; placeholder-text: I18n.t("前置 ID (prev)", "Prev ID"); }
                 NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-next; placeholder-text: I18n.t("落地 ID (next)", "Next ID"); }
-                LabeledActionButton {
+                NexusButton {
+                    btn-height: 30px; has-icon: true;
                     icon: @image-url("../icons/check.svg"); label: I18n.t("保存链", "Save"); primary: true;
                     clicked => {
                         WorkspaceState.update-subscription-chain(sub.id, WorkspaceState.edit-chain-prev, WorkspaceState.edit-chain-next);

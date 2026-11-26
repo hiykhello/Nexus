@@ -2,8 +2,8 @@ import { I18n, LanguagePreference } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { AccentPreset, Theme, ThemePreference } from "../theme.slint";
 import { SlidingSegmentBar } from "glass_primitives.slint";
+import { NexusButton } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
-import { RuleChipButton } from "rule_builder_parts.slint";
 
 component AccentChip inherits Rectangle {
     in property <string> label;
@@ -11,16 +11,30 @@ component AccentChip inherits Rectangle {
     in property <bool> selected: false;
     callback chosen();
 
+    forward-focus: fs;
     height: 30px;
-    border-radius: 15px;
-    border-width: 1px;
-    border-color: root.selected ? root.swatch-color : Theme.well-border;
+    border-radius: Theme.radius-md;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color: fs.has-focus ? Theme.accent : (root.selected ? root.swatch-color : Theme.well-border);
     background:
         root.selected ? root.swatch-color.with-alpha(Theme.dark ? 0.22 : 0.14)
         : ta.has-hover ? Theme.row-hover-bg
         : Theme.well-bg;
+    transform-scale: ta.pressed ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.chosen(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") { root.chosen(); return accept; }
+            reject
+        }
+    }
 
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.chosen(); } }
 
@@ -60,7 +74,7 @@ export component ThemeStudioCard inherits Rectangle {
     VerticalLayout {
         alignment: start;
         padding: Theme.space-lg;
-        spacing: 14px;
+        spacing: Theme.space-md;
 
         HorizontalLayout {
             vertical-stretch: 0;
@@ -77,7 +91,8 @@ export component ThemeStudioCard inherits Rectangle {
                 overflow: elide;
             }
 
-            RuleChipButton {
+            NexusButton {
+                btn-height: 28px;
                 label: I18n.t("恢复默认", "Reset");
                 clicked => {
                     Theme.apply-preference(ThemePreference.system);
@@ -95,6 +110,7 @@ export component ThemeStudioCard inherits Rectangle {
             Text { width: 72px; text: I18n.t("主题模式", "Theme"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
             SlidingSegmentBar {
                 horizontal-stretch: 1;
+                max-width: 360px;
                 bar-height: 32px;
                 options: [I18n.t("跟随系统", "System"), I18n.t("浅色", "Light"), I18n.t("深色", "Dark")];
                 current-index: Theme.preference == ThemePreference.light ? 1 : Theme.preference == ThemePreference.dark ? 2 : 0;
@@ -103,6 +119,7 @@ export component ThemeStudioCard inherits Rectangle {
                     root.prefs-changed();
                 }
             }
+            Rectangle { horizontal-stretch: 1; }
         }
 
         HorizontalLayout {
@@ -111,6 +128,7 @@ export component ThemeStudioCard inherits Rectangle {
             Text { width: 72px; text: I18n.t("界面语言", "Language"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
             SlidingSegmentBar {
                 horizontal-stretch: 1;
+                max-width: 360px;
                 bar-height: 32px;
                 options: [I18n.t("跟随系统", "System"), "简体中文", "English"];
                 current-index: I18n.preference == LanguagePreference.zh-cn ? 1 : I18n.preference == LanguagePreference.en-us ? 2 : 0;
@@ -119,6 +137,7 @@ export component ThemeStudioCard inherits Rectangle {
                     root.prefs-changed();
                 }
             }
+            Rectangle { horizontal-stretch: 1; }
         }
 
         HorizontalLayout {

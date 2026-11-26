@@ -1,7 +1,6 @@
 import { AboutSlint, ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
 import { NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
@@ -9,21 +8,16 @@ import { ThemeStudioCard } from "theme_studio_card.slint";
 import { TraySettingsCard } from "tray_settings_card.slint";
 import { ShortcutsCard } from "shortcuts_card.slint";
 
-component SpecRow inherits Rectangle {
+component SpecRow inherits VerticalLayout {
     in property <string> label;
     in property <string> value;
     in property <color> value-color: Theme.text-primary;
+    in property <bool> show-divider: true;
 
     vertical-stretch: 0;
-    height: 40px;
-    border-radius: 11px;
-    border-width: 1px;
-    border-color: Theme.well-border;
-    background: Theme.well-bg;
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        height: 38px;
         spacing: Theme.space-sm;
 
         Text {
@@ -47,6 +41,8 @@ component SpecRow inherits Rectangle {
             overflow: elide;
         }
     }
+
+    if root.show-divider : Rectangle { height: 1px; background: Theme.hairline-subtle; }
 }
 
 component AboutIdentityCard inherits Rectangle {
@@ -61,12 +57,12 @@ component AboutIdentityCard inherits Rectangle {
 
         HorizontalLayout {
             vertical-stretch: 0;
-            spacing: 14px;
+            spacing: Theme.space-md;
 
             Rectangle {
-                width: 48px; height: 48px; border-radius: 15px;
-                border-width: 1px; border-color: Theme.accent.with-alpha(Theme.dark ? 0.46 : 0.32);
-                background: @radial-gradient(circle, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.well-bg 100%);
+                width: 48px; height: 48px; border-radius: Theme.radius-md;
+                border-width: 1px; border-color: Theme.accent.with-alpha(Theme.dark ? 0.42 : 0.28);
+                background: Theme.accent-soft;
                 Image {
                     x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
                     width: 28px; height: 28px; source: @image-url("../icons/nexus-prism.svg");
@@ -105,12 +101,14 @@ component AboutRuntimeCard inherits Rectangle {
 
     VerticalLayout {
         padding: Theme.space-lg;
-        spacing: 10px;
+        spacing: Theme.space-xs;
 
         Text {
             text: I18n.t("运行环境", "Runtime");
             font-size: 14px; font-weight: 700; color: Theme.text-primary;
         }
+
+        Rectangle { height: 4px; }
 
         SpecRow {
             label: I18n.t("界面引擎", "UI Engine");
@@ -131,86 +129,7 @@ component AboutRuntimeCard inherits Rectangle {
             label: I18n.t("配置管理", "Configuration");
             value: I18n.t("托管工作区 · 已就绪", "Managed Workspace · Ready");
             value-color: Theme.text-secondary;
-        }
-    }
-}
-
-component RuleModalChip inherits Rectangle {
-    in property <string> label;
-    in property <bool> show-icon: false;
-    callback clicked();
-
-    height: 28px;
-    border-radius: 14px;
-    border-width: 1px;
-    border-color: ta.has-hover ? Theme.selected-border : transparent;
-    background: ta.pressed ? Theme.selected-bg : ta.has-hover ? Theme.row-hover-bg : transparent;
-    transform-scale: ta.pressed ? 0.96 : 1.0;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-
-    accessible-role: button;
-    accessible-label: root.label;
-    accessible-action-default => { root.clicked(); }
-
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-
-    HorizontalLayout {
-        padding-left: root.show-icon ? 9px : 10px;
-        padding-right: 10px;
-        spacing: 5px;
-        alignment: center;
-
-        if root.show-icon : Image {
-            width: 13px;
-            height: 13px;
-            y: (parent.height - self.height) / 2;
-            source: @image-url("../icons/rule-edit.svg");
-            colorize: ta.has-hover ? Theme.accent : Theme.nav-active-fg;
-        }
-
-        Text {
-            text: root.label;
-            font-size: 12px;
-            font-weight: 600;
-            color: ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-            vertical-alignment: center;
-        }
-    }
-}
-
-component RuleQuickStrip inherits Rectangle {
-    callback open-rule-modal(int);
-
-    vertical-stretch: 0;
-    height: 36px;
-    border-radius: 18px;
-    border-width: 1px;
-    border-color: Theme.well-border;
-    background: Theme.well-bg;
-
-    HorizontalLayout {
-        padding: 3px;
-        spacing: 2px;
-
-        RuleModalChip {
-            show-icon: true;
-            label: I18n.t("路由规则", "Rules");
-            clicked => { root.open-rule-modal(0); }
-        }
-        Rectangle { width: 1px; y: 6px; height: parent.height - 12px; background: Theme.hairline-subtle; }
-        RuleModalChip {
-            label: I18n.t("DNS 规则", "DNS");
-            clicked => { root.open-rule-modal(1); }
-        }
-        Rectangle { width: 1px; y: 6px; height: parent.height - 12px; background: Theme.hairline-subtle; }
-        RuleModalChip {
-            label: I18n.t("规则测试", "Explain");
-            clicked => { root.open-rule-modal(2); }
+            show-divider: false;
         }
     }
 }
@@ -237,22 +156,21 @@ export component AboutPanel inherits VerticalLayout {
     callback ui-prefs-changed();
     callback grant-tun-privilege();
     callback revoke-tun-privilege();
-    callback open-rule-modal(int);
 
     property <bool> is-compact: LayoutMetrics.is-compact-w(root.window-width);
     property <bool> about-two-col: root.window-width >= 840px;
 
     spacing: Theme.space-md;
 
-    if !root.is-compact : HorizontalLayout {
+    HorizontalLayout {
         vertical-stretch: 0;
         padding-right: 18px;
-        spacing: Theme.space-md;
 
         SlidingSegmentBar {
-            horizontal-stretch: 0;
+            horizontal-stretch: root.is-compact ? 1 : 0;
             preferred-width: 340px;
-            max-width: 360px;
+            max-width: root.is-compact ? 9999px : 360px;
+            bar-height: 32px;
             options: [I18n.t("外观", "Appearance"), I18n.t("系统", "System"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
             current-index: root.active-subtab;
             selected(idx) => {
@@ -261,31 +179,7 @@ export component AboutPanel inherits VerticalLayout {
             }
         }
 
-        Rectangle { horizontal-stretch: 1; }
-
-        RuleQuickStrip {
-            horizontal-stretch: 0;
-            open-rule-modal(tab) => { root.open-rule-modal(tab); }
-        }
-    }
-
-    if root.is-compact : VerticalLayout {
-        vertical-stretch: 0;
-        padding-right: 18px;
-        spacing: Theme.space-sm;
-
-        SlidingSegmentBar {
-            options: [I18n.t("外观", "Appearance"), I18n.t("系统", "System"), I18n.t("快捷键", "Shortcuts"), I18n.t("关于", "About")];
-            current-index: root.active-subtab;
-            selected(idx) => {
-                root.active-subtab = idx;
-                sv.content-y = 0px;
-            }
-        }
-
-        RuleQuickStrip {
-            open-rule-modal(tab) => { root.open-rule-modal(tab); }
-        }
+        if !root.is-compact : Rectangle { horizontal-stretch: 1; }
     }
 
     Rectangle {
@@ -303,7 +197,7 @@ export component AboutPanel inherits VerticalLayout {
             settings-col := VerticalLayout {
                 x: 0px;
                 y: 0px;
-                width: sv.visible-width;
+                width: min(780px, sv.visible-width);
                 padding-right: 18px;
                 padding-bottom: 6px;
                 spacing: Theme.space-md;

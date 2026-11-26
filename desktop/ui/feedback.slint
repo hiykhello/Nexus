@@ -1,5 +1,8 @@
 export global TooltipState {
     in-out property <bool> visible: false;
+    in-out property <bool> warm: false;
+    in-out property <bool> instant: false;
+    in-out property <bool> anchor-right: false;
     in-out property <string> text: "";
     in-out property <length> anchor-x: 0px;
     in-out property <length> anchor-y: 0px;
@@ -7,6 +10,21 @@ export global TooltipState {
     in-out property <length> anchor-h: 0px;
 
     public function show(t: string, ax: length, ay: length, aw: length, ah: length) {
+        instant = visible || warm;
+        warm = t != "";
+        anchor-right = false;
+        text = t;
+        anchor-x = ax;
+        anchor-y = ay;
+        anchor-w = aw;
+        anchor-h = ah;
+        visible = t != "";
+    }
+
+    public function show-right(t: string, ax: length, ay: length, aw: length, ah: length) {
+        instant = visible || warm;
+        warm = t != "";
+        anchor-right = true;
         text = t;
         anchor-x = ax;
         anchor-y = ay;

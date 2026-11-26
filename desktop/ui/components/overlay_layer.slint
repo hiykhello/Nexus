@@ -4,8 +4,14 @@ import { Theme } from "../theme.slint";
 
 export component OverlayFeedbackLayer inherits Rectangle {
     property <bool> tip-below: TooltipState.anchor-y + TooltipState.anchor-h + 36px < root.height;
-    property <length> tip-x: clamp(TooltipState.anchor-x + (TooltipState.anchor-w - tip-box.width) / 2, 8px, max(8px, root.width - tip-box.width - 8px));
-    property <length> tip-target-y: tip-below ? (TooltipState.anchor-y + TooltipState.anchor-h + 6px) : max(8px, TooltipState.anchor-y - tip-box.height - 6px);
+    property <length> tip-x:
+        TooltipState.anchor-right
+            ? min(max(8px, root.width - tip-box.width - 8px), TooltipState.anchor-x + TooltipState.anchor-w + 8px)
+            : clamp(TooltipState.anchor-x + (TooltipState.anchor-w - tip-box.width) / 2, 8px, max(8px, root.width - tip-box.width - 8px));
+    property <length> tip-target-y:
+        TooltipState.anchor-right
+            ? clamp(TooltipState.anchor-y + (TooltipState.anchor-h - tip-box.height) / 2, 8px, max(8px, root.height - tip-box.height - 8px))
+            : (tip-below ? (TooltipState.anchor-y + TooltipState.anchor-h + 6px) : max(8px, TooltipState.anchor-y - tip-box.height - 6px));
 
     property <color> toast-accent:
         ToastState.tone == "success" ? Theme.success-fg
@@ -26,9 +32,15 @@ export component OverlayFeedbackLayer inherits Rectangle {
         triggered => { ToastState.dismiss(); }
     }
 
+    tip-warm-timer := Timer {
+        interval: 350ms;
+        running: TooltipState.warm && !TooltipState.visible;
+        triggered => { TooltipState.warm = false; }
+    }
+
     tip-box := Rectangle {
         x: root.tip-x;
-        y: TooltipState.visible ? root.tip-target-y : (root.tip-target-y + (tip-below ? -4px : 4px));
+        y: TooltipState.visible ? root.tip-target-y : (TooltipState.anchor-right ? root.tip-target-y : root.tip-target-y + (tip-below ? -3px : 3px));
         width: max(40px, tip-label.preferred-width + 18px);
         height: 26px;
         opacity: TooltipState.visible ? 1.0 : 0.0;
@@ -37,8 +49,8 @@ export component OverlayFeedbackLayer inherits Rectangle {
         border-width: 1px;
         border-color: Theme.hairline-strong;
         background: Theme.overlay-bg;
-        animate opacity { duration: Motion.fast; }
-        animate y { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
+        animate opacity { duration: TooltipState.instant ? 0ms : Motion.fast; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+        animate y { duration: TooltipState.instant ? 0ms : Motion.fast; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
         tip-label := Text {
             width: 100%;
@@ -61,10 +73,10 @@ export component OverlayFeedbackLayer inherits Rectangle {
         visible: self.opacity > 0.01;
         border-radius: Theme.radius-md;
         border-width: 1px;
-        border-color: root.toast-accent.with-alpha(0.55);
+        border-color: root.toast-accent.with-alpha(0.50);
         background: Theme.overlay-bg;
-        animate y { duration: Motion.fluid; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
-        animate opacity { duration: Motion.fast; }
+        animate y { duration: ToastState.open ? Motion.fluid : Motion.exit; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+        animate opacity { duration: ToastState.open ? Motion.fluid : Motion.exit; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
         TouchArea {
             enabled: ToastState.open;
@@ -75,16 +87,19 @@ export component OverlayFeedbackLayer inherits Rectangle {
         toast-row := HorizontalLayout {
             padding-left: 12px;
             padding-right: 12px;
-            padding-top: 9px;
-            padding-bottom: 9px;
+            padding-top: 8px;
+            padding-bottom: 8px;
             spacing: 8px;
 
-            Rectangle {
-                width: 3px;
-                height: 16px;
+            Image {
+                width: 14px;
+                height: 14px;
                 y: (parent.height - self.height) / 2;
-                border-radius: 2px;
-                background: root.toast-accent;
+                source:
+                    ToastState.tone == "success" ? @image-url("../icons/check.svg")
+                    : (ToastState.tone == "warn" || ToastState.tone == "error") ? @image-url("../icons/alert-triangle.svg")
+                    : @image-url("../icons/bolt.svg");
+                colorize: root.toast-accent;
             }
 
             Text {

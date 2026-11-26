@@ -1,0 +1,171 @@
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+
+// Unified flat-matte action button (replaces 7 duplicated local button components).
+export component NexusButton inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> has-icon: false;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> active: false;
+    in property <bool> warn: false;
+    in property <bool> enabled: true;
+    in property <length> btn-height: 32px;
+    callback clicked();
+
+    forward-focus: fs;
+    horizontal-stretch: 0;
+    height: root.btn-height;
+    border-radius: Theme.radius-md;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color:
+        fs.has-focus ? Theme.accent
+        : !root.enabled ? Theme.well-border
+        : root.danger ? Theme.error-border
+        : root.warn ? Theme.warn-border
+        : root.primary ? Theme.pill-active-top
+        : root.active ? Theme.selected-border
+        : ta.has-hover ? Theme.hairline-strong
+        : Theme.card-border;
+    background:
+        !root.enabled ? Theme.well-bg
+        : root.danger ? (ta.pressed ? Theme.error-fg.with-alpha(0.28) : ta.has-hover ? Theme.error-fg.with-alpha(0.20) : Theme.error-bg)
+        : root.warn ? Theme.warn-bg
+        : root.primary ? (ta.pressed ? Theme.pill-active-bot.darker(0.12) : ta.has-hover ? Theme.pill-active-bot.brighter(0.06) : Theme.pill-active-bot)
+        : root.active ? Theme.selected-bg
+        : ta.pressed ? Theme.nav-active-bg
+        : ta.has-hover ? Theme.row-hover-bg
+        : Theme.well-bg;
+    opacity: root.enabled ? 1.0 : 0.48;
+    transform-scale: (ta.pressed && root.enabled) ? 0.97 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: root.has-icon ? 10px : 12px;
+        padding-right: 12px;
+        spacing: 6px;
+        alignment: center;
+
+        if root.has-icon : Image {
+            width: 13px;
+            height: 13px;
+            y: (parent.height - self.height) / 2;
+            source: root.icon;
+            colorize:
+                !root.enabled ? Theme.text-muted
+                : root.danger ? Theme.error-fg
+                : root.warn ? Theme.warn-fg
+                : root.primary ? Theme.pill-active-fg
+                : root.active ? Theme.nav-active-fg
+                : ta.has-hover ? Theme.text-primary
+                : Theme.text-secondary;
+        }
+
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: (root.primary || root.active || root.danger) ? 700 : 600;
+            color:
+                !root.enabled ? Theme.text-muted
+                : root.danger ? Theme.error-fg
+                : root.warn ? Theme.warn-fg
+                : root.primary ? Theme.pill-active-fg
+                : root.active ? Theme.nav-active-fg
+                : Theme.text-primary;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// Unified flat-matte selectable chip (8px radius, keyboard focus ring, 0.97 press feedback).
+export component NexusChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> active: false;
+    in property <bool> warn-accent: false;
+    in property <bool> enabled: true;
+    in property <length> chip-height: 28px;
+    callback clicked();
+
+    forward-focus: fs;
+    horizontal-stretch: 0;
+    height: root.chip-height;
+    border-radius: root.chip-height <= 26px ? Theme.radius-sm : Theme.radius-md;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color:
+        fs.has-focus ? Theme.accent
+        : root.active ? (root.warn-accent ? Theme.warn-fg : Theme.selected-border)
+        : (ta.has-hover && root.enabled) ? Theme.hairline-strong
+        : Theme.well-border;
+    background:
+        root.active ? (root.warn-accent ? Theme.warn-bg : Theme.selected-bg)
+        : (ta.has-hover && root.enabled) ? Theme.row-hover-bg
+        : Theme.well-bg;
+    opacity: root.enabled ? 1.0 : 0.45;
+    transform-scale: (ta.pressed && root.enabled) ? 0.97 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+
+    fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: root.active ? 700 : 500;
+            color:
+                root.active ? (root.warn-accent ? Theme.warn-fg : Theme.nav-active-fg)
+                : ta.has-hover && root.enabled ? Theme.text-primary
+                : Theme.text-secondary;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}

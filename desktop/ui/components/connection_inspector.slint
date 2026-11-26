@@ -1,47 +1,53 @@
 import { ToastState } from "../feedback.slint";
 import { I18n } from "../i18n.slint";
-import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { ProportionBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
+import { NexusButton } from "nexus_buttons.slint";
 
-component MetaGridTile inherits Rectangle {
+component MetaKeyValueRow inherits VerticalLayout {
     in property <string> label;
     in property <string> value;
     in property <bool> mono: true;
     in property <bool> copyable: false;
+    in property <bool> accent-value: false;
+    in property <bool> show-divider: true;
     callback copy-clicked(string);
 
-    horizontal-stretch: 1;
-    preferred-width: 0px;
-    min-width: 0px;
-    height: 56px;
-    border-radius: 12px;
-    border-width: 1px;
-    border-color: Theme.well-border;
-    background: Theme.well-bg;
+    vertical-stretch: 0;
 
-    VerticalLayout {
-        padding-left: 11px;
-        padding-right: 8px;
-        padding-top: 7px;
-        padding-bottom: 8px;
-        alignment: space-between;
-        spacing: 3px;
+    HorizontalLayout {
+        height: 32px;
+        spacing: Theme.space-sm;
 
-        HorizontalLayout {
-            spacing: 4px;
-            Text {
-                text: root.label;
-                font-size: 10px;
-                font-weight: 600;
-                color: Theme.text-muted;
-                vertical-alignment: center;
-                horizontal-stretch: 1;
-                overflow: elide;
-            }
-            if root.copyable && root.value != "" : IconActionButton {
-                size: 18px;
+        Text {
+            horizontal-stretch: 0;
+            width: 68px;
+            text: root.label;
+            font-size: 11px;
+            font-weight: 600;
+            color: Theme.text-muted;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            text: root.value != "" ? root.value : "-";
+            font-size: 12px;
+            font-weight: root.accent-value ? 700 : 600;
+            font-family: root.mono ? Theme.mono-font : "";
+            color: root.accent-value ? Theme.nav-active-fg : Theme.text-primary;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        if root.copyable && root.value != "" : VerticalLayout {
+            alignment: center;
+            IconActionButton {
+                size: 20px;
                 icon: @image-url("../icons/copy.svg");
                 label: I18n.t("复制", "Copy");
                 clicked => {
@@ -50,42 +56,45 @@ component MetaGridTile inherits Rectangle {
                 }
             }
         }
-
-        Text {
-            text: root.value != "" ? root.value : "-";
-            font-size: 12px;
-            font-weight: 600;
-            font-family: root.mono ? Theme.mono-font : "";
-            color: Theme.text-primary;
-            overflow: elide;
-        }
     }
+
+    if root.show-divider : Rectangle { height: 1px; background: Theme.hairline-subtle; }
 }
 
-component CapsuleRuleOption inherits Rectangle {
+component RuleToneSegment inherits Rectangle {
     in property <string> label;
     in property <bool> active: false;
     in property <string> tone: "accent"; // "direct" | "accent" | "danger"
     callback clicked();
 
+    forward-focus: fs;
     horizontal-stretch: 1;
     preferred-width: 0px;
     min-width: 0px;
-    height: 30px;
-    border-radius: 15px;
-    border-width: root.active ? 1px : 0px;
-    border-color:
-        root.active
-            ? (root.tone == "danger" ? Theme.error-border : root.tone == "direct" ? Theme.success-border : Theme.pill-active-top.brighter(0.20))
-            : transparent;
+    height: 26px;
+    border-radius: Theme.radius-xs;
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: fs.has-focus ? Theme.accent : transparent;
     background:
         root.active
             ? (root.tone == "danger" ? Theme.pill-danger-bot
                 : root.tone == "direct" ? Theme.pill-direct-bot
                 : Theme.pill-active-bot)
             : ta.has-hover ? Theme.row-hover-bg : transparent;
-    animate border-color { duration: Motion.fast; }
-    animate background { duration: Motion.fast; }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -228,101 +237,46 @@ export component ConnectionInspectorCard inherits Rectangle {
             }
         }
 
-        // Visual Route Pipeline Pill Bar: [source/app] -> [rule] -> [outbound (radiant Cobalt pill!)]
-        if root.has-selection : Rectangle {
-            vertical-stretch: 0;
-            height: 46px;
-            border-radius: 14px;
-            border-width: 1px;
-            border-color: Theme.well-border;
-            background: Theme.well-bg;
+        if root.has-selection : Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; spacing: 6px;
-
-                Rectangle {
-                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                    height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
-                    border-width: 1px; border-color: Theme.well-border; background: Theme.inset-bg;
-                    HorizontalLayout {
-                        padding-left: 8px; padding-right: 8px;
-                        Text { text: root.source-chip; font-size: 11px; font-weight: 600; font-family: Theme.mono-font; color: Theme.text-primary; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-                    }
-                }
-
-                Text { text: "→"; font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
-
-                Rectangle {
-                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                    height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
-                    border-width: 1px; border-color: Theme.well-border; background: Theme.inset-bg;
-                    HorizontalLayout {
-                        padding-left: 8px; padding-right: 8px;
-                        Text { text: root.route-rule != "" ? root.route-rule : I18n.t("默认路由", "Default"); font-size: 11px; font-weight: 600; font-family: Theme.mono-font; color: Theme.text-secondary; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-                    }
-                }
-
-                Text { text: "→"; font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
-
-                Rectangle {
-                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                    height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
-                    border-width: 1px; border-color: Theme.pill-active-top;
-                    background: Theme.pill-active-bot;
-                    HorizontalLayout {
-                        padding-left: 8px; padding-right: 8px;
-                        Text { text: root.outbound != "" ? root.outbound : "-"; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.pill-active-fg; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-                    }
-                }
-            }
-        }
-
-        // 2x2 Concentric Metadata Tiles (Target / Rule / Source / App)
-        if root.has-selection : GridLayout {
-            vertical-stretch: 0;
-            spacing: 8px;
-            Row {
-                MetaGridTile { label: I18n.t("目标地址", "Target"); value: root.display-target; copyable: true; copy-clicked(v) => { root.copy-text(v); } }
-                MetaGridTile { label: I18n.t("规则命中", "Rule Match"); value: root.route-rule; copyable: true; copy-clicked(v) => { root.copy-text(v); } }
-            }
-            Row {
-                MetaGridTile { label: I18n.t("本地来源", "Source"); value: root.source-addr; }
-                MetaGridTile { label: I18n.t("所属进程", "Process"); value: root.process-path; }
-            }
-        }
-
-        // Luminous Traffic Distribution Card with Wave 7 glowing ProportionBar
-        if root.has-selection : Rectangle {
-            vertical-stretch: 0;
-            border-radius: 14px;
-            border-width: 1px;
-            border-color: Theme.telemetry-down.with-alpha(Theme.dark ? 0.30 : 0.22);
-            background: @linear-gradient(135deg, Theme.telemetry-down.with-alpha(Theme.dark ? 0.11 : 0.07) 0%, Theme.telemetry-up.with-alpha(Theme.dark ? 0.10 : 0.06) 100%);
-
-            VerticalLayout {
-                padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 11px;
-                spacing: 8px;
-
-                HorizontalLayout {
-                    spacing: 6px;
-                    Text { text: "↓ " + root.download-text; font-size: 12px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-stretch: 1; }
-                    Text { text: I18n.t("流量分布", "Traffic Split"); font-size: 11px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
-                    Text { text: "↑ " + root.upload-text; font-size: 12px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-stretch: 1; horizontal-alignment: right; }
-                }
-
-                ProportionBar {
-                    first-ratio: 1.0 - root.up-ratio;
-                    first-color: Theme.telemetry-down;
-                    second-color: Theme.telemetry-up;
-                    has-data: root.has-traffic;
-                }
-            }
-        }
-
-        // Quick Rule Deck (Recessed full-pill 3-option bar + Radiant CTA + Rose Close)
+        // Flat hairline-separated metadata rows (no redundant truncated pipeline or nested tiles)
         if root.has-selection : VerticalLayout {
             vertical-stretch: 0;
-            spacing: 10px;
+            MetaKeyValueRow { label: I18n.t("目标地址", "Target"); value: root.display-target; copyable: true; copy-clicked(v) => { root.copy-text(v); } }
+            MetaKeyValueRow { label: I18n.t("出口节点", "Outbound"); value: root.outbound; accent-value: true; }
+            MetaKeyValueRow { label: I18n.t("规则命中", "Rule Match"); value: root.route-rule != "" ? root.route-rule : I18n.t("默认路由", "Default"); copyable: root.route-rule != ""; copy-clicked(v) => { root.copy-text(v); } }
+            MetaKeyValueRow { label: I18n.t("本地来源", "Source"); value: root.source-addr; }
+            MetaKeyValueRow { label: I18n.t("所属进程", "Process"); value: root.process-path; show-divider: false; }
+        }
+
+        if root.has-selection : Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        // Flat matte Traffic Distribution section (zero gradients, zero nested card)
+        if root.has-selection : VerticalLayout {
+            vertical-stretch: 0;
+            spacing: Theme.space-sm;
+
+            HorizontalLayout {
+                spacing: 6px;
+                Text { text: "↓ " + root.download-text; font-size: 12px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-stretch: 1; }
+                Text { text: I18n.t("流量分布", "Traffic Split"); font-size: 11px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
+                Text { text: "↑ " + root.upload-text; font-size: 12px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-stretch: 1; horizontal-alignment: right; }
+            }
+
+            ProportionBar {
+                first-ratio: 1.0 - root.up-ratio;
+                first-color: Theme.telemetry-down;
+                second-color: Theme.telemetry-up;
+                has-data: root.has-traffic;
+            }
+        }
+
+        if root.has-selection : Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        // Quick Rule Deck (concentric 8px outer / 5px inner + unified 8px NexusButton actions)
+        if root.has-selection : VerticalLayout {
+            vertical-stretch: 0;
+            spacing: Theme.space-sm;
 
             Text {
                 text: I18n.t("快速分流", "Quick Rule");
@@ -332,66 +286,39 @@ export component ConnectionInspectorCard inherits Rectangle {
             }
 
             Rectangle {
-                height: 36px;
-                border-radius: 18px;
+                height: 32px;
+                border-radius: Theme.radius-md;
                 border-width: 1px;
                 border-color: Theme.well-border;
                 background: Theme.well-bg;
 
                 HorizontalLayout {
                     padding: 3px;
-                    spacing: 3px;
-                    CapsuleRuleOption { label: I18n.t("直连", "Direct"); tone: "direct"; active: root.eff-rule-action == "direct"; clicked => { root.custom-rule-action = "direct"; } }
-                    CapsuleRuleOption { label: I18n.t("代理", "Proxy"); active: root.eff-rule-action == "proxy"; clicked => { root.custom-rule-action = "proxy"; } }
-                    CapsuleRuleOption { label: I18n.t("拒绝", "Reject"); tone: "danger"; active: root.eff-rule-action == "reject"; clicked => { root.custom-rule-action = "reject"; } }
+                    spacing: 4px;
+                    RuleToneSegment { label: I18n.t("直连", "Direct"); tone: "direct"; active: root.eff-rule-action == "direct"; clicked => { root.custom-rule-action = "direct"; } }
+                    RuleToneSegment { label: I18n.t("代理", "Proxy"); active: root.eff-rule-action == "proxy"; clicked => { root.custom-rule-action = "proxy"; } }
+                    RuleToneSegment { label: I18n.t("拒绝", "Reject"); tone: "danger"; active: root.eff-rule-action == "reject"; clicked => { root.custom-rule-action = "reject"; } }
                 }
             }
 
             HorizontalLayout {
-                spacing: 8px;
+                spacing: Theme.space-sm;
 
-                Rectangle {
+                NexusButton {
                     horizontal-stretch: 1;
-                    height: 36px;
-                    border-radius: Theme.radius-md;
-                    border-width: 1px;
-                    border-color: Theme.pill-active-top;
-                    background: rule-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot;
-
-                    rule-ta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => {
-                            root.create-rule-from-connection(root.display-target, root.dest-port, root.protocol, root.outbound, root.eff-rule-action);
-                        }
-                    }
-
-                    HorizontalLayout {
-                        alignment: center;
-                        padding-left: 12px; padding-right: 12px;
-                        spacing: 6px;
-                        Image { width: 14px; height: 14px; y: (parent.height - self.height) / 2; source: @image-url("../icons/wand.svg"); colorize: Theme.pill-active-fg; }
-                        Text { text: I18n.t("添加分流规则", "Add Rule"); font-size: 12px; font-weight: 700; color: Theme.pill-active-fg; vertical-alignment: center; overflow: elide; }
+                    has-icon: true;
+                    icon: @image-url("../icons/wand.svg");
+                    label: I18n.t("添加分流规则", "Add Rule");
+                    primary: true;
+                    clicked => {
+                        root.create-rule-from-connection(root.display-target, root.dest-port, root.protocol, root.outbound, root.eff-rule-action);
                     }
                 }
 
-                if root.conn-id != "" : Rectangle {
-                    horizontal-stretch: 0;
-                    height: 36px;
-                    border-radius: 12px;
-                    border-width: 1px;
-                    border-color: Theme.error-border;
-                    background: cls-ta.pressed ? Theme.error-fg.with-alpha(0.32) : cls-ta.has-hover ? Theme.error-fg.with-alpha(0.24) : Theme.error-bg;
-                    transform-scale: cls-ta.pressed ? 0.96 : 1.0;
-                    animate background { duration: Motion.fast; }
-                    animate transform-scale { duration: Motion.micro; }
-                    cls-ta := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.close-connection(root.conn-id); }
-                    }
-                    HorizontalLayout {
-                        padding-left: 14px; padding-right: 14px;
-                        Text { text: I18n.t("断开", "Close"); font-size: 12px; font-weight: 700; color: Theme.error-fg; vertical-alignment: center; }
-                    }
+                if root.conn-id != "" : NexusButton {
+                    label: I18n.t("断开", "Close");
+                    danger: true;
+                    clicked => { root.close-connection(root.conn-id); }
                 }
             }
         }

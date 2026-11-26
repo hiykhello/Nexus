@@ -9,22 +9,23 @@ component KpiTile inherits Rectangle {
     in property <string> sub-text;
     in property <color> value-color: Theme.text-primary;
     in property <color> dot-color: Theme.accent;
+    in property <bool> compact: false;
 
     horizontal-stretch: 1;
     preferred-width: 0px;
     min-width: 0px;
-    height: 68px;
+    height: root.compact ? 52px : 68px;
     border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
 
     VerticalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        padding-top: 9px;
-        padding-bottom: 9px;
-        spacing: 4px;
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        padding-top: root.compact ? 6px : 8px;
+        padding-bottom: root.compact ? 6px : 8px;
+        spacing: root.compact ? 2px : 4px;
         alignment: center;
 
         HorizontalLayout {
@@ -60,7 +61,7 @@ component KpiTile inherits Rectangle {
 
         Text {
             text: root.value;
-            font-size: 20px;
+            font-size: root.compact ? 17px : 20px;
             font-weight: 800;
             font-family: Theme.mono-font;
             letter-spacing: -0.3px;
@@ -152,12 +153,14 @@ export component ConnectionsKpiStrip inherits VerticalLayout {
         spacing: Theme.space-sm;
         Row {
             KpiTile {
+                compact: true;
                 label: I18n.t("活跃连接", "Active");
                 value: "\{root.total-count}";
                 sub-text: root.total-count > 0 ? "T:\{root.tcp-count} U:\{root.udp-count}" : I18n.t("待命", "Idle");
                 dot-color: root.total-count > 0 ? Theme.success-fg : Theme.offline-fg;
             }
             KpiTile {
+                compact: true;
                 label: I18n.t("代理占比", "Proxy Share");
                 value: root.total-count > 0 ? "\{root.proxy-pct}%" : "--";
                 sub-text: root.total-count > 0 ? I18n.t("直连 ", "Direct ") + "\{root.direct-pct}%" : "";
@@ -167,6 +170,7 @@ export component ConnectionsKpiStrip inherits VerticalLayout {
         }
         Row {
             KpiTile {
+                compact: true;
                 label: I18n.t("实时下载", "Download");
                 value: root.download-rate;
                 sub-text: root.download-total;
@@ -174,6 +178,7 @@ export component ConnectionsKpiStrip inherits VerticalLayout {
                 dot-color: Theme.telemetry-down;
             }
             KpiTile {
+                compact: true;
                 label: I18n.t("实时上传", "Upload");
                 value: root.upload-rate;
                 sub-text: root.upload-total;

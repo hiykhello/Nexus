@@ -1,5 +1,6 @@
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
+import { NexusButton } from "nexus_buttons.slint";
 
 export component ProportionBar inherits Rectangle {
     in property <float> first-ratio: 0.5;
@@ -24,7 +25,6 @@ export component ProportionBar inherits Rectangle {
         height: parent.height;
         border-radius: root.bar-height / 2;
         background: root.first-color;
-        animate width { duration: Motion.fast; }
     }
 
     if root.has-data && root.has-second && (1.0 - root.clamped-r) > 0.005 : Rectangle {
@@ -34,33 +34,6 @@ export component ProportionBar inherits Rectangle {
         height: parent.height;
         border-radius: root.bar-height / 2;
         background: root.second-color;
-        animate x { duration: Motion.fast; }
-        animate width { duration: Motion.fast; }
-    }
-}
-
-export component KbdChip inherits Rectangle {
-    in property <string> keys;
-
-    vertical-stretch: 0;
-    width: kbd-row.preferred-width;
-    height: 20px;
-    border-radius: Theme.radius-xs;
-    border-width: 1px;
-    border-color: Theme.well-border;
-    background: Theme.inset-bg;
-
-    kbd-row := HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        Text {
-            text: root.keys;
-            font-size: 10px;
-            font-weight: 700;
-            font-family: Theme.mono-font;
-            color: Theme.text-muted;
-            vertical-alignment: center;
-        }
     }
 }
 
@@ -73,23 +46,36 @@ export component SlidingSegmentBar inherits Rectangle {
     property <int> count: max(1, root.options.length);
     property <length> seg-w: max(0px, (root.width - 6px - 4px * (root.count - 1)) / root.count);
 
+    forward-focus: fs;
     vertical-stretch: 0;
     min-width: 0px;
     height: root.bar-height;
     border-radius: Theme.radius-md;
-    border-width: 1px;
-    border-color: Theme.well-border;
+    border-width: fs.has-focus ? 2px : 1px;
+    border-color: fs.has-focus ? Theme.accent : Theme.well-border;
     background: Theme.well-bg;
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.RightArrow && root.count > 1) {
+                root.selected(Math.mod(clamp(root.current-index, 0, root.count - 1) + 1, root.count));
+                return accept;
+            }
+            if (ev.text == Key.LeftArrow && root.count > 1) {
+                root.selected(Math.mod(clamp(root.current-index, 0, root.count - 1) - 1 + root.count, root.count));
+                return accept;
+            }
+            reject
+        }
+    }
 
     Rectangle {
         x: 3px + clamp(root.current-index, 0, root.count - 1) * (root.seg-w + 4px);
         y: 3px;
         width: root.seg-w;
         height: max(0px, parent.height - 6px);
-        border-radius: Theme.radius-sm;
+        border-radius: Theme.radius-xs;
         background: Theme.pill-active-bot;
-        animate x { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
-        animate width { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
     }
 
     HorizontalLayout {
@@ -101,9 +87,8 @@ export component SlidingSegmentBar inherits Rectangle {
             min-width: 0px;
             preferred-width: 0px;
             horizontal-stretch: 1;
-            border-radius: Theme.radius-sm;
+            border-radius: Theme.radius-xs;
             background: !is-active && seg-ta.has-hover ? Theme.row-hover-bg : transparent;
-            animate background { duration: Motion.micro; }
 
             accessible-role: tab;
             accessible-label: opt;
@@ -124,7 +109,6 @@ export component SlidingSegmentBar inherits Rectangle {
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 overflow: elide;
-                animate color { duration: Motion.fast; }
             }
         }
     }
@@ -258,11 +242,12 @@ export component EmptyStateCard inherits Rectangle {
     in property <string> title;
     in property <string> subtitle: "";
     in property <string> action-label: "";
+    in property <bool> primary-cta: true;
     in property <string> secondary-action-label: "";
     callback action-clicked();
     callback secondary-action-clicked();
 
-    vertical-stretch: 0;
+    vertical-stretch: 1;
     border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
@@ -316,63 +301,15 @@ export component EmptyStateCard inherits Rectangle {
             padding-top: 4px;
             spacing: Theme.space-sm;
 
-            if root.action-label != "" : Rectangle {
-                height: 32px;
-                border-radius: Theme.radius-md;
-                border-width: 1px;
-                border-color: Theme.pill-active-top;
-                background: cta-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot;
-
-                accessible-role: button;
-                accessible-label: root.action-label;
-                accessible-action-default => { root.action-clicked(); }
-
-                cta-ta := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.action-clicked(); }
-                }
-
-                HorizontalLayout {
-                    padding-left: 14px;
-                    padding-right: 14px;
-                    Text {
-                        text: root.action-label;
-                        font-size: 12px;
-                        font-weight: 700;
-                        color: Theme.pill-active-fg;
-                        vertical-alignment: center;
-                    }
-                }
+            if root.action-label != "" : NexusButton {
+                label: root.action-label;
+                primary: root.primary-cta;
+                clicked => { root.action-clicked(); }
             }
 
-            if root.secondary-action-label != "" : Rectangle {
-                height: 32px;
-                border-radius: Theme.radius-md;
-                border-width: 1px;
-                border-color: sec-ta.has-hover ? Theme.selected-border : Theme.card-border;
-                background: sec-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
-                animate background { duration: Motion.fast; }
-
-                accessible-role: button;
-                accessible-label: root.secondary-action-label;
-                accessible-action-default => { root.secondary-action-clicked(); }
-
-                sec-ta := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.secondary-action-clicked(); }
-                }
-
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    Text {
-                        text: root.secondary-action-label;
-                        font-size: 12px;
-                        font-weight: 600;
-                        color: Theme.text-primary;
-                        vertical-alignment: center;
-                    }
-                }
+            if root.secondary-action-label != "" : NexusButton {
+                label: root.secondary-action-label;
+                clicked => { root.secondary-action-clicked(); }
             }
         }
     }

@@ -1,7 +1,6 @@
 import { TooltipState } from "../feedback.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
-import { Motion } from "../motion.slint";
 import { Shortcuts } from "../shortcuts.slint";
 import { Theme } from "../theme.slint";
 
@@ -15,17 +14,29 @@ component NavRailItem inherits Rectangle {
 
     private property <bool> tip-armed: false;
 
+    forward-focus: fs;
     height: 36px;
     border-radius: Theme.radius-md;
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: fs.has-focus ? Theme.accent : transparent;
     background:
         root.active ? Theme.nav-active-bg
         : ta.has-hover ? Theme.nav-hover-bg
         : transparent;
-    animate background { duration: Motion.fast; }
 
     accessible-role: tab;
     accessible-label: root.label;
     accessible-action-default => { root.triggered(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                root.triggered();
+                return accept;
+            }
+            reject
+        }
+    }
 
     Timer {
         interval: 260ms;
@@ -33,7 +44,7 @@ component NavRailItem inherits Rectangle {
         triggered => {
             root.tip-armed = false;
             if (ta.has-hover && root.collapsed) {
-                TooltipState.show(
+                TooltipState.show-right(
                     root.tip-text != "" ? root.tip-text : root.label,
                     root.absolute-position.x,
                     root.absolute-position.y,
@@ -48,7 +59,18 @@ component NavRailItem inherits Rectangle {
         mouse-cursor: pointer;
         changed has-hover => {
             if (self.has-hover && root.collapsed) {
-                root.tip-armed = true;
+                if (TooltipState.visible || TooltipState.warm) {
+                    root.tip-armed = false;
+                    TooltipState.show-right(
+                        root.tip-text != "" ? root.tip-text : root.label,
+                        root.absolute-position.x,
+                        root.absolute-position.y,
+                        root.width,
+                        root.height
+                    );
+                } else {
+                    root.tip-armed = true;
+                }
             } else {
                 root.tip-armed = false;
                 TooltipState.hide();
@@ -106,14 +128,26 @@ component RailUtilityButton inherits Rectangle {
 
     private property <bool> tip-armed: false;
 
+    forward-focus: fs;
     height: 34px;
     border-radius: Theme.radius-md;
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: fs.has-focus ? Theme.accent : transparent;
     background: ta.pressed ? Theme.nav-active-bg : ta.has-hover ? Theme.nav-hover-bg : transparent;
-    animate background { duration: Motion.fast; }
 
     accessible-role: button;
     accessible-label: root.label;
     accessible-action-default => { root.clicked(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
 
     Timer {
         interval: 260ms;
@@ -121,7 +155,7 @@ component RailUtilityButton inherits Rectangle {
         triggered => {
             root.tip-armed = false;
             if (ta.has-hover && root.collapsed) {
-                TooltipState.show(
+                TooltipState.show-right(
                     root.tip-text != "" ? root.tip-text : root.label,
                     root.absolute-position.x,
                     root.absolute-position.y,
@@ -136,7 +170,18 @@ component RailUtilityButton inherits Rectangle {
         mouse-cursor: pointer;
         changed has-hover => {
             if (self.has-hover && root.collapsed) {
-                root.tip-armed = true;
+                if (TooltipState.visible || TooltipState.warm) {
+                    root.tip-armed = false;
+                    TooltipState.show-right(
+                        root.tip-text != "" ? root.tip-text : root.label,
+                        root.absolute-position.x,
+                        root.absolute-position.y,
+                        root.width,
+                        root.height
+                    );
+                } else {
+                    root.tip-armed = true;
+                }
             } else {
                 root.tip-armed = false;
                 TooltipState.hide();
@@ -194,7 +239,6 @@ export component Sidebar inherits Rectangle {
     horizontal-stretch: 0;
     background: Theme.sidebar-card-bg;
     clip: true;
-    animate width { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
 
     VerticalLayout {
         padding-left: 7px;

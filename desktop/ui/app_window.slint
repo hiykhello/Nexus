@@ -396,13 +396,14 @@ export component AppWindow inherits Window {
                             }
 
                             if active-tab == 3 : ProfilesPanel {
-                                vertical-stretch: 1; share-link-input <=> root.share-link-input;
+                                vertical-stretch: 1;
                                 diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok;
                                 refresh-profiles => { root.refresh-profiles(); }
-                                import-share-link(uri) => { root.import-share-link(uri); }
+                                open-add-outbound => { root.rule-modal-open = false; root.outbound-modal-open = true; }
                             }
 
                             if active-tab == 4 : LogsPanel {
+                                window-width: root.width;
                                 vertical-stretch: 1; logs: root.logs; log-level <=> root.log-level; domain-filter <=> root.log-domain-filter;
                                 search-text <=> root.log-search; sev-choice <=> root.log-sev-choice;
                                 export-status: root.log-export-status; export-ok: root.log-export-ok;
@@ -424,7 +425,6 @@ export component AppWindow inherits Window {
                                 tray-prefs-changed => { root.tray-prefs-changed(); }
                                 ui-prefs-changed => { root.ui-prefs-changed(); }
                                 grant-tun-privilege => { root.grant-tun-privilege(); } revoke-tun-privilege => { root.revoke-tun-privilege(); }
-                                open-rule-modal(tab) => { root.outbound-modal-open = false; root.rule-modal-tab = tab; root.rule-modal-open = true; }
                             }
                         }
                     }
