@@ -6,7 +6,6 @@ import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { OutboundGroupItem, OutboundMemberItem } from "../types.slint";
 import { EmptyStateCard, NexusInput, NexusVScrollBar } from "glass_primitives.slint";
-import { FloatingProbeFab } from "floating_fabs.slint";
 import { GroupMemberCard } from "group_member_card.slint";
 import { GroupRail, GroupSummaryStrip } from "group_rail.slint";
 import { IconActionButton } from "icon_button.slint";
@@ -26,19 +25,11 @@ component CapsulePillButton inherits Rectangle {
         : root.active ? Theme.selected-border
         : ta.has-hover ? Theme.hairline-strong : Theme.card-border;
     background:
-        root.primary
-            ? (ta.pressed
-                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+        root.primary ? (ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot)
         : root.active ? Theme.selected-bg
         : ta.has-hover ? Theme.row-hover-bg
         : Theme.row-bg;
-    drop-shadow-blur: root.primary ? 10px : 0px;
-    drop-shadow-offset-y: root.primary ? 2px : 0px;
-    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.42 : 0.26);
-    transform-scale: ta.pressed ? 0.96 : 1.0;
     animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
 
     accessible-role: button;
     accessible-label: root.text;
@@ -159,7 +150,7 @@ export component GroupsPanel inherits VerticalLayout {
             min-width: 0px;
             spacing: 10px;
 
-            // De-duplicated Flagship Toolbar (bottom-right FloatingProbeFab owns 一键测速!)
+            // Matte Toolbar (includes inline Probe action; no floating FAB!)
             HorizontalLayout {
                 vertical-stretch: 0;
                 padding-right: 18px;
@@ -195,6 +186,13 @@ export component GroupsPanel inherits VerticalLayout {
                         root.hide-timeout = !root.hide-timeout;
                         root.hide-timeout-changed(root.hide-timeout);
                     }
+                }
+
+                if root.selected-group != "" : CapsulePillButton {
+                    icon: @image-url("../icons/bolt.svg");
+                    text: root.probing ? I18n.t("测速中...", "Probing...") : I18n.t("测速", "Probe");
+                    active: root.probing;
+                    clicked => { if (!root.probing) { root.probe-group(root.selected-group); } }
                 }
 
                 CapsulePillButton {
@@ -271,7 +269,7 @@ export component GroupsPanel inherits VerticalLayout {
                         x: 0px;
                         y: 0px;
                         width: sv.visible-width;
-                        padding-bottom: 72px;
+                        padding-bottom: 12px;
                         alignment: start;
 
                         property <length> grid-w: max(0px, sv.visible-width - 18px);
@@ -319,13 +317,6 @@ export component GroupsPanel inherits VerticalLayout {
                     viewport-size: sv.visible-height;
                     content-size: sv.content-height;
                     scroll-pos <=> sv.content-y;
-                }
-
-                if root.selected-group != "" : FloatingProbeFab {
-                    x: parent.width - self.width - 18px;
-                    y: parent.height - self.height - 8px;
-                    probing: root.probing;
-                    clicked => { root.probe-group(root.selected-group); }
                 }
             }
         }

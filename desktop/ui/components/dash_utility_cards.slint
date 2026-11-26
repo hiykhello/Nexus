@@ -1,0 +1,444 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { OutboundGroupItem } from "../types.slint";
+
+component CardIconTrigger inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    horizontal-stretch: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: ta.has-hover && root.enabled ? Theme.selected-border : Theme.well-border;
+    background: ta.has-hover && root.enabled ? Theme.row-hover-bg : Theme.well-bg;
+    opacity: root.enabled ? 1.0 : 0.45;
+    animate background { duration: Motion.fast; }
+
+    accessible-role: button;
+    accessible-label: root.tip;
+    accessible-action-default => { if (root.enabled) { root.clicked(); } }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+
+    Image {
+        x: 5px;
+        y: 5px;
+        width: 14px;
+        height: 14px;
+        source: root.icon;
+        colorize: ta.has-hover && root.enabled ? Theme.accent : Theme.text-secondary;
+    }
+}
+
+component ProbeRow inherits HorizontalLayout {
+    in property <string> name;
+    in property <int> ms: -1;
+
+    height: 28px;
+    spacing: 6px;
+
+    Rectangle {
+        width: 6px;
+        height: 6px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 3px;
+        background: root.ms > 0 ? Theme.latency-fg(root.ms, "healthy") : (root.ms == 0 ? Theme.error-fg : Theme.offline-fg);
+    }
+
+    Text {
+        horizontal-stretch: 1;
+        min-width: 0px;
+        text: root.name;
+        font-size: 12px;
+        font-weight: 500;
+        color: Theme.text-primary;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    Rectangle {
+        horizontal-stretch: 0;
+        height: 20px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 5px;
+        background: Theme.latency-bg(root.ms, root.ms == 0 ? "timeout" : "");
+        HorizontalLayout {
+            padding-left: 7px;
+            padding-right: 7px;
+            Text {
+                text: root.ms > 0 ? "\{root.ms} ms" : (root.ms == 0 ? I18n.t("超时", "Timeout") : "--");
+                font-size: 10px;
+                font-weight: 700;
+                font-family: Theme.mono-font;
+                color: Theme.latency-fg(root.ms, root.ms == 0 ? "timeout" : "");
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component ServiceHealthCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> probe-busy: false;
+    in property <int> google-ms: -1;
+    in property <int> cf-ms: -1;
+    in property <int> github-ms: -1;
+    in property <int> youtube-ms: -1;
+    callback probe-connectivity();
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 13px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 6px;
+            Text {
+                horizontal-stretch: 1;
+                text: I18n.t("服务状态", "Service Health");
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+            CardIconTrigger {
+                icon: @image-url("../icons/refresh.svg");
+                tip: I18n.t("重新检测", "Re-check");
+                enabled: root.core-running && !root.probe-busy;
+                clicked => { root.probe-connectivity(); }
+            }
+        }
+
+        VerticalLayout {
+            vertical-stretch: 1;
+            alignment: space-between;
+            spacing: 2px;
+            ProbeRow { name: "Google"; ms: root.google-ms; }
+            ProbeRow { name: "Cloudflare"; ms: root.cf-ms; }
+            ProbeRow { name: "GitHub"; ms: root.github-ms; }
+            ProbeRow { name: "YouTube"; ms: root.youtube-ms; }
+        }
+    }
+}
+
+export component RoutingSummaryCard inherits Rectangle {
+    in property <string> routing-name: "";
+    in property <int> rule-count: 0;
+    in property <string> outbound-mode: "rule";
+    callback open-rules();
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 13px;
+        spacing: 8px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 6px;
+            Text {
+                horizontal-stretch: 1;
+                text: I18n.t("分流规则", "Routing Rules");
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+            CardIconTrigger {
+                icon: @image-url("../icons/settings.svg");
+                tip: I18n.t("规则与 DNS 诊断", "Rules & DNS Diagnostics");
+                clicked => { root.open-rules(); }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 4px;
+            Text {
+                text: "\{root.rule-count}";
+                font-size: 24px;
+                font-weight: 800;
+                font-family: Theme.mono-font;
+                color: Theme.text-primary;
+            }
+            Text {
+                text: root.routing-name != "" ? root.routing-name : I18n.t("内置默认分流方案", "Default Routing Preset");
+                font-size: 11px;
+                color: Theme.text-secondary;
+                overflow: elide;
+            }
+        }
+
+        Rectangle {
+            height: 28px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: diag-ta.has-hover ? Theme.selected-border : Theme.well-border;
+            background: diag-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+            animate background { duration: Motion.fast; }
+
+            diag-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open-rules(); }
+            }
+
+            HorizontalLayout {
+                padding-left: 9px;
+                padding-right: 9px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: I18n.t("规则测试与 DNS 查询", "Explain & Live DNS");
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: Theme.text-primary;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    text: ">";
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component ModeOptionRow inherits Rectangle {
+    in property <string> label;
+    in property <string> desc;
+    in property <bool> active: false;
+    callback selected();
+
+    height: 36px;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: root.active ? Theme.selected-border : (ta.has-hover ? Theme.hairline-strong : Theme.well-border);
+    background: root.active ? Theme.selected-bg : (ta.has-hover ? Theme.row-hover-bg : Theme.well-bg);
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.selected(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+
+        Rectangle {
+            width: 7px;
+            height: 7px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3.5px;
+            background: root.active ? Theme.accent : Theme.offline-fg;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            text: root.label;
+            font-size: 12px;
+            font-weight: root.active ? 700 : 500;
+            color: root.active ? Theme.nav-active-fg : Theme.text-primary;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.desc;
+            font-size: 10px;
+            color: Theme.text-muted;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component OutboundModeCard inherits Rectangle {
+    in property <string> outbound-mode: "rule";
+    callback switch-outbound-mode(string);
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 13px;
+        spacing: 8px;
+
+        Text {
+            text: I18n.t("出站模式", "Outbound Mode");
+            font-size: 12px;
+            font-weight: 700;
+            color: Theme.text-primary;
+        }
+
+        VerticalLayout {
+            vertical-stretch: 1;
+            alignment: space-between;
+            spacing: 6px;
+            ModeOptionRow {
+                label: I18n.t("规则", "Rule");
+                desc: I18n.t("智能分流", "Smart");
+                active: root.outbound-mode != "global" && root.outbound-mode != "direct";
+                selected => { root.switch-outbound-mode("rule"); }
+            }
+            ModeOptionRow {
+                label: I18n.t("全局", "Global");
+                desc: I18n.t("全走代理", "All Proxy");
+                active: root.outbound-mode == "global";
+                selected => { root.switch-outbound-mode("global"); }
+            }
+            ModeOptionRow {
+                label: I18n.t("直连", "Direct");
+                desc: I18n.t("绕过代理", "Bypass");
+                active: root.outbound-mode == "direct";
+                selected => { root.switch-outbound-mode("direct"); }
+            }
+        }
+    }
+}
+
+component GroupPillTile inherits Rectangle {
+    in property <OutboundGroupItem> group;
+    in property <bool> selected: false;
+    callback clicked();
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: root.selected ? Theme.selected-border : (ta.has-hover ? Theme.hairline-strong : Theme.well-border);
+    background: root.selected ? Theme.selected-bg : (ta.has-hover ? Theme.row-hover-bg : Theme.well-bg);
+    animate background { duration: Motion.fast; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        alignment: center;
+        spacing: 2px;
+
+        Text {
+            text: root.group.tag;
+            font-size: 11px;
+            font-weight: 700;
+            color: root.selected ? Theme.nav-active-fg : Theme.text-primary;
+            overflow: elide;
+        }
+        Text {
+            text: root.group.active-member != "" ? root.group.active-member : "--";
+            font-size: 10px;
+            font-family: Theme.mono-font;
+            color: Theme.text-muted;
+            overflow: elide;
+        }
+    }
+}
+
+export component PolicyGroupsCard inherits Rectangle {
+    in property <[OutboundGroupItem]> groups: [];
+    in property <string> selected-group: "";
+    callback choose-group(string);
+    callback open-groups();
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 13px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 6px;
+            Text {
+                horizontal-stretch: 1;
+                text: I18n.t("策略组", "Policy Groups");
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+            CardIconTrigger {
+                icon: @image-url("../icons/groups.svg");
+                tip: I18n.t("管理代理节点", "Manage Proxies");
+                clicked => { root.open-groups(); }
+            }
+        }
+
+        if root.groups.length == 0 : VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: 3px;
+            Text { text: I18n.t("暂无策略组", "No groups"); font-size: 12px; font-weight: 600; color: Theme.text-secondary; horizontal-alignment: center; }
+            Text { text: I18n.t("启动代理后自动加载", "Loads on start"); font-size: 10px; color: Theme.text-muted; horizontal-alignment: center; }
+        }
+
+        if root.groups.length > 0 : VerticalLayout {
+            vertical-stretch: 1;
+            spacing: 6px;
+
+            HorizontalLayout {
+                vertical-stretch: 1;
+                spacing: 6px;
+                if root.groups.length > 0 : GroupPillTile {
+                    group: root.groups[0];
+                    selected: root.groups[0].tag == root.selected-group;
+                    clicked => { root.choose-group(root.groups[0].tag); root.open-groups(); }
+                }
+                if root.groups.length > 1 : GroupPillTile {
+                    group: root.groups[1];
+                    selected: root.groups[1].tag == root.selected-group;
+                    clicked => { root.choose-group(root.groups[1].tag); root.open-groups(); }
+                }
+            }
+
+            if root.groups.length > 2 : HorizontalLayout {
+                vertical-stretch: 1;
+                spacing: 6px;
+                GroupPillTile {
+                    group: root.groups[2];
+                    selected: root.groups[2].tag == root.selected-group;
+                    clicked => { root.choose-group(root.groups[2].tag); root.open-groups(); }
+                }
+                if root.groups.length > 3 : GroupPillTile {
+                    group: root.groups[3];
+                    selected: root.groups[3].tag == root.selected-group;
+                    clicked => { root.choose-group(root.groups[3].tag); root.open-groups(); }
+                }
+            }
+        }
+    }
+}

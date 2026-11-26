@@ -1,8 +1,9 @@
 import { ScrollView } from "std-widgets.slint";
-import { GlassSpeculum, NexusVScrollBar } from "glass_primitives.slint";
+import { NexusVScrollBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
+import { OutboundNodeDraft } from "../types.slint";
 import { OutboundEditorTab } from "outbound_editor_tab.slint";
 
 // Centered modal dialog for creating a new Outbound node
@@ -11,7 +12,7 @@ export component OutboundModalDialog inherits Rectangle {
     in property <bool> editor-ok: true;
 
     callback close-requested();
-    callback append-raw-kdl(string);
+    callback add-outbound-node(OutboundNodeDraft);
 
     background: Theme.modal-backdrop;
 
@@ -25,18 +26,14 @@ export component OutboundModalDialog inherits Rectangle {
         height: min(self.max-dialog-h, max(280px, 62px + modal-body.preferred-height));
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        border-radius: 20px;
+        border-radius: Theme.radius-card;
         border-width: 1px;
         border-color: Theme.modal-border;
         background: Theme.overlay-bg;
-        drop-shadow-blur: 36px;
-        drop-shadow-offset-y: 12px;
-        drop-shadow-color: Theme.modal-shadow;
         clip: true;
 
         // Absorb clicks inside modal sheet so backdrop does not dismiss
         TouchArea {}
-        GlassSpeculum {}
 
         VerticalLayout {
             // Modal header bar: icon badge + title + active protocol pill + close button
@@ -144,7 +141,7 @@ export component OutboundModalDialog inherits Rectangle {
                             container-width: max(0px, modal-sv.visible-width - 40px);
                             status-text: root.editor-status;
                             status-ok: root.editor-ok;
-                            append-raw-kdl(snippet) => { root.append-raw-kdl(snippet); }
+                            add-outbound-node(draft) => { root.add-outbound-node(draft); }
                         }
                     }
                 }

@@ -3,52 +3,11 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { GlassSpeculum, NexusInput, NexusVScrollBar } from "glass_primitives.slint";
+import { NexusInput, NexusVScrollBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { WorkspaceProfilesView, WorkspaceSubscriptionsView } from "workspace_panels.slint";
 import { WorkspaceRoutingDnsView } from "workspace_routing_dns_view.slint";
 import { WorkspaceHostPortableView } from "workspace_host_view.slint";
-
-component SecondaryFileChip inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    in property <bool> show-label: true;
-    callback clicked();
-
-    horizontal-stretch: 0;
-    height: 26px;
-    border-radius: 9px;
-    border-width: 1px;
-    border-color: ta.has-hover ? Theme.selected-border : Theme.well-border;
-    background: ta.pressed ? Theme.nav-active-bg : ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
-    transform-scale: ta.pressed ? 0.96 : 1.0;
-    animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-
-    HorizontalLayout {
-        padding-left: 8px;
-        padding-right: root.show-label ? 9px : 8px;
-        spacing: 5px;
-        Image {
-            width: 12px; height: 12px;
-            y: (parent.height - self.height) / 2;
-            source: root.icon;
-            colorize: ta.has-hover ? Theme.nav-active-fg : Theme.text-secondary;
-        }
-        if root.show-label : Text {
-            text: root.label;
-            font-size: 11px; font-weight: 600;
-            color: ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-            vertical-alignment: center;
-        }
-    }
-}
 
 component WorkspaceSubTabPill inherits Rectangle {
     in property <string> label;
@@ -74,17 +33,12 @@ component WorkspaceSubTabPill inherits Rectangle {
 
 export component ProfilesPanel inherits VerticalLayout {
     in-out property <string> share-link-input: "";
-    in property <string> config-path: "";
-    in property <int> kdl-line-count: 0;
     in property <string> diagnostic-message: "";
     in property <bool> diagnostic-ok: true;
 
     callback refresh-profiles();
     callback import-share-link(string);
-    callback open-external-editor();
-    callback reload-config-from-disk();
 
-    property <bool> show-file-labels: root.width >= 618px;
     spacing: Theme.space-md;
 
     // Unified 4-Layer Workspace Sub-Tab Bar + Quick Share-URI Import
@@ -107,7 +61,7 @@ export component ProfilesPanel inherits VerticalLayout {
                 WorkspaceSubTabPill { label: I18n.t("配置项", "Profiles"); active: WorkspaceState.active-subtab == 0; clicked => { WorkspaceState.active-subtab = 0; } }
                 WorkspaceSubTabPill { label: I18n.t("订阅", "Subs"); active: WorkspaceState.active-subtab == 1; clicked => { WorkspaceState.active-subtab = 1; } }
                 WorkspaceSubTabPill { label: I18n.t("路由与 DNS", "Route & DNS"); active: WorkspaceState.active-subtab == 2; clicked => { WorkspaceState.active-subtab = 2; } }
-                WorkspaceSubTabPill { label: I18n.t("本机宿主", "Host"); active: WorkspaceState.active-subtab == 3; clicked => { WorkspaceState.active-subtab = 3; } }
+                WorkspaceSubTabPill { label: I18n.t("本机设置", "Local"); active: WorkspaceState.active-subtab == 3; clicked => { WorkspaceState.active-subtab = 3; } }
             }
         }
 
@@ -131,63 +85,6 @@ export component ProfilesPanel inherits VerticalLayout {
             label: I18n.t("刷新", "Refresh");
             spin-on-click: true;
             clicked => { root.refresh-profiles(); }
-        }
-    }
-
-    // Slim active compiled config bar (path + line count + External Editor + Reload from Disk)
-    HorizontalLayout {
-        vertical-stretch: 0;
-        padding-right: 18px;
-
-        Rectangle {
-            horizontal-stretch: 1; min-width: 0px; height: 40px;
-            border-radius: 14px; border-width: 1px;
-            border-color: Theme.card-border; background: Theme.card-surface;
-            GlassSpeculum { corner-inset: 12px; }
-
-            HorizontalLayout {
-                padding-left: 12px; padding-right: 8px; spacing: 8px;
-                Image {
-                    width: 13px; height: 13px; y: (parent.height - self.height) / 2;
-                    source: @image-url("../icons/config.svg"); colorize: Theme.text-muted;
-                }
-                Text {
-                    horizontal-stretch: 1; min-width: 0px;
-                    text: root.config-path != "" ? root.config-path : "~/.config/nexus/config.kdl";
-                    font-size: 11px; font-family: Theme.mono-font;
-                    color: Theme.text-secondary; vertical-alignment: center; overflow: elide;
-                }
-                if root.kdl-line-count > 0 && root.show-file-labels : Rectangle {
-                    horizontal-stretch: 0; height: 20px; y: (parent.height - self.height) / 2;
-                    border-radius: 7px; border-width: 1px; border-color: Theme.well-border; background: Theme.well-bg;
-                    HorizontalLayout {
-                        padding-left: 7px; padding-right: 7px;
-                        Text {
-                            text: I18n.t("\{root.kdl-line-count} 行", "\{root.kdl-line-count}L");
-                            font-size: 10px; font-weight: 600; font-family: Theme.mono-font;
-                            color: Theme.text-muted; vertical-alignment: center;
-                        }
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    SecondaryFileChip {
-                        icon: @image-url("../icons/external-link.svg");
-                        label: I18n.t("外部编辑器", "External");
-                        show-label: root.show-file-labels;
-                        clicked => { root.open-external-editor(); }
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    SecondaryFileChip {
-                        icon: @image-url("../icons/reload.svg");
-                        label: I18n.t("从磁盘重载", "Reload Disk");
-                        show-label: root.show-file-labels;
-                        clicked => { root.reload-config-from-disk(); }
-                    }
-                }
-            }
         }
     }
 

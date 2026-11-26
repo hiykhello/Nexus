@@ -3,7 +3,7 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 
@@ -85,7 +85,6 @@ export component WorkspaceRoutingDnsView inherits VerticalLayout {
     Rectangle {
         width: root.grid-w; border-radius: 16px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 14px; }
         VerticalLayout {
             padding: 12px; spacing: 8px;
 
@@ -145,7 +144,7 @@ export component WorkspaceRoutingDnsView inherits VerticalLayout {
             HorizontalLayout {
                 spacing: 8px;
                 NexusInput { horizontal-stretch: 44; preferred-width: 0px; min-width: 96px; mono: true; text <=> WorkspaceState.rule-match-input; placeholder-text: I18n.t("域名 / CIDR (如 example.com)", "Domain / CIDR"); }
-                NexusInput { horizontal-stretch: 32; preferred-width: 0px; min-width: 84px; mono: true; text <=> WorkspaceState.rule-desktop-process; placeholder-text: I18n.t("桌面进程名 (desktop_process)", "Desktop process name"); }
+                NexusInput { horizontal-stretch: 32; preferred-width: 0px; min-width: 84px; mono: true; text <=> WorkspaceState.rule-desktop-process; placeholder-text: I18n.t("桌面进程名（可选）", "Desktop process name"); }
                 if WorkspaceState.rule-target-type == "profile_id" : NexusInput { horizontal-stretch: 24; preferred-width: 0px; min-width: 72px; mono: true; text <=> WorkspaceState.rule-target-profile-id; placeholder-text: I18n.t("目标 ID", "Target ID"); }
                 IconActionButton {
                     icon: @image-url("../icons/plus.svg"); label: I18n.t("加规则", "Add Rule"); primary: true;
@@ -171,14 +170,13 @@ export component WorkspaceRoutingDnsView inherits VerticalLayout {
     Rectangle {
         width: root.grid-w; border-radius: 16px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 14px; }
         VerticalLayout {
             padding: 12px; spacing: 8px;
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: I18n.t("DNS 模式", "DNS Mode"); font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; }
-                VerticalLayout { alignment: center; RoutePillOption { label: I18n.t("简易 DNS", "SimpleDNS"); active: WorkspaceState.dns-mode == "simple"; clicked => { WorkspaceState.dns-mode = "simple"; } } }
-                VerticalLayout { alignment: center; RoutePillOption { label: I18n.t("原始 KDL", "RawDNS"); active: WorkspaceState.dns-mode == "raw_kdl"; clicked => { WorkspaceState.dns-mode = "raw_kdl"; } } }
+                VerticalLayout { alignment: center; RoutePillOption { label: I18n.t("简易 DNS", "Simple DNS"); active: WorkspaceState.dns-mode == "simple"; clicked => { WorkspaceState.dns-mode = "simple"; } } }
+                VerticalLayout { alignment: center; RoutePillOption { label: I18n.t("自定义 DNS", "Custom DNS"); active: WorkspaceState.dns-mode == "raw_kdl"; clicked => { WorkspaceState.dns-mode = "raw_kdl"; } } }
                 Rectangle { horizontal-stretch: 1; }
                 RouteActionButton {
                     icon: @image-url("../icons/check.svg"); label: I18n.t("应用 DNS", "Apply DNS"); primary: true;
@@ -200,7 +198,7 @@ export component WorkspaceRoutingDnsView inherits VerticalLayout {
             }
             if WorkspaceState.dns-mode == "raw_kdl" : NexusInput {
                 mono: true; text <=> WorkspaceState.dns-raw-kdl;
-                placeholder-text: I18n.t("粘贴原始 KDL dns { ... } 片段...", "Paste raw KDL dns { ... } block...");
+                placeholder-text: I18n.t("粘贴自定义 DNS 规则配置...", "Paste custom DNS configuration...");
             }
             FlexboxLayout {
                 spacing: 8px;

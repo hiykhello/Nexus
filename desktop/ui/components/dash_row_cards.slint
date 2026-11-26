@@ -1,0 +1,318 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { ActiveConnectionItem } from "../types.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+component CardActionLink inherits Rectangle {
+    in property <string> label;
+    callback clicked();
+
+    horizontal-stretch: 0;
+    height: 22px;
+    border-radius: Theme.radius-xs;
+    background: ta.has-hover ? Theme.row-hover-bg : transparent;
+    animate background { duration: Motion.fast; }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        Text {
+            text: root.label;
+            font-size: 11px;
+            font-weight: 600;
+            color: ta.has-hover ? Theme.accent : Theme.text-secondary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component ConnPreviewRow inherits Rectangle {
+    in property <ActiveConnectionItem> item;
+
+    height: 28px;
+    border-radius: 6px;
+    background: Theme.well-bg;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+
+        Text {
+            width: 36px;
+            text: root.item.protocol == "udp/quic" ? "QUIC" : root.item.protocol == "tcp/tls" ? "TLS" : root.item.protocol;
+            font-size: 10px;
+            font-weight: 700;
+            font-family: Theme.mono-font;
+            color: Theme.accent;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            text: root.item.target != "" ? root.item.target : root.item.path;
+            font-size: 11px;
+            font-weight: 600;
+            color: Theme.text-primary;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            width: 66px;
+            text: root.item.outbound != "" ? root.item.outbound : root.item.path;
+            font-size: 10px;
+            font-weight: 600;
+            font-family: Theme.mono-font;
+            color: root.item.outbound == "direct" ? Theme.success-fg : Theme.text-secondary;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        Text {
+            width: 58px;
+            text: root.item.download-text;
+            font-size: 10px;
+            font-family: Theme.mono-font;
+            color: Theme.telemetry-down;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component ConnectionsPreviewCard inherits Rectangle {
+    in property <int> active-sessions: 0;
+    in property <[ActiveConnectionItem]> connections: [];
+    callback open-connections();
+
+    property <int> display-count: root.active-sessions > 0 ? root.active-sessions : root.connections.length;
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 13px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+
+            Text {
+                text: I18n.t("活动连接", "Active Connections");
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+
+            Rectangle {
+                height: 20px;
+                min-width: 24px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 10px;
+                background: root.display-count > 0 ? Theme.accent-soft : Theme.well-bg;
+                HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 7px;
+                    Text {
+                        text: "\{root.display-count}";
+                        font-size: 10px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: root.display-count > 0 ? Theme.nav-active-fg : Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            CardActionLink {
+                label: I18n.t("详情 >", "Details >");
+                clicked => { root.open-connections(); }
+            }
+        }
+
+        if root.connections.length == 0 : VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: I18n.t("暂无活跃连接", "No active connections");
+                font-size: 12px;
+                font-weight: 600;
+                color: Theme.text-secondary;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: I18n.t("产生代理流量后将在此展示前 4 条实时会话", "Top 4 live streams appear here once traffic flows");
+                font-size: 11px;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        if root.connections.length > 0 : VerticalLayout {
+            vertical-stretch: 1;
+            alignment: start;
+            spacing: 5px;
+            if root.connections.length > 0 : ConnPreviewRow { item: root.connections[0]; }
+            if root.connections.length > 1 : ConnPreviewRow { item: root.connections[1]; }
+            if root.connections.length > 2 : ConnPreviewRow { item: root.connections[2]; }
+            if root.connections.length > 3 : ConnPreviewRow { item: root.connections[3]; }
+        }
+    }
+}
+
+component QuickSwitchTile inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    height: 66px;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: root.checked ? Theme.selected-border : Theme.card-border;
+    background: root.checked ? Theme.selected-bg : Theme.card-surface;
+    animate border-color { duration: Motion.fast; }
+    animate background { duration: Motion.fast; }
+
+    HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 12px;
+        spacing: 8px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.title;
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                overflow: elide;
+            }
+            Text {
+                text: root.subtitle;
+                font-size: 11px;
+                font-family: Theme.mono-font;
+                color: root.checked ? Theme.nav-active-fg : Theme.text-muted;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            NexusSwitch {
+                checked: root.checked;
+                enabled: root.enabled;
+                auto-toggle: false;
+                toggled => { root.toggled(!root.checked); }
+            }
+        }
+    }
+}
+
+export component QuickSwitchRow inherits VerticalLayout {
+    in property <bool> compact: false;
+    in property <bool> mixed-enabled: true;
+    in property <string> mixed-port: "7890";
+    in property <bool> lan-enabled: false;
+    in property <string> lan-subtitle: "";
+    in property <bool> sys-proxy-supported: true;
+    in property <bool> sys-proxy-enabled: false;
+    in property <bool> tun-enabled: false;
+
+    callback toggle-mixed-port(bool);
+    callback toggle-lan-share(bool);
+    callback toggle-system-proxy(bool);
+    callback toggle-tun(bool);
+
+    vertical-stretch: 0;
+    spacing: 10px;
+
+    if !root.compact : HorizontalLayout {
+        spacing: 10px;
+        QuickSwitchTile {
+            title: I18n.t("端口代理", "Port Proxy");
+            subtitle: root.mixed-enabled ? "Mixed :" + root.mixed-port : I18n.t("已关闭", "Disabled");
+            checked: root.mixed-enabled;
+            toggled(on) => { root.toggle-mixed-port(on); }
+        }
+        QuickSwitchTile {
+            title: I18n.t("局域网代理", "LAN Proxy");
+            subtitle: root.lan-enabled ? (root.lan-subtitle != "" ? "0.0.0.0" + root.lan-subtitle : I18n.t("已开放", "Open")) : I18n.t("仅本机", "Local only");
+            checked: root.lan-enabled;
+            toggled(on) => { root.toggle-lan-share(on); }
+        }
+        QuickSwitchTile {
+            title: I18n.t("系统代理", "System Proxy");
+            subtitle: !root.sys-proxy-supported ? I18n.t("不支持", "Unsupported") : root.sys-proxy-enabled ? I18n.t("已接管", "Active") : I18n.t("未启用", "Off");
+            checked: root.sys-proxy-enabled;
+            enabled: root.sys-proxy-supported;
+            toggled(on) => { root.toggle-system-proxy(on); }
+        }
+        QuickSwitchTile {
+            title: I18n.t("TUN 模式", "TUN Mode");
+            subtitle: root.tun-enabled ? I18n.t("全局虚拟网卡", "Virtual NIC") : I18n.t("未启用", "Off");
+            checked: root.tun-enabled;
+            toggled(on) => { root.toggle-tun(on); }
+        }
+    }
+
+    if root.compact : GridLayout {
+        spacing: 8px;
+        Row {
+            QuickSwitchTile {
+                title: I18n.t("端口代理", "Port Proxy");
+                subtitle: root.mixed-enabled ? "Mixed :" + root.mixed-port : I18n.t("已关闭", "Disabled");
+                checked: root.mixed-enabled;
+                toggled(on) => { root.toggle-mixed-port(on); }
+            }
+            QuickSwitchTile {
+                title: I18n.t("局域网代理", "LAN Proxy");
+                subtitle: root.lan-enabled ? (root.lan-subtitle != "" ? "0.0.0.0" + root.lan-subtitle : I18n.t("已开放", "Open")) : I18n.t("仅本机", "Local only");
+                checked: root.lan-enabled;
+                toggled(on) => { root.toggle-lan-share(on); }
+            }
+        }
+        Row {
+            QuickSwitchTile {
+                title: I18n.t("系统代理", "System Proxy");
+                subtitle: !root.sys-proxy-supported ? I18n.t("不支持", "Unsupported") : root.sys-proxy-enabled ? I18n.t("已接管", "Active") : I18n.t("未启用", "Off");
+                checked: root.sys-proxy-enabled;
+                enabled: root.sys-proxy-supported;
+                toggled(on) => { root.toggle-system-proxy(on); }
+            }
+            QuickSwitchTile {
+                title: I18n.t("TUN 模式", "TUN Mode");
+                subtitle: root.tun-enabled ? I18n.t("全局虚拟网卡", "Virtual NIC") : I18n.t("未启用", "Off");
+                checked: root.tun-enabled;
+                toggled(on) => { root.toggle-tun(on); }
+            }
+        }
+    }
+}

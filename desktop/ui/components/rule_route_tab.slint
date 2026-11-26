@@ -1,8 +1,8 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { RouteRuleDraft } from "../types.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { NexusSwitch } from "nexus_controls.slint";
-import { CollapsibleSection, NexusSelect } from "nexus_select.slint";
 import { ConditionRow, RuleActionBar, RuleChipButton } from "rule_builder_parts.slint";
 
 export component RuleRouteTab inherits VerticalLayout {
@@ -14,104 +14,50 @@ export component RuleRouteTab inherits VerticalLayout {
 
     in-out property <bool> use-rule-set: false;
     in-out property <string> rule-set-name: "geosite-cn";
-    in-out property <bool> ip-cidr-match-source: false;
-    in-out property <bool> match-any: false;
     in-out property <int> cond-count: 1;
 
-    in-out property <bool> c1-negate: false;
     in-out property <string> c2-kind: "port";
     in-out property <string> c2-value: "443";
-    in-out property <bool> c2-negate: false;
     in-out property <string> c3-kind: "network";
     in-out property <string> c3-value: "tcp";
-    in-out property <bool> c3-negate: false;
     in-out property <string> c4-kind: "protocol";
     in-out property <string> c4-value: "tls";
-    in-out property <bool> c4-negate: false;
 
-    in-out property <string> domain-source: "default";
     in-out property <string> action-kind: "route";
-    in-out property <string> connect-timeout-ms: "";
-    in-out property <string> reject-method: "default";
-    in-out property <bool> reject-no-drop: false;
-    in-out property <bool> resolve-route-only: false;
     in-out property <bool> tls-fragment: false;
-    in-out property <string> tls-frag-min: "16";
-    in-out property <string> tls-frag-max: "64";
-    in-out property <string> udp-timeout-ms: "";
-    in-out property <bool> udp-adaptive: false;
-    in-out property <bool> advanced-open: false;
 
-    callback append-route-rule-kdl(string);
+    callback add-route-rule(RouteRuleDraft);
 
-    property <int> adv-active-count:
-        (root.domain-source != "default" ? 1 : 0)
-        + (root.connect-timeout-ms != "" ? 1 : 0)
-        + (root.tls-fragment ? 1 : 0)
-        + (root.udp-adaptive ? 1 : 0);
-
-    pure function format-pred(k: string, v: string, neg: bool, indent: string) -> string {
-        let val = v == "" ? "example.com" : v;
-        let quoted = "\"" + val + "\"";
-        let leaf = (k == "port" || k == "source-port" || k == "dscp") ? k + " " + val
-            : k == "ip-is-private" ? k + " #" + (val == "false" ? "false" : "true")
-            : k + " " + quoted;
-        return neg ? indent + "not {\n" + indent + "    " + leaf + "\n" + indent + "}"
-            : indent + leaf;
-    }
-
-    pure function build-options-props() -> string {
-        let timeout-p = root.connect-timeout-ms != "" ? " connect-timeout-ms=" + root.connect-timeout-ms : "";
-        let frag-p = root.tls-fragment
-            ? " tls-record-fragment=#true tls-fragment-min=" + (root.tls-frag-min == "" ? "16" : root.tls-frag-min)
-                + " tls-fragment-max=" + (root.tls-frag-max == "" ? "64" : root.tls-frag-max)
-            : "";
-        let udp-to-p = root.udp-timeout-ms != "" ? " udp-timeout-ms=" + root.udp-timeout-ms : "";
-        let udp-ad-p = root.udp-adaptive ? " udp-adaptive-timeout=#true" : "";
-        return (root.action-kind == "route" || root.action-kind == "route-options")
-            ? timeout-p + frag-p + udp-to-p + udp-ad-p
-            : root.action-kind == "bypass" ? timeout-p : "";
-    }
-
-    pure function build-rule-body-indented(base: string) -> string {
-        let action-prop = "action=\"" + root.action-kind + "\"";
-        let out-name = root.target-outbound == "" ? "proxy" : root.target-outbound;
-        let out-prop = (root.action-kind == "route" || (root.action-kind == "bypass" && root.target-outbound != ""))
-            ? " outbound=\"" + out-name + "\"" : "";
-        let dom-prop = root.domain-source != "default" ? " domain-source=\"" + root.domain-source + "\"" : "";
-        let rej-prop = root.action-kind == "reject"
-            ? (root.reject-method == "drop" ? " method=\"drop\"" : "")
-                + (root.reject-no-drop ? " no-drop=#true" : "")
-            : "";
-        let res-prop = (root.action-kind == "resolve" && root.resolve-route-only) ? " route-only=#true" : "";
-        let header = base + "rule " + action-prop + out-prop + dom-prop + rej-prop + res-prop + root.build-options-props();
-        let rs = root.rule-set-name == "" ? "geosite-cn" : root.rule-set-name;
-        let rs-props = " rule-set=\"" + rs + "\"" + (root.ip-cidr-match-source ? " ip-cidr-match-source=#true" : "");
-        let use-or = root.match-any && root.cond-count > 1;
-        let pad = use-or ? base + "        " : base + "    ";
-        let p1 = root.format-pred(root.primary-kind, root.primary-value, root.c1-negate, pad);
-        let p2 = root.cond-count >= 2 ? "\n" + root.format-pred(root.c2-kind, root.c2-value, root.c2-negate, pad) : "";
-        let p3 = root.cond-count >= 3 ? "\n" + root.format-pred(root.c3-kind, root.c3-value, root.c3-negate, pad) : "";
-        let p4 = root.cond-count >= 4 ? "\n" + root.format-pred(root.c4-kind, root.c4-value, root.c4-negate, pad) : "";
-        let body = use-or ? base + "    or {\n" + p1 + p2 + p3 + p4 + "\n" + base + "    }" : p1 + p2 + p3 + p4;
-        return root.use-rule-set ? header + rs-props : header + " {\n" + body + "\n" + base + "}";
-    }
-
-    pure function build-rule-body() -> string {
-        root.build-rule-body-indented("")
+    pure function current-draft() -> RouteRuleDraft {
+        {
+            use-rule-set: root.use-rule-set,
+            rule-set-name: root.rule-set-name,
+            cond-count: root.cond-count,
+            c1-kind: root.primary-kind,
+            c1-value: root.primary-value,
+            c2-kind: root.c2-kind,
+            c2-value: root.c2-value,
+            c3-kind: root.c3-kind,
+            c3-value: root.c3-value,
+            c4-kind: root.c4-kind,
+            c4-value: root.c4-value,
+            action-kind: root.action-kind,
+            target-outbound: root.target-outbound,
+            tls-fragment: root.tls-fragment,
+        }
     }
 
     function remove-cond(idx: int) {
         if (root.cond-count <= 1) { return; }
         if (idx == 1) {
-            root.primary-kind = root.c2-kind; root.primary-value = root.c2-value; root.c1-negate = root.c2-negate;
-            root.c2-kind = root.c3-kind; root.c2-value = root.c3-value; root.c2-negate = root.c3-negate;
-            root.c3-kind = root.c4-kind; root.c3-value = root.c4-value; root.c3-negate = root.c4-negate;
+            root.primary-kind = root.c2-kind; root.primary-value = root.c2-value;
+            root.c2-kind = root.c3-kind; root.c2-value = root.c3-value;
+            root.c3-kind = root.c4-kind; root.c3-value = root.c4-value;
         } else if (idx == 2) {
-            root.c2-kind = root.c3-kind; root.c2-value = root.c3-value; root.c2-negate = root.c3-negate;
-            root.c3-kind = root.c4-kind; root.c3-value = root.c4-value; root.c3-negate = root.c4-negate;
+            root.c2-kind = root.c3-kind; root.c2-value = root.c3-value;
+            root.c3-kind = root.c4-kind; root.c3-value = root.c4-value;
         } else if (idx == 3) {
-            root.c3-kind = root.c4-kind; root.c3-value = root.c4-value; root.c3-negate = root.c4-negate;
+            root.c3-kind = root.c4-kind; root.c3-value = root.c4-value;
         }
         root.cond-count -= 1;
     }
@@ -119,22 +65,12 @@ export component RuleRouteTab inherits VerticalLayout {
     function reset-form() {
         root.use-rule-set = false;
         root.rule-set-name = "geosite-cn";
-        root.ip-cidr-match-source = false;
-        root.match-any = false;
         root.cond-count = 1;
         root.primary-kind = "domain-suffix";
         root.primary-value = "example.com";
-        root.c1-negate = false;
         root.action-kind = "route";
         root.target-outbound = "proxy";
-        root.domain-source = "default";
-        root.connect-timeout-ms = "";
-        root.reject-method = "default";
-        root.reject-no-drop = false;
-        root.resolve-route-only = false;
         root.tls-fragment = false;
-        root.udp-timeout-ms = "";
-        root.udp-adaptive = false;
     }
 
     vertical-stretch: 0;
@@ -146,112 +82,66 @@ export component RuleRouteTab inherits VerticalLayout {
         border-color: Theme.card-border;
         background: Theme.card-surface;
 
-        GlassSpeculum {}
 
         VerticalLayout {
             alignment: start;
             padding: Theme.space-lg;
             spacing: Theme.space-md;
 
-            // 1. Predicate composer
+            // 1. Match predicates
             VerticalLayout {
                 spacing: Theme.space-sm;
 
                 HorizontalLayout {
                     spacing: 6px;
-                    RuleChipButton { label: I18n.t("多条件组合", "Multi-Predicate"); active: !root.use-rule-set; clicked => { root.use-rule-set = false; } }
+                    RuleChipButton { label: I18n.t("多条件组合", "Predicates"); active: !root.use-rule-set; clicked => { root.use-rule-set = false; } }
                     RuleChipButton { label: I18n.t("规则集", "Rule Set"); active: root.use-rule-set; clicked => { root.use-rule-set = true; } }
                     Rectangle { horizontal-stretch: 1; }
-                    if !root.use-rule-set && root.cond-count > 1 : RuleChipButton { label: "AND"; active: !root.match-any; clicked => { root.match-any = false; } }
-                    if !root.use-rule-set && root.cond-count > 1 : RuleChipButton { label: "OR"; active: root.match-any; clicked => { root.match-any = true; } }
                     if !root.use-rule-set && root.cond-count < 4 : RuleChipButton { label: I18n.t("+ 条件", "+ Cond"); clicked => { root.cond-count += 1; } }
                 }
 
-                if !root.use-rule-set : ConditionRow { kind <=> root.primary-kind; value <=> root.primary-value; negate <=> root.c1-negate; removable: root.cond-count > 1; remove-requested => { root.remove-cond(1); } }
-                if !root.use-rule-set && root.cond-count >= 2 : ConditionRow { kind <=> root.c2-kind; value <=> root.c2-value; negate <=> root.c2-negate; removable: root.cond-count > 1; remove-requested => { root.remove-cond(2); } }
-                if !root.use-rule-set && root.cond-count >= 3 : ConditionRow { kind <=> root.c3-kind; value <=> root.c3-value; negate <=> root.c3-negate; removable: root.cond-count > 1; remove-requested => { root.remove-cond(3); } }
-                if !root.use-rule-set && root.cond-count >= 4 : ConditionRow { kind <=> root.c4-kind; value <=> root.c4-value; negate <=> root.c4-negate; removable: root.cond-count > 1; remove-requested => { root.remove-cond(4); } }
+                if !root.use-rule-set : ConditionRow { kind <=> root.primary-kind; value <=> root.primary-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(1); } }
+                if !root.use-rule-set && root.cond-count >= 2 : ConditionRow { kind <=> root.c2-kind; value <=> root.c2-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(2); } }
+                if !root.use-rule-set && root.cond-count >= 3 : ConditionRow { kind <=> root.c3-kind; value <=> root.c3-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(3); } }
+                if !root.use-rule-set && root.cond-count >= 4 : ConditionRow { kind <=> root.c4-kind; value <=> root.c4-value; removable: root.cond-count > 1; remove-requested => { root.remove-cond(4); } }
 
                 if root.use-rule-set : HorizontalLayout {
                     spacing: Theme.space-sm;
                     Text { text: I18n.t("规则集名", "Rule Set"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
                     NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.rule-set-name; placeholder-text: "geosite-cn / geoip-cn"; }
-                    NexusSwitch { text: I18n.t("源 CIDR", "Source CIDR"); checked <=> root.ip-cidr-match-source; }
                 }
             }
 
             Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
-            // 2. Action & tuning
+            // 2. Action & outbound target
             VerticalLayout {
                 spacing: Theme.space-sm;
 
-                FlexboxLayout {
+                HorizontalLayout {
                     spacing: 6px;
-                    RuleChipButton { label: "route"; active: root.action-kind == "route"; clicked => { root.action-kind = "route"; } }
-                    RuleChipButton { label: "reject"; warn-accent: true; active: root.action-kind == "reject"; clicked => { root.action-kind = "reject"; } }
-                    RuleChipButton { label: "bypass"; active: root.action-kind == "bypass"; clicked => { root.action-kind = "bypass"; } }
-                    RuleChipButton { label: "sniff"; active: root.action-kind == "sniff"; clicked => { root.action-kind = "sniff"; } }
-                    RuleChipButton { label: "resolve"; active: root.action-kind == "resolve"; clicked => { root.action-kind = "resolve"; } }
-                    RuleChipButton { label: "hijack-dns"; active: root.action-kind == "hijack-dns"; clicked => { root.action-kind = "hijack-dns"; } }
-                    RuleChipButton { label: "options"; active: root.action-kind == "route-options"; clicked => { root.action-kind = "route-options"; } }
+                    RuleChipButton { label: I18n.t("代理 / 分流", "Route"); active: root.action-kind == "route"; clicked => { root.action-kind = "route"; } }
+                    RuleChipButton { label: I18n.t("直连绕过", "Direct"); active: root.action-kind == "bypass"; clicked => { root.action-kind = "bypass"; } }
+                    RuleChipButton { label: I18n.t("拦截拒绝", "Block"); warn-accent: true; active: root.action-kind == "reject"; clicked => { root.action-kind = "reject"; } }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.action-kind != "reject" : NexusSwitch { text: I18n.t("TLS 分片", "TLS Fragment"); checked <=> root.tls-fragment; }
                 }
 
-                if root.action-kind == "route" || root.action-kind == "bypass" : HorizontalLayout {
+                if root.action-kind == "route" : HorizontalLayout {
                     spacing: Theme.space-sm;
                     Text { text: I18n.t("目标出站", "Outbound"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                    NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.target-outbound; placeholder-text: "proxy / direct"; }
-                }
-
-                if root.action-kind == "reject" : HorizontalLayout {
-                    spacing: Theme.space-sm;
-                    Text { text: I18n.t("拒绝策略", "Reject Method"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                    RuleChipButton { label: "default (RST)"; warn-accent: true; active: root.reject-method == "default"; clicked => { root.reject-method = "default"; } }
-                    RuleChipButton { label: "drop"; warn-accent: true; active: root.reject-method == "drop"; clicked => { root.reject-method = "drop"; } }
-                    NexusSwitch { text: "no-drop"; checked <=> root.reject-no-drop; }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-
-                if root.action-kind == "resolve" : HorizontalLayout {
-                    spacing: Theme.space-sm;
-                    NexusSwitch { text: "route-only"; checked <=> root.resolve-route-only; }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-
-                CollapsibleSection {
-                    title: I18n.t("高级调优选项", "Advanced Options");
-                    badge: root.adv-active-count > 0 ? I18n.t("\{root.adv-active-count} 项已配置", "\{root.adv-active-count} set") : "";
-                    expanded <=> root.advanced-open;
-
-                    HorizontalLayout {
-                        spacing: Theme.space-sm;
-                        Text { text: I18n.t("域名来源", "Domain Source"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                        NexusSelect { width: 124px; options: ["default", "explicit", "sniffed", "fakeip", "reverse"]; current-value <=> root.domain-source; }
-                        Text { text: I18n.t("超时(ms)", "Timeout"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                        NexusInput { width: 80px; mono: true; text <=> root.connect-timeout-ms; placeholder-text: I18n.t("可选", "Opt"); }
-                        Rectangle { horizontal-stretch: 1; }
-                    }
-
-                    if root.action-kind == "route" || root.action-kind == "route-options" : HorizontalLayout {
-                        spacing: Theme.space-sm;
-                        NexusSwitch { text: I18n.t("TLS 分片", "TLS Fragment"); checked <=> root.tls-fragment; }
-                        if root.tls-fragment : NexusInput { width: 52px; mono: true; text <=> root.tls-frag-min; placeholder-text: "16"; }
-                        if root.tls-fragment : Text { text: "-"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                        if root.tls-fragment : NexusInput { width: 52px; mono: true; text <=> root.tls-frag-max; placeholder-text: "64"; }
-                        NexusSwitch { text: I18n.t("UDP 自适应", "Adaptive UDP"); checked <=> root.udp-adaptive; }
-                        Rectangle { horizontal-stretch: 1; }
-                    }
+                    NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.target-outbound; placeholder-text: "proxy / direct / profile-id"; }
                 }
             }
 
             Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
-            // 3. Action bar (Reset + Add to Config)
+            // 3. Action bar (Reset + Add Rule)
             RuleActionBar {
-                button-text: I18n.t("添加到配置", "Add to Config");
+                button-text: I18n.t("添加规则", "Add Rule");
                 status-text: root.status-text;
                 status-ok: root.status-ok;
-                commit => { root.append-route-rule-kdl(root.build-rule-body()); }
+                commit => { root.add-route-rule(root.current-draft()); }
                 reset => { root.reset-form(); }
             }
         }

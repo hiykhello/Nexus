@@ -1,9 +1,9 @@
-import { Motion } from "../motion.slint";
-import { GlassSpeculum, SlidingSegmentBar } from "glass_primitives.slint";
-import { NexusSlider, NexusSwitch } from "nexus_controls.slint";
-import { RuleChipButton } from "rule_builder_parts.slint";
 import { I18n, LanguagePreference } from "../i18n.slint";
-import { AccentPreset, MaterialPreset, Theme, ThemePreference } from "../theme.slint";
+import { Motion } from "../motion.slint";
+import { AccentPreset, Theme, ThemePreference } from "../theme.slint";
+import { SlidingSegmentBar } from "glass_primitives.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+import { RuleChipButton } from "rule_builder_parts.slint";
 
 component AccentChip inherits Rectangle {
     in property <string> label;
@@ -16,35 +16,25 @@ component AccentChip inherits Rectangle {
     border-width: 1px;
     border-color: root.selected ? root.swatch-color : Theme.well-border;
     background:
-        root.selected ? root.swatch-color.with-alpha(Theme.dark ? 0.24 : 0.14)
+        root.selected ? root.swatch-color.with-alpha(Theme.dark ? 0.22 : 0.14)
         : ta.has-hover ? Theme.row-hover-bg
         : Theme.well-bg;
-    transform-scale: ta.pressed ? 0.96 : root.selected ? 1.02 : 1.0;
-    drop-shadow-blur: root.selected ? 8px : 0px;
-    drop-shadow-color: root.swatch-color.with-alpha(Theme.dark ? 0.34 : 0.22);
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
 
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.chosen(); } }
 
     HorizontalLayout {
         padding-left: 9px;
-        padding-right: 10px;
+        padding-right: 11px;
         spacing: 6px;
 
         Rectangle {
-            width: 12px; height: 12px; border-radius: 6px;
+            width: 10px;
+            height: 10px;
             y: (parent.height - self.height) / 2;
-            border-width: root.selected ? 1.5px : 0px;
-            border-color: root.swatch-color.with-alpha(0.55);
-            background: root.selected ? root.swatch-color.with-alpha(0.20) : transparent;
-
-            Rectangle {
-                x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-                width: 8px; height: 8px; border-radius: 4px;
-                background: root.swatch-color;
-            }
+            border-radius: 5px;
+            background: root.swatch-color;
         }
 
         Text {
@@ -57,120 +47,20 @@ component AccentChip inherits Rectangle {
     }
 }
 
-component SettingsToggleRow inherits HorizontalLayout {
-    in property <string> label;
-    in-out property <bool> checked: false;
-    in property <bool> auto-toggle: true;
-    callback toggled();
+export component ThemeStudioCard inherits Rectangle {
+    in property <length> window-width: 1280px;
+    callback prefs-changed();
 
     vertical-stretch: 0;
-    height: 30px;
-    spacing: Theme.space-md;
-
-    Text {
-        horizontal-stretch: 1;
-        text: root.label;
-        font-size: 13px;
-        font-weight: 500;
-        color: Theme.text-primary;
-        vertical-alignment: center;
-        overflow: elide;
-    }
-
-    VerticalLayout {
-        alignment: center;
-        NexusSwitch {
-            auto-toggle: root.auto-toggle;
-            checked <=> root.checked;
-            toggled => { root.toggled(); }
-        }
-    }
-}
-
-component ThemeIdentityCard inherits Rectangle {
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         alignment: start;
         padding: Theme.space-lg;
         spacing: 14px;
-
-        Text {
-            text: I18n.t("主题与语言", "Theme & Language");
-            font-size: 14px; font-weight: 700; color: Theme.text-primary;
-        }
-
-        HorizontalLayout {
-            vertical-stretch: 0;
-            spacing: Theme.space-md;
-            Text { width: 64px; text: I18n.t("外观", "Theme"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
-            SlidingSegmentBar {
-                horizontal-stretch: 1;
-                bar-height: 32px;
-                options: [I18n.t("跟随系统", "System"), I18n.t("浅色", "Light"), I18n.t("深色", "Dark")];
-                current-index: Theme.preference == ThemePreference.light ? 1 : Theme.preference == ThemePreference.dark ? 2 : 0;
-                selected(idx) => {
-                    Theme.apply-preference(idx == 1 ? ThemePreference.light : idx == 2 ? ThemePreference.dark : ThemePreference.system);
-                }
-            }
-        }
-
-        HorizontalLayout {
-            vertical-stretch: 0;
-            spacing: Theme.space-md;
-            Text { width: 64px; text: I18n.t("语言", "Language"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
-            SlidingSegmentBar {
-                horizontal-stretch: 1;
-                bar-height: 32px;
-                options: [I18n.t("跟随系统", "System"), "简体中文", "English"];
-                current-index: I18n.preference == LanguagePreference.zh-cn ? 1 : I18n.preference == LanguagePreference.en-us ? 2 : 0;
-                selected(idx) => {
-                    I18n.preference = idx == 1 ? LanguagePreference.zh-cn : idx == 2 ? LanguagePreference.en-us : LanguagePreference.system;
-                }
-            }
-        }
-
-        HorizontalLayout {
-            vertical-stretch: 0;
-            spacing: Theme.space-md;
-            Text { width: 64px; text: I18n.t("强调色", "Accent"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
-            FlexboxLayout {
-                horizontal-stretch: 1;
-                vertical-stretch: 0;
-                spacing: 6px;
-                AccentChip { label: I18n.t("蔚蓝", "Ocean"); swatch-color: Theme.dark ? #5899ff : #2563eb; selected: Theme.accent-preset == AccentPreset.ocean; chosen => { Theme.accent-preset = AccentPreset.ocean; } }
-                AccentChip { label: I18n.t("翡翠", "Emerald"); swatch-color: Theme.dark ? #34d399 : #047857; selected: Theme.accent-preset == AccentPreset.emerald; chosen => { Theme.accent-preset = AccentPreset.emerald; } }
-                AccentChip { label: I18n.t("极光紫", "Violet"); swatch-color: Theme.dark ? #a78bfa : #7c3aed; selected: Theme.accent-preset == AccentPreset.violet; chosen => { Theme.accent-preset = AccentPreset.violet; } }
-                AccentChip { label: I18n.t("琥珀", "Amber"); swatch-color: Theme.dark ? #fbbf24 : #b45309; selected: Theme.accent-preset == AccentPreset.amber; chosen => { Theme.accent-preset = AccentPreset.amber; } }
-                AccentChip { label: I18n.t("绯红", "Rose"); swatch-color: Theme.dark ? #fb7185 : #e11d48; selected: Theme.accent-preset == AccentPreset.rose; chosen => { Theme.accent-preset = AccentPreset.rose; } }
-            }
-        }
-    }
-}
-
-component ThemeMaterialCard inherits Rectangle {
-    border-radius: 20px;
-    border-width: 1px;
-    border-color: Theme.card-border;
-    background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum {}
-
-    VerticalLayout {
-        alignment: start;
-        padding: Theme.space-lg;
-        spacing: 12px;
 
         HorizontalLayout {
             vertical-stretch: 0;
@@ -179,8 +69,10 @@ component ThemeMaterialCard inherits Rectangle {
             Text {
                 horizontal-stretch: 1;
                 min-width: 0px;
-                text: I18n.t("材质与动效", "Material & Motion");
-                font-size: 14px; font-weight: 700; color: Theme.text-primary;
+                text: I18n.t("外观与语言", "Appearance & Language");
+                font-size: 14px;
+                font-weight: 700;
+                color: Theme.text-primary;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -190,8 +82,9 @@ component ThemeMaterialCard inherits Rectangle {
                 clicked => {
                     Theme.apply-preference(ThemePreference.system);
                     Theme.accent-preset = AccentPreset.ocean;
-                    Theme.apply-material(MaterialPreset.frosted);
+                    I18n.preference = LanguagePreference.system;
                     Motion.reduced = false;
+                    root.prefs-changed();
                 }
             }
         }
@@ -199,14 +92,15 @@ component ThemeMaterialCard inherits Rectangle {
         HorizontalLayout {
             vertical-stretch: 0;
             spacing: Theme.space-md;
-            Text { width: 64px; text: I18n.t("材质", "Material"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
+            Text { width: 72px; text: I18n.t("主题模式", "Theme"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
             SlidingSegmentBar {
                 horizontal-stretch: 1;
                 bar-height: 32px;
-                options: [I18n.t("纯色", "Solid"), I18n.t("磨砂玻璃", "Frosted"), I18n.t("通透琉璃", "Crystal")];
-                current-index: Theme.material-preset == MaterialPreset.solid ? 0 : Theme.material-preset == MaterialPreset.crystal ? 2 : 1;
+                options: [I18n.t("跟随系统", "System"), I18n.t("浅色", "Light"), I18n.t("深色", "Dark")];
+                current-index: Theme.preference == ThemePreference.light ? 1 : Theme.preference == ThemePreference.dark ? 2 : 0;
                 selected(idx) => {
-                    Theme.apply-material(idx == 0 ? MaterialPreset.solid : idx == 2 ? MaterialPreset.crystal : MaterialPreset.frosted);
+                    Theme.apply-preference(idx == 1 ? ThemePreference.light : idx == 2 ? ThemePreference.dark : ThemePreference.system);
+                    root.prefs-changed();
                 }
             }
         }
@@ -214,21 +108,15 @@ component ThemeMaterialCard inherits Rectangle {
         HorizontalLayout {
             vertical-stretch: 0;
             spacing: Theme.space-md;
-            Text { width: 64px; text: I18n.t("卡片透明", "Card"); font-size: 13px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusSlider {
+            Text { width: 72px; text: I18n.t("界面语言", "Language"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
+            SlidingSegmentBar {
                 horizontal-stretch: 1;
-                minimum: 15;
-                value: Theme.surface-opacity * 100;
-                changed(v) => { Theme.surface-opacity = Math.round(v) / 100.0; }
-            }
-            Rectangle {
-                width: 46px; height: 24px; y: (parent.height - self.height) / 2;
-                border-radius: 7px; border-width: 1px; border-color: Theme.well-border; background: Theme.well-bg;
-                Text {
-                    width: 100%; height: 100%;
-                    text: "\{Math.round(Theme.surface-opacity * 100)}%";
-                    font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-primary;
-                    horizontal-alignment: center; vertical-alignment: center;
+                bar-height: 32px;
+                options: [I18n.t("跟随系统", "System"), "简体中文", "English"];
+                current-index: I18n.preference == LanguagePreference.zh-cn ? 1 : I18n.preference == LanguagePreference.en-us ? 2 : 0;
+                selected(idx) => {
+                    I18n.preference = idx == 1 ? LanguagePreference.zh-cn : idx == 2 ? LanguagePreference.en-us : LanguagePreference.system;
+                    root.prefs-changed();
                 }
             }
         }
@@ -236,66 +124,43 @@ component ThemeMaterialCard inherits Rectangle {
         HorizontalLayout {
             vertical-stretch: 0;
             spacing: Theme.space-md;
-            Text { width: 64px; text: I18n.t("背景透明", "Window"); font-size: 13px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusSlider {
+            Text { width: 72px; text: I18n.t("强调色", "Accent"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
+            FlexboxLayout {
                 horizontal-stretch: 1;
-                minimum: 15;
-                value: Theme.window-opacity * 100;
-                changed(v) => { Theme.window-opacity = Math.round(v) / 100.0; }
-            }
-            Rectangle {
-                width: 46px; height: 24px; y: (parent.height - self.height) / 2;
-                border-radius: 7px; border-width: 1px; border-color: Theme.well-border; background: Theme.well-bg;
-                Text {
-                    width: 100%; height: 100%;
-                    text: "\{Math.round(Theme.window-opacity * 100)}%";
-                    font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-primary;
-                    horizontal-alignment: center; vertical-alignment: center;
-                }
+                vertical-stretch: 0;
+                spacing: 6px;
+                AccentChip { label: I18n.t("蔚蓝", "Ocean"); swatch-color: Theme.dark ? #3b82f6 : #1d4ed8; selected: Theme.accent-preset == AccentPreset.ocean; chosen => { Theme.accent-preset = AccentPreset.ocean; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("翡翠", "Emerald"); swatch-color: Theme.dark ? #22c55e : #15803d; selected: Theme.accent-preset == AccentPreset.emerald; chosen => { Theme.accent-preset = AccentPreset.emerald; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("极光紫", "Violet"); swatch-color: Theme.dark ? #a78bfa : #6d28d9; selected: Theme.accent-preset == AccentPreset.violet; chosen => { Theme.accent-preset = AccentPreset.violet; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("琥珀", "Amber"); swatch-color: Theme.dark ? #f59e0b : #b45309; selected: Theme.accent-preset == AccentPreset.amber; chosen => { Theme.accent-preset = AccentPreset.amber; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("绯红", "Rose"); swatch-color: Theme.dark ? #fb7185 : #dc2626; selected: Theme.accent-preset == AccentPreset.rose; chosen => { Theme.accent-preset = AccentPreset.rose; root.prefs-changed(); } }
             }
         }
 
         Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
-        SettingsToggleRow { label: I18n.t("背景模糊", "Backdrop Blur"); checked <=> Theme.blur-enabled; }
-        SettingsToggleRow { label: I18n.t("环境流光", "Ambient Glow"); checked <=> Theme.ambient-glow; }
-        SettingsToggleRow {
-            label: I18n.t("灵动动效", "Fluid Motion");
-            auto-toggle: false;
-            checked: !Motion.reduced;
-            toggled => { Motion.reduced = !Motion.reduced; }
+        HorizontalLayout {
+            vertical-stretch: 0;
+            height: 30px;
+            spacing: Theme.space-md;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 1px;
+                Text {
+                    text: I18n.t("减弱动态效果", "Reduced Motion");
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: Theme.text-primary;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                NexusSwitch {
+                    checked <=> Motion.reduced;
+                    toggled => { root.prefs-changed(); }
+                }
+            }
         }
-    }
-}
-
-export component ThemeStudioCard inherits VerticalLayout {
-    in property <length> window-width: 1040px;
-
-    property <bool> two-col: root.window-width >= 900px;
-
-    vertical-stretch: 0;
-    alignment: start;
-    spacing: Theme.space-md;
-
-    if root.two-col : HorizontalLayout {
-        spacing: Theme.space-md;
-
-        ThemeIdentityCard {
-            horizontal-stretch: 1;
-            preferred-width: 0px;
-            min-width: 0px;
-        }
-
-        ThemeMaterialCard {
-            horizontal-stretch: 1;
-            preferred-width: 0px;
-            min-width: 0px;
-        }
-    }
-
-    if !root.two-col : VerticalLayout {
-        spacing: Theme.space-md;
-        ThemeIdentityCard {}
-        ThemeMaterialCard {}
     }
 }

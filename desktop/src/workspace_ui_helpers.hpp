@@ -1,4 +1,4 @@
-// Pure Workspace UI draft/validation helpers included by workspace_ui_flow.hpp and unit-tested directly.
+// Pure Workspace UI draft/validation/builder helpers included by workspace_ui_flow.hpp and unit-tested directly.
 #pragma once
 
 namespace desktop_ui_helpers {
@@ -142,6 +142,41 @@ namespace desktop_ui_helpers {
         return std::pair<std::string, std::int64_t>{std::move(host), port};
     }
 
+    inline auto parse_positive_i64_prefix(std::string_view raw) noexcept -> std::int64_t {
+        auto sv = trim_ascii_ws(raw);
+        if (sv.empty()) return 0;
+        std::size_t end = 0;
+        while (end < sv.size() && sv[end] >= '0' && sv[end] <= '9') ++end;
+        if (end == 0) return 0;
+        std::int64_t val = 0;
+        auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + end, val);
+        return (ec == std::errc{} && ptr == sv.data() + end && val > 0) ? val : 0;
+    }
+
+    inline auto ensure_default_workspace_profile(
+        desktop::WorkspaceDocument& doc,
+        desktop::TelemetryStoreData& telemetry) -> bool {
+        bool seeded = false;
+        if (doc.profiles.empty()) {
+            desktop::WorkspaceProfileItem def{};
+            def.id = "direct-default";
+            def.remarks = "Direct";
+            def.subscription_id = "manual";
+            def.kind = "custom_outbound";
+            def.custom_outbound_kdl = "outbound \"{{tag}}\" type=\"direct\" {}\n";
+            doc.profiles.push_back(std::move(def));
+            seeded = true;
+        }
+        bool active_found = false;
+        for (auto const& p : doc.profiles) {
+            if (p.id == telemetry.active_profile_id) { active_found = true; break; }
+        }
+        if (!active_found && !doc.profiles.empty()) {
+            telemetry.active_profile_id = doc.profiles.front().id;
+        }
+        return seeded;
+    }
+
     inline auto populate_node_from_parsed_share_link(
         desktop::WorkspaceProfileItem& item,
         desktop::ParsedOutbound const& parsed) -> void {
@@ -183,7 +218,7 @@ namespace desktop_ui_helpers {
         std::string_view kind_sv,
         std::string_view remarks_sv,
         std::string_view payload_sv,
-        std::string_view fallback_full_kdl,
+        std::string_view fallback_full_cfg,
         std::unordered_set<std::string> const& existing_ids,
         std::size_t current_count) -> std::expected<desktop::WorkspaceProfileItem, std::string> {
         std::string kind(trim_ascii_ws(kind_sv));
@@ -219,11 +254,11 @@ namespace desktop_ui_helpers {
             item.proxy_chain.hop_ids = split_csv_trim(payload);
             if (item.proxy_chain.hop_ids.size() < 2) return std::unexpected("Proxy chain requires at least 2 hop IDs");
         } else if (kind == "custom_outbound") {
-            if (payload.empty()) return std::unexpected("Custom outbound KDL snippet is required");
+            if (payload.empty()) return std::unexpected("Custom outbound definition is required");
             item.custom_outbound_kdl = payload;
         } else {
-            item.full_custom_kdl = payload.empty() ? std::string(fallback_full_kdl) : payload;
-            if (trim_ascii_ws(item.full_custom_kdl).empty()) return std::unexpected("Full custom KDL content is required");
+            item.full_custom_kdl = payload.empty() ? std::string(fallback_full_cfg) : payload;
+            if (trim_ascii_ws(item.full_custom_kdl).empty()) return std::unexpected("Custom full configuration is required");
         }
 
         if (remarks.empty()) remarks = kind + "-" + std::to_string(current_count + 1);
@@ -234,3 +269,5 @@ namespace desktop_ui_helpers {
         return item;
     }
 }
+
+#include "workspace_form_builders.hpp"

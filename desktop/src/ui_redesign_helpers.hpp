@@ -1,4 +1,4 @@
-// Connection formatting, quick-nodes & tray snapshot builders included by desktop/src/main.cpp.
+// Connection formatting & tray snapshot builders included by desktop/src/main.cpp.
 #pragma once
 
 namespace desktop_ui_helpers {
@@ -256,33 +256,6 @@ namespace desktop_ui_helpers {
             if (k.starts_with(prefix)) group_pins.insert(k.substr(prefix.size()));
         }
         return group_pins;
-    }
-
-    inline auto build_ui_quick_nodes(
-        std::vector<desktop::OutboundGroupSnapshot> const& cached_groups,
-        std::string_view active_tag,
-        std::unordered_set<std::string> const* pinned_members) -> std::vector<nexus_ui::OutboundMemberItem> {
-        std::vector<nexus_ui::OutboundMemberItem> out;
-        for (auto const& g : cached_groups) {
-            if (g.tag != active_tag) continue;
-            auto group_pins = extract_group_pins(g.tag, pinned_members);
-            auto picked = desktop::pick_quick_nodes(g.members, group_pins, 9);
-            out.reserve(picked.size());
-            for (auto const& m : picked) {
-                out.push_back({
-                    slint::SharedString(m.name),
-                    slint::SharedString(m.state),
-                    static_cast<int>(m.latency_ms),
-                    static_cast<int>(m.ewma_ms),
-                    m.breaker_open,
-                    m.selected,
-                    m.overridden,
-                    group_pins.contains(m.name),
-                });
-            }
-            break;
-        }
-        return out;
     }
 
     inline auto build_proxy_env_from_inbounds(desktop::CoexistingInbounds const& inb) -> std::string {

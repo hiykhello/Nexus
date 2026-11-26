@@ -1,6 +1,6 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { GlassSpeculum, SlidingSegmentBar } from "glass_primitives.slint";
+import { SlidingSegmentBar } from "glass_primitives.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 import { TunPrivilegeCard } from "tun_privilege_card.slint";
 
@@ -39,15 +39,10 @@ component TrayWindowCard inherits Rectangle {
     in property <bool> tray-native-active: true;
     callback prefs-changed();
 
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         alignment: start;
@@ -116,15 +111,10 @@ component TrayMenuCard inherits Rectangle {
     in-out property <string> tray-click-action: "toggle";
     callback prefs-changed();
 
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         alignment: start;
@@ -163,7 +153,6 @@ component TrayMenuCard inherits Rectangle {
                 color: Theme.text-primary;
             }
             SlidingSegmentBar {
-                bar-height: 34px;
                 options: [I18n.t("显示 / 隐藏", "Toggle"), I18n.t("呼出窗口", "Show"), I18n.t("开关代理", "Proxy")];
                 current-index: root.tray-click-action == "show" ? 1 : root.tray-click-action == "toggle_proxy" ? 2 : 0;
                 selected(idx) => {

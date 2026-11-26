@@ -1,0 +1,332 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+
+component MetricPill inherits Rectangle {
+    in property <string> text;
+    in property <color> fg: Theme.text-secondary;
+    in property <brush> bg: Theme.well-bg;
+    in property <color> bd: Theme.well-border;
+
+    horizontal-stretch: 0;
+    height: 22px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.bd;
+    background: root.bg;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        Text {
+            text: root.text;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: Theme.mono-font;
+            color: root.fg;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component HeroStatusCard inherits Rectangle {
+    in property <bool> core-running: false;
+    in property <bool> core-toggling: false;
+    in property <string> core-uptime: "";
+    in property <string> active-profile: "";
+    in property <string> active-node: "";
+    in property <int> active-node-latency-ms: -1;
+    in property <string> outbound-mode: "rule";
+    in property <bool> tun-enabled: false;
+    in property <string> diagnostic-message: "";
+    in property <bool> diagnostic-ok: true;
+    in property <string> hero-state-override: "";
+
+    callback toggle-core();
+    callback open-groups();
+
+    property <bool> is-error: root.hero-state-override == "error" || (!root.diagnostic-ok && root.diagnostic-message != "" && !root.core-running);
+    property <bool> is-degraded: root.hero-state-override == "degraded" || (root.core-running && !root.diagnostic-ok && root.diagnostic-message != "");
+    property <color> state-fg:
+        root.is-error ? Theme.error-fg
+        : root.is-degraded || root.core-toggling ? Theme.warn-fg
+        : root.core-running ? Theme.success-fg
+        : Theme.offline-fg;
+    property <brush> state-bg:
+        root.is-error ? Theme.error-bg
+        : root.is-degraded || root.core-toggling ? Theme.warn-bg
+        : root.core-running ? Theme.success-bg
+        : Theme.well-bg;
+    property <color> state-bd:
+        root.is-error ? Theme.error-border
+        : root.is-degraded || root.core-toggling ? Theme.warn-border
+        : root.core-running ? Theme.success-border
+        : Theme.well-border;
+    property <string> state-label:
+        root.is-error ? I18n.t("连接异常", "Error")
+        : root.is-degraded ? I18n.t("状态降级", "Degraded")
+        : root.core-toggling ? I18n.t("切换中", "Switching")
+        : root.core-running ? I18n.t("代理已连接", "Connected")
+        : I18n.t("待命", "Standby");
+    property <string> headline:
+        root.active-node != "" ? root.active-node
+        : root.active-profile != "" ? root.active-profile
+        : I18n.t("默认工作区", "Default Workspace");
+    property <string> mode-label:
+        root.outbound-mode == "global" ? I18n.t("全局", "Global")
+        : root.outbound-mode == "direct" ? I18n.t("直连", "Direct")
+        : I18n.t("规则", "Rule");
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: root.is-error ? Theme.error-border : root.core-running ? Theme.success-border : Theme.card-border;
+    background: Theme.card-surface;
+
+    HorizontalLayout {
+        padding: 14px;
+        spacing: 14px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            alignment: space-between;
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    horizontal-stretch: 0;
+                    height: 22px;
+                    border-radius: 11px;
+                    border-width: 1px;
+                    border-color: root.state-bd;
+                    background: root.state-bg;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 9px;
+                        spacing: 5px;
+                        Rectangle {
+                            width: 6px;
+                            height: 6px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 3px;
+                            background: root.state-fg;
+                        }
+                        Text {
+                            text: root.state-label;
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: root.state-fg;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if root.tun-enabled : MetricPill {
+                    text: "TUN";
+                    fg: Theme.nav-active-fg;
+                    bg: Theme.selected-bg;
+                    bd: Theme.selected-border;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            VerticalLayout {
+                spacing: 3px;
+                Text {
+                    text: root.headline;
+                    font-size: 18px;
+                    font-weight: 800;
+                    color: Theme.text-primary;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.active-profile != "" && root.active-profile != root.headline
+                        ? root.active-profile
+                        : (root.core-running ? I18n.t("本机代理与分流策略已激活", "Proxy and routing policies active")
+                                            : I18n.t("点击右侧开关启动本地代理内核", "Press toggle to start local proxy core"));
+                    font-size: 11px;
+                    color: Theme.text-secondary;
+                    overflow: elide;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+
+                MetricPill {
+                    text: root.mode-label;
+                }
+
+                if root.active-node-latency-ms > 0 : MetricPill {
+                    text: "\{root.active-node-latency-ms} ms";
+                    fg: Theme.latency-fg(root.active-node-latency-ms, "healthy");
+                    bg: Theme.latency-bg(root.active-node-latency-ms, "healthy");
+                    bd: Theme.well-border;
+                }
+
+                if root.core-running && root.core-uptime != "" : MetricPill {
+                    text: root.core-uptime;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+
+        // Crisp Matte Circular Start/Stop Button
+        VerticalLayout {
+            horizontal-stretch: 0;
+            alignment: center;
+
+            Rectangle {
+                width: 56px;
+                height: 56px;
+                border-radius: 28px;
+                border-width: 2px;
+                border-color:
+                    root.core-running ? Theme.success-fg
+                    : root.core-toggling ? Theme.warn-fg
+                    : pwr-ta.has-hover ? Theme.accent : Theme.hairline-strong;
+                background:
+                    root.core-running ? (pwr-ta.pressed ? Theme.success-fg.darker(0.15) : Theme.success-fg)
+                    : pwr-ta.pressed ? Theme.well-bg
+                    : pwr-ta.has-hover ? Theme.selected-bg : Theme.well-bg;
+                animate background { duration: Motion.fast; }
+                animate border-color { duration: Motion.fast; }
+
+                accessible-role: button;
+                accessible-label: root.core-running ? I18n.t("停止代理", "Stop Proxy") : I18n.t("启动代理", "Start Proxy");
+                accessible-action-default => { if (!root.core-toggling) { root.toggle-core(); } }
+
+                pwr-ta := TouchArea {
+                    enabled: !root.core-toggling;
+                    mouse-cursor: root.core-toggling ? default : pointer;
+                    clicked => { root.toggle-core(); }
+                }
+
+                Image {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: 22px;
+                    height: 22px;
+                    source: root.core-running ? @image-url("../icons/stop.svg") : @image-url("../icons/play.svg");
+                    colorize: root.core-running ? Theme.success-on-fill : (pwr-ta.has-hover ? Theme.accent : Theme.text-primary);
+                }
+            }
+        }
+    }
+}
+
+export component SpeedMiniCard inherits Rectangle {
+    in property <string> title: "";
+    in property <string> rate-value: "0.0";
+    in property <string> rate-unit: "KB/s";
+    in property <string> peak-text: "0.0 KB/s";
+    in property <string> total-text: "0 B";
+    in property <string> wave-area: "";
+    in property <string> wave-line: "";
+    in property <color> channel-color: Theme.telemetry-down;
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+    clip: true;
+
+    VerticalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        padding-top: 11px;
+        padding-bottom: 10px;
+        spacing: 4px;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 3px;
+                background: root.channel-color;
+            }
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: root.title;
+                font-size: 11px;
+                font-weight: 700;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: I18n.t("峰值 ", "Peak ") + root.peak-text;
+                font-size: 10px;
+                font-family: Theme.mono-font;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 5px;
+            alignment: start;
+            Text {
+                text: root.rate-value;
+                font-size: 22px;
+                font-weight: 800;
+                font-family: Theme.mono-font;
+                color: Theme.text-primary;
+                vertical-alignment: bottom;
+            }
+            Text {
+                text: root.rate-unit;
+                font-size: 11px;
+                font-weight: 700;
+                font-family: Theme.mono-font;
+                color: root.channel-color;
+                vertical-alignment: bottom;
+            }
+        }
+
+        Text {
+            text: I18n.t("累计 ", "Total ") + root.total-text;
+            font-size: 10px;
+            font-family: Theme.mono-font;
+            color: Theme.text-muted;
+            overflow: elide;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            min-height: 36px;
+            border-radius: 6px;
+            background: Theme.well-bg;
+            clip: true;
+
+            if root.wave-area != "" : Path {
+                viewbox-width: 240;
+                viewbox-height: 84;
+                commands: root.wave-area;
+                fill: root.channel-color.with-alpha(Theme.dark ? 0.16 : 0.12);
+            }
+
+            if root.wave-line != "" : Path {
+                viewbox-width: 240;
+                viewbox-height: 84;
+                commands: root.wave-line;
+                stroke: root.channel-color;
+                stroke-width: 1.75px;
+            }
+
+            if root.wave-line == "" : Rectangle {
+                x: 8px;
+                y: parent.height - 6px;
+                width: max(0px, parent.width - 16px);
+                height: 1.5px;
+                background: root.channel-color.with-alpha(0.32);
+            }
+        }
+    }
+}

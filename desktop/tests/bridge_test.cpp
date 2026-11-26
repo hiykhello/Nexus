@@ -12,7 +12,6 @@ import desktop.async_worker;
 import desktop.core_supervisor;
 import desktop.firewall_helper;
 import desktop.http_control;
-import desktop.ipc_client;
 import desktop.service_installer;
 import desktop.share_link;
 import desktop.single_instance;
@@ -26,68 +25,19 @@ namespace {
         }
     }
 
-    auto test_frame_builder() -> void {
-        std::string_view single[] = {"status"};
-        auto f1 = desktop::build_nexus1_frame(single);
-        expect(f1.has_value() && *f1 == "NEXUS/1 status", "single token NEXUS/1 frame");
-
-        std::string_view multi[] = {"select", "proxy", "hk-01"};
-        auto f2 = desktop::build_nexus1_frame(multi);
-        expect(f2.has_value() && *f2 == std::string("NEXUS/1 select\0proxy\0hk-01", 26),
-            "NUL-delimited multi-token NEXUS/1 frame");
-
-        std::string_view bad_empty[] = {"select", ""};
-        expect(!desktop::build_nexus1_frame(bad_empty).has_value(), "reject empty token");
-
-        std::string embedded_nul("a\0b", 3);
-        std::string_view bad_nul[] = {embedded_nul};
-        expect(!desktop::build_nexus1_frame(bad_nul).has_value(), "reject embedded NUL");
-
-        auto ok_r = desktop::decode_nexus1_reply("NEXUS/1 OK\nrunning\n");
-        expect(ok_r.ok && ok_r.body == "running\n", "decode NEXUS/1 OK reply");
-        auto err_r = desktop::decode_nexus1_reply("NEXUS/1 ERROR\nforbidden\n");
-        expect(!err_r.ok && err_r.body == "forbidden", "decode NEXUS/1 ERROR reply");
+    auto test_private_memory_metric() -> void {
+        expect(desktop::current_process_id() > 0, "current_process_id reports positive PID");
+        auto bytes = desktop::current_process_memory_bytes();
+        expect(bytes > 0, "current_process_memory_bytes reports positive private memory");
+        auto cpu1 = desktop::current_process_cpu_time_ns();
+        volatile std::uint64_t spin = 0;
+        for (int i = 0; i < 50000; ++i) spin += static_cast<std::uint64_t>(i);
+        (void)spin;
+        auto cpu2 = desktop::current_process_cpu_time_ns();
+        expect(cpu2 >= cpu1, "current_process_cpu_time_ns is monotonic");
     }
 
 #ifndef _WIN32
-    auto test_unix_ipc_roundtrip() -> void {
-        auto sock_path = (std::filesystem::temp_directory_path() /
-            std::format("nexus-desktop-ipc-test-{}.sock", ::getpid())).string();
-        ::unlink(sock_path.c_str());
-
-        sockaddr_un addr{};
-        addr.sun_family = AF_UNIX;
-        std::memcpy(addr.sun_path, sock_path.data(), sock_path.size());
-        auto addr_len = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + sock_path.size() + 1);
-
-        int srv = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        expect(srv >= 0, "create test UDS");
-        expect(::bind(srv, reinterpret_cast<sockaddr const*>(&addr), addr_len) == 0, "bind test UDS");
-        expect(::listen(srv, 4) == 0, "listen test UDS");
-
-        std::string captured;
-        std::jthread server([&] {
-            int c = ::accept4(srv, nullptr, nullptr, SOCK_CLOEXEC);
-            if (c >= 0) {
-                char buf[256]{};
-                auto n = ::recv(c, buf, sizeof(buf), 0);
-                if (n > 0) captured.assign(buf, static_cast<std::size_t>(n));
-                std::string_view resp = "OK reloaded\n";
-                (void)::send(c, resp.data(), resp.size(), MSG_NOSIGNAL);
-                ::close(c);
-            }
-            ::close(srv);
-        });
-
-        desktop::IpcClient client(sock_path);
-        auto reply = client.reload();
-        server.join();
-        ::unlink(sock_path.c_str());
-
-        expect(reply.ok && reply.body == "OK reloaded\n", "UDS reload reply");
-        expect(captured == "NEXUS/1 reload", "UDS captured request");
-    }
-
     auto test_single_instance_wakeup() -> void {
         auto app_id = std::format("nexus-desktop-test-{}", ::getpid());
         std::atomic<bool> woken{false};
@@ -448,9 +398,6 @@ namespace {
         auto ev = authed.events();
         expect(ev.ok && ev.body.contains("\"events\":["), "GET /v1/events 200 OK");
         expect(authed.reload().ok, "authenticated POST /v1/reload 200 OK");
-        desktop::IpcClient uds(sock_path);
-        expect(uds.status().ok, "live SEQPACKET UDS NEXUS/1 status OK");
-        expect(uds.reload().ok, "live SEQPACKET UDS NEXUS/1 reload OK");
         auto m2 = authed.metrics();
         expect(desktop::parse_openmetrics_summary(m2.body).control_generation > gen1, "control_generation incremented after clear-cache");
         sup.stop();
@@ -463,9 +410,8 @@ namespace {
 
 auto main() -> int {
     try {
-        test_frame_builder();
+        test_private_memory_metric();
 #ifndef _WIN32
-        test_unix_ipc_roundtrip();
         test_single_instance_wakeup();
 #endif
         test_supervisor_missing_binary();

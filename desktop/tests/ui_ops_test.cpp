@@ -1,7 +1,6 @@
 import std;
 import desktop.core_supervisor;
 import desktop.http_control;
-import desktop.kdl_ops;
 import desktop.system_proxy;
 import desktop.ui_actions;
 import desktop.ui_prefs;
@@ -14,43 +13,29 @@ namespace {
         if (!cond) throw std::runtime_error(std::string(msg));
     }
 
-    auto test_inbound_kdl_ops() -> void {
+    auto test_inbound_port_and_endpoint_selection() -> void {
         expect(!desktop::parse_port_u16("0").has_value(), "reject port 0");
         expect(!desktop::parse_port_u16("70000").has_value(), "reject port >65535");
         expect(!desktop::parse_port_u16("80x").has_value(), "reject non-numeric port");
         expect(desktop::parse_port_u16(" 7890 ").value_or(0) == 7890, "parse trimmed port");
 
-        std::string cfg =
-            "schema-version 1\n"
-            "role \"client\"\n"
-            "inbound \"local\" type=\"socks5\" {\n"
-            "    listen host=\"127.0.0.1\" port=2080\n"
-            "    authentication \"none\"\n"
-            "}\n"
-            "outbound \"direct\" type=\"direct\"\n"
-            "outbound \"proxy\" type=\"selector\" { member \"direct\"; selected \"direct\"; }\n"
-            "routing { default-outbound \"proxy\"; }\n";
+        desktop::CoexistingInbounds multi{};
+        multi.mixed = {true, "127.0.0.1", 7891};
+        multi.socks5 = {true, "127.0.0.1", 2080};
+        multi.http = {true, "127.0.0.1", 8081};
 
-        auto parsed0 = desktop::parse_inbound_endpoints(cfg);
-        expect(!parsed0.mixed.enabled && parsed0.socks5.enabled && parsed0.socks5.port == 2080 && !parsed0.http.enabled,
-            "initial socks5-only parse");
-
-        std::string multi = cfg +
-            "inbound \"m\" type=\"mixed\" {\n    listen host=\"127.0.0.1\" port=7891\n}\n"
-            "inbound \"h\" type=\"http\" {\n    listen host=\"127.0.0.1\" port=8081\n}\n";
-        auto parsed1 = desktop::parse_inbound_endpoints(multi);
-        expect(parsed1.mixed.enabled && parsed1.mixed.port == 7891 &&
-               parsed1.socks5.enabled && parsed1.socks5.port == 2080 &&
-               parsed1.http.enabled && parsed1.http.port == 8081,
-            "coexisting mixed+socks5+http parsed");
-
-        auto sel1 = desktop::select_system_proxy_endpoint(parsed1);
+        auto sel1 = desktop::select_system_proxy_endpoint(multi);
         expect(sel1.has_value() && sel1->first == "127.0.0.1" && sel1->second == 7891, "prefer mixed for system proxy");
 
-        desktop::CoexistingInbounds http_only = parsed1;
+        desktop::CoexistingInbounds http_only = multi;
         http_only.mixed.enabled = false;
         auto sel2 = desktop::select_system_proxy_endpoint(http_only);
         expect(sel2.has_value() && sel2->second == 8081, "fallback to http when mixed disabled");
+
+        desktop::CoexistingInbounds socks_only = http_only;
+        socks_only.http.enabled = false;
+        auto sel3 = desktop::select_system_proxy_endpoint(socks_only);
+        expect(sel3.has_value() && sel3->second == 2080, "fallback to socks5 when mixed & http disabled");
 
         desktop::CoexistingInbounds wild{};
         wild.http.enabled = true;
@@ -58,39 +43,6 @@ namespace {
         wild.http.port = 8888;
         auto sel_w = desktop::select_system_proxy_endpoint(wild);
         expect(sel_w.has_value() && sel_w->first == "127.0.0.1" && sel_w->second == 8888, "normalize wildcard host");
-    }
-
-    auto test_outbound_mode_and_merge() -> void {
-        std::string cfg =
-            "schema-version 1\n"
-            "role \"client\"\n"
-            "outbound \"direct\" type=\"direct\"\n"
-            "routing { default-outbound \"edge-grp\"; }\n";
-
-        auto merged = desktop::merge_raw_kdl_snippet(cfg, "  outbound \"x\" type=\"direct\"  \n");
-        expect(merged.ends_with("outbound \"x\" type=\"direct\"\n"), "clean snippet merge");
-
-        // Route & DNS surgical insertion helpers
-        auto r_ins = desktop::insert_route_rule_kdl(cfg, "rule action=\"route\" outbound=\"direct\" {\n    domain-suffix \"example.com\"\n}");
-        expect(r_ins.first && r_ins.second.contains("routing {") &&
-               r_ins.second.contains("tcp-program sniff-timeout-ms=300 unknown=\"skip\" {") &&
-               r_ins.second.contains("domain-suffix \"example.com\""),
-            "insert route rule inside routing { tcp-program sniff-timeout-ms=300 unknown=\"skip\" }");
-        auto r_ins2 = desktop::insert_route_rule_kdl(r_ins.second, "rule action=\"reject\" {\n    port 25\n}");
-        expect(r_ins2.first && r_ins2.second.find("tcp-program") == r_ins2.second.rfind("tcp-program") &&
-               r_ins2.second.contains("port 25"), "second route rule reuses existing attributed tcp-program block");
-        auto r_fresh = desktop::insert_route_rule_kdl(
-            "schema-version 1\nrole \"client\"\n// routing { tcp-program { } }\noutbound \"direct\" type=\"direct\"\n",
-            "rule action=\"route\" outbound=\"direct\" {\n    domain-suffix \"fresh.test\"\n}");
-        expect(r_fresh.first && r_fresh.second.contains("default-outbound \"direct\"") &&
-               r_fresh.second.contains("tcp-program sniff-timeout-ms=300 unknown=\"skip\" {"),
-            "fresh routing creation includes default-outbound and valid tcp-program options");
-
-        auto d_ins1 = desktop::insert_dns_rule_kdl(cfg, "rule domain-suffix=\"internal.corp\" action=\"route\" server=\"local\"");
-        expect(d_ins1.first && d_ins1.second.contains("dns {") && d_ins1.second.contains("internal.corp"), "create dns block on first rule");
-        auto d_ins2 = desktop::insert_dns_rule_kdl(d_ins1.second, "rule domain-suffix=\"ads.test\" action=\"reject\" reject-method=\"reply\"");
-        expect(d_ins2.first && d_ins2.second.find("dns {") == d_ins2.second.rfind("dns {") &&
-               d_ins2.second.contains("ads.test"), "second dns rule reuses single top-level dns block");
     }
 
     auto test_ui_prefs_and_locale() -> void {
@@ -152,18 +104,9 @@ namespace {
         }
         desktop::CoreSupervisor sup(bin);
         auto val = sup.validate_config(tmp);
-        expect(val.ok, "real nexus validates coexisting mixed+socks5+http inbounds: " + val.message);
-
-        auto with_rule = desktop::insert_route_rule_kdl(cfg, "rule action=\"route\" outbound=\"direct\" {\n    domain-suffix \"example.com\"\n}");
-        expect(with_rule.first, "insert valid tcp-program route rule");
-        {
-            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-            out << with_rule.second;
-        }
-        auto val_m = sup.validate_config(tmp);
         std::error_code ec;
         std::filesystem::remove(tmp, ec);
-        expect(val_m.ok, "real nexus validates tcp-program rule insertion: " + val_m.message);
+        expect(val.ok, "real nexus validates coexisting mixed+socks5+http inbounds: " + val.message);
     }
 
     auto test_system_proxy_controller() -> void {
@@ -445,8 +388,7 @@ namespace {
 
 auto main() -> int {
     try {
-        test_inbound_kdl_ops();
-        test_outbound_mode_and_merge();
+        test_inbound_port_and_endpoint_selection();
         test_ui_prefs_and_locale();
         test_live_coexisting_inbounds_validate();
         test_system_proxy_controller();

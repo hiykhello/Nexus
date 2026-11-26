@@ -137,7 +137,7 @@ namespace desktop_ui_helpers {
                 }
             }
             bool ok = persist_host_db(ctx);
-            auto msg = ok ? tr(en, "已保存同步配置（凭据隔离存于 0600 密钥文件）", "Saved sync settings (credentials isolated in 0600 secret file)")
+            auto msg = ok ? tr(en, "已保存同步配置（凭据已本机安全隔离保存）", "Saved sync settings (credentials isolated locally)")
                           : tr(en, "保存同步凭据失败", "Failed to save sync settings");
             auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             g.set_sync_status_ok(ok);

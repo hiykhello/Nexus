@@ -3,7 +3,7 @@ import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSelect } from "nexus_select.slint";
 
@@ -90,7 +90,6 @@ export component LiveRulesTab inherits VerticalLayout {
         border-radius: 14px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
         clip: true;
-        GlassSpeculum { corner-inset: 12px; }
 
         VerticalLayout {
             Rectangle {
@@ -113,7 +112,7 @@ export component LiveRulesTab inherits VerticalLayout {
                     font-size: 13px; font-weight: 700; color: Theme.text-primary; horizontal-alignment: center;
                 }
                 Text {
-                    text: I18n.t("启动核心后点击「刷新运行规则」从 GET /v1/rules 获取实时规则表", "Start Core and click Refresh Rules to inspect live GET /v1/rules entries");
+                    text: I18n.t("启动核心后点击「刷新运行规则」查看当前生效的实时规则表", "Start Core and click Refresh Rules to inspect live active rules");
                     font-size: 11px; color: Theme.text-muted; horizontal-alignment: center; wrap: word-wrap;
                 }
             }
@@ -148,7 +147,6 @@ export component LiveDnsQueryTab inherits VerticalLayout {
     Rectangle {
         border-radius: 14px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 12px; }
 
         VerticalLayout {
             padding: 12px; spacing: 8px;
@@ -240,7 +238,6 @@ export component LiveDnsQueryTab inherits VerticalLayout {
         border-radius: 14px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
         clip: true;
-        GlassSpeculum { corner-inset: 12px; }
 
         VerticalLayout {
             Rectangle {
@@ -260,7 +257,7 @@ export component LiveDnsQueryTab inherits VerticalLayout {
                 Text {
                     text: ControlInspectState.dns-query-rcode != ""
                         ? I18n.t("返回空应答记录", "Query completed with 0 answer records")
-                        : I18n.t("输入域名并点击「立即解析」调用 GET /v1/dns/query 实测核心 DNS 管线", "Enter a domain and click Query to test live GET /v1/dns/query resolution");
+                        : I18n.t("输入域名并点击「立即解析」实测核心 DNS 解析管线", "Enter a domain and click Query to test live DNS resolution");
                     font-size: 11px; color: Theme.text-muted; horizontal-alignment: center; wrap: word-wrap;
                 }
             }

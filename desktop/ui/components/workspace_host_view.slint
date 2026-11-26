@@ -2,7 +2,7 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 import { WorkspaceSyncCard, WorkspaceUdpProbeCard } from "workspace_sync_cards.slint";
 
@@ -54,17 +54,16 @@ export component WorkspaceHostPortableView inherits VerticalLayout {
     Rectangle {
         width: root.grid-w; border-radius: 16px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 14px; }
         VerticalLayout {
             padding: 12px; spacing: 8px;
             HorizontalLayout {
                 spacing: 8px;
                 Text {
                     horizontal-stretch: 1; min-width: 0px;
-                    text: I18n.t("本机宿主适配 (SQLite nexus-client.db · 永不同步)", "Desktop Host Adapter (SQLite nexus-client.db · Local Only)");
+                    text: I18n.t("本机设置（仅存本机）", "Local Settings (Device Only)");
                     font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; overflow: elide;
                 }
-                HostActionButton { icon: @image-url("../icons/check.svg"); label: I18n.t("保存宿主设置", "Save Host"); primary: true; clicked => { WorkspaceState.apply-host-config(); } }
+                HostActionButton { icon: @image-url("../icons/check.svg"); label: I18n.t("保存设置", "Save Settings"); primary: true; clicked => { WorkspaceState.apply-host-config(); } }
             }
 
             // Row 1: Mixed inbound + listen endpoint
@@ -95,7 +94,7 @@ export component WorkspaceHostPortableView inherits VerticalLayout {
                 NexusInput { width: 72px; mono: true; text <=> WorkspaceState.host-tun-mtu; placeholder-text: "1400"; }
                 Rectangle { horizontal-stretch: 1; }
                 NexusSwitch {
-                    text: I18n.t("严格路由 (strict-route)", "Strict Route");
+                    text: I18n.t("严格路由", "Strict Route");
                     checked <=> WorkspaceState.host-tun-strict-route;
                     toggled => {
                         if (WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route) {
@@ -131,15 +130,14 @@ export component WorkspaceHostPortableView inherits VerticalLayout {
     Rectangle {
         width: root.grid-w; border-radius: 16px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 14px; }
         VerticalLayout {
             padding: 12px; spacing: 8px;
-            Text { text: I18n.t("便携工作区交换 (workspace.json)", "Portable Workspace Exchange (workspace.json)"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
+            Text { text: I18n.t("工作区备份与迁移", "Workspace Backup & Transfer"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
             Text { text: I18n.t("仅含节点、策略组、代理链、订阅、路由与 DNS；自动剥离本机端口、系统代理与测速遥测。", "Contains only Profiles, Subscriptions, Routing & DNS; automatically strips host ports, OS proxy & telemetry."); font-size: 11px; color: Theme.text-muted; wrap: word-wrap; }
             FlexboxLayout {
                 spacing: 8px;
-                HostActionButton { icon: @image-url("../icons/external-link.svg"); label: I18n.t("导出 workspace.json", "Export Workspace"); primary: true; clicked => { WorkspaceState.export-portable-workspace(); } }
-                HostActionButton { icon: @image-url("../icons/download.svg"); label: I18n.t("导入 workspace.json", "Import Workspace"); clicked => { WorkspaceState.import-portable-workspace(); } }
+                HostActionButton { icon: @image-url("../icons/external-link.svg"); label: I18n.t("导出工作区", "Export Workspace"); primary: true; clicked => { WorkspaceState.export-portable-workspace(); } }
+                HostActionButton { icon: @image-url("../icons/download.svg"); label: I18n.t("导入工作区", "Import Workspace"); clicked => { WorkspaceState.import-portable-workspace(); } }
             }
             if WorkspaceState.portable-status != "" : Text {
                 text: WorkspaceState.portable-status; font-size: 11px; font-family: Theme.mono-font;

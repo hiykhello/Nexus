@@ -119,6 +119,20 @@ export namespace desktop {
         std::string data;
     };
 
+    struct WsEvent {
+        std::string type;
+        std::string data_json;
+    };
+
+    // RFC 6455 §1.3 Sec-WebSocket-Accept computation using standard GUID 258EAFA5-E914-47DA-95CA-C5AB0DC85B11.
+    [[nodiscard]] auto compute_ws_accept_key(std::string_view sec_ws_key) -> std::string;
+
+    // Parses a multiplexed /v1/ws JSON envelope {"type":"...","data":...}.
+    [[nodiscard]] auto parse_ws_envelope_json(std::string_view json) -> std::optional<WsEvent>;
+
+    // Parses /v1/status or /v1/ws metrics JSON payload into MetricsSnapshot.
+    [[nodiscard]] auto parse_status_metrics_json(std::string_view json) -> std::optional<MetricsSnapshot>;
+
     // Incremental text/event-stream (SSE) frame decoder supporting CRLF/LF, comments, and multi-line data.
     class SseFrameParser {
         std::string line_buf_;
@@ -206,6 +220,7 @@ export namespace desktop {
         std::string host_;
         std::uint16_t port_;
         std::string bearer_token_;
+        std::uint64_t endpoint_gen_{0};
         std::chrono::milliseconds timeout_{2000};
 
     public:
@@ -220,10 +235,17 @@ export namespace desktop {
             std::scoped_lock lk(self.mu_);
             return self.port_;
         }
+        [[nodiscard]] auto endpoint_generation(this HttpControlClient const& self) noexcept -> std::uint64_t {
+            std::scoped_lock lk(self.mu_);
+            return self.endpoint_gen_;
+        }
         auto set_endpoint(this HttpControlClient& self, std::string host, std::uint16_t port) -> void {
             std::scoped_lock lk(self.mu_);
-            self.host_ = std::move(host);
-            self.port_ = port;
+            if (self.host_ != host || self.port_ != port) {
+                self.host_ = std::move(host);
+                self.port_ = port;
+                ++self.endpoint_gen_;
+            }
         }
         auto set_bearer_token(this HttpControlClient& self, std::string token) -> void {
             std::scoped_lock lk(self.mu_);
@@ -332,6 +354,17 @@ export namespace desktop {
                                    std::chrono::milliseconds{3000}, std::chrono::milliseconds{100},
                                    std::move(on_connected));
         }
+        // Opens a loopback-only RFC 6455 multiplexed WebSocket stream to GET /v1/ws (Authorization: Bearer header only).
+        [[nodiscard]] auto stream_ws(this HttpControlClient const& self,
+                                     std::vector<std::string> const& channels,
+                                     std::function<bool(WsEvent const&)> on_event,
+                                     std::stop_token stop = {},
+                                     std::uint64_t since = 0,
+                                     std::uint32_t interval_ms = 1000,
+                                     std::chrono::milliseconds connect_timeout = std::chrono::milliseconds{3000},
+                                     std::chrono::milliseconds poll_interval = std::chrono::milliseconds{100},
+                                     std::function<void()> on_connected = {})
+            -> std::expected<void, std::string>;
         [[nodiscard]] auto connections(this HttpControlClient const& self) -> HttpReply {
             return self.request("GET", "/v1/connections");
         }

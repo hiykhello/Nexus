@@ -54,7 +54,6 @@ export component RuleChipButton inherits Rectangle {
 export component ConditionRow inherits HorizontalLayout {
     in-out property <string> kind: "domain-suffix";
     in-out property <string> value: "";
-    in-out property <bool> negate: false;
     in property <bool> removable: true;
     callback remove-requested();
 
@@ -70,19 +69,13 @@ export component ConditionRow inherits HorizontalLayout {
             "domain-wildcard",
             "domain-regex",
             "ip-cidr",
-            "source-ip-cidr",
             "ip-is-private",
             "port",
             "port-range",
             "network",
             "protocol",
-            "inbound",
             "process-name",
             "process-path",
-            "source-mac",
-            "gateway-mac",
-            "source-interface",
-            "dscp",
         ];
         current-value <=> root.kind;
     }
@@ -93,26 +86,15 @@ export component ConditionRow inherits HorizontalLayout {
         mono: true;
         text <=> root.value;
         placeholder-text:
-            root.kind == "ip-cidr" || root.kind == "source-ip-cidr" ? I18n.t("如 10.0.0.0/8 或 2001:db8::/32", "e.g. 10.0.0.0/8 or 2001:db8::/32")
+            root.kind == "ip-cidr" ? I18n.t("如 10.0.0.0/8 或 2001:db8::/32", "e.g. 10.0.0.0/8 or 2001:db8::/32")
             : root.kind == "port" ? I18n.t("如 443", "e.g. 443")
-            : root.kind == "port-range" ? I18n.t("如 8000:9000", "e.g. 8000:9000")
+            : root.kind == "port-range" ? I18n.t("如 8000-9000", "e.g. 8000-9000")
             : root.kind == "network" ? I18n.t("tcp 或 udp", "tcp or udp")
             : root.kind == "protocol" ? "tls / http / quic / dns / ssh / stun"
-            : root.kind == "ip-is-private" ? I18n.t("true 或 false", "true or false")
-            : root.kind == "inbound" ? I18n.t("如 local", "e.g. local")
-            : root.kind == "source-mac" || root.kind == "gateway-mac" ? I18n.t("如 aa:bb:cc:dd:ee:ff", "e.g. aa:bb:cc:dd:ee:ff")
-            : root.kind == "dscp" ? I18n.t("如 46 或 10,18", "e.g. 46 or 10,18")
+            : root.kind == "ip-is-private" ? I18n.t("私网地址 (private)", "private")
             : root.kind == "process-name" ? I18n.t("如 curl", "e.g. curl")
+            : root.kind == "process-path" ? I18n.t("如 /usr/bin/curl", "e.g. /usr/bin/curl")
             : I18n.t("输入匹配值 (如 example.com)", "Match value (e.g. example.com)");
-    }
-
-    RuleChipButton {
-        width: 44px;
-        height: 32px;
-        label: "NOT";
-        warn-accent: true;
-        active: root.negate;
-        clicked => { root.negate = !root.negate; }
     }
 
     RuleChipButton {
@@ -194,17 +176,10 @@ export component RuleActionBar inherits VerticalLayout {
         Rectangle {
             horizontal-stretch: 0;
             height: 32px;
-            border-radius: 16px;
+            border-radius: Theme.radius-md;
             border-width: 1px;
-            border-color: Theme.pill-active-top.brighter(0.20);
-            background: commit-ta.pressed
-                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
-            drop-shadow-blur: 10px;
-            drop-shadow-offset-y: 2px;
-            drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.40 : 0.24);
-            transform-scale: commit-ta.pressed ? 0.96 : 1.0;
-            animate transform-scale { duration: Motion.micro; }
+            border-color: Theme.pill-active-top;
+            background: commit-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot;
 
             commit-ta := TouchArea {
                 mouse-cursor: pointer;

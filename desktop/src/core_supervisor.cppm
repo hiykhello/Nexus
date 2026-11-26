@@ -13,7 +13,9 @@ export namespace desktop {
         bool use_persistent_helper = false;
     };
 
+    [[nodiscard]] auto current_process_id() noexcept -> std::uint64_t;
     [[nodiscard]] auto current_process_memory_bytes() noexcept -> std::uint64_t;
+    [[nodiscard]] auto current_process_cpu_time_ns() noexcept -> std::uint64_t;
 
     // Supervises a local Nexus core child process (unprivileged or session-elevated)
     // and executes offline `nexus check --config` validation before hot reload.
@@ -28,7 +30,9 @@ export namespace desktop {
         auto operator=(CoreSupervisor const&) -> CoreSupervisor& = delete;
 
         [[nodiscard]] auto running(this CoreSupervisor const& self) noexcept -> bool;
+        [[nodiscard]] auto process_id(this CoreSupervisor const& self) noexcept -> std::uint64_t;
         [[nodiscard]] auto memory_bytes(this CoreSupervisor const& self) noexcept -> std::uint64_t;
+        [[nodiscard]] auto cpu_time_ns(this CoreSupervisor const& self) noexcept -> std::uint64_t;
         [[nodiscard]] auto elevated_session(this CoreSupervisor const& self) noexcept -> bool;
         [[nodiscard]] auto using_persistent_helper(this CoreSupervisor const& self) noexcept -> bool;
         [[nodiscard]] auto last_start_cancelled(this CoreSupervisor const& self) noexcept -> bool;

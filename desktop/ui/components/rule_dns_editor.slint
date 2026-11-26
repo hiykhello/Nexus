@@ -1,9 +1,10 @@
 import { ScrollView } from "std-widgets.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
-import { GlassSpeculum, NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
+import { NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
+import { DnsRuleDraft, RouteRuleDraft } from "../types.slint";
 import { RuleDnsTab } from "rule_dns_tab.slint";
 import { RuleExplainPanel } from "rule_explain_panel.slint";
 import { LiveDnsQueryTab, LiveRulesTab } from "rule_inspect_tabs.slint";
@@ -18,15 +19,15 @@ export component RuleModalDialog inherits Rectangle {
     in-out property <string> route-target-outbound: "proxy";
     in-out property <string> dns-rule-kind: "domain-suffix";
     in-out property <string> dns-match-value: "internal.corp";
-    in-out property <string> dns-target-server: "local";
+    in-out property <string> dns-target-server: "direct";
     in property <string> editor-status: "";
     in property <bool> editor-ok: true;
     in property <string> explain-result: "";
     in property <bool> explain-ok: true;
 
     callback close-requested();
-    callback append-route-rule-kdl(string);
-    callback append-dns-rule-kdl(string);
+    callback add-route-rule(RouteRuleDraft);
+    callback add-dns-rule(DnsRuleDraft);
     callback run-explain(string, string, string, string);
 
     background: Theme.modal-backdrop;
@@ -41,18 +42,14 @@ export component RuleModalDialog inherits Rectangle {
         height: min(self.max-dialog-h, max(240px, 62px + modal-body.preferred-height));
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        border-radius: 20px;
+        border-radius: Theme.radius-card;
         border-width: 1px;
         border-color: Theme.modal-border;
         background: Theme.overlay-bg;
-        drop-shadow-blur: 36px;
-        drop-shadow-offset-y: 12px;
-        drop-shadow-color: Theme.modal-shadow;
         clip: true;
 
         // Absorb clicks inside modal sheet so backdrop doesn't dismiss
         TouchArea {}
-        GlassSpeculum {}
 
         VerticalLayout {
             // Modal header bar: icon + title + 3-tab segment bar + close button
@@ -161,7 +158,7 @@ export component RuleModalDialog inherits Rectangle {
                             target-outbound <=> root.route-target-outbound;
                             status-text: root.editor-status;
                             status-ok: root.editor-ok;
-                            append-route-rule-kdl(rule) => { root.append-route-rule-kdl(rule); }
+                            add-route-rule(draft) => { root.add-route-rule(draft); }
                         }
 
                         if root.active-mode == 1 : RuleDnsTab {
@@ -170,7 +167,7 @@ export component RuleModalDialog inherits Rectangle {
                             target-server <=> root.dns-target-server;
                             status-text: root.editor-status;
                             status-ok: root.editor-ok;
-                            append-dns-rule-kdl(rule) => { root.append-dns-rule-kdl(rule); }
+                            add-dns-rule(draft) => { root.add-dns-rule(draft); }
                         }
 
                         if root.active-mode == 2 : RuleExplainPanel {

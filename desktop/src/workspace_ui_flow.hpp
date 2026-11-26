@@ -1,4 +1,4 @@
-// 4-Layer Workspace UI callbacks and portable workspace export/import for desktop/src/main.cpp.
+// 4-Layer Workspace UI callbacks, structured modal builders, and portable backup for desktop/src/main.cpp.
 #pragma once
 
 #include "workspace_ui_sync.hpp"
@@ -37,8 +37,12 @@ namespace desktop_ui_helpers {
     inline auto refresh_workspace_from_disk(WorkspaceUiContext& ctx) -> void {
         if (ctx.db) {
             if (auto loaded = ctx.db->load_workspace(); loaded) ctx.doc = std::move(*loaded);
-            ctx.host = desktop::load_host_config_from_db(*ctx.db, ctx.cfg_dir, ctx.secrets_dir, ctx.fallback_sock);
+            ctx.host = desktop::load_host_config_from_db(*ctx.db, ctx.cfg_dir, ctx.secrets_dir, {});
             if (auto tel = ctx.db->load_telemetry(); tel) ctx.telemetry = std::move(*tel);
+        }
+        if (ensure_default_workspace_profile(ctx.doc, ctx.telemetry)) {
+            (void)persist_workspace_db(ctx);
+            (void)persist_telemetry_db(ctx);
         }
         auto notices = desktop::normalize_desktop_host_config(ctx.host, is_en_ui(ctx.ui));
         sync_workspace_to_ui(ctx);
@@ -46,6 +50,125 @@ namespace desktop_ui_helpers {
         ctx.ui.global<nexus_ui::WorkspaceState>().set_host_strict_route_notice(
             slint::SharedString(notices.empty() ? "" : notices.front()));
         if (ctx.sync_tray) ctx.sync_tray();
+    }
+
+    inline auto bind_structured_modal_callbacks(WorkspaceUiContext& ctx) -> void {
+        ctx.ui.on_add_outbound_node([&ctx](nexus_ui::OutboundNodeDraft d) {
+            bool const en = is_en_ui(ctx.ui);
+            OutboundFormDraft form{
+                .proto = std::string(d.proto), .tag = std::string(d.tag),
+                .host = std::string(d.host), .port = std::string(d.port),
+                .secret = std::string(d.secret), .uuid_str = std::string(d.uuid_str),
+                .username = std::string(d.username), .flow = std::string(d.flow),
+                .hy2_ports = std::string(d.hy2_ports), .hy2_salamander = std::string(d.hy2_salamander),
+                .hy2_up_mbps = std::string(d.hy2_up_mbps), .hy2_down_mbps = std::string(d.hy2_down_mbps),
+                .tuic_cc = std::string(d.tuic_cc), .tuic_udp_over_stream = d.tuic_udp_over_stream,
+                .ss_method = std::string(d.ss_method), .snell_ver = d.snell_ver,
+                .snell_obfs = std::string(d.snell_obfs), .snell_obfs_host = std::string(d.snell_obfs_host),
+                .naive_proto = std::string(d.naive_proto), .ssh_host_sha = std::string(d.ssh_host_sha),
+                .sni = std::string(d.sni), .fingerprint = std::string(d.fingerprint),
+                .cert_sha256 = std::string(d.cert_sha256), .use_reality = d.use_reality,
+                .reality_pbk = std::string(d.reality_pbk), .reality_sid = std::string(d.reality_sid),
+                .tls_fragment = d.tls_fragment, .ech_dns = d.ech_dns, .ech_query_sni = std::string(d.ech_query_sni),
+                .transport = std::string(d.transport), .transport_path = std::string(d.transport_path),
+                .transport_host = std::string(d.transport_host), .xhttp_mode = std::string(d.xhttp_mode),
+                .ws_max_early_data = std::string(d.ws_max_early_data), .ws_early_data_header = std::string(d.ws_early_data_header),
+                .mux_enabled = d.mux_enabled, .mux_proto = std::string(d.mux_proto),
+                .mux_max_conns = std::string(d.mux_max_conns), .mux_min_streams = std::string(d.mux_min_streams),
+                .mux_padding = d.mux_padding,
+            };
+            std::unordered_set<std::string> ids;
+            for (auto const& p : ctx.doc.profiles) ids.insert(p.id);
+            auto built = build_workspace_node_from_form(form, ids, ctx.doc.profiles.size());
+            if (!built) {
+                ctx.ui.set_diagnostic_ok(false);
+                ctx.ui.set_diagnostic_message(slint::SharedString(built.error()));
+                push_toast(ctx.ui, built.error(), "error");
+                return;
+            }
+            std::string new_id = built->id;
+            std::string label = built->remarks;
+            ctx.doc.profiles.push_back(std::move(*built));
+            ++ctx.doc.revision;
+            ctx.telemetry.active_profile_id = new_id;
+            (void)persist_workspace_db(ctx);
+            (void)persist_telemetry_db(ctx);
+            sync_workspace_to_ui(ctx);
+            if (ctx.sync_tray) ctx.sync_tray();
+            ctx.ui.set_outbound_modal_open(false);
+            push_toast(ctx.ui, tr(en, "已添加节点: ", "Added node: ") + label, "success");
+            recompose_active_workspace(ctx, new_id);
+        });
+
+        ctx.ui.on_add_route_rule([&ctx](nexus_ui::RouteRuleDraft d) {
+            bool const en = is_en_ui(ctx.ui);
+            RouteRuleFormDraft form{
+                .use_rule_set = d.use_rule_set,
+                .rule_set_name = std::string(d.rule_set_name),
+                .conditions = {},
+                .action_kind = std::string(d.action_kind),
+                .target_outbound = std::string(d.target_outbound),
+                .tls_fragment = d.tls_fragment,
+            };
+            int const count = std::clamp(d.cond_count, 1, 4);
+            if (count >= 1) form.conditions.push_back({std::string(d.c1_kind), std::string(d.c1_value)});
+            if (count >= 2) form.conditions.push_back({std::string(d.c2_kind), std::string(d.c2_value)});
+            if (count >= 3) form.conditions.push_back({std::string(d.c3_kind), std::string(d.c3_value)});
+            if (count >= 4) form.conditions.push_back({std::string(d.c4_kind), std::string(d.c4_value)});
+
+            if (ctx.doc.routing_profiles.empty()) {
+                ctx.doc.routing_profiles = desktop::make_default_workspace().routing_profiles;
+            }
+            desktop::RoutingProfile* active_rp = nullptr;
+            for (auto& rp : ctx.doc.routing_profiles) if (rp.is_active) { active_rp = &rp; break; }
+            if (!active_rp) { ctx.doc.routing_profiles.front().is_active = true; active_rp = &ctx.doc.routing_profiles.front(); }
+
+            auto built = build_routing_rule_from_draft(form, ctx.doc.profiles, active_rp->rules.size());
+            if (!built) {
+                ctx.ui.set_diagnostic_ok(false);
+                ctx.ui.set_diagnostic_message(slint::SharedString(built.error()));
+                push_toast(ctx.ui, built.error(), "error");
+                return;
+            }
+            active_rp->rules.push_back(std::move(*built));
+            ++ctx.doc.revision;
+            (void)persist_workspace_db(ctx);
+            sync_workspace_to_ui(ctx);
+            ctx.ui.set_diagnostic_ok(true);
+            ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "已添加路由规则", "Route rule added")));
+            recompose_active_workspace(ctx);
+        });
+
+        ctx.ui.on_add_dns_rule([&ctx](nexus_ui::DnsRuleDraft d) {
+            bool const en = is_en_ui(ctx.ui);
+            DnsRuleFormDraft form{
+                .match_kind = std::string(d.match_kind),
+                .match_value = std::string(d.match_value),
+                .action_kind = std::string(d.action_kind),
+                .target_server = std::string(d.target_server),
+            };
+            if (ctx.doc.routing_profiles.empty()) {
+                ctx.doc.routing_profiles = desktop::make_default_workspace().routing_profiles;
+            }
+            desktop::RoutingProfile* active_rp = nullptr;
+            for (auto& rp : ctx.doc.routing_profiles) if (rp.is_active) { active_rp = &rp; break; }
+            if (!active_rp) { ctx.doc.routing_profiles.front().is_active = true; active_rp = &ctx.doc.routing_profiles.front(); }
+
+            auto built = build_dns_rule_from_draft(form, active_rp->rules.size());
+            if (!built) {
+                ctx.ui.set_diagnostic_ok(false);
+                ctx.ui.set_diagnostic_message(slint::SharedString(built.error()));
+                push_toast(ctx.ui, built.error(), "error");
+                return;
+            }
+            active_rp->rules.push_back(std::move(*built));
+            ++ctx.doc.revision;
+            (void)persist_workspace_db(ctx);
+            sync_workspace_to_ui(ctx);
+            ctx.ui.set_diagnostic_ok(true);
+            ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "已添加 DNS 规则", "DNS rule added")));
+            recompose_active_workspace(ctx);
+        });
     }
 
     inline auto bind_workspace_callbacks(WorkspaceUiContext& ctx) -> void {
@@ -59,16 +182,26 @@ namespace desktop_ui_helpers {
         if (ctx.db) {
             auto loaded = ctx.db->load_workspace();
             ctx.doc = loaded ? std::move(*loaded) : desktop::make_default_workspace();
-            ctx.host = desktop::load_host_config_from_db(*ctx.db, ctx.cfg_dir, ctx.secrets_dir, ctx.fallback_sock);
+            ctx.host = desktop::load_host_config_from_db(*ctx.db, ctx.cfg_dir, ctx.secrets_dir, {});
             if (auto tel = ctx.db->load_telemetry(); tel) ctx.telemetry = std::move(*tel);
         } else {
             ctx.doc = desktop::make_default_workspace();
-            ctx.host = desktop::make_default_desktop_host_config(ctx.cfg_dir, ctx.fallback_sock);
+            ctx.host = desktop::make_default_desktop_host_config(ctx.cfg_dir, {});
         }
+        ctx.host.control_socket.clear();
+
+        if (ensure_default_workspace_profile(ctx.doc, ctx.telemetry)) {
+            (void)persist_workspace_db(ctx);
+            (void)persist_telemetry_db(ctx);
+        }
+        auto init_ctl = parse_host_control_config(ctx.host);
+        ctx.http_ctrl.set_endpoint(init_ctl.http_host, init_ctl.http_port);
+        ctx.http_ctrl.set_bearer_token(init_ctl.bearer_token);
 
         auto notices = desktop::normalize_desktop_host_config(ctx.host, is_en_ui(ctx.ui));
         sync_workspace_to_ui(ctx);
         bind_workspace_sync_callbacks(ctx);
+        bind_structured_modal_callbacks(ctx);
         auto const& ws = ctx.ui.global<nexus_ui::WorkspaceState>();
         if (!notices.empty()) ws.set_host_strict_route_notice(slint::SharedString(notices.front()));
 
@@ -91,8 +224,7 @@ namespace desktop_ui_helpers {
                 ctx.running_selector_tag, ctx.running_selector_members, live_tag);
             if (decision.can_live_switch) {
                 ctx.worker.post([&ctx, decision, en] {
-                    bool ok = ctx.http_ctrl.select_group(decision.selector_tag, decision.target_tag).ok ||
-                              ctx.ipc.select_outbound(decision.selector_tag, decision.target_tag).ok;
+                    bool ok = ctx.http_ctrl.select_group(decision.selector_tag, decision.target_tag).ok;
                     auto msg = ok ? tr(en, "已热切换 TUN 节点（免重启提权）", "Switched TUN node live (zero restart)")
                                   : tr(en, "热切换节点失败", "Live node switch failed");
                     on_ui_thread(ctx.weak_ui, [&ctx, ok, msg = std::move(msg)](auto& s) {
@@ -111,7 +243,7 @@ namespace desktop_ui_helpers {
             for (auto const& p : ctx.doc.profiles) ids.insert(p.id);
             auto built = build_workspace_profile_from_draft(
                 std::string_view(kind_s), std::string_view(remarks_s), std::string_view(payload_s),
-                std::string_view(ctx.ui.get_kdl_text()), ids, ctx.doc.profiles.size());
+                {}, ids, ctx.doc.profiles.size());
             if (!built) {
                 push_toast(ctx.ui, built.error(), "error");
                 return;
@@ -124,7 +256,9 @@ namespace desktop_ui_helpers {
             std::string label = built->remarks;
             ctx.doc.profiles.push_back(std::move(*built));
             ++ctx.doc.revision;
+            if (ctx.telemetry.active_profile_id.empty()) ctx.telemetry.active_profile_id = ctx.doc.profiles.back().id;
             (void)persist_workspace_db(ctx);
+            (void)persist_telemetry_db(ctx);
             sync_workspace_to_ui(ctx);
             if (ctx.sync_tray) ctx.sync_tray();
             push_toast(ctx.ui, tr(en, "已添加到工作区: ", "Added to workspace: ") + label, "success");
@@ -281,14 +415,14 @@ namespace desktop_ui_helpers {
             g.set_host_strict_route_notice(slint::SharedString(notices.empty() ? "" : notices.front()));
             if (!notices.empty()) push_toast(ctx.ui, notices.front(), "warn");
             if (!ctx.doc.profiles.empty()) recompose_active_workspace(ctx);
-            else if (notices.empty()) push_toast(ctx.ui, tr(en, "已保存本机宿主设置 (SQLite)", "Saved Desktop Host settings (SQLite)"), "success");
+            else if (notices.empty()) push_toast(ctx.ui, tr(en, "已保存本机设置", "Saved local settings"), "success");
         });
 
         ws.on_export_portable_workspace([&ctx] {
             bool const en = is_en_ui(ctx.ui);
             auto out_path = ctx.cfg_dir / "workspace-export.json";
             bool ok = desktop::save_workspace_atomic(out_path, ctx.doc);
-            auto msg = ok ? (tr(en, "已导出纯净便携工作区: ", "Exported portable workspace: ") + out_path.string())
+            auto msg = ok ? tr(en, "已导出便携工作区备份", "Exported portable workspace backup")
                           : tr(en, "导出工作区失败", "Failed to export portable workspace");
             auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             g.set_portable_status_ok(ok);
@@ -305,7 +439,7 @@ namespace desktop_ui_helpers {
                                     : std::expected<desktop::WorkspaceDocument, std::string>(std::unexpected("missing"));
             auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             if (!loaded_ws) {
-                auto msg = tr(en, "未找到有效便携工作区文件: ", "Valid portable workspace file not found: ") + in_path.string();
+                auto msg = tr(en, "未找到可导入的工作区备份", "No valid portable workspace backup found");
                 g.set_portable_status_ok(false);
                 g.set_portable_status(slint::SharedString(msg));
                 push_toast(ctx.ui, msg, "error");
@@ -322,7 +456,7 @@ namespace desktop_ui_helpers {
             (void)persist_telemetry_db(ctx);
             sync_workspace_to_ui(ctx);
             if (ctx.sync_tray) ctx.sync_tray();
-            auto msg = tr(en, "已导入便携工作区（本机宿主与遥测保持隔离）", "Imported portable workspace (host & telemetry untouched)");
+            auto msg = tr(en, "已导入便携工作区（本机设置与遥测保持隔离）", "Imported portable workspace (local settings & telemetry untouched)");
             g.set_portable_status_ok(true);
             g.set_portable_status(slint::SharedString(msg));
             push_toast(ctx.ui, msg, "success");

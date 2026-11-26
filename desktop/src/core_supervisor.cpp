@@ -23,6 +23,7 @@ module;
 #endif
 #ifdef __APPLE__
 #include <libproc.h>
+#include <mach/mach_time.h>
 #include <mach-o/dyld.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
@@ -40,6 +41,7 @@ import std;
 import desktop.tun_helper_protocol;
 import desktop.tun_privilege;
 
+#include "core_process_metrics.hpp"
 #include "core_supervisor_detail.hpp"
 #include "tun_helper_client.hpp"
 #include "core_supervisor_elevated.hpp"
@@ -176,15 +178,19 @@ namespace desktop {
 #endif
     }
 
-    auto current_process_memory_bytes() noexcept -> std::uint64_t {
+    auto current_process_id() noexcept -> std::uint64_t { return query_self_pid(); }
+    auto current_process_memory_bytes() noexcept -> std::uint64_t { return query_self_memory_bytes(); }
+    auto current_process_cpu_time_ns() noexcept -> std::uint64_t { return query_self_cpu_time_ns(); }
+
+    auto CoreSupervisor::process_id(this CoreSupervisor const& self) noexcept -> std::uint64_t {
+        if (!self.impl_) return 0;
+        std::scoped_lock lk(self.impl_->state_mu);
+        if (self.impl_->stopping) return 0;
 #ifdef _WIN32
-        return query_win_working_set_bytes(::GetCurrentProcess());
-#elif defined(__linux__)
-        return read_proc_memory_bytes("/proc/self/smaps_rollup", "/proc/self/statm");
-#elif defined(__APPLE__)
-        return query_macos_phys_footprint_bytes(::getpid());
+        return self.impl_->process ? static_cast<std::uint64_t>(::GetProcessId(self.impl_->process)) : 0;
 #else
-        return 0;
+        pid_t pid = self.impl_->signal_pid > 0 ? self.impl_->signal_pid : self.impl_->pid;
+        return pid > 0 ? static_cast<std::uint64_t>(pid) : 0;
 #endif
     }
 
@@ -193,37 +199,23 @@ namespace desktop {
         try {
 #ifdef _WIN32
             std::scoped_lock lk(self.impl_->state_mu);
-            if (self.impl_->stopping || !self.impl_->process) return 0;
-            return query_win_working_set_bytes(self.impl_->process);
-#elif defined(__linux__)
-            pid_t pid = -1;
-            {
-                std::scoped_lock lk(self.impl_->state_mu);
-                if (self.impl_->stopping) return 0;
-                pid = self.impl_->signal_pid > 0 ? self.impl_->signal_pid : self.impl_->pid;
-            }
-            if (pid <= 0) return 0;
-            char smaps_path[64]{};
-            auto smaps_res = std::format_to_n(smaps_path, sizeof(smaps_path) - 1, "/proc/{}/smaps_rollup", static_cast<long>(pid));
-            *smaps_res.out = '\0';
-            char statm_path[64]{};
-            auto statm_res = std::format_to_n(statm_path, sizeof(statm_path) - 1, "/proc/{}/statm", static_cast<long>(pid));
-            *statm_res.out = '\0';
-            return read_proc_memory_bytes(smaps_path, statm_path);
-#elif defined(__APPLE__)
-            pid_t pid = -1;
-            {
-                std::scoped_lock lk(self.impl_->state_mu);
-                if (self.impl_->stopping) return 0;
-                pid = self.impl_->signal_pid > 0 ? self.impl_->signal_pid : self.impl_->pid;
-            }
-            return query_macos_phys_footprint_bytes(pid);
+            return (!self.impl_->stopping && self.impl_->process) ? query_win_private_bytes(self.impl_->process) : 0;
 #else
-            return 0;
+            return query_posix_pid_memory_bytes(self.process_id());
 #endif
-        } catch (...) {
-            return 0;
-        }
+        } catch (...) { return 0; }
+    }
+
+    auto CoreSupervisor::cpu_time_ns(this CoreSupervisor const& self) noexcept -> std::uint64_t {
+        if (!self.impl_) return 0;
+        try {
+#ifdef _WIN32
+            std::scoped_lock lk(self.impl_->state_mu);
+            return (!self.impl_->stopping && self.impl_->process) ? query_win_cpu_time_ns(self.impl_->process) : 0;
+#else
+            return query_posix_pid_cpu_time_ns(self.process_id());
+#endif
+        } catch (...) { return 0; }
     }
 
     auto CoreSupervisor::start(this CoreSupervisor& self, std::filesystem::path const& config_path, CoreStartOptions opts) -> bool {
@@ -253,11 +245,11 @@ namespace desktop {
         }
         std::error_code file_ec;
         if (!std::filesystem::is_regular_file(self.binary_, file_ec)) {
-            set_error("未找到 nexus 核心二进制: " + self.binary_.string());
+            set_error("未找到 Nexus 核心组件");
             return false;
         }
         if (!std::filesystem::is_regular_file(config_path, file_ec)) {
-            set_error("配置文件不存在: " + config_path.string());
+            set_error("运行配置尚未就绪");
             return false;
         }
 
@@ -436,7 +428,7 @@ namespace desktop {
         std::filesystem::path const& config_path) -> ValidationResult {
         std::error_code ec;
         if (!std::filesystem::is_regular_file(self.binary_, ec)) {
-            return {false, "未找到 nexus 核心二进制: " + self.binary_.string()};
+            return {false, "未找到 Nexus 核心组件"};
         }
         auto workdir = config_path.parent_path();
         bool has_dir = !workdir.empty() && std::filesystem::is_directory(workdir, ec);
@@ -462,7 +454,7 @@ namespace desktop {
         std::string_view extra_options) -> ValidationResult {
         std::error_code ec;
         if (!std::filesystem::is_regular_file(self.binary_, ec))
-            return {false, "未找到 nexus 核心二进制: " + self.binary_.string()};
+            return {false, "未找到 Nexus 核心组件"};
         if (inbound.empty() || network.empty() || target.empty())
             return {false, "入站名称、协议 (tcp/udp) 与目标 host:port 不能为空"};
         std::vector<std::string> extras;

@@ -2,7 +2,6 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { ActiveConnectionItem } from "../types.slint";
-import { GlassSpeculum } from "glass_primitives.slint";
 
 component KpiTile inherits Rectangle {
     in property <string> label;
@@ -15,15 +14,10 @@ component KpiTile inherits Rectangle {
     preferred-width: 0px;
     min-width: 0px;
     height: 68px;
-    border-radius: 16px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 10px;
-    drop-shadow-offset-y: 2px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum { corner-inset: 14px; }
 
     VerticalLayout {
         padding-left: 14px;

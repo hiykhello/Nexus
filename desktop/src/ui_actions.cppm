@@ -4,6 +4,23 @@ import std;
 import desktop.http_control;
 
 export namespace desktop {
+    struct InboundEndpointSpec {
+        bool enabled = false;
+        std::string host = "127.0.0.1";
+        std::uint16_t port = 0;
+    };
+
+    struct CoexistingInbounds {
+        InboundEndpointSpec mixed{false, "127.0.0.1", 7890};
+        InboundEndpointSpec socks5{false, "127.0.0.1", 1080};
+        InboundEndpointSpec http{false, "0.0.0.0", 7891};
+    };
+
+    [[nodiscard]] auto parse_port_u16(std::string_view text) -> std::optional<std::uint16_t>;
+
+    [[nodiscard]] auto select_system_proxy_endpoint(CoexistingInbounds const& inb)
+        -> std::optional<std::pair<std::string, std::uint16_t>>;
+
     struct RuleMatchDraft {
         std::string kind;
         std::string value;
@@ -11,7 +28,7 @@ export namespace desktop {
         std::string outbound;
     };
 
-    // Extracts a clean KDL rule predicate, action, and target outbound from an active connection row.
+    // Extracts a structured rule predicate, action, and target outbound from an active connection row.
     [[nodiscard]] auto extract_rule_match_from_connection(
         std::string_view target,
         int port,

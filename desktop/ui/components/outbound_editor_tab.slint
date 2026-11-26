@@ -1,9 +1,9 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { OutboundNodeDraft } from "../types.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 import { CollapsibleSection, NexusSelect } from "nexus_select.slint";
-import { OutboundKdl } from "outbound_kdl_format.slint";
 import { OutboundProtoCard } from "outbound_proto_card.slint";
 import { RuleActionBar, RuleChipButton } from "rule_builder_parts.slint";
 
@@ -15,7 +15,6 @@ component OutboundTransportCard inherits Rectangle {
     in-out property <string> sni: "";
     in-out property <string> fingerprint: "chrome";
     in-out property <string> cert-sha256: "";
-    in-out property <bool> verify-tls: true;
     in-out property <bool> use-reality: true;
     in-out property <string> reality-pbk: "";
     in-out property <string> reality-sid: "";
@@ -33,20 +32,13 @@ component OutboundTransportCard inherits Rectangle {
     in-out property <string> mux-max-conns: "4";
     in-out property <string> mux-min-streams: "2";
     in-out property <bool> mux-padding: false;
-    in-out property <string> detour: "";
-    in-out property <string> bind-interface: "";
-    in-out property <string> routing-mark: "";
-    in-out property <bool> tcp-fast-open: false;
-    in-out property <bool> multipath-tcp: false;
-    in-out property <bool> tcp-keepalive: false;
-    in-out property <bool> dial-advanced-open: false;
+    in-out property <bool> advanced-open: false;
 
     border-radius: 16px;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
 
-    GlassSpeculum { corner-inset: 14px; }
 
     VerticalLayout {
         alignment: start;
@@ -54,7 +46,7 @@ component OutboundTransportCard inherits Rectangle {
         spacing: Theme.space-sm;
 
         Text {
-            text: root.has-tls ? I18n.t("TLS、传输与套接字", "TLS, Transport & Socket") : I18n.t("前置链与套接字", "Detour & Socket");
+            text: root.has-tls ? I18n.t("TLS、传输与多路复用", "TLS, Transport & Mux") : I18n.t("传输与多路复用", "Transport & Mux");
             font-size: 13px; font-weight: 700; color: Theme.text-primary;
         }
 
@@ -68,7 +60,6 @@ component OutboundTransportCard inherits Rectangle {
 
         if root.has-tls : FlexboxLayout {
             spacing: Theme.space-sm;
-            NexusSwitch { text: "TLS Verify"; checked <=> root.verify-tls; }
             if root.has-transport : NexusSwitch { text: "REALITY"; checked <=> root.use-reality; }
             if root.can-tls-frag : NexusSwitch { text: "TLS Frag"; checked <=> root.tls-fragment; }
             NexusSwitch { text: "ECH DNS"; checked <=> root.ech-dns; }
@@ -129,32 +120,14 @@ component OutboundTransportCard inherits Rectangle {
             Rectangle { horizontal-stretch: 1; }
         }
 
-        CollapsibleSection {
-            title: I18n.t("前置链、证书固定与底层套接字", "Detour, Cert Pin & Dial Socket");
-            expanded <=> root.dial-advanced-open;
+        if root.has-tls : CollapsibleSection {
+            title: I18n.t("证书指纹固定", "Certificate Pinning");
+            expanded <=> root.advanced-open;
 
-            if root.has-tls : HorizontalLayout {
+            HorizontalLayout {
                 spacing: 6px;
                 Text { text: "SHA-256"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { min-width: 84px; horizontal-stretch: 1; mono: true; text <=> root.cert-sha256; placeholder-text: I18n.t("可选证书 SHA-256 固定", "Optional cert SHA-256 pin"); }
-            }
-
-            HorizontalLayout {
-                spacing: 6px;
-                Text { text: I18n.t("前置", "Detour"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { min-width: 64px; horizontal-stretch: 1; mono: true; text <=> root.detour; placeholder-text: I18n.t("可选", "Opt"); }
-                Text { text: I18n.t("网卡", "Iface"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { width: 64px; mono: true; text <=> root.bind-interface; placeholder-text: "eth0"; }
-                Text { text: "Mark"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { width: 56px; mono: true; text <=> root.routing-mark; placeholder-text: "0x1"; }
-            }
-
-            HorizontalLayout {
-                spacing: Theme.space-md;
-                NexusSwitch { text: "TFO"; checked <=> root.tcp-fast-open; }
-                NexusSwitch { text: "MPTCP"; checked <=> root.multipath-tcp; }
-                NexusSwitch { text: "Keepalive"; checked <=> root.tcp-keepalive; }
-                Rectangle { horizontal-stretch: 1; }
+                NexusInput { min-width: 84px; horizontal-stretch: 1; mono: true; text <=> root.cert-sha256; placeholder-text: I18n.t("可选证书 SHA-256 指纹", "Optional cert SHA-256 pin"); }
             }
         }
     }
@@ -164,35 +137,31 @@ export component OutboundEditorTab inherits VerticalLayout {
     in property <length> container-width: 760px;
     in property <string> status-text: "";
     in property <bool> status-ok: true;
-    callback append-raw-kdl(string);
+    callback add-outbound-node(OutboundNodeDraft);
 
     in-out property <string> proto: "vless";
     in-out property <string> tag: "hk-01";
     in-out property <string> host: "hk01.example.net";
     in-out property <string> port: "443";
-    in-out property <string> secret-file: "secrets/hk-01.secret";
+    in-out property <string> secret: "";
     in-out property <string> uuid-str: "";
-    in-out property <string> username: "user";
+    in-out property <string> username: "";
     in-out property <string> flow: "xtls-rprx-vision";
     in-out property <string> hy2-ports: "";
     in-out property <string> hy2-salamander: "";
-    in-out property <string> hy2-up-bps: "";
-    in-out property <string> hy2-down-bps: "";
+    in-out property <string> hy2-up-mbps: "";
+    in-out property <string> hy2-down-mbps: "";
     in-out property <string> tuic-cc: "bbr";
-    in-out property <string> tuic-udp-mode: "native";
+    in-out property <bool> tuic-udp-over-stream: false;
     in-out property <string> ss-method: "2022-blake3-aes-128-gcm";
     in-out property <int> snell-ver: 5;
     in-out property <string> snell-obfs: "none";
     in-out property <string> snell-obfs-host: "";
     in-out property <string> naive-proto: "h2";
-    in-out property <bool> naive-padding: true;
-    in-out property <string> http-ver: "auto";
-    in-out property <bool> http-udp: false;
     in-out property <string> ssh-host-sha: "";
     in-out property <string> sni: "";
     in-out property <string> fingerprint: "chrome";
     in-out property <string> cert-sha256: "";
-    in-out property <bool> verify-tls: true;
     in-out property <bool> use-reality: true;
     in-out property <string> reality-pbk: "";
     in-out property <string> reality-sid: "";
@@ -210,46 +179,40 @@ export component OutboundEditorTab inherits VerticalLayout {
     in-out property <string> mux-max-conns: "4";
     in-out property <string> mux-min-streams: "2";
     in-out property <bool> mux-padding: false;
-    in-out property <string> detour: "";
-    in-out property <string> bind-interface: "";
-    in-out property <string> routing-mark: "";
-    in-out property <bool> tcp-fast-open: false;
-    in-out property <bool> multipath-tcp: false;
-    in-out property <bool> tcp-keepalive: false;
-    in-out property <bool> dial-advanced-open: false;
+    in-out property <bool> advanced-open: false;
 
     property <bool> two-col: root.container-width >= 680px;
     property <bool> has-tls: root.proto != "shadowsocks" && root.proto != "snell" && root.proto != "ssh";
     property <bool> has-transport: root.proto == "vless" || root.proto == "trojan" || root.proto == "anytls";
-    property <bool> can-mux: root.has-transport || root.proto == "shadowsocks";
+    property <bool> can-mux: root.has-transport || root.proto == "shadowsocks" || root.proto == "snell";
     property <bool> can-tls-frag: root.has-tls && root.proto != "hysteria2" && root.proto != "tuic";
 
-    pure function current-kdl() -> string {
-        OutboundKdl.build(
-            root.proto, root.tag, root.host, root.port,
-            root.secret-file, root.uuid-str, root.username, root.flow,
-            root.hy2-ports, root.hy2-salamander, root.hy2-up-bps, root.hy2-down-bps,
-            root.tuic-cc, root.tuic-udp-mode,
-            root.ss-method, root.snell-ver, root.snell-obfs, root.snell-obfs-host,
-            root.naive-proto, root.naive-padding, root.http-ver, root.http-udp,
-            root.ssh-host-sha,
-            root.sni, root.fingerprint, root.cert-sha256, root.verify-tls, root.use-reality, root.reality-pbk, root.reality-sid,
-            root.tls-fragment, root.ech-dns, root.ech-query-sni,
-            root.transport, root.transport-path, root.transport-host, root.xhttp-mode, root.ws-max-early-data, root.ws-early-data-header,
-            root.mux-enabled, root.mux-proto, root.mux-max-conns, root.mux-min-streams, root.mux-padding,
-            root.detour, root.bind-interface, root.routing-mark, root.tcp-fast-open, root.multipath-tcp, root.tcp-keepalive,
-        )
+    pure function current-draft() -> OutboundNodeDraft {
+        {
+            proto: root.proto, tag: root.tag, host: root.host, port: root.port,
+            secret: root.secret, uuid-str: root.uuid-str, username: root.username, flow: root.flow,
+            hy2-ports: root.hy2-ports, hy2-salamander: root.hy2-salamander,
+            hy2-up-mbps: root.hy2-up-mbps, hy2-down-mbps: root.hy2-down-mbps,
+            tuic-cc: root.tuic-cc, tuic-udp-over-stream: root.tuic-udp-over-stream,
+            ss-method: root.ss-method, snell-ver: root.snell-ver, snell-obfs: root.snell-obfs, snell-obfs-host: root.snell-obfs-host,
+            naive-proto: root.naive-proto, ssh-host-sha: root.ssh-host-sha,
+            sni: root.sni, fingerprint: root.fingerprint, cert-sha256: root.cert-sha256,
+            use-reality: root.use-reality, reality-pbk: root.reality-pbk, reality-sid: root.reality-sid,
+            tls-fragment: root.tls-fragment, ech-dns: root.ech-dns, ech-query-sni: root.ech-query-sni,
+            transport: root.transport, transport-path: root.transport-path, transport-host: root.transport-host,
+            xhttp-mode: root.xhttp-mode, ws-max-early-data: root.ws-max-early-data, ws-early-data-header: root.ws-early-data-header,
+            mux-enabled: root.mux-enabled, mux-proto: root.mux-proto,
+            mux-max-conns: root.mux-max-conns, mux-min-streams: root.mux-min-streams, mux-padding: root.mux-padding,
+        }
     }
 
     function reset-form() {
         root.proto = "vless"; root.tag = "hk-01"; root.host = "hk01.example.net"; root.port = "443";
-        root.secret-file = "secrets/hk-01.secret"; root.uuid-str = ""; root.username = "user"; root.flow = "xtls-rprx-vision";
-        root.sni = ""; root.fingerprint = "chrome"; root.cert-sha256 = ""; root.verify-tls = true; root.use-reality = true;
+        root.secret = ""; root.uuid-str = ""; root.username = ""; root.flow = "xtls-rprx-vision";
+        root.sni = ""; root.fingerprint = "chrome"; root.cert-sha256 = ""; root.use-reality = true;
         root.reality-pbk = ""; root.reality-sid = ""; root.tls-fragment = false; root.ech-dns = false; root.ech-query-sni = "";
         root.transport = "tcp"; root.transport-path = "/"; root.transport-host = ""; root.ws-max-early-data = ""; root.ws-early-data-header = "";
         root.mux-enabled = false; root.mux-proto = "h2mux"; root.mux-max-conns = "4"; root.mux-min-streams = "2"; root.mux-padding = false;
-        root.detour = ""; root.bind-interface = ""; root.routing-mark = "";
-        root.tcp-fast-open = false; root.multipath-tcp = false; root.tcp-keepalive = false;
     }
 
     vertical-stretch: 0;
@@ -262,26 +225,24 @@ export component OutboundEditorTab inherits VerticalLayout {
         OutboundProtoCard {
             horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
             proto <=> root.proto; tag <=> root.tag; host <=> root.host; port <=> root.port;
-            secret-file <=> root.secret-file; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
-            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander; hy2-up-bps <=> root.hy2-up-bps; hy2-down-bps <=> root.hy2-down-bps;
-            tuic-cc <=> root.tuic-cc; tuic-udp-mode <=> root.tuic-udp-mode; ss-method <=> root.ss-method;
+            secret <=> root.secret; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
+            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander;
+            hy2-up-mbps <=> root.hy2-up-mbps; hy2-down-mbps <=> root.hy2-down-mbps;
+            tuic-cc <=> root.tuic-cc; tuic-udp-over-stream <=> root.tuic-udp-over-stream; ss-method <=> root.ss-method;
             snell-ver <=> root.snell-ver; snell-obfs <=> root.snell-obfs; snell-obfs-host <=> root.snell-obfs-host;
-            naive-proto <=> root.naive-proto; naive-padding <=> root.naive-padding; http-ver <=> root.http-ver; http-udp <=> root.http-udp;
-            ssh-host-sha <=> root.ssh-host-sha;
+            naive-proto <=> root.naive-proto; ssh-host-sha <=> root.ssh-host-sha;
         }
 
         OutboundTransportCard {
             horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
             has-tls: root.has-tls; has-transport: root.has-transport; can-mux: root.can-mux; can-tls-frag: root.can-tls-frag;
             sni <=> root.sni; fingerprint <=> root.fingerprint; cert-sha256 <=> root.cert-sha256;
-            verify-tls <=> root.verify-tls; use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
+            use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
             tls-fragment <=> root.tls-fragment; ech-dns <=> root.ech-dns; ech-query-sni <=> root.ech-query-sni;
             transport <=> root.transport; transport-path <=> root.transport-path; transport-host <=> root.transport-host; xhttp-mode <=> root.xhttp-mode;
             ws-max-early-data <=> root.ws-max-early-data; ws-early-data-header <=> root.ws-early-data-header;
             mux-enabled <=> root.mux-enabled; mux-proto <=> root.mux-proto; mux-max-conns <=> root.mux-max-conns; mux-min-streams <=> root.mux-min-streams; mux-padding <=> root.mux-padding;
-            detour <=> root.detour; bind-interface <=> root.bind-interface; routing-mark <=> root.routing-mark;
-            tcp-fast-open <=> root.tcp-fast-open; multipath-tcp <=> root.multipath-tcp; tcp-keepalive <=> root.tcp-keepalive;
-            dial-advanced-open <=> root.dial-advanced-open;
+            advanced-open <=> root.advanced-open;
         }
     }
 
@@ -290,33 +251,31 @@ export component OutboundEditorTab inherits VerticalLayout {
 
         OutboundProtoCard {
             proto <=> root.proto; tag <=> root.tag; host <=> root.host; port <=> root.port;
-            secret-file <=> root.secret-file; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
-            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander; hy2-up-bps <=> root.hy2-up-bps; hy2-down-bps <=> root.hy2-down-bps;
-            tuic-cc <=> root.tuic-cc; tuic-udp-mode <=> root.tuic-udp-mode; ss-method <=> root.ss-method;
+            secret <=> root.secret; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
+            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander;
+            hy2-up-mbps <=> root.hy2-up-mbps; hy2-down-mbps <=> root.hy2-down-mbps;
+            tuic-cc <=> root.tuic-cc; tuic-udp-over-stream <=> root.tuic-udp-over-stream; ss-method <=> root.ss-method;
             snell-ver <=> root.snell-ver; snell-obfs <=> root.snell-obfs; snell-obfs-host <=> root.snell-obfs-host;
-            naive-proto <=> root.naive-proto; naive-padding <=> root.naive-padding; http-ver <=> root.http-ver; http-udp <=> root.http-udp;
-            ssh-host-sha <=> root.ssh-host-sha;
+            naive-proto <=> root.naive-proto; ssh-host-sha <=> root.ssh-host-sha;
         }
 
         OutboundTransportCard {
             has-tls: root.has-tls; has-transport: root.has-transport; can-mux: root.can-mux; can-tls-frag: root.can-tls-frag;
             sni <=> root.sni; fingerprint <=> root.fingerprint; cert-sha256 <=> root.cert-sha256;
-            verify-tls <=> root.verify-tls; use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
+            use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
             tls-fragment <=> root.tls-fragment; ech-dns <=> root.ech-dns; ech-query-sni <=> root.ech-query-sni;
             transport <=> root.transport; transport-path <=> root.transport-path; transport-host <=> root.transport-host; xhttp-mode <=> root.xhttp-mode;
             ws-max-early-data <=> root.ws-max-early-data; ws-early-data-header <=> root.ws-early-data-header;
             mux-enabled <=> root.mux-enabled; mux-proto <=> root.mux-proto; mux-max-conns <=> root.mux-max-conns; mux-min-streams <=> root.mux-min-streams; mux-padding <=> root.mux-padding;
-            detour <=> root.detour; bind-interface <=> root.bind-interface; routing-mark <=> root.routing-mark;
-            tcp-fast-open <=> root.tcp-fast-open; multipath-tcp <=> root.multipath-tcp; tcp-keepalive <=> root.tcp-keepalive;
-            dial-advanced-open <=> root.dial-advanced-open;
+            advanced-open <=> root.advanced-open;
         }
     }
 
     RuleActionBar {
-        button-text: I18n.t("添加出站", "Add Outbound");
+        button-text: I18n.t("添加节点", "Add Node");
         status-text: root.status-text;
         status-ok: root.status-ok;
-        commit => { root.append-raw-kdl(root.current-kdl()); }
+        commit => { root.add-outbound-node(root.current-draft()); }
         reset => { root.reset-form(); }
     }
 }

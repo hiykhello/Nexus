@@ -25,17 +25,6 @@ namespace desktop_ui_helpers {
 #endif
     }
 
-    inline auto make_dash_order_model(std::array<int, 4> o) -> std::shared_ptr<slint::VectorModel<int>> {
-        auto s = desktop::sanitize_dash_order(o);
-        return std::make_shared<slint::VectorModel<int>>(std::vector<int>(s.begin(), s.end()));
-    }
-    inline auto read_dash_order_model(std::shared_ptr<slint::Model<int>> const& m) -> std::array<int, 4> {
-        std::array<int, 4> out{0, 1, 2, 3};
-        if (!m || m->row_count() != 4) return out;
-        for (std::size_t i = 0; i < 4; ++i) out[i] = m->row_data(i).value_or(static_cast<int>(i));
-        return desktop::sanitize_dash_order(out);
-    }
-
     inline auto apply_prefs_to_ui(nexus_ui::AppWindow& ui, desktop::UiPrefs const& p, std::string const& sys_locale) -> void {
         auto const& i18n = ui.global<nexus_ui::I18n>();
         i18n.set_system_locale(slint::SharedString(sys_locale));
@@ -55,14 +44,6 @@ namespace desktop_ui_helpers {
             : p.accent_preset == "amber" ? nexus_ui::AccentPreset::Amber
             : p.accent_preset == "rose" ? nexus_ui::AccentPreset::Rose
             : nexus_ui::AccentPreset::Ocean);
-        theme.set_material_preset(
-            p.material_preset == "solid" ? nexus_ui::MaterialPreset::Solid
-            : p.material_preset == "crystal" ? nexus_ui::MaterialPreset::Crystal
-            : nexus_ui::MaterialPreset::Frosted);
-        theme.set_window_opacity(p.window_opacity);
-        theme.set_surface_opacity(p.surface_opacity);
-        theme.set_blur_enabled(p.blur_enabled);
-        theme.set_ambient_glow(p.ambient_glow);
         ui.global<nexus_ui::Motion>().set_reduced(p.reduced_motion);
 
         ui.set_outbound_mode(slint::SharedString(p.outbound_mode));
@@ -74,11 +55,6 @@ namespace desktop_ui_helpers {
         ui.set_tray_show_speed(p.tray_show_speed);
         ui.set_tray_click_action(slint::SharedString(p.tray_click_action));
         ui.set_tun_elevate_persistent(p.tun_elevate_persistent);
-        ui.set_dash_show_speed(p.dash_show_speed); ui.set_dash_show_quick_nodes(p.dash_show_quick_nodes);
-        ui.set_dash_show_network(p.dash_show_network); ui.set_dash_show_ports(p.dash_show_ports);
-        ui.set_dash_show_traffic(p.dash_show_traffic); ui.set_dash_show_memory(p.dash_show_memory);
-        ui.set_dash_show_connectivity(p.dash_show_connectivity);
-        ui.set_dash_section_order(make_dash_order_model(p.dash_section_order)); ui.set_dash_info_order(make_dash_order_model(p.dash_info_order)); ui.set_dash_deck_swapped(p.dash_deck_swapped);
     }
 
     inline auto capture_prefs_from_ui(nexus_ui::AppWindow const& ui) -> desktop::UiPrefs {
@@ -91,12 +67,6 @@ namespace desktop_ui_helpers {
         auto accent = theme.get_accent_preset();
         p.accent_preset = accent == nexus_ui::AccentPreset::Emerald ? "emerald" : accent == nexus_ui::AccentPreset::Violet ? "violet"
             : accent == nexus_ui::AccentPreset::Amber ? "amber" : accent == nexus_ui::AccentPreset::Rose ? "rose" : "ocean";
-        auto mat = theme.get_material_preset();
-        p.material_preset = mat == nexus_ui::MaterialPreset::Solid ? "solid" : mat == nexus_ui::MaterialPreset::Crystal ? "crystal" : "frosted";
-        p.window_opacity = theme.get_window_opacity();
-        p.surface_opacity = theme.get_surface_opacity();
-        p.blur_enabled = theme.get_blur_enabled();
-        p.ambient_glow = theme.get_ambient_glow();
         p.reduced_motion = ui.global<nexus_ui::Motion>().get_reduced();
         p.outbound_mode = std::string(ui.get_outbound_mode());
         p.sidebar_width = ui.get_sidebar_width();
@@ -107,24 +77,7 @@ namespace desktop_ui_helpers {
         p.tray_show_speed = ui.get_tray_show_speed();
         p.tray_click_action = std::string(ui.get_tray_click_action());
         p.tun_elevate_persistent = ui.get_tun_elevate_persistent();
-        p.dash_show_speed = ui.get_dash_show_speed(); p.dash_show_quick_nodes = ui.get_dash_show_quick_nodes();
-        p.dash_show_network = ui.get_dash_show_network(); p.dash_show_ports = ui.get_dash_show_ports();
-        p.dash_show_traffic = ui.get_dash_show_traffic(); p.dash_show_memory = ui.get_dash_show_memory();
-        p.dash_show_connectivity = ui.get_dash_show_connectivity();
-        p.dash_section_order = read_dash_order_model(ui.get_dash_section_order()); p.dash_info_order = read_dash_order_model(ui.get_dash_info_order()); p.dash_deck_swapped = ui.get_dash_deck_swapped();
         return p;
-    }
-
-    inline auto sync_inbounds_to_ui(nexus_ui::AppWindow& ui, desktop::CoexistingInbounds const& inb) -> void {
-        ui.set_mixed_proxy_enabled(inb.mixed.enabled);
-        ui.set_mixed_proxy_host(slint::SharedString(inb.mixed.host));
-        ui.set_mixed_proxy_port(slint::SharedString(std::to_string(inb.mixed.port)));
-        ui.set_socks_proxy_enabled(inb.socks5.enabled);
-        ui.set_socks_proxy_host(slint::SharedString(inb.socks5.host));
-        ui.set_socks_proxy_port(slint::SharedString(std::to_string(inb.socks5.port)));
-        ui.set_http_proxy_enabled(inb.http.enabled);
-        ui.set_http_proxy_host(slint::SharedString(inb.http.host));
-        ui.set_http_proxy_port(slint::SharedString(std::to_string(inb.http.port)));
     }
 
     inline auto read_inbounds_from_ui(nexus_ui::AppWindow const& ui) -> desktop::CoexistingInbounds {
@@ -139,45 +92,6 @@ namespace desktop_ui_helpers {
         inb.http.host = std::string(ui.get_http_proxy_host());
         inb.http.port = desktop::parse_port_u16(std::string_view(ui.get_http_proxy_port())).value_or(0);
         return inb;
-    }
-
-    inline auto setup_native_window_blur(
-        nexus_ui::AppWindow& ui,
-        slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui,
-        std::shared_ptr<desktop::WindowBlurController> blur) -> void {
-        auto attempted = std::make_shared<bool>(false);
-        auto try_attach = [blur, attempted](nexus_ui::AppWindow& win_ui) mutable {
-            if (!blur->active() && !*attempted) {
-                *attempted = true;
-#ifdef _WIN32
-                (void)blur->attach_win32(win_ui.window().win32_hwnd());
-#elif !defined(__APPLE__)
-                (void)blur->attach_wayland(win_ui.window().wayland_display(), win_ui.window().wayland_surface());
-#else
-                (void)win_ui;
-#endif
-            }
-        };
-        (void)ui.window().set_rendering_notifier([weak_ui, try_attach = std::move(try_attach), blur, attempted](
-            slint::RenderingState state, slint::GraphicsAPI) mutable {
-            if (state == slint::RenderingState::RenderingSetup) {
-                *attempted = false;
-                if (auto strong = weak_ui.lock()) try_attach(**strong);
-            } else if (state == slint::RenderingState::BeforeRendering) {
-                auto strong = weak_ui.lock();
-                if (!strong) return;
-                if (!blur->active() && !*attempted) try_attach(**strong);
-                if (!blur->active()) return;
-                auto phys = (**strong).window().size();
-                auto sz = desktop::compute_logical_blur_size(phys.width, phys.height, (**strong).window().scale_factor());
-                auto const& theme = (**strong).global<nexus_ui::Theme>();
-                bool en = desktop::should_enable_native_blur(theme.get_blur_enabled(), theme.get_window_opacity());
-                blur->sync(en, sz.width, sz.height, theme.get_dark());
-            } else if (state == slint::RenderingState::RenderingTeardown) {
-                *attempted = false;
-                blur->detach();
-            }
-        });
     }
 
     inline auto is_failed_node_state(std::string_view st) -> bool {
@@ -224,8 +138,6 @@ namespace desktop_ui_helpers {
         ui.set_download_rate(slint::SharedString(rate.down_rate));
         ui.set_upload_total(slint::SharedString(format_bytes_human(m.upload_bytes)));
         ui.set_download_total(slint::SharedString(format_bytes_human(m.download_bytes)));
-        double tot = static_cast<double>(m.upload_bytes) + static_cast<double>(m.download_bytes);
-        ui.set_total_down_ratio(tot > 0.0 ? static_cast<float>(std::clamp(static_cast<double>(m.download_bytes) / tot, 0.0, 1.0)) : 0.5f);
         ui.set_down_speed_value(slint::SharedString(rate.down_value)); ui.set_down_speed_unit(slint::SharedString(rate.down_unit));
         ui.set_down_speed_peak(slint::SharedString(rate.down_peak)); ui.set_down_wave_area(slint::SharedString(rate.down_wave_area)); ui.set_down_wave_line(slint::SharedString(rate.down_wave_line));
         ui.set_up_speed_value(slint::SharedString(rate.up_value)); ui.set_up_speed_unit(slint::SharedString(rate.up_unit));
@@ -233,11 +145,14 @@ namespace desktop_ui_helpers {
     }
 
     inline auto clear_telemetry_ui(nexus_ui::AppWindow& ui) -> void {
-        ui.set_core_uptime(slint::SharedString("")); ui.set_core_memory_text(slint::SharedString("--"));
+        ui.set_core_uptime(slint::SharedString(""));
+        ui.set_core_pid_text(slint::SharedString(""));
+        ui.set_core_cpu_text(slint::SharedString("--"));
+        ui.set_core_cpu_ratio(0.0f);
+        ui.set_core_memory_text(slint::SharedString("--"));
         ui.set_active_sessions(0);
         ui.set_upload_rate(slint::SharedString("0.0 KB/s")); ui.set_download_rate(slint::SharedString("0.0 KB/s"));
         ui.set_upload_total(slint::SharedString("0 B")); ui.set_download_total(slint::SharedString("0 B"));
-        ui.set_total_down_ratio(0.5f);
         ui.set_down_speed_value(slint::SharedString("0.0")); ui.set_down_speed_unit(slint::SharedString("KB/s")); ui.set_down_speed_peak(slint::SharedString("0.0 KB/s"));
         ui.set_down_wave_area(slint::SharedString("")); ui.set_down_wave_line(slint::SharedString(""));
         ui.set_up_speed_value(slint::SharedString("0.0")); ui.set_up_speed_unit(slint::SharedString("KB/s")); ui.set_up_speed_peak(slint::SharedString("0.0 KB/s"));
@@ -305,26 +220,7 @@ namespace desktop_ui_helpers {
         ui.set_groups(std::make_shared<slint::VectorModel<nexus_ui::OutboundGroupItem>>(std::move(ui_groups)));
         member_models.replace(ui_members, member_filter, sort_mode);
         ui.set_active_group_fastest_ms(member_models.fastest_latency_ms());
-        ui.set_quick_nodes(std::make_shared<slint::VectorModel<nexus_ui::OutboundMemberItem>>(
-            build_ui_quick_nodes(cached_groups, active_tag, pinned_members)));
         sync_active_node_to_ui(ui, cached_groups, active_tag);
-    }
-
-    inline auto count_kdl_lines(std::string_view kdl) -> int {
-        if (kdl.empty()) return 0;
-        int lines = 1;
-        for (char c : kdl) { if (c == '\n') ++lines; }
-        if (kdl.back() == '\n' && lines > 1) --lines;
-        return lines;
-    }
-
-    inline auto apply_kdl_to_ui_state(nexus_ui::AppWindow& ui, std::string const& kdl) -> void {
-        ui.set_kdl_text(slint::SharedString(kdl));
-        ui.set_kdl_line_count(count_kdl_lines(kdl));
-        ui.set_tun_enabled(kdl_has_tun_inbound(kdl));
-        if (!kdl.empty()) {
-            sync_inbounds_to_ui(ui, desktop::parse_inbound_endpoints(kdl));
-        }
     }
 
     inline auto sync_tray_state(

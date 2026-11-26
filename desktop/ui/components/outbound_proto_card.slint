@@ -1,6 +1,6 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 import { NexusSelect } from "nexus_select.slint";
 import { RuleChipButton } from "rule_builder_parts.slint";
@@ -10,24 +10,21 @@ export component OutboundProtoCard inherits Rectangle {
     in-out property <string> tag: "hk-01";
     in-out property <string> host: "hk01.example.net";
     in-out property <string> port: "443";
-    in-out property <string> secret-file: "secrets/hk-01.secret";
+    in-out property <string> secret: "";
     in-out property <string> uuid-str: "";
-    in-out property <string> username: "user";
+    in-out property <string> username: "";
     in-out property <string> flow: "xtls-rprx-vision";
     in-out property <string> hy2-ports: "";
     in-out property <string> hy2-salamander: "";
-    in-out property <string> hy2-up-bps: "";
-    in-out property <string> hy2-down-bps: "";
+    in-out property <string> hy2-up-mbps: "";
+    in-out property <string> hy2-down-mbps: "";
     in-out property <string> tuic-cc: "bbr";
-    in-out property <string> tuic-udp-mode: "native";
+    in-out property <bool> tuic-udp-over-stream: false;
     in-out property <string> ss-method: "2022-blake3-aes-128-gcm";
     in-out property <int> snell-ver: 5;
     in-out property <string> snell-obfs: "none";
     in-out property <string> snell-obfs-host: "";
     in-out property <string> naive-proto: "h2";
-    in-out property <bool> naive-padding: true;
-    in-out property <string> http-ver: "auto";
-    in-out property <bool> http-udp: false;
     in-out property <string> ssh-host-sha: "";
 
     border-radius: 16px;
@@ -35,14 +32,13 @@ export component OutboundProtoCard inherits Rectangle {
     border-color: Theme.card-border;
     background: Theme.card-surface;
 
-    GlassSpeculum { corner-inset: 14px; }
 
     VerticalLayout {
         alignment: start;
         padding: 14px;
         spacing: Theme.space-sm;
 
-        Text { text: I18n.t("协议与凭据", "Protocol & Endpoint"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
+        Text { text: I18n.t("协议与凭据", "Protocol & Credentials"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
 
         FlexboxLayout {
             spacing: 6px;
@@ -60,7 +56,7 @@ export component OutboundProtoCard inherits Rectangle {
 
         HorizontalLayout {
             spacing: 6px;
-            Text { text: I18n.t("标签", "Tag"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            Text { text: I18n.t("名称", "Name"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
             NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.tag; placeholder-text: "hk-01"; }
             Text { text: I18n.t("端口", "Port"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
             NexusInput { width: 68px; mono: true; text <=> root.port; placeholder-text: "443"; }
@@ -68,14 +64,14 @@ export component OutboundProtoCard inherits Rectangle {
 
         HorizontalLayout {
             spacing: 6px;
-            Text { text: I18n.t("主机", "Host"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            Text { text: I18n.t("服务器", "Server"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
             NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.host; placeholder-text: "edge.example.net"; }
         }
 
         if root.proto == "vless" : HorizontalLayout {
             spacing: 6px;
-            Text { text: I18n.t("UUID 文件", "UUID File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            Text { text: "UUID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.secret; placeholder-text: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"; }
         }
 
         if root.proto == "vless" : HorizontalLayout {
@@ -86,14 +82,14 @@ export component OutboundProtoCard inherits Rectangle {
 
         if root.proto == "trojan" || root.proto == "anytls" : HorizontalLayout {
             spacing: 6px;
-            Text { text: I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            Text { text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("输入节点密码", "Enter password"); }
         }
 
         if root.proto == "hysteria2" : HorizontalLayout {
             spacing: 6px;
-            Text { text: I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            Text { text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("认证密码", "Auth password"); }
             Text { text: I18n.t("跳端口", "Ports"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
             NexusInput { width: 92px; mono: true; text <=> root.hy2-ports; placeholder-text: "20000-40000"; }
         }
@@ -101,27 +97,26 @@ export component OutboundProtoCard inherits Rectangle {
         if root.proto == "hysteria2" : HorizontalLayout {
             spacing: 6px;
             Text { text: I18n.t("混淆", "Obfs"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 56px; horizontal-stretch: 1; mono: true; text <=> root.hy2-salamander; placeholder-text: I18n.t("可选", "Optional"); }
+            NexusInput { min-width: 56px; horizontal-stretch: 1; mono: true; password: true; text <=> root.hy2-salamander; placeholder-text: I18n.t("可选", "Optional"); }
             Text { text: "Up"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { width: 66px; mono: true; text <=> root.hy2-up-bps; placeholder-text: "100M"; }
+            NexusInput { width: 62px; mono: true; text <=> root.hy2-up-mbps; placeholder-text: "100"; }
             Text { text: "Down"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { width: 66px; mono: true; text <=> root.hy2-down-bps; placeholder-text: "200M"; }
+            NexusInput { width: 62px; mono: true; text <=> root.hy2-down-mbps; placeholder-text: "200"; }
         }
 
         if root.proto == "tuic" : HorizontalLayout {
             spacing: 6px;
             Text { text: "UUID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
             NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.uuid-str; placeholder-text: "TUIC UUID"; }
-            Text { text: I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            Text { text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("输入密码", "Password"); }
         }
 
         if root.proto == "tuic" : HorizontalLayout {
-            spacing: 6px;
+            spacing: 8px;
             Text { text: I18n.t("拥塞", "CC"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusSelect { width: 96px; options: ["bbr", "cubic", "new_reno"]; current-value <=> root.tuic-cc; }
-            Text { text: "UDP"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusSelect { width: 92px; options: ["native", "quic"]; current-value <=> root.tuic-udp-mode; }
+            NexusSelect { width: 96px; options: ["bbr", "cubic", "reno"]; current-value <=> root.tuic-cc; }
+            NexusSwitch { text: "UDP over Stream"; checked <=> root.tuic-udp-over-stream; }
             Rectangle { horizontal-stretch: 1; }
         }
 
@@ -133,8 +128,8 @@ export component OutboundProtoCard inherits Rectangle {
 
         if root.proto == "shadowsocks" : HorizontalLayout {
             spacing: 6px;
-            Text { text: I18n.t("密钥文件", "Key File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            Text { text: I18n.t("密钥", "Key"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("Base64 密钥", "Base64 key"); }
         }
 
         if root.proto == "snell" : HorizontalLayout {
@@ -143,7 +138,7 @@ export component OutboundProtoCard inherits Rectangle {
             RuleChipButton { label: "v4"; active: root.snell-ver == 4; clicked => { root.snell-ver = 4; } }
             RuleChipButton { label: "v5"; active: root.snell-ver == 5; clicked => { root.snell-ver = 5; } }
             Text { text: "PSK"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("输入 PSK", "Pre-shared key"); }
         }
 
         if root.proto == "snell" : HorizontalLayout {
@@ -160,18 +155,6 @@ export component OutboundProtoCard inherits Rectangle {
             Text { text: I18n.t("承载", "Proto"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
             RuleChipButton { label: "h2"; active: root.naive-proto == "h2"; clicked => { root.naive-proto = "h2"; } }
             RuleChipButton { label: "h3"; active: root.naive-proto == "h3"; clicked => { root.naive-proto = "h3"; } }
-            NexusSwitch { text: "Padding"; checked <=> root.naive-padding; }
-            Rectangle { horizontal-stretch: 1; }
-        }
-
-        if root.proto == "http-connect" : HorizontalLayout {
-            spacing: 6px;
-            Text { text: "HTTP"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            RuleChipButton { label: "auto"; active: root.http-ver == "auto"; clicked => { root.http-ver = "auto"; } }
-            RuleChipButton { label: "h1"; active: root.http-ver == "h1"; clicked => { root.http-ver = "h1"; } }
-            RuleChipButton { label: "h2"; active: root.http-ver == "h2"; clicked => { root.http-ver = "h2"; } }
-            RuleChipButton { label: "h3"; active: root.http-ver == "h3"; clicked => { root.http-ver = "h3"; } }
-            NexusSwitch { text: "UDP"; checked <=> root.http-udp; }
             Rectangle { horizontal-stretch: 1; }
         }
 
@@ -179,14 +162,14 @@ export component OutboundProtoCard inherits Rectangle {
             spacing: 6px;
             Text { text: I18n.t("用户", "User"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
             NexusInput { width: 78px; mono: true; text <=> root.username; placeholder-text: "user"; }
-            Text { text: root.proto == "ssh" ? I18n.t("私钥", "Key") : I18n.t("密码文件", "Pass File"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.secret-file; }
+            Text { text: root.proto == "ssh" ? I18n.t("密码/私钥", "Pass/Key") : I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: root.proto == "ssh" ? I18n.t("密码或 PEM 私钥", "Password or PEM key") : I18n.t("输入密码", "Password"); }
         }
 
         if root.proto == "ssh" : HorizontalLayout {
             spacing: 6px;
             Text { text: "HostKey"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.ssh-host-sha; placeholder-text: I18n.t("可选 SHA-256 指纹", "Optional SHA-256"); }
+            NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.ssh-host-sha; placeholder-text: I18n.t("必填 SHA-256 指纹", "Required SHA-256"); }
         }
     }
 }

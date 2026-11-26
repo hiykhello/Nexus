@@ -332,7 +332,7 @@ namespace desktop {
         WorkspaceComposeResult err{};
         std::error_code ec;
         if (!std::filesystem::is_regular_file(core_binary, ec)) {
-            err.errors.push_back("core binary not found: " + path_to_utf8_cmp(core_binary));
+            err.errors.push_back("Core component not found");
             return err;
         }
         auto argv = build_workspace_compose_argv(core_binary, workspace_file, host_file, secrets_dir, active_profile_id, emit_kdl_file);

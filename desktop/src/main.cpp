@@ -24,8 +24,6 @@ import desktop.client_db;
 import desktop.core_supervisor;
 import desktop.desktop_host_config;
 import desktop.http_control;
-import desktop.ipc_client;
-import desktop.kdl_ops;
 import desktop.share_link;
 import desktop.single_instance;
 import desktop.system_proxy;
@@ -34,7 +32,6 @@ import desktop.tray_controller;
 import desktop.tun_privilege;
 import desktop.ui_actions;
 import desktop.ui_prefs;
-import desktop.window_blur;
 import desktop.workspace_composer;
 import desktop.workspace_models;
 import desktop.workspace_store;
@@ -43,20 +40,16 @@ import desktop.workspace_sync;
 #include "main_helpers.hpp"
 #include "ui_redesign_helpers.hpp"
 #include "ui_binding_helpers.hpp"
-#include "tun_elevation_flow.hpp"
 #include "workspace_ui_flow.hpp"
+#include "tun_elevation_flow.hpp"
 #include "main_quick_controls.hpp"
 #include "main_callbacks.hpp"
 #include "main_inspect_callbacks.hpp"
 
 using desktop_ui_helpers::default_config_dir;
-using desktop_ui_helpers::default_control_endpoint;
 using desktop_ui_helpers::is_en_ui;
 using desktop_ui_helpers::on_ui_thread;
-using desktop_ui_helpers::open_with_system_editor;
-using desktop_ui_helpers::read_file_text;
 using desktop_ui_helpers::tr;
-using desktop_ui_helpers::write_file_atomic;
 
 auto main(int argc, char** argv) -> int {
     (void)argc;
@@ -67,14 +60,11 @@ auto main(int argc, char** argv) -> int {
     std::error_code dir_ec;
     std::filesystem::create_directories(cfg_dir, dir_ec);
     auto config_path = cfg_dir / "config.kdl";
-    auto secrets_dir = cfg_dir / "secrets";
     auto binary_path = desktop_ui_helpers::resolve_core_binary(argv[0]);
     slint::set_xdg_app_id("nexus-desktop");
 
     auto ui = nexus_ui::AppWindow::create();
     slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui(ui);
-    auto blur_ctrl = std::make_shared<desktop::WindowBlurController>();
-    desktop_ui_helpers::setup_native_window_blur(*ui, weak_ui, blur_ctrl);
 
     std::function<void()> show_window_from_ui;
     auto instance = desktop::SingleInstanceGuard::acquire("nexus-desktop", [weak_ui, &show_window_from_ui] {
@@ -85,7 +75,6 @@ auto main(int argc, char** argv) -> int {
     });
     if (!instance) return 0;
 
-    auto fallback_sock = default_control_endpoint(cfg_dir);
     std::unique_ptr<desktop::ClientDatabase> client_db;
     std::string db_open_error;
     if (auto opened = desktop::ClientDatabase::open(cfg_dir / "nexus-client.db"); opened) {
@@ -94,15 +83,8 @@ auto main(int argc, char** argv) -> int {
         db_open_error = opened.error();
     }
 
-    if (!std::filesystem::exists(config_path, dir_ec)) {
-        (void)write_file_atomic(config_path, desktop_ui_helpers::build_default_desktop_config(fallback_sock));
-    }
-    auto initial_kdl = read_file_text(config_path);
-    auto ctl_cfg = desktop_ui_helpers::parse_control_config(initial_kdl, fallback_sock, cfg_dir);
-
     desktop::CoreSupervisor supervisor(binary_path);
-    desktop::IpcClient ipc(ctl_cfg.socket);
-    desktop::HttpControlClient http_ctrl(ctl_cfg.http_host, ctl_cfg.http_port, ctl_cfg.bearer_token);
+    desktop::HttpControlClient http_ctrl("127.0.0.1", 19090);
     desktop::SystemProxyController sys_proxy;
     std::vector<desktop::OutboundGroupSnapshot> cached_groups;
     std::unordered_set<std::string> pinned_members;
@@ -116,6 +98,9 @@ auto main(int argc, char** argv) -> int {
     std::mutex logs_mu;
     std::atomic<std::uint64_t> last_log_seq{0};
     desktop_ui_helpers::RateTracker rate_tracker;
+    desktop_ui_helpers::CpuUsageTracker app_cpu_tracker;
+    desktop_ui_helpers::CpuUsageTracker core_cpu_tracker;
+    std::uint64_t last_core_pid = 0;
     std::optional<std::chrono::steady_clock::time_point> core_started_at;
     std::atomic<bool> metrics_in_flight{false};
     std::atomic<bool> conns_in_flight{false};
@@ -126,12 +111,10 @@ auto main(int argc, char** argv) -> int {
     desktop::AsyncWorker worker;
     desktop::AsyncWorker probe_worker;
 
-    ui->set_config_path(slint::SharedString(config_path.string()));
     auto loaded_prefs = (client_db ? desktop::load_ui_prefs_from_db(*client_db) : std::nullopt)
                             .value_or(desktop::UiPrefs{});
     desktop_ui_helpers::apply_prefs_to_ui(*ui, loaded_prefs, desktop::detect_system_locale());
     desktop_ui_helpers::clear_telemetry_ui(*ui);
-    desktop_ui_helpers::apply_kdl_to_ui_state(*ui, initial_kdl);
     if (!db_open_error.empty()) {
         bool const en = is_en_ui(*ui);
         auto msg = tr(en, "客户端数据库打开失败: ", "Client database error: ") + db_open_error;
@@ -155,8 +138,8 @@ auto main(int argc, char** argv) -> int {
     std::atomic<bool> quit_once{false};
 
     desktop_ui_helpers::WorkspaceUiContext ws_ctx{
-        *ui, weak_ui, worker, supervisor, ipc, http_ctrl, rate_tracker, core_started_at, lifecycle_busy,
-        cfg_dir, config_path, fallback_sock, sync_tray, client_db.get(), {}, {}, {}, {}, {}, {}, "proxy", {}, {}
+        *ui, weak_ui, worker, supervisor, http_ctrl, rate_tracker, core_started_at, lifecycle_busy,
+        cfg_dir, config_path, sync_tray, client_db.get(), {}, {}, {}, {}, {}, {}, "proxy", {}, {}
     };
 
     desktop::TrayController tray(desktop_ui_helpers::make_tray_callbacks(
@@ -167,14 +150,34 @@ auto main(int argc, char** argv) -> int {
     };
     ui->set_tray_native_active(tray.native_backend_active());
 
-    auto sync_memory_ui = [&] {
-        auto app_rss = desktop::current_process_memory_bytes();
-        auto core_rss = supervisor.running() ? supervisor.memory_bytes() : 0ULL;
-        auto total_rss = app_rss + core_rss;
-        ui->set_app_memory_text(slint::SharedString(app_rss > 0 ? desktop_ui_helpers::format_bytes_human(app_rss) : "--"));
-        ui->set_core_memory_text(slint::SharedString(core_rss > 0 ? desktop_ui_helpers::format_bytes_human(core_rss) : "--"));
-        ui->set_total_memory_text(slint::SharedString(total_rss > 0 ? desktop_ui_helpers::format_bytes_human(total_rss) : "--"));
-        ui->set_app_memory_ratio(total_rss > 0 ? static_cast<float>(static_cast<double>(app_rss) / static_cast<double>(total_rss)) : 1.0f);
+    auto sync_perf_ui = [&] {
+        auto app_pid = desktop::current_process_id();
+        auto app_priv = desktop::current_process_memory_bytes();
+        auto app_cpu = app_cpu_tracker.record(desktop::current_process_cpu_time_ns());
+        ui->set_app_pid_text(slint::SharedString(app_pid > 0 ? std::format("PID {}", app_pid) : "--"));
+        ui->set_app_cpu_text(slint::SharedString(app_cpu.text));
+        ui->set_app_cpu_ratio(app_cpu.ratio);
+        ui->set_app_memory_text(slint::SharedString(app_priv > 0 ? desktop_ui_helpers::format_bytes_human(app_priv) : "--"));
+
+        bool const core_up = supervisor.running();
+        auto core_pid = core_up ? supervisor.process_id() : 0ULL;
+        if (!core_up || core_pid != last_core_pid) {
+            core_cpu_tracker.reset();
+            last_core_pid = core_pid;
+        }
+        if (core_up) {
+            auto core_priv = supervisor.memory_bytes();
+            auto core_cpu = core_cpu_tracker.record(supervisor.cpu_time_ns());
+            ui->set_core_pid_text(slint::SharedString(core_pid > 0 ? std::format("PID {}", core_pid) : ""));
+            ui->set_core_cpu_text(slint::SharedString(core_cpu.text));
+            ui->set_core_cpu_ratio(core_cpu.ratio);
+            ui->set_core_memory_text(slint::SharedString(core_priv > 0 ? desktop_ui_helpers::format_bytes_human(core_priv) : "--"));
+        } else {
+            ui->set_core_pid_text(slint::SharedString(""));
+            ui->set_core_cpu_text(slint::SharedString("--"));
+            ui->set_core_cpu_ratio(0.0f);
+            ui->set_core_memory_text(slint::SharedString("--"));
+        }
     };
 
     auto record_traffic_totals = [&](std::uint64_t up_total, std::uint64_t down_total) {
@@ -200,17 +203,17 @@ auto main(int argc, char** argv) -> int {
 
     desktop_ui_helpers::LiveInspectController inspect_ctrl{
         *ui, weak_ui, worker, probe_worker, supervisor, http_ctrl, tray,
-        cached_groups, pinned_members, member_models, log_models, cached_logs, logs_mu, last_log_seq, sync_tray
+        cached_groups, pinned_members, member_models, conn_models, log_models, rate_tracker,
+        cached_logs, logs_mu, last_log_seq, sync_tray, record_traffic_totals
     };
 
     on_window_shown = [&] {
-        sync_memory_ui();
+        sync_perf_ui();
         if (supervisor.running()) {
             poll_telemetry(std::string_view(ui->get_active_node()).empty());
-            if (ui->get_active_tab() == 2 && !ui->get_connections_paused()) ui->invoke_refresh_connections();
+            if ((ui->get_active_tab() == 0 || ui->get_active_tab() == 2) && !ui->get_connections_paused()) ui->invoke_refresh_connections();
             if (ui->get_active_tab() == 4) ui->invoke_refresh_logs();
-            inspect_ctrl.sync_log_stream(
-                ui->get_active_tab() == 4 && ui->global<nexus_ui::ControlInspectState>().get_logs_stream_enabled());
+            inspect_ctrl.sync_log_stream(true);
         }
     };
     on_window_hidden = [&] {
@@ -235,28 +238,19 @@ auto main(int argc, char** argv) -> int {
     };
 
     desktop_ui_helpers::bind_quick_control_callbacks(ws_ctx, sys_proxy, persist_prefs);
-
-    desktop_ui_helpers::TunFlowContext tun_ctx{
-        *ui, weak_ui, worker, supervisor, ipc, http_ctrl, rate_tracker, core_started_at,
-        cfg_dir, config_path, fallback_sock, lifecycle_busy, sync_tray, persist_prefs,
-        [&](bool on) {
-            ws_ctx.host.enable_tun = on;
-            (void)desktop_ui_helpers::persist_host_db(ws_ctx);
-            desktop_ui_helpers::sync_workspace_to_ui(ws_ctx);
-        }
-    };
-    desktop_ui_helpers::bind_tun_callbacks(tun_ctx);
     desktop_ui_helpers::bind_workspace_callbacks(ws_ctx);
+    desktop_ui_helpers::bind_tun_callbacks(ws_ctx, persist_prefs);
 
     ui->on_activate_profile([&](slint::SharedString id) {
         ui->global<nexus_ui::WorkspaceState>().invoke_activate_profile(id);
     });
     ui->on_toggle_core([&] {
+        inspect_ctrl.reset_ws_fallback();
         if (!supervisor.running()) last_log_seq.store(0, std::memory_order_release);
-        desktop_ui_helpers::toggle_core_with_workspace(ws_ctx, [&](std::string kdl, bool prefer_persistent, bool en) {
+        desktop_ui_helpers::toggle_core_with_workspace(ws_ctx, [&](std::string cfg_text, bool prefer_persistent, bool en) {
             desktop_ui_helpers::toggle_core_async(
-                weak_ui, worker, supervisor, sys_proxy, ipc, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
-                core_started_at, metrics_in_flight, lifecycle_busy, cfg_dir, config_path, fallback_sock, std::move(kdl), prefer_persistent, en);
+                weak_ui, worker, supervisor, sys_proxy, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
+                core_started_at, metrics_in_flight, lifecycle_busy, cfg_dir, config_path, std::move(cfg_text), prefer_persistent, en);
         });
     });
 
@@ -267,60 +261,14 @@ auto main(int argc, char** argv) -> int {
             return;
         }
         worker.post([&, weak_ui, en] {
-            auto reply = ipc.reload();
-            if (!reply.ok) { if (auto hr = http_ctrl.reload(); hr.ok) reply = {true, "OK"}; }
-            auto msg = reply.ok ? tr(en, "热重载成功", "Reloaded") : (tr(en, "热重载失败: ", "Reload failed: ") + reply.body);
-            on_ui_thread(weak_ui, [ok = reply.ok, msg = std::move(msg)](auto& s) {
+            auto hr = http_ctrl.reload();
+            auto msg = hr.ok ? tr(en, "热重载成功", "Reloaded") : (tr(en, "热重载失败: ", "Reload failed: ") + hr.body);
+            on_ui_thread(weak_ui, [ok = hr.ok, msg = std::move(msg)](auto& s) {
                 desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
             });
         });
     });
-    ui->on_save_and_reload([&](slint::SharedString text) {
-        bool en = is_en_ui(*ui);
-        std::string payload(text);
-        ui->set_diagnostic_message(slint::SharedString(tr(en, "正在校验并保存...", "Validating & saving...")));
-        worker.post([&, weak_ui, en, payload = std::move(payload)] {
-            auto res = desktop_ui_helpers::validate_draft_config(cfg_dir, supervisor, payload, en);
-            if (!res.ok) {
-                auto disk_kdl = read_file_text(config_path);
-                on_ui_thread(weak_ui, [&sync_tray, disk_kdl = std::move(disk_kdl), msg = tr(en, "拒绝下发无效配置: ", "Invalid config rejected: ") + res.message](auto& s) {
-                    s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(msg));
-                    if (!disk_kdl.empty()) desktop_ui_helpers::apply_kdl_to_ui_state(*s, disk_kdl);
-                    sync_tray(); desktop_ui_helpers::push_toast(*s, msg, "error");
-                });
-                return;
-            }
-            bool saved = write_file_atomic(config_path, payload);
-            std::string disk_kdl = saved ? std::string{} : read_file_text(config_path);
-            desktop::IpcReply reply{saved, saved ? tr(en, "已保存", "Saved") : tr(en, "写入失败", "Write failed")};
-            if (saved) {
-                bool was_running = supervisor.running();
-                if (was_running) {
-                    reply = ipc.reload();
-                    if (!reply.ok && http_ctrl.reload().ok) reply = {true, "OK"};
-                }
-                if (!was_running || reply.ok) {
-                    auto next_ctl = desktop_ui_helpers::parse_control_config(payload, fallback_sock, cfg_dir);
-                    ipc.set_endpoint(next_ctl.socket);
-                    http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
-                    http_ctrl.set_bearer_token(next_ctl.bearer_token);
-                }
-            }
-            std::string msg = !saved ? tr(en, "写入配置文件失败", "Failed to write config file")
-                : (reply.ok ? tr(en, "校验通过，已保存并热重载", "Saved & reloaded") : (tr(en, "已保存，但重载失败: ", "Saved; reload failed: ") + reply.body));
-            on_ui_thread(weak_ui, [&sync_tray, ok = saved && reply.ok, saved, payload, disk_kdl = std::move(disk_kdl), msg = std::move(msg)](auto& s) {
-                if (saved) {
-                    desktop_ui_helpers::apply_kdl_to_ui_state(*s, payload);
-                } else {
-                    s->set_tun_enabled(desktop_ui_helpers::kdl_has_tun_inbound(disk_kdl));
-                }
-                s->set_diagnostic_ok(ok); s->set_diagnostic_message(slint::SharedString(msg));
-                sync_tray(); desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
-            });
-        });
-    });
 
-    ui->on_open_external_editor([&] { open_with_system_editor(config_path); });
     ui->global<nexus_ui::ToastState>().set_has_endpoint_formatter(true);
     ui->global<nexus_ui::ToastState>().on_format_endpoint_cb([](slint::SharedString h, slint::SharedString p) {
         return slint::SharedString(desktop::format_host_port(std::string_view(h), std::string_view(p)));
@@ -338,13 +286,23 @@ auto main(int argc, char** argv) -> int {
         worker.post([cmd = std::move(cmd)] { (void)desktop_ui_helpers::copy_text_to_clipboard(cmd); });
         desktop_ui_helpers::push_toast(*ui, tr(en, "已复制终端代理环境变量", "Copied proxy export command"), "success");
     });
-    desktop_ui_helpers::bind_dash_layout_callbacks(*ui, persist_prefs);
+    ui->on_ui_prefs_changed(persist_prefs);
     ui->on_clear_cache([&] {
         bool en = is_en_ui(*ui);
-        worker.post([&, weak_ui, en] {
-            auto reply = http_ctrl.clear_cache();
-            auto msg = reply.ok ? tr(en, "缓存已清空", "Cache cleared") : (tr(en, "清空缓存失败: ", "Clear cache failed: ") + reply.body);
-            on_ui_thread(weak_ui, [ok = reply.ok, msg = std::move(msg)](auto& s) {
+        bool const core_up = supervisor.running();
+        worker.post([&, weak_ui, en, core_up, db = client_db.get()] {
+            bool ok = true;
+            std::string err;
+            if (core_up) {
+                auto reply = http_ctrl.clear_cache();
+                ok = reply.ok;
+                if (!ok) err = reply.body;
+            }
+            desktop::reclaim_process_memory(db);
+            auto msg = ok ? tr(en, "缓存与内存已整理", "Cache cleared & memory trimmed")
+                          : (tr(en, "清空缓存失败: ", "Clear cache failed: ") + err);
+            on_ui_thread(weak_ui, [&sync_perf_ui, ok, msg = std::move(msg)](auto& s) {
+                sync_perf_ui();
                 desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
             });
         });
@@ -354,8 +312,8 @@ auto main(int argc, char** argv) -> int {
     });
 
     desktop_ui_helpers::DesktopCallbacksContext cb_ctx{
-        *ui, weak_ui, worker, probe_worker, supervisor, ipc, http_ctrl, client_db.get(), ws_ctx.telemetry,
-        cfg_dir, config_path, fallback_sock, cached_groups, pinned_members, member_models, conn_models, log_models,
+        *ui, weak_ui, worker, probe_worker, supervisor, http_ctrl, client_db.get(), ws_ctx,
+        cfg_dir, config_path, cached_groups, pinned_members, member_models, conn_models, log_models,
         cached_logs, logs_mu, last_log_seq, sync_tray
     };
     struct ShutdownGuard {
@@ -388,13 +346,23 @@ auto main(int argc, char** argv) -> int {
         return slint::CloseRequestResponse::HideWindow;
     });
 
-    sync_memory_ui();
+    sync_perf_ui();
+
+    // Trim transient startup allocations once initial UI layout settles.
+    slint::Timer startup_trim_timer;
+    startup_trim_timer.start(slint::TimerMode::SingleShot, std::chrono::milliseconds(2500), [&] {
+        worker.post([db = client_db.get(), weak_ui, &sync_perf_ui] {
+            desktop::reclaim_process_memory(db);
+            on_ui_thread(weak_ui, [&sync_perf_ui](auto&) { sync_perf_ui(); });
+        });
+    });
 
     slint::Timer telemetry_timer(std::chrono::seconds(1), [&] {
         if (lifecycle_busy.load(std::memory_order_acquire)) return;
         bool const core_up = supervisor.running();
         if (!core_up && (core_started_at || ui->get_core_running())) {
             bool en = is_en_ui(*ui);
+            inspect_ctrl.reset_ws_fallback();
             inspect_ctrl.stop_log_stream();
             last_log_seq.store(0, std::memory_order_release);
             core_started_at.reset();
@@ -413,22 +381,23 @@ auto main(int argc, char** argv) -> int {
             sync_tray();
             return;
         }
-        // While hidden in tray, pause full UI polling; if tray speed tooltip is enabled, poll lightweight /metrics every 5s.
         if (!window_visible) {
             if (core_up && ui->get_tray_show_speed() && (++hidden_metrics_tick % 5 == 0)) {
                 poll_telemetry(false);
             }
             return;
         }
-        sync_memory_ui();
-        inspect_ctrl.sync_log_stream(
-            core_up && ui->get_active_tab() == 4 && ui->global<nexus_ui::ControlInspectState>().get_logs_stream_enabled());
+        sync_perf_ui();
+        inspect_ctrl.sync_log_stream(core_up);
         if (core_up) {
             if (!core_started_at) core_started_at = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - *core_started_at);
             ui->set_core_uptime(slint::SharedString(desktop_ui_helpers::format_uptime(elapsed)));
-            poll_telemetry(std::string_view(ui->get_active_node()).empty());
-            if (ui->get_active_tab() == 2 && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
+            bool const ws_up = inspect_ctrl.ws_live();
+            if (!ws_up) {
+                poll_telemetry(std::string_view(ui->get_active_node()).empty());
+            }
+            if (!ws_up && (ui->get_active_tab() == 0 || ui->get_active_tab() == 2) && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
                 !conns_in_flight.exchange(true, std::memory_order_acq_rel)) {
                 bool posted = worker.post([&, weak_ui] {
                     auto reply = http_ctrl.connections();

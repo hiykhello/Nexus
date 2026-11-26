@@ -2,8 +2,7 @@ import { ToastState } from "../feedback.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
-import { ProportionBar } from "bento_deck_cards.slint";
-import { GlassSpeculum } from "glass_primitives.slint";
+import { ProportionBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 
 component MetaGridTile inherits Rectangle {
@@ -81,21 +80,12 @@ component CapsuleRuleOption inherits Rectangle {
             : transparent;
     background:
         root.active
-            ? (root.tone == "danger"
-                ? @linear-gradient(135deg, Theme.pill-danger-top 0%, Theme.pill-danger-bot 100%)
-                : root.tone == "direct"
-                    ? @linear-gradient(135deg, Theme.pill-direct-top 0%, Theme.pill-direct-bot 100%)
-                    : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+            ? (root.tone == "danger" ? Theme.pill-danger-bot
+                : root.tone == "direct" ? Theme.pill-direct-bot
+                : Theme.pill-active-bot)
             : ta.has-hover ? Theme.row-hover-bg : transparent;
-    drop-shadow-blur: root.active ? 8px : 0px;
-    drop-shadow-color:
-        root.tone == "danger" ? Theme.pill-danger-shadow
-        : root.tone == "direct" ? Theme.pill-direct-shadow
-        : Theme.pill-active-bot.with-alpha(0.36);
-    transform-scale: ta.pressed ? 0.97 : 1.0;
     animate border-color { duration: Motion.fast; }
-    animate drop-shadow-blur { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
+    animate background { duration: Motion.fast; }
 
     ta := TouchArea {
         mouse-cursor: pointer;
@@ -159,16 +149,11 @@ export component ConnectionInspectorCard inherits Rectangle {
         : root.source-addr != "" ? root.source-addr
         : I18n.t("本机", "Local");
 
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: root.has-selection ? Theme.selected-border : Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
     clip: true;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         padding: 16px;
@@ -282,10 +267,8 @@ export component ConnectionInspectorCard inherits Rectangle {
                 Rectangle {
                     horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
                     height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
-                    border-width: 1px; border-color: Theme.pill-active-top.brighter(0.20);
-                    background: @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
-                    drop-shadow-blur: 10px;
-                    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.44 : 0.26);
+                    border-width: 1px; border-color: Theme.pill-active-top;
+                    background: Theme.pill-active-bot;
                     HorizontalLayout {
                         padding-left: 8px; padding-right: 8px;
                         Text { text: root.outbound != "" ? root.outbound : "-"; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.pill-active-fg; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
@@ -370,17 +353,10 @@ export component ConnectionInspectorCard inherits Rectangle {
                 Rectangle {
                     horizontal-stretch: 1;
                     height: 36px;
-                    border-radius: 12px;
+                    border-radius: Theme.radius-md;
                     border-width: 1px;
-                    border-color: Theme.pill-active-top.brighter(0.20);
-                    background: rule-ta.pressed
-                        ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-                        : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
-                    drop-shadow-blur: 12px;
-                    drop-shadow-offset-y: 2px;
-                    drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.44 : 0.28);
-                    transform-scale: rule-ta.pressed ? 0.97 : 1.0;
-                    animate transform-scale { duration: Motion.micro; }
+                    border-color: Theme.pill-active-top;
+                    background: rule-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot;
 
                     rule-ta := TouchArea {
                         mouse-cursor: pointer;

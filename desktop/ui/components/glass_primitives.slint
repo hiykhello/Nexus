@@ -1,25 +1,41 @@
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 
-export component GlassSpeculum inherits Rectangle {
-    in property <length> corner-inset: 18px;
-    x: 0px;
-    y: 0px;
-    width: 100%;
-    height: 1px;
+export component ProportionBar inherits Rectangle {
+    in property <float> first-ratio: 0.5;
+    in property <color> first-color: Theme.accent;
+    in property <color> second-color: Theme.telemetry-up;
+    in property <bool> has-data: true;
+    in property <bool> has-second: true;
+    in property <length> bar-height: 6px;
 
-    Rectangle {
-        x: root.corner-inset;
+    property <float> clamped-r: clamp(root.first-ratio, 0.0, 1.0);
+
+    vertical-stretch: 0;
+    height: root.bar-height;
+    border-radius: root.bar-height / 2;
+    background: Theme.inset-bg;
+    clip: true;
+
+    if root.has-data && root.clamped-r > 0.005 : Rectangle {
+        x: 0px;
         y: 0px;
-        width: max(0px, parent.width - root.corner-inset * 2);
-        height: 1px;
-        background: @linear-gradient(
-            90deg,
-            transparent 0%,
-            Theme.top-speculum 20%,
-            Theme.top-speculum 80%,
-            transparent 100%
-        );
+        width: parent.width * root.clamped-r;
+        height: parent.height;
+        border-radius: root.bar-height / 2;
+        background: root.first-color;
+        animate width { duration: Motion.fast; }
+    }
+
+    if root.has-data && root.has-second && (1.0 - root.clamped-r) > 0.005 : Rectangle {
+        x: parent.width * root.clamped-r + 1px;
+        y: 0px;
+        width: max(0px, parent.width * (1.0 - root.clamped-r) - 1px);
+        height: parent.height;
+        border-radius: root.bar-height / 2;
+        background: root.second-color;
+        animate x { duration: Motion.fast; }
+        animate width { duration: Motion.fast; }
     }
 }
 
@@ -51,7 +67,7 @@ export component KbdChip inherits Rectangle {
 export component SlidingSegmentBar inherits Rectangle {
     in property <[string]> options: [];
     in property <int> current-index: 0;
-    in property <length> bar-height: 36px;
+    in property <length> bar-height: 34px;
     callback selected(int);
 
     property <int> count: max(1, root.options.length);
@@ -60,7 +76,7 @@ export component SlidingSegmentBar inherits Rectangle {
     vertical-stretch: 0;
     min-width: 0px;
     height: root.bar-height;
-    border-radius: root.bar-height / 2;
+    border-radius: Theme.radius-md;
     border-width: 1px;
     border-color: Theme.well-border;
     background: Theme.well-bg;
@@ -70,13 +86,8 @@ export component SlidingSegmentBar inherits Rectangle {
         y: 3px;
         width: root.seg-w;
         height: max(0px, parent.height - 6px);
-        border-radius: self.height / 2;
-        border-width: 1px;
-        border-color: Theme.pill-active-top.brighter(0.20);
-        background: @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
-        drop-shadow-blur: 10px;
-        drop-shadow-offset-y: 2px;
-        drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.44 : 0.28);
+        border-radius: Theme.radius-sm;
+        background: Theme.pill-active-bot;
         animate x { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
         animate width { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
     }
@@ -90,11 +101,9 @@ export component SlidingSegmentBar inherits Rectangle {
             min-width: 0px;
             preferred-width: 0px;
             horizontal-stretch: 1;
-            border-radius: self.height / 2;
+            border-radius: Theme.radius-sm;
             background: !is-active && seg-ta.has-hover ? Theme.row-hover-bg : transparent;
-            transform-scale: seg-ta.pressed ? 0.97 : 1.0;
             animate background { duration: Motion.micro; }
-            animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
 
             accessible-role: tab;
             accessible-label: opt;
@@ -109,7 +118,7 @@ export component SlidingSegmentBar inherits Rectangle {
                 width: 100%;
                 height: 100%;
                 text: opt;
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: is-active ? 700 : 500;
                 color: is-active ? Theme.pill-active-fg : (seg-ta.has-hover ? Theme.text-primary : Theme.text-secondary);
                 horizontal-alignment: center;
@@ -143,22 +152,19 @@ export component NexusInput inherits Rectangle {
     vertical-stretch: 0;
     height: root.input-height;
     min-width: root.borderless ? 44px : 56px;
-    border-radius: root.borderless ? 7px : root.search-icon ? (root.input-height / 2) : Theme.radius-md;
+    border-radius: Theme.radius-md;
     border-width: root.borderless && !ti.has-focus && !in-ta.has-hover ? 0px : 1px;
     border-color:
         !root.enabled ? Theme.well-border
         : ti.has-focus ? Theme.accent
-        : in-ta.has-hover ? Theme.selected-border
+        : in-ta.has-hover ? Theme.hairline-strong
         : Theme.well-border;
     background:
         root.borderless
             ? (ti.has-focus ? Theme.well-bg : in-ta.has-hover ? Theme.row-hover-bg : transparent)
             : Theme.well-bg;
-    drop-shadow-blur: ti.has-focus ? 10px : 0px;
-    drop-shadow-color: Theme.input-focus-ring;
     opacity: root.enabled ? 1.0 : 0.55;
     animate border-color { duration: Motion.fast; }
-    animate drop-shadow-blur { duration: Motion.fast; }
 
     in-ta := TouchArea {
         enabled: root.enabled;
@@ -257,15 +263,10 @@ export component EmptyStateCard inherits Rectangle {
     callback secondary-action-clicked();
 
     vertical-stretch: 0;
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         padding: Theme.space-xl;
@@ -319,15 +320,8 @@ export component EmptyStateCard inherits Rectangle {
                 height: 32px;
                 border-radius: Theme.radius-md;
                 border-width: 1px;
-                border-color: Theme.pill-active-top.brighter(0.20);
-                background: cta-ta.pressed
-                    ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-                    : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%);
-                transform-scale: cta-ta.pressed ? 0.96 : 1.0;
-                drop-shadow-blur: 10px;
-                drop-shadow-offset-y: 2px;
-                drop-shadow-color: Theme.pill-active-bot.with-alpha(0.32);
-                animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
+                border-color: Theme.pill-active-top;
+                background: cta-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot;
 
                 accessible-role: button;
                 accessible-label: root.action-label;
@@ -357,9 +351,7 @@ export component EmptyStateCard inherits Rectangle {
                 border-width: 1px;
                 border-color: sec-ta.has-hover ? Theme.selected-border : Theme.card-border;
                 background: sec-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
-                transform-scale: sec-ta.pressed ? 0.96 : 1.0;
                 animate background { duration: Motion.fast; }
-                animate transform-scale { duration: Motion.micro; }
 
                 accessible-role: button;
                 accessible-label: root.secondary-action-label;
@@ -405,13 +397,12 @@ export component NexusVScrollBar inherits Rectangle {
     private property <length> drag-start-y: 0px;
     private property <length> drag-start-scroll: 0px;
 
-    width: 12px;
+    width: 10px;
     visible: root.can-scroll;
     clip: true;
 
-    // Clear recessed rail
     Rectangle {
-        x: 2px;
+        x: 1px;
         y: 0px;
         width: 8px;
         height: parent.height;
@@ -421,9 +412,8 @@ export component NexusVScrollBar inherits Rectangle {
         background: Theme.scrollbar-rail-bg;
     }
 
-    // High-contrast tactile rounded thumb
     Rectangle {
-        x: 3px;
+        x: 2px;
         y: root.thumb-y;
         width: 6px;
         height: root.thumb-h;

@@ -1,7 +1,6 @@
 import { ToastState, TooltipState } from "../feedback.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
-import { GlassSpeculum } from "glass_primitives.slint";
 
 export component OverlayFeedbackLayer inherits Rectangle {
     property <bool> tip-below: TooltipState.anchor-y + TooltipState.anchor-h + 36px < root.height;
@@ -38,13 +37,8 @@ export component OverlayFeedbackLayer inherits Rectangle {
         border-width: 1px;
         border-color: Theme.hairline-strong;
         background: Theme.overlay-bg;
-        drop-shadow-blur: 14px;
-        drop-shadow-offset-y: 3px;
-        drop-shadow-color: Theme.card-hover-shadow;
         animate opacity { duration: Motion.fast; }
         animate y { duration: Motion.fast; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
-
-        GlassSpeculum {}
 
         tip-label := Text {
             width: 100%;
@@ -60,23 +54,17 @@ export component OverlayFeedbackLayer inherits Rectangle {
 
     toast-box := Rectangle {
         x: max(16px, root.width - self.width - 20px);
-        y: ToastState.open ? max(16px, root.height - self.height - 20px) : (root.height + 16px);
+        y: ToastState.open ? max(16px, root.height - self.height - 44px) : (root.height + 16px);
         width: min(380px, max(196px, toast-row.preferred-width));
         height: toast-row.preferred-height;
         opacity: ToastState.open ? 1.0 : 0.0;
         visible: self.opacity > 0.01;
         border-radius: Theme.radius-md;
         border-width: 1px;
-        border-color: root.toast-accent.with-alpha(0.52);
+        border-color: root.toast-accent.with-alpha(0.55);
         background: Theme.overlay-bg;
-        backdrop-blur: Theme.blur-radius;
-        drop-shadow-blur: 20px;
-        drop-shadow-offset-y: 6px;
-        drop-shadow-color: Theme.card-hover-shadow;
         animate y { duration: Motion.fluid; easing: cubic-bezier(0.22, 1.0, 0.36, 1.0); }
         animate opacity { duration: Motion.fast; }
-
-        GlassSpeculum {}
 
         TouchArea {
             enabled: ToastState.open;

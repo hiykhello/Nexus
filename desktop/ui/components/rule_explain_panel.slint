@@ -1,7 +1,7 @@
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSelect } from "nexus_select.slint";
 
@@ -20,15 +20,10 @@ export component RuleExplainPanel inherits VerticalLayout {
 
     Rectangle {
         vertical-stretch: 0;
-        border-radius: 20px;
+        border-radius: Theme.radius-card;
         border-width: 1px;
         border-color: Theme.card-border;
         background: Theme.card-surface;
-        drop-shadow-blur: 14px;
-        drop-shadow-offset-y: 3px;
-        drop-shadow-color: Theme.card-shadow;
-
-        GlassSpeculum {}
 
         VerticalLayout {
             padding: Theme.space-md;

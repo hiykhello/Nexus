@@ -185,6 +185,35 @@ namespace desktop {
             if (!bracketed && inner.contains(':')) return std::format("[{}]", inner);
             return std::string(s);
         }
+
+        auto normalize_client_host(std::string_view host) -> std::string {
+            auto t = trim_ascii_ws(host);
+            if (t.empty() || t == "0.0.0.0" || t == "::" || t == "[::]") return "127.0.0.1";
+            return std::string(t);
+        }
+    }
+
+    auto parse_port_u16(std::string_view text) -> std::optional<std::uint16_t> {
+        auto clean = trim_ascii_ws(text);
+        if (clean.empty()) return std::nullopt;
+        unsigned long val = 0;
+        auto [ptr, ec] = std::from_chars(clean.data(), clean.data() + clean.size(), val);
+        if (ec != std::errc{} || ptr != clean.data() + clean.size() || val == 0 || val > 65535) return std::nullopt;
+        return static_cast<std::uint16_t>(val);
+    }
+
+    auto select_system_proxy_endpoint(CoexistingInbounds const& inb)
+        -> std::optional<std::pair<std::string, std::uint16_t>> {
+        if (inb.mixed.enabled && inb.mixed.port > 0) {
+            return std::pair{normalize_client_host(inb.mixed.host), inb.mixed.port};
+        }
+        if (inb.http.enabled && inb.http.port > 0) {
+            return std::pair{normalize_client_host(inb.http.host), inb.http.port};
+        }
+        if (inb.socks5.enabled && inb.socks5.port > 0) {
+            return std::pair{normalize_client_host(inb.socks5.host), inb.socks5.port};
+        }
+        return std::nullopt;
     }
 
     auto format_host_port(std::string_view host, std::string_view port) -> std::string {

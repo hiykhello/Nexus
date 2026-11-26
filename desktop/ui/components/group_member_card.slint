@@ -3,9 +3,8 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { OutboundMemberItem } from "../types.slint";
-import { GlassSpeculum } from "glass_primitives.slint";
 
-// Concentric Radial Node Card styled as crisp L1 Graphite elevated card directly on canvas
+// Matte Precision Node Card directly on canvas
 export component GroupMemberCard inherits Rectangle {
     in property <OutboundMemberItem> member;
     in property <string> group-name: "";
@@ -27,29 +26,20 @@ export component GroupMemberCard inherits Rectangle {
     }
 
     height: 92px;
-    border-radius: 16px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color:
-        root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.82 : 0.65)
+        root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.80 : 0.65)
         : is-timeout ? Theme.error-border
         : member-ta.has-hover ? Theme.selected-border
         : Theme.card-border;
     background:
-        root.member.selected
-            ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.accent.with-alpha(Theme.dark ? 0.09 : 0.04) 100%)
-        : is-timeout
-            ? @linear-gradient(135deg, Theme.error-fg.with-alpha(Theme.dark ? 0.14 : 0.08) 0%, Theme.card-bg 72%)
+        root.member.selected ? Theme.selected-bg
+        : is-timeout ? Theme.error-bg
         : member-ta.has-hover ? Theme.row-hover-bg
         : Theme.card-surface;
-    drop-shadow-blur: root.member.selected ? 16px : member-ta.has-hover ? 12px : 8px;
-    drop-shadow-offset-y: root.member.selected || member-ta.has-hover ? 3px : 2px;
-    drop-shadow-color: root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.30 : 0.18) : Theme.card-shadow;
-    transform-scale: member-ta.pressed && !root.member.selected ? 0.985 : 1.0;
     animate border-color { duration: Motion.fast; }
-    animate drop-shadow-blur { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; }
-
-    GlassSpeculum { corner-inset: 14px; }
+    animate background { duration: Motion.fast; }
 
     accessible-role: button;
     accessible-label: root.member.name;
@@ -102,8 +92,6 @@ export component GroupMemberCard inherits Rectangle {
                         width: root.member.selected ? 11px : 9px; height: root.member.selected ? 11px : 9px;
                         border-radius: self.width / 2;
                         background: root.member.selected ? Theme.accent : orb-color.with-alpha(Theme.dark ? 0.58 : 0.45);
-                        drop-shadow-blur: root.member.selected ? 9px : 0px;
-                        drop-shadow-color: Theme.accent.with-alpha(0.75);
                     }
                 }
 

@@ -365,6 +365,43 @@ namespace {
                desktop_ui_helpers::is_ip_or_cidr_rule_token("private") &&
                !desktop_ui_helpers::is_ip_or_cidr_rule_token("example.com"),
             "P2 #7: routing token classifier routes bare IPv4/IPv6/CIDR/private to ips");
+
+        // Wave 33D: Default profile auto-seeding + structured Outbound / Route / DNS modal builders
+        auto empty_doc = desktop::make_default_workspace();
+        desktop::TelemetryStoreData empty_tel{};
+        expect(desktop_ui_helpers::ensure_default_workspace_profile(empty_doc, empty_tel) &&
+               empty_doc.profiles.size() == 1 && empty_doc.profiles[0].id == "direct-default" &&
+               empty_tel.active_profile_id == "direct-default",
+            "Wave 33D: cold-start auto-seeds Direct profile");
+
+        desktop_ui_helpers::OutboundFormDraft node_draft{};
+        node_draft.proto = "vless"; node_draft.tag = "Tokyo-01"; node_draft.host = "jp.example.net";
+        node_draft.port = "443"; node_draft.secret = "11111111-2222-3333-4444-555555555555";
+        node_draft.flow = "xtls-rprx-vision"; node_draft.sni = "cdn.example.net";
+        node_draft.use_reality = true; node_draft.reality_pbk = "pub123"; node_draft.transport = "tcp";
+        auto built_node = desktop_ui_helpers::build_workspace_node_from_form(node_draft, ids, 0);
+        expect(built_node.has_value() && built_node->kind == "node" && built_node->node.protocol == "vless" &&
+               built_node->node.password == "11111111-2222-3333-4444-555555555555" &&
+               built_node->node.transport.type.empty() && built_node->node.tls.reality_public_key == "pub123",
+            "Wave 33D: structured outbound form builds VLESS node without secret-file paths");
+
+        desktop_ui_helpers::RouteRuleFormDraft rr_draft{};
+        rr_draft.conditions = {{"domain", "api.example.com"}, {"port", "443"}, {"process-name", "curl"}};
+        rr_draft.action_kind = "route"; rr_draft.target_outbound = "direct"; rr_draft.tls_fragment = true;
+        auto built_rr = desktop_ui_helpers::build_routing_rule_from_draft(rr_draft, doc.profiles, 0);
+        expect(built_rr.has_value() && built_rr->target_type == "direct" && built_rr->tls_fragment &&
+               built_rr->domains.size() == 1 && built_rr->domains[0] == "full:api.example.com" &&
+               built_rr->ports.size() == 1 && built_rr->ports[0] == "443" &&
+               built_rr->desktop_process.size() == 1 && built_rr->desktop_process[0] == "curl",
+            "Wave 33D: structured route rule form maps predicates cleanly into Workspace RoutingRule");
+
+        desktop_ui_helpers::DnsRuleFormDraft dr_draft{
+            .match_kind = "domain-suffix", .match_value = "internal.corp", .action_kind = "direct", .target_server = "direct",
+        };
+        auto built_dr = desktop_ui_helpers::build_dns_rule_from_draft(dr_draft, 1);
+        expect(built_dr.has_value() && built_dr->scope == "dns_only" && built_dr->target_type == "direct" &&
+               built_dr->domains.size() == 1 && built_dr->domains[0] == "internal.corp",
+            "Wave 33D: structured DNS rule form builds dns_only Workspace rule");
     }
 }
 

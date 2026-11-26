@@ -1,4 +1,3 @@
-import { GlassSpeculum } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { RuleChipButton } from "rule_builder_parts.slint";
 import { I18n } from "../i18n.slint";
@@ -121,15 +120,10 @@ export component ShortcutsCard inherits VerticalLayout {
 
     Rectangle {
         vertical-stretch: 0;
-        border-radius: 20px;
+        border-radius: Theme.radius-card;
         border-width: 1px;
         border-color: Theme.card-border;
         background: Theme.card-surface;
-        drop-shadow-blur: 14px;
-        drop-shadow-offset-y: 3px;
-        drop-shadow-color: Theme.card-shadow;
-
-        GlassSpeculum {}
 
         VerticalLayout {
             alignment: start;

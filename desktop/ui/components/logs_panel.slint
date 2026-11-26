@@ -1,6 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
-import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSelect } from "nexus_select.slint";
 import { LogLineItem } from "../types.slint";
@@ -26,7 +26,7 @@ export component LogsPanel inherits VerticalLayout {
 
     spacing: Theme.space-md;
 
-    // Single compact top toolbar: Search + Dropdown filters (显示级别 / 采集级别 / 模块) + Live SSE + Actions
+    // Single compact top toolbar: Search + Dropdown filters (显示级别 / 采集级别 / 模块) + Live Stream + Actions
     HorizontalLayout {
         vertical-stretch: 0;
         spacing: Theme.space-sm;
@@ -80,19 +80,19 @@ export component LogsPanel inherits VerticalLayout {
             height: 32px;
             border-radius: 16px;
             border-width: 1px;
-            border-color: ControlInspectState.logs-stream-connected ? Theme.success-border : ControlInspectState.logs-stream-enabled ? Theme.selected-border : Theme.card-border;
-            background: ControlInspectState.logs-stream-connected ? Theme.success-bg : ControlInspectState.logs-stream-enabled ? Theme.selected-bg : Theme.row-bg;
-            transform-scale: sse-ta.pressed ? 0.96 : 1.0;
+            border-color: !ControlInspectState.logs-stream-enabled ? Theme.card-border : ControlInspectState.logs-stream-connected ? Theme.success-border : Theme.selected-border;
+            background: !ControlInspectState.logs-stream-enabled ? Theme.row-bg : ControlInspectState.logs-stream-connected ? Theme.success-bg : Theme.selected-bg;
+            transform-scale: stream-ta.pressed ? 0.96 : 1.0;
             animate background { duration: Motion.fast; }
             animate transform-scale { duration: Motion.micro; }
             accessible-role: button;
-            accessible-label: I18n.t("实时日志流", "Live SSE Stream");
+            accessible-label: I18n.t("实时日志流", "Live Log Stream");
             accessible-action-default => {
                 let next = !ControlInspectState.logs-stream-enabled;
                 ControlInspectState.logs-stream-enabled = next;
                 ControlInspectState.toggle-logs-stream(next);
             }
-            sse-ta := TouchArea {
+            stream-ta := TouchArea {
                 mouse-cursor: pointer;
                 clicked => {
                     let next = !ControlInspectState.logs-stream-enabled;
@@ -104,12 +104,12 @@ export component LogsPanel inherits VerticalLayout {
                 padding-left: 9px; padding-right: 10px; spacing: 5px;
                 Rectangle {
                     width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
-                    background: ControlInspectState.logs-stream-connected ? Theme.success-fg : ControlInspectState.logs-stream-enabled ? Theme.accent : Theme.offline-fg;
+                    background: !ControlInspectState.logs-stream-enabled ? Theme.offline-fg : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.accent;
                 }
                 Text {
-                    text: ControlInspectState.logs-stream-connected ? "SSE" : ControlInspectState.logs-stream-enabled ? I18n.t("实时", "Live") : I18n.t("暂停", "Off");
+                    text: !ControlInspectState.logs-stream-enabled ? I18n.t("暂停", "Paused") : ControlInspectState.logs-stream-connected ? I18n.t("实时", "Live") : I18n.t("连接中", "Connecting");
                     font-size: 11px; font-weight: 700; font-family: Theme.mono-font;
-                    color: ControlInspectState.logs-stream-connected ? Theme.success-fg : ControlInspectState.logs-stream-enabled ? Theme.nav-active-fg : Theme.text-muted;
+                    color: !ControlInspectState.logs-stream-enabled ? Theme.text-muted : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.nav-active-fg;
                     vertical-alignment: center;
                 }
             }
@@ -149,19 +149,14 @@ export component LogsPanel inherits VerticalLayout {
         }
     }
 
-    // Row 4: Full-Height 20px Framed Log Console Card (zero bottom void in both live & empty states!)
+    // Full-Height Matte Framed Log Console Card
     Rectangle {
         vertical-stretch: 1;
-        border-radius: 20px;
+        border-radius: Theme.radius-card;
         border-width: 1px;
         border-color: Theme.card-border;
         background: Theme.card-surface;
-        drop-shadow-blur: 14px;
-        drop-shadow-offset-y: 3px;
-        drop-shadow-color: Theme.card-shadow;
         clip: true;
-
-        GlassSpeculum {}
 
         VerticalLayout {
             width: 100%;

@@ -6,7 +6,7 @@ import { Theme } from "../theme.slint";
 import { ActiveConnectionItem } from "../types.slint";
 import { ConnectionInspectorCard } from "connection_inspector.slint";
 import { ConnectionsKpiStrip } from "connections_kpi_strip.slint";
-import { EmptyStateCard, GlassSpeculum, NexusInput, SlidingSegmentBar } from "glass_primitives.slint";
+import { EmptyStateCard, NexusInput, SlidingSegmentBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 
 export component ConnectionsPanel inherits VerticalLayout {
@@ -221,19 +221,14 @@ export component ConnectionsPanel inherits VerticalLayout {
             min-width: 0px;
             spacing: Theme.space-sm;
 
-            // Full-Height 20px Framed Connections Table Card
+            // Full-Height Matte Framed Connections Table Card
             Rectangle {
                 vertical-stretch: 1;
-                border-radius: 20px;
+                border-radius: Theme.radius-card;
                 border-width: 1px;
                 border-color: Theme.card-border;
                 background: Theme.card-surface;
-                drop-shadow-blur: 14px;
-                drop-shadow-offset-y: 3px;
-                drop-shadow-color: Theme.card-shadow;
                 clip: true;
-
-                GlassSpeculum {}
 
                 VerticalLayout {
                     width: 100%;

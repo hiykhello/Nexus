@@ -1,4 +1,4 @@
-// Private desktop UI rate tracker & log snapshot formatting helpers included by desktop/src/main.cpp.
+// Private desktop UI rate tracker, control config, TUN privilege & log snapshot helpers for desktop/src/main.cpp.
 #pragma once
 #include "speed_wave.hpp"
 
@@ -14,22 +14,6 @@ namespace desktop_ui_helpers {
         char const* home = std::getenv("HOME");
         auto base = (home && *home) ? std::filesystem::path(home) : std::filesystem::temp_directory_path(ec);
         return (ec || base.empty() ? std::filesystem::path("/tmp") : base) / ".config" / "nexus";
-#endif
-    }
-
-    inline auto default_control_endpoint(std::filesystem::path const& cfg_dir) -> std::string {
-#ifdef _WIN32
-        (void)cfg_dir;
-        return R"(\\.\pipe\nexus-control)";
-#else
-        char const* run = std::getenv("XDG_RUNTIME_DIR");
-        if (run && *run) return (std::filesystem::path(run) / "nexus-control.sock").string();
-        auto run_dir = cfg_dir / "run";
-        std::error_code ec;
-        std::filesystem::create_directories(run_dir, ec);
-        std::filesystem::permissions(run_dir,
-            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::owner_exec, ec);
-        return (run_dir / "control.sock").string();
 #endif
     }
 
@@ -61,38 +45,6 @@ namespace desktop_ui_helpers {
             return false;
         }
         return true;
-    }
-
-    inline auto open_with_system_editor(std::filesystem::path const& path) -> void {
-#ifdef _WIN32
-        ::ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-#else
-        auto arg = path.string();
-        pid_t child = ::fork();
-        if (child < 0) return;
-        if (child == 0) {
-            pid_t grand = ::fork();
-            if (grand == 0) {
-                int devnull = ::open("/dev/null", O_RDWR | O_CLOEXEC);
-                if (devnull >= 0) {
-                    (void)::dup2(devnull, STDIN_FILENO);
-                    (void)::dup2(devnull, STDOUT_FILENO);
-                    (void)::dup2(devnull, STDERR_FILENO);
-                }
-#ifdef __APPLE__
-                char* argv[] = {const_cast<char*>("open"), arg.data(), nullptr};
-                ::execvp("open", argv);
-#else
-                char* argv[] = {const_cast<char*>("xdg-open"), arg.data(), nullptr};
-                ::execvp("xdg-open", argv);
-#endif
-                ::_exit(127);
-            }
-            ::_exit(0);
-        }
-        int status = 0;
-        while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-#endif
     }
 
 #ifndef _WIN32
@@ -260,6 +212,39 @@ namespace desktop_ui_helpers {
         }
     };
 
+    struct CpuUsageTracker {
+        using Clock = std::chrono::steady_clock;
+        bool has_prev = false;
+        std::uint64_t prev_cpu_ns = 0;
+        Clock::time_point prev_ts{};
+        double cores = static_cast<double>(std::max(1u, std::thread::hardware_concurrency()));
+
+        struct Sample {
+            std::string text;
+            float ratio = 0.0f;
+        };
+
+        auto reset() noexcept -> void {
+            has_prev = false;
+            prev_cpu_ns = 0;
+        }
+
+        auto record(std::uint64_t cpu_ns) -> Sample {
+            auto now = Clock::now();
+            double pct = 0.0;
+            if (has_prev && now > prev_ts && cpu_ns >= prev_cpu_ns) {
+                double dt_ns = std::chrono::duration<double, std::nano>(now - prev_ts).count();
+                if (dt_ns > 50'000'000.0) {
+                    pct = std::clamp((static_cast<double>(cpu_ns - prev_cpu_ns) / (dt_ns * cores)) * 100.0, 0.0, 100.0);
+                }
+            }
+            has_prev = true;
+            prev_cpu_ns = cpu_ns;
+            prev_ts = now;
+            return {std::format("{:.1f}%", pct), static_cast<float>(pct / 100.0)};
+        }
+    };
+
     inline auto format_logs_snapshot(std::vector<desktop::LogEntrySnapshot> const& entries) -> std::string {
         std::string out;
         for (auto const& e : entries)
@@ -267,40 +252,8 @@ namespace desktop_ui_helpers {
         return out;
     }
 
-    inline constexpr std::string_view kManagedTunMarker = "// nexus-desktop managed-tun\n";
-    inline constexpr std::string_view kManagedTunBlock =
-        "// nexus-desktop managed-tun\n"
-        "inbound \"tun-in\" type=\"tun\" {\n"
-        "    interface-name \"nexus-tun0\"\n"
-        "    address \"172.19.0.1/30\"\n"
-        "    mtu 1400\n"
-        "    auto-route #true\n"
-        "}\n"
-        "// /nexus-desktop managed-tun\n";
-
-    inline auto kdl_has_tun_inbound(std::string_view kdl) -> bool {
-        return kdl.contains("type=\"tun\"") || kdl.contains("type \"tun\"");
-    }
-
-    inline auto toggle_tun_in_kdl(std::string_view kdl, bool enable, bool is_en = false) -> std::pair<bool, std::string> {
-        constexpr std::string_view kEnd = "// /nexus-desktop managed-tun\n";
-        std::string out(kdl);
-        auto start = out.find(kManagedTunMarker);
-        if (!enable) {
-            if (start != std::string::npos) {
-                auto end = out.find(kEnd, start);
-                if (end != std::string::npos) out.erase(start, (end + kEnd.size()) - start);
-                return {true, std::move(out)};
-            }
-            if (kdl_has_tun_inbound(out)) {
-                return {false, tr(is_en, "检测到自定义 TUN 入站，请在外部编辑器中手动修改", "Custom TUN inbound detected; edit manually in external editor")};
-            }
-            return {true, std::move(out)};
-        }
-        if (kdl_has_tun_inbound(out)) return {true, std::move(out)};
-        if (!out.empty() && out.back() != '\n') out.push_back('\n');
-        out.append("\n").append(kManagedTunBlock);
-        return {true, std::move(out)};
+    inline auto config_has_tun_inbound(std::string_view cfg_text) noexcept -> bool {
+        return cfg_text.contains("type=\"tun\"") || cfg_text.contains("type \"tun\"");
     }
 
     inline auto validate_draft_config(
@@ -310,7 +263,7 @@ namespace desktop_ui_helpers {
         bool is_en) -> desktop::ValidationResult {
         auto tmp = cfg_dir / ".validate-draft.kdl";
         if (!write_file_atomic(tmp, payload)) {
-            return {false, tr(is_en, "无法写入临时校验文件", "Failed to write temp file")};
+            return {false, tr(is_en, "无法写入临时校验文件", "Failed to write temporary validation file")};
         }
         auto res = supervisor.validate_config(tmp);
         std::error_code ec;
@@ -319,51 +272,51 @@ namespace desktop_ui_helpers {
     }
 
     struct ControlConfigParsed {
-        std::string socket;
         std::string http_host = "127.0.0.1";
-        std::uint16_t http_port = 9090;
+        std::uint16_t http_port = 19090;
         std::string bearer_token;
     };
 
     struct StartPrepResult {
         bool ok = false;
-        bool synthesized_default = false;
-        std::string kdl_text;
+        std::string composed_text;
         std::string error_message;
         ControlConfigParsed control;
     };
 
-    inline auto build_default_desktop_config(std::string_view control_socket) -> std::string {
-        std::string ctl_line = "control http-listen=\"127.0.0.1:9090\" metrics=#true\n";
-        if (!control_socket.empty() && control_socket.front() == '/' &&
-            !control_socket.contains('"') && !control_socket.contains('\\')) {
-            ctl_line = std::format("control socket=\"{}\" http-listen=\"127.0.0.1:9090\" metrics=#true\n", control_socket);
+    inline auto parse_http_listen_spec(std::string_view listen, ControlConfigParsed& out) -> void {
+        if (auto colon = listen.rfind(':'); colon != std::string_view::npos) {
+            if (auto port = desktop::parse_port_u16(listen.substr(colon + 1))) {
+                std::string h(listen.substr(0, colon));
+                if (h.size() >= 2 && h.front() == '[' && h.back() == ']') h = h.substr(1, h.size() - 2);
+                if (h.empty() || h == "0.0.0.0") h = "127.0.0.1";
+                else if (h == "::") h = "::1";
+                out.http_host = std::move(h);
+                out.http_port = *port;
+            }
         }
-        return std::format(
-            "schema-version 1\n"
-            "role \"client\"\n"
-            "{}"
-            "// nexus-desktop managed-inbound mixed\n"
-            "inbound \"local-mixed\" type=\"mixed\" {{\n"
-            "    listen host=\"127.0.0.1\" port=7890\n"
-            "    authentication \"none\"\n"
-            "}}\n"
-            "// /nexus-desktop managed-inbound mixed\n"
-            "// nexus-desktop managed-inbound socks5\n"
-            "inbound \"local-socks5\" type=\"socks5\" {{\n"
-            "    listen host=\"127.0.0.1\" port=1080\n"
-            "    authentication \"none\"\n"
-            "}}\n"
-            "// /nexus-desktop managed-inbound socks5\n"
-            "outbound \"direct\" type=\"direct\"\n"
-            "routing {{ default-outbound \"direct\"; }}\n",
-            ctl_line);
     }
 
-    inline auto parse_control_config(std::string_view kdl, std::string_view fallback_socket,
-                                     std::filesystem::path const& base_dir = {}) -> ControlConfigParsed {
+    inline auto read_trimmed_token(std::filesystem::path const& tok_path) -> std::string {
+        auto tok = read_file_text(tok_path);
+        while (!tok.empty() && (tok.back() == '\n' || tok.back() == '\r' || tok.back() == ' ')) tok.pop_back();
+        while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+        return tok;
+    }
+
+    inline auto parse_host_control_config(desktop::DesktopHostConfig const& host) -> ControlConfigParsed {
         ControlConfigParsed out{};
-        out.socket = std::string(fallback_socket);
+        if (!host.control_http_listen.empty()) parse_http_listen_spec(host.control_http_listen, out);
+        if (!host.control_bearer_file.empty()) {
+            std::filesystem::path bp(std::u8string_view(
+                reinterpret_cast<char8_t const*>(host.control_bearer_file.data()), host.control_bearer_file.size()));
+            out.bearer_token = read_trimmed_token(bp);
+        }
+        return out;
+    }
+
+    inline auto parse_control_config(std::string_view cfg_text, std::filesystem::path const& base_dir = {}) -> ControlConfigParsed {
+        ControlConfigParsed out{};
         auto extract_q = [](std::string_view line, std::string_view key) -> std::optional<std::string> {
             auto p = line.find(key);
             if (p == std::string_view::npos) return std::nullopt;
@@ -372,34 +325,21 @@ namespace desktop_ui_helpers {
             if (e == std::string_view::npos) return std::nullopt;
             return std::string(line.substr(p, e - p));
         };
-        while (!kdl.empty()) {
-            auto nl = kdl.find('\n');
-            auto line = nl == std::string_view::npos ? kdl : kdl.substr(0, nl);
-            kdl = nl == std::string_view::npos ? std::string_view{} : kdl.substr(nl + 1);
+        while (!cfg_text.empty()) {
+            auto nl = cfg_text.find('\n');
+            auto line = nl == std::string_view::npos ? cfg_text : cfg_text.substr(0, nl);
+            cfg_text = nl == std::string_view::npos ? std::string_view{} : cfg_text.substr(nl + 1);
             while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.remove_prefix(1);
             if (line.starts_with("//") || !(line == "control" || line.starts_with("control ") || line.starts_with("control\t"))) {
                 continue;
             }
-            if (auto s = extract_q(line, "socket=\""); s && !s->empty()) out.socket = *s;
             if (auto hl = extract_q(line, "http-listen=\""); hl && !hl->empty()) {
-                if (auto colon = hl->rfind(':'); colon != std::string::npos) {
-                    if (auto port = desktop::parse_port_u16(std::string_view(*hl).substr(colon + 1))) {
-                        auto h = hl->substr(0, colon);
-                        if (h.size() >= 2 && h.front() == '[' && h.back() == ']') h = h.substr(1, h.size() - 2);
-                        if (h == "0.0.0.0") h = "127.0.0.1";
-                        else if (h == "::") h = "::1";
-                        out.http_host = std::move(h);
-                        out.http_port = *port;
-                    }
-                }
+                parse_http_listen_spec(*hl, out);
             }
             if (auto tf = extract_q(line, "bearer-token-file=\""); tf && !tf->empty()) {
                 std::filesystem::path tok_path(*tf);
                 if (tok_path.is_relative() && !base_dir.empty()) tok_path = base_dir / tok_path;
-                auto tok = read_file_text(tok_path);
-                while (!tok.empty() && (tok.back() == '\n' || tok.back() == '\r' || tok.back() == ' ')) tok.pop_back();
-                while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
-                out.bearer_token = std::move(tok);
+                out.bearer_token = read_trimmed_token(tok_path);
             }
             break;
         }
@@ -410,33 +350,96 @@ namespace desktop_ui_helpers {
         std::filesystem::path const& cfg_dir,
         std::filesystem::path const& config_path,
         desktop::CoreSupervisor const& supervisor,
-        std::string draft_kdl,
-        std::string_view fallback_socket,
+        std::string composed_text,
         bool is_en) -> StartPrepResult {
         StartPrepResult res{};
         std::error_code ec;
-        if (draft_kdl.empty()) {
-            if (std::filesystem::exists(config_path, ec)) draft_kdl = read_file_text(config_path);
-            if (draft_kdl.empty()) {
-                draft_kdl = build_default_desktop_config(fallback_socket);
-                res.synthesized_default = true;
+        if (composed_text.empty()) {
+            if (std::filesystem::exists(config_path, ec)) composed_text = read_file_text(config_path);
+            if (composed_text.empty()) {
+                res.error_message = tr(is_en, "请先在工作区添加至少一个配置项", "Add at least one profile in Workspace first");
+                return res;
             }
         }
-        bool needs_write = !std::filesystem::exists(config_path, ec) || read_file_text(config_path) != draft_kdl;
+        bool needs_write = !std::filesystem::exists(config_path, ec) || read_file_text(config_path) != composed_text;
         if (needs_write) {
-            auto val = validate_draft_config(cfg_dir, supervisor, draft_kdl, is_en);
+            auto val = validate_draft_config(cfg_dir, supervisor, composed_text, is_en);
             if (!val.ok) {
                 res.error_message = std::move(val.message);
                 return res;
             }
-            if (!write_file_atomic(config_path, draft_kdl)) {
-                res.error_message = tr(is_en, "写入配置文件失败", "Failed to write config file");
+            if (!write_file_atomic(config_path, composed_text)) {
+                res.error_message = tr(is_en, "写入运行配置失败", "Failed to write runtime configuration");
                 return res;
             }
         }
-        res.control = parse_control_config(draft_kdl, fallback_socket, cfg_dir);
-        res.kdl_text = std::move(draft_kdl);
+        res.control = parse_control_config(composed_text, cfg_dir);
+        res.composed_text = std::move(composed_text);
         res.ok = true;
         return res;
+    }
+
+    inline auto tun_status_to_ui_string(desktop::TunPrivilegeStatus st) noexcept -> std::string_view {
+        switch (st) {
+        case desktop::TunPrivilegeStatus::ready_root_or_admin: return "ready_root";
+        case desktop::TunPrivilegeStatus::ready_persistent_cap: return "ready_persistent";
+        case desktop::TunPrivilegeStatus::needs_elevation: return "needs_elevation";
+        case desktop::TunPrivilegeStatus::unavailable: return "unavailable";
+        }
+        return "unavailable";
+    }
+
+    inline auto apply_tun_probe_to_ui(nexus_ui::AppWindow& ui, desktop::TunPrivilegeProbe const& p) -> void {
+        ui.set_tun_privilege_status(slint::SharedString(tun_status_to_ui_string(p.status)));
+        ui.set_tun_persistent_granted(p.has_persistent_grant);
+        ui.set_tun_can_persist(p.supports_persistent);
+    }
+
+    inline auto resolve_tun_elevation_for_start(
+        std::filesystem::path const& binary_path,
+        std::filesystem::path const& config_path,
+        std::filesystem::path const& workdir,
+        bool prefer_persistent,
+        bool en,
+        desktop::CoreStartOptions& out_opts,
+        desktop::TunPrivilegeProbe& out_probe) -> desktop::ElevationResult {
+        out_opts = {};
+        out_probe = desktop::probe_tun_privilege(binary_path);
+        if (out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin) {
+            return {true, false, {}};
+        }
+        if (out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap) {
+            out_opts.use_persistent_helper = out_probe.helper_required_for_persistent;
+            return {true, false, {}};
+        }
+        if (out_probe.status == desktop::TunPrivilegeStatus::unavailable) {
+            return {false, false, out_probe.detail.empty()
+                ? tr(en, "当前环境不支持 TUN 提权", "TUN elevation is unavailable on this host")
+                : out_probe.detail};
+        }
+        if (prefer_persistent && out_probe.supports_persistent) {
+            auto grant = desktop::grant_persistent_tun_privilege(binary_path, en, config_path, workdir);
+            out_probe = desktop::probe_tun_privilege(binary_path);
+            if (!grant.ok) return grant;
+            if (out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap) {
+                out_opts.use_persistent_helper = out_probe.helper_required_for_persistent;
+                return {true, false, grant.message};
+            }
+            if (out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin) {
+                return {true, false, grant.message};
+            }
+            if (out_probe.supports_session_only) {
+                out_opts.elevate_session = true;
+                return {true, false, grant.message};
+            }
+            return {false, false, grant.message};
+        }
+        if (out_probe.supports_session_only) {
+            out_opts.elevate_session = true;
+            return {true, false, {}};
+        }
+        return {false, false, out_probe.detail.empty()
+            ? tr(en, "缺少按次提权所需系统工具", "Session-only elevation helper unavailable on host")
+            : out_probe.detail};
     }
 }

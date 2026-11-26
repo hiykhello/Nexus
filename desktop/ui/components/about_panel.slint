@@ -4,7 +4,7 @@ import { LayoutMetrics } from "../layout_metrics.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { GlassSpeculum, NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
+import { NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
 import { ThemeStudioCard } from "theme_studio_card.slint";
 import { TraySettingsCard } from "tray_settings_card.slint";
 import { ShortcutsCard } from "shortcuts_card.slint";
@@ -50,15 +50,10 @@ component SpecRow inherits Rectangle {
 }
 
 component AboutIdentityCard inherits Rectangle {
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         padding: Theme.space-lg;
@@ -102,17 +97,11 @@ component AboutIdentityCard inherits Rectangle {
 component AboutRuntimeCard inherits Rectangle {
     in property <bool> core-running: false;
     in property <bool> tun-enabled: false;
-    in property <string> config-path: "";
 
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         padding: Theme.space-lg;
@@ -139,8 +128,8 @@ component AboutRuntimeCard inherits Rectangle {
             value-color: root.core-running ? Theme.success-fg : Theme.text-secondary;
         }
         SpecRow {
-            label: I18n.t("配置路径", "Config Path");
-            value: root.config-path != "" ? root.config-path : "~/.config/nexus/config.kdl";
+            label: I18n.t("配置管理", "Configuration");
+            value: I18n.t("托管工作区 · 已就绪", "Managed Workspace · Ready");
             value-color: Theme.text-secondary;
         }
     }
@@ -243,9 +232,9 @@ export component AboutPanel inherits VerticalLayout {
     in property <bool> tun-privilege-busy: false;
     in property <bool> core-running: false;
     in property <bool> tun-enabled: false;
-    in property <string> config-path: "";
 
     callback tray-prefs-changed();
+    callback ui-prefs-changed();
     callback grant-tun-privilege();
     callback revoke-tun-privilege();
     callback open-rule-modal(int);
@@ -322,6 +311,7 @@ export component AboutPanel inherits VerticalLayout {
 
                 if root.active-subtab == 0 : ThemeStudioCard {
                     window-width: root.window-width;
+                    prefs-changed => { root.ui-prefs-changed(); }
                 }
 
                 if root.active-subtab == 1 : TraySettingsCard {
@@ -352,7 +342,7 @@ export component AboutPanel inherits VerticalLayout {
                     AboutIdentityCard { horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; }
                     AboutRuntimeCard {
                         horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                        core-running: root.core-running; tun-enabled: root.tun-enabled; config-path: root.config-path;
+                        core-running: root.core-running; tun-enabled: root.tun-enabled;
                     }
                 }
 
@@ -361,7 +351,7 @@ export component AboutPanel inherits VerticalLayout {
                     spacing: Theme.space-md;
                     AboutIdentityCard {}
                     AboutRuntimeCard {
-                        core-running: root.core-running; tun-enabled: root.tun-enabled; config-path: root.config-path;
+                        core-running: root.core-running; tun-enabled: root.tun-enabled;
                     }
                 }
             }

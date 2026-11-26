@@ -2,7 +2,7 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState, WorkspaceProfileRow, WorkspaceSubRow } from "../workspace_state.slint";
-import { EmptyStateCard, GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { EmptyStateCard, NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 
@@ -79,7 +79,6 @@ export component WorkspaceProfilesView inherits VerticalLayout {
         width: root.grid-w;
         border-radius: 16px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 14px; }
         VerticalLayout {
             padding: 12px; spacing: 8px;
             FlexboxLayout {
@@ -87,14 +86,14 @@ export component WorkspaceProfilesView inherits VerticalLayout {
                 PillOption { label: I18n.t("节点", "Node"); active: WorkspaceState.draft-kind == "node"; clicked => { WorkspaceState.draft-kind = "node"; } }
                 PillOption { label: I18n.t("策略组", "Group"); active: WorkspaceState.draft-kind == "policy_group"; clicked => { WorkspaceState.draft-kind = "policy_group"; } }
                 PillOption { label: I18n.t("代理链", "Chain"); active: WorkspaceState.draft-kind == "proxy_chain"; clicked => { WorkspaceState.draft-kind = "proxy_chain"; } }
-                PillOption { label: I18n.t("出站 KDL", "Outbound"); active: WorkspaceState.draft-kind == "custom_outbound"; clicked => { WorkspaceState.draft-kind = "custom_outbound"; } }
-                PillOption { label: I18n.t("完整 KDL", "Full KDL"); active: WorkspaceState.draft-kind == "full_custom_kdl"; clicked => { WorkspaceState.draft-kind = "full_custom_kdl"; } }
+                PillOption { label: I18n.t("自定义出站", "Custom Out"); active: WorkspaceState.draft-kind == "custom_outbound"; clicked => { WorkspaceState.draft-kind = "custom_outbound"; } }
+                PillOption { label: I18n.t("自定义配置", "Custom Config"); active: WorkspaceState.draft-kind == "full_custom_kdl"; clicked => { WorkspaceState.draft-kind = "full_custom_kdl"; } }
                 PillOption { label: I18n.t("导入 nexus://", "Import nexus://"); active: WorkspaceState.draft-kind == "nexus_share"; clicked => { WorkspaceState.draft-kind = "nexus_share"; } }
             }
             if WorkspaceState.draft-kind == "policy_group" : HorizontalLayout {
                 spacing: 8px;
                 NexusSwitch {
-                    text: I18n.t("切换节点时中断已有连接 (interrupt-exist-connections)", "Interrupt existing connections on switch");
+                    text: I18n.t("切换节点时中断已有连接", "Interrupt existing connections on switch");
                     checked <=> WorkspaceState.draft-group-interrupt;
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -114,8 +113,8 @@ export component WorkspaceProfilesView inherits VerticalLayout {
                         : WorkspaceState.draft-kind == "node" ? I18n.t("分享链接 URI 或 host:port...", "Share URI or host:port...")
                         : WorkspaceState.draft-kind == "policy_group" ? I18n.t("策略(url-test/selector):成员ID逗号分隔", "strategy:member1,member2")
                         : WorkspaceState.draft-kind == "proxy_chain" ? I18n.t("跳点 ID 逗号分隔 (入口 -> 出口)", "hop1,hop2 (entry -> exit)")
-                        : WorkspaceState.draft-kind == "custom_outbound" ? I18n.t("自定义出站 KDL (如 outbound \"{{tag}}\" type=\"direct\" {})", "Custom outbound KDL (e.g. outbound \"{{tag}}\" ...)")
-                        : I18n.t("留空将从当前生效 KDL 快照创建", "Leave blank to snapshot current KDL");
+                        : WorkspaceState.draft-kind == "custom_outbound" ? I18n.t("粘贴自定义出站配置...", "Paste custom outbound definition...")
+                        : I18n.t("粘贴自定义完整配置...", "Paste custom full configuration...");
                 }
                 IconActionButton {
                     icon: WorkspaceState.draft-kind == "nexus_share" ? @image-url("../icons/download.svg") : @image-url("../icons/plus.svg");
@@ -143,9 +142,9 @@ export component WorkspaceProfilesView inherits VerticalLayout {
         width: root.grid-w;
         icon: @image-url("../icons/profiles.svg");
         title: I18n.t("暂无工作区配置项", "No workspace profiles yet");
-        subtitle: I18n.t("支持节点、策略组、代理链与自定义 KDL", "Supports Node, PolicyGroup, ProxyChain & Custom KDL");
-        action-label: I18n.t("创建完整 KDL 快照", "Snapshot Current KDL");
-        action-clicked => { WorkspaceState.create-profile("full_custom_kdl", "Default", ""); }
+        subtitle: I18n.t("支持节点、策略组、代理链与自定义配置", "Supports Node, Policy Group, Proxy Chain & Custom Config");
+        action-label: I18n.t("添加默认直连配置", "Add Default Direct");
+        action-clicked => { WorkspaceState.create-profile("custom_outbound", "Direct", "outbound \"{{tag}}\" type=\"direct\" {}\n"); }
     }
 
     if WorkspaceState.profiles.length > 0 : FlexboxLayout {
@@ -160,8 +159,7 @@ export component WorkspaceProfilesView inherits VerticalLayout {
                 background: item.active
                     ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.accent.with-alpha(Theme.dark ? 0.08 : 0.04) 100%)
                     : pta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
-                GlassSpeculum { corner-inset: 14px; }
-                pta := TouchArea {
+                        pta := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { WorkspaceState.activate-profile(item.id); }
                 }
@@ -179,7 +177,7 @@ export component WorkspaceProfilesView inherits VerticalLayout {
                                 HorizontalLayout {
                                     padding-left: 6px; padding-right: 6px;
                                     Text {
-                                        text: item.kind == "node" ? "NODE" : item.kind == "policy_group" ? "GROUP" : item.kind == "proxy_chain" ? "CHAIN" : item.kind == "custom_outbound" ? "OUT" : "FULL";
+                                        text: item.kind == "node" ? "NODE" : item.kind == "policy_group" ? "GROUP" : item.kind == "proxy_chain" ? "CHAIN" : item.kind == "custom_outbound" ? "OUT" : "CFG";
                                         font-size: 9px; font-weight: 700; font-family: Theme.mono-font;
                                         color: item.kind == "proxy_chain" ? Theme.warn-fg : item.kind == "policy_group" ? Theme.nav-active-fg : Theme.text-secondary;
                                         vertical-alignment: center;
@@ -238,7 +236,6 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
     Rectangle {
         width: root.grid-w; border-radius: 16px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 14px; }
         VerticalLayout {
             padding: 12px; spacing: 8px;
             HorizontalLayout {
@@ -258,8 +255,8 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
             }
             HorizontalLayout {
                 spacing: 8px;
-                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-prev-id; placeholder-text: I18n.t("前置代理 ID (prev_profile_id，可选)", "Pre-proxy ID (optional)"); }
-                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-next-id; placeholder-text: I18n.t("落地代理 ID (next_profile_id，可选)", "Landing proxy ID (optional)"); }
+                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-prev-id; placeholder-text: I18n.t("前置代理 ID（可选）", "Pre-proxy ID (optional)"); }
+                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-next-id; placeholder-text: I18n.t("落地代理 ID（可选）", "Landing proxy ID (optional)"); }
             }
         }
     }
@@ -267,7 +264,6 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
     for sub in WorkspaceState.subscriptions : Rectangle {
         width: root.grid-w; border-radius: 16px; border-width: 1px;
         border-color: Theme.card-border; background: Theme.card-surface;
-        GlassSpeculum { corner-inset: 14px; }
         VerticalLayout {
             padding: 12px; spacing: 6px;
             HorizontalLayout {

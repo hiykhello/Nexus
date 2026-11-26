@@ -58,7 +58,7 @@ set(NEXUS_BRIDGE_IMPLS
     src/http_control.cpp
     src/http_control_extra.cpp
     src/http_sse.cpp
-    src/kdl_ops.cpp
+    src/http_ws.cpp
     src/mini_json.cpp
     src/service_installer.cpp
     src/share_link.cpp
@@ -79,11 +79,6 @@ set(NEXUS_BRIDGE_IMPLS
     src/workspace_store.cpp
     src/workspace_sync.cpp
 )
-if(WIN32)
-    list(APPEND NEXUS_BRIDGE_IMPLS src/ipc_client_win.cpp)
-else()
-    list(APPEND NEXUS_BRIDGE_IMPLS src/ipc_client_linux.cpp)
-endif()
 
 add_library(nexus-desktop-bridge STATIC ${NEXUS_BRIDGE_IMPLS})
 target_sources(nexus-desktop-bridge
@@ -95,8 +90,6 @@ target_sources(nexus-desktop-bridge
             src/desktop_host_config.cppm
             src/firewall_helper.cppm
             src/http_control.cppm
-            src/ipc_client.cppm
-            src/kdl_ops.cppm
             src/mini_json.cppm
             src/service_installer.cppm
             src/share_link.cppm
@@ -165,6 +158,7 @@ if(NEXUS_DESKTOP_BUILD_UI)
         ui/app_window.slint
         EDITION 1.19
         NAMESPACE nexus_ui
+        COMPILATION_UNITS 16
     )
     if(MSVC)
         target_compile_features(nexus-desktop PRIVATE cxx_std_23)
@@ -256,4 +250,13 @@ if(NEXUS_DESKTOP_BUILD_TESTS)
     endif()
     target_link_libraries(nexus-desktop-http-w32-tests PRIVATE nexus-desktop-bridge)
     add_test(NAME nexus-desktop-http-w32-tests COMMAND nexus-desktop-http-w32-tests)
+
+    add_executable(nexus-desktop-http-ws-tests tests/http_ws_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-http-ws-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-http-ws-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-http-ws-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-http-ws-tests COMMAND nexus-desktop-http-ws-tests)
 endif()

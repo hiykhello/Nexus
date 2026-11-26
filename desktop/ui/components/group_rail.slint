@@ -3,8 +3,7 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { OutboundGroupItem } from "../types.slint";
-import { ProportionBar } from "bento_deck_cards.slint";
-import { GlassSpeculum, NexusVScrollBar } from "glass_primitives.slint";
+import { NexusVScrollBar, ProportionBar } from "glass_primitives.slint";
 
 // Wide Studio (>=1200px) 224px vertical policy-group rail with Group Health & Latency Summary Footer
 export component GroupRail inherits Rectangle {
@@ -18,16 +17,11 @@ export component GroupRail inherits Rectangle {
     width: 224px;
     horizontal-stretch: 0;
     vertical-stretch: 1;
-    border-radius: 20px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 14px;
-    drop-shadow-offset-y: 3px;
-    drop-shadow-color: Theme.card-shadow;
     clip: true;
-
-    GlassSpeculum {}
 
     VerticalLayout {
         padding: 12px;
@@ -104,17 +98,11 @@ export component GroupRail inherits Rectangle {
                             : item-ta.has-hover ? Theme.hairline-strong
                             : Theme.well-border;
                         background:
-                            is-current
-                                ? @linear-gradient(135deg, Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14) 0%, Theme.accent.with-alpha(Theme.dark ? 0.10 : 0.05) 100%)
+                            is-current ? Theme.selected-bg
                             : item-ta.has-hover ? Theme.row-hover-bg
                             : Theme.well-bg;
-                        drop-shadow-blur: is-current ? 12px : 0px;
-                        drop-shadow-offset-y: is-current ? 2px : 0px;
-                        drop-shadow-color: Theme.accent.with-alpha(Theme.dark ? 0.24 : 0.14);
-                        transform-scale: item-ta.pressed && !is-current ? 0.98 : 1.0;
                         animate border-color { duration: Motion.fast; }
-                        animate drop-shadow-blur { duration: Motion.fast; }
-                        animate transform-scale { duration: Motion.micro; }
+                        animate background { duration: Motion.fast; }
 
                         item-ta := TouchArea {
                             mouse-cursor: pointer;
@@ -291,17 +279,12 @@ export component GroupSummaryStrip inherits Rectangle {
 
     vertical-stretch: 0;
     height: 44px;
-    border-radius: 16px;
+    border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: root.probing ? Theme.selected-border : Theme.card-border;
     background: Theme.card-surface;
-    drop-shadow-blur: 10px;
-    drop-shadow-offset-y: 2px;
-    drop-shadow-color: Theme.card-shadow;
     clip: true;
     animate border-color { duration: Motion.fast; }
-
-    GlassSpeculum { corner-inset: 14px; }
 
     if root.probing : Rectangle {
         x: 0px;

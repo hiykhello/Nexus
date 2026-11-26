@@ -9,14 +9,12 @@ namespace desktop_ui_helpers {
         slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui;
         desktop::AsyncWorker& worker;
         desktop::CoreSupervisor& supervisor;
-        desktop::IpcClient& ipc;
         desktop::HttpControlClient& http_ctrl;
         RateTracker& rate_tracker;
         std::optional<std::chrono::steady_clock::time_point>& core_started_at;
         std::atomic<bool>& lifecycle_busy;
         std::filesystem::path const& cfg_dir;
         std::filesystem::path const& config_path;
-        std::string const& fallback_sock;
         std::function<void()>& sync_tray;
         desktop::ClientDatabase* db = nullptr;
 
@@ -153,9 +151,9 @@ namespace desktop_ui_helpers {
             } else if (p.kind == "proxy_chain") {
                 subtitle = std::format("{} hops", p.proxy_chain.hop_ids.size());
             } else if (p.kind == "custom_outbound") {
-                subtitle = "custom outbound KDL";
+                subtitle = "custom outbound";
             } else {
-                subtitle = "full custom KDL";
+                subtitle = "custom config";
             }
             auto sub_it = sub_names.find(p.subscription_id);
             auto d_it = delays.find(p.id);
@@ -199,6 +197,8 @@ namespace desktop_ui_helpers {
         std::vector<nexus_ui::WorkspaceRuleRow> rule_rows;
         bool active_auto_detect = false;
         bool active_find_process = false;
+        std::string active_routing_name;
+        int active_rule_count = 0;
         for (auto const& rp : ctx.doc.routing_profiles) {
             r_rows.push_back({
                 slint::SharedString(rp.id), slint::SharedString(rp.name),
@@ -207,11 +207,16 @@ namespace desktop_ui_helpers {
             if (rp.is_active) {
                 active_auto_detect = rp.auto_detect_interface;
                 active_find_process = rp.find_process;
+                active_routing_name = rp.name.empty() ? rp.id : rp.name;
+                active_rule_count = static_cast<int>(rp.rules.size());
                 for (auto const& r : rp.rules) {
                     std::string tgt = (r.target_type == "profile_id" && !r.target_profile_id.empty())
                         ? ("@" + r.target_profile_id) : r.target_type;
                     std::string match = !r.domains.empty() ? join_csv(r.domains)
-                        : !r.ips.empty() ? join_csv(r.ips) : join_csv(r.rule_sets);
+                        : !r.ips.empty() ? join_csv(r.ips)
+                        : !r.rule_sets.empty() ? join_csv(r.rule_sets)
+                        : !r.ports.empty() ? join_csv(r.ports)
+                        : !r.protocols.empty() ? join_csv(r.protocols) : join_csv(r.networks);
                     rule_rows.push_back({
                         slint::SharedString(r.id), slint::SharedString(r.scope), slint::SharedString(tgt),
                         slint::SharedString(match), slint::SharedString(join_csv(r.desktop_process)),
@@ -220,6 +225,8 @@ namespace desktop_ui_helpers {
                 }
             }
         }
+        ctx.ui.set_active_rule_count(active_rule_count);
+        ctx.ui.set_active_routing_name(slint::SharedString(active_routing_name));
         ws.set_routing_auto_detect_interface(active_auto_detect);
         ws.set_routing_find_process(active_find_process);
         ws.set_routing_profiles(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceRoutingRow>>(std::move(r_rows)));
@@ -241,13 +248,14 @@ namespace desktop_ui_helpers {
         ws.set_host_workers_spec(slint::SharedString(ctx.host.workers_spec));
         ws.set_host_workers_max(slint::SharedString(std::to_string(ctx.host.workers_max)));
 
-        // Sync overview quick-profiles deck + Quick-Settings tile bar directly from unified SQLite workspace/host state.
+        // Sync overview quick-profiles deck + Quick-Settings tile bar directly from unified workspace/host state.
         sync_profiles_to_ui(ctx.ui, ctx.doc, ctx.telemetry.active_profile_id);
         std::string active_label;
         for (auto const& p : ctx.doc.profiles) {
             if (p.id == ctx.telemetry.active_profile_id) { active_label = p.remarks.empty() ? p.id : p.remarks; break; }
         }
         ctx.ui.set_active_profile(slint::SharedString(active_label));
+        ctx.ui.set_tun_enabled(ctx.host.enable_tun);
         ctx.ui.set_mixed_proxy_enabled(ctx.host.enable_mixed);
         if (auto hp = parse_host_port_literal(ctx.host.mixed_listen); hp) {
             ctx.ui.set_mixed_proxy_host(slint::SharedString(hp->first));
@@ -283,8 +291,8 @@ namespace desktop_ui_helpers {
         return notices;
     }
 
-    // Shared Core composer commit flow: NEVER overwrites config.kdl before validation/rollback,
-    // handles TUN elevation transitions when Core is running, and fails closed on compose errors.
+    // Single-source-of-truth Core composer commit flow: validates before writing runtime config,
+    // handles TUN elevation transitions when Core is running, and reloads via pure HTTP control plane.
     inline auto recompose_active_workspace(WorkspaceUiContext& ctx, std::string target_profile_id = {}) -> void {
         if (ctx.doc.profiles.empty()) return;
         bool const en = is_en_ui(ctx.ui);
@@ -294,51 +302,48 @@ namespace desktop_ui_helpers {
         (void)persist_workspace_and_host(ctx, en);
         auto doc_snap = ctx.doc;
         auto host_snap = ctx.host;
-        ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "正在由核心编译工作区...", "Composing workspace via Core...")));
+        ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "正在应用工作区配置...", "Applying workspace configuration...")));
 
         ctx.worker.post([&ctx, doc_snap = std::move(doc_snap), host_snap = std::move(host_snap), id = std::move(target_profile_id), prefer_persistent, en]() mutable {
             auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
             auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
-            if (!ws_tmp.ok || !host_tmp.ok) {
-                ws_tmp.wipe_and_remove();
-                host_tmp.wipe_and_remove();
-                auto err = tr(en, "写入临时编译输入文件失败", "Failed to write temporary compose inputs");
+            auto fail_compose = [&](std::string err) {
                 on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
                     s->set_diagnostic_ok(false);
                     s->set_diagnostic_message(slint::SharedString(err));
                     push_toast(*s, err, "error");
                     if (ctx.sync_tray) ctx.sync_tray();
                 });
+            };
+            if (!ws_tmp.ok || !host_tmp.ok) {
+                ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
+                fail_compose(tr(en, "准备运行配置失败", "Failed to prepare runtime inputs"));
                 return;
             }
             auto composed = desktop::compose_workspace_via_core(
                 ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.secrets_dir, id, {});
-            ws_tmp.wipe_and_remove();
-            host_tmp.wipe_and_remove();
+            ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
             if (!composed.ok || composed.kdl.empty()) {
-                auto err = composed.errors.empty() ? tr(en, "核心编译工作区失败", "Workspace compose failed") : composed.errors.front();
-                on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
-                    s->set_diagnostic_ok(false);
-                    s->set_diagnostic_message(slint::SharedString(err));
-                    push_toast(*s, err, "error");
-                    if (ctx.sync_tray) ctx.sync_tray();
-                });
+                fail_compose(composed.errors.empty() ? tr(en, "生成运行配置失败", "Failed to build runtime configuration") : composed.errors.front());
+                return;
+            }
+            auto val = validate_draft_config(ctx.cfg_dir, ctx.supervisor, composed.kdl, en);
+            if (!val.ok) {
+                fail_compose(tr(en, "配置校验未通过: ", "Configuration invalid: ") + val.message);
                 return;
             }
 
             bool const was_running = ctx.supervisor.running();
-            auto const prev_kdl = read_file_text(ctx.config_path);
-            bool const prev_tun = kdl_has_tun_inbound(prev_kdl);
-            bool const next_tun = kdl_has_tun_inbound(composed.kdl);
+            auto const prev_cfg = read_file_text(ctx.config_path);
+            bool const prev_tun = config_has_tun_inbound(prev_cfg);
+            bool const next_tun = config_has_tun_inbound(composed.kdl);
 
-            if (was_running && prev_tun != next_tun && !ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) {
-                auto val = validate_draft_config(ctx.cfg_dir, ctx.supervisor, composed.kdl, en);
-                if (!val.ok) {
-                    ctx.lifecycle_busy.store(false, std::memory_order_release);
-                    auto err = tr(en, "编译结果校验未通过: ", "Composed KDL invalid: ") + val.message;
-                    on_ui_thread(ctx.weak_ui, [err = std::move(err)](auto& s) {
-                        s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(err));
-                        push_toast(*s, err, "error");
+            if (was_running && prev_tun != next_tun) {
+                if (ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) {
+                    auto msg = tr(en, "核心正在切换状态，请稍后重试", "Core is busy; try again shortly");
+                    on_ui_thread(ctx.weak_ui, [msg = std::move(msg)](auto& s) {
+                        s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(msg));
+                        push_toast(*s, msg, "warn");
                     });
                     return;
                 }
@@ -361,10 +366,10 @@ namespace desktop_ui_helpers {
                 ctx.supervisor.stop();
                 bool started = wrote && ctx.supervisor.start(ctx.config_path, opts);
                 if (!started) {
-                    if (!prev_kdl.empty()) (void)write_file_atomic(ctx.config_path, prev_kdl);
+                    if (!prev_cfg.empty()) (void)write_file_atomic(ctx.config_path, prev_cfg);
                     bool recovered = ctx.supervisor.start(ctx.config_path, {});
                     ctx.lifecycle_busy.store(false, std::memory_order_release);
-                    auto err = tr(en, "应用工作区并重启核心失败，已回滚: ", "Failed to restart Core for workspace; rolled back: ") + ctx.supervisor.last_error();
+                    auto err = tr(en, "应用配置并重启核心失败，已回滚: ", "Failed to restart Core; rolled back: ") + ctx.supervisor.last_error();
                     on_ui_thread(ctx.weak_ui, [&ctx, recovered, err = std::move(err)](auto& s) {
                         s->set_core_running(recovered);
                         if (!recovered) ctx.running_selector_members.clear();
@@ -374,18 +379,16 @@ namespace desktop_ui_helpers {
                     });
                     return;
                 }
-                auto next_ctl = parse_control_config(composed.kdl, ctx.fallback_sock, ctx.cfg_dir);
-                ctx.ipc.set_endpoint(next_ctl.socket);
+                auto next_ctl = parse_control_config(composed.kdl, ctx.cfg_dir);
                 ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
                 ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
                 ctx.lifecycle_busy.store(false, std::memory_order_release);
-                auto ok_msg = next_tun ? tr(en, "工作区已编译并启用 TUN 重启生效", "Workspace applied with TUN elevation")
-                                       : tr(en, "工作区已编译并关闭 TUN 重启生效", "Workspace applied with TUN disabled");
+                auto ok_msg = next_tun ? tr(en, "配置已生效并启用 TUN", "Applied with TUN enabled")
+                                       : tr(en, "配置已生效并关闭 TUN", "Applied with TUN disabled");
                 on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed), ok_msg = std::move(ok_msg), next_tun](auto& s) mutable {
                     ctx.running_selector_tag = composed.selector_tag;
                     ctx.running_selector_members = std::move(composed.selector_members);
                     ctx.last_secret_files = std::move(composed.secret_files);
-                    apply_kdl_to_ui_state(*s, composed.kdl);
                     s->set_tun_enabled(next_tun);
                     s->set_core_running(true);
                     ctx.core_started_at = std::chrono::steady_clock::now();
@@ -398,11 +401,35 @@ namespace desktop_ui_helpers {
                 return;
             }
 
-            on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed)](auto& s) mutable {
+            bool saved = write_file_atomic(ctx.config_path, composed.kdl);
+            bool reload_ok = saved;
+            std::string reload_err;
+            if (saved) {
+                if (was_running) {
+                    auto hr = ctx.http_ctrl.reload();
+                    reload_ok = hr.ok;
+                    if (!hr.ok) reload_err = hr.body;
+                }
+                if (!was_running || reload_ok) {
+                    auto next_ctl = parse_control_config(composed.kdl, ctx.cfg_dir);
+                    ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
+                    ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
+                }
+            }
+            auto msg = !saved ? tr(en, "写入运行配置失败", "Failed to write runtime configuration")
+                : (reload_ok
+                    ? (was_running ? tr(en, "配置已保存并热重载", "Saved & reloaded")
+                                   : tr(en, "配置已保存，启动核心时生效", "Saved; activates on start"))
+                    : (tr(en, "已保存，但热重载失败: ", "Saved; reload failed: ") + reload_err));
+            on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed), ok = saved && reload_ok, msg = std::move(msg), next_tun](auto& s) mutable {
                 ctx.running_selector_tag = composed.selector_tag;
                 ctx.running_selector_members = std::move(composed.selector_members);
                 ctx.last_secret_files = std::move(composed.secret_files);
-                s->invoke_save_and_reload(slint::SharedString(composed.kdl));
+                s->set_tun_enabled(next_tun);
+                s->set_diagnostic_ok(ok);
+                s->set_diagnostic_message(slint::SharedString(msg));
+                push_toast(*s, msg, ok ? "success" : "error");
+                if (ctx.sync_tray) ctx.sync_tray();
             });
         });
     }
@@ -413,10 +440,15 @@ namespace desktop_ui_helpers {
         bool const en = is_en_ui(ctx.ui);
         bool const prefer_persistent = ctx.ui.get_tun_elevate_persistent();
         ctx.ui.set_core_toggling(true);
-        if (ctx.supervisor.running() || ctx.doc.profiles.empty()) {
-            if (ctx.supervisor.running()) ctx.running_selector_members.clear();
-            run_toggle(std::string(ctx.ui.get_kdl_text()), prefer_persistent, en);
+        if (ctx.supervisor.running()) {
+            ctx.running_selector_members.clear();
+            run_toggle(std::string{}, prefer_persistent, en);
             return;
+        }
+        if (ensure_default_workspace_profile(ctx.doc, ctx.telemetry)) {
+            (void)persist_workspace_db(ctx);
+            (void)persist_telemetry_db(ctx);
+            sync_workspace_to_ui(ctx);
         }
         auto active_id = resolve_effective_active_profile_id(ctx);
         (void)persist_workspace_and_host(ctx, en);
@@ -427,44 +459,34 @@ namespace desktop_ui_helpers {
                                        active_id = std::move(active_id), prefer_persistent, en]() mutable {
             auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
             auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
-            if (!ws_tmp.ok || !host_tmp.ok) {
-                ws_tmp.wipe_and_remove();
-                host_tmp.wipe_and_remove();
-                auto err = tr(en, "写入临时编译输入文件失败", "Failed to write temporary compose inputs");
+            auto fail_toggle = [&](std::string err) {
                 on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
                     s->set_core_toggling(false);
-                    s->set_diagnostic_ok(false);
-                    s->set_diagnostic_message(slint::SharedString(err));
+                    s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(err));
                     push_toast(*s, err, "error");
                     if (ctx.sync_tray) ctx.sync_tray();
                     ctx.lifecycle_busy.store(false, std::memory_order_release);
                 });
+            };
+            if (!ws_tmp.ok || !host_tmp.ok) {
+                ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
+                fail_toggle(tr(en, "准备运行配置失败", "Failed to prepare runtime inputs"));
                 return;
             }
             auto composed = desktop::compose_workspace_via_core(
                 ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.secrets_dir, active_id, {});
-            ws_tmp.wipe_and_remove();
-            host_tmp.wipe_and_remove();
+            ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
             if (!composed.ok || composed.kdl.empty()) {
-                auto err = composed.errors.empty() ? tr(en, "核心编译工作区失败", "Workspace compose failed") : composed.errors.front();
-                on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
-                    s->set_core_toggling(false);
-                    s->set_diagnostic_ok(false);
-                    s->set_diagnostic_message(slint::SharedString(err));
-                    push_toast(*s, err, "error");
-                    if (ctx.sync_tray) ctx.sync_tray();
-                    ctx.lifecycle_busy.store(false, std::memory_order_release);
-                });
+                fail_toggle(composed.errors.empty() ? tr(en, "生成运行配置失败", "Failed to build runtime configuration") : composed.errors.front());
                 return;
             }
-            std::string kdl = composed.kdl;
-            on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed)](auto& s) mutable {
+            std::string cfg_text = composed.kdl;
+            on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed)](auto&) mutable {
                 ctx.running_selector_tag = composed.selector_tag;
                 ctx.running_selector_members = std::move(composed.selector_members);
                 ctx.last_secret_files = std::move(composed.secret_files);
-                apply_kdl_to_ui_state(*s, composed.kdl);
             });
-            run_toggle(std::move(kdl), prefer_persistent, en);
+            run_toggle(std::move(cfg_text), prefer_persistent, en);
         });
         if (!posted) {
             ctx.ui.set_core_toggling(false);

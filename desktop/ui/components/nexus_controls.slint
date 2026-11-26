@@ -32,18 +32,13 @@ export component NexusSwitch inherits HorizontalLayout {
         border-radius: 11px;
         border-width: 1px;
         border-color: root.checked
-            ? Theme.pill-active-top.with-alpha(0.75)
+            ? Theme.pill-active-top
             : (track-ta.has-hover && root.enabled && root.interactive ? Theme.selected-border : Theme.well-border);
         background: root.checked
-            ? (track-ta.pressed
-                ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
-                : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+            ? (track-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot)
             : Theme.inset-bg;
-        drop-shadow-blur: root.checked && root.enabled ? 9px : 0px;
-        drop-shadow-color: Theme.pill-active-bot.with-alpha(Theme.dark ? 0.40 : 0.24);
         opacity: root.enabled ? 1.0 : 0.45;
         animate border-color { duration: Motion.fast; }
-        animate drop-shadow-blur { duration: Motion.fast; }
 
         Rectangle {
             x: root.checked ? (root.is-pressed ? 16px : 18px) : 2px;
@@ -52,9 +47,6 @@ export component NexusSwitch inherits HorizontalLayout {
             height: 18px;
             border-radius: 9px;
             background: Theme.control-knob-bg;
-            drop-shadow-blur: 4px;
-            drop-shadow-offset-y: 1px;
-            drop-shadow-color: Theme.control-knob-shadow;
             animate x { duration: Motion.normal; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
             animate width { duration: Motion.micro; }
         }
@@ -133,9 +125,6 @@ export component NexusSlider inherits Rectangle {
             height: parent.height;
             border-radius: 2px;
             background: Theme.accent;
-            drop-shadow-blur: ta.has-hover || ta.pressed ? 8px : 0px;
-            drop-shadow-color: Theme.accent.with-alpha(0.38);
-            animate drop-shadow-blur { duration: Motion.fast; }
         }
     }
 
@@ -145,15 +134,11 @@ export component NexusSlider inherits Rectangle {
         width: root.thumb-vis;
         height: root.thumb-vis;
         border-radius: self.width / 2;
-        border-width: 2.5px;
+        border-width: 2px;
         border-color: ta.pressed ? Theme.accent.darker(0.12) : Theme.accent;
         background: Theme.control-knob-bg;
-        drop-shadow-blur: ta.has-hover || ta.pressed ? 9px : 4px;
-        drop-shadow-offset-y: 1px;
-        drop-shadow-color: Theme.accent.with-alpha(ta.has-hover || ta.pressed ? 0.48 : 0.25);
         animate width { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
         animate height { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
-        animate drop-shadow-blur { duration: Motion.fast; }
     }
 
     ta := TouchArea {

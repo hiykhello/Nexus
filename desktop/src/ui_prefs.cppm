@@ -15,7 +15,7 @@ export namespace desktop {
         std::string language = "system";
         std::string outbound_mode = "rule";
         float sidebar_width = 196.0f;
-        bool sidebar_collapsed = false;
+        bool sidebar_collapsed = true;
         bool close_to_tray = true;
         bool start_minimized = false;
         bool tray_show_nodes = true;

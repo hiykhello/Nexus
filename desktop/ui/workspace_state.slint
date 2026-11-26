@@ -55,7 +55,7 @@ export global WorkspaceState {
     in-out property <bool> dns-fakeip: false;
     in-out property <string> dns-raw-kdl: "";
 
-    // Isolated Layer 3 Desktop Host fields (stored in local SQLite nexus-client.db; never exported into portable workspace.json)
+    // Isolated Layer 3 Desktop Host fields (device-local only; never exported into portable backup)
     in property <bool> host-is-linux: true;
     in-out property <bool> host-enable-mixed: true;
     in-out property <string> host-mixed-listen: "127.0.0.1:7890";
@@ -74,7 +74,7 @@ export global WorkspaceState {
     in-out property <string> edit-chain-prev: "";
     in-out property <string> edit-chain-next: "";
 
-    // Wave 23 E2EE WebDAV Sync (stored ONLY in local 0600 secrets/sync-creds.json) & UDP Probe state
+    // Wave 23 E2EE WebDAV Sync (credentials isolated locally) & UDP Probe state
     in-out property <string> sync-webdav-url: "";
     in-out property <string> sync-webdav-user: "";
     in-out property <string> sync-webdav-pass: "";

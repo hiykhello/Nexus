@@ -1,4 +1,4 @@
-// Secondary UI callback wiring (groups, connections, profiles, logs, rules) included by desktop/src/main.cpp.
+// Secondary UI callback wiring (groups, connections, logs, rule explain) included by desktop/src/main.cpp.
 #pragma once
 
 namespace desktop_ui_helpers {
@@ -8,13 +8,11 @@ namespace desktop_ui_helpers {
         desktop::AsyncWorker& worker;
         desktop::AsyncWorker& probe_worker;
         desktop::CoreSupervisor& supervisor;
-        desktop::IpcClient& ipc;
         desktop::HttpControlClient& http_ctrl;
         desktop::ClientDatabase* client_db;
-        desktop::TelemetryStoreData& telemetry;
+        WorkspaceUiContext& ws_ctx;
         std::filesystem::path const& cfg_dir;
         std::filesystem::path const& config_path;
-        std::string const& fallback_sock;
         std::vector<desktop::OutboundGroupSnapshot>& cached_groups;
         std::unordered_set<std::string>& pinned_members;
         MemberModelPipeline& member_models;
@@ -130,7 +128,7 @@ namespace desktop_ui_helpers {
         ctx.ui.on_select_member([&ctx, push_group_models](slint::SharedString group, slint::SharedString member) {
             std::string g(group), m(member);
             ctx.worker.post([&ctx, push_group_models, g = std::move(g), m = std::move(m)] {
-                if (!ctx.http_ctrl.select_group(g, m).ok) (void)ctx.ipc.select_outbound(g, m);
+                (void)ctx.http_ctrl.select_group(g, m);
                 if (auto reply = ctx.http_ctrl.outbounds(); reply.ok)
                     push_group_models(desktop::parse_outbounds_json(reply.body), g);
             });
@@ -217,12 +215,12 @@ namespace desktop_ui_helpers {
             });
         });
 
-        // Wave 25 ad-hoc endpoint connectivity probe via POST /v1/outbounds/{tag}/probe (runs on dedicated probe_worker)
+        // Ad-hoc endpoint connectivity probe via HTTP control plane (runs on dedicated probe_worker)
         ctx.ui.on_probe_connectivity([&ctx] {
             if (!ctx.supervisor.running() || ctx.ui.get_conn_probe_busy()) return;
             std::string tag(ctx.ui.get_selected_group());
             if (tag.empty()) tag = "proxy";
-            std::string active_pid = ctx.telemetry.active_profile_id;
+            std::string active_pid = ctx.ws_ctx.telemetry.active_profile_id;
             ctx.ui.set_conn_probe_busy(true);
             bool posted = ctx.probe_worker.post([&ctx, tag = std::move(tag), active_pid = std::move(active_pid)]() mutable {
                 auto run_one = [&](std::string_view url, bool& used_direct) -> desktop::OutboundProbeResult {
@@ -233,13 +231,15 @@ namespace desktop_ui_helpers {
                     }
                     return rep.ok ? desktop::parse_outbound_probe_json(rep.body) : desktop::OutboundProbeResult{};
                 };
-                bool g_direct = false, c_direct = false, h_direct = false;
+                bool g_direct = false, c_direct = false, h_direct = false, y_direct = false;
                 auto r_google = run_one("https://www.gstatic.com/generate_204", g_direct);
                 auto r_cf = run_one("https://cp.cloudflare.com/generate_204", c_direct);
                 auto r_gh = run_one("https://api.github.com", h_direct);
+                auto r_yt = run_one("https://www.youtube.com/generate_204", y_direct);
                 int g_ms = r_google.ok ? static_cast<int>(std::max<std::int64_t>(1, r_google.latency_ms)) : 0;
                 int c_ms = r_cf.ok ? static_cast<int>(std::max<std::int64_t>(1, r_cf.latency_ms)) : 0;
                 int h_ms = r_gh.ok ? static_cast<int>(std::max<std::int64_t>(1, r_gh.latency_ms)) : 0;
+                int y_ms = r_yt.ok ? static_cast<int>(std::max<std::int64_t>(1, r_yt.latency_ms)) : 0;
                 auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count();
                 bool const record_active = !g_direct && tag != "direct" && !active_pid.empty();
@@ -258,70 +258,22 @@ namespace desktop_ui_helpers {
                         r_google.ok ? "healthy" : (r_google.state.empty() ? "timeout" : r_google.state), now_ms,
                     });
                 }
-                on_ui_thread(ctx.weak_ui, [&ctx, record_active, active_pid = std::move(active_pid), now_ms, g_ms, c_ms, h_ms](auto& s) {
+                on_ui_thread(ctx.weak_ui, [&ctx, record_active, active_pid = std::move(active_pid), now_ms, g_ms, c_ms, h_ms, y_ms](auto& s) {
                     if (record_active) {
                         bool updated = false;
-                        for (auto& e : ctx.telemetry.entries) {
+                        for (auto& e : ctx.ws_ctx.telemetry.entries) {
                             if (e.profile_id == active_pid) { e.delay_ms = g_ms; e.last_tested_ms = now_ms; updated = true; break; }
                         }
-                        if (!updated) ctx.telemetry.entries.push_back({.profile_id = active_pid, .delay_ms = g_ms, .last_tested_ms = now_ms});
+                        if (!updated) ctx.ws_ctx.telemetry.entries.push_back({.profile_id = active_pid, .delay_ms = g_ms, .last_tested_ms = now_ms});
                     }
                     s->set_conn_google_ms(g_ms);
                     s->set_conn_cf_ms(c_ms);
                     s->set_conn_github_ms(h_ms);
+                    s->set_conn_youtube_ms(y_ms);
                     s->set_conn_probe_busy(false);
                 });
             });
             if (!posted) ctx.ui.set_conn_probe_busy(false);
-        });
-
-        ctx.ui.on_reload_config_from_disk([&ctx] {
-            bool en = is_en_ui(ctx.ui);
-            ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "正在从磁盘读取并校验...", "Reading & validating config from disk...")));
-            ctx.worker.post([&ctx, en] {
-                auto disk_kdl = read_file_text(ctx.config_path);
-                if (disk_kdl.empty()) {
-                    auto msg = tr(en, "无法读取磁盘配置文件", "Failed to read config file from disk");
-                    on_ui_thread(ctx.weak_ui, [msg = std::move(msg)](auto& s) {
-                        s->set_diagnostic_ok(false);
-                        s->set_diagnostic_message(slint::SharedString(msg));
-                        push_toast(*s, msg, "error");
-                    });
-                    return;
-                }
-                auto val = validate_draft_config(ctx.cfg_dir, ctx.supervisor, disk_kdl, en);
-                if (!val.ok) {
-                    auto msg = tr(en, "磁盘配置校验失败: ", "Disk config invalid: ") + val.message;
-                    on_ui_thread(ctx.weak_ui, [msg = std::move(msg)](auto& s) {
-                        s->set_diagnostic_ok(false);
-                        s->set_diagnostic_message(slint::SharedString(msg));
-                        push_toast(*s, msg, "error");
-                    });
-                    return;
-                }
-                bool was_running = ctx.supervisor.running();
-                desktop::IpcReply reply{true, "OK"};
-                if (was_running) {
-                    reply = ctx.ipc.reload();
-                    if (!reply.ok && ctx.http_ctrl.reload().ok) reply = {true, "OK"};
-                }
-                if (!was_running || reply.ok) {
-                    auto next_ctl = parse_control_config(disk_kdl, ctx.fallback_sock, ctx.cfg_dir);
-                    ctx.ipc.set_endpoint(next_ctl.socket);
-                    ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
-                    ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
-                }
-                auto msg = reply.ok
-                    ? tr(en, "已从磁盘校验并重载配置", "Reloaded config from disk")
-                    : (tr(en, "磁盘配置已读取，但热重载失败: ", "Read disk config; reload failed: ") + reply.body);
-                on_ui_thread(ctx.weak_ui, [&ctx, ok = reply.ok, disk_kdl = std::move(disk_kdl), msg = std::move(msg)](auto& s) {
-                    apply_kdl_to_ui_state(*s, disk_kdl);
-                    s->set_diagnostic_ok(ok);
-                    s->set_diagnostic_message(slint::SharedString(msg));
-                    if (ctx.sync_tray) ctx.sync_tray();
-                    push_toast(*s, msg, ok ? "success" : "error");
-                });
-            });
         });
 
         ctx.ui.on_apply_log_level([&ctx](slint::SharedString level) {
@@ -331,9 +283,8 @@ namespace desktop_ui_helpers {
             if (dom.empty() || dom == "all") dom = "global";
             ctx.worker.post([&ctx, en, lvl = std::move(lvl), dom = std::move(dom)] {
                 auto http_res = ctx.http_ctrl.set_log_level(lvl, dom);
-                bool ok = http_res.ok || (dom == "global" && ctx.ipc.set_log_level(lvl).ok);
-                auto msg = ok ? tr(en, "日志级别已更新", "Log level updated") : http_res.body;
-                on_ui_thread(ctx.weak_ui, [ok, msg = std::move(msg)](auto& s) {
+                auto msg = http_res.ok ? tr(en, "日志级别已更新", "Log level updated") : http_res.body;
+                on_ui_thread(ctx.weak_ui, [ok = http_res.ok, msg = std::move(msg)](auto& s) {
                     push_toast(*s, msg, ok ? "success" : "error");
                     if (ok) s->invoke_refresh_logs();
                 });
@@ -373,7 +324,7 @@ namespace desktop_ui_helpers {
                 { std::lock_guard lock(ctx.logs_mu); body = format_logs_snapshot(ctx.cached_logs); }
                 auto out_path = ctx.cfg_dir / "logs-snapshot.txt";
                 bool ok = !body.empty() && write_file_atomic(out_path, body);
-                auto msg = ok ? (tr(en, "已导出日志快照: ", "Exported logs: ") + out_path.string())
+                auto msg = ok ? tr(en, "已导出日志快照", "Exported log snapshot")
                               : tr(en, "暂无可导出的日志快照", "No logs to export");
                 on_ui_thread(ctx.weak_ui, [ok, msg = std::move(msg)](auto& s) {
                     s->set_log_export_ok(ok);
@@ -386,40 +337,35 @@ namespace desktop_ui_helpers {
             ctx.log_models.clear();
         });
         ctx.ui.on_run_rule_explain([&ctx](slint::SharedString inb, slint::SharedString net, slint::SharedString tgt, slint::SharedString extra) {
-            std::string i(inb), n(net), t(tgt), e(extra), kdl(ctx.ui.get_kdl_text());
-            ctx.worker.post([&ctx, i = std::move(i), n = std::move(n), t = std::move(t), e = std::move(e), kdl = std::move(kdl)] {
+            std::string i(inb), n(net), t(tgt), e(extra);
+            auto doc_snap = ctx.ws_ctx.doc;
+            auto host_snap = ctx.ws_ctx.host;
+            auto active_id = resolve_effective_active_profile_id(ctx.ws_ctx);
+            ctx.worker.post([&ctx, i = std::move(i), n = std::move(n), t = std::move(t), e = std::move(e),
+                             doc_snap = std::move(doc_snap), host_snap = std::move(host_snap), active_id = std::move(active_id)] {
                 auto draft = ctx.cfg_dir / ".explain-draft.kdl";
-                auto target_cfg = (!kdl.empty() && write_file_atomic(draft, kdl)) ? draft : ctx.config_path;
+                bool use_draft = false;
+                if (!doc_snap.profiles.empty()) {
+                    auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
+                    auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
+                    if (ws_tmp.ok && host_tmp.ok) {
+                        auto composed = desktop::compose_workspace_via_core(
+                            ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.ws_ctx.secrets_dir, active_id, {});
+                        if (composed.ok && !composed.kdl.empty() && write_file_atomic(draft, composed.kdl)) {
+                            use_draft = true;
+                        }
+                    }
+                    ws_tmp.wipe_and_remove();
+                    host_tmp.wipe_and_remove();
+                }
+                auto target_cfg = use_draft ? draft : ctx.config_path;
                 auto res = ctx.supervisor.explain_rule(target_cfg, i, n, t, e);
-                if (target_cfg == draft) { std::error_code ec; std::filesystem::remove(draft, ec); }
+                if (use_draft) { std::error_code ec; std::filesystem::remove(draft, ec); }
                 on_ui_thread(ctx.weak_ui, [ok = res.ok, msg = std::move(res.message)](auto& s) {
                     s->set_explain_ok(ok);
                     s->set_explain_result(slint::SharedString(msg));
                 });
             });
-        });
-
-        auto apply_kdl_edit = [&ctx](std::pair<bool, std::string> res, std::string_view label) {
-            bool en = is_en_ui(ctx.ui);
-            ctx.ui.set_diagnostic_ok(res.first);
-            if (!res.first) {
-                ctx.ui.set_diagnostic_message(slint::SharedString(res.second));
-                push_toast(ctx.ui, res.second, "error");
-                return;
-            }
-            ctx.ui.set_kdl_text(slint::SharedString(res.second));
-            ctx.ui.set_kdl_line_count(count_kdl_lines(res.second));
-            ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "已写入规则片段到配置: ", "Inserted snippet: ") + std::string(label)));
-            ctx.ui.invoke_save_and_reload(slint::SharedString(res.second));
-        };
-        ctx.ui.on_append_route_rule_kdl([&ctx, apply_kdl_edit](slint::SharedString rule_block) {
-            apply_kdl_edit(desktop::insert_route_rule_kdl(std::string_view(ctx.ui.get_kdl_text()), std::string_view(rule_block)), "route");
-        });
-        ctx.ui.on_append_dns_rule_kdl([&ctx, apply_kdl_edit](slint::SharedString rule_line) {
-            apply_kdl_edit(desktop::insert_dns_rule_kdl(std::string_view(ctx.ui.get_kdl_text()), std::string_view(rule_line)), "dns");
-        });
-        ctx.ui.on_append_raw_kdl([&ctx, apply_kdl_edit](slint::SharedString snippet) {
-            apply_kdl_edit({true, desktop::merge_raw_kdl_snippet(std::string_view(ctx.ui.get_kdl_text()), std::string_view(snippet))}, "outbound");
         });
 
         ctx.ui.on_create_rule_from_connection([&ctx](slint::SharedString target, int port, slint::SharedString proto, slint::SharedString outbound, slint::SharedString rule_action) {
@@ -437,39 +383,6 @@ namespace desktop_ui_helpers {
             push_toast(ctx.ui,
                 tr(is_en_ui(ctx.ui), "已带入连接目标到分流规则编辑器: ", "Pre-filled rule editor for: ") + draft.value,
                 "info");
-        });
-    }
-
-    inline auto bind_dash_layout_callbacks(nexus_ui::AppWindow& ui, std::function<void()> persist) -> void {
-        ui.on_dash_prefs_changed(persist);
-        ui.on_reorder_dash_section([&ui, persist](int from_id, int to_id) {
-            auto ord = read_dash_order_model(ui.get_dash_section_order());
-            if (desktop::reorder_dash_slots(ord, from_id, to_id)) {
-                ui.set_dash_section_order(make_dash_order_model(ord));
-                persist();
-            }
-        });
-        ui.on_reorder_dash_info([&ui, persist](int from_id, int to_id) {
-            auto ord = read_dash_order_model(ui.get_dash_info_order());
-            if (desktop::reorder_dash_slots(ord, from_id, to_id)) {
-                ui.set_dash_info_order(make_dash_order_model(ord));
-                persist();
-            }
-        });
-        ui.on_swap_dash_deck([&ui, persist] {
-            ui.set_dash_deck_swapped(!ui.get_dash_deck_swapped());
-            persist();
-        });
-        ui.on_reset_dash_layout([&ui, persist] {
-            ui.set_dash_show_speed(true); ui.set_dash_show_quick_nodes(true);
-            ui.set_dash_show_network(true); ui.set_dash_show_memory(true);
-            ui.set_dash_show_traffic(true); ui.set_dash_show_ports(true);
-            ui.set_dash_show_connectivity(true);
-            ui.set_dash_section_order(make_dash_order_model({0, 1, 2, 3}));
-            ui.set_dash_info_order(make_dash_order_model({0, 1, 2, 3}));
-            ui.set_dash_deck_swapped(false);
-            persist();
-            push_toast(ui, tr(is_en_ui(ui), "已恢复默认概览布局", "Dashboard layout reset"), "info");
         });
     }
 }

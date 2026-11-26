@@ -1,5 +1,5 @@
-// Wave 30-32 Live Control API inspection callbacks (GET /v1/rules, GET /v1/dns/query, FakeIP/DNS flush,
-// per-node POST /v1/outbounds/{tag}/probe, and SSE live log streaming) included by desktop/src/main.cpp.
+// Wave 30-33 Live Control API inspection callbacks (GET /v1/rules, GET /v1/dns/query, FakeIP/DNS flush,
+// per-node POST /v1/outbounds/{tag}/probe, and multiplexed RFC 6455 /v1/ws with transparent SSE fallback).
 #pragma once
 
 namespace desktop_ui_helpers {
@@ -14,11 +14,14 @@ namespace desktop_ui_helpers {
         std::vector<desktop::OutboundGroupSnapshot>& cached_groups;
         std::unordered_set<std::string>& pinned_members;
         MemberModelPipeline& member_models;
+        ConnectionsModelPipeline& conn_models;
         LogsModelPipeline& log_models;
+        RateTracker& rate_tracker;
         std::vector<desktop::LogEntrySnapshot>& cached_logs;
         std::mutex& logs_mu;
         std::atomic<std::uint64_t>& last_log_seq;
         std::function<void()>& sync_tray;
+        std::function<void(std::uint64_t, std::uint64_t)> on_traffic_totals;
 
         std::vector<desktop::RuleEntrySnapshot> cached_rules;
         std::shared_ptr<slint::VectorModel<nexus_ui::LiveRuleRow>> rules_model =
@@ -26,12 +29,50 @@ namespace desktop_ui_helpers {
         std::shared_ptr<slint::VectorModel<nexus_ui::DnsAnswerRow>> dns_answers_model =
             std::make_shared<slint::VectorModel<nexus_ui::DnsAnswerRow>>();
 
-        std::mutex sse_mu;
-        std::stop_source sse_stop;
-        std::thread sse_thread;
-        bool sse_active = false;
+        std::mutex stream_mu;
+        std::stop_source stream_stop;
+        std::thread stream_thread;
+        bool stream_active = false;
+        std::atomic<bool> ws_connected{false};
+        std::atomic<bool> ws_rejected{false};
+        std::atomic<std::uint64_t> last_endpoint_gen{0};
+        std::atomic<bool> logs_stream_enabled{true};
 
         ~LiveInspectController() { stop_log_stream(); }
+
+        [[nodiscard]] auto ws_live() const noexcept -> bool {
+            return ws_connected.load(std::memory_order_acquire);
+        }
+
+        auto reset_ws_fallback() -> void {
+            ws_rejected.store(false, std::memory_order_release);
+            last_endpoint_gen.store(http_ctrl.endpoint_generation(), std::memory_order_release);
+        }
+
+        auto ingest_live_log(desktop::LogEntrySnapshot entry) -> void {
+            if (entry.seq > 0) {
+                auto prev = last_log_seq.load(std::memory_order_acquire);
+                while (entry.seq > prev &&
+                       !last_log_seq.compare_exchange_weak(prev, entry.seq, std::memory_order_acq_rel)) {}
+            }
+            bool inserted = false;
+            {
+                std::lock_guard lk_logs(logs_mu);
+                bool const dup = entry.seq > 0 && std::ranges::any_of(cached_logs, [&](auto const& existing) {
+                    return existing.seq == entry.seq;
+                });
+                if (!dup) {
+                    cached_logs.push_back(entry);
+                    if (cached_logs.size() > LogsModelPipeline::kMaxLogs) cached_logs.erase(cached_logs.begin());
+                    inserted = true;
+                }
+            }
+            if (inserted) {
+                on_ui_thread(weak_ui, [this, entry = std::move(entry)](auto&) mutable {
+                    log_models.append_live(std::move(entry));
+                });
+            }
+        }
 
         auto apply_rules_filter(std::string_view query) -> void {
             auto q = lower_ascii(query);
@@ -56,72 +97,126 @@ namespace desktop_ui_helpers {
         auto stop_log_stream() -> void {
             std::thread to_join;
             {
-                std::lock_guard lk(sse_mu);
-                if (!sse_active && !sse_thread.joinable()) return;
-                sse_active = false;
-                sse_stop.request_stop();
-                to_join = std::move(sse_thread);
+                std::lock_guard lk(stream_mu);
+                if (!stream_active && !stream_thread.joinable()) return;
+                stream_active = false;
+                stream_stop.request_stop();
+                to_join = std::move(stream_thread);
             }
             if (to_join.joinable()) to_join.join();
+            ws_connected.store(false, std::memory_order_release);
             on_ui_thread(weak_ui, [](auto& s) {
                 s->template global<nexus_ui::ControlInspectState>().set_logs_stream_connected(false);
             });
         }
 
-        auto sync_log_stream(bool should_run) -> void {
+        auto sync_log_stream(bool core_up) -> void {
+            auto const cur_gen = http_ctrl.endpoint_generation();
+            auto const prev_gen = last_endpoint_gen.exchange(cur_gen, std::memory_order_acq_rel);
+            bool const endpoint_changed = (cur_gen != prev_gen);
+            if (!core_up) {
+                ws_rejected.store(false, std::memory_order_release);
+                stop_log_stream();
+                return;
+            }
+            if (endpoint_changed) {
+                ws_rejected.store(false, std::memory_order_release);
+                stop_log_stream();
+            }
+            bool const should_run = !ws_rejected.load(std::memory_order_acquire)
+                                 || logs_stream_enabled.load(std::memory_order_acquire);
             if (!should_run) {
                 stop_log_stream();
                 return;
             }
-            std::lock_guard lk(sse_mu);
-            if (sse_active) return;
-            if (sse_thread.joinable()) sse_thread.join();
-            sse_stop = std::stop_source{};
-            auto stoken = sse_stop.get_token();
-            sse_active = true;
-            sse_thread = std::thread([this, stoken] {
+            std::lock_guard lk(stream_mu);
+            if (stream_active) return;
+            if (stream_thread.joinable()) stream_thread.join();
+            stream_stop = std::stop_source{};
+            auto stoken = stream_stop.get_token();
+            stream_active = true;
+            stream_thread = std::thread([this, stoken] {
                 int backoff_ms = 1000;
                 while (!stoken.stop_requested()) {
                     auto since = last_log_seq.load(std::memory_order_acquire);
-                    auto on_connected = [&] {
-                        backoff_ms = 1000;
-                        on_ui_thread(weak_ui, [](auto& s) {
-                            s->template global<nexus_ui::ControlInspectState>().set_logs_stream_connected(true);
-                        });
-                    };
-                    auto res = http_ctrl.stream_logs_sse([&](desktop::SseEvent const& ev) -> bool {
-                        if (stoken.stop_requested()) return false;
-                        if (ev.event == "log" || ev.event == "message") {
-                            if (auto entry = desktop::parse_log_entry_json(ev.data)) {
-                                if (entry->seq > 0) {
-                                    auto prev = last_log_seq.load(std::memory_order_acquire);
-                                    while (entry->seq > prev &&
-                                           !last_log_seq.compare_exchange_weak(prev, entry->seq, std::memory_order_acq_rel)) {}
-                                }
-                                bool inserted = false;
-                                {
-                                    std::lock_guard lk_logs(logs_mu);
-                                    bool const dup = entry->seq > 0 && std::ranges::any_of(cached_logs, [&](auto const& existing) {
-                                        return existing.seq == entry->seq;
-                                    });
-                                    if (!dup) {
-                                        cached_logs.push_back(*entry);
-                                        if (cached_logs.size() > LogsModelPipeline::kMaxLogs) {
-                                            cached_logs.erase(cached_logs.begin());
-                                        }
-                                        inserted = true;
+                    bool connected_this_round = false;
+                    if (!ws_rejected.load(std::memory_order_acquire)) {
+                        auto on_ws_up = [&] {
+                            connected_this_round = true;
+                            backoff_ms = 1000;
+                            ws_connected.store(true, std::memory_order_release);
+                            on_ui_thread(weak_ui, [this](auto& s) {
+                                s->template global<nexus_ui::ControlInspectState>().set_logs_stream_connected(true);
+                                bool const want_rules = !cached_rules.empty() || s->get_rule_modal_open();
+                                worker.post([this, want_rules] {
+                                    auto gr = http_ctrl.outbounds();
+                                    auto groups = gr.ok ? desktop::parse_outbounds_json(gr.body)
+                                                        : std::vector<desktop::OutboundGroupSnapshot>{};
+                                    std::optional<std::vector<desktop::RuleEntrySnapshot>> rules;
+                                    if (want_rules) {
+                                        auto rr = http_ctrl.rules();
+                                        if (rr.ok) rules = desktop::parse_rules_json(rr.body);
                                     }
-                                }
-                                if (inserted) {
-                                    on_ui_thread(weak_ui, [this, entry = std::move(*entry)](auto&) mutable {
-                                        log_models.append_live(std::move(entry));
+                                    on_ui_thread(weak_ui, [this, gr_ok = gr.ok, groups = std::move(groups),
+                                                           rules = std::move(rules)](auto& s2) mutable {
+                                        if (gr_ok) {
+                                            push_group_snapshot_to_ui(*s2, cached_groups, std::move(groups),
+                                                std::string(s2->get_selected_group()), member_models,
+                                                std::string_view(s2->get_member_filter()),
+                                                std::string_view(s2->get_member_sort()), &pinned_members);
+                                            if (sync_tray) sync_tray();
+                                        }
+                                        if (rules) {
+                                            cached_rules = std::move(*rules);
+                                            auto const& st = s2->template global<nexus_ui::ControlInspectState>();
+                                            apply_rules_filter(std::string_view(st.get_rules_filter()));
+                                        }
+                                    });
+                                });
+                            });
+                        };
+                        auto ws_res = http_ctrl.stream_ws({"logs", "connections", "metrics"}, [&](desktop::WsEvent const& ev) -> bool {
+                            if (stoken.stop_requested()) return false;
+                            if (ev.type == "log" && logs_stream_enabled.load(std::memory_order_acquire)) {
+                                if (auto entry = desktop::parse_log_entry_json(ev.data_json)) ingest_live_log(std::move(*entry));
+                            } else if (ev.type == "connections") {
+                                auto parsed = desktop::parse_connections_json(ev.data_json);
+                                on_ui_thread(weak_ui, [this, parsed = std::move(parsed)](auto& s) mutable {
+                                    if (!s->get_connections_paused()) conn_models.replace(std::move(parsed));
+                                });
+                            } else if (ev.type == "metrics") {
+                                if (auto m = desktop::parse_status_metrics_json(ev.data_json)) {
+                                    on_ui_thread(weak_ui, [this, m = *m](auto& s) {
+                                        apply_metrics_to_ui(*s, m, rate_tracker.record(m.upload_bytes, m.download_bytes));
+                                        if (on_traffic_totals) on_traffic_totals(m.upload_bytes, m.download_bytes);
+                                        if (sync_tray && s->get_tray_show_speed()) sync_tray();
                                     });
                                 }
                             }
+                            return !stoken.stop_requested();
+                        }, stoken, since, 1000, std::chrono::milliseconds{3000}, std::chrono::milliseconds{100}, on_ws_up);
+                        ws_connected.store(false, std::memory_order_release);
+                        if (!ws_res && !connected_this_round &&
+                            (ws_res.error().contains("404") || ws_res.error().contains("426") || ws_res.error().contains("405"))) {
+                            ws_rejected.store(true, std::memory_order_release);
                         }
-                        return !stoken.stop_requested();
-                    }, stoken, {}, {}, {}, since, on_connected);
-                    (void)res;
+                    }
+                    if (ws_rejected.load(std::memory_order_acquire) && !stoken.stop_requested()) {
+                        if (!logs_stream_enabled.load(std::memory_order_acquire)) break;
+                        auto on_sse_up = [&] {
+                            backoff_ms = 1000;
+                            on_ui_thread(weak_ui, [](auto& s) {
+                                s->template global<nexus_ui::ControlInspectState>().set_logs_stream_connected(true);
+                            });
+                        };
+                        (void)http_ctrl.stream_logs_sse([&](desktop::SseEvent const& ev) -> bool {
+                            if (stoken.stop_requested()) return false;
+                            if ((ev.event == "log" || ev.event == "message") && logs_stream_enabled.load(std::memory_order_acquire)) {
+                                if (auto entry = desktop::parse_log_entry_json(ev.data)) ingest_live_log(std::move(*entry));
+                            }
+                            return !stoken.stop_requested();
+                        }, stoken, {}, {}, {}, since, on_sse_up);
+                    }
                     on_ui_thread(weak_ui, [](auto& s) {
                         s->template global<nexus_ui::ControlInspectState>().set_logs_stream_connected(false);
                     });
@@ -133,6 +228,8 @@ namespace desktop_ui_helpers {
                     }
                     backoff_ms = std::min(8000, backoff_ms * 2);
                 }
+                std::lock_guard lk(stream_mu);
+                if (stream_stop.get_token() == stoken) stream_active = false;
             });
         }
 
@@ -311,7 +408,8 @@ namespace desktop_ui_helpers {
             });
 
             g.on_toggle_logs_stream([this](bool enabled) {
-                sync_log_stream(enabled && supervisor.running() && ui.get_active_tab() == 4);
+                logs_stream_enabled.store(enabled, std::memory_order_release);
+                if (!ws_live()) sync_log_stream(supervisor.running());
             });
         }
     };

@@ -1,23 +1,7 @@
-// End-to-end TUN privilege probing, elevation, core start/stop, and rollback orchestration for desktop/src/main.cpp.
+// End-to-end Workspace-native TUN elevation, core start/stop, and rollback orchestration for desktop/src/main.cpp.
 #pragma once
 
 namespace desktop_ui_helpers {
-    inline auto tun_status_to_ui_string(desktop::TunPrivilegeStatus st) noexcept -> std::string_view {
-        switch (st) {
-        case desktop::TunPrivilegeStatus::ready_root_or_admin: return "ready_root";
-        case desktop::TunPrivilegeStatus::ready_persistent_cap: return "ready_persistent";
-        case desktop::TunPrivilegeStatus::needs_elevation: return "needs_elevation";
-        case desktop::TunPrivilegeStatus::unavailable: return "unavailable";
-        }
-        return "unavailable";
-    }
-
-    inline auto apply_tun_probe_to_ui(nexus_ui::AppWindow& ui, desktop::TunPrivilegeProbe const& p) -> void {
-        ui.set_tun_privilege_status(slint::SharedString(tun_status_to_ui_string(p.status)));
-        ui.set_tun_persistent_granted(p.has_persistent_grant);
-        ui.set_tun_can_persist(p.supports_persistent);
-    }
-
     inline auto probe_tun_privilege_async(
         slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui,
         desktop::AsyncWorker& worker,
@@ -30,60 +14,11 @@ namespace desktop_ui_helpers {
         });
     }
 
-    inline auto resolve_tun_elevation_for_start(
-        std::filesystem::path const& binary_path,
-        std::filesystem::path const& config_path,
-        std::filesystem::path const& workdir,
-        bool prefer_persistent,
-        bool en,
-        desktop::CoreStartOptions& out_opts,
-        desktop::TunPrivilegeProbe& out_probe) -> desktop::ElevationResult {
-        out_opts = {};
-        out_probe = desktop::probe_tun_privilege(binary_path);
-        if (out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin) {
-            return {true, false, {}};
-        }
-        if (out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap) {
-            out_opts.use_persistent_helper = out_probe.helper_required_for_persistent;
-            return {true, false, {}};
-        }
-        if (out_probe.status == desktop::TunPrivilegeStatus::unavailable) {
-            return {false, false, out_probe.detail.empty()
-                ? tr(en, "当前环境不支持 TUN 提权", "TUN elevation is unavailable on this host")
-                : out_probe.detail};
-        }
-        if (prefer_persistent && out_probe.supports_persistent) {
-            auto grant = desktop::grant_persistent_tun_privilege(binary_path, en, config_path, workdir);
-            out_probe = desktop::probe_tun_privilege(binary_path);
-            if (!grant.ok) return grant;
-            if (out_probe.status == desktop::TunPrivilegeStatus::ready_persistent_cap) {
-                out_opts.use_persistent_helper = out_probe.helper_required_for_persistent;
-                return {true, false, grant.message};
-            }
-            if (out_probe.status == desktop::TunPrivilegeStatus::ready_root_or_admin) {
-                return {true, false, grant.message};
-            }
-            if (out_probe.supports_session_only) {
-                out_opts.elevate_session = true;
-                return {true, false, grant.message};
-            }
-            return {false, false, grant.message};
-        }
-        if (out_probe.supports_session_only) {
-            out_opts.elevate_session = true;
-            return {true, false, {}};
-        }
-        return {false, false, out_probe.detail.empty()
-            ? tr(en, "缺少按次提权所需系统工具", "Session-only elevation helper unavailable on host")
-            : out_probe.detail};
-    }
-
     inline auto toggle_core_async(
         slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui,
         desktop::AsyncWorker& worker,
         desktop::CoreSupervisor& supervisor,
         desktop::SystemProxyController& sys_proxy,
-        desktop::IpcClient& ipc,
         desktop::HttpControlClient& http_ctrl,
         std::function<void()> on_tray_sync,
         std::vector<desktop::OutboundGroupSnapshot>& cached_groups,
@@ -95,16 +30,15 @@ namespace desktop_ui_helpers {
         std::atomic<bool>& core_toggling,
         std::filesystem::path const& cfg_dir,
         std::filesystem::path const& config_path,
-        std::string fallback_sock,
-        std::string draft_kdl,
+        std::string composed_text,
         bool prefer_persistent_tun,
         bool en) -> void {
         bool posted = worker.post([&, weak_ui, en, prefer_persistent_tun, on_tray_sync = std::move(on_tray_sync),
-                                   draft_kdl = std::move(draft_kdl), fallback_sock = std::move(fallback_sock)]() mutable {
+                                   composed_text = std::move(composed_text)]() mutable {
             bool running = false;
             bool cancelled = false;
             std::optional<desktop::TunPrivilegeProbe> refreshed_probe;
-            std::string summary, diag_err, new_kdl;
+            std::string summary, diag_err;
             if (supervisor.running()) {
                 (void)sys_proxy.restore();
                 supervisor.stop();
@@ -112,20 +46,17 @@ namespace desktop_ui_helpers {
                 summary = diag_err.empty() ? tr(en, "已断开", "Disconnected")
                                            : (tr(en, "停止核心警告: ", "Stop warning: ") + diag_err);
             } else {
-                auto prep = prepare_config_before_start(cfg_dir, config_path, supervisor, std::move(draft_kdl), fallback_sock, en);
+                auto prep = prepare_config_before_start(cfg_dir, config_path, supervisor, std::move(composed_text), en);
                 if (!prep.ok) {
                     diag_err = prep.error_message;
                     summary = tr(en, "配置校验未通过: ", "Config invalid: ") + diag_err;
                 } else {
-                    if (prep.synthesized_default) new_kdl = std::move(prep.kdl_text);
-                    ipc.set_endpoint(prep.control.socket);
                     http_ctrl.set_endpoint(prep.control.http_host, prep.control.http_port);
                     http_ctrl.set_bearer_token(prep.control.bearer_token);
 
                     desktop::CoreStartOptions start_opts{};
                     bool elev_ok = true;
-                    auto const& active_kdl = prep.synthesized_default ? new_kdl : prep.kdl_text;
-                    if (kdl_has_tun_inbound(active_kdl)) {
+                    if (config_has_tun_inbound(prep.composed_text)) {
                         desktop::TunPrivilegeProbe p{};
                         auto elev = resolve_tun_elevation_for_start(
                             supervisor.binary_path(), config_path, cfg_dir, prefer_persistent_tun, en, start_opts, p);
@@ -158,13 +89,11 @@ namespace desktop_ui_helpers {
             }
             slint::invoke_from_event_loop([&, weak_ui, running, cancelled, on_tray_sync = std::move(on_tray_sync),
                                            refreshed_probe = std::move(refreshed_probe),
-                                           summary = std::move(summary), diag_err = std::move(diag_err),
-                                           new_kdl = std::move(new_kdl)]() mutable {
+                                           summary = std::move(summary), diag_err = std::move(diag_err)]() mutable {
                 if (auto strong = weak_ui.lock()) {
                     auto& s = **strong;
                     if (refreshed_probe) apply_tun_probe_to_ui(s, *refreshed_probe);
                     s.set_core_running(running);
-                    if (!new_kdl.empty()) apply_kdl_to_ui_state(s, new_kdl);
                     s.set_diagnostic_ok(diag_err.empty() || cancelled);
                     s.set_diagnostic_message(slint::SharedString(cancelled ? "" : diag_err));
                     if (running) {
@@ -192,60 +121,52 @@ namespace desktop_ui_helpers {
         }
     }
 
-    struct TunFlowContext {
-        nexus_ui::AppWindow& ui;
-        slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui;
-        desktop::AsyncWorker& worker;
-        desktop::CoreSupervisor& supervisor;
-        desktop::IpcClient& ipc;
-        desktop::HttpControlClient& http_ctrl;
-        RateTracker& rate_tracker;
-        std::optional<std::chrono::steady_clock::time_point>& core_started_at;
-        std::filesystem::path const& cfg_dir;
-        std::filesystem::path const& config_path;
-        std::string const& fallback_sock;
-        std::atomic<bool>& lifecycle_busy;
-        std::function<void()>& sync_tray;
-        std::function<void()> persist_prefs;
-        std::function<void(bool)> on_tun_state_changed;
-    };
+    inline auto bind_tun_callbacks(WorkspaceUiContext& ws_ctx, std::function<void()> persist_prefs) -> void {
+        probe_tun_privilege_async(ws_ctx.weak_ui, ws_ctx.worker, ws_ctx.supervisor.binary_path());
 
-    inline auto bind_tun_callbacks(TunFlowContext& ctx) -> void {
-        probe_tun_privilege_async(ctx.weak_ui, ctx.worker, ctx.supervisor.binary_path());
-
-        ctx.ui.on_tray_prefs_changed([&ctx] {
-            if (ctx.persist_prefs) ctx.persist_prefs();
-            if (ctx.sync_tray) ctx.sync_tray();
+        ws_ctx.ui.on_tray_prefs_changed([&ws_ctx, persist_prefs = std::move(persist_prefs)] {
+            if (persist_prefs) persist_prefs();
+            if (ws_ctx.sync_tray) ws_ctx.sync_tray();
         });
 
-        ctx.ui.on_toggle_tun([&ctx](bool on) {
-            if (ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) {
-                ctx.ui.set_tun_enabled(!on);
+        ws_ctx.ui.on_toggle_tun([&ws_ctx](bool on) {
+            if (ws_ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) {
+                ws_ctx.ui.set_tun_enabled(!on);
                 return;
             }
-            bool const en = is_en_ui(ctx.ui);
-            bool const prefer_persistent = ctx.ui.get_tun_elevate_persistent();
-            std::string prev_kdl(ctx.ui.get_kdl_text());
-            ctx.ui.set_tun_privilege_busy(true);
-            ctx.ui.set_core_toggling(true);
+            bool const en = is_en_ui(ws_ctx.ui);
+            bool const prefer_persistent = ws_ctx.ui.get_tun_elevate_persistent();
+            if (ensure_default_workspace_profile(ws_ctx.doc, ws_ctx.telemetry)) {
+                (void)persist_workspace_db(ws_ctx);
+                (void)persist_telemetry_db(ws_ctx);
+            }
+            auto next_host = ws_ctx.host;
+            next_host.enable_tun = on;
+            auto notices = desktop::normalize_desktop_host_config(next_host, en);
+            auto doc_snap = ws_ctx.doc;
+            auto active_id = resolve_effective_active_profile_id(ws_ctx);
+            ws_ctx.ui.set_tun_privilege_busy(true);
+            ws_ctx.ui.set_core_toggling(true);
 
-            bool posted = ctx.worker.post([&ctx, on, en, prefer_persistent, prev_kdl = std::move(prev_kdl)]() mutable {
+            bool posted = ws_ctx.worker.post([&ws_ctx, on, en, prefer_persistent,
+                                              doc_snap = std::move(doc_snap), next_host = std::move(next_host),
+                                              notices = std::move(notices), active_id = std::move(active_id)]() mutable {
                 auto finish_err = [&](std::string msg, std::string tone, std::optional<desktop::TunPrivilegeProbe> probe = std::nullopt,
                                       std::optional<bool> core_running_override = std::nullopt) {
-                    on_ui_thread(ctx.weak_ui, [&ctx, on, msg = std::move(msg), tone = std::move(tone),
-                                               prev_kdl, probe = std::move(probe), core_running_override](auto& s) {
+                    on_ui_thread(ws_ctx.weak_ui, [&ws_ctx, on, msg = std::move(msg), tone = std::move(tone),
+                                                  probe = std::move(probe), core_running_override](auto& s) {
                         if (probe) apply_tun_probe_to_ui(*s, *probe);
-                        apply_kdl_to_ui_state(*s, prev_kdl);
+                        sync_workspace_to_ui(ws_ctx);
                         s->set_tun_enabled(!on);
                         if (core_running_override) {
                             s->set_core_running(*core_running_override);
                             if (*core_running_override) {
-                                ctx.core_started_at = std::chrono::steady_clock::now();
-                                ctx.rate_tracker.reset();
+                                ws_ctx.core_started_at = std::chrono::steady_clock::now();
+                                ws_ctx.rate_tracker.reset();
                                 s->set_core_uptime(slint::SharedString("00:00:00"));
                             } else {
-                                ctx.core_started_at.reset();
-                                ctx.rate_tracker.reset();
+                                ws_ctx.core_started_at.reset();
+                                ws_ctx.rate_tracker.reset();
                             }
                         }
                         s->set_diagnostic_ok(tone == "warn" || tone == "info");
@@ -253,66 +174,82 @@ namespace desktop_ui_helpers {
                         s->set_tun_privilege_busy(false);
                         s->set_core_toggling(false);
                         push_toast(*s, msg, tone);
-                        if (ctx.sync_tray) ctx.sync_tray();
-                        ctx.lifecycle_busy.store(false, std::memory_order_release);
+                        if (ws_ctx.sync_tray) ws_ctx.sync_tray();
+                        ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
                     });
                 };
 
-                auto next_res = toggle_tun_in_kdl(prev_kdl, on, en);
-                if (!next_res.first) { finish_err(next_res.second, "error"); return; }
-
-                auto val = validate_draft_config(ctx.cfg_dir, ctx.supervisor, next_res.second, en);
+                auto ws_tmp = make_temp_compose_workspace(ws_ctx.cfg_dir, doc_snap);
+                auto host_tmp = make_temp_compose_host(ws_ctx.cfg_dir, next_host);
+                if (!ws_tmp.ok || !host_tmp.ok) {
+                    ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
+                    finish_err(tr(en, "准备 TUN 配置失败", "Failed to prepare TUN configuration"), "error");
+                    return;
+                }
+                auto composed = desktop::compose_workspace_via_core(
+                    ws_ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ws_ctx.secrets_dir, active_id, {});
+                ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
+                if (!composed.ok || composed.kdl.empty()) {
+                    finish_err(composed.errors.empty() ? tr(en, "生成 TUN 配置失败", "Failed to build TUN configuration") : composed.errors.front(), "error");
+                    return;
+                }
+                auto val = validate_draft_config(ws_ctx.cfg_dir, ws_ctx.supervisor, composed.kdl, en);
                 if (!val.ok) {
                     finish_err(tr(en, "TUN 配置校验未通过: ", "TUN config invalid: ") + val.message, "error");
                     return;
                 }
+                auto const prev_cfg = read_file_text(ws_ctx.config_path);
 
                 if (on) {
                     desktop::CoreStartOptions start_opts{};
                     desktop::TunPrivilegeProbe probe{};
                     auto elev = resolve_tun_elevation_for_start(
-                        ctx.supervisor.binary_path(), ctx.config_path, ctx.cfg_dir, prefer_persistent, en, start_opts, probe);
+                        ws_ctx.supervisor.binary_path(), ws_ctx.config_path, ws_ctx.cfg_dir, prefer_persistent, en, start_opts, probe);
                     if (!elev.ok) {
                         finish_err(elev.message, elev.cancelled ? "warn" : "error", probe);
                         return;
                     }
-                    if (!write_file_atomic(ctx.config_path, next_res.second)) {
-                        finish_err(tr(en, "写入配置文件失败", "Failed to write config file"), "error", probe);
+                    if (!write_file_atomic(ws_ctx.config_path, composed.kdl)) {
+                        finish_err(tr(en, "写入运行配置失败", "Failed to write runtime configuration"), "error", probe);
                         return;
                     }
-                    bool const was_running = ctx.supervisor.running();
+                    bool const was_running = ws_ctx.supervisor.running();
                     if (was_running) {
-                        ctx.supervisor.stop();
-                        if (!ctx.supervisor.start(ctx.config_path, start_opts)) {
-                            bool const cancelled = ctx.supervisor.last_start_cancelled();
+                        ws_ctx.supervisor.stop();
+                        if (!ws_ctx.supervisor.start(ws_ctx.config_path, start_opts)) {
+                            bool const cancelled = ws_ctx.supervisor.last_start_cancelled();
                             auto reason = cancelled
                                 ? tr(en, "已取消提权，已回滚并恢复原有连接", "Elevation cancelled; rolled back to previous connection")
-                                : (tr(en, "TUN 启动失败，已回滚配置: ", "TUN start failed, rolled back: ") + ctx.supervisor.last_error());
-                            (void)write_file_atomic(ctx.config_path, prev_kdl);
-                            bool recovered = ctx.supervisor.start(ctx.config_path, {});
+                                : (tr(en, "TUN 启动失败，已回滚配置: ", "TUN start failed, rolled back: ") + ws_ctx.supervisor.last_error());
+                            if (!prev_cfg.empty()) (void)write_file_atomic(ws_ctx.config_path, prev_cfg);
+                            bool recovered = ws_ctx.supervisor.start(ws_ctx.config_path, {});
                             finish_err(std::move(reason), cancelled ? "warn" : "error", probe, recovered);
                             return;
                         }
-                        auto next_ctl = parse_control_config(next_res.second, ctx.fallback_sock, ctx.cfg_dir);
-                        ctx.ipc.set_endpoint(next_ctl.socket);
-                        ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
-                        ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
+                        auto next_ctl = parse_control_config(composed.kdl, ws_ctx.cfg_dir);
+                        ws_ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
+                        ws_ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
                     }
                     auto ok_msg = was_running
                         ? (start_opts.elevate_session ? tr(en, "已按次提权并启用 TUN 模式", "TUN enabled (session elevation)")
                            : start_opts.use_persistent_helper ? tr(en, "已通过持久服务启用 TUN 模式", "TUN enabled (persistent helper)")
                                                               : tr(en, "已启用 TUN 模式并重启核心", "TUN enabled & core restarted"))
-                        : tr(en, "已保存 TUN 配置，启动核心时生效", "TUN saved; activates when core starts");
-                    on_ui_thread(ctx.weak_ui, [&ctx, kdl = std::move(next_res.second),
-                                               probe, was_running, ok_msg = std::move(ok_msg)](auto& s) {
+                        : tr(en, "已保存 TUN 设置，启动核心时生效", "TUN saved; activates when core starts");
+                    on_ui_thread(ws_ctx.weak_ui, [&ws_ctx, composed = std::move(composed), next_host = std::move(next_host),
+                                                  notices = std::move(notices), probe, was_running, ok_msg = std::move(ok_msg)](auto& s) mutable {
+                        ws_ctx.host = std::move(next_host);
+                        (void)persist_host_db(ws_ctx);
+                        ws_ctx.running_selector_tag = composed.selector_tag;
+                        ws_ctx.running_selector_members = std::move(composed.selector_members);
+                        ws_ctx.last_secret_files = std::move(composed.secret_files);
                         apply_tun_probe_to_ui(*s, probe);
-                        apply_kdl_to_ui_state(*s, kdl);
-                        s->set_tun_enabled(true);
-                        if (ctx.on_tun_state_changed) ctx.on_tun_state_changed(true);
+                        sync_workspace_to_ui(ws_ctx);
+                        s->template global<nexus_ui::WorkspaceState>().set_host_strict_route_notice(
+                            slint::SharedString(notices.empty() ? "" : notices.front()));
                         if (was_running) {
                             s->set_core_running(true);
-                            ctx.core_started_at = std::chrono::steady_clock::now();
-                            ctx.rate_tracker.reset();
+                            ws_ctx.core_started_at = std::chrono::steady_clock::now();
+                            ws_ctx.rate_tracker.reset();
                             s->set_core_uptime(slint::SharedString("00:00:00"));
                         }
                         s->set_diagnostic_ok(true);
@@ -320,63 +257,69 @@ namespace desktop_ui_helpers {
                         s->set_tun_privilege_busy(false);
                         s->set_core_toggling(false);
                         push_toast(*s, ok_msg, "success");
-                        if (ctx.sync_tray) ctx.sync_tray();
-                        ctx.lifecycle_busy.store(false, std::memory_order_release);
+                        if (ws_ctx.sync_tray) ws_ctx.sync_tray();
+                        ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
                     });
                     return;
                 }
 
                 // Disabling TUN
-                if (!write_file_atomic(ctx.config_path, next_res.second)) {
-                    finish_err(tr(en, "写入配置文件失败", "Failed to write config file"), "error");
+                if (!write_file_atomic(ws_ctx.config_path, composed.kdl)) {
+                    finish_err(tr(en, "写入运行配置失败", "Failed to write runtime configuration"), "error");
                     return;
                 }
-                bool running_after = ctx.supervisor.running();
+                bool running_after = ws_ctx.supervisor.running();
                 bool op_ok = true;
                 bool restarted = false;
                 std::string ok_msg;
                 if (running_after) {
-                    if (ctx.supervisor.elevated_session() || ctx.supervisor.using_persistent_helper()) {
-                        bool const was_helper = ctx.supervisor.using_persistent_helper();
+                    if (ws_ctx.supervisor.elevated_session() || ws_ctx.supervisor.using_persistent_helper()) {
+                        bool const was_helper = ws_ctx.supervisor.using_persistent_helper();
                         restarted = true;
-                        ctx.supervisor.stop();
-                        running_after = ctx.supervisor.start(ctx.config_path, {});
+                        ws_ctx.supervisor.stop();
+                        running_after = ws_ctx.supervisor.start(ws_ctx.config_path, {});
                         op_ok = running_after;
                         ok_msg = running_after
                             ? (was_helper ? tr(en, "已关闭 TUN 并切换回普通模式", "TUN disabled & switched to unprivileged mode")
                                           : tr(en, "已关闭 TUN 并收回临时提权", "TUN disabled & session elevation dropped"))
-                            : (tr(en, "已关闭 TUN，但普通模式重启失败: ", "TUN disabled; unprivileged restart failed: ") + ctx.supervisor.last_error());
+                            : (tr(en, "已关闭 TUN，但普通模式重启失败: ", "TUN disabled; unprivileged restart failed: ") + ws_ctx.supervisor.last_error());
                     } else {
-                        auto r = ctx.ipc.reload();
-                        if (!r.ok) {
-                            auto hr = ctx.http_ctrl.reload();
-                            if (hr.ok) r = {true, "OK"};
-                            else if (!hr.body.empty()) r.body = hr.body;
-                        }
-                        op_ok = r.ok;
+                        auto hr = ws_ctx.http_ctrl.reload();
+                        op_ok = hr.ok;
                         ok_msg = op_ok
                             ? tr(en, "已关闭 TUN 模式", "TUN mode disabled")
-                            : (tr(en, "已保存配置，但关闭 TUN 热重载失败: ", "Config saved; reload failed disabling TUN: ") + r.body);
+                            : (tr(en, "已保存设置，但关闭 TUN 热重载失败: ", "Saved; reload failed disabling TUN: ") + hr.body);
+                    }
+                    if (op_ok) {
+                        auto next_ctl = parse_control_config(composed.kdl, ws_ctx.cfg_dir);
+                        ws_ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
+                        ws_ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
                     }
                 } else {
-                    ok_msg = tr(en, "已关闭 TUN 配置", "TUN config disabled");
+                    ok_msg = tr(en, "已关闭 TUN 模式", "TUN mode disabled");
                 }
-                auto probe = desktop::probe_tun_privilege(ctx.supervisor.binary_path());
-                on_ui_thread(ctx.weak_ui, [&ctx, kdl = std::move(next_res.second), probe, running_after,
-                                           op_ok, restarted, ok_msg = std::move(ok_msg)](auto& s) {
+                auto probe = desktop::probe_tun_privilege(ws_ctx.supervisor.binary_path());
+                on_ui_thread(ws_ctx.weak_ui, [&ws_ctx, composed = std::move(composed), next_host = std::move(next_host),
+                                              notices = std::move(notices), probe, running_after,
+                                              op_ok, restarted, ok_msg = std::move(ok_msg)](auto& s) mutable {
+                    ws_ctx.host = std::move(next_host);
+                    (void)persist_host_db(ws_ctx);
+                    ws_ctx.running_selector_tag = composed.selector_tag;
+                    ws_ctx.running_selector_members = std::move(composed.selector_members);
+                    ws_ctx.last_secret_files = std::move(composed.secret_files);
                     apply_tun_probe_to_ui(*s, probe);
-                    apply_kdl_to_ui_state(*s, kdl);
-                    s->set_tun_enabled(false);
-                    if (ctx.on_tun_state_changed) ctx.on_tun_state_changed(false);
+                    sync_workspace_to_ui(ws_ctx);
+                    s->template global<nexus_ui::WorkspaceState>().set_host_strict_route_notice(
+                        slint::SharedString(notices.empty() ? "" : notices.front()));
                     s->set_core_running(running_after);
                     if (restarted) {
                         if (running_after) {
-                            ctx.core_started_at = std::chrono::steady_clock::now();
-                            ctx.rate_tracker.reset();
+                            ws_ctx.core_started_at = std::chrono::steady_clock::now();
+                            ws_ctx.rate_tracker.reset();
                             s->set_core_uptime(slint::SharedString("00:00:00"));
                         } else {
-                            ctx.core_started_at.reset();
-                            ctx.rate_tracker.reset();
+                            ws_ctx.core_started_at.reset();
+                            ws_ctx.rate_tracker.reset();
                             clear_telemetry_ui(*s);
                         }
                     }
@@ -385,78 +328,78 @@ namespace desktop_ui_helpers {
                     s->set_tun_privilege_busy(false);
                     s->set_core_toggling(false);
                     push_toast(*s, ok_msg, op_ok ? "info" : "error");
-                    if (ctx.sync_tray) ctx.sync_tray();
-                    ctx.lifecycle_busy.store(false, std::memory_order_release);
+                    if (ws_ctx.sync_tray) ws_ctx.sync_tray();
+                    ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
                 });
             });
             if (!posted) {
-                ctx.ui.set_tun_enabled(!on);
-                ctx.ui.set_tun_privilege_busy(false);
-                ctx.ui.set_core_toggling(false);
-                ctx.lifecycle_busy.store(false, std::memory_order_release);
+                ws_ctx.ui.set_tun_enabled(!on);
+                ws_ctx.ui.set_tun_privilege_busy(false);
+                ws_ctx.ui.set_core_toggling(false);
+                ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
             }
         });
 
-        ctx.ui.on_grant_tun_privilege([&ctx] {
-            if (ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) return;
-            bool const en = is_en_ui(ctx.ui);
-            ctx.ui.set_tun_privilege_busy(true);
-            ctx.ui.set_core_toggling(true);
-            bool posted = ctx.worker.post([&ctx, en] {
-                auto res = desktop::grant_persistent_tun_privilege(ctx.supervisor.binary_path(), en, ctx.config_path, ctx.cfg_dir);
-                auto probe = desktop::probe_tun_privilege(ctx.supervisor.binary_path());
-                on_ui_thread(ctx.weak_ui, [&ctx, res = std::move(res), probe = std::move(probe)](auto& s) {
+        ws_ctx.ui.on_grant_tun_privilege([&ws_ctx] {
+            if (ws_ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) return;
+            bool const en = is_en_ui(ws_ctx.ui);
+            ws_ctx.ui.set_tun_privilege_busy(true);
+            ws_ctx.ui.set_core_toggling(true);
+            bool posted = ws_ctx.worker.post([&ws_ctx, en] {
+                auto res = desktop::grant_persistent_tun_privilege(ws_ctx.supervisor.binary_path(), en, ws_ctx.config_path, ws_ctx.cfg_dir);
+                auto probe = desktop::probe_tun_privilege(ws_ctx.supervisor.binary_path());
+                on_ui_thread(ws_ctx.weak_ui, [&ws_ctx, res = std::move(res), probe = std::move(probe)](auto& s) {
                     apply_tun_probe_to_ui(*s, probe);
                     s->set_tun_privilege_busy(false);
                     s->set_core_toggling(false);
                     push_toast(*s, res.message, res.ok ? "success" : res.cancelled ? "warn" : "error");
-                    ctx.lifecycle_busy.store(false, std::memory_order_release);
+                    ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
                 });
             });
             if (!posted) {
-                ctx.ui.set_tun_privilege_busy(false);
-                ctx.ui.set_core_toggling(false);
-                ctx.lifecycle_busy.store(false, std::memory_order_release);
+                ws_ctx.ui.set_tun_privilege_busy(false);
+                ws_ctx.ui.set_core_toggling(false);
+                ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
             }
         });
 
-        ctx.ui.on_revoke_tun_privilege([&ctx] {
-            if (ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) return;
-            bool const en = is_en_ui(ctx.ui);
-            bool const tun_active = ctx.ui.get_tun_enabled();
-            ctx.ui.set_tun_privilege_busy(true);
-            ctx.ui.set_core_toggling(true);
-            bool posted = ctx.worker.post([&ctx, en, tun_active] {
-                bool const stopped_helper = ctx.supervisor.using_persistent_helper();
-                if (stopped_helper) ctx.supervisor.stop();
-                auto res = desktop::revoke_persistent_tun_privilege(ctx.supervisor.binary_path(), en);
-                auto probe = desktop::probe_tun_privilege(ctx.supervisor.binary_path());
-                bool const core_up = ctx.supervisor.running();
+        ws_ctx.ui.on_revoke_tun_privilege([&ws_ctx] {
+            if (ws_ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) return;
+            bool const en = is_en_ui(ws_ctx.ui);
+            bool const tun_active = ws_ctx.ui.get_tun_enabled();
+            ws_ctx.ui.set_tun_privilege_busy(true);
+            ws_ctx.ui.set_core_toggling(true);
+            bool posted = ws_ctx.worker.post([&ws_ctx, en, tun_active] {
+                bool const stopped_helper = ws_ctx.supervisor.using_persistent_helper();
+                if (stopped_helper) ws_ctx.supervisor.stop();
+                auto res = desktop::revoke_persistent_tun_privilege(ws_ctx.supervisor.binary_path(), en);
+                auto probe = desktop::probe_tun_privilege(ws_ctx.supervisor.binary_path());
+                bool const core_up = ws_ctx.supervisor.running();
                 auto msg = (res.ok && stopped_helper)
                     ? tr(en, "已停止核心并卸载 TUN 持久授权", "Core stopped & persistent TUN grant revoked")
                     : (res.ok && core_up && tun_active)
                         ? tr(en, "已撤销持久授权，将在下次重启核心后生效", "Persistent grant revoked; takes effect on next core restart")
                         : res.message;
-                on_ui_thread(ctx.weak_ui, [&ctx, stopped_helper, ok = res.ok, cancelled = res.cancelled,
-                                           msg = std::move(msg), probe = std::move(probe)](auto& s) {
+                on_ui_thread(ws_ctx.weak_ui, [&ws_ctx, stopped_helper, ok = res.ok, cancelled = res.cancelled,
+                                              msg = std::move(msg), probe = std::move(probe)](auto& s) {
                     apply_tun_probe_to_ui(*s, probe);
                     if (stopped_helper) {
                         s->set_core_running(false);
-                        ctx.core_started_at.reset();
-                        ctx.rate_tracker.reset();
+                        ws_ctx.core_started_at.reset();
+                        ws_ctx.rate_tracker.reset();
                         clear_telemetry_ui(*s);
                     }
                     s->set_tun_privilege_busy(false);
                     s->set_core_toggling(false);
                     push_toast(*s, msg, ok ? "success" : cancelled ? "warn" : "error");
-                    if (stopped_helper && ctx.sync_tray) ctx.sync_tray();
-                    ctx.lifecycle_busy.store(false, std::memory_order_release);
+                    if (stopped_helper && ws_ctx.sync_tray) ws_ctx.sync_tray();
+                    ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
                 });
             });
             if (!posted) {
-                ctx.ui.set_tun_privilege_busy(false);
-                ctx.ui.set_core_toggling(false);
-                ctx.lifecycle_busy.store(false, std::memory_order_release);
+                ws_ctx.ui.set_tun_privilege_busy(false);
+                ws_ctx.ui.set_core_toggling(false);
+                ws_ctx.lifecycle_busy.store(false, std::memory_order_release);
             }
         });
     }

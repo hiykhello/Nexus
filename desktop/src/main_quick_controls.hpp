@@ -37,34 +37,6 @@ namespace desktop_ui_helpers {
             if (ws_ctx.sync_tray) ws_ctx.sync_tray();
         };
 
-        ui.on_apply_inbound_proxy_config([&ws_ctx, apply_host_inbound_update](
-            slint::SharedString proto, bool enabled, slint::SharedString host, slint::SharedString port_s) {
-            bool const en = is_en_ui(ws_ctx.ui);
-            auto port = desktop::parse_port_u16(std::string_view(port_s));
-            if (enabled && !port) {
-                ws_ctx.ui.set_diagnostic_ok(false);
-                ws_ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "入站端口需为 1..65535", "Inbound port must be 1..65535")));
-                return;
-            }
-            auto ep = desktop::format_host_port(std::string_view(host), std::to_string(port.value_or(7890)));
-            if (enabled && ep.empty()) {
-                ws_ctx.ui.set_diagnostic_ok(false);
-                ws_ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "入站监听地址无效", "Invalid inbound listen host")));
-                return;
-            }
-            if (std::string_view(proto) == "mixed") {
-                ws_ctx.host.enable_mixed = enabled;
-                if (enabled) ws_ctx.host.mixed_listen = ep;
-            } else if (std::string_view(proto) == "second" || std::string_view(proto) == "socks5") {
-                ws_ctx.host.second_local_listen = enabled ? ep : std::string{};
-            } else {
-                auto lan_host = std::string_view(host).empty() ? std::string_view("0.0.0.0") : std::string_view(host);
-                auto lan_ep = desktop::format_host_port(lan_host, std::to_string(port.value_or(7891)));
-                ws_ctx.host.lan_listen = enabled ? lan_ep : std::string{};
-            }
-            apply_host_inbound_update(en);
-        });
-
         ui.on_toggle_mixed_port([&ws_ctx, apply_host_inbound_update](bool on) {
             ws_ctx.host.enable_mixed = on;
             if (on && ws_ctx.host.mixed_listen.empty()) ws_ctx.host.mixed_listen = "127.0.0.1:7890";
