@@ -14,6 +14,9 @@ export namespace provider {
         std::string reality_short_id;
         std::string ech_mode;
         std::string ech_config;
+        bool fragment = false;
+        bool record_fragment = false;
+        std::string ech_query_server_name;
     };
 
     struct WorkspaceTransport {
@@ -25,6 +28,11 @@ export namespace provider {
         std::string xhttp_mode;
         std::string xhttp_protocol;
         std::map<std::string, std::string> headers;
+        std::uint32_t max_early_data = 0;
+        std::string early_data_header_name;
+        std::uint32_t grpc_idle_timeout_ms = 0;
+        std::uint32_t grpc_ping_timeout_ms = 0;
+        bool grpc_permit_without_stream = false;
     };
 
     struct WorkspaceMultiplex {
@@ -81,6 +89,7 @@ export namespace provider {
         std::string probe_url = "https://www.gstatic.com/generate_204";
         std::uint32_t probe_interval_ms = 300000;
         std::uint32_t tolerance_ms = 50;
+        bool interrupt_exist_connections = false;
     };
 
     struct WorkspaceProxyChain {
@@ -151,6 +160,8 @@ export namespace provider {
         bool is_active = false;
         std::string domain_strategy = "as-is";
         std::string default_outbound = "proxy";
+        bool auto_detect_interface = false;
+        bool find_process = false;
         std::vector<WorkspaceRoutingRule> rules;
     };
 

@@ -110,7 +110,8 @@ namespace provider {
 
         auto emit_multiplex_block(std::ostringstream& os, ParsedProxy const& p) -> void {
             if (!p.mux_enabled) return;
-            std::string_view proto = p.mux_protocol == "smux-v1" ? "smux-v1" : "smux-v2";
+            auto mp = lower_ascii(p.mux_protocol);
+            std::string_view proto = (mp == "smux-v1") ? "smux-v1" : (mp == "h2mux") ? "h2mux" : "smux-v2";
             os << "    multiplex {\n      enabled #true\n      protocol " << kdl_escape(proto) << "\n    }\n";
         }
 

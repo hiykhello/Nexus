@@ -1217,6 +1217,7 @@ discover = [
     "tests/socks5_udp_route.cpp", "tests/socks5_udp_tunnel_authorization.cpp", "tests/udp_socket.cpp", "tests/net_udp_route.cpp",
     "tests/proxy.cpp", "tests/proxy_limits.cpp", "tests/proxy_single_worker.cpp", "tests/proxy_feature_api.cpp", "tests/udp_cli_disabled.cpp",
     "tests/session_quota.cpp", "tests/session_registry.cpp",
+    "tests/wave32_workspace_schema_unit.cpp",
 ]
 
 [target.'cfg(not(os = "linux"))'.test]

@@ -238,12 +238,9 @@ namespace provider::ws_detail {
         if (lower_ascii(ctx.ws.dns.mode) == "raw_kdl" && !trim(ctx.ws.dns.raw_kdl).empty()) {
             auto doc = glaze::read_kdl<glaze::KdlDocument>(ctx.ws.dns.raw_kdl);
             if (!doc) return std::unexpected("invalid dns.raw_kdl syntax");
-            if (doc->size() == 1 && doc->front().name == "dns") {
-                dns_out << ctx.ws.dns.raw_kdl;
-                if (!ctx.ws.dns.raw_kdl.ends_with('\n')) dns_out << '\n';
-            } else {
-                dns_out << "dns {\n" << ctx.ws.dns.raw_kdl << "\n}\n";
-            }
+            if (doc->size() == 1 && doc->front().name == "dns")
+                dns_out << ctx.ws.dns.raw_kdl << (ctx.ws.dns.raw_kdl.ends_with('\n') ? "" : "\n");
+            else dns_out << "dns {\n" << ctx.ws.dns.raw_kdl << "\n}\n";
             ctx.dns_emitted = true;
             ctx.direct_dns_primary = extract_raw_dns_server(*doc);
         } else {
@@ -354,17 +351,9 @@ namespace provider::ws_detail {
 
             std::size_t dns_rule_count = 0;
             constexpr std::size_t max_dns_rules = 240;
-            for (auto const& hr : host_rules) {
-                if (dns_rule_count >= max_dns_rules) break;
-                dns_rules_os << "    - " << hr << " to=\"static-hosts\"\n"; ++dns_rule_count;
-            }
-            for (auto const& dom : ctx.protect_domains) {
-                if (dns_rule_count >= max_dns_rules) break;
-                dns_rules_os << "    - domain=" << kdl_quote(dom) << " to=" << kdl_quote(ctx.direct_dns_primary) << '\n'; ++dns_rule_count;
-            }
-            if (sd.block_aaaa && dns_rule_count < max_dns_rules) {
-                dns_rules_os << "    - query-type=\"AAAA\" action=\"reject\" reject-rcode=\"NOERROR\"\n"; ++dns_rule_count;
-            }
+            for (auto const& hr : host_rules) { if (dns_rule_count >= max_dns_rules) break; dns_rules_os << "    - " << hr << " to=\"static-hosts\"\n"; ++dns_rule_count; }
+            for (auto const& dom : ctx.protect_domains) { if (dns_rule_count >= max_dns_rules) break; dns_rules_os << "    - domain=" << kdl_quote(dom) << " to=" << kdl_quote(ctx.direct_dns_primary) << '\n'; ++dns_rule_count; }
+            if (sd.block_aaaa && dns_rule_count < max_dns_rules) { dns_rules_os << "    - query-type=\"AAAA\" action=\"reject\" reject-rcode=\"NOERROR\"\n"; ++dns_rule_count; }
             if (sd.block_svcb_https && dns_rule_count + 2 <= max_dns_rules) {
                 dns_rules_os << "    - query-type=\"SVCB\" action=\"reject\" reject-rcode=\"NOERROR\"\n"
                              << "    - query-type=\"HTTPS\" action=\"reject\" reject-rcode=\"NOERROR\"\n";
@@ -395,18 +384,15 @@ namespace provider::ws_detail {
             }
 
             dns_out << "dns {\n";
-            if (dns_listen_ep)
-                dns_out << "  listen host=" << kdl_quote(dns_listen_ep->first) << " port=" << dns_listen_ep->second << '\n';
+            if (dns_listen_ep) dns_out << "  listen host=" << kdl_quote(dns_listen_ep->first) << " port=" << dns_listen_ep->second << '\n';
             dns_out << "  servers {\n" << dns_servers_os.str() << "  }\n";
             if (!fakeip_line.empty()) dns_out << fakeip_line;
             for (auto const& rs_tag : ref_dns_sets)
-                if (auto it = ctx.asset_by_tag.find(rs_tag); it != ctx.asset_by_tag.end())
-                    emit_ruleset_decl(dns_out, *it->second, true, dns_has_remote);
+                if (auto it = ctx.asset_by_tag.find(rs_tag); it != ctx.asset_by_tag.end()) emit_ruleset_decl(dns_out, *it->second, true, dns_has_remote);
             if (dns_rule_count > 0) dns_out << "  rules {\n" << dns_rules_os.str() << "  }\n";
             dns_out << "  final " << kdl_quote(resolved_default == "direct" ? ctx.direct_dns_primary : ctx.remote_dns_primary) << '\n';
             dns_out << "  strategy " << kdl_quote(normalize_dns_strategy(sd.strategy)) << '\n';
-            if (sd.serve_stale_seconds > 0)
-                dns_out << "  optimistic-cache-seconds " << std::clamp<std::uint32_t>(sd.serve_stale_seconds, 1, 3600) << '\n';
+            if (sd.serve_stale_seconds > 0) dns_out << "  optimistic-cache-seconds " << std::clamp<std::uint32_t>(sd.serve_stale_seconds, 1, 3600) << '\n';
             dns_out << "}\n";
             ctx.dns_emitted = true;
         }
@@ -483,6 +469,8 @@ namespace provider::ws_detail {
         if (def_block) rules_os << "    - action=\"reject\" {\n      or {\n        network \"tcp\"\n        network \"udp\"\n      }\n    }\n";
 
         routing_out << "routing {\n";
+        if (rp.auto_detect_interface) routing_out << "  auto-detect-interface #true\n";
+        if (rp.find_process) routing_out << "  find-process #true\n";
         for (auto const& rs_tag : ref_route_sets)
             if (auto it = ctx.asset_by_tag.find(rs_tag); it != ctx.asset_by_tag.end()) emit_ruleset_decl(routing_out, *it->second, false, route_has_remote);
         if (route_has_remote) routing_out << "  default-http-client \"ruleset-http\"\n";

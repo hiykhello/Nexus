@@ -107,7 +107,8 @@ namespace provider::ws_detail {
         }
 
         auto emit_tls(ComposeContext& ctx, std::ostringstream& os, WorkspaceNode const& n, std::string_view tag,
-                      bool allow_reality, bool allow_tls12, bool allow_kx, bool allow_ech) -> std::expected<void, std::string> {
+                      bool allow_reality, bool allow_tls12, bool allow_kx, bool allow_ech, bool allow_fragment)
+            -> std::expected<void, std::string> {
             auto const& t = n.tls;
             std::string sni = t.sni.empty() ? n.server : t.sni;
             os << "    tls {\n";
@@ -158,10 +159,27 @@ namespace provider::ws_detail {
                     using_tls12 = (norm == "tls12");
                 }
             }
+            if (t.fragment || t.record_fragment) {
+                if (!allow_fragment) {
+                    ctx.warnings.push_back("tls.fragment ignored on non-TCP outbound " + std::string(tag));
+                } else if (!t.record_fragment) {
+                    os << "      tls-fragment #true\n";
+                } else {
+                    os << "      tls-fragment {\n";
+                    if (!t.fragment) os << "        enabled #false\n";
+                    os << "        record-fragment #true\n      }\n";
+                }
+            }
             if (allow_ech && !using_reality && !using_tls12 && is_valid_hostname(sni) && !platform::parse_ip_address(sni)) {
                 auto em = lower_ascii(t.ech_mode);
-                if (em == "dns") os << "      ech-dns #true\n";
-                else if (!t.ech_config.empty() && (em.empty() || em == "config")) {
+                if (em == "dns") {
+                    os << "      ech-dns #true\n";
+                    if (auto qsn = trim(t.ech_query_server_name); !qsn.empty()) {
+                        if (qsn.size() <= 253 && is_valid_hostname(qsn) && !platform::parse_ip_address(qsn))
+                            os << "      ech-query-server-name " << kdl_quote(qsn) << '\n';
+                        else ctx.warnings.push_back("ignored invalid ech_query_server_name on " + std::string(tag));
+                    }
+                } else if (!t.ech_config.empty() && (em.empty() || em == "config")) {
                     auto ef = ctx.write_hashed_secret("ech", t.ech_config, ".ech");
                     if (!ef) return std::unexpected(ef.error());
                     os << "      ech-config-file " << kdl_quote(*ef) << '\n';
@@ -171,7 +189,8 @@ namespace provider::ws_detail {
             return {};
         }
 
-        auto emit_transport(std::ostringstream& os, WorkspaceTransport const& tr, bool allow_xhttp) -> void {
+        auto emit_transport(ComposeContext& ctx, std::ostringstream& os, WorkspaceTransport const& tr,
+                            std::string_view tag, bool allow_xhttp) -> void {
             auto kind = lower_ascii(tr.type);
             if (kind == "ws") kind = "websocket";
             if (kind == "splithttp") kind = "xhttp";
@@ -179,6 +198,14 @@ namespace provider::ws_detail {
                 os << "    transport " << kdl_quote(kind) << " {\n";
                 if (!tr.host.empty()) os << "      host " << kdl_quote(tr.host) << '\n';
                 if (!tr.path.empty()) os << "      path " << kdl_quote(leading_slash(tr.path)) << '\n';
+                if (kind == "websocket") {
+                    if (tr.max_early_data > 0)
+                        os << "      max-early-data " << std::min<std::uint32_t>(tr.max_early_data, 8192u) << '\n';
+                    if (auto hdr = trim(tr.early_data_header_name); !hdr.empty()) {
+                        if (valid_ws_early_header(hdr)) os << "      early-data-header-name " << kdl_quote(hdr) << '\n';
+                        else ctx.warnings.push_back("ignored invalid early_data_header_name on " + std::string(tag));
+                    }
+                }
                 for (auto const& [k, v] : tr.headers)
                     if (!k.empty()) os << "      header " << kdl_quote(k) << ' ' << kdl_quote(v) << '\n';
                 os << "    }\n";
@@ -189,6 +216,11 @@ namespace provider::ws_detail {
                 if (!sn.empty()) os << "      service-name " << kdl_quote(sn) << '\n';
                 auto auth = !tr.authority.empty() ? tr.authority : tr.host;
                 if (!auth.empty()) os << "      authority " << kdl_quote(auth) << '\n';
+                if (tr.grpc_idle_timeout_ms > 0)
+                    os << "      idle-timeout-ms " << std::min<std::uint32_t>(tr.grpc_idle_timeout_ms, 3600000u) << '\n';
+                if (tr.grpc_ping_timeout_ms > 0)
+                    os << "      ping-timeout-ms " << std::min<std::uint32_t>(tr.grpc_ping_timeout_ms, 3600000u) << '\n';
+                if (tr.grpc_permit_without_stream) os << "      permit-without-stream #true\n";
                 os << "    }\n";
             } else if (kind == "xhttp" && allow_xhttp) {
                 os << "    transport \"xhttp\" {\n";
@@ -212,7 +244,7 @@ namespace provider::ws_detail {
         auto emit_multiplex(std::ostringstream& os, WorkspaceMultiplex const& mux) -> void {
             if (!mux.enabled) return;
             auto mp = lower_ascii(mux.protocol);
-            std::string_view proto = (mp == "smux-v1") ? "smux-v1" : "smux-v2";
+            std::string_view proto = (mp == "smux-v1") ? "smux-v1" : (mp == "h2mux") ? "h2mux" : "smux-v2";
             os << "    multiplex {\n      enabled #true\n      protocol " << kdl_quote(proto) << '\n';
             if (mux.max_connections >= 1 && mux.max_connections <= 64)
                 os << "      max-connections " << mux.max_connections << '\n';
@@ -282,18 +314,18 @@ namespace provider::ws_detail {
             bool allow_reality = tr.empty() || (is_xhttp && !is_h3);
             if (n.tls.enabled || !is_xhttp || !n.tls.reality_public_key.empty() || is_h3) {
                 if (auto ok = emit_tls(ctx, os, n, tag, allow_reality,
-                        !is_vision && n.tls.reality_public_key.empty() && !is_xhttp, true, true); !ok)
+                        !is_vision && n.tls.reality_public_key.empty() && !is_xhttp, true, true, !is_h3); !ok)
                     return std::unexpected(ok.error());
             }
-            emit_transport(os, n.transport, !is_vision);
+            emit_transport(ctx, os, n.transport, tag, !is_vision);
             if (!is_vision && !is_xhttp) emit_multiplex(os, n.multiplex);
         } else if (proto == "trojan" || proto == "anytls") {
             if (n.password.empty()) return std::unexpected("missing password on " + std::string(tag));
             auto pf = ctx.write_hashed_secret("pass", n.password);
             if (!pf) return std::unexpected(pf.error());
             os << "    authentication {\n      password-file " << kdl_quote(*pf) << "\n    }\n";
-            if (auto ok = emit_tls(ctx, os, n, tag, false, true, true, true); !ok) return std::unexpected(ok.error());
-            emit_transport(os, n.transport, false);
+            if (auto ok = emit_tls(ctx, os, n, tag, false, true, true, true, true); !ok) return std::unexpected(ok.error());
+            emit_transport(ctx, os, n.transport, tag, false);
             if (proto == "trojan") emit_multiplex(os, n.multiplex);
         } else if (proto == "shadowsocks") {
             if (!is_ss2022(n.method))
@@ -312,7 +344,7 @@ namespace provider::ws_detail {
             auto pf = ctx.write_hashed_secret("hy2-pass", n.password);
             if (!pf) return std::unexpected(pf.error());
             os << "    authentication {\n      password-file " << kdl_quote(*pf) << "\n    }\n";
-            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, true); !ok) return std::unexpected(ok.error());
+            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, true, false); !ok) return std::unexpected(ok.error());
             auto const& ex = n.extra;
             bool need_quic = !ex.hy2_salamander_password.empty() || !ex.hy2_ports.empty() || ex.hy2_up_mbps > 0 || ex.hy2_down_mbps > 0;
             if (need_quic) {
@@ -341,7 +373,7 @@ namespace provider::ws_detail {
             auto pf = ctx.write_hashed_secret("tuic-pass", n.password);
             if (!pf) return std::unexpected(pf.error());
             os << "    authentication {\n      uuid-file " << kdl_quote(*uf) << "\n      password-file " << kdl_quote(*pf) << "\n    }\n";
-            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, true); !ok) return std::unexpected(ok.error());
+            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, true, false); !ok) return std::unexpected(ok.error());
             auto cc = lower_ascii(n.extra.tuic_congestion_control);
             if (cc == "bbr" || cc == "cubic" || cc == "reno") os << "    congestion-control " << kdl_quote(cc) << '\n';
             os << "    udp-over-stream " << (n.extra.tuic_udp_over_stream ? "#true" : "#false") << '\n';
@@ -365,7 +397,7 @@ namespace provider::ws_detail {
             bool h3 = (np == "h3" || np == "quic");
             os << "    protocol " << kdl_quote(h3 ? "h3" : "h2") << '\n';
             os << "    authentication username=" << kdl_quote(n.username) << " password-file=" << kdl_quote(*pf) << '\n';
-            if (auto ok = emit_tls(ctx, os, n, tag, false, !h3, true, true); !ok) return std::unexpected(ok.error());
+            if (auto ok = emit_tls(ctx, os, n, tag, false, !h3, true, true, !h3); !ok) return std::unexpected(ok.error());
             os << "    padding #true\n";
         } else if (proto == "ssh") {
             std::vector<std::string> pins;
@@ -420,7 +452,7 @@ namespace provider::ws_detail {
             std::string auth_host = !n.tls.sni.empty() ? n.tls.sni : n.server;
             os << "    authority " << kdl_quote(auth_host) << '\n';
             os << "    authentication {\n      bearer-file " << kdl_quote(*bf) << "\n    }\n";
-            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, true); !ok) return std::unexpected(ok.error());
+            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, true, false); !ok) return std::unexpected(ok.error());
             auto mode = lower_ascii(n.extra.masque_mode);
             if (mode == "connect-ip") {
                 os << "    mode \"connect-ip\"\n";
@@ -436,14 +468,14 @@ namespace provider::ws_detail {
             }
             if (proto == "socks5" && detour.empty()) os << "    udp #true\n";
             if (proto == "http-connect" && n.tls.enabled) {
-                if (auto ok = emit_tls(ctx, os, n, tag, false, true, false, true); !ok) return std::unexpected(ok.error());
+                if (auto ok = emit_tls(ctx, os, n, tag, false, true, false, true, true); !ok) return std::unexpected(ok.error());
             }
         } else if (proto == "shadowtls") {
             if (n.password.empty()) return std::unexpected("ShadowTLS missing password on " + std::string(tag));
             auto pf = ctx.write_hashed_secret("stls-pass", n.password);
             if (!pf) return std::unexpected(pf.error());
             os << "    authentication {\n      password-file " << kdl_quote(*pf) << "\n    }\n";
-            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, false); !ok) return std::unexpected(ok.error());
+            if (auto ok = emit_tls(ctx, os, n, tag, false, false, true, false, true); !ok) return std::unexpected(ok.error());
             os << "    strict-tls13 #true\n";
         } else {
             return std::unexpected("unsupported outbound protocol '" + proto + "' on " + std::string(tag));

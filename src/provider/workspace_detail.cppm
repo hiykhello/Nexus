@@ -19,6 +19,18 @@ namespace provider::ws_detail {
         return out;
     }
 
+    inline auto valid_ws_early_header(std::string_view name) -> bool {
+        if (name.empty() || name.size() > 128) return false;
+        for (char c : name)
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                  std::string_view("!#$%&'*+-.^_`|~").contains(c))) return false;
+        auto l = lower_ascii(name);
+        constexpr std::array<std::string_view, 12> kBad{"host", "connection", "upgrade", "content-length",
+            "transfer-encoding", "expect", "trailer", "proxy-connection", "sec-websocket-key",
+            "sec-websocket-version", "sec-websocket-accept", "sec-websocket-extensions"};
+        return !std::ranges::contains(kBad, std::string_view(l));
+    }
+
     inline auto kdl_quote(std::string_view s) -> std::string {
         std::string out;
         out.reserve(s.size() + 2);

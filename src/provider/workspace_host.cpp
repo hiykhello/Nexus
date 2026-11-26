@@ -135,6 +135,7 @@ namespace provider::ws_detail {
                     os << "    tolerance-ms " << std::clamp<std::uint32_t>(p.policy_group.tolerance_ms, 0, 10000) << '\n';
             }
         }
+        if (p.policy_group.interrupt_exist_connections) os << "    interrupt-exist-connections #true\n";
         os << "  }\n";
         return os.str();
     }
