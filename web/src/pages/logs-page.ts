@@ -1,7 +1,33 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
-import { LogEntry, nexusApi } from '../api.ts';
+import {
+  createLogsStream,
+  formatTimestampNs,
+  nexusApi,
+  type LogEntry,
+  type StreamState,
+} from '../api.ts';
+import { icons } from '../icons.ts';
+import { onLocaleChange, t } from '../i18n.ts';
+import type { ManagedStream } from '../sse.ts';
+import { appStore } from '../store.ts';
 import { sharedStyles } from '../styles.ts';
+
+const LEVELS = ['all', 'trace', 'debug', 'info', 'warn', 'error'] as const;
+const DOMAINS = [
+  'all',
+  'core',
+  'net',
+  'tls',
+  'quic',
+  'dns',
+  'route',
+  'tun',
+  'proxy',
+  'control',
+  'state',
+] as const;
+const MAX_ENTRIES = 600;
 
 @customElement('nexus-logs-page')
 export class NexusLogsPage extends LitElement {
@@ -9,21 +35,39 @@ export class NexusLogsPage extends LitElement {
     sharedStyles,
     css`
       .log-box {
-        max-height: 58vh;
+        max-height: 60vh;
+        min-height: 280px;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 2px;
+        background: var(--nx-well);
+        border: 1px solid var(--nx-border);
+        border-radius: 10px;
+        padding: 8px;
       }
       .log-line {
         display: grid;
-        grid-template-columns: 64px 66px 74px 1fr;
+        grid-template-columns: 62px 68px 64px 72px 1fr;
         gap: 8px;
+        align-items: baseline;
         padding: 4px 6px;
         border-radius: 6px;
+        line-height: 1.45;
       }
       .log-line:hover {
-        background: var(--nx-surface-alt);
+        background: var(--nx-row-hover);
+      }
+      .msg {
+        word-break: break-word;
+      }
+      @media (max-width: 720px) {
+        .log-line {
+          grid-template-columns: 56px 56px 1fr;
+        }
+        .hide-sm {
+          display: none;
+        }
       }
     `,
   ];
@@ -31,135 +75,350 @@ export class NexusLogsPage extends LitElement {
   @state() private entries: LogEntry[] = [];
   @state() private latestSeq = 0;
   @state() private evicted = 0;
-  @state() private level = 'trace';
+  @state() private level = 'all';
   @state() private domain = 'all';
   @state() private search = '';
-  @state() private autoFollow = true;
-  @state() private error = '';
+  @state() private paused = false;
+  @state() private autoScroll = true;
+  @state() private streamState: StreamState = 'connecting';
+  @state() private copied = false;
+  @state() private toast = '';
+  @state() private toastKind: 'ok' | 'err' = 'ok';
 
-  private timer?: number;
+  private stream: ManagedStream<LogEntry> | null = null;
+  private seenSeq = new Set<number>();
+  private reloadToken = 0;
+  private unsubs: (() => void)[] = [];
+  private searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   connectedCallback(): void {
     super.connectedCallback();
-    void this.refresh();
-    this.timer = window.setInterval(() => {
-      if (this.autoFollow) void this.refresh();
-    }, 2000);
+    this.unsubs.push(
+      appStore.subscribe(() => void this.reloadStream(), 'refresh'),
+      onLocaleChange(() => this.requestUpdate()),
+    );
+    void this.reloadStream();
+  }
+
+  private stopStream(): void {
+    this.stream?.stop();
+    this.stream = null;
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    if (this.timer !== undefined) window.clearInterval(this.timer);
+    this.reloadToken++;
+    this.stopStream();
+    if (this.searchTimer !== null) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    }
+    for (const u of this.unsubs) u();
+    this.unsubs = [];
   }
 
-  private async refresh(): Promise<void> {
+  private getFilterParams() {
+    return {
+      level: this.level === 'all' ? undefined : this.level,
+      domain: this.domain === 'all' ? undefined : this.domain,
+      search: this.search.trim() || undefined,
+      since: this.latestSeq > 0 ? this.latestSeq : undefined,
+    };
+  }
+
+  private async reloadStream(): Promise<void> {
+    const token = ++this.reloadToken;
+    this.stopStream();
+    this.seenSeq.clear();
+    this.entries = [];
+    this.latestSeq = 0;
+
     try {
-      const resp = await nexusApi.logs({
-        level: this.level,
-        domain: this.domain,
-        search: this.search,
+      const snap = await nexusApi.logs({
+        level: this.level === 'all' ? undefined : this.level,
+        domain: this.domain === 'all' ? undefined : this.domain,
+        search: this.search.trim() || undefined,
         limit: 250,
       });
-      this.entries = resp.entries ?? [];
-      this.latestSeq = resp.latest_seq ?? 0;
-      this.evicted = resp.evicted ?? 0;
-      this.error = '';
+      if (!this.isConnected || token !== this.reloadToken) return;
+      this.applySnapshot(snap.entries ?? [], snap.latest_seq ?? 0, snap.evicted ?? 0);
     } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
+      if (!this.isConnected || token !== this.reloadToken) return;
+      this.toast = err instanceof Error ? err.message : String(err);
+      this.toastKind = 'err';
+    }
+
+    if (!this.isConnected || token !== this.reloadToken) return;
+    this.stopStream();
+    this.stream = createLogsStream(
+      () => this.getFilterParams(),
+      (entry) => {
+        if (!this.paused && token === this.reloadToken) this.appendEntry(entry);
+      },
+      (resp) => {
+        if (!this.paused && token === this.reloadToken) {
+          this.applySnapshot(resp.entries ?? [], resp.latest_seq ?? 0, resp.evicted ?? 0);
+        }
+      },
+      (st) => {
+        if (token === this.reloadToken) this.streamState = st;
+      },
+      (err) => {
+        if (token === this.reloadToken) {
+          this.toast = err;
+          this.toastKind = 'err';
+        }
+      },
+    );
+    this.stream.start();
+  }
+
+  private pruneSeenSeq(kept: LogEntry[]): void {
+    if (this.seenSeq.size <= MAX_ENTRIES) return;
+    this.seenSeq = new Set(kept.map((e) => e.seq));
+  }
+
+  private applySnapshot(items: LogEntry[], latest: number, evicted: number): void {
+    this.latestSeq = Math.max(this.latestSeq, latest);
+    this.evicted = evicted;
+    let added = false;
+    const next = [...this.entries];
+    for (const item of items) {
+      if (this.seenSeq.has(item.seq)) continue;
+      this.seenSeq.add(item.seq);
+      if (item.seq > this.latestSeq) this.latestSeq = item.seq;
+      next.push(item);
+      added = true;
+    }
+    if (added) {
+      const kept = next.slice(-MAX_ENTRIES);
+      this.pruneSeenSeq(kept);
+      this.entries = kept;
+      this.scrollToBottom();
     }
   }
 
+  private appendEntry(entry: LogEntry): void {
+    if (this.seenSeq.has(entry.seq)) return;
+    this.seenSeq.add(entry.seq);
+    if (entry.seq > this.latestSeq) this.latestSeq = entry.seq;
+    const kept = [...this.entries.slice(-(MAX_ENTRIES - 1)), entry];
+    this.pruneSeenSeq(kept);
+    this.entries = kept;
+    this.scrollToBottom();
+  }
+
+  private scrollToBottom(): void {
+    if (!this.autoScroll) return;
+    void this.updateComplete.then(() => {
+      const el = this.shadowRoot?.querySelector('.log-box');
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }
+
+  private scheduleReload(): void {
+    if (this.searchTimer !== null) clearTimeout(this.searchTimer);
+    this.searchTimer = setTimeout(() => {
+      this.searchTimer = null;
+      void this.reloadStream();
+    }, 280);
+  }
+
   private async updateCoreLevel(newLevel: string): Promise<void> {
+    if (!newLevel) return;
+    const targetDomain = this.domain === 'all' ? 'global' : this.domain;
     try {
-      await nexusApi.setLogLevel(newLevel, this.domain === 'all' ? 'global' : this.domain);
+      await nexusApi.setLogLevel(newLevel, targetDomain);
+      this.toast = t('logs.levelApplied', { domain: targetDomain, level: newLevel });
+      this.toastKind = 'ok';
     } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
+      this.toast = err instanceof Error ? err.message : String(err);
+      this.toastKind = 'err';
+    }
+  }
+
+  private formatPlainLines(): string {
+    return this.entries
+      .map(
+        (e) =>
+          `#${e.seq} ${formatTimestampNs(e.timestamp_ns)} [${e.level}] (${e.domain}) ev=${e.event} ${e.message}`,
+      )
+      .join('\n');
+  }
+
+  private async copyLogs(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(this.formatPlainLines());
+      this.copied = true;
+      setTimeout(() => (this.copied = false), 1400);
+    } catch {
+      // clipboard unavailable
     }
   }
 
   private exportSnapshot(): void {
-    const lines = this.entries.map(
-      (e) => `#${e.seq} [${e.level}] (${e.domain}) ev=${e.event} ${e.message}`,
-    );
-    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([this.formatPlainLines() + '\n'], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `nexus-logs-${Date.now()}.txt`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  private levelBadge(lvl: string): string {
+    if (lvl === 'error') return 'err';
+    if (lvl === 'warn') return 'warn';
+    if (lvl === 'info') return 'accent';
+    if (lvl === 'debug') return 'ok';
+    return '';
   }
 
   render() {
+    const streamBadgeClass =
+      this.streamState === 'live'
+        ? 'ok'
+        : this.streamState === 'polling' || this.streamState === 'connecting'
+          ? 'warn'
+          : 'err';
+
     return html`
       <div class="page">
-        <div class="row between">
-          <h2>内存环形日志 (最新 #${this.latestSeq} · 已淘汰 ${this.evicted})</h2>
+        <div class="page-head">
           <div class="row">
-            <button @click=${() => (this.autoFollow = !this.autoFollow)}>
-              ${this.autoFollow ? '暂停轮询' : '恢复轮询'}
+            <h2>${t('logs.title')}</h2>
+            <span class="badge ${streamBadgeClass}">
+              <span class="dot"></span>${t(`stream.${this.streamState}`)}
+            </span>
+            <span class="badge mono">${t('logs.latest')} #${this.latestSeq}</span>
+            <span class="badge mono">${t('logs.evicted')} ${this.evicted}</span>
+          </div>
+          <div class="row">
+            <button class="sm" @click=${() => (this.paused = !this.paused)}>
+              ${this.paused ? icons.play() : icons.pause()}
+              ${this.paused ? t('common.resume') : t('common.pause')}
             </button>
-            <button @click=${() => this.exportSnapshot()} ?disabled=${this.entries.length === 0}>导出快照</button>
-            <button class="primary" @click=${() => void this.refresh()}>立即拉取</button>
+            <button
+              class="chip ${this.autoScroll ? 'active' : ''}"
+              @click=${() => {
+                this.autoScroll = !this.autoScroll;
+                if (this.autoScroll) this.scrollToBottom();
+              }}
+            >
+              ${t('logs.autoscroll')}
+            </button>
+            <button
+              class="sm"
+              ?disabled=${this.entries.length === 0}
+              @click=${() => void this.copyLogs()}
+            >
+              ${icons.copy()} ${this.copied ? t('common.copied') : t('common.copy')}
+            </button>
+            <button
+              class="sm"
+              ?disabled=${this.entries.length === 0}
+              @click=${() => this.exportSnapshot()}
+            >
+              ${icons.download()} ${t('common.export')}
+            </button>
+            <button class="primary sm" @click=${() => void this.reloadStream()}>
+              ${icons.refresh()} ${t('common.refresh')}
+            </button>
           </div>
         </div>
 
-        <div class="card row">
-          <input
-            style="flex:1; min-width: 180px"
-            type="search"
-            placeholder="搜索域名 / 规则 / 事件关键字..."
-            .value=${this.search}
-            @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}
-            @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && void this.refresh()}
-          />
-          <select
-            .value=${this.domain}
-            @change=${(e: Event) => {
-              this.domain = (e.target as HTMLSelectElement).value;
-              void this.refresh();
-            }}
-          >
-            ${['all', 'core', 'proxy', 'route', 'dns', 'tun', 'quic', 'control'].map(
-              (d) => html`<option value=${d}>域: ${d}</option>`,
+        ${this.toast
+          ? html`
+              <div class="toast ${this.toastKind}" role="status" aria-live="polite">
+                <span>${this.toast}</span>
+                <button
+                  class="ghost sm"
+                  aria-label=${t('common.dismiss')}
+                  @click=${() => (this.toast = '')}
+                >
+                  ${icons.close()}
+                </button>
+              </div>
+            `
+          : ''}
+
+        <div class="card col" style="gap:10px">
+          <div class="row">
+            <input
+              data-search-input
+              type="search"
+              style="flex:1; min-width:200px"
+              placeholder=${t('logs.search')}
+              .value=${this.search}
+              @input=${(e: Event) => {
+                this.search = (e.target as HTMLInputElement).value;
+                this.scheduleReload();
+              }}
+              @keydown=${(e: KeyboardEvent) => e.key === 'Enter' && void this.reloadStream()}
+            />
+            <select
+              aria-label=${t('logs.domainLabel')}
+              .value=${this.domain}
+              @change=${(e: Event) => {
+                this.domain = (e.target as HTMLSelectElement).value;
+                void this.reloadStream();
+              }}
+            >
+              ${DOMAINS.map(
+                (d) =>
+                  html`<option value=${d}>
+                    ${t('logs.domainPrefix', { domain: d === 'all' ? t('common.all') : d })}
+                  </option>`,
+              )}
+            </select>
+            <select
+              aria-label=${t('logs.coreLevelLabel')}
+              @change=${(e: Event) => {
+                const el = e.target as HTMLSelectElement;
+                void this.updateCoreLevel(el.value);
+                el.value = '';
+              }}
+            >
+              <option value="" selected disabled>${t('logs.coreLevel')}...</option>
+              ${['error', 'warn', 'info', 'debug', 'trace'].map(
+                (lvl) => html`<option value=${lvl}>${lvl.toUpperCase()}</option>`,
+              )}
+            </select>
+          </div>
+
+          <div class="row">
+            ${LEVELS.map(
+              (lvl) => html`
+                <button
+                  class="chip ${this.level === lvl ? 'active' : ''}"
+                  @click=${() => {
+                    this.level = lvl;
+                    void this.reloadStream();
+                  }}
+                >
+                  ${lvl === 'all' ? t('common.all') : lvl.toUpperCase()}
+                </button>
+              `,
             )}
-          </select>
-          <select
-            .value=${this.level}
-            @change=${(e: Event) => {
-              this.level = (e.target as HTMLSelectElement).value;
-              void this.refresh();
-            }}
-          >
-            ${['trace', 'debug', 'info', 'warn', 'error'].map(
-              (lvl) => html`<option value=${lvl}>查询级别 ≥ ${lvl}</option>`,
-            )}
-          </select>
-          <select
-            @change=${(e: Event) => void this.updateCoreLevel((e.target as HTMLSelectElement).value)}
-          >
-            <option value="" selected disabled>调整核心输出级别...</option>
-            ${['error', 'warn', 'info', 'debug', 'trace'].map(
-              (lvl) => html`<option value=${lvl}>核心设为 ${lvl}</option>`,
-            )}
-          </select>
+          </div>
         </div>
 
-        ${this.error ? html`<div class="error-banner">${this.error}</div>` : ''}
-
-        <div class="card log-box mono">
-          ${this.entries.length === 0
-            ? html`<div class="muted">暂无匹配日志记录</div>`
-            : this.entries.map(
-                (e) => html`
-                  <div class="log-line">
-                    <span class="muted">#${e.seq}</span>
-                    <span class="badge ${e.level === 'error' ? 'err' : e.level === 'warn' ? 'warn' : ''}">${e.level}</span>
-                    <span class="muted">${e.domain}</span>
-                    <span>${e.message}</span>
-                  </div>
-                `,
-              )}
+        <div class="card" style="padding:10px">
+          <div class="log-box mono">
+            ${this.entries.length === 0
+              ? html`<div class="empty-state">${t('logs.empty')}</div>`
+              : this.entries.map(
+                  (e) => html`
+                    <div class="log-line">
+                      <span class="muted">#${e.seq}</span>
+                      <span class="muted hide-sm">${formatTimestampNs(e.timestamp_ns)}</span>
+                      <span class="badge ${this.levelBadge(e.level)}">${e.level}</span>
+                      <span class="muted hide-sm">${e.domain}</span>
+                      <span class="msg">${e.message}</span>
+                    </div>
+                  `,
+                )}
+          </div>
         </div>
       </div>
     `;

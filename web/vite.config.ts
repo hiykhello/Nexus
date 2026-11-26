@@ -7,6 +7,7 @@ export default defineConfig({
     proxy: {
       '/v1': 'http://127.0.0.1:9090',
       '/metrics': 'http://127.0.0.1:9090',
+      '/ssmapi': 'http://127.0.0.1:9090',
     },
   },
   build: {
