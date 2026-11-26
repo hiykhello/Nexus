@@ -23,6 +23,7 @@
 | [路由、DNS 与状态原则](design-principles/routing-dns-and-state.md) | 首命中与三态逻辑、多维 DNS 缓存键与乐观刷新、原子落盘与 FakeIP 段预留 |
 | [协议与出站策略组原则](design-principles/protocols-and-groups.md) | 协议线规边界、HTTP 连接池租约、EWMA/断路器/滞后选路状态机 |
 | [多平台集成与运维原则](design-principles/platform-and-operations.md) | Linux nftables/systemd、Android 免 Root VPN、macOS 验签、Windows 代理/防火墙与 OpenWrt |
+| [GUI 设计系统与交互原则](design-principles/gui-design-system.md) | CLI/GUI 产品边界、桌面零滚动 4 行 Bento 控制台、哑光视觉与 GPU/内存红线、四端统一基线 |
 
 ---
 

@@ -63,6 +63,7 @@ UDP 记录完整转交的 payload。统计按所有者的逻辑关联划分，�
 | `POST /v1/config/reloads` | 对已配置的主配置发起重新加载，返回 202 和操作 ID；不接收任意路径、任意远程 URL 或秘密配置内容 |
 | `GET /v1/operations/{id}` | 返回重载进行中、成功或失败及实际提交的 generation、可公开诊断；操作状态有界保留并可过期 |
 | `GET /v1/events?topics=stats,sessions,operations` | Server-Sent Events（SSE）流；事件 `id`、`event`、JSON `data` 含实例与序号，供经授权的客户端接收有界更新 |
+| `GET /v1/ws` | 多路复用 RFC 6455 WebSocket 实时流（`logs` / `connections` / `metrics`），与既有 SSE 路由 100% 共存 |
 
 selector 请求使用 generation 避免从旧页面修改新配置；同一 selector 的变更串行化，成功响应是提交后的值。`POST` 接受只表示排队，具体结果以 operation 状态为准。重载先解析、校验和编译候选，再按[路由引擎](routing-engine.md)发布；成功记录已提交 generation，失败保留旧规则。路由快照和系统网络修改不自动组成全局事务；操作状态须区分整体成功、失败/回滚和恢复仍需处理，不能在网络状态未恢复时只报告路由已更新。
 
@@ -80,7 +81,40 @@ selector 请求使用 generation 避免从旧页面修改新配置；同一 sele
 
 所有可能超过 JavaScript 安全整数范围的累计字节、代次与序号在 JSON 中编码为十进制字符串；小范围的会话数量和采样间隔使用 JSON 整数，速率为有限非负数，单位 B/s。拒绝无法精确解析的输入、负数和超范围数值。不同进程实例的计数/代次不能直接比较；这只是示意性 wire 约定，其他响应字段、状态码和版本兼容需实现后固定。
 
-SSE 客户端用支持自定义请求头的 `fetch` 流发送 Bearer token，而不是把秘密放入 URL；每条事件的序号使客户端能够检测丢失或重连。首版不保证事件历史重放，断线或发现序号缺口后调用快照 API 重建状态；`Last-Event-ID` 不意味着历史一定可用。慢消费者合并中间统计快照或断开，不能无限排队。WebSocket 和订阅历史不是当前必要能力。
+SSE 客户端用支持自定义请求头的 `fetch` 流发送 Bearer token，而不是把秘密放入 URL；每条事件的序号使客户端能够检测丢失或重连。首版不保证事件历史重放，断线或发现序号缺口后调用快照 API 重建状态；`Last-Event-ID` 不意味着历史一定可用。慢消费者合并中间统计快照或断开，不能无限排队。多通道订阅优先走下文 `GET /v1/ws` 多路复用 WebSocket，并与既有 SSE 路由保持完全兼容。
+
+### 多路复用 RFC 6455 WebSocket（`GET /v1/ws`）
+
+为桌面端、移动端与 Web 控制台提供单连接低开销实时流（日志、活动连接与实时指标复用同一 TCP 连接）：
+
+- **握手升级**：要求 `GET /v1/ws` 并携带 `Upgrade: websocket`、`Connection: Upgrade`、`Sec-WebSocket-Version: 13` 与 `Sec-WebSocket-Key`（16 字节 Base64）；服务端以 `SHA-1(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")` 的 Base64 值返回 `Sec-WebSocket-Accept` 并完成 `101 Switching Protocols`。
+- **零 URL 令牌双路径鉴权与 CSWSH 防护**：
+  - **禁止 URL 传参**：任何携带 `?token=` 或 `?secret=` 查询参数的升级请求直接以 `400 Bad Request` 拒绝。
+  - **CSWSH Origin 校验**：校验浏览器 `Origin` 请求头——仅放行空 `Origin`（原生客户端）、回环来源（`http(s)://127.0.0.1*`、`localhost`、`[::1]`）或已显式配置的 `cors-allow-origin`；跨站浏览器升级一律拒绝（`403 Forbidden`）。
+  - **原生客户端（Desktop / Android / Apple）**：在 HTTP Upgrade 请求头中携带 `Authorization: Bearer <token>`，服务端执行抗时序比较；令牌错误在升级前即返回 `401 Unauthorized`（服务端未配置 Bearer 令牌时升级即直接视为已认证）。
+  - **浏览器客户端（`web/`）**：当服务端启用 Bearer 鉴权且升级请求未携带 `Authorization` 头时，允许完成 `101` 升级并进入 `pending_auth` 状态（**5 秒超时**）；客户端首条文本帧**必须**发送 `{"type":"auth","token":"<token>"}`（抗时序校验），通过后回复 `{"type":"auth_ok"}`，校验失败、超时或收到非 `auth` 帧一律发送 RFC 6455 Close `4401` 并断开连接。
+- **RFC 6455 帧约束**：强制校验客户端上行掩码位（`MASK = 1`，RFC 6455 §5.1）；单帧最大入站载荷上限 **`64 KiB`**（超限返回 Close `1009`）；完整处理 Text（`0x1`）、分片帧、Close（`0x8`）、Ping（`0x9` → 自动回 Pong `0xA`）与 Pong（`0xA`）。
+- **多通道 JSON 线规**：
+
+| 方向 | 消息结构 | 说明 |
+| --- | --- | --- |
+| Client → Server | `{"type":"auth","token":"<token>"}` | 浏览器首帧鉴权（仅 `pending_auth` 阶段） |
+| Client → Server | `{"type":"subscribe","channels":["logs","connections","metrics"],"since":0,"interval_ms":1000}` | 订阅一个或多个频道并指定日志起始序号与推送间隔 |
+| Client → Server | `{"type":"unsubscribe","channels":["logs"]}` | 动态退订指定频道，更新活跃频道位掩码 |
+| Client → Server | `{"type":"ping"}` | 应用层保活探测 |
+| Server → Client | `{"type":"auth_ok"}` / `{"type":"subscribed","channels":[...]}` / `{"type":"pong"}` | 鉴权通过、当前生效频道确认与应用层心跳回复 |
+| Server → Client | `{"type":"log","data":{...}}` | 日志增量事件（与 SSE 日志 JSON 结构一致，推进 `since`） |
+| Server → Client | `{"type":"connections","data":{...}}` | 活动连接快照（与 `GET /v1/connections` 结构一致） |
+| Server → Client | `{"type":"metrics","data":{...}}` | 实时状态与流量指标（与 `GET /v1/status` 聚合结构一致） |
+| Server → Client | `{"type":"error","code":"...","message":"..."}` | 结构化错误回报，不含凭据或内部栈 |
+
+- **共存与优雅回退**：`/v1/ws` 与既有 SSE 流（`/v1/logs?stream=1`、`/v1/connections?stream=1`、`/v1/status?stream=1`、`/v1/events`）100% 共存；四端客户端优先使用单连接 `/v1/ws`，握手失败或服务端不支持时自动无缝回退至 SSE / 轮询。
+
+### 内置嵌入式 Web 控制台（`dashboard-root`）
+
+- **默认内置与目录覆盖优先级**：启用 `control http-listen` 且未设置 `dashboard-root`（`""`）或显式设为 `dashboard-root="embedded"` 时，直接从核心二进制内置的 C++26 `#embed` 预压缩（gzip）静态资源托管 Web 控制台（零运行时 Node 与 `zlib` 依赖）；配置自定义目录路径时优先服务该目录（启动期校验目录可读与路径规范化，拒绝目录穿越、符号链接逃逸与隐藏文件）。
+- **只读沙箱与安全响应头**：仅允许 `GET` / `HEAD`（其他方法返回 `405 Method Not Allowed` + `Allow: GET, HEAD`），非法路径/点文件返回 `400`/`403`，缺失带扩展名静态资源返回 `404`，无扩展名 SPA 路由回退至 `/index.html`；统一附带 `Content-Security-Policy: default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'; object-src 'none'; frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY` 与 `Referrer-Policy: no-referrer`（HTML `no-cache`，带内容哈希的 `/assets/*` 设为 `public, max-age=31536000, immutable`）。
+- **压缩协商与 API 边界**：预压缩内置资源返回 `Content-Encoding: gzip` 与 `Vary: Accept-Encoding`；若客户端通过 `Accept-Encoding` 明确禁止 gzip（例如 `Accept-Encoding: identity` 或 `gzip;q=0`），返回 `406 Not Acceptable`。所有 API 路由（`/v1/*`、`/metrics`、`/ssmapi/*`）优先于控制台路由分发，不受静态放行影响并继续严格执行 CORS 与 Bearer 鉴权。
 
 ## 认证、浏览器与暴露范围
 
@@ -111,3 +145,4 @@ IPC 和 HTTP 共同调用同一服务及授权决策，不默认具有相同 wir
 - 用固定版本的自有 API 客户端验证身份、跨源、只读与各控制权限、分页、订阅断线、selector 修改及重载成功/失败/恢复；保存兼容性样本。
 - 以直接流、代理链、UDP 和加速路径注入已知字节量，对比双向计数、速度、失败和重启；并发关闭/selector 切换/路由发布保持一致的生命周期语义。
 - 模拟慢消费者、错误 Origin、凭据泄漏路径、URL/JSON 边界、帧拆分、超长/截断、重复 ID、非法 BEVE、未授权账户、重载失败和网络配置失败；覆盖 Unix socket 和 Windows named pipe 各自身份与清理行为。
+- 验证 `GET /v1/ws` 握手 `Sec-WebSocket-Accept`、CSWSH `Origin` 拦截（`403`）、`?token=` 拒绝（`400`）、请求头 Bearer 与浏览器首帧 `auth`（`4401` 超时/失败关闭）、掩码校验、`64 KiB` 超限关闭（`1009`）、Ping/Pong、多频道 `subscribe`/`unsubscribe` 与 SSE 回退；验证内置嵌入式控制台（`dashboard-root=""`/`"embedded"`）、自定义目录优先覆盖、严格 CSP 与 `Accept-Encoding` 禁止 gzip 时的 `406` 响应。
