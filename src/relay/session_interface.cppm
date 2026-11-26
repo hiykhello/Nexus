@@ -28,7 +28,44 @@ import :relay_pool;
 import :shadowsocks_users;
 
 namespace relay {
+    export struct DirectWireShaping {
+        bool tls_record_fragment = false;
+        std::uint16_t tls_fragment_min = 0, tls_fragment_max = 0;
+        std::uint32_t tls_fragment_fallback_delay_ms = 0;
+        std::array<std::uint8_t, 64> tcp_prefix{};
+        std::uint8_t tcp_prefix_len = 0;
+        bool applied = false;
+        [[nodiscard]] auto pending() const noexcept -> bool {
+            return !applied && (tls_record_fragment || tcp_prefix_len > 0);
+        }
+        [[nodiscard]] auto configured() const noexcept -> bool {
+            return applied || tls_record_fragment || tcp_prefix_len > 0;
+        }
+    };
+
+    export struct NetworkMetadataSnapshot {
+        std::optional<rules::NetworkType> network_type;
+        std::optional<bool> network_is_expensive;
+        std::optional<bool> network_is_constrained;
+        std::string wifi_ssid;
+        std::optional<rules::MacAddress> wifi_bssid;
+        std::vector<rules::ProgramAddress> default_interface_addresses;
+    };
+
+    // Cold per-session metadata allocated on demand and copy-on-write shared
+    // across multiplexed child streams.
+    export struct SessionExtras {
+        std::string process_path;
+        std::string source_user;
+        std::string package_name;
+        containers::inplace_vector<std::string, 8> process_paths;
+        DirectWireShaping direct_shaping;
+        std::optional<std::string> route_override_address;
+        std::uint16_t route_override_port = 0;
+    };
+
     export struct Session {
+        using DirectWireShaping = relay::DirectWireShaping;
         // Destroyed last, after sockets and all owners of this session.
         std::optional<SessionQuota::Lease> quota;
         std::optional<SessionQuota::Lease> principal_lease;
@@ -43,94 +80,114 @@ namespace relay {
         [[nodiscard]] auto reserve_principal_datagram(bool upstream, std::size_t size) -> std::optional<PrincipalBytes::Reservation>;
         std::optional<std::uint32_t> source_uid;
         std::optional<std::uint32_t> source_gid;
-        std::string process_path, source_user, package_name;
-        containers::inplace_vector<std::string, 8> process_paths;
         std::optional<std::string_view> source_interface;
         platform::network::Monitor const* network_monitor = nullptr;
-        std::optional<rules::NetworkType> network_type;
-        std::optional<bool> network_is_expensive, network_is_constrained;
-        std::string wifi_ssid;
-        std::optional<rules::MacAddress> wifi_bssid;
-        std::vector<rules::ProgramAddress> default_interface_addresses;
+        std::shared_ptr<SessionExtras> extras;
+        std::shared_ptr<NetworkMetadataSnapshot const> network_metadata;
         rules::IngressMetadata ingress;
-        auto populate_network_metadata() noexcept -> void {
-            auto snap = network_monitor ? network_monitor->get() : nullptr;
-            if (!snap) return;
-            if (snap->default_network_type) {
-                using P = platform::network::NetworkType;
-                using R = rules::NetworkType;
-                switch (*snap->default_network_type) {
-                case P::wifi: network_type = R::wifi; break;
-                case P::cellular: network_type = R::cellular; break;
-                case P::ethernet: network_type = R::ethernet; break;
-                case P::other: network_type = R::other; break;
-                }
-            }
-            network_is_expensive = snap->network_is_expensive;
-            network_is_constrained = snap->network_is_constrained;
-            if (snap->wifi_ssid && !snap->wifi_ssid->empty()) wifi_ssid = *snap->wifi_ssid;
-            wifi_bssid = snap->wifi_bssid;
-            default_interface_addresses.clear();
-            for (auto const& [bytes, size] : snap->default_interface_addresses())
-                default_interface_addresses.push_back({bytes, size});
+        [[nodiscard]] auto ensure_mutable_extras() -> SessionExtras& {
+            if (!extras) extras = std::make_shared<SessionExtras>();
+            else if (extras.use_count() > 1) extras = std::make_shared<SessionExtras>(*extras);
+            return *extras;
         }
+        [[nodiscard]] auto process_path_view() const noexcept -> std::string_view {
+            return extras ? std::string_view(extras->process_path) : std::string_view{};
+        }
+        [[nodiscard]] auto source_user_view() const noexcept -> std::string_view {
+            return extras ? std::string_view(extras->source_user) : std::string_view{};
+        }
+        [[nodiscard]] auto package_name_view() const noexcept -> std::string_view {
+            return extras ? std::string_view(extras->package_name) : std::string_view{};
+        }
+        [[nodiscard]] auto process_paths_span() const noexcept -> std::span<std::string const> {
+            return extras ? std::span<std::string const>(extras->process_paths) : std::span<std::string const>{};
+        }
+        [[nodiscard]] auto direct_shaping_pending() const noexcept -> bool {
+            return extras && extras->direct_shaping.pending();
+        }
+        [[nodiscard]] auto direct_shaping_ptr() const noexcept -> DirectWireShaping const* {
+            return extras ? &extras->direct_shaping : nullptr;
+        }
+        [[nodiscard]] auto route_override_addr() const noexcept -> std::optional<std::string_view> {
+            if (extras && extras->route_override_address) return *extras->route_override_address;
+            return {};
+        }
+        [[nodiscard]] auto route_override_port_val() const noexcept -> std::uint16_t {
+            return extras ? extras->route_override_port : std::uint16_t{0};
+        }
+        auto populate_network_metadata() noexcept -> void;
         auto fill_match_input(rules::MatchInput& m) const noexcept -> rules::MatchInput& {
             if (!m.inbound) m.inbound = inbound;
             if (!m.auth_user) m.auth_user = auth_user;
             if (!m.source_uid) m.source_uid = source_uid;
-            if (!m.process_path && !process_path.empty()) m.process_path = process_path;
-            if (!m.process_paths && !process_paths.empty()) m.process_paths = std::span<std::string const>(process_paths);
+            if (!m.source_gid) m.source_gid = source_gid;
             if (!m.source_interface) m.source_interface = source_interface;
             if (!m.route_mode) m.route_mode = active_route_mode();
-            if (!m.network_type) m.network_type = network_type;
-            if (!m.network_is_expensive) m.network_is_expensive = network_is_expensive;
-            if (!m.network_is_constrained) m.network_is_constrained = network_is_constrained;
-            if (!m.wifi_ssid && !wifi_ssid.empty()) m.wifi_ssid = wifi_ssid;
-            if (!m.wifi_bssid) m.wifi_bssid = wifi_bssid;
-            if (!m.default_interface_addresses && !default_interface_addresses.empty())
-                m.default_interface_addresses = std::span<rules::ProgramAddress const>(default_interface_addresses);
-            if (!m.source_gid) m.source_gid = source_gid;
-            if (!m.source_user && !source_user.empty()) m.source_user = source_user;
-            if (!m.package_name && !package_name.empty()) m.package_name = package_name;
+            if (auto const* ex = extras.get()) {
+                if (!m.process_path && !ex->process_path.empty()) m.process_path = ex->process_path;
+                if (!m.process_paths && !ex->process_paths.empty())
+                    m.process_paths = std::span<std::string const>(ex->process_paths);
+                if (!m.source_user && !ex->source_user.empty()) m.source_user = ex->source_user;
+                if (!m.package_name && !ex->package_name.empty()) m.package_name = ex->package_name;
+            }
+            if (auto const* net = network_metadata.get()) {
+                if (!m.network_type) m.network_type = net->network_type;
+                if (!m.network_is_expensive) m.network_is_expensive = net->network_is_expensive;
+                if (!m.network_is_constrained) m.network_is_constrained = net->network_is_constrained;
+                if (!m.wifi_ssid && !net->wifi_ssid.empty()) m.wifi_ssid = net->wifi_ssid;
+                if (!m.wifi_bssid) m.wifi_bssid = net->wifi_bssid;
+                if (!m.default_interface_addresses && !net->default_interface_addresses.empty())
+                    m.default_interface_addresses = std::span<rules::ProgramAddress const>(net->default_interface_addresses);
+            }
             return m;
         }
         auto fill_program_input(rules::ProgramInput& p) const noexcept -> rules::ProgramInput& {
             if (!p.inbound) p.inbound = inbound;
             if (!p.auth_user) p.auth_user = auth_user;
             if (!p.source_uid) p.source_uid = source_uid;
-            if (!p.process_path && !process_path.empty()) p.process_path = process_path;
-            if (!p.process_paths && !process_paths.empty()) p.process_paths = std::span<std::string const>(process_paths);
+            if (!p.source_gid) p.source_gid = source_gid;
             if (!p.source_interface) p.source_interface = source_interface;
             if (!p.route_mode) p.route_mode = active_route_mode();
-            if (!p.network_type) p.network_type = network_type;
-            if (!p.network_is_expensive) p.network_is_expensive = network_is_expensive;
-            if (!p.network_is_constrained) p.network_is_constrained = network_is_constrained;
-            if (!p.wifi_ssid && !wifi_ssid.empty()) p.wifi_ssid = wifi_ssid;
-            if (!p.wifi_bssid) p.wifi_bssid = wifi_bssid;
-            if (!p.default_interface_addresses && !default_interface_addresses.empty())
-                p.default_interface_addresses = std::span<rules::ProgramAddress const>(default_interface_addresses);
-            if (!p.source_gid) p.source_gid = source_gid;
-            if (!p.source_user && !source_user.empty()) p.source_user = source_user;
-            if (!p.package_name && !package_name.empty()) p.package_name = package_name;
+            if (auto const* ex = extras.get()) {
+                if (!p.process_path && !ex->process_path.empty()) p.process_path = ex->process_path;
+                if (!p.process_paths && !ex->process_paths.empty())
+                    p.process_paths = std::span<std::string const>(ex->process_paths);
+                if (!p.source_user && !ex->source_user.empty()) p.source_user = ex->source_user;
+                if (!p.package_name && !ex->package_name.empty()) p.package_name = ex->package_name;
+            }
+            if (auto const* net = network_metadata.get()) {
+                if (!p.network_type) p.network_type = net->network_type;
+                if (!p.network_is_expensive) p.network_is_expensive = net->network_is_expensive;
+                if (!p.network_is_constrained) p.network_is_constrained = net->network_is_constrained;
+                if (!p.wifi_ssid && !net->wifi_ssid.empty()) p.wifi_ssid = net->wifi_ssid;
+                if (!p.wifi_bssid) p.wifi_bssid = net->wifi_bssid;
+                if (!p.default_interface_addresses && !net->default_interface_addresses.empty())
+                    p.default_interface_addresses = std::span<rules::ProgramAddress const>(net->default_interface_addresses);
+            }
             return p;
         }
         auto fill_dns_context(policy::DnsContext& d) const noexcept -> policy::DnsContext& {
             if (!d.inbound) d.inbound = inbound;
             if (!d.auth_user) d.auth_user = auth_user;
             if (!d.source_interface) d.source_interface = source_interface;
-            if (!d.network_type) d.network_type = network_type;
-            if (!d.network_is_expensive) d.network_is_expensive = network_is_expensive;
-            if (!d.network_is_constrained) d.network_is_constrained = network_is_constrained;
-            if (!d.wifi_ssid && !wifi_ssid.empty()) d.wifi_ssid = wifi_ssid;
-            if (!d.wifi_bssid) d.wifi_bssid = wifi_bssid;
-            if (d.default_interface_addresses.empty() && !default_interface_addresses.empty())
-                d.default_interface_addresses = std::span<rules::ProgramAddress const>(default_interface_addresses);
             if (!d.source_uid) d.source_uid = source_uid;
             if (!d.source_gid) d.source_gid = source_gid;
-            if (!d.source_user && !source_user.empty()) d.source_user = source_user;
-            if (!d.process_path && !process_path.empty()) d.process_path = process_path;
-            if (!d.process_paths && !process_paths.empty()) d.process_paths = std::span<std::string const>(process_paths);
-            if (!d.package_name && !package_name.empty()) d.package_name = package_name;
+            if (auto const* ex = extras.get()) {
+                if (!d.source_user && !ex->source_user.empty()) d.source_user = ex->source_user;
+                if (!d.process_path && !ex->process_path.empty()) d.process_path = ex->process_path;
+                if (!d.process_paths && !ex->process_paths.empty())
+                    d.process_paths = std::span<std::string const>(ex->process_paths);
+                if (!d.package_name && !ex->package_name.empty()) d.package_name = ex->package_name;
+            }
+            if (auto const* net = network_metadata.get()) {
+                if (!d.network_type) d.network_type = net->network_type;
+                if (!d.network_is_expensive) d.network_is_expensive = net->network_is_expensive;
+                if (!d.network_is_constrained) d.network_is_constrained = net->network_is_constrained;
+                if (!d.wifi_ssid && !net->wifi_ssid.empty()) d.wifi_ssid = net->wifi_ssid;
+                if (!d.wifi_bssid) d.wifi_bssid = net->wifi_bssid;
+                if (d.default_interface_addresses.empty() && !net->default_interface_addresses.empty())
+                    d.default_interface_addresses = std::span<rules::ProgramAddress const>(net->default_interface_addresses);
+            }
             if (!d.route_mode) d.route_mode = active_route_mode();
             return d;
         }
@@ -139,8 +196,9 @@ namespace relay {
         net::UdpEndpoint* physical_peer = nullptr;
         auto record_physical_peer(io::endpoint const& endpoint) noexcept -> void;
         auto process_metadata() const noexcept -> std::optional<std::string_view> {
-            if (process_path.empty()) return {};
-            return process_path;
+            auto path = process_path_view();
+            if (path.empty()) return {};
+            return path;
         }
         SessionQuota* splice_pipes = nullptr;
         DirectBufferPool* direct_buffers = nullptr;
@@ -230,19 +288,6 @@ namespace relay {
         Clock::time_point lifetime_deadline = Clock::time_point::max();
         std::uint32_t direct_connect_timeout_ms = 10000;
         TcpSocketOptions const* direct_tcp_options = nullptr;
-        struct DirectWireShaping {
-            bool tls_record_fragment = false;
-            std::uint16_t tls_fragment_min = 0, tls_fragment_max = 0;
-            std::uint32_t tls_fragment_fallback_delay_ms = 0;
-            std::array<std::uint8_t, 64> tcp_prefix{};
-            std::uint8_t tcp_prefix_len = 0;
-            bool applied = false;
-            [[nodiscard]] auto pending() const noexcept -> bool {
-                return !applied && (tls_record_fragment || tcp_prefix_len > 0);
-            }
-        } direct_shaping;
-        std::optional<std::string> route_override_address;
-        std::uint16_t route_override_port = 0;
         std::stop_source stop;
         // The server registry only borrows this session and outlives its task.
         std::vector<Session*>* registry = nullptr;
@@ -348,17 +393,22 @@ namespace relay {
         child.network_monitor = parent.network_monitor;
         child.source_uid = parent.source_uid;
         child.source_gid = parent.source_gid;
-        child.process_path = parent.process_path;
-        child.process_paths = parent.process_paths;
-        child.source_user = parent.source_user;
-        child.package_name = parent.package_name;
         child.source_interface = parent.source_interface;
-        child.network_type = parent.network_type;
-        child.network_is_expensive = parent.network_is_expensive;
-        child.network_is_constrained = parent.network_is_constrained;
-        child.wifi_ssid = parent.wifi_ssid;
-        child.wifi_bssid = parent.wifi_bssid;
-        child.default_interface_addresses = parent.default_interface_addresses;
+        child.network_metadata = parent.network_metadata;
+        if (parent.extras) {
+            if (!parent.extras->direct_shaping.configured() &&
+                !parent.extras->route_override_address &&
+                parent.extras->route_override_port == 0) {
+                child.extras = parent.extras;
+            } else if (!parent.extras->process_path.empty() || !parent.extras->process_paths.empty() ||
+                       !parent.extras->source_user.empty() || !parent.extras->package_name.empty()) {
+                auto& ce = child.ensure_mutable_extras();
+                ce.process_path = parent.extras->process_path;
+                ce.process_paths = parent.extras->process_paths;
+                ce.source_user = parent.extras->source_user;
+                ce.package_name = parent.extras->package_name;
+            }
+        }
 #ifdef NEXUS_ENABLE_FAKEIP
         child.fakeip = parent.fakeip;
         child.fakeip_view = parent.fakeip_view;

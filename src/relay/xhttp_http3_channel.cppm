@@ -27,7 +27,7 @@ namespace relay::vless_xhttp {
             auto* stream = state(id);
             if (!stream || stream->failed || stream->closed ||
                 bundle_.app.h3().response(id, fields, body)) return false;
-            stream->fin_requested = !body;
+            if (auto* cur = state(id)) cur->fin_requested = !body;
             driver_.notify();
             return true;
         }

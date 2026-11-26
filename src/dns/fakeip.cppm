@@ -47,8 +47,10 @@ export namespace dns {
             Clock::time_point reusable{};
             std::size_t pins=0;
         };
+        static constexpr std::uint32_t empty_slot=std::numeric_limits<std::uint32_t>::max();
         std::uint32_t first_;
         std::vector<Entry> entries_;
+        std::vector<std::uint32_t> index_;
         std::size_t cursor_=0;
         std::uint64_t next_generation_=1;
         bool generation_exhausted_=false;
@@ -58,6 +60,10 @@ export namespace dns {
         std::chrono::seconds ttl_, grace_;
         FakeIpPool(std::uint32_t first,std::size_t count,std::chrono::seconds ttl,std::chrono::seconds grace);
         [[nodiscard]] auto advance(Clock::time_point now) noexcept -> bool;
+        [[nodiscard]] static auto forward_hash(std::uint64_t view,std::string_view domain) noexcept -> std::size_t;
+        [[nodiscard]] auto index_find(std::uint64_t view,std::string_view domain) const noexcept -> std::optional<std::size_t>;
+        auto index_insert(std::uint32_t entry_idx) noexcept -> void;
+        auto index_erase(std::uint32_t entry_idx) noexcept -> void;
     public:
         [[nodiscard]] static auto create(std::uint32_t first,std::uint32_t last,
             std::chrono::seconds ttl,std::chrono::seconds grace) -> std::expected<std::unique_ptr<FakeIpPool>,FakeIpError>;

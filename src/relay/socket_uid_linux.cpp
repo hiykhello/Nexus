@@ -204,19 +204,21 @@ namespace relay {
         auto owner=local_socket_owner(peer,destination);
         if (!owner) return;
         source_uid=owner->uid;
-        if (auto user = cached_user_for_uid(owner->uid); !user.empty()) source_user = std::move(user);
+        if (auto user = cached_user_for_uid(owner->uid); !user.empty())
+            ensure_mutable_extras().source_user = std::move(user);
         if (needs_process) {
             std::optional<std::uint32_t> gid;
             std::string pkg;
             containers::inplace_vector<std::string, 8> paths;
             local_process_details(owner->inode,owner->uid,gid,pkg,paths);
             if ((!paths.empty() || !pkg.empty()) && local_socket_owner(peer,destination)==owner) {
+                auto& ex=ensure_mutable_extras();
                 if (!paths.empty()) {
-                    process_path=paths.front();
-                    process_paths=std::move(paths);
+                    ex.process_path=paths.front();
+                    ex.process_paths=std::move(paths);
                 }
                 if (gid) source_gid=gid;
-                if (!pkg.empty()) package_name=std::move(pkg);
+                if (!pkg.empty()) ex.package_name=std::move(pkg);
             }
         }
     }

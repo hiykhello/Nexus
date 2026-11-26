@@ -33,6 +33,11 @@ export namespace packet {
     [[nodiscard]] auto make_tcp4(Tcp4View segment, std::size_t mtu = 1500) -> std::expected<Bytes, PacketError>;
     // Reuses storage where possible; the resulting bytes do not borrow the input.
     [[nodiscard]] auto make_tcp4(Tcp4View segment, std::size_t mtu, Bytes storage) -> std::expected<Bytes, PacketError>;
+    // Two-span scatter payload overload (segment.payload followed by payload_tail) for zero-copy ring TX.
+    [[nodiscard]] auto make_tcp4(Tcp4View segment, std::span<std::uint8_t const> payload_tail, std::size_t mtu = 1500)
+        -> std::expected<Bytes, PacketError>;
+    [[nodiscard]] auto make_tcp4(Tcp4View segment, std::span<std::uint8_t const> payload_tail, std::size_t mtu, Bytes storage)
+        -> std::expected<Bytes, PacketError>;
     struct Tcp6View {
         Address6 source{}, destination{};
         std::uint16_t source_port = 0, destination_port = 0;
@@ -45,6 +50,10 @@ export namespace packet {
     [[nodiscard]] auto parse_tcp6(std::span<std::uint8_t const> packet) noexcept -> std::expected<Tcp6View, PacketError>;
     [[nodiscard]] auto make_tcp6(Tcp6View segment, std::size_t mtu = 1500) -> std::expected<Bytes, PacketError>;
     [[nodiscard]] auto make_tcp6(Tcp6View segment, std::size_t mtu, Bytes storage) -> std::expected<Bytes, PacketError>;
+    [[nodiscard]] auto make_tcp6(Tcp6View segment, std::span<std::uint8_t const> payload_tail, std::size_t mtu = 1500)
+        -> std::expected<Bytes, PacketError>;
+    [[nodiscard]] auto make_tcp6(Tcp6View segment, std::span<std::uint8_t const> payload_tail, std::size_t mtu, Bytes storage)
+        -> std::expected<Bytes, PacketError>;
     struct TcpOptionView { std::uint8_t kind = 0; std::span<std::uint8_t const> data; };
     struct TcpOptions {
         std::array<TcpOptionView, 40> items{};

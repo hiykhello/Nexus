@@ -4,6 +4,7 @@ import http.header;
 import http2.headers;
 import http2.client_types;
 import quic.cid_registry;
+import utility;
 import nghttp3;
 import ngtcp2;
 import capy;
@@ -33,11 +34,13 @@ namespace relay::vless_xhttp {
             bool accepted = false, complete = false, failed = false, closed = false, retired = false, abort = false;
             bool remote_end = false, fin_requested = false, fin_written = false, supplied = false, credited = false;
         };
-        std::map<std::int64_t, Stream> streams;
+        utility::FlatMap<std::int64_t, Stream> streams;
         bool dead = false, goaway = false;
 
         Http3Streams(Registry& registry, quic::SessionHandle owner, capy::async_event& event)
-            : registry_(registry), owner_(owner), event_(event) {}
+            : registry_(registry), owner_(owner), event_(event) {
+            streams.reserve(std::min<std::size_t>(Streams, 16));
+        }
         static constexpr auto stream_capacity() noexcept -> std::size_t { return Streams; }
         auto changed() noexcept -> void { event_.set(); }
         auto add_connection_id(q::ngtcp2_cid const& cid, q::ngtcp2_stateless_reset_token const&) noexcept -> int {

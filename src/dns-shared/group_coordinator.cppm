@@ -31,7 +31,7 @@ namespace dns_hp_experiment {
             Entry(FlightGroup::Flight*,io::io_context&,d::ResponseCache&);
         };
         io::io_context& context_;d::ResponseCache& cache_;FlightGroup& group_;
-        std::map<std::uint64_t,std::unique_ptr<Entry>> active_;
+        std::vector<std::pair<std::uint64_t,std::unique_ptr<Entry>>> active_;
         std::uint64_t next_=0;bool stopped_=false;
         std::chrono::milliseconds timeout_;
         static auto ms(Clock::time_point) noexcept -> std::uint64_t;

@@ -345,6 +345,33 @@ namespace {
                received->source_port == a.port && received->destination_port == local.port &&
                std::ranges::equal(received->payload, data);
     }
+    auto slab_and_peers() -> bool {
+        // Multi-flow same-local intrusive chain + slot reuse generation bump.
+        u::FlowTable chain(u::Mapping::address_port_dependent, u::Filtering::address_port_dependent, {4, 4, 1000});
+        auto f1 = chain.open(local, a, 0), f2 = chain.open(local, a2, 0), f3 = chain.open(local, b, 0);
+        if (!f1 || !f2 || !f3 || u::FlowTable::slot_index(*f1) >= 4 || u::FlowTable::slot_index(*f2) >= 4 ||
+            u::FlowTable::slot_index(*f3) >= 4) return false;
+        if (!chain.close(*f2, 1) || chain.open(local, a, 1) != *f1 || chain.open(local, b, 1) != *f3) return false;
+        auto f2b = chain.open(local, a2, 2);
+        if (!f2b || *f2b == *f2 || u::FlowTable::slot_index(*f2b) != u::FlowTable::slot_index(*f2)) return false;
+        if (!chain.close(*f1, 3) || !chain.close(*f3, 3) || chain.open(local, a2, 3) != *f2b) return false;
+        // > 8 peers exercising inline + geometric extra_peers without lowering peers_per_flow.
+        u::FlowTable many(u::Mapping::endpoint_independent, u::Filtering::address_port_dependent, {2, 40, 1000});
+        auto id = many.open(local, a, 0);
+        if (!id) return false;
+        for (std::uint16_t i = 0; i < 40; ++i) {
+            u::Endpoint4 peer{{198, 51, 100, static_cast<std::uint8_t>(1 + i)}, static_cast<std::uint16_t>(1000 + i)};
+            if (!many.transmit(*id, peer, 1 + i, [] { return true; })) return false;
+        }
+        u::Endpoint4 overflow{{198, 51, 100, 99}, 9999};
+        auto over = many.transmit(*id, overflow, 50, [] { return true; });
+        if (over || over.error() != u::Error::peer_limit) return false;
+        for (std::uint16_t i = 0; i < 40; ++i) {
+            u::Endpoint4 peer{{198, 51, 100, static_cast<std::uint8_t>(1 + i)}, static_cast<std::uint16_t>(1000 + i)};
+            if (many.accept_reply(*id, peer, 60 + i) != local) return false;
+        }
+        return true;
+    }
 }
 
 int main() {
@@ -360,5 +387,6 @@ int main() {
     if (!bridge()) { std::cerr << "UDP packet bridge failed\n"; return 1; }
     if (!bridge6()) { std::cerr << "IPv6 UDP bridge failed\n"; return 1; }
     if (!memory_roundtrip()) { std::cerr << "UDP memory roundtrip failed\n"; return 1; }
+    if (!slab_and_peers()) { std::cerr << "UDP slab and multi-peer failed\n"; return 1; }
     std::cout << "UDP mapping, filtering, deadlines and memory roundtrip passed\n";
 }

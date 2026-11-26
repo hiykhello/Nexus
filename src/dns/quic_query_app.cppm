@@ -46,8 +46,13 @@ export namespace dns::doq_detail {
         quic::SessionHandle owner_;
         Transport* transport_ = nullptr;
         std::deque<std::shared_ptr<Query>> waiting_;
-        std::map<std::int64_t, std::shared_ptr<Query>> streams_;
+        std::vector<std::pair<std::int64_t, std::shared_ptr<Query>>> streams_;
         std::size_t requests_ = 0;
+
+        auto find_stream(std::int64_t id) noexcept {
+            auto it = std::ranges::lower_bound(streams_, id, {}, [](auto const& entry) { return entry.first; });
+            return (it != streams_.end() && it->first == id) ? it : streams_.end();
+        }
         Clock::time_point idle_until_ = Clock::now() + 1s;
         enum class Early { inactive, available, sending };
         Early early_ = Early::inactive;
@@ -136,15 +141,16 @@ export namespace dns::doq_detail {
         auto stream_acked(Transport&, std::int64_t, std::uint64_t, std::uint64_t, void*) noexcept -> int { return 0; }
         auto datagram(Transport&, std::span<std::uint8_t const>) noexcept -> int { return n::err_callback_failure; }
         auto stream_close(Transport&, std::uint32_t, std::int64_t id, std::uint64_t, std::uint64_t, void*) noexcept -> int {
-            auto it = streams_.find(id);
+            auto it = find_stream(id);
             if (it != streams_.end()) {
-                resolve(*it->second, std::unexpected(Error::transport));
+                auto query = std::move(it->second);
                 streams_.erase(it);
+                resolve(*query, std::unexpected(Error::transport));
             }
             return 0;
         }
         auto stream_reset(Transport&, std::int64_t id, std::uint64_t, std::uint64_t, void*) noexcept -> int {
-            if (auto it = streams_.find(id); it != streams_.end()) {
+            if (auto it = find_stream(id); it != streams_.end()) {
                 it->second->reset = true;
                 resolve(*it->second, std::unexpected(Error::protocol));
             }
@@ -156,7 +162,7 @@ export namespace dns::doq_detail {
 
         auto stream_data(Transport& transport, std::uint32_t flags, std::int64_t id, std::uint64_t offset,
             std::span<std::uint8_t const> input, void*) -> int {
-            auto it = streams_.find(id);
+            auto it = find_stream(id);
             if (it == streams_.end()) {
                 close_code_ = protocol_error;
                 return 0;
@@ -211,7 +217,12 @@ export namespace dns::doq_detail {
                 auto open = n::ngtcp2_conn_open_bidi_stream(native, &id, nullptr);
                 if (open == n::err_stream_id_blocked) break;
                 if (open) return std::unexpected(open);
-                streams_.emplace(id, std::move(query));
+                if (streams_.empty() || streams_.back().first < id) streams_.emplace_back(id, std::move(query));
+                else {
+                    auto pos = std::ranges::lower_bound(streams_, id, {}, [](auto const& entry) { return entry.first; });
+                    if (pos != streams_.end() && pos->first == id) pos->second = std::move(query);
+                    else streams_.emplace(pos, id, std::move(query));
+                }
                 waiting_.pop_front();
                 if (!ready_) early_ = Early::sending;
             }

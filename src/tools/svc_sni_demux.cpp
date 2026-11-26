@@ -70,7 +70,7 @@ namespace cli {
         struct SniDemuxState {
             static constexpr std::size_t kMaxConns = 256;
             relay::SniDemuxRouter router;
-            std::unordered_map<std::string, corosio::endpoint> upstreams;
+            std::vector<std::pair<std::string, corosio::endpoint>> upstreams;
             std::uint16_t bound_port = 0;
             std::atomic_bool stopping{false};
             std::atomic<std::size_t> active{0};
@@ -87,6 +87,11 @@ namespace cli {
             std::jthread worker;
 
             ~SniDemuxState() { stop(); }
+
+            [[nodiscard]] auto find_upstream(std::string_view target) const noexcept -> corosio::endpoint const* {
+                auto it = std::ranges::lower_bound(upstreams, target, {}, &std::pair<std::string, corosio::endpoint>::first);
+                return it != upstreams.end() && it->first == target ? &it->second : nullptr;
+            }
 
             auto track(corosio::tcp_socket* s) -> void {
                 std::lock_guard lk(socks_mu);
@@ -154,8 +159,8 @@ namespace cli {
                 if (peek.empty() || stopping.load(std::memory_order_acquire)) co_return;
 
                 auto decision = router.route(peek);
-                auto it = upstreams.find(decision.target_upstream);
-                if (it == upstreams.end()) co_return;
+                auto const* upstream_ep = find_upstream(decision.target_upstream);
+                if (!upstream_ep) co_return;
 
                 corosio::tcp_socket upstream(io);
                 if (upstream.open()) co_return;
@@ -165,7 +170,7 @@ namespace cli {
                     ~UpstreamGuard() { st.untrack(u); }
                 } upstream_guard{*this, &upstream};
                 track(&upstream);
-                auto [ce] = co_await corosio::timeout(upstream.connect(it->second), Clock::now() + 5s);
+                auto [ce] = co_await corosio::timeout(upstream.connect(*upstream_ep), Clock::now() + 5s);
                 if (ce || stopping.load(std::memory_order_acquire)) co_return;
                 if (!co_await write_all(upstream, decision.passthrough_bytes, Clock::now() + 5s)) co_return;
 
@@ -198,13 +203,17 @@ namespace cli {
 
         auto st = std::make_unique<SniDemuxState>();
         st->router.set_fallback(relay::DemuxRole::https_site, cfg.fallback_upstream);
-        st->upstreams.emplace(cfg.fallback_upstream, *fb_ep);
+        st->upstreams.reserve(cfg.rules.size() + 1);
+        st->upstreams.emplace_back(cfg.fallback_upstream, *fb_ep);
         for (auto const& r : cfg.rules) {
             auto uep = parse_host_port(r.target_upstream);
             if (!uep) return std::unexpected(uep.error());
-            st->upstreams.emplace(r.target_upstream, *uep);
+            st->upstreams.emplace_back(r.target_upstream, *uep);
             st->router.add_rule({r.host_pattern, r.required_alpn, to_role(r.role), r.target_upstream});
         }
+        std::ranges::stable_sort(st->upstreams, {}, &std::pair<std::string, corosio::endpoint>::first);
+        auto dup = std::ranges::unique(st->upstreams, {}, &std::pair<std::string, corosio::endpoint>::first);
+        st->upstreams.erase(dup.begin(), dup.end());
         if (auto ec = st->acceptor.open(); ec)
             return std::unexpected("sni-demux: acceptor open failed: " + ec.message());
         if (auto ec = st->acceptor.bind(*listen_ep); ec)

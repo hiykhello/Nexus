@@ -36,7 +36,7 @@ export namespace shadowsocks::detail {
             UdpListenerAdmission admission{allow_new, &rejected, identity};
             auto pending = owner.sniff_owner_ ?
                 owner.state_.dispatcher().begin_ordered(owner.state_.key(), wire, remote, now, seconds, deadline, admission) :
-                owner.state_.dispatcher().begin(owner.state_.key(), wire, remote, now, seconds, deadline, policy, admission, owner.ordered_.has_value());
+                owner.state_.dispatcher().begin(owner.state_.key(), wire, remote, now, seconds, deadline, policy, admission, bool(owner.ordered_));
             if (!pending) return rejected != UdpSessionError::packet && rejected != UdpSessionError::other_listener_generation;
             struct PendingGuard {
                 UdpDispatcher& dispatcher;

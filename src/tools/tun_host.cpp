@@ -8,7 +8,9 @@ module;
 #include <boost/corosio/ipv6_address.hpp>
 module cli.tun_host;
 import std;
+import containers.cache_index;
 import containers.inplace_vector;
+import containers.ring_queue;
 import config;
 import cli.dns_fakeip_backend;
 import relay;
@@ -92,7 +94,7 @@ namespace cli::tun_enabled {
             bool connected = false, failed = false;
             CachedUdpRoute cached_route{};
             struct Pending { std::vector<std::uint8_t> wire; std::size_t payload_size; Clock::time_point deadline; };
-            std::deque<Pending> tx_queue;
+            containers::BoundedRing<Pending, 64> tx_queue;
             capy::async_event work;
             explicit UdpProxyFlow(corosio::io_context& ctx) : session(ctx) {}
         };
@@ -114,7 +116,7 @@ namespace cli::tun_enabled {
             UdpAliasFlow(corosio::io_context& context,platform::SocketBinding const* binding,
                 net::UdpEndpoint original) : session(context),socket(binding),alias(original) {}
         };
-        using UdpAliases=std::unordered_map<udp::FlowId,std::shared_ptr<UdpAliasFlow>>;
+        using UdpAliases=containers::SlotMap<udp::FlowId,std::shared_ptr<UdpAliasFlow>,20>;
         UdpAliases udp4_aliases,udp6_aliases;
 #endif
         relay::Server& parent;
@@ -142,11 +144,11 @@ namespace cli::tun_enabled {
         std::uint64_t udp_icmp_window_ms=0;
         unsigned udp_icmp_replies=0;
         std::uint64_t udp_self_loop_drops = 0;
-        std::unordered_map<std::uint64_t, std::shared_ptr<TcpFlowSlot>> tcp4_flows, tcp6_flows;
-        std::unordered_map<std::uint64_t, std::unique_ptr<UdpDirectFlow>> udp4_direct, udp6_direct;
-        using UdpProxyFlows=std::unordered_map<udp::FlowId,std::vector<std::shared_ptr<UdpProxyFlow>>>;
+        containers::FlatIdMap<std::uint64_t, std::shared_ptr<TcpFlowSlot>> tcp4_flows, tcp6_flows;
+        containers::SlotMap<std::uint64_t, std::unique_ptr<UdpDirectFlow>, 20> udp4_direct, udp6_direct;
+        using UdpProxyFlows=containers::FlatIdMap<udp::FlowId,std::vector<std::shared_ptr<UdpProxyFlow>>>;
         UdpProxyFlows udp4_proxy, udp6_proxy;
-        std::deque<UdpReply> udp_replies;
+        containers::BoundedRing<UdpReply, TunUdpProxyOps::kMaxUdpReplies> udp_replies;
         std::unique_ptr<std::uint8_t[]> udp_poll_buf;
         std::uint64_t last_udp_expire_ms = 0;
         std::array<std::uint64_t, 2> iss_key_{};
@@ -222,7 +224,10 @@ namespace cli::tun_enabled {
             auto svc = eng.service(now);
             if (svc && svc->output.delivered) moved = true;
             if (res->id) if (auto it = flows.find(*res->id); it != flows.end()) it->second->wake();
-            if (svc && svc->id) if (auto it = flows.find(*svc->id); it != flows.end()) it->second->wake();
+            if (svc && svc->id) if (auto it = flows.find(*svc->id); it != flows.end()) {
+                if (svc->action == tcp::ServiceAction::reclaimed) it->second->closed = true;
+                it->second->wake();
+            }
             return moved;
         }
 
@@ -250,6 +255,12 @@ namespace cli::tun_enabled {
             auto t4 = tcp::ConnectionTable::create(cfg.tcp_flows, cfg.tcp_buffer);
             auto t6 = tcp::ConnectionTable6::create(cfg.tcp_flows, cfg.tcp_buffer);
             if (!t4 || !t6) return std::unexpected("failed initializing TUN TCP tables");
+            tcp4_flows.init(cfg.tcp_flows); tcp6_flows.init(cfg.tcp_flows);
+            udp4_direct.init(cfg.tcp_flows); udp6_direct.init(cfg.tcp_flows);
+            udp4_proxy.init(cfg.tcp_flows); udp6_proxy.init(cfg.tcp_flows);
+#ifdef NEXUS_ENABLE_FAKEIP
+            udp4_aliases.init(cfg.tcp_flows); udp6_aliases.init(cfg.tcp_flows);
+#endif
             table4.emplace(std::move(*t4)); table6.emplace(std::move(*t6));
             engine4.emplace(tcp4_link, *table4, rules::Matcher{}, cfg.mtu);
             engine6.emplace(tcp6_link, *table6, rules::Matcher{}, cfg.mtu);

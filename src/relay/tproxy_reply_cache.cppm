@@ -11,6 +11,7 @@ module;
 
 module relay:tproxy_reply_cache;
 import std;
+import containers.cache_index;
 import net.udp_socket;
 import :types;
 
@@ -122,7 +123,7 @@ namespace relay::tproxy_detail {
             Clock::time_point last_used{};
         };
 
-        std::vector<Entry> entries_;
+        containers::IntrusiveLruTable<Entry> entries_;
         std::uint64_t netns_ = 0;
         Clock::time_point last_reap_{};
 
@@ -139,22 +140,36 @@ namespace relay::tproxy_detail {
             return k;
         }
 
-        auto find(Key const& key) noexcept -> Entry* {
-            for (auto& entry : entries_) {
-                if (entry.key == key) return &entry;
+        static auto hash_key(Key const& k) noexcept -> std::size_t {
+            std::uint64_t h = 14695981039346656037ull, a0 = 0, a1 = 0;
+            auto mix = [&](std::uint64_t v) noexcept { h = (h ^ v) * 1099511628211ull; };
+            mix((static_cast<std::uint64_t>(k.family) << 24) | (static_cast<std::uint64_t>(k.has_mark) << 16) | k.port);
+            std::memcpy(&a0, k.address.data(), 8); mix(a0);
+            if (k.family == 6) { std::memcpy(&a1, k.address.data() + 8, 8); mix(a1); }
+            mix(k.mark);
+            mix(k.netns);
+            return static_cast<std::size_t>(h ^ (h >> 32));
+        }
+
+        auto find_idx(Key const& key, std::size_t hash) const noexcept -> std::optional<std::uint32_t> {
+            return entries_.find(hash, [&](Entry const& e) noexcept { return e.key == key; });
+        }
+
+        auto evict_expired(Clock::time_point now) noexcept -> void {
+            while (auto tail = entries_.lru()) {
+                if (now - entries_.at(*tail).last_used < idle_ttl) break;
+                entries_.erase(*tail);
             }
-            return nullptr;
         }
 
         auto evict_one(Clock::time_point now) noexcept -> void {
-            std::erase_if(entries_, [&](Entry const& e) { return now - e.last_used >= idle_ttl; });
-            if (entries_.size() < max_entries || entries_.empty()) return;
-            auto oldest = std::ranges::min_element(entries_, {}, &Entry::last_used);
-            entries_.erase(oldest);
+            evict_expired(now);
+            if (entries_.size() < max_entries) return;
+            if (auto tail = entries_.lru()) entries_.erase(*tail);
         }
 
     public:
-        TproxyReplySocketCache() : netns_(current_netns_inode()) { entries_.reserve(max_entries); }
+        TproxyReplySocketCache() : entries_(max_entries), netns_(current_netns_inode()) {}
 
         auto clear() noexcept -> void { entries_.clear(); }
 
@@ -169,20 +184,22 @@ namespace relay::tproxy_detail {
         auto reap_idle(Clock::time_point now) noexcept -> void {
             if (now - last_reap_ < std::chrono::seconds(1)) return;
             last_reap_ = now;
-            std::erase_if(entries_, [&](Entry const& e) { return now - e.last_used >= idle_ttl; });
+            evict_expired(now);
         }
 
         auto ensure_bound(net::UdpEndpoint const& source, std::optional<std::uint32_t> mark) -> std::error_code {
             auto now = Clock::now();
             auto key = make_key(source, mark, netns_);
-            if (auto* hit = find(key)) {
-                hit->last_used = now;
+            auto h = hash_key(key);
+            if (auto hit = find_idx(key, h)) {
+                entries_.at(*hit).last_used = now;
+                entries_.promote(*hit);
                 return {};
             }
             Socket sock;
             if (auto ec = sock.bind(source, false, false, mark)) return ec;
             if (entries_.size() >= max_entries) evict_one(now);
-            entries_.push_back(Entry{key, std::move(sock), now});
+            entries_.insert_front(h, Entry{key, std::move(sock), now});
             return {};
         }
 
@@ -190,32 +207,39 @@ namespace relay::tproxy_detail {
             net::UdpEndpoint const& client, std::span<std::uint8_t const> bytes) -> SendResult {
             auto now = Clock::now();
             auto key = make_key(source, mark, netns_);
-            if (auto* hit = find(key)) {
-                int err = hit->socket.send_errno(client, bytes);
+            auto h = hash_key(key);
+            if (auto hit = find_idx(key, h)) {
+                auto& entry = entries_.at(*hit);
+                int err = entry.socket.send_errno(client, bytes);
                 if (err == 0) {
-                    hit->last_used = now;
+                    entry.last_used = now;
+                    entries_.promote(*hit);
                     return SendResult::sent;
                 }
                 if (err == EMSGSIZE) {
-                    hit->last_used = now;
+                    entry.last_used = now;
+                    entries_.promote(*hit);
                     return SendResult::dropped;
                 }
                 if (err != ENOBUFS && err != EINVAL && err != EADDRNOTAVAIL && err != EBADF &&
                     err != ENETUNREACH && err != EHOSTUNREACH) {
                     return SendResult::failed;
                 }
-                std::erase_if(entries_, [&](Entry const& e) { return e.key == key; });
+                entries_.erase(*hit);
             }
             if (ensure_bound(source, mark)) return SendResult::failed;
-            auto* bound = find(key);
+            auto bound = find_idx(key, h);
             if (!bound) return SendResult::failed;
-            int err = bound->socket.send_errno(client, bytes);
+            auto& entry = entries_.at(*bound);
+            int err = entry.socket.send_errno(client, bytes);
             if (err == 0) {
-                bound->last_used = now;
+                entry.last_used = now;
+                entries_.promote(*bound);
                 return SendResult::sent;
             }
             if (err == EMSGSIZE) {
-                bound->last_used = now;
+                entry.last_used = now;
+                entries_.promote(*bound);
                 return SendResult::dropped;
             }
             return SendResult::failed;

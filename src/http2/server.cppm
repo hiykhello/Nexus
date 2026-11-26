@@ -68,7 +68,7 @@ export namespace http2 {
         static auto resize(void* ptr, std::size_t size, void* context) noexcept -> void*;
 
         struct Stream {
-            std::int32_t id;
+            std::int32_t id = 0;
             bool responded = false;
             bool head_request = false;
             bool headers_received = false;
@@ -76,6 +76,13 @@ export namespace http2 {
             std::unique_ptr<std::byte[]> response;
             std::size_t response_size = 0;
             std::size_t response_offset = 0;
+        };
+        static constexpr std::uint32_t kNoSlot = std::numeric_limits<std::uint32_t>::max();
+        struct StreamSlot {
+            Stream stream{};
+            std::uint32_t prev = kNoSlot;
+            std::uint32_t next = kNoSlot;
+            bool in_use = false;
         };
         HeaderBlock headers_;
         std::size_t max_streams_;
@@ -125,9 +132,13 @@ export namespace http2 {
             ServerSession& owner;
             ~FieldsReservation() { owner.fields_reserved_ = 0; }
         };
-        // nghttp2 retains Stream pointers in data providers until completion.
-        // Erasing a different stream must not relocate those objects.
-        std::list<Stream> streams_;
+        // Pre-allocated pointer-stable slab sized to max_streams_; nghttp2 retains
+        // Stream* in data providers and StreamSlot* in stream user data until close.
+        std::vector<StreamSlot> stream_slots_;
+        std::uint32_t free_head_ = kNoSlot;
+        std::uint32_t active_head_ = kNoSlot;
+        std::uint32_t slab_allocated_ = 0;
+        std::size_t active_streams_ = 0;
         ServerEvents events_;
         std::uint8_t const* output_ = nullptr;
         std::size_t output_left_ = 0;
@@ -138,6 +149,64 @@ export namespace http2 {
         Shutdown shutdown_ = Shutdown::running;
         std::int32_t paused_stream_ = 0;
         std::size_t paused_bytes_ = 0;
+
+        [[nodiscard]] auto find_slot(h2::nghttp2_session* session, std::int32_t id) noexcept -> StreamSlot* {
+            if (!session || id <= 0) return nullptr;
+            auto* slot = static_cast<StreamSlot*>(h2::nghttp2_session_get_stream_user_data(session, id));
+            return slot && slot->in_use && slot->stream.id == id ? slot : nullptr;
+        }
+        [[nodiscard]] auto find_slot(std::int32_t id) noexcept -> StreamSlot* { return find_slot(session_, id); }
+        [[nodiscard]] auto acquire_slot(std::int32_t id) noexcept -> StreamSlot* {
+            if (active_streams_ >= max_streams_) return nullptr;
+            std::uint32_t idx = kNoSlot;
+            if (free_head_ != kNoSlot) {
+                idx = free_head_;
+                free_head_ = stream_slots_[idx].next;
+            } else if (slab_allocated_ < stream_slots_.size()) {
+                idx = slab_allocated_++;
+            } else {
+                return nullptr;
+            }
+            auto& slot = stream_slots_[idx];
+            slot.stream = Stream{id};
+            slot.in_use = true;
+            slot.prev = kNoSlot;
+            slot.next = active_head_;
+            if (active_head_ != kNoSlot) stream_slots_[active_head_].prev = idx;
+            active_head_ = idx;
+            ++active_streams_;
+            return &slot;
+        }
+        auto release_slot(StreamSlot* slot) noexcept -> void {
+            if (!slot || !slot->in_use) return;
+            auto idx = static_cast<std::uint32_t>(slot - stream_slots_.data());
+            if (slot->prev != kNoSlot) stream_slots_[slot->prev].next = slot->next;
+            else active_head_ = slot->next;
+            if (slot->next != kNoSlot) stream_slots_[slot->next].prev = slot->prev;
+            slot->stream.response.reset();
+            slot->stream = Stream{};
+            slot->in_use = false;
+            slot->prev = kNoSlot;
+            slot->next = free_head_;
+            free_head_ = idx;
+            --active_streams_;
+        }
+        auto clear_streams() noexcept -> void {
+            for (auto idx = active_head_; idx != kNoSlot;) {
+                auto& slot = stream_slots_[idx];
+                auto next = slot.next;
+                slot.stream.response.reset();
+                slot.stream = Stream{};
+                slot.in_use = false;
+                slot.prev = kNoSlot;
+                slot.next = kNoSlot;
+                idx = next;
+            }
+            active_head_ = kNoSlot;
+            free_head_ = kNoSlot;
+            slab_allocated_ = 0;
+            active_streams_ = 0;
+        }
 
         ServerSession(ServerLimits limits, ServerEvents events, std::shared_ptr<memory::Budget> budget);
         auto library_error(int rc) noexcept -> std::unexpected<ServerError>;

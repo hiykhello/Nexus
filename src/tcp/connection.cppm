@@ -80,11 +80,14 @@ export namespace tcp {
                 ? send_.available() : 0;
         }
         [[nodiscard]] auto unsent(std::size_t maximum) const -> SendSlice;
+        [[nodiscard]] auto unsent_view(std::size_t maximum) const noexcept -> SendView;
         [[nodiscard]] auto sent(std::size_t count, std::uint64_t now) -> std::expected<void, ConnectionError>;
         [[nodiscard]] auto send_due(std::uint64_t now, std::size_t maximum) -> std::expected<std::optional<SendSlice>, ConnectionError>;
+        [[nodiscard]] auto send_due_view(std::uint64_t now, std::size_t maximum) noexcept -> std::expected<std::optional<SendView>, ConnectionError>;
         [[nodiscard]] auto send_retransmitted(std::uint64_t now) -> std::expected<void, ConnectionError>;
         // Poll arms the timer; commit only after the returned probe is actually sent.
         [[nodiscard]] auto probe_due(std::uint64_t now) -> std::expected<std::optional<SendSlice>, ConnectionError>;
+        [[nodiscard]] auto probe_due_view(std::uint64_t now) noexcept -> std::expected<std::optional<SendView>, ConnectionError>;
         [[nodiscard]] auto probe_sent(std::uint64_t now) -> std::expected<void, ConnectionError>;
         [[nodiscard]] auto close_send() noexcept -> std::expected<void, ConnectionError>;
         [[nodiscard]] auto fin_ready() const noexcept -> bool;
@@ -127,10 +130,13 @@ export namespace tcp {
         [[nodiscard]] auto enqueue(std::span<std::uint8_t const> data) { return core_.enqueue(data); }
         [[nodiscard]] auto send_capacity() const noexcept -> std::size_t { return core_.send_capacity(); }
         [[nodiscard]] auto unsent(std::size_t maximum) const { return core_.unsent(maximum); }
+        [[nodiscard]] auto unsent_view(std::size_t maximum) const noexcept { return core_.unsent_view(maximum); }
         [[nodiscard]] auto sent(std::size_t count, std::uint64_t now) { return core_.sent(count,now); }
         [[nodiscard]] auto send_due(std::uint64_t now,std::size_t maximum) { return core_.send_due(now,maximum); }
+        [[nodiscard]] auto send_due_view(std::uint64_t now,std::size_t maximum) noexcept { return core_.send_due_view(now,maximum); }
         [[nodiscard]] auto send_retransmitted(std::uint64_t now) { return core_.send_retransmitted(now); }
         [[nodiscard]] auto probe_due(std::uint64_t now) { return core_.probe_due(now); }
+        [[nodiscard]] auto probe_due_view(std::uint64_t now) noexcept { return core_.probe_due_view(now); }
         [[nodiscard]] auto probe_sent(std::uint64_t now) { return core_.probe_sent(now); }
         [[nodiscard]] auto close_send() noexcept { return core_.close_send(); }
         [[nodiscard]] auto fin_ready() const noexcept -> bool { return core_.fin_ready(); }

@@ -18,6 +18,7 @@ module;
 
 module relay;
 import std;
+import containers.ring_queue;
 import proxy.v4;
 import rules;
 import http.connect;
@@ -146,7 +147,7 @@ namespace relay {
             pro::proxy<TunnelFacade> tunnel;
             net::DatagramFraming framing{};
             bool needs_uot = false, connected = false, active = true;
-            std::deque<std::vector<std::uint8_t>> tx_queue;
+            containers::BoundedRing<std::vector<std::uint8_t>, 64> tx_queue;
             capy::async_event work;
             explicit Flow(io::io_context& ctx, io::endpoint c, std::chrono::milliseconds idle)
                 : session(ctx), client(c), last_active(Clock::now()), idle_timeout(idle) {}
@@ -158,14 +159,14 @@ namespace relay {
             }
         };
         struct DownPacket { io::endpoint to; std::vector<std::uint8_t> data; };
+        static constexpr std::size_t kMaxFlows = 512, kMaxDownQueue = 512;
         Server& server_; io::udp_socket socket_; std::string target_host_;
         std::uint16_t target_port_; net::ProxyAddress target_addr_{};
         std::chrono::milliseconds idle_timeout_;
         std::unordered_map<EndpointKey, std::shared_ptr<Flow>, EndpointKeyHash> flows_;
-        std::deque<DownPacket> tx_down_; PacketBufPool buf_pool_; capy::async_event tx_down_ev_;
+        containers::BoundedRing<DownPacket, kMaxDownQueue> tx_down_; PacketBufPool buf_pool_; capy::async_event tx_down_ev_;
         bool stopping_ = false, draining_ = false, down_writer_active_ = false;
         std::size_t active_tasks_ = 0; bool* server_active_flag_ = nullptr;
-        static constexpr std::size_t kMaxFlows = 512, kMaxDownQueue = 512;
 
         auto sync_active_flag() noexcept -> void {
             if (server_active_flag_) *server_active_flag_ = (active_tasks_ > 0 || !flows_.empty() || !tx_down_.empty());

@@ -14,6 +14,7 @@ import xhttp.server;
 import xhttp.wire;
 import relay.stream_relay;
 import relay.vless_mux;
+import utility;
 import capy;
 import corosio;
 import :types;
@@ -38,18 +39,18 @@ namespace relay::vless_xhttp {
         xhttp::Profile transport;
         std::vector<std::string> names;
         std::shared_ptr<memory::Budget> budget;
-        std::unordered_map<std::string, std::shared_ptr<Split>> sessions;
+        std::unordered_map<std::string, std::shared_ptr<Split>, utility::TransparentStringHash, std::equal_to<>> sessions;
         bool secure;
         std::optional<RealityTcpProfile> reality;
         std::size_t streaming = 0;
-        auto find(std::string const& key) -> std::pair<std::shared_ptr<Split>, bool> {
+        auto find(std::string_view key) -> std::pair<std::shared_ptr<Split>, bool> {
             if (auto item = sessions.find(key); item != sessions.end()) return {item->second, false};
             if (sessions.size() + streaming >= transport.limits.sessions) return {};
             auto session = std::make_shared<Split>(transport.limits, budget);
-            sessions.emplace(key, session);
+            sessions.emplace(std::string(key), session);
             return {std::move(session), true};
         }
-        auto retire(std::string const& key, std::shared_ptr<Split> const& split, bool unpaired_only) noexcept -> void {
+        auto retire(std::string_view key, std::shared_ptr<Split> const& split, bool unpaired_only) noexcept -> void {
             if (unpaired_only && split->sides.download) return;
             split->sides.closed = true;
             split->input.close();
@@ -61,7 +62,7 @@ namespace relay::vless_xhttp {
 
     struct SplitOwner {
         InboundProfile& profile;
-        std::string const& id;
+        std::string_view id;
         std::shared_ptr<Split> const& split;
         bool active, orphan = false;
         ~SplitOwner() { if (active) profile.retire(id, split, orphan); }

@@ -67,11 +67,12 @@ namespace http2 {
           budget_(std::move(budget)), headers_(limits.header_fields, limits.header_bytes),
           max_streams_(limits.concurrent_streams), response_limit_(limits.response_bytes),
           total_response_limit_(limits.total_response_bytes), response_header_fields_(limits.response_header_fields),
-          response_header_bytes_(limits.response_header_bytes), input_window_(limits.input_window), events_(events) {}
+          response_header_bytes_(limits.response_header_bytes), input_window_(limits.input_window),
+          stream_slots_(limits.concurrent_streams), events_(events) {}
 
     ServerSession::~ServerSession() {
         if (session_) h2::nghttp2_session_del(session_);
-        streams_.clear();
+        clear_streams();
         headers_.discard();
         response_reserved_ = stream_reserved_ = 0;
         if (budget_attached_) budget_->detach(this);
@@ -134,14 +135,19 @@ namespace http2 {
     auto ServerSession::begin(h2::nghttp2_session* session, h2::nghttp2_frame const* frame, void* p) noexcept -> int {
         auto& self = *static_cast<ServerSession*>(p);
         if (frame->headers.cat == h2::NGHTTP2_HCAT_REQUEST) {
-            if (self.streams_.size() >= self.max_streams_ ||
+            if (self.find_slot(session, frame->hd.stream_id)) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
+            if (self.active_streams_ >= self.max_streams_ ||
                 sizeof(Stream) > self.shared_limit_ - self.shared_memory_used()) {
                 if (h2::nghttp2_submit_rst_stream(session, 0, frame->hd.stream_id, h2::NGHTTP2_REFUSED_STREAM) != 0)
                     return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
                 return h2::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE;
             }
-            try { self.streams_.push_back({frame->hd.stream_id}); }
-            catch (...) { return h2::NGHTTP2_ERR_CALLBACK_FAILURE; }
+            auto* slot = self.acquire_slot(frame->hd.stream_id);
+            if (!slot) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
+            if (h2::nghttp2_session_set_stream_user_data(session, frame->hd.stream_id, slot) != 0) {
+                self.release_slot(slot);
+                return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
             self.stream_reserved_ += sizeof(Stream);
             // INITIAL_WINDOW_SIZE applies to every stream when the peer
             // acknowledges SETTINGS. Setting it here as well would apply
@@ -169,17 +175,17 @@ namespace http2 {
                                                       : h2::NGHTTP2_ERR_CALLBACK_FAILURE;
     }
 
-    auto ServerSession::frame(h2::nghttp2_session*, h2::nghttp2_frame const* f, void* p) noexcept -> int {
+    auto ServerSession::frame(h2::nghttp2_session* session, h2::nghttp2_frame const* f, void* p) noexcept -> int {
         auto& self = *static_cast<ServerSession*>(p);
         auto end = (f->hd.flags & h2::NGHTTP2_FLAG_END_STREAM) != 0;
         if (f->hd.type == h2::NGHTTP2_HEADERS) {
             if (self.headers_.stream() != f->hd.stream_id) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
             if (f->headers.cat == h2::NGHTTP2_HCAT_REQUEST) {
-                auto stream = std::ranges::find(self.streams_, f->hd.stream_id, &Stream::id);
-                if (stream == self.streams_.end()) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
+                auto* slot = self.find_slot(session, f->hd.stream_id);
+                if (!slot) return h2::NGHTTP2_ERR_CALLBACK_FAILURE;
                 auto method = std::ranges::find(self.headers_.fields(), std::string_view{":method"}, &Header::name);
-                stream->head_request = method != self.headers_.fields().end() && method->value == "HEAD";
-                stream->headers_received = true;
+                slot->stream.head_request = method != self.headers_.fields().end() && method->value == "HEAD";
+                slot->stream.headers_received = true;
             }
             auto ok = self.events_.headers(self.events_.context, f->hd.stream_id, self.headers_.fields(),
                                            f->headers.cat != h2::NGHTTP2_HCAT_REQUEST, end);
@@ -235,9 +241,10 @@ namespace http2 {
     auto ServerSession::closed(h2::nghttp2_session* session, std::int32_t id, std::uint32_t code, void* p) noexcept -> int {
         auto& self = *static_cast<ServerSession*>(p);
         if (self.headers_.stream() == id) self.headers_.discard();
-        if (auto stream = std::ranges::find(self.streams_, id, &Stream::id); stream != self.streams_.end()) {
-            auto size = stream->response_size;
-            self.streams_.erase(stream);
+        if (auto* slot = self.find_slot(session, id)) {
+            auto size = slot->stream.response_size;
+            (void)h2::nghttp2_session_set_stream_user_data(session, id, nullptr);
+            self.release_slot(slot);
             self.response_reserved_ -= size;
             self.stream_reserved_ -= sizeof(Stream);
         }
@@ -254,7 +261,8 @@ namespace http2 {
 
     auto ServerSession::create(ServerLimits limits, ServerEvents events, std::shared_ptr<memory::Budget> budget)
         -> std::expected<std::unique_ptr<ServerSession>, ServerError> {
-        if (!limits.concurrent_streams || !limits.header_fields || !limits.header_bytes || !limits.response_bytes ||
+        if (!limits.concurrent_streams || limits.concurrent_streams == kNoSlot || !limits.header_fields ||
+            !limits.header_bytes || !limits.response_bytes ||
             !limits.total_response_bytes || !limits.input_window ||
             limits.input_window > static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max()) ||
             !limits.outbound_ack_frames || !limits.outbound_queue_frames || !limits.library_memory_bytes ||
@@ -345,13 +353,13 @@ namespace http2 {
         if (failed_) return std::unexpected(ServerError{ServerErrorKind::failed});
         if (terminated_) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
         if (id <= 0) return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
-        auto stream = std::ranges::find(streams_, id, &Stream::id);
-        if (stream == streams_.end() || stream->reset_pending || paused_stream_ == id)
+        auto* slot = find_slot(id);
+        if (!slot || slot->stream.reset_pending || paused_stream_ == id)
             return std::unexpected(ServerError{ServerErrorKind::invalid_state});
         auto rc = h2::nghttp2_submit_rst_stream(session_, 0, id, code);
         if (rc != 0) return library_error(rc);
         ++revision_;
-        stream->reset_pending = true;
+        slot->stream.reset_pending = true;
         return {};
     }
 
@@ -362,43 +370,44 @@ namespace http2 {
         if (terminated_) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
         if (id <= 0 || status < 200 || status > 599)
             return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
-        auto stream = std::ranges::find(streams_, id, &Stream::id);
-        if (stream == streams_.end() || !stream->headers_received || stream->responded || stream->reset_pending)
+        auto* slot = find_slot(id);
+        if (!slot || !slot->stream.headers_received || slot->stream.responded || slot->stream.reset_pending)
             return std::unexpected(ServerError{ServerErrorKind::invalid_state});
+        auto& stream = slot->stream;
         if (body.size() > response_limit_ || body.size() > total_response_limit_ - response_reserved_ ||
-            (body.size() != 0 && (stream->head_request || status == 204 || status == 205 || status == 304)))
+            (body.size() != 0 && (stream.head_request || status == 204 || status == 205 || status == 304)))
             return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
-        if (stream->head_request || status == 204 || status == 205 || status == 304)
+        if (stream.head_request || status == 204 || status == 205 || status == 304)
             return respond_empty(id, status, headers);
         std::array<std::uint8_t, 3> value{};
         std::array<std::uint8_t, 7> name{};
         FieldsReservation reservation{*this};
-        auto fields = response_fields(status, stream->head_request, body.size(), headers, value, name);
+        auto fields = response_fields(status, stream.head_request, body.size(), headers, value, name);
         if (!fields) return std::unexpected(fields.error());
         if (body.size() > shared_limit_ - shared_memory_used())
             return std::unexpected(ServerError{ServerErrorKind::budget_exceeded});
         if (!body.empty()) {
-            try { stream->response = std::make_unique_for_overwrite<std::byte[]>(body.size()); }
+            try { stream.response = std::make_unique_for_overwrite<std::byte[]>(body.size()); }
             catch (std::bad_alloc const&) { return std::unexpected(ServerError{ServerErrorKind::allocation}); }
-            std::memcpy(stream->response.get(), body.data(), body.size());
+            std::memcpy(stream.response.get(), body.data(), body.size());
         }
-        stream->response_size = body.size();
+        stream.response_size = body.size();
         response_reserved_ += body.size();
         h2::nghttp2_data_provider2 provider{};
-        provider.source.ptr = &*stream;
+        provider.source.ptr = &stream;
         provider.read_callback = read_response;
         active_ = true;
         auto rc = h2::nghttp2_submit_response2(session_, id, fields->data(), fields->size(), &provider);
         active_ = false;
         if (rc != 0) {
-            stream->response.reset();
+            stream.response.reset();
             response_reserved_ -= body.size();
-            stream->response_size = 0;
-            stream->response_offset = 0;
+            stream.response_size = 0;
+            stream.response_offset = 0;
             return library_error(rc);
         }
         ++revision_;
-        stream->responded = true;
+        stream.responded = true;
         return {};
     }
 
@@ -409,20 +418,20 @@ namespace http2 {
         if (terminated_) return std::unexpected(ServerError{ServerErrorKind::invalid_state});
         if (id <= 0 || status < 200 || status > 599)
             return std::unexpected(ServerError{ServerErrorKind::invalid_argument});
-        auto stream = std::ranges::find(streams_, id, &Stream::id);
-        if (stream == streams_.end() || !stream->headers_received || stream->responded || stream->reset_pending)
+        auto* slot = find_slot(id);
+        if (!slot || !slot->stream.headers_received || slot->stream.responded || slot->stream.reset_pending)
             return std::unexpected(ServerError{ServerErrorKind::invalid_state});
         std::array<std::uint8_t, 3> value{};
         std::array<std::uint8_t, 7> name{};
         FieldsReservation reservation{*this};
-        auto fields = response_fields(status, stream->head_request, 0, headers, value, name);
+        auto fields = response_fields(status, slot->stream.head_request, 0, headers, value, name);
         if (!fields) return std::unexpected(fields.error());
         active_ = true;
         auto rc = h2::nghttp2_submit_response2(session_, id, fields->data(), fields->size(), nullptr);
         active_ = false;
         if (rc != 0) return library_error(rc);
         ++revision_;
-        stream->responded = true;
+        slot->stream.responded = true;
         return {};
     }
 
@@ -483,7 +492,7 @@ namespace http2 {
             // nghttp2 may still borrow response providers. Destroy it first,
             // after copying its last output chunk, then release our streams.
             h2::nghttp2_session_del(session_); session_ = nullptr; output_ = nullptr;
-            streams_.clear(); headers_.discard();
+            clear_streams(); headers_.discard();
             response_reserved_ = stream_reserved_ = 0; paused_stream_ = 0; paused_bytes_ = 0; terminated_ = true;
         }
         return count;

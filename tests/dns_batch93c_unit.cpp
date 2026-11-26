@@ -117,6 +117,69 @@ namespace {
         }
     }
 
+    auto compression_case_and_overflow() -> void {
+        auto raw_name=[](std::string_view domain) -> dns::Bytes {
+            dns::Bytes out;
+            while (!domain.empty()) {
+                auto dot=domain.find('.');
+                auto label=domain.substr(0,dot);
+                out.push_back(static_cast<std::uint8_t>(label.size()));
+                out.insert(out.end(),label.begin(),label.end());
+                if (dot==domain.npos) break;
+                domain.remove_prefix(dot+1);
+            }
+            out.push_back(0);
+            return out;
+        };
+        auto append_raw=[&](dns::Bytes& wire,std::string_view owner,std::uint16_t type,dns::Bytes const& rdata) {
+            ++wire[7];
+            auto raw=raw_name(owner);
+            wire.insert(wire.end(),raw.begin(),raw.end());
+            auto length=static_cast<std::uint16_t>(rdata.size());
+            wire.insert(wire.end(),{static_cast<std::uint8_t>(type>>8),static_cast<std::uint8_t>(type),
+                0,1,0,0,0,60,static_cast<std::uint8_t>(length>>8),static_cast<std::uint8_t>(length)});
+            wire.insert(wire.end(),rdata.begin(),rdata.end());
+        };
+        // Case-insensitive suffix compression across mixed-case question + answers.
+        dns::Bytes mixed{0,123,0x81,0x80,0,1,0,0,0,0,0,0};
+        auto qraw=raw_name("Mixed.Example.Test");
+        mixed.insert(mixed.end(),qraw.begin(),qraw.end());
+        mixed.insert(mixed.end(),{0,1,0,1});
+        append_raw(mixed,"Sub.EXAMPLE.test",5,raw_name("TARGET.Example.TEST"));
+        append_raw(mixed,"a.sub.example.test",1,{192,0,2,55});
+        dns::Question mixed_q{"mixed.example.test",1};
+        auto parsed_mixed=dns::parse_response(mixed,123,mixed_q);
+        check(parsed_mixed.has_value(),"parse mixed-case response");
+        auto compressed_mixed=dns::encode_response(*parsed_mixed,456,{});
+        check(compressed_mixed && compressed_mixed->size()<mixed.size(),"mixed-case suffix compressed");
+        auto decoded_mixed=dns::parse_response(*compressed_mixed,456,mixed_q);
+        check(decoded_mixed && decoded_mixed->records.size()==2,"mixed-case round-trip");
+        check(decoded_mixed->records[0].name=="sub.example.test" && decoded_mixed->records[0].cname=="target.example.test","mixed-case cname");
+        check(decoded_mixed->records[1].name=="a.sub.example.test" && std::ranges::equal(data(*decoded_mixed,1),std::array{192,0,2,55}),"mixed-case A");
+
+        // >128 distinct suffixes (60 records x 3 unique labels = 180 unique suffixes):
+        // early suffixes compress, tail emits uncompressed cleanly with zero error.
+        dns::Question many_q{"root.many.test",1};
+        auto many=response(many_q);
+        for (unsigned i=0;i<60;++i) {
+            auto owner="a"+std::to_string(i)+".b"+std::to_string(i)+".t"+std::to_string(i);
+            append(many,owner,1,{192,0,2,static_cast<std::uint8_t>(i+1)});
+        }
+        append(many,"a0.b0.t0",1,{192,0,2,200});
+        append(many,"a59.b59.t59",1,{192,0,2,201});
+        auto parsed_many=dns::parse_response(many,123,many_q);
+        check(parsed_many && parsed_many->records.size()==62,"parse >128 suffixes");
+        auto encoded_many=dns::encode_response(*parsed_many,789,{});
+        check(encoded_many && encoded_many->size()<many.size(),"encode >128 suffixes succeeds and compresses early entries");
+        auto decoded_many=dns::parse_response(*encoded_many,789,many_q);
+        check(decoded_many && decoded_many->records.size()==62,"round-trip >128 suffixes");
+        for (unsigned i=0;i<60;++i) {
+            auto expected="a"+std::to_string(i)+".b"+std::to_string(i)+".t"+std::to_string(i);
+            check(decoded_many->records[i].name==expected,"owner preserved across >128 suffixes");
+        }
+        check(decoded_many->records[60].name=="a0.b0.t0" && decoded_many->records[61].name=="a59.b59.t59","tail records preserved");
+    }
+
     auto view_config() -> void {
         std::string const skeleton=R"kdl(schema-version 1
 role "client"
@@ -206,6 +269,7 @@ outbound "lower" type="http-connect" {
 int main() {
     compression();
     pointer_boundary();
+    compression_case_and_overflow();
     view_config();
     datagram_rules();
     auto local=dns::parse_local_resolv("nameserver 100.100.100.100\nsearch first.test tailnet.ts.net\n");

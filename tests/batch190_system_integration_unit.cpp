@@ -159,22 +159,31 @@ namespace {
     }
 
     auto test_batch169_runtime_resilience() -> void {
-        // 1. init_multiplexed_child propagates full parent context uniformly
+        // 1. init_multiplexed_child propagates full parent context uniformly (zero-copy + COW)
         corosio::io_context io;
         rules::RuntimeRouteMode mode;
+        relay::Session empty_session(io);
+        require(!empty_session.extras && !empty_session.network_metadata &&
+            empty_session.process_path_view().empty() && !empty_session.direct_shaping_pending(),
+            "default Session keeps cold metadata unallocated");
         relay::Session parent(io), child(io);
         parent.runtime_mode = &mode;
         parent.source_uid = 1000u;
         parent.source_gid = 1000u;
-        parent.process_path = "/usr/bin/curl";
+        parent.ensure_mutable_extras().process_path = "/usr/bin/curl";
         parent.reverse_view = 42u;
         parent.direct_connect_timeout_ms = 3456u;
         auto dl = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         relay::init_multiplexed_child(child, parent, dl);
         require(child.transport_owner == &parent && child.runtime_mode == &mode &&
-            child.source_uid == 1000u && child.process_path == "/usr/bin/curl" && child.reverse_view == 42u &&
-            child.direct_connect_timeout_ms == 3456u && child.handshake_deadline == dl,
-            "init_multiplexed_child copies full parent session state");
+            child.source_uid == 1000u && child.process_path_view() == "/usr/bin/curl" && child.reverse_view == 42u &&
+            child.direct_connect_timeout_ms == 3456u && child.handshake_deadline == dl &&
+            child.extras == parent.extras,
+            "init_multiplexed_child shares parent SessionExtras in O(1)");
+        child.ensure_mutable_extras().route_override_port = 8443;
+        require(child.extras != parent.extras && child.process_path_view() == "/usr/bin/curl" &&
+            child.route_override_port_val() == 8443 && parent.route_override_port_val() == 0,
+            "SessionExtras copy-on-write isolates child mutations from parent");
 
         // 2. Multi-producer logging::Runtime: 24 threads x 50 messages -> 0 dropped
         logging::Config lcfg{};

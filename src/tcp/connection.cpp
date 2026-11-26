@@ -12,6 +12,13 @@ namespace tcp {
             while (shift < 14 && (capacity >> shift) > 65535) ++shift;
             return shift;
         }
+        auto to_send_slice(SendView const& view) -> SendSlice {
+            std::vector<std::uint8_t> bytes;
+            bytes.reserve(view.size());
+            bytes.insert(bytes.end(), view.head.begin(), view.head.end());
+            bytes.insert(bytes.end(), view.tail.begin(), view.tail.end());
+            return {view.sequence, std::move(bytes)};
+        }
     }
     PassiveConnection::PassiveConnection(PassiveHandshake handshake, ReceiveBuffer receive, TimedSend send, std::uint64_t now)
         : handshake_(std::move(handshake)), timer_(now), receive_(std::move(receive)), send_(std::move(send)),
@@ -96,7 +103,7 @@ namespace tcp {
             }
         } else {
             if (fin_sent_ && now < fin_time_) return std::unexpected(ConnectionError::time_reversed);
-            if (!send_.due(now, 0)) return std::unexpected(ConnectionError::time_reversed);
+            if (!send_.due_view(now, 0)) return std::unexpected(ConnectionError::time_reversed);
         }
         if (segment.flags & 0x04) {
             auto next = receive_.next();
@@ -123,7 +130,7 @@ namespace tcp {
             peer_window_ = scaled_win;
             max_peer_window_ = std::max(max_peer_window_, scaled_win);
             window_sequence_ = segment.sequence; window_ack_ = segment.acknowledgement;
-            (void)send_.due(now, 0);
+            (void)send_.due_view(now, 0);
         } else {
             if (segment.flags != 0x10 && segment.flags != 0x18 && segment.flags != 0x11 && segment.flags != 0x19)
                 return std::unexpected(ConnectionError::unsupported);
@@ -260,10 +267,13 @@ namespace tcp {
         if (!send_.enqueue(data)) return std::unexpected(ConnectionError::capacity);
         return {};
     }
-    auto PassiveConnection::unsent(std::size_t maximum) const -> SendSlice {
-        if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed) return send_.unsent(0);
+    auto PassiveConnection::unsent_view(std::size_t maximum) const noexcept -> SendView {
+        if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed) return send_.unsent_view(0);
         auto allowance = peer_window_ > send_.in_flight() ? peer_window_ - send_.in_flight() : 0;
-        return send_.unsent(std::min({maximum, allowance, static_cast<std::size_t>(effective_mss_)}));
+        return send_.unsent_view(std::min({maximum, allowance, static_cast<std::size_t>(effective_mss_)}));
+    }
+    auto PassiveConnection::unsent(std::size_t maximum) const -> SendSlice {
+        return to_send_slice(unsent_view(maximum));
     }
     auto PassiveConnection::sent(std::size_t count, std::uint64_t now) -> std::expected<void, ConnectionError> {
         if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed) return std::unexpected(ConnectionError::unsupported);
@@ -276,7 +286,7 @@ namespace tcp {
         if (!result) return std::unexpected(result.error() == SendError::time_reversed ? ConnectionError::time_reversed : ConnectionError::unsupported);
         return {};
     }
-    auto PassiveConnection::send_due(std::uint64_t now, std::size_t maximum) -> std::expected<std::optional<SendSlice>, ConnectionError> {
+    auto PassiveConnection::send_due_view(std::uint64_t now, std::size_t maximum) noexcept -> std::expected<std::optional<SendView>, ConnectionError> {
         if (state_ == ConnectionState::expired) return std::unexpected(ConnectionError::expired);
         if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed) return std::unexpected(ConnectionError::unsupported);
         if (!advance(now)) return std::unexpected(ConnectionError::time_reversed);
@@ -285,10 +295,16 @@ namespace tcp {
             drain_receive(); receive_.release_storage(); send_.release_storage();
             return std::unexpected(ConnectionError::expired);
         }
-        auto result = send_.due(now, std::min({maximum, static_cast<std::size_t>(peer_window_),
-                                               static_cast<std::size_t>(effective_mss_)}));
+        auto result = send_.due_view(now, std::min({maximum, static_cast<std::size_t>(peer_window_),
+                                                    static_cast<std::size_t>(effective_mss_)}));
         if (!result) return std::unexpected(ConnectionError::time_reversed);
-        return std::move(*result);
+        return *result;
+    }
+    auto PassiveConnection::send_due(std::uint64_t now, std::size_t maximum) -> std::expected<std::optional<SendSlice>, ConnectionError> {
+        auto view = send_due_view(now, maximum);
+        if (!view) return std::unexpected(view.error());
+        if (!*view) return std::optional<SendSlice>{};
+        return std::optional<SendSlice>{to_send_slice(**view)};
     }
     auto PassiveConnection::send_retransmitted(std::uint64_t now) -> std::expected<void, ConnectionError> {
         if (state_ == ConnectionState::expired) return std::unexpected(ConnectionError::expired);
@@ -299,38 +315,44 @@ namespace tcp {
         if (!result) return std::unexpected(result.error() == SendError::time_reversed ? ConnectionError::time_reversed : ConnectionError::unsupported);
         return {};
     }
-    auto PassiveConnection::probe_due(std::uint64_t now) -> std::expected<std::optional<SendSlice>, ConnectionError> {
+    auto PassiveConnection::probe_due_view(std::uint64_t now) noexcept -> std::expected<std::optional<SendView>, ConnectionError> {
         if (state_ == ConnectionState::expired) return std::unexpected(ConnectionError::expired);
         if (state_ != ConnectionState::established && state_ != ConnectionState::peer_closed)
             return std::unexpected(ConnectionError::unsupported);
         if (!advance(now)) return std::unexpected(ConnectionError::time_reversed);
-        if (!send_.due(now, 0)) return std::unexpected(ConnectionError::time_reversed);
+        if (!send_.due_view(now, 0)) return std::unexpected(ConnectionError::time_reversed);
         if (probe_deadline_ && now < probe_time_) return std::unexpected(ConnectionError::time_reversed);
         if (peer_window_ || (!send_.queued() && (!close_requested_ || fin_sent_))) {
             probe_deadline_.reset(); probe_rto_ = 1000; probe_retries_ = 0;
-            return std::optional<SendSlice>{};
+            return std::optional<SendView>{};
         }
         probe_time_ = now;
         if (!probe_deadline_) {
             probe_deadline_ = now > std::numeric_limits<std::uint64_t>::max() - probe_rto_
                 ? std::numeric_limits<std::uint64_t>::max() : now + probe_rto_;
-            return std::optional<SendSlice>{};
+            return std::optional<SendView>{};
         }
-        if (now < *probe_deadline_) return std::optional<SendSlice>{};
+        if (now < *probe_deadline_) return std::optional<SendView>{};
         if (probe_retries_ >= kMaxProbeRetries) {
             state_ = ConnectionState::expired;
             drain_receive(); receive_.release_storage(); send_.release_storage();
             return std::unexpected(ConnectionError::expired);
         }
-        if (send_.in_flight()) return std::optional<SendSlice>{send_.retransmit(1)};
-        if (send_.queued()) return std::optional<SendSlice>{send_.unsent(1)};
-        return std::optional<SendSlice>{SendSlice{send_.next() - 1, {}}};
+        if (send_.in_flight()) return std::optional<SendView>{send_.retransmit_view(1)};
+        if (send_.queued()) return std::optional<SendView>{send_.unsent_view(1)};
+        return std::optional<SendView>{SendView{send_.next() - 1, {}, {}}};
+    }
+    auto PassiveConnection::probe_due(std::uint64_t now) -> std::expected<std::optional<SendSlice>, ConnectionError> {
+        auto view = probe_due_view(now);
+        if (!view) return std::unexpected(view.error());
+        if (!*view) return std::optional<SendSlice>{};
+        return std::optional<SendSlice>{to_send_slice(**view)};
     }
     auto PassiveConnection::probe_sent(std::uint64_t now) -> std::expected<void, ConnectionError> {
-        auto probe = probe_due(now);
+        auto probe = probe_due_view(now);
         if (!probe) return std::unexpected(probe.error());
         if (!*probe) return std::unexpected(ConnectionError::unsupported);
-        if (!send_.in_flight() && !(**probe).bytes.empty()) {
+        if (!send_.in_flight() && !(**probe).empty()) {
             if (!send_.sent(1, now)) return std::unexpected(ConnectionError::time_reversed);
         }
         ++probe_retries_;
@@ -356,7 +378,7 @@ namespace tcp {
     auto PassiveConnection::fin_sent(std::uint64_t now) noexcept -> std::expected<void, ConnectionError> {
         if (!fin_ready()) return std::unexpected(ConnectionError::unsupported);
         if (!advance(now)) return std::unexpected(ConnectionError::time_reversed);
-        if (!send_.due(now, 0)) return std::unexpected(ConnectionError::time_reversed);
+        if (!send_.due_view(now, 0)) return std::unexpected(ConnectionError::time_reversed);
         fin_sequence_ = send_.next(); active_close_ = !receive_.finished(); fin_sent_ = true; fin_time_ = now; fin_retries_ = 0;
         fin_deadline_ = now > std::numeric_limits<std::uint64_t>::max() - fin_rto_
             ? std::numeric_limits<std::uint64_t>::max() : now + fin_rto_;

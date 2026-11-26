@@ -337,10 +337,18 @@ export namespace shadowsocks::detail {
         [[no_unique_address]] typename Lookup::Extra extra_;
         dns::LocalSnapshotSource* local_source_;
         std::size_t* local_rotation_;
-        std::map<std::uint64_t,Entry> active_;
+        std::vector<std::pair<std::uint64_t,Entry>> active_;
         std::size_t limit_;
         bool stopped_=false;
         std::size_t succeeded_=0,failed_=0;
+        auto find_active(std::uint64_t token) noexcept {
+            auto it=std::ranges::lower_bound(active_,token,{},[](auto const& item){return item.first;});
+            return (it!=active_.end() && it->first==token) ? it : active_.end();
+        }
+        auto find_active(std::uint64_t token) const noexcept {
+            auto it=std::ranges::lower_bound(active_,token,{},[](auto const& item){return item.first;});
+            return (it!=active_.end() && it->first==token) ? it : active_.end();
+        }
         // The active entry owns the operation until run finishes. Completion
         // erases it only after the awaited operation has returned or unwound.
         auto run(BasicUdpResolveOperation<Lookup>& operation,udp_io::endpoint upstream,
@@ -349,7 +357,7 @@ export namespace shadowsocks::detail {
             if (result) ++succeeded_; else ++failed_;
         }
         auto done(std::uint64_t token,bool exception) noexcept -> void {
-            auto it=active_.find(token);
+            auto it=find_active(token);
             if (it==active_.end()) return;
             if (exception) { ++failed_; it->second.operation->cancel(); }
             active_.erase(it);
@@ -379,7 +387,7 @@ export namespace shadowsocks::detail {
             auto reject=[&](UdpResolveStartError error) -> std::expected<void,UdpResolveStartError> {
                 (void)dispatcher_.cancel(token); return std::unexpected(error);
             };
-            if (active_.contains(token)) return std::unexpected(UdpResolveStartError::duplicate);
+            if (find_active(token)!=active_.end()) return std::unexpected(UdpResolveStartError::duplicate);
             if (stopped_) return reject(UdpResolveStartError::stopped);
             if (active_.size()>=limit_) return reject(UdpResolveStartError::full);
             if (deadline<=now) return reject(UdpResolveStartError::expired);
@@ -391,12 +399,23 @@ export namespace shadowsocks::detail {
                 ,std::move(resolved_handler)
                 ); }
             catch (...) { (void)dispatcher_.cancel(token); throw; }
-            auto [it,inserted]=active_.emplace(token,Entry{std::move(operation),deadline});
-            if (!inserted) return reject(UdpResolveStartError::full);
+            auto* raw=operation.get();
+            if (active_.empty() || active_.back().first<token) active_.emplace_back(token,Entry{std::move(operation),deadline});
+            else {
+                auto pos=std::ranges::lower_bound(active_,token,{},[](auto const& item){return item.first;});
+                if (pos!=active_.end() && pos->first==token) return reject(UdpResolveStartError::full);
+                active_.emplace(pos,token,Entry{std::move(operation),deadline});
+            }
             try {
                 udp_capy::run_async(context_.get_executor(),[this,token] { done(token,false); },
-                    [this,token](std::exception_ptr) noexcept { done(token,true); })(run(*it->second.operation,upstream,view,deadline));
-            } catch (...) { it->second.operation->cancel(); active_.erase(it); throw; }
+                    [this,token](std::exception_ptr) noexcept { done(token,true); })(run(*raw,upstream,view,deadline));
+            } catch (...) {
+                if (auto it=find_active(token); it!=active_.end()) {
+                    it->second.operation->cancel();
+                    active_.erase(it);
+                }
+                throw;
+            }
             return {};
         }
         auto cancel_expired(Clock::time_point now) noexcept -> void {
@@ -407,7 +426,7 @@ export namespace shadowsocks::detail {
             for (auto& [token,entry]:active_) entry.operation->cancel();
         }
         [[nodiscard]] auto drained() const noexcept -> bool { return active_.empty(); }
-        [[nodiscard]] auto busy(std::uint64_t token) const noexcept -> bool { return active_.contains(token); }
+        [[nodiscard]] auto busy(std::uint64_t token) const noexcept -> bool { return find_active(token)!=active_.end(); }
         [[nodiscard]] auto active() const noexcept -> std::size_t { return active_.size(); }
         [[nodiscard]] auto succeeded() const noexcept -> std::size_t { return succeeded_; }
         [[nodiscard]] auto failed() const noexcept -> std::size_t { return failed_; }

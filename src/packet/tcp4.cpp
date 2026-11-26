@@ -62,16 +62,27 @@ namespace packet {
         return v;
     }
     auto make_tcp4(Tcp4View v, std::size_t mtu) -> std::expected<Bytes, PacketError> {
-        return make_tcp4(v, mtu, {});
+        return make_tcp4(v, {}, mtu, {});
     }
     auto make_tcp4(Tcp4View v, std::size_t mtu, Bytes p) -> std::expected<Bytes, PacketError> {
+        return make_tcp4(v, {}, mtu, std::move(p));
+    }
+    auto make_tcp4(Tcp4View v, std::span<std::uint8_t const> payload_tail, std::size_t mtu)
+        -> std::expected<Bytes, PacketError> {
+        return make_tcp4(v, payload_tail, mtu, {});
+    }
+    auto make_tcp4(Tcp4View v, std::span<std::uint8_t const> payload_tail, std::size_t mtu, Bytes p)
+        -> std::expected<Bytes, PacketError> {
         if (v.options.size() > 40 || v.options.size() % 4 || v.flags > 0x1ff)
             return std::unexpected(PacketError::unsupported_header);
         auto header = 40 + v.options.size();
-        if (mtu < header || v.payload.size() > 65535 - header || v.payload.size() > mtu - header)
+        if (mtu < header || v.payload.size() > 65535 - header ||
+            payload_tail.size() > 65535 - header - v.payload.size() ||
+            v.payload.size() + payload_tail.size() > mtu - header)
             return std::unexpected(PacketError::too_large);
-        p.resize(header + v.payload.size());
-        std::ranges::fill(p, 0);
+        auto total_payload = v.payload.size() + payload_tail.size();
+        p.resize(header + total_payload);
+        std::fill_n(p.begin(), static_cast<std::ptrdiff_t>(header), std::uint8_t{0});
         p[0] = 0x45; put16(p, 2, static_cast<std::uint16_t>(p.size())); put16(p, 6, 0x4000);
         p[8] = 64; p[9] = 6;
         std::copy(v.source.begin(), v.source.end(), p.begin() + 12);
@@ -83,6 +94,7 @@ namespace packet {
         p[33] = static_cast<std::uint8_t>(v.flags); put16(p, 34, v.window); put16(p, 38, v.urgent);
         std::ranges::copy(v.options, p.begin() + 40);
         std::ranges::copy(v.payload, p.begin() + header);
+        if (!payload_tail.empty()) std::ranges::copy(payload_tail, p.begin() + header + v.payload.size());
         put16(p, 36, checksum(p));
         return p;
     }

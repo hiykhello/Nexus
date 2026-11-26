@@ -1,4 +1,5 @@
 export module containers.cache_index;
+export import containers.flat_id_map;
 import std;
 
 export namespace containers {
@@ -122,6 +123,7 @@ export namespace containers {
 
         template<class MatchPred, class ExpiredPred>
         auto upsert(std::size_t hash, MatchPred&& matches, Entry entry, ExpiredPred&& is_expired) -> std::uint32_t {
+            if (!capacity_) return kEmpty;
             if (auto existing = find(hash, matches)) {
                 slots_[*existing].value.emplace(std::move(entry));
                 accessed_[*existing].store(0, std::memory_order_relaxed);
@@ -371,6 +373,126 @@ export namespace containers {
             head_ = kNull;
             tail_ = kNull;
             free_head_ = kNull;
+        }
+    };
+
+    // O(1) direct-indexed slab keyed by generation-tagged IDs (low SlotBits = slot index).
+    // Intrusive active list gives O(active) iteration safe across erasing the current item.
+    template<class Id, class Value, std::uint32_t SlotBits = 20>
+    class SlotMap {
+        static constexpr std::uint32_t kNull = std::numeric_limits<std::uint32_t>::max();
+        static constexpr std::uint64_t kSlotMask = (std::uint64_t{1} << SlotBits) - 1;
+        struct Slot {
+            std::pair<Id, Value> kv{};
+            std::uint32_t prev = kNull, next = kNull;
+            bool used = false;
+        };
+        std::vector<Slot> slots_;
+        std::size_t size_ = 0;
+        std::uint32_t head_ = kNull, tail_ = kNull;
+
+        static constexpr auto slot_index(Id id) noexcept -> std::uint32_t {
+            return static_cast<std::uint32_t>(static_cast<std::uint64_t>(id) & kSlotMask);
+        }
+        auto unlink(std::uint32_t idx) noexcept -> void {
+            auto p = slots_[idx].prev, n = slots_[idx].next;
+            if (p != kNull) slots_[p].next = n; else head_ = n;
+            if (n != kNull) slots_[n].prev = p; else tail_ = p;
+            slots_[idx].prev = slots_[idx].next = kNull;
+        }
+        auto link_back(std::uint32_t idx) noexcept -> void {
+            slots_[idx].prev = tail_;
+            slots_[idx].next = kNull;
+            if (tail_ != kNull) slots_[tail_].next = idx; else head_ = idx;
+            tail_ = idx;
+        }
+        auto erase_idx(std::uint32_t idx) noexcept -> void {
+            unlink(idx);
+            slots_[idx].used = false;
+            slots_[idx].kv = std::pair<Id, Value>{};
+            --size_;
+        }
+    public:
+        template<bool IsConst>
+        class Iter {
+            using Owner = std::conditional_t<IsConst, SlotMap const, SlotMap>;
+            using Pair = std::conditional_t<IsConst, std::pair<Id, Value> const, std::pair<Id, Value>>;
+            Owner* owner_ = nullptr;
+            std::uint32_t idx_ = kNull;
+            friend class SlotMap;
+        public:
+            Iter() = default;
+            Iter(Owner* owner, std::uint32_t idx) noexcept : owner_(owner), idx_(idx) {}
+            auto operator*() const noexcept -> Pair& { return owner_->slots_[idx_].kv; }
+            auto operator->() const noexcept -> Pair* { return &owner_->slots_[idx_].kv; }
+            auto operator++() noexcept -> Iter& { idx_ = owner_->slots_[idx_].next; return *this; }
+            auto operator++(int) noexcept -> Iter { auto copy = *this; ++(*this); return copy; }
+            auto operator==(Iter const& other) const noexcept -> bool { return idx_ == other.idx_; }
+        };
+        using iterator = Iter<false>;
+        using const_iterator = Iter<true>;
+
+        auto init(std::size_t capacity) -> void { clear(); slots_.resize(capacity); }
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
+        [[nodiscard]] auto empty() const noexcept -> bool { return size_ == 0; }
+        [[nodiscard]] auto begin() noexcept -> iterator { return {this, head_}; }
+        [[nodiscard]] auto end() noexcept -> iterator { return {this, kNull}; }
+        [[nodiscard]] auto begin() const noexcept -> const_iterator { return {this, head_}; }
+        [[nodiscard]] auto end() const noexcept -> const_iterator { return {this, kNull}; }
+        [[nodiscard]] auto contains(Id id) const noexcept -> bool {
+            auto idx = slot_index(id);
+            return idx < slots_.size() && slots_[idx].used && slots_[idx].kv.first == id;
+        }
+        [[nodiscard]] auto find(Id id) noexcept -> iterator {
+            auto idx = slot_index(id);
+            return (idx < slots_.size() && slots_[idx].used && slots_[idx].kv.first == id) ? iterator{this, idx} : end();
+        }
+        [[nodiscard]] auto find(Id id) const noexcept -> const_iterator {
+            auto idx = slot_index(id);
+            return (idx < slots_.size() && slots_[idx].used && slots_[idx].kv.first == id) ? const_iterator{this, idx} : end();
+        }
+        template<class... Args>
+        auto emplace(Id id, Args&&... args) -> std::pair<iterator, bool> {
+            auto idx = slot_index(id);
+            if (idx >= slots_.size()) slots_.resize(static_cast<std::size_t>(idx) + 1);
+            if (slots_[idx].used) {
+                if (slots_[idx].kv.first == id) return {iterator{this, idx}, false};
+                erase_idx(idx);
+            }
+            slots_[idx].kv.first = id;
+            slots_[idx].kv.second = Value(std::forward<Args>(args)...);
+            slots_[idx].used = true;
+            link_back(idx);
+            ++size_;
+            return {iterator{this, idx}, true};
+        }
+        auto operator[](Id id) -> Value& {
+            auto it = find(id);
+            if (it != end()) return it->second;
+            return emplace(id).first->second;
+        }
+        auto erase(Id id) noexcept -> std::size_t {
+            auto idx = slot_index(id);
+            if (idx >= slots_.size() || !slots_[idx].used || slots_[idx].kv.first != id) return 0;
+            erase_idx(idx);
+            return 1;
+        }
+        auto erase(iterator it) noexcept -> iterator {
+            if (it.idx_ == kNull) return end();
+            auto nxt = slots_[it.idx_].next;
+            erase_idx(it.idx_);
+            return {this, nxt};
+        }
+        auto clear() noexcept -> void {
+            for (auto cur = head_; cur != kNull;) {
+                auto nxt = slots_[cur].next;
+                slots_[cur].used = false;
+                slots_[cur].prev = slots_[cur].next = kNull;
+                slots_[cur].kv = std::pair<Id, Value>{};
+                cur = nxt;
+            }
+            head_ = tail_ = kNull;
+            size_ = 0;
         }
     };
 }

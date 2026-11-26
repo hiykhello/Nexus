@@ -7,6 +7,7 @@ import dns.input_budget;
 import dns.corosio_resolver;
 import capy;
 import dns.response_cache;
+import dns.cache_types;
 import dns.response_match;
 import dns.local_config;
 import corosio;
@@ -70,7 +71,7 @@ export namespace dns {
         struct Entry { Key key;Response response;Clock::time_point stored,expires,refresh_after{};std::size_t cost=0; };
         struct Pending { Key key;std::uint64_t sequence;std::weak_ptr<QueryFlight> flight; };
         containers::IntrusiveLruTable<Entry> entries_;
-        std::vector<Pending> pending_;
+        detail::PendingIndex<Pending> pending_;
         std::uint64_t sequence_=0;
         std::size_t bytes_=0;
         std::size_t capacity_=1024;
@@ -196,7 +197,8 @@ export namespace dns {
             if (!optimistic() || !(query.flags&0x0100) || (query.edns && query.edns->dnssec_ok)) return {};
             auto k=key(view,query);
             if (!k) return {};
-            auto idx=entries_.find(hash_key(*k),[&](Entry const& item) {return same(item.key,*k);});
+            auto const h=hash_key(*k);
+            auto idx=entries_.find(h,[&](Entry const& item) {return same(item.key,*k);});
             if (!idx) return {};
             auto& entry=entries_.at(*idx);
             if (now<entry.expires || entry.response.rcode) return {};
@@ -214,7 +216,7 @@ export namespace dns {
                     wire[record.data_offset-3]=static_cast<std::uint8_t>(ttl);
             }
             std::optional<Ticket> refresh;
-            if (now>=entry.refresh_after && !std::ranges::any_of(pending_,[&](auto const& item) {return same(item.key,*k);})) {
+            if (now>=entry.refresh_after && !pending_.has_key(h,[&](Pending const& item) {return same(item.key,*k);})) {
                 refresh=begin(view,query);
                 if (refresh) entry.refresh_after=now+std::chrono::seconds(1);
             }
@@ -225,42 +227,52 @@ export namespace dns {
             -> std::expected<std::optional<JoinedQuery>,detail::ResolveError> {
             auto k=key(view,query);
             if (!k) return std::optional<JoinedQuery>{};
-            auto pending=std::ranges::find_if(pending_,[&](auto const& slot) {return same(slot.key,*k);});
-            if (pending!=pending_.end()) {
-                auto existing=pending->flight.lock();
+            auto const h=hash_key(*k);
+            auto pending=pending_.find_key(h,[&](Pending const& slot) {return same(slot.key,*k);});
+            if (pending) {
+                auto existing=pending_.at(*pending).flight.lock();
                 if (existing && !existing->result && existing->deadline>Clock::now() && !existing->stop.stop_requested()) {
                     if (existing->waiters>=64) return std::unexpected(detail::ResolveError::limit);
                     return JoinedQuery{std::move(existing),false};
                 }
             }
-            if (sequence_==std::numeric_limits<std::uint64_t>::max() || (pending==pending_.end() && pending_.size()>=256))
+            if (sequence_==std::numeric_limits<std::uint64_t>::max() || (!pending && pending_.size()>=256))
                 return std::unexpected(detail::ResolveError::limit);
             auto flight=std::make_shared<QueryFlight>(deadline);
-            flight->ticket=Ticket{++sequence_};
-            if (pending==pending_.end()) pending_.push_back({std::move(*k),sequence_,flight});
+            auto next_seq=sequence_+1;
+            if (!pending) pending_.emplace(next_seq,h,Pending{std::move(*k),next_seq,flight});
             else {
-                pending->sequence=sequence_;
-                pending->flight=flight;
+                pending_.rekey_query(*pending,next_seq);
+                pending_.at(*pending).sequence=next_seq;
+                pending_.at(*pending).flight=flight;
             }
+            sequence_=next_seq;
+            flight->ticket=Ticket{sequence_};
             return JoinedQuery{std::move(flight),true};
         }
 
         [[nodiscard]] auto begin(View const& view,QueryMessage const& query) -> std::optional<Ticket> {
             auto k=key(view,query);if(!k || sequence_==std::numeric_limits<std::uint64_t>::max())return {};
-            auto it=std::ranges::find_if(pending_,[&](auto const& pending){return same(pending.key,*k);});
-            if(it==pending_.end() && pending_.size()>=256)return {};
-            auto sequence=++sequence_;
-            if(it==pending_.end()) pending_.push_back({std::move(*k),sequence,{}});
-            else {it->sequence=sequence;it->flight.reset();}
+            auto const h=hash_key(*k);
+            auto it=pending_.find_key(h,[&](Pending const& pending){return same(pending.key,*k);});
+            if(!it && pending_.size()>=256)return {};
+            auto sequence=sequence_+1;
+            if(!it) pending_.emplace(sequence,h,Pending{std::move(*k),sequence,{}});
+            else {
+                pending_.rekey_query(*it,sequence);
+                pending_.at(*it).sequence=sequence;
+                pending_.at(*it).flight.reset();
+            }
+            sequence_=sequence;
             return Ticket{sequence};
         }
         auto cancel(Ticket const& ticket) noexcept -> void {
-            std::erase_if(pending_,[&](auto const& pending){return pending.sequence==ticket.sequence;});
+            if(auto idx=pending_.find_query(ticket.sequence)) pending_.erase(*idx);
         }
         auto publish(Ticket const& ticket,QueryMessage const& query,Response response,Clock::time_point now) -> void {
-            auto pending=std::ranges::find(pending_,ticket.sequence,&Pending::sequence);
-            if(pending==pending_.end())return;
-            Key k=std::move(pending->key);pending_.erase(pending);
+            auto idx=pending_.find_query(ticket.sequence);
+            if(!idx)return;
+            Key k=std::move(pending_.at(*idx).key);pending_.erase(*idx);
             if(response.flags&0x0200 || !validate_response_ecs(query,response))return;
             bool ecs=query.edns && query.edns->options.size()==1 && query.edns->options[0].code==8;
             if(ecs) {
@@ -279,8 +291,9 @@ export namespace dns {
             while(!entries_.empty() && (entries_.size()>=capacity_ || bytes_>8*1024*1024-entry.cost)) {
                 erase_idx(*entries_.lru());
             }
-            bytes_+=entry.cost;
+            auto const cost=entry.cost;
             (void)entries_.insert_front(h,std::move(entry));
+            bytes_+=cost;
         }
     };
 }

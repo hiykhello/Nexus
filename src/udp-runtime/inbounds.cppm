@@ -124,7 +124,7 @@ export namespace relay::udp_runtime {
         shadowsocks::detail::UdpListenerRegistry registry_{1024};
         std::deque<Group> groups_;
         Setup setup_;
-        std::optional<shadowsocks::detail::UdpOrderedRouting> ordered_;
+        std::shared_ptr<shadowsocks::detail::UdpOrderedRouting const> ordered_;
         std::vector<std::unique_ptr<Listener>> listeners_;
         std::vector<DynamicBase> dynamic_bases_;
         std::vector<DynamicActive> dynamic_active_;
@@ -210,7 +210,7 @@ export namespace relay::udp_runtime {
         // stop() has drained the listeners and the external sender owner.
         [[nodiscard]] auto set_ordered(shadowsocks::detail::UdpOrderedRouting routing) -> bool {
             if (setup_.active() || !routing.allows || !routing.send || !routing.stop || !routing.drained || !routing.finish) return false;
-            ordered_=std::move(routing); return true;
+            ordered_=std::make_shared<shadowsocks::detail::UdpOrderedRouting>(std::move(routing)); return true;
         }
         [[nodiscard]] auto set_socket_binding(platform::SocketBinding binding) noexcept -> bool {
             if (!groups_.empty() || setup_.active() || !binding.valid()) return false;

@@ -177,4 +177,65 @@ export namespace utility {
     };
     template<class F>
     scope_exit(F) -> scope_exit<std::decay_t<F>>;
+
+    struct TransparentStringHash {
+        using is_transparent = void;
+        [[nodiscard]] auto operator()(std::string_view sv) const noexcept -> std::size_t {
+            return std::hash<std::string_view>{}(sv);
+        }
+        [[nodiscard]] auto operator()(std::string const& s) const noexcept -> std::size_t {
+            return std::hash<std::string_view>{}(s);
+        }
+        [[nodiscard]] auto operator()(char const* s) const noexcept -> std::size_t {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+
+    template<class Key, class Value>
+    class FlatMap {
+    public:
+        using value_type = std::pair<Key, Value>;
+        using iterator = typename std::vector<value_type>::iterator;
+        using const_iterator = typename std::vector<value_type>::const_iterator;
+    private:
+        std::vector<value_type> entries_;
+    public:
+        auto reserve(std::size_t n) -> void { entries_.reserve(n); }
+        [[nodiscard]] auto empty() const noexcept -> bool { return entries_.empty(); }
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return entries_.size(); }
+        auto begin() noexcept -> iterator { return entries_.begin(); }
+        auto end() noexcept -> iterator { return entries_.end(); }
+        auto begin() const noexcept -> const_iterator { return entries_.begin(); }
+        auto end() const noexcept -> const_iterator { return entries_.end(); }
+        auto find(Key const& key) noexcept -> iterator {
+            auto it = std::ranges::lower_bound(entries_, key, {}, &value_type::first);
+            return it != entries_.end() && it->first == key ? it : entries_.end();
+        }
+        auto find(Key const& key) const noexcept -> const_iterator {
+            auto it = std::ranges::lower_bound(entries_, key, {}, &value_type::first);
+            return it != entries_.end() && it->first == key ? it : entries_.end();
+        }
+        template<class... Args>
+        auto try_emplace(Key const& key, Args&&... args) -> std::pair<iterator, bool> {
+            if (entries_.empty() || entries_.back().first < key) {
+                entries_.emplace_back(std::piecewise_construct, std::forward_as_tuple(key),
+                                      std::forward_as_tuple(std::forward<Args>(args)...));
+                return {std::prev(entries_.end()), true};
+            }
+            auto it = std::ranges::lower_bound(entries_, key, {}, &value_type::first);
+            if (it != entries_.end() && it->first == key) return {it, false};
+            return {entries_.emplace(it, std::piecewise_construct, std::forward_as_tuple(key),
+                                     std::forward_as_tuple(std::forward<Args>(args)...)), true};
+        }
+        auto erase(iterator it) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> iterator {
+            return entries_.erase(it);
+        }
+        auto erase(Key const& key) noexcept(std::is_nothrow_move_assignable_v<value_type>) -> std::size_t {
+            auto it = find(key);
+            if (it == entries_.end()) return 0;
+            entries_.erase(it);
+            return 1;
+        }
+        auto clear() noexcept -> void { entries_.clear(); }
+    };
 }

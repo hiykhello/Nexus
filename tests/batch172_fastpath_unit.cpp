@@ -301,6 +301,17 @@ namespace {
         DummyOrd const* no_ord = nullptr;
         auto c_res = cli::tun_enabled::lookup_tun_owner_cached(ucache, 1000, lo, ntohs(csa.sin_port), lo, ntohs(sa.sin_port), *r_uid, no_ord);
         require(ucache.size() == 1, "TunUdpOwnerCache inserted entry");
+        (void)cli::tun_enabled::lookup_tun_owner_cached(ucache, 2000, lo, ntohs(csa.sin_port), lo, ntohs(sa.sin_port), *r_uid, no_ord);
+        require(ucache.size() == 1, "TunUdpOwnerCache hot hit keeps size");
+        (void)cli::tun_enabled::lookup_tun_owner_cached(ucache, 7000, lo, ntohs(csa.sin_port), lo, ntohs(sa.sin_port), *r_uid, no_ord);
+        require(ucache.size() == 1, "TunUdpOwnerCache TTL overwrite updates slot in place");
+        cli::tun_enabled::TunUdpOwnerCache bounded_cache(4);
+        for (std::uint16_t p = 1; p <= 6; ++p)
+            (void)cli::tun_enabled::lookup_tun_owner_cached(bounded_cache, 1000, lo, p, lo, ntohs(sa.sin_port), *r_uid, no_ord);
+        require(bounded_cache.size() == 4, "TunUdpOwnerCache ClockTable enforces capacity bound");
+        cli::tun_enabled::TunUdpOwnerCache zero_cache(0);
+        (void)cli::tun_enabled::lookup_tun_owner_cached(zero_cache, 1000, lo, 1, lo, ntohs(sa.sin_port), *r_uid, no_ord);
+        require(zero_cache.size() == 0, "TunUdpOwnerCache zero capacity bypasses upsert safely");
         (void)c_res;
     }
 }

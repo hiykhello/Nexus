@@ -199,10 +199,14 @@ export namespace cli::tun_enabled {
                                     if (owner_info) {
                                         if (owner_info->uid) session->source_uid = owner_info->uid;
                                         if (owner_info->gid) session->source_gid = owner_info->gid;
-                                        if (!owner_info->process_path.empty()) session->process_path = owner_info->process_path;
-                                        if (!owner_info->process_paths.empty()) session->process_paths = owner_info->process_paths;
-                                        if (!owner_info->user.empty()) session->source_user = owner_info->user;
-                                        if (!owner_info->package_name.empty()) session->package_name = owner_info->package_name;
+                                        if (!owner_info->process_path.empty() || !owner_info->process_paths.empty() ||
+                                            !owner_info->user.empty() || !owner_info->package_name.empty()) {
+                                            auto& ex = session->ensure_mutable_extras();
+                                            if (!owner_info->process_path.empty()) ex.process_path = owner_info->process_path;
+                                            if (!owner_info->process_paths.empty()) ex.process_paths = owner_info->process_paths;
+                                            if (!owner_info->user.empty()) ex.source_user = owner_info->user;
+                                            if (!owner_info->package_name.empty()) ex.package_name = owner_info->package_name;
+                                        }
                                     }
                                     session->begin_traffic(relay::TrafficProtocol::tun_udp, remote.port);
                                     auto answer = answer_tun_dns(host, bridge, remote, flow, source, std::move(session),

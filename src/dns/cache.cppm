@@ -21,7 +21,8 @@ export namespace dns {
         };
         struct Pending { CacheKey key; std::uint64_t query; std::optional<std::uint64_t> refresh_revision; };
         containers::ClockTable<Entry> entries_;
-        std::vector<Pending> pending_;
+        detail::PendingIndex<Pending> pending_;
+        std::size_t refresh_count_ = 0;
         std::size_t capacity_;
         std::uint64_t stale_window_ms_;
         std::uint64_t generation_ = 1, now_ = 0, next_query_ = 0, min_evict_at_ = std::numeric_limits<std::uint64_t>::max();

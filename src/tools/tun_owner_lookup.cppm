@@ -1,6 +1,7 @@
 // Shared TUN clock & socket-owner metadata lookup helpers.
 export module cli.tun_owner_lookup;
 import std;
+import containers.cache_index;
 import containers.inplace_vector;
 import platform.process_owner;
 import rules;
@@ -67,16 +68,17 @@ export namespace cli::tun_enabled {
             }
         };
         struct Entry {
+            Key key{};
             std::optional<TunOwnerInfo> info;
             std::uint64_t expires_ms = 0;
             bool has_process = false;
         };
         static constexpr std::size_t max_entries = 1024;
         static constexpr std::uint64_t ttl_ms = 5000;
-        std::unordered_map<Key, Entry, KeyHash> map_;
-        std::deque<Key> order_;
+        containers::ClockTable<Entry> table_;
     public:
-        [[nodiscard]] auto size() const noexcept -> std::size_t { return map_.size(); }
+        explicit TunUdpOwnerCache(std::size_t capacity = max_entries) : table_(capacity) {}
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return table_.size(); }
         auto lookup_or_query(std::uint64_t now_ms_val, std::span<std::uint8_t const> local_ip, std::uint16_t local_port,
             std::span<std::uint8_t const> remote_ip, std::uint16_t remote_port,
             rules::RouteMatcher const& policy, auto const* ordered) -> std::optional<TunOwnerInfo> {
@@ -85,19 +87,22 @@ export namespace cli::tun_enabled {
             if (!need_uid && !need_process) return {};
             auto lip = platform::normalize_socket_ip(local_ip);
             if (!lip || local_port == 0) return {};
+            if (table_.capacity() == 0)
+                return lookup_tun_owner(true, local_ip, local_port, remote_ip, remote_port, policy, ordered);
             Key key{lip->size, lip->bytes, local_port};
-            if (auto it = map_.find(key); it != map_.end() && now_ms_val < it->second.expires_ms) {
-                if (!need_process || it->second.has_process) return it->second.info;
-            }
-            auto info = lookup_tun_owner(true, local_ip, local_port, remote_ip, remote_port, policy, ordered);
-            auto [it, inserted] = map_.insert_or_assign(key, Entry{info, now_ms_val + ttl_ms, need_process});
-            if (inserted) {
-                order_.push_back(key);
-                while (map_.size() > max_entries && !order_.empty()) {
-                    map_.erase(order_.front());
-                    order_.pop_front();
+            auto const hash = KeyHash{}(key);
+            auto matches = [&](Entry const& e) noexcept { return e.key == key; };
+            if (auto idx = table_.find(hash, matches)) {
+                auto const& entry = table_.at(*idx);
+                if (now_ms_val < entry.expires_ms && (!need_process || entry.has_process)) {
+                    table_.touch(*idx);
+                    return entry.info;
                 }
             }
+            auto info = lookup_tun_owner(true, local_ip, local_port, remote_ip, remote_port, policy, ordered);
+            if (table_.capacity() != 0)
+                table_.upsert(hash, matches, Entry{key, info, now_ms_val + ttl_ms, need_process},
+                    [&](Entry const& e) noexcept { return now_ms_val >= e.expires_ms; });
             return info;
         }
     };

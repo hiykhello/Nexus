@@ -50,7 +50,7 @@ export namespace tcp {
         enum class Action { data, retransmit, probe, fin, fin_retry };
         auto flush(EngineStep& report) -> void;
         auto watch(std::span<std::uint8_t const> bytes) -> std::shared_ptr<packet::TcpGeneration>;
-        auto emit(PassiveConnection& flow, SendSlice const& slice, std::uint64_t now, Action action)
+        auto emit(PassiveConnection& flow, SendView const& slice, std::uint64_t now, Action action)
             -> std::expected<TransmitResult, EngineError>;
     public:
         MemoryEngine(packet::MemoryLink& link, ConnectionTable& table, std::size_t mtu = 1500)
@@ -100,7 +100,7 @@ export namespace tcp {
         enum class Action { data, retransmit, probe, fin, fin_retry };
         auto flush(EngineStep& report) -> void;
         auto watch(std::span<std::uint8_t const> bytes) -> std::shared_ptr<packet::TcpGeneration>;
-        auto emit(PassiveConnection6& flow, SendSlice const& slice, std::uint64_t now, Action action)
+        auto emit(PassiveConnection6& flow, SendView const& slice, std::uint64_t now, Action action)
             -> std::expected<TransmitResult, EngineError>;
     public:
         MemoryEngine6(packet::MemoryLink& link, ConnectionTable6& table, std::size_t mtu = 1500)

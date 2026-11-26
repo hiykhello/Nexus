@@ -4,6 +4,13 @@ import std;
 export namespace tcp {
     enum class SendError { invalid_capacity, capacity, invalid_count, invalid_ack, time_reversed, not_due };
     struct SendSlice { std::uint32_t sequence; std::vector<std::uint8_t> bytes; };
+    struct SendView {
+        std::uint32_t sequence = 0;
+        std::span<std::uint8_t const> head{};
+        std::span<std::uint8_t const> tail{};
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return head.size() + tail.size(); }
+        [[nodiscard]] auto empty() const noexcept -> bool { return head.empty() && tail.empty(); }
+    };
     // Single owner; flat circular byte ring replaces std::deque for zero per-byte pop_front overhead.
     class SendBuffer {
         std::vector<std::uint8_t> ring_;
@@ -11,6 +18,8 @@ export namespace tcp {
         std::uint32_t una_ = 0;
         SendBuffer(std::uint32_t initial, std::size_t capacity)
             : ring_(capacity), capacity_(capacity), una_(initial) {}
+        auto view_range(std::size_t offset, std::size_t length) const noexcept
+            -> std::pair<std::span<std::uint8_t const>, std::span<std::uint8_t const>>;
         auto copy_range(std::size_t offset, std::size_t length) const -> std::vector<std::uint8_t>;
     public:
         [[nodiscard]] static auto create(std::uint32_t initial, std::size_t capacity)
@@ -18,6 +27,8 @@ export namespace tcp {
         [[nodiscard]] auto enqueue(std::span<std::uint8_t const> bytes) -> std::expected<void, SendError>;
         [[nodiscard]] auto unsent(std::size_t maximum) const -> SendSlice;
         [[nodiscard]] auto retransmit(std::size_t maximum) const -> SendSlice;
+        [[nodiscard]] auto unsent_view(std::size_t maximum) const noexcept -> SendView;
+        [[nodiscard]] auto retransmit_view(std::size_t maximum) const noexcept -> SendView;
         [[nodiscard]] auto mark_sent(std::size_t count) noexcept -> std::expected<void, SendError>;
         [[nodiscard]] auto acknowledge(std::uint32_t acknowledgement) noexcept -> std::expected<std::size_t, SendError>;
         auto release_storage() noexcept -> void { std::vector<std::uint8_t>{}.swap(ring_); capacity_ = 0; }
@@ -47,9 +58,12 @@ export namespace tcp {
         [[nodiscard]] auto enqueue(std::span<std::uint8_t const> bytes) -> std::expected<void, SendError> { return buffer_.enqueue(bytes); }
         [[nodiscard]] auto unsent(std::size_t maximum) const -> SendSlice { return buffer_.unsent(maximum); }
         [[nodiscard]] auto retransmit(std::size_t maximum) const -> SendSlice { return buffer_.retransmit(maximum); }
+        [[nodiscard]] auto unsent_view(std::size_t maximum) const noexcept -> SendView { return buffer_.unsent_view(maximum); }
+        [[nodiscard]] auto retransmit_view(std::size_t maximum) const noexcept -> SendView { return buffer_.retransmit_view(maximum); }
         [[nodiscard]] auto sent(std::size_t count, std::uint64_t now) noexcept -> std::expected<void, SendError>;
         [[nodiscard]] auto acknowledge(std::uint32_t ack, std::uint64_t now) noexcept -> std::expected<std::size_t, SendError>;
         [[nodiscard]] auto due(std::uint64_t now, std::size_t maximum) -> std::expected<std::optional<SendSlice>, SendError>;
+        [[nodiscard]] auto due_view(std::uint64_t now, std::size_t maximum) noexcept -> std::expected<std::optional<SendView>, SendError>;
         [[nodiscard]] auto retransmitted(std::uint64_t now) noexcept -> std::expected<void, SendError>;
         auto release_storage() noexcept -> void { buffer_.release_storage(); }
         [[nodiscard]] auto deadline() const noexcept -> std::optional<std::uint64_t> { return deadline_; }

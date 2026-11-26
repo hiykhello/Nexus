@@ -180,7 +180,7 @@ namespace relay::udp_runtime {
                 [this,&slot](std::exception_ptr) noexcept {close(slot);slot.reader=false;slot.reader_done.set();--active_;})(read_loop(slot));}
             catch (...) {slot.reader=false;slot.reader_done.set();--active_;throw;}
         }
-        auto connect_slot(Slot& slot,Clock::time_point deadline,Sink const& sink) -> capy::task<bool> {
+        auto connect_slot(Slot& slot,Clock::time_point deadline,Sink sink={}) -> capy::task<bool> {
             auto connected=co_await slot.tunnel->connect(address(slot.target),deadline);
             if(stopped_ || slot.closed || connected!=PacketConnectResult::connected)co_return false;
             slot.transport=slot.tunnel->transport();
@@ -193,9 +193,9 @@ namespace relay::udp_runtime {
                 }
             } else co_return false;
             if(stopped_ || slot.closed || Clock::now()>=deadline)co_return false;
-            slot.connected=true;slot.sink=sink;start_reader(slot);co_return true;
+            slot.connected=true;if(sink)slot.sink=std::move(sink);start_reader(slot);co_return true;
         }
-        auto rotate_xudp(Slot& slot,Clock::time_point deadline,Sink const& sink) -> capy::task<bool> {
+        auto rotate_xudp(Slot& slot,Clock::time_point deadline,Sink sink={}) -> capy::task<bool> {
             using namespace std::chrono_literals;
             slot.rotating=true;slot.connected=false;slot.xudp->cancel();
             while(slot.reader && !stopped_ && !slot.closed && Clock::now()<deadline) {
@@ -209,7 +209,7 @@ namespace relay::udp_runtime {
             if(!slot.tunnel)co_return false;
             slot.rotating=false;
             slot.active_deadline=slot.tunnel->connection_deadline(deadline);
-            co_return co_await connect_slot(slot,*slot.active_deadline,sink);
+            co_return co_await connect_slot(slot,*slot.active_deadline,std::move(sink));
         }
         auto write_loop(Slot& slot) -> capy::task<> {
             while(!stopped_ && !slot.closed && !slot.queue.empty()) {
@@ -219,7 +219,7 @@ namespace relay::udp_runtime {
                 slot.active_deadline=job.deadline;
                 if(!slot.connected) {
                     slot.active_deadline=slot.tunnel->connection_deadline(job.deadline);
-                    if(!co_await connect_slot(slot,*slot.active_deadline,job.sink)){close(slot);break;}
+                    if(!co_await connect_slot(slot,*slot.active_deadline,std::move(job.sink))){close(slot);break;}
                 }
                 if(stopped_ || slot.closed || Clock::now()>=*slot.active_deadline){slot.active_deadline.reset();continue;}
                 auto packet=slot.dispatcher->take_selected(job.token,job.target,Clock::now());
@@ -237,7 +237,7 @@ namespace relay::udp_runtime {
                     if(!sent) {
                         auto result=co_await slot.xudp->open(xaddress(packet->target),packet->payload);
                         if(!result && result.error()==xudp::ClientIoError::exhausted) {
-                            if(!co_await rotate_xudp(slot,job.deadline,job.sink)){close(slot);break;}
+                            if(!co_await rotate_xudp(slot,job.deadline,std::move(job.sink))){close(slot);break;}
                             result=co_await slot.xudp->open(xaddress(packet->target),packet->payload);
                         }
                         if(result){slot.xudp_id=*result;sent=true;}

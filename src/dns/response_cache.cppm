@@ -13,7 +13,7 @@ export namespace dns {
         struct Pending { CacheKey key; std::uint64_t query; bool sent_edns=false; };
         struct Entry { CacheKey key; Response response; std::uint64_t stored,expires; std::size_t cost=0; bool sent_edns=false; };
         mutable std::mutex mutex_;
-        std::vector<Pending> pending_;
+        detail::PendingIndex<Pending> pending_;
         containers::IntrusiveLruTable<Entry> entries_;
         std::size_t capacity_,byte_capacity_,total_bytes_=0;
         std::uint64_t generation_=1,next_=0,last_now_=0;
@@ -81,18 +81,19 @@ export namespace dns {
         auto operator=(ResponseCache const&) -> ResponseCache& = delete;
         [[nodiscard]] auto begin(CacheKey key,bool sent_edns=false) -> std::expected<CacheToken,CacheError> {
             if (!normalize(key)) return std::unexpected(CacheError::invalid_key);
+            auto const h=entry_hash(key,sent_edns);
             std::lock_guard lock(mutex_);
             if (pending_.size()>=4096) return std::unexpected(CacheError::query_limit);
             if (next_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(CacheError::generation_exhausted);
-            auto next=next_+1;pending_.push_back({std::move(key),next,sent_edns});next_=next;
+            auto next=next_+1;pending_.emplace(next,h,Pending{std::move(key),next,sent_edns});next_=next;
             return CacheToken{generation_,next};
         }
         auto cancel(CacheToken token) -> std::expected<void,CacheError> {
             std::lock_guard lock(mutex_);
             if (token.generation!=generation_) return std::unexpected(CacheError::stale_generation);
-            auto it=std::ranges::find(pending_,token.query,&Pending::query);
-            if (it==pending_.end()) return std::unexpected(CacheError::stale_query);
-            pending_.erase(it);return {};
+            auto idx=pending_.find_query(token.query);
+            if (!idx) return std::unexpected(CacheError::stale_query);
+            pending_.erase(*idx);return {};
         }
         auto publish(CacheKey key,Response const& source,std::uint64_t now,CacheToken token) -> std::expected<void,CacheError> {
             if (!normalize(key) || source.wire.size()<2) return std::unexpected(CacheError::invalid_key);
@@ -102,12 +103,12 @@ export namespace dns {
             auto ttl=lifetime(*response,{key.name,key.type});
             std::lock_guard lock(mutex_);
             if (token.generation!=generation_) return std::unexpected(CacheError::stale_generation);
-            auto it=std::ranges::find(pending_,token.query,&Pending::query);
-            if (it==pending_.end() || !same(it->key,key)) return std::unexpected(CacheError::stale_query);
+            auto idx=pending_.find_query(token.query);
+            if (!idx || !same(pending_.at(*idx).key,key)) return std::unexpected(CacheError::stale_query);
             now=std::max(now,last_now_);last_now_=now;
             if (!capacity_) return std::unexpected(CacheError::disabled);
             if (ttl && *ttl>(std::numeric_limits<std::uint64_t>::max()-now)/1000) return std::unexpected(CacheError::invalid_answer);
-            auto sent_edns=it->sent_edns;
+            auto sent_edns=pending_.at(*idx).sent_edns;
             auto h=entry_hash(key,sent_edns);
             auto existing=entries_.find(h,[&](Entry const& entry){return same(entry.key,key) && entry.sent_edns==sent_edns;});
             if (!ttl) { if (existing) erase_idx(*existing); }
@@ -119,11 +120,13 @@ export namespace dns {
                     while (!entries_.empty() && (entries_.size()>=capacity_ || total_bytes_>byte_capacity_-replacement.cost)) {
                         erase_idx(*entries_.lru());
                     }
-                    total_bytes_+=replacement.cost;
+                    auto const cost=replacement.cost;
                     (void)entries_.insert_front(h,std::move(replacement));
+                    total_bytes_+=cost;
                 }
             }
-            std::erase_if(pending_,[&](Pending const& p){return p.query<=token.query && p.sent_edns==sent_edns && same(p.key,key);});
+            pending_.erase_key_if(h,[&](std::uint64_t q,Pending const& p){return q<=token.query && p.sent_edns==sent_edns && same(p.key,key);},
+                [](Pending const&) {});
             return {};
         }
         auto lookup_entry(CacheKey key,std::uint64_t now,std::uint16_t id,bool sent_edns=false) -> std::expected<std::optional<Cached>,CacheError> {

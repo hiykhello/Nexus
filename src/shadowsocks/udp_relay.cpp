@@ -13,61 +13,80 @@ namespace shadowsocks {
     }
     UdpRelay::~UdpRelay() { clear(); }
     auto UdpRelay::close(std::array<std::uint8_t,8> session) noexcept -> void {
-        auto it=sockets_.find(session);
-        if (it!=sockets_.end()) { it->second.socket.close(); sockets_.erase(it); }
+        constexpr auto kNull=udp_detail::IntrusiveU64Table<Entry>::kNull;
+        auto found=sockets_.find(udp_detail::id_to_u64(session));
+        if (!found) return;
+        auto idx=*found;
+        if (cursor_==idx) {
+            auto next=sockets_.next_of(idx);
+            cursor_=(next!=kNull) ? next : (sockets_.head()!=idx ? sockets_.head() : kNull);
+        }
+        sockets_.at(idx).socket.close();
+        sockets_.erase(idx);
+        if (sockets_.empty()) cursor_=kNull;
     }
     auto UdpRelay::clear() noexcept -> void {
-        for (auto& [id,entry]:sockets_) entry.socket.close();
-        sockets_.clear(); cursor_.reset();
+        constexpr auto kNull=udp_detail::IntrusiveU64Table<Entry>::kNull;
+        for (auto cur=sockets_.head();cur!=kNull;cur=sockets_.next_of(cur)) sockets_.at(cur).socket.close();
+        sockets_.clear();
+        cursor_=kNull;
     }
     auto UdpRelay::send(std::array<std::uint8_t,8> session,UdpPeer target,std::span<std::uint8_t const> payload)
         -> std::expected<void,UdpRelayFailure> {
         if (!valid(target) || (target.family==6 && std::ranges::all_of(std::span{target.address}.first<10>(),[](auto byte){return byte==0;}) && target.address[10]==255 && target.address[11]==255))
             return std::unexpected(failure(UdpRelayError::invalid_target));
-        auto it=sockets_.find(session);
-        bool fresh=it==sockets_.end();
+        auto const key=udp_detail::id_to_u64(session);
+        auto found=sockets_.find(key);
+        bool fresh=!found.has_value();
+        std::uint32_t idx=0;
         if (fresh) {
             if (max_targets_==0) return std::unexpected(failure(UdpRelayError::target_limit));
             if (sockets_.size()>=max_sessions_) return std::unexpected(failure(UdpRelayError::session_limit));
-            auto [inserted,_]=sockets_.try_emplace(session,binding_); it=inserted;
+            idx=sockets_.emplace_back(key,binding_);
+        } else {
+            idx=*found;
         }
-        auto& targets=it->second.targets;
-        if (!targets.contains(target) && targets.size()>=max_targets_) return std::unexpected(failure(UdpRelayError::target_limit));
-        std::set<UdpPeer>::iterator position;
-        bool added=false;
-        try { auto result=targets.insert(target); position=result.first; added=result.second; }
-        catch (...) { if (fresh) close(session); throw; }
-        auto sent=it->second.socket.send(endpoint(target),payload);
+        auto& entry=sockets_.at(idx);
+        auto& targets=entry.targets;
+        auto pos=std::ranges::lower_bound(targets,target);
+        bool const exists=pos!=targets.end() && *pos==target;
+        if (!exists && targets.size()>=max_targets_) return std::unexpected(failure(UdpRelayError::target_limit));
+        if (!exists) {
+            try { pos=targets.insert(pos,target); }
+            catch (...) { if (fresh) close(session); throw; }
+        }
+        auto sent=entry.socket.send(endpoint(target),payload);
         if (!sent) {
             auto e=system_failure(sent.error());
-            if (added) targets.erase(position);
+            if (!exists) targets.erase(pos);
             if (fresh) close(session);
             return std::unexpected(e);
         }
         return {};
     }
     auto UdpRelay::poll() -> std::expected<std::optional<UdpRelayReply>,UdpRelayFailure> {
+        constexpr auto kNull=udp_detail::IntrusiveU64Table<Entry>::kNull;
         if (sockets_.empty()) return std::optional<UdpRelayReply>{};
-        auto it=cursor_ ? sockets_.upper_bound(*cursor_) : sockets_.begin();
-        if (it==sockets_.end()) it=sockets_.begin();
+        auto cur=cursor_!=kNull ? cursor_ : sockets_.head();
         auto count=std::min<std::size_t>(sockets_.size(),64);
         std::array<std::uint8_t,65536> buffer{};
         for (std::size_t i=0;i<count;++i) {
-            auto current=it++;
-            if (it==sockets_.end()) it=sockets_.begin();
-            cursor_=current->first;
-            auto received=current->second.socket.receive(buffer);
+            auto next=sockets_.next_of(cur);
+            if (next==kNull) next=sockets_.head();
+            cursor_=next;
+            auto& entry=sockets_.at(cur);
+            auto const session=udp_detail::u64_to_id(sockets_.key_of(cur));
+            auto received=entry.socket.receive(buffer);
             if (!received) {
                 auto error=system_failure(received.error());
-                auto session=current->first;
                 close(session);
                 return std::unexpected(error);
             }
-            if (!*received || !(**received).valid) continue;
+            if (!*received || !(**received).valid) { cur=next; continue; }
             auto const& packet=**received;
             auto source=peer(packet.source);
-            if (!current->second.targets.contains(source)) continue;
-            return std::optional{UdpRelayReply{current->first,source,{buffer.begin(),buffer.begin()+packet.size}}};
+            if (!std::ranges::binary_search(entry.targets,source)) { cur=next; continue; }
+            return std::optional{UdpRelayReply{session,source,{buffer.begin(),buffer.begin()+packet.size}}};
         }
         return std::optional<UdpRelayReply>{};
     }

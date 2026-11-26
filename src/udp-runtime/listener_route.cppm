@@ -1,6 +1,7 @@
 // Ordered routing & DNS launch helpers for BasicUdpListener.
 export module ss_udp.listener_route;
 import std;
+import functional;
 import corosio;
 import dns.corosio_local;
 import dns.policy;
@@ -10,19 +11,19 @@ export import ss_udp.resolve;
 
 export namespace shadowsocks::detail {
     enum class UdpTunnelReplyResult { delivered, dropped, busy, error };
-    using UdpTunnelReplySink = std::function<UdpTunnelReplyResult(UdpSessionHandle const&, UdpPeer, std::span<std::uint8_t const>)>;
+    using UdpTunnelReplySink = functional::move_only_function<UdpTunnelReplyResult(UdpSessionHandle const&, UdpPeer, std::span<std::uint8_t const>)>;
 
     struct UdpOrderedRouting {
         std::shared_ptr<rules::RouteProgram const> program;
         std::size_t fallback = 0;
         bool skip_unknown = false;
         std::chrono::milliseconds sniff_timeout{200};
-        std::function<bool(std::size_t)> allows;
-        std::function<std::expected<void, UdpResolveError>(udp_io::io_context&, UdpDispatcher&, std::uint64_t, std::size_t,
-            std::span<UdpPeer const>, std::optional<std::string_view>, std::chrono::steady_clock::time_point, UdpTunnelReplySink)> send;
-        std::function<void()> stop;
-        std::function<bool()> drained;
-        std::function<void()> finish;
+        functional::move_only_function<bool(std::size_t) const> allows;
+        functional::move_only_function<std::expected<void, UdpResolveError>(udp_io::io_context&, UdpDispatcher&, std::uint64_t, std::size_t,
+            std::span<UdpPeer const>, std::optional<std::string_view>, std::chrono::steady_clock::time_point, UdpTunnelReplySink) const> send;
+        functional::move_only_function<void() const> stop;
+        functional::move_only_function<bool() const> drained;
+        functional::move_only_function<void() const> finish;
     };
 
     struct ListenerRouteOps {

@@ -22,6 +22,7 @@ import net.datagram_driver;
 import net.udp_connect;
 import hysteria2.transport_options;
 import platform.socket_options;
+import utility;
 import crypto;
 import ngtcp2;
 import nghttp3;
@@ -84,12 +85,14 @@ export namespace naive {
             bool is_datagram = false;
         };
 
-        std::map<std::int64_t, Stream> streams;
+        utility::FlatMap<std::int64_t, Stream> streams;
         std::deque<OutboundPacket> tx_dgrams;
         bool dead = false, goaway = false;
 
-        H3ConnectHooks(Registry& registry, quic::SessionHandle owner, capy::async_event& event) noexcept
-            : registry_(registry), owner_(owner), event_(event) {}
+        H3ConnectHooks(Registry& registry, quic::SessionHandle owner, capy::async_event& event)
+            : registry_(registry), owner_(owner), event_(event) {
+            streams.reserve(std::min<std::size_t>(Streams, 16));
+        }
         static constexpr auto stream_capacity() noexcept -> std::size_t { return Streams; }
         auto changed() noexcept -> void { event_.set(); }
         auto stopping() noexcept -> void { dead = true; tx_dgrams.clear(); changed(); }
@@ -327,7 +330,7 @@ export namespace naive {
                 if (bundle_.app.h3().terminal_error()) { bundle_.app.request_stop(); driver_.notify(); }
                 return false;
             }
-            s->fin_requested = !body;
+            if (auto* cur = state()) cur->fin_requested = !body;
             driver_.notify();
             return true;
         }

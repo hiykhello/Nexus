@@ -71,7 +71,8 @@ class BasicSnapshotState {
     Snapshot* retired_=nullptr;
     std::atomic<Snapshot*> current_;
     mutable std::mutex mutex_;
-    std::vector<Pending> pending_;
+    PendingIndex<Pending> pending_;
+    std::size_t refresh_count_=0;
 
     static auto checked_readers(std::size_t readers) -> std::size_t {
         // Up to sixteen configured listeners with up to 256 workers each, plus
@@ -368,17 +369,19 @@ public:
     }
     [[nodiscard]] auto begin_query(Key key) -> std::expected<Token,Error> {
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
+        auto const hash=SnapshotKeyHash{}(key);
         std::lock_guard lock(mutex_);
         if (pending_.size()==4096) return std::unexpected(Error::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(Error::generation_exhausted);
         if (!compact_key_storage(key)) return std::unexpected(Error::invalid_key);
         auto query=next_query_+1;
-        pending_.push_back({std::move(key),query,{}}); next_query_=query;
+        pending_.emplace(query,hash,Pending{std::move(key),query,{}}); next_query_=query;
         return Token{current_.load()->generation,query};
     }
     [[nodiscard]] auto begin_refresh(Key key,std::uint64_t now,std::size_t maximum)
         -> std::expected<std::optional<Token>,Error> {
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
+        auto const hash=SnapshotKeyHash{}(key);
         std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);
         Builder builder{*this,clone(*current)};
         if (auto result=advance(*builder.snapshot,now); !result) return std::unexpected(result.error());
@@ -387,31 +390,32 @@ public:
         if (index==slots) return std::optional<Token>{};
         auto* node=current->values[index];
         if (node->negative || now<node->expires || stale_window_ms_-(now-node->expires)<1000) return std::optional<Token>{};
-        if (std::ranges::any_of(pending_,[&](auto const& item) { return same(item.key,key); })) return std::optional<Token>{};
-        auto refreshes=std::ranges::count_if(pending_,[](auto const& item) { return item.refresh_revision.has_value(); });
-        if (static_cast<std::size_t>(refreshes)>=maximum) return std::optional<Token>{};
+        if (pending_.has_key(hash,[&](Pending const& item) { return same(item.key,key); })) return std::optional<Token>{};
+        if (refresh_count_>=maximum) return std::optional<Token>{};
         if (pending_.size()==4096) return std::unexpected(Error::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(Error::generation_exhausted);
         if (!compact_key_storage(key)) return std::unexpected(Error::invalid_key);
         auto query=next_query_+1;
-        pending_.push_back({std::move(key),query,node->revision}); next_query_=query;
+        pending_.emplace(query,hash,Pending{std::move(key),query,node->revision}); ++refresh_count_; next_query_=query;
         return std::optional<Token>{Token{current->generation,query}};
     }
     [[nodiscard]] auto cancel_query(Token token) -> std::expected<void,Error> {
         std::lock_guard lock(mutex_);
         if (token.generation!=current_.load()->generation) return std::unexpected(Error::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end()) return std::unexpected(Error::stale_query);
-        pending_.erase(pending); return {};
+        auto pending=pending_.find_query(token.query);
+        if (!pending) return std::unexpected(Error::stale_query);
+        if (pending_.at(*pending).refresh_revision) --refresh_count_;
+        pending_.erase(*pending); return {};
     }
     [[nodiscard]] auto publish(Key key,Answer answer,std::uint64_t now,Token token) -> std::expected<void,Error> {
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
         if (!valid_answer(answer,key.type)) return std::unexpected(Error::invalid_answer);
+        auto const hash=SnapshotKeyHash{}(key);
         std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);
         if (current->initialized && now<current->now) return std::unexpected(Error::time_reversed);
         if (token.generation!=current->generation) return std::unexpected(Error::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end() || !same(pending->key,key)) return std::unexpected(Error::stale_query);
+        auto pending=pending_.find_query(token.query);
+        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(Error::stale_query);
         if (!capacity_) return std::unexpected(Error::disabled);
         auto duration=std::uint64_t(*answer.ttl)*1000;
         if (duration>std::numeric_limits<std::uint64_t>::max()-now) return std::unexpected(Error::invalid_answer);
@@ -421,43 +425,48 @@ public:
 #ifdef DNS_SEMANTIC_TEST_HOOK
         snapshot_test::after_advance_for_test();
 #endif
-        if (!refresh_current(*builder.snapshot,*pending)) { builder.publish(); return std::unexpected(Error::stale_query); }
+        if (!refresh_current(*builder.snapshot,pending_.at(*pending))) { builder.publish(); return std::unexpected(Error::stale_query); }
         if (!duration) remove(*builder.snapshot,key);
         else if (auto result=install(*builder.snapshot,key,std::move(answer),{},now+duration,token.query); !result) return result;
-        std::erase_if(pending_,[&](Pending const& item) { return item.query<=token.query && same(item.key,key); });
+        pending_.erase_key_if(hash,[&](std::uint64_t q,Pending const& item) { return q<=token.query && same(item.key,key); },
+            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
         builder.publish(); return {};
     }
     [[nodiscard]] auto publish_negative(Key key,Negative kind,std::uint32_t ttl,std::uint64_t now,Token token)
         -> std::expected<void,Error> {
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
+        auto const hash=SnapshotKeyHash{}(key);
         std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);
         if (current->initialized && now<current->now) return std::unexpected(Error::time_reversed);
         if (token.generation!=current->generation) return std::unexpected(Error::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end() || !same(pending->key,key)) return std::unexpected(Error::stale_query);
+        auto pending=pending_.find_query(token.query);
+        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(Error::stale_query);
         if (!capacity_) return std::unexpected(Error::disabled);
         auto duration=std::uint64_t(ttl)*1000;
         if (duration>std::numeric_limits<std::uint64_t>::max()-now) return std::unexpected(Error::invalid_answer);
         Builder builder{*this,clone(*current)};
         if (auto result=advance(*builder.snapshot,now); !result) return result;
-        if (!refresh_current(*builder.snapshot,*pending)) { builder.publish(); return std::unexpected(Error::stale_query); }
+        if (!refresh_current(*builder.snapshot,pending_.at(*pending))) { builder.publish(); return std::unexpected(Error::stale_query); }
         if (!duration) remove(*builder.snapshot,key);
         else if (auto result=install(*builder.snapshot,key,{},kind,now+duration,token.query); !result) return result;
-        std::erase_if(pending_,[&](Pending const& item) { return item.query<=token.query && same(item.key,key); });
+        pending_.erase_key_if(hash,[&](std::uint64_t q,Pending const& item) { return q<=token.query && same(item.key,key); },
+            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
         builder.publish(); return {};
     }
     [[nodiscard]] auto invalidate(Key key,std::uint64_t now,Token token) -> std::expected<void,Error> {
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
+        auto const hash=SnapshotKeyHash{}(key);
         std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);
         if (current->initialized && now<current->now) return std::unexpected(Error::time_reversed);
         if (token.generation!=current->generation) return std::unexpected(Error::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end() || !same(pending->key,key)) return std::unexpected(Error::stale_query);
+        auto pending=pending_.find_query(token.query);
+        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(Error::stale_query);
         Builder builder{*this,clone(*current)};
         if (auto result=advance(*builder.snapshot,now); !result) return result;
-        if (!refresh_current(*builder.snapshot,*pending)) { builder.publish(); return std::unexpected(Error::stale_query); }
+        if (!refresh_current(*builder.snapshot,pending_.at(*pending))) { builder.publish(); return std::unexpected(Error::stale_query); }
         remove(*builder.snapshot,key);
-        std::erase_if(pending_,[&](Pending const& item) { return item.query<=token.query && same(item.key,key); });
+        pending_.erase_key_if(hash,[&](std::uint64_t q,Pending const& item) { return q<=token.query && same(item.key,key); },
+            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
         builder.publish(); return {};
     }
     [[nodiscard]] auto clear(std::uint64_t now) -> std::expected<void,Error> {
@@ -467,7 +476,7 @@ public:
         Builder builder{*this,acquire()};
         builder.snapshot->generation=current->generation+1;
         builder.snapshot->now=now; builder.snapshot->initialized=true;
-        pending_.clear(); next_query_=0; builder.publish(); return {};
+        pending_.clear(); refresh_count_=0; next_query_=0; builder.publish(); return {};
     }
 #ifdef DNS_SEMANTIC_TEST_HOOK
     [[nodiscard]] auto current_for_test() const noexcept -> void const* { return current_.load(); }

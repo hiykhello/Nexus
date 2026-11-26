@@ -95,6 +95,7 @@ export namespace nghttp2 {
     using ::nghttp2_session_callbacks_set_before_frame_send_callback;
     using ::nghttp2_session_callbacks_set_on_frame_not_send_callback;
     using ::nghttp2_session_get_stream_user_data;
+    using ::nghttp2_session_set_stream_user_data;
     using ::nghttp2_session_set_next_stream_id;
     using ::nghttp2_submit_headers;
     using ::nghttp2_submit_push_promise;

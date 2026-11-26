@@ -86,7 +86,7 @@ namespace dns {
             std::optional<Connector> connector_;
             std::optional<Stream> stream_;
             TlsDnsStream routed_;
-            std::map<std::uint16_t,std::shared_ptr<Request>> pending_;
+            std::vector<std::pair<std::uint16_t,std::shared_ptr<Request>>> pending_;
             std::deque<std::shared_ptr<Request>> writes_;
             std::bitset<65536> used_;
             std::size_t transactions_=0;
@@ -115,14 +115,15 @@ namespace dns {
                     Bytes bytes(size);
                     if (!co_await fill(bytes)) {close(Error::transport); break;}
                     auto id=static_cast<std::uint16_t>((unsigned(bytes[0])<<8)|bytes[1]);
-                    auto it=pending_.find(id);
+                    auto it=std::ranges::find(pending_,id,[](auto const& entry){return entry.first;});
                     if (!used_.test(id) || (it!=pending_.end() && !it->second->submitted)) {
                         close(Error::protocol);
                         break;
                     }
                     if (it==pending_.end()) continue;
                     auto request=std::move(it->second);
-                    pending_.erase(it);
+                    if (it!=std::prev(pending_.end())) *it=std::move(pending_.back());
+                    pending_.pop_back();
                     served_=true;
                     if (pending_.empty()) {
                         quiescing_=true;
@@ -208,7 +209,10 @@ namespace dns {
                 }
             }
             auto leave(std::shared_ptr<Request> const& request) noexcept -> void {
-                if (!pending_.erase(request->id)) return;
+                auto it=std::ranges::find(pending_,request->id,[](auto const& entry){return entry.first;});
+                if (it==pending_.end()) return;
+                if (it!=std::prev(pending_.end())) *it=std::move(pending_.back());
+                pending_.pop_back();
                 std::erase(writes_,request);
                 if (pending_.empty()) close(Error::canceled);
             }
@@ -218,7 +222,7 @@ namespace dns {
                 request->outgoing[2]=static_cast<std::uint8_t>(id>>8);
                 request->outgoing[3]=static_cast<std::uint8_t>(id);
                 writes_.push_back(request);
-                try {pending_.emplace(id,request);}
+                try {pending_.emplace_back(id,request);}
                 catch (...) { writes_.pop_back(); throw; }
                 used_.set(id);
                 ++transactions_;

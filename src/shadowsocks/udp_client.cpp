@@ -44,12 +44,16 @@ namespace shadowsocks {
         auto packet=decode_udp_packet(std::span{key_}.first(key_size_),UdpDirection::server,wire,wall,client_,method_);
         if (!packet) return std::unexpected(packet.error()==UdpPacketError::session_collision ?
             UdpClientError::session_conflict : UdpClientError::packet);
-        auto it=servers_.find(packet->session_id);
-        if (it==servers_.end()) {
+        auto const key=udp_detail::id_to_u64(packet->session_id);
+        auto found=servers_.find(key);
+        std::uint32_t idx=0;
+        if (!found) {
             if (servers_.size()>=capacity_) return std::unexpected(UdpClientError::full);
-            it=servers_.try_emplace(packet->session_id).first;
+            idx=servers_.emplace_front(key);
+        } else {
+            idx=*found;
         }
-        switch (it->second.commit(packet->packet_id)) {
+        switch (servers_.at(idx).commit(packet->packet_id)) {
             case UdpReplayResult::duplicate: return std::unexpected(UdpClientError::duplicate);
             case UdpReplayResult::too_old: return std::unexpected(UdpClientError::too_old);
             case UdpReplayResult::fresh: return std::move(*packet);
@@ -88,45 +92,56 @@ namespace shadowsocks {
             if (value==std::numeric_limits<std::uint64_t>::max()) { exhausted_=true; next_.reset(); }
             else next_=value+1;
             Id id{}; for (std::size_t i=0;i<id.size();++i) id[i]=static_cast<std::uint8_t>(value>>(56-8*i));
-            if (clients_.contains(id) || servers_.contains(id)) continue;
+            auto const key=udp_detail::id_to_u64(id);
+            if (clients_.contains(key) || servers_.contains(key)) continue;
             // Reserve before allocation; an exception may waste an ID, never reuse it.
-            clients_.insert(id);
-            active_.emplace(id,std::make_unique<UdpClientSession>(std::span{key_}.first(key_size_),id,server_limit_));
+            clients_.insert(key);
+            (void)active_.insert_front(udp_detail::hash_u64(key),
+                ActiveSession{key,std::make_unique<UdpClientSession>(std::span{key_}.first(key_size_),id,server_limit_)});
             return id;
         }
         return std::unexpected(UdpClientError::exhausted);
     }
-    auto UdpClientPool::close(Id id) noexcept -> bool { return active_.erase(id)!=0; }
+    auto UdpClientPool::close(Id id) noexcept -> bool {
+        auto const key=udp_detail::id_to_u64(id);
+        auto found=active_.find(udp_detail::hash_u64(key),[key](auto const& e){ return e.key==key; });
+        if (!found) return false;
+        active_.erase(*found);
+        return true;
+    }
     auto UdpClientPool::request(Id id,std::span<std::uint8_t const> address,std::span<std::uint8_t const> payload,
         std::span<std::uint8_t const> padding,Clock::time_point now,std::uint64_t wall)
         -> std::expected<std::vector<std::uint8_t>,UdpClientError> {
         if (failed_) return std::unexpected(UdpClientError::failed);
-        auto it=active_.find(id);
-        if (it==active_.end()) return std::unexpected(UdpClientError::missing);
+        auto const key=udp_detail::id_to_u64(id);
+        auto found=active_.find(udp_detail::hash_u64(key),[key](auto const& e){ return e.key==key; });
+        if (!found) return std::unexpected(UdpClientError::missing);
         if (!advance(now,wall)) return std::unexpected(UdpClientError::time_reversed);
-        return it->second->request(address,payload,padding,now,wall);
+        return active_.at(*found).session->request(address,payload,padding,now,wall);
     }
     auto UdpClientPool::receive(Id id,std::span<std::uint8_t const> wire,Clock::time_point now,std::uint64_t wall)
         -> std::expected<UdpPacket,UdpClientError> {
         if (failed_) return std::unexpected(UdpClientError::failed);
-        auto it=active_.find(id);
-        if (it==active_.end()) return std::unexpected(UdpClientError::missing);
+        auto const key=udp_detail::id_to_u64(id);
+        auto found=active_.find(udp_detail::hash_u64(key),[key](auto const& e){ return e.key==key; });
+        if (!found) return std::unexpected(UdpClientError::missing);
         if (!advance(now,wall)) return std::unexpected(UdpClientError::time_reversed);
-        auto packet=it->second->receive(wire,now,wall);
+        auto packet=active_.at(*found).session->receive(wire,now,wall);
         if (!packet) {
             if (packet.error()==UdpClientError::session_conflict || packet.error()==UdpClientError::time_reversed) failed_=true;
             return std::unexpected(packet.error());
         }
-        auto server=servers_.find(packet->session_id);
-        if (clients_.contains(packet->session_id) || (server!=servers_.end() && server->second!=id)) {
+        auto const srv_key=udp_detail::id_to_u64(packet->session_id);
+        auto server=servers_.find(srv_key);
+        if (clients_.contains(srv_key) || (server && *server!=key)) {
             failed_=true; return std::unexpected(UdpClientError::session_conflict);
         }
-        if (server==servers_.end()) {
+        if (!server) {
             if (servers_.size()>=server_limit_) { failed_=true; return std::unexpected(UdpClientError::full); }
             // The per-session replay window is already committed. If recording
             // the global identity throws, no other session may continue with
             // an incomplete history.
-            try { servers_.emplace(packet->session_id,id); }
+            try { (void)servers_.emplace(srv_key,key); }
             catch (...) { failed_=true; throw; }
         }
         return std::move(*packet);

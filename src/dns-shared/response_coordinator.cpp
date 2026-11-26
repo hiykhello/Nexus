@@ -50,9 +50,14 @@ namespace dns_hp_experiment {
         (void)co_await capy::when_all(work(entry),monitor(entry));co_return capy::results<>{};
     }
     auto ResponseFlightOwner::done(std::uint64_t id) noexcept -> void {
-        auto it=active_.find(id);if (it==active_.end()) return;
-        auto* flight=it->second->flight;group_.complete_raw(flight,std::unexpected(d::detail::ResolveError::state));
-        active_.erase(it);group_.finish(flight);
+        auto it=std::ranges::lower_bound(active_,id,{},[](auto const& item){return item.first;});
+        if (it==active_.end() || it->first!=id) return;
+        auto entry=std::move(it->second);
+        active_.erase(it);
+        auto* flight=entry->flight;
+        group_.complete_raw(flight,std::unexpected(d::detail::ResolveError::state));
+        entry.reset();
+        group_.finish(flight);
     }
     auto ResponseFlightOwner::start(FlightGroup::Flight* flight) noexcept -> void {
         using Error=d::detail::ResolveError;
@@ -62,11 +67,15 @@ namespace dns_hp_experiment {
         auto id=++next_;
         try {
             auto entry=std::make_unique<Entry>(flight,context_,cache_);
-            auto [it,inserted]=active_.emplace(id,std::move(entry));
-            if (!inserted) { group_.complete_raw(flight,std::unexpected(Error::state));group_.finish(flight);return; }
+            auto* raw=entry.get();
+            active_.emplace_back(id,std::move(entry));
             try { capy::run_async(context_.get_executor(),[this,id](capy::results<>) { done(id); },
-                [this,id](std::exception_ptr) noexcept { done(id); })(run(*it->second)); }
-            catch (...) { active_.erase(it);throw; }
+                [this,id](std::exception_ptr) noexcept { done(id); })(run(*raw)); }
+            catch (...) {
+                if (auto it=std::ranges::lower_bound(active_,id,{},[](auto const& item){return item.first;});
+                    it!=active_.end() && it->first==id) active_.erase(it);
+                throw;
+            }
         } catch (...) { group_.complete_raw(flight,std::unexpected(Error::state));group_.finish(flight); }
     }
     auto ResponseFlightOwner::stop() noexcept -> void { stopped_=true;for (auto& [id,entry]:active_) { group_.retire(entry->flight);entry->query.cancel(); } }

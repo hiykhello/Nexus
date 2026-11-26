@@ -7,6 +7,7 @@ module;
 
 export module relay.l3_mux;
 import std;
+import containers.ring_queue;
 import packet;
 import tcp.send;
 import tcp.receive;
@@ -58,17 +59,97 @@ export namespace relay {
         struct UdpFlow {
             std::uint16_t local_port = 0;
             bool closed = false;
-            std::deque<UdpDatagram> rx_queue;
+            containers::BoundedRing<UdpDatagram, 128> rx_queue;
             capy::async_event rx_event;
         };
 
     private:
+        // Contiguous active vector + open-addressed local_port index (backward-shift delete).
+        template<class Flow>
+        class PortTable {
+            static constexpr std::uint32_t kNull = std::numeric_limits<std::uint32_t>::max();
+            std::vector<std::shared_ptr<Flow>> items_;
+            std::vector<std::uint32_t> buckets_;
+            std::size_t mask_ = 0;
+
+            static constexpr auto hash_port(std::uint16_t port) noexcept -> std::size_t {
+                return static_cast<std::size_t>((static_cast<std::uint32_t>(port) * 2654435761u) >> 16);
+            }
+            auto insert_bucket(std::uint16_t port, std::uint32_t idx) noexcept -> void {
+                for (std::size_t pos = hash_port(port) & mask_; ; pos = (pos + 1) & mask_) {
+                    if (buckets_[pos] == kNull) { buckets_[pos] = idx; return; }
+                }
+            }
+            auto ensure_capacity(std::size_t target) -> void {
+                if (!buckets_.empty() && target * 2 <= buckets_.size()) return;
+                std::size_t bsz = buckets_.empty() ? 32 : buckets_.size() * 2;
+                while (bsz < target * 2) bsz <<= 1;
+                buckets_.assign(bsz, kNull);
+                mask_ = bsz - 1;
+                for (std::uint32_t i = 0; i < items_.size(); ++i) insert_bucket(items_[i]->local_port, i);
+            }
+            [[nodiscard]] auto find_bucket(std::uint16_t port) const noexcept -> std::size_t {
+                if (buckets_.empty() || items_.empty()) return buckets_.size();
+                for (std::size_t pos = hash_port(port) & mask_; ; pos = (pos + 1) & mask_) {
+                    auto cur = buckets_[pos];
+                    if (cur == kNull) return buckets_.size();
+                    if (items_[cur]->local_port == port) return pos;
+                }
+            }
+        public:
+            [[nodiscard]] auto empty() const noexcept -> bool { return items_.empty(); }
+            [[nodiscard]] auto items() noexcept -> std::vector<std::shared_ptr<Flow>>& { return items_; }
+            [[nodiscard]] auto items() const noexcept -> std::vector<std::shared_ptr<Flow>> const& { return items_; }
+            [[nodiscard]] auto contains(std::uint16_t port) const noexcept -> bool { return find_bucket(port) < buckets_.size(); }
+            [[nodiscard]] auto find(std::uint16_t port) const noexcept -> Flow* {
+                auto pos = find_bucket(port);
+                return pos < buckets_.size() ? items_[buckets_[pos]].get() : nullptr;
+            }
+            auto insert(std::shared_ptr<Flow> flow) -> void {
+                ensure_capacity(items_.size() + 1);
+                auto idx = static_cast<std::uint32_t>(items_.size());
+                auto port = flow->local_port;
+                items_.push_back(std::move(flow));
+                insert_bucket(port, idx);
+            }
+            auto erase(std::uint16_t port, Flow const* expected) noexcept -> bool {
+                auto pos = find_bucket(port);
+                if (pos >= buckets_.size()) return false;
+                auto idx = buckets_[pos];
+                if (items_[idx].get() != expected) return false;
+                std::size_t hole = pos;
+                for (std::size_t scan = (hole + 1) & mask_; buckets_[scan] != kNull; scan = (scan + 1) & mask_) {
+                    auto cur = buckets_[scan];
+                    auto ideal = hash_port(items_[cur]->local_port) & mask_;
+                    if (((scan - ideal) & mask_) >= ((scan - hole) & mask_)) {
+                        buckets_[hole] = cur;
+                        hole = scan;
+                    }
+                }
+                buckets_[hole] = kNull;
+                auto const last = static_cast<std::uint32_t>(items_.size() - 1);
+                if (idx != last) {
+                    auto moved_port = items_[last]->local_port;
+                    items_[idx] = std::move(items_[last]);
+                    for (std::size_t p = hash_port(moved_port) & mask_; ; p = (p + 1) & mask_) {
+                        if (buckets_[p] == last) { buckets_[p] = idx; break; }
+                    }
+                }
+                items_.pop_back();
+                return true;
+            }
+            auto clear() noexcept -> void {
+                items_.clear();
+                std::ranges::fill(buckets_, kNull);
+            }
+        };
+
         L3Endpoint cfg_;
         SendPacketFn send_fn_;
         void* send_ctx_;
         std::uint16_t next_port_ = 32768;
-        std::unordered_map<std::uint16_t, std::shared_ptr<TcpFlow>> tcp_;
-        std::unordered_map<std::uint16_t, std::shared_ptr<UdpFlow>> udp_;
+        PortTable<TcpFlow> tcp_;
+        PortTable<UdpFlow> udp_;
 
         auto alloc_tcp_port() -> std::optional<std::uint16_t> {
             for (std::uint32_t n = 0; n < 28232; ++n) {
@@ -94,18 +175,19 @@ export namespace relay {
         }
 
         auto emit_tcp(TcpFlow const& f, std::uint32_t seq, std::uint32_t ack, std::uint16_t flags,
-                      std::uint16_t win, std::span<std::uint8_t const> opts, std::span<std::uint8_t const> payload) -> bool {
+                      std::uint16_t win, std::span<std::uint8_t const> opts, std::span<std::uint8_t const> payload,
+                      std::span<std::uint8_t const> payload_tail = {}) -> bool {
             if (!f.is_v6) {
                 packet::Address4 dst{};
                 std::copy_n(f.remote.begin(), 4, dst.begin());
                 packet::Tcp4View v{cfg_.local_v4, dst, f.local_port, f.remote_port, seq, ack, flags, win, 0, opts, payload};
-                auto pkt = packet::make_tcp4(v, cfg_.mtu);
+                auto pkt = packet::make_tcp4(v, payload_tail, cfg_.mtu);
                 return pkt && send_fn_(send_ctx_, *pkt);
             }
             packet::Address6 dst{};
             std::copy_n(f.remote.begin(), 16, dst.begin());
             packet::Tcp6View v{cfg_.local_v6, dst, f.local_port, f.remote_port, seq, ack, flags, win, 0, opts, payload};
-            auto pkt = packet::make_tcp6(v, cfg_.mtu);
+            auto pkt = packet::make_tcp6(v, payload_tail, cfg_.mtu);
             return pkt && send_fn_(send_ctx_, *pkt);
         }
 
@@ -140,9 +222,9 @@ export namespace relay {
         auto handle_tcp_seg(bool is_v6, std::span<std::uint8_t const> src_ip, std::uint16_t sport, std::uint16_t dport,
                             std::uint32_t seq, std::uint32_t ack, std::uint16_t flags, std::uint16_t peer_win,
                             std::span<std::uint8_t const> opts, std::span<std::uint8_t const> payload, std::uint64_t now) -> void {
-            auto it = tcp_.find(dport);
-            if (it == tcp_.end()) return;
-            auto& f = *it->second;
+            auto* fp = tcp_.find(dport);
+            if (!fp) return;
+            auto& f = *fp;
             if (f.is_v6 != is_v6 || f.remote_port != sport || !same_remote(is_v6, f.remote, src_ip) || f.state == TcpFlow::State::closed)
                 return;
             if (flags & 0x04) {
@@ -201,9 +283,9 @@ export namespace relay {
         [[nodiscard]] auto endpoint() const noexcept -> L3Endpoint const& { return cfg_; }
         auto set_endpoint(L3Endpoint cfg) noexcept -> void { cfg_ = cfg; }
         auto reset_flows() -> void {
-            for (auto& [p, f] : tcp_) { (void)p; f->state = TcpFlow::State::closed; f->changed.set(); }
+            for (auto& f : tcp_.items()) { f->state = TcpFlow::State::closed; f->changed.set(); }
             tcp_.clear();
-            for (auto& [p, f] : udp_) { (void)p; f->closed = true; f->rx_event.set(); }
+            for (auto& f : udp_.items()) { f->closed = true; f->rx_event.set(); }
             udp_.clear();
         }
         [[nodiscard]] auto active() const noexcept -> bool { return !tcp_.empty() || !udp_.empty(); }
@@ -226,21 +308,21 @@ export namespace relay {
                 auto b = dst.address().to_v4().to_bytes();
                 std::ranges::copy(b, flow->remote.begin());
             }
-            tcp_.emplace(*port, flow);
+            tcp_.insert(flow);
             (void)emit_syn(*flow);
             return flow;
         }
 
         auto close_tcp(TcpFlow& f) -> void {
-            auto it = tcp_.find(f.local_port);
-            if (it == tcp_.end() || it->second.get() != &f) return;
+            auto* found = tcp_.find(f.local_port);
+            if (!found || found != &f) return;
             if (f.state == TcpFlow::State::established) {
                 auto s = f.fin_sent ? f.fin_seq + 1 : f.send->next();
                 (void)emit_tcp(f, s, f.recv->next(), 0x04, 0, {}, {});
             }
             f.state = TcpFlow::State::closed;
             f.changed.set();
-            tcp_.erase(it);
+            (void)tcp_.erase(f.local_port, &f);
         }
 
         auto request_fin(TcpFlow& f, std::uint64_t now) -> void {
@@ -263,12 +345,12 @@ export namespace relay {
             auto const cap = std::min<std::size_t>(32768, f.peer_window);
             while (f.send->in_flight() < cap) {
                 auto const budget = std::min<std::size_t>(f.peer_mss, cap - f.send->in_flight());
-                auto slice = f.send->unsent(budget);
-                if (slice.bytes.empty()) break;
+                auto slice = f.send->unsent_view(budget);
+                if (slice.empty()) break;
                 auto const rw = win16(*f.recv);
-                if (!emit_tcp(f, slice.sequence, f.recv->next(), 0x18, rw, {}, slice.bytes)) break;
+                if (!emit_tcp(f, slice.sequence, f.recv->next(), 0x18, rw, {}, slice.head, slice.tail)) break;
                 f.last_rx_win = rw;
-                if (!f.send->sent(slice.bytes.size(), now)) break;
+                if (!f.send->sent(slice.size(), now)) break;
             }
             if (f.peer_window == 0 && f.send->in_flight() == 0 && f.send->queued() > 0 && f.persist_deadline == 0)
                 f.persist_deadline = now + 500;
@@ -287,16 +369,16 @@ export namespace relay {
             if (!port) return nullptr;
             auto flow = std::make_shared<UdpFlow>();
             flow->local_port = *port;
-            udp_.emplace(*port, flow);
+            udp_.insert(flow);
             return flow;
         }
 
         auto close_udp(UdpFlow& f) -> void {
-            auto it = udp_.find(f.local_port);
-            if (it == udp_.end() || it->second.get() != &f) return;
+            auto* found = udp_.find(f.local_port);
+            if (!found || found != &f) return;
             f.closed = true;
             f.rx_event.set();
-            udp_.erase(it);
+            (void)udp_.erase(f.local_port, &f);
         }
 
         auto send_udp(UdpFlow const& f, bool is_v6, std::span<std::uint8_t const> dst,
@@ -321,11 +403,11 @@ export namespace relay {
             auto ver = pkt[0] >> 4;
             if (ver == 4) {
                 if (auto u = packet::parse_udp4(pkt)) {
-                    if (auto it = udp_.find(u->destination_port); it != udp_.end() && it->second->rx_queue.size() < 128) {
+                    if (auto* flow = udp_.find(u->destination_port); flow && !flow->rx_queue.full()) {
                         UdpDatagram dg{false, {}, u->source_port, {u->payload.begin(), u->payload.end()}};
                         std::ranges::copy(u->source, dg.source.begin());
-                        it->second->rx_queue.push_back(std::move(dg));
-                        it->second->rx_event.set();
+                        flow->rx_queue.push_back(std::move(dg));
+                        flow->rx_event.set();
                     }
                     return;
                 }
@@ -335,10 +417,10 @@ export namespace relay {
                 }
             } else if (ver == 6) {
                 if (auto u = packet::parse_udp6(pkt)) {
-                    if (auto it = udp_.find(u->destination_port); it != udp_.end() && it->second->rx_queue.size() < 128) {
+                    if (auto* flow = udp_.find(u->destination_port); flow && !flow->rx_queue.full()) {
                         UdpDatagram dg{true, u->source, u->source_port, {u->payload.begin(), u->payload.end()}};
-                        it->second->rx_queue.push_back(std::move(dg));
-                        it->second->rx_event.set();
+                        flow->rx_queue.push_back(std::move(dg));
+                        flow->rx_event.set();
                     }
                     return;
                 }
@@ -350,7 +432,7 @@ export namespace relay {
         }
 
         auto tick(std::uint64_t now) -> void {
-            for (auto& [port, f] : tcp_) {
+            for (auto& f : tcp_.items()) {
                 if (f->state == TcpFlow::State::syn_sent && now >= f->syn_deadline) {
                     if (f->syn_retries >= 4) { f->state = TcpFlow::State::closed; f->changed.set(); continue; }
                     ++f->syn_retries;
@@ -359,9 +441,9 @@ export namespace relay {
                 } else if (f->state == TcpFlow::State::established) {
                     if (f->send->expired(now)) { f->state = TcpFlow::State::closed; f->changed.set(); continue; }
                     auto const rtx_max = f->peer_window ? std::min<std::size_t>(f->peer_mss, f->peer_window) : std::size_t{f->peer_mss};
-                    if (auto d = f->send->due(now, rtx_max); d && *d) {
+                    if (auto d = f->send->due_view(now, rtx_max); d && *d) {
                         auto const rw = win16(*f->recv);
-                        if (emit_tcp(*f, (*d)->sequence, f->recv->next(), 0x18, rw, {}, (*d)->bytes)) {
+                        if (emit_tcp(*f, (*d)->sequence, f->recv->next(), 0x18, rw, {}, (*d)->head, (*d)->tail)) {
                             f->last_rx_win = rw;
                             (void)f->send->retransmitted(now);
                         }
@@ -385,7 +467,7 @@ export namespace relay {
         [[nodiscard]] auto next_tick_ms(std::uint64_t now) const noexcept -> std::optional<std::uint64_t> {
             std::optional<std::uint64_t> next;
             auto clamp = [&](std::uint64_t t) noexcept { if (!next || t < *next) next = t; };
-            for (auto const& [port, f] : tcp_) {
+            for (auto const& f : tcp_.items()) {
                 if (f->state == TcpFlow::State::syn_sent) clamp(f->syn_deadline);
                 else if (f->state == TcpFlow::State::established) {
                     if (f->send && f->send->in_flight() > 0) clamp(now + 25);

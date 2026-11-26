@@ -51,29 +51,32 @@ namespace relay {
         co_return std::expected<void,RouteResolveFailure>{};
     }
     namespace {
-        auto apply_direct_shaping(Session& session,rules::ProgramAction const& action) noexcept -> void {
+        auto apply_direct_shaping(Session& session,rules::ProgramAction const& action) -> void {
+            if (!action.tls_record_fragment && !action.tcp_prefix_len &&
+                !action.override_address && !action.override_port) return;
+            auto& ex=session.ensure_mutable_extras();
             if (action.tls_record_fragment) {
-                session.direct_shaping.tls_record_fragment=true;
-                if (action.tls_fragment_min) session.direct_shaping.tls_fragment_min=action.tls_fragment_min;
-                if (action.tls_fragment_max) session.direct_shaping.tls_fragment_max=action.tls_fragment_max;
+                ex.direct_shaping.tls_record_fragment=true;
+                if (action.tls_fragment_min) ex.direct_shaping.tls_fragment_min=action.tls_fragment_min;
+                if (action.tls_fragment_max) ex.direct_shaping.tls_fragment_max=action.tls_fragment_max;
                 if (action.tls_fragment_fallback_delay_ms)
-                    session.direct_shaping.tls_fragment_fallback_delay_ms=action.tls_fragment_fallback_delay_ms;
+                    ex.direct_shaping.tls_fragment_fallback_delay_ms=action.tls_fragment_fallback_delay_ms;
             }
             if (action.tcp_prefix_len) {
-                session.direct_shaping.tcp_prefix=action.tcp_prefix;
-                session.direct_shaping.tcp_prefix_len=action.tcp_prefix_len;
+                ex.direct_shaping.tcp_prefix=action.tcp_prefix;
+                ex.direct_shaping.tcp_prefix_len=action.tcp_prefix_len;
             }
-            if (action.override_address) session.route_override_address=action.override_address;
-            if (action.override_port) session.route_override_port=action.override_port;
+            if (action.override_address) ex.route_override_address=action.override_address;
+            if (action.override_port) ex.route_override_port=action.override_port;
         }
     }
 
     auto shape_direct_first_payload(Session& session,std::span<std::uint8_t const> input)
         -> std::optional<std::vector<std::uint8_t>> {
-        if (session.tunnel || !session.direct_shaping.pending() || input.empty()) return std::nullopt;
-        session.direct_shaping.applied=true;
+        if (session.tunnel || !session.direct_shaping_pending() || input.empty()) return std::nullopt;
+        auto& sh=session.ensure_mutable_extras().direct_shaping;
+        sh.applied=true;
         std::vector<std::uint8_t> out;
-        auto const& sh=session.direct_shaping;
         if (sh.tcp_prefix_len)
             out.insert(out.end(),sh.tcp_prefix.begin(),sh.tcp_prefix.begin()+sh.tcp_prefix_len);
         if (sh.tls_record_fragment) {
@@ -96,15 +99,17 @@ namespace relay {
         combined.insert(combined.end(),tail.begin(),tail.end());
         auto shaped=shape_direct_first_payload(session,combined);
         auto bytes=shaped ? std::span<std::uint8_t const>(*shaped) : std::span<std::uint8_t const>(combined);
-        std::size_t const prefix_len=shaped ? std::min<std::size_t>(session.direct_shaping.tcp_prefix_len,bytes.size()) : 0u;
-        if (!session.tunnel && shaped && session.direct_shaping.tls_record_fragment) {
+        auto const* sh=session.direct_shaping_ptr();
+        std::size_t const prefix_len=(shaped && sh) ? std::min<std::size_t>(sh->tcp_prefix_len,bytes.size()) : 0u;
+        if (!session.tunnel && shaped && sh && sh->tls_record_fragment) {
+            auto const fallback_delay_ms=sh->tls_fragment_fallback_delay_ms;
             auto payload=bytes;
             if (prefix_len) {
                 sniff::TcpReplay prefix_replay(bytes.first(prefix_len));
                 if (!co_await replay_ordered_tcp(session,prefix_replay,deadline)) co_return false;
                 payload=bytes.subspan(prefix_len);
             }
-            if (session.direct_shaping.tls_fragment_fallback_delay_ms && payload.size()>=5 &&
+            if (fallback_delay_ms && payload.size()>=5 &&
                 payload[0]==0x16 && payload[1]==0x03) {
                 auto rec0=std::size_t{5}+((std::size_t{payload[3]}<<8)|payload[4]);
                 if (rec0<payload.size()) {
@@ -113,7 +118,7 @@ namespace relay {
                     auto rem=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-Clock::now());
                     if (rem<=std::chrono::milliseconds::zero()) { session.close(); co_return false; }
                     auto pause=std::min<std::chrono::milliseconds>(
-                        std::chrono::milliseconds(session.direct_shaping.tls_fragment_fallback_delay_ms),rem);
+                        std::chrono::milliseconds(fallback_delay_ms),rem);
                     auto [delay_err]=co_await corosio::delay(pause);
                     if (delay_err || session.closed || Clock::now()>=deadline) { session.close(); co_return false; }
                     sniff::TcpReplay rest_recs(payload.subspan(rec0));
@@ -194,7 +199,9 @@ namespace relay {
             if(result.stop==Stop::exhausted)break;
             co_return OrderedTcpResult{result.stop,1,{},std::move(result.rule_error),result.system};
         }
-        auto overrode_ip=sniff_override_destination && input.sniffed_domain && !session.route_override_address;
+        auto const ov_addr=session.route_override_addr();
+        auto const ov_port=session.route_override_port_val();
+        auto overrode_ip=sniff_override_destination && input.sniffed_domain && !ov_addr;
         auto domain=overrode_ip ? input.sniffed_domain : (input.fakeip_domain ? input.fakeip_domain : input.explicit_domain);
         if (auto ov=session.mode_override_outbound(domain.value_or(input.ip.value_or("")))) {
             selected=*ov; route_rule.reset();
@@ -202,16 +209,16 @@ namespace relay {
             selected=session.route_snapshot->matcher.choose_outbound(selected,domain.value_or(input.ip.value_or("")));
         if(selected==static_cast<std::size_t>(RouteAction::block))co_return OrderedTcpResult{Stop::terminal,2};
         bool remote_domain = false;
-        if (!session.route_override_address && domain && selected >= static_cast<std::size_t>(RouteAction::vless) &&
+        if (!ov_addr && domain && selected >= static_cast<std::size_t>(RouteAction::vless) &&
             session.tunnel_factories) {
             auto idx = selected - static_cast<std::size_t>(RouteAction::vless);
             if (idx < session.tunnel_factories->size() && (*session.tunnel_factories)[idx].remote_domain_dial) {
                 remote_domain = true;
                 endpoints = {corosio::endpoint(corosio::ipv4_address::loopback(),
-                    session.route_override_port ? session.route_override_port : *input.port)};
+                    ov_port ? ov_port : *input.port)};
             }
         }
-        if(!remote_domain && !session.route_override_address && domain &&
+        if(!remote_domain && !ov_addr && domain &&
            ((!candidates.view() && !overrode_ip) || (overrode_ip && (endpoints.empty() || selected<static_cast<std::size_t>(RouteAction::vless) || session.dns)))) {
             if(!overrode_ip && (input.ip || !endpoints.empty()))co_return OrderedTcpResult{Stop::state_error};
             std::optional<platform::IpAddress> source;
@@ -234,9 +241,9 @@ namespace relay {
             if(!overrode_ip && !candidates.assign(*resolved,input))co_return OrderedTcpResult{Stop::state_error};
             endpoints=std::move(*resolved);
         }
-        if (session.route_override_address) {
-            auto port=session.route_override_port ? session.route_override_port : *input.port;
-            if (auto literal=platform::parse_ip_address(*session.route_override_address)) {
+        if (ov_addr) {
+            auto port=ov_port ? ov_port : *input.port;
+            if (auto literal=platform::parse_ip_address(*ov_addr)) {
                 if (literal->size==4) {
                     corosio::ipv4_address::bytes_type b{};
                     std::copy_n(literal->bytes.begin(),4,b.begin());
@@ -252,7 +259,7 @@ namespace relay {
                         co_return OrderedTcpResult{Stop::state_error};
                     source_bytes=source->view();
                 }
-                auto resolved=co_await resolve_destination(session,context,*session.route_override_address,port,deadline,
+                auto resolved=co_await resolve_destination(session,context,std::string(*ov_addr),port,deadline,
                     {.network=input.network,.source_port=input.source_port,.source_ip_bytes=source_bytes});
                 if(!resolved) {
                     auto error=resolved.error();
@@ -264,14 +271,14 @@ namespace relay {
                 endpoints=std::move(*resolved);
             }
             route_only=false;
-        } else if (session.route_override_port) {
-            for (auto& ep : endpoints) ep=corosio::endpoint(ep.address(),session.route_override_port);
+        } else if (ov_port) {
+            for (auto& ep : endpoints) ep=corosio::endpoint(ep.address(),ov_port);
         }
         bool first_sent=false;
         auto first=first_override ? *first_override : sniffer.wire();
         // Recover pre-read bytes through the metered replay rather than the
         // direct Fast Open path, which cannot wait on the user budget.
-        if (session.meters_principal_bytes() || session.direct_shaping.pending()) first={};
+        if (session.meters_principal_bytes() || session.direct_shaping_pending()) first={};
         auto code=co_await dial_route_candidates(session,context,endpoints,selected,deadline,first,&first_sent,route_rule,(route_only || overrode_ip || remote_domain) ? domain : std::nullopt);
         if(session.closed)co_return OrderedTcpResult{Stop::canceled};
         co_return OrderedTcpResult{.stop=Stop::terminal,.code=code,.first_sent=first_sent,.deadline=deadline};
@@ -303,7 +310,7 @@ namespace relay {
             co_return handled ? Result::dns_handled : Result::rejected;
         }
         if (result.first_sent || sniffer.wire().empty()) co_return Result::connected;
-        if (!session.tunnel && session.direct_shaping.pending()) {
+        if (!session.tunnel && session.direct_shaping_pending()) {
             auto replayed=co_await replay_shaped_direct(session,sniffer.wire(),{},result.deadline);
             co_return replayed ? Result::connected : Result::rejected;
         }

@@ -6,8 +6,8 @@ version = "0.1.0"
 nexus.beman-inplace-vector = "=0.1.0"
 
 [features]
-ring-queue = { sources = ["ring_queue.cppm"] }
+ring-queue = {}
 byte-ring = { sources = ["byte_ring.cppm"] }
 
 [build]
-sources = ["inplace_vector.cppm", "cache_index.cppm"]
+sources = ["inplace_vector.cppm", "flat_id_map.cppm", "cache_index.cppm", "ring_queue.cppm"]

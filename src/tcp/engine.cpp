@@ -87,12 +87,12 @@ namespace tcp {
         if (mtu_ <= 40) return std::unexpected(EngineError::invalid_mtu);
         TransmitResult result;
         if (pending_) { result.backpressured = true; return result; }
-        auto time = flow->send_due(now, 0);
+        auto time = flow->send_due_view(now, 0);
         if (!time) { result.connection_error = time.error(); return result; }
         auto max_opts = std::min<std::size_t>(28, mtu_ - 41);
         auto opt_len = flow->ack(max_opts).options.size();
-        auto slice = flow->unsent(std::min<std::size_t>(mtu_ - 40 - opt_len, 65535 - 40 - opt_len));
-        if (slice.bytes.empty()) return result;
+        auto slice = flow->unsent_view(std::min<std::size_t>(mtu_ - 40 - opt_len, 65535 - 40 - opt_len));
+        if (slice.empty()) return result;
         return emit(*flow, slice, now, Action::data);
     }
     auto MemoryEngine::retransmit(ConnectionId id, std::uint64_t now) -> std::expected<TransmitResult, EngineError> {
@@ -105,7 +105,7 @@ namespace tcp {
         if (pending_) { result.backpressured = true; return result; }
         auto max_opts = std::min<std::size_t>(28, mtu_ - 41);
         auto opt_len = flow->ack(max_opts).options.size();
-        auto due = flow->send_due(now, std::min<std::size_t>(mtu_ - 40 - opt_len, 65535 - 40 - opt_len));
+        auto due = flow->send_due_view(now, std::min<std::size_t>(mtu_ - 40 - opt_len, 65535 - 40 - opt_len));
         if (!due) { result.connection_error = due.error(); return result; }
         if (!*due) return result;
         return emit(*flow, **due, now, Action::retransmit);
@@ -118,7 +118,7 @@ namespace tcp {
         if (mtu_ < 40) return std::unexpected(EngineError::invalid_mtu);
         TransmitResult result;
         if (pending_) { result.backpressured = true; return result; }
-        auto due = flow->probe_due(now);
+        auto due = flow->probe_due_view(now);
         if (!due) { result.connection_error = due.error(); return result; }
         if (!*due) return result;
         return emit(*flow, **due, now, Action::probe);
@@ -136,21 +136,22 @@ namespace tcp {
             if (!due) { result.connection_error = due.error(); return result; }
             if (!*due) return result;
         } else {
-            auto time = flow->send_due(now, 0);
+            auto time = flow->send_due_view(now, 0);
             if (!time) { result.connection_error = time.error(); return result; }
             if (!flow->fin_ready()) return result;
         }
-        return emit(*flow, SendSlice{}, now, retry ? Action::fin_retry : Action::fin);
+        return emit(*flow, SendView{}, now, retry ? Action::fin_retry : Action::fin);
     }
-    auto MemoryEngine::emit(PassiveConnection& flow, SendSlice const& slice, std::uint64_t now, Action action)
+    auto MemoryEngine::emit(PassiveConnection& flow, SendView const& slice, std::uint64_t now, Action action)
         -> std::expected<TransmitResult, EngineError> {
         TransmitResult result;
         bool is_fin = action == Action::fin || action == Action::fin_retry;
-        auto payload_len = is_fin ? std::size_t{0} : slice.bytes.size();
+        auto payload_len = is_fin ? std::size_t{0} : slice.size();
         auto max_opts = mtu_ > 40 + payload_len ? std::min<std::size_t>(28, mtu_ - 40 - payload_len) : 0;
         auto view = is_fin ? flow.fin(max_opts) : flow.ack(max_opts);
-        if (!is_fin) { view.sequence = slice.sequence; view.payload = slice.bytes; }
-        auto bytes = packet::make_tcp4(view, mtu_);
+        std::span<std::uint8_t const> tail{};
+        if (!is_fin) { view.sequence = slice.sequence; view.payload = slice.head; tail = slice.tail; }
+        auto bytes = packet::make_tcp4(view, tail, mtu_);
         if (!bytes) return std::unexpected(EngineError::invalid_mtu);
         auto rev = view;
         std::swap(rev.source, rev.destination);
@@ -162,7 +163,7 @@ namespace tcp {
             else result.output_error = sent.error();
             return result;
         }
-        result.bytes = slice.bytes.size(); result.delivered = true;
+        result.bytes = slice.size(); result.delivered = true;
         auto committed = [&]() -> std::expected<void, ConnectionError> {
             switch (action) {
                 case Action::data: return flow.sent(result.bytes, now);
@@ -261,12 +262,12 @@ namespace tcp {
         if (mtu_ <= 60) return std::unexpected(EngineError::invalid_mtu);
         TransmitResult result;
         if (pending_) { result.backpressured = true; return result; }
-        auto time = flow->send_due(now, 0);
+        auto time = flow->send_due_view(now, 0);
         if (!time) { result.connection_error = time.error(); return result; }
         auto max_opts = std::min<std::size_t>(28, mtu_ - 61);
         auto opt_len = flow->ack(max_opts).options.size();
-        auto slice = flow->unsent(std::min<std::size_t>(mtu_ - 60 - opt_len, 65535 - 20 - opt_len));
-        if (slice.bytes.empty()) return result;
+        auto slice = flow->unsent_view(std::min<std::size_t>(mtu_ - 60 - opt_len, 65535 - 20 - opt_len));
+        if (slice.empty()) return result;
         return emit(*flow, slice, now, Action::data);
     }
     auto MemoryEngine6::retransmit(ConnectionId id, std::uint64_t now) -> std::expected<TransmitResult, EngineError> {
@@ -279,7 +280,7 @@ namespace tcp {
         if (pending_) { result.backpressured = true; return result; }
         auto max_opts = std::min<std::size_t>(28, mtu_ - 61);
         auto opt_len = flow->ack(max_opts).options.size();
-        auto due = flow->send_due(now, std::min<std::size_t>(mtu_ - 60 - opt_len, 65535 - 20 - opt_len));
+        auto due = flow->send_due_view(now, std::min<std::size_t>(mtu_ - 60 - opt_len, 65535 - 20 - opt_len));
         if (!due) { result.connection_error = due.error(); return result; }
         if (!*due) return result;
         return emit(*flow, **due, now, Action::retransmit);
@@ -292,7 +293,7 @@ namespace tcp {
         if (mtu_ < 60) return std::unexpected(EngineError::invalid_mtu);
         TransmitResult result;
         if (pending_) { result.backpressured = true; return result; }
-        auto due = flow->probe_due(now);
+        auto due = flow->probe_due_view(now);
         if (!due) { result.connection_error = due.error(); return result; }
         if (!*due) return result;
         return emit(*flow, **due, now, Action::probe);
@@ -310,21 +311,22 @@ namespace tcp {
             if (!due) { result.connection_error = due.error(); return result; }
             if (!*due) return result;
         } else {
-            auto time = flow->send_due(now, 0);
+            auto time = flow->send_due_view(now, 0);
             if (!time) { result.connection_error = time.error(); return result; }
             if (!flow->fin_ready()) return result;
         }
-        return emit(*flow, SendSlice{}, now, retry ? Action::fin_retry : Action::fin);
+        return emit(*flow, SendView{}, now, retry ? Action::fin_retry : Action::fin);
     }
-    auto MemoryEngine6::emit(PassiveConnection6& flow, SendSlice const& slice, std::uint64_t now, Action action)
+    auto MemoryEngine6::emit(PassiveConnection6& flow, SendView const& slice, std::uint64_t now, Action action)
         -> std::expected<TransmitResult, EngineError> {
         TransmitResult result;
         bool is_fin = action == Action::fin || action == Action::fin_retry;
-        auto payload_len = is_fin ? std::size_t{0} : slice.bytes.size();
+        auto payload_len = is_fin ? std::size_t{0} : slice.size();
         auto max_opts = mtu_ > 60 + payload_len ? std::min<std::size_t>(28, mtu_ - 60 - payload_len) : 0;
         auto view = is_fin ? flow.fin(max_opts) : flow.ack(max_opts);
-        if (!is_fin) { view.sequence = slice.sequence; view.payload = slice.bytes; }
-        auto bytes = packet::make_tcp6(view, mtu_);
+        std::span<std::uint8_t const> tail{};
+        if (!is_fin) { view.sequence = slice.sequence; view.payload = slice.head; tail = slice.tail; }
+        auto bytes = packet::make_tcp6(view, tail, mtu_);
         if (!bytes) return std::unexpected(EngineError::invalid_mtu);
         auto rev = view;
         std::swap(rev.source, rev.destination);
@@ -336,7 +338,7 @@ namespace tcp {
             else result.output_error = sent.error();
             return result;
         }
-        result.bytes = slice.bytes.size(); result.delivered = true;
+        result.bytes = slice.size(); result.delivered = true;
         auto committed = [&]() -> std::expected<void, ConnectionError> {
             switch (action) {
                 case Action::data: return flow.sent(result.bytes, now);

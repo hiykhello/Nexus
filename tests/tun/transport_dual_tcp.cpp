@@ -16,7 +16,8 @@ int main() {
     auto bytes=p::make_tcp6(six);
     if (!bytes || !link.send(p::Side::first,*bytes)) return 1;
     auto step=engine.step(1,50);
-    if (!step || !step->tcp6 || !step->tcp6->input.opened || a->size()!=0 || b->size()!=1) return 1;
+    if (!step || !step->tcp6 || !step->tcp6->input.opened || !step->tcp6->input.id || a->size()!=0 || b->size()!=1) return 1;
+    auto const id6=*step->tcp6->input.id;
     step=engine.step(2,50);
     auto out=link.receive(p::Side::first);
     if (!step || !out || !*out || !p::parse_tcp6(**out)) return 1;
@@ -27,7 +28,7 @@ int main() {
     step=engine.step(3,50);
     if (!step || !step->tcp.input.rejected || step->tcp.input.rejected->table_error!=t::TableError::full ||
         a->size()!=0 || b->size()!=1) return 1;
-    if (!b->abort(1) || !link.send(p::Side::first,*packet)) return 1;
+    if (!b->abort(id6) || !link.send(p::Side::first,*packet)) return 1;
     step=engine.step(4,50);
     if (!step || !step->tcp.input.opened || a->size()!=1) return 1;
     if (!engine.stop(5) || a->size() || b->size()) return 1;

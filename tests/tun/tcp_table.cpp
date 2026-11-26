@@ -50,7 +50,8 @@ int main() {
         table6->reclaim(*id6,120002)!=true || table6->find(syn6)) return 1;
     auto fresh6=table6->open(syn6,70,120002);
     if (!fresh6 || *fresh6==*id6 || !table6->abort(*fresh6) || !table6->abort(*id6b) || table6->size()) return 1;
-    if (t::ConnectionTable::create(0, 8) || t::ConnectionTable::create(1, 0) ||
+    if (t::ConnectionTable::create(0, 8) || t::ConnectionTable::create((1u << 20) + 1, 8) ||
+        t::ConnectionTable::create(1, 0) ||
         !t::ConnectionTable::create(1, 65536) || t::ConnectionTable::create(1, 4u * 1024u * 1024u + 1)) return 1;
     auto table = t::ConnectionTable::create(2, 8);
     p::Tcp4View syn{.source={10,0,0,1}, .destination={10,0,0,2}, .source_port=1234,
@@ -62,7 +63,10 @@ int main() {
     auto syn2 = syn; syn2.source_port++;
     auto id2 = table->open(syn2, 60, 0);
     auto syn3 = syn; syn3.source_port += 2;
-    if (!id || !id2 || *id == *id2 || table->find(syn) != *id || table->find(syn2) != *id2 ||
+    if (!id || !id2 || *id == *id2 || t::ConnectionTable::slot_index(*id) >= 2 ||
+        t::ConnectionTable::slot_index(*id2) >= 2 ||
+        table->next(0) != *id || table->next(*id) != *id2 || table->next(*id2) != *id ||
+        table->find(syn) != *id || table->find(syn2) != *id2 ||
         table->open(syn, 50, 0).error() != t::TableError::duplicate ||
         table->open(syn3, 70, 0).error() != t::TableError::full || table->size() != 2) return 1;
     auto* first = table->get(*id);
@@ -79,7 +83,10 @@ int main() {
         table->reclaim(*id, 120002) != false || !table->observe_eof(*id) ||
         table->reclaim(*id, 120002) != true || table->get(*id) || table->find(syn)) return 1;
     auto replacement = table->open(syn, 100, 120002);
-    if (!replacement || *replacement == *id || table->get(*id2) != second || table->size() != 2 ||
+    if (!replacement || *replacement == *id || *replacement <= *id2 ||
+        t::ConnectionTable::slot_index(*replacement) != t::ConnectionTable::slot_index(*id) ||
+        table->next(*id) != *id2 || table->next(*id2) != *replacement || table->next(*replacement) != *id2 ||
+        table->get(*id2) != second || table->size() != 2 ||
         table->reclaim(*id, 120002).error() != t::TableError::not_found) return 1;
     // A handshake timeout is removed only after its retransmission budget is committed.
     for (auto now : {1000ull, 3000ull, 7000ull, 15000ull}) if (!second->retransmitted(now)) return 1;

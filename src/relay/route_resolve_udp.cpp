@@ -23,7 +23,7 @@ namespace relay {
             auto const* ordered = session.ordered_tcp;
             if (!ordered || !ordered->udp || session.closed || !target.port || target.length > target.bytes.size() || Clock::now() >= deadline) co_return std::nullopt;
             auto const& policy = *ordered;
-            rules::ProgramInput input{.port = target.port, .network = rules::Network::udp, .inbound = session.inbound, .auth_user = session.auth_user, .source_uid = session.source_uid, .process_path = session.process_path, .source_interface = session.source_interface};
+            rules::ProgramInput input{.port = target.port, .network = rules::Network::udp};
             session.fill_program_input(input);
             if (policy.program.has_dns_hijack()) input.dns_query = dns::parse_query(payload).has_value();
             input = session.ingress.apply(input);

@@ -3,6 +3,7 @@ module;
 #include <unistd.h>
 export module masque.host;
 import std;
+import functional;
 import masque.server;
 import masque.ip_server;
 import masque.config;
@@ -39,7 +40,7 @@ export namespace masque {
         corosio::io_context& context_;
         HostConfig const& config_;
         dns::LocalSnapshotSource& snapshots_;
-        std::function<void()> notify_transport_;
+        functional::move_only_function<void()> notify_transport_;
         capy::async_event work_;
         ConfigPolicy policy_;
         Server server_;
@@ -151,7 +152,7 @@ export namespace masque {
         using ServerType=Server;
         using Transport=typename Server::Transport;
         ServerHost(corosio::io_context& context,Tls& tls,HostConfig const& config,dns::LocalSnapshotSource& snapshots,
-            nghttp3::nghttp3_mem const& memory,std::function<void()> notify_transport,IpServerPort* ip_port=nullptr)
+            nghttp3::nghttp3_mem const& memory,functional::move_only_function<void()> notify_transport,IpServerPort* ip_port=nullptr)
             :context_(context),config_(config),snapshots_(snapshots),notify_transport_(std::move(notify_transport)),
              policy_(config_,this,[](void* owner) noexcept {static_cast<ServerHost*>(owner)->changed();}),server_(tls,policy_,config.authority,memory,ip_port) {
             if(!config_.valid(ip_port!=nullptr) || !notify_transport_)throw std::invalid_argument("invalid MASQUE host configuration");

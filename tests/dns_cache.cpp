@@ -1,7 +1,117 @@
 import std;
+import corosio;
 import dns.cache;
 import dns.message;
+import dns.response_cache;
+import dns.message_cache;
 namespace d=dns;
+
+namespace {
+    auto make_a_response(std::string_view domain,std::uint16_t id,std::uint8_t last_octet) -> d::Response {
+        auto wire=*d::make_query(id,{std::string(domain),1});
+        wire[2]=0x81; wire[3]=0x80; wire[7]=1;
+        wire.insert(wire.end(),{0xc0,0x0c,0,1,0,1,0,0,0,60,0,4,192,0,2,last_octet});
+        return *d::parse_response(wire,id,{std::string(domain),1});
+    }
+
+    auto pending_index_stress() -> int {
+        d::Address a{}; a.size=4; a.bytes[0]=192; a.bytes[3]=9;
+        d::AddressAnswer ans{"k0.test",{"k0.test"},{a},60};
+        // 1. AddressCache: >256 concurrent pending keys (rehashes 64->128->256->512),
+        //    same-key superseding, mid-chain cancellation, and O(1) refresh cap.
+        d::AddressCache burst(512,5000);
+        std::vector<d::CacheToken> tokens;
+        tokens.reserve(300);
+        for (int i=0;i<300;++i) {
+            auto t=burst.begin_query({1,"k"+std::to_string(i)+".test",1});
+            if (!t) return 104;
+            tokens.push_back(*t);
+        }
+        auto k0_newer=burst.begin_query({1,"k0.test",1});
+        auto k150_newer=burst.begin_query({1,"k150.test",1});
+        if (!k0_newer || !k150_newer) return 105;
+        if (!burst.publish({1,"k0.test",1},ans,1000,*k0_newer)) return 106;
+        if (auto stale=burst.publish({1,"k0.test",1},ans,1000,tokens[0]); stale || stale.error()!=d::CacheError::stale_query) return 107;
+        for (int i=2;i<300;i+=2) {
+            if (i==150) continue;
+            if (!burst.cancel_query(tokens[i])) return 108;
+            if (auto dup=burst.cancel_query(tokens[i]); dup || dup.error()!=d::CacheError::stale_query) return 109;
+        }
+        if (!burst.publish({1,"k150.test",1},ans,1000,*k150_newer)) return 110;
+        if (auto stale=burst.publish({1,"k150.test",1},ans,1000,tokens[150]); stale || stale.error()!=d::CacheError::stale_query) return 111;
+        for (int i=1;i<300;i+=2) {
+            auto name="k"+std::to_string(i)+".test";
+            if (!burst.publish({1,name,1},ans,1000,tokens[i])) return 112;
+        }
+        if (burst.size()!=152) return 113;
+
+        // 2. Snapshot AddressCache pending burst + refresh counter tracking.
+        d::AddressCache snap(16,5000,true,2);
+        auto reader=snap.reader(0);
+        std::vector<d::CacheToken> snap_tokens;
+        for (int i=0;i<100;++i) {
+            auto t=snap.begin_query({1,"s"+std::to_string(i)+".test",1});
+            if (!t) return 114;
+            snap_tokens.push_back(*t);
+        }
+        d::AddressAnswer short_ans{"s0.test",{"s0.test"},{a},1};
+        if (!snap.publish({1,"s0.test",1},short_ans,1000,snap_tokens[0]) ||
+            !snap.publish({1,"s1.test",1},short_ans,1000,snap_tokens[1])) return 115;
+        auto r0=snap.begin_refresh({1,"s0.test",1},2000,1);
+        if (!r0 || !*r0) return 116;
+        if (auto r1=snap.begin_refresh({1,"s1.test",1},2000,1); !r1 || *r1) return 117;
+        if (!snap.cancel_query(**r0)) return 118;
+        auto r1=snap.begin_refresh({1,"s1.test",1},2000,1);
+        if (!r1 || !*r1 || !snap.publish({1,"s1.test",1},short_ans,2000,**r1)) return 119;
+        if (auto hit=snap.lookup({1,"s1.test",1},2000,reader); !hit || !*hit) return 120;
+        for (int i=2;i<100;++i) if (!snap.cancel_query(snap_tokens[i])) return 121;
+
+        // 3. ResponseCache pending burst & sent_edns isolation.
+        d::ResponseCache rcache(64);
+        d::CacheKey rk{1,"rc.test",1};
+        auto e0_old=rcache.begin(rk,false), e0_new=rcache.begin(rk,false), e1=rcache.begin(rk,true);
+        if (!e0_old || !e0_new || !e1) return 122;
+        std::vector<d::CacheToken> extra;
+        for (int i=0;i<100;++i) {
+            auto t=rcache.begin({1,"rx"+std::to_string(i)+".test",1},false);
+            if (!t) return 123;
+            extra.push_back(*t);
+        }
+        auto resp0=make_a_response("rc.test",7,10), resp1=make_a_response("rc.test",8,11);
+        if (!rcache.publish(rk,resp0,1000,*e0_new)) return 124;
+        if (auto stale=rcache.publish(rk,resp0,1000,*e0_old); stale || stale.error()!=d::CacheError::stale_query) return 125;
+        if (!rcache.publish(rk,resp1,1000,*e1)) return 126;
+        auto hit0=rcache.lookup(rk,1000,7,false), hit1=rcache.lookup(rk,1000,8,true);
+        if (!hit0 || !*hit0 || !hit1 || !*hit1) return 127;
+        for (auto t:extra) if (!rcache.cancel(t)) return 128;
+
+        // 4. MessageCache 256-pending cap, rekey_query overwrite, cancel & publish.
+        d::MessageCache mcache(std::chrono::seconds(60),256);
+        d::MessageCache::View view(0,corosio::endpoint(corosio::ipv4_address::loopback(),53),false,{});
+        std::vector<d::MessageCache::Ticket> tickets;
+        tickets.reserve(256);
+        for (int i=0;i<256;++i) {
+            auto qwire=*d::make_query(1,{"m"+std::to_string(i)+".test",1});
+            auto q=*d::parse_query(qwire);
+            auto t=mcache.begin(view,q);
+            if (!t) return 129;
+            tickets.push_back(*t);
+        }
+        auto overflow_q=*d::parse_query(*d::make_query(1,{"overflow.test",1}));
+        if (mcache.begin(view,overflow_q).has_value()) return 130;
+        auto q0=*d::parse_query(*d::make_query(1,{"m0.test",1}));
+        auto rekeyed=mcache.begin(view,q0);
+        if (!rekeyed || rekeyed->sequence==tickets[0].sequence) return 131;
+        auto now=std::chrono::steady_clock::now();
+        mcache.publish(tickets[0],q0,make_a_response("m0.test",1,20),now);
+        if (mcache.lookup(view,q0,now).has_value()) return 132;
+        mcache.publish(*rekeyed,q0,make_a_response("m0.test",1,21),now);
+        if (!mcache.lookup(view,q0,now).has_value()) return 133;
+        for (std::size_t i=1;i<tickets.size();++i) mcache.cancel(tickets[i]);
+        if (!mcache.begin(view,overflow_q).has_value()) return 134;
+        return 0;
+    }
+}
 
 auto main() -> int {
     d::AddressCache cache(2);
@@ -221,5 +331,6 @@ auto main() -> int {
         !refresh_evict.publish(key,answer,11000,*refresh_evict.begin_query(key))) return 102;
     auto old_refresh=refresh_evict.publish(key,answer,11000,*lost);
     if (old_refresh || old_refresh.error()!=d::CacheError::stale_query || !*refresh_evict.lookup(key,11000)) return 103;
+    if (auto rc=pending_index_stress()) return rc;
     std::println("DNS positive cache, view isolation, expiry and clear barrier passed");
 }

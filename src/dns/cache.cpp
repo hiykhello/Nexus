@@ -150,12 +150,13 @@ namespace dns {
     auto AddressCache::begin_query(CacheKey key) -> std::expected<CacheToken,CacheError> {
         if (snapshot_) return snapshot_->begin_query(std::move(key));
         if (!normalize(key)) return std::unexpected(CacheError::invalid_key);
+        auto const hash = key_hash(key);
         std::unique_lock lock(mutex_);
         if (pending_.size()==4096) return std::unexpected(CacheError::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(CacheError::generation_exhausted);
         if (!detail::compact_key_storage(key)) return std::unexpected(CacheError::invalid_key);
         auto query=next_query_+1;
-        pending_.push_back({std::move(key),query,{}});
+        pending_.emplace(query,hash,Pending{std::move(key),query,{}});
         next_query_=query;
         return CacheToken{generation_,query};
     }
@@ -176,14 +177,14 @@ namespace dns {
         auto const& entry=entries_.at(*idx);
         if (entry.negative || now<entry.expires || stale_window_ms_-(now-entry.expires)<1000)
             return std::optional<CacheToken>{};
-        if (std::ranges::any_of(pending_,[&](auto const& item) { return same(item.key,key); })) return std::optional<CacheToken>{};
-        auto refreshes=std::ranges::count_if(pending_,[](auto const& item) { return item.refresh_revision.has_value(); });
-        if (static_cast<std::size_t>(refreshes)>=max_registered_refreshes) return std::optional<CacheToken>{};
+        if (pending_.has_key(hash,[&](Pending const& item) { return same(item.key,key); })) return std::optional<CacheToken>{};
+        if (refresh_count_>=max_registered_refreshes) return std::optional<CacheToken>{};
         if (pending_.size()==4096) return std::unexpected(CacheError::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(CacheError::generation_exhausted);
         if (!detail::compact_key_storage(key)) return std::unexpected(CacheError::invalid_key);
         auto query=next_query_+1;
-        pending_.push_back({std::move(key),query,entry.revision});
+        pending_.emplace(query,hash,Pending{std::move(key),query,entry.revision});
+        ++refresh_count_;
         next_query_=query;
         return std::optional<CacheToken>{CacheToken{generation_,query}};
     }
@@ -191,9 +192,10 @@ namespace dns {
         if (snapshot_) return snapshot_->cancel_query(token);
         std::unique_lock lock(mutex_);
         if (token.generation!=generation_) return std::unexpected(CacheError::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end()) return std::unexpected(CacheError::stale_query);
-        pending_.erase(pending);
+        auto pending=pending_.find_query(token.query);
+        if (!pending) return std::unexpected(CacheError::stale_query);
+        if (pending_.at(*pending).refresh_revision) --refresh_count_;
+        pending_.erase(*pending);
         return {};
     }
     auto AddressCache::publish(CacheKey key, AddressAnswer answer, std::uint64_t now, CacheToken token)
@@ -205,14 +207,14 @@ namespace dns {
         std::unique_lock lock(mutex_); now=ordered(now);
         if (initialized_ && now<now_) return std::unexpected(CacheError::time_reversed);
         if (token.generation!=generation_) return std::unexpected(CacheError::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end() || !same(pending->key,key)) return std::unexpected(CacheError::stale_query);
+        auto pending=pending_.find_query(token.query);
+        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(CacheError::stale_query);
         if (!capacity_) return std::unexpected(CacheError::disabled);
         auto duration=std::uint64_t(*answer.ttl)*1000;
         if (duration>std::numeric_limits<std::uint64_t>::max()-now) return std::unexpected(CacheError::invalid_answer);
         if (duration && !detail::compact_answer_storage(answer)) return std::unexpected(CacheError::invalid_answer);
         if (auto result=advance(now); !result) return result;
-        if (!refresh_current(*pending)) return std::unexpected(CacheError::stale_query);
+        if (!refresh_current(pending_.at(*pending))) return std::unexpected(CacheError::stale_query);
         if (duration==0) {
             if (auto idx=entries_.find(hash,[&](Entry const& entry) { return same(entry.key,key); }))
                 entries_.erase(*idx);
@@ -226,7 +228,9 @@ namespace dns {
                 });
             min_evict_at_ = std::min(min_evict_at_, deadline);
         }
-        std::erase_if(pending_,[&](Pending const& item) { return item.query<=token.query && same(item.key,key); });
+        pending_.erase_key_if(hash,
+            [&](std::uint64_t q, Pending const& item) { return q<=token.query && same(item.key,key); },
+            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
         return {};
     }
     auto AddressCache::publish_negative(CacheKey key, NegativeKind kind, std::uint32_t ttl,
@@ -237,13 +241,13 @@ namespace dns {
         std::unique_lock lock(mutex_); now=ordered(now);
         if (initialized_ && now<now_) return std::unexpected(CacheError::time_reversed);
         if (token.generation!=generation_) return std::unexpected(CacheError::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end() || !same(pending->key,key)) return std::unexpected(CacheError::stale_query);
+        auto pending=pending_.find_query(token.query);
+        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(CacheError::stale_query);
         if (!capacity_) return std::unexpected(CacheError::disabled);
         auto duration=std::uint64_t(ttl)*1000;
         if (duration>std::numeric_limits<std::uint64_t>::max()-now) return std::unexpected(CacheError::invalid_answer);
         if (auto result=advance(now); !result) return result;
-        if (!refresh_current(*pending)) return std::unexpected(CacheError::stale_query);
+        if (!refresh_current(pending_.at(*pending))) return std::unexpected(CacheError::stale_query);
         if (!duration) {
             if (auto idx=entries_.find(hash,[&](Entry const& entry) { return same(entry.key,key); }))
                 entries_.erase(*idx);
@@ -257,7 +261,9 @@ namespace dns {
                 });
             min_evict_at_ = std::min(min_evict_at_, deadline);
         }
-        std::erase_if(pending_,[&](Pending const& item) { return item.query<=token.query && same(item.key,key); });
+        pending_.erase_key_if(hash,
+            [&](std::uint64_t q, Pending const& item) { return q<=token.query && same(item.key,key); },
+            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
         return {};
     }
     auto AddressCache::invalidate(CacheKey key, std::uint64_t now, CacheToken token)
@@ -268,13 +274,15 @@ namespace dns {
         std::unique_lock lock(mutex_); now=ordered(now);
         if (initialized_ && now<now_) return std::unexpected(CacheError::time_reversed);
         if (token.generation!=generation_) return std::unexpected(CacheError::stale_generation);
-        auto pending=std::ranges::find(pending_,token.query,&Pending::query);
-        if (pending==pending_.end() || !same(pending->key,key)) return std::unexpected(CacheError::stale_query);
+        auto pending=pending_.find_query(token.query);
+        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(CacheError::stale_query);
         if (auto result=advance(now); !result) return result;
-        if (!refresh_current(*pending)) return std::unexpected(CacheError::stale_query);
+        if (!refresh_current(pending_.at(*pending))) return std::unexpected(CacheError::stale_query);
         if (auto idx=entries_.find(hash,[&](Entry const& entry) { return same(entry.key,key); }))
             entries_.erase(*idx);
-        std::erase_if(pending_,[&](Pending const& item) { return item.query<=token.query && same(item.key,key); });
+        pending_.erase_key_if(hash,
+            [&](std::uint64_t q, Pending const& item) { return q<=token.query && same(item.key,key); },
+            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
         return {};
     }
     auto AddressCache::clear(std::uint64_t now) -> std::expected<void,CacheError> {
@@ -282,7 +290,7 @@ namespace dns {
         std::unique_lock lock(mutex_); now=ordered(now);
         if (initialized_ && now<now_) return std::unexpected(CacheError::time_reversed);
         if (generation_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(CacheError::generation_exhausted);
-        now_=now; initialized_=true; ++generation_; next_query_=0; entries_.clear(); pending_.clear();
+        now_=now; initialized_=true; ++generation_; next_query_=0; entries_.clear(); pending_.clear(); refresh_count_=0;
         min_evict_at_=std::numeric_limits<std::uint64_t>::max();
         return {};
     }

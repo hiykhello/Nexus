@@ -1,5 +1,7 @@
 import std;
+import packet;
 import tcp.send;
+namespace p = ::packet;
 namespace t = tcp;
 int main() {
     if (t::SendBuffer::create(0, 0) || t::SendBuffer::create(0, 0x80000000ull)) return 1;
@@ -37,5 +39,32 @@ int main() {
     if (timed->due(1200, 1).error() != t::SendError::time_reversed) return 1;
     auto done = timed->acknowledge(105, 1201);
     if (!done || *done != 3 || timed->deadline() || timed->rto() != 1000) return 1;
+    // Wraparound zero-alloc two-span SendView + jumbo MTU scatter make_tcp4/make_tcp6.
+    auto wrap = t::TimedSend::create(500, 6);
+    if (!wrap || !wrap->enqueue(std::array<std::uint8_t, 4>{1, 2, 3, 4}) ||
+        !wrap->sent(4, 10) || !wrap->acknowledge(504, 15)) return 1;
+    if (!wrap->enqueue(std::array<std::uint8_t, 5>{10, 11, 12, 13, 14})) return 1;
+    auto uv = wrap->unsent_view(5);
+    if (uv.sequence != 504 || uv.head.size() != 2 || uv.tail.size() != 3 || uv.size() != 5 ||
+        uv.head[0] != 10 || uv.head[1] != 11 || uv.tail[0] != 12 || uv.tail[2] != 14) return 1;
+    if (!wrap->sent(5, 20)) return 1;
+    auto dv = wrap->due_view(2000, 5);
+    if (!dv || !*dv || (**dv).sequence != 504 || (**dv).head.size() != 2 || (**dv).tail.size() != 3) return 1;
+    std::vector<std::uint8_t> h(2500, 0x5au), tl(2000, 0xa5u);
+    p::Tcp4View v4{.source = {10, 0, 0, 1}, .destination = {10, 0, 0, 2}, .source_port = 1234,
+                   .destination_port = 443, .sequence = 1, .acknowledgement = 2, .flags = 0x18, .window = 65535, .payload = h};
+    auto pkt4 = p::make_tcp4(v4, tl, 9000);
+    if (!pkt4 || pkt4->size() != 4540) return 1;
+    auto pv4 = p::parse_tcp4(*pkt4);
+    if (!pv4 || pv4->payload.size() != 4500 || !std::ranges::equal(pv4->payload.first(2500), h) ||
+        !std::ranges::equal(pv4->payload.subspan(2500), tl)) return 1;
+    p::Tcp6View v6{.source = {0x20, 1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+                   .destination = {0x20, 1, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2},
+                   .source_port = 1234, .destination_port = 443, .sequence = 1, .acknowledgement = 2, .flags = 0x18, .window = 65535, .payload = h};
+    auto pkt6 = p::make_tcp6(v6, tl, 9000);
+    if (!pkt6 || pkt6->size() != 4560) return 1;
+    auto pv6 = p::parse_tcp6(*pkt6);
+    if (!pv6 || pv6->payload.size() != 4500 || !std::ranges::equal(pv6->payload.first(2500), h) ||
+        !std::ranges::equal(pv6->payload.subspan(2500), tl)) return 1;
     std::cout << "TCP send ownership, cumulative ACK and sequence wrap passed\n";
 }

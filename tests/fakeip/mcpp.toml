@@ -4,15 +4,17 @@ version = "0.1.0"
 
 # FakeIP proxy tests opt into their implementation and callbacks; the default
 # workspace graph keeps the ordinary request provider.
+[dependencies]
+dns = { path = "../../src/dns", features = ["fakeip"] }
+
 [features]
-fakeip-base = []
+fakeip-base = ["dns/test-fakeip"]
 proxy = ["fakeip-base"]
 lifetime = ["fakeip-base", "relay-runtime/test-fakeip-lifetime"]
 owner = ["fakeip-base", "relay-runtime/test-fakeip-abandon"]
 io-uring = ["nexus.corosio-source/uring"]
 
 [feature-deps.fakeip-base]
-dns = { path = "../../src/dns", features = ["fakeip", "test-fakeip"] }
 relay-runtime = { path = "../../src/relay", default-features = false, features = ["dns-standard", "test-fakeip"] }
 nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
@@ -34,3 +36,7 @@ required_features = ["lifetime"]
 kind = "bin"
 main = "../proxy_fakeip_owner.cpp"
 required_features = ["owner"]
+
+[targets.fakeip-pool-unit]
+kind = "bin"
+main = "fakeip_pool_unit.cpp"

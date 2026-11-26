@@ -9,9 +9,55 @@ import std;
 import corosio;
 import net.datagram_frame;
 import net.udp_route;
+import platform.network_state;
+import rules;
 
 namespace relay {
     namespace {
+        auto cached_network_metadata(std::shared_ptr<platform::network::Snapshot const> const& snap) noexcept
+            -> std::shared_ptr<NetworkMetadataSnapshot const> {
+            if (!snap) return {};
+            struct CacheEntry {
+                std::weak_ptr<platform::network::Snapshot const> source;
+                std::shared_ptr<NetworkMetadataSnapshot const> metadata;
+            };
+            thread_local CacheEntry cache{};
+            if (!cache.source.owner_before(snap) && !snap.owner_before(cache.source))
+                return cache.metadata;
+            try {
+                auto built = std::make_shared<NetworkMetadataSnapshot>();
+                if (snap->default_network_type) {
+                    using P = platform::network::NetworkType;
+                    using R = rules::NetworkType;
+                    switch (*snap->default_network_type) {
+                    case P::wifi: built->network_type = R::wifi; break;
+                    case P::cellular: built->network_type = R::cellular; break;
+                    case P::ethernet: built->network_type = R::ethernet; break;
+                    case P::other: built->network_type = R::other; break;
+                    }
+                }
+                built->network_is_expensive = snap->network_is_expensive;
+                built->network_is_constrained = snap->network_is_constrained;
+                if (snap->wifi_ssid && !snap->wifi_ssid->empty()) built->wifi_ssid = *snap->wifi_ssid;
+                built->wifi_bssid = snap->wifi_bssid;
+                auto addrs = snap->default_interface_addresses();
+                built->default_interface_addresses.reserve(addrs.size());
+                for (auto const& [bytes, size] : addrs)
+                    built->default_interface_addresses.push_back({bytes, size});
+                bool const has_any = built->network_type.has_value() ||
+                    built->network_is_expensive.has_value() ||
+                    built->network_is_constrained.has_value() ||
+                    !built->wifi_ssid.empty() ||
+                    built->wifi_bssid.has_value() ||
+                    !built->default_interface_addresses.empty();
+                cache.source = snap;
+                cache.metadata = has_any ? std::move(built) : std::shared_ptr<NetworkMetadataSnapshot const>{};
+                return cache.metadata;
+            } catch (...) {
+                return {};
+            }
+        }
+
         auto accepted_endpoint(io::tcp_socket const& socket,
             int (*lookup)(int, sockaddr*, socklen_t*)) noexcept -> io::endpoint {
             sockaddr_storage storage{};
@@ -192,11 +238,17 @@ namespace relay {
         if (slot_) registry_->remove(*std::exchange(slot_, nullptr));
     }
 
+    auto Session::populate_network_metadata() noexcept -> void {
+        auto snap = network_monitor ? network_monitor->get() : nullptr;
+        if (!snap) return;
+        network_metadata = cached_network_metadata(snap);
+    }
+
     auto Session::begin_traffic(TrafficProtocol protocol, std::uint16_t port,
         std::optional<TransparentDatagram> transparent_datagram) -> void {
         if (!traffic.registry_ && transport_owner) traffic.registry_ = transport_owner->traffic.registry_;
         if (traffic.registry_)
-            traffic.begin(source_endpoint(*this, true), port, protocol, started, registry != nullptr, source_uid, process_path,
+            traffic.begin(source_endpoint(*this, true), port, protocol, started, registry != nullptr, source_uid, process_path_view(),
                 transparent_datagram, route_snapshot ? route_snapshot->generation : 1, inbound.value_or(std::string_view{}));
     }
 

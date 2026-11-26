@@ -204,10 +204,14 @@ export namespace cli::tun_enabled {
                     policy, session.ordered_tcp)) {
                 if (owner->uid) session.source_uid = owner->uid;
                 if (owner->gid) session.source_gid = owner->gid;
-                if (!owner->process_path.empty()) session.process_path = std::move(owner->process_path);
-                if (!owner->process_paths.empty()) session.process_paths = std::move(owner->process_paths);
-                if (!owner->user.empty()) session.source_user = std::move(owner->user);
-                if (!owner->package_name.empty()) session.package_name = std::move(owner->package_name);
+                if (!owner->process_path.empty() || !owner->process_paths.empty() ||
+                    !owner->user.empty() || !owner->package_name.empty()) {
+                    auto& ex = session.ensure_mutable_extras();
+                    if (!owner->process_path.empty()) ex.process_path = std::move(owner->process_path);
+                    if (!owner->process_paths.empty()) ex.process_paths = std::move(owner->process_paths);
+                    if (!owner->user.empty()) ex.source_user = std::move(owner->user);
+                    if (!owner->package_name.empty()) ex.package_name = std::move(owner->package_name);
+                }
             }
             session.begin_traffic(relay::TrafficProtocol::tun_tcp, req.port);
             TcpChannel<Impl, IsV6> ch{host, session, id, slot};

@@ -8,6 +8,7 @@ module;
 
 export module relay:openvpn_transport;
 import std;
+import containers.ring_queue;
 import config;
 import platform.socket_options;
 import net.udp_socket;
@@ -68,8 +69,16 @@ export namespace relay::ovpn_detail {
         std::uint64_t local_sid = 0;
         std::uint32_t peer_id = 0;
         std::uint16_t ping_s = 10, ping_restart_s = 60;
+        static constexpr std::size_t kTxQueueCap = 256;
         L3Mux mux;
-        std::deque<std::vector<std::uint8_t>> tx_queue;
+        containers::RingQueue<kTxQueueCap> tx_ring;
+        std::array<std::vector<std::uint8_t>, kTxQueueCap> tx_slots;
+        auto tx_push(std::vector<std::uint8_t> pkt) noexcept -> bool {
+            if (tx_ring.full()) return false;
+            tx_slots[tx_ring.tail()] = std::move(pkt);
+            tx_ring.commit();
+            return true;
+        }
         capy::async_event ready_event, tx_event;
         std::stop_source stop_src;
         std::uint64_t last_tx_ms = 0, last_rx_ms = 0;
@@ -92,13 +101,10 @@ export namespace relay::ovpn_detail {
             h->last_tx_ms = now_ms();
             if (!h->use_tcp) {
                 if (h->udp.send(h->udp_target, *sealed).has_value()) return true;
-                if (h->tx_queue.size() >= 256) return false;
-                h->tx_queue.push_back(std::move(*sealed));
-                return true;
+                return h->tx_push(std::move(*sealed));
             }
             auto framed = openvpn::encode_tcp_frame(*sealed);
-            if (!framed || h->tx_queue.size() >= 256) return false;
-            h->tx_queue.push_back(std::move(*framed));
+            if (!framed || !h->tx_push(std::move(*framed))) return false;
             h->tx_event.set();
             return true;
         }
@@ -234,8 +240,7 @@ export namespace relay::ovpn_detail {
                     .session_id = local_sid, .acks = {*cp->packet_id}, .remote_session_id = cp->session_id};
                 if (auto w = openvpn::encode_control_packet(ack)) {
                     if (!use_tcp) (void)udp.send(udp_target, *w);
-                    else if (auto f = openvpn::encode_tcp_frame(*w); f && tx_queue.size() < 256) {
-                        tx_queue.push_back(std::move(*f));
+                    else if (auto f = openvpn::encode_tcp_frame(*w); f && tx_push(std::move(*f))) {
                         tx_event.set();
                     }
                 }
@@ -254,9 +259,11 @@ export namespace relay::ovpn_detail {
                     }
                     moved = true;
                 }
-                while (!h->tx_queue.empty()) {
-                    if (!h->udp.send(h->udp_target, h->tx_queue.front())) break;
-                    h->tx_queue.pop_front();
+                while (!h->tx_ring.empty()) {
+                    auto const idx = h->tx_ring.front();
+                    if (!h->udp.send(h->udp_target, h->tx_slots[idx])) break;
+                    h->tx_slots[idx].clear();
+                    h->tx_ring.consume();
                     moved = true;
                 }
                 auto ms = now_ms();
@@ -306,13 +313,14 @@ export namespace relay::ovpn_detail {
         static auto tcp_tx_loop(HostState* h) -> capy::task<capy::results<>> {
             while (!h->stopped && !h->stop_src.stop_requested()) {
                 h->tx_event.clear();
-                if (h->tx_queue.empty()) {
+                if (h->tx_ring.empty()) {
                     auto [ec] = co_await h->tx_event.wait();
                     if (ec) break;
                     continue;
                 }
-                auto pkt = std::move(h->tx_queue.front());
-                h->tx_queue.pop_front();
+                auto const idx = h->tx_ring.front();
+                auto pkt = std::move(h->tx_slots[idx]);
+                h->tx_ring.consume();
                 bool ok = true;
                 if (h->detour_tunnel) ok = co_await h->detour_tunnel->send(pkt);
                 else if (h->tcp && h->tcp->is_open()) {
@@ -335,9 +343,8 @@ export namespace relay::ovpn_detail {
                 h->mux.tick(ms);
                 if (h->ping_s > 0 && ms - h->last_tx_ms >= static_cast<std::uint64_t>(h->ping_s) * 1000) {
                     if (auto ping = h->data.seal_data_v2(openvpn::ping_magic)) {
-                        if (auto f = openvpn::encode_tcp_frame(*ping); f && h->tx_queue.size() < 256) {
+                        if (auto f = openvpn::encode_tcp_frame(*ping); f && h->tx_push(std::move(*f))) {
                             h->last_tx_ms = ms;
-                            h->tx_queue.push_back(std::move(*f));
                             h->tx_event.set();
                         }
                     }

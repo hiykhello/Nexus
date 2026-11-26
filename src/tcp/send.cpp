@@ -2,13 +2,22 @@ module tcp.send;
 import std;
 
 namespace tcp {
+    auto SendBuffer::view_range(std::size_t offset, std::size_t length) const noexcept
+        -> std::pair<std::span<std::uint8_t const>, std::span<std::uint8_t const>> {
+        if (!length || !capacity_) return {{}, {}};
+        auto pos = (head_ + offset) % capacity_;
+        auto first = std::min(length, capacity_ - pos);
+        std::span<std::uint8_t const> h(ring_.data() + pos, first);
+        std::span<std::uint8_t const> t = length > first
+            ? std::span<std::uint8_t const>(ring_.data(), length - first) : std::span<std::uint8_t const>{};
+        return {h, t};
+    }
     auto SendBuffer::copy_range(std::size_t offset, std::size_t length) const -> std::vector<std::uint8_t> {
         std::vector<std::uint8_t> out(length);
         if (!length) return out;
-        auto pos = (head_ + offset) % capacity_;
-        auto first = std::min(length, capacity_ - pos);
-        std::copy_n(ring_.data() + pos, first, out.data());
-        if (length > first) std::copy_n(ring_.data(), length - first, out.data() + first);
+        auto [h, t] = view_range(offset, length);
+        std::ranges::copy(h, out.data());
+        if (!t.empty()) std::ranges::copy(t, out.data() + h.size());
         return out;
     }
     auto SendBuffer::create(std::uint32_t initial, std::size_t capacity) -> std::expected<SendBuffer, SendError> {
@@ -32,6 +41,16 @@ namespace tcp {
     auto SendBuffer::retransmit(std::size_t maximum) const -> SendSlice {
         auto length = std::min(maximum, sent_);
         return {una_, copy_range(0, length)};
+    }
+    auto SendBuffer::unsent_view(std::size_t maximum) const noexcept -> SendView {
+        auto length = std::min(maximum, count_ - sent_);
+        auto [h, t] = view_range(sent_, length);
+        return {next(), h, t};
+    }
+    auto SendBuffer::retransmit_view(std::size_t maximum) const noexcept -> SendView {
+        auto length = std::min(maximum, sent_);
+        auto [h, t] = view_range(0, length);
+        return {una_, h, t};
     }
     auto SendBuffer::mark_sent(std::size_t count) noexcept -> std::expected<void, SendError> {
         if (count > count_ - sent_) return std::unexpected(SendError::invalid_count);
@@ -113,6 +132,13 @@ namespace tcp {
             return std::optional<SendSlice>{buffer_.retransmit(maximum)};
         if (!deadline_ || now < *deadline_ || !maximum) return std::optional<SendSlice>{};
         return std::optional<SendSlice>{buffer_.retransmit(maximum)};
+    }
+    auto TimedSend::due_view(std::uint64_t now, std::size_t maximum) noexcept -> std::expected<std::optional<SendView>, SendError> {
+        if (auto time = advance(now); !time) return std::unexpected(time.error());
+        if (fast_retransmit_ && maximum && buffer_.in_flight())
+            return std::optional<SendView>{buffer_.retransmit_view(maximum)};
+        if (!deadline_ || now < *deadline_ || !maximum) return std::optional<SendView>{};
+        return std::optional<SendView>{buffer_.retransmit_view(maximum)};
     }
     auto TimedSend::retransmitted(std::uint64_t now) noexcept -> std::expected<void, SendError> {
         if (auto time = advance(now); !time) return time;

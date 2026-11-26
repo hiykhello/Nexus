@@ -40,15 +40,16 @@ namespace relay {
         source_uid = owner->uid;
         source_gid = owner->gid;
 #endif
-        if (!owner->user.empty()) source_user = std::move(owner->user);
-        if (needs_process) {
+        if (!owner->user.empty()) ensure_mutable_extras().source_user = std::move(owner->user);
+        if (needs_process && (!owner->executables.empty() || !owner->executable.empty() || !owner->package_name.empty())) {
+            auto& ex = ensure_mutable_extras();
             if (!owner->executables.empty()) {
-                process_path = owner->executables.front();
-                process_paths = std::move(owner->executables);
+                ex.process_path = owner->executables.front();
+                ex.process_paths = std::move(owner->executables);
             } else if (!owner->executable.empty()) {
-                process_path = std::move(owner->executable);
+                ex.process_path = std::move(owner->executable);
             }
-            if (!owner->package_name.empty()) package_name = std::move(owner->package_name);
+            if (!owner->package_name.empty()) ex.package_name = std::move(owner->package_name);
         }
     }
 }

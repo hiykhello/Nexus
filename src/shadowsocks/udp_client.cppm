@@ -1,7 +1,9 @@
 export module shadowsocks.udp_client;
 import std;
+import containers.cache_index;
 import shadowsocks.udp_replay;
 import shadowsocks.key;
+import shadowsocks.udp_sessions;
 export import shadowsocks.udp_packet;
 
 export namespace shadowsocks {
@@ -25,7 +27,7 @@ export namespace shadowsocks {
         std::uint64_t last_wall_=0;
         std::size_t capacity_;
         CipherMethod method_;
-        std::map<std::array<std::uint8_t,8>,UdpReplayWindow> servers_;
+        udp_detail::IntrusiveU64Table<UdpReplayWindow> servers_;
         [[nodiscard]] auto advance(Clock::time_point now, std::uint64_t wall) noexcept -> bool;
     public:
         UdpClientSession(std::span<std::uint8_t const> key, std::array<std::uint8_t,8> client,
@@ -53,6 +55,7 @@ export namespace shadowsocks {
     class UdpClientPool {
         using Clock=std::chrono::steady_clock;
         using Id=std::array<std::uint8_t,8>;
+        struct ActiveSession { std::uint64_t key=0; std::unique_ptr<UdpClientSession> session; };
         std::array<std::uint8_t,32> key_{};
         std::size_t key_size_=0, active_limit_, history_limit_, server_limit_;
         std::optional<std::uint64_t> next_;
@@ -60,9 +63,9 @@ export namespace shadowsocks {
         std::optional<Clock::time_point> last_;
         Clock::time_point anchor_mono_{};
         std::uint64_t anchor_wall_=0, last_wall_=0;
-        std::set<Id> clients_;
-        std::map<Id,Id> servers_;
-        std::map<Id,std::unique_ptr<UdpClientSession>> active_;
+        udp_detail::FlatU64Set clients_;
+        udp_detail::FlatU64Map servers_;
+        containers::IntrusiveLruTable<ActiveSession> active_;
         [[nodiscard]] auto advance(Clock::time_point now, std::uint64_t wall) noexcept -> bool;
     public:
         UdpClientPool(std::span<std::uint8_t const> key, std::size_t active_limit,

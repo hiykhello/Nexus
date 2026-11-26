@@ -11,9 +11,9 @@ export namespace shadowsocks {
     // Single owner, Linux nonblocking sockets. Caller must authenticate packets,
     // resolve and authorize every destination, and close IDs returned by expire().
     class UdpRelay {
-        struct Entry { net::UdpDialSockets socket; std::set<UdpPeer> targets; explicit Entry(platform::SocketBinding const* binding) : socket(binding) {} };
-        std::map<std::array<std::uint8_t,8>,Entry> sockets_;
-        std::optional<std::array<std::uint8_t,8>> cursor_;
+        struct Entry { net::UdpDialSockets socket; std::vector<UdpPeer> targets; explicit Entry(platform::SocketBinding const* binding) : socket(binding) {} };
+        udp_detail::IntrusiveU64Table<Entry> sockets_;
+        std::uint32_t cursor_=udp_detail::IntrusiveU64Table<Entry>::kNull;
         std::size_t max_sessions_,max_targets_;
         platform::SocketBinding const* binding_;
     public:

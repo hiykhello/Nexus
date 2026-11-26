@@ -353,7 +353,7 @@ namespace relay {
             }
             auto replay_head=result.first_sent ? std::span<std::uint8_t const>{} : sniffer.wire();
             auto replay_tail=prefetch.tail();
-            if (!session.tunnel && session.direct_shaping.pending() && (!replay_head.empty() || !replay_tail.empty())) {
+            if (!session.tunnel && session.direct_shaping_pending() && (!replay_head.empty() || !replay_tail.empty())) {
                 if(!co_await replay_shaped_direct(session,replay_head,replay_tail,session.handshake_deadline)){fail();co_return;}
             } else {
                 sniff::TcpReplay replay(replay_head,replay_tail);

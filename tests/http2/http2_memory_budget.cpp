@@ -425,8 +425,18 @@ int main() {
         auto next=request; next[8]=static_cast<std::byte>(id);
         if (!(**many).receive(next) || !(**many).respond_body(static_cast<std::int32_t>(id),200,body)) return 124;
     }
+    // Exceeding concurrent_streams (64) must refuse stream 129 without corrupting slab accounting.
+    { auto over=request; over[8]=std::byte{129}; if (!(**many).receive(over) || (**many).respond_empty(129,204)) return 145; }
     for (;;) { auto n=(**many).output(sink); if (!n) return 125; if (!*n) break; }
-    if ((**many).response_memory_used() || (**many).library_memory_peak()>many_limits.library_memory_bytes) return 126;
+    if ((**many).response_memory_used() || (**many).stream_memory_charge() ||
+        (**many).library_memory_peak()>many_limits.library_memory_bytes) return 126;
+    // Reuse all 64 freed slab slots in a second wave to verify free-list & user-data rebinding.
+    for (unsigned id=131; id<259; id+=2) {
+        auto next=request; next[7]=static_cast<std::byte>(id>>8); next[8]=static_cast<std::byte>(id&0xff);
+        if (!(**many).receive(next) || !(**many).respond_body(static_cast<std::int32_t>(id),200,body)) return 146;
+    }
+    for (;;) { auto n=(**many).output(sink); if (!n) return 147; if (!*n) break; }
+    if ((**many).response_memory_used() || (**many).stream_memory_charge()) return 148;
     // Reservations may precede session creation and survive its destruction.
     nh::ServerLimits owned_limits{8,4,128,1024,4096}; owned_limits.shared_memory_bytes=65536;
     auto owner=std::make_shared<::memory::Budget>(owned_limits.shared_memory_bytes);

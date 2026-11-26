@@ -75,7 +75,7 @@ export namespace shadowsocks::detail {
         udp_io::endpoint upstream_;
         UdpResolveOptions dns_options_;
         std::optional<UdpDnsRouting> dns_routing_;
-        std::optional<UdpOrderedRouting> ordered_;
+        std::shared_ptr<UdpOrderedRouting const> ordered_;
         std::optional<OrderedUdpSniffOwner> sniff_owner_;
 #ifdef NEXUS_DNS_RESPONSE
         bool has_response_program_=false;
@@ -298,7 +298,7 @@ export namespace shadowsocks::detail {
                     udp_io::endpoint upstream,std::size_t pending=64,
                     std::chrono::milliseconds tick_interval=std::chrono::milliseconds(5),UdpResolveOptions dns_options={},
                     std::optional<UdpDnsRouting> dns_routing={},Cache* borrowed_cache=nullptr,
-                    typename Lookup::Reader* reader=nullptr,typename Lookup::Extra extra={},std::optional<UdpOrderedRouting> ordered={},
+                    typename Lookup::Reader* reader=nullptr,typename Lookup::Extra extra={},std::shared_ptr<UdpOrderedRouting const> ordered={},
                     UdpListenerIngress* ingress=nullptr,std::uint64_t generation=0)
             : context_(context),ingress_(ingress),generation_(generation),state_(state),cache_(select_cache(owned_cache_,borrowed_cache)),
               local_source_(dns::system_local_snapshots()),

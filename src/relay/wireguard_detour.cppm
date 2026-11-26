@@ -7,6 +7,7 @@ module;
 
 module relay:wireguard_detour;
 import std;
+import containers.ring_queue;
 import proxy.v4;
 import net.udp_socket;
 import net.datagram_frame;
@@ -106,7 +107,7 @@ namespace relay::wg_detail {
         net::UdpSocket physical_;
         std::optional<Endpoint> remote_;
         std::string const* network_namespace_ = nullptr;
-        std::deque<QueuedPacket> input_, output_;
+        containers::BoundedRing<QueuedPacket, capacity> input_, output_;
         capy::async_event tx_;
         bool closed_ = false;
 

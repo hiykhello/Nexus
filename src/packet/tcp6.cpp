@@ -80,20 +80,36 @@ namespace packet {
         return v;
     }
     auto make_tcp6(Tcp6View v,std::size_t mtu) -> std::expected<Bytes,PacketError> {
-        return make_tcp6(v,mtu,{});
+        return make_tcp6(v,{},mtu,{});
     }
     auto make_tcp6(Tcp6View v,std::size_t mtu,Bytes p) -> std::expected<Bytes,PacketError> {
+        return make_tcp6(v,{},mtu,std::move(p));
+    }
+    auto make_tcp6(Tcp6View v,std::span<std::uint8_t const> payload_tail,std::size_t mtu)
+        -> std::expected<Bytes,PacketError> {
+        return make_tcp6(v,payload_tail,mtu,{});
+    }
+    auto make_tcp6(Tcp6View v,std::span<std::uint8_t const> payload_tail,std::size_t mtu,Bytes p)
+        -> std::expected<Bytes,PacketError> {
         if (v.options.size()>40 || v.options.size()%4 || v.flags>0x1ff) return std::unexpected(PacketError::unsupported_header);
         auto header=60+v.options.size();
-        if (mtu<header || v.payload.size()>65535-(header-40) || v.payload.size()>mtu-header)
+        auto max_tcp_payload=65535-(header-40);
+        if (mtu<header || v.payload.size()>max_tcp_payload ||
+            payload_tail.size()>max_tcp_payload-v.payload.size() ||
+            v.payload.size()+payload_tail.size()>mtu-header)
             return std::unexpected(PacketError::too_large);
-        p.resize(header+v.payload.size()); std::ranges::fill(p,0); p[0]=0x60; p[6]=6; p[7]=64;
+        auto total_payload=v.payload.size()+payload_tail.size();
+        p.resize(header+total_payload);
+        std::fill_n(p.begin(),static_cast<std::ptrdiff_t>(header),std::uint8_t{0});
+        p[0]=0x60; p[6]=6; p[7]=64;
         put16(p,4,static_cast<std::uint16_t>(p.size()-40));
         std::ranges::copy(v.source,p.begin()+8); std::ranges::copy(v.destination,p.begin()+24);
         put16(p,40,v.source_port); put16(p,42,v.destination_port); put32(p,44,v.sequence); put32(p,48,v.acknowledgement);
         p[52]=static_cast<std::uint8_t>(((20+v.options.size())/4)<<4 | (v.flags>>8)); p[53]=static_cast<std::uint8_t>(v.flags);
         put16(p,54,v.window); put16(p,58,v.urgent);
-        std::ranges::copy(v.options,p.begin()+60); std::ranges::copy(v.payload,p.begin()+header);
+        std::ranges::copy(v.options,p.begin()+60);
+        std::ranges::copy(v.payload,p.begin()+header);
+        if (!payload_tail.empty()) std::ranges::copy(payload_tail,p.begin()+header+v.payload.size());
         put16(p,56,checksum(p,40)); return p;
     }
 }
