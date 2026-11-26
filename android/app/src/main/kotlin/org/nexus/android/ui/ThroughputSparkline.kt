@@ -4,10 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -29,6 +27,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -42,6 +42,7 @@ import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 private const val WAVE_SIGMA = 1.5
 private const val WAVE_RADIUS = 4
@@ -52,13 +53,28 @@ private val GAUSSIAN_KERNEL = FloatArray(WAVE_RADIUS + 1) { d ->
     exp(-(d * d).toDouble() / (2.0 * WAVE_SIGMA * WAVE_SIGMA)).toFloat()
 }
 
+private class WaveScratchBuffers(initialLen: Int = 40) {
+    var padded = FloatArray(initialLen)
+    var heights = FloatArray(initialLen)
+    var slopes = FloatArray(initialLen)
+
+    fun ensureCapacity(len: Int) {
+        if (padded.size < len) {
+            padded = FloatArray(len)
+            heights = FloatArray(len)
+            slopes = FloatArray(len)
+        } else {
+            padded.fill(0f, 0, len)
+            heights.fill(0f, 0, len)
+            slopes.fill(0f, 0, len)
+        }
+    }
+}
+
 /**
  * Dual-channel Bento `NetworkSpeedCard`:
- * - Two equal side-by-side speed tiles (`下载` Sky Cyan & `上传` Prism Violet, ~1.45 aspect ratio)
- * - Gaussian blur (`sigma = 1.5`, `radius = 4`) + clamped Catmull-Rom Cubic Bezier area wave
- * - Wave bleeds `-2.dp` past left/right/bottom edges inside `clipToBounds()` so idle/zero traffic
- *   hides cleanly below the bottom edge with zero flat baseline artifact
- * - Zero per-frame draw allocations (reusable `Path` instances + `Modifier.drawWithCache`)
+ * - Zero `BoxWithConstraints` subcomposition (single-pass `Modifier.layout` aspect sizing)
+ * - Reusable `Path` (`rewind()`) + preallocated `WaveScratchBuffers` (zero per-tick FloatArray GC)
  */
 @Composable
 fun ThroughputSparklineCard(
@@ -112,9 +128,11 @@ private fun SpeedWaveTile(
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
+    val fontScale = LocalDensity.current.fontScale
     val tileShape = RoundedCornerShape(20.dp)
     val linePath = remember { Path() }
     val areaPath = remember { Path() }
+    val scratch = remember { WaveScratchBuffers() }
     val (figureValue, figureUnit) = remember(rateBps) { splitTrafficRate(rateBps) }
     val activeSamples = if (running) samples else emptyList()
 
@@ -147,137 +165,151 @@ private fun SpeedWaveTile(
         }
     }
 
-    BoxWithConstraints(modifier = modifier) {
-        val targetMinHeight = (maxWidth / SPEED_TILE_ASPECT_RATIO).coerceIn(126.dp, 148.dp)
-        Surface(
+    val aspectMinHeightModifier = Modifier.layout { measurable, constraints ->
+        val minH = 126.dp.roundToPx()
+        val maxH = 148.dp.roundToPx()
+        val targetMinH = if (constraints.hasBoundedWidth) {
+            (constraints.maxWidth / SPEED_TILE_ASPECT_RATIO).roundToInt().coerceIn(minH, maxH)
+        } else {
+            minH
+        }
+        val adjusted = constraints.copy(
+            minHeight = max(constraints.minHeight, targetMinH).coerceAtMost(constraints.maxHeight),
+        )
+        val placeable = measurable.measure(adjusted)
+        layout(placeable.width, placeable.height) {
+            placeable.placeRelative(0, 0)
+        }
+    }
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .then(aspectMinHeightModifier),
+        shape = tileShape,
+        color = Color.Transparent,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (running) accentColor.copy(alpha = 0.24f) else ext.hairline,
+        ),
+    ) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .defaultMinSize(minHeight = targetMinHeight),
-            shape = tileShape,
-            color = Color.Transparent,
-            border = BorderStroke(
-                width = 1.dp,
-                color = if (running) accentColor.copy(alpha = 0.24f) else ext.hairline,
-            ),
+                .clip(tileShape)
+                .clipToBounds()
+                .background(Brush.verticalGradient(listOf(ext.cardGradientTop, ext.cardGradientBottom)))
+                .drawWithCache {
+                    val bleedPx = 2.dp.toPx()
+                    val clampedScale = fontScale.coerceIn(1f, 2.2f)
+                    val scaledTextBandPx = 18.dp.toPx() + 58.dp.toPx() * clampedScale
+                    val minWaveBandPx = 28.dp.toPx()
+                    val chartTopPx = scaledTextBandPx.coerceIn(
+                        minimumValue = 72.dp.toPx().coerceAtMost(size.height * 0.58f),
+                        maximumValue = (size.height - minWaveBandPx).coerceAtLeast(size.height * 0.58f),
+                    )
+                    val strokePx = 2.2.dp.toPx()
+                    val stroke = Stroke(
+                        width = strokePx,
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round,
+                    )
+                    val glowStroke = Stroke(
+                        width = 6.dp.toPx(),
+                        cap = StrokeCap.Round,
+                        join = StrokeJoin.Round,
+                    )
+                    val glowColor = accentColor.copy(alpha = if (ext.isDark) 0.28f else 0.16f)
+                    val topStrokeColor = if (ext.isDark) lerp(accentColor, Color.White, 0.20f) else accentColor
+                    val fillBrush = Brush.verticalGradient(
+                        colorStops = arrayOf(
+                            0.0f to accentColor.copy(alpha = if (ext.isDark) 0.42f else 0.30f),
+                            0.58f to accentColor.copy(alpha = if (ext.isDark) 0.16f else 0.10f),
+                            1.0f to accentColor.copy(alpha = if (ext.isDark) 0.02f else 0.01f),
+                        ),
+                        startY = chartTopPx,
+                        endY = size.height + bleedPx,
+                    )
+
+                    val hasCurve = buildSpeedWavePaths(
+                        samples = activeSamples,
+                        width = size.width + bleedPx * 2f,
+                        leftOffset = -bleedPx,
+                        chartTop = chartTopPx,
+                        baselineY = size.height + bleedPx,
+                        strokeWidthPx = strokePx,
+                        linePath = linePath,
+                        areaPath = areaPath,
+                        scratch = scratch,
+                    )
+
+                    onDrawBehind {
+                        if (hasCurve) {
+                            drawPath(path = areaPath, brush = fillBrush)
+                            drawPath(path = linePath, color = glowColor, style = glowStroke)
+                            drawPath(path = linePath, color = topStrokeColor, style = stroke)
+                        }
+                    }
+                },
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .defaultMinSize(minHeight = targetMinHeight)
-                    .clip(tileShape)
-                    .clipToBounds()
-                    .background(Brush.verticalGradient(listOf(ext.cardGradientTop, ext.cardGradientBottom)))
-                    .drawWithCache {
-                        val bleedPx = 2.dp.toPx()
-                        val chartTopPx = 72.dp.toPx().coerceAtMost(size.height * 0.58f)
-                        val strokePx = 2.2.dp.toPx()
-                        val stroke = Stroke(
-                            width = strokePx,
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round,
-                        )
-                        val glowStroke = Stroke(
-                            width = 6.dp.toPx(),
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round,
-                        )
-                        val glowColor = accentColor.copy(alpha = if (ext.isDark) 0.28f else 0.16f)
-                        val topStrokeColor = if (ext.isDark) lerp(accentColor, Color.White, 0.20f) else accentColor
-                        val fillBrush = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0.0f to accentColor.copy(alpha = if (ext.isDark) 0.42f else 0.30f),
-                                0.58f to accentColor.copy(alpha = if (ext.isDark) 0.16f else 0.10f),
-                                1.0f to accentColor.copy(alpha = if (ext.isDark) 0.02f else 0.01f),
-                            ),
-                            startY = chartTopPx,
-                            endY = size.height + bleedPx,
-                        )
-
-                        val hasCurve = buildSpeedWavePaths(
-                            samples = activeSamples,
-                            width = size.width + bleedPx * 2f,
-                            leftOffset = -bleedPx,
-                            chartTop = chartTopPx,
-                            baselineY = size.height + bleedPx,
-                            strokeWidthPx = strokePx,
-                            linePath = linePath,
-                            areaPath = areaPath,
-                        )
-
-                        onDrawBehind {
-                            if (hasCurve) {
-                                drawPath(path = areaPath, brush = fillBrush)
-                                drawPath(path = linePath, color = glowColor, style = glowStroke)
-                                drawPath(path = linePath, color = topStrokeColor, style = stroke)
-                            }
-                        }
-                    },
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .height(1.dp)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(Color.Transparent, ext.topSpeculum, ext.topSpeculum, Color.Transparent),
-                            ),
+                    .padding(horizontal = 16.dp)
+                    .height(1.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color.Transparent, ext.topSpeculum, ext.topSpeculum, Color.Transparent),
                         ),
-                )
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 14.dp, end = 12.dp, top = 12.dp, bottom = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ),
+            )
+            val extraWaveClearance = ((fontScale - 1f).coerceIn(0f, 1.2f) * 32f).dp
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, end = 12.dp, top = 12.dp, bottom = 10.dp + extraWaveClearance),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = arrow,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = accentColor,
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                     Text(
-                        text = figureText,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        text = arrow,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = accentColor,
                         maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "总计 ${formatTrafficBytes(totalBytes)}",
-                        style = MaterialTheme.typography.labelSmall,
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
-                        softWrap = false,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Text(
+                    text = figureText,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "总计 ${formatTrafficBytes(totalBytes)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
 }
 
-/**
- * Smoothed throughput wave math:
- * 1. Left-pad with 0.0 to `capacity + radius + 1` (`sigma = 1.5`, `radius = 4`)
- * 2. Apply Gaussian blur kernel `exp(-d*d / (2 * sigma^2))`
- * 3. Compute clamped Catmull-Rom slopes (`clamp((h[i+1] - h[i-1]) / 2, -3*h[i], 3*h[i])`)
- * 4. Emit Cubic Bezier curve & closed area path with `minScale = 8 KiB/s` and baseline below clip edge
- */
 private fun buildSpeedWavePaths(
     samples: List<Long>,
     width: Float,
@@ -287,13 +319,14 @@ private fun buildSpeedWavePaths(
     strokeWidthPx: Float,
     linePath: Path,
     areaPath: Path,
+    scratch: WaveScratchBuffers,
 ): Boolean {
     linePath.rewind()
     areaPath.rewind()
     if (width <= 0f || baselineY <= chartTop || samples.isEmpty()) return false
     var anyPositive = false
-    for (s in samples) {
-        if (s > 0L) {
+    for (i in samples.indices) {
+        if (samples[i] > 0L) {
             anyPositive = true
             break
         }
@@ -302,7 +335,11 @@ private fun buildSpeedWavePaths(
 
     val capacity = max(samples.size, 12)
     val len = capacity + WAVE_RADIUS + 1
-    val padded = FloatArray(len)
+    scratch.ensureCapacity(len)
+    val padded = scratch.padded
+    val heights = scratch.heights
+    val slopes = scratch.slopes
+
     val copyCount = min(samples.size, len)
     val srcStart = samples.size - copyCount
     val dstStart = len - copyCount
@@ -310,7 +347,6 @@ private fun buildSpeedWavePaths(
         padded[dstStart + i] = samples[srcStart + i].coerceAtLeast(0L).toFloat()
     }
 
-    val heights = FloatArray(len)
     var peakHeight = 0f
     for (i in 0 until len) {
         var sum = 0f
@@ -327,7 +363,6 @@ private fun buildSpeedWavePaths(
         if (blurred > peakHeight) peakHeight = blurred
     }
 
-    val slopes = FloatArray(len)
     val last = len - 1
     for (i in 1 until last) {
         val raw = (heights[i + 1] - heights[i - 1]) * 0.5f

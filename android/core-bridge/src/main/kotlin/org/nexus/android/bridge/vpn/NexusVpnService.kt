@@ -1,12 +1,7 @@
 package org.nexus.android.bridge.vpn
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.net.IpPrefix
 import android.net.ProxyInfo
 import android.net.VpnService
@@ -17,8 +12,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.nexus.android.bridge.core.CoreProcessSupervisor
 import org.nexus.android.bridge.dns.AndroidDnsBridge
@@ -76,6 +73,7 @@ class NexusVpnService : VpnService() {
     private lateinit var workspaceStore: WorkspaceStore
     private lateinit var hostStore: AndroidHostConfigStore
     private lateinit var telemetryStore: TelemetryStore
+    private lateinit var notifications: VpnNotificationController
     private lateinit var lifecycleExecutor: ExecutorService
     private var tunInterface: ParcelFileDescriptor? = null
     private var protectServer: ProtectSocketServer? = null
@@ -85,8 +83,8 @@ class NexusVpnService : VpnService() {
     private var screenMonitor: ScreenStateMonitor? = null
     private var serviceScope: CoroutineScope? = null
     private val networkGeneration = AtomicLong(0L)
-    @Volatile
-    private var lastRunMode: AndroidRunMode = AndroidRunMode.VPN
+    @Volatile private var lastRunMode: AndroidRunMode = AndroidRunMode.VPN
+    @Volatile private var activeProfileLabel: String = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -96,6 +94,7 @@ class NexusVpnService : VpnService() {
         workspaceStore = WorkspaceStore(filesDir, db)
         hostStore = AndroidHostConfigStore(File(filesDir, "host.json"), db)
         telemetryStore = TelemetryStore(db)
+        notifications = VpnNotificationController(this)
         lifecycleExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "nexus-vpn-lifecycle").apply { isDaemon = true }
         }
@@ -122,7 +121,7 @@ class NexusVpnService : VpnService() {
 
     private fun launchForegroundWithHost(req: LaunchRequest, stopBeforeStart: Boolean, silentMissing: Boolean) {
         val initialMode = lastRunMode
-        promoteForeground(initialMode)
+        notifications.promoteForeground(runMode = initialMode, profileName = activeProfileLabel)
         submitLifecycle {
             if (silentMissing && !req.configTarget.exists()) {
                 runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
@@ -132,7 +131,8 @@ class NexusVpnService : VpnService() {
             if (!silentMissing && !validateLaunchTarget(req)) return@submitLifecycle
             val host = hostStore.load(paths)
             lastRunMode = host.android.runMode
-            if (host.android.runMode != initialMode) promoteForeground(host.android.runMode)
+            activeProfileLabel = readActiveProfileName()
+            notifications.promoteForeground(runMode = host.android.runMode, profileName = activeProfileLabel)
             if (stopBeforeStart) stopTunnelLocked(stopSelfAfter = false, preserveError = false)
             startTunnelLocked(req, host)
         }
@@ -152,14 +152,11 @@ class NexusVpnService : VpnService() {
         try {
             lifecycleExecutor.submit { stopTunnelLocked(stopSelfAfter = false) }
                 .get(DESTROY_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        } catch (_: TimeoutException) {
-            // Allow background teardown without blocking main thread.
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
+        } catch (_: TimeoutException) {
         } catch (_: ExecutionException) {
-            // Best-effort cleanup during service teardown.
         } catch (_: RejectedExecutionException) {
-            // Executor already shut down.
         } finally {
             lifecycleExecutor.shutdown()
         }
@@ -196,6 +193,13 @@ class NexusVpnService : VpnService() {
         runCatching { lifecycleExecutor.execute(task) }
             .onFailure { err -> if (err !is RejectedExecutionException) throw err }
     }
+
+    private fun readActiveProfileName(): String = runCatching {
+        val activeId = telemetryStore.load().activeProfileId
+        val summaries = workspaceStore.listProfileSummaries()
+        val matched = summaries.firstOrNull { it.id == activeId } ?: summaries.firstOrNull()
+        matched?.name?.ifBlank { matched.id } ?: activeId
+    }.getOrDefault("")
 
     private fun writeSessionBearerToken(): String {
         val bytes = ByteArray(24)
@@ -257,8 +261,7 @@ class NexusVpnService : VpnService() {
             val sessionToken = writeSessionBearerToken()
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
             serviceScope = scope
-            val httpUrl = hostConfig.common.controlHttpListen.takeIf { it.isNotBlank() }?.let { "http://$it" }
-                ?: "http://127.0.0.1:9090"
+            val httpUrl = NexusControlClient.httpUrlFromListen(hostConfig.common.controlHttpListen)
             val controlClient = NexusControlClient(
                 unixSocketPath = paths.controlSocket.absolutePath,
                 httpBaseUrl = httpUrl,
@@ -281,9 +284,7 @@ class NexusVpnService : VpnService() {
                     builder.addAddress("fdfe:dcba:9876::1", 126)
                     builder.addDnsServer(TUN_DNS_V6)
                 }
-                if (host.allowBypass) {
-                    builder.allowBypass()
-                }
+                if (host.allowBypass) builder.allowBypass()
                 if (host.enableLocalProxy && host.appendHttpProxy && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     AndroidHostConfig.parseHostPort(host.localListen)?.let { (h, p) ->
                         runCatching { builder.setHttpProxy(ProxyInfo.buildDirectProxy(h, p)) }
@@ -346,20 +347,26 @@ class NexusVpnService : VpnService() {
                     dozePauseEnabled = host.dozePauseEnabled,
                 )
                 _powerSaveMode.value = paused
-                if (paused) submitLifecycle { runCatching { db.shrinkMemory() } }
+                if (paused) {
+                    submitLifecycle { runCatching { db.shrinkMemory() } }
+                    notifications.updateIfDue(host.runMode, activeProfileLabel, -1L, -1L, powerSave = true, force = true)
+                }
                 requestTileSync()
             }.also { it.start() }
             screenMonitor = screen
             _dozeMode.value = screen.isDeviceIdle
-            _powerSaveMode.value = ScreenStateMonitor.shouldPausePolling(
+            val initialPaused = ScreenStateMonitor.shouldPausePolling(
                 interactive = screen.isInteractive,
                 deviceIdle = screen.isDeviceIdle,
                 screenOffPauseStats = host.screenOffPauseStats,
                 dozePauseEnabled = host.dozePauseEnabled,
             )
+            _powerSaveMode.value = initialPaused
             _startedAtMs.value = System.currentTimeMillis()
             _runningState.value = true
             _tunnelState.value = VpnTunnelState.RUNNING
+            notifications.updateIfDue(host.runMode, activeProfileLabel, -1L, -1L, powerSave = initialPaused, force = true)
+            launchNotificationSpeedLoop(scope, controlClient, host.runMode)
             requestTileSync()
         } catch (t: Throwable) {
             val msg = t.message ?: t.javaClass.simpleName
@@ -367,6 +374,35 @@ class NexusVpnService : VpnService() {
             _lastError.value = msg
             _tunnelState.value = VpnTunnelState.ERROR
             stopTunnelLocked(stopSelfAfter = true, preserveError = true)
+        }
+    }
+
+    private fun launchNotificationSpeedLoop(scope: CoroutineScope, controlClient: NexusControlClient, runMode: AndroidRunMode) {
+        scope.launch {
+            var prevDown = -1L; var prevUp = -1L; var prevTs = 0L; var prevGen = -1L
+            var lastProfileSyncMs = System.currentTimeMillis()
+            while (isActive && _runningState.value) {
+                delay(2_500L)
+                if (_powerSaveMode.value) { prevDown = -1L; prevUp = -1L; continue }
+                val metrics = runCatching { controlClient.fetchMetrics() }.getOrNull() ?: continue
+                val now = System.currentTimeMillis()
+                var profileChanged = false
+                if (metrics.controlGeneration != prevGen || now - lastProfileSyncMs >= 10_000L) {
+                    prevGen = metrics.controlGeneration
+                    lastProfileSyncMs = now
+                    val latest = readActiveProfileName()
+                    if (latest != activeProfileLabel) { activeProfileLabel = latest; profileChanged = true }
+                }
+                if (prevDown >= 0L && prevTs > 0L) {
+                    val elapsedMs = (now - prevTs).coerceAtLeast(500L)
+                    val downRate = ((metrics.downloadBytes - prevDown).coerceAtLeast(0L) * 1000L) / elapsedMs
+                    val upRate = ((metrics.uploadBytes - prevUp).coerceAtLeast(0L) * 1000L) / elapsedMs
+                    notifications.updateIfDue(runMode, activeProfileLabel, downRate, upRate, powerSave = false, force = profileChanged)
+                } else if (profileChanged) {
+                    notifications.updateIfDue(runMode, activeProfileLabel, -1L, -1L, powerSave = false, force = true)
+                }
+                prevDown = metrics.downloadBytes; prevUp = metrics.uploadBytes; prevTs = now
+            }
         }
     }
 
@@ -402,40 +438,6 @@ class NexusVpnService : VpnService() {
         }
     }
 
-    private fun promoteForeground(runMode: AndroidRunMode) {
-        val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Nexus VPN", NotificationManager.IMPORTANCE_LOW)
-                    .apply { description = "Nexus background proxy tunnel status" },
-            )
-        }
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        val contentPending = launchIntent?.let {
-            PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        }
-        val stopPending = PendingIntent.getService(
-            this, 1, Intent(this, NexusVpnService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val subtitle = if (runMode == AndroidRunMode.PROXY_ONLY) "仅本地代理模式已激活" else "本地加密隧道已激活"
-        val notification = Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Nexus 正在运行")
-            .setContentText(subtitle)
-            .setSmallIcon(android.R.drawable.stat_sys_vp_phone_call)
-            .setOngoing(true)
-            .apply { if (contentPending != null) setContentIntent(contentPending) }
-            .addAction(Notification.Action.Builder(null, "停止", stopPending).build())
-            .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-    }
-
     companion object {
         const val ACTION_START = "org.nexus.android.action.START_VPN"
         const val ACTION_STOP = "org.nexus.android.action.STOP_VPN"
@@ -445,8 +447,6 @@ class NexusVpnService : VpnService() {
         const val EXTRA_HOST_OVERRIDE_PATH = "org.nexus.android.extra.HOST_OVERRIDE_PATH"
         const val EXTRA_FAKE_IPV6_POOL = "org.nexus.android.extra.FAKE_IPV6_POOL"
 
-        private const val CHANNEL_ID = "nexus_vpn_channel"
-        private const val NOTIFICATION_ID = 9001
         private const val DESTROY_WAIT_TIMEOUT_MS = 250L
         private const val TUN_DNS_V4 = "172.19.0.2"
         private const val TUN_DNS_V6 = "fdfe:dcba:9876::2"

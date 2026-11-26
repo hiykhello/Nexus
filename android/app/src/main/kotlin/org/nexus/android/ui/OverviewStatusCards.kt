@@ -3,7 +3,6 @@ package org.nexus.android.ui
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
@@ -11,7 +10,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -26,21 +24,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -63,8 +64,8 @@ internal fun sampleRuntimeMemoryText(): String {
 
 /**
  * Nexus 2-segment proportion bar:
- * 8dp full-pill rounded bar with a 2dp animated gap between active segments and whole-percent
- * rounding so 1Hz telemetry jitter never replays layout animations unnecessarily.
+ * 8dp full-pill rounded bar rendered purely in the Draw phase (`drawBehind`) so 1Hz telemetry
+ * animations never trigger Composition or Layout invalidations.
  */
 @Composable
 internal fun NexusProportionBar(
@@ -87,37 +88,41 @@ internal fun NexusProportionBar(
         secondPct <= 0 -> 1f
         else -> (firstPct / 100f).coerceIn(0.06f, 0.94f)
     }
-    val animFirst by animateFloatAsState(
+    val animFirstState = animateFloatAsState(
         targetValue = targetFirst,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "propFirst",
     )
-    val gapWidth by animateDpAsState(
-        targetValue = if (hasBoth) 2.dp else 0.dp,
+    val animGapState = animateFloatAsState(
+        targetValue = if (hasBoth) 1f else 0f,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "propGap",
     )
+    val trackColor = ext.insetSurface
 
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .height(8.dp)
             .clip(CircleShape)
-            .background(ext.insetSurface),
-    ) {
-        if (total > 0L) {
-            if (animFirst > 0.005f) {
-                Box(Modifier.weight(animFirst).fillMaxHeight().background(firstColor))
-            }
-            if (gapWidth > 0.dp) {
-                Spacer(Modifier.width(gapWidth))
-            }
-            val rem = (1f - animFirst).coerceAtLeast(0f)
-            if (rem > 0.005f) {
-                Box(Modifier.weight(rem).fillMaxHeight().background(secondColor))
-            }
-        }
-    }
+            .drawBehind {
+                drawRect(color = trackColor)
+                if (total > 0L && size.width > 0f) {
+                    val gapPx = 2.dp.toPx() * animGapState.value.coerceIn(0f, 1f)
+                    val usable = (size.width - gapPx).coerceAtLeast(0f)
+                    val firstFrac = animFirstState.value.coerceIn(0f, 1f)
+                    val firstW = usable * firstFrac
+                    val secondW = usable * (1f - firstFrac)
+                    if (firstW > 0.5f) {
+                        drawRect(color = firstColor, topLeft = Offset.Zero, size = Size(firstW, size.height))
+                    }
+                    if (secondW > 0.5f) {
+                        val startX = if (firstW > 0.5f) firstW + gapPx else 0f
+                        drawRect(color = secondColor, topLeft = Offset(startX, 0f), size = Size(secondW, size.height))
+                    }
+                }
+            },
+    )
 }
 
 /**
@@ -143,7 +148,7 @@ internal fun DashboardCustomizeBar(
         OpticalCard(
             cornerRadius = 18.dp,
             borderColor = accent.copy(alpha = 0.48f),
-            accentTint = accent.copy(alpha = 0.09f),
+            accentTint = accent.copy(alpha = 0.06f),
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp),
@@ -166,19 +171,24 @@ internal fun DashboardCustomizeBar(
                         )
                     }
                     if (visibility.hasCustomLayout) {
-                        Text(
-                            text = "恢复默认",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = accent,
+                        Box(
                             modifier = Modifier
+                                .minimumInteractiveComponentSize()
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     onChange(DashboardCardVisibility())
                                 }
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "恢复默认",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = accent,
+                            )
+                        }
                     }
                 }
                 FlowRow(
@@ -193,6 +203,7 @@ internal fun DashboardCustomizeBar(
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onChange(visibility.toggleCard(cardId))
                             },
+                            modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 36.dp),
                             shape = RoundedCornerShape(999.dp),
                             color = if (active) accent.copy(alpha = if (ext.isDark) 0.24f else 0.14f) else ext.wellSurface,
                             border = BorderStroke(
@@ -201,7 +212,7 @@ internal fun DashboardCustomizeBar(
                             ),
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
@@ -233,7 +244,7 @@ internal fun DashboardCustomizeBar(
 /**
  * 2-column smoked-graphite mini-Bento status pair:
  * - Left (`网络状态`): live 4-bar signal + active exit & latency (tap triggers probe / opens Groups)
- * - Right (`内存与连接`): runtime memory + active connections + 2-segment DL/UL `NexusProportionBar`
+ * - Right (`连接与流量`): runtime memory + active connections + 2-segment DL/UL `NexusProportionBar`
  */
 @Composable
 internal fun OverviewStatusMiniPair(

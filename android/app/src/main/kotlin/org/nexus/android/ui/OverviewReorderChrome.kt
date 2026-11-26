@@ -3,6 +3,7 @@ package org.nexus.android.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +44,7 @@ import org.nexus.android.ui.theme.NexusTheme
  * Tactile reorder chrome displayed around Overview Bento cards strictly while Customize Mode
  * (`dashEditing == true`) is active. Renders [content] directly with zero wrapper overhead or
  * gesture interception during normal daily usage (`dashEditing == false`).
+ * All action buttons use 48dp IconButton touch targets wrapping sleek 30dp optical badges.
  */
 @Composable
 internal fun ReorderableDashboardCardFrame(
@@ -102,7 +105,7 @@ internal fun ReorderableDashboardCardFrame(
                     .fillMaxWidth()
                     .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Surface(
                     shape = RoundedCornerShape(999.dp),
@@ -140,7 +143,7 @@ internal fun ReorderableDashboardCardFrame(
                     },
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
@@ -182,26 +185,26 @@ internal fun ReorderableDashboardCardFrame(
                         onMoveDown()
                     },
                 )
-                Surface(
+                IconButton(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onHide()
                     },
-                    shape = CircleShape,
-                    color = ext.insetSurface,
-                    border = BorderStroke(1.dp, ext.hairline),
-                    modifier = Modifier.size(28.dp),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
+                    Surface(
+                        shape = CircleShape,
+                        color = ext.insetSurface,
+                        border = BorderStroke(1.dp, ext.hairline),
+                        modifier = Modifier.size(30.dp),
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_close),
-                            contentDescription = "隐藏卡片",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(14.dp),
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_close),
+                                contentDescription = "隐藏卡片",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -219,24 +222,21 @@ private fun ReorderActionPill(
 ) {
     val ext = NexusTheme.colors
     val accent = MaterialTheme.colorScheme.primary
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        shape = CircleShape,
-        color = if (enabled) accent.copy(alpha = if (ext.isDark) 0.22f else 0.12f) else ext.wellSurface,
-        border = BorderStroke(1.dp, if (enabled) accent.copy(alpha = 0.50f) else ext.hairline),
-        modifier = Modifier.size(28.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
+    IconButton(onClick = onClick, enabled = enabled) {
+        Surface(
+            shape = CircleShape,
+            color = if (enabled) accent.copy(alpha = if (ext.isDark) 0.22f else 0.12f) else ext.wellSurface,
+            border = BorderStroke(1.dp, if (enabled) accent.copy(alpha = 0.50f) else ext.hairline),
+            modifier = Modifier.size(30.dp),
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (enabled) accent else Color.Gray.copy(alpha = 0.45f),
-            )
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (enabled) accent else Color.Gray.copy(alpha = 0.45f),
+                )
+            }
         }
     }
 }

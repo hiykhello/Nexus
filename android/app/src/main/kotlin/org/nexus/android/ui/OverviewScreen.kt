@@ -1,12 +1,10 @@
 package org.nexus.android.ui
 
 import android.content.ClipboardManager
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,14 +16,12 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -34,12 +30,15 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -50,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import org.nexus.android.R
 import org.nexus.android.bridge.ipc.MetricsSummary
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
+import org.nexus.android.bridge.workspace.AndroidPerAppMode
 import org.nexus.android.ui.theme.NexusTheme
 
 @Composable
@@ -73,6 +73,7 @@ fun OverviewScreen(
     downloadSamples: List<Long>,
     uploadSamples: List<Long>,
     excludedCount: Int,
+    perAppMode: AndroidPerAppMode = AndroidPerAppMode.EXCLUDE,
     diagnostic: String,
     errorDetail: String,
     windowSizeClass: NexusWindowSizeClass,
@@ -88,6 +89,7 @@ fun OverviewScreen(
     onOpenConnections: () -> Unit,
     onOpenConfig: () -> Unit,
     onOpenSplitTunnel: () -> Unit,
+    onOpenDiagnostics: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -139,12 +141,14 @@ fun OverviewScreen(
                 downloadBytes = metrics.downloadBytes,
                 uploadBytes = metrics.uploadBytes,
                 excludedCount = excludedCount,
+                perAppMode = perAppMode,
                 isProbing = isProbing,
                 diagnostic = diagnostic,
                 compactToolsOnly = deduplicatedTools,
                 onProbeGroup = onProbeActiveGroup,
                 onClearCache = onClearCache,
                 onOpenSplitTunnel = onOpenSplitTunnel,
+                onOpenDiagnostics = onOpenDiagnostics,
             )
             DashboardCardVisibility.KEY_KPI_GRID -> TelemetryKpiGrid(
                 running = running,
@@ -310,15 +314,13 @@ private fun OutboundModeCard(
     val ext = NexusTheme.colors
     val haptic = LocalHapticFeedback.current
     val tunInteraction = remember { MutableInteractionSource() }
-    val trackBg by animateColorAsState(
-        targetValue = if (running) MaterialTheme.colorScheme.primary else ext.insetSurface,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "tunTrack",
-    )
-    val thumbOffset by animateDpAsState(
-        targetValue = if (running) 16.dp else 2.dp,
+    val primary = MaterialTheme.colorScheme.primary
+    val offTrack = ext.insetSurface
+    // Deferred Draw-phase animation (zero recompositions during toggle transition)
+    val thumbProgressState = animateFloatAsState(
+        targetValue = if (running) 1f else 0f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMediumLow),
-        label = "tunThumb",
+        label = "tunThumbProgress",
     )
 
     Row(
@@ -345,12 +347,12 @@ private fun OutboundModeCard(
             },
             enabled = !starting,
             interactionSource = tunInteraction,
-            modifier = Modifier.height(44.dp).liquidPress(tunInteraction, pressedScale = 0.95f),
+            modifier = Modifier.height(48.dp).liquidPress(tunInteraction, pressedScale = 0.95f),
             shape = RoundedCornerShape(999.dp),
             color = ext.wellSurface,
             border = BorderStroke(
                 1.dp,
-                if (running) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else ext.hairline,
+                if (running) primary.copy(alpha = 0.45f) else ext.hairline,
             ),
         ) {
             Row(
@@ -370,16 +372,19 @@ private fun OutboundModeCard(
                     modifier = Modifier
                         .width(34.dp)
                         .height(20.dp)
-                        .background(trackBg, CircleShape),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .offset(x = thumbOffset)
-                            .size(16.dp)
-                            .background(Color.White, CircleShape),
-                    )
-                }
+                        .drawBehind {
+                            val p = thumbProgressState.value.coerceIn(0f, 1f)
+                            val radius = size.height * 0.5f
+                            drawRoundRect(
+                                color = lerp(offTrack, primary, p),
+                                cornerRadius = CornerRadius(radius, radius),
+                            )
+                            val thumbR = 8.dp.toPx()
+                            val pad = 2.dp.toPx()
+                            val cx = pad + thumbR + (size.width - (pad + thumbR) * 2f) * p
+                            drawCircle(color = Color.White, radius = thumbR, center = Offset(cx, size.height * 0.5f))
+                        },
+                )
             }
         }
     }
@@ -424,7 +429,7 @@ internal fun QuickOnboardingCard(
     OpticalCard(
         cornerRadius = 16.dp,
         borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
-        accentTint = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+        accentTint = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),

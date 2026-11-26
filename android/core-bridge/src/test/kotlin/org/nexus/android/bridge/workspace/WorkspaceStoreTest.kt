@@ -214,4 +214,80 @@ class WorkspaceStoreTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun wave32WorkspaceFieldsRoundTripWithCanonicalSnakeCaseKeys() {
+        val doc = WorkspaceDocument(
+            profiles = listOf(
+                ProfileItem(
+                    id = "n-w32",
+                    remarks = "Wave32-Node",
+                    kind = ProfileKind.NODE,
+                    node = NodeConfig(
+                        protocol = "vless",
+                        server = "edge.example.com",
+                        port = 443,
+                        tls = NodeTlsConfig(
+                            enabled = true,
+                            sni = "cdn.example.com",
+                            echMode = "dns",
+                            echQueryServerName = "cloudflare-ech.com",
+                            fragment = true,
+                            recordFragment = true,
+                        ),
+                        transport = NodeTransportConfig(
+                            type = "ws",
+                            path = "/ws",
+                            maxEarlyData = 2048,
+                            earlyDataHeaderName = "Sec-WebSocket-Protocol",
+                            grpcIdleTimeoutMs = 30_000,
+                            grpcPingTimeoutMs = 15_000,
+                            grpcPermitWithoutStream = true,
+                        ),
+                        multiplex = NodeMultiplexConfig(
+                            enabled = true,
+                            protocol = "h2mux",
+                            maxConnections = 4,
+                            padding = true,
+                        ),
+                    ),
+                ),
+                ProfileItem(
+                    id = "g-w32",
+                    remarks = "Group-Cut",
+                    kind = ProfileKind.POLICY_GROUP,
+                    policyGroup = PolicyGroupConfig(
+                        strategy = "url-test",
+                        memberIds = listOf("n-w32"),
+                        interruptExistConnections = true,
+                    ),
+                ),
+            ),
+            routingProfiles = listOf(
+                RoutingProfileItem(
+                    id = "rp-w32",
+                    name = "Smart",
+                    isActive = true,
+                    autoDetectInterface = true,
+                    findProcess = true,
+                ),
+            ),
+        )
+        val encoded = WorkspaceJsonCodec.encode(doc)
+        assertTrue(encoded.contains("\"interrupt_exist_connections\": true"))
+        assertTrue(encoded.contains("\"auto_detect_interface\": true"))
+        assertTrue(encoded.contains("\"find_process\": true"))
+        assertTrue(encoded.contains("\"fragment\": true"))
+        assertTrue(encoded.contains("\"record_fragment\": true"))
+        assertTrue(encoded.contains("\"ech_query_server_name\": \"cloudflare-ech.com\""))
+        assertTrue(encoded.contains("\"max_early_data\": 2048"))
+        assertTrue(encoded.contains("\"early_data_header_name\": \"Sec-WebSocket-Protocol\""))
+        assertTrue(encoded.contains("\"grpc_idle_timeout_ms\": 30000"))
+        assertTrue(encoded.contains("\"grpc_ping_timeout_ms\": 15000"))
+        assertTrue(encoded.contains("\"grpc_permit_without_stream\": true"))
+        assertTrue(encoded.contains("\"protocol\": \"h2mux\""))
+
+        val decoded = WorkspaceJsonCodec.decode(encoded)
+        assertEquals(doc, decoded)
+    }
 }

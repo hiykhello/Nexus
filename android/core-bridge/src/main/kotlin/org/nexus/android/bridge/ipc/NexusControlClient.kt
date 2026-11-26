@@ -9,8 +9,10 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Locale
 
 data class ControlReply(val ok: Boolean, val statusCode: Int, val body: String)
 
@@ -22,6 +24,36 @@ data class MetricsSummary(
 )
 
 /**
+ * Caches a bearer-token secret file by `lastModified()` + `length()` so high-frequency HTTP/SSE
+ * calls avoid re-reading flash storage on every request while immediately picking up rotated tokens.
+ */
+class CachedTokenReader(private val tokenFile: File) {
+    private val lock = Any()
+    private var cachedMtime: Long = -1L
+    private var cachedLen: Long = -1L
+    private var cachedToken: String? = null
+
+    fun read(): String? = synchronized(lock) {
+        if (!tokenFile.isFile) {
+            cachedMtime = -1L
+            cachedLen = -1L
+            cachedToken = null
+            return null
+        }
+        val mtime = tokenFile.lastModified()
+        val len = tokenFile.length()
+        if (mtime == cachedMtime && len == cachedLen && cachedToken != null) {
+            return cachedToken
+        }
+        val fresh = runCatching { tokenFile.readText(Charsets.UTF_8).trim() }.getOrNull()
+        cachedMtime = mtime
+        cachedLen = len
+        cachedToken = fresh?.takeIf { it.isNotEmpty() }
+        cachedToken
+    }
+}
+
+/**
  * Dual-transport Nexus control client:
  * 1. Local AF_UNIX SOCK_SEQPACKET NEXUS/1 NUL-delimited control socket (zero TCP footprint)
  * 2. Optional loopback HTTP /v1/ API & /metrics with per-session Bearer token auth
@@ -29,14 +61,29 @@ data class MetricsSummary(
 class NexusControlClient(
     private val unixSocketPath: String,
     private val httpBaseUrl: String? = null,
+    private val httpBaseUrlProvider: (() -> String?)? = null,
     private val bearerToken: String? = null,
     private val bearerTokenProvider: (() -> String?)? = null,
     private val timeoutMs: Int = 2_000,
 ) {
+    private fun resolvedBaseUrl(): String? =
+        httpBaseUrlProvider?.invoke()?.takeIf { it.isNotBlank() } ?: httpBaseUrl?.takeIf { it.isNotBlank() }
+
+    private fun resolvedToken(): String? =
+        bearerTokenProvider?.invoke()?.takeIf { it.isNotEmpty() } ?: bearerToken?.takeIf { it.isNotEmpty() }
+
+    fun createSseClient(readTimeoutMs: Int = NexusSseClient.DEFAULT_SSE_READ_TIMEOUT_MS): NexusSseClient =
+        NexusSseClient(
+            httpBaseUrlProvider = { resolvedBaseUrl() },
+            bearerTokenProvider = { resolvedToken() },
+            readTimeoutMs = readTimeoutMs,
+        )
+
     suspend fun status(): ControlReply = sendUnix("status")
     suspend fun reload(): ControlReply = sendUnix("reload")
+
     suspend fun selectOutbound(group: String, member: String): ControlReply =
-        if (httpBaseUrl != null) {
+        if (resolvedBaseUrl() != null) {
             val encoded = encodePathSegment(group)
             val httpReply = sendHttp("PUT", "/v1/groups/$encoded", JSONObject().put("member", member).toString())
             if (httpReply.ok) httpReply else sendUnix("select", group, member)
@@ -45,21 +92,80 @@ class NexusControlClient(
         }
 
     suspend fun setOutboundMode(mode: String, outbound: String = "proxy"): ControlReply =
-        if (httpBaseUrl != null) {
+        if (resolvedBaseUrl() != null) {
             sendHttp("PUT", "/v1/mode", buildSetModeHttpJson(mode, outbound))
         } else {
             sendUnix(*buildSetModeUnixTokens(mode, outbound).toTypedArray())
         }
 
     suspend fun resetGroupAuto(group: String): ControlReply =
-        if (httpBaseUrl != null) {
+        if (resolvedBaseUrl() != null) {
             val encoded = encodePathSegment(group)
             sendHttp("PUT", "/v1/groups/$encoded", JSONObject().put("member", "--auto").toString())
         } else {
             sendUnix("select", group, "--auto")
         }
 
+    suspend fun fetchStatusJson(): ControlReply = sendHttp("GET", "/v1/status")
     suspend fun fetchOutboundsJson(): ControlReply = sendHttp("GET", "/v1/outbounds")
+    suspend fun fetchRulesJson(): ControlReply = sendHttp("GET", "/v1/rules")
+    suspend fun fetchRules(): List<LiveRuleSnapshot> {
+        val reply = fetchRulesJson()
+        return if (reply.ok) ControlToolsJsonParser.parseRules(reply.body) else emptyList()
+    }
+
+    suspend fun queryDns(
+        name: String,
+        type: String = "A",
+        server: String = "",
+    ): DnsQueryResult {
+        val cleanName = name.trim()
+        if (cleanName.isEmpty()) {
+            return DnsQueryResult(ok = false, errorCode = "invalid-name", errorMessage = "请输入待查询的域名")
+        }
+        val params = buildList {
+            add("name=${encodeQueryValue(cleanName)}")
+            if (type.isNotBlank()) add("type=${encodeQueryValue(type.trim().uppercase())}")
+            if (server.isNotBlank()) add("server=${encodeQueryValue(server.trim())}")
+        }.joinToString("&")
+        val reply = sendHttp("GET", "/v1/dns/query?$params", readTimeoutOverrideMs = DNS_QUERY_READ_TIMEOUT_MS)
+        return ControlToolsJsonParser.parseDnsQuery(reply)
+    }
+
+    suspend fun flushFakeIp(): FakeIpFlushResult {
+        val reply = sendHttp("POST", "/v1/cache/fakeip/flush", "{}")
+        return ControlToolsJsonParser.parseFakeIpFlush(reply)
+    }
+
+    suspend fun probeOutbound(
+        tag: String,
+        url: String = DEFAULT_PROBE_URL,
+        timeoutMs: Int = 5_000,
+        mode: String = "http",
+    ): OutboundProbeResult {
+        val clampedTimeout = timeoutMs.coerceIn(500, 30_000)
+        val body = JSONObject().apply {
+            if (url.isNotBlank()) put("url", url)
+            put("timeout_ms", clampedTimeout)
+            put("mode", if (mode == "h2-ping") "h2-ping" else "http")
+        }.toString()
+        val reply = sendHttp(
+            method = "POST",
+            path = "/v1/outbounds/${encodePathSegment(tag)}/probe",
+            body = body,
+            readTimeoutOverrideMs = clampedTimeout + 3_000,
+        )
+        return ControlToolsJsonParser.parseOutboundProbe(reply)
+    }
+
+    suspend fun setLogLevel(level: String, domain: String = "global"): ControlReply {
+        val body = JSONObject().apply {
+            put("level", level.trim().lowercase())
+            if (domain.isNotBlank()) put("domain", domain.trim())
+        }.toString()
+        return sendHttp("POST", "/v1/log-level", body)
+    }
+
     suspend fun fetchConnectionsJson(): ControlReply = sendHttp("GET", "/v1/connections")
     suspend fun fetchConnectionDetailJson(id: Long): ControlReply = sendHttp("GET", "/v1/connections/$id")
     suspend fun fetchLogsJson(
@@ -78,26 +184,36 @@ class NexusControlClient(
         }.joinToString("&")
         return sendHttp("GET", "/v1/logs?$params")
     }
+
     suspend fun closeConnection(id: Long): ControlReply = sendHttp("DELETE", "/v1/connections/$id")
     suspend fun closeAllConnections(): ControlReply =
-        if (httpBaseUrl != null) sendHttp("DELETE", "/v1/connections") else sendUnix("close-all")
+        if (resolvedBaseUrl() != null) sendHttp("DELETE", "/v1/connections") else sendUnix("close-all")
+
     suspend fun probeGroup(group: String): ControlReply =
-        if (httpBaseUrl != null) {
+        if (resolvedBaseUrl() != null) {
             sendHttp("POST", "/v1/groups/${encodePathSegment(group)}/probe", "{}")
         } else {
             sendUnix("probe", group)
         }
+
     suspend fun notifyNetworkChange(generation: Long): ControlReply =
-        if (httpBaseUrl != null) {
+        if (resolvedBaseUrl() != null) {
             sendHttp("POST", "/v1/network-change", JSONObject().put("generation", generation.toString()).toString())
         } else {
             sendUnix("network-change", generation.toString())
         }
+
     suspend fun clearCache(target: String = "all"): ControlReply =
         sendHttp("POST", "/v1/state/clear-cache", JSONObject().put("target", target).toString())
+
     suspend fun fetchMetrics(): MetricsSummary {
         val reply = sendHttp("GET", "/metrics")
-        return if (reply.ok) parseOpenMetrics(reply.body) else MetricsSummary()
+        if (reply.ok) return parseOpenMetrics(reply.body)
+        val statusReply = fetchStatusJson()
+        if (statusReply.ok) {
+            ControlToolsJsonParser.parseStatus(statusReply.body)?.let { return it.toMetricsSummary() }
+        }
+        return MetricsSummary()
     }
 
     suspend fun sendUnix(vararg tokens: String): ControlReply = withContext(Dispatchers.IO) {
@@ -136,42 +252,85 @@ class NexusControlClient(
         }
     }
 
-    suspend fun sendHttp(method: String, path: String, body: String? = null): ControlReply =
-        withContext(Dispatchers.IO) {
-            val base = httpBaseUrl ?: return@withContext ControlReply(false, 0, "HTTP control disabled")
-            runCatching {
-                val token = bearerTokenProvider?.invoke()?.takeIf { it.isNotEmpty() } ?: bearerToken
-                val conn = (URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
-                    requestMethod = method
-                    connectTimeout = timeoutMs
-                    readTimeout = timeoutMs
-                    instanceFollowRedirects = false
-                    useCaches = false
-                    if (!token.isNullOrEmpty()) {
-                        setRequestProperty("Authorization", "Bearer $token")
-                    }
-                    if (body != null) {
-                        doOutput = true
-                        setRequestProperty("Content-Type", "application/json")
-                        outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                    }
-                }
-                try {
-                    val code = conn.responseCode
-                    val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-                    val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-                    ControlReply(code in 200..299, code, text)
-                } finally {
-                    conn.disconnect()
-                }
-            }.getOrElse { err ->
-                ControlReply(false, 0, err.message ?: "HTTP control error")
-            }
+    suspend fun sendHttp(
+        method: String,
+        path: String,
+        body: String? = null,
+        readTimeoutOverrideMs: Int? = null,
+    ): ControlReply = withContext(Dispatchers.IO) {
+        val base = resolvedBaseUrl() ?: return@withContext ControlReply(false, 0, "HTTP control disabled")
+        if (!isLoopbackHttpUrl(base)) {
+            return@withContext ControlReply(false, 403, "refusing non-loopback control HTTP URL")
         }
+        runCatching {
+            val token = resolvedToken()
+            val conn = (URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                connectTimeout = timeoutMs
+                readTimeout = readTimeoutOverrideMs ?: timeoutMs
+                instanceFollowRedirects = false
+                useCaches = false
+                if (!token.isNullOrEmpty()) {
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
+                if (body != null) {
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                }
+            }
+            try {
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                ControlReply(code in 200..299, code, text)
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrElse { err ->
+            ControlReply(false, 0, err.message ?: "HTTP control error")
+        }
+    }
 
     companion object {
         const val MAX_REQUEST_BYTES = 1024
         const val MAX_REPLY_BYTES = 65_536
+        const val DNS_QUERY_READ_TIMEOUT_MS = 15_000
+        const val DEFAULT_PROBE_URL = "https://www.gstatic.com/generate_204"
+
+        fun httpUrlFromListen(listen: String?, fallback: String = "http://127.0.0.1:9090"): String {
+            val clean = listen?.trim().orEmpty()
+            if (clean.isEmpty()) return fallback
+            val candidate = when {
+                clean.contains("://") -> clean
+                clean == "::" || clean == "::1" -> "http://[::1]"
+                else -> "http://$clean"
+            }
+            val uri = runCatching { URI(candidate) }.getOrNull() ?: return fallback
+            if (!uri.scheme.equals("http", ignoreCase = true)) return fallback
+            if (!uri.rawUserInfo.isNullOrEmpty()) return fallback
+            if (uri.rawQuery != null || uri.rawFragment != null) return fallback
+            if (!uri.rawPath.isNullOrEmpty() && uri.rawPath != "/") return fallback
+            val rawHost = uri.host?.lowercase(Locale.ROOT) ?: return fallback
+            val normalizedHost = when (rawHost) {
+                "0.0.0.0" -> "127.0.0.1"
+                "::", "[::]" -> "[::1]"
+                "::1", "[::1]" -> "[::1]"
+                "127.0.0.1", "localhost" -> rawHost
+                else -> return fallback
+            }
+            val port = uri.port
+            if (port == 0 || port > 65_535) return fallback
+            return if (port > 0) "http://$normalizedHost:$port" else "http://$normalizedHost"
+        }
+
+        internal fun isLoopbackHttpUrl(url: String): Boolean {
+            val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return false
+            if (!uri.scheme.equals("http", ignoreCase = true)) return false
+            if (!uri.rawUserInfo.isNullOrEmpty()) return false
+            val host = uri.host?.lowercase(Locale.ROOT) ?: return false
+            return host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
+        }
 
         fun encodePathSegment(segment: String): String =
             URLEncoder.encode(segment, "UTF-8").replace("+", "%20")

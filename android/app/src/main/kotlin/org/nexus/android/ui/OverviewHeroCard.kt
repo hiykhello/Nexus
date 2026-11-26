@@ -1,13 +1,10 @@
 package org.nexus.android.ui
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,8 +25,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,6 +35,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -79,26 +77,23 @@ internal fun FiveStateHeroCard(
     val haptic = LocalHapticFeedback.current
     val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
 
-    val accentColor by animateColorAsState(
-        targetValue = when (heroState) {
-            HeroConnectionState.CONNECTED -> ext.success
-            HeroConnectionState.STARTING -> ext.warning
-            HeroConnectionState.DEGRADED -> ext.warning
-            HeroConnectionState.ERROR -> ext.danger
-            HeroConnectionState.STANDBY -> ext.muted
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "heroAccent",
-    )
+    val accentColor = when (heroState) {
+        HeroConnectionState.CONNECTED -> ext.success
+        HeroConnectionState.STARTING -> ext.warning
+        HeroConnectionState.DEGRADED -> ext.warning
+        HeroConnectionState.ERROR -> ext.danger
+        HeroConnectionState.STANDBY -> ext.muted
+    }
     val borderColor = if (heroState == HeroConnectionState.STANDBY) {
         ext.hairline
     } else {
-        accentColor.copy(alpha = 0.55f)
+        accentColor.copy(alpha = 0.45f)
     }
+    // Restrained matte surface wash (preserves crisp Optical Precision hierarchy in Dark & Light)
     val tint = if (heroState == HeroConnectionState.STANDBY) {
         Color.Transparent
     } else {
-        accentColor.copy(alpha = if (ext.isDark) 0.11f else 0.07f)
+        accentColor.copy(alpha = if (ext.isDark) 0.05f else 0.035f)
     }
 
     val statusLabel = when (heroState) {
@@ -167,9 +162,10 @@ internal fun FiveStateHeroCard(
                         if (isLive && activeExit.memberName.isNotEmpty()) {
                             Row(
                                 modifier = Modifier
+                                    .minimumInteractiveComponentSize()
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable(onClick = onOpenGroups)
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
@@ -196,7 +192,8 @@ internal fun FiveStateHeroCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = if (isLive) onOpenGroups else onOpenConfig),
+                            .clickable(onClick = if (isLive) onOpenGroups else onOpenConfig)
+                            .padding(vertical = 2.dp),
                     )
 
                     val subline = when {
@@ -273,8 +270,8 @@ internal fun FiveStateHeroCard(
 }
 
 /**
- * Radiant circular `52.dp` Liquid Glass Hero Power Orb unified with Nexus Desktop.
- * Zero per-frame allocations (`drawWithCache` radial outer bloom + premultiplied AGSL button).
+ * Radiant circular `52.dp` Liquid Glass Hero Power Orb harmonized with MaterialTheme primary
+ * (supports Dynamic Color when enabled) and semantic running/warning/error states.
  */
 @Composable
 private fun HeroPowerOrbButton(
@@ -282,29 +279,24 @@ private fun HeroPowerOrbButton(
     onClick: () -> Unit,
 ) {
     val ext = NexusTheme.colors
+    val primary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val isLive = heroState == HeroConnectionState.CONNECTED || heroState == HeroConnectionState.DEGRADED
     val isStarting = heroState == HeroConnectionState.STARTING
 
-    val orbTint by animateColorAsState(
-        targetValue = when (heroState) {
-            HeroConnectionState.CONNECTED -> Color(0xFF10B981)
-            HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> Color(0xFFF59E0B)
-            HeroConnectionState.ERROR -> Color(0xFFF43F5E)
-            HeroConnectionState.STANDBY -> Color(0xFF3B82F6)
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "heroOrbTint",
-    )
-    val orbBase by animateColorAsState(
-        targetValue = when (heroState) {
-            HeroConnectionState.CONNECTED -> Color(0xFF059669)
-            HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> Color(0xFFD97706)
-            HeroConnectionState.ERROR -> Color(0xFFE11D48)
-            HeroConnectionState.STANDBY -> Color(0xFF2563EB)
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "heroOrbBase",
-    )
+    val orbTint = when (heroState) {
+        HeroConnectionState.CONNECTED -> ext.success
+        HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> ext.warning
+        HeroConnectionState.ERROR -> ext.danger
+        HeroConnectionState.STANDBY -> primary
+    }
+    val orbBase = when (heroState) {
+        HeroConnectionState.CONNECTED -> lerp(ext.success, Color.Black, 0.22f)
+        HeroConnectionState.STARTING, HeroConnectionState.DEGRADED -> lerp(ext.warning, Color.Black, 0.22f)
+        HeroConnectionState.ERROR -> lerp(ext.danger, Color.Black, 0.22f)
+        HeroConnectionState.STANDBY -> lerp(primary, Color.Black, 0.16f)
+    }
+    val iconColor = if (heroState == HeroConnectionState.STANDBY) onPrimary else Color.White
 
     Box(
         modifier = Modifier
@@ -313,8 +305,8 @@ private fun HeroPowerOrbButton(
                 val r = size.minDimension * 0.5f
                 val bloomCenter = Offset(size.width * 0.5f, size.height * 0.5f)
                 val bloomBrush = Brush.radialGradient(
-                    0.0f to orbTint.copy(alpha = if (ext.isDark) 0.46f else 0.28f),
-                    0.58f to orbTint.copy(alpha = if (ext.isDark) 0.18f else 0.10f),
+                    0.0f to orbTint.copy(alpha = if (ext.isDark) 0.42f else 0.24f),
+                    0.58f to orbTint.copy(alpha = if (ext.isDark) 0.16f else 0.08f),
                     1.0f to Color.Transparent,
                     center = bloomCenter,
                     radius = r,
@@ -330,7 +322,7 @@ private fun HeroPowerOrbButton(
             enabled = !isStarting,
             tint = orbTint,
             surfaceBase = orbBase,
-            contentColor = Color.White,
+            contentColor = iconColor,
             cornerRadius = 26.dp,
             isDark = ext.isDark,
             elevation = 8.dp,
@@ -346,24 +338,24 @@ private fun HeroPowerOrbButton(
                     isStarting -> CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
                         strokeWidth = 2.4.dp,
-                        color = Color.White,
+                        color = iconColor,
                     )
                     heroState == HeroConnectionState.ERROR -> Icon(
                         painter = painterResource(R.drawable.ic_refresh),
                         contentDescription = "重试连接",
-                        tint = Color.White,
+                        tint = iconColor,
                         modifier = Modifier.size(20.dp),
                     )
                     isLive -> Icon(
                         painter = painterResource(R.drawable.ic_stop),
                         contentDescription = "断开连接",
-                        tint = Color.White,
+                        tint = iconColor,
                         modifier = Modifier.size(18.dp),
                     )
                     else -> Icon(
                         painter = painterResource(R.drawable.ic_play),
                         contentDescription = "连接",
-                        tint = Color.White,
+                        tint = iconColor,
                         modifier = Modifier.size(20.dp),
                     )
                 }

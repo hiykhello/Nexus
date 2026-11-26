@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -20,6 +22,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,7 +65,7 @@ internal fun GroupSummaryStrip(
         modifier = modifier.fillMaxWidth(),
         cornerRadius = 20.dp,
         borderColor = if (isProbing) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else ext.hairline,
-        accentTint = if (isProbing) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
+        accentTint = if (isProbing) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else Color.Transparent,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
@@ -139,7 +142,7 @@ internal fun GroupRailCard(
         cornerRadius = 16.dp,
         borderColor = if (selected) MaterialTheme.colorScheme.primary else ext.hairline,
         borderWidth = if (selected) 1.5.dp else 1.dp,
-        accentTint = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent,
+        accentTint = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
         onClick = onClick,
     ) {
         Column(
@@ -188,8 +191,11 @@ internal fun GroupRailCard(
 internal fun GroupMemberCard(
     member: OutboundMemberSnapshot,
     onSelect: () -> Unit,
+    isProbing: Boolean = false,
+    onProbe: (() -> Unit)? = null,
 ) {
     val ext = NexusTheme.colors
+    val primary = MaterialTheme.colorScheme.primary
     val selected = member.selected
     val isTimeout = isMemberTimeout(member)
     val unprobed = member.latencyMs < 0L && !isTimeout
@@ -198,23 +204,23 @@ internal fun GroupMemberCard(
         isTimeout -> Triple("不可达", ext.danger, ext.danger)
         member.latencyMs >= 350L -> Triple("高延迟", ext.danger, ext.danger)
         member.latencyMs >= 180L -> Triple("波动", ext.slow, ext.slow)
-        member.latencyMs >= 80L -> Triple("良好", ext.warning, Color(0xFF60A5FA))
-        else -> Triple("极速", ext.success, Color(0xFF38BDF8))
+        member.latencyMs >= 80L -> Triple("良好", ext.warning, primary)
+        else -> Triple("极速", ext.success, ext.telemetryDownload)
     }
-    val effectiveOrbColor = if (selected) Color(0xFF3B82F6) else orbTint
+    val effectiveOrbColor = if (selected) primary else orbTint
 
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
         cornerRadius = 18.dp,
-        borderColor = if (selected) Color(0xFF3B82F6).copy(alpha = 0.80f) else ext.hairline,
+        borderColor = if (selected) primary.copy(alpha = 0.80f) else ext.hairline,
         borderWidth = if (selected) 1.5.dp else 1.dp,
-        accentTint = if (selected) Color(0xFF2563EB).copy(alpha = if (ext.isDark) 0.16f else 0.08f) else Color.Transparent,
+        accentTint = if (selected) primary.copy(alpha = if (ext.isDark) 0.12f else 0.06f) else Color.Transparent,
         onClick = if (!selected) onSelect else null,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 13.dp, end = if (onProbe != null) 4.dp else 13.dp, top = 10.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             ConcentricNodeOrb(
                 accent = effectiveOrbColor,
@@ -260,11 +266,31 @@ internal fun GroupMemberCard(
                 }
             }
             LatencyBadge(latencyMs = member.latencyMs, state = member.state)
-            if (selected) {
+            if (onProbe != null) {
+                IconButton(
+                    onClick = onProbe,
+                    enabled = !isProbing,
+                ) {
+                    if (isProbing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = primary,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_speed),
+                            contentDescription = "单节点测速",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            } else if (selected) {
                 Icon(
                     painter = painterResource(R.drawable.ic_check),
                     contentDescription = "当前节点",
-                    tint = Color(0xFF60A5FA),
+                    tint = primary,
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -272,9 +298,6 @@ internal fun GroupMemberCard(
     }
 }
 
-/**
- * Zero-allocation concentric radial node-orb matching `nexus_design_v8_android_subpages.jpg`.
- */
 @Composable
 private fun ConcentricNodeOrb(
     accent: Color,
@@ -288,8 +311,8 @@ private fun ConcentricNodeOrb(
                 val r = size.minDimension * 0.5f
                 val orbCenter = Offset(size.width * 0.5f, size.height * 0.5f)
                 val bloom = Brush.radialGradient(
-                    0.0f to accent.copy(alpha = if (selected) 0.58f else if (isDark) 0.30f else 0.20f),
-                    0.55f to accent.copy(alpha = if (selected) 0.24f else if (isDark) 0.12f else 0.07f),
+                    0.0f to accent.copy(alpha = if (selected) 0.54f else if (isDark) 0.28f else 0.18f),
+                    0.55f to accent.copy(alpha = if (selected) 0.22f else if (isDark) 0.11f else 0.06f),
                     1.0f to Color.Transparent,
                     center = orbCenter,
                     radius = r,
@@ -298,7 +321,7 @@ private fun ConcentricNodeOrb(
                 val ringInner = Stroke(width = 1.4.dp.toPx())
                 val outerColor = accent.copy(alpha = if (selected) 0.72f else if (isDark) 0.36f else 0.30f)
                 val innerColor = accent.copy(alpha = if (selected) 0.92f else if (isDark) 0.55f else 0.45f)
-                val coreColor = if (selected) Color(0xFF93C5FD) else accent.copy(alpha = 0.85f)
+                val coreColor = if (selected) lerp(accent, Color.White, 0.38f) else accent.copy(alpha = 0.85f)
                 onDrawBehind {
                     drawCircle(brush = bloom, radius = r)
                     drawCircle(color = outerColor, radius = r * 0.84f, style = ringOuter)

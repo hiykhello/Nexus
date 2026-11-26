@@ -3,11 +3,9 @@ package org.nexus.android.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.InetAddresses
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
-import android.system.OsConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,8 +27,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.nexus.android.bridge.core.CoreProcessSupervisor
-import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
+import org.nexus.android.bridge.ipc.CachedTokenReader
 import org.nexus.android.bridge.ipc.NexusControlClient
+import org.nexus.android.bridge.ipc.NexusSseClient
 import org.nexus.android.bridge.ipc.OutboundJsonParser
 import org.nexus.android.bridge.model.RuntimeSocketPaths
 import org.nexus.android.bridge.owner.ConnectionOwnerResolver
@@ -39,8 +38,6 @@ import org.nexus.android.bridge.vpn.VpnTunnelState
 import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.AndroidRunMode
 import org.nexus.android.bridge.workspace.NexusClientDatabase
-import org.nexus.android.bridge.workspace.ProfileItem
-import org.nexus.android.bridge.workspace.ProfileKind
 import org.nexus.android.ui.theme.NexusTheme
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -51,12 +48,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var db: NexusClientDatabase
     private lateinit var supervisor: CoreProcessSupervisor
     private lateinit var controlClient: NexusControlClient
+    private lateinit var sseClient: NexusSseClient
+    private lateinit var tunnelCoordinator: MainTunnelCoordinator
     private lateinit var workspaceCoordinator: WorkspaceCoordinator
     private lateinit var syncCoordinator: WorkspaceSyncCoordinator
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trimInFlight = AtomicBoolean(false)
     private val dashSaveMutex = Mutex()
     @Volatile private var pendingDashVisibility: DashboardCardVisibility? = null
+    @Volatile private var controlHttpBaseUrl: String = "http://127.0.0.1:9090"
     private var ownerResolver: ConnectionOwnerResolver? = null
     private var askedNotificationPermission = false
     private var pendingStartConfigPath: String? = null
@@ -81,35 +81,52 @@ class MainActivity : ComponentActivity() {
         socketPaths = RuntimeSocketPaths(noBackupFilesDir)
         db = NexusClientDatabase.open(this)
         supervisor = CoreProcessSupervisor(this)
+        val tokenReader = CachedTokenReader(socketPaths.controlTokenFile)
         controlClient = NexusControlClient(
             unixSocketPath = socketPaths.controlSocket.absolutePath,
-            httpBaseUrl = "http://127.0.0.1:9090",
-            bearerTokenProvider = { socketPaths.controlTokenFile.takeIf { it.isFile }?.readText()?.trim() },
+            httpBaseUrlProvider = { controlHttpBaseUrl },
+            bearerTokenProvider = { tokenReader.read() },
         )
+        sseClient = controlClient.createSseClient()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ownerResolver = ConnectionOwnerResolver(applicationContext).apply { start() }
         }
+        tunnelCoordinator = MainTunnelCoordinator(filesDir, cacheDir, configFile, socketPaths, supervisor, controlClient)
         workspaceCoordinator = WorkspaceCoordinator(filesDir, socketPaths, db, supervisor, controlClient)
         syncCoordinator = WorkspaceSyncCoordinator(workspaceCoordinator, socketPaths, supervisor, controlClient)
 
         setContent {
-            NexusTheme {
-                val scope = rememberCoroutineScope()
-                var dashVisibility by remember { mutableStateOf(DashboardCardVisibility()) }
-                var loadedKdl by remember { mutableStateOf("") }
-                var workspaceState by remember { mutableStateOf(WorkspaceUiState()) }
-                var composeLaunchError by remember { mutableStateOf("") }
+            val scope = rememberCoroutineScope()
+            var dashVisibility by remember { mutableStateOf(DashboardCardVisibility()) }
+            var loadedKdl by remember { mutableStateOf("") }
+            var workspaceState by remember { mutableStateOf(WorkspaceUiState()) }
+            var composeLaunchError by remember { mutableStateOf("") }
 
-                LaunchedEffect(configFile) {
-                    val (kdl, dash) = withContext(Dispatchers.IO) {
-                        if (!configFile.exists()) writeConfigAtomically(defaultAndroidKdl(socketPaths))
-                        configFile.readText() to DashboardLayoutPrefs.load(db)
-                    }
-                    loadedKdl = kdl
-                    dashVisibility = dash
-                    workspaceState = workspaceCoordinator.loadInitialState()
+            fun applyWorkspace(
+                next: WorkspaceUiState,
+                syncConflict: SyncConflictUi? = workspaceState.syncConflict,
+            ) {
+                controlHttpBaseUrl = NexusControlClient.httpUrlFromListen(next.host.common.controlHttpListen)
+                workspaceState = next.copy(
+                    isRefreshingSub = workspaceState.isRefreshingSub,
+                    isSyncing = workspaceState.isSyncing,
+                    syncConflict = syncConflict,
+                    isProbingUdp = workspaceState.isProbingUdp,
+                    udpProbeResult = workspaceState.udpProbeResult,
+                )
+            }
+
+            LaunchedEffect(configFile) {
+                val (kdl, dash) = withContext(Dispatchers.IO) {
+                    tunnelCoordinator.ensureDefaultConfigExists()
+                    configFile.readText() to DashboardLayoutPrefs.load(db)
                 }
+                loadedKdl = kdl
+                dashVisibility = dash
+                applyWorkspace(workspaceCoordinator.loadInitialState())
+            }
 
+            NexusTheme(dynamicColor = workspaceState.host.android.dynamicColor) {
                 val running by NexusVpnService.runningState.collectAsStateWithLifecycle()
                 val tunnelState by NexusVpnService.tunnelState.collectAsStateWithLifecycle()
                 val startedAtMs by NexusVpnService.startedAtMs.collectAsStateWithLifecycle()
@@ -121,24 +138,6 @@ class MainActivity : ComponentActivity() {
                 val effectiveError = lastError.ifBlank { composeLaunchError }
                 val perAppPackages = remember(workspaceState.host.android.perAppPackages) {
                     workspaceState.host.android.perAppPackages.toSet()
-                }
-                val profileChips = remember(workspaceState.document.profiles, workspaceState.activeProfileId) {
-                    workspaceState.document.profiles.map { p ->
-                        UiProfileChip(id = p.id, name = p.remarks.ifBlank { p.id }, active = p.id == workspaceState.activeProfileId)
-                    }
-                }
-
-                fun applyWorkspace(
-                    next: WorkspaceUiState,
-                    syncConflict: SyncConflictUi? = workspaceState.syncConflict,
-                ) {
-                    workspaceState = next.copy(
-                        isRefreshingSub = workspaceState.isRefreshingSub,
-                        isSyncing = workspaceState.isSyncing,
-                        syncConflict = syncConflict,
-                        isProbingUdp = workspaceState.isProbingUdp,
-                        udpProbeResult = workspaceState.udpProbeResult,
-                    )
                 }
 
                 fun launchRestartAsync() {
@@ -186,6 +185,11 @@ class MainActivity : ComponentActivity() {
                         },
                         onSelectRoutingProfile = { routingId -> workspaceCoordinator.selectRoutingProfile(routingId, running).let { (n, m) -> applyWorkspace(n); m } },
                         onAddRoutingRule = { rule -> workspaceCoordinator.addRoutingRule(rule, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onToggleRoutingRule = { ruleId, en -> workspaceCoordinator.toggleRoutingRule(ruleId, en, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onDeleteRoutingRule = { ruleId -> workspaceCoordinator.deleteRoutingRule(ruleId, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onUpdateRoutingFlags = { autoIf, findProc ->
+                            workspaceCoordinator.updateRoutingProfileFlags(autoIf, findProc, running).let { (n, m) -> applyWorkspace(n); m }
+                        },
                         onUpdateDns = { dns -> workspaceCoordinator.updateDns(dns, running).let { (n, m) -> applyWorkspace(n); m } },
                         onUpdateHost = { host -> workspaceCoordinator.updateHost(host).let { (n, m) -> applyWorkspace(n); m } },
                         onUpdateSyncSettings = { u, user, pw, pass, dev ->
@@ -224,7 +228,6 @@ class MainActivity : ComponentActivity() {
                     powerSave = powerSave,
                     localLogs = localLogs,
                     initialKdl = loadedKdl,
-                    profiles = profileChips,
                     activeProfileName = workspaceState.activeProfileTitle,
                     excludedPackages = perAppPackages,
                     dashVisibility = dashVisibility,
@@ -249,6 +252,13 @@ class MainActivity : ComponentActivity() {
                                 val updated = if (checked) (cur.android.perAppPackages + pkg).distinct()
                                 else cur.android.perAppPackages.filterNot { it == pkg }
                                 cur.copy(android = cur.android.copy(perAppPackages = updated))
+                            }.first)
+                        }
+                    },
+                    onBypassFromConnection = { pkg ->
+                        scope.launch {
+                            applyWorkspace(workspaceCoordinator.mutateHost { cur ->
+                                MainTunnelCoordinator.applyBypassFromConnection(cur, pkg)
                             }.first)
                         }
                     },
@@ -299,17 +309,7 @@ class MainActivity : ComponentActivity() {
                         applyWorkspace(next)
                         null to msg
                     },
-                    onSwitchProfile = { profileId ->
-                        val (next, msg) = workspaceCoordinator.selectProfile(profileId, running) { launchRestartAsync() }
-                        applyWorkspace(next)
-                        null to msg
-                    },
-                    onSaveProfileSnapshot = { name, kdl ->
-                        val item = ProfileItem(id = "", remarks = name, kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = kdl)
-                        workspaceCoordinator.addProfile(item, running).let { (next, msg) -> applyWorkspace(next); msg }
-                    },
-                    onValidateKdl = { text -> validateDraft(text) },
-                    onSaveAndReload = { text -> saveAndReload(text) },
+                    onSaveAndReload = { text -> tunnelCoordinator.saveAndReload(text) },
                     onImportShareLink = { uri, _ ->
                         val (next, msg) = workspaceCoordinator.importShareUri(uri, running)
                         applyWorkspace(next)
@@ -321,7 +321,8 @@ class MainActivity : ComponentActivity() {
                         "" to msg
                     },
                     onRefreshMetrics = { controlClient.fetchMetrics() },
-                    onClearCache = { controlClient.clearCache().ok },
+                    onClearCache = { controlClient.clearCache("all").ok },
+                    onClearCacheTarget = { target -> controlClient.clearCache(target).ok },
                     onFetchGroups = {
                         val reply = controlClient.fetchOutboundsJson()
                         if (reply.ok) OutboundJsonParser.parse(reply.body) else emptyList()
@@ -334,12 +335,20 @@ class MainActivity : ComponentActivity() {
                         val reply = controlClient.fetchConnectionDetailJson(id)
                         if (reply.ok) OutboundJsonParser.parseConnectionDetail(reply.body) else null
                     },
-                    onResolveOwnerPackage = { conn -> resolveOwnerPackage(conn) },
+                    onResolveOwnerPackage = { conn -> tunnelCoordinator.resolveOwnerPackage(ownerResolver, conn) },
                     onCloseConnection = { id -> controlClient.closeConnection(id).ok },
                     onCloseAllConnections = { controlClient.closeAllConnections().ok },
                     onSelectMember = { g, m -> controlClient.selectOutbound(g, m).ok },
                     onResetAuto = { g -> controlClient.resetGroupAuto(g).ok },
                     onProbeGroup = { g -> controlClient.probeGroup(g).ok },
+                    onProbeOutbound = { tag -> controlClient.probeOutbound(tag) },
+                    onFetchLiveRules = { controlClient.fetchRules() },
+                    onQueryDns = { name, type, server -> controlClient.queryDns(name, type, server) },
+                    onFlushFakeIp = { controlClient.flushFakeIp() },
+                    onSetCoreLogLevel = { level -> controlClient.setLogLevel(level).ok },
+                    statusStream = { sseClient.streamStatus(1_000) },
+                    connectionsStream = { sseClient.streamConnections(1_500) },
+                    logsStream = { since, level, search -> sseClient.streamLogs(since = since, level = level, search = search) },
                     onFetchLogs = { level, search ->
                         val reply = controlClient.fetchLogsJson(level = level, search = search, limit = 128)
                         if (reply.ok) {
@@ -353,39 +362,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun validateDraft(text: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        val draft = File.createTempFile("draft-", ".kdl", cacheDir)
-        try {
-            draft.writeText(text, Charsets.UTF_8)
-            val res = supervisor.validateConfig(draft)
-            res.ok to res.output
-        } finally {
-            runCatching { draft.delete() }
-        }
-    }
-
-    private fun writeConfigAtomically(text: String) {
-        val parent = configFile.parentFile ?: filesDir
-        parent.mkdirs()
-        val tmp = File.createTempFile(".config-", ".kdl.tmp", parent)
-        try {
-            tmp.writeText(text, Charsets.UTF_8)
-            if (!tmp.renameTo(configFile)) throw java.io.IOException("Atomic rename failed")
-        } catch (t: Throwable) {
-            runCatching { tmp.delete() }
-            throw t
-        }
-    }
-
-    private suspend fun saveAndReload(text: String): Pair<Boolean, String> {
-        val (ok, msg) = validateDraft(text)
-        if (!ok) return false to "拒绝保存无效配置: $msg"
-        val writeErr = withContext(Dispatchers.IO) { runCatching { writeConfigAtomically(text) }.exceptionOrNull() }
-        if (writeErr != null) return false to "保存配置失败: ${writeErr.message}"
-        val reload = controlClient.reload()
-        return true to if (reload.ok) "已校验保存并热重载" else "已保存配置"
-    }
-
     private fun requestAndStartTunnel(runMode: AndroidRunMode) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !askedNotificationPermission) {
             val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -395,11 +371,7 @@ class MainActivity : ComponentActivity() {
                 return
             }
         }
-        if (runMode == AndroidRunMode.PROXY_ONLY) {
-            startVpnService()
-        } else {
-            launchVpnConsentOrStart()
-        }
+        if (runMode == AndroidRunMode.PROXY_ONLY) startVpnService() else launchVpnConsentOrStart()
     }
 
     private fun launchVpnConsentOrStart() {
@@ -441,46 +413,5 @@ class MainActivity : ComponentActivity() {
         ioScope.cancel()
         ownerResolver?.close(); ownerResolver = null
         super.onDestroy()
-    }
-
-    private suspend fun resolveOwnerPackage(conn: ActiveConnectionSnapshot): String? = withContext(Dispatchers.IO) {
-        val resolver = ownerResolver ?: return@withContext null
-        val src = AndroidHostConfig.parseHostPort(conn.source) ?: return@withContext null
-        val dst = AndroidHostConfig.parseHostPort(conn.target) ?: return@withContext null
-        if (!InetAddresses.isNumericAddress(src.first) || !InetAddresses.isNumericAddress(dst.first)) return@withContext null
-        val proto = if (conn.protocol.contains("udp", ignoreCase = true)) OsConstants.IPPROTO_UDP else OsConstants.IPPROTO_TCP
-        val info = runCatching {
-            resolver.resolve(proto, InetAddresses.parseNumericAddress(src.first), src.second, InetAddresses.parseNumericAddress(dst.first), dst.second)
-        }.getOrNull() ?: return@withContext null
-        if (info.packageNames.isNotEmpty()) "${info.packageNames.joinToString(", ")} (UID ${info.uid})" else "UID ${info.uid}"
-    }
-
-    companion object {
-        private fun escapeKdlString(raw: String): String = buildString(raw.length) {
-            for (ch in raw) when (ch) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                else -> if (ch.code >= 0x20 && ch.code != 0x7F && ch != '\u0085' && ch != '\u2028' && ch != '\u2029') append(ch)
-            }
-        }
-
-        private fun androidControlDirective(paths: RuntimeSocketPaths): String {
-            val ctrlSock = escapeKdlString(paths.controlSocket.absolutePath)
-            val tokenFile = escapeKdlString(paths.controlTokenFile.absolutePath)
-            return """control socket="$ctrlSock" http-listen="127.0.0.1:9090" bearer-token-file="$tokenFile" metrics=#true"""
-        }
-
-        private fun defaultAndroidKdl(paths: RuntimeSocketPaths): String = """
-            schema-version 1
-            role "client"
-            workers 1
-            ${androidControlDirective(paths)}
-            inbound "local" type="socks5" {
-                listen host="127.0.0.1" port=10808
-                authentication "none"
-            }
-            outbound "direct" type="direct"
-            routing { default-outbound "direct"; }
-        """.trimIndent() + "\n"
     }
 }

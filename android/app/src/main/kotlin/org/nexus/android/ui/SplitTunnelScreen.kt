@@ -1,10 +1,14 @@
 package org.nexus.android.ui
 
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -39,19 +43,25 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.nexus.android.R
+import org.nexus.android.apps.AppIconCache
 import org.nexus.android.apps.InstalledAppEntry
 import org.nexus.android.apps.InstalledAppsRepository
 import org.nexus.android.bridge.workspace.AndroidPerAppMode
 import org.nexus.android.ui.theme.NexusTheme
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SplitTunnelScreen(
     running: Boolean,
@@ -72,7 +82,12 @@ fun SplitTunnelScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val ext = NexusTheme.colors
+    // Hoisted above conditional branches to keep scroll position across filter changes.
+    val gridState = rememberLazyGridState()
+    val iconSizePx = remember(density) { with(density) { 40.dp.roundToPx() } }
+
     var filter by rememberSaveable { mutableStateOf("") }
     var includeSystem by rememberSaveable { mutableStateOf(false) }
     var needsRestartBanner by rememberSaveable { mutableStateOf(false) }
@@ -114,14 +129,14 @@ fun SplitTunnelScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     if (onBack != null) {
-                        IconButton(onClick = onBack, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = onBack) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_back),
                                 contentDescription = "返回",
-                                modifier = Modifier.size(18.dp),
+                                modifier = Modifier.size(20.dp),
                             )
                         }
                     }
@@ -156,10 +171,10 @@ fun SplitTunnelScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     FilterChip(
                         selected = includeSystem,
@@ -182,25 +197,46 @@ fun SplitTunnelScreen(
                         },
                         label = { Text("允许绕过") },
                     )
-                }
-                if (perAppMode == AndroidPerAppMode.EXCLUDE) {
-                    AssistChip(
-                        onClick = {
-                            val recommended = InstalledAppsRepository.RECOMMENDED_BYPASS_PACKAGES
-                            if (onAddExcludedBatch != null) {
-                                onAddExcludedBatch(recommended)
-                            } else {
-                                recommended.forEach { pkg -> onToggleExcluded(pkg, true) }
-                            }
-                            if (running) needsRestartBanner = true
-                        },
-                        label = { Text("应用推荐绕过") },
-                    )
+                    if (perAppMode == AndroidPerAppMode.EXCLUDE) {
+                        AssistChip(
+                            onClick = {
+                                val recommended = InstalledAppsRepository.RECOMMENDED_BYPASS_PACKAGES
+                                if (onAddExcludedBatch != null) {
+                                    onAddExcludedBatch(recommended)
+                                } else {
+                                    recommended.forEach { pkg -> onToggleExcluded(pkg, true) }
+                                }
+                                if (running) needsRestartBanner = true
+                            },
+                            label = { Text("推荐绕过") },
+                        )
+                    }
                 }
             }
         }
 
+        if (perAppMode == AndroidPerAppMode.INCLUDE && excludedPackages.isEmpty()) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = ext.warningContainer,
+                border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.45f)),
+            ) {
+                Text(
+                    text = "当前「仅代理所选」未勾选任何应用，第三方应用均不会经过 VPN；请在下方勾选需要代理的应用。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ext.warning,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                )
+            }
+        }
+
         if (running && needsRestartBanner) {
+            val bannerText = when (perAppMode) {
+                AndroidPerAppMode.INCLUDE -> "代理应用列表已变更，重启隧道后立即生效"
+                AndroidPerAppMode.EXCLUDE -> "绕过应用列表已变更，重启隧道后立即生效"
+                AndroidPerAppMode.OFF -> "分应用模式已关闭，重启隧道后立即生效"
+            }
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -213,7 +249,7 @@ fun SplitTunnelScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = "绕过列表已变更，重启隧道后立即生效",
+                        text = bannerText,
                         style = MaterialTheme.typography.bodySmall,
                         color = ext.warning,
                         modifier = Modifier.weight(1f),
@@ -259,7 +295,7 @@ fun SplitTunnelScreen(
         if (visible.isEmpty()) {
             EmptyStateCard(
                 title = "未找到匹配应用",
-                subtitle = "请尝试更换搜索关键字或开启「包含系统应用」。",
+                subtitle = "请尝试更换搜索关键字或开启「系统应用」。",
                 iconRes = R.drawable.ic_apps,
             )
         } else {
@@ -269,7 +305,7 @@ fun SplitTunnelScreen(
                 GridCells.Adaptive(minSize = 280.dp)
             }
             LazyVerticalGrid(
-                state = rememberLazyGridState(),
+                state = gridState,
                 columns = cols,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(bottom = bottomPad + 12.dp),
@@ -283,6 +319,9 @@ fun SplitTunnelScreen(
                 ) { app ->
                     SplitTunnelAppRow(
                         app = app,
+                        context = context,
+                        iconSizePx = iconSizePx,
+                        loadIcons = previewApps == null,
                         checkedProvider = { excludedPackages.contains(app.packageName) },
                         onToggle = { next ->
                             onToggleExcluded(app.packageName, next)
@@ -298,17 +337,29 @@ fun SplitTunnelScreen(
 @Composable
 private fun SplitTunnelAppRow(
     app: InstalledAppEntry,
+    context: Context,
+    iconSizePx: Int,
+    loadIcons: Boolean,
     checkedProvider: () -> Boolean,
     onToggle: (Boolean) -> Unit,
 ) {
     val checked = checkedProvider()
     val ext = NexusTheme.colors
+    val iconBitmap: ImageBitmap? by produceState(
+        initialValue = if (loadIcons) AppIconCache.peek(app.packageName, iconSizePx) else null,
+        key1 = app.packageName,
+        key2 = loadIcons,
+    ) {
+        if (loadIcons && value == null) {
+            value = AppIconCache.load(context, app.packageName, iconSizePx)
+        }
+    }
 
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
         cornerRadius = 14.dp,
         borderColor = if (checked) MaterialTheme.colorScheme.primary else ext.hairline,
-        accentTint = if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
+        accentTint = if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else Color.Transparent,
         onClick = { onToggle(!checked) },
     ) {
         Row(
@@ -316,21 +367,30 @@ private fun SplitTunnelAppRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .background(
-                        color = if (checked) MaterialTheme.colorScheme.primaryContainer else ext.wellSurface,
-                        shape = RoundedCornerShape(10.dp),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = app.label.take(1).uppercase(),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (checked) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+            if (iconBitmap != null) {
+                Image(
+                    bitmap = iconBitmap!!,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)),
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            color = if (checked) MaterialTheme.colorScheme.primaryContainer else ext.wellSurface,
+                            shape = RoundedCornerShape(10.dp),
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = app.label.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (checked) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Column(
                 modifier = Modifier.weight(1f),

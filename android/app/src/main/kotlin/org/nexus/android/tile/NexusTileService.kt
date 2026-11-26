@@ -23,15 +23,21 @@ import org.nexus.android.bridge.workspace.TelemetryStore
 import org.nexus.android.bridge.workspace.WorkspaceStore
 import org.nexus.android.ui.MainActivity
 import java.io.File
+import java.util.concurrent.Executors
+
+private data class TileDiskMeta(
+    val configExists: Boolean,
+    val profile: String,
+    val runMode: AndroidRunMode,
+    val outboundMode: String,
+)
 
 class NexusTileService : TileService() {
     private var listenScope: CoroutineScope? = null
-    @Volatile
-    private var cachedConfigReady: Boolean = false
-    @Volatile
-    private var cachedProfileName: String = "默认配置"
-    @Volatile
-    private var cachedRunMode: AndroidRunMode = AndroidRunMode.VPN
+    @Volatile private var cachedConfigReady: Boolean = false
+    @Volatile private var cachedProfileName: String = "默认配置"
+    @Volatile private var cachedRunMode: AndroidRunMode = AndroidRunMode.VPN
+    @Volatile private var cachedOutboundMode: String = "rule"
 
     override fun onStartListening() {
         super.onStartListening()
@@ -44,13 +50,12 @@ class NexusTileService : TileService() {
                 NexusVpnService.powerSaveMode,
             ) { tunnelState, powerSave -> tunnelState to powerSave }
                 .collect { (tunnelState, powerSave) ->
-                    val (configExists, profile, runMode) = withContext(Dispatchers.IO) {
-                        readTileDiskMeta()
-                    }
-                    cachedConfigReady = configExists
-                    cachedProfileName = profile
-                    cachedRunMode = runMode
-                    applyTileState(tunnelState, powerSave, configExists, profile)
+                    val meta = withContext(Dispatchers.IO) { readTileDiskMeta() }
+                    cachedConfigReady = meta.configExists
+                    cachedProfileName = meta.profile
+                    cachedRunMode = meta.runMode
+                    cachedOutboundMode = meta.outboundMode
+                    applyTileState(tunnelState, powerSave, meta.configExists, meta.profile, meta.outboundMode)
                 }
         }
     }
@@ -69,7 +74,7 @@ class NexusTileService : TileService() {
             NexusVpnService.runningState.value
         if (activeOrStarting) {
             startService(Intent(this, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_STOP))
-            applyTileState(VpnTunnelState.STOPPED, powerSave = false, configExists = cachedConfigReady, profile = cachedProfileName)
+            applyTileState(VpnTunnelState.STOPPED, false, cachedConfigReady, cachedProfileName, cachedOutboundMode)
             return
         }
 
@@ -90,27 +95,42 @@ class NexusTileService : TileService() {
                 startActivityAndCollapse(launch)
             }
         } else {
-            applyTileState(VpnTunnelState.STARTING, powerSave = false, configExists = true, profile = cachedProfileName)
-            startForegroundService(
-                Intent(this, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_START),
-            )
+            applyTileState(VpnTunnelState.STARTING, false, true, cachedProfileName, cachedOutboundMode)
+            // Dispatch onto an independent daemon executor so collapsing the QS shade right after tap
+            // (which cancels `listenScope` in `onStopListening`) can never cancel VPN startup.
+            val appContext = applicationContext
+            clickExecutor.execute {
+                runCatching {
+                    val dbRef = NexusClientDatabase.open(appContext)
+                    TelemetryStore(dbRef).clearUnexpectedCrash()
+                }
+                runCatching {
+                    appContext.startForegroundService(
+                        Intent(appContext, NexusVpnService::class.java).setAction(NexusVpnService.ACTION_START),
+                    )
+                }
+            }
         }
     }
 
-    private fun readTileDiskMeta(): Triple<Boolean, String, AndroidRunMode> {
+    private fun readTileDiskMeta(): TileDiskMeta {
         val paths = RuntimeSocketPaths(noBackupFilesDir)
-        val configExists = paths.composedConfigFile.isFile || File(filesDir, "config.kdl").isFile
         val db = NexusClientDatabase.open(this)
+        val summaries = runCatching { WorkspaceStore(filesDir, db).listProfileSummaries() }.getOrDefault(emptyList())
+        val configExists = if (summaries.isNotEmpty()) {
+            paths.composedConfigFile.isFile
+        } else {
+            paths.composedConfigFile.isFile || File(filesDir, "config.kdl").isFile
+        }
         val runMode = runCatching {
             AndroidHostConfigStore(File(filesDir, "host.json"), db).load().android.runMode
         }.getOrDefault(AndroidRunMode.VPN)
-        val activeId = runCatching { TelemetryStore(db).load().activeProfileId }.getOrDefault("")
-        val profile = runCatching {
-            val summaries = WorkspaceStore(filesDir, db).listProfileSummaries()
-            val matched = summaries.firstOrNull { it.id == activeId } ?: summaries.firstOrNull()
-            matched?.name?.ifBlank { matched.id } ?: activeId.ifBlank { "默认配置" }
-        }.getOrDefault(activeId.ifBlank { "默认配置" })
-        return Triple(configExists, profile, runMode)
+        val telemetry = runCatching { TelemetryStore(db).load() }.getOrNull()
+        val activeId = telemetry?.activeProfileId.orEmpty()
+        val outboundMode = telemetry?.outboundMode.orEmpty().ifBlank { "rule" }
+        val matched = summaries.firstOrNull { it.id == activeId } ?: summaries.firstOrNull()
+        val profile = matched?.name?.ifBlank { matched.id } ?: activeId.ifBlank { "默认配置" }
+        return TileDiskMeta(configExists, profile, runMode, outboundMode)
     }
 
     private fun applyTileState(
@@ -118,7 +138,13 @@ class NexusTileService : TileService() {
         powerSave: Boolean,
         configExists: Boolean,
         profile: String,
+        outboundMode: String,
     ) {
+        val modeTag = when (outboundMode) {
+            "global" -> "全局"
+            "direct" -> "直连"
+            else -> "规则"
+        }
         qsTile?.apply {
             this.state = when {
                 !configExists && state == VpnTunnelState.STOPPED -> Tile.STATE_UNAVAILABLE
@@ -130,12 +156,18 @@ class NexusTileService : TileService() {
                     !configExists && state == VpnTunnelState.STOPPED -> "待配置"
                     state == VpnTunnelState.STARTING -> "正在启动…"
                     state == VpnTunnelState.RUNNING && powerSave -> "省电 · $profile"
-                    state == VpnTunnelState.RUNNING -> "已连接 · $profile"
+                    state == VpnTunnelState.RUNNING -> "$modeTag · $profile"
                     state == VpnTunnelState.ERROR -> "启动异常"
                     else -> "已断开 · $profile"
                 }
             }
             updateTile()
+        }
+    }
+
+    companion object {
+        private val clickExecutor = Executors.newSingleThreadExecutor { r ->
+            Thread(r, "nexus-qs-tile-click").apply { isDaemon = true }
         }
     }
 }

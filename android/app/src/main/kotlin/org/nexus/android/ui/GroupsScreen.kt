@@ -1,15 +1,11 @@
 package org.nexus.android.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -21,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -29,7 +24,6 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,8 +41,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -61,10 +53,8 @@ import kotlinx.coroutines.launch
 import org.nexus.android.R
 import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
+import org.nexus.android.bridge.ipc.OutboundProbeResult
 import org.nexus.android.ui.theme.NexusTheme
-
-private const val SORT_DEFAULT = "default"
-private const val SORT_LATENCY = "latency"
 
 @Composable
 fun GroupsScreen(
@@ -72,6 +62,7 @@ fun GroupsScreen(
     onSelectMember: suspend (group: String, member: String) -> Boolean,
     onResetAuto: suspend (group: String) -> Boolean,
     onProbeGroup: suspend (group: String) -> Boolean,
+    onProbeOutbound: (suspend (outboundTag: String) -> OutboundProbeResult)? = null,
     windowSizeClass: NexusWindowSizeClass,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -79,12 +70,17 @@ fun GroupsScreen(
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
+    // Hoisted scroll states above conditional branches to preserve position across empty/filter toggles.
+    val railListState = rememberLazyListState()
+    val memberGridState = rememberLazyGridState()
+
     var groups by remember { mutableStateOf<List<OutboundGroupSnapshot>>(emptyList()) }
     var selectedTag by rememberSaveable { mutableStateOf("") }
     var searchQuery by rememberSaveable { mutableStateOf("") }
-    var sortMode by rememberSaveable { mutableStateOf(SORT_DEFAULT) }
+    var sortMode by rememberSaveable { mutableStateOf(GROUPS_SORT_DEFAULT) }
     var hideTimeout by rememberSaveable { mutableStateOf(false) }
     var isProbing by remember { mutableStateOf(false) }
+    var probingMembers by remember { mutableStateOf<Set<String>>(emptySet()) }
     var feedback by remember { mutableStateOf("") }
 
     suspend fun reload() {
@@ -108,7 +104,7 @@ fun GroupsScreen(
             (!hideTimeout || !isTimeout) && (q.isEmpty() || m.name.lowercase().contains(q))
         }
         when (sortMode) {
-            SORT_LATENCY -> filtered.sortedWith(
+            GROUPS_SORT_LATENCY -> filtered.sortedWith(
                 compareBy<OutboundMemberSnapshot> {
                     if (it.latencyMs > 0L) it.latencyMs else Long.MAX_VALUE
                 }.thenBy { it.name.lowercase() },
@@ -153,294 +149,228 @@ fun GroupsScreen(
                 .padding(start = startPad, end = endPad),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-        if (isExpanded) {
-            LazyColumn(
-                state = rememberLazyListState(),
-                modifier = Modifier.width(248.dp).fillMaxHeight(),
-                contentPadding = PaddingValues(top = topPad, bottom = bottomPad),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item(key = "rail_header", contentType = "header") {
-                    Text(
-                        text = "策略组 (${groups.size})",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-                    )
-                }
-                items(items = groups, key = { it.tag }, contentType = { "group_rail_item" }) { group ->
-                    GroupRailCard(
-                        group = group,
-                        selected = group.tag == selectedTag,
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            selectedTag = group.tag
-                        },
-                    )
-                }
-            }
-        }
-
-        Column(
-            modifier = Modifier.weight(1f).fillMaxHeight().padding(top = topPad),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (!isExpanded) {
-                val ext = NexusTheme.colors
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(items = groups, key = { it.tag }, contentType = { "group_chip" }) { group ->
-                        val isSel = group.tag == selectedTag
-                        val modeSuffix = if (!group.manualOverride && group.mode != "selector") " · 自动" else ""
-                        val chipInteraction = remember { MutableInteractionSource() }
-                        Surface(
+            if (isExpanded) {
+                LazyColumn(
+                    state = railListState,
+                    modifier = Modifier.width(248.dp).fillMaxHeight(),
+                    contentPadding = PaddingValues(top = topPad, bottom = bottomPad),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    item(key = "rail_header", contentType = "header") {
+                        Text(
+                            text = "策略组 (${groups.size})",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                        )
+                    }
+                    items(items = groups, key = { it.tag }, contentType = { "group_rail_item" }) { group ->
+                        GroupRailCard(
+                            group = group,
+                            selected = group.tag == selectedTag,
                             onClick = {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 selectedTag = group.tag
                             },
-                            interactionSource = chipInteraction,
-                            modifier = Modifier.liquidPress(chipInteraction, pressedScale = 0.95f),
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (isSel) Color(0xFF2563EB) else ext.wellSurface,
-                            border = BorderStroke(
-                                1.dp,
-                                if (isSel) Color(0xFF60A5FA).copy(alpha = 0.85f) else ext.hairline,
-                            ),
-                        ) {
+                        )
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(top = topPad),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (!isExpanded) {
+                    GroupChipRow(
+                        groups = groups,
+                        selectedTag = selectedTag,
+                        onSelectTag = { selectedTag = it },
+                    )
+                }
+
+                if (activeGroup != null) {
+                    GroupSummaryStrip(
+                        group = activeGroup,
+                        isProbing = isProbing,
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = {
                             Text(
-                                text = "${group.tag}$modeSuffix",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSel) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = "搜索节点...",
                                 maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.padding(horizontal = 15.dp, vertical = 8.dp),
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_search),
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.ic_close),
+                                        contentDescription = "清除",
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilledTonalIconButton(onClick = { scope.launch { reload() } }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_refresh),
+                            contentDescription = "刷新",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+
+                GroupFilterToolbar(
+                    sortMode = sortMode,
+                    hideTimeout = hideTimeout,
+                    showResetAuto = activeGroup?.manualOverride == true,
+                    onSortChange = { sortMode = it },
+                    onToggleHideTimeout = { hideTimeout = !hideTimeout },
+                    onResetAuto = {
+                        val tag = activeGroup?.tag ?: return@GroupFilterToolbar
+                        scope.launch {
+                            val ok = onResetAuto(tag)
+                            feedback = if (ok) "已恢复自动选优" else "恢复失败"
+                            reload()
+                        }
+                    },
+                )
+
+                if (feedback.isNotEmpty()) {
+                    val ext = NexusTheme.colors
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = ext.wellSurface,
+                        border = BorderStroke(1.dp, ext.hairline),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = feedback,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+
+                if (filteredMembers.isEmpty()) {
+                    EmptyStateCard(
+                        title = "未匹配到节点",
+                        subtitle = if (searchQuery.isNotEmpty() || hideTimeout) {
+                            "尝试清空搜索词或关闭「隐藏超时」过滤。"
+                        } else {
+                            "当前策略组 ${activeGroup?.tag.orEmpty()} 尚无出站节点。"
+                        },
+                        iconRes = R.drawable.ic_nav_groups,
+                        actionLabel = if (searchQuery.isNotEmpty() || hideTimeout) "重置过滤" else null,
+                        onAction = if (searchQuery.isNotEmpty() || hideTimeout) {
+                            {
+                                searchQuery = ""
+                                hideTimeout = false
+                            }
+                        } else null,
+                    )
+                } else {
+                    val gridCells = when (windowSizeClass) {
+                        NexusWindowSizeClass.COMPACT -> GridCells.Fixed(1)
+                        NexusWindowSizeClass.MEDIUM -> GridCells.Fixed(2)
+                        NexusWindowSizeClass.EXPANDED -> GridCells.Adaptive(minSize = 240.dp)
+                    }
+                    LazyVerticalGrid(
+                        state = memberGridState,
+                        columns = gridCells,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(bottom = bottomPad + 86.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(
+                            items = filteredMembers,
+                            key = { "${activeGroup?.tag.orEmpty()}:${it.name}" },
+                            contentType = { "member_card" },
+                        ) { member ->
+                            val probingThis = member.name in probingMembers
+                            GroupMemberCard(
+                                member = member,
+                                isProbing = probingThis,
+                                onSelect = {
+                                    val g = activeGroup?.tag ?: return@GroupMemberCard
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    scope.launch {
+                                        val ok = onSelectMember(g, member.name)
+                                        feedback = if (ok) "已切换至 ${member.name}" else "切换失败"
+                                        reload()
+                                    }
+                                },
+                                onProbe = if (onProbeOutbound != null) {
+                                    {
+                                        if (member.name !in probingMembers) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            scope.launch {
+                                                probingMembers = probingMembers + member.name
+                                                try {
+                                                    val res = onProbeOutbound(member.name)
+                                                    if (res.ok) {
+                                                        groups = groups.map { grp ->
+                                                            grp.copy(
+                                                                members = grp.members.map { m ->
+                                                                    if (m.name == member.name) {
+                                                                        m.copy(
+                                                                            state = res.state,
+                                                                            latencyMs = if (res.state.equals("timeout", true) || res.state.equals("unreachable", true)) 0L else res.latencyMs,
+                                                                        )
+                                                                    } else m
+                                                                },
+                                                            )
+                                                        }
+                                                        feedback = if (res.latencyMs > 0L) {
+                                                            "${member.name}: ${res.latencyMs} ms (${res.state})"
+                                                        } else {
+                                                            "${member.name}: ${res.state}"
+                                                        }
+                                                    } else {
+                                                        feedback = "${member.name} 测速失败: ${res.errorMessage}"
+                                                    }
+                                                } finally {
+                                                    probingMembers = probingMembers - member.name
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else null,
                             )
                         }
                     }
                 }
             }
-
-            if (activeGroup != null) {
-                GroupSummaryStrip(
-                    group = activeGroup,
-                    isProbing = isProbing,
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = {
-                        Text(
-                            text = "搜索节点...",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    shape = RoundedCornerShape(999.dp),
-                    leadingIcon = {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_search),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_close),
-                                    contentDescription = "清除",
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                FilledTonalIconButton(onClick = { scope.launch { reload() } }) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_refresh),
-                        contentDescription = "刷新",
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-
-            // Zero-clipping full-pill recessed 3-way filter bar
-            val extFilter = NexusTheme.colors
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = extFilter.wellSurface,
-                    border = BorderStroke(1.dp, extFilter.hairline),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(3.dp),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val pills = listOf(
-                            Triple("默认", sortMode == SORT_DEFAULT) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                sortMode = SORT_DEFAULT
-                            },
-                            Triple("按延迟", sortMode == SORT_LATENCY) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                sortMode = SORT_LATENCY
-                            },
-                            Triple("隐藏超时", hideTimeout) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                hideTimeout = !hideTimeout
-                            },
-                        )
-                        pills.forEach { (label, active, action) ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(999.dp))
-                                    .background(
-                                        if (active) extFilter.insetSurface else Color.Transparent,
-                                    )
-                                    .clickable(onClick = action)
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                )
-                            }
-                        }
-                    }
-                }
-                if (activeGroup != null && activeGroup.manualOverride) {
-                    Surface(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            scope.launch {
-                                val ok = onResetAuto(activeGroup.tag)
-                                feedback = if (ok) "已恢复自动选优" else "恢复失败"
-                                reload()
-                            }
-                        },
-                        shape = RoundedCornerShape(999.dp),
-                        color = extFilter.warningContainer,
-                        border = BorderStroke(1.dp, extFilter.warning.copy(alpha = 0.45f)),
-                    ) {
-                        Text(
-                            text = "恢复自动",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = extFilter.warning,
-                            maxLines = 1,
-                            softWrap = false,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
-                        )
-                    }
-                }
-            }
-
-            if (feedback.isNotEmpty()) {
-                val ext = NexusTheme.colors
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = ext.wellSurface,
-                    border = BorderStroke(1.dp, ext.hairline),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = feedback,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                    )
-                }
-            }
-
-            if (filteredMembers.isEmpty()) {
-                EmptyStateCard(
-                    title = "未匹配到节点",
-                    subtitle = if (searchQuery.isNotEmpty() || hideTimeout) {
-                        "尝试清空搜索词或关闭「隐藏超时」过滤。"
-                    } else {
-                        "当前策略组 ${activeGroup?.tag.orEmpty()} 尚无出站节点。"
-                    },
-                    iconRes = R.drawable.ic_nav_groups,
-                    actionLabel = if (searchQuery.isNotEmpty() || hideTimeout) "重置过滤" else null,
-                    onAction = if (searchQuery.isNotEmpty() || hideTimeout) {
-                        {
-                            searchQuery = ""
-                            hideTimeout = false
-                        }
-                    } else null,
-                )
-            } else {
-                val gridCells = when (windowSizeClass) {
-                    NexusWindowSizeClass.COMPACT -> GridCells.Fixed(1)
-                    NexusWindowSizeClass.MEDIUM -> GridCells.Fixed(2)
-                    NexusWindowSizeClass.EXPANDED -> GridCells.Adaptive(minSize = 240.dp)
-                }
-                LazyVerticalGrid(
-                    state = rememberLazyGridState(),
-                    columns = gridCells,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(bottom = bottomPad + 86.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(
-                        items = filteredMembers,
-                        key = { "${activeGroup?.tag.orEmpty()}:${it.name}" },
-                        contentType = { "member_card" },
-                    ) { member ->
-                        GroupMemberCard(
-                            member = member,
-                            onSelect = {
-                                val g = activeGroup?.tag ?: return@GroupMemberCard
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                scope.launch {
-                                    val ok = onSelectMember(g, member.name)
-                                    feedback = if (ok) "已切换至 ${member.name}" else "切换失败"
-                                    reload()
-                                }
-                            },
-                        )
-                    }
-                }
-            }
-        }
         }
 
-        // Radiant deep Cobalt Liquid Glass Probe FAB anchored bottom-end
         if (activeGroup != null) {
-            val ext = NexusTheme.colors
-            LiquidGlassButton(
-                enabled = !isProbing,
-                tint = Color(0xFF3B82F6),
-                surfaceBase = Color(0xFF2563EB),
-                contentColor = Color.White,
-                cornerRadius = 24.dp,
-                isDark = ext.isDark,
-                elevation = 10.dp,
-                pressedScale = 0.93f,
-                livingSheen = isProbing,
+            GroupProbeFab(
+                isProbing = isProbing,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = endPad, bottom = bottomPad + 14.dp),
@@ -458,34 +388,7 @@ fun GroupsScreen(
                         isProbing = false
                     }
                 },
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (isProbing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = Color.White,
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_speed),
-                            contentDescription = "测速",
-                            tint = Color.White,
-                            modifier = Modifier.size(17.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = if (isProbing) "测速中" else "测速",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                    )
-                }
-            }
+            )
         }
     }
 }

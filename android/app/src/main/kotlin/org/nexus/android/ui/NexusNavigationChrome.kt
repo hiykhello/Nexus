@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.nexus.android.R
+import org.nexus.android.bridge.workspace.AndroidPerAppMode
 import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
@@ -74,6 +76,7 @@ internal enum class NexusTab(val label: String, @param:DrawableRes val iconRes: 
 @Composable
 internal fun NexusTopAppBar(
     showSplitTunnel: Boolean,
+    perAppMode: AndroidPerAppMode = AndroidPerAppMode.EXCLUDE,
     currentTab: NexusTab,
     windowSizeClass: NexusWindowSizeClass,
     heroState: HeroConnectionState,
@@ -112,7 +115,11 @@ internal fun NexusTopAppBar(
                 }
                 Text(
                     text = when {
-                        showSplitTunnel -> "分应用绕过"
+                        showSplitTunnel -> when (perAppMode) {
+                            AndroidPerAppMode.INCLUDE -> "分应用代理"
+                            AndroidPerAppMode.EXCLUDE -> "分应用绕过"
+                            AndroidPerAppMode.OFF -> "分应用控制"
+                        }
                         windowSizeClass == NexusWindowSizeClass.EXPANDED -> currentTab.label
                         else -> "Nexus"
                     },
@@ -121,6 +128,7 @@ internal fun NexusTopAppBar(
                 if (!showSplitTunnel && currentTab == NexusTab.OVERVIEW && activeProfileName.isNotEmpty()) {
                     Surface(
                         onClick = onOpenConfig,
+                        modifier = Modifier.minimumInteractiveComponentSize(),
                         shape = RoundedCornerShape(999.dp),
                         color = ext.wellSurface,
                         border = BorderStroke(1.dp, ext.hairlineStrong),
@@ -131,7 +139,7 @@ internal fun NexusTopAppBar(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         )
                     }
                 }
@@ -152,7 +160,9 @@ internal fun NexusTopAppBar(
                                 onToggleDashEditing()
                             },
                             interactionSource = editInteraction,
-                            modifier = Modifier.liquidPress(editInteraction, pressedScale = 0.94f),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .liquidPress(editInteraction, pressedScale = 0.94f),
                             shape = RoundedCornerShape(999.dp),
                             color = if (dashEditing) MaterialTheme.colorScheme.primaryContainer else ext.wellSurface,
                             border = BorderStroke(
@@ -165,7 +175,7 @@ internal fun NexusTopAppBar(
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = if (dashEditing) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             )
                         }
                     } else {

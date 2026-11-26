@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -145,11 +146,12 @@ internal fun HostSettingsCard(
                             shape = RoundedCornerShape(999.dp),
                             color = if (active) accent.copy(alpha = if (ext.isDark) 0.25f else 0.14f) else ext.wellSurface,
                             border = BorderStroke(1.dp, if (active) accent.copy(alpha = 0.72f) else ext.hairline),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).heightIn(min = 42.dp),
                         ) {
                             Row(
-                                modifier = Modifier.padding(vertical = 7.dp),
+                                modifier = Modifier.padding(vertical = 10.dp),
                                 horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
                                     text = "$preset",
@@ -204,6 +206,12 @@ internal fun HostSettingsCard(
                 subtitle = "低电耗或息屏时暂停高频流量统计以降低功耗",
                 checked = a.dozePauseEnabled && a.screenOffPauseStats,
                 onCheckedChange = { v -> updateAndroid { it.copy(dozePauseEnabled = v, screenOffPauseStats = v) } },
+            )
+            HostToggleRow(
+                title = "Material You 动态取色",
+                subtitle = "Android 12+ 跟随壁纸主题色，关闭则使用 Nexus 光学精密蓝",
+                checked = a.dynamicColor,
+                onCheckedChange = { v -> updateAndroid { it.copy(dynamicColor = v) } },
             )
         }
     }

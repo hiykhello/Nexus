@@ -38,6 +38,9 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+            </intent-filter>
         </activity>
 
         <!-- Hosts VPN TUN & UDS bridges in-process so StateFlow/Tile/Prefs stay in sync; native libnexus.so runs in an isolated child process -->
@@ -57,6 +60,7 @@
         <service
             android:name=".tile.NexusTileService"
             android:exported="true"
+            android:icon="@drawable/ic_nexus_notification"
             android:label="Nexus"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>

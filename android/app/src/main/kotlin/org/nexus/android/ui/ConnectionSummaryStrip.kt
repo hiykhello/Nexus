@@ -183,6 +183,7 @@ internal fun ConnectionItemCard(
     onClose: () -> Unit,
 ) {
     val ext = NexusTheme.colors
+    val primary = MaterialTheme.colorScheme.primary
     val targetHost = conn.target.ifEmpty {
         if (conn.destinationPort > 0) "${conn.path}:${conn.destinationPort}" else conn.path
     }
@@ -191,9 +192,9 @@ internal fun ConnectionItemCard(
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
         cornerRadius = 18.dp,
-        borderColor = if (selected) Color(0xFF3B82F6).copy(alpha = 0.80f) else ext.hairline,
+        borderColor = if (selected) primary.copy(alpha = 0.80f) else ext.hairline,
         borderWidth = if (selected) 1.5.dp else 1.dp,
-        accentTint = if (selected) Color(0xFF2563EB).copy(alpha = if (ext.isDark) 0.14f else 0.08f) else Color.Transparent,
+        accentTint = if (selected) primary.copy(alpha = if (ext.isDark) 0.12f else 0.06f) else Color.Transparent,
         onClick = onInspect,
     ) {
         Row(

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledTonalButton
@@ -53,28 +54,21 @@ data class UiProfileChip(
 
 /**
  * Graphite Bento Mobile 4-Pillar Workspace & Host Settings (`档案`) screen:
- * - `节点`: 5-kind polymorphic ProfileItem list, share-link import, portable workspace.json export/import
- * - `订阅`: Subscription quota, expiry, prev/next chain picker, identity-preserving refresh
- * - `路由DNS`: Routing profile switcher, SimpleDNS/RawDNS summary, Rules & DNS modal sheet
- * - `本机`: Isolated Layer 3 Android Host Settings (VPN vs Proxy-Only, per-app, MTU, boot safety)
+ * - Hoisted `LazyListState`s above responsive branches
+ * - Flattened `profilesPillarItems(...)` so 100+ subscription nodes stay virtualized
  */
 @Composable
 fun ConfigScreen(
     kdlText: String,
-    hasRemoteOutbound: Boolean,
-    profiles: List<UiProfileChip>,
     onApplyConfig: suspend (String) -> Pair<Boolean, String>,
     diagnostic: String,
     onDiagnosticChange: (String) -> Unit,
     onImportShareLink: suspend (String, String) -> Pair<String?, String>,
     onImportSubscription: suspend (String, String) -> Pair<String, String>,
-    onSwitchProfile: suspend (String) -> Pair<String?, String>,
-    onSaveProfileSnapshot: suspend (String, String) -> String,
-    onValidateKdl: suspend (String) -> Pair<Boolean, String>,
     windowSizeClass: NexusWindowSizeClass,
     contentPadding: PaddingValues,
-    excludedCount: Int = 0,
     onOpenSplitTunnel: (() -> Unit)? = null,
+    onOpenDiagnostics: (() -> Unit)? = null,
     workspaceState: WorkspaceUiState = WorkspaceUiState(),
     workspaceActions: WorkspaceUiActions = WorkspaceUiActions(),
     modifier: Modifier = Modifier,
@@ -84,6 +78,9 @@ fun ConfigScreen(
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
     val ext = NexusTheme.colors
+    // Hoisted scroll states above responsive branches.
+    val primaryListState = rememberLazyListState()
+    val secondaryListState = rememberLazyListState()
 
     var activePillar by rememberSaveable { mutableStateOf("profiles") }
     var showRuleDnsSheet by rememberSaveable { mutableStateOf(false) }
@@ -154,68 +151,83 @@ fun ConfigScreen(
     }
 
     val diagnosticBanner: @Composable () -> Unit = {
-        if (diagnostic.isNotEmpty()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = if (diagnosticError) ext.dangerContainer else ext.successContainer,
-                border = BorderStroke(1.dp, (if (diagnosticError) ext.danger else ext.success).copy(alpha = 0.45f)),
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = if (diagnosticError) ext.dangerContainer else ext.successContainer,
+            border = BorderStroke(1.dp, (if (diagnosticError) ext.danger else ext.success).copy(alpha = 0.45f)),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(if (diagnosticError) R.drawable.ic_warning else R.drawable.ic_check),
-                        contentDescription = null,
-                        tint = if (diagnosticError) ext.danger else ext.success,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        text = diagnostic,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (diagnosticError) ext.danger else ext.success,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+                Icon(
+                    painter = painterResource(if (diagnosticError) R.drawable.ic_warning else R.drawable.ic_check),
+                    contentDescription = null,
+                    tint = if (diagnosticError) ext.danger else ext.success,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = diagnostic,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (diagnosticError) ext.danger else ext.success,
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
 
-    val activePane: @Composable () -> Unit = {
+    fun LazyListScope.emitActivePillarItems() {
+        item(key = "hdr", contentType = "header") { headerCard() }
+        if (diagnostic.isNotEmpty()) {
+            item(key = "diag", contentType = "diag") { diagnosticBanner() }
+        }
         when (activePillar) {
-            "subs" -> SubscriptionsPillarPane(
-                state = workspaceState,
-                actions = workspaceActions,
-                onFeedback = onDiagnosticChange,
-            )
-            "routing" -> RoutingDnsPillarPane(
-                state = workspaceState,
-                actions = workspaceActions,
-                onOpenRuleDnsModal = { showRuleDnsSheet = true },
-                onFeedback = onDiagnosticChange,
-            )
-            "host" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                HostSettingsCard(
-                    host = workspaceState.host,
-                    onUpdateHost = { next -> scope.launch { onDiagnosticChange(workspaceActions.onUpdateHost(next)) } },
-                    onOpenSplitTunnel = onOpenSplitTunnel,
-                )
-                WebDavSyncCard(
-                    state = workspaceState,
-                    actions = workspaceActions,
-                    onFeedback = onDiagnosticChange,
-                )
-                UdpProbeCard(
+            "subs" -> item(key = "subs_pane", contentType = "subs") {
+                SubscriptionsPillarPane(
                     state = workspaceState,
                     actions = workspaceActions,
                     onFeedback = onDiagnosticChange,
                 )
             }
-            else -> ProfilesPillarPane(
+            "routing" -> item(key = "routing_pane", contentType = "routing") {
+                RoutingDnsPillarPane(
+                    state = workspaceState,
+                    actions = workspaceActions,
+                    onOpenRuleDnsModal = { showRuleDnsSheet = true },
+                    onOpenDiagnostics = onOpenDiagnostics,
+                    onFeedback = onDiagnosticChange,
+                )
+            }
+            "host" -> {
+                item(key = "host_card", contentType = "host") {
+                    HostSettingsCard(
+                        host = workspaceState.host,
+                        onUpdateHost = { next -> scope.launch { onDiagnosticChange(workspaceActions.onUpdateHost(next)) } },
+                        onOpenSplitTunnel = onOpenSplitTunnel,
+                    )
+                }
+                item(key = "sync_card", contentType = "sync") {
+                    WebDavSyncCard(
+                        state = workspaceState,
+                        actions = workspaceActions,
+                        onFeedback = onDiagnosticChange,
+                    )
+                }
+                item(key = "udp_card", contentType = "udp") {
+                    UdpProbeCard(
+                        state = workspaceState,
+                        actions = workspaceActions,
+                        onFeedback = onDiagnosticChange,
+                    )
+                }
+            }
+            else -> profilesPillarItems(
                 state = workspaceState,
                 actions = workspaceActions,
+                scope = scope,
+                context = context,
                 onFeedback = onDiagnosticChange,
                 onQuickShareImport = { uri ->
                     scope.launch { onDiagnosticChange(onImportShareLink(uri, kdlText).second) }
@@ -239,33 +251,32 @@ fun ConfigScreen(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             LazyColumn(
-                state = rememberLazyListState(),
+                state = primaryListState,
                 modifier = Modifier.weight(1.08f).fillMaxHeight(),
                 contentPadding = PaddingValues(top = topPad, bottom = bottomPad + 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                item(key = "hdr") { headerCard() }
-                item(key = "pane") { activePane() }
-                if (diagnostic.isNotEmpty()) item(key = "diag") { diagnosticBanner() }
+                emitActivePillarItems()
             }
             LazyColumn(
-                state = rememberLazyListState(),
+                state = secondaryListState,
                 modifier = Modifier.weight(0.92f).fillMaxHeight(),
                 contentPadding = PaddingValues(top = topPad, bottom = bottomPad + 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (activePillar != "routing") {
-                    item(key = "side_routing") {
+                    item(key = "side_routing", contentType = "routing") {
                         RoutingDnsPillarPane(
                             state = workspaceState,
                             actions = workspaceActions,
                             onOpenRuleDnsModal = { showRuleDnsSheet = true },
+                            onOpenDiagnostics = onOpenDiagnostics,
                             onFeedback = onDiagnosticChange,
                         )
                     }
                 }
                 if (activePillar != "host") {
-                    item(key = "side_host") {
+                    item(key = "side_host", contentType = "host") {
                         HostSettingsCard(
                             host = workspaceState.host,
                             onUpdateHost = { next -> scope.launch { onDiagnosticChange(workspaceActions.onUpdateHost(next)) } },
@@ -277,26 +288,22 @@ fun ConfigScreen(
         }
     } else {
         LazyColumn(
-            state = rememberLazyListState(),
+            state = primaryListState,
             modifier = modifier
                 .fillMaxSize()
                 .consumeWindowInsets(contentPadding)
                 .imePadding(),
             contentPadding = contentPadding,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item(key = "hdr") { headerCard() }
-            item(key = "pane") { activePane() }
-            if (diagnostic.isNotEmpty()) item(key = "diag") { diagnosticBanner() }
+            emitActivePillarItems()
         }
     }
 
     if (showRuleDnsSheet) {
         RuleDnsModalSheet(
-            kdlText = kdlText,
             workspaceState = workspaceState,
             workspaceActions = workspaceActions,
-            onApplyConfig = onApplyConfig,
             onResultFeedback = onDiagnosticChange,
             onDismiss = { showRuleDnsSheet = false },
         )

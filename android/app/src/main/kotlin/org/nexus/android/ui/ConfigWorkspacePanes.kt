@@ -2,9 +2,9 @@ package org.nexus.android.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,9 +15,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -27,15 +30,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -43,6 +43,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.nexus.android.R
 import org.nexus.android.bridge.workspace.PolicyGroupConfig
@@ -60,7 +61,7 @@ internal fun ProfileKindBadge(kind: ProfileKind, modifier: Modifier = Modifier) 
     val ext = NexusTheme.colors
     val (bg, fg, label) = when (kind) {
         ProfileKind.NODE -> Triple(ext.telemetryDownloadContainer, ext.telemetryDownload, "节点")
-        ProfileKind.POLICY_GROUP -> Triple(Color(0xFF2563EB).copy(alpha = 0.20f), Color(0xFF60A5FA), "策略组")
+        ProfileKind.POLICY_GROUP -> Triple(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, "策略组")
         ProfileKind.PROXY_CHAIN -> Triple(ext.telemetryUploadContainer, ext.telemetryUpload, "代理链")
         ProfileKind.CUSTOM_OUTBOUND -> Triple(ext.warningContainer, ext.warning, "自定义出站")
         ProfileKind.FULL_CUSTOM_KDL -> Triple(ext.successContainer, ext.success, "完整档案")
@@ -68,8 +69,72 @@ internal fun ProfileKindBadge(kind: ProfileKind, modifier: Modifier = Modifier) 
     StatusPill(text = label, containerColor = bg, contentColor = fg, modifier = modifier)
 }
 
+/**
+ * Flattened `LazyListScope` emitter for the Profiles pillar so 100+ subscription profiles stay
+ * fully virtualized inside `ConfigScreen`'s `LazyColumn` instead of nesting an eager `Column`.
+ */
+internal fun LazyListScope.profilesPillarItems(
+    state: WorkspaceUiState,
+    actions: WorkspaceUiActions,
+    scope: CoroutineScope,
+    context: Context,
+    onFeedback: (String) -> Unit,
+    onQuickShareImport: (String) -> Unit,
+) {
+    item(key = "profiles_header", contentType = "profiles_header") {
+        ProfilesHeaderCard(
+            state = state,
+            actions = actions,
+            onFeedback = onFeedback,
+            onQuickShareImport = onQuickShareImport,
+        )
+    }
+    val profiles = state.document.profiles
+    if (profiles.isEmpty()) {
+        item(key = "profiles_empty", contentType = "empty") {
+            val ext = NexusTheme.colors
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = ext.wellSurface,
+                border = BorderStroke(1.dp, ext.hairline),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = "暂无节点档案。粘贴 nexus:// 分享包、节点链接或拉取订阅即可开始。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(14.dp),
+                )
+            }
+        }
+    } else {
+        items(
+            items = profiles,
+            key = { it.id },
+            contentType = { "profile_item" },
+        ) { profile ->
+            ProfileListRow(
+                profile = profile,
+                active = profile.id == state.activeProfileId,
+                onSelect = { scope.launch { onFeedback(actions.onSelectProfile(profile.id)) } },
+                onExportShare = {
+                    scope.launch {
+                        val (uri, note) = actions.onExportShareUri(profile.id)
+                        if (!uri.isNullOrBlank()) {
+                            context.getSystemService(ClipboardManager::class.java)
+                                ?.setPrimaryClip(ClipData.newPlainText("nexus-share", uri))
+                        }
+                        onFeedback(note)
+                    }
+                },
+                onDelete = { scope.launch { onFeedback(actions.onDeleteProfile(profile.id)) } },
+            )
+        }
+    }
+}
+
 @Composable
-internal fun ProfilesPillarPane(
+private fun ProfilesHeaderCard(
     state: WorkspaceUiState,
     actions: WorkspaceUiActions,
     onFeedback: (String) -> Unit,
@@ -80,6 +145,7 @@ internal fun ProfilesPillarPane(
     val haptic = LocalHapticFeedback.current
     val ext = NexusTheme.colors
     var shareUri by rememberSaveable { mutableStateOf("") }
+    var interruptOnSwitch by rememberSaveable { mutableStateOf(false) }
 
     OpticalCard(cornerRadius = 20.dp) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -118,12 +184,16 @@ internal fun ProfilesPillarPane(
                             id = WorkspaceStore.newProfileId("grp"),
                             remarks = "自动测速组",
                             kind = ProfileKind.POLICY_GROUP,
-                            policyGroup = PolicyGroupConfig(strategy = "url-test", memberIds = nodes),
+                            policyGroup = PolicyGroupConfig(
+                                strategy = "url-test",
+                                memberIds = nodes,
+                                interruptExistConnections = interruptOnSwitch,
+                            ),
                         )
                         scope.launch { onFeedback(actions.onAddProfile(item)) }
                     },
                     shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                     modifier = Modifier.weight(1f),
                 ) { Text("+ 策略组", maxLines = 1) }
                 OutlinedButton(
@@ -138,10 +208,15 @@ internal fun ProfilesPillarPane(
                         scope.launch { onFeedback(actions.onAddProfile(item)) }
                     },
                     shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                     modifier = Modifier.weight(1f),
                 ) { Text("+ 代理链", maxLines = 1) }
             }
+            FilterChip(
+                selected = interruptOnSwitch,
+                onClick = { interruptOnSwitch = !interruptOnSwitch },
+                label = { Text("新建策略组切换时断开旧连接") },
+            )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 OutlinedButton(
                     onClick = {
@@ -152,7 +227,7 @@ internal fun ProfilesPillarPane(
                         onFeedback("已复制便携工作区 JSON（不含本机端口与凭据）")
                     },
                     shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                     modifier = Modifier.weight(1f),
                 ) {
                     Icon(painterResource(R.drawable.ic_copy), null, Modifier.size(14.dp))
@@ -171,7 +246,7 @@ internal fun ProfilesPillarPane(
                         }
                     },
                     shape = RoundedCornerShape(999.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                     modifier = Modifier.weight(1f),
                 ) {
                     Icon(painterResource(R.drawable.ic_paste), null, Modifier.size(14.dp))
@@ -179,101 +254,80 @@ internal fun ProfilesPillarPane(
                     Text("导入 nexus://", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
+        }
+    }
+}
 
-            if (state.document.profiles.isEmpty()) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = ext.wellSurface,
-                    border = BorderStroke(1.dp, ext.hairline),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = "暂无节点档案。粘贴 nexus:// 分享包、节点链接或拉取订阅即可开始。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(12.dp),
-                    )
+@Composable
+private fun ProfileListRow(
+    profile: ProfileItem,
+    active: Boolean,
+    onSelect: () -> Unit,
+    onExportShare: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val ext = NexusTheme.colors
+    val primary = MaterialTheme.colorScheme.primary
+    val haptic = LocalHapticFeedback.current
+
+    Surface(
+        onClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onSelect()
+        },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = if (active) primary.copy(alpha = if (ext.isDark) 0.18f else 0.10f) else ext.cardGradientTop,
+        border = BorderStroke(
+            if (active) 1.3.dp else 1.dp,
+            if (active) primary.copy(alpha = 0.78f) else ext.hairline,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(7.dp).background(
+                    if (active) primary else ext.muted.copy(alpha = 0.5f),
+                    CircleShape,
+                ),
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = profile.remarks.ifBlank { profile.id },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val subMeta = when (profile.kind) {
+                    ProfileKind.NODE -> profile.node?.let { n ->
+                        val mux = if (n.multiplex.enabled && n.multiplex.protocol.isNotEmpty()) " · ${n.multiplex.protocol}" else ""
+                        val frag = if (n.tls.fragment) " · frag" else ""
+                        "${n.protocol.uppercase()} · ${n.server}:${n.port}$mux$frag"
+                    }.orEmpty()
+                    ProfileKind.POLICY_GROUP -> profile.policyGroup?.let { g ->
+                        val cut = if (g.interruptExistConnections) " · 切线断旧" else ""
+                        "${g.strategy} · ${g.memberIds.size} 成员$cut"
+                    }.orEmpty()
+                    ProfileKind.PROXY_CHAIN -> "${profile.proxyChain?.hopIds?.size ?: 0} 跳链路"
+                    else -> profile.id
                 }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    state.document.profiles.forEach { profile ->
-                        key(profile.id) {
-                            val active = profile.id == state.activeProfileId
-                            val interaction = remember { MutableInteractionSource() }
-                            Surface(
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    scope.launch { onFeedback(actions.onSelectProfile(profile.id)) }
-                                },
-                                interactionSource = interaction,
-                                modifier = Modifier.fillMaxWidth().liquidPress(interaction, pressedScale = 0.98f),
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (active) Color(0xFF2563EB).copy(alpha = if (ext.isDark) 0.24f else 0.12f) else ext.wellSurface,
-                                border = BorderStroke(
-                                    if (active) 1.3.dp else 1.dp,
-                                    if (active) Color(0xFF3B82F6).copy(alpha = 0.78f) else ext.hairline,
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                                ) {
-                                    Box(
-                                        modifier = Modifier.size(7.dp).background(
-                                            if (active) Color(0xFF60A5FA) else ext.muted.copy(alpha = 0.5f),
-                                            CircleShape,
-                                        ),
-                                    )
-                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(
-                                            text = profile.remarks.ifBlank { profile.id },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        val subMeta = when (profile.kind) {
-                                            ProfileKind.NODE -> profile.node?.let { "${it.protocol.uppercase()} · ${it.server}:${it.port}" }.orEmpty()
-                                            ProfileKind.POLICY_GROUP -> profile.policyGroup?.let { "${it.strategy} · ${it.memberIds.size} 成员" }.orEmpty()
-                                            ProfileKind.PROXY_CHAIN -> "${profile.proxyChain?.hopIds?.size ?: 0} 跳链路"
-                                            else -> profile.id
-                                        }
-                                        if (subMeta.isNotEmpty()) {
-                                            Text(subMeta, style = NexusNumericStyles.monoBadge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        }
-                                    }
-                                    ProfileKindBadge(profile.kind)
-                                    if (profile.kind != ProfileKind.FULL_CUSTOM_KDL) {
-                                        IconButton(
-                                            onClick = {
-                                                scope.launch {
-                                                    val (uri, note) = actions.onExportShareUri(profile.id)
-                                                    if (!uri.isNullOrBlank()) {
-                                                        context.getSystemService(ClipboardManager::class.java)
-                                                            ?.setPrimaryClip(ClipData.newPlainText("nexus-share", uri))
-                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    }
-                                                    onFeedback(note)
-                                                }
-                                            },
-                                            modifier = Modifier.size(28.dp),
-                                        ) {
-                                            Icon(painterResource(R.drawable.ic_share), "分享 nexus://", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
-                                        }
-                                    }
-                                    if (!active) {
-                                        IconButton(
-                                            onClick = { scope.launch { onFeedback(actions.onDeleteProfile(profile.id)) } },
-                                            modifier = Modifier.size(28.dp),
-                                        ) {
-                                            Icon(painterResource(R.drawable.ic_delete), "删除", tint = ext.muted, modifier = Modifier.size(15.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if (subMeta.isNotEmpty()) {
+                    Text(subMeta, style = NexusNumericStyles.monoBadge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            ProfileKindBadge(profile.kind)
+            if (profile.kind != ProfileKind.FULL_CUSTOM_KDL) {
+                IconButton(onClick = onExportShare) {
+                    Icon(painterResource(R.drawable.ic_share), "分享 nexus://", tint = primary, modifier = Modifier.size(18.dp))
+                }
+            }
+            if (!active) {
+                IconButton(onClick = onDelete) {
+                    Icon(painterResource(R.drawable.ic_delete), "删除", tint = ext.muted, modifier = Modifier.size(18.dp))
                 }
             }
         }

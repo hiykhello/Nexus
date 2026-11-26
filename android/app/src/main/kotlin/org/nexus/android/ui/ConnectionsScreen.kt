@@ -8,7 +8,6 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,6 +18,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -46,11 +46,11 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -62,10 +62,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.nexus.android.R
 import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
+import org.nexus.android.bridge.workspace.AndroidPerAppMode
 import org.nexus.android.ui.theme.NexusTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,7 +76,9 @@ fun ConnectionsScreen(
     running: Boolean,
     powerSave: Boolean = false,
     excludedPackages: Set<String>,
+    perAppMode: AndroidPerAppMode = AndroidPerAppMode.EXCLUDE,
     onFetchConnections: suspend () -> List<ActiveConnectionSnapshot>,
+    connectionsStream: (() -> Flow<List<ActiveConnectionSnapshot>>)? = null,
     onInspectConnection: suspend (Long) -> ActiveConnectionSnapshot?,
     onResolveOwnerPackage: suspend (ActiveConnectionSnapshot) -> String?,
     onCloseConnection: suspend (Long) -> Boolean,
@@ -93,7 +97,15 @@ fun ConnectionsScreen(
     val haptic = LocalHapticFeedback.current
     val layoutDirection = LocalLayoutDirection.current
     val ext = NexusTheme.colors
+    val primary = MaterialTheme.colorScheme.primary
     val twoPane = windowSizeClass == NexusWindowSizeClass.EXPANDED
+
+    // Hoisted scroll state above conditional branches.
+    val listState = rememberLazyListState()
+    val latestFetch by rememberUpdatedState(onFetchConnections)
+    val latestStream by rememberUpdatedState(connectionsStream)
+    val latestInspect by rememberUpdatedState(onInspectConnection)
+    val latestResolveOwner by rememberUpdatedState(onResolveOwnerPackage)
 
     var connections by remember { mutableStateOf<List<ActiveConnectionSnapshot>>(emptyList()) }
     var selectedId by rememberSaveable { mutableLongStateOf(initialSelectedConnection?.id ?: -1L) }
@@ -103,21 +115,25 @@ fun ConnectionsScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var isPaused by rememberSaveable { mutableStateOf(false) }
 
-    // Lifecycle-scoped periodic refresh (stops cleanly when backgrounded or screen-off)
+    // Lifecycle-scoped SSE stream (falls back cleanly to polling when SSE is absent or powerSave is active)
     LaunchedEffect(running, powerSave, isPaused, lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            connections = onFetchConnections()
+            connections = latestFetch()
             if (!running || isPaused) return@repeatOnLifecycle
-            while (isActive) {
-                delay(if (powerSave) 5_000L else 2_000L)
-                if (!isPaused) {
-                    connections = onFetchConnections()
+            val sseFactory = latestStream
+            if (!powerSave && sseFactory != null) {
+                sseFactory().collect { snapshot ->
+                    if (!isPaused) connections = snapshot
+                }
+            } else {
+                while (isActive) {
+                    delay(if (powerSave) 5_000L else 2_000L)
+                    if (!isPaused) connections = latestFetch()
                 }
             }
         }
     }
 
-    // Resolve selected detail when id changes or restored after configuration change
     LaunchedEffect(selectedId, connections) {
         if (selectedId <= 0L) {
             inspectedDetail = null
@@ -128,13 +144,11 @@ fun ConnectionsScreen(
         val fromList = connections.firstOrNull { it.id == targetId }
         if (inspectedDetail?.id != targetId) {
             resolvedOwner = null
-            val fresh = onInspectConnection(targetId) ?: fromList
+            val fresh = latestInspect(targetId) ?: fromList
             if (selectedId == targetId) {
                 inspectedDetail = fresh
-                val owner = fresh?.let { onResolveOwnerPackage(it) }
-                if (selectedId == targetId) {
-                    resolvedOwner = owner
-                }
+                val owner = fresh?.let { latestResolveOwner(it) }
+                if (selectedId == targetId) resolvedOwner = owner
             }
         }
     }
@@ -177,7 +191,7 @@ fun ConnectionsScreen(
         scope.launch {
             if (onCloseConnection(id)) {
                 if (selectedId == id) dismissDetail()
-                connections = onFetchConnections()
+                connections = latestFetch()
             }
         }
     }
@@ -189,8 +203,11 @@ fun ConnectionsScreen(
     }
 
     val bypassApp: (String) -> Unit = { pkg ->
-        onBypassPackage(pkg)
-        actionFeedback = "已绕过 $pkg"
+        val action = computePerAppConnectionAction(perAppMode, pkg, excludedPackages)
+        if (action.enabled) {
+            onBypassPackage(pkg)
+            actionFeedback = action.feedbackText
+        }
     }
 
     val startPad = contentPadding.calculateStartPadding(layoutDirection) + 16.dp
@@ -206,7 +223,6 @@ fun ConnectionsScreen(
             .padding(start = startPad, end = endPad, top = topPad),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Search + Pause-Live-Refresh + Refresh toolbar
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -248,7 +264,7 @@ fun ConnectionsScreen(
                     modifier = Modifier.size(18.dp),
                 )
             }
-            FilledTonalIconButton(onClick = { scope.launch { connections = onFetchConnections() } }) {
+            FilledTonalIconButton(onClick = { scope.launch { connections = latestFetch() } }) {
                 Icon(painterResource(R.drawable.ic_refresh), "刷新", Modifier.size(20.dp))
             }
             if (windowSizeClass != NexusWindowSizeClass.COMPACT) {
@@ -259,28 +275,32 @@ fun ConnectionsScreen(
                             scope.launch {
                                 if (onCloseAllConnections()) {
                                     dismissDetail()
-                                    connections = onFetchConnections()
+                                    connections = latestFetch()
                                 }
                             }
                         }
                     },
                     enabled = connections.isNotEmpty(),
+                    modifier = Modifier.heightIn(min = 44.dp),
                     shape = RoundedCornerShape(999.dp),
                     color = if (connections.isNotEmpty()) ext.dangerContainer else ext.wellSurface,
                     border = BorderStroke(1.dp, if (connections.isNotEmpty()) ext.danger.copy(alpha = 0.40f) else ext.hairline),
                 ) {
-                    Text(
-                        text = "全部断开",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (connections.isNotEmpty()) ext.danger else ext.muted,
+                    Box(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    )
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "全部断开",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (connections.isNotEmpty()) ext.danger else ext.muted,
+                        )
+                    }
                 }
             }
         }
 
-        // Wave 9 Live Summary KPI Strip (`活跃连接 · 实时下行 · 实时上行 · 代理占比`)
         ConnectionsKpiStrip(
             activeCount = filtered.size,
             tcpCount = tcpCount,
@@ -312,7 +332,7 @@ fun ConnectionsScreen(
                             scope.launch {
                                 if (onCloseAllConnections()) {
                                     dismissDetail()
-                                    connections = onFetchConnections()
+                                    connections = latestFetch()
                                 }
                             }
                         },
@@ -323,94 +343,87 @@ fun ConnectionsScreen(
             }
         }
 
-        // Master / On-Demand List-Detail workspace (100%-wide default on Tablet until a row is tapped)
-        BoxWithConstraints(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        ) {
-            val detailPaneWidth = (maxWidth * 0.43f).coerceIn(340.dp, 456.dp)
-            Row(modifier = Modifier.fillMaxSize()) {
-                if (filtered.isEmpty()) {
-                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        EmptyStateCard(
-                            title = "暂无活跃连接",
-                            subtitle = if (query.isNotEmpty()) "未匹配到 \"$query\"" else "产生流量后将在此实时显示连接与路由。",
-                            iconRes = R.drawable.ic_nav_connections,
-                            actionLabel = if (query.isNotEmpty()) "清除搜索" else "刷新",
-                            onAction = { if (query.isNotEmpty()) query = "" else scope.launch { connections = onFetchConnections() } },
+        // Zero-BoxWithConstraints master / on-demand list-detail workspace
+        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (filtered.isEmpty()) {
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    EmptyStateCard(
+                        title = "暂无活跃连接",
+                        subtitle = if (query.isNotEmpty()) "未匹配到 \"$query\"" else "产生流量后将在此实时显示连接与路由。",
+                        iconRes = R.drawable.ic_nav_connections,
+                        actionLabel = if (query.isNotEmpty()) "清除搜索" else "刷新",
+                        onAction = { if (query.isNotEmpty()) query = "" else scope.launch { connections = latestFetch() } },
+                    )
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    contentPadding = PaddingValues(bottom = bottomPad + 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(
+                        items = filtered,
+                        key = { it.id },
+                        contentType = { "connection" },
+                    ) { conn ->
+                        ConnectionItemCard(
+                            conn = conn,
+                            selected = selectedId == conn.id,
+                            onInspect = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                if (twoPane && selectedId == conn.id) {
+                                    dismissDetail()
+                                    return@ConnectionItemCard
+                                }
+                                val targetId = conn.id
+                                actionFeedback = ""
+                                resolvedOwner = null
+                                selectedId = targetId
+                                inspectedDetail = conn
+                                scope.launch {
+                                    val detail = latestInspect(targetId) ?: conn
+                                    if (selectedId == targetId) {
+                                        inspectedDetail = detail
+                                        val owner = latestResolveOwner(detail)
+                                        if (selectedId == targetId) resolvedOwner = owner
+                                    }
+                                }
+                            },
+                            onClose = { closeSingle(conn.id) },
                         )
                     }
-                } else {
-                    LazyColumn(
-                        state = rememberLazyListState(),
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                        contentPadding = PaddingValues(bottom = bottomPad + 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(
-                            items = filtered,
-                            key = { it.id },
-                            contentType = { "connection" },
-                        ) { conn ->
-                            ConnectionItemCard(
-                                conn = conn,
-                                selected = selectedId == conn.id,
-                                onInspect = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    if (twoPane && selectedId == conn.id) {
-                                        dismissDetail()
-                                        return@ConnectionItemCard
-                                    }
-                                    val targetId = conn.id
-                                    actionFeedback = ""
-                                    resolvedOwner = null
-                                    selectedId = targetId
-                                    inspectedDetail = conn
-                                    scope.launch {
-                                        val detail = onInspectConnection(targetId) ?: conn
-                                        if (selectedId == targetId) {
-                                            inspectedDetail = detail
-                                            val owner = onResolveOwnerPackage(detail)
-                                            if (selectedId == targetId) {
-                                                resolvedOwner = owner
-                                            }
-                                        }
-                                    }
-                                },
-                                onClose = { closeSingle(conn.id) },
-                            )
-                        }
-                    }
                 }
+            }
 
-                // Expanded >=840dp: On-demand Right Detail Pane (zero empty placeholder when collapsed)
-                AnimatedVisibility(
-                    visible = twoPane && activeDetail != null,
-                    enter = expandHorizontally(expandFrom = Alignment.End) + fadeIn(),
-                    exit = shrinkHorizontally(shrinkTowards = Alignment.End) + fadeOut(),
-                ) {
-                    activeDetail?.let { detail ->
-                        Column(
-                            modifier = Modifier
-                                .width(detailPaneWidth)
-                                .fillMaxHeight()
-                                .padding(start = 14.dp, bottom = bottomPad + 8.dp),
+            AnimatedVisibility(
+                visible = twoPane && activeDetail != null,
+                enter = expandHorizontally(expandFrom = Alignment.End) + fadeIn(),
+                exit = shrinkHorizontally(shrinkTowards = Alignment.End) + fadeOut(),
+            ) {
+                activeDetail?.let { detail ->
+                    Column(
+                        modifier = Modifier
+                            .width(404.dp)
+                            .fillMaxHeight()
+                            .padding(start = 14.dp, bottom = bottomPad + 8.dp),
+                    ) {
+                        OpticalCard(
+                            cornerRadius = 24.dp,
+                            borderColor = primary.copy(alpha = 0.55f),
                         ) {
-                            OpticalCard(
-                                cornerRadius = 24.dp,
-                                borderColor = Color(0xFF3B82F6).copy(alpha = 0.55f),
-                            ) {
-                                ConnectionDetailContent(
-                                    detail = detail,
-                                    ownerPackage = resolvedOwner,
-                                    excludedPackages = excludedPackages,
-                                    actionFeedback = actionFeedback,
-                                    showDismissButton = true,
-                                    onDismiss = dismissDetail,
-                                    onCloseConnection = closeSingle,
-                                    onCreateRule = createRule,
-                                    onBypassOwnerApp = bypassApp,
-                                )
-                            }
+                            ConnectionDetailContent(
+                                detail = detail,
+                                ownerPackage = resolvedOwner,
+                                excludedPackages = excludedPackages,
+                                perAppMode = perAppMode,
+                                actionFeedback = actionFeedback,
+                                showDismissButton = true,
+                                onDismiss = dismissDetail,
+                                onCloseConnection = closeSingle,
+                                onCreateRule = createRule,
+                                onBypassOwnerApp = bypassApp,
+                            )
                         }
                     }
                 }
@@ -418,7 +431,6 @@ fun ConnectionsScreen(
         }
     }
 
-    // Compact & Medium (<840dp): Smooth Material 3 ModalBottomSheet inspector
     if (!twoPane && activeDetail != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
@@ -431,6 +443,7 @@ fun ConnectionsScreen(
                 detail = activeDetail,
                 ownerPackage = resolvedOwner,
                 excludedPackages = excludedPackages,
+                perAppMode = perAppMode,
                 actionFeedback = actionFeedback,
                 showDismissButton = true,
                 onDismiss = dismissDetail,

@@ -4,10 +4,13 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +24,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -148,7 +152,7 @@ private fun SubscriptionItemCard(
                         Text("到期 $dateStr", style = NexusNumericStyles.monoBadge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                OutlinedButton(enabled = !busy, onClick = onRefresh, shape = RoundedCornerShape(999.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                OutlinedButton(enabled = !busy, onClick = onRefresh, shape = RoundedCornerShape(999.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
                     Icon(painterResource(R.drawable.ic_refresh), null, Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("更新")
@@ -182,40 +186,72 @@ private fun ChainPickerPill(
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
+    var query by remember(expanded) { mutableStateOf("") }
+    val shown = remember(candidates, query) {
+        val q = query.trim().lowercase()
+        val list = if (q.isEmpty()) candidates else candidates.filter {
+            it.remarks.lowercase().contains(q) || it.id.lowercase().contains(q)
+        }
+        list.take(30)
+    }
+
     Box(modifier = modifier) {
         Surface(
             onClick = { onExpandedChange(true) },
             shape = RoundedCornerShape(999.dp),
             color = ext.insetSurface,
             border = BorderStroke(1.dp, ext.hairline),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().heightIn(min = 40.dp),
         ) {
-            Text(
-                text = "$label ▾",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            )
+            Box(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    text = "$label ▾",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
+            if (candidates.size > 8) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("筛选节点…", maxLines = 1) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
             DropdownMenuItem(text = { Text("不设置") }, onClick = { onExpandedChange(false); onPick("") })
-            candidates.forEach { item ->
+            shown.forEach { item ->
                 DropdownMenuItem(
                     text = { Text(item.remarks.ifBlank { item.id }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     onClick = { onExpandedChange(false); onPick(item.id) },
+                )
+            }
+            if (candidates.size > shown.size && query.isEmpty()) {
+                DropdownMenuItem(
+                    enabled = false,
+                    text = { Text("共 ${candidates.size} 项，输入关键字筛选", style = MaterialTheme.typography.labelSmall) },
+                    onClick = {},
                 )
             }
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun RoutingDnsPillarPane(
     state: WorkspaceUiState,
     actions: WorkspaceUiActions,
     onOpenRuleDnsModal: () -> Unit,
+    onOpenDiagnostics: (() -> Unit)? = null,
     onFeedback: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -226,16 +262,20 @@ internal fun RoutingDnsPillarPane(
     OpticalCard(cornerRadius = 20.dp) {
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("路由方案", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
                 state.document.routingProfiles.forEach { rp ->
                     val selected = rp.id == activeRouting.id
                     val accent = MaterialTheme.colorScheme.primary
                     Surface(
                         onClick = { scope.launch { onFeedback(actions.onSelectRoutingProfile(rp.id)) } },
+                        modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 38.dp),
                         shape = RoundedCornerShape(999.dp),
                         color = if (selected) accent.copy(alpha = if (ext.isDark) 0.25f else 0.14f) else ext.wellSurface,
                         border = BorderStroke(1.dp, if (selected) accent.copy(alpha = 0.72f) else ext.hairline),
-                        modifier = Modifier.weight(1f),
                     ) {
                         Text(
                             text = rp.name,
@@ -244,7 +284,7 @@ internal fun RoutingDnsPillarPane(
                             color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                         )
                     }
                 }
@@ -278,6 +318,17 @@ internal fun RoutingDnsPillarPane(
                 Icon(painterResource(R.drawable.ic_rule), null, Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("编辑路由规则与 DNS 方案")
+            }
+            if (onOpenDiagnostics != null) {
+                OutlinedButton(
+                    onClick = onOpenDiagnostics,
+                    shape = RoundedCornerShape(999.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(painterResource(R.drawable.ic_search), null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("实时规则视图 · DNS 探测 · 缓存清理")
+                }
             }
         }
     }

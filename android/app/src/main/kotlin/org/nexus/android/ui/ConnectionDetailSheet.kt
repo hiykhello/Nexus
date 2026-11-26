@@ -5,10 +5,12 @@ import android.content.ClipboardManager
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -36,38 +39,14 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.nexus.android.R
 import org.nexus.android.bridge.ipc.ActiveConnectionSnapshot
 import org.nexus.android.bridge.model.EndpointParser
+import org.nexus.android.bridge.workspace.AndroidPerAppMode
 import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
-import java.util.Locale
-
-internal fun extractOwnerPackageName(ownerDisplay: String?): String? {
-    val raw = ownerDisplay?.trim().orEmpty()
-    if (raw.isEmpty()) return null
-    val beforeUid = raw.substringBefore(" (UID").trim()
-    val firstPkg = beforeUid.substringBefore(',').trim()
-    return firstPkg.takeIf {
-        it.contains('.') &&
-            !it.startsWith("UID") &&
-            it.all { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '_' || ch == '-' }
-    }
-}
-
-private fun formatCompactDuration(durationMs: Long): String = when {
-    durationMs < 1_000L -> "${durationMs.coerceAtLeast(0L)} ms"
-    durationMs < 60_000L -> String.format(Locale.US, "%.1f s", durationMs / 1000.0)
-    else -> "${durationMs / 60_000L}m ${(durationMs / 1000L) % 60L}s"
-}
-
-private fun formatShortAppLabel(pkg: String?, fallback: String): String {
-    val raw = pkg?.trim().orEmpty().ifEmpty { fallback.trim() }
-    if (raw.isEmpty()) return "系统"
-    val leaf = raw.substringBefore(" (UID").substringAfterLast('.').ifEmpty { raw }
-    return leaf.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() }
-}
 
 /**
  * Flagship `24.dp` Optical Precision connection inspector rendered inside either:
@@ -79,6 +58,7 @@ fun ConnectionDetailContent(
     detail: ActiveConnectionSnapshot,
     ownerPackage: String?,
     excludedPackages: Set<String>,
+    perAppMode: AndroidPerAppMode = AndroidPerAppMode.EXCLUDE,
     actionFeedback: String,
     showDismissButton: Boolean,
     onDismiss: () -> Unit,
@@ -88,6 +68,8 @@ fun ConnectionDetailContent(
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
+    val primary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     var copiedHost by remember(detail.id) { mutableStateOf(false) }
@@ -98,7 +80,7 @@ fun ConnectionDetailContent(
     }
     val ruleHost = EndpointParser.stripPortAndBrackets(targetDisplay)
     val resolvedPkg = extractOwnerPackageName(ownerPackage) ?: extractOwnerPackageName(detail.processPath)
-    val alreadyBypassed = resolvedPkg != null && excludedPackages.contains(resolvedPkg)
+    val perAppAction = resolvedPkg?.let { computePerAppConnectionAction(perAppMode, it, excludedPackages) }
     val shortApp = formatShortAppLabel(resolvedPkg, detail.processPath)
     val shortRule = detail.routeRule.substringBefore("->").trim().ifEmpty { "默认" }
     val shortExit = detail.outbound.ifEmpty { detail.path }.substringAfterLast('/').ifEmpty { "-" }
@@ -110,7 +92,6 @@ fun ConnectionDetailContent(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // Header: protocol pill + id + compact duration + circular close button
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -137,24 +118,26 @@ fun ConnectionDetailContent(
                 mono = true,
             )
             if (showDismissButton) {
-                Surface(
-                    onClick = onDismiss,
-                    shape = CircleShape,
-                    color = ext.wellSurface,
-                    border = BorderStroke(1.dp, ext.hairline),
-                    modifier = Modifier.size(30.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_close),
-                        contentDescription = "关闭",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(7.dp),
-                    )
+                IconButton(onClick = onDismiss) {
+                    Surface(
+                        shape = CircleShape,
+                        color = ext.wellSurface,
+                        border = BorderStroke(1.dp, ext.hairline),
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_close),
+                                contentDescription = "关闭",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        // Visual Route Chain Pill Bar (`App → Rule → Outbound`) — stepped graphite block
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(999.dp),
@@ -188,14 +171,13 @@ fun ConnectionDetailContent(
                     text = shortExit,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
 
-        // Stepped smoked-graphite inner block for connection metadata + tap-to-copy target
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
@@ -203,8 +185,8 @@ fun ConnectionDetailContent(
             border = BorderStroke(1.dp, ext.hairline),
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -228,24 +210,22 @@ fun ConnectionDetailContent(
                             copiedHost = true
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         },
-                        modifier = Modifier.size(24.dp),
                     ) {
                         Icon(
                             painter = painterResource(if (copiedHost) R.drawable.ic_check else R.drawable.ic_copy),
                             contentDescription = "复制目标",
                             tint = if (copiedHost) ext.success else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(14.dp),
+                            modifier = Modifier.size(16.dp),
                         )
                     }
                 }
-                DetailMetaRow(label = "来源", value = detail.source.ifEmpty { "-" }, mono = true)
+                DetailMetaRow(label = "来源", value = detail.source.ifEmpty { "-" }, mono = true, endPadding = 8.dp)
                 if (resolvedPkg != null) {
-                    DetailMetaRow(label = "应用", value = resolvedPkg)
+                    DetailMetaRow(label = "应用", value = resolvedPkg, endPadding = 8.dp)
                 }
             }
         }
 
-        // 2-segment DL/UL NexusProportionBar
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             NexusProportionBar(
                 firstBytes = detail.downloadBytes,
@@ -259,7 +239,6 @@ fun ConnectionDetailContent(
             }
         }
 
-        // Recessed full-pill 3-way Quick Split + radiant Cobalt Liquid Glass CTA
         if (ruleHost.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("快速分流", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -275,9 +254,9 @@ fun ConnectionDetailContent(
                         val outbound = if (ruleTargetMode == "direct") "direct" else "proxy"
                         onCreateRule(ruleHost, action, outbound)
                     },
-                    tint = Color(0xFF3B82F6),
-                    surfaceBase = Color(0xFF2563EB),
-                    contentColor = Color.White,
+                    tint = primary,
+                    surfaceBase = lerp(primary, Color.Black, if (ext.isDark) 0.16f else 0.08f),
+                    contentColor = onPrimary,
                     cornerRadius = 22.dp,
                     isDark = ext.isDark,
                     elevation = 7.dp,
@@ -289,9 +268,9 @@ fun ConnectionDetailContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center,
                     ) {
-                        Icon(painter = painterResource(R.drawable.ic_rule), contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(painter = painterResource(R.drawable.ic_rule), contentDescription = null, tint = onPrimary, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("保存规则", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+                        Text("保存规则", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = onPrimary, maxLines = 1)
                     }
                 }
             }
@@ -313,42 +292,41 @@ fun ConnectionDetailContent(
             }
         }
 
-        // Side-by-side bottom pill row (`绕过应用` & rose `断开连接`)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (resolvedPkg != null) {
+            if (resolvedPkg != null && perAppAction != null) {
                 val bypassInteraction = remember { MutableInteractionSource() }
                 Surface(
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onBypassOwnerApp(resolvedPkg)
                     },
-                    enabled = !alreadyBypassed,
+                    enabled = perAppAction.enabled,
                     interactionSource = bypassInteraction,
-                    modifier = Modifier.weight(1f).liquidPress(bypassInteraction, pressedScale = 0.96f),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).liquidPress(bypassInteraction, pressedScale = 0.96f),
                     shape = RoundedCornerShape(999.dp),
                     color = ext.wellSurface,
                     border = BorderStroke(1.dp, ext.hairline),
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp, horizontal = 10.dp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         Icon(
-                            painter = painterResource(if (alreadyBypassed) R.drawable.ic_check else R.drawable.ic_apps),
+                            painter = painterResource(if (!perAppAction.enabled) R.drawable.ic_check else R.drawable.ic_apps),
                             contentDescription = null,
-                            tint = if (alreadyBypassed) ext.muted else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (!perAppAction.enabled) ext.muted else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(15.dp),
                         )
                         Spacer(Modifier.width(5.dp))
                         Text(
-                            text = if (alreadyBypassed) "已绕过应用" else "绕过应用",
+                            text = perAppAction.label,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (alreadyBypassed) ext.muted else MaterialTheme.colorScheme.onSurface,
+                            color = if (!perAppAction.enabled) ext.muted else MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -357,19 +335,19 @@ fun ConnectionDetailContent(
             } else if (showDismissButton) {
                 Surface(
                     onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                     shape = RoundedCornerShape(999.dp),
                     color = ext.wellSurface,
                     border = BorderStroke(1.dp, ext.hairline),
                 ) {
-                    Text(
-                        text = "收起",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "收起",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
             }
             val closeInteraction = remember { MutableInteractionSource() }
@@ -379,13 +357,13 @@ fun ConnectionDetailContent(
                     onCloseConnection(detail.id)
                 },
                 interactionSource = closeInteraction,
-                modifier = Modifier.weight(1f).liquidPress(closeInteraction, pressedScale = 0.96f),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).liquidPress(closeInteraction, pressedScale = 0.96f),
                 shape = RoundedCornerShape(999.dp),
                 color = ext.dangerContainer,
                 border = BorderStroke(1.dp, ext.danger.copy(alpha = 0.45f)),
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp, horizontal = 10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                 ) {
@@ -403,9 +381,10 @@ private fun DetailMetaRow(
     label: String,
     value: String,
     mono: Boolean = false,
+    endPadding: Dp = 0.dp,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(end = endPadding),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -425,26 +404,4 @@ private fun DetailMetaRow(
             modifier = Modifier.weight(1f),
         )
     }
-}
-
-internal fun formatProtocolLabel(protocol: String): String = when (protocol.lowercase()) {
-    "udp/quic" -> "QUIC"
-    "udp" -> "UDP"
-    "tcp/tls" -> "TLS"
-    "tcp" -> "TCP"
-    else -> protocol.uppercase()
-}
-
-@Composable
-internal fun protocolContainerColor(protocol: String) = when (formatProtocolLabel(protocol)) {
-    "QUIC", "UDP" -> NexusTheme.colors.protocolQuicContainer
-    "TLS" -> NexusTheme.colors.protocolTlsContainer
-    else -> MaterialTheme.colorScheme.surfaceContainerHigh
-}
-
-@Composable
-internal fun protocolContentColor(protocol: String) = when (formatProtocolLabel(protocol)) {
-    "QUIC", "UDP" -> NexusTheme.colors.protocolQuic
-    "TLS" -> NexusTheme.colors.protocolTls
-    else -> MaterialTheme.colorScheme.onSurfaceVariant
 }

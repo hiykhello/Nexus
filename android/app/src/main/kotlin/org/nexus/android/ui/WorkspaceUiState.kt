@@ -1,6 +1,5 @@
 package org.nexus.android.ui
 
-import androidx.compose.runtime.Immutable
 import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.DnsConfig
 import org.nexus.android.bridge.workspace.ProfileItem
@@ -9,7 +8,6 @@ import org.nexus.android.bridge.workspace.UdpProbeKind
 import org.nexus.android.bridge.workspace.UdpProbeResult
 import org.nexus.android.bridge.workspace.WorkspaceDocument
 
-@Immutable
 data class SyncConflictUi(
     val direction: String, // "push" | "pull"
     val remoteRevision: Long,
@@ -18,7 +16,10 @@ data class SyncConflictUi(
     val message: String,
 )
 
-@Immutable
+/**
+ * Unannotated container holding `WorkspaceDocument` (which contains unbounded `List<ProfileItem>`)
+ * so Compose Strong Skipping uses O(1) reference equality (`===`) instead of O(N) deep `.equals()`.
+ */
 data class WorkspaceUiState(
     val document: WorkspaceDocument = WorkspaceDocument(),
     val host: AndroidHostConfig = AndroidHostConfig(),
@@ -55,6 +56,9 @@ data class WorkspaceUiActions(
     val onUpdateSubscriptionChain: suspend (subId: String, prevId: String, nextId: String) -> String = { _, _, _ -> "" },
     val onSelectRoutingProfile: suspend (routingId: String) -> String = { "" },
     val onAddRoutingRule: suspend (RoutingRuleItem) -> String = { "" },
+    val onToggleRoutingRule: suspend (ruleId: String, enabled: Boolean) -> String = { _, _ -> "" },
+    val onDeleteRoutingRule: suspend (ruleId: String) -> String = { "" },
+    val onUpdateRoutingFlags: suspend (autoDetectInterface: Boolean, findProcess: Boolean) -> String = { _, _ -> "" },
     val onUpdateDns: suspend (DnsConfig) -> String = { "" },
     val onUpdateHost: suspend (AndroidHostConfig) -> String = { "" },
     val onUpdateSyncSettings: suspend (

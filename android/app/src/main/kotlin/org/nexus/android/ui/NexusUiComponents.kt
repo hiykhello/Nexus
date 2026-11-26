@@ -1,16 +1,14 @@
 package org.nexus.android.ui
 
 import androidx.annotation.DrawableRes
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -18,7 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -31,12 +29,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -116,6 +119,12 @@ fun OpticalCard(
     }
 }
 
+/**
+ * Zero-subcomposition segmented control:
+ * - No `BoxWithConstraints`
+ * - Sliding indicator animation read strictly inside Draw phase (`drawWithCache` -> `onDrawBehind`)
+ * - Meets 44-48dp comfortable touch target height
+ */
 @Composable
 fun OpticalSegmentedControl(
     options: List<Pair<String, String>>,
@@ -129,6 +138,19 @@ fun OpticalSegmentedControl(
     val count = options.size.coerceAtLeast(1)
     val selectedIdx = options.indexOfFirst { it.first == selectedKey }.coerceAtLeast(0)
     val pillShape = RoundedCornerShape(999.dp)
+    val primary = MaterialTheme.colorScheme.primary
+    val primaryContainer = MaterialTheme.colorScheme.primaryContainer
+    val onPrimaryContainer = MaterialTheme.colorScheme.onPrimaryContainer
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+
+    val animatedIndexState = animateFloatAsState(
+        targetValue = selectedIdx.toFloat(),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "segIndex",
+    )
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -136,63 +158,80 @@ fun OpticalSegmentedControl(
         color = ext.wellSurface,
         border = BorderStroke(1.dp, ext.hairline),
     ) {
-        BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth().padding(4.dp),
-        ) {
-            val slotWidth = maxWidth / count
-            val indicatorOffset by animateDpAsState(
-                targetValue = slotWidth * selectedIdx,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness = Spring.StiffnessMediumLow,
-                ),
-                label = "segOffset",
-            )
-            Box(
-                modifier = Modifier
-                    .offset(x = indicatorOffset)
-                    .width(slotWidth)
-                    .height(36.dp)
-                    .liquidGlassSurface(
-                        tint = MaterialTheme.colorScheme.primary,
-                        surfaceBase = MaterialTheme.colorScheme.primaryContainer,
-                        cornerRadius = 18.dp,
-                        isDark = ext.isDark,
-                        rimIntensity = 0.95f,
-                    ),
-            )
-            Row(modifier = Modifier.fillMaxWidth()) {
-                options.forEach { (key, label) ->
-                    val selected = key == selectedKey
-                    val fg by animateColorAsState(
-                        targetValue = if (selected) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        label = "segFg",
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp)
+                .drawWithCache {
+                    val slotW = size.width / count.toFloat()
+                    val h = size.height
+                    val cr = CornerRadius(h * 0.5f, h * 0.5f)
+                    val strokePx = 1.15.dp.toPx()
+                    val halfStroke = strokePx * 0.5f
+                    val innerCr = CornerRadius((h * 0.5f - halfStroke).coerceAtLeast(0f))
+                    val topLift = lerp(primaryContainer, Color.White, if (ext.isDark) 0.14f else 0.30f)
+                    val bottomDepth = lerp(primaryContainer, primary, if (ext.isDark) 0.20f else 0.12f)
+                    val fillBrush = Brush.verticalGradient(
+                        0.0f to topLift,
+                        0.5f to primaryContainer,
+                        1.0f to bottomDepth,
                     )
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(36.dp)
-                            .clip(pillShape)
-                            .clickable(enabled = enabled && !selected) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onSelect(key)
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            color = fg,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                    val rimStroke = Stroke(width = strokePx)
+                    val rimColor = if (ext.isDark) {
+                        Color.White.copy(alpha = 0.28f)
+                    } else {
+                        primary.copy(alpha = 0.35f)
+                    }
+                    val topGlossColor = Color.White.copy(alpha = if (ext.isDark) 0.32f else 0.70f)
+                    onDrawBehind {
+                        val idx = animatedIndexState.value.coerceIn(0f, (count - 1).toFloat())
+                        val left = slotW * idx
+                        drawRoundRect(
+                            brush = fillBrush,
+                            topLeft = Offset(left, 0f),
+                            size = Size(slotW, h),
+                            cornerRadius = cr,
+                        )
+                        drawRoundRect(
+                            color = rimColor,
+                            topLeft = Offset(left + halfStroke, halfStroke),
+                            size = Size((slotW - strokePx).coerceAtLeast(0f), (h - strokePx).coerceAtLeast(0f)),
+                            cornerRadius = innerCr,
+                            style = rimStroke,
+                        )
+                        val inset = (h * 0.35f).coerceAtMost(slotW * 0.25f)
+                        drawLine(
+                            color = topGlossColor,
+                            start = Offset(left + inset, strokePx),
+                            end = Offset((left + slotW - inset).coerceAtLeast(left + inset), strokePx),
+                            strokeWidth = strokePx,
                         )
                     }
+                },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            options.forEach { (key, label) ->
+                val selected = key == selectedKey
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 40.dp)
+                        .clip(pillShape)
+                        .clickable(enabled = enabled && !selected) {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSelect(key)
+                        }
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (selected) onPrimaryContainer else onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -287,12 +326,7 @@ fun LatencyBadge(
 }
 
 /**
- * 4-bar ascending optical signal strength indicator aligned with Desktop Slint UI:
- * - <80ms: 4 bars (Emerald)
- * - 80..179ms: 3 bars (Amber)
- * - 180..349ms: 2 bars (Orange-Coral slow)
- * - >=350ms: 1 bar (Rose danger)
- * - Timeout / Unprobed: 0 active bars
+ * 4-bar ascending optical signal strength indicator aligned with Desktop Slint UI.
  */
 @Composable
 fun SignalBarsIndicator(

@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -65,31 +67,36 @@ private val DNS_STRATEGIES = listOf(
 
 /**
  * Focused Rules & DNS Modal Bottom Sheet backed by Layer 1 `WorkspaceDocument`:
- * - Routing tab supports domains, IPs, `android_packages`, and `proxy`/`direct`/`block`/`profile_id` targets.
- * - DNS tab switches cleanly between `SimpleDNS` (`198.18.0.0/16`, `fc00::/18`, underscore `strategy`) and `Raw KDL`.
+ * - Single system bar inset handling (no redundant `.navigationBarsPadding()`)
+ * - Semantic MaterialTheme primary CTA colors & 48dp touch targets
+ * - Exposes Wave 30-31 `tlsFragment`, `autoDetectInterface`, `findProcess`, and `blockSvcbHttps`
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun RuleDnsModalSheet(
-    kdlText: String,
     workspaceState: WorkspaceUiState = WorkspaceUiState(),
     workspaceActions: WorkspaceUiActions = WorkspaceUiActions(),
-    onApplyConfig: suspend (String) -> Pair<Boolean, String>,
     onResultFeedback: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val ext = NexusTheme.colors
+    val primary = MaterialTheme.colorScheme.primary
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val activeRp = workspaceState.document.activeRoutingProfile()
     var activeTab by rememberSaveable { mutableStateOf("route") }
     var routeMatchType by rememberSaveable { mutableStateOf("domain-suffix") }
     var routePattern by rememberSaveable { mutableStateOf("") }
     var routeTargetType by rememberSaveable { mutableStateOf("proxy") }
+    var routeTlsFragment by rememberSaveable { mutableStateOf(false) }
     var targetProfileId by rememberSaveable {
         mutableStateOf(workspaceState.document.profiles.firstOrNull()?.id.orEmpty())
     }
+    var autoDetectInterface by rememberSaveable(activeRp.id) { mutableStateOf(activeRp.autoDetectInterface) }
+    var findProcess by rememberSaveable(activeRp.id) { mutableStateOf(activeRp.findProcess) }
 
     val curDns = workspaceState.document.dns
     var dnsMode by rememberSaveable { mutableStateOf(curDns.mode) }
@@ -98,6 +105,7 @@ internal fun RuleDnsModalSheet(
     var dnsStrategy by rememberSaveable { mutableStateOf(curDns.simple.strategy) }
     var fakeIpEnabled by rememberSaveable { mutableStateOf(curDns.simple.fakeIpEnabled) }
     var blockAaaa by rememberSaveable { mutableStateOf(curDns.simple.blockAaaa) }
+    var blockSvcbHttps by rememberSaveable { mutableStateOf(curDns.simple.blockSvcbHttps) }
     var rawDnsKdl by rememberSaveable { mutableStateOf(curDns.rawKdl) }
 
     var busy by remember { mutableStateOf(false) }
@@ -114,9 +122,8 @@ internal fun RuleDnsModalSheet(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .imePadding()
-                .navigationBarsPadding()
                 .padding(horizontal = 18.dp)
-                .padding(bottom = 18.dp),
+                .padding(bottom = 22.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
@@ -124,15 +131,15 @@ internal fun RuleDnsModalSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(painterResource(R.drawable.ic_rule), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                Icon(painterResource(R.drawable.ic_rule), null, tint = primary, modifier = Modifier.size(18.dp))
                 Text("路由规则与 DNS 方案", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                IconButton(onClick = { if (!busy) onDismiss() }, modifier = Modifier.size(32.dp)) {
-                    Icon(painterResource(R.drawable.ic_close), "关闭", Modifier.size(18.dp))
+                IconButton(onClick = { if (!busy) onDismiss() }) {
+                    Icon(painterResource(R.drawable.ic_close), "关闭", Modifier.size(20.dp))
                 }
             }
 
             OpticalSegmentedControl(
-                options = listOf("route" to "添加路由规则", "dns" to "DNS 方案"),
+                options = listOf("route" to "路由规则", "dns" to "DNS 方案"),
                 selectedKey = activeTab,
                 onSelect = { activeTab = it; inlineError = "" },
                 modifier = Modifier.fillMaxWidth(),
@@ -178,6 +185,30 @@ internal fun RuleDnsModalSheet(
                         }
                     }
                 }
+                ModalToggleWell(
+                    title = "TLS ClientHello 分片 (tls_fragment)",
+                    subtitle = "对此条规则匹配的直连/代理 TLS 握手启用分片",
+                    checked = routeTlsFragment,
+                    onCheckedChange = { routeTlsFragment = it },
+                )
+                ModalToggleWell(
+                    title = "自动探测默认出口网卡 (auto_detect_interface)",
+                    subtitle = "路由方案级开关，跨平台工作区同步保留",
+                    checked = autoDetectInterface,
+                    onCheckedChange = { next ->
+                        autoDetectInterface = next
+                        scope.launch { onResultFeedback(workspaceActions.onUpdateRoutingFlags(next, findProcess)) }
+                    },
+                )
+                ModalToggleWell(
+                    title = "进程/应用归属识别 (find_process)",
+                    subtitle = "开启路由引擎进程匹配与连接归属解析",
+                    checked = findProcess,
+                    onCheckedChange = { next ->
+                        findProcess = next
+                        scope.launch { onResultFeedback(workspaceActions.onUpdateRoutingFlags(autoDetectInterface, next)) }
+                    },
+                )
             } else {
                 OpticalSegmentedControl(
                     options = listOf("simple" to "简易 DNS", "raw_kdl" to "Raw KDL"),
@@ -219,6 +250,12 @@ internal fun RuleDnsModalSheet(
                         subtitle = "对 AAAA 查询返回 NOERROR 空应答",
                         checked = blockAaaa,
                         onCheckedChange = { blockAaaa = it },
+                    )
+                    ModalToggleWell(
+                        title = "屏蔽 HTTPS / SVCB 记录",
+                        subtitle = "避免浏览器通过 HTTPS RR 绕过规则或降级 ECH",
+                        checked = blockSvcbHttps,
+                        onCheckedChange = { blockSvcbHttps = it },
                     )
                 } else {
                     OutlinedTextField(
@@ -273,6 +310,7 @@ internal fun RuleDnsModalSheet(
                                 },
                                 ips = if (routeMatchType == "ip-cidr") items else emptyList(),
                                 androidPackages = if (routeMatchType == "android_packages") items else emptyList(),
+                                tlsFragment = routeTlsFragment,
                             )
                             workspaceActions.onAddRoutingRule(rule)
                         } else {
@@ -286,6 +324,7 @@ internal fun RuleDnsModalSheet(
                                     fakeIpV4Pool = curDns.simple.fakeIpV4Pool.ifBlank { SimpleDnsConfig().fakeIpV4Pool },
                                     fakeIpV6Pool = curDns.simple.fakeIpV6Pool.ifBlank { SimpleDnsConfig().fakeIpV6Pool },
                                     blockAaaa = blockAaaa,
+                                    blockSvcbHttps = blockSvcbHttps,
                                 ),
                                 rawKdl = rawDnsKdl,
                             )
@@ -296,18 +335,19 @@ internal fun RuleDnsModalSheet(
                         onDismiss()
                     }
                 },
-                tint = if (submitEnabled) Color(0xFF2563EB) else ext.insetSurface,
-                surfaceBase = if (submitEnabled) Color(0xFF1D4ED8) else ext.wellSurface,
-                contentColor = if (submitEnabled) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (submitEnabled) primary else ext.insetSurface,
+                surfaceBase = if (submitEnabled) lerp(primary, Color.Black, if (ext.isDark) 0.14f else 0.08f) else ext.wellSurface,
+                contentColor = if (submitEnabled) onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 enabled = submitEnabled,
                 cornerRadius = 999.dp,
                 isDark = ext.isDark,
-                modifier = Modifier.fillMaxWidth().height(46.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
             ) {
                 Text(
                     text = if (busy) "正在应用..." else if (activeTab == "route") "保存路由规则" else "保存 DNS 方案",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
+                    color = if (submitEnabled) onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -352,6 +392,7 @@ private fun ModalSelectPill(
     val accent = MaterialTheme.colorScheme.primary
     Surface(
         onClick = onClick,
+        modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 38.dp),
         shape = RoundedCornerShape(999.dp),
         color = if (selected) accent.copy(alpha = if (ext.isDark) 0.26f else 0.14f) else ext.wellSurface,
         border = BorderStroke(if (selected) 1.2.dp else 1.dp, if (selected) accent.copy(alpha = 0.72f) else ext.hairline),
@@ -363,7 +404,7 @@ private fun ModalSelectPill(
             color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             softWrap = false,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp),
         )
     }
 }

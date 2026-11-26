@@ -26,6 +26,9 @@ data class NodeTlsConfig(
     val realityShortId: String = "",
     val echMode: String = "",
     val echConfig: String = "",
+    val echQueryServerName: String = "",
+    val fragment: Boolean = false,
+    val recordFragment: Boolean = false,
 )
 
 data class NodeTransportConfig(
@@ -37,6 +40,11 @@ data class NodeTransportConfig(
     val xhttpMode: String = "",
     val xhttpProtocol: String = "",
     val headers: Map<String, String> = emptyMap(),
+    val maxEarlyData: Int = 0,
+    val earlyDataHeaderName: String = "",
+    val grpcIdleTimeoutMs: Int = 0,
+    val grpcPingTimeoutMs: Int = 0,
+    val grpcPermitWithoutStream: Boolean = false,
 ) {
     companion object {
         fun normalizeType(raw: String?): String {
@@ -51,7 +59,11 @@ data class NodeMultiplexConfig(
     val protocol: String = "",
     val maxConnections: Int = 0,
     val padding: Boolean = false,
-)
+) {
+    companion object {
+        val SUPPORTED_PROTOCOLS: List<String> = listOf("h2mux", "smux-v2", "smux-v1")
+    }
+}
 
 data class NodeExtraConfig(
     val hy2Ports: String = "",
@@ -100,6 +112,7 @@ data class PolicyGroupConfig(
     val probeUrl: String = "https://www.gstatic.com/generate_204",
     val probeIntervalMs: Long = 300_000L,
     val toleranceMs: Int = 50,
+    val interruptExistConnections: Boolean = false,
 )
 
 data class ProxyChainConfig(
@@ -174,6 +187,8 @@ data class RoutingProfileItem(
     val domainStrategy: String = "as-is",
     val defaultOutbound: String = "proxy",
     val rules: List<RoutingRuleItem> = emptyList(),
+    val autoDetectInterface: Boolean = false,
+    val findProcess: Boolean = false,
 )
 
 data class SimpleDnsConfig(

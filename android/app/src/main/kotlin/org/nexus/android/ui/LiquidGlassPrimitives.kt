@@ -2,24 +2,24 @@ package org.nexus.android.ui
 
 import android.graphics.RuntimeShader
 import android.os.Build
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,12 +35,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.node.LayoutModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 private const val AGSL_LIQUID_CAUSTIC = """
     uniform float2 resolution;
@@ -59,36 +68,105 @@ private const val AGSL_LIQUID_CAUSTIC = """
     }
 """
 
+private val PRESS_SPRING = spring<Float>(
+    dampingRatio = Spring.DampingRatioMediumBouncy,
+    stiffness = Spring.StiffnessMedium,
+)
+
 /**
- * Spring-elastic tactile press squish with deferred graphicsLayer state reads
- * (zero recomposition / zero relayout overhead during press animations).
+ * Spring-elastic tactile press squish implemented with `Modifier.Node` + persistent `Animatable`
+ * (zero `Modifier.composed` overhead, zero recompositions during press animations).
  */
 fun Modifier.liquidPress(
-    interactionSource: MutableInteractionSource,
+    interactionSource: InteractionSource,
     pressedScale: Float = 0.96f,
-): Modifier = composed {
-    val pressed by interactionSource.collectIsPressedAsState()
-    val scaleState = animateFloatAsState(
-        targetValue = if (pressed) pressedScale else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium,
-        ),
-        label = "liquidPressScale",
-    )
-    val liftYState = animateFloatAsState(
-        targetValue = if (pressed) 1.5f else 0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium,
-        ),
-        label = "liquidPressLift",
-    )
-    this.graphicsLayer {
-        val s = scaleState.value
-        scaleX = s
-        scaleY = s
-        translationY = liftYState.value
+): Modifier = this then LiquidPressElement(interactionSource, pressedScale)
+
+private data class LiquidPressElement(
+    val interactionSource: InteractionSource,
+    val pressedScale: Float,
+) : ModifierNodeElement<LiquidPressNode>() {
+    override fun create(): LiquidPressNode = LiquidPressNode(interactionSource, pressedScale)
+
+    override fun update(node: LiquidPressNode) {
+        node.updateParams(interactionSource, pressedScale)
+    }
+
+    override fun InspectorInfo.inspectableProperties() {
+        name = "liquidPress"
+        properties["pressedScale"] = pressedScale
+    }
+}
+
+private class LiquidPressNode(
+    private var interactionSource: InteractionSource,
+    private var pressedScale: Float,
+) : Modifier.Node(), LayoutModifierNode {
+    private val scaleAnim = Animatable(1f)
+    private val liftAnim = Animatable(0f)
+    private var collectJob: Job? = null
+
+    override fun onAttach() {
+        startCollecting()
+    }
+
+    override fun onDetach() {
+        collectJob?.cancel()
+        collectJob = null
+    }
+
+    override fun onReset() {
+        collectJob?.cancel()
+        collectJob = null
+        if (isAttached) {
+            coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                scaleAnim.snapTo(1f)
+                liftAnim.snapTo(0f)
+            }
+        }
+    }
+
+    fun updateParams(newSource: InteractionSource, newPressedScale: Float) {
+        pressedScale = newPressedScale
+        if (interactionSource !== newSource) {
+            interactionSource = newSource
+            if (isAttached) startCollecting()
+        }
+    }
+
+    private fun startCollecting() {
+        collectJob?.cancel()
+        val source = interactionSource
+        collectJob = coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            scaleAnim.snapTo(1f)
+            liftAnim.snapTo(0f)
+            var activePressCount = 0
+            source.interactions.collect { interaction ->
+                when (interaction) {
+                    is PressInteraction.Press -> activePressCount++
+                    is PressInteraction.Release, is PressInteraction.Cancel ->
+                        activePressCount = (activePressCount - 1).coerceAtLeast(0)
+                }
+                val pressed = activePressCount > 0
+                launch { scaleAnim.animateTo(if (pressed) pressedScale else 1f, PRESS_SPRING) }
+                launch { liftAnim.animateTo(if (pressed) 1.5f else 0f, PRESS_SPRING) }
+            }
+        }
+    }
+
+    override fun MeasureScope.measure(
+        measurable: Measurable,
+        constraints: Constraints,
+    ): MeasureResult {
+        val placeable = measurable.measure(constraints)
+        return layout(placeable.width, placeable.height) {
+            placeable.placeWithLayer(0, 0) {
+                val s = scaleAnim.value
+                scaleX = s
+                scaleY = s
+                translationY = liftAnim.value
+            }
+        }
     }
 }
 
@@ -149,7 +227,6 @@ fun Modifier.liquidGlassSurface(
                 (size.height - strokePx).coerceAtLeast(0f),
             )
 
-            // 1. Translucent glass depth gradient
             val topLift = lerp(surfaceBase, Color.White, if (isDark) 0.14f else 0.32f)
             val bottomDepth = lerp(surfaceBase, tint, if (isDark) 0.22f else 0.14f)
             val depthBrush = Brush.verticalGradient(
@@ -158,7 +235,6 @@ fun Modifier.liquidGlassSurface(
                 1.0f to bottomDepth,
             )
 
-            // 2. Top meniscus dome catchlight
             val meniscusBrush = Brush.radialGradient(
                 colors = listOf(
                     Color.White.copy(alpha = if (isDark) 0.30f else 0.58f),
@@ -169,7 +245,6 @@ fun Modifier.liquidGlassSurface(
                 radius = maxOf(size.width * 0.66f, size.height * 1.15f),
             )
 
-            // 3. Bottom internal caustic refraction glow
             val causticBounceBrush = Brush.radialGradient(
                 colors = listOf(
                     tint.copy(alpha = if (isDark) 0.34f else 0.22f),
@@ -179,7 +254,6 @@ fun Modifier.liquidGlassSurface(
                 radius = maxOf(size.width * 0.58f, size.height * 0.95f),
             )
 
-            // 4. Razor top specular meniscus filament
             val filamentInset = (radiusPx * 0.55f).coerceAtMost(size.width * 0.25f)
             val filamentBrush = Brush.horizontalGradient(
                 colors = listOf(
@@ -192,7 +266,6 @@ fun Modifier.liquidGlassSurface(
                 endX = (size.width - filamentInset).coerceAtLeast(filamentInset + 1f),
             )
 
-            // 5. Directional Fresnel rim border
             val fresnelStroke = Stroke(width = strokePx)
             val fresnelBrush = Brush.linearGradient(
                 colorStops = arrayOf(
@@ -205,7 +278,6 @@ fun Modifier.liquidGlassSurface(
                 end = Offset(size.width, size.height),
             )
 
-            // 6. Specular glass sheen (AGSL shader cached once on API 33+, or translated Canvas Brush fallback)
             val agslBrush: Brush? = if (runtimeShader != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 runCatching {
                     runtimeShader.setFloatUniform("resolution", size.width, size.height)
@@ -276,7 +348,7 @@ fun Modifier.liquidGlassSurface(
 }
 
 /**
- * Flagship tactile Liquid Glass button combining spring-elastic press squish,
+ * Flagship tactile Liquid Glass button combining `Modifier.Node` spring-elastic press squish,
  * colored ambient glow shadow, multi-layer liquid refraction surface, and crisp ripple feedback.
  */
 @Composable

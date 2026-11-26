@@ -102,7 +102,7 @@ object OutboundJsonParser {
                             seq = e.optString("seq").toLongOrNull() ?: e.optLong("seq", 0L),
                             level = e.optString("level", "info"),
                             domain = e.optString("domain", "core"),
-                            eventCode = e.optInt("event_code", 0),
+                            eventCode = e.optInt("event", e.optInt("event_code", 0)),
                             message = e.optString("message", ""),
                         ),
                     )

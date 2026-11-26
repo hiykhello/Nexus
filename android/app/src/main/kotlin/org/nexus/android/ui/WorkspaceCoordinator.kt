@@ -16,7 +16,6 @@ import org.nexus.android.bridge.workspace.ComposeResult
 import org.nexus.android.bridge.workspace.DnsConfig
 import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.bridge.workspace.ProfileItem
-import org.nexus.android.bridge.workspace.ProfileKind
 import org.nexus.android.bridge.workspace.ProfileReplacement
 import org.nexus.android.bridge.workspace.RoutingRuleItem
 import org.nexus.android.bridge.workspace.SubscriptionInfoParser
@@ -27,7 +26,6 @@ import org.nexus.android.bridge.workspace.WorkspaceDefaults
 import org.nexus.android.bridge.workspace.WorkspaceStore
 import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 import java.io.File
-import java.net.HttpURLConnection
 import java.net.URL
 
 /**
@@ -207,7 +205,7 @@ class WorkspaceCoordinator(
             val sub = doc.subscriptions.firstOrNull { it.id == subId }
                 ?: return@withContext null to "未找到订阅 $subId"
             runCatching {
-                val (payload, headers) = fetchSubscriptionPayload(sub)
+                val (payload, headers) = SubscriptionHttpFetcher.fetchPayload(sub)
                 val parsedHeaders = SubscriptionInfoParser.parseHeaders(headers)
                 val lines = SecretFileIO.decodeSubscriptionLines(payload)
                 val parsedNodes = lines.mapNotNull { ShareLinkParser.parse(it).getOrNull() }
@@ -311,6 +309,67 @@ class WorkspaceCoordinator(
         return loadInitialState() to "已添加分流规则并同步"
     }
 
+    suspend fun toggleRoutingRule(ruleId: String, enabled: Boolean, running: Boolean): Pair<WorkspaceUiState, String> {
+        val activeProfile = withContext(Dispatchers.IO) {
+            val doc = workspaceStore.loadOrInit()
+            val activeRp = doc.activeRoutingProfile()
+            val nextRoutings = doc.routingProfiles.map { rp ->
+                if (rp.id == activeRp.id) {
+                    rp.copy(rules = rp.rules.map { r -> if (r.id == ruleId && !r.locked) r.copy(enabled = enabled) else r })
+                } else rp
+            }
+            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
+            telemetryStore.load().activeProfileId
+        }
+        if (running) {
+            val compose = composeForLaunch(activeProfile)
+            if (compose.ok) controlClient.reload()
+        }
+        return loadInitialState() to if (enabled) "已启用规则" else "已停用规则"
+    }
+
+    suspend fun deleteRoutingRule(ruleId: String, running: Boolean): Pair<WorkspaceUiState, String> {
+        val activeProfile = withContext(Dispatchers.IO) {
+            val doc = workspaceStore.loadOrInit()
+            val activeRp = doc.activeRoutingProfile()
+            val nextRoutings = doc.routingProfiles.map { rp ->
+                if (rp.id == activeRp.id) {
+                    rp.copy(rules = rp.rules.filterNot { r -> r.id == ruleId && !r.locked })
+                } else rp
+            }
+            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
+            telemetryStore.load().activeProfileId
+        }
+        if (running) {
+            val compose = composeForLaunch(activeProfile)
+            if (compose.ok) controlClient.reload()
+        }
+        return loadInitialState() to "已删除分流规则"
+    }
+
+    suspend fun updateRoutingProfileFlags(
+        autoDetectInterface: Boolean,
+        findProcess: Boolean,
+        running: Boolean,
+    ): Pair<WorkspaceUiState, String> {
+        val activeProfile = withContext(Dispatchers.IO) {
+            val doc = workspaceStore.loadOrInit()
+            val activeRp = doc.activeRoutingProfile()
+            val nextRoutings = doc.routingProfiles.map { rp ->
+                if (rp.id == activeRp.id) {
+                    rp.copy(autoDetectInterface = autoDetectInterface, findProcess = findProcess)
+                } else rp
+            }
+            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
+            telemetryStore.load().activeProfileId
+        }
+        if (running) {
+            val compose = composeForLaunch(activeProfile)
+            if (compose.ok) controlClient.reload()
+        }
+        return loadInitialState() to "已更新路由高级选项"
+    }
+
     suspend fun updateDns(dns: DnsConfig, running: Boolean): Pair<WorkspaceUiState, String> {
         val activeProfile = withContext(Dispatchers.IO) {
             val doc = workspaceStore.loadOrInit()
@@ -324,9 +383,6 @@ class WorkspaceCoordinator(
         return loadInitialState() to "已更新 DNS 方案"
     }
 
-    /**
-     * Serialized atomic read-modify-write for Layer 3 host config preventing concurrent lost updates.
-     */
     suspend fun mutateHost(transform: (AndroidHostConfig) -> AndroidHostConfig): Pair<WorkspaceUiState, String> {
         withContext(Dispatchers.IO) {
             hostMutex.withLock {
@@ -374,45 +430,6 @@ class WorkspaceCoordinator(
         return loadInitialState() to result.second
     }
 
-    private fun fetchSubscriptionPayload(sub: SubscriptionItem): Pair<String, Map<String, List<String>>> {
-        val initial = URL(sub.url.trim())
-        val initialOrigin = urlOriginKey(initial)
-        var current = initial
-        repeat(4) { hop ->
-            val loopback = current.host in setOf("127.0.0.1", "localhost", "::1", "[::1]")
-            require(current.protocol == "https" || (current.protocol == "http" && loopback)) {
-                "仅允许 HTTPS 订阅链接"
-            }
-            val sameOrigin = urlOriginKey(current) == initialOrigin
-            val conn = (current.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8_000
-                readTimeout = 10_000
-                instanceFollowRedirects = false
-                setRequestProperty("User-Agent", sanitizeHeaderValue(sub.userAgent).ifBlank { "Nexus-Android/1.0" })
-                if (sameOrigin) {
-                    sanitizeRequestHeaders(sub.requestHeaders).forEach { (k, v) -> setRequestProperty(k, v) }
-                }
-            }
-            try {
-                val code = conn.responseCode
-                if (code in setOf(301, 302, 303, 307, 308)) {
-                    require(hop < 3) { "重定向次数过多" }
-                    val loc = conn.getHeaderField("Location")?.trim().orEmpty()
-                    require(loc.isNotEmpty()) { "重定向缺少 Location" }
-                    current = URL(current, loc)
-                } else {
-                    require(code in 200..299) { "HTTP $code" }
-                    val bytes = conn.inputStream.use { SecretFileIO.readBoundedBytes(it, 2 * 1024 * 1024) }
-                    val hdrs = conn.headerFields.filterKeys { it != null }
-                    return String(bytes, Charsets.UTF_8) to hdrs
-                }
-            } finally {
-                conn.disconnect()
-            }
-        }
-        error("订阅重定向超限")
-    }
-
     companion object {
         fun buildRuleFromConnection(
             targetHost: String,
@@ -443,23 +460,9 @@ class WorkspaceCoordinator(
             )
         }
 
-        internal fun urlOriginKey(url: URL): String {
-            val port = if (url.port != -1) url.port else url.defaultPort
-            return "${url.protocol.lowercase()}://${url.host.lowercase()}:$port"
-        }
-
-        internal fun sanitizeHeaderValue(raw: String): String =
-            raw.replace("\r", "").replace("\n", "").trim()
-
+        internal fun urlOriginKey(url: URL): String = SubscriptionHttpFetcher.urlOriginKey(url)
+        internal fun sanitizeHeaderValue(raw: String): String = SubscriptionHttpFetcher.sanitizeHeaderValue(raw)
         internal fun sanitizeRequestHeaders(headers: Map<String, String>): Map<String, String> =
-            buildMap {
-                for ((rawKey, rawVal) in headers) {
-                    val key = sanitizeHeaderValue(rawKey)
-                    val value = sanitizeHeaderValue(rawVal)
-                    if (key.isNotEmpty() && !key.equals("host", ignoreCase = true)) {
-                        put(key, value)
-                    }
-                }
-            }
+            SubscriptionHttpFetcher.sanitizeRequestHeaders(headers)
     }
 }
