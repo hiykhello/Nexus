@@ -141,7 +141,6 @@ export class NexusRulesServicesPage extends LitElement {
               <h3>${t('rules.tableTitle')}</h3>
               <span class="badge tabular">${list.length} / ${this.rules.length}</span>
             </div>
-            <span class="badge mono">GET /v1/rules</span>
           </div>
 
           <div class="row">

@@ -315,6 +315,8 @@ export class NexusApp extends LitElement {
   render() {
     const st = appStore.streamState;
     const badgeCls = st === 'live' ? 'ok' : st === 'polling' || st === 'connecting' ? 'warn' : 'err';
+    const streamLabel =
+      st === 'live' && appStore.streamTransport === 'ws' ? t('stream.liveWs') : t(`stream.${st}`);
     const locale = getLocale();
 
     return html`
@@ -325,8 +327,8 @@ export class NexusApp extends LitElement {
               <span class="brand-mark">N</span>
               <span class="brand-text">NEXUS</span>
             </div>
-            <span class="badge ${badgeCls}" title=${appStore.streamError || t(`stream.${st}`)}>
-              <span class="dot"></span>${t(`stream.${st}`)}
+            <span class="badge ${badgeCls}" title=${appStore.streamError || streamLabel}>
+              <span class="dot"></span>${streamLabel}
             </span>
           </div>
 

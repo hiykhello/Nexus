@@ -157,7 +157,6 @@ export class NexusDnsQueryCard extends LitElement {
       <div class="card">
         <div class="row between">
           <h3>${t('dns.title')}</h3>
-          <span class="badge mono">GET /v1/dns/query</span>
         </div>
 
         <form

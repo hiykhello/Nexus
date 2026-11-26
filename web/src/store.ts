@@ -1,6 +1,15 @@
-import { createStatusStream, nexusApi, onAuthEvent } from './api.ts';
+import { createStatusStream, getBearerToken, nexusApi, notifyUnauthorized, onAuthEvent } from './api.ts';
 import type { ManagedStream } from './sse.ts';
-import type { ModeResponse, RateSample, StatusResponse, StreamState, ThemePreference } from './types.ts';
+import type {
+  ConnectionItem,
+  LogEntry,
+  ModeResponse,
+  RateSample,
+  StatusResponse,
+  StreamState,
+  ThemePreference,
+} from './types.ts';
+import { ControlWsClient, type WsChannel } from './ws.ts';
 
 const THEME_KEY = 'nexus_web_theme';
 const MAX_HISTORY = 45;
@@ -9,6 +18,7 @@ export class AppStore extends EventTarget {
   status: StatusResponse | null = null;
   mode: ModeResponse | null = null;
   streamState: StreamState = 'connecting';
+  streamTransport: 'ws' | 'sse' = 'ws';
   streamError = '';
   authRequired = false;
   upRate = 0;
@@ -16,8 +26,12 @@ export class AppStore extends EventTarget {
   history: RateSample[] = [];
   themePref: ThemePreference = 'system';
   resolvedTheme: 'dark' | 'light' = 'dark';
+  latestConnections: ConnectionItem[] = [];
 
-  private stream: ManagedStream<StatusResponse> | null = null;
+  private wsClient: ControlWsClient | null = null;
+  private sseFallback: ManagedStream<StatusResponse> | null = null;
+  private channelRefs: Record<'connections' | 'logs', number> = { connections: 0, logs: 0 };
+  private logSince = 0;
   private lastUp = 0;
   private lastDown = 0;
   private lastTs = 0;
@@ -29,6 +43,14 @@ export class AppStore extends EventTarget {
     super();
     this.themePref = this.loadThemePref();
     this.resolvedTheme = this.computeResolvedTheme();
+  }
+
+  get wsLive(): boolean {
+    return this.wsClient?.isLive ?? false;
+  }
+
+  get shouldUseSseFallback(): boolean {
+    return this.streamTransport === 'sse' && !this.wsLive && !this.authRequired;
   }
 
   start(): void {
@@ -45,47 +67,107 @@ export class AppStore extends EventTarget {
       onAuthEvent('unauthorized', () => {
         this.authRequired = true;
         this.streamState = 'unauthorized';
+        this.sseFallback?.stop();
+        this.emit('transport-change');
         this.emit('change');
         this.emit('auth-required');
       }),
       onAuthEvent('token-changed', () => {
         this.authRequired = false;
+        this.streamTransport = 'ws';
         this.streamError = '';
-        this.stream?.restart();
+        this.sseFallback?.stop();
+        this.wsClient?.restart();
         void this.refreshMode();
+        this.emit('transport-change');
         this.emit('change');
         this.emit('refresh');
       }),
     );
 
-    this.stream = createStatusStream(
-      (s) => this.ingestStatus(s),
-      (st) => {
-        this.streamState = st;
-        if (st === 'live' || st === 'polling') {
-          this.authRequired = false;
-          this.streamError = '';
-        }
-        this.emit('change');
+    this.wsClient = new ControlWsClient({
+      getToken: getBearerToken,
+      getSubscribe: () => ({
+        channels: this.activeWsChannels(),
+        since: this.logSince,
+        interval_ms: 1500,
+      }),
+      onMetrics: (s) => this.ingestStatus(s),
+      onConnections: (items) => {
+        this.latestConnections = items;
+        this.dispatchEvent(new CustomEvent('ws-connections', { detail: items }));
       },
-      (err) => {
+      onLog: (entry) => {
+        if (entry.seq > this.logSince) this.logSince = entry.seq;
+        this.dispatchEvent(new CustomEvent('ws-log', { detail: entry }));
+      },
+      onState: (st) => {
+        if (st === 'live' || st === 'unauthorized') {
+          this.streamState = st;
+          if (st === 'live') {
+            this.streamTransport = 'ws';
+            this.authRequired = false;
+            this.streamError = '';
+          }
+          this.emit('change');
+        }
+      },
+      onError: (err) => {
         this.streamError = err;
         this.emit('change');
       },
-      1500,
-    );
-    this.stream.start();
+      onUnauthorized: notifyUnauthorized,
+      onFallback: () => this.activateSseFallback(),
+      onRecovered: () => this.stopSseFallback(),
+    });
+    this.wsClient.start();
     void this.refreshMode();
   }
 
   stop(): void {
     if (!this.started) return;
     this.started = false;
-    this.stream?.stop();
-    this.stream = null;
+    this.wsClient?.stop();
+    this.wsClient = null;
+    this.sseFallback?.stop();
+    this.sseFallback = null;
     this.mediaQuery?.removeEventListener('change', this.handleMediaChange);
     for (const fn of this.unsubAuth) fn();
     this.unsubAuth = [];
+  }
+
+  acquireChannel(channel: 'connections' | 'logs', since?: number): () => void {
+    if (channel === 'logs' && since !== undefined && since >= 0) {
+      this.logSince = since;
+    }
+    this.channelRefs[channel]++;
+    this.wsClient?.syncSubscriptions();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.channelRefs[channel] = Math.max(0, this.channelRefs[channel] - 1);
+      this.wsClient?.syncSubscriptions();
+    };
+  }
+
+  setLogCursor(since: number): void {
+    if (since > this.logSince) {
+      this.logSince = since;
+      if (this.channelRefs.logs > 0) this.wsClient?.syncSubscriptions();
+    }
+  }
+
+  onWsConnections(cb: (items: ConnectionItem[]) => void): () => void {
+    const handler = (ev: Event) => cb((ev as CustomEvent<ConnectionItem[]>).detail);
+    this.addEventListener('ws-connections', handler);
+    return () => this.removeEventListener('ws-connections', handler);
+  }
+
+  onWsLog(cb: (entry: LogEntry) => void): () => void {
+    const handler = (ev: Event) => cb((ev as CustomEvent<LogEntry>).detail);
+    this.addEventListener('ws-log', handler);
+    return () => this.removeEventListener('ws-log', handler);
   }
 
   async refreshNow(): Promise<void> {
@@ -138,12 +220,57 @@ export class AppStore extends EventTarget {
     this.emit('change');
   }
 
-  subscribe(cb: () => void, event: 'change' | 'refresh' | 'auth-required' = 'change'): () => void {
+  subscribe(
+    cb: () => void,
+    event: 'change' | 'refresh' | 'auth-required' | 'transport-change' = 'change',
+  ): () => void {
     this.addEventListener(event, cb);
     return () => this.removeEventListener(event, cb);
   }
 
-  private emit(name: 'change' | 'refresh' | 'auth-required'): void {
+  private activeWsChannels(): WsChannel[] {
+    const list: WsChannel[] = ['metrics'];
+    if (this.channelRefs.connections > 0) list.push('connections');
+    if (this.channelRefs.logs > 0) list.push('logs');
+    return list;
+  }
+
+  private activateSseFallback(): void {
+    if (!this.started || this.authRequired) return;
+    this.streamTransport = 'sse';
+    if (!this.sseFallback) {
+      this.sseFallback = createStatusStream(
+        (s) => this.ingestStatus(s),
+        (st) => {
+          if (this.wsLive) return;
+          this.streamState = st;
+          if (st === 'live' || st === 'polling') {
+            this.authRequired = false;
+            this.streamError = '';
+          }
+          this.emit('change');
+        },
+        (err) => {
+          if (this.wsLive) return;
+          this.streamError = err;
+          this.emit('change');
+        },
+        1500,
+      );
+    }
+    this.sseFallback.start();
+    this.emit('transport-change');
+    this.emit('change');
+  }
+
+  private stopSseFallback(): void {
+    this.streamTransport = 'ws';
+    this.sseFallback?.stop();
+    this.emit('transport-change');
+    this.emit('change');
+  }
+
+  private emit(name: 'change' | 'refresh' | 'auth-required' | 'transport-change'): void {
     this.dispatchEvent(new CustomEvent(name));
   }
 

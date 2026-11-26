@@ -60,11 +60,20 @@ export class NexusConnectionsPage extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    if (appStore.latestConnections.length > 0) {
+      this.connections = appStore.latestConnections;
+    }
     this.unsubs.push(
+      appStore.acquireChannel('connections'),
+      appStore.onWsConnections((items) => {
+        if (!this.paused) this.connections = items;
+      }),
+      appStore.subscribe(() => this.syncTransport(), 'transport-change'),
+      appStore.subscribe(() => this.requestUpdate(), 'change'),
       appStore.subscribe(() => void this.refreshOnce(), 'refresh'),
       onLocaleChange(() => this.requestUpdate()),
     );
-    this.startStream();
+    this.syncTransport();
   }
 
   disconnectedCallback(): void {
@@ -73,6 +82,20 @@ export class NexusConnectionsPage extends LitElement {
     this.stream = null;
     for (const u of this.unsubs) u();
     this.unsubs = [];
+  }
+
+  private syncTransport(): void {
+    if (appStore.wsLive || appStore.authRequired) {
+      this.stream?.stop();
+      this.stream = null;
+      this.streamState = appStore.authRequired ? 'unauthorized' : 'live';
+      return;
+    }
+    if (appStore.shouldUseSseFallback) {
+      if (!this.stream) this.startStream();
+    } else {
+      this.streamState = 'connecting';
+    }
   }
 
   private startStream(): void {
@@ -201,12 +224,15 @@ export class NexusConnectionsPage extends LitElement {
       new Set(['tcp', 'udp', ...this.connections.map((c) => c.protocol.toLowerCase())]),
     );
     const hasFilter = this.search.trim().length > 0 || this.protoFilter !== 'all';
+    const activeState: StreamState = appStore.wsLive ? 'live' : this.streamState;
     const streamBadgeClass =
-      this.streamState === 'live'
+      activeState === 'live'
         ? 'ok'
-        : this.streamState === 'polling' || this.streamState === 'connecting'
+        : activeState === 'polling' || activeState === 'connecting'
           ? 'warn'
           : 'err';
+    const streamLabel =
+      activeState === 'live' && appStore.wsLive ? t('stream.liveWs') : t(`stream.${activeState}`);
 
     return html`
       <div class="page">
@@ -215,7 +241,7 @@ export class NexusConnectionsPage extends LitElement {
             <h2>${t('connections.title')}</h2>
             <span class="badge tabular">${list.length} / ${this.connections.length}</span>
             <span class="badge ${streamBadgeClass}">
-              <span class="dot"></span>${t(`stream.${this.streamState}`)}
+              <span class="dot"></span>${streamLabel}
             </span>
           </div>
           <div class="row">

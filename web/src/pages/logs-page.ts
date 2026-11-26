@@ -86,6 +86,7 @@ export class NexusLogsPage extends LitElement {
   @state() private toastKind: 'ok' | 'err' = 'ok';
 
   private stream: ManagedStream<LogEntry> | null = null;
+  private releaseLogsChannel: (() => void) | null = null;
   private seenSeq = new Set<number>();
   private reloadToken = 0;
   private unsubs: (() => void)[] = [];
@@ -94,6 +95,13 @@ export class NexusLogsPage extends LitElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.unsubs.push(
+      appStore.onWsLog((entry) => {
+        if (!this.paused && entry.seq > this.latestSeq && this.matchesFilters(entry)) {
+          this.appendEntry(entry);
+        }
+      }),
+      appStore.subscribe(() => this.syncTransport(), 'transport-change'),
+      appStore.subscribe(() => this.requestUpdate(), 'change'),
       appStore.subscribe(() => void this.reloadStream(), 'refresh'),
       onLocaleChange(() => this.requestUpdate()),
     );
@@ -109,6 +117,8 @@ export class NexusLogsPage extends LitElement {
     super.disconnectedCallback();
     this.reloadToken++;
     this.stopStream();
+    this.releaseLogsChannel?.();
+    this.releaseLogsChannel = null;
     if (this.searchTimer !== null) {
       clearTimeout(this.searchTimer);
       this.searchTimer = null;
@@ -126,29 +136,33 @@ export class NexusLogsPage extends LitElement {
     };
   }
 
-  private async reloadStream(): Promise<void> {
-    const token = ++this.reloadToken;
-    this.stopStream();
-    this.seenSeq.clear();
-    this.entries = [];
-    this.latestSeq = 0;
-
-    try {
-      const snap = await nexusApi.logs({
-        level: this.level === 'all' ? undefined : this.level,
-        domain: this.domain === 'all' ? undefined : this.domain,
-        search: this.search.trim() || undefined,
-        limit: 250,
-      });
-      if (!this.isConnected || token !== this.reloadToken) return;
-      this.applySnapshot(snap.entries ?? [], snap.latest_seq ?? 0, snap.evicted ?? 0);
-    } catch (err) {
-      if (!this.isConnected || token !== this.reloadToken) return;
-      this.toast = err instanceof Error ? err.message : String(err);
-      this.toastKind = 'err';
+  private matchesFilters(entry: LogEntry): boolean {
+    if (this.domain !== 'all' && entry.domain !== this.domain) return false;
+    if (this.level !== 'all') {
+      const rank: Record<string, number> = { trace: 0, debug: 1, info: 2, warn: 3, error: 4, fatal: 5 };
+      const minRank = rank[this.level] ?? 0;
+      const itemRank = rank[entry.level] ?? 0;
+      if (itemRank < minRank) return false;
     }
+    const q = this.search.trim().toLowerCase();
+    if (q && !`${entry.domain} ${entry.message}`.toLowerCase().includes(q)) return false;
+    return true;
+  }
 
-    if (!this.isConnected || token !== this.reloadToken) return;
+  private syncTransport(): void {
+    if (appStore.wsLive || appStore.authRequired) {
+      this.stopStream();
+      this.streamState = appStore.authRequired ? 'unauthorized' : 'live';
+      return;
+    }
+    if (appStore.shouldUseSseFallback) {
+      if (!this.stream && this.isConnected) this.startFallbackSse(this.reloadToken);
+    } else {
+      this.streamState = 'connecting';
+    }
+  }
+
+  private startFallbackSse(token: number): void {
     this.stopStream();
     this.stream = createLogsStream(
       () => this.getFilterParams(),
@@ -171,6 +185,36 @@ export class NexusLogsPage extends LitElement {
       },
     );
     this.stream.start();
+  }
+
+  private async reloadStream(): Promise<void> {
+    const token = ++this.reloadToken;
+    this.stopStream();
+    this.seenSeq.clear();
+    this.entries = [];
+    this.latestSeq = 0;
+
+    try {
+      const snap = await nexusApi.logs({
+        level: this.level === 'all' ? undefined : this.level,
+        domain: this.domain === 'all' ? undefined : this.domain,
+        search: this.search.trim() || undefined,
+        limit: 250,
+      });
+      if (!this.isConnected || token !== this.reloadToken) return;
+      this.applySnapshot(snap.entries ?? [], snap.latest_seq ?? 0, snap.evicted ?? 0);
+      appStore.setLogCursor(this.latestSeq);
+    } catch (err) {
+      if (!this.isConnected || token !== this.reloadToken) return;
+      this.toast = err instanceof Error ? err.message : String(err);
+      this.toastKind = 'err';
+    }
+
+    if (!this.isConnected || token !== this.reloadToken) return;
+    if (!this.releaseLogsChannel) {
+      this.releaseLogsChannel = appStore.acquireChannel('logs', this.latestSeq);
+    }
+    this.syncTransport();
   }
 
   private pruneSeenSeq(kept: LogEntry[]): void {
@@ -275,12 +319,15 @@ export class NexusLogsPage extends LitElement {
   }
 
   render() {
+    const activeState: StreamState = appStore.wsLive ? 'live' : this.streamState;
     const streamBadgeClass =
-      this.streamState === 'live'
+      activeState === 'live'
         ? 'ok'
-        : this.streamState === 'polling' || this.streamState === 'connecting'
+        : activeState === 'polling' || activeState === 'connecting'
           ? 'warn'
           : 'err';
+    const streamLabel =
+      activeState === 'live' && appStore.wsLive ? t('stream.liveWs') : t(`stream.${activeState}`);
 
     return html`
       <div class="page">
@@ -288,7 +335,7 @@ export class NexusLogsPage extends LitElement {
           <div class="row">
             <h2>${t('logs.title')}</h2>
             <span class="badge ${streamBadgeClass}">
-              <span class="dot"></span>${t(`stream.${this.streamState}`)}
+              <span class="dot"></span>${streamLabel}
             </span>
             <span class="badge mono">${t('logs.latest')} #${this.latestSeq}</span>
             <span class="badge mono">${t('logs.evicted')} ${this.evicted}</span>
