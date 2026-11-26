@@ -1,4 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
+import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
 import { Motion } from "../motion.slint";
@@ -39,6 +40,10 @@ component CapsulePillButton inherits Rectangle {
     animate border-color { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; }
 
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -74,6 +79,7 @@ export component GroupsPanel inherits VerticalLayout {
     in property <bool> active-group-auto: false;
     in property <string> active-group-node: "";
     in property <int> active-group-latency-ms: -1;
+    in property <int> active-group-fastest-ms: -1;
     in property <int> active-group-healthy: 0;
     in property <int> active-group-total: 0;
     in-out property <string> member-filter: "";
@@ -85,6 +91,7 @@ export component GroupsPanel inherits VerticalLayout {
     callback select-member(string, string);
     callback toggle-pin-member(string, string);
     callback sort-members(string);
+    callback hide-timeout-changed(bool);
     callback reset-group-auto(string);
     callback probe-group(string);
     callback refresh-groups();
@@ -97,26 +104,6 @@ export component GroupsPanel inherits VerticalLayout {
         root.member-sort == "latency" ? I18n.t("按延迟", "Latency")
         : root.member-sort == "name" ? I18n.t("按名称", "Name")
         : I18n.t("默认排序", "Default");
-
-    pure function pick-min-lat(a: int, b: int) -> int {
-        return a <= 0 ? b : (b <= 0 ? a : min(a, b));
-    }
-
-    pure function member-lat(list: [OutboundMemberItem], i: int) -> int {
-        return i < list.length && list[i].latency-ms > 0 ? list[i].latency-ms : -1;
-    }
-
-    property <int> fastest-member-ms:
-        pick-min-lat(
-            pick-min-lat(
-                pick-min-lat(pick-min-lat(member-lat(root.members, 0), member-lat(root.members, 1)), pick-min-lat(member-lat(root.members, 2), member-lat(root.members, 3))),
-                pick-min-lat(pick-min-lat(member-lat(root.members, 4), member-lat(root.members, 5)), pick-min-lat(member-lat(root.members, 6), member-lat(root.members, 7)))
-            ),
-            pick-min-lat(
-                pick-min-lat(pick-min-lat(member-lat(root.members, 8), member-lat(root.members, 9)), pick-min-lat(member-lat(root.members, 10), member-lat(root.members, 11))),
-                pick-min-lat(pick-min-lat(member-lat(root.members, 12), member-lat(root.members, 13)), pick-min-lat(member-lat(root.members, 14), root.active-group-latency-ms))
-            )
-        );
 
     spacing: Theme.space-md;
 
@@ -163,7 +150,7 @@ export component GroupsPanel inherits VerticalLayout {
             selected-group: root.selected-group;
             healthy-count: root.active-group-healthy;
             total-count: root.active-group-total > 0 ? root.active-group-total : root.members.length;
-            fastest-latency-ms: root.fastest-member-ms;
+            fastest-latency-ms: root.active-group-fastest-ms > 0 ? root.active-group-fastest-ms : root.active-group-latency-ms;
             choose-group(tag) => { sv.content-y = 0px; root.choose-group(tag); }
         }
 
@@ -204,7 +191,10 @@ export component GroupsPanel inherits VerticalLayout {
                     icon: @image-url("../icons/eye-off.svg");
                     text: I18n.t("隐藏超时", "Hide Err");
                     active: root.hide-timeout;
-                    clicked => { root.hide-timeout = !root.hide-timeout; }
+                    clicked => {
+                        root.hide-timeout = !root.hide-timeout;
+                        root.hide-timeout-changed(root.hide-timeout);
+                    }
                 }
 
                 CapsulePillButton {
@@ -304,18 +294,18 @@ export component GroupsPanel inherits VerticalLayout {
                             width: max(0px, grid-w + 10px);
                             height: Math.ceil(root.members.length / grid-cols) * 102px;
                             for m in root.members : Rectangle {
-                                property <bool> is-timeout: m.latency-ms <= 0 && (m.state == "timeout" || m.state == "unreachable" || m.state == "error" || m.state == "failed");
-                                property <bool> shown: !root.hide-timeout || !is-timeout;
-                                width: shown ? cell-w : 0px;
-                                height: shown ? 102px : 0px;
+                                width: cell-w;
+                                height: 102px;
 
-                                if shown : GroupMemberCard {
+                                GroupMemberCard {
                                     x: 0px;
                                     y: 0px;
                                     width: card-w;
+                                    group-name: root.selected-group;
                                     member: m;
                                     select-clicked => { root.select-member(root.selected-group, m.name); }
                                     toggle-pin-clicked => { root.toggle-pin-member(root.selected-group, m.name); }
+                                    probe-clicked => { ControlInspectState.probe-member(root.selected-group, m.name); }
                                 }
                             }
                         }

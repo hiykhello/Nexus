@@ -13,35 +13,63 @@ export global OutboundKdl {
         use-reality: bool,
         pub-key: string,
         short-id: string,
+        tls-frag: bool,
+        ech-dns: bool,
+        ech-qsn: string,
     ) -> string {
         let server-name = sni != "" ? sni : host;
         let can-reality = use-reality && (proto == "vless" || proto == "trojan" || proto == "anytls");
+        let can-frag = tls-frag && proto != "hysteria2" && proto != "tuic";
         let sni-line = "        server-name " + q(server-name) + "\n";
         let fp-line = fp != "default" ? "        fingerprint " + q(fp) + "\n" : "";
         let sha-line = cert-sha != "" ? "        certificate-sha256 " + q(cert-sha) + "\n" : "";
         let ver-line = (proto == "naive" || proto == "http-connect")
             ? "        verify " + (verify-tls ? "#true" : "#false") + "\n"
             : (!verify-tls ? "        verify #false\n" : "");
+        let frag-line = can-frag ? "        tls-fragment #true\n" : "";
+        let ech-line = ech-dns
+            ? "        ech-dns #true\n" + (ech-qsn != "" ? "        ech-query-server-name " + q(ech-qsn) + "\n" : "")
+            : "";
         let real-line = can-reality
             ? "        reality {\n            public-key " + q(pub-key != "" ? pub-key : "<reality-public-key>") + "\n"
                 + (short-id != "" ? "            short-id " + q(short-id) + "\n" : "")
                 + "        }\n"
             : "";
-        return "    tls {\n" + sni-line + fp-line + sha-line + ver-line + real-line + "    }\n";
+        return "    tls {\n" + sni-line + fp-line + sha-line + ver-line + frag-line + ech-line + real-line + "    }\n";
     }
 
-    pure function transport-block(proto: string, transport: string, path: string, host-hdr: string, xhttp-mode: string) -> string {
+    pure function transport-block(
+        proto: string, transport: string, path: string, host-hdr: string, xhttp-mode: string,
+        ws-max-ed: string, ws-ed-hdr: string,
+    ) -> string {
         let supported = proto == "vless" || proto == "trojan" || proto == "anytls";
         if (!supported || transport == "tcp") {
             return "";
         }
+        let ws-ed = transport == "websocket"
+            ? (ws-max-ed != "" && ws-max-ed != "0" ? "        max-early-data " + ws-max-ed + "\n" : "")
+                + (ws-ed-hdr != "" ? "        early-data-header-name " + q(ws-ed-hdr) + "\n" : "")
+            : "";
         let body = transport == "grpc"
             ? (path != "" ? "        service-name " + q(path) + "\n" : "")
                 + (host-hdr != "" ? "        authority " + q(host-hdr) + "\n" : "")
             : (path != "" ? "        path " + q(path) + "\n" : "")
                 + (host-hdr != "" ? "        host " + q(host-hdr) + "\n" : "")
+                + ws-ed
                 + (transport == "xhttp" && xhttp-mode != "" ? "        mode " + q(xhttp-mode) + "\n" : "");
         return "    transport " + q(transport) + " {\n" + body + "    }\n";
+    }
+
+    pure function mux-block(proto: string, enabled: bool, mux-proto: string, max-conn: string, min-streams: string, padding: bool) -> string {
+        let can-mux = proto == "vless" || proto == "trojan" || proto == "anytls" || proto == "shadowsocks";
+        if (!can-mux || !enabled) {
+            return "";
+        }
+        let p-line = "        protocol " + q(mux-proto != "" ? mux-proto : "h2mux") + "\n";
+        let mc-line = max-conn != "" && max-conn != "0" ? "        max-connections " + max-conn + "\n" : "";
+        let ms-line = min-streams != "" && min-streams != "0" ? "        min-streams " + min-streams + "\n" : "";
+        let pad-line = padding ? "        padding #true\n" : "";
+        return "    multiplex {\n        enabled #true\n" + p-line + mc-line + ms-line + pad-line + "    }\n";
     }
 
     pure function hy2-quic-block(ports: string, salamander: string, send-bps: string, recv-bps: string) -> string {
@@ -74,7 +102,9 @@ export global OutboundKdl {
         naive-proto: string, naive-padding: bool, http-ver: string, http-udp: bool,
         ssh-host-sha: string,
         sni: string, fp: string, cert-sha: string, verify-tls: bool, use-reality: bool, reality-pbk: string, reality-sid: string,
-        transport: string, t-path: string, t-host: string, xhttp-mode: string,
+        tls-frag: bool, ech-dns: bool, ech-qsn: string,
+        transport: string, t-path: string, t-host: string, xhttp-mode: string, ws-max-ed: string, ws-ed-hdr: string,
+        mux-en: bool, mux-proto: string, mux-max-c: string, mux-min-s: string, mux-pad: bool,
         detour: string, bind-if: string, routing-mark: string, tfo: bool, mptcp: bool, keepalive: bool,
     ) -> string {
         let t = tag != "" ? tag : "node-01";
@@ -84,9 +114,10 @@ export global OutboundKdl {
         let srv = "    server host=" + q(h) + " port=" + p + "\n";
         let head = "outbound " + q(t) + " type=" + q(proto) + " {\n";
         let dial = dial-lines(detour, bind-if, routing-mark, tfo, mptcp, keepalive);
+        let mux = mux-block(proto, mux-en, mux-proto, mux-max-c, mux-min-s, mux-pad);
 
         if (proto == "shadowsocks") {
-            return head + srv + "    method " + q(ss-method) + "\n    key-file " + q(sec) + "\n" + dial + "}";
+            return head + srv + "    method " + q(ss-method) + "\n    key-file " + q(sec) + "\n" + mux + dial + "}";
         }
         if (proto == "snell") {
             let obfs-block = snell-obfs == "http"
@@ -101,7 +132,7 @@ export global OutboundKdl {
             return head + srv + usr + key + hk + dial + "}";
         }
 
-        let tls = tls-block(proto, h, sni, fp, cert-sha, verify-tls, use-reality, reality-pbk, reality-sid);
+        let tls = tls-block(proto, h, sni, fp, cert-sha, verify-tls, use-reality, reality-pbk, reality-sid, tls-frag, ech-dns, ech-qsn);
         if (proto == "naive") {
             let u = username != "" ? username : "user";
             let auth = "    authentication username=" + q(u) + " password-file=" + q(sec) + "\n";
@@ -130,7 +161,7 @@ export global OutboundKdl {
             ? "    authentication {\n        uuid-file " + q(sec) + "\n    }\n"
                 + (flow != "none" ? "    flow " + q(flow) + "\n" : "")
             : "    authentication {\n        password-file " + q(sec) + "\n    }\n";
-        let trans = transport-block(proto, transport, t-path, t-host, xhttp-mode);
-        return head + srv + auth + tls + trans + dial + "}";
+        let trans = transport-block(proto, transport, t-path, t-host, xhttp-mode, ws-max-ed, ws-ed-hdr);
+        return head + srv + auth + tls + trans + mux + dial + "}";
     }
 }

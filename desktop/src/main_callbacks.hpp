@@ -18,8 +18,11 @@ namespace desktop_ui_helpers {
         std::vector<desktop::OutboundGroupSnapshot>& cached_groups;
         std::unordered_set<std::string>& pinned_members;
         MemberModelPipeline& member_models;
+        ConnectionsModelPipeline& conn_models;
+        LogsModelPipeline& log_models;
         std::vector<desktop::LogEntrySnapshot>& cached_logs;
         std::mutex& logs_mu;
+        std::atomic<std::uint64_t>& last_log_seq;
         std::function<void()> sync_tray;
     };
 
@@ -82,6 +85,12 @@ namespace desktop_ui_helpers {
                 if (!quit_once.exchange(true, std::memory_order_acq_rel))
                     slint::invoke_from_event_loop([] { slint::quit_event_loop(); });
             },
+            .on_flush_fakeip = [weak_ui] {
+                on_ui_thread(weak_ui, [](auto& s) { s->template global<nexus_ui::ControlInspectState>().invoke_flush_fakeip(); });
+            },
+            .on_clear_dns_cache = [weak_ui] {
+                on_ui_thread(weak_ui, [](auto& s) { s->template global<nexus_ui::ControlInspectState>().invoke_clear_dns_cache(); });
+            },
         };
     }
 
@@ -100,6 +109,9 @@ namespace desktop_ui_helpers {
         });
         ctx.ui.on_sort_members([&ctx](slint::SharedString mode) {
             ctx.member_models.set_sort(std::string_view(mode));
+        });
+        ctx.ui.on_hide_timeout_changed([&ctx](bool hide) {
+            ctx.member_models.set_hide_timeout(hide);
         });
         ctx.ui.on_toggle_pin_member([&ctx, push_group_models](slint::SharedString group, slint::SharedString member) {
             std::string key = std::string(group) + "::" + std::string(member);
@@ -143,17 +155,21 @@ namespace desktop_ui_helpers {
             if (!posted) ctx.ui.set_groups_probing(false);
         });
 
-        auto push_connections = [weak_ui = ctx.weak_ui](std::vector<desktop::ActiveConnectionSnapshot> parsed, std::string filter) {
-            auto items = build_ui_connection_items(parsed, std::move(filter));
-            on_ui_thread(weak_ui, [items = std::move(items)](auto& s) mutable {
-                s->set_connections(std::make_shared<slint::VectorModel<nexus_ui::ActiveConnectionItem>>(std::move(items)));
+        auto push_connections = [&ctx](std::vector<desktop::ActiveConnectionSnapshot> parsed) {
+            on_ui_thread(ctx.weak_ui, [&ctx, parsed = std::move(parsed)](auto&) mutable {
+                ctx.conn_models.replace(std::move(parsed));
             });
         };
+        ctx.ui.on_filter_connections([&ctx](slint::SharedString q) {
+            ctx.conn_models.set_filter(std::string(q));
+        });
+        ctx.ui.on_route_filter_changed([&ctx](int rf) {
+            ctx.conn_models.set_route_filter(rf);
+        });
         ctx.ui.on_refresh_connections([&ctx, push_connections] {
-            std::string filter(ctx.ui.get_connection_filter());
-            ctx.worker.post([&ctx, push_connections, filter = std::move(filter)] {
+            ctx.worker.post([&ctx, push_connections] {
                 if (auto reply = ctx.http_ctrl.connections(); reply.ok)
-                    push_connections(desktop::parse_connections_json(reply.body), filter);
+                    push_connections(desktop::parse_connections_json(reply.body));
             });
         });
         auto inspect_seq = std::make_shared<std::atomic<std::uint64_t>>(0);
@@ -186,20 +202,18 @@ namespace desktop_ui_helpers {
             std::string_view sv(id_str);
             auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), id);
             if (ec != std::errc{} || id == 0) return;
-            std::string filter(ctx.ui.get_connection_filter());
-            ctx.worker.post([&ctx, push_connections, id, filter = std::move(filter)] {
+            ctx.worker.post([&ctx, push_connections, id] {
                 (void)ctx.http_ctrl.close_connection(id);
                 if (auto reply = ctx.http_ctrl.connections(); reply.ok)
-                    push_connections(desktop::parse_connections_json(reply.body), filter);
+                    push_connections(desktop::parse_connections_json(reply.body));
             });
         });
         ctx.ui.on_close_all_connections([&ctx, push_connections, inspect_seq] {
             inspect_seq->fetch_add(1, std::memory_order_acq_rel);
-            std::string filter(ctx.ui.get_connection_filter());
-            ctx.worker.post([&ctx, push_connections, filter = std::move(filter)] {
+            ctx.worker.post([&ctx, push_connections] {
                 (void)ctx.http_ctrl.close_all_connections();
                 if (auto reply = ctx.http_ctrl.connections(); reply.ok)
-                    push_connections(desktop::parse_connections_json(reply.body), filter);
+                    push_connections(desktop::parse_connections_json(reply.body));
             });
         });
 
@@ -313,9 +327,11 @@ namespace desktop_ui_helpers {
         ctx.ui.on_apply_log_level([&ctx](slint::SharedString level) {
             bool en = is_en_ui(ctx.ui);
             std::string lvl(level);
-            ctx.worker.post([&ctx, en, lvl = std::move(lvl)] {
-                auto http_res = ctx.http_ctrl.set_log_level(lvl);
-                bool ok = http_res.ok || ctx.ipc.set_log_level(lvl).ok;
+            std::string dom(ctx.ui.get_log_domain_filter());
+            if (dom.empty() || dom == "all") dom = "global";
+            ctx.worker.post([&ctx, en, lvl = std::move(lvl), dom = std::move(dom)] {
+                auto http_res = ctx.http_ctrl.set_log_level(lvl, dom);
+                bool ok = http_res.ok || (dom == "global" && ctx.ipc.set_log_level(lvl).ok);
                 auto msg = ok ? tr(en, "日志级别已更新", "Log level updated") : http_res.body;
                 on_ui_thread(ctx.weak_ui, [ok, msg = std::move(msg)](auto& s) {
                     push_toast(*s, msg, ok ? "success" : "error");
@@ -323,19 +339,30 @@ namespace desktop_ui_helpers {
                 });
             });
         });
+        ctx.ui.on_log_sev_filter_changed([&ctx](slint::SharedString sev) {
+            ctx.log_models.set_sev_filter(std::string(sev));
+        });
+        ctx.ui.on_filter_logs_search([&ctx](slint::SharedString q) {
+            ctx.log_models.set_search(std::string_view(q));
+        });
         ctx.ui.on_refresh_logs([&ctx] {
             std::string domain(ctx.ui.get_log_domain_filter()), search(ctx.ui.get_log_search()), level(ctx.ui.get_log_level());
+            ctx.log_models.set_domain_filter(domain);
+            ctx.log_models.set_search(search);
             ctx.worker.post([&ctx, level = std::move(level), domain = std::move(domain), search = std::move(search)] {
                 auto reply = ctx.http_ctrl.logs(level, domain, search, 0, 200);
                 if (!reply.ok) return;
                 auto snap = desktop::parse_logs_json(reply.body);
+                std::uint64_t latest = snap.latest_seq;
+                if (latest == 0 && !snap.entries.empty()) latest = snap.entries.back().seq;
+                if (latest > 0) {
+                    auto prev = ctx.last_log_seq.load(std::memory_order_acquire);
+                    while (latest > prev &&
+                           !ctx.last_log_seq.compare_exchange_weak(prev, latest, std::memory_order_acq_rel)) {}
+                }
                 { std::lock_guard lock(ctx.logs_mu); ctx.cached_logs = snap.entries; }
-                on_ui_thread(ctx.weak_ui, [entries = std::move(snap.entries)](auto& s) {
-                    std::vector<nexus_ui::LogLineItem> items;
-                    items.reserve(entries.size());
-                    for (auto const& e : entries)
-                        items.push_back({slint::SharedString(e.level), slint::SharedString(e.domain), slint::SharedString(e.message)});
-                    s->set_logs(std::make_shared<slint::VectorModel<nexus_ui::LogLineItem>>(std::move(items)));
+                on_ui_thread(ctx.weak_ui, [&ctx, entries = std::move(snap.entries)](auto&) mutable {
+                    ctx.log_models.replace(std::move(entries));
                 });
             });
         });
@@ -356,7 +383,7 @@ namespace desktop_ui_helpers {
         });
         ctx.ui.on_clear_logs([&ctx] {
             { std::lock_guard lock(ctx.logs_mu); ctx.cached_logs.clear(); }
-            ctx.ui.set_logs(std::make_shared<slint::VectorModel<nexus_ui::LogLineItem>>());
+            ctx.log_models.clear();
         });
         ctx.ui.on_run_rule_explain([&ctx](slint::SharedString inb, slint::SharedString net, slint::SharedString tgt, slint::SharedString extra) {
             std::string i(inb), n(net), t(tgt), e(extra), kdl(ctx.ui.get_kdl_text());

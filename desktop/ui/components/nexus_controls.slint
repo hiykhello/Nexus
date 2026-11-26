@@ -51,10 +51,10 @@ export component NexusSwitch inherits HorizontalLayout {
             width: root.is-pressed ? 20px : 18px;
             height: 18px;
             border-radius: 9px;
-            background: #ffffff;
+            background: Theme.control-knob-bg;
             drop-shadow-blur: 4px;
             drop-shadow-offset-y: 1px;
-            drop-shadow-color: #00000038;
+            drop-shadow-color: Theme.control-knob-shadow;
             animate x { duration: Motion.normal; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
             animate width { duration: Motion.micro; }
         }
@@ -147,7 +147,7 @@ export component NexusSlider inherits Rectangle {
         border-radius: self.width / 2;
         border-width: 2.5px;
         border-color: ta.pressed ? Theme.accent.darker(0.12) : Theme.accent;
-        background: #ffffff;
+        background: Theme.control-knob-bg;
         drop-shadow-blur: ta.has-hover || ta.pressed ? 9px : 4px;
         drop-shadow-offset-y: 1px;
         drop-shadow-color: Theme.accent.with-alpha(ta.has-hover || ta.pressed ? 0.48 : 0.25);

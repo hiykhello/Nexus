@@ -197,12 +197,16 @@ namespace desktop_ui_helpers {
 
         std::vector<nexus_ui::WorkspaceRoutingRow> r_rows;
         std::vector<nexus_ui::WorkspaceRuleRow> rule_rows;
+        bool active_auto_detect = false;
+        bool active_find_process = false;
         for (auto const& rp : ctx.doc.routing_profiles) {
             r_rows.push_back({
                 slint::SharedString(rp.id), slint::SharedString(rp.name),
                 slint::SharedString(rp.default_outbound), static_cast<int>(rp.rules.size()), rp.is_active,
             });
             if (rp.is_active) {
+                active_auto_detect = rp.auto_detect_interface;
+                active_find_process = rp.find_process;
                 for (auto const& r : rp.rules) {
                     std::string tgt = (r.target_type == "profile_id" && !r.target_profile_id.empty())
                         ? ("@" + r.target_profile_id) : r.target_type;
@@ -210,11 +214,14 @@ namespace desktop_ui_helpers {
                         : !r.ips.empty() ? join_csv(r.ips) : join_csv(r.rule_sets);
                     rule_rows.push_back({
                         slint::SharedString(r.id), slint::SharedString(r.scope), slint::SharedString(tgt),
-                        slint::SharedString(match), slint::SharedString(join_csv(r.desktop_process)), r.enabled,
+                        slint::SharedString(match), slint::SharedString(join_csv(r.desktop_process)),
+                        r.tls_fragment, r.enabled,
                     });
                 }
             }
         }
+        ws.set_routing_auto_detect_interface(active_auto_detect);
+        ws.set_routing_find_process(active_find_process);
         ws.set_routing_profiles(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceRoutingRow>>(std::move(r_rows)));
         ws.set_routing_rules(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceRuleRow>>(std::move(rule_rows)));
 
@@ -230,6 +237,9 @@ namespace desktop_ui_helpers {
         ws.set_host_enable_tun(ctx.host.enable_tun);
         ws.set_host_tun_mtu(slint::SharedString(std::to_string(ctx.host.tun_mtu)));
         ws.set_host_tun_strict_route(ctx.host.tun_strict_route);
+        ws.set_host_workers(slint::SharedString(std::to_string(ctx.host.workers)));
+        ws.set_host_workers_spec(slint::SharedString(ctx.host.workers_spec));
+        ws.set_host_workers_max(slint::SharedString(std::to_string(ctx.host.workers_max)));
 
         // Sync overview quick-profiles deck + Quick-Settings tile bar directly from unified SQLite workspace/host state.
         sync_profiles_to_ui(ctx.ui, ctx.doc, ctx.telemetry.active_profile_id);

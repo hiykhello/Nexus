@@ -126,21 +126,31 @@ namespace {
         auto const* mode_sub = find_by_label(menu, "分流模式");
         auto const* node_sub = find_by_label(menu, "快捷切换节点");
         auto const* prof_sub = find_by_label(menu, "配置档案");
+        auto const* probe_it = find_by_label(menu, "立即测速");
+        auto const* fakeip_it = find_by_label(menu, "清空 FakeIP 映射");
+        auto const* dns_it = find_by_label(menu, "清空 DNS 缓存");
         auto const* copy_it = find_by_label(menu, "复制终端代理");
+        auto const* reload_it = find_by_label(menu, "重载配置");
         auto const* quit_it = find_by_label(menu, "退出 Nexus");
-        expect(hide_it && stop_it && proxy_it && tun_it && mode_sub && node_sub && prof_sub && copy_it && quit_it,
+        expect(hide_it && stop_it && proxy_it && tun_it && mode_sub && node_sub && prof_sub &&
+               probe_it && fakeip_it && dns_it && copy_it && reload_it && quit_it,
             "all expected zh-CN tray items present");
-        expect(proxy_it->kind == desktop::TrayMenuKind::checkbox && proxy_it->checked, "system proxy checked");
-        expect(tun_it->kind == desktop::TrayMenuKind::checkbox && !tun_it->checked, "TUN mode unchecked");
+        expect(proxy_it->kind == desktop::TrayMenuKind::checkbox && proxy_it->enabled && proxy_it->checked,
+            "system proxy enabled and checked when core running");
+        expect(tun_it->kind == desktop::TrayMenuKind::checkbox && tun_it->enabled && !tun_it->checked,
+            "TUN mode enabled and unchecked when core running");
+        expect(probe_it->enabled && fakeip_it->enabled && dns_it->enabled && reload_it->enabled,
+            "core-dependent maintenance actions enabled when core running");
         expect(mode_sub->children.size() == 3 && mode_sub->children[0].checked &&
                !mode_sub->children[1].checked && !mode_sub->children[2].checked, "rule radio checked");
-        expect(node_sub->children.size() == 3 && node_sub->children[0].label == "hk-edge-01  36ms" &&
-               node_sub->children[0].checked && !node_sub->children[1].checked, "quick nodes submenu");
+        expect(node_sub->enabled && node_sub->children.size() == 3 && node_sub->children[0].label == "hk-edge-01  36ms" &&
+               node_sub->children[0].enabled && node_sub->children[0].checked && !node_sub->children[1].checked,
+            "quick nodes submenu enabled when core running");
         expect(prof_sub->children.size() == 2 && prof_sub->children[0].checked &&
                !prof_sub->children[1].checked, "profiles submenu");
         expect(copy_it->enabled, "copy proxy enabled when command present");
 
-        // Cap at 8 quick nodes, hide profiles when <= 1, disable copy when cmd empty, flip visibility/core & en-US
+        // Cap at 8 quick nodes, hide profiles when <= 1, disable core-dependent items when offline, flip visibility/core & en-US
         desktop::TraySnapshot en_snap = make_rich_snapshot(true);
         en_snap.window_visible = false;
         en_snap.core_running = false;
@@ -157,7 +167,16 @@ namespace {
         collect_ids_and_check_no_jargon(en_menu, en_ids);
         expect(find_by_label(en_menu, "Show Window") != nullptr, "en Show Window when hidden");
         expect(find_by_label(en_menu, "Connect") != nullptr, "en Connect when offline");
-        expect(find_by_label(en_menu, "TUN Mode") != nullptr, "en TUN Mode checkbox label");
+        auto const* en_proxy = find_by_label(en_menu, "System Proxy");
+        auto const* en_tun = find_by_label(en_menu, "TUN Mode");
+        auto const* en_probe = find_by_label(en_menu, "Test Latency");
+        auto const* en_fakeip = find_by_label(en_menu, "Flush FakeIP");
+        auto const* en_dns = find_by_label(en_menu, "Clear DNS Cache");
+        auto const* en_reload = find_by_label(en_menu, "Reload Config");
+        expect(en_proxy && !en_proxy->enabled && en_tun && !en_tun->enabled &&
+               en_probe && !en_probe->enabled && en_fakeip && !en_fakeip->enabled &&
+               en_dns && !en_dns->enabled && en_reload && !en_reload->enabled,
+            "core-dependent tray items disabled when core is offline");
         expect(find_by_label(en_menu, "↓") == nullptr, "speed header omitted when core offline");
         expect(find_by_label(en_menu, "Profiles") == nullptr, "profiles submenu omitted when <= 1 profile");
         auto const* en_copy = find_by_label(en_menu, "Copy Proxy Env");
@@ -165,7 +184,8 @@ namespace {
         auto const* en_modes = find_by_label(en_menu, "Routing Mode");
         expect(en_modes && en_modes->children[1].checked, "global radio checked");
         auto const* en_nodes = find_by_label(en_menu, "Quick Nodes");
-        expect(en_nodes && en_nodes->children.size() == 8, "quick nodes capped at 8");
+        expect(en_nodes && !en_nodes->enabled && en_nodes->children.size() == 8 && !en_nodes->children[0].enabled,
+            "quick nodes capped at 8 and disabled when core offline");
 
         en_snap.show_nodes = false;
         auto hidden_nodes_menu = desktop::build_tray_menu(en_snap);
@@ -173,7 +193,8 @@ namespace {
     }
 
     auto test_dispatch_and_clicks() -> void {
-        int show_cnt = 0, toggle_win_cnt = 0, toggle_core_cnt = 0, probe_cnt = 0, copy_cnt = 0, reload_cnt = 0, quit_cnt = 0;
+        int show_cnt = 0, toggle_win_cnt = 0, toggle_core_cnt = 0, probe_cnt = 0, copy_cnt = 0;
+        int reload_cnt = 0, quit_cnt = 0, fakeip_cnt = 0, dns_cnt = 0;
         std::string switched_mode, selected_group, selected_node, activated_profile;
         std::vector<bool> proxy_toggles, tun_toggles;
 
@@ -190,6 +211,8 @@ namespace {
             .on_copy_proxy_env = [&] { ++copy_cnt; },
             .on_reload = [&] { ++reload_cnt; },
             .on_quit = [&] { ++quit_cnt; },
+            .on_flush_fakeip = [&] { ++fakeip_cnt; },
+            .on_clear_dns_cache = [&] { ++dns_cnt; },
         });
         expect(!tray.native_backend_active(), "native backend disabled under NEXUS_DISABLE_NATIVE_TRAY=1");
 
@@ -222,6 +245,8 @@ namespace {
             "dispatch profile activation");
 
         expect(tray.dispatch_menu_id(find_by_label(menu, "立即测速")->id) && probe_cnt == 1, "dispatch probe");
+        expect(tray.dispatch_menu_id(find_by_label(menu, "清空 FakeIP 映射")->id) && fakeip_cnt == 1, "dispatch flush fakeip");
+        expect(tray.dispatch_menu_id(find_by_label(menu, "清空 DNS 缓存")->id) && dns_cnt == 1, "dispatch clear dns cache");
         expect(tray.dispatch_menu_id(find_by_label(menu, "复制终端代理")->id) && copy_cnt == 1, "dispatch copy proxy");
         expect(tray.dispatch_menu_id(find_by_label(menu, "重载配置")->id) && reload_cnt == 1, "dispatch reload");
 
@@ -229,6 +254,20 @@ namespace {
         expect(!tray.dispatch_menu_id(menu[0].id), "header id not actionable");
         expect(!tray.dispatch_menu_id(mode_sub->id), "submenu container id not actionable");
         expect(!tray.dispatch_menu_id(999999), "unknown menu id rejected");
+
+        // Notifications: notify_if_hidden skips while visible, fires when hidden
+        expect(!tray.notify_if_hidden("Nexus", "Visible skip", desktop::TrayNotificationUrgency::warning) &&
+               !tray.last_notification().has_value(),
+            "notify_if_hidden does not emit while main window is visible");
+        snap.window_visible = false;
+        tray.update_snapshot(snap);
+        (void)tray.notify_if_hidden("Nexus", "Core exited", desktop::TrayNotificationUrgency::error);
+        expect(tray.last_notification().has_value() &&
+               tray.last_notification()->body == "Core exited" &&
+               tray.last_notification()->urgency == desktop::TrayNotificationUrgency::error,
+            "notify_if_hidden records error notification when window hidden");
+        snap.window_visible = true;
+        tray.update_snapshot(snap);
 
         // Primary click actions: toggle, show, toggle_proxy + secondary click (middle-click)
         tray.trigger_primary_click();
@@ -251,16 +290,41 @@ namespace {
         tray.trigger_secondary_click();
         expect(proxy_toggles.size() == 3 && proxy_toggles.back(), "secondary (middle) click toggles system proxy");
 
+        // Core offline must reject core-dependent actions cleanly
+        snap.core_running = false;
+        snap.state = desktop::TrayState::offline;
+        tray.update_snapshot(snap);
+        expect(!tray.dispatch_menu_id(find_by_label(menu, "系统代理")->id) && proxy_toggles.size() == 3,
+            "system proxy dispatch rejected when core offline");
+        expect(!tray.dispatch_menu_id(find_by_label(menu, "TUN 模式")->id) && tun_toggles.size() == 1,
+            "TUN dispatch rejected when core offline");
+        expect(!tray.dispatch_menu_id(find_by_label(menu, "立即测速")->id) && probe_cnt == 1,
+            "probe dispatch rejected when core offline");
+        expect(!tray.dispatch_menu_id(find_by_label(menu, "清空 FakeIP 映射")->id) && fakeip_cnt == 1,
+            "flush fakeip dispatch rejected when core offline");
+        expect(!tray.dispatch_menu_id(find_by_label(menu, "清空 DNS 缓存")->id) && dns_cnt == 1,
+            "clear dns cache dispatch rejected when core offline");
+        expect(!tray.dispatch_menu_id(find_by_label(menu, "重载配置")->id) && reload_cnt == 1,
+            "reload dispatch rejected when core offline");
+        expect(!tray.dispatch_menu_id(node_sub->children[1].id),
+            "quick node selection rejected when core offline");
+        tray.trigger_primary_click();
+        tray.trigger_secondary_click();
+        expect(proxy_toggles.size() == 3, "toggle_proxy clicks ignored when core offline");
+
         // Quit is atomic-once
         auto const quit_id = find_by_label(menu, "退出 Nexus")->id;
         expect(tray.dispatch_menu_id(quit_id) && quit_cnt == 1 && tray.quit_requested(), "first quit fires once");
         expect(tray.dispatch_menu_id(quit_id) && quit_cnt == 1, "second quit does not refire callback");
 
-        // Post-stop suppresses all callbacks
+        // Post-stop suppresses all callbacks and notifications
         tray.stop();
         tray.stop();
         expect(!tray.dispatch_menu_id(find_by_label(menu, "重载配置")->id) && reload_cnt == 1,
             "dispatch after stop is ignored");
+        expect(!tray.notify("Nexus", "After stop", desktop::TrayNotificationUrgency::info) &&
+               tray.last_notification()->body == "Core exited",
+            "notify after stop is ignored");
         tray.trigger_primary_click();
         tray.trigger_secondary_click();
         expect(proxy_toggles.size() == 3, "clicks after stop are ignored");

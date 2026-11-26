@@ -35,6 +35,7 @@ export struct WorkspaceRuleRow {
     target-label: string,
     match-summary: string,
     process-summary: string,
+    tls-fragment: bool,
     enabled: bool,
 }
 
@@ -54,13 +55,16 @@ export global WorkspaceState {
     in-out property <bool> dns-fakeip: false;
     in-out property <string> dns-raw-kdl: "";
 
-    // Isolated Layer 3 Desktop Host fields (never exported into portable workspace.json)
+    // Isolated Layer 3 Desktop Host fields (stored in local SQLite nexus-client.db; never exported into portable workspace.json)
     in property <bool> host-is-linux: true;
     in-out property <bool> host-enable-mixed: true;
     in-out property <string> host-mixed-listen: "127.0.0.1:7890";
     in-out property <bool> host-enable-tun: false;
     in-out property <string> host-tun-mtu: "1400";
     in-out property <bool> host-tun-strict-route: false;
+    in-out property <string> host-workers: "1";
+    in-out property <string> host-workers-spec: "";
+    in-out property <string> host-workers-max: "0";
     in property <string> host-strict-route-notice: "";
     in property <string> portable-status: "";
     in property <bool> portable-status-ok: true;
@@ -70,7 +74,7 @@ export global WorkspaceState {
     in-out property <string> edit-chain-prev: "";
     in-out property <string> edit-chain-next: "";
 
-    // Wave 23 E2EE WebDAV Sync (stored ONLY in local 0600 host.json) & UDP Probe state
+    // Wave 23 E2EE WebDAV Sync (stored ONLY in local 0600 secrets/sync-creds.json) & UDP Probe state
     in-out property <string> sync-webdav-url: "";
     in-out property <string> sync-webdav-user: "";
     in-out property <string> sync-webdav-pass: "";
@@ -89,6 +93,7 @@ export global WorkspaceState {
     in-out property <string> draft-kind: "node";
     in-out property <string> draft-remarks: "";
     in-out property <string> draft-payload: "";
+    in-out property <bool> draft-group-interrupt: false;
 
     // Subscription editor inputs
     in-out property <string> sub-remarks: "";
@@ -96,12 +101,15 @@ export global WorkspaceState {
     in-out property <string> sub-prev-id: "";
     in-out property <string> sub-next-id: "";
 
-    // Routing rule adder inputs
+    // Routing profile & rule adder inputs (Wave 30-31: auto_detect_interface, find_process, tls_fragment)
+    in-out property <bool> routing-auto-detect-interface: false;
+    in-out property <bool> routing-find-process: false;
     in-out property <string> rule-scope: "both";
     in-out property <string> rule-target-type: "proxy";
     in-out property <string> rule-target-profile-id: "";
     in-out property <string> rule-match-input: "";
     in-out property <string> rule-desktop-process: "";
+    in-out property <bool> rule-tls-fragment: false;
 
     callback activate-profile(string);
     callback create-profile(string, string, string); // kind, remarks, payload
@@ -110,6 +118,7 @@ export global WorkspaceState {
     callback update-subscription-chain(string, string, string); // sub-id, prev-id, next-id
     callback delete-subscription(string);
     callback select-routing-profile(string);
+    callback apply-routing-options(bool, bool); // auto_detect_interface, find_process
     callback add-routing-rule(string, string, string, string, string); // scope, target-type, target-profile-id, match, desktop-process
     callback apply-dns-config(string, string, string, bool, string); // mode, direct, remote, fakeip, raw-kdl
     callback apply-host-config();

@@ -72,6 +72,10 @@ component ConnectedModeBtn inherits Rectangle {
     animate drop-shadow-blur { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; }
 
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 
     Text {
@@ -271,8 +275,8 @@ export component LocalPortsCompactCard inherits Rectangle {
     in-out property <string> socks-proxy-host: "127.0.0.1";
     in-out property <string> socks-proxy-port: "1080";
     in-out property <bool> http-proxy-enabled: false;
-    in-out property <string> http-proxy-host: "127.0.0.1";
-    in-out property <string> http-proxy-port: "8080";
+    in-out property <string> http-proxy-host: "0.0.0.0";
+    in-out property <string> http-proxy-port: "7891";
     callback apply-inbound-proxy-config(string, bool, string, string);
     callback copy-endpoint(string);
     callback copy-proxy-env();
@@ -340,6 +344,10 @@ component DeckNavBtn inherits Rectangle {
     animate border-color { duration: Motion.fast; }
     animate background { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
 
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 

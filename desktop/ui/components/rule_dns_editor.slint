@@ -1,13 +1,15 @@
 import { ScrollView } from "std-widgets.slint";
+import { ControlInspectState } from "../control_inspect_state.slint";
 import { GlassSpeculum, NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
 import { RuleDnsTab } from "rule_dns_tab.slint";
 import { RuleExplainPanel } from "rule_explain_panel.slint";
+import { LiveDnsQueryTab, LiveRulesTab } from "rule_inspect_tabs.slint";
 import { RuleRouteTab } from "rule_route_tab.slint";
 
-// Centered modal dialog for Routing Rules, DNS Rules, and Live Rule Explain
+// Centered modal dialog for Routing Rules, DNS Rules, Live Explain, Live Rules & Live DNS Query
 export component RuleModalDialog inherits Rectangle {
     in-out property <int> active-mode: 0;
     in-out property <string> route-rule-kind: "domain-suffix";
@@ -27,25 +29,25 @@ export component RuleModalDialog inherits Rectangle {
     callback append-dns-rule-kdl(string);
     callback run-explain(string, string, string, string);
 
-    background: Theme.dark ? #00000094 : #0f172a5e;
+    background: Theme.modal-backdrop;
 
     TouchArea {
         clicked => { root.close-requested(); }
     }
 
     Rectangle {
-        property <length> max-dialog-h: max(280px, min(parent.height - 64px, 600px));
-        width: max(320px, min(parent.width - 64px, 780px));
+        property <length> max-dialog-h: max(280px, min(parent.height - 64px, 620px));
+        width: max(320px, min(parent.width - 56px, 840px));
         height: min(self.max-dialog-h, max(240px, 62px + modal-body.preferred-height));
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         border-radius: 20px;
         border-width: 1px;
-        border-color: Theme.dark ? Theme.hairline-strong : #0f172a26;
+        border-color: Theme.modal-border;
         background: Theme.overlay-bg;
         drop-shadow-blur: 36px;
         drop-shadow-offset-y: 12px;
-        drop-shadow-color: Theme.dark ? #00000080 : #0f172a30;
+        drop-shadow-color: Theme.modal-shadow;
         clip: true;
 
         // Absorb clicks inside modal sheet so backdrop doesn't dismiss
@@ -98,13 +100,22 @@ export component RuleModalDialog inherits Rectangle {
 
                 SlidingSegmentBar {
                     horizontal-stretch: 0;
-                    width: 280px;
+                    width: min(470px, max(280px, parent.width - 210px));
                     bar-height: 32px;
-                    options: [I18n.t("路由规则", "Route"), I18n.t("DNS 规则", "DNS"), I18n.t("规则测试", "Explain")];
+                    options: [
+                        I18n.t("路由规则", "Route"),
+                        I18n.t("DNS 规则", "DNS"),
+                        I18n.t("规则测试", "Explain"),
+                        I18n.t("运行规则", "Live Rules"),
+                        I18n.t("DNS 解析", "DNS Query"),
+                    ];
                     current-index: root.active-mode;
                     selected(idx) => {
                         root.active-mode = idx;
                         modal-sv.content-y = 0px;
+                        if (idx == 3 && ControlInspectState.live-rules.length == 0 && !ControlInspectState.rules-loading) {
+                            ControlInspectState.refresh-live-rules();
+                        }
                     }
                 }
 
@@ -167,6 +178,10 @@ export component RuleModalDialog inherits Rectangle {
                             explain-ok: root.explain-ok;
                             run-explain(inb, net, tgt, extra) => { root.run-explain(inb, net, tgt, extra); }
                         }
+
+                        if root.active-mode == 3 : LiveRulesTab {}
+
+                        if root.active-mode == 4 : LiveDnsQueryTab {}
                     }
                 }
 

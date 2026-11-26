@@ -49,7 +49,6 @@ export component HeroCommandCard inherits Rectangle {
 
     property <int> bars: root.core-running ? Theme.latency-bars(root.active-node-latency-ms) : 0;
     property <color> lat-color: !root.core-running ? Theme.offline-fg : Theme.latency-fg(root.active-node-latency-ms, root.active-node-latency-ms == 0 ? "timeout" : "healthy");
-    property <float> aura-phase: Motion.reduced ? 0.0 : mod(animation-tick(), 2600ms) / 2600ms;
     property <length> orb-size: root.compact ? 66px : root.wide ? 86px : 76px;
 
     property <string> inline-issue-text:
@@ -301,19 +300,20 @@ export component HeroCommandCard inherits Rectangle {
                     height: self.bloom-d;
                     border-radius: self.bloom-d / 2;
                     background: root.core-running
-                        ? @radial-gradient(circle, #10b98130 0%, transparent 70%)
+                        ? @radial-gradient(circle, Theme.orb-run-halo 0%, transparent 70%)
                         : @radial-gradient(circle, Theme.accent.with-alpha(Theme.dark ? 0.22 : 0.16) 0%, transparent 70%);
                 }
 
-                // Breathing ambient ring when connected
+                // Breathing ambient ring ONLY when connected/degraded (0% animation-tick() burn while idle!)
                 if (root.is-connected || root.is-degraded) && !Motion.reduced : Rectangle {
-                    property <length> ring-d: root.orb-size + 14px * root.aura-phase;
+                    property <float> aura-phase: mod(animation-tick(), 2600ms) / 2600ms;
+                    property <length> ring-d: root.orb-size + 14px * self.aura-phase;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                     width: self.ring-d;
                     height: self.ring-d;
                     border-radius: self.ring-d / 2;
-                    background: root.state-color.with-alpha(0.32 * (1.0 - root.aura-phase));
+                    background: root.state-color.with-alpha(0.32 * (1.0 - self.aura-phase));
                 }
 
                 orb := Rectangle {
@@ -325,22 +325,22 @@ export component HeroCommandCard inherits Rectangle {
                     border-width: 1.5px;
                     border-color:
                         root.is-starting ? Theme.warn-border
-                        : root.core-running ? #a7f3d0.with-alpha(orb-ta.has-hover ? 0.92 : 0.64)
+                        : root.core-running ? Theme.orb-run-border.with-alpha(orb-ta.has-hover ? 0.92 : 0.64)
                         : Theme.pill-active-top.brighter(0.22);
                     background:
                         root.is-starting ? Theme.warn-bg
                         : root.core-running
                             ? (orb-ta.pressed
-                                ? @linear-gradient(145deg, #059669 0%, #047857 100%)
+                                ? @linear-gradient(145deg, Theme.orb-run-bot 0%, Theme.orb-run-pressed-bot 100%)
                                 : orb-ta.has-hover
-                                    ? @linear-gradient(145deg, #6ee7b7 0%, #10b981 52%, #059669 100%)
-                                    : @linear-gradient(145deg, #34d399 0%, #10b981 52%, #059669 100%))
+                                    ? @linear-gradient(145deg, Theme.orb-run-hover-top 0%, Theme.orb-run-mid 52%, Theme.orb-run-bot 100%)
+                                    : @linear-gradient(145deg, Theme.orb-run-top 0%, Theme.orb-run-mid 52%, Theme.orb-run-bot 100%))
                             : (orb-ta.pressed
                                 ? @linear-gradient(145deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
                                 : @linear-gradient(145deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%));
                     drop-shadow-blur: root.core-running ? 26px : 20px;
                     drop-shadow-offset-y: 4px;
-                    drop-shadow-color: root.core-running ? #10b98188 : Theme.pill-active-bot.with-alpha(Theme.dark ? 0.48 : 0.32);
+                    drop-shadow-color: root.core-running ? Theme.orb-run-shadow : Theme.pill-active-bot.with-alpha(Theme.dark ? 0.48 : 0.32);
                     transform-scale: !root.is-starting && orb-ta.pressed ? 0.93 : 1.0;
                     clip: true;
                     animate border-radius { duration: Motion.slow; easing: cubic-bezier(0.34, 1.4, 0.64, 1.0); }
@@ -352,7 +352,7 @@ export component HeroCommandCard inherits Rectangle {
                         x: 10px; y: 3px;
                         width: parent.width - 20px; height: parent.height * 0.36;
                         border-radius: self.height / 2;
-                        background: @linear-gradient(180deg, #ffffff40 0%, transparent 100%);
+                        background: @linear-gradient(180deg, Theme.orb-sheen-top 0%, transparent 100%);
                     }
 
                     orb-ta := TouchArea {
@@ -375,9 +375,9 @@ export component HeroCommandCard inherits Rectangle {
                         width: root.compact ? 18px : 22px;
                         height: root.compact ? 18px : 22px;
                         border-radius: 5px;
-                        background: #ffffff;
+                        background: Theme.orb-glyph-fg;
                         drop-shadow-blur: 6px;
-                        drop-shadow-color: #00000028;
+                        drop-shadow-color: Theme.orb-glyph-shadow;
                     }
                     // Crisp solid white Play glyph when idle
                     if !root.is-starting && !root.core-running : Path {
@@ -387,7 +387,7 @@ export component HeroCommandCard inherits Rectangle {
                         height: root.compact ? 22px : 26px;
                         viewbox-width: 24;
                         viewbox-height: 26;
-                        fill: #ffffff;
+                        fill: Theme.orb-glyph-fg;
                         commands: "M 5 3.5 C 5 2.0 6.6 1.1 7.9 1.9 L 21.4 10.9 C 22.6 11.7 22.6 13.5 21.4 14.3 L 7.9 23.3 C 6.6 24.1 5 23.2 5 21.7 Z";
                     }
                 }

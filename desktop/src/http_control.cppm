@@ -15,6 +15,9 @@ export namespace desktop {
         std::int64_t latency_ms = -1;
         bool selected = false;
         bool overridden = false;
+        std::int64_t ewma_ms = -1;
+        int last_status = 0;
+        bool breaker_open = false;
     };
 
     struct OutboundGroupSnapshot {
@@ -77,6 +80,62 @@ export namespace desktop {
         std::string error;
     };
 
+    struct RuleEntrySnapshot {
+        std::uint32_t index = 0;
+        std::string type;
+        std::string action;
+        std::string target;
+        std::string summary;
+    };
+
+    struct DnsAnswerSnapshot {
+        std::string name;
+        std::string type;
+        std::uint32_t ttl = 0;
+        std::string data;
+    };
+
+    struct DnsQueryResult {
+        bool ok = false;
+        std::string name;
+        std::string type;
+        int rcode = -1;
+        std::string rcode_name;
+        std::uint32_t ttl = 0;
+        std::uint64_t elapsed_ms = 0;
+        std::vector<DnsAnswerSnapshot> answers;
+        std::string error;
+    };
+
+    struct FakeIpFlushResult {
+        bool ok = false;
+        std::uint64_t flushed = 0;
+        bool fakeip = false;
+        std::string error;
+    };
+
+    struct SseEvent {
+        std::string event;
+        std::string data;
+    };
+
+    // Incremental text/event-stream (SSE) frame decoder supporting CRLF/LF, comments, and multi-line data.
+    class SseFrameParser {
+        std::string line_buf_;
+        std::string cur_event_;
+        std::string cur_data_;
+        bool has_data_ = false;
+        bool line_overflow_ = false;
+        bool frame_overflow_ = false;
+
+    public:
+        static constexpr std::size_t kMaxFrameBytes = 256u * 1024u;
+        auto feed(this SseFrameParser& self, std::string_view chunk,
+                  std::function<bool(SseEvent const&)> const& on_event) -> bool;
+        auto finish(this SseFrameParser& self,
+                    std::function<bool(SseEvent const&)> const& on_event) -> bool;
+    };
+
     // Parses OpenMetrics /metrics output emitted by Nexus (Batch 95C).
     [[nodiscard]] auto parse_openmetrics_summary(std::string_view text) -> MetricsSnapshot;
 
@@ -94,6 +153,18 @@ export namespace desktop {
 
     // Parses JSON emitted by GET /v1/logs.
     [[nodiscard]] auto parse_logs_json(std::string_view json) -> LogsSnapshot;
+
+    // Parses a single log entry JSON object (emitted by SSE GET /v1/logs?stream=1).
+    [[nodiscard]] auto parse_log_entry_json(std::string_view json) -> std::optional<LogEntrySnapshot>;
+
+    // Parses JSON emitted by GET /v1/rules (Wave 30-31).
+    [[nodiscard]] auto parse_rules_json(std::string_view json) -> std::vector<RuleEntrySnapshot>;
+
+    // Parses JSON emitted by GET /v1/dns/query (Wave 30-31).
+    [[nodiscard]] auto parse_dns_query_json(std::string_view json) -> DnsQueryResult;
+
+    // Parses JSON emitted by POST /v1/cache/fakeip/flush (Wave 30-31).
+    [[nodiscard]] auto parse_fakeip_flush_json(std::string_view json) -> FakeIpFlushResult;
 
     [[nodiscard]] inline auto url_encode(std::string_view input) -> std::string {
         std::string out;
@@ -201,8 +272,65 @@ export namespace desktop {
             return self.request("POST", "/v1/reload");
         }
         [[nodiscard]] auto set_log_level(this HttpControlClient const& self,
-                                         std::string_view level) -> HttpReply {
-            return self.request("POST", "/v1/log-level", std::format("{{\"level\":\"{}\"}}", json_escape(level)));
+                                         std::string_view level,
+                                         std::string_view domain = "global") -> HttpReply {
+            std::string payload = (domain.empty() || domain == "global")
+                ? std::format("{{\"level\":\"{}\"}}", json_escape(level))
+                : std::format("{{\"level\":\"{}\",\"domain\":\"{}\"}}", json_escape(level), json_escape(domain));
+            return self.request("POST", "/v1/log-level", payload);
+        }
+        [[nodiscard]] auto rules(this HttpControlClient const& self) -> HttpReply {
+            return self.request("GET", "/v1/rules");
+        }
+        [[nodiscard]] auto dns_query(this HttpControlClient const& self,
+                                     std::string_view name,
+                                     std::string_view qtype = "A",
+                                     std::string_view server = {},
+                                     std::chrono::milliseconds timeout_override = std::chrono::milliseconds{15000}) -> HttpReply {
+            std::string path = std::format("/v1/dns/query?name={}&type={}",
+                url_encode(name), url_encode(qtype.empty() ? "A" : qtype));
+            if (!server.empty()) path += std::format("&server={}", url_encode(server));
+            return self.request("GET", path, {}, timeout_override);
+        }
+        [[nodiscard]] auto flush_fakeip(this HttpControlClient const& self) -> HttpReply {
+            return self.request("POST", "/v1/cache/fakeip/flush", "{}");
+        }
+        // Opens a persistent text/event-stream SSE connection until on_event returns false, EOF, error, or stop is requested.
+        [[nodiscard]] auto stream_sse(this HttpControlClient const& self,
+                                      std::string_view path,
+                                      std::function<bool(SseEvent const&)> on_event,
+                                      std::stop_token stop = {},
+                                      std::chrono::milliseconds connect_timeout = std::chrono::milliseconds{3000},
+                                      std::chrono::milliseconds poll_interval = std::chrono::milliseconds{100},
+                                      std::function<void()> on_connected = {})
+            -> std::expected<void, std::string>;
+        [[nodiscard]] auto stream_logs_sse(this HttpControlClient const& self,
+                                           std::function<bool(SseEvent const&)> on_event,
+                                           std::stop_token stop = {},
+                                           std::string_view level = {},
+                                           std::string_view domain = {},
+                                           std::string_view search = {},
+                                           std::uint64_t since = 0,
+                                           std::function<void()> on_connected = {}) -> std::expected<void, std::string> {
+            std::string path = "/v1/logs?stream=1";
+            if (since > 0) path += std::format("&since={}", since);
+            if (!level.empty() && level != "all") path += std::format("&level={}", url_encode(level));
+            if (!domain.empty() && domain != "all") path += std::format("&domain={}", url_encode(domain));
+            if (!search.empty()) path += std::format("&search={}", url_encode(search));
+            return self.stream_sse(path, std::move(on_event), std::move(stop),
+                                   std::chrono::milliseconds{3000}, std::chrono::milliseconds{100},
+                                   std::move(on_connected));
+        }
+        [[nodiscard]] auto stream_connections_sse(this HttpControlClient const& self,
+                                                  std::function<bool(SseEvent const&)> on_event,
+                                                  std::stop_token stop = {},
+                                                  std::uint32_t interval_ms = 1000,
+                                                  std::function<void()> on_connected = {}) -> std::expected<void, std::string> {
+            auto clamped = std::clamp<std::uint32_t>(interval_ms, 250u, 10000u);
+            return self.stream_sse(std::format("/v1/connections?stream=1&interval_ms={}", clamped),
+                                   std::move(on_event), std::move(stop),
+                                   std::chrono::milliseconds{3000}, std::chrono::milliseconds{100},
+                                   std::move(on_connected));
         }
         [[nodiscard]] auto connections(this HttpControlClient const& self) -> HttpReply {
             return self.request("GET", "/v1/connections");

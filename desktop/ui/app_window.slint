@@ -1,5 +1,6 @@
 import { Palette, ScrollView } from "std-widgets.slint";
 import { OutboundGroupItem, OutboundMemberItem, LogLineItem, ActiveConnectionItem, ProfileItem } from "types.slint";
+import { ControlInspectState } from "control_inspect_state.slint";
 import { ToastState, TooltipState } from "feedback.slint";
 import { I18n } from "i18n.slint";
 import { LayoutMetrics } from "layout_metrics.slint";
@@ -19,7 +20,7 @@ import { RuleModalDialog } from "components/rule_dns_editor.slint";
 import { OutboundModalDialog } from "components/outbound_modal_dialog.slint";
 import { AboutPanel } from "components/about_panel.slint";
 
-export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState, WorkspaceState }
+export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState, WorkspaceState, ControlInspectState }
 
 export component AppWindow inherits Window {
     title: "Nexus";
@@ -49,8 +50,8 @@ export component AppWindow inherits Window {
     in-out property <string> socks-proxy-host: "127.0.0.1";
     in-out property <string> socks-proxy-port: "1080";
     in-out property <bool> http-proxy-enabled: false;
-    in-out property <string> http-proxy-host: "127.0.0.1";
-    in-out property <string> http-proxy-port: "8080";
+    in-out property <string> http-proxy-host: "0.0.0.0";
+    in-out property <string> http-proxy-port: "7891";
     in-out property <bool> tun-enabled: false;
     in-out property <string> active-profile: "";
     in-out property <string> active-node: "";
@@ -69,8 +70,10 @@ export component AppWindow inherits Window {
     in-out property <bool> active-group-auto: false;
     in-out property <int> active-group-healthy: 0;
     in-out property <int> active-group-total: 0;
+    in-out property <int> active-group-fastest-ms: -1;
     in-out property <string> member-filter: "";
     in-out property <string> member-sort: "default";
+    in-out property <bool> hide-timeout: false;
     in-out property <bool> groups-probing: false;
     in-out property <string> kdl-text: "";
     in-out property <int> kdl-line-count: 0;
@@ -83,11 +86,13 @@ export component AppWindow inherits Window {
     in-out property <[ActiveConnectionItem]> connections: [];
     in-out property <string> selected-connection-detail: "";
     in-out property <string> connection-filter: "";
+    in-out property <int> connection-route-filter: 0;
     in-out property <bool> connections-paused: false;
     in-out property <[ProfileItem]> profiles: [];
     in-out property <string> log-level: "info";
     in-out property <string> log-domain-filter: "all";
     in-out property <string> log-search: "";
+    in-out property <string> log-sev-choice: "all";
     in-out property <string> log-export-status: "";
     in-out property <bool> log-export-ok: true;
     in-out property <string> explain-result: "";
@@ -114,13 +119,13 @@ export component AppWindow inherits Window {
     in-out property <string> down-speed-value: "0.0";
     in-out property <string> down-speed-unit: "KB/s";
     in-out property <string> down-speed-peak: "0.0 KB/s";
-    in-out property <string> down-wave-area: "M 0.0 49.6 C 3.5 48.2 7.0 46.6 10.4 44.5 C 13.9 42.5 17.4 39.9 20.9 37.2 C 24.3 34.5 27.8 31.3 31.3 28.3 C 34.8 25.4 38.3 22.0 41.7 19.6 C 45.2 17.1 48.7 14.8 52.2 13.5 C 55.7 12.3 59.1 11.8 62.6 12.2 C 66.1 12.5 69.6 14.1 73.0 15.8 C 76.5 17.5 80.0 20.3 83.5 22.4 C 87.0 24.6 90.4 27.2 93.9 28.7 C 97.4 30.2 100.9 31.4 104.3 31.4 C 107.8 31.5 111.3 30.6 114.8 29.2 C 118.3 27.8 121.7 25.3 125.2 23.0 C 128.7 20.7 132.2 17.7 135.7 15.5 C 139.1 13.3 142.6 11.1 146.1 9.8 C 149.6 8.5 153.0 7.9 156.5 7.8 C 160.0 7.8 163.5 8.7 167.0 9.5 C 170.4 10.3 173.9 11.8 177.4 12.8 C 180.9 13.8 184.3 14.8 187.8 15.3 C 191.3 15.8 194.8 15.9 198.3 15.8 C 201.7 15.7 205.2 15.1 208.7 14.8 C 212.2 14.6 215.7 14.2 219.1 14.0 C 222.6 13.9 226.1 13.9 229.6 13.9 C 233.0 14.0 236.5 14.4 240.0 14.4 L 240.0 84.0 L 0.0 84.0 Z";
-    in-out property <string> down-wave-line: "M 0.0 49.6 C 3.5 48.2 7.0 46.6 10.4 44.5 C 13.9 42.5 17.4 39.9 20.9 37.2 C 24.3 34.5 27.8 31.3 31.3 28.3 C 34.8 25.4 38.3 22.0 41.7 19.6 C 45.2 17.1 48.7 14.8 52.2 13.5 C 55.7 12.3 59.1 11.8 62.6 12.2 C 66.1 12.5 69.6 14.1 73.0 15.8 C 76.5 17.5 80.0 20.3 83.5 22.4 C 87.0 24.6 90.4 27.2 93.9 28.7 C 97.4 30.2 100.9 31.4 104.3 31.4 C 107.8 31.5 111.3 30.6 114.8 29.2 C 118.3 27.8 121.7 25.3 125.2 23.0 C 128.7 20.7 132.2 17.7 135.7 15.5 C 139.1 13.3 142.6 11.1 146.1 9.8 C 149.6 8.5 153.0 7.9 156.5 7.8 C 160.0 7.8 163.5 8.7 167.0 9.5 C 170.4 10.3 173.9 11.8 177.4 12.8 C 180.9 13.8 184.3 14.8 187.8 15.3 C 191.3 15.8 194.8 15.9 198.3 15.8 C 201.7 15.7 205.2 15.1 208.7 14.8 C 212.2 14.6 215.7 14.2 219.1 14.0 C 222.6 13.9 226.1 13.9 229.6 13.9 C 233.0 14.0 236.5 14.4 240.0 14.4";
+    in-out property <string> down-wave-area: "";
+    in-out property <string> down-wave-line: "";
     in-out property <string> up-speed-value: "0.0";
     in-out property <string> up-speed-unit: "KB/s";
     in-out property <string> up-speed-peak: "0.0 KB/s";
-    in-out property <string> up-wave-area: "M 0.0 55.8 C 3.5 55.9 7.0 56.3 10.4 56.7 C 13.9 57.0 17.4 57.8 20.9 57.8 C 24.3 57.9 27.8 58.0 31.3 56.9 C 34.8 55.8 38.3 54.1 41.7 51.3 C 45.2 48.6 48.7 44.6 52.2 40.4 C 55.7 36.3 59.1 30.8 62.6 26.4 C 66.1 22.0 69.6 17.0 73.0 14.0 C 76.5 11.0 80.0 8.7 83.5 8.3 C 87.0 7.8 90.4 9.2 93.9 11.1 C 97.4 13.0 100.9 16.9 104.3 19.7 C 107.8 22.5 111.3 26.1 114.8 27.8 C 118.3 29.6 121.7 30.5 125.2 30.0 C 128.7 29.6 132.2 27.3 135.7 25.2 C 139.1 23.1 142.6 19.5 146.1 17.5 C 149.6 15.5 153.0 13.5 156.5 13.3 C 160.0 13.1 163.5 14.3 167.0 16.4 C 170.4 18.5 173.9 22.4 177.4 25.7 C 180.9 29.1 184.3 33.4 187.8 36.5 C 191.3 39.5 194.8 42.3 198.3 44.0 C 201.7 45.6 205.2 46.3 208.7 46.6 C 212.2 46.9 215.7 46.3 219.1 45.9 C 222.6 45.5 226.1 44.8 229.6 44.3 C 233.0 43.9 236.5 43.3 240.0 43.3 L 240.0 84.0 L 0.0 84.0 Z";
-    in-out property <string> up-wave-line: "M 0.0 55.8 C 3.5 55.9 7.0 56.3 10.4 56.7 C 13.9 57.0 17.4 57.8 20.9 57.8 C 24.3 57.9 27.8 58.0 31.3 56.9 C 34.8 55.8 38.3 54.1 41.7 51.3 C 45.2 48.6 48.7 44.6 52.2 40.4 C 55.7 36.3 59.1 30.8 62.6 26.4 C 66.1 22.0 69.6 17.0 73.0 14.0 C 76.5 11.0 80.0 8.7 83.5 8.3 C 87.0 7.8 90.4 9.2 93.9 11.1 C 97.4 13.0 100.9 16.9 104.3 19.7 C 107.8 22.5 111.3 26.1 114.8 27.8 C 118.3 29.6 121.7 30.5 125.2 30.0 C 128.7 29.6 132.2 27.3 135.7 25.2 C 139.1 23.1 142.6 19.5 146.1 17.5 C 149.6 15.5 153.0 13.5 156.5 13.3 C 160.0 13.1 163.5 14.3 167.0 16.4 C 170.4 18.5 173.9 22.4 177.4 25.7 C 180.9 29.1 184.3 33.4 187.8 36.5 C 191.3 39.5 194.8 42.3 198.3 44.0 C 201.7 45.6 205.2 46.3 208.7 46.6 C 212.2 46.9 215.7 46.3 219.1 45.9 C 222.6 45.5 226.1 44.8 229.6 44.3 C 233.0 43.9 236.5 43.3 240.0 43.3";
+    in-out property <string> up-wave-area: "";
+    in-out property <string> up-wave-line: "";
     in-out property <bool> dash-editing: false;
     in-out property <bool> dash-show-speed: true; in-out property <bool> dash-show-quick-nodes: true;
     in-out property <bool> dash-show-network: true; in-out property <bool> dash-show-memory: true;
@@ -141,13 +146,16 @@ export component AppWindow inherits Window {
     callback reorder-dash-section(int, int); callback reorder-dash-info(int, int);
     callback swap-dash-deck(); callback reset-dash-layout();
     callback choose-group(string); callback filter-members(string); callback sort-members(string);
+    callback hide-timeout-changed(bool);
     callback toggle-pin-member(string, string); callback select-member(string, string);
     callback reset-group-auto(string); callback probe-group(string); callback refresh-groups();
-    callback refresh-connections(); callback inspect-connection(string); callback close-connection(string);
+    callback refresh-connections(); callback filter-connections(string); callback route-filter-changed(int);
+    callback inspect-connection(string); callback close-connection(string);
     callback close-all-connections(); callback create-rule-from-connection(string, int, string, string, string);
     callback activate-profile(string); callback refresh-profiles();
     callback save-and-reload(string); callback open-external-editor();
     callback reload-config-from-disk(); callback import-share-link(string); callback apply-log-level(string);
+    callback log-sev-filter-changed(string); callback filter-logs-search(string);
     callback refresh-logs(); callback export-logs(); callback clear-logs();
     callback run-rule-explain(string, string, string, string); callback append-route-rule-kdl(string);
     callback append-dns-rule-kdl(string); callback append-raw-kdl(string); callback quit-requested();
@@ -369,9 +377,12 @@ export component AppWindow inherits Window {
                             groups: root.groups; members: root.members; selected-group: root.selected-group;
                             active-group-mode: root.active-group-mode; active-group-auto: root.active-group-auto;
                             active-group-node: root.active-node; active-group-latency-ms: root.active-node-latency-ms;
+                            active-group-fastest-ms: root.active-group-fastest-ms;
                             active-group-healthy: root.active-group-healthy; active-group-total: root.active-group-total;
-                            member-filter <=> root.member-filter; member-sort <=> root.member-sort; probing: root.groups-probing;
+                            member-filter <=> root.member-filter; member-sort <=> root.member-sort;
+                            hide-timeout <=> root.hide-timeout; probing: root.groups-probing;
                             choose-group(tag) => { root.choose-group(tag); } filter-members(q) => { root.filter-members(q); } sort-members(mode) => { root.sort-members(mode); }
+                            hide-timeout-changed(h) => { root.hide-timeout-changed(h); }
                             toggle-pin-member(g, m) => { root.toggle-pin-member(g, m); } select-member(g, m) => { root.select-member(g, m); }
                             reset-group-auto(g) => { root.reset-group-auto(g); } probe-group(g) => { root.probe-group(g); } refresh-groups => { root.refresh-groups(); }
                             open-add-outbound => { root.rule-modal-open = false; root.outbound-modal-open = true; }
@@ -382,11 +393,14 @@ export component AppWindow inherits Window {
                             window-width: root.width;
                             vertical-stretch: 1;
                             connections: root.connections; filter-text <=> root.connection-filter;
+                            route-filter <=> root.connection-route-filter;
                             selected-detail <=> root.selected-connection-detail; paused <=> root.connections-paused;
                             default-proxy-outbound: root.selected-group != "" ? root.selected-group : "proxy";
                             download-rate: root.download-rate; upload-rate: root.upload-rate;
                             download-total: root.download-total; upload-total: root.upload-total;
                             refresh-connections => { root.refresh-connections(); }
+                            filter-changed(q) => { root.filter-connections(q); }
+                            route-filter-changed(rf) => { root.route-filter-changed(rf); }
                             inspect-connection(id) => { root.inspect-connection(id); }
                             close-connection(id) => { root.close-connection(id); }
                             close-all-connections => { root.close-all-connections(); }
@@ -408,8 +422,12 @@ export component AppWindow inherits Window {
 
                         if active-tab == 4 : LogsPanel {
                             vertical-stretch: 1; logs: root.logs; log-level <=> root.log-level; domain-filter <=> root.log-domain-filter;
-                            search-text <=> root.log-search; export-status: root.log-export-status; export-ok: root.log-export-ok;
-                            apply-log-level(lvl) => { root.apply-log-level(lvl); } refresh-logs => { root.refresh-logs(); }
+                            search-text <=> root.log-search; sev-choice <=> root.log-sev-choice;
+                            export-status: root.log-export-status; export-ok: root.log-export-ok;
+                            apply-log-level(lvl) => { root.apply-log-level(lvl); }
+                            sev-filter-changed(sev) => { root.log-sev-filter-changed(sev); }
+                            search-changed(q) => { root.filter-logs-search(q); }
+                            refresh-logs => { root.refresh-logs(); }
                             export-logs => { root.export-logs(); } clear-logs => { root.clear-logs(); }
                         }
 

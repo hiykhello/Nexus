@@ -1,0 +1,153 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+import { WorkspaceSyncCard, WorkspaceUdpProbeCard } from "workspace_sync_cards.slint";
+
+component HostActionButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <bool> primary: false;
+    callback clicked();
+    horizontal-stretch: 0;
+    height: 30px;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: root.primary ? Theme.pill-active-top.brighter(0.20) : ta.has-hover ? Theme.selected-border : Theme.card-border;
+    background: root.primary
+        ? (ta.pressed
+            ? @linear-gradient(135deg, Theme.pill-active-bot 0%, Theme.pill-active-bot.darker(0.14) 100%)
+            : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
+        : ta.pressed ? Theme.nav-active-bg : ta.has-hover ? Theme.row-hover-bg : Theme.row-bg;
+    transform-scale: ta.pressed ? 0.96 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    HorizontalLayout {
+        padding-left: 10px; padding-right: 12px; spacing: 6px;
+        Image {
+            width: 13px; height: 13px; y: (parent.height - self.height) / 2;
+            source: root.icon;
+            colorize: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+        }
+        Text {
+            text: root.label; font-size: 12px; font-weight: 600;
+            color: root.primary ? Theme.pill-active-fg : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component WorkspaceHostPortableView inherits VerticalLayout {
+    in property <length> grid-w: 600px;
+    spacing: Theme.space-sm;
+
+    // Isolated Layer 3 Desktop Host Card (responsive 3-row layout — zero overflow at 780px Compact)
+    Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Text {
+                    horizontal-stretch: 1; min-width: 0px;
+                    text: I18n.t("本机宿主适配 (SQLite nexus-client.db · 永不同步)", "Desktop Host Adapter (SQLite nexus-client.db · Local Only)");
+                    font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; overflow: elide;
+                }
+                HostActionButton { icon: @image-url("../icons/check.svg"); label: I18n.t("保存宿主设置", "Save Host"); primary: true; clicked => { WorkspaceState.apply-host-config(); } }
+            }
+
+            // Row 1: Mixed inbound + listen endpoint
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: I18n.t("混合入站", "Mixed"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusSwitch {
+                    checked <=> WorkspaceState.host-enable-mixed;
+                    enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route);
+                }
+                NexusInput { horizontal-stretch: 1; preferred-width: 0px; min-width: 120px; mono: true; text <=> WorkspaceState.host-mixed-listen; placeholder-text: "127.0.0.1:7890"; }
+            }
+
+            // Row 2: TUN inbound + MTU + Strict Route
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "TUN"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusSwitch {
+                    checked <=> WorkspaceState.host-enable-tun;
+                    toggled => {
+                        if (WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route) {
+                            WorkspaceState.host-enable-mixed = false;
+                        }
+                        WorkspaceState.apply-host-config();
+                    }
+                }
+                Text { text: "MTU"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { width: 72px; mono: true; text <=> WorkspaceState.host-tun-mtu; placeholder-text: "1400"; }
+                Rectangle { horizontal-stretch: 1; }
+                NexusSwitch {
+                    text: I18n.t("严格路由 (strict-route)", "Strict Route");
+                    checked <=> WorkspaceState.host-tun-strict-route;
+                    toggled => {
+                        if (WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route) {
+                            WorkspaceState.host-enable-mixed = false;
+                        }
+                        WorkspaceState.apply-host-config();
+                    }
+                }
+            }
+
+            // Row 3: Wave 27 Dynamic Workers Controls (workers / workers_spec / workers_max)
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: I18n.t("工作线程", "Workers"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { width: 58px; mono: true; text <=> WorkspaceState.host-workers; placeholder-text: "1"; }
+                Text { text: I18n.t("动态策略", "Spec"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { horizontal-stretch: 1; preferred-width: 0px; min-width: 84px; mono: true; text <=> WorkspaceState.host-workers-spec; placeholder-text: "auto / max / max-2"; }
+                Text { text: I18n.t("上限", "Max"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                NexusInput { width: 58px; mono: true; text <=> WorkspaceState.host-workers-max; placeholder-text: "0"; }
+            }
+
+            if WorkspaceState.host-strict-route-notice != "" : Rectangle {
+                border-radius: 10px; border-width: 1px; border-color: Theme.warn-border; background: Theme.warn-bg;
+                HorizontalLayout {
+                    padding: 8px;
+                    Text { text: WorkspaceState.host-strict-route-notice; font-size: 11px; font-weight: 600; color: Theme.warn-fg; wrap: word-wrap; }
+                }
+            }
+        }
+    }
+
+    // Portable Layer 1 Workspace Export / Import Card
+    Rectangle {
+        width: root.grid-w; border-radius: 16px; border-width: 1px;
+        border-color: Theme.card-border; background: Theme.card-surface;
+        GlassSpeculum { corner-inset: 14px; }
+        VerticalLayout {
+            padding: 12px; spacing: 8px;
+            Text { text: I18n.t("便携工作区交换 (workspace.json)", "Portable Workspace Exchange (workspace.json)"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
+            Text { text: I18n.t("仅含节点、策略组、代理链、订阅、路由与 DNS；自动剥离本机端口、系统代理与测速遥测。", "Contains only Profiles, Subscriptions, Routing & DNS; automatically strips host ports, OS proxy & telemetry."); font-size: 11px; color: Theme.text-muted; wrap: word-wrap; }
+            FlexboxLayout {
+                spacing: 8px;
+                HostActionButton { icon: @image-url("../icons/external-link.svg"); label: I18n.t("导出 workspace.json", "Export Workspace"); primary: true; clicked => { WorkspaceState.export-portable-workspace(); } }
+                HostActionButton { icon: @image-url("../icons/download.svg"); label: I18n.t("导入 workspace.json", "Import Workspace"); clicked => { WorkspaceState.import-portable-workspace(); } }
+            }
+            if WorkspaceState.portable-status != "" : Text {
+                text: WorkspaceState.portable-status; font-size: 11px; font-family: Theme.mono-font;
+                color: WorkspaceState.portable-status-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
+            }
+        }
+    }
+
+    WorkspaceSyncCard { grid-w: root.grid-w; }
+    WorkspaceUdpProbeCard { grid-w: root.grid-w; }
+}

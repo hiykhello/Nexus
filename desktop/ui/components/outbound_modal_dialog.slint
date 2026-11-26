@@ -13,7 +13,7 @@ export component OutboundModalDialog inherits Rectangle {
     callback close-requested();
     callback append-raw-kdl(string);
 
-    background: Theme.dark ? #00000094 : #0f172a5e;
+    background: Theme.modal-backdrop;
 
     TouchArea {
         clicked => { root.close-requested(); }
@@ -27,11 +27,11 @@ export component OutboundModalDialog inherits Rectangle {
         y: (parent.height - self.height) / 2;
         border-radius: 20px;
         border-width: 1px;
-        border-color: Theme.dark ? Theme.hairline-strong : #0f172a26;
+        border-color: Theme.modal-border;
         background: Theme.overlay-bg;
         drop-shadow-blur: 36px;
         drop-shadow-offset-y: 12px;
-        drop-shadow-color: Theme.dark ? #00000080 : #0f172a30;
+        drop-shadow-color: Theme.modal-shadow;
         clip: true;
 
         // Absorb clicks inside modal sheet so backdrop does not dismiss

@@ -164,8 +164,13 @@ namespace desktop_ui_helpers {
         item.node.tls.reality_public_key = parsed.reality_public_key;
         item.node.tls.reality_short_id = parsed.reality_short_id;
         item.node.transport.type = normalize_node_transport_type(parsed.transport);
-        item.node.transport.path = parsed.path;
-        item.node.transport.host = parsed.host_header;
+        if (item.node.transport.type == "grpc") {
+            item.node.transport.service_name = parsed.path;
+            item.node.transport.authority = parsed.host_header;
+        } else {
+            item.node.transport.path = parsed.path;
+            item.node.transport.host = parsed.host_header;
+        }
         item.node.transport.xhttp_mode = parsed.xhttp_mode;
         item.node.extra.tuic_congestion_control = parsed.congestion_control;
         item.node.extra.naive_protocol = parsed.protocol;

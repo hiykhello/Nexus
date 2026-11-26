@@ -12,6 +12,14 @@ export component NexusSelect inherits Rectangle {
     in property <bool> enabled: true;
     callback selected(string);
 
+    private property <int> highlight-idx: 0;
+
+    function open-popup() {
+        if (!root.enabled || root.options.length == 0) { return; }
+        root.highlight-idx = 0;
+        popup.show();
+    }
+
     pure function display-opt(v: string) -> string {
         (root.all-label != "" && v == "all") ? root.all-label : v
     }
@@ -33,16 +41,14 @@ export component NexusSelect inherits Rectangle {
     accessible-role: combobox;
     accessible-label: root.prefix != "" ? root.prefix + " " + root.display-opt(root.current-value) : root.display-opt(root.current-value);
     accessible-action-default => {
-        if (root.enabled) {
-            popup.show();
-        }
+        root.open-popup();
     }
 
     sel-ta := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
         clicked => {
-            popup.show();
+            root.open-popup();
         }
     }
 
@@ -86,72 +92,101 @@ export component NexusSelect inherits Rectangle {
         y: root.height + 4px;
         width: max(root.width, 136px);
         close-policy: PopupClosePolicy.close-on-click-outside;
+        forward-focus: popup-focus;
 
-        Rectangle {
+        popup-focus := FocusScope {
             width: 100%;
             height: min(260px, list-col.preferred-height);
-            border-radius: Theme.radius-md;
-            border-width: 1px;
-            border-color: Theme.dark ? Theme.hairline-strong : #0f172a28;
-            background: Theme.overlay-bg;
-            drop-shadow-blur: 18px;
-            drop-shadow-offset-y: 6px;
-            drop-shadow-color: Theme.dark ? #00000078 : #0f172a24;
-            clip: true;
+            init => { self.focus(); }
+            key-pressed(ev) => {
+                if (ev.text == Key.Escape) {
+                    popup.close();
+                    return accept;
+                }
+                if (ev.text == Key.DownArrow && root.options.length > 0) {
+                    root.highlight-idx = Math.mod(root.highlight-idx + 1, root.options.length);
+                    return accept;
+                }
+                if (ev.text == Key.UpArrow && root.options.length > 0) {
+                    root.highlight-idx = Math.mod(root.highlight-idx - 1 + root.options.length, root.options.length);
+                    return accept;
+                }
+                if ((ev.text == Key.Return || ev.text == " ") && root.highlight-idx >= 0 && root.highlight-idx < root.options.length) {
+                    let chosen = root.options[root.highlight-idx];
+                    root.current-value = chosen;
+                    root.selected(chosen);
+                    popup.close();
+                    return accept;
+                }
+                reject
+            }
 
-            GlassSpeculum {}
+            Rectangle {
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.popup-border;
+                background: Theme.overlay-bg;
+                drop-shadow-blur: 18px;
+                drop-shadow-offset-y: 6px;
+                drop-shadow-color: Theme.popup-shadow;
+                clip: true;
 
-            Flickable {
-                width: 100%;
-                height: 100%;
-                content-height: list-col.preferred-height;
+                GlassSpeculum {}
 
-                list-col := VerticalLayout {
-                    width: parent.width;
-                    padding: 4px;
-                    spacing: 2px;
+                Flickable {
+                    width: 100%;
+                    height: 100%;
+                    content-height: list-col.preferred-height;
 
-                    for opt in root.options : Rectangle {
-                        property <bool> is-current: opt == root.current-value;
-                        height: 28px;
-                        border-radius: Theme.radius-sm;
-                        background:
-                            is-current ? Theme.selected-bg
-                            : item-ta.has-hover ? Theme.row-hover-bg
-                            : transparent;
+                    list-col := VerticalLayout {
+                        width: parent.width;
+                        padding: 4px;
+                        spacing: 2px;
 
-                        item-ta := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                root.current-value = opt;
-                                root.selected(opt);
-                                popup.close();
+                        for opt[idx] in root.options : Rectangle {
+                            property <bool> is-current: opt == root.current-value;
+                            property <bool> is-highlighted: idx == root.highlight-idx && popup-focus.has-focus;
+                            height: 28px;
+                            border-radius: Theme.radius-sm;
+                            background:
+                                is-current ? Theme.selected-bg
+                                : (item-ta.has-hover || is-highlighted) ? Theme.row-hover-bg
+                                : transparent;
+
+                            item-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                moved => { root.highlight-idx = idx; }
+                                clicked => {
+                                    root.current-value = opt;
+                                    root.selected(opt);
+                                    popup.close();
+                                }
                             }
-                        }
 
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            spacing: 6px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 6px;
 
-                            Text {
-                                horizontal-stretch: 1;
-                                min-width: 0px;
-                                text: root.display-opt(opt);
-                                font-size: 12px;
-                                font-weight: is-current ? 700 : 500;
-                                font-family: root.mono ? Theme.mono-font : "";
-                                color: is-current ? Theme.nav-active-fg : Theme.text-primary;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    min-width: 0px;
+                                    text: root.display-opt(opt);
+                                    font-size: 12px;
+                                    font-weight: is-current ? 700 : 500;
+                                    font-family: root.mono ? Theme.mono-font : "";
+                                    color: is-current ? Theme.nav-active-fg : Theme.text-primary;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
 
-                            if is-current : Image {
-                                width: 12px;
-                                height: 12px;
-                                y: (parent.height - self.height) / 2;
-                                source: @image-url("../icons/check.svg");
-                                colorize: Theme.accent;
+                                if is-current : Image {
+                                    width: 12px;
+                                    height: 12px;
+                                    y: (parent.height - self.height) / 2;
+                                    source: @image-url("../icons/check.svg");
+                                    colorize: Theme.accent;
+                                }
                             }
                         }
                     }

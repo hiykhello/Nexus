@@ -14,6 +14,9 @@ namespace desktop::ws_codec {
             {"reality_short_id", t.reality_short_id},
             {"ech_mode", t.ech_mode},
             {"ech_config", t.ech_config},
+            {"ech_query_server_name", t.ech_query_server_name},
+            {"fragment", t.fragment},
+            {"record_fragment", t.record_fragment},
         };
     }
 
@@ -29,6 +32,9 @@ namespace desktop::ws_codec {
             json_get_string(o, "reality_short_id"),
             json_get_string(o, "ech_mode"),
             json_get_string(o, "ech_config"),
+            json_get_string(o, "ech_query_server_name"),
+            json_get_bool(o, "fragment", false),
+            json_get_bool(o, "record_fragment", false),
         };
     }
 
@@ -42,6 +48,11 @@ namespace desktop::ws_codec {
             {"xhttp_mode", tr.xhttp_mode},
             {"xhttp_protocol", tr.xhttp_protocol},
             {"headers", json_from_string_map(tr.headers)},
+            {"max_early_data", tr.max_early_data},
+            {"early_data_header_name", tr.early_data_header_name},
+            {"grpc_idle_timeout_ms", tr.grpc_idle_timeout_ms},
+            {"grpc_ping_timeout_ms", tr.grpc_ping_timeout_ms},
+            {"grpc_permit_without_stream", tr.grpc_permit_without_stream},
         };
     }
 
@@ -66,6 +77,11 @@ namespace desktop::ws_codec {
             json_get_string(o, "xhttp_mode"),
             json_get_string(o, "xhttp_protocol"),
             json_get_string_map(o, "headers"),
+            json_get_i64(o, "max_early_data", 0),
+            json_get_string(o, "early_data_header_name"),
+            json_get_i64(o, "grpc_idle_timeout_ms", 0),
+            json_get_i64(o, "grpc_ping_timeout_ms", 0),
+            json_get_bool(o, "grpc_permit_without_stream", false),
         };
     }
 
@@ -135,6 +151,7 @@ namespace desktop::ws_codec {
                 {"enabled", n.multiplex.enabled},
                 {"protocol", n.multiplex.protocol},
                 {"max_connections", n.multiplex.max_connections},
+                {"min_streams", n.multiplex.min_streams},
                 {"padding", n.multiplex.padding},
             }},
             {"extra", extra_to_json(n.extra)},
@@ -156,7 +173,8 @@ namespace desktop::ws_codec {
         if (auto const* v = json_find(o, "multiplex"); v && v->is_object()) {
             auto const& m = std::get<JsonObject>(v->data);
             n.multiplex = {json_get_bool(m, "enabled"), json_get_string(m, "protocol"),
-                           json_get_i64(m, "max_connections"), json_get_bool(m, "padding")};
+                           json_get_i64(m, "max_connections"), json_get_i64(m, "min_streams"),
+                           json_get_bool(m, "padding")};
         }
         if (auto const* v = json_find(o, "extra"); v && v->is_object()) n.extra = extra_from_json(std::get<JsonObject>(v->data));
         return n;
@@ -180,6 +198,7 @@ namespace desktop::ws_codec {
                 {"probe_url", p.policy_group.probe_url},
                 {"probe_interval_ms", p.policy_group.probe_interval_ms},
                 {"tolerance_ms", p.policy_group.tolerance_ms},
+                {"interrupt_exist_connections", p.policy_group.interrupt_exist_connections},
             }},
             {"proxy_chain", JsonObject{{"hop_ids", json_from_string_vec(p.proxy_chain.hop_ids)}}},
             {"full_custom_kdl", p.full_custom_kdl},
@@ -206,6 +225,7 @@ namespace desktop::ws_codec {
                 json_get_string(g, "probe_url", "https://www.gstatic.com/generate_204"),
                 json_get_i64(g, "probe_interval_ms", 300000),
                 json_get_i64(g, "tolerance_ms", 100),
+                json_get_bool(g, "interrupt_exist_connections", false),
             };
         }
         if (auto const* v = json_find(o, "proxy_chain"); v && v->is_object()) {
@@ -286,6 +306,7 @@ namespace desktop::ws_codec {
         return JsonObject{
             {"id", rp.id}, {"name", rp.name}, {"is_active", rp.is_active},
             {"domain_strategy", rp.domain_strategy}, {"default_outbound", rp.default_outbound},
+            {"auto_detect_interface", rp.auto_detect_interface}, {"find_process", rp.find_process},
             {"rules", JsonValue(std::move(rules))},
         };
     }
@@ -297,6 +318,8 @@ namespace desktop::ws_codec {
         rp.is_active = json_get_bool(o, "is_active");
         rp.domain_strategy = json_get_string(o, "domain_strategy", "as-is");
         rp.default_outbound = json_get_string(o, "default_outbound", "proxy");
+        rp.auto_detect_interface = json_get_bool(o, "auto_detect_interface", false);
+        rp.find_process = json_get_bool(o, "find_process", false);
         if (auto const* arr = json_find(o, "rules"); arr && arr->is_array()) {
             for (auto const& elem : std::get<JsonArray>(arr->data)) {
                 if (!elem.is_object()) continue;

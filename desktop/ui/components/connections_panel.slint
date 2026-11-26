@@ -21,7 +21,7 @@ export component ConnectionsPanel inherits VerticalLayout {
     in property <string> download-total: "0 B";
     in property <string> upload-total: "0 B";
 
-    private property <int> route-filter: 0; // 0: All | 1: Proxy | 2: Direct
+    in-out property <int> route-filter: 0; // 0: All | 1: Proxy | 2: Direct
     private property <string> selected-id: "";
     private property <string> selected-proto: "";
     private property <string> selected-target: "";
@@ -42,6 +42,8 @@ export component ConnectionsPanel inherits VerticalLayout {
     property <bool> show-rule-col: !root.is-compact && (!root.show-detail || root.is-wide);
 
     callback refresh-connections();
+    callback filter-changed(string);
+    callback route-filter-changed(int);
     callback inspect-connection(string);
     callback close-connection(string);
     callback close-all-connections();
@@ -49,9 +51,18 @@ export component ConnectionsPanel inherits VerticalLayout {
     callback create-rule-from-connection(string, int, string, string, string);
 
     function clear-selection() {
-        root.selected-id = "";
-        root.selected-detail = "";
-        root.inspect-connection("");
+        root.selected-id = ""; root.selected-detail = ""; root.inspect-connection("");
+    }
+
+    function select-connection-row(c: ActiveConnectionItem, p-label: string, host: string) {
+        if (root.selected-id != c.id) { root.selected-detail = ""; }
+        root.selected-id = c.id; root.selected-proto = p-label; root.selected-target = host;
+        root.selected-inbound = c.inbound; root.selected-outbound = c.outbound != "" ? c.outbound : c.path;
+        root.selected-rule = c.route-rule; root.selected-process = c.process-path; root.selected-source = c.source;
+        root.selected-duration = c.duration-text; root.selected-port = c.destination-port;
+        root.selected-up-text = c.upload-text; root.selected-down-text = c.download-text;
+        root.selected-up-ratio = c.up-ratio; root.selected-has-traffic = c.has-traffic;
+        root.inspect-connection(c.id);
     }
 
     spacing: Theme.space-md;
@@ -77,7 +88,8 @@ export component ConnectionsPanel inherits VerticalLayout {
             search-icon: true;
             text <=> root.filter-text;
             placeholder-text: I18n.t("搜索域名、IP、进程或规则...", "Search host, IP, app or rule...");
-            accepted => { root.refresh-connections(); }
+            edited(q) => { root.filter-changed(q); }
+            accepted => { root.filter-changed(root.filter-text); }
         }
 
         SlidingSegmentBar {
@@ -86,7 +98,10 @@ export component ConnectionsPanel inherits VerticalLayout {
             bar-height: 32px;
             options: [I18n.t("全部", "All"), I18n.t("代理", "Proxy"), I18n.t("直连", "Direct")];
             current-index: root.route-filter;
-            selected(idx) => { root.route-filter = idx; }
+            selected(idx) => {
+                root.route-filter = idx;
+                root.route-filter-changed(idx);
+            }
         }
 
         // Pause-Refresh capsule preventing row jumping while inspecting
@@ -100,6 +115,12 @@ export component ConnectionsPanel inherits VerticalLayout {
             transform-scale: pause-ta.pressed ? 0.96 : 1.0;
             animate background { duration: Motion.fast; }
             animate transform-scale { duration: Motion.micro; }
+            accessible-role: button;
+            accessible-label: root.paused ? I18n.t("已暂停", "Paused") : I18n.t("暂停", "Pause");
+            accessible-action-default => {
+                root.paused = !root.paused;
+                if (!root.paused) { root.refresh-connections(); }
+            }
             pause-ta := TouchArea {
                 mouse-cursor: pointer;
                 clicked => {
@@ -262,7 +283,6 @@ export component ConnectionsPanel inherits VerticalLayout {
                         vertical-stretch: 1;
                         for conn[idx] in root.connections : Rectangle {
                             property <bool> is-direct: conn.outbound == "direct";
-                            property <bool> visible-row: root.route-filter == 0 || (root.route-filter == 1 && !is-direct) || (root.route-filter == 2 && is-direct);
                             property <bool> is-selected: root.disp-id != "" && root.disp-id == conn.id;
                             property <bool> is-udp: conn.protocol == "udp/quic" || conn.protocol == "udp";
                             property <bool> is-tls: conn.protocol == "tcp/tls";
@@ -277,8 +297,7 @@ export component ConnectionsPanel inherits VerticalLayout {
                                 : conn.destination-port > 0 ? "\{conn.path}:\{conn.destination-port}" : conn.path;
 
                             width: lv.visible-width;
-                            height: visible-row ? 52px : 0px;
-                            visible: visible-row;
+                            height: 52px;
                             clip: true;
                             background:
                                 is-selected ? Theme.selected-bg
@@ -286,129 +305,134 @@ export component ConnectionsPanel inherits VerticalLayout {
                                 : Math.mod(idx, 2) == 0 ? Theme.row-bg : Theme.row-alt-bg;
                             animate background { duration: Motion.micro; }
 
-                            conn-ta := TouchArea {
-                                enabled: visible-row;
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    if (is-selected) {
-                                        root.clear-selection();
-                                    } else {
-                                        if (root.selected-id != conn.id) { root.selected-detail = ""; }
-                                        root.selected-id = conn.id;
-                                        root.selected-proto = proto-label;
-                                        root.selected-target = display-host;
-                                        root.selected-inbound = conn.inbound;
-                                        root.selected-outbound = conn.outbound != "" ? conn.outbound : conn.path;
-                                        root.selected-rule = conn.route-rule;
-                                        root.selected-process = conn.process-path;
-                                        root.selected-source = conn.source;
-                                        root.selected-duration = conn.duration-text;
-                                        root.selected-port = conn.destination-port;
-                                        root.selected-up-text = conn.upload-text;
-                                        root.selected-down-text = conn.download-text;
-                                        root.selected-up-ratio = conn.up-ratio;
-                                        root.selected-has-traffic = conn.has-traffic;
-                                        lv.ensure-row-visible(idx, Motion.reduced ? ScrollBehavior.instant : ScrollBehavior.smooth);
-                                        root.inspect-connection(conn.id);
+                            ContextMenuArea {
+                                Menu {
+                                    MenuItem {
+                                        title: I18n.t("查看连接详情", "Inspect Connection");
+                                        activated => { root.select-connection-row(conn, proto-label, display-host); }
+                                    }
+                                    MenuItem {
+                                        title: I18n.t("为此目标创建代理规则", "Create Rule (Proxy)");
+                                        activated => { root.create-rule-from-connection(display-host, conn.destination-port, proto-label, root.default-proxy-outbound, "route"); }
+                                    }
+                                    MenuItem {
+                                        title: I18n.t("为此目标创建直连规则", "Create Rule (Direct)");
+                                        activated => { root.create-rule-from-connection(display-host, conn.destination-port, proto-label, "direct", "direct"); }
+                                    }
+                                    MenuItem {
+                                        title: I18n.t("断开此连接", "Close Connection");
+                                        activated => { if (is-selected) { root.clear-selection(); } root.close-connection(conn.id); }
                                     }
                                 }
-                            }
 
-                            if visible-row && is-selected : Rectangle {
-                                x: 0px; y: 6px; width: 3px; height: parent.height - 12px;
-                                border-radius: 1.5px; background: Theme.accent;
-                            }
+                                conn-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if (is-selected) {
+                                            root.clear-selection();
+                                        } else {
+                                            lv.ensure-row-visible(idx, Motion.reduced ? ScrollBehavior.instant : ScrollBehavior.smooth);
+                                            root.select-connection-row(conn, proto-label, display-host);
+                                        }
+                                    }
+                                }
 
-                            if visible-row : HorizontalLayout {
-                                padding-left: 14px;
-                                padding-right: 12px;
-                                spacing: 8px;
+                                if is-selected : Rectangle {
+                                    x: 0px; y: 6px; width: 3px; height: parent.height - 12px;
+                                    border-radius: 1.5px; background: Theme.accent;
+                                }
 
-                                // Col 1: Protocol pill
-                                Rectangle {
-                                    width: 52px;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 12px;
+                                    spacing: 8px;
+
+                                    // Col 1: Protocol pill
                                     Rectangle {
-                                        x: 0px; y: (parent.height - self.height) / 2;
-                                        width: 46px; height: 22px; border-radius: 11px;
-                                        background: is-udp ? Theme.proto-quic-bg : is-tls ? Theme.proto-tls-bg : Theme.proto-direct-bg;
+                                        width: 52px;
+                                        Rectangle {
+                                            x: 0px; y: (parent.height - self.height) / 2;
+                                            width: 46px; height: 22px; border-radius: 11px;
+                                            background: is-udp ? Theme.proto-quic-bg : is-tls ? Theme.proto-tls-bg : Theme.proto-direct-bg;
+                                            Text {
+                                                width: 100%; height: 100%;
+                                                text: proto-label; font-size: 10px; font-weight: 800; font-family: Theme.mono-font;
+                                                color: is-udp ? Theme.proto-quic-fg : is-tls ? Theme.proto-tls-fg : Theme.proto-direct-fg;
+                                                horizontal-alignment: center; vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    // Col 2: Target host + subtle #id / process caption
+                                    VerticalLayout {
+                                        horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 2px;
                                         Text {
-                                            width: 100%; height: 100%;
-                                            text: proto-label; font-size: 10px; font-weight: 800; font-family: Theme.mono-font;
-                                            color: is-udp ? Theme.proto-quic-fg : is-tls ? Theme.proto-tls-fg : Theme.proto-direct-fg;
-                                            horizontal-alignment: center; vertical-alignment: center;
+                                            text: display-host; font-size: 13px; font-weight: is-selected ? 700 : 600;
+                                            color: Theme.text-primary; overflow: elide;
+                                        }
+                                        Text {
+                                            text: "#" + conn.id
+                                                + (conn.process-path != "" ? " · " + conn.process-path : "")
+                                                + (conn.duration-text != "" ? " · " + conn.duration-text : "");
+                                            font-size: 10px; font-family: Theme.mono-font;
+                                            color: Theme.text-muted; overflow: elide;
                                         }
                                     }
-                                }
 
-                                // Col 2: Target host + subtle #id / process caption
-                                VerticalLayout {
-                                    horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 2px;
-                                    Text {
-                                        text: display-host; font-size: 13px; font-weight: is-selected ? 700 : 600;
-                                        color: Theme.text-primary; overflow: elide;
-                                    }
-                                    Text {
-                                        text: "#" + conn.id
-                                            + (conn.process-path != "" ? " · " + conn.process-path : "")
-                                            + (conn.duration-text != "" ? " · " + conn.duration-text : "");
-                                        font-size: 10px; font-family: Theme.mono-font;
-                                        color: Theme.text-muted; overflow: elide;
-                                    }
-                                }
-
-                                // Col 3: Rule badge
-                                if root.show-rule-col : Rectangle {
-                                    width: 94px;
-                                    if conn.route-rule != "" : Rectangle {
-                                        x: 0px; y: (parent.height - self.height) / 2;
-                                        width: min(parent.width, rule-lbl.preferred-width + 14px);
-                                        height: 21px; border-radius: 10px;
-                                        background: is-direct ? Theme.proto-direct-bg : Theme.accent-soft;
-                                        rule-lbl := Text {
-                                            x: 7px; width: max(0px, parent.width - 14px); height: 100%;
-                                            text: conn.route-rule; font-size: 10px; font-weight: 700;
-                                            color: is-direct ? Theme.proto-direct-fg : Theme.nav-active-fg;
-                                            vertical-alignment: center; overflow: elide;
+                                    // Col 3: Rule badge
+                                    if root.show-rule-col : Rectangle {
+                                        width: 94px;
+                                        if conn.route-rule != "" : Rectangle {
+                                            x: 0px; y: (parent.height - self.height) / 2;
+                                            width: min(parent.width, rule-lbl.preferred-width + 14px);
+                                            height: 21px; border-radius: 10px;
+                                            background: is-direct ? Theme.proto-direct-bg : Theme.accent-soft;
+                                            rule-lbl := Text {
+                                                x: 7px; width: max(0px, parent.width - 14px); height: 100%;
+                                                text: conn.route-rule; font-size: 10px; font-weight: 700;
+                                                color: is-direct ? Theme.proto-direct-fg : Theme.nav-active-fg;
+                                                vertical-alignment: center; overflow: elide;
+                                            }
+                                        }
+                                        if conn.route-rule == "" : Text {
+                                            width: 100%; height: 100%; text: "-"; font-size: 11px; color: Theme.text-muted; vertical-alignment: center;
                                         }
                                     }
-                                    if conn.route-rule == "" : Text {
-                                        width: 100%; height: 100%; text: "-"; font-size: 11px; color: Theme.text-muted; vertical-alignment: center;
+
+                                    // Col 4: Outbound node
+                                    Text {
+                                        width: 84px;
+                                        text: conn.outbound != "" ? conn.outbound : conn.path;
+                                        font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
+                                        color: is-direct ? Theme.proto-direct-fg : Theme.text-secondary;
+                                        vertical-alignment: center; overflow: elide;
                                     }
-                                }
 
-                                // Col 4: Outbound node
-                                Text {
-                                    width: 84px;
-                                    text: conn.outbound != "" ? conn.outbound : conn.path;
-                                    font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
-                                    color: is-direct ? Theme.proto-direct-fg : Theme.text-secondary;
-                                    vertical-alignment: center; overflow: elide;
-                                }
+                                    // Col 5: Right-aligned DL / UL traffic
+                                    VerticalLayout {
+                                        width: 82px; alignment: center; spacing: 1px;
+                                        Text { text: "↓ " + conn.download-text; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-alignment: right; overflow: elide; }
+                                        Text { text: "↑ " + conn.upload-text; font-size: 10px; font-weight: 600; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-alignment: right; overflow: elide; }
+                                    }
 
-                                // Col 5: Right-aligned DL / UL traffic
-                                VerticalLayout {
-                                    width: 82px; alignment: center; spacing: 1px;
-                                    Text { text: "↓ " + conn.download-text; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-alignment: right; overflow: elide; }
-                                    Text { text: "↑ " + conn.upload-text; font-size: 10px; font-weight: 600; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-alignment: right; overflow: elide; }
-                                }
-
-                                // Col 6: Close action
-                                VerticalLayout {
-                                    alignment: center;
-                                    IconActionButton {
-                                        icon: @image-url("../icons/x.svg");
-                                        label: I18n.t("断开", "Close");
-                                        danger: true;
-                                        size: 22px;
-                                        clicked => {
-                                            if (is-selected) { root.clear-selection(); }
-                                            root.close-connection(conn.id);
+                                    // Col 6: Close action
+                                    VerticalLayout {
+                                        alignment: center;
+                                        IconActionButton {
+                                            icon: @image-url("../icons/x.svg");
+                                            label: I18n.t("断开", "Close");
+                                            danger: true;
+                                            size: 22px;
+                                            clicked => {
+                                                if (is-selected) { root.clear-selection(); }
+                                                root.close-connection(conn.id);
+                                            }
                                         }
                                     }
                                 }
                             }
 
-                            if visible-row : Rectangle {
+                            Rectangle {
                                 x: 14px; y: parent.height - 1px; width: max(0px, parent.width - 28px); height: 1px;
                                 background: Theme.hairline-subtle;
                             }

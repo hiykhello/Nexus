@@ -1,10 +1,10 @@
+import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { ProportionBar } from "bento_deck_cards.slint";
 import { GlassSpeculum } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
-import { NexusSwitch } from "nexus_controls.slint";
 
 component WidgetToggleChip inherits Rectangle {
     in property <string> label;
@@ -20,6 +20,10 @@ component WidgetToggleChip inherits Rectangle {
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.toggled(); }
 
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
 
@@ -163,68 +167,6 @@ export component DashCustomizeBar inherits VerticalLayout {
     }
 }
 
-export component BentoSwitchTile inherits Rectangle {
-    in property <image> icon;
-    in property <string> label;
-    in property <string> subtitle: "";
-    in property <color> badge-color: Theme.accent;
-    in property <bool> active: false;
-    in property <bool> enabled: true;
-    in property <bool> compact: false;
-    callback toggled(bool);
-
-    horizontal-stretch: 1;
-    min-width: 0px;
-    height: 58px;
-    border-radius: 20px;
-    border-width: 1px;
-    border-color: ta.has-hover && root.enabled ? Theme.hairline-strong : Theme.card-border;
-    background: (ta.has-hover && root.enabled) ? Theme.row-hover-bg : Theme.card-surface;
-    drop-shadow-blur: 10px;
-    drop-shadow-offset-y: 2px;
-    drop-shadow-color: Theme.card-shadow;
-    opacity: root.enabled ? 1.0 : 0.55;
-    transform-scale: root.enabled && ta.pressed ? 0.975 : 1.0;
-    animate border-color { duration: Motion.fast; }
-    animate background { duration: Motion.fast; }
-    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
-
-    GlassSpeculum {}
-
-    ta := TouchArea {
-        enabled: root.enabled;
-        mouse-cursor: root.enabled ? pointer : default;
-        clicked => { root.toggled(!root.active); }
-    }
-
-    HorizontalLayout {
-        padding-left: 11px; padding-right: 11px; spacing: 9px;
-
-        Rectangle {
-            width: 34px; height: 34px; y: (parent.height - self.height) / 2; border-radius: 10px;
-            border-width: 1px;
-            border-color: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.38 : 0.28) : Theme.well-border;
-            background: root.active ? root.badge-color.with-alpha(Theme.dark ? 0.22 : 0.14) : Theme.well-bg;
-            Image {
-                x: 8px; y: 8px; width: 16px; height: 16px;
-                source: root.icon;
-                colorize: root.active ? root.badge-color : Theme.text-secondary;
-            }
-        }
-
-        VerticalLayout {
-            horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 2px;
-            Text { text: root.label; font-size: 13px; font-weight: 700; color: root.active ? Theme.text-primary : Theme.text-primary; overflow: elide; }
-            if root.subtitle != "" : Text { text: root.subtitle; font-size: 10px; font-family: Theme.mono-font; color: root.active ? Theme.text-secondary : Theme.text-muted; overflow: elide; }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            NexusSwitch { enabled: root.enabled; checked: root.active; interactive: false; }
-        }
-    }
-}
-
 // Row 3 Col 1: Square-ish Network Health Card (matches approved v6 mockup)
 export component NetworkHealthCard inherits Rectangle {
     in property <bool> core-running: false;
@@ -348,12 +290,50 @@ export component CoreMemoryCard inherits Rectangle {
         spacing: 8px;
 
         HorizontalLayout {
-            spacing: 6px;
+            spacing: 4px;
             Text { text: I18n.t("内存占用", "Memory"); font-size: 12px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+            Rectangle {
+                horizontal-stretch: 0; height: 22px; y: (parent.height - self.height) / 2;
+                border-radius: 6px; border-width: 1px;
+                border-color: fip-ta.has-hover && root.core-running ? Theme.selected-border : Theme.well-border;
+                background: fip-ta.has-hover && root.core-running ? Theme.row-hover-bg : Theme.well-bg;
+                opacity: root.core-running ? 1.0 : 0.45;
+                accessible-role: button;
+                accessible-label: I18n.t("刷新 FakeIP", "Flush FakeIP");
+                accessible-action-default => { if (root.core-running) { ControlInspectState.flush-fakeip(); } }
+                fip-ta := TouchArea {
+                    enabled: root.core-running;
+                    mouse-cursor: root.core-running ? pointer : default;
+                    clicked => { ControlInspectState.flush-fakeip(); }
+                }
+                HorizontalLayout {
+                    padding-left: 6px; padding-right: 6px;
+                    Text { text: "FakeIP"; font-size: 9.5px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; }
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 0; height: 22px; y: (parent.height - self.height) / 2;
+                border-radius: 6px; border-width: 1px;
+                border-color: dns-ta.has-hover && root.core-running ? Theme.selected-border : Theme.well-border;
+                background: dns-ta.has-hover && root.core-running ? Theme.row-hover-bg : Theme.well-bg;
+                opacity: root.core-running ? 1.0 : 0.45;
+                accessible-role: button;
+                accessible-label: I18n.t("清除 DNS 缓存", "Clear DNS Cache");
+                accessible-action-default => { if (root.core-running) { ControlInspectState.clear-dns-cache(); } }
+                dns-ta := TouchArea {
+                    enabled: root.core-running;
+                    mouse-cursor: root.core-running ? pointer : default;
+                    clicked => { ControlInspectState.clear-dns-cache(); }
+                }
+                HorizontalLayout {
+                    padding-left: 6px; padding-right: 6px;
+                    Text { text: "DNS"; font-size: 9.5px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; }
+                }
+            }
             IconActionButton {
-                size: 26px;
+                size: 24px;
                 icon: @image-url("../icons/trash.svg");
-                label: I18n.t("清缓存", "Clear Cache");
+                label: I18n.t("清全部缓存", "Clear All Cache");
                 enabled: root.core-running;
                 clicked => { root.clear-cache(); }
             }

@@ -1,9 +1,11 @@
 import { ListView } from "std-widgets.slint";
+import { ControlInspectState } from "../control_inspect_state.slint";
 import { GlassSpeculum, NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSelect } from "nexus_select.slint";
 import { LogLineItem } from "../types.slint";
 import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 
 export component LogsPanel inherits VerticalLayout {
@@ -11,49 +13,53 @@ export component LogsPanel inherits VerticalLayout {
     in-out property <string> log-level: "info";
     in-out property <string> domain-filter: "all";
     in-out property <string> search-text: "";
+    in-out property <string> sev-choice: "all";
     in property <string> export-status: "";
     in property <bool> export-ok: true;
 
-    private property <string> sev-choice: "all";
-    property <string> sev-filter:
-        root.sev-choice == "ERR" ? "error"
-        : root.sev-choice == "WRN" ? "warn"
-        : root.sev-choice == "INF" ? "info"
-        : root.sev-choice == "DBG" ? "debug"
-        : "all";
-
     callback apply-log-level(string);
+    callback sev-filter-changed(string);
+    callback search-changed(string);
     callback refresh-logs();
     callback export-logs();
     callback clear-logs();
 
     spacing: Theme.space-md;
 
-    // Single compact top toolbar: Search + Dropdown filters (显示级别 / 采集级别 / 模块) + Actions
+    // Single compact top toolbar: Search + Dropdown filters (显示级别 / 采集级别 / 模块) + Live SSE + Actions
     HorizontalLayout {
         vertical-stretch: 0;
         spacing: Theme.space-sm;
 
         NexusInput {
             horizontal-stretch: 1;
-            min-width: 160px;
+            min-width: 140px;
             search-icon: true;
             text <=> root.search-text;
             placeholder-text: I18n.t("搜索日志...", "Search logs...");
+            edited(q) => { root.search-changed(q); }
             accepted => { root.refresh-logs(); }
         }
 
         NexusSelect {
-            width: 110px;
+            width: 106px;
             mono: false;
             prefix: I18n.t("级别", "Lvl");
             all-label: I18n.t("全部", "All");
             options: ["all", "ERR", "WRN", "INF", "DBG"];
             current-value <=> root.sev-choice;
+            selected(v) => {
+                let norm = v == "ERR" ? "error"
+                    : v == "WRN" ? "warn"
+                    : v == "INF" ? "info"
+                    : v == "DBG" ? "debug"
+                    : "all";
+                root.sev-filter-changed(norm);
+            }
         }
 
         NexusSelect {
-            width: 118px;
+            width: 114px;
             prefix: I18n.t("采集", "Cap");
             options: ["error", "warn", "info", "debug", "trace"];
             current-value <=> root.log-level;
@@ -61,12 +67,52 @@ export component LogsPanel inherits VerticalLayout {
         }
 
         NexusSelect {
-            width: 114px;
+            width: 110px;
             prefix: I18n.t("模块", "Mod");
             all-label: I18n.t("全部", "All");
-            options: ["all", "core", "proxy", "route", "dns", "tun", "quic", "control"];
+            options: ["all", "core", "proxy", "route", "dns", "tun", "quic", "tls", "net", "state", "control"];
             current-value <=> root.domain-filter;
             selected(d) => { root.refresh-logs(); }
+        }
+
+        Rectangle {
+            horizontal-stretch: 0;
+            height: 32px;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: ControlInspectState.logs-stream-connected ? Theme.success-border : ControlInspectState.logs-stream-enabled ? Theme.selected-border : Theme.card-border;
+            background: ControlInspectState.logs-stream-connected ? Theme.success-bg : ControlInspectState.logs-stream-enabled ? Theme.selected-bg : Theme.row-bg;
+            transform-scale: sse-ta.pressed ? 0.96 : 1.0;
+            animate background { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; }
+            accessible-role: button;
+            accessible-label: I18n.t("实时日志流", "Live SSE Stream");
+            accessible-action-default => {
+                let next = !ControlInspectState.logs-stream-enabled;
+                ControlInspectState.logs-stream-enabled = next;
+                ControlInspectState.toggle-logs-stream(next);
+            }
+            sse-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    let next = !ControlInspectState.logs-stream-enabled;
+                    ControlInspectState.logs-stream-enabled = next;
+                    ControlInspectState.toggle-logs-stream(next);
+                }
+            }
+            HorizontalLayout {
+                padding-left: 9px; padding-right: 10px; spacing: 5px;
+                Rectangle {
+                    width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+                    background: ControlInspectState.logs-stream-connected ? Theme.success-fg : ControlInspectState.logs-stream-enabled ? Theme.accent : Theme.offline-fg;
+                }
+                Text {
+                    text: ControlInspectState.logs-stream-connected ? "SSE" : ControlInspectState.logs-stream-enabled ? I18n.t("实时", "Live") : I18n.t("暂停", "Off");
+                    font-size: 11px; font-weight: 700; font-family: Theme.mono-font;
+                    color: ControlInspectState.logs-stream-connected ? Theme.success-fg : ControlInspectState.logs-stream-enabled ? Theme.nav-active-fg : Theme.text-muted;
+                    vertical-alignment: center;
+                }
+            }
         }
 
         IconActionButton {
@@ -165,12 +211,8 @@ export component LogsPanel inherits VerticalLayout {
             if root.logs.length > 0 : lv := ListView {
                 vertical-stretch: 1;
                 for entry[idx] in root.logs : Rectangle {
-                    property <bool> visible-row:
-                        root.sev-filter == "all"
-                        || (root.sev-filter == "debug" ? (entry.level == "debug" || entry.level == "trace") : entry.level == root.sev-filter);
                     width: lv.visible-width;
-                    height: visible-row ? row-body.preferred-height : 0px;
-                    visible: visible-row;
+                    height: row-body.preferred-height;
                     clip: true;
                     background: Math.mod(idx, 2) == 0 ? Theme.row-bg : Theme.row-alt-bg;
 

@@ -68,6 +68,46 @@ namespace desktop {
             return buf;
         }
 
+        // Builds a bottom-up 32x32 32-bpp BGRA + 1-bpp AND-mask DIB for Win32 CreateIconFromResourceEx.
+        auto build_win32_icon_dib(TrayState state) -> std::array<std::uint8_t, 40 + 32 * 32 * 4 + 32 * 4> {
+            auto const argb = render_prism_icon_argb32(state);
+            std::array<std::uint8_t, 40 + 32 * 32 * 4 + 32 * 4> out{};
+            auto put32 = [&](std::size_t off, std::uint32_t v) {
+                out[off + 0] = static_cast<std::uint8_t>(v & 0xffu);
+                out[off + 1] = static_cast<std::uint8_t>((v >> 8) & 0xffu);
+                out[off + 2] = static_cast<std::uint8_t>((v >> 16) & 0xffu);
+                out[off + 3] = static_cast<std::uint8_t>((v >> 24) & 0xffu);
+            };
+            auto put16 = [&](std::size_t off, std::uint16_t v) {
+                out[off + 0] = static_cast<std::uint8_t>(v & 0xffu);
+                out[off + 1] = static_cast<std::uint8_t>((v >> 8) & 0xffu);
+            };
+            put32(0, 40u);                           // biSize
+            put32(4, 32u);                           // biWidth
+            put32(8, 64u);                           // biHeight (2 * 32 for XOR + AND)
+            put16(12, 1u);                           // biPlanes
+            put16(14, 32u);                          // biBitCount
+            put32(16, 0u);                           // biCompression (BI_RGB)
+            put32(20, 32u * 32u * 4u + 32u * 4u);    // biSizeImage
+            constexpr std::size_t kXorOff = 40;
+            constexpr std::size_t kAndOff = 40 + 32 * 32 * 4;
+            for (std::size_t y = 0; y < 32; ++y) {
+                std::size_t const dst_y = 31 - y;
+                for (std::size_t x = 0; x < 32; ++x) {
+                    std::size_t const s = (y * 32 + x) * 4;
+                    std::size_t const d = kXorOff + (dst_y * 32 + x) * 4;
+                    out[d + 0] = argb[s + 3]; // B
+                    out[d + 1] = argb[s + 2]; // G
+                    out[d + 2] = argb[s + 1]; // R
+                    out[d + 3] = argb[s + 0]; // A
+                    if (argb[s + 0] == 0) {
+                        out[kAndOff + dst_y * 4 + (x >> 3)] |= static_cast<std::uint8_t>(0x80u >> (x & 7u));
+                    }
+                }
+            }
+            return out;
+        }
+
         auto escape_dbusmenu_label(std::string_view raw) -> std::string {
             std::string out;
             out.reserve(raw.size() + 4);
@@ -122,10 +162,11 @@ namespace desktop {
             true, false, {}});
         items.push_back({kMenuSep1, TrayMenuKind::separator, {}, false, false, {}});
 
+        bool const online = snap.core_running;
         items.push_back({kMenuSystemProxy, TrayMenuKind::checkbox,
-            en ? "System Proxy" : "系统代理", true, snap.system_proxy_enabled, {}});
+            en ? "System Proxy" : "系统代理", online, snap.system_proxy_enabled, {}});
         items.push_back({kMenuTun, TrayMenuKind::checkbox,
-            en ? "TUN Mode" : "TUN 模式", true, snap.tun_enabled, {}});
+            en ? "TUN Mode" : "TUN 模式", online, snap.tun_enabled, {}});
 
         bool const is_global = snap.outbound_mode == "global";
         bool const is_direct = snap.outbound_mode == "direct";
@@ -137,7 +178,7 @@ namespace desktop {
         }});
 
         if (snap.show_nodes && !snap.quick_nodes.empty()) {
-            TrayMenuItem sub{kMenuNodesSubmenu, TrayMenuKind::submenu, en ? "Quick Nodes" : "快捷切换节点", true, false, {}};
+            TrayMenuItem sub{kMenuNodesSubmenu, TrayMenuKind::submenu, en ? "Quick Nodes" : "快捷切换节点", online, false, {}};
             std::size_t const limit = std::min(snap.quick_nodes.size(), kMaxQuickNodes);
             sub.children.reserve(limit);
             for (std::size_t i = 0; i < limit; ++i) {
@@ -145,7 +186,7 @@ namespace desktop {
                 std::string label = node.latency_label.empty()
                     ? node.name : std::format("{}  {}", node.name, node.latency_label);
                 sub.children.push_back({kMenuNodeBase + static_cast<std::int32_t>(i),
-                    TrayMenuKind::radio, std::move(label), true, node.active, {}});
+                    TrayMenuKind::radio, std::move(label), online, node.active, {}});
             }
             items.push_back(std::move(sub));
         }
@@ -163,10 +204,14 @@ namespace desktop {
         }
 
         items.push_back({kMenuSep2, TrayMenuKind::separator, {}, false, false, {}});
-        items.push_back({kMenuProbe, TrayMenuKind::action, en ? "Test Latency" : "立即测速", true, false, {}});
+        items.push_back({kMenuProbe, TrayMenuKind::action, en ? "Test Latency" : "立即测速", online, false, {}});
+        items.push_back({kMenuFlushFakeIp, TrayMenuKind::action,
+            en ? "Flush FakeIP" : "清空 FakeIP 映射", online, false, {}});
+        items.push_back({kMenuClearDnsCache, TrayMenuKind::action,
+            en ? "Clear DNS Cache" : "清空 DNS 缓存", online, false, {}});
         items.push_back({kMenuCopyProxy, TrayMenuKind::action,
             en ? "Copy Proxy Env" : "复制终端代理", !snap.proxy_export_cmd.empty(), false, {}});
-        items.push_back({kMenuReload, TrayMenuKind::action, en ? "Reload Config" : "重载配置", true, false, {}});
+        items.push_back({kMenuReload, TrayMenuKind::action, en ? "Reload Config" : "重载配置", online, false, {}});
         items.push_back({kMenuSep3, TrayMenuKind::separator, {}, false, false, {}});
         items.push_back({kMenuQuit, TrayMenuKind::action, en ? "Quit Nexus" : "退出 Nexus", true, false, {}});
         return items;
@@ -180,6 +225,7 @@ namespace desktop {
         std::atomic<bool> stopped{false};
         TraySnapshot snap{};
         std::string tooltip_text{"Nexus - 已停止"};
+        std::optional<TrayNotification> last_notif;
         std::unique_ptr<detail::NativeTrayBackend> backend;
 
         auto dispatch_id_impl(std::int32_t id) -> bool {
@@ -201,9 +247,11 @@ namespace desktop {
                 if (callbacks.on_toggle_core) callbacks.on_toggle_core();
                 return true;
             case kMenuSystemProxy:
+                if (!cur.core_running) return false;
                 if (callbacks.on_toggle_system_proxy) callbacks.on_toggle_system_proxy(!cur.system_proxy_enabled);
                 return true;
             case kMenuTun:
+                if (!cur.core_running) return false;
                 if (callbacks.on_toggle_tun) callbacks.on_toggle_tun(!cur.tun_enabled);
                 return true;
             case kMenuModeRule:
@@ -216,13 +264,23 @@ namespace desktop {
                 if (callbacks.on_switch_mode) callbacks.on_switch_mode("direct");
                 return true;
             case kMenuProbe:
+                if (!cur.core_running) return false;
                 if (callbacks.on_probe_active_group) callbacks.on_probe_active_group();
+                return true;
+            case kMenuFlushFakeIp:
+                if (!cur.core_running) return false;
+                if (callbacks.on_flush_fakeip) callbacks.on_flush_fakeip();
+                return true;
+            case kMenuClearDnsCache:
+                if (!cur.core_running) return false;
+                if (callbacks.on_clear_dns_cache) callbacks.on_clear_dns_cache();
                 return true;
             case kMenuCopyProxy:
                 if (cur.proxy_export_cmd.empty()) return false;
                 if (callbacks.on_copy_proxy_env) callbacks.on_copy_proxy_env();
                 return true;
             case kMenuReload:
+                if (!cur.core_running) return false;
                 if (callbacks.on_reload) callbacks.on_reload();
                 return true;
             case kMenuQuit:
@@ -234,7 +292,7 @@ namespace desktop {
 
             if (id >= kMenuNodeBase && id < kMenuNodeBase + static_cast<std::int32_t>(kMaxQuickNodes)) {
                 auto const idx = static_cast<std::size_t>(id - kMenuNodeBase);
-                if (!cur.show_nodes || idx >= cur.quick_nodes.size()) return false;
+                if (!cur.core_running || !cur.show_nodes || idx >= cur.quick_nodes.size()) return false;
                 auto const& node = cur.quick_nodes[idx];
                 std::string grp = node.group.empty() ? cur.active_group : node.group;
                 if (callbacks.on_select_node) callbacks.on_select_node(std::move(grp), node.name);
@@ -253,17 +311,18 @@ namespace desktop {
         auto primary_click_impl() -> void {
             if (stopped.load(std::memory_order_acquire)) return;
             std::string action;
-            bool proxy_enabled = false;
+            bool proxy_enabled = false, core_running = false;
             {
                 std::lock_guard lock(mutex);
                 action = snap.click_action;
                 proxy_enabled = snap.system_proxy_enabled;
+                core_running = snap.core_running;
             }
             if (action == "show") {
                 if (callbacks.on_show) callbacks.on_show();
                 else if (callbacks.on_toggle_window) callbacks.on_toggle_window();
             } else if (action == "toggle_proxy") {
-                if (callbacks.on_toggle_system_proxy) callbacks.on_toggle_system_proxy(!proxy_enabled);
+                if (core_running && callbacks.on_toggle_system_proxy) callbacks.on_toggle_system_proxy(!proxy_enabled);
             } else {
                 if (callbacks.on_toggle_window) callbacks.on_toggle_window();
                 else if (callbacks.on_show) callbacks.on_show();
@@ -272,12 +331,30 @@ namespace desktop {
 
         auto secondary_click_impl() -> void {
             if (stopped.load(std::memory_order_acquire)) return;
-            bool proxy_enabled = false;
+            bool proxy_enabled = false, core_running = false;
             {
                 std::lock_guard lock(mutex);
                 proxy_enabled = snap.system_proxy_enabled;
+                core_running = snap.core_running;
             }
-            if (callbacks.on_toggle_system_proxy) callbacks.on_toggle_system_proxy(!proxy_enabled);
+            if (core_running && callbacks.on_toggle_system_proxy) callbacks.on_toggle_system_proxy(!proxy_enabled);
+        }
+
+        auto notify_impl(TrayNotification notif, bool only_if_hidden) -> bool {
+            if (stopped.load(std::memory_order_acquire)) return false;
+            if (notif.title.empty() && notif.body.empty()) return false;
+            TrayState icon_state = TrayState::offline;
+            {
+                std::lock_guard lock(mutex);
+                if (only_if_hidden && snap.window_visible) return false;
+                icon_state = snap.state;
+                last_notif = notif;
+            }
+            if (backend) return backend->show_notification(notif, icon_state);
+#if defined(__linux__)
+            if (!detail::native_tray_disabled_by_env()) return detail::send_linux_desktop_notification(notif, icon_state);
+#endif
+            return false;
         }
 
         auto make_host() -> detail::NativeTrayHost {
@@ -376,6 +453,22 @@ namespace desktop {
 
     auto TrayController::native_backend_active(this TrayController const& self) noexcept -> bool {
         return self.impl_ && self.impl_->backend && self.impl_->backend->active();
+    }
+
+    auto TrayController::notify(this TrayController& self, std::string title, std::string body,
+        TrayNotificationUrgency urgency) -> bool {
+        return self.impl_ && self.impl_->notify_impl({std::move(title), std::move(body), urgency}, false);
+    }
+
+    auto TrayController::notify_if_hidden(this TrayController& self, std::string title, std::string body,
+        TrayNotificationUrgency urgency) -> bool {
+        return self.impl_ && self.impl_->notify_impl({std::move(title), std::move(body), urgency}, true);
+    }
+
+    auto TrayController::last_notification(this TrayController const& self) -> std::optional<TrayNotification> {
+        if (!self.impl_) return {};
+        std::lock_guard lock(self.impl_->mutex);
+        return self.impl_->last_notif;
     }
 
     auto TrayController::trigger_show(this TrayController& self) -> void {

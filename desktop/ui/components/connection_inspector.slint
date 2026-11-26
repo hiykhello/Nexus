@@ -82,15 +82,15 @@ component CapsuleRuleOption inherits Rectangle {
     background:
         root.active
             ? (root.tone == "danger"
-                ? @linear-gradient(135deg, #f43f5e 0%, #be123c 100%)
+                ? @linear-gradient(135deg, Theme.pill-danger-top 0%, Theme.pill-danger-bot 100%)
                 : root.tone == "direct"
-                    ? @linear-gradient(135deg, #10b981 0%, #047857 100%)
+                    ? @linear-gradient(135deg, Theme.pill-direct-top 0%, Theme.pill-direct-bot 100%)
                     : @linear-gradient(135deg, Theme.pill-active-top 0%, Theme.pill-active-bot 100%))
             : ta.has-hover ? Theme.row-hover-bg : transparent;
     drop-shadow-blur: root.active ? 8px : 0px;
     drop-shadow-color:
-        root.tone == "danger" ? #f43f5e44
-        : root.tone == "direct" ? #10b98144
+        root.tone == "danger" ? Theme.pill-danger-shadow
+        : root.tone == "direct" ? Theme.pill-direct-shadow
         : Theme.pill-active-bot.with-alpha(0.36);
     transform-scale: ta.pressed ? 0.97 : 1.0;
     animate border-color { duration: Motion.fast; }
@@ -110,7 +110,7 @@ component CapsuleRuleOption inherits Rectangle {
         font-weight: root.active ? 700 : 600;
         color:
             root.active
-                ? (root.tone == "accent" ? Theme.pill-active-fg : #ffffff)
+                ? (root.tone == "accent" ? Theme.pill-active-fg : Theme.selection-fg)
                 : Theme.text-secondary;
         horizontal-alignment: center;
         vertical-alignment: center;

@@ -177,58 +177,9 @@ namespace desktop {
         return out;
     }
 
-    auto parse_outbounds_json(std::string_view json) -> std::vector<OutboundGroupSnapshot> {
-        std::vector<OutboundGroupSnapshot> groups;
-        auto pos = json.find("\"groups\"");
-        if (pos == std::string_view::npos) return groups;
-        auto arr_start = json.find('[', pos);
-        if (arr_start == std::string_view::npos) return groups;
-        auto arr_end = find_matching(json, arr_start, '[', ']');
-        if (arr_end == std::string_view::npos) return groups;
-
-        std::size_t cursor = arr_start + 1;
-        while (cursor < arr_end) {
-            auto obj_start = json.find('{', cursor);
-            if (obj_start == std::string_view::npos || obj_start >= arr_end) break;
-            auto obj_end = find_matching(json, obj_start, '{', '}');
-            if (obj_end == std::string_view::npos || obj_end > arr_end) break;
-            auto obj = json.substr(obj_start, obj_end - obj_start + 1);
-
-            OutboundGroupSnapshot grp{};
-            grp.tag = extract_json_string(obj, "name");
-            if (grp.tag.empty()) grp.tag = extract_json_string(obj, "tag");
-            grp.mode = extract_json_string(obj, "mode");
-            grp.active = extract_json_string(obj, "selected");
-            if (grp.active.empty()) grp.active = extract_json_string(obj, "active");
-            grp.manual_override = extract_json_bool(obj, "override");
-
-            if (auto mpos = obj.find("\"members\""); mpos != std::string_view::npos) {
-                if (auto ma = obj.find('[', mpos); ma != std::string_view::npos) {
-                    if (auto me = find_matching(obj, ma, '[', ']'); me != std::string_view::npos) {
-                        std::size_t mc = ma + 1;
-                        while (mc < me) {
-                            auto ms = obj.find('{', mc);
-                            if (ms == std::string_view::npos || ms >= me) break;
-                            auto mend = find_matching(obj, ms, '{', '}');
-                            if (mend == std::string_view::npos || mend > me) break;
-                            auto mobj = obj.substr(ms, mend - ms + 1);
-                            OutboundMemberSnapshot m{};
-                            m.name = extract_json_string(mobj, "name");
-                            m.state = extract_json_string(mobj, "state");
-                            m.latency_ms = extract_json_i64(mobj, "latency_ms", -1);
-                            m.selected = (!grp.active.empty() && m.name == grp.active);
-                            m.overridden = m.selected && grp.manual_override;
-                            if (!m.name.empty()) grp.members.push_back(std::move(m));
-                            mc = mend + 1;
-                        }
-                    }
-                }
-            }
-            if (!grp.tag.empty()) groups.push_back(std::move(grp));
-            cursor = obj_end + 1;
-        }
-        return groups;
-    }
+    // parse_outbounds_json, parse_outbound_probe_json, parse_rules_json,
+    // parse_dns_query_json, parse_fakeip_flush_json, parse_log_entry_json
+    // live in http_control_extra.cpp.
 
     namespace {
         auto parse_one_connection(std::string_view obj) -> ActiveConnectionSnapshot {
@@ -313,30 +264,13 @@ namespace desktop {
             entry.seq = seq_str.empty() ? static_cast<std::uint64_t>(extract_json_i64(obj, "seq", 0)) : parse_u64(seq_str);
             entry.level = extract_json_string(obj, "level");
             entry.domain = extract_json_string(obj, "domain");
-            entry.event_code = static_cast<std::uint32_t>(extract_json_i64(obj, "event_code", 0));
+            auto ev_code = extract_json_i64(obj, "event_code", -1);
+            if (ev_code < 0) ev_code = extract_json_i64(obj, "event", 0);
+            entry.event_code = static_cast<std::uint32_t>(std::max<std::int64_t>(0, ev_code));
             entry.message = extract_json_string(obj, "message");
             out.entries.push_back(std::move(entry));
             cursor = obj_end + 1;
         }
-        return out;
-    }
-
-    auto parse_outbound_probe_json(std::string_view json) -> OutboundProbeResult {
-        OutboundProbeResult out{};
-        auto obj_start = json.find('{');
-        if (obj_start == std::string_view::npos) { out.error = "empty probe response"; return out; }
-        auto obj_end = find_matching(json, obj_start, '{', '}');
-        if (obj_end == std::string_view::npos) { out.error = "malformed probe JSON"; return out; }
-        auto obj = json.substr(obj_start, obj_end - obj_start + 1);
-        out.outbound = extract_json_string(obj, "outbound");
-        out.resolved_outbound = extract_json_string(obj, "resolved_outbound");
-        out.state = extract_json_string(obj, "state");
-        out.latency_ms = extract_json_i64(obj, "latency_ms", -1);
-        out.status_code = static_cast<int>(extract_json_i64(obj, "status_code", 0));
-        out.url = extract_json_string(obj, "url");
-        out.error = extract_json_string(obj, "message");
-        if (out.error.empty()) out.error = extract_json_string(obj, "error");
-        out.ok = (out.state == "healthy" || out.state == "ok" || out.state == "up") && out.latency_ms >= 0;
         return out;
     }
 
@@ -464,7 +398,11 @@ namespace desktop {
         std::string raw;
         char buf[4096];
         for (;;) {
+#ifdef _WIN32
+            auto n = ::recv(fd, buf, static_cast<int>(sizeof(buf)), 0);
+#else
             auto n = ::recv(fd, buf, sizeof(buf), 0);
+#endif
 #ifndef _WIN32
             if (n < 0 && errno == EINTR) continue;
 #endif

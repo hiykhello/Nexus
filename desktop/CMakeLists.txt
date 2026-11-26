@@ -56,6 +56,8 @@ set(NEXUS_BRIDGE_IMPLS
     src/desktop_host_config.cpp
     src/firewall_helper.cpp
     src/http_control.cpp
+    src/http_control_extra.cpp
+    src/http_sse.cpp
     src/kdl_ops.cpp
     src/mini_json.cpp
     src/service_installer.cpp
@@ -65,6 +67,7 @@ set(NEXUS_BRIDGE_IMPLS
     src/telemetry_store.cpp
     src/tray_controller.cpp
     src/tray_linux_sni.cpp
+    src/tray_notify_linux.cpp
     src/tray_win32.cpp
     src/tun_helper_protocol.cpp
     src/tun_privilege.cpp
@@ -160,6 +163,7 @@ if(NEXUS_DESKTOP_BUILD_UI)
     add_executable(nexus-desktop src/main.cpp)
     slint_target_sources(nexus-desktop
         ui/app_window.slint
+        EDITION 1.19
         NAMESPACE nexus_ui
     )
     if(MSVC)
@@ -243,4 +247,13 @@ if(NEXUS_DESKTOP_BUILD_TESTS)
     endif()
     target_link_libraries(nexus-desktop-client-db-tests PRIVATE nexus-desktop-bridge)
     add_test(NAME nexus-desktop-client-db-tests COMMAND nexus-desktop-client-db-tests)
+
+    add_executable(nexus-desktop-http-w32-tests tests/http_control_w32_test.cpp)
+    if(MSVC)
+        target_compile_features(nexus-desktop-http-w32-tests PRIVATE cxx_std_23)
+    else()
+        target_compile_features(nexus-desktop-http-w32-tests PRIVATE cxx_std_26)
+    endif()
+    target_link_libraries(nexus-desktop-http-w32-tests PRIVATE nexus-desktop-bridge)
+    add_test(NAME nexus-desktop-http-w32-tests COMMAND nexus-desktop-http-w32-tests)
 endif()

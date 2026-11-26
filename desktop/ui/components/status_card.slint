@@ -27,8 +27,8 @@ export component StatusCard inherits Rectangle {
     in-out property <string> socks-proxy-host: "127.0.0.1";
     in-out property <string> socks-proxy-port: "1080";
     in-out property <bool> http-proxy-enabled: false;
-    in-out property <string> http-proxy-host: "127.0.0.1";
-    in-out property <string> http-proxy-port: "8080";
+    in-out property <string> http-proxy-host: "0.0.0.0";
+    in-out property <string> http-proxy-port: "7891";
     in property <bool> tun-enabled: false;
     in property <string> active-profile: "";
     in property <[ProfileItem]> profiles: [];
@@ -101,7 +101,7 @@ export component StatusCard inherits Rectangle {
 
     property <string> sys-proxy-port:
         root.mixed-proxy-enabled ? ":\{root.mixed-proxy-port != "" ? root.mixed-proxy-port : "7890"}"
-        : root.http-proxy-enabled ? ":\{root.http-proxy-port != "" ? root.http-proxy-port : "8080"}"
+        : root.http-proxy-enabled ? ":\{root.http-proxy-port != "" ? root.http-proxy-port : "7891"}"
         : root.socks-proxy-enabled ? ":\{root.socks-proxy-port != "" ? root.socks-proxy-port : "1080"}"
         : "";
     property <bool> is-compact: LayoutMetrics.is-compact-w(root.window-width);

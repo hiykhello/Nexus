@@ -1,3 +1,4 @@
+import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
@@ -7,10 +8,13 @@ import { GlassSpeculum } from "glass_primitives.slint";
 // Concentric Radial Node Card styled as crisp L1 Graphite elevated card directly on canvas
 export component GroupMemberCard inherits Rectangle {
     in property <OutboundMemberItem> member;
+    in property <string> group-name: "";
     callback select-clicked();
     callback toggle-pin-clicked();
+    callback probe-clicked();
 
     property <bool> is-selected: root.member.selected;
+    property <bool> is-probing: ControlInspectState.probing-member-name != "" && ControlInspectState.probing-member-name == root.member.name;
     property <bool> is-timeout: root.member.latency-ms <= 0 && (root.member.state == "timeout" || root.member.state == "unreachable" || root.member.state == "error" || root.member.state == "failed");
     property <color> lat-color: Theme.latency-fg(root.member.latency-ms, root.member.state);
     property <int> bars: Theme.latency-bars(root.member.latency-ms);
@@ -47,119 +51,173 @@ export component GroupMemberCard inherits Rectangle {
 
     GlassSpeculum { corner-inset: 14px; }
 
-    member-ta := TouchArea {
-        mouse-cursor: root.member.selected ? default : pointer;
-        clicked => {
-            root.ensure-visible(Motion.reduced ? ScrollBehavior.instant : ScrollBehavior.smooth);
-            if (!root.member.selected) { root.select-clicked(); }
+    accessible-role: button;
+    accessible-label: root.member.name;
+    accessible-action-default => { if (!root.member.selected) { root.select-clicked(); } }
+
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: I18n.t("选择此节点", "Select Node");
+                enabled: !root.member.selected;
+                activated => { root.select-clicked(); }
+            }
+            MenuItem {
+                title: I18n.t("单节点测速", "Probe Node");
+                activated => { root.probe-clicked(); }
+            }
+            MenuItem {
+                title: root.member.pinned ? I18n.t("取消置顶", "Unpin Node") : I18n.t("置顶节点", "Pin Node");
+                activated => { root.toggle-pin-clicked(); }
+            }
         }
-    }
 
-    VerticalLayout {
-        padding-left: 12px; padding-right: 12px; padding-top: 11px; padding-bottom: 10px;
-        spacing: 8px;
+        member-ta := TouchArea {
+            mouse-cursor: root.member.selected ? default : pointer;
+            clicked => {
+                root.ensure-visible(Motion.reduced ? ScrollBehavior.instant : ScrollBehavior.smooth);
+                if (!root.member.selected) { root.select-clicked(); }
+            }
+        }
 
-        // Top block: 26px concentric circular node-orb + Node Name & Semantic Quality
-        HorizontalLayout {
-            spacing: 10px;
+        VerticalLayout {
+            padding-left: 12px; padding-right: 12px; padding-top: 11px; padding-bottom: 10px;
+            spacing: 8px;
 
-            Rectangle {
-                horizontal-stretch: 0;
-                width: 26px; height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
-                border-width: 1px;
-                border-color: root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.62 : 0.48) : is-timeout ? Theme.error-border : Theme.hairline-strong;
-                background: root.member.selected
-                    ? @radial-gradient(circle, Theme.accent.with-alpha(0.38) 0%, Theme.accent.with-alpha(0.10) 100%)
-                    : is-timeout ? Theme.error-bg : Theme.well-bg;
+            // Top block: 26px concentric circular node-orb + Node Name & Semantic Quality
+            HorizontalLayout {
+                spacing: 10px;
 
                 Rectangle {
-                    x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
-                    width: root.member.selected ? 11px : 9px; height: root.member.selected ? 11px : 9px;
-                    border-radius: self.width / 2;
-                    background: root.member.selected ? Theme.accent : orb-color.with-alpha(Theme.dark ? 0.58 : 0.45);
-                    drop-shadow-blur: root.member.selected ? 9px : 0px;
-                    drop-shadow-color: Theme.accent.with-alpha(0.75);
-                }
-            }
+                    horizontal-stretch: 0;
+                    width: 26px; height: 26px; y: (parent.height - self.height) / 2; border-radius: 13px;
+                    border-width: 1px;
+                    border-color: root.member.selected ? Theme.accent.with-alpha(Theme.dark ? 0.62 : 0.48) : is-timeout ? Theme.error-border : Theme.hairline-strong;
+                    background: root.member.selected
+                        ? @radial-gradient(circle, Theme.accent.with-alpha(0.38) 0%, Theme.accent.with-alpha(0.10) 100%)
+                        : is-timeout ? Theme.error-bg : Theme.well-bg;
 
-            VerticalLayout {
-                horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 3px;
-
-                HorizontalLayout {
-                    spacing: 5px;
-                    Text {
-                        text: root.member.name; font-size: 14px; font-weight: 700; color: Theme.text-primary;
-                        vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide;
-                    }
-                    if root.member.overridden : Rectangle {
-                        horizontal-stretch: 0; height: 18px; y: (parent.height - self.height) / 2;
-                        border-radius: 5px; background: Theme.warn-bg;
-                        HorizontalLayout {
-                            padding-left: 5px; padding-right: 5px;
-                            Text { text: I18n.t("手动", "Pinned"); font-size: 9px; font-weight: 700; color: Theme.warn-fg; vertical-alignment: center; }
-                        }
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 5px;
                     Rectangle {
-                        horizontal-stretch: 0; height: 17px; border-radius: 5px;
-                        background: Theme.latency-bg(root.member.latency-ms, root.member.state);
-                        HorizontalLayout {
-                            padding-left: 6px; padding-right: 6px;
-                            Text {
-                                text:
-                                    is-timeout ? I18n.t("超时", "Timeout")
-                                    : root.member.latency-ms <= 0 ? I18n.t("未测速", "Unprobed")
-                                    : root.member.state == "degraded" ? I18n.t("波动", "Degraded")
-                                    : root.member.latency-ms < 80 ? I18n.t("极速", "Fast")
-                                    : root.member.latency-ms < 180 ? I18n.t("良好", "Good")
-                                    : I18n.t("偏高", "Slow");
-                                font-size: 9px; font-weight: 700; color: lat-color; vertical-alignment: center;
+                        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                        width: root.member.selected ? 11px : 9px; height: root.member.selected ? 11px : 9px;
+                        border-radius: self.width / 2;
+                        background: root.member.selected ? Theme.accent : orb-color.with-alpha(Theme.dark ? 0.58 : 0.45);
+                        drop-shadow-blur: root.member.selected ? 9px : 0px;
+                        drop-shadow-color: Theme.accent.with-alpha(0.75);
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 3px;
+
+                    HorizontalLayout {
+                        spacing: 5px;
+                        Text {
+                            text: root.member.name; font-size: 14px; font-weight: 700; color: Theme.text-primary;
+                            vertical-alignment: center; horizontal-stretch: 1; min-width: 0px; overflow: elide;
+                        }
+                        if root.member.overridden : Rectangle {
+                            horizontal-stretch: 0; height: 18px; y: (parent.height - self.height) / 2;
+                            border-radius: 5px; background: Theme.warn-bg;
+                            HorizontalLayout {
+                                padding-left: 5px; padding-right: 5px;
+                                Text { text: I18n.t("手动", "Manual"); font-size: 9px; font-weight: 700; color: Theme.warn-fg; vertical-alignment: center; }
+                            }
+                        }
+                        if root.member.breaker-open : Rectangle {
+                            horizontal-stretch: 0; height: 18px; y: (parent.height - self.height) / 2;
+                            border-radius: 5px; background: Theme.error-bg;
+                            HorizontalLayout {
+                                padding-left: 5px; padding-right: 5px;
+                                Text { text: I18n.t("熔断", "Breaker"); font-size: 9px; font-weight: 700; color: Theme.error-fg; vertical-alignment: center; }
                             }
                         }
                     }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-            }
-        }
 
-        // Bottom row: 4-bar ascending signal meter left + latency pill & favorite star right
-        HorizontalLayout {
-            spacing: 6px;
-            HorizontalLayout {
-                horizontal-stretch: 0; width: 20px; spacing: 2px; padding-top: 4px; padding-bottom: 4px;
-                Rectangle { width: 3.5px; height: 5px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 1 ? lat-color : Theme.offline-fg; opacity: bars >= 1 ? 1.0 : 0.28; }
-                Rectangle { width: 3.5px; height: 8px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 2 ? lat-color : Theme.offline-fg; opacity: bars >= 2 ? 1.0 : 0.25; }
-                Rectangle { width: 3.5px; height: 11px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 3 ? lat-color : Theme.offline-fg; opacity: bars >= 3 ? 1.0 : 0.22; }
-                Rectangle { width: 3.5px; height: 14px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 4 ? lat-color : Theme.offline-fg; opacity: bars >= 4 ? 1.0 : 0.20; }
-            }
-
-            Rectangle { horizontal-stretch: 1; }
-
-            Rectangle {
-                horizontal-stretch: 0; height: 22px; border-radius: 11px;
-                background: Theme.latency-bg(root.member.latency-ms, root.member.state);
-                HorizontalLayout {
-                    padding-left: 8px; padding-right: 8px;
-                    Text {
-                        text: root.member.latency-ms > 0 ? "\{root.member.latency-ms} ms" : (is-timeout ? I18n.t("超时", "Timeout") : "--");
-                        font-size: 11px; font-weight: 700; font-family: Theme.mono-font; vertical-alignment: center; color: lat-color;
+                    HorizontalLayout {
+                        spacing: 5px;
+                        Rectangle {
+                            horizontal-stretch: 0; height: 17px; border-radius: 5px;
+                            background: Theme.latency-bg(root.member.latency-ms, root.member.state);
+                            HorizontalLayout {
+                                padding-left: 6px; padding-right: 6px;
+                                Text {
+                                    text:
+                                        is-timeout ? I18n.t("超时", "Timeout")
+                                        : root.member.latency-ms <= 0 ? I18n.t("未测速", "Unprobed")
+                                        : root.member.state == "degraded" ? I18n.t("波动", "Degraded")
+                                        : root.member.latency-ms < 80 ? I18n.t("极速", "Fast")
+                                        : root.member.latency-ms < 180 ? I18n.t("良好", "Good")
+                                        : I18n.t("偏高", "Slow");
+                                    font-size: 9px; font-weight: 700; color: lat-color; vertical-alignment: center;
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
             }
 
-            Rectangle {
-                horizontal-stretch: 0; width: 22px; height: 22px; border-radius: 6px;
-                background: pin-ta.has-hover ? Theme.well-bg : transparent;
-                opacity: root.member.pinned || member-ta.has-hover || pin-ta.has-hover ? 1.0 : 0.28;
-                animate opacity { duration: Motion.fast; }
-                pin-ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-pin-clicked(); } }
-                Image {
-                    x: 4px; y: 4px; width: 14px; height: 14px;
-                    source: root.member.pinned ? @image-url("../icons/star-filled.svg") : @image-url("../icons/star.svg");
-                    colorize: root.member.pinned ? Theme.warn-fg : Theme.text-muted;
+            // Bottom row: 4-bar ascending signal meter left + latency pill & favorite star right
+            HorizontalLayout {
+                spacing: 6px;
+                HorizontalLayout {
+                    horizontal-stretch: 0; width: 20px; spacing: 2px; padding-top: 4px; padding-bottom: 4px;
+                    Rectangle { width: 3.5px; height: 5px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 1 ? lat-color : Theme.offline-fg; opacity: bars >= 1 ? 1.0 : 0.28; }
+                    Rectangle { width: 3.5px; height: 8px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 2 ? lat-color : Theme.offline-fg; opacity: bars >= 2 ? 1.0 : 0.25; }
+                    Rectangle { width: 3.5px; height: 11px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 3 ? lat-color : Theme.offline-fg; opacity: bars >= 3 ? 1.0 : 0.22; }
+                    Rectangle { width: 3.5px; height: 14px; y: parent.height - self.height - 4px; border-radius: 1.5px; background: bars >= 4 ? lat-color : Theme.offline-fg; opacity: bars >= 4 ? 1.0 : 0.20; }
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Rectangle {
+                    horizontal-stretch: 0; height: 22px; border-radius: 11px;
+                    background: Theme.latency-bg(root.member.latency-ms, root.member.state);
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px;
+                        Text {
+                            text: root.member.latency-ms > 0 ? "\{root.member.latency-ms} ms" : (is-timeout ? I18n.t("超时", "Timeout") : "--");
+                            font-size: 11px; font-weight: 700; font-family: Theme.mono-font; vertical-alignment: center; color: lat-color;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 0; width: 22px; height: 22px; border-radius: 6px;
+                    background: probe-ta.has-hover ? Theme.well-bg : transparent;
+                    opacity: root.is-probing || member-ta.has-hover || probe-ta.has-hover ? 1.0 : 0.36;
+                    animate opacity { duration: Motion.fast; }
+                    accessible-role: button;
+                    accessible-label: I18n.t("测速", "Probe");
+                    accessible-action-default => { root.probe-clicked(); }
+                    probe-ta := TouchArea {
+                        enabled: !root.is-probing;
+                        mouse-cursor: root.is-probing ? default : pointer;
+                        clicked => { root.probe-clicked(); }
+                    }
+                    Image {
+                        x: 4px; y: 4px; width: 14px; height: 14px;
+                        source: root.is-probing ? @image-url("../icons/loader.svg") : @image-url("../icons/bolt.svg");
+                        colorize: root.is-probing ? Theme.accent : probe-ta.has-hover ? Theme.accent : Theme.text-muted;
+                        transform-rotation: root.is-probing && !Motion.reduced ? 360deg * (mod(animation-tick(), 900ms) / 900ms) : 0deg;
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 0; width: 22px; height: 22px; border-radius: 6px;
+                    background: pin-ta.has-hover ? Theme.well-bg : transparent;
+                    opacity: root.member.pinned || member-ta.has-hover || pin-ta.has-hover ? 1.0 : 0.28;
+                    animate opacity { duration: Motion.fast; }
+                    accessible-role: button;
+                    accessible-label: root.member.pinned ? I18n.t("取消置顶", "Unpin") : I18n.t("置顶", "Pin");
+                    accessible-action-default => { root.toggle-pin-clicked(); }
+                    pin-ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-pin-clicked(); } }
+                    Image {
+                        x: 4px; y: 4px; width: 14px; height: 14px;
+                        source: root.member.pinned ? @image-url("../icons/star-filled.svg") : @image-url("../icons/star.svg");
+                        colorize: root.member.pinned ? Theme.warn-fg : Theme.text-muted;
+                    }
                 }
             }
         }

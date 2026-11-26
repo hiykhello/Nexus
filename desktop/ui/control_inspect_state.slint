@@ -1,0 +1,54 @@
+export struct LiveRuleRow {
+    index: int,
+    rule-type: string,
+    action: string,
+    target: string,
+    summary: string,
+}
+
+export struct DnsAnswerRow {
+    name: string,
+    rr-type: string,
+    ttl: int,
+    data: string,
+}
+
+// Shared live Control API inspection & targeted maintenance state (Wave 30-32)
+export global ControlInspectState {
+    // GET /v1/rules live runtime rules inspector
+    in property <[LiveRuleRow]> live-rules: [];
+    in-out property <string> rules-filter: "";
+    in property <bool> rules-loading: false;
+    in property <string> rules-error: "";
+
+    // GET /v1/dns/query interactive live DNS tester
+    in-out property <string> dns-query-name: "example.com";
+    in-out property <string> dns-query-type: "A";
+    in-out property <string> dns-query-server: "";
+    in property <bool> dns-query-busy: false;
+    in property <string> dns-query-rcode: "";
+    in property <int> dns-query-elapsed-ms: -1;
+    in property <int> dns-query-ttl: 0;
+    in property <string> dns-query-error: "";
+    in property <[DnsAnswerRow]> dns-answers: [];
+
+    // Live SSE log streaming indicator & toggle
+    in-out property <bool> logs-stream-enabled: true;
+    in property <bool> logs-stream-connected: false;
+
+    // Active per-node probe indicator
+    in property <string> probing-member-name: "";
+
+    // Targeted cache maintenance feedback
+    in property <bool> cache-action-busy: false;
+    in property <string> cache-action-status: "";
+    in property <bool> cache-action-ok: true;
+
+    callback refresh-live-rules();
+    callback filter-live-rules(string);
+    callback run-dns-query();
+    callback flush-fakeip();
+    callback clear-dns-cache();
+    callback probe-member(string, string); // group, member
+    callback toggle-logs-stream(bool);
+}

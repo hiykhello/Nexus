@@ -138,6 +138,8 @@ export component NexusInput inherits Rectangle {
         ti.focus();
     }
 
+    forward-focus: ti;
+
     vertical-stretch: 0;
     height: root.input-height;
     min-width: root.borderless ? 44px : 56px;
@@ -213,7 +215,7 @@ export component NexusInput inherits Rectangle {
                 font-family: root.mono ? Theme.mono-font : "";
                 color: Theme.text-primary;
                 selection-background-color: Theme.accent.with-alpha(0.35);
-                selection-foreground-color: #ffffff;
+                selection-foreground-color: Theme.selection-fg;
                 vertical-alignment: center;
                 accepted => { root.accepted(); }
                 edited => { root.edited(self.text); }
@@ -327,6 +329,10 @@ export component EmptyStateCard inherits Rectangle {
                 drop-shadow-color: Theme.pill-active-bot.with-alpha(0.32);
                 animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.34, 1.56, 0.64, 1.0); }
 
+                accessible-role: button;
+                accessible-label: root.action-label;
+                accessible-action-default => { root.action-clicked(); }
+
                 cta-ta := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.action-clicked(); }
@@ -354,6 +360,10 @@ export component EmptyStateCard inherits Rectangle {
                 transform-scale: sec-ta.pressed ? 0.96 : 1.0;
                 animate background { duration: Motion.fast; }
                 animate transform-scale { duration: Motion.micro; }
+
+                accessible-role: button;
+                accessible-label: root.secondary-action-label;
+                accessible-action-default => { root.secondary-action-clicked(); }
 
                 sec-ta := TouchArea {
                     mouse-cursor: pointer;
@@ -407,8 +417,8 @@ export component NexusVScrollBar inherits Rectangle {
         height: parent.height;
         border-radius: 4px;
         border-width: 1px;
-        border-color: Theme.dark ? #ffffff18 : #0f172a1c;
-        background: Theme.dark ? #ffffff12 : #0f172a12;
+        border-color: Theme.scrollbar-rail-border;
+        background: Theme.scrollbar-rail-bg;
     }
 
     // High-contrast tactile rounded thumb
@@ -420,8 +430,8 @@ export component NexusVScrollBar inherits Rectangle {
         border-radius: 3px;
         background:
             ta.pressed ? Theme.accent
-            : ta.has-hover ? (Theme.dark ? #d4dce8 : #334155)
-            : (Theme.dark ? #a3afc4.with-alpha(0.80) : #475569.with-alpha(0.72));
+            : ta.has-hover ? Theme.scrollbar-thumb-hover
+            : Theme.scrollbar-thumb;
         animate background { duration: Motion.fast; }
     }
 

@@ -116,6 +116,11 @@ namespace desktop_ui_helpers {
                 push_toast(ctx.ui, built.error(), "error");
                 return;
             }
+            auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
+            if (built->kind == "policy_group") {
+                built->policy_group.interrupt_exist_connections = g.get_draft_group_interrupt();
+                g.set_draft_group_interrupt(false);
+            }
             std::string label = built->remarks;
             ctx.doc.profiles.push_back(std::move(*built));
             ++ctx.doc.revision;
@@ -194,6 +199,19 @@ namespace desktop_ui_helpers {
             recompose_active_workspace(ctx);
         });
 
+        ws.on_apply_routing_options([&ctx](bool auto_detect, bool find_proc) {
+            for (auto& rp : ctx.doc.routing_profiles) {
+                if (!rp.is_active) continue;
+                rp.auto_detect_interface = auto_detect;
+                rp.find_process = find_proc;
+                ++ctx.doc.revision;
+                (void)persist_workspace_db(ctx);
+                sync_workspace_to_ui(ctx);
+                recompose_active_workspace(ctx);
+                break;
+            }
+        });
+
         ws.on_add_routing_rule([&ctx](slint::SharedString scope, slint::SharedString tgt_type, slint::SharedString tgt_pid,
                                       slint::SharedString match_s, slint::SharedString proc_s) {
             bool const en = is_en_ui(ctx.ui);
@@ -203,6 +221,7 @@ namespace desktop_ui_helpers {
                 push_toast(ctx.ui, tr(en, "请至少填写一个域名、IP/CIDR 或进程名", "Provide at least one domain, IP/CIDR, or process name"), "error");
                 return;
             }
+            bool const tls_frag = ctx.ui.global<nexus_ui::WorkspaceState>().get_rule_tls_fragment();
             for (auto& rp : ctx.doc.routing_profiles) {
                 if (!rp.is_active) continue;
                 desktop::RoutingRule r{};
@@ -215,6 +234,7 @@ namespace desktop_ui_helpers {
                     else r.domains.push_back(tok);
                 }
                 r.desktop_process = std::move(procs);
+                r.tls_fragment = tls_frag;
                 rp.rules.push_back(std::move(r));
                 ++ctx.doc.revision;
                 (void)persist_workspace_db(ctx);
@@ -247,6 +267,15 @@ namespace desktop_ui_helpers {
             std::string mtu_s(g.get_host_tun_mtu());
             std::int64_t mtu = 1400;
             if (auto [p, ec] = std::from_chars(mtu_s.data(), mtu_s.data() + mtu_s.size(), mtu); ec == std::errc{}) ctx.host.tun_mtu = mtu;
+            std::string workers_s(trim_ascii_ws(std::string_view(g.get_host_workers())));
+            std::int64_t workers_val = ctx.host.workers;
+            if (auto [p, ec] = std::from_chars(workers_s.data(), workers_s.data() + workers_s.size(), workers_val); ec == std::errc{})
+                ctx.host.workers = workers_val;
+            ctx.host.workers_spec = std::string(trim_ascii_ws(std::string_view(g.get_host_workers_spec())));
+            std::string wmax_s(trim_ascii_ws(std::string_view(g.get_host_workers_max())));
+            std::int64_t wmax_val = 0;
+            if (auto [p, ec] = std::from_chars(wmax_s.data(), wmax_s.data() + wmax_s.size(), wmax_val); ec == std::errc{})
+                ctx.host.workers_max = wmax_val;
             auto notices = persist_workspace_and_host(ctx, en);
             sync_workspace_to_ui(ctx);
             g.set_host_strict_route_notice(slint::SharedString(notices.empty() ? "" : notices.front()));

@@ -47,6 +47,7 @@ import desktop.workspace_sync;
 #include "workspace_ui_flow.hpp"
 #include "main_quick_controls.hpp"
 #include "main_callbacks.hpp"
+#include "main_inspect_callbacks.hpp"
 
 using desktop_ui_helpers::default_config_dir;
 using desktop_ui_helpers::default_control_endpoint;
@@ -106,9 +107,14 @@ auto main(int argc, char** argv) -> int {
     std::vector<desktop::OutboundGroupSnapshot> cached_groups;
     std::unordered_set<std::string> pinned_members;
     desktop_ui_helpers::MemberModelPipeline member_models;
+    desktop_ui_helpers::ConnectionsModelPipeline conn_models;
+    desktop_ui_helpers::LogsModelPipeline log_models;
     ui->set_members(member_models.sorted);
+    ui->set_connections(conn_models.model);
+    ui->set_logs(log_models.model);
     std::vector<desktop::LogEntrySnapshot> cached_logs;
     std::mutex logs_mu;
+    std::atomic<std::uint64_t> last_log_seq{0};
     desktop_ui_helpers::RateTracker rate_tracker;
     std::optional<std::chrono::steady_clock::time_point> core_started_at;
     std::atomic<bool> metrics_in_flight{false};
@@ -116,6 +122,7 @@ auto main(int argc, char** argv) -> int {
     std::atomic<bool> lifecycle_busy{false};
     std::uint64_t last_ledger_up = 0, last_ledger_down = 0;
     int conn_poll_tick = 0;
+    int hidden_metrics_tick = 0;
     desktop::AsyncWorker worker;
     desktop::AsyncWorker probe_worker;
 
@@ -191,18 +198,33 @@ auto main(int argc, char** argv) -> int {
             refresh_groups_too, sync_tray, record_traffic_totals);
     };
 
+    desktop_ui_helpers::LiveInspectController inspect_ctrl{
+        *ui, weak_ui, worker, probe_worker, supervisor, http_ctrl, tray,
+        cached_groups, pinned_members, member_models, log_models, cached_logs, logs_mu, last_log_seq, sync_tray
+    };
+
     on_window_shown = [&] {
         sync_memory_ui();
         if (supervisor.running()) {
             poll_telemetry(std::string_view(ui->get_active_node()).empty());
             if (ui->get_active_tab() == 2 && !ui->get_connections_paused()) ui->invoke_refresh_connections();
-            ui->invoke_refresh_logs();
+            if (ui->get_active_tab() == 4) ui->invoke_refresh_logs();
+            inspect_ctrl.sync_log_stream(
+                ui->get_active_tab() == 4 && ui->global<nexus_ui::ControlInspectState>().get_logs_stream_enabled());
         }
     };
     on_window_hidden = [&] {
+        inspect_ctrl.stop_log_stream();
+        ui->set_rule_modal_open(false);
+        ui->set_outbound_modal_open(false);
+        ui->global<nexus_ui::TooltipState>().invoke_hide();
+        if (!ui->get_tray_show_speed()) {
+            ui->set_download_rate(slint::SharedString("0.0 KB/s"));
+            ui->set_upload_rate(slint::SharedString("0.0 KB/s"));
+        }
         { std::lock_guard lk(logs_mu); cached_logs.clear(); }
-        ui->set_logs(std::make_shared<slint::VectorModel<nexus_ui::LogLineItem>>());
-        ui->set_connections(std::make_shared<slint::VectorModel<nexus_ui::ActiveConnectionItem>>());
+        log_models.clear();
+        conn_models.clear();
         worker.post([db = client_db.get()] { desktop::reclaim_process_memory(db); });
     };
     show_window_from_ui = [&] {
@@ -230,6 +252,7 @@ auto main(int argc, char** argv) -> int {
         ui->global<nexus_ui::WorkspaceState>().invoke_activate_profile(id);
     });
     ui->on_toggle_core([&] {
+        if (!supervisor.running()) last_log_seq.store(0, std::memory_order_release);
         desktop_ui_helpers::toggle_core_with_workspace(ws_ctx, [&](std::string kdl, bool prefer_persistent, bool en) {
             desktop_ui_helpers::toggle_core_async(
                 weak_ui, worker, supervisor, sys_proxy, ipc, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
@@ -332,21 +355,25 @@ auto main(int argc, char** argv) -> int {
 
     desktop_ui_helpers::DesktopCallbacksContext cb_ctx{
         *ui, weak_ui, worker, probe_worker, supervisor, ipc, http_ctrl, client_db.get(), ws_ctx.telemetry,
-        cfg_dir, config_path, fallback_sock, cached_groups, pinned_members, member_models, cached_logs, logs_mu, sync_tray
+        cfg_dir, config_path, fallback_sock, cached_groups, pinned_members, member_models, conn_models, log_models,
+        cached_logs, logs_mu, last_log_seq, sync_tray
     };
     struct ShutdownGuard {
         std::atomic<bool>& quit_once;
+        desktop_ui_helpers::LiveInspectController& inspect_ctrl;
         desktop::TrayController& tray;
         desktop::AsyncWorker& worker;
         desktop::AsyncWorker& probe_worker;
         ~ShutdownGuard() {
             quit_once.store(true, std::memory_order_release);
+            inspect_ctrl.stop_log_stream();
             tray.stop();
             probe_worker.stop();
             worker.stop();
         }
-    } shutdown_guard{quit_once, tray, worker, probe_worker};
+    } shutdown_guard{quit_once, inspect_ctrl, tray, worker, probe_worker};
     desktop_ui_helpers::bind_secondary_callbacks(cb_ctx);
+    inspect_ctrl.bind();
     ui->on_refresh_profiles([&] { desktop_ui_helpers::refresh_workspace_from_disk(ws_ctx); });
     ui->on_quit_requested([&] { if (!quit_once.exchange(true, std::memory_order_acq_rel)) slint::quit_event_loop(); });
     ui->window().on_close_requested([&] {
@@ -368,6 +395,8 @@ auto main(int argc, char** argv) -> int {
         bool const core_up = supervisor.running();
         if (!core_up && (core_started_at || ui->get_core_running())) {
             bool en = is_en_ui(*ui);
+            inspect_ctrl.stop_log_stream();
+            last_log_seq.store(0, std::memory_order_release);
             core_started_at.reset();
             ws_ctx.running_selector_members.clear();
             rate_tracker.reset();
@@ -379,13 +408,21 @@ auto main(int argc, char** argv) -> int {
             auto msg = err.empty() ? tr(en, "核心意外退出", "Core exited unexpectedly") : (tr(en, "核心已退出: ", "Core exited: ") + err);
             ui->set_diagnostic_ok(false); ui->set_diagnostic_message(slint::SharedString(msg));
             desktop_ui_helpers::push_toast(*ui, msg, "error");
+            (void)tray.notify_if_hidden("Nexus", msg, desktop::TrayNotificationUrgency::error);
             desktop_ui_helpers::clear_telemetry_ui(*ui);
             sync_tray();
             return;
         }
-        // Pause high-frequency memory, metrics, connections & logs UI polling while hidden in tray!
-        if (!window_visible) return;
+        // While hidden in tray, pause full UI polling; if tray speed tooltip is enabled, poll lightweight /metrics every 5s.
+        if (!window_visible) {
+            if (core_up && ui->get_tray_show_speed() && (++hidden_metrics_tick % 5 == 0)) {
+                poll_telemetry(false);
+            }
+            return;
+        }
         sync_memory_ui();
+        inspect_ctrl.sync_log_stream(
+            core_up && ui->get_active_tab() == 4 && ui->global<nexus_ui::ControlInspectState>().get_logs_stream_enabled());
         if (core_up) {
             if (!core_started_at) core_started_at = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - *core_started_at);
@@ -393,15 +430,14 @@ auto main(int argc, char** argv) -> int {
             poll_telemetry(std::string_view(ui->get_active_node()).empty());
             if (ui->get_active_tab() == 2 && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
                 !conns_in_flight.exchange(true, std::memory_order_acq_rel)) {
-                std::string filter(ui->get_connection_filter());
-                bool posted = worker.post([&, weak_ui, filter = std::move(filter)] {
+                bool posted = worker.post([&, weak_ui] {
                     auto reply = http_ctrl.connections();
                     conns_in_flight.store(false, std::memory_order_release);
                     if (!reply.ok) return;
-                    auto items = desktop_ui_helpers::build_ui_connection_items(desktop::parse_connections_json(reply.body), filter);
-                    on_ui_thread(weak_ui, [items = std::move(items)](auto& s) mutable {
+                    auto parsed = desktop::parse_connections_json(reply.body);
+                    on_ui_thread(weak_ui, [&conn_models, parsed = std::move(parsed)](auto& s) mutable {
                         if (s->get_connections_paused()) return;
-                        s->set_connections(std::make_shared<slint::VectorModel<nexus_ui::ActiveConnectionItem>>(std::move(items)));
+                        conn_models.replace(std::move(parsed));
                     });
                 });
                 if (!posted) conns_in_flight.store(false, std::memory_order_release);
@@ -420,6 +456,7 @@ auto main(int argc, char** argv) -> int {
     slint::run_event_loop(slint::EventLoopMode::RunUntilQuit);
     quit_once.store(true, std::memory_order_release);
     persist_prefs();
+    inspect_ctrl.stop_log_stream();
     tray.stop();
     probe_worker.stop();
     worker.stop();

@@ -3,6 +3,7 @@ import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
+import { WorkspaceState } from "../workspace_state.slint";
 import { GlassSpeculum, NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
 import { ThemeStudioCard } from "theme_studio_card.slint";
 import { TraySettingsCard } from "tray_settings_card.slint";
@@ -129,8 +130,12 @@ component AboutRuntimeCard inherits Rectangle {
         SpecRow {
             label: I18n.t("核心模式", "Core Engine");
             value: root.core-running
-                ? (root.tun-enabled ? I18n.t("io_uring · TUN 运行中", "io_uring · TUN Active") : I18n.t("io_uring · 运行中", "io_uring · Active"))
-                : I18n.t("io_uring / epoll · 待命", "io_uring / epoll · Standby");
+                ? (WorkspaceState.host-is-linux
+                    ? (root.tun-enabled ? I18n.t("io_uring · TUN 运行中", "io_uring · TUN Active") : I18n.t("io_uring · 运行中", "io_uring · Active"))
+                    : (root.tun-enabled ? I18n.t("原生异步引擎 · TUN 运行中", "Native Async · TUN Active") : I18n.t("原生异步引擎 · 运行中", "Native Async · Active")))
+                : (WorkspaceState.host-is-linux
+                    ? I18n.t("io_uring / epoll · 待命", "io_uring / epoll · Standby")
+                    : I18n.t("原生异步引擎 · 待命", "Native Async · Standby"));
             value-color: root.core-running ? Theme.success-fg : Theme.text-secondary;
         }
         SpecRow {
@@ -155,6 +160,10 @@ component RuleModalChip inherits Rectangle {
     animate background { duration: Motion.fast; }
     animate border-color { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; }
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
 
     ta := TouchArea {
         mouse-cursor: pointer;

@@ -19,6 +19,7 @@ namespace desktop::detail {
         constexpr UINT kTrayCallbackMsg = WM_APP + 101;
         constexpr UINT kTrayQuitMsg = WM_APP + 102;
         constexpr UINT kTraySyncMsg = WM_APP + 103;
+        constexpr UINT kTrayNotifyMsg = WM_APP + 104;
         constexpr UINT kTrayIconId = 1;
 
         auto to_wide(std::string_view utf8) -> std::wstring {
@@ -41,12 +42,19 @@ namespace desktop::detail {
             return escaped;
         }
 
-        auto copy_tooltip_wide(wchar_t (&dst)[128], std::string_view utf8) -> void {
+        template <std::size_t N>
+        auto copy_wide_trunc(wchar_t (&dst)[N], std::string_view utf8, wchar_t const* fallback = L"") -> void {
             auto wide = to_wide(utf8);
-            if (wide.empty()) wide = L"Nexus";
-            auto const n = std::min(wide.size(), std::size(dst) - 1);
+            if (wide.empty() && fallback) wide = fallback;
+            auto const n = std::min(wide.size(), N - 1);
             std::copy_n(wide.data(), n, dst);
             dst[n] = L'\0';
+        }
+
+        auto make_prism_hicon(TrayState st) -> HICON {
+            auto dib = build_win32_icon_dib(st);
+            return ::CreateIconFromResourceEx(
+                dib.data(), static_cast<DWORD>(dib.size()), TRUE, 0x00030000u, 32, 32, LR_DEFAULTCOLOR);
         }
 
         auto build_hmenu(std::vector<TrayMenuItem> const& items) -> HMENU {
@@ -89,33 +97,95 @@ namespace desktop::detail {
         class Win32TrayBackend final : public NativeTrayBackend {
             NativeTrayHost host_;
             std::thread ui_thread_;
+            std::mutex notif_mu_;
+            std::deque<TrayNotification> pending_notifs_;
             std::atomic<HWND> hwnd_{nullptr};
             std::atomic<bool> active_{false};
             std::atomic<bool> stopping_{false};
+            HICON dynamic_icon_{nullptr};
+            TrayState icon_state_{TrayState::offline};
+            bool has_icon_state_{false};
             UINT taskbar_created_msg_{0};
 
+            auto destroy_dynamic_icon() noexcept -> void {
+                if (dynamic_icon_) {
+                    ::DestroyIcon(dynamic_icon_);
+                    dynamic_icon_ = nullptr;
+                }
+                has_icon_state_ = false;
+            }
+
             auto add_icon(HWND w) -> bool {
+                auto const snap = host_.get_snapshot();
+                HICON next = make_prism_hicon(snap.state);
                 NOTIFYICONDATAW nid{};
                 nid.cbSize = sizeof(nid);
                 nid.hWnd = w;
                 nid.uID = kTrayIconId;
                 nid.uFlags = NIF_MESSAGE | NIF_TIP | NIF_ICON;
                 nid.uCallbackMessage = kTrayCallbackMsg;
-                HINSTANCE hinst = ::GetModuleHandleW(nullptr);
-                nid.hIcon = ::LoadIconW(hinst, MAKEINTRESOURCEW(1));
-                if (!nid.hIcon) nid.hIcon = ::LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
-                copy_tooltip_wide(nid.szTip, host_.get_tooltip());
-                return ::Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
+                if (next) {
+                    nid.hIcon = next;
+                } else {
+                    HINSTANCE hinst = ::GetModuleHandleW(nullptr);
+                    nid.hIcon = ::LoadIconW(hinst, MAKEINTRESOURCEW(1));
+                    if (!nid.hIcon) nid.hIcon = ::LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+                }
+                copy_wide_trunc(nid.szTip, host_.get_tooltip(), L"Nexus");
+                bool const added = ::Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
+                if (next) {
+                    if (added) {
+                        if (dynamic_icon_) ::DestroyIcon(dynamic_icon_);
+                        dynamic_icon_ = next;
+                        icon_state_ = snap.state;
+                        has_icon_state_ = true;
+                    } else {
+                        ::DestroyIcon(next);
+                    }
+                }
+                return added;
             }
 
-            auto update_tooltip(HWND w) -> void {
+            auto sync_icon_and_tooltip(HWND w) -> void {
+                auto const snap = host_.get_snapshot();
                 NOTIFYICONDATAW nid{};
                 nid.cbSize = sizeof(nid);
                 nid.hWnd = w;
                 nid.uID = kTrayIconId;
                 nid.uFlags = NIF_TIP;
-                copy_tooltip_wide(nid.szTip, host_.get_tooltip());
+                copy_wide_trunc(nid.szTip, host_.get_tooltip(), L"Nexus");
+                HICON next = nullptr;
+                if (!has_icon_state_ || snap.state != icon_state_) {
+                    next = make_prism_hicon(snap.state);
+                    if (next) {
+                        nid.uFlags |= NIF_ICON;
+                        nid.hIcon = next;
+                    }
+                }
                 ::Shell_NotifyIconW(NIM_MODIFY, &nid);
+                if (next) {
+                    if (dynamic_icon_) ::DestroyIcon(dynamic_icon_);
+                    dynamic_icon_ = next;
+                    icon_state_ = snap.state;
+                    has_icon_state_ = true;
+                }
+            }
+
+            auto drain_notifications(HWND w) -> void {
+                std::deque<TrayNotification> batch;
+                { std::lock_guard lk(notif_mu_); batch.swap(pending_notifs_); }
+                for (auto const& n : batch) {
+                    NOTIFYICONDATAW nid{};
+                    nid.cbSize = sizeof(nid);
+                    nid.hWnd = w;
+                    nid.uID = kTrayIconId;
+                    nid.uFlags = NIF_INFO;
+                    copy_wide_trunc(nid.szInfoTitle, n.title, L"Nexus");
+                    copy_wide_trunc(nid.szInfo, n.body, L"");
+                    nid.dwInfoFlags = n.urgency == TrayNotificationUrgency::error ? NIIF_ERROR
+                        : (n.urgency == TrayNotificationUrgency::warning ? NIIF_WARNING : NIIF_INFO);
+                    ::Shell_NotifyIconW(NIM_MODIFY, &nid);
+                }
             }
 
             auto show_context_menu(HWND w) -> void {
@@ -151,7 +221,11 @@ namespace desktop::detail {
                     return 0;
                 }
                 if (msg == kTraySyncMsg) {
-                    self->update_tooltip(w);
+                    self->sync_icon_and_tooltip(w);
+                    return 0;
+                }
+                if (msg == kTrayNotifyMsg) {
+                    self->drain_notifications(w);
                     return 0;
                 }
                 if (msg == kTrayQuitMsg) {
@@ -205,6 +279,7 @@ namespace desktop::detail {
                     ::Shell_NotifyIconW(NIM_DELETE, &nid);
                     ::DestroyWindow(cur);
                 }
+                destroy_dynamic_icon();
             }
 
         public:
@@ -231,6 +306,18 @@ namespace desktop::detail {
                 if (HWND w = hwnd_.load(std::memory_order_acquire)) {
                     ::PostMessageW(w, kTraySyncMsg, 0, 0);
                 }
+            }
+
+            auto show_notification(TrayNotification const& notif, TrayState) -> bool override {
+                if (stopping_.load(std::memory_order_acquire) || !active_.load(std::memory_order_acquire)) return false;
+                HWND w = hwnd_.load(std::memory_order_acquire);
+                if (!w) return false;
+                {
+                    std::lock_guard lk(notif_mu_);
+                    if (pending_notifs_.size() >= 8) pending_notifs_.pop_front();
+                    pending_notifs_.push_back(notif);
+                }
+                return ::PostMessageW(w, kTrayNotifyMsg, 0, 0) != FALSE;
             }
 
             auto stop() noexcept -> void override {

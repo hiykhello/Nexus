@@ -9,19 +9,38 @@ namespace desktop_ui_helpers {
         return out;
     }
 
-    // Slint 1.19 live FilterModel + SortModel pipeline for proxy group members (zero full-snapshot rebuilds on search/sort)
+    template <typename T>
+    inline auto sync_vector_model(slint::VectorModel<T>& model, std::vector<T> const& next) -> void {
+        auto const cur_n = model.row_count();
+        auto const next_n = next.size();
+        auto const common = std::min(cur_n, next_n);
+        for (std::size_t i = 0; i < common; ++i) model.set_row_data(i, next[i]);
+        for (std::size_t i = common; i < next_n; ++i) model.push_back(next[i]);
+        for (std::size_t i = cur_n; i > next_n; --i) model.erase(i - 1);
+    }
+
+    inline auto is_timeout_member_item(nexus_ui::OutboundMemberItem const& m) noexcept -> bool {
+        if (m.latency_ms > 0) return false;
+        std::string_view st(m.state);
+        return st == "timeout" || st == "unreachable" || st == "error" || st == "failed";
+    }
+
+    // Slint 1.19 live FilterModel + SortModel pipeline for proxy group members (zero full-snapshot rebuilds on search/sort/hide-timeout)
     struct MemberModelPipeline {
         std::shared_ptr<slint::VectorModel<nexus_ui::OutboundMemberItem>> raw =
             std::make_shared<slint::VectorModel<nexus_ui::OutboundMemberItem>>();
         std::shared_ptr<std::string> filter_lc = std::make_shared<std::string>();
         std::shared_ptr<std::string> sort_mode = std::make_shared<std::string>("default");
+        std::shared_ptr<bool> hide_timeout = std::make_shared<bool>(false);
         std::shared_ptr<slint::FilterModel<nexus_ui::OutboundMemberItem>> filtered;
         std::shared_ptr<slint::SortModel<nexus_ui::OutboundMemberItem>> sorted;
 
         MemberModelPipeline() {
             auto f_lc = filter_lc;
+            auto h_to = hide_timeout;
             filtered = std::make_shared<slint::FilterModel<nexus_ui::OutboundMemberItem>>(
-                raw, [f_lc](nexus_ui::OutboundMemberItem const& m) {
+                raw, [f_lc, h_to](nexus_ui::OutboundMemberItem const& m) {
+                    if (*h_to && is_timeout_member_item(m)) return false;
                     if (f_lc->empty()) return true;
                     return lower_ascii(std::string_view(m.name)).contains(*f_lc);
                 });
@@ -42,10 +61,12 @@ namespace desktop_ui_helpers {
                 });
         }
 
-        auto replace(std::vector<nexus_ui::OutboundMemberItem> items, std::string_view filter, std::string_view sort) -> void {
+        auto replace(std::vector<nexus_ui::OutboundMemberItem> const& items, std::string_view filter, std::string_view sort) -> void {
             *filter_lc = lower_ascii(filter);
             *sort_mode = sort.empty() ? "default" : std::string(sort);
-            raw->set_vector(std::move(items));
+            sync_vector_model(*raw, items);
+            filtered->reset();
+            sorted->reset();
         }
 
         auto set_filter(std::string_view filter) -> void {
@@ -56,6 +77,22 @@ namespace desktop_ui_helpers {
         auto set_sort(std::string_view sort) -> void {
             *sort_mode = sort.empty() ? "default" : std::string(sort);
             sorted->reset();
+        }
+
+        auto set_hide_timeout(bool hide) -> void {
+            *hide_timeout = hide;
+            filtered->reset();
+        }
+
+        [[nodiscard]] auto fastest_latency_ms() const -> int {
+            int best = -1;
+            auto const n = raw->row_count();
+            for (std::size_t i = 0; i < n; ++i) {
+                if (auto row = raw->row_data(i); row && row->latency_ms > 0) {
+                    if (best <= 0 || row->latency_ms < best) best = row->latency_ms;
+                }
+            }
+            return best;
         }
     };
 
@@ -87,11 +124,15 @@ namespace desktop_ui_helpers {
             c.id, inb, src, dst, outb, mode, rule, c.duration_ms, proc);
     }
 
-    inline auto build_ui_connection_items(std::vector<desktop::ActiveConnectionSnapshot> const& parsed, std::string filter)
+    inline auto build_ui_connection_items(std::vector<desktop::ActiveConnectionSnapshot> const& parsed,
+                                          std::string filter, int route_filter = 0)
         -> std::vector<nexus_ui::ActiveConnectionItem> {
         for (char& ch : filter) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         std::vector<nexus_ui::ActiveConnectionItem> items;
         for (auto const& c : parsed) {
+            bool const is_direct = (c.outbound == "direct");
+            if (route_filter == 1 && is_direct) continue;
+            if (route_filter == 2 && !is_direct) continue;
             auto hay = std::format("{} {} {} {} {} {} {} {}", c.id, c.protocol, c.path, c.outbound, c.target,
                 c.route_rule, c.process_path, c.destination_port);
             for (char& ch : hay) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -118,6 +159,92 @@ namespace desktop_ui_helpers {
         }
         return items;
     }
+
+    // Persistent in-place-mutated Connections VectorModel pipeline (eliminates ListView height:0px hiding & scroll resets)
+    struct ConnectionsModelPipeline {
+        std::shared_ptr<slint::VectorModel<nexus_ui::ActiveConnectionItem>> model =
+            std::make_shared<slint::VectorModel<nexus_ui::ActiveConnectionItem>>();
+        std::vector<desktop::ActiveConnectionSnapshot> raw;
+        std::string filter;
+        int route_filter = 0; // 0: All | 1: Proxy | 2: Direct
+
+        auto apply() -> void {
+            sync_vector_model(*model, build_ui_connection_items(raw, filter, route_filter));
+        }
+        auto replace(std::vector<desktop::ActiveConnectionSnapshot> next) -> void {
+            raw = std::move(next);
+            apply();
+        }
+        auto set_filter(std::string q) -> void {
+            filter = std::move(q);
+            apply();
+        }
+        auto set_route_filter(int rf) -> void {
+            route_filter = rf;
+            apply();
+        }
+        auto clear() -> void {
+            raw.clear();
+            sync_vector_model(*model, {});
+        }
+    };
+
+    // Persistent in-place-mutated Logs VectorModel pipeline (C++ severity/domain/search filtering + bounded SSE appends)
+    struct LogsModelPipeline {
+        static constexpr std::size_t kMaxLogs = 400;
+        std::shared_ptr<slint::VectorModel<nexus_ui::LogLineItem>> model =
+            std::make_shared<slint::VectorModel<nexus_ui::LogLineItem>>();
+        std::vector<desktop::LogEntrySnapshot> raw;
+        std::string sev_filter = "all"; // "all" | "error" | "warn" | "info" | "debug"
+        std::string domain_filter = "all";
+        std::string search_lc;
+
+        [[nodiscard]] auto matches(desktop::LogEntrySnapshot const& e) const -> bool {
+            if (sev_filter != "all") {
+                if (sev_filter == "debug") {
+                    if (e.level != "debug" && e.level != "trace") return false;
+                } else if (e.level != sev_filter) {
+                    return false;
+                }
+            }
+            if (!domain_filter.empty() && domain_filter != "all" && e.domain != domain_filter) return false;
+            if (!search_lc.empty()) {
+                auto hay = lower_ascii(e.domain) + " " + lower_ascii(e.message);
+                if (!hay.contains(search_lc)) return false;
+            }
+            return true;
+        }
+        auto apply() -> void {
+            std::vector<nexus_ui::LogLineItem> out;
+            out.reserve(raw.size());
+            for (auto const& e : raw) {
+                if (matches(e)) {
+                    out.push_back({slint::SharedString(e.level), slint::SharedString(e.domain), slint::SharedString(e.message)});
+                }
+            }
+            sync_vector_model(*model, out);
+        }
+        auto replace(std::vector<desktop::LogEntrySnapshot> entries) -> void {
+            if (entries.size() > kMaxLogs) entries.erase(entries.begin(), entries.end() - static_cast<std::ptrdiff_t>(kMaxLogs));
+            raw = std::move(entries);
+            apply();
+        }
+        auto append_live(desktop::LogEntrySnapshot entry) -> void {
+            if (!raw.empty() && entry.seq > 0 && raw.back().seq >= entry.seq) return;
+            raw.push_back(entry);
+            bool trimmed = false;
+            while (raw.size() > kMaxLogs) { raw.erase(raw.begin()); trimmed = true; }
+            if (trimmed) {
+                apply();
+            } else if (matches(raw.back())) {
+                model->push_back({slint::SharedString(raw.back().level), slint::SharedString(raw.back().domain), slint::SharedString(raw.back().message)});
+            }
+        }
+        auto set_sev_filter(std::string sev) -> void { sev_filter = std::move(sev); apply(); }
+        auto set_domain_filter(std::string dom) -> void { domain_filter = std::move(dom); apply(); }
+        auto set_search(std::string_view q) -> void { search_lc = lower_ascii(q); apply(); }
+        auto clear() -> void { raw.clear(); sync_vector_model(*model, {}); }
+    };
 
     inline auto extract_group_pins(
         std::string_view group_tag,
@@ -146,6 +273,8 @@ namespace desktop_ui_helpers {
                     slint::SharedString(m.name),
                     slint::SharedString(m.state),
                     static_cast<int>(m.latency_ms),
+                    static_cast<int>(m.ewma_ms),
+                    m.breaker_open,
                     m.selected,
                     m.overridden,
                     group_pins.contains(m.name),

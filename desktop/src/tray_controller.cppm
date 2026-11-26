@@ -62,6 +62,18 @@ export namespace desktop {
         std::vector<TrayMenuItem> children;
     };
 
+    enum class TrayNotificationUrgency : std::uint8_t {
+        info,
+        warning,
+        error,
+    };
+
+    struct TrayNotification {
+        std::string title;
+        std::string body;
+        TrayNotificationUrgency urgency = TrayNotificationUrgency::info;
+    };
+
     struct TrayCallbacks {
         std::function<void()> on_show;
         std::function<void()> on_toggle_window;
@@ -75,6 +87,8 @@ export namespace desktop {
         std::function<void()> on_copy_proxy_env;
         std::function<void()> on_reload;
         std::function<void()> on_quit;
+        std::function<void()> on_flush_fakeip;
+        std::function<void()> on_clear_dns_cache;
     };
 
     [[nodiscard]] auto build_tray_menu(TraySnapshot const& snap) -> std::vector<TrayMenuItem>;
@@ -103,6 +117,11 @@ export namespace desktop {
         auto trigger_primary_click(this TrayController& self) -> void;
         auto trigger_secondary_click(this TrayController& self) -> void;
         [[nodiscard]] auto native_backend_active(this TrayController const& self) noexcept -> bool;
+        auto notify(this TrayController& self, std::string title, std::string body,
+            TrayNotificationUrgency urgency = TrayNotificationUrgency::info) -> bool;
+        auto notify_if_hidden(this TrayController& self, std::string title, std::string body,
+            TrayNotificationUrgency urgency = TrayNotificationUrgency::info) -> bool;
+        [[nodiscard]] auto last_notification(this TrayController const& self) -> std::optional<TrayNotification>;
 
         auto trigger_show(this TrayController& self) -> void;
         auto trigger_reload(this TrayController& self) -> void;
@@ -122,6 +141,8 @@ namespace desktop::detail {
     inline constexpr std::int32_t kMenuCopyProxy = 1006;
     inline constexpr std::int32_t kMenuReload = 1007;
     inline constexpr std::int32_t kMenuQuit = 1008;
+    inline constexpr std::int32_t kMenuFlushFakeIp = 1009;
+    inline constexpr std::int32_t kMenuClearDnsCache = 1010;
     inline constexpr std::int32_t kMenuModeSubmenu = 1100;
     inline constexpr std::int32_t kMenuModeRule = 1101;
     inline constexpr std::int32_t kMenuModeGlobal = 1102;
@@ -141,6 +162,10 @@ namespace desktop::detail {
         virtual ~NativeTrayBackend() = default;
         [[nodiscard]] virtual auto active() const noexcept -> bool = 0;
         virtual auto notify_snapshot_changed() -> void = 0;
+        virtual auto show_notification(TrayNotification const& notif, TrayState icon_state) -> bool {
+            (void)notif; (void)icon_state;
+            return false;
+        }
         virtual auto stop() noexcept -> void = 0;
     };
 
@@ -156,11 +181,17 @@ namespace desktop::detail {
 
     [[nodiscard]] auto native_tray_disabled_by_env() noexcept -> bool;
     [[nodiscard]] auto render_prism_icon_argb32(TrayState state) -> std::array<std::uint8_t, 32 * 32 * 4>;
+    [[nodiscard]] auto build_win32_icon_dib(TrayState state) -> std::array<std::uint8_t, 40 + 32 * 32 * 4 + 32 * 4>;
     [[nodiscard]] auto escape_dbusmenu_label(std::string_view raw) -> std::string;
     [[nodiscard]] auto find_menu_item(std::vector<TrayMenuItem> const& items, std::int32_t id) -> TrayMenuItem const*;
     auto flatten_menu_items(std::vector<TrayMenuItem> const& items, std::vector<TrayMenuItem const*>& out) -> void;
     [[nodiscard]] auto create_linux_sni_tray(NativeTrayHost host) -> std::unique_ptr<NativeTrayBackend>;
     [[nodiscard]] auto create_win32_tray(NativeTrayHost host) -> std::unique_ptr<NativeTrayBackend>;
+    [[nodiscard]] auto send_linux_dbus_notification_on_conn(
+        void* dbus_dl_handle, void* dbus_conn,
+        TrayNotification const& notif, TrayState icon_state) -> bool;
+    [[nodiscard]] auto send_linux_desktop_notification(
+        TrayNotification const& notif, TrayState icon_state) -> bool;
 
     inline constexpr char const* kSniIntrospectXml =
         "<!DOCTYPE node PUBLIC \"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN\" \"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd\"><node>"

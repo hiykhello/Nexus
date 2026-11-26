@@ -86,15 +86,12 @@ namespace desktop::detail {
 
         struct Marshal {
             DbusLib const& lib;
-            auto var(Iter* it, char const* sig, int ty, void const* p) const -> void {
-                Iter v{}; lib.open(it, kVar, sig, &v); lib.basic(&v, ty, p); lib.close(it, &v);
-            }
+            auto var(Iter* it, char const* sig, int ty, void const* p) const -> void { Iter v{}; lib.open(it, kVar, sig, &v); lib.basic(&v, ty, p); lib.close(it, &v); }
             auto read_i32_str(Iter* it, std::int32_t& id, char const*& s) const -> bool {
                 if (lib.arg_type(it) != kI32) return false;
                 lib.get_basic(it, &id);
                 if (!lib.next(it) || lib.arg_type(it) != kStr) return false;
-                lib.get_basic(it, &s);
-                return true;
+                lib.get_basic(it, &s); return true;
             }
             auto pixmap_arr(Iter* it, TrayState st, bool with_icon) const -> void {
                 Iter arr{}; lib.open(it, kArr, "(iiay)", &arr);
@@ -192,13 +189,19 @@ namespace desktop::detail {
             NativeTrayHost host_;
             DbusLib lib_;
             std::thread worker_;
-            std::mutex wake_mu_;
+            std::mutex wake_mu_, notif_mu_;
+            std::deque<std::pair<TrayNotification, TrayState>> pending_notifs_;
             int wake_fd_ = -1;
             std::atomic<bool> active_{false}, stopping_{false}, dirty_{false}, reprobe_{false};
             std::uint32_t menu_rev_{1};
             TrayState last_state_{TrayState::offline};
             std::string reg_arg_;
 
+            auto drain_notifications(Conn* c) -> void {
+                std::deque<std::pair<TrayNotification, TrayState>> batch;
+                { std::lock_guard lk(notif_mu_); batch.swap(pending_notifs_); }
+                for (auto const& [notif, st] : batch) (void)send_linux_dbus_notification_on_conn(lib_.handle, c, notif, st);
+            }
             auto send_unref(Conn* c, Msg* m) -> void { if (m) { lib_.send(c, m, nullptr); lib_.flush(c); lib_.unref_msg(m); } }
             auto reply_empty_i32_arrs(Conn* c, Msg* req, int count) -> int {
                 if (auto* r = lib_.new_ret(req)) {
@@ -437,13 +440,12 @@ namespace desktop::detail {
                     "type='signal',interface='org.kde.StatusNotifierWatcher',member='StatusNotifierHostUnregistered'",
                 }) { lib_.bus_add_match(conn, rule, &err); lib_.err_free(&err); }
 
-                last_state_ = host_.get_snapshot().state;
-                sync_watcher_state(conn);
-                ready.set_value(true);
+                last_state_ = host_.get_snapshot().state; sync_watcher_state(conn); ready.set_value(true);
                 while (!stopping_.load(std::memory_order_acquire) && lib_.is_connected(conn)) {
                     while (lib_.dispatch(conn) == kDataRemains && !stopping_.load(std::memory_order_acquire)) {}
                     if (reprobe_.exchange(false, std::memory_order_acq_rel) && !stopping_.load(std::memory_order_acquire)) { sync_watcher_state(conn); continue; }
                     if (dirty_.exchange(false, std::memory_order_acq_rel) && !stopping_.load(std::memory_order_acquire)) emit_updates(conn);
+                    if (!stopping_.load(std::memory_order_acquire)) drain_notifications(conn);
                     pollfd fds[2]{{dbus_fd, static_cast<short>(POLLIN | (lib_.has_outgoing(conn) ? POLLOUT : 0)), 0}, {wake_fd, POLLIN, 0}};
                     if (::poll(fds, 2, -1) < 0) { if (errno == EINTR) continue; break; }
                     if (fds[1].revents & POLLIN) { std::uint64_t d = 0; while (::read(wake_fd, &d, sizeof(d)) > 0) {} }
@@ -463,8 +465,7 @@ namespace desktop::detail {
                 if (!bus_addr || !*bus_addr || !lib_.load()) return false;
                 int fd = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
                 if (fd < 0) return false;
-                wake_fd_ = fd;
-                std::promise<bool> ready; auto fut = ready.get_future();
+                wake_fd_ = fd; std::promise<bool> ready; auto fut = ready.get_future();
                 worker_ = std::thread([this, fd, p = std::move(ready)]() mutable { run_loop(fd, std::move(p)); });
                 if (!fut.get()) { stop(); return false; }
                 return true;
@@ -472,6 +473,11 @@ namespace desktop::detail {
             auto active() const noexcept -> bool override { return active_.load(std::memory_order_acquire); }
             auto notify_snapshot_changed() -> void override {
                 if (!stopping_.load(std::memory_order_acquire)) { dirty_.store(true, std::memory_order_release); wake(); }
+            }
+            auto show_notification(TrayNotification const& notif, TrayState icon_state) -> bool override {
+                if (stopping_.load(std::memory_order_acquire)) return false;
+                { std::lock_guard lk(notif_mu_); if (pending_notifs_.size() >= 8) pending_notifs_.pop_front(); pending_notifs_.emplace_back(notif, icon_state); }
+                wake(); return true;
             }
             auto stop() noexcept -> void override {
                 stopping_.store(true, std::memory_order_seq_cst); active_.store(false, std::memory_order_release); wake();

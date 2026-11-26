@@ -290,7 +290,8 @@ namespace desktop_ui_helpers {
                 ui_members.reserve(g.members.size());
                 for (auto const& m : g.members) {
                     if (m.latency_ms > 0) ++healthy_cnt;
-                    ui_members.push_back({slint::SharedString(m.name), slint::SharedString(m.state), static_cast<int>(m.latency_ms),
+                    ui_members.push_back({slint::SharedString(m.name), slint::SharedString(m.state),
+                                          static_cast<int>(m.latency_ms), static_cast<int>(m.ewma_ms), m.breaker_open,
                                           m.selected, m.overridden, group_pins.contains(m.name)});
                 }
                 break;
@@ -302,7 +303,8 @@ namespace desktop_ui_helpers {
         ui.set_active_group_healthy(healthy_cnt);
         ui.set_active_group_total(total_cnt);
         ui.set_groups(std::make_shared<slint::VectorModel<nexus_ui::OutboundGroupItem>>(std::move(ui_groups)));
-        member_models.replace(std::move(ui_members), member_filter, sort_mode);
+        member_models.replace(ui_members, member_filter, sort_mode);
+        ui.set_active_group_fastest_ms(member_models.fastest_latency_ms());
         ui.set_quick_nodes(std::make_shared<slint::VectorModel<nexus_ui::OutboundMemberItem>>(
             build_ui_quick_nodes(cached_groups, active_tag, pinned_members)));
         sync_active_node_to_ui(ui, cached_groups, active_tag);

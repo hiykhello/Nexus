@@ -5,12 +5,9 @@ import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
 import { GlassSpeculum, NexusInput, NexusVScrollBar } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
-import {
-    WorkspaceProfilesView,
-    WorkspaceSubscriptionsView,
-    WorkspaceRoutingDnsView,
-    WorkspaceHostPortableView,
-} from "workspace_panels.slint";
+import { WorkspaceProfilesView, WorkspaceSubscriptionsView } from "workspace_panels.slint";
+import { WorkspaceRoutingDnsView } from "workspace_routing_dns_view.slint";
+import { WorkspaceHostPortableView } from "workspace_host_view.slint";
 
 component SecondaryFileChip inherits Rectangle {
     in property <image> icon;

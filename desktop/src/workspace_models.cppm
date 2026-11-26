@@ -14,6 +14,9 @@ export namespace desktop {
         std::string reality_short_id;
         std::string ech_mode;
         std::string ech_config;
+        std::string ech_query_server_name;
+        bool fragment = false;
+        bool record_fragment = false;
     };
 
     struct TransportConfig {
@@ -25,12 +28,18 @@ export namespace desktop {
         std::string xhttp_mode;
         std::string xhttp_protocol;
         std::vector<std::pair<std::string, std::string>> headers;
+        std::int64_t max_early_data = 0;
+        std::string early_data_header_name;
+        std::int64_t grpc_idle_timeout_ms = 0;
+        std::int64_t grpc_ping_timeout_ms = 0;
+        bool grpc_permit_without_stream = false;
     };
 
     struct MultiplexConfig {
         bool enabled = false;
         std::string protocol;
         std::int64_t max_connections = 0;
+        std::int64_t min_streams = 0;
         bool padding = false;
     };
 
@@ -81,6 +90,7 @@ export namespace desktop {
         std::string probe_url = "https://www.gstatic.com/generate_204";
         std::int64_t probe_interval_ms = 300000;
         std::int64_t tolerance_ms = 100;
+        bool interrupt_exist_connections = false;
     };
 
     struct ProxyChainConfig {
@@ -152,6 +162,8 @@ export namespace desktop {
         bool is_active = false;
         std::string domain_strategy = "as-is"; // "as-is" | "ip-if-non-match" | "ip-on-demand"
         std::string default_outbound = "proxy"; // "proxy" | "direct" | "block"
+        bool auto_detect_interface = false;
+        bool find_process = false;
         std::vector<RoutingRule> rules;
     };
 

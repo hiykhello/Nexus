@@ -2,6 +2,8 @@ export struct OutboundMemberItem {
     name: string,
     state: string,
     latency-ms: int,
+    ewma-ms: int,
+    breaker-open: bool,
     selected: bool,
     overridden: bool,
     pinned: bool,

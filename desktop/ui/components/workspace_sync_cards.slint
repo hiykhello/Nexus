@@ -71,8 +71,8 @@ export component WorkspaceSyncCard inherits Rectangle {
             }
         }
         Text {
-            text: I18n.t("scrypt + XChaCha20-Poly1305 仅加密同步便携工作区；WebDAV 凭据与同步口令仅存于本机 0600 host.json。",
-                         "scrypt + XChaCha20-Poly1305 encrypts portable workspace only; WebDAV credentials & passphrase stay local in 0600 host.json.");
+            text: I18n.t("scrypt + XChaCha20-Poly1305 仅加密同步便携工作区；宿主设置存于本机 SQLite (nexus-client.db)，凭据与同步口令存于本机 0600 secrets/sync-creds.json。",
+                         "scrypt + XChaCha20-Poly1305 encrypts portable workspace only; host settings live in local SQLite (nexus-client.db) and credentials/passphrase stay in local 0600 secrets/sync-creds.json.");
             font-size: 11px; color: Theme.text-muted; wrap: word-wrap;
         }
         HorizontalLayout {
