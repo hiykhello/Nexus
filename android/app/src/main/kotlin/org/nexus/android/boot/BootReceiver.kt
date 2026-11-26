@@ -15,6 +15,7 @@ import org.nexus.android.bridge.workspace.AndroidRunMode
 import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.bridge.workspace.TelemetryStore
 import org.nexus.android.bridge.workspace.WorkspaceComposer
+import org.nexus.android.bridge.workspace.WorkspaceDefaults
 import org.nexus.android.bridge.workspace.WorkspaceStore
 import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 import java.io.File
@@ -75,21 +76,16 @@ object BootLaunchPolicy {
     }
 
     /**
-     * Resolves boot target config without silently falling back to a stale `config.kdl` when
-     * the SQLite workspace owns profiles but `composedConfigFile` is missing.
+     * Resolves boot target strictly from the Workspace-composed runtime config
+     * (composing on demand if missing; zero legacy single-file fallback).
      */
     fun resolveBootConfigTarget(
-        hasWorkspaceProfiles: Boolean,
         composedConfigFile: File,
-        legacyConfigFile: File,
         composeOnDemand: () -> Boolean = { false },
     ): File? {
-        if (hasWorkspaceProfiles) {
-            if (composedConfigFile.isFile) return composedConfigFile
-            if (composeOnDemand() && composedConfigFile.isFile) return composedConfigFile
-            return null
-        }
-        return composedConfigFile.takeIf { it.isFile } ?: legacyConfigFile.takeIf { it.isFile }
+        if (composedConfigFile.isFile) return composedConfigFile
+        if (composeOnDemand() && composedConfigFile.isFile) return composedConfigFile
+        return null
     }
 }
 
@@ -117,11 +113,8 @@ class BootReceiver : BroadcastReceiver() {
                     vpnPrepared = VpnService.prepare(appContext) == null,
                     resolveConfigReady = {
                         val wsStore = WorkspaceStore(appContext.filesDir, db).also { workspaceStoreRef = it }
-                        val summaries = runCatching { wsStore.listProfileSummaries() }.getOrDefault(emptyList())
                         resolvedTarget = BootLaunchPolicy.resolveBootConfigTarget(
-                            hasWorkspaceProfiles = summaries.isNotEmpty(),
                             composedConfigFile = paths.composedConfigFile,
-                            legacyConfigFile = File(appContext.filesDir, "config.kdl"),
                             composeOnDemand = { composeWorkspaceOnBoot(appContext, paths, wsStore, hostStore, telemetryStore) },
                         )
                         resolvedTarget?.isFile == true
@@ -155,7 +148,13 @@ class BootReceiver : BroadcastReceiver() {
         hostStore: AndroidHostConfigStore,
         telemetryStore: TelemetryStore,
     ): Boolean = runCatching {
-        val doc = workspaceStore.loadOrInit()
+        val loaded = workspaceStore.loadOrInit()
+        val doc = if (loaded.profiles.isEmpty()) {
+            val seed = WorkspaceDefaults.defaultDirectProfile()
+            workspaceStore.save(loaded.copy(profiles = listOf(seed)), bumpRevision = false)
+        } else {
+            loaded
+        }
         val activeId = telemetryStore.load().activeProfileId
             .takeIf { id -> doc.profiles.any { it.id == id } }
             ?: doc.profiles.firstOrNull()?.id.orEmpty()

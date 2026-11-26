@@ -164,7 +164,7 @@ class NexusVpnService : VpnService() {
     }
 
     private fun resolveLaunchRequest(intent: Intent?): LaunchRequest {
-        val defaultTarget = paths.composedConfigFile.takeIf { it.isFile } ?: File(filesDir, "config.kdl")
+        val defaultTarget = paths.composedConfigFile
         val cfgPath = intent?.getStringExtra(EXTRA_CONFIG_PATH) ?: defaultTarget.absolutePath
         val isDir = intent?.getBooleanExtra(EXTRA_CONFIG_IS_DIR, false) ?: false
         val ovPath = intent?.getStringExtra(EXTRA_HOST_OVERRIDE_PATH)?.takeIf { it.isNotBlank() }
@@ -180,8 +180,8 @@ class NexusVpnService : VpnService() {
     private fun validateLaunchTarget(req: LaunchRequest): Boolean {
         val ok = if (req.isConfigDir) req.configTarget.isDirectory else req.configTarget.isFile
         if (ok) return true
-        appendLog("[error] vpn: missing config ${req.configTarget.name}")
-        _lastError.value = "未找到配置文件 ${req.configTarget.name}"
+        appendLog("[error] vpn: runtime config is not ready")
+        _lastError.value = "运行时配置尚未就绪，请在应用内启动连接"
         _tunnelState.value = VpnTunnelState.ERROR
         requestTileSync()
         runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
@@ -302,7 +302,7 @@ class NexusVpnService : VpnService() {
                 for (pkg in plan.allowedPackages) runCatching { builder.addAllowedApplication(pkg) }
                 for (pkg in plan.disallowedPackages) runCatching { builder.addDisallowedApplication(pkg) }
 
-                val tun = builder.establish() ?: error("VpnService.Builder.establish() returned null")
+                val tun = builder.establish() ?: error("系统未授予 VPN 接口权限")
                 tunInterface = tun
 
                 val fdSrv = TunFdSocketServer(paths.tunFdSocket, tun)
@@ -336,7 +336,7 @@ class NexusVpnService : VpnService() {
                     submitLifecycle { stopTunnelLocked(stopSelfAfter = true, preserveError = true) }
                 },
             )
-            if (!started) error("failed to start libnexus.so sidecar")
+            if (!started) error("内核引擎启动失败")
 
             val screen = ScreenStateMonitor(this) { interactive, idle ->
                 _dozeMode.value = idle

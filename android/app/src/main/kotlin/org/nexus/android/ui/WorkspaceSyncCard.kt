@@ -79,12 +79,12 @@ internal fun WebDavSyncCard(
         Column(modifier = Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("端到端加密 WebDAV 同步", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                StatusPill("XChaCha20 · 0600", ext.insetSurface, MaterialTheme.colorScheme.onSurfaceVariant, mono = true)
+                StatusPill("端到端加密", ext.insetSurface, MaterialTheme.colorScheme.onSurfaceVariant)
             }
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
-                label = { Text("WebDAV 目录地址 (HTTPS)") },
+                label = { Text("WebDAV 服务器地址 (HTTPS)") },
                 placeholder = { Text("https://dav.example.com/nexus/", maxLines = 1) },
                 shape = RoundedCornerShape(14.dp),
                 singleLine = true,

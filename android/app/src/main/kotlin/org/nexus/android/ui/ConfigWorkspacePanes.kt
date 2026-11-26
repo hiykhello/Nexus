@@ -50,6 +50,7 @@ import org.nexus.android.bridge.workspace.PolicyGroupConfig
 import org.nexus.android.bridge.workspace.ProfileItem
 import org.nexus.android.bridge.workspace.ProfileKind
 import org.nexus.android.bridge.workspace.ProxyChainConfig
+import org.nexus.android.bridge.workspace.WorkspaceDefaults
 import org.nexus.android.bridge.workspace.WorkspaceJsonCodec
 import org.nexus.android.bridge.workspace.WorkspaceStore
 import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
@@ -64,7 +65,7 @@ internal fun ProfileKindBadge(kind: ProfileKind, modifier: Modifier = Modifier) 
         ProfileKind.POLICY_GROUP -> Triple(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, "策略组")
         ProfileKind.PROXY_CHAIN -> Triple(ext.telemetryUploadContainer, ext.telemetryUpload, "代理链")
         ProfileKind.CUSTOM_OUTBOUND -> Triple(ext.warningContainer, ext.warning, "自定义出站")
-        ProfileKind.FULL_CUSTOM_KDL -> Triple(ext.successContainer, ext.success, "完整档案")
+        ProfileKind.FULL_CUSTOM_KDL -> Triple(ext.successContainer, ext.success, "自定义配置")
     }
     StatusPill(text = label, containerColor = bg, contentColor = fg, modifier = modifier)
 }
@@ -224,7 +225,7 @@ private fun ProfilesHeaderCard(
                         context.getSystemService(ClipboardManager::class.java)
                             ?.setPrimaryClip(ClipData.newPlainText("nexus-workspace", json))
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onFeedback("已复制便携工作区 JSON（不含本机端口与凭据）")
+                        onFeedback("已复制工作区备份（不含本机端口与凭据）")
                     },
                     shape = RoundedCornerShape(999.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
@@ -313,7 +314,8 @@ private fun ProfileListRow(
                         "${g.strategy} · ${g.memberIds.size} 成员$cut"
                     }.orEmpty()
                     ProfileKind.PROXY_CHAIN -> "${profile.proxyChain?.hopIds?.size ?: 0} 跳链路"
-                    else -> profile.id
+                    ProfileKind.CUSTOM_OUTBOUND -> if (profile.id == WorkspaceDefaults.DEFAULT_DIRECT_PROFILE_ID) "内置直连兜底" else "高级自定义出站"
+                    ProfileKind.FULL_CUSTOM_KDL -> "高级自定义配置"
                 }
                 if (subMeta.isNotEmpty()) {
                     Text(subMeta, style = NexusNumericStyles.monoBadge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)

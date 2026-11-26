@@ -16,6 +16,7 @@ import org.nexus.android.bridge.workspace.ComposeResult
 import org.nexus.android.bridge.workspace.DnsConfig
 import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.bridge.workspace.ProfileItem
+import org.nexus.android.bridge.workspace.ProfileKind
 import org.nexus.android.bridge.workspace.ProfileReplacement
 import org.nexus.android.bridge.workspace.RoutingRuleItem
 import org.nexus.android.bridge.workspace.SubscriptionInfoParser
@@ -23,6 +24,7 @@ import org.nexus.android.bridge.workspace.SubscriptionItem
 import org.nexus.android.bridge.workspace.TelemetryStore
 import org.nexus.android.bridge.workspace.WorkspaceComposer
 import org.nexus.android.bridge.workspace.WorkspaceDefaults
+import org.nexus.android.bridge.workspace.WorkspaceDocument
 import org.nexus.android.bridge.workspace.WorkspaceStore
 import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 import java.io.File
@@ -49,42 +51,37 @@ class WorkspaceCoordinator(
     @Volatile
     private var lastCompose: ComposeResult = ComposeResult(ok = false)
 
+    private fun loadOrSeedWorkspaceLocked(): WorkspaceDocument {
+        val loaded = workspaceStore.loadOrInit()
+        if (loaded.profiles.isNotEmpty()) return loaded
+        val seed = WorkspaceDefaults.defaultDirectProfile()
+        val seeded = workspaceStore.save(loaded.copy(profiles = listOf(seed)), bumpRevision = false)
+        if (telemetryStore.load().activeProfileId.isBlank()) {
+            telemetryStore.setActiveProfileId(seed.id)
+        }
+        return seeded
+    }
+
     suspend fun loadInitialState(): WorkspaceUiState = withContext(Dispatchers.IO) {
-        val doc = workspaceStore.loadOrInit()
+        val doc = loadOrSeedWorkspaceLocked()
         val host = hostMutex.withLock { hostStore.load(socketPaths) }
         val telemetry = telemetryStore.load()
         val activeId = telemetry.activeProfileId.takeIf { id -> doc.profiles.any { it.id == id } }
             ?: doc.profiles.firstOrNull()?.id.orEmpty()
-        WorkspaceUiState(
-            document = doc,
-            host = host,
-            activeProfileId = activeId,
-            outboundMode = telemetry.outboundMode,
-            selectorTag = lastCompose.selectorTag,
-            selectorMembers = lastCompose.selectorMembers,
-            composeWarnings = lastCompose.warnings,
-        )
+        WorkspaceUiState(doc, host, activeId, telemetry.outboundMode, lastCompose.selectorTag, lastCompose.selectorMembers, lastCompose.warnings)
     }
 
     suspend fun composeForLaunch(activeProfileId: String): ComposeResult = withContext(Dispatchers.IO) {
         composeMutex.withLock {
-            val doc = workspaceStore.loadOrInit()
-            val resolvedId = activeProfileId.takeIf { id -> doc.profiles.any { it.id == id } }
-                ?: doc.profiles.firstOrNull()?.id.orEmpty()
+            val doc = loadOrSeedWorkspaceLocked()
+            val resolvedId = activeProfileId.takeIf { id -> doc.profiles.any { it.id == id } } ?: doc.profiles.firstOrNull()?.id.orEmpty()
             val composeWsFile = socketPaths.composeWorkspaceFile
             val composeHostFile = socketPaths.composeHostFile
             try {
                 workspaceStore.writeCoreInputFile(composeWsFile, doc)
                 hostMutex.withLock { hostStore.writeCoreHostFile(composeHostFile, socketPaths) }
-                val res = composer.composeWorkspace(
-                    workspaceFile = composeWsFile,
-                    hostFile = composeHostFile,
-                    secretsDir = socketPaths.secretsDir,
-                    activeProfileId = resolvedId,
-                    emitKdlFile = socketPaths.composedConfigFile,
-                )
-                if (res.ok) lastCompose = res
-                res
+                composer.composeWorkspace(composeWsFile, composeHostFile, socketPaths.secretsDir, resolvedId, socketPaths.composedConfigFile)
+                    .also { if (it.ok) lastCompose = it }
             } finally {
                 WorkspaceSyncBridge.wipeAndDelete(composeWsFile)
                 WorkspaceSyncBridge.wipeAndDelete(composeHostFile)
@@ -121,9 +118,33 @@ class WorkspaceCoordinator(
                 if (!reload.ok) onRestartNeeded()
                 return loadInitialState() to "已切换至 ${target.remarks.ifBlank { target.id }}"
             }
-            return loadInitialState() to "组合失败: ${compose.errors.firstOrNull() ?: "未知错误"}"
+            return loadInitialState() to "配置生成失败: ${compose.errors.firstOrNull() ?: "未知错误"}"
         }
         return loadInitialState() to "已选中 ${target.remarks.ifBlank { target.id }}"
+    }
+
+    suspend fun importCustomConfig(rawConfig: String, running: Boolean): Pair<WorkspaceUiState, String> {
+        val trimmed = rawConfig.trim()
+        if (trimmed.isEmpty()) return loadInitialState() to "配置内容为空"
+        val (savedItem, prevActiveId) = withContext(Dispatchers.IO) {
+            val doc = loadOrSeedWorkspaceLocked()
+            val prevActive = telemetryStore.load().activeProfileId
+            val item = ProfileItem(id = WorkspaceStore.newProfileId("custom"), remarks = "自定义配置", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = trimmed)
+            workspaceStore.save(doc.copy(profiles = doc.profiles + item))
+            telemetryStore.setActiveProfileId(item.id)
+            item to prevActive
+        }
+        val compose = composeForLaunch(savedItem.id)
+        if (!compose.ok) {
+            withContext(Dispatchers.IO) {
+                val cur = workspaceStore.loadOrInit()
+                workspaceStore.save(cur.copy(profiles = cur.profiles.filterNot { it.id == savedItem.id }), bumpRevision = false)
+                telemetryStore.setActiveProfileId(prevActiveId)
+            }
+            return loadInitialState() to "拒绝导入无效配置: ${compose.errors.firstOrNull() ?: "格式校验未通过"}"
+        }
+        if (running) controlClient.reload()
+        return loadInitialState() to "已导入并启用自定义配置"
     }
 
     suspend fun importShareUri(uri: String, running: Boolean): Pair<WorkspaceUiState, String> {
@@ -165,7 +186,7 @@ class WorkspaceCoordinator(
                 controlClient.reload()
             } else {
                 val err = compose.errors.firstOrNull().orEmpty()
-                return loadInitialState() to "已添加 ${savedItem.remarks.ifBlank { savedItem.id }}，但编译校验失败: $err"
+                return loadInitialState() to "已添加 ${savedItem.remarks.ifBlank { savedItem.id }}，但配置校验失败: $err"
             }
         }
         return loadInitialState() to "已添加 ${savedItem.remarks.ifBlank { savedItem.id }}"
@@ -272,7 +293,7 @@ class WorkspaceCoordinator(
                 controlClient.reload()
             } else {
                 val err = compose.errors.firstOrNull().orEmpty()
-                return loadInitialState() to "已保存链式配置，但编译失败: $err"
+                return loadInitialState() to "已保存链式配置，但校验失败: $err"
             }
         }
         return loadInitialState() to "已更新订阅链式前置/落地配置"
@@ -421,7 +442,7 @@ class WorkspaceCoordinator(
                 val firstId = imported.profiles.firstOrNull()?.id.orEmpty()
                 if (firstId.isNotEmpty()) telemetryStore.setActiveProfileId(firstId)
                 firstId to "已导入便携工作区（${imported.profiles.size} 个档案）"
-            }.getOrElse { err -> null to "工作区 JSON 无效: ${err.message}" }
+            }.getOrElse { err -> null to "工作区数据格式无效: ${err.message}" }
         }
         if (running && result.first != null) {
             val compose = composeForLaunch(result.first!!)

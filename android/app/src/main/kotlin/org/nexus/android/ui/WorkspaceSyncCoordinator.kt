@@ -203,7 +203,7 @@ class WorkspaceSyncCoordinator(
                             backup to saved
                         }
                     }.getOrElse { err ->
-                        return Triple(state, null, "远端工作区 JSON 无效: ${err.message ?: err.javaClass.simpleName}")
+                        return Triple(state, null, "远端工作区数据格式无效: ${err.message ?: err.javaClass.simpleName}")
                     }
                     val syncedRev = outcome.revision.takeIf { it > 0L } ?: imported.revision
                     val (nextState, _) = coordinator.mutateHost { cur ->

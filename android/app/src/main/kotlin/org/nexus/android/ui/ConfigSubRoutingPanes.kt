@@ -302,7 +302,7 @@ internal fun RoutingDnsPillarPane(
                         fontWeight = FontWeight.SemiBold,
                     )
                     val dnsDesc = if (dns.mode == "raw_kdl") {
-                        "DNS 模式: 高级自定义 (Raw KDL)"
+                        "DNS 模式: 高级自定义"
                     } else {
                         val fakeText = if (dns.simple.fakeIpEnabled) "FakeIP (${dns.simple.fakeIpV4Pool} / ${dns.simple.fakeIpV6Pool})" else "标准解析"
                         "DNS 模式: 简易 · $fakeText · ${dns.simple.strategy}"

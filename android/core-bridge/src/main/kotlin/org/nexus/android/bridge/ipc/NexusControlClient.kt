@@ -79,6 +79,13 @@ class NexusControlClient(
             readTimeoutMs = readTimeoutMs,
         )
 
+    fun createWsClient(readTimeoutMs: Int = NexusWsClient.DEFAULT_WS_READ_TIMEOUT_MS): NexusWsClient =
+        NexusWsClient(
+            httpBaseUrlProvider = { resolvedBaseUrl() },
+            bearerTokenProvider = { resolvedToken() },
+            readTimeoutMs = readTimeoutMs,
+        )
+
     suspend fun status(): ControlReply = sendUnix("status")
     suspend fun reload(): ControlReply = sendUnix("reload")
 

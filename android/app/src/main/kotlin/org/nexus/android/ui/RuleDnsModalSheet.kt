@@ -186,14 +186,14 @@ internal fun RuleDnsModalSheet(
                     }
                 }
                 ModalToggleWell(
-                    title = "TLS ClientHello 分片 (tls_fragment)",
-                    subtitle = "对此条规则匹配的直连/代理 TLS 握手启用分片",
+                    title = "TLS ClientHello 分片",
+                    subtitle = "对此条规则匹配的直连或代理 TLS 握手启用分片",
                     checked = routeTlsFragment,
                     onCheckedChange = { routeTlsFragment = it },
                 )
                 ModalToggleWell(
-                    title = "自动探测默认出口网卡 (auto_detect_interface)",
-                    subtitle = "路由方案级开关，跨平台工作区同步保留",
+                    title = "自动探测默认出口网卡",
+                    subtitle = "路由方案级开关，跨设备工作区同步保留",
                     checked = autoDetectInterface,
                     onCheckedChange = { next ->
                         autoDetectInterface = next
@@ -201,7 +201,7 @@ internal fun RuleDnsModalSheet(
                     },
                 )
                 ModalToggleWell(
-                    title = "进程/应用归属识别 (find_process)",
+                    title = "进程与应用归属识别",
                     subtitle = "开启路由引擎进程匹配与连接归属解析",
                     checked = findProcess,
                     onCheckedChange = { next ->
@@ -211,7 +211,7 @@ internal fun RuleDnsModalSheet(
                 )
             } else {
                 OpticalSegmentedControl(
-                    options = listOf("simple" to "简易 DNS", "raw_kdl" to "Raw KDL"),
+                    options = listOf("simple" to "简易 DNS", "raw_kdl" to "高级自定义"),
                     selectedKey = dnsMode,
                     onSelect = { dnsMode = it; inlineError = "" },
                     modifier = Modifier.fillMaxWidth(),
@@ -261,7 +261,7 @@ internal fun RuleDnsModalSheet(
                     OutlinedTextField(
                         value = rawDnsKdl,
                         onValueChange = { rawDnsKdl = it },
-                        label = { Text("Raw DNS KDL 块") },
+                        label = { Text("高级自定义 DNS 配置") },
                         textStyle = NexusNumericStyles.codeBlock,
                         shape = RoundedCornerShape(14.dp),
                         minLines = 5,

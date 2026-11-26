@@ -45,6 +45,7 @@ import org.nexus.android.bridge.ipc.MetricsSummary
 import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
 import org.nexus.android.bridge.ipc.OutboundProbeResult
+import org.nexus.android.bridge.ipc.WsEvent
 import org.nexus.android.bridge.vpn.VpnTunnelState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,8 +57,7 @@ internal fun NexusRootScreen(
     lastError: String = "",
     powerSave: Boolean,
     localLogs: List<UiLogLine>,
-    initialKdl: String,
-    activeProfileName: String = "默认配置",
+    activeProfileName: String = "默认直连",
     excludedPackages: Set<String>,
     dashVisibility: DashboardCardVisibility = DashboardCardVisibility(),
     onDashVisibilityChange: (DashboardCardVisibility) -> Unit = {},
@@ -68,11 +68,11 @@ internal fun NexusRootScreen(
     onAddExcludedBatch: ((Set<String>) -> Unit)? = null,
     onStartStop: (Boolean) -> Unit,
     onRestartVpn: () -> Unit = {},
-    onSwitchOutboundMode: suspend (mode: String, currentKdl: String) -> Pair<String?, String> = { _, _ -> null to "" },
-    onCreateRuleFromConnection: suspend (host: String, action: String, outbound: String, currentKdl: String) -> Pair<String?, String> = { _, _, _, _ -> null to "" },
-    onSaveAndReload: suspend (String) -> Pair<Boolean, String>,
-    onImportShareLink: suspend (String, String) -> Pair<String?, String>,
-    onImportSubscription: suspend (String, String) -> Pair<String, String>,
+    onSwitchOutboundMode: suspend (mode: String) -> String = { "" },
+    onCreateRuleFromConnection: suspend (host: String, action: String, outbound: String) -> String = { _, _, _ -> "" },
+    onImportCustomConfig: suspend (String) -> String = { "" },
+    onImportShareLink: suspend (String) -> String = { "" },
+    onImportSubscription: suspend (String, String) -> String = { _, _ -> "" },
     onRefreshMetrics: suspend () -> MetricsSummary,
     onClearCache: suspend () -> Boolean,
     onClearCacheTarget: (suspend (String) -> Boolean)? = null,
@@ -90,6 +90,7 @@ internal fun NexusRootScreen(
     onQueryDns: suspend (String, String, String) -> DnsQueryResult = { _, _, _ -> DnsQueryResult(false, errorMessage = "未连接") },
     onFlushFakeIp: suspend () -> FakeIpFlushResult = { FakeIpFlushResult(false, message = "未连接") },
     onSetCoreLogLevel: (suspend (String) -> Boolean)? = null,
+    wsStream: ((channels: List<String>, since: Long, intervalMs: Int) -> Flow<WsEvent>)? = null,
     statusStream: (() -> Flow<LiveStatusSnapshot>)? = null,
     connectionsStream: (() -> Flow<List<ActiveConnectionSnapshot>>)? = null,
     logsStream: ((since: Long, level: String, search: String) -> Flow<LogRingEntry>)? = null,
@@ -116,7 +117,6 @@ internal fun NexusRootScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showSplitTunnel by rememberSaveable { mutableStateOf(false) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
-    var kdlText by rememberSaveable { mutableStateOf(initialKdl) }
     var diagnostic by remember { mutableStateOf("") }
     var dashEditing by rememberSaveable { mutableStateOf(previewDashEditing) }
     var isProbingOverview by remember { mutableStateOf(false) }
@@ -137,6 +137,7 @@ internal fun NexusRootScreen(
         onRefreshMetrics = onRefreshMetrics,
         onFetchGroups = onFetchGroups,
         onFetchLogs = onFetchLogs,
+        wsStream = wsStream,
         statusStream = statusStream,
         logsStream = logsStream,
         previewMetrics = previewMetrics,
@@ -146,10 +147,6 @@ internal fun NexusRootScreen(
         previewQuickNodes = previewQuickNodes,
         previewMemoryText = previewMemoryText,
     )
-
-    LaunchedEffect(initialKdl) {
-        if (kdlText.isEmpty() && initialKdl.isNotEmpty()) kdlText = initialKdl
-    }
 
     BackHandler(enabled = showSplitTunnel) { showSplitTunnel = false }
 
@@ -257,30 +254,19 @@ internal fun NexusRootScreen(
                                 contentPadding = screenPadding,
                                 onStartStop = { onStartStop(running) },
                                 onSwitchOutboundMode = { mode ->
-                                    scope.launch {
-                                        val (updated, note) = onSwitchOutboundMode(mode, kdlText)
-                                        if (updated != null) kdlText = updated
-                                        diagnostic = note
-                                    }
+                                    scope.launch { diagnostic = onSwitchOutboundMode(mode) }
                                 },
                                 onDashVisibilityChange = onDashVisibilityChange,
                                 onQuickPasteImport = { raw ->
                                     scope.launch {
-                                        val (updated, note) = importClipboardPayload(raw, kdlText, onImportSubscription, onImportShareLink)
-                                        if (updated != null) {
-                                            val looksLikeKdl = raw.contains("schema-version") ||
-                                                (raw.contains("routing {") && raw.contains("outbound "))
-                                            if (looksLikeKdl) {
-                                                val (saved, saveMsg) = onSaveAndReload(updated)
-                                                if (saved) kdlText = updated
-                                                diagnostic = saveMsg
-                                            } else {
-                                                kdlText = updated
-                                                diagnostic = note
-                                            }
-                                        } else {
-                                            diagnostic = note
-                                        }
+                                        diagnostic = importClipboardPayload(
+                                            raw = raw,
+                                            onImportWorkspaceShare = workspaceActions.onImportShareUri,
+                                            onImportWorkspaceBackup = workspaceActions.onImportWorkspaceJson,
+                                            onImportCustomConfig = onImportCustomConfig,
+                                            onImportSubscription = onImportSubscription,
+                                            onImportShareLink = onImportShareLink,
+                                        )
                                         selectedTab = NexusTab.CONFIG.ordinal
                                     }
                                 },
@@ -329,15 +315,15 @@ internal fun NexusRootScreen(
                                 excludedPackages = excludedPackages,
                                 perAppMode = perAppMode,
                                 onFetchConnections = onFetchConnections,
+                                wsActive = telemetry.wsActive && !powerSave,
+                                wsConnections = telemetry.wsLiveConnections,
                                 connectionsStream = connectionsStream,
                                 onInspectConnection = onInspectConnection,
                                 onResolveOwnerPackage = onResolveOwnerPackage,
                                 onCloseConnection = onCloseConnection,
                                 onCloseAllConnections = onCloseAllConnections,
                                 onCreateRuleFromConnection = { host, action, outbound ->
-                                    val (updated, note) = onCreateRuleFromConnection(host, action, outbound, kdlText)
-                                    if (updated != null) kdlText = updated
-                                    note
+                                    onCreateRuleFromConnection(host, action, outbound)
                                 },
                                 onBypassPackage = { pkg ->
                                     if (onBypassFromConnection != null) onBypassFromConnection(pkg)
@@ -349,12 +335,11 @@ internal fun NexusRootScreen(
                                 uploadRateBps = telemetry.uploadRateBps,
                             )
                             NexusTab.CONFIG -> ConfigScreen(
-                                kdlText = kdlText,
-                                onApplyConfig = { next -> onSaveAndReload(next).also { if (it.first) kdlText = next } },
                                 diagnostic = diagnostic,
                                 onDiagnosticChange = { diagnostic = it },
-                                onImportShareLink = { raw, cur -> onImportShareLink(raw, cur).also { if (it.first != null) kdlText = it.first!! } },
-                                onImportSubscription = { name, url -> onImportSubscription(name, url).also { if (it.first.isNotEmpty()) kdlText = it.first } },
+                                onImportCustomConfig = onImportCustomConfig,
+                                onImportShareLink = onImportShareLink,
+                                onImportSubscription = onImportSubscription,
                                 windowSizeClass = windowSizeClass,
                                 contentPadding = screenPadding,
                                 onOpenSplitTunnel = { showSplitTunnel = true },

@@ -78,6 +78,8 @@ fun ConnectionsScreen(
     excludedPackages: Set<String>,
     perAppMode: AndroidPerAppMode = AndroidPerAppMode.EXCLUDE,
     onFetchConnections: suspend () -> List<ActiveConnectionSnapshot>,
+    wsActive: Boolean = false,
+    wsConnections: List<ActiveConnectionSnapshot>? = null,
     connectionsStream: (() -> Flow<List<ActiveConnectionSnapshot>>)? = null,
     onInspectConnection: suspend (Long) -> ActiveConnectionSnapshot?,
     onResolveOwnerPackage: suspend (ActiveConnectionSnapshot) -> String?,
@@ -115,11 +117,19 @@ fun ConnectionsScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var isPaused by rememberSaveable { mutableStateOf(false) }
 
-    // Lifecycle-scoped SSE stream (falls back cleanly to polling when SSE is absent or powerSave is active)
-    LaunchedEffect(running, powerSave, isPaused, lifecycleOwner) {
+    // Consume multiplexed WebSocket snapshots directly when active (respecting Pause toggle)
+    LaunchedEffect(wsConnections, isPaused) {
+        if (wsConnections != null && !isPaused) {
+            connections = wsConnections
+        }
+    }
+
+    // Lifecycle-scoped SSE / polling fallback when multiplexed WebSocket is not active
+    val wsFeeding = wsActive || wsConnections != null
+    LaunchedEffect(running, powerSave, isPaused, wsFeeding, lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            connections = latestFetch()
-            if (!running || isPaused) return@repeatOnLifecycle
+            if (wsConnections == null) connections = latestFetch()
+            if (!running || isPaused || wsFeeding) return@repeatOnLifecycle
             val sseFactory = latestStream
             if (!powerSave && sseFactory != null) {
                 sseFactory().collect { snapshot ->

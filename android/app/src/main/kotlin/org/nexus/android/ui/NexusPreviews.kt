@@ -31,7 +31,7 @@ import org.nexus.android.bridge.workspace.SubscriptionUsage
 import org.nexus.android.bridge.workspace.WorkspaceDocument
 import org.nexus.android.ui.theme.NexusTheme
 
-internal const val PREVIEW_SAMPLE_KDL = """schema-version 1
+internal const val PREVIEW_SAMPLE_CUSTOM_CONFIG = """schema-version 1
 role "client"
 outbound "direct" type="direct"
 routing { default-outbound "direct"; }"""
@@ -171,7 +171,7 @@ internal val PREVIEW_SAMPLE_WORKSPACE = WorkspaceUiState(
             ProfileItem(id = "hk-01", remarks = "HK-01 香港高速", kind = ProfileKind.NODE, node = NodeConfig(protocol = "vless", server = "hk.example.com", port = 443)),
             ProfileItem(id = "auto-grp", remarks = "Auto 测速策略组", kind = ProfileKind.POLICY_GROUP, policyGroup = PolicyGroupConfig(strategy = "url-test", memberIds = listOf("hk-01"), interruptExistConnections = true)),
             ProfileItem(id = "chain-01", remarks = "双跳中继链", kind = ProfileKind.PROXY_CHAIN, proxyChain = ProxyChainConfig(hopIds = listOf("hk-01"))),
-            ProfileItem(id = "legacy-corp", remarks = "Corp-Split", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = PREVIEW_SAMPLE_KDL),
+            ProfileItem(id = "custom-corp", remarks = "Corp-Split", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = PREVIEW_SAMPLE_CUSTOM_CONFIG),
         ),
         subscriptions = listOf(
             SubscriptionItem(
@@ -222,15 +222,14 @@ internal fun SampleRootPreview(
             lastError = lastError,
             powerSave = false,
             localLogs = if (running) PREVIEW_SAMPLE_LOGS else emptyList(),
-            initialKdl = PREVIEW_SAMPLE_KDL,
             activeProfileName = "Tokyo-Core",
             excludedPackages = setOf("com.android.chrome", "com.google.android.projection.gearhead"),
             workspaceState = PREVIEW_SAMPLE_WORKSPACE,
             onToggleExcluded = { _, _ -> },
             onStartStop = {},
-            onSaveAndReload = { true to "Saved" },
-            onImportShareLink = { _, cur -> cur to "" },
-            onImportSubscription = { _, _ -> "" to "" },
+            onImportCustomConfig = { "已导入自定义配置" },
+            onImportShareLink = { "" },
+            onImportSubscription = { _, _ -> "" },
             onRefreshMetrics = { if (running) PREVIEW_SAMPLE_METRICS else MetricsSummary() },
             onClearCache = { true },
             onFetchGroups = { if (running) PREVIEW_SAMPLE_GROUPS else emptyList() },
@@ -321,12 +320,11 @@ private fun ConnectionsExpandedPreview() {
 private fun ConfigPhoneDarkPreview() {
     PreviewFrame(dark = true) {
         ConfigScreen(
-            kdlText = PREVIEW_SAMPLE_KDL,
-            onApplyConfig = { true to "已校验保存并热重载" },
             diagnostic = "工作区已校验并生效",
             onDiagnosticChange = {},
-            onImportShareLink = { _, cur -> cur to "" },
-            onImportSubscription = { _, _ -> "" to "" },
+            onImportCustomConfig = { "已导入自定义配置" },
+            onImportShareLink = { "" },
+            onImportSubscription = { _, _ -> "" },
             windowSizeClass = NexusWindowSizeClass.COMPACT,
             contentPadding = PaddingValues(16.dp),
             onOpenSplitTunnel = {},

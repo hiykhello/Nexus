@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
+import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 
 enum class NexusWindowSizeClass {
     COMPACT,
@@ -62,17 +63,22 @@ fun formatDurationClock(elapsedMs: Long): String {
 
 internal suspend fun importClipboardPayload(
     raw: String,
-    currentKdl: String,
-    onImportSubscription: suspend (String, String) -> Pair<String, String>,
-    onImportShareLink: suspend (String, String) -> Pair<String?, String>,
-): Pair<String?, String> {
-    if (raw.isEmpty()) return null to "剪贴板为空，请先复制链接"
-    val lower = raw.lowercase()
-    val isSub = (lower.startsWith("https://") || lower.startsWith("http://127.0.0.1")) && !lower.contains("@")
-    return if (isSub) {
-        val (updated, note) = onImportSubscription("subscription", raw)
-        updated.ifEmpty { null } to note
-    } else {
-        onImportShareLink(raw, currentKdl)
+    onImportWorkspaceShare: suspend (String) -> String,
+    onImportWorkspaceBackup: suspend (String) -> String,
+    onImportCustomConfig: suspend (String) -> String,
+    onImportSubscription: suspend (String, String) -> String,
+    onImportShareLink: suspend (String) -> String,
+): String {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return "剪贴板为空，请先复制节点链接、订阅地址或工作区备份"
+    val lower = trimmed.lowercase()
+    return when {
+        trimmed.startsWith(WorkspaceSyncBridge.SHARE_URI_PREFIX) -> onImportWorkspaceShare(trimmed)
+        trimmed.startsWith("{") && trimmed.contains("\"schema_version\"") -> onImportWorkspaceBackup(trimmed)
+        trimmed.contains("schema-version") || (trimmed.contains("routing {") && trimmed.contains("outbound ")) ->
+            onImportCustomConfig(trimmed)
+        (lower.startsWith("https://") || lower.startsWith("http://127.0.0.1")) && !lower.contains("@") ->
+            onImportSubscription("订阅", trimmed)
+        else -> onImportShareLink(trimmed)
     }
 }

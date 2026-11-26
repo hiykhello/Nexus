@@ -43,7 +43,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.nexus.android.R
-import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 import org.nexus.android.ui.theme.NexusTheme
 
 data class UiProfileChip(
@@ -59,12 +58,11 @@ data class UiProfileChip(
  */
 @Composable
 fun ConfigScreen(
-    kdlText: String,
-    onApplyConfig: suspend (String) -> Pair<Boolean, String>,
     diagnostic: String,
     onDiagnosticChange: (String) -> Unit,
-    onImportShareLink: suspend (String, String) -> Pair<String?, String>,
-    onImportSubscription: suspend (String, String) -> Pair<String, String>,
+    onImportCustomConfig: suspend (String) -> String = { "" },
+    onImportShareLink: suspend (String) -> String = { "" },
+    onImportSubscription: suspend (String, String) -> String = { _, _ -> "" },
     windowSizeClass: NexusWindowSizeClass,
     contentPadding: PaddingValues,
     onOpenSplitTunnel: (() -> Unit)? = null,
@@ -90,29 +88,21 @@ fun ConfigScreen(
         val raw = context.getSystemService(ClipboardManager::class.java)
             ?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
         if (raw.isEmpty()) {
-            onDiagnosticChange("剪贴板为空，请先复制节点、订阅链接或便携工作区 JSON")
+            onDiagnosticChange("剪贴板为空，请先复制节点链接、订阅地址或工作区备份")
         } else {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             scope.launch {
-                val lower = raw.lowercase()
-                when {
-                    raw.startsWith(WorkspaceSyncBridge.SHARE_URI_PREFIX) -> {
-                        onDiagnosticChange(workspaceActions.onImportShareUri(raw))
-                    }
-                    raw.startsWith("{") && raw.contains("\"schema_version\"") -> {
-                        onDiagnosticChange(workspaceActions.onImportWorkspaceJson(raw))
-                    }
-                    raw.contains("schema-version") || (raw.contains("routing {") && raw.contains("outbound ")) -> {
-                        onDiagnosticChange(onApplyConfig(raw).second)
-                    }
-                    (lower.startsWith("https://") || lower.startsWith("http://127.0.0.1")) && !lower.contains("@") -> {
-                        val note = workspaceActions.onAddSubscription("订阅", raw)
-                        onDiagnosticChange(note.ifBlank { onImportSubscription("subscription", raw).second })
-                    }
-                    else -> {
-                        onDiagnosticChange(onImportShareLink(raw, kdlText).second)
-                    }
-                }
+                val note = importClipboardPayload(
+                    raw = raw,
+                    onImportWorkspaceShare = workspaceActions.onImportShareUri,
+                    onImportWorkspaceBackup = workspaceActions.onImportWorkspaceJson,
+                    onImportCustomConfig = onImportCustomConfig,
+                    onImportSubscription = { name, url ->
+                        workspaceActions.onAddSubscription(name, url).ifBlank { onImportSubscription(name, url) }
+                    },
+                    onImportShareLink = onImportShareLink,
+                )
+                onDiagnosticChange(note)
             }
         }
     }
@@ -230,7 +220,7 @@ fun ConfigScreen(
                 context = context,
                 onFeedback = onDiagnosticChange,
                 onQuickShareImport = { uri ->
-                    scope.launch { onDiagnosticChange(onImportShareLink(uri, kdlText).second) }
+                    scope.launch { onDiagnosticChange(onImportShareLink(uri)) }
                 },
             )
         }

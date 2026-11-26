@@ -1,15 +1,17 @@
 package org.nexus.android.bridge.ipc
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.DisposableHandle
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -42,50 +44,53 @@ class NexusSseClient(
                 backoffMs = (backoffMs * 2L).coerceAtMost(MAX_BACKOFF_MS)
                 continue
             }
-            var conn: HttpURLConnection? = null
-            var cancelHandle: DisposableHandle? = null
             var receivedAnyFrame = false
             try {
-                val token = bearerTokenProvider()?.takeIf { it.isNotEmpty() }
-                val opened = (URL(base + path).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = connectTimeoutMs
-                    readTimeout = readTimeoutMs
-                    instanceFollowRedirects = false
-                    useCaches = false
-                    setRequestProperty("Accept", "text/event-stream")
-                    setRequestProperty("Cache-Control", "no-cache")
-                    if (!token.isNullOrEmpty()) {
-                        setRequestProperty("Authorization", "Bearer $token")
-                    }
-                }
-                conn = opened
-                cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
-                    runCatching { opened.disconnect() }
-                }
-                if (!currentCoroutineContext().isActive) {
-                    throw CancellationException("SSE stream cancelled")
-                }
-                val code = opened.responseCode
-                if (code !in 200..299) {
-                    delay(backoffMs)
-                    backoffMs = (backoffMs * 2L).coerceAtMost(MAX_BACKOFF_MS)
-                    continue
-                }
-                BufferedReader(InputStreamReader(opened.inputStream, Charsets.UTF_8)).use { reader ->
-                    val parser = SseFrameAccumulator()
-                    while (currentCoroutineContext().isActive) {
-                        val line = reader.readLine() ?: break
-                        val emitted = parser.feedLine(line)
-                        if (emitted != null) {
-                            receivedAnyFrame = true
-                            backoffMs = INITIAL_BACKOFF_MS
-                            emit(emitted)
+                coroutineScope {
+                    val token = bearerTokenProvider()?.takeIf { it.isNotEmpty() }
+                    val opened = (URL(base + path).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = connectTimeoutMs
+                        readTimeout = readTimeoutMs
+                        instanceFollowRedirects = false
+                        useCaches = false
+                        setRequestProperty("Accept", "text/event-stream")
+                        setRequestProperty("Cache-Control", "no-cache")
+                        if (!token.isNullOrEmpty()) {
+                            setRequestProperty("Authorization", "Bearer $token")
                         }
                     }
-                    parser.flushPending()?.let {
-                        receivedAnyFrame = true
-                        emit(it)
+                    val cancelCloser = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            runCatching { opened.disconnect() }
+                        }
+                    }
+                    try {
+                        val code = opened.responseCode
+                        if (code !in 200..299) {
+                            return@coroutineScope
+                        }
+                        BufferedReader(InputStreamReader(opened.inputStream, Charsets.UTF_8)).use { reader ->
+                            val parser = SseFrameAccumulator()
+                            while (currentCoroutineContext().isActive) {
+                                val line = reader.readLine() ?: break
+                                val emitted = parser.feedLine(line)
+                                if (emitted != null) {
+                                    receivedAnyFrame = true
+                                    backoffMs = INITIAL_BACKOFF_MS
+                                    emit(emitted)
+                                }
+                            }
+                            parser.flushPending()?.let {
+                                receivedAnyFrame = true
+                                emit(it)
+                            }
+                        }
+                    } finally {
+                        cancelCloser.cancel()
+                        runCatching { opened.disconnect() }
                     }
                 }
             } catch (ce: CancellationException) {
@@ -95,9 +100,6 @@ class NexusSseClient(
                     throw CancellationException("SSE stream cancelled")
                 }
                 // Transient stream drop or core reload; reconnect with bounded backoff.
-            } finally {
-                cancelHandle?.dispose()
-                runCatching { conn?.disconnect() }
             }
             if (!currentCoroutineContext().isActive) break
             if (receivedAnyFrame) backoffMs = INITIAL_BACKOFF_MS

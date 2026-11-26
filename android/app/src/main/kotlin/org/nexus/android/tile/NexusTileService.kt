@@ -117,11 +117,7 @@ class NexusTileService : TileService() {
         val paths = RuntimeSocketPaths(noBackupFilesDir)
         val db = NexusClientDatabase.open(this)
         val summaries = runCatching { WorkspaceStore(filesDir, db).listProfileSummaries() }.getOrDefault(emptyList())
-        val configExists = if (summaries.isNotEmpty()) {
-            paths.composedConfigFile.isFile
-        } else {
-            paths.composedConfigFile.isFile || File(filesDir, "config.kdl").isFile
-        }
+        val configExists = paths.composedConfigFile.isFile
         val runMode = runCatching {
             AndroidHostConfigStore(File(filesDir, "host.json"), db).load().android.runMode
         }.getOrDefault(AndroidRunMode.VPN)
@@ -129,7 +125,7 @@ class NexusTileService : TileService() {
         val activeId = telemetry?.activeProfileId.orEmpty()
         val outboundMode = telemetry?.outboundMode.orEmpty().ifBlank { "rule" }
         val matched = summaries.firstOrNull { it.id == activeId } ?: summaries.firstOrNull()
-        val profile = matched?.name?.ifBlank { matched.id } ?: activeId.ifBlank { "默认配置" }
+        val profile = matched?.name?.ifBlank { matched.id } ?: activeId.ifBlank { "默认直连" }
         return TileDiskMeta(configExists, profile, runMode, outboundMode)
     }
 

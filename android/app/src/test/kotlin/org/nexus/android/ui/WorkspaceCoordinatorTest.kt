@@ -4,6 +4,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.nexus.android.bridge.workspace.NodeConfig
+import org.nexus.android.bridge.workspace.ProfileItem
+import org.nexus.android.bridge.workspace.ProfileKind
+import org.nexus.android.bridge.workspace.WorkspaceDefaults
+import org.nexus.android.bridge.workspace.WorkspaceDocument
 import java.net.URL
 
 class WorkspaceCoordinatorTest {
@@ -58,5 +63,32 @@ class WorkspaceCoordinatorTest {
         assertFalse(cleaned.keys.any { it.equals("host", ignoreCase = true) })
         assertEquals("text/plain", cleaned["Accept"])
         assertFalse(cleaned.values.any { it.contains('\r') || it.contains('\n') })
+    }
+
+    @Test
+    fun defaultDirectSeedAllowsWorkspaceLaunchWhileShowingOnboardingUntilRemoteNodeAdded() {
+        val seed = WorkspaceDefaults.defaultDirectProfile()
+        assertEquals(WorkspaceDefaults.DEFAULT_DIRECT_PROFILE_ID, seed.id)
+        assertEquals(ProfileKind.CUSTOM_OUTBOUND, seed.kind)
+
+        val seededState = WorkspaceUiState(
+            document = WorkspaceDocument(profiles = listOf(seed)),
+            activeProfileId = seed.id,
+        )
+        assertEquals("默认直连", seededState.activeProfileTitle)
+        assertFalse(seededState.hasAnyRemoteProfile)
+
+        val remote = ProfileItem(
+            id = "hk-1",
+            remarks = "HK-01",
+            kind = ProfileKind.NODE,
+            node = NodeConfig(protocol = "vless", server = "hk.example.com", port = 443),
+        )
+        val withRemote = seededState.copy(
+            document = WorkspaceDocument(profiles = listOf(seed, remote)),
+            activeProfileId = remote.id,
+        )
+        assertEquals("HK-01", withRemote.activeProfileTitle)
+        assertTrue(withRemote.hasAnyRemoteProfile)
     }
 }

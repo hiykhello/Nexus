@@ -221,7 +221,7 @@ fun LogsScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text(
-                                text = if (sseStreaming) "SSE 实时流" else "运行日志",
+                                text = if (sseStreaming) "实时日志流" else "运行日志",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface,

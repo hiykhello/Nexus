@@ -103,41 +103,41 @@ class BootLaunchPolicyTest {
     }
 
     @Test
-    fun resolveBootConfigTargetNeverFallsBackToStaleLegacyConfigWhenWorkspaceHasProfiles() {
+    fun resolveBootConfigTargetUsesWorkspaceComposedConfigSingleSourceOfTruth() {
         val dir = Files.createTempDirectory("nexus-boot-target").toFile()
         try {
             val composed = File(dir, "composed.kdl")
-            val legacy = File(dir, "config.kdl").apply { writeText("schema-version 1\n") }
 
-            // Workspace owns profiles, composed missing, on-demand compose fails -> returns null (never legacy!)
+            // Missing composed config & on-demand compose fails -> returns null (never legacy file)
             val failed = BootLaunchPolicy.resolveBootConfigTarget(
-                hasWorkspaceProfiles = true,
                 composedConfigFile = composed,
-                legacyConfigFile = legacy,
                 composeOnDemand = { false },
             )
             assertEquals(null, failed)
 
-            // Workspace owns profiles, on-demand compose generates composed.kdl -> returns composed
+            // On-demand compose generates composed config -> returns composed
+            var composeCalls = 0
             val rebuilt = BootLaunchPolicy.resolveBootConfigTarget(
-                hasWorkspaceProfiles = true,
                 composedConfigFile = composed,
-                legacyConfigFile = legacy,
                 composeOnDemand = {
+                    composeCalls++
                     composed.writeText("schema-version 1\n")
                     true
                 },
             )
             assertEquals(composed, rebuilt)
+            assertEquals(1, composeCalls)
 
-            // Workspace has zero profiles -> falls back to legacy config.kdl when composed missing
-            composed.delete()
-            val legacyFallback = BootLaunchPolicy.resolveBootConfigTarget(
-                hasWorkspaceProfiles = false,
+            // Already composed -> returns immediately without invoking composeOnDemand again
+            val cached = BootLaunchPolicy.resolveBootConfigTarget(
                 composedConfigFile = composed,
-                legacyConfigFile = legacy,
+                composeOnDemand = {
+                    composeCalls++
+                    true
+                },
             )
-            assertEquals(legacy, legacyFallback)
+            assertEquals(composed, cached)
+            assertEquals(1, composeCalls)
         } finally {
             dir.deleteRecursively()
         }

@@ -1,7 +1,13 @@
 package org.nexus.android.ui
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewFontScale
 import androidx.compose.ui.unit.dp
@@ -59,18 +65,48 @@ private fun ConnectionsPhoneLightPreview() {
 private fun ConfigPhoneLightPreview() {
     PreviewFrame(dark = false) {
         ConfigScreen(
-            kdlText = PREVIEW_SAMPLE_KDL,
-            onApplyConfig = { true to "已校验保存并热重载" },
             diagnostic = "工作区已校验并生效",
             onDiagnosticChange = {},
-            onImportShareLink = { _, cur -> cur to "" },
-            onImportSubscription = { _, _ -> "" to "" },
+            onImportCustomConfig = { "已导入自定义配置" },
+            onImportShareLink = { "" },
+            onImportSubscription = { _, _ -> "" },
             windowSizeClass = NexusWindowSizeClass.COMPACT,
             contentPadding = PaddingValues(16.dp),
             onOpenSplitTunnel = {},
             onOpenDiagnostics = {},
             workspaceState = PREVIEW_SAMPLE_WORKSPACE,
         )
+    }
+}
+
+@Preview(name = "Host & Routing Light", showBackground = true, widthDp = 412, heightDp = 1280)
+@Composable
+private fun HostAndRoutingLightPreview() {
+    PreviewFrame(dark = false) {
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            RoutingDnsPillarPane(
+                state = PREVIEW_SAMPLE_WORKSPACE,
+                actions = WorkspaceUiActions(),
+                onOpenRuleDnsModal = {},
+                onOpenDiagnostics = {},
+                onFeedback = {},
+            )
+            HostSettingsCard(
+                host = PREVIEW_SAMPLE_WORKSPACE.host,
+                onUpdateHost = {},
+                onOpenSplitTunnel = {},
+            )
+            WebDavSyncCard(
+                state = PREVIEW_SAMPLE_WORKSPACE,
+                actions = WorkspaceUiActions(),
+                onFeedback = {},
+            )
+        }
     }
 }
 

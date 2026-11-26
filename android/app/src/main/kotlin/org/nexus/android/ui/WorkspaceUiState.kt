@@ -6,6 +6,7 @@ import org.nexus.android.bridge.workspace.ProfileItem
 import org.nexus.android.bridge.workspace.RoutingRuleItem
 import org.nexus.android.bridge.workspace.UdpProbeKind
 import org.nexus.android.bridge.workspace.UdpProbeResult
+import org.nexus.android.bridge.workspace.WorkspaceDefaults
 import org.nexus.android.bridge.workspace.WorkspaceDocument
 
 data class SyncConflictUi(
@@ -44,7 +45,7 @@ data class WorkspaceUiState(
             ?: "默认配置"
 
     val hasAnyRemoteProfile: Boolean
-        get() = document.profiles.isNotEmpty()
+        get() = document.profiles.any { it.id != WorkspaceDefaults.DEFAULT_DIRECT_PROFILE_ID }
 }
 
 data class WorkspaceUiActions(

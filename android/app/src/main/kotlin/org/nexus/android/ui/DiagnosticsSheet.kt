@@ -303,7 +303,7 @@ internal fun DiagnosticsSheet(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("内核已编译规则 (${liveRules.size})", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("内核已生效规则 (${liveRules.size})", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         IconButton(
                             enabled = running && !loadingRules,
                             onClick = {
@@ -336,11 +336,11 @@ internal fun DiagnosticsSheet(
                         }.take(60)
                     }
                     if (!running) {
-                        Text("隧道未运行时无法读取内核实时编译规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("隧道未运行时无法读取实时生效规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else if (loadingRules) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Text("正在读取 /v1/rules …", style = MaterialTheme.typography.bodySmall)
+                            Text("正在读取实时规则…", style = MaterialTheme.typography.bodySmall)
                         }
                     } else if (matched.isEmpty()) {
                         Text("未匹配到内核规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -30,6 +30,7 @@ import org.nexus.android.bridge.core.CoreProcessSupervisor
 import org.nexus.android.bridge.ipc.CachedTokenReader
 import org.nexus.android.bridge.ipc.NexusControlClient
 import org.nexus.android.bridge.ipc.NexusSseClient
+import org.nexus.android.bridge.ipc.NexusWsClient
 import org.nexus.android.bridge.ipc.OutboundJsonParser
 import org.nexus.android.bridge.model.RuntimeSocketPaths
 import org.nexus.android.bridge.owner.ConnectionOwnerResolver
@@ -39,17 +40,16 @@ import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.AndroidRunMode
 import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.ui.theme.NexusTheme
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : ComponentActivity() {
-    private lateinit var configFile: File
     private lateinit var socketPaths: RuntimeSocketPaths
     private lateinit var db: NexusClientDatabase
     private lateinit var supervisor: CoreProcessSupervisor
     private lateinit var controlClient: NexusControlClient
     private lateinit var sseClient: NexusSseClient
-    private lateinit var tunnelCoordinator: MainTunnelCoordinator
+    private lateinit var wsClient: NexusWsClient
+    private val tunnelCoordinator = MainTunnelCoordinator()
     private lateinit var workspaceCoordinator: WorkspaceCoordinator
     private lateinit var syncCoordinator: WorkspaceSyncCoordinator
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -77,7 +77,6 @@ class MainActivity : ComponentActivity() {
         window.isNavigationBarContrastEnforced = false
         super.onCreate(savedInstanceState)
 
-        configFile = File(filesDir, "config.kdl")
         socketPaths = RuntimeSocketPaths(noBackupFilesDir)
         db = NexusClientDatabase.open(this)
         supervisor = CoreProcessSupervisor(this)
@@ -88,17 +87,16 @@ class MainActivity : ComponentActivity() {
             bearerTokenProvider = { tokenReader.read() },
         )
         sseClient = controlClient.createSseClient()
+        wsClient = controlClient.createWsClient()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ownerResolver = ConnectionOwnerResolver(applicationContext).apply { start() }
         }
-        tunnelCoordinator = MainTunnelCoordinator(filesDir, cacheDir, configFile, socketPaths, supervisor, controlClient)
         workspaceCoordinator = WorkspaceCoordinator(filesDir, socketPaths, db, supervisor, controlClient)
         syncCoordinator = WorkspaceSyncCoordinator(workspaceCoordinator, socketPaths, supervisor, controlClient)
 
         setContent {
             val scope = rememberCoroutineScope()
             var dashVisibility by remember { mutableStateOf(DashboardCardVisibility()) }
-            var loadedKdl by remember { mutableStateOf("") }
             var workspaceState by remember { mutableStateOf(WorkspaceUiState()) }
             var composeLaunchError by remember { mutableStateOf("") }
 
@@ -116,14 +114,13 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            LaunchedEffect(configFile) {
-                val (kdl, dash) = withContext(Dispatchers.IO) {
-                    tunnelCoordinator.ensureDefaultConfigExists()
-                    configFile.readText() to DashboardLayoutPrefs.load(db)
+            LaunchedEffect(Unit) {
+                dashVisibility = withContext(Dispatchers.IO) { DashboardLayoutPrefs.load(db) }
+                val initial = workspaceCoordinator.loadInitialState()
+                applyWorkspace(initial)
+                if (!socketPaths.composedConfigFile.isFile && initial.activeProfileId.isNotEmpty()) {
+                    workspaceCoordinator.composeForLaunch(initial.activeProfileId)
                 }
-                loadedKdl = kdl
-                dashVisibility = dash
-                applyWorkspace(workspaceCoordinator.loadInitialState())
             }
 
             NexusTheme(dynamicColor = workspaceState.host.android.dynamicColor) {
@@ -145,16 +142,12 @@ class MainActivity : ComponentActivity() {
                         composeLaunchError = ""
                         val state = workspaceCoordinator.loadInitialState()
                         applyWorkspace(state)
-                        if (state.document.profiles.isNotEmpty()) {
-                            val composed = workspaceCoordinator.composeForLaunch(state.activeProfileId)
-                            if (!composed.ok || !socketPaths.composedConfigFile.isFile) {
-                                composeLaunchError = composed.errors.firstOrNull() ?: "工作区编译失败，已取消重启"
-                                return@launch
-                            }
-                            pendingStartConfigPath = socketPaths.composedConfigFile.absolutePath
-                        } else {
-                            pendingStartConfigPath = configFile.absolutePath
+                        val composed = workspaceCoordinator.composeForLaunch(state.activeProfileId)
+                        if (!composed.ok || !socketPaths.composedConfigFile.isFile) {
+                            composeLaunchError = composed.errors.firstOrNull() ?: "配置生成失败，已取消重启"
+                            return@launch
                         }
+                        pendingStartConfigPath = socketPaths.composedConfigFile.absolutePath
                         pendingFakeIpv6Pool = if (AndroidHostConfig.needsFakeIpv6Route(state.document, state.host.android)) {
                             state.document.dns.simple.fakeIpV6Pool
                         } else ""
@@ -227,7 +220,6 @@ class MainActivity : ComponentActivity() {
                     lastError = effectiveError,
                     powerSave = powerSave,
                     localLogs = localLogs,
-                    initialKdl = loadedKdl,
                     activeProfileName = workspaceState.activeProfileTitle,
                     excludedPackages = perAppPackages,
                     dashVisibility = dashVisibility,
@@ -279,16 +271,12 @@ class MainActivity : ComponentActivity() {
                                 withContext(Dispatchers.IO) { workspaceCoordinator.telemetryStore.clearUnexpectedCrash() }
                                 val latest = workspaceCoordinator.loadInitialState()
                                 applyWorkspace(latest)
-                                if (latest.document.profiles.isNotEmpty()) {
-                                    val composed = workspaceCoordinator.composeForLaunch(latest.activeProfileId)
-                                    if (!composed.ok || !socketPaths.composedConfigFile.isFile) {
-                                        composeLaunchError = composed.errors.firstOrNull() ?: "工作区编译失败，已阻止启动"
-                                        return@launch
-                                    }
-                                    pendingStartConfigPath = socketPaths.composedConfigFile.absolutePath
-                                } else {
-                                    pendingStartConfigPath = configFile.absolutePath
+                                val composed = workspaceCoordinator.composeForLaunch(latest.activeProfileId)
+                                if (!composed.ok || !socketPaths.composedConfigFile.isFile) {
+                                    composeLaunchError = composed.errors.firstOrNull() ?: "配置生成失败，已阻止启动"
+                                    return@launch
                                 }
+                                pendingStartConfigPath = socketPaths.composedConfigFile.absolutePath
                                 pendingFakeIpv6Pool = if (AndroidHostConfig.needsFakeIpv6Route(latest.document, latest.host.android)) {
                                     latest.document.dns.simple.fakeIpV6Pool
                                 } else ""
@@ -298,27 +286,31 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onRestartVpn = { launchRestartAsync() },
-                    onSwitchOutboundMode = { mode, _ ->
+                    onSwitchOutboundMode = { mode ->
                         val (next, msg) = workspaceCoordinator.switchOutboundMode(mode, running)
                         applyWorkspace(next)
-                        null to msg
+                        msg
                     },
-                    onCreateRuleFromConnection = { host, action, outbound, _ ->
+                    onCreateRuleFromConnection = { host, action, outbound ->
                         val rule = WorkspaceCoordinator.buildRuleFromConnection(host, action, outbound)
                         val (next, msg) = workspaceCoordinator.addRoutingRule(rule, running)
                         applyWorkspace(next)
-                        null to msg
+                        msg
                     },
-                    onSaveAndReload = { text -> tunnelCoordinator.saveAndReload(text) },
-                    onImportShareLink = { uri, _ ->
+                    onImportCustomConfig = { raw ->
+                        val (next, msg) = workspaceCoordinator.importCustomConfig(raw, running)
+                        applyWorkspace(next)
+                        msg
+                    },
+                    onImportShareLink = { uri ->
                         val (next, msg) = workspaceCoordinator.importShareUri(uri, running)
                         applyWorkspace(next)
-                        null to msg
+                        msg
                     },
                     onImportSubscription = { name, url ->
                         val (next, msg) = workspaceCoordinator.addAndRefreshSubscription(name, url, running)
                         applyWorkspace(next)
-                        "" to msg
+                        msg
                     },
                     onRefreshMetrics = { controlClient.fetchMetrics() },
                     onClearCache = { controlClient.clearCache("all").ok },
@@ -346,6 +338,7 @@ class MainActivity : ComponentActivity() {
                     onQueryDns = { name, type, server -> controlClient.queryDns(name, type, server) },
                     onFlushFakeIp = { controlClient.flushFakeIp() },
                     onSetCoreLogLevel = { level -> controlClient.setLogLevel(level).ok },
+                    wsStream = { channels, since, intervalMs -> wsClient.stream(channels = channels, since = since, intervalMs = intervalMs) },
                     statusStream = { sseClient.streamStatus(1_000) },
                     connectionsStream = { sseClient.streamConnections(1_500) },
                     logsStream = { since, level, search -> sseClient.streamLogs(since = since, level = level, search = search) },
@@ -393,7 +386,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun dispatchVpnAction(action: String) {
-        val targetPath = pendingStartConfigPath ?: socketPaths.composedConfigFile.takeIf { it.isFile }?.absolutePath ?: configFile.absolutePath
+        val targetPath = pendingStartConfigPath ?: socketPaths.composedConfigFile.absolutePath
         startForegroundService(
             Intent(this, NexusVpnService::class.java)
                 .setAction(action)

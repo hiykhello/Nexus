@@ -254,6 +254,15 @@ data class WorkspaceDocument(
 }
 
 object WorkspaceDefaults {
+    const val DEFAULT_DIRECT_PROFILE_ID = "default-direct"
+
+    fun defaultDirectProfile(): ProfileItem = ProfileItem(
+        id = DEFAULT_DIRECT_PROFILE_ID,
+        remarks = "默认直连",
+        kind = ProfileKind.CUSTOM_OUTBOUND,
+        customOutboundKdl = """outbound "{{tag}}" type="direct"""",
+    )
+
     fun defaultRoutingProfiles(): List<RoutingProfileItem> = listOf(
         RoutingProfileItem(
             id = "bypass-lan-cn",
