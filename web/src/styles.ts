@@ -14,18 +14,7 @@ export const sharedStyles = css`
   .page {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    animation: fadeIn 140ms ease-out;
-  }
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(3px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    gap: 14px;
   }
   .page-head {
     display: flex;
@@ -42,7 +31,7 @@ export const sharedStyles = css`
   .bento-2 {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
+    gap: 12px;
   }
   @media (max-width: 900px) {
     .bento-2 {
@@ -50,16 +39,14 @@ export const sharedStyles = css`
     }
   }
   .card {
-    background: var(--nx-surface-grad, var(--nx-surface));
+    background: var(--nx-surface);
     border: 1px solid var(--nx-border);
-    border-radius: 14px;
-    padding: 16px;
-    box-shadow: var(--nx-shadow);
+    border-radius: 12px;
+    padding: 14px;
   }
   .well {
     background: var(--nx-well);
-    border: 1px solid var(--nx-border);
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 12px;
   }
   .row {
@@ -81,6 +68,7 @@ export const sharedStyles = css`
     font-size: 19px;
     font-weight: 700;
     letter-spacing: -0.015em;
+    text-wrap: balance;
   }
   h3 {
     margin: 0;
@@ -100,6 +88,17 @@ export const sharedStyles = css`
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+  .rate-slot {
+    display: inline-block;
+    min-width: 9ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .num-col {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
   .secondary {
     color: var(--nx-text-secondary);
     font-size: 13px;
@@ -114,9 +113,19 @@ export const sharedStyles = css`
     font-variant-numeric: tabular-nums;
   }
   .truncate {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  button,
+  .btn,
+  a,
+  .chip,
+  .badge {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    user-select: none;
   }
   button,
   .btn {
@@ -128,21 +137,21 @@ export const sharedStyles = css`
     border: 1px solid var(--nx-border-strong);
     background: var(--nx-well);
     color: var(--nx-text);
-    border-radius: 9px;
+    border-radius: 8px;
     padding: 7px 12px;
     font-size: 12.5px;
     font-weight: 600;
     line-height: 1.2;
     cursor: pointer;
-    transition: background 120ms ease, border-color 120ms ease, transform 90ms ease, opacity 120ms ease;
+    transition:
+      background 120ms ease-out,
+      border-color 120ms ease-out,
+      transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
     font-family: inherit;
   }
-  button:hover:not(:disabled) {
-    border-color: var(--nx-accent-border);
-    background: var(--nx-row-hover);
-  }
-  button:active:not(:disabled) {
-    transform: translateY(0.5px);
+  button:active:not(:disabled),
+  .chip:active {
+    transform: scale(0.98);
   }
   button:focus-visible,
   a:focus-visible,
@@ -150,38 +159,27 @@ export const sharedStyles = css`
   select:focus-visible,
   [tabindex]:focus-visible {
     outline: 2px solid var(--nx-accent);
-    outline-offset: 1px;
+    outline-offset: 2px;
   }
   button.primary {
     background: var(--nx-accent);
     border-color: var(--nx-accent);
     color: var(--nx-accent-fg);
   }
-  button.primary:hover:not(:disabled) {
-    background: var(--nx-accent-hover);
-    border-color: var(--nx-accent-hover);
-  }
   button.danger {
     color: var(--nx-err-fg);
     border-color: var(--nx-err-border);
     background: var(--nx-err-bg);
-  }
-  button.danger:hover:not(:disabled) {
-    border-color: var(--nx-err-fg);
   }
   button.ghost {
     background: transparent;
     border-color: transparent;
     color: var(--nx-text-secondary);
   }
-  button.ghost:hover:not(:disabled) {
-    background: var(--nx-well);
-    color: var(--nx-text);
-  }
   button.sm {
     padding: 5px 9px;
     font-size: 12px;
-    border-radius: 7px;
+    border-radius: 6px;
   }
   button:disabled {
     opacity: 0.48;
@@ -192,11 +190,15 @@ export const sharedStyles = css`
     border: 1px solid var(--nx-border-strong);
     background: var(--nx-well);
     color: var(--nx-text);
-    border-radius: 9px;
+    border-radius: 8px;
     padding: 7px 11px;
     font-size: 13px;
     font-family: inherit;
-    transition: border-color 120ms ease, background 120ms ease;
+    transition: border-color 120ms ease-out, background 120ms ease-out;
+  }
+  option {
+    background: var(--nx-surface);
+    color: var(--nx-text);
   }
   input::placeholder {
     color: var(--nx-muted);
@@ -218,14 +220,9 @@ export const sharedStyles = css`
     font-size: 12px;
     font-weight: 600;
   }
-  .segmented button:hover:not(:disabled) {
-    background: var(--nx-well);
-    color: var(--nx-text);
-  }
   .segmented button.active {
     background: var(--nx-accent);
     color: var(--nx-accent-fg);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
   }
   .chip {
     display: inline-flex;
@@ -239,6 +236,10 @@ export const sharedStyles = css`
     background: var(--nx-well);
     color: var(--nx-text-secondary);
     cursor: pointer;
+    transition:
+      background 120ms ease-out,
+      border-color 120ms ease-out,
+      transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
   }
   .chip.active {
     background: var(--nx-accent-soft);
@@ -321,8 +322,8 @@ export const sharedStyles = css`
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 10px 14px;
-    border-radius: 10px;
+    padding: 9px 12px;
+    border-radius: 8px;
     font-size: 13px;
     border: 1px solid var(--nx-border-strong);
     background: var(--nx-well);
@@ -339,7 +340,8 @@ export const sharedStyles = css`
   }
   .table-wrap {
     overflow-x: auto;
-    border-radius: 10px;
+    overscroll-behavior: contain;
+    border-radius: 8px;
   }
   table {
     width: 100%;
@@ -349,7 +351,7 @@ export const sharedStyles = css`
   th,
   td {
     text-align: left;
-    padding: 9px 10px;
+    padding: 8px 10px;
     border-bottom: 1px solid var(--nx-border);
     vertical-align: middle;
   }
@@ -365,19 +367,65 @@ export const sharedStyles = css`
     border-bottom: none;
   }
   tbody tr.clickable {
-    transition: background 100ms ease;
     cursor: pointer;
-  }
-  tbody tr.clickable:hover {
-    background: var(--nx-row-hover);
   }
   tbody tr.selected {
     background: var(--nx-accent-soft);
   }
   .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
     text-align: center;
     padding: 28px 16px;
     color: var(--nx-muted);
     font-size: 13px;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    button:hover:not(:disabled) {
+      border-color: var(--nx-accent-border);
+      background: var(--nx-row-hover);
+    }
+    button.primary:hover:not(:disabled) {
+      background: var(--nx-accent-hover);
+      border-color: var(--nx-accent-hover);
+    }
+    button.danger:hover:not(:disabled) {
+      border-color: var(--nx-err-fg);
+    }
+    button.ghost:hover:not(:disabled) {
+      background: var(--nx-well);
+      color: var(--nx-text);
+    }
+    .segmented button:hover:not(:disabled):not(.active) {
+      background: var(--nx-surface);
+      color: var(--nx-text);
+    }
+    .chip:hover:not(.active) {
+      border-color: var(--nx-border-strong);
+      color: var(--nx-text);
+    }
+    tbody tr.clickable:hover {
+      background: var(--nx-row-hover);
+    }
+  }
+  @media (pointer: coarse) {
+    input,
+    select {
+      font-size: 16px;
+      min-height: 44px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 `;

@@ -21,11 +21,11 @@ export class NexusDiagnosticsPage extends LitElement {
       .metrics-pre {
         margin: 8px 0 0;
         padding: 12px;
-        border-radius: 10px;
+        border-radius: 8px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
         max-height: 260px;
         overflow: auto;
+        overscroll-behavior: contain;
         white-space: pre-wrap;
         word-break: break-all;
         font-size: 11.5px;
@@ -234,13 +234,18 @@ export class NexusDiagnosticsPage extends LitElement {
         <div class="card col">
           <div class="row between">
             <h3>${t('auth.title')}</h3>
-            <span class="badge mono">${t('diag.sessionStorageOnly')}</span>
+            <span class="muted mono" style="font-size:11.5px">${t('diag.sessionStorageOnly')}</span>
           </div>
           <p class="muted" style="margin:0">${t('auth.desc')}</p>
           <div class="row">
             <input
               data-search-input
               type="password"
+              aria-label=${t('auth.tokenLabel')}
+              autocomplete="off"
+              spellcheck="false"
+              autocapitalize="none"
+              autocorrect="off"
               style="flex:1; min-width:240px"
               placeholder=${t('auth.placeholder')}
               .value=${this.tokenInput}
@@ -258,10 +263,17 @@ export class NexusDiagnosticsPage extends LitElement {
           <div class="card col">
             <div class="row between">
               <h3>${t('diag.events')}</h3>
-              <span class="badge tabular">${this.events.length}</span>
+              <span class="muted tabular">${this.events.length}</span>
             </div>
             ${this.events.length === 0
-              ? html`<div class="empty-state">${t('diag.noEvents')}</div>`
+              ? html`
+                  <div class="empty-state">
+                    <span>${t('diag.noEvents')}</span>
+                    <button class="sm" ?disabled=${this.busy} @click=${() => void this.refresh()}>
+                      ${icons.refresh()} ${t('common.refresh')}
+                    </button>
+                  </div>
+                `
               : html`
                   <div class="table-wrap">
                     <table>
@@ -311,7 +323,7 @@ export class NexusDiagnosticsPage extends LitElement {
                             (m) => html`
                               <tr>
                                 <td class="mono muted" style="word-break:break-all">${m.name}</td>
-                                <td class="mono" style="text-align:right; font-weight:600">${m.value}</td>
+                                <td class="mono num-col" style="font-weight:600">${m.value}</td>
                               </tr>
                             `,
                           )}

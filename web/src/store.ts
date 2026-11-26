@@ -325,9 +325,17 @@ export class AppStore extends EventTarget {
   };
 
   private applyThemeDom(): void {
-    if (typeof document !== 'undefined') {
-      document.documentElement.dataset.theme = this.resolvedTheme;
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.theme = this.resolvedTheme;
+    document.documentElement.style.colorScheme = this.resolvedTheme;
+    const color = this.resolvedTheme === 'dark' ? '#111317' : '#f5f6f8';
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!meta && document.head) {
+      meta = document.createElement('meta');
+      meta.name = 'theme-color';
+      document.head.appendChild(meta);
     }
+    if (meta) meta.content = color;
   }
 }
 

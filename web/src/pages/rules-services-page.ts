@@ -30,7 +30,6 @@ export class NexusRulesServicesPage extends LitElement {
         padding: 7px 10px;
         border-radius: 8px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
       }
     `,
   ];
@@ -108,6 +107,7 @@ export class NexusRulesServicesPage extends LitElement {
   render() {
     const list = this.filteredRules();
     const actions = Array.from(new Set(this.rules.map((r) => r.action.toLowerCase())));
+    const hasFilter = this.search.trim().length > 0 || this.actionFilter !== 'all';
 
     return html`
       <div class="page">
@@ -139,7 +139,7 @@ export class NexusRulesServicesPage extends LitElement {
           <div class="row between">
             <div class="row">
               <h3>${t('rules.tableTitle')}</h3>
-              <span class="badge tabular">${list.length} / ${this.rules.length}</span>
+              <span class="muted tabular">${list.length} / ${this.rules.length}</span>
             </div>
           </div>
 
@@ -147,6 +147,10 @@ export class NexusRulesServicesPage extends LitElement {
             <input
               data-search-input
               type="search"
+              aria-label=${t('rules.search')}
+              spellcheck="false"
+              autocapitalize="none"
+              autocorrect="off"
               style="flex:1; min-width:220px"
               placeholder=${t('rules.search')}
               .value=${this.search}
@@ -190,7 +194,18 @@ export class NexusRulesServicesPage extends LitElement {
               </thead>
               <tbody>
                 ${list.length === 0
-                  ? html`<tr><td colspan="5" class="empty-state">${t('rules.empty')}</td></tr>`
+                  ? html`
+                      <tr>
+                        <td colspan="5">
+                          <div class="empty-state">
+                            <span>${t('rules.empty')}</span>
+                            ${hasFilter
+                              ? html`<button class="sm" @click=${() => { this.search = ''; this.actionFilter = 'all'; }}>${t('common.clearFilters')}</button>`
+                              : html`<button class="sm" ?disabled=${this.loading} @click=${() => void this.refresh()}>${icons.refresh()} ${t('common.refresh')}</button>`}
+                          </div>
+                        </td>
+                      </tr>
+                    `
                   : list.map(
                       (r) => html`
                         <tr>

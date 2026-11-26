@@ -35,15 +35,15 @@ export class NexusLogsPage extends LitElement {
     sharedStyles,
     css`
       .log-box {
-        max-height: 60vh;
+        max-height: 60dvh;
         min-height: 280px;
         overflow-y: auto;
+        overscroll-behavior: contain;
         display: flex;
         flex-direction: column;
         gap: 2px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
-        border-radius: 10px;
+        border-radius: 8px;
         padding: 8px;
       }
       .log-line {
@@ -55,8 +55,10 @@ export class NexusLogsPage extends LitElement {
         border-radius: 6px;
         line-height: 1.45;
       }
-      .log-line:hover {
-        background: var(--nx-row-hover);
+      @media (hover: hover) and (pointer: fine) {
+        .log-line:hover {
+          background: var(--nx-row-hover);
+        }
       }
       .msg {
         word-break: break-word;
@@ -328,6 +330,7 @@ export class NexusLogsPage extends LitElement {
           : 'err';
     const streamLabel =
       activeState === 'live' && appStore.wsLive ? t('stream.liveWs') : t(`stream.${activeState}`);
+    const hasFilter = this.level !== 'all' || this.domain !== 'all' || this.search.trim().length > 0;
 
     return html`
       <div class="page">
@@ -337,8 +340,9 @@ export class NexusLogsPage extends LitElement {
             <span class="badge ${streamBadgeClass}">
               <span class="dot"></span>${streamLabel}
             </span>
-            <span class="badge mono">${t('logs.latest')} #${this.latestSeq}</span>
-            <span class="badge mono">${t('logs.evicted')} ${this.evicted}</span>
+            <span class="muted mono tabular">
+              ${t('logs.latest')} #${this.latestSeq} · ${t('logs.evicted')} ${this.evicted}
+            </span>
           </div>
           <div class="row">
             <button class="sm" @click=${() => (this.paused = !this.paused)}>
@@ -394,6 +398,10 @@ export class NexusLogsPage extends LitElement {
             <input
               data-search-input
               type="search"
+              aria-label=${t('logs.search')}
+              spellcheck="false"
+              autocapitalize="none"
+              autocorrect="off"
               style="flex:1; min-width:200px"
               placeholder=${t('logs.search')}
               .value=${this.search}
@@ -426,7 +434,7 @@ export class NexusLogsPage extends LitElement {
                 el.value = '';
               }}
             >
-              <option value="" selected disabled>${t('logs.coreLevel')}...</option>
+              <option value="" selected disabled>${t('logs.coreLevel')}…</option>
               ${['error', 'warn', 'info', 'debug', 'trace'].map(
                 (lvl) => html`<option value=${lvl}>${lvl.toUpperCase()}</option>`,
               )}
@@ -453,7 +461,14 @@ export class NexusLogsPage extends LitElement {
         <div class="card" style="padding:10px">
           <div class="log-box mono">
             ${this.entries.length === 0
-              ? html`<div class="empty-state">${t('logs.empty')}</div>`
+              ? html`
+                  <div class="empty-state">
+                    <span>${t('logs.empty')}</span>
+                    ${hasFilter
+                      ? html`<button class="sm" @click=${() => { this.level = 'all'; this.domain = 'all'; this.search = ''; void this.reloadStream(); }}>${t('common.clearFilters')}</button>`
+                      : html`<button class="sm" @click=${() => void this.reloadStream()}>${icons.refresh()} ${t('common.refresh')}</button>`}
+                  </div>
+                `
               : this.entries.map(
                   (e) => html`
                     <div class="log-line">

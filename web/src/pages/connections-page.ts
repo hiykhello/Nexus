@@ -239,7 +239,7 @@ export class NexusConnectionsPage extends LitElement {
         <div class="page-head">
           <div class="row">
             <h2>${t('connections.title')}</h2>
-            <span class="badge tabular">${list.length} / ${this.connections.length}</span>
+            <span class="muted tabular">${list.length} / ${this.connections.length}</span>
             <span class="badge ${streamBadgeClass}">
               <span class="dot"></span>${streamLabel}
             </span>
@@ -309,6 +309,10 @@ export class NexusConnectionsPage extends LitElement {
             <input
               data-search-input
               type="search"
+              aria-label=${t('connections.search')}
+              spellcheck="false"
+              autocapitalize="none"
+              autocorrect="off"
               style="flex:1; min-width:220px"
               placeholder=${t('connections.search')}
               .value=${this.search}
@@ -419,14 +423,25 @@ export class NexusConnectionsPage extends LitElement {
                 <th>${t('connections.col.target')}</th>
                 <th>${t('connections.col.outbound')}</th>
                 <th>${t('connections.col.rule')}</th>
-                <th>${t('connections.col.traffic')}</th>
-                <th>${t('connections.col.duration')}</th>
+                <th class="num-col">${t('connections.col.traffic')}</th>
+                <th class="num-col">${t('connections.col.duration')}</th>
                 <th>${t('connections.col.action')}</th>
               </tr>
             </thead>
             <tbody>
               ${list.length === 0
-                ? html`<tr><td colspan="8" class="empty-state">${t('connections.empty')}</td></tr>`
+                ? html`
+                    <tr>
+                      <td colspan="8">
+                        <div class="empty-state">
+                          <span>${t('connections.empty')}</span>
+                          ${hasFilter
+                            ? html`<button class="sm" @click=${() => { this.search = ''; this.protoFilter = 'all'; }}>${t('common.clearFilters')}</button>`
+                            : html`<button class="sm" @click=${() => void this.refreshOnce()}>${icons.refresh()} ${t('common.refresh')}</button>`}
+                        </div>
+                      </td>
+                    </tr>
+                  `
                 : list.map(
                     (c) => html`
                       <tr
@@ -450,12 +465,12 @@ export class NexusConnectionsPage extends LitElement {
                         </td>
                         <td><span class="badge ok">${c.outbound || c.path}</span></td>
                         <td class="mono muted">${c.route_rule || '-'}</td>
-                        <td class="mono">
-                          <span style="color:var(--nx-up)">↑ ${formatBytes(c.upload_bytes)}</span>
+                        <td class="mono num-col">
+                          <span style="color:var(--nx-up)">↑<span class="rate-slot">${formatBytes(c.upload_bytes)}</span></span>
                           /
-                          <span style="color:var(--nx-down)">↓ ${formatBytes(c.download_bytes)}</span>
+                          <span style="color:var(--nx-down)">↓<span class="rate-slot">${formatBytes(c.download_bytes)}</span></span>
                         </td>
-                        <td class="mono muted">${formatDuration(c.duration_ms)}</td>
+                        <td class="mono muted num-col">${formatDuration(c.duration_ms)}</td>
                         <td>
                           <button
                             class="danger sm"

@@ -46,7 +46,7 @@ export class NexusApp extends LitElement {
     css`
       :host {
         display: block;
-        min-height: 100vh;
+        min-height: 100dvh;
         background: var(--nx-bg);
         color: var(--nx-text);
         font-family:
@@ -59,25 +59,26 @@ export class NexusApp extends LitElement {
       }
       .shell {
         display: grid;
-        grid-template-columns: 236px 1fr;
-        min-height: 100vh;
+        grid-template-columns: 224px 1fr;
+        min-height: 100dvh;
       }
       aside {
         background: var(--nx-sidebar);
         border-right: 1px solid var(--nx-border);
-        padding: 18px 12px 14px;
+        padding: 16px 12px 14px;
         display: flex;
         flex-direction: column;
         gap: 10px;
         position: sticky;
         top: 0;
-        height: 100vh;
+        height: 100dvh;
       }
       .brand-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 4px 8px 6px;
+        padding: 4px 6px 6px;
+        gap: 8px;
       }
       .brand {
         display: flex;
@@ -87,58 +88,45 @@ export class NexusApp extends LitElement {
       .brand-mark {
         width: 26px;
         height: 26px;
-        border-radius: 8px;
-        background: linear-gradient(135deg, var(--nx-accent), #7c3aed);
+        border-radius: 7px;
+        background: var(--nx-accent);
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        color: #fff;
-        font-weight: 800;
+        color: var(--nx-accent-fg);
+        font-weight: 700;
         font-size: 13px;
       }
       .brand-text {
-        font-size: 16px;
-        font-weight: 800;
-        letter-spacing: 0.12em;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
       }
       nav {
         display: flex;
         flex-direction: column;
-        gap: 3px;
+        gap: 2px;
       }
       nav a {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
+        gap: 9px;
         text-decoration: none;
         color: var(--nx-text-secondary);
-        padding: 9px 11px;
-        border-radius: 9px;
+        padding: 8px 10px;
+        border-radius: 8px;
         font-size: 13.5px;
         font-weight: 600;
-        transition: background 120ms ease, color 120ms ease;
-      }
-      nav a .nav-left {
-        display: inline-flex;
-        align-items: center;
-        gap: 9px;
-      }
-      nav a:hover {
-        background: var(--nx-well);
-        color: var(--nx-text);
       }
       nav a.active {
         background: var(--nx-accent-soft);
         color: var(--nx-accent-text, var(--nx-accent));
       }
-      .kbd {
-        font-size: 10.5px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        padding: 1px 5px;
-        border-radius: 5px;
-        background: var(--nx-inset);
-        color: var(--nx-muted);
+      @media (hover: hover) and (pointer: fine) {
+        nav a:hover:not(.active) {
+          background: var(--nx-well);
+          color: var(--nx-text);
+        }
       }
       .sidebar-foot {
         margin-top: auto;
@@ -149,18 +137,18 @@ export class NexusApp extends LitElement {
         border-top: 1px solid var(--nx-border);
       }
       .mini-rates {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
         gap: 6px;
         padding: 8px 10px;
-        border-radius: 10px;
+        border-radius: 8px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
         font-size: 11.5px;
       }
       .controls-row {
         display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
+        grid-template-columns: repeat(3, 1fr);
         gap: 5px;
       }
       .controls-row button {
@@ -168,10 +156,11 @@ export class NexusApp extends LitElement {
         font-size: 11.5px;
       }
       main {
-        padding: 22px 26px;
+        padding: 20px 24px max(24px, env(safe-area-inset-bottom));
         max-width: 1280px;
         width: 100%;
         margin: 0 auto;
+        min-width: 0;
       }
       .auth-banner {
         display: flex;
@@ -179,9 +168,9 @@ export class NexusApp extends LitElement {
         align-items: center;
         justify-content: space-between;
         gap: 10px;
-        margin-bottom: 16px;
-        padding: 11px 14px;
-        border-radius: 12px;
+        margin-bottom: 14px;
+        padding: 10px 14px;
+        border-radius: 10px;
         background: var(--nx-warn-bg);
         border: 1px solid var(--nx-warn-border);
         color: var(--nx-warn-fg);
@@ -199,19 +188,20 @@ export class NexusApp extends LitElement {
           z-index: 30;
           border-right: none;
           border-bottom: 1px solid var(--nx-border);
-          padding: 10px 12px;
+          padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px
+            max(12px, env(safe-area-inset-left));
           gap: 8px;
         }
         nav {
           flex-direction: row;
           overflow-x: auto;
+          overscroll-behavior: contain;
           padding-bottom: 2px;
         }
         nav a {
           padding: 7px 10px;
           white-space: nowrap;
         }
-        .kbd,
         .mini-rates,
         .hint-line {
           display: none;
@@ -222,7 +212,8 @@ export class NexusApp extends LitElement {
           border-top: none;
         }
         main {
-          padding: 16px 14px;
+          padding: 14px max(14px, env(safe-area-inset-right))
+            max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
         }
       }
     `,
@@ -324,7 +315,7 @@ export class NexusApp extends LitElement {
         <aside>
           <div class="brand-row">
             <div class="brand">
-              <span class="brand-mark">N</span>
+              <span class="brand-mark" aria-hidden="true">N</span>
               <span class="brand-text">NEXUS</span>
             </div>
             <span class="badge ${badgeCls}" title=${appStore.streamError || streamLabel}>
@@ -335,9 +326,11 @@ export class NexusApp extends LitElement {
           <nav aria-label=${t('nav.mainLabel')}>
             ${NAV_ITEMS.map(
               (item) => html`
-                <a ${routerLink(this.router, item.path, { exact: item.exact, activeClass: 'active' })}>
-                  <span class="nav-left">${item.icon()}<span>${t(item.labelKey)}</span></span>
-                  <span class="kbd">${item.key}</span>
+                <a
+                  title="${t(item.labelKey)} (${item.key})"
+                  ${routerLink(this.router, item.path, { exact: item.exact, activeClass: 'active' })}
+                >
+                  ${item.icon()}<span>${t(item.labelKey)}</span>
                 </a>
               `,
             )}
@@ -345,8 +338,8 @@ export class NexusApp extends LitElement {
 
           <div class="sidebar-foot">
             <div class="mini-rates mono">
-              <div style="color:var(--nx-down)">↓ ${formatRate(appStore.downRate)}</div>
-              <div style="color:var(--nx-up); text-align:right">↑ ${formatRate(appStore.upRate)}</div>
+              <span class="rate-slot" style="color:var(--nx-down)">↓ ${formatRate(appStore.downRate)}</span>
+              <span class="rate-slot" style="color:var(--nx-up)">↑ ${formatRate(appStore.upRate)}</span>
             </div>
 
             <div class="controls-row">
@@ -378,10 +371,10 @@ export class NexusApp extends LitElement {
         <main>
           ${appStore.authRequired
             ? html`
-                <div class="auth-banner">
+                <div class="auth-banner" role="alert">
                   <span>${t('auth.banner')}</span>
                   <button class="primary sm" @click=${() => (this.authModalOpen = true)}>
-                    ${icons.lock()} ${t('auth.save')}
+                    ${icons.lock()} ${t('auth.openConfig')}
                   </button>
                 </div>
               `

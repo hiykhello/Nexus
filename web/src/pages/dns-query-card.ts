@@ -44,8 +44,7 @@ export class NexusDnsQueryCard extends LitElement {
       .result-box {
         margin-top: 12px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
-        border-radius: 10px;
+        border-radius: 8px;
         padding: 12px;
       }
       .data-cell {
@@ -64,6 +63,7 @@ export class NexusDnsQueryCard extends LitElement {
   @state() private server = '';
   @state() private querying = false;
   @state() private cacheBusy = false;
+  @state() private confirmClearAll = false;
   @state() private result: DnsQueryResponse | null = null;
   @state() private recent: Array<{ name: string; type: DnsRecordType }> = [];
   @state() private copiedIdx = -1;
@@ -123,6 +123,7 @@ export class NexusDnsQueryCard extends LitElement {
   }
 
   private async clearCache(target: CacheClearTarget): Promise<void> {
+    this.confirmClearAll = false;
     this.cacheBusy = true;
     try {
       const res = await nexusApi.clearCache(target);
@@ -168,6 +169,10 @@ export class NexusDnsQueryCard extends LitElement {
         >
           <input
             type="text"
+            aria-label=${t('dns.domainLabel')}
+            spellcheck="false"
+            autocapitalize="none"
+            autocorrect="off"
             placeholder=${t('dns.domainPlaceholder')}
             .value=${this.domain}
             @input=${(e: Event) => (this.domain = (e.target as HTMLInputElement).value)}
@@ -182,6 +187,10 @@ export class NexusDnsQueryCard extends LitElement {
           </select>
           <input
             type="text"
+            aria-label=${t('dns.serverLabel')}
+            spellcheck="false"
+            autocapitalize="none"
+            autocorrect="off"
             placeholder=${t('dns.serverPlaceholder')}
             .value=${this.server}
             @input=${(e: Event) => (this.server = (e.target as HTMLInputElement).value)}
@@ -239,7 +248,7 @@ export class NexusDnsQueryCard extends LitElement {
                     <span class="badge ${rcodeClass}">${r.rcode_name} (${r.rcode})</span>
                   </div>
                   <div class="row mono">
-                    <span class="badge">${t('dns.col.ttl')} ${r.ttl}s</span>
+                    <span class="muted tabular">${t('dns.col.ttl')} ${r.ttl}s</span>
                     <span class="badge ok">${r.elapsed_ms} ms</span>
                   </div>
                 </div>
@@ -295,9 +304,20 @@ export class NexusDnsQueryCard extends LitElement {
           <button class="sm" ?disabled=${this.cacheBusy} @click=${() => void this.clearCache('rulesets')}>
             ${t('dns.cacheRules')}
           </button>
-          <button class="danger sm" ?disabled=${this.cacheBusy} @click=${() => void this.clearCache('all')}>
-            ${icons.trash()} ${t('dns.cacheAll')}
-          </button>
+          ${this.confirmClearAll
+            ? html`
+                <button class="danger sm" ?disabled=${this.cacheBusy} @click=${() => void this.clearCache('all')}>
+                  ${t('dns.confirmClearAll')}
+                </button>
+                <button class="sm" @click=${() => (this.confirmClearAll = false)}>
+                  ${t('common.cancel')}
+                </button>
+              `
+            : html`
+                <button class="danger sm" ?disabled=${this.cacheBusy} @click=${() => (this.confirmClearAll = true)}>
+                  ${icons.trash()} ${t('dns.cacheAll')}
+                </button>
+              `}
         </div>
       </div>
     `;

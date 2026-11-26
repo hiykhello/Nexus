@@ -2,8 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#111317" />
     <title>Nexus Console</title>
     <style>
       html,
@@ -11,27 +15,28 @@
         margin: 0;
         padding: 0;
         min-height: 100%;
-        background: #111318;
-        color: #f5f6f9;
+        background: #111317;
+        color: #eceff4;
         -webkit-font-smoothing: antialiased;
+        -webkit-tap-highlight-color: transparent;
         text-rendering: optimizeLegibility;
       }
       @media (prefers-color-scheme: light) {
         html:not([data-theme='dark']),
         html:not([data-theme='dark']) body {
-          background: #f0f2f6;
-          color: #0f172a;
+          background: #f5f6f8;
+          color: #151820;
         }
       }
       html[data-theme='light'],
       html[data-theme='light'] body {
-        background: #f0f2f6;
-        color: #0f172a;
+        background: #f5f6f8;
+        color: #151820;
       }
       html[data-theme='dark'],
       html[data-theme='dark'] body {
-        background: #111318;
-        color: #f5f6f9;
+        background: #111317;
+        color: #eceff4;
       }
     </style>
   </head>

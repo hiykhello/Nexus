@@ -24,9 +24,6 @@ export class NexusOverviewPage extends LitElement {
         align-items: center;
         justify-content: space-between;
         gap: 14px;
-        background:
-          radial-gradient(circle at top right, var(--nx-accent-soft), transparent 55%),
-          var(--nx-surface-grad, var(--nx-surface));
       }
       .hero-title {
         display: flex;
@@ -50,8 +47,7 @@ export class NexusOverviewPage extends LitElement {
         position: relative;
         margin-top: 10px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
-        border-radius: 10px;
+        border-radius: 8px;
         padding: 10px 8px 4px;
       }
       .spark {
@@ -88,8 +84,7 @@ export class NexusOverviewPage extends LitElement {
         flex-direction: column;
         gap: 8px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
-        border-radius: 10px;
+        border-radius: 8px;
         padding: 12px;
       }
       .group-tile select {
@@ -146,12 +141,15 @@ export class NexusOverviewPage extends LitElement {
   }
 
   private async setMode(mode: RouteMode): Promise<void> {
+    const prev = appStore.mode;
+    appStore.setModeLocal({ mode, outbound: prev?.outbound ?? '' });
     this.busy = true;
     try {
       const res = await nexusApi.setMode(mode);
       appStore.setModeLocal(res);
       this.showToast(t('overview.modeUpdated', { mode: t(`overview.mode.${mode}`) }), 'ok');
     } catch (err) {
+      if (prev) appStore.setModeLocal(prev);
       this.showToast(err instanceof Error ? err.message : String(err), 'err');
     } finally {
       this.busy = false;
@@ -196,11 +194,18 @@ export class NexusOverviewPage extends LitElement {
   }
 
   private async quickSelect(group: string, member: string): Promise<void> {
+    const prev = this.groups;
+    this.groups = prev.map((g) =>
+      g.name === group
+        ? { ...g, selected: member, override: g.mode === 'url-test' ? true : g.override }
+        : g,
+    );
     this.busy = true;
     try {
       await nexusApi.selectGroup(group, member);
       await this.refreshGroups();
     } catch (err) {
+      this.groups = prev;
       this.showToast(err instanceof Error ? err.message : String(err), 'err');
     } finally {
       this.busy = false;
@@ -320,12 +325,14 @@ export class NexusOverviewPage extends LitElement {
           <div class="card kpi-card">
             <h3>${t('overview.sessions')}</h3>
             <div class="metric">${st?.active_sessions ?? 0}</div>
-            <div class="muted tabular">${t('overview.listeners')}: ${st?.listeners ?? 0}</div>
+            <div class="muted tabular">${t('overview.mode')}: ${t(`overview.mode.${mode}`)}</div>
           </div>
           <div class="card kpi-card">
-            <h3>${t('overview.controlGen')}</h3>
-            <div class="metric">#${st?.control_generation ?? '0'}</div>
-            <div class="muted tabular">${t('overview.workers')}: ${st?.workers ?? 0}</div>
+            <h3>${t('overview.peakCard')}</h3>
+            <div class="metric">${formatRate(maxVal)}</div>
+            <div class="muted mono truncate">
+              ${appStore.mode?.outbound ? `→ ${appStore.mode.outbound}` : st?.instance ?? 'nexus'}
+            </div>
           </div>
         </div>
 
@@ -335,17 +342,19 @@ export class NexusOverviewPage extends LitElement {
             <div class="legend tabular">
               <span class="legend-item">
                 <span class="swatch" style="background:var(--nx-down)"></span>
-                ${t('overview.download')} ${formatRate(appStore.downRate)}
+                ${t('overview.download')} <span class="rate-slot">${formatRate(appStore.downRate)}</span>
               </span>
               <span class="legend-item">
                 <span class="swatch" style="background:var(--nx-up)"></span>
-                ${t('overview.upload')} ${formatRate(appStore.upRate)}
+                ${t('overview.upload')} <span class="rate-slot">${formatRate(appStore.upRate)}</span>
               </span>
-              <span class="badge">${t('overview.peak')} ${formatRate(maxVal)}</span>
+              <span class="muted">
+                ${t('overview.peak')} <span class="rate-slot">${formatRate(maxVal)}</span>
+              </span>
             </div>
           </div>
           <div class="spark-wrap">
-            <svg class="spark" viewBox="0 0 400 104" preserveAspectRatio="none">
+            <svg class="spark" aria-hidden="true" viewBox="0 0 400 104" preserveAspectRatio="none">
               <defs>
                 <linearGradient id="nx-down-grad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stop-color="var(--nx-down)" stop-opacity="0.28" />
@@ -377,10 +386,17 @@ export class NexusOverviewPage extends LitElement {
         <div class="card">
           <div class="row between">
             <h3>${t('overview.quickGroups')}</h3>
-            <span class="badge">${this.groups.length}</span>
+            <span class="muted tabular">${this.groups.length}</span>
           </div>
           ${this.groups.length === 0
-            ? html`<div class="empty-state">${t('overview.noGroups')}</div>`
+            ? html`
+                <div class="empty-state">
+                  <span>${t('overview.noGroups')}</span>
+                  <button class="sm" ?disabled=${this.busy} @click=${() => void this.handleRefresh()}>
+                    ${icons.refresh()} ${t('common.refresh')}
+                  </button>
+                </div>
+              `
             : html`
                 <div class="group-grid">
                   ${this.groups.map((g) => {
@@ -392,7 +408,7 @@ export class NexusOverviewPage extends LitElement {
                         <div class="row between">
                           <strong class="truncate">${g.name}</strong>
                           <span class="badge lat-${tier}">
-                            ${active?.latency_ms !== undefined ? `${active.latency_ms} ms` : g.mode}
+                            ${active?.latency_ms !== undefined ? `${active.latency_ms} ms` : t('outbounds.unprobed')}
                           </span>
                         </div>
                         <div class="row between muted" style="font-size:11.5px">

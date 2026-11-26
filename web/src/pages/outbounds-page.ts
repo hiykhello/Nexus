@@ -44,9 +44,13 @@ export class NexusOutboundsPage extends LitElement {
         align-items: stretch;
         gap: 5px;
         padding: 10px 12px;
-        border-radius: 10px;
+        border-radius: 8px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
+        border: 1px solid transparent;
+        transition:
+          background 120ms ease-out,
+          border-color 120ms ease-out,
+          transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
       }
       .rail-item.active {
         background: var(--nx-accent-soft);
@@ -63,23 +67,28 @@ export class NexusOutboundsPage extends LitElement {
         flex-direction: column;
         gap: 10px;
         padding: 12px;
-        border-radius: 12px;
+        border-radius: 8px;
         background: var(--nx-well);
-        border: 1px solid var(--nx-border);
-        transition: border-color 120ms ease, background 120ms ease;
+        border: 1px solid transparent;
+        transition:
+          border-color 120ms ease-out,
+          background 120ms ease-out,
+          transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
       }
       .node-card.switchable {
         cursor: pointer;
       }
-      .node-card.switchable:hover {
-        border-color: var(--nx-accent-border);
-        background: var(--nx-row-hover);
+      .node-card.switchable:active,
+      .rail-item:active {
+        transform: scale(0.98);
       }
       .node-card.selected {
         border-color: var(--nx-accent);
         background: var(--nx-accent-soft);
       }
       .node-select-btn {
+        flex: 1;
+        min-width: 0;
         border: none;
         background: transparent;
         padding: 0;
@@ -88,15 +97,23 @@ export class NexusOutboundsPage extends LitElement {
         font-weight: 700;
         text-align: left;
         justify-content: flex-start;
-        max-width: 145px;
-      }
-      .node-select-btn:hover:not(:disabled) {
-        background: transparent;
-        color: var(--nx-accent-text, var(--nx-accent));
       }
       .node-select-btn:disabled {
         opacity: 1;
         cursor: default;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        .rail-item:hover:not(.active) {
+          background: var(--nx-row-hover);
+        }
+        .node-card.switchable:hover {
+          border-color: var(--nx-accent-border);
+          background: var(--nx-row-hover);
+        }
+        .node-select-btn:hover:not(:disabled) {
+          background: transparent;
+          color: var(--nx-accent-text, var(--nx-accent));
+        }
       }
       .bars {
         display: inline-flex;
@@ -107,10 +124,11 @@ export class NexusOutboundsPage extends LitElement {
       .bars span {
         width: 3px;
         border-radius: 1px;
-        background: var(--nx-inset);
+        background: currentColor;
+        opacity: 0.24;
       }
       .bars span.on {
-        background: currentColor;
+        opacity: 1;
       }
     `,
   ];
@@ -161,11 +179,18 @@ export class NexusOutboundsPage extends LitElement {
   }
 
   private async selectMember(group: string, member: string): Promise<void> {
+    const prev = this.groups;
+    this.groups = prev.map((g) => {
+      if (g.name !== group) return g;
+      if (member === '--auto') return { ...g, override: false };
+      return { ...g, selected: member, override: g.mode === 'url-test' ? true : g.override };
+    });
     this.busy = true;
     try {
       await nexusApi.selectGroup(group, member);
       await this.refresh();
     } catch (err) {
+      this.groups = prev;
       this.toast = err instanceof Error ? err.message : String(err);
       this.toastKind = 'err';
     } finally {
@@ -281,13 +306,20 @@ export class NexusOutboundsPage extends LitElement {
           : ''}
 
         ${this.groups.length === 0
-          ? html`<div class="card empty-state">${t('outbounds.empty')}</div>`
+          ? html`
+              <div class="card empty-state">
+                <span>${t('outbounds.empty')}</span>
+                <button class="sm" ?disabled=${this.busy} @click=${() => void this.refresh()}>
+                  ${icons.refresh()} ${t('common.refresh')}
+                </button>
+              </div>
+            `
           : html`
               <div class="split">
                 <div class="card rail">
                   <div class="row between" style="margin-bottom:4px">
                     <h3>${t('outbounds.groups')}</h3>
-                    <span class="badge">${this.groups.length}</span>
+                    <span class="muted tabular">${this.groups.length}</span>
                   </div>
                   ${this.groups.map((g) => {
                     const upCount = g.members.filter((m) => m.state === 'up').length;
@@ -298,7 +330,7 @@ export class NexusOutboundsPage extends LitElement {
                       >
                         <div class="row between" style="width:100%">
                           <strong class="truncate">${g.name}</strong>
-                          <span class="badge">${g.mode}</span>
+                          <span class="muted mono" style="font-size:11px">${g.mode}</span>
                         </div>
                         <div class="row between muted" style="width:100%; font-size:11.5px">
                           <span class="truncate">${g.selected}</span>
@@ -315,7 +347,7 @@ export class NexusOutboundsPage extends LitElement {
                         <div class="row between" style="gap:10px">
                           <div class="row">
                             <strong style="font-size:16px">${group.name}</strong>
-                            <span class="badge accent">${group.mode}</span>
+                            <span class="muted mono">${group.mode}</span>
                             <span class="badge ok">${t('outbounds.selected')}: ${group.selected}</span>
                             ${group.override
                               ? html`<span class="badge warn">${t('outbounds.override')}</span>`
@@ -351,6 +383,10 @@ export class NexusOutboundsPage extends LitElement {
                           <input
                             data-search-input
                             type="search"
+                            aria-label=${t('outbounds.search')}
+                            spellcheck="false"
+                            autocapitalize="none"
+                            autocorrect="off"
                             style="flex:1; min-width:180px"
                             placeholder=${t('outbounds.search')}
                             .value=${this.search}
@@ -368,74 +404,85 @@ export class NexusOutboundsPage extends LitElement {
                           </select>
                         </div>
 
-                        <div class="node-grid">
-                          ${members.map((m) => {
-                            const ms = this.effectiveLatency(m);
-                            const st = this.effectiveState(m);
-                            const tier = m.breaker_open ? 'down' : getLatencyTier(ms, st);
-                            const bars = latencyBars(ms);
-                            const probing = this.probingNodes.has(m.name);
-                            const live = this.liveProbes.get(m.name);
-                            const statusCode = live?.status_code ?? m.last_status;
-                            const isSelected = m.name === group.selected;
-                            return html`
-                              <div
-                                class="node-card ${isSelected ? 'selected' : ''} ${canSwitch ? 'switchable' : ''}"
-                                @click=${() =>
-                                  canSwitch && !this.busy && void this.selectMember(group.name, m.name)}
-                              >
-                                <div class="row between">
-                                  <button
-                                    type="button"
-                                    class="node-select-btn truncate"
-                                    title=${m.name}
-                                    aria-pressed=${isSelected ? 'true' : 'false'}
-                                    ?disabled=${!canSwitch || this.busy}
-                                    @click=${(ev: Event) => {
-                                      ev.stopPropagation();
-                                      if (canSwitch) void this.selectMember(group.name, m.name);
-                                    }}
-                                  >
-                                    ${m.name}
-                                  </button>
-                                  <span class="badge lat-${tier}">
-                                    <span class="bars">
-                                      ${[4, 7, 10, 12].map(
-                                        (h, idx) =>
-                                          html`<span
-                                            class=${idx < bars ? 'on' : ''}
-                                            style="height:${h}px"
-                                          ></span>`,
-                                      )}
-                                    </span>
-                                    ${m.breaker_open
-                                      ? t('outbounds.breaker')
-                                      : ms !== null
-                                        ? `${ms} ms`
-                                        : st === 'down'
-                                          ? t('outbounds.down')
-                                          : t('outbounds.unprobed')}
-                                  </span>
-                                </div>
-
-                                <div class="row between">
-                                  <div class="muted mono" style="font-size:11.5px">
-                                    ${m.ewma_ms !== undefined ? `EWMA ${m.ewma_ms}ms` : st}
-                                    ${statusCode !== undefined ? ` · HTTP ${statusCode}` : ''}
-                                  </div>
-                                  <button
-                                    class="sm"
-                                    ?disabled=${probing}
-                                    @click=${(ev: Event) => void this.probeNode(m.name, ev)}
-                                  >
-                                    ${icons.bolt()}
-                                    ${probing ? t('outbounds.probing') : t('outbounds.probeNode')}
-                                  </button>
-                                </div>
+                        ${members.length === 0
+                          ? html`
+                              <div class="empty-state">
+                                <span>${t('outbounds.noMatch')}</span>
+                                ${this.search.trim()
+                                  ? html`<button class="sm" @click=${() => (this.search = '')}>${t('common.clearFilters')}</button>`
+                                  : html`<button class="sm" @click=${() => void this.refresh()}>${icons.refresh()} ${t('common.refresh')}</button>`}
                               </div>
-                            `;
-                          })}
-                        </div>
+                            `
+                          : html`
+                              <div class="node-grid">
+                                ${members.map((m) => {
+                                  const ms = this.effectiveLatency(m);
+                                  const st = this.effectiveState(m);
+                                  const tier = m.breaker_open ? 'down' : getLatencyTier(ms, st);
+                                  const bars = latencyBars(ms);
+                                  const probing = this.probingNodes.has(m.name);
+                                  const live = this.liveProbes.get(m.name);
+                                  const statusCode = live?.status_code ?? m.last_status;
+                                  const isSelected = m.name === group.selected;
+                                  return html`
+                                    <div
+                                      class="node-card ${isSelected ? 'selected' : ''} ${canSwitch ? 'switchable' : ''}"
+                                      @click=${() =>
+                                        canSwitch && !this.busy && void this.selectMember(group.name, m.name)}
+                                    >
+                                      <div class="row between">
+                                        <button
+                                          type="button"
+                                          class="node-select-btn truncate"
+                                          title=${m.name}
+                                          aria-pressed=${isSelected ? 'true' : 'false'}
+                                          ?disabled=${!canSwitch || this.busy}
+                                          @click=${(ev: Event) => {
+                                            ev.stopPropagation();
+                                            if (canSwitch) void this.selectMember(group.name, m.name);
+                                          }}
+                                        >
+                                          ${m.name}
+                                        </button>
+                                        <span class="badge lat-${tier}">
+                                          <span class="bars" aria-hidden="true">
+                                            ${[4, 7, 10, 12].map(
+                                              (h, idx) =>
+                                                html`<span
+                                                  class=${idx < bars ? 'on' : ''}
+                                                  style="height:${h}px"
+                                                ></span>`,
+                                            )}
+                                          </span>
+                                          ${m.breaker_open
+                                            ? t('outbounds.breaker')
+                                            : ms !== null
+                                              ? `${ms} ms`
+                                              : st === 'down'
+                                                ? t('outbounds.down')
+                                                : t('outbounds.unprobed')}
+                                        </span>
+                                      </div>
+
+                                      <div class="row between">
+                                        <div class="muted mono" style="font-size:11.5px">
+                                          ${m.ewma_ms !== undefined ? `EWMA ${m.ewma_ms}ms` : st}
+                                          ${statusCode !== undefined ? ` · HTTP ${statusCode}` : ''}
+                                        </div>
+                                        <button
+                                          class="sm"
+                                          ?disabled=${probing}
+                                          @click=${(ev: Event) => void this.probeNode(m.name, ev)}
+                                        >
+                                          ${icons.bolt()}
+                                          ${probing ? t('outbounds.probing') : t('outbounds.probeNode')}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  `;
+                                })}
+                              </div>
+                            `}
                       </div>
                     `
                   : ''}

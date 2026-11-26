@@ -13,24 +13,44 @@ export class NexusAuthModal extends LitElement {
       .backdrop {
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.58);
-        backdrop-filter: blur(4px);
+        background: var(--nx-scrim);
         display: flex;
         align-items: center;
         justify-content: center;
         padding: 16px;
         z-index: 100;
+        transition: opacity 160ms ease-out;
+      }
+      @media (prefers-reduced-transparency: no-preference) {
+        .backdrop {
+          backdrop-filter: blur(4px);
+        }
       }
       .modal {
         width: min(460px, 100%);
+        max-height: 90dvh;
+        overflow-y: auto;
+        overscroll-behavior: contain;
         background: var(--nx-overlay);
         border: 1px solid var(--nx-border-strong);
         border-radius: 16px;
-        padding: 20px;
-        box-shadow: var(--nx-shadow-hover);
+        padding: 18px;
+        box-shadow: var(--nx-modal-shadow);
         display: flex;
         flex-direction: column;
         gap: 12px;
+        transition:
+          opacity 180ms cubic-bezier(0.23, 1, 0.32, 1),
+          transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+      }
+      @starting-style {
+        .backdrop {
+          opacity: 0;
+        }
+        .modal {
+          opacity: 0;
+          transform: scale(0.96);
+        }
       }
     `,
   ];
@@ -101,6 +121,11 @@ export class NexusAuthModal extends LitElement {
           <p class="muted" style="margin:0">${t('auth.desc')}</p>
           <input
             type="password"
+            aria-label=${t('auth.tokenLabel')}
+            autocomplete="off"
+            spellcheck="false"
+            autocapitalize="none"
+            autocorrect="off"
             placeholder=${t('auth.placeholder')}
             .value=${this.tokenInput}
             @input=${(e: Event) => (this.tokenInput = (e.target as HTMLInputElement).value)}
