@@ -4,9 +4,11 @@ import SwiftUI
 import NexusCoreBridge
 import NexusSharedUI
 
-/// Primary macOS Dashboard built with `NavigationSplitView` sidebar and narrow-input detail panes.
+/// Primary macOS Dashboard built with `NavigationSplitView` sidebar, Live Route Transit Strip,
+/// global `⌘K` Command Palette sheet, and narrow-input detail panes.
 struct DashboardView: View {
     @Bindable var model: NexusAppModel
+    @Environment(\.nexusTheme) private var theme
 
     private var sidebarSelection: Binding<AppSection?> {
         Binding(
@@ -47,9 +49,17 @@ struct DashboardView: View {
                 detailContent(for: model.selectedSection)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .background(theme.canvasBackground)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    model.openCommandPalette()
+                } label: {
+                    Label("命令", systemImage: "magnifyingglass")
+                }
+                .help("打开命令与域名诊断面板 (⌘K)")
+
                 Button {
                     Task {
                         await model.refreshStatus()
@@ -66,12 +76,29 @@ struct DashboardView: View {
                     Label("热重载", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(!model.isRunning)
-                .help("热重载当前生效配置")
+                .help("热重载当前生效配置 (⌘R)")
             }
+        }
+        .sheet(isPresented: $model.showCommandPalette) {
+            CommandPaletteView(
+                initialQuery: model.commandPaletteInitialQuery,
+                isRunning: model.isRunning,
+                outboundMode: model.outboundMode,
+                groups: model.groups,
+                rules: model.rules,
+                quickActions: model.commandPaletteQuickActions(),
+                onSelectNode: { g, m in Task { await model.selectMember(group: g, member: m) } },
+                onRunAction: { id in model.runCommandPaletteAction(id) },
+                onQueryDns: { domain in await model.queryDnsForPalette(domain: domain) },
+                onFlushFakeIp: { Task { await model.flushFakeIpCache() } },
+                onDismiss: { model.closeCommandPalette() }
+            )
+            .nexusTheme(preset: model.themePreset)
         }
         .task {
             await model.refreshStatus()
             await model.refreshGroupsAndMetrics()
+            if model.rules.isEmpty { await model.refreshRules() }
         }
     }
 
@@ -113,6 +140,8 @@ struct DashboardView: View {
         case .rulesDns:
             RulesDnsView(
                 rules: model.rules,
+                outboundMode: model.outboundMode,
+                groups: model.groups,
                 dnsResponse: model.dnsResponse,
                 dnsError: model.dnsError,
                 isQueryingDns: model.isQueryingDns,
@@ -136,6 +165,7 @@ struct DashboardView: View {
                 onRefresh: { Task { await model.refreshGroupsAndMetrics() } },
                 onInspect: { id in Task { await model.inspectConnection(id: id) } },
                 onDismissDetail: { model.selectedConnectionDetail = nil },
+                onDiagnoseDomain: { host in model.openCommandPalette(initialQuery: host) },
                 onClose: { id in Task { await model.closeConnection(id: id) } },
                 onCloseAll: { Task { await model.closeAllConnections() } }
             )
@@ -164,6 +194,7 @@ struct DashboardView: View {
 /// Isolated sidebar footer leaf so 1Hz memory updates do not invalidate sidebar navigation rows.
 private struct SidebarStatusFooter: View {
     var model: NexusAppModel
+    @Environment(\.nexusTheme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -179,7 +210,10 @@ private struct SidebarStatusFooter: View {
                 .foregroundStyle(.secondary)
         }
         .padding(10)
-        .background(.bar)
+        .background(theme.chassisBackground)
+        .overlay(alignment: .top) {
+            Divider()
+        }
     }
 }
 
@@ -210,19 +244,38 @@ struct OverviewPane: View {
                         }
                     }
                 )
-                if let group = model.primaryGroup {
-                    QuickGroupSwitcherCard(
-                        group: group,
-                        isRunning: model.isRunning,
-                        activeRttMs: model.activeGroupRttMs,
-                        onSelectMember: { member in Task { await model.selectMember(group: group.tag, member: member) } },
-                        onProbeGroup: { Task { await model.probeGroup(group: group.tag) } }
-                    )
-                }
+                OverviewTransitLeaf(model: model)
                 OverviewLiveMetricsLeaf(model: model)
             }
             .padding()
         }
+    }
+}
+
+/// Isolated 1Hz transit strip leaf so live rate ticks stay localized to the strip.
+private struct OverviewTransitLeaf: View {
+    var model: NexusAppModel
+
+    var body: some View {
+        RouteTransitStripView(
+            isRunning: model.isRunning,
+            inboundLabel: model.transitInboundLabel,
+            inboundDetail: model.transitInboundDetail,
+            outboundMode: model.outboundMode,
+            rulesCount: model.rules.count,
+            fakeIpEnabled: model.workspace.dns.simple.fakeIpEnabled,
+            primaryGroup: model.primaryGroup,
+            activeRttMs: model.activeGroupRttMs,
+            rxRateBytesPerSec: model.rxRateBytesPerSec,
+            txRateBytesPerSec: model.txRateBytesPerSec,
+            activeSessions: model.metrics.activeSessions,
+            onTapInbound: { model.selectedSection = .settings },
+            onTapRouting: { model.selectedSection = .rulesDns },
+            onTapProxies: { model.selectedSection = .proxies },
+            onSelectMember: { g, m in Task { await model.selectMember(group: g, member: m) } },
+            onProbeGroup: { g in Task { await model.probeGroup(group: g) } },
+            onTapTraffic: { model.selectedSection = .connections }
+        )
     }
 }
 
@@ -241,6 +294,7 @@ private struct OverviewLiveMetricsLeaf: View {
             workers: max(model.statusSnapshot.workers, model.hostConfig.workers),
             rxHistory: model.rxHistory,
             txHistory: model.txHistory,
+            onsetMarkers: model.sparklineOnsets,
             rxRateBytesPerSec: model.rxRateBytesPerSec,
             txRateBytesPerSec: model.txRateBytesPerSec
         )

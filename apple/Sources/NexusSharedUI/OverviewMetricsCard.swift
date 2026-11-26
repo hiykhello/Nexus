@@ -16,8 +16,10 @@ public struct OverviewMetricsSection: View {
     public let workers: Int
     public let rxHistory: [Double]
     public let txHistory: [Double]
+    public let onsetMarkers: [SparklineOnsetMarker]
     public let rxRateBytesPerSec: Double
     public let txRateBytesPerSec: Double
+    @Environment(\.nexusTheme) private var theme
 
     public init(
         metrics: MetricsSnapshot,
@@ -30,6 +32,7 @@ public struct OverviewMetricsSection: View {
         workers: Int = 1,
         rxHistory: [Double] = [],
         txHistory: [Double] = [],
+        onsetMarkers: [SparklineOnsetMarker] = [],
         rxRateBytesPerSec: Double = 0,
         txRateBytesPerSec: Double = 0
     ) {
@@ -43,6 +46,7 @@ public struct OverviewMetricsSection: View {
         self.workers = max(1, workers)
         self.rxHistory = rxHistory
         self.txHistory = txHistory
+        self.onsetMarkers = onsetMarkers
         self.rxRateBytesPerSec = rxRateBytesPerSec
         self.txRateBytesPerSec = txRateBytesPerSec
     }
@@ -63,21 +67,21 @@ public struct OverviewMetricsSection: View {
                     value: "\(max(Int(metrics.activeSessions), diagnostics.activeConnections))",
                     subtitle: "监听端口 \(diagnostics.listeners)",
                     systemImage: "network",
-                    tint: .blue
+                    tint: theme.accentText
                 )
                 BentoKpiTile(
                     title: "累计流量",
                     value: "↓ \(NexusByteFormat.bytes(metrics.downloadBytes))",
                     subtitle: "↑ \(NexusByteFormat.bytes(metrics.uploadBytes))",
                     systemImage: "arrow.up.arrow.down.circle",
-                    tint: .teal
+                    tint: theme.rxLine
                 )
                 BentoKpiTile(
                     title: "内核状态",
                     value: isRunning ? "\(workers) 线程" : "未运行",
                     subtitle: coreMemorySubtitle,
                     systemImage: "cpu",
-                    tint: isRunning ? .indigo : .secondary
+                    tint: isRunning ? theme.signalEmerald : theme.secondaryInk
                 )
                 if let appMem = residentMemoryMiB {
                     appMemoryTile(appMem)
@@ -88,7 +92,8 @@ public struct OverviewMetricsSection: View {
                 rxRateBytesPerSec: rxRateBytesPerSec,
                 txRateBytesPerSec: txRateBytesPerSec,
                 rxHistory: rxHistory,
-                txHistory: txHistory
+                txHistory: txHistory,
+                onsetMarkers: onsetMarkers
             )
 
             NetworkDiagnosticsStrip(network: network)
@@ -110,7 +115,7 @@ public struct OverviewMetricsSection: View {
             value: String(format: "%.1f MiB", mem),
             subtitle: ok ? "扩展预算 < \(memoryBudgetMiB) MiB" : "接近扩展上限 (\(memoryBudgetMiB) MiB)",
             systemImage: "memorychip",
-            tint: ok ? .green : .red
+            tint: ok ? theme.signalEmerald : theme.danger
         )
         #else
         return BentoKpiTile(
@@ -118,7 +123,7 @@ public struct OverviewMetricsSection: View {
             value: String(format: "%.1f MiB", mem),
             subtitle: "界面进程私有占用",
             systemImage: "memorychip",
-            tint: .green
+            tint: theme.signalEmerald
         )
         #endif
     }
@@ -165,6 +170,8 @@ private struct ThroughputCard: View {
     let txRateBytesPerSec: Double
     let rxHistory: [Double]
     let txHistory: [Double]
+    let onsetMarkers: [SparklineOnsetMarker]
+    @Environment(\.nexusTheme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -181,21 +188,22 @@ private struct ThroughputCard: View {
                     rateSlots
                 }
             }
-            ThroughputSparklineView(rxSamples: rxHistory, txSamples: txHistory)
+            ThroughputSparklineView(rxSamples: rxHistory, txSamples: txHistory, onsetMarkers: onsetMarkers)
         }
         .bentoCard(padding: 12, cornerRadius: 14)
     }
 
     private var rateSlots: some View {
         HStack(spacing: 12) {
-            LiveRateLabel(text: NexusByteFormat.rate(rxRateBytesPerSec), systemImage: "arrow.down", tint: .blue)
-            LiveRateLabel(text: NexusByteFormat.rate(txRateBytesPerSec), systemImage: "arrow.up", tint: .green)
+            LiveRateLabel(text: NexusByteFormat.rate(rxRateBytesPerSec), systemImage: "arrow.down", tint: theme.rxLine)
+            LiveRateLabel(text: NexusByteFormat.rate(txRateBytesPerSec), systemImage: "arrow.up", tint: theme.txLine)
         }
     }
 }
 
 private struct NetworkDiagnosticsStrip: View {
     let network: AppleNetworkSnapshot
+    @Environment(\.nexusTheme) private var theme
 
     private var connectivitySymbol: String {
         guard network.hasConnectivity else { return "wifi.slash" }
@@ -219,18 +227,18 @@ private struct NetworkDiagnosticsStrip: View {
             if network.isExpensive {
                 Label("计费网络", systemImage: "cellularbars")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(theme.warning)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Color.orange.opacity(0.12), in: Capsule())
+                    .background(theme.warning.opacity(0.14), in: Capsule())
             }
             if network.isConstrained {
                 Label("低数据模式", systemImage: "tortoise.fill")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(theme.warning)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Color.orange.opacity(0.12), in: Capsule())
+                    .background(theme.warning.opacity(0.14), in: Capsule())
             }
             Spacer(minLength: 4)
             Text(network.hasConnectivity ? "物理链路正常" : "等待网络恢复")

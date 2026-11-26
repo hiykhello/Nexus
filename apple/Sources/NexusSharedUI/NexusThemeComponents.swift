@@ -1,6 +1,7 @@
 #if canImport(SwiftUI)
 import Foundation
 import SwiftUI
+import NexusCoreBridge
 #if os(macOS)
 import AppKit
 #elseif canImport(UIKit)
@@ -87,8 +88,9 @@ public enum NexusPalette {
             return .red
         }
         guard let ms = latencyMs, ms >= 0 else { return .secondary }
-        if ms < 120 { return .green }
-        if ms < 300 { return .orange }
+        if ms < 80 { return .green }
+        if ms < 180 { return .blue }
+        if ms < 350 { return .orange }
         return .red
     }
 
@@ -98,8 +100,8 @@ public enum NexusPalette {
             return "xmark.circle.fill"
         }
         guard let ms = latencyMs, ms >= 0 else { return "minus.circle" }
-        if ms < 120 { return "checkmark.circle.fill" }
-        if ms < 300 { return "exclamationmark.triangle.fill" }
+        if ms < 180 { return "checkmark.circle.fill" }
+        if ms < 350 { return "exclamationmark.triangle.fill" }
         return "xmark.octagon.fill"
     }
 
@@ -114,11 +116,13 @@ public enum NexusPalette {
     }
 }
 
-/// Matte flat card modifier with Increased Contrast border adaptation and zero `.compositingGroup()` overhead.
+/// Matte flat card modifier with instrument theme tokens, Increased Contrast support,
+/// and zero `.compositingGroup()` overhead.
 public struct BentoCardModifier: ViewModifier {
     private let padding: CGFloat
     private let cornerRadius: CGFloat
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.nexusTheme) private var theme
 
     public init(padding: CGFloat = 12, cornerRadius: CGFloat = 14) {
         self.padding = padding
@@ -130,10 +134,10 @@ public struct BentoCardModifier: ViewModifier {
         let increased = contrast == .increased
         content
             .padding(padding)
-            .background(NexusPalette.cardSurface, in: shape)
+            .background(theme.cardSurface, in: shape)
             .overlay(
                 shape.strokeBorder(
-                    NexusPalette.hairlineBorder(increasedContrast: increased),
+                    increased ? theme.strongBorder : theme.hairlineBorder,
                     lineWidth: increased ? 1.25 : 1
                 )
             )
@@ -167,6 +171,7 @@ public struct NexusPillButtonStyle: ButtonStyle {
 
 private struct NexusPillButtonBody: View {
     let configuration: ButtonStyleConfiguration
+    @Environment(\.nexusTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     #if os(macOS)
     @State private var isHovered = false
@@ -175,7 +180,7 @@ private struct NexusPillButtonBody: View {
     var body: some View {
         configuration.label
             #if os(macOS)
-            .background(isHovered ? NexusPalette.subtleSurface : Color.clear, in: Capsule())
+            .background(isHovered ? theme.hoverSurface : Color.clear, in: Capsule())
             .onHover { isHovered = $0 }
             #elseif os(iOS)
             .frame(minHeight: 44)
@@ -250,6 +255,7 @@ public struct LiveRateLabel: View {
 public struct RttPillView: View {
     public let latencyMs: Int64?
     public let state: String
+    @Environment(\.nexusTheme) private var theme
 
     public init(latencyMs: Int64?, state: String = "up") {
         self.latencyMs = latencyMs
@@ -266,7 +272,7 @@ public struct RttPillView: View {
     }
 
     public var body: some View {
-        let tint = NexusPalette.rttColor(latencyMs: latencyMs, state: state)
+        let tint = theme.rttColor(latencyMs: latencyMs, state: state)
         let symbol = NexusPalette.rttSymbol(latencyMs: latencyMs, state: state)
         HStack(spacing: 4) {
             Image(systemName: symbol)
@@ -291,6 +297,7 @@ public struct ActionErrorBanner: View {
     public let flush: Bool
     public let onRetry: (() -> Void)?
     public let onDismiss: () -> Void
+    @Environment(\.nexusTheme) private var theme
 
     public init(
         message: String,
@@ -307,7 +314,7 @@ public struct ActionErrorBanner: View {
     public var body: some View {
         let row = HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(theme.warning)
                 .accessibilityHidden(true)
             Text(message)
                 .font(.caption)
@@ -335,15 +342,16 @@ public struct ActionErrorBanner: View {
             row
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(theme.warning.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 }
 
-/// Live connection/core status capsule with icon dot + label.
+/// Live connection/core status capsule using dedicated Signal Emerald when online.
 public struct StatusBadgeView: View {
     public let isOnline: Bool
     public let label: String
+    @Environment(\.nexusTheme) private var theme
 
     public init(isOnline: Bool, label: String) {
         self.isOnline = isOnline
@@ -351,96 +359,20 @@ public struct StatusBadgeView: View {
     }
 
     public var body: some View {
+        let tint = isOnline ? theme.signalEmerald : Color.secondary
         HStack(spacing: 6) {
             Circle()
-                .fill(isOnline ? Color.green : Color.secondary)
+                .fill(tint)
                 .frame(width: 8, height: 8)
                 .accessibilityHidden(true)
             Text(label)
                 .font(.caption.weight(.semibold))
         }
-        .foregroundStyle(isOnline ? Color.green : Color.secondary)
+        .foregroundStyle(tint)
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .background((isOnline ? Color.green : Color.secondary).opacity(0.12), in: Capsule())
+        .background(tint.opacity(0.14), in: Capsule())
         .accessibilityElement(children: .combine)
-    }
-}
-
-/// Lightweight dual RX/TX throughput sparkline using native SwiftUI `Canvas` with
-/// peak scale caption, dashed TX vs solid+fill RX distinction, and full VoiceOver readout.
-public struct ThroughputSparklineView: View {
-    public let rxSamples: [Double]
-    public let txSamples: [Double]
-
-    public init(rxSamples: [Double], txSamples: [Double]) {
-        self.rxSamples = rxSamples
-        self.txSamples = txSamples
-    }
-
-    private var peakValue: Double {
-        max(1024.0, (rxSamples + txSamples).max() ?? 1024.0)
-    }
-
-    public var body: some View {
-        let maxVal = peakValue
-        ZStack(alignment: .topTrailing) {
-            Canvas { context, size in
-                drawSeries(rxSamples, maxVal: maxVal, color: .blue, in: &context, size: size, fill: true, dashed: false)
-                drawSeries(txSamples, maxVal: maxVal, color: .green, in: &context, size: size, fill: false, dashed: true)
-            }
-            .frame(height: 54)
-
-            Text("峰值 \(NexusByteFormat.rate(maxVal))")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .allowsHitTesting(false)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("实时上下行速率折线图")
-        .accessibilityValue(
-            "下行 \(NexusByteFormat.rate(rxSamples.last ?? 0))，上行 \(NexusByteFormat.rate(txSamples.last ?? 0))，峰值 \(NexusByteFormat.rate(maxVal))"
-        )
-    }
-
-    private func drawSeries(
-        _ samples: [Double],
-        maxVal: Double,
-        color: Color,
-        in context: inout GraphicsContext,
-        size: CGSize,
-        fill: Bool,
-        dashed: Bool
-    ) {
-        guard samples.count >= 2, size.width > 4, size.height > 4 else { return }
-        let stepX = size.width / CGFloat(samples.count - 1)
-        var strokePath = Path()
-        for (idx, sample) in samples.enumerated() {
-            let x = CGFloat(idx) * stepX
-            let ratio = min(1.0, max(0.0, sample / maxVal))
-            let y = size.height - CGFloat(ratio) * (size.height - 6) - 3
-            if idx == 0 {
-                strokePath.move(to: CGPoint(x: x, y: y))
-            } else {
-                strokePath.addLine(to: CGPoint(x: x, y: y))
-            }
-        }
-        if fill {
-            var fillPath = strokePath
-            fillPath.addLine(to: CGPoint(x: size.width, y: size.height))
-            fillPath.addLine(to: CGPoint(x: 0, y: size.height))
-            fillPath.closeSubpath()
-            context.fill(fillPath, with: .color(color.opacity(0.12)))
-        }
-        let style = StrokeStyle(
-            lineWidth: 1.8,
-            lineCap: .round,
-            lineJoin: .round,
-            dash: dashed ? [4, 3] : []
-        )
-        context.stroke(strokePath, with: .color(color), style: style)
     }
 }
 #endif

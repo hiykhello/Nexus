@@ -15,6 +15,7 @@ public struct ConnectionsView: View {
     public let onRefresh: () -> Void
     public let onInspect: (String) -> Void
     public let onDismissDetail: () -> Void
+    public let onDiagnoseDomain: ((String) -> Void)?
     public let onClose: (String) -> Void
     public let onCloseAll: () -> Void
 
@@ -48,6 +49,7 @@ public struct ConnectionsView: View {
         onRefresh: @escaping () -> Void,
         onInspect: @escaping (String) -> Void,
         onDismissDetail: @escaping () -> Void = {},
+        onDiagnoseDomain: ((String) -> Void)? = nil,
         onClose: @escaping (String) -> Void,
         onCloseAll: @escaping () -> Void
     ) {
@@ -59,6 +61,7 @@ public struct ConnectionsView: View {
         self.onRefresh = onRefresh
         self.onInspect = onInspect
         self.onDismissDetail = onDismissDetail
+        self.onDiagnoseDomain = onDiagnoseDomain
         self.onClose = onClose
         self.onCloseAll = onCloseAll
     }
@@ -98,6 +101,10 @@ public struct ConnectionsView: View {
         filtered.reduce(0) { $0 &+ $1.downloadBytes }
     }
 
+    private var maxConnectionTrafficBytes: UInt64 {
+        filtered.map { $0.uploadBytes &+ $0.downloadBytes }.max() ?? 1
+    }
+
     private var detailPresentedBinding: Binding<Bool> {
         Binding(
             get: { selectedDetail != nil },
@@ -121,10 +128,15 @@ public struct ConnectionsView: View {
         .inspector(isPresented: detailPresentedBinding) {
             if let detail = selectedDetail {
                 ScrollView {
-                    ConnectionDetailCard(detail: detail, onDismiss: {
-                        selectedRowID = nil
-                        onDismissDetail()
-                    })
+                    ConnectionDetailCard(
+                        detail: detail,
+                        maxTotalBytes: maxConnectionTrafficBytes,
+                        onDiagnoseDomain: onDiagnoseDomain,
+                        onDismiss: {
+                            selectedRowID = nil
+                            onDismissDetail()
+                        }
+                    )
                     .padding()
                 }
                 .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
@@ -135,8 +147,13 @@ public struct ConnectionsView: View {
             if let detail = selectedDetail {
                 NavigationStack {
                     ScrollView {
-                        ConnectionDetailCard(detail: detail, onDismiss: nil)
-                            .padding()
+                        ConnectionDetailCard(
+                            detail: detail,
+                            maxTotalBytes: maxConnectionTrafficBytes,
+                            onDiagnoseDomain: onDiagnoseDomain,
+                            onDismiss: nil
+                        )
+                        .padding()
                     }
                     .navigationTitle("连接 #\(detail.id)")
                     .toolbar {
@@ -276,7 +293,7 @@ public struct ConnectionsView: View {
                 Text("Nexus 代理转发期间，活跃连接将实时显示在此处。")
             } actions: {
                 Button("刷新", action: onRefresh)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(NexusProminentButtonStyle())
             }
         } else if filtered.isEmpty {
             let trimmed = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -357,8 +374,11 @@ public struct ConnectionsView: View {
         }
         .contextMenu(forSelectionType: ActiveConnectionSnapshot.ID.self) { ids in
             if let first = ids.first {
-                Button("查看详情") {
-                    triggerInspect(first)
+                Button("查看详情") { triggerInspect(first) }
+                if let onDiagnoseDomain,
+                   let match = connections.first(where: { $0.id == first }),
+                   !match.target.isEmpty {
+                    Button("诊断此域名") { onDiagnoseDomain(match.target) }
                 }
                 Button("断开连接", role: .destructive) {
                     for id in ids { onClose(id) }
@@ -370,11 +390,12 @@ public struct ConnectionsView: View {
 
     #if !os(macOS)
     private var mobileConnectionsList: some View {
-        List(filtered) { conn in
+        let maxBytes = maxConnectionTrafficBytes
+        return List(filtered) { conn in
             Button {
                 triggerInspect(conn.id)
             } label: {
-                ConnectionRowView(conn: conn)
+                ConnectionRowView(conn: conn, maxTotalBytes: maxBytes)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
             }
@@ -383,12 +404,14 @@ public struct ConnectionsView: View {
                 Button("断开", role: .destructive) { onClose(conn.id) }
             }
             .contextMenu {
-                Button("查看详情") {
-                    triggerInspect(conn.id)
+                Button("查看详情") { triggerInspect(conn.id) }
+                if let onDiagnoseDomain, !conn.target.isEmpty {
+                    Button("诊断此域名") { onDiagnoseDomain(conn.target) }
                 }
                 Button("断开连接", role: .destructive) { onClose(conn.id) }
             }
         }
+        .scrollContentBackground(.hidden)
     }
     #endif
 }
@@ -396,6 +419,7 @@ public struct ConnectionsView: View {
 #if !os(macOS)
 private struct ConnectionRowView: View {
     let conn: ActiveConnectionSnapshot
+    let maxTotalBytes: UInt64
 
     private var targetText: String {
         conn.target.isEmpty ? ":\(conn.destinationPort)" : conn.target
@@ -406,72 +430,36 @@ private struct ConnectionRowView: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(conn.outbound.isEmpty ? conn.path : conn.outbound) → \(targetText)")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text("\(conn.protocolName.uppercased()) · \(inboundText) · \(conn.durationMs) ms\(conn.routeRule.isEmpty ? "" : " · \(conn.routeRule)")")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(conn.outbound.isEmpty ? conn.path : conn.outbound) → \(targetText)")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("\(conn.protocolName.uppercased()) · \(inboundText) · \(conn.durationMs) ms\(conn.routeRule.isEmpty ? "" : " · \(conn.routeRule)")")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 6)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("↓ \(NexusByteFormat.bytes(conn.downloadBytes))")
+                        .font(.caption.monospacedDigit())
+                    Text("↑ \(NexusByteFormat.bytes(conn.uploadBytes))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("↓ \(NexusByteFormat.bytes(conn.downloadBytes))")
-                    .font(.caption.monospacedDigit())
-                Text("↑ \(NexusByteFormat.bytes(conn.uploadBytes))")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+            TrafficShareMicroBar(
+                uploadBytes: conn.uploadBytes,
+                downloadBytes: conn.downloadBytes,
+                maxTotalBytes: maxTotalBytes
+            )
         }
         .padding(.vertical, 2)
     }
 }
 #endif
-
-public struct ConnectionDetailCard: View {
-    public let detail: ActiveConnectionSnapshot
-    public let onDismiss: (() -> Void)?
-
-    public init(detail: ActiveConnectionSnapshot, onDismiss: (() -> Void)? = nil) {
-        self.detail = detail
-        self.onDismiss = onDismiss
-    }
-
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("连接 #\(detail.id) 链路详情")
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                Spacer()
-                Text("\(detail.durationMs) ms")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                if let onDismiss {
-                    Button(action: onDismiss) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("关闭连接详情")
-                    .nexusTooltip("关闭详情面板")
-                }
-            }
-            Divider()
-            VStack(alignment: .leading, spacing: 4) {
-                Text("入站：\(NexusDisplayCopy.connectionInboundLabel(inbound: detail.inbound, listener: detail.listener))  ·  出站：\(detail.outbound.isEmpty ? detail.path : detail.outbound)")
-                Text("来源：\(detail.source.isEmpty ? "—" : detail.source)  →  目标：\(detail.target.isEmpty ? ":\(detail.destinationPort)" : detail.target)")
-                Text("路由：\(detail.routeMode.isEmpty ? "—" : NexusDisplayCopy.outboundModeTitle(detail.routeMode)) \(detail.routeRule)  ·  流量：↑ \(NexusByteFormat.bytes(detail.uploadBytes)) / ↓ \(NexusByteFormat.bytes(detail.downloadBytes))")
-                Text("进程：\(detail.processPath.isEmpty ? "—" : detail.processPath)  ·  UID：\(detail.sourceUid.map(String.init) ?? "—")")
-            }
-            .font(.caption.monospaced())
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .bentoCard(padding: 12, cornerRadius: 14)
-    }
-}
 #endif

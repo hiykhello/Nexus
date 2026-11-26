@@ -23,6 +23,7 @@ public struct ProxiesGroupsView: View {
     @State private var sortByLatency: Bool = false
     @FocusState private var isSearchFocused: Bool
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.nexusTheme) private var theme
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -94,7 +95,7 @@ public struct ProxiesGroupsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(NexusPalette.subtleSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(theme.wellSurface, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             if groups.isEmpty {
                 ContentUnavailableView {
@@ -103,12 +104,13 @@ public struct ProxiesGroupsView: View {
                     Text("连接内核后将展示所有出站策略组与节点延迟。")
                 } actions: {
                     Button("刷新", action: onRefresh)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(NexusProminentButtonStyle())
                 }
             } else {
                 groupRail
                 if let group = activeGroup {
-                    activeGroupToolbar(group)
+                    let groupSummary = GroupLatencySummary.compute(members: group.members)
+                    activeGroupToolbar(group, summary: groupSummary)
                     let members = preparedMembers(for: group)
                     if members.isEmpty {
                         if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -134,11 +136,13 @@ public struct ProxiesGroupsView: View {
                         ScrollView {
                             LazyVGrid(columns: nodeColumns, spacing: 10) {
                                 ForEach(members) { member in
+                                    let ratio = groupSummary.relativeRatio(for: GroupLatencySummary.effectiveLatency(member))
                                     ProxyNodeCard(
                                         member: member,
                                         isActive: member.name == group.active,
                                         canSelect: group.supportsManualSelection,
                                         isProbing: probingOutbounds.contains(member.name),
+                                        relativeLatencyRatio: ratio,
                                         onSelect: { onSelectMember(group.tag, member.name) },
                                         onProbe: { onProbeOutbound(member.name) }
                                     )
@@ -235,27 +239,32 @@ public struct ProxiesGroupsView: View {
             HStack(spacing: 8) {
                 ForEach(groups) { group in
                     let isSelected = activeGroup?.tag == group.tag
+                    let miniSummary = GroupLatencySummary.compute(members: group.members)
                     Button {
                         selectedGroupTag = group.tag
                     } label: {
-                        HStack(spacing: 6) {
-                            Text(group.tag)
-                                .font(.subheadline.weight(.semibold))
-                            Text(group.mode)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(group.tag)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(group.mode)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            LatencySpectrumBar(summary: miniSummary, barHeight: 2)
+                                .frame(minWidth: 56)
                         }
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                        .padding(.vertical, 6)
                         .background(
-                            isSelected ? Color.accentColor.opacity(0.16) : NexusPalette.subtleSurface,
-                            in: Capsule()
+                            isSelected ? theme.accentFill.opacity(0.16) : theme.wellSurface,
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
                         )
                         .overlay(
-                            Capsule().strokeBorder(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(
                                 isSelected
-                                    ? Color.accentColor
-                                    : NexusPalette.hairlineBorder(increasedContrast: increased),
+                                    ? theme.accentFill
+                                    : (increased ? theme.strongBorder : theme.hairlineBorder),
                                 lineWidth: (isSelected || increased) ? 1.25 : 1
                             )
                         )
@@ -267,29 +276,33 @@ public struct ProxiesGroupsView: View {
         }
     }
 
-    private func activeGroupToolbar(_ group: OutboundGroupSnapshot) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                groupTitleBlock(group)
-                Spacer(minLength: 8)
-                groupActionButtons(group)
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                groupTitleBlock(group)
-                HStack(spacing: 8) {
+    private func activeGroupToolbar(_ group: OutboundGroupSnapshot, summary: GroupLatencySummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    groupTitleBlock(group, summary: summary)
+                    Spacer(minLength: 8)
                     groupActionButtons(group)
                 }
+                VStack(alignment: .leading, spacing: 8) {
+                    groupTitleBlock(group, summary: summary)
+                    HStack(spacing: 8) {
+                        groupActionButtons(group)
+                    }
+                }
             }
+            LatencySpectrumBar(summary: summary, barHeight: 3)
         }
         .bentoCard(padding: 12, cornerRadius: 14)
     }
 
-    private func groupTitleBlock(_ group: OutboundGroupSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private func groupTitleBlock(_ group: OutboundGroupSnapshot, summary: GroupLatencySummary) -> some View {
+        let p50Part = summary.p50Ms.map { "P50 \($0) ms · " } ?? ""
+        return VStack(alignment: .leading, spacing: 2) {
             Text("\(group.tag) · \(group.mode)")
                 .font(.headline)
                 .lineLimit(1)
-            Text("当前出站：\(group.active.isEmpty ? "未选择" : group.active) · \(group.members.count) 节点")
+            Text("当前：\(group.active.isEmpty ? "未选择" : group.active) · \(p50Part)\(summary.healthyCount)/\(summary.totalCount) 可用")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -313,7 +326,7 @@ public struct ProxiesGroupsView: View {
         } label: {
             Label("整组测速", systemImage: "bolt.horizontal")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(NexusProminentButtonStyle())
         .accessibilityHint("对当前策略组内全部成员执行并发测速")
         #if os(iOS)
         .frame(minHeight: 44)
@@ -326,9 +339,11 @@ private struct ProxyNodeCard: View {
     let isActive: Bool
     let canSelect: Bool
     let isProbing: Bool
+    let relativeLatencyRatio: Double?
     let onSelect: () -> Void
     let onProbe: () -> Void
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.nexusTheme) private var theme
 
     private var displayLatency: Int64? {
         if let ewma = member.ewmaMs, ewma >= 0 { return ewma }
@@ -338,6 +353,7 @@ private struct ProxyNodeCard: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         let increased = contrast == .increased
+        let rttTint = theme.rttColor(latencyMs: displayLatency, state: member.state)
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -353,7 +369,7 @@ private struct ProxyNodeCard: View {
                         if member.breakerOpen {
                             Label("熔断", systemImage: "exclamationmark.octagon.fill")
                                 .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.red)
+                                .foregroundStyle(theme.danger)
                         }
                     }
                 }
@@ -402,10 +418,16 @@ private struct ProxyNodeCard: View {
             }
         }
         .padding(12)
-        .background(isActive ? Color.accentColor.opacity(0.08) : NexusPalette.cardSurface, in: shape)
+        .background(
+            ZStack {
+                shape.fill(isActive ? theme.accentFill.opacity(0.08) : theme.cardSurface)
+                RelativeLatencyMeterBackground(ratio: relativeLatencyRatio, tint: rttTint)
+                    .clipShape(shape)
+            }
+        )
         .overlay(
             shape.strokeBorder(
-                isActive ? Color.accentColor : NexusPalette.hairlineBorder(increasedContrast: increased),
+                isActive ? theme.accentFill : (increased ? theme.strongBorder : theme.hairlineBorder),
                 lineWidth: (isActive || increased) ? 1.5 : 1
             )
         )

@@ -16,12 +16,14 @@ struct NexusMenuBarApp: App {
             systemImage: model.isRunning ? "network.badge.shield.half.filled" : "network.slash"
         ) {
             MenuBarPopoverView(model: model)
+                .nexusTheme(preset: model.themePreset)
         }
         .menuBarExtraStyle(.window)
 
         Window("Nexus 控制台", id: "dashboard") {
             DashboardView(model: model)
                 .frame(minWidth: 920, minHeight: 620)
+                .nexusTheme(preset: model.themePreset)
         }
         .commands {
             CommandMenu("导航") {
@@ -40,15 +42,17 @@ struct NexusMenuBarApp: App {
                 Divider()
                 Button("热重载配置") { Task { await model.reloadConfig() } }
                     .keyboardShortcut("r", modifiers: .command)
-                Button("快速查找当前页") { model.triggerSearchFocus() }
+                Button("命令与域名诊断") { model.openCommandPalette() }
                     .keyboardShortcut("k", modifiers: .command)
+                Button("查找当前页") { model.triggerSearchFocus() }
+                    .keyboardShortcut("f", modifiers: .command)
             }
         }
 
         Settings {
             SettingsView(model: model)
                 .frame(minWidth: 500, idealWidth: 560, minHeight: 460)
-                .scenePadding()
+                .nexusTheme(preset: model.themePreset)
         }
     }
 }
@@ -61,6 +65,7 @@ struct NexusMobileApp: App {
     var body: some Scene {
         WindowGroup {
             AdaptiveMobileRootView(model: model)
+                .nexusTheme(preset: model.themePreset)
         }
     }
 }
@@ -68,6 +73,11 @@ struct NexusMobileApp: App {
 private struct AdaptiveMobileRootView: View {
     @Bindable var model: NexusAppModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.nexusTheme) private var theme
+
+    private var paletteSections: [AppSection] {
+        sizeClass == .regular ? AppSection.allCases : NexusAppModel.compactMobileTabs
+    }
 
     private var sidebarSelection: Binding<AppSection?> {
         Binding(
@@ -88,6 +98,7 @@ private struct AdaptiveMobileRootView: View {
                     NavigationStack {
                         mobileSectionContainer(model.selectedSection)
                             .navigationTitle(model.selectedSection.rawValue)
+                            .toolbar { mobileQuickSearchToolbar }
                     }
                 }
             } else {
@@ -96,12 +107,30 @@ private struct AdaptiveMobileRootView: View {
                         NavigationStack {
                             mobileSectionContainer(tab)
                                 .navigationTitle(tab.rawValue)
+                                .toolbar { mobileQuickSearchToolbar }
                         }
                         .tabItem { Label(tab.rawValue, systemImage: tab.systemImage) }
                         .tag(tab)
                     }
                 }
             }
+        }
+        .sheet(isPresented: $model.showCommandPalette) {
+            let allowed = paletteSections
+            CommandPaletteView(
+                initialQuery: model.commandPaletteInitialQuery,
+                isRunning: model.isRunning,
+                outboundMode: model.outboundMode,
+                groups: model.groups,
+                rules: model.rules,
+                quickActions: model.commandPaletteQuickActions(allowedSections: allowed),
+                onSelectNode: { g, m in Task { await model.selectMember(group: g, member: m) } },
+                onRunAction: { id in model.runCommandPaletteAction(id, allowedSections: allowed) },
+                onQueryDns: { domain in await model.queryDnsForPalette(domain: domain) },
+                onFlushFakeIp: { Task { await model.flushFakeIpCache() } },
+                onDismiss: { model.closeCommandPalette() }
+            )
+            .nexusTheme(preset: model.themePreset)
         }
         .onAppear {
             if sizeClass != .regular { model.normalizeCompactSelection() }
@@ -112,6 +141,19 @@ private struct AdaptiveMobileRootView: View {
         .task {
             await model.refreshStatus()
             await model.refreshGroupsAndMetrics()
+            if model.rules.isEmpty { await model.refreshRules() }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var mobileQuickSearchToolbar: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.openCommandPalette()
+            } label: {
+                Label("命令与诊断", systemImage: "magnifyingglass")
+            }
+            .keyboardShortcut("k", modifiers: .command)
         }
     }
 
@@ -137,13 +179,17 @@ private struct AdaptiveMobileRootView: View {
 
     @ViewBuilder
     private func mobileSectionContainer(_ tab: AppSection) -> some View {
-        if tab != .overview && tab != .settings {
-            withShellErrorBanner {
+        Group {
+            if tab != .overview && tab != .settings {
+                withShellErrorBanner {
+                    mobileTabContent(tab)
+                }
+            } else {
                 mobileTabContent(tab)
             }
-        } else {
-            mobileTabContent(tab)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.canvasBackground.ignoresSafeArea())
     }
 
     private var workspaceTabView: some View {
@@ -209,32 +255,14 @@ private struct AdaptiveMobileRootView: View {
                             }
                         }
                     )
-                    if let group = model.primaryGroup {
-                        QuickGroupSwitcherCard(
-                            group: group,
-                            isRunning: model.isRunning,
-                            activeRttMs: model.activeGroupRttMs,
-                            onSelectMember: { member in Task { await model.selectMember(group: group.tag, member: member) } },
-                            onProbeGroup: { Task { await model.probeGroup(group: group.tag) } }
-                        )
-                    }
-                    OverviewMetricsSection(
-                        metrics: model.metrics,
-                        diagnostics: model.diagnostics,
-                        network: model.network,
-                        isRunning: model.isRunning,
-                        residentMemoryMiB: model.residentMemoryMiB,
-                        coreMemoryMiB: model.coreMemoryMiB,
-                        workers: max(model.statusSnapshot.workers, model.hostConfig.workers),
-                        rxHistory: model.rxHistory,
-                        txHistory: model.txHistory,
-                        rxRateBytesPerSec: model.rxRateBytesPerSec,
-                        txRateBytesPerSec: model.txRateBytesPerSec
-                    )
+                    MobileOverviewTransitLeaf(model: model)
+                    MobileOverviewMetricsLeaf(model: model)
                     if sizeClass != .regular {
                         HStack(spacing: 10) {
                             NavigationLink {
                                 withShellErrorBanner { workspaceTabView }
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .background(theme.canvasBackground.ignoresSafeArea())
                                     .navigationTitle(AppSection.workspace.rawValue)
                             } label: {
                                 Label("工作区", systemImage: AppSection.workspace.systemImage)
@@ -243,6 +271,8 @@ private struct AdaptiveMobileRootView: View {
                             .buttonStyle(.bordered)
                             NavigationLink {
                                 withShellErrorBanner { logsTabView }
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .background(theme.canvasBackground.ignoresSafeArea())
                                     .navigationTitle(AppSection.logs.rawValue)
                             } label: {
                                 Label("实时日志", systemImage: AppSection.logs.systemImage)
@@ -291,6 +321,8 @@ private struct AdaptiveMobileRootView: View {
         case .rulesDns:
             RulesDnsView(
                 rules: model.rules,
+                outboundMode: model.outboundMode,
+                groups: model.groups,
                 dnsResponse: model.dnsResponse,
                 dnsError: model.dnsError,
                 isQueryingDns: model.isQueryingDns,
@@ -314,6 +346,7 @@ private struct AdaptiveMobileRootView: View {
                 onRefresh: { Task { await model.refreshGroupsAndMetrics() } },
                 onInspect: { id in Task { await model.inspectConnection(id: id) } },
                 onDismissDetail: { model.selectedConnectionDetail = nil },
+                onDiagnoseDomain: { host in model.openCommandPalette(initialQuery: host) },
                 onClose: { id in Task { await model.closeConnection(id: id) } },
                 onCloseAll: { Task { await model.closeAllConnections() } }
             )
@@ -322,6 +355,55 @@ private struct AdaptiveMobileRootView: View {
         case .settings:
             SettingsView(model: model)
         }
+    }
+}
+
+/// Isolated 1Hz transit strip leaf on iOS/iPadOS so live rate ticks do not re-diff `OverviewHeaderControls`.
+private struct MobileOverviewTransitLeaf: View {
+    var model: NexusAppModel
+
+    var body: some View {
+        RouteTransitStripView(
+            isRunning: model.isRunning,
+            inboundLabel: model.transitInboundLabel,
+            inboundDetail: model.transitInboundDetail,
+            outboundMode: model.outboundMode,
+            rulesCount: model.rules.count,
+            fakeIpEnabled: model.workspace.dns.simple.fakeIpEnabled,
+            primaryGroup: model.primaryGroup,
+            activeRttMs: model.activeGroupRttMs,
+            rxRateBytesPerSec: model.rxRateBytesPerSec,
+            txRateBytesPerSec: model.txRateBytesPerSec,
+            activeSessions: model.metrics.activeSessions,
+            onTapInbound: { model.selectedSection = .settings },
+            onTapRouting: { model.selectedSection = .rulesDns },
+            onTapProxies: { model.selectedSection = .proxies },
+            onSelectMember: { g, m in Task { await model.selectMember(group: g, member: m) } },
+            onProbeGroup: { g in Task { await model.probeGroup(group: g) } },
+            onTapTraffic: { model.selectedSection = .connections }
+        )
+    }
+}
+
+/// Isolated 1Hz metrics/throughput leaf on iOS/iPadOS matching macOS `OverviewLiveMetricsLeaf`.
+private struct MobileOverviewMetricsLeaf: View {
+    var model: NexusAppModel
+
+    var body: some View {
+        OverviewMetricsSection(
+            metrics: model.metrics,
+            diagnostics: model.diagnostics,
+            network: model.network,
+            isRunning: model.isRunning,
+            residentMemoryMiB: model.residentMemoryMiB,
+            coreMemoryMiB: model.coreMemoryMiB,
+            workers: max(model.statusSnapshot.workers, model.hostConfig.workers),
+            rxHistory: model.rxHistory,
+            txHistory: model.txHistory,
+            onsetMarkers: model.sparklineOnsets,
+            rxRateBytesPerSec: model.rxRateBytesPerSec,
+            txRateBytesPerSec: model.txRateBytesPerSec
+        )
     }
 }
 #endif

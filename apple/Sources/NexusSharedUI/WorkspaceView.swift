@@ -25,6 +25,7 @@ public struct WorkspaceView: View {
     @State private var showImportSheet: Bool = false
     @State private var pendingDeleteProfile: WorkspaceProfileItem?
     @FocusState private var isSearchFocused: Bool
+    @Environment(\.nexusTheme) private var theme
 
     private enum WorkspaceSection: String, CaseIterable, Identifiable {
         case nodes = "节点配置"
@@ -173,10 +174,7 @@ public struct WorkspaceView: View {
         } label: {
             Label("导入分享链接", systemImage: "link.badge.plus")
         }
-        .buttonStyle(.borderedProminent)
-        #if os(iOS)
-        .frame(minHeight: 44)
-        #endif
+        .buttonStyle(NexusProminentButtonStyle())
     }
 
     private var refreshButton: some View {
@@ -225,7 +223,7 @@ public struct WorkspaceView: View {
             if let conflict = syncConflictSummary, !conflict.isEmpty {
                 Text("同步冲突：\(conflict)")
                     .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(theme.warning)
             } else if syncConfig.lastSyncedRevision > 0 {
                 Text("已同步（版本 \(syncConfig.lastSyncedRevision)）")
                     .font(.caption2.monospacedDigit())
@@ -256,7 +254,7 @@ public struct WorkspaceView: View {
                     Text("导入分享链接或同步工作区后，节点将自动保存在本地。")
                 } actions: {
                     Button("导入分享链接") { showImportSheet = true }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(NexusProminentButtonStyle())
                 }
             } else if filteredProfiles.isEmpty {
                 ContentUnavailableView {
@@ -288,6 +286,7 @@ public struct WorkspaceView: View {
                         }
                     }
                 }
+                .scrollContentBackground(.hidden)
             }
         }
     }
@@ -307,6 +306,7 @@ public struct WorkspaceView: View {
                 List(workspace.subscriptions) { sub in
                     WorkspaceSubscriptionRow(subscription: sub)
                 }
+                .scrollContentBackground(.hidden)
             }
         }
     }
@@ -351,16 +351,30 @@ private struct WorkspaceProfileRow: View {
     let item: WorkspaceProfileItem
     let isActive: Bool
     let onSelect: () -> Void
+    @Environment(\.nexusTheme) private var theme
 
     private var endpointText: String {
         if let node = item.node, !node.server.isEmpty {
-            return "\(node.protocolName.uppercased()) · \(node.server):\(node.port)"
+            let proto = node.protocolName.uppercased()
+            let secTag: String
+            if !node.tls.realityPublicKey.isEmpty {
+                secTag = " · REALITY"
+            } else if node.tls.enabled {
+                secTag = " · TLS"
+            } else {
+                secTag = ""
+            }
+            return "\(proto)\(secTag) · \(node.server):\(node.port)"
         }
         return item.id
     }
 
     var body: some View {
         HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(isActive ? theme.signalEmeraldFill : Color.clear)
+                .frame(width: 3, height: 28)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(item.remarks.isEmpty ? item.id : item.remarks)
@@ -393,6 +407,7 @@ private struct WorkspaceProfileRow: View {
 
 private struct WorkspaceSubscriptionRow: View {
     let subscription: WorkspaceSubscriptionItem
+    @Environment(\.nexusTheme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -403,7 +418,7 @@ private struct WorkspaceSubscriptionRow: View {
                 Spacer()
                 Text(subscription.enabled ? "已启用" : "已停用")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(subscription.enabled ? .green : .secondary)
+                    .foregroundStyle(subscription.enabled ? theme.signalEmerald : .secondary)
             }
             if !subscription.url.isEmpty {
                 Text(subscription.url)
@@ -416,63 +431,18 @@ private struct WorkspaceSubscriptionRow: View {
             if subscription.usage.hasQuota {
                 let used = UInt64(max(0, subscription.usage.usedBytes))
                 let total = UInt64(max(1, subscription.usage.totalBytes))
-                ProgressView(value: min(1.0, Double(used) / Double(total)))
+                let fraction = min(1.0, Double(used) / Double(total))
+                let quotaTint = fraction >= 0.90
+                    ? theme.danger
+                    : (fraction >= 0.75 ? theme.warning : theme.signalEmeraldFill)
+                ProgressView(value: fraction)
+                    .tint(quotaTint)
                 Text("已用 \(NexusByteFormat.bytes(used)) / 总量 \(NexusByteFormat.bytes(total))")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
-    }
-}
-
-private struct ShareLinkImportSheet: View {
-    @Binding var shareLinkInput: String
-    let onCancel: () -> Void
-    let onImport: (String) -> Void
-    @FocusState private var isLinkFieldFocused: Bool
-
-    private var trimmedInput: String {
-        shareLinkInput.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("支持 vless://、trojan://、anytls://、hy2://、tuic://、snell://、ss://、ssh://、naive+https://。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("粘贴分享链接…", text: $shareLinkInput)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($isLinkFieldFocused)
-                    .onSubmit {
-                        if !trimmedInput.isEmpty { onImport(shareLinkInput) }
-                    }
-                    .accessibilityLabel("节点分享链接")
-                Spacer(minLength: 0)
-            }
-            .padding()
-            .navigationTitle("导入节点分享链接")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", action: onCancel)
-                        .keyboardShortcut(.cancelAction)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("解析并保存") {
-                        onImport(shareLinkInput)
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(trimmedInput.isEmpty)
-                }
-            }
-            .onAppear {
-                isLinkFieldFocused = true
-            }
-        }
-        #if os(macOS)
-        .frame(minWidth: 440, minHeight: 190)
-        #endif
     }
 }
 #endif

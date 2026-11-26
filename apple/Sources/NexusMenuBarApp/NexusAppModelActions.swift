@@ -7,16 +7,24 @@ import NexusCoreBridge
 /// with optimistic state rollback and user-facing error reporting.
 extension NexusAppModel {
     func loadWorkspaceState(rootDirectory: URL? = nil) async {
-        if rootDirectory == nil, let pending = elevationSaveTask { await pending.value }
         let baseDir = rootDirectory ?? Self.defaultWorkspaceDirectory()
         let db = rootDirectory.map { NexusClientDatabase(rootDirectory: $0) } ?? clientDatabase
         let wsStore = WorkspaceStore(rootDirectory: baseDir, database: db)
         let hostStore = HostConfigStore(rootDirectory: baseDir, database: db)
         let telStore = TelemetryStore(rootDirectory: baseDir, database: db)
-        let saveToken = elevationSaveTask
+
+        let elevGen = elevationSaveGeneration
+        if rootDirectory == nil, let pending = elevationSaveTask { await pending.value }
         let savedMode = await PrivilegedDaemonController.loadSavedElevationMode(from: db)
-        if (rootDirectory != nil || elevationSaveTask == saveToken), savedMode != _storedTunElevationMode {
+        if (rootDirectory != nil || elevationSaveGeneration == elevGen), savedMode != _storedTunElevationMode {
             withMutation(keyPath: \.tunElevationMode) { _storedTunElevationMode = savedMode }
+        }
+
+        let themeGen = themeSaveGeneration
+        if rootDirectory == nil, let pendingTheme = themeSaveTask { await pendingTheme.value }
+        let savedTheme = await ThemePreferenceStore.load(from: db)
+        if (rootDirectory != nil || themeSaveGeneration == themeGen), savedTheme != themePreset {
+            themePreset = savedTheme
         }
         if let loaded = try? await wsStore.loadOrInit() { workspace = loaded }
         if let loadedHost = try? await hostStore.loadOrInit() {
@@ -31,6 +39,27 @@ extension NexusAppModel {
         }
         if tel.unreadUnexpectedCrash && !tel.lastCrashReason.isEmpty {
             actionErrorMessage = "上次异常退出：\(tel.lastCrashReason)"
+        }
+    }
+
+    func setThemePreset(_ preset: NexusThemePreset) {
+        guard preset != themePreset else { return }
+        themeSaveGeneration &+= 1
+        themePreset = preset
+        let db = clientDatabase
+        let previous = themeSaveTask
+        themeSaveTask = Task {
+            _ = await previous?.value
+            try? await ThemePreferenceStore.save(preset, to: db)
+        }
+    }
+
+    func queryDnsForPalette(domain: String) async -> Result<DnsQueryResponse, Error> {
+        do {
+            let response = try await httpControl.queryDns(name: domain, type: "A", server: nil)
+            return .success(response)
+        } catch {
+            return .failure(error)
         }
     }
 
@@ -123,7 +152,9 @@ extension NexusAppModel {
             outboundMode = outboundModeTransition.current
             _ = try? await telStore.setOutboundMode(updated.mode)
             actionErrorMessage = nil
-            statusSummary = "已切换为\(NexusDisplayCopy.outboundModeTitle(updated.mode))模式"
+            let title = NexusDisplayCopy.outboundModeTitle(updated.mode)
+            recordSparklineOnset(title)
+            statusSummary = "已切换为\(title)模式"
         } catch {
             guard let reverted = outboundModeTransition.rollback(for: gen) else { return }
             outboundMode = reverted
@@ -136,11 +167,13 @@ extension NexusAppModel {
         do {
             try await httpControl.reload()
             actionErrorMessage = nil
+            recordSparklineOnset("重载")
             statusSummary = "已触发热重载"
         } catch {
             do {
                 _ = try await session.reload()
                 actionErrorMessage = nil
+                recordSparklineOnset("重载")
                 statusSummary = "热重载成功"
             } catch {
                 actionErrorMessage = "热重载失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
@@ -217,11 +250,13 @@ extension NexusAppModel {
             try await httpControl.selectGroup(tag: group, member: member)
             guard gen == groupSelectionGeneration else { return }
             actionErrorMessage = nil
+            recordSparklineOnset(member)
         } catch {
             do {
                 _ = try await session.selectOutbound(group: group, member: member)
                 guard gen == groupSelectionGeneration else { return }
                 actionErrorMessage = nil
+                recordSparklineOnset(member)
             } catch {
                 guard gen == groupSelectionGeneration else { return }
                 groups = previousGroups
@@ -236,10 +271,12 @@ extension NexusAppModel {
         do {
             try await httpControl.resetGroupAuto(tag: group)
             actionErrorMessage = nil
+            recordSparklineOnset("自动")
         } catch {
             do {
                 _ = try await session.resetGroupAuto(group: group)
                 actionErrorMessage = nil
+                recordSparklineOnset("自动")
             } catch {
                 actionErrorMessage = "恢复自动选优失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
             }

@@ -6,6 +6,8 @@ import NexusCoreBridge
 /// Live searchable Rules + interactive Live DNS Query + FakeIP/DNS cache controls shared across macOS and iOS.
 public struct RulesDnsView: View {
     public let rules: [RuleMetric]
+    public let outboundMode: String
+    public let groups: [OutboundGroupSnapshot]
     public let dnsResponse: DnsQueryResponse?
     public let dnsError: String?
     public let isQueryingDns: Bool
@@ -25,6 +27,7 @@ public struct RulesDnsView: View {
     @State private var serverInput: String = ""
     @State private var showClearAllConfirm: Bool = false
     @FocusState private var isRuleSearchFocused: Bool
+    @Environment(\.nexusTheme) private var theme
     @ScaledMetric(relativeTo: .body) private var recordPickerWidth: CGFloat = 92
     @ScaledMetric(relativeTo: .body) private var serverFieldWidth: CGFloat = 170
     #if os(iOS)
@@ -35,6 +38,8 @@ public struct RulesDnsView: View {
 
     public init(
         rules: [RuleMetric],
+        outboundMode: String = "rule",
+        groups: [OutboundGroupSnapshot] = [],
         dnsResponse: DnsQueryResponse?,
         dnsError: String?,
         isQueryingDns: Bool,
@@ -49,6 +54,8 @@ public struct RulesDnsView: View {
         onClearAllCache: @escaping () -> Void
     ) {
         self.rules = rules
+        self.outboundMode = outboundMode
+        self.groups = groups
         self.dnsResponse = dnsResponse
         self.dnsError = dnsError
         self.isQueryingDns = isQueryingDns
@@ -151,7 +158,7 @@ public struct RulesDnsView: View {
             if let err = dnsError, !err.isEmpty {
                 Text("查询失败：\(err)")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(theme.danger)
             }
 
             if let resp = dnsResponse {
@@ -187,11 +194,8 @@ public struct RulesDnsView: View {
 
     private var queryButton: some View {
         Button("查询", action: triggerDnsQuery)
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(NexusProminentButtonStyle())
             .disabled(isQueryingDns || domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            #if os(iOS)
-            .frame(minHeight: 44)
-            #endif
     }
 
     private var cacheControlsBar: some View {
@@ -279,7 +283,7 @@ public struct RulesDnsView: View {
                     Text("连接内核后点击刷新即可查看当前生效路由规则。")
                 } actions: {
                     Button("刷新规则", action: onRefreshRules)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(NexusProminentButtonStyle())
                 }
             } else if filteredRules.isEmpty {
                 ContentUnavailableView {
@@ -291,9 +295,33 @@ public struct RulesDnsView: View {
                         .buttonStyle(.bordered)
                 }
             } else {
+                let activeIndex = matchedRuleIndex
                 List(filteredRules) { rule in
-                    RuleRowView(rule: rule)
+                    let queryable = DomainRouteExplainer.firstQueryableDomain(in: rule.summary)
+                    RuleRowView(rule: rule, isMatched: activeIndex == rule.index)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if let queryable { prefillAndQuery(queryable) }
+                        }
+                        .contextMenu {
+                            if let queryable {
+                                Button {
+                                    prefillAndQuery(queryable)
+                                } label: {
+                                    Label("探测此规则域名", systemImage: "magnifyingglass")
+                                }
+                            }
+                            Button {
+                                NexusByteFormat.copyToClipboard(rule.summary)
+                            } label: {
+                                Label("复制规则条件", systemImage: "doc.on.doc")
+                            }
+                        }
+                        .accessibilityAction(named: Text("探测此规则域名")) {
+                            if let queryable { prefillAndQuery(queryable) }
+                        }
                 }
+                .scrollContentBackground(.hidden)
             }
         }
     }
@@ -324,6 +352,21 @@ public struct RulesDnsView: View {
         #endif
     }
 
+    private var matchedRuleIndex: Int? {
+        guard DomainRouteExplainer.looksLikeDomainQuery(domainInput) else { return nil }
+        return DomainRouteExplainer.explain(
+            domain: domainInput,
+            outboundMode: outboundMode,
+            rules: rules,
+            groups: groups
+        ).matchedRuleIndex
+    }
+
+    private func prefillAndQuery(_ domain: String) {
+        domainInput = domain
+        triggerDnsQuery()
+    }
+
     private func triggerDnsQuery() {
         let domain = domainInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !domain.isEmpty else { return }
@@ -334,10 +377,11 @@ public struct RulesDnsView: View {
 
 private struct DnsResponseSummarySection: View {
     let response: DnsQueryResponse
+    @Environment(\.nexusTheme) private var theme
     @ScaledMetric(relativeTo: .caption2) private var recordTypeColWidth: CGFloat = 48
 
     private var rcodeTint: Color {
-        response.rcode == 0 ? .green : (response.rcode == 3 ? .orange : .red)
+        response.rcode == 0 ? theme.signalEmerald : (response.rcode == 3 ? theme.warning : theme.danger)
     }
 
     var body: some View {
@@ -366,7 +410,7 @@ private struct DnsResponseSummarySection: View {
                     HStack(spacing: 8) {
                         Text(ans.type)
                             .font(.caption2.weight(.semibold).monospaced())
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(theme.rxLine)
                             .frame(minWidth: recordTypeColWidth, alignment: .leading)
                         Text(ans.data)
                             .font(.caption.monospaced())
@@ -387,19 +431,25 @@ private struct DnsResponseSummarySection: View {
 
 private struct RuleRowView: View {
     let rule: RuleMetric
+    let isMatched: Bool
+    @Environment(\.nexusTheme) private var theme
     @ScaledMetric(relativeTo: .caption) private var indexColWidth: CGFloat = 40
     @ScaledMetric(relativeTo: .caption) private var typeColWidth: CGFloat = 104
 
     private var targetTint: Color {
         switch rule.target.lowercased() {
-        case "direct": return .green
-        case "block", "reject": return .red
-        default: return .blue
+        case "direct": return theme.signalEmerald
+        case "block", "reject": return theme.danger
+        default: return theme.accentText
         }
     }
 
     var body: some View {
         HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(isMatched ? theme.accentFill : Color.clear)
+                .frame(width: 2, height: 16)
+                .accessibilityHidden(true)
             Text("#\(rule.index)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)

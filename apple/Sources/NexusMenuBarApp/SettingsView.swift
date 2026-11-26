@@ -10,54 +10,87 @@ struct SettingsView: View {
     @Bindable var model: NexusAppModel
     @State private var bearerTokenDraft: String = ""
     @State private var showAdvancedDiagnostics: Bool = false
+    @Environment(\.nexusTheme) private var theme
 
     var body: some View {
         Form {
+            appearanceThemeSection
             localProxyAndLoginSection
             tunAndElevationSection
             controlApiAndKeychainSection
+            #if os(macOS)
+            keyboardShortcutsSection
+            #endif
             storageAndAboutSection
             advancedDiagnosticsSection
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(theme.canvasBackground)
         .safeAreaInset(edge: .bottom) {
             saveFooterBar
         }
         .task { await model.loadWorkspaceState() }
     }
 
-    private var saveFooterBar: some View {
-        HStack(spacing: 10) {
-            if let err = model.actionErrorMessage, !err.isEmpty {
-                Label(err, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .lineLimit(1)
-            } else {
-                Text(model.statusSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    private var appearanceThemeSection: some View {
+        Section("外观与仪表主题") {
+            ThemeSwatchPickerView(selected: model.themePreset) { preset in
+                model.setThemePreset(preset)
             }
-            Spacer(minLength: 8)
-            Button("测试连接") {
-                Task { await model.refreshStatus() }
-            }
-            .buttonStyle(.bordered)
-            #if os(iOS)
-            .frame(minHeight: 44)
-            #endif
-            Button("保存设置") {
-                Task { await model.saveHostConfig() }
-            }
-            .buttonStyle(.borderedProminent)
-            #if os(iOS)
-            .frame(minHeight: 44)
-            #endif
+            Text(model.themePreset.subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
+    }
+
+    #if os(macOS)
+    private var keyboardShortcutsSection: some View {
+        Section("快捷键") {
+            LabeledContent("命令与域名诊断", value: "⌘K")
+                .font(.caption.monospaced())
+            LabeledContent("页内查找筛选", value: "⌘F")
+                .font(.caption.monospaced())
+            LabeledContent("热重载生效配置", value: "⌘R")
+                .font(.caption.monospaced())
+            LabeledContent("切换功能区", value: "⌘1 – ⌘6")
+                .font(.caption.monospaced())
+        }
+    }
+    #endif
+
+    private var saveFooterBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 10) {
+                if let err = model.actionErrorMessage, !err.isEmpty {
+                    Label(err, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(theme.warning)
+                        .lineLimit(1)
+                } else {
+                    Text(model.statusSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button("测试连接") {
+                    Task { await model.refreshStatus() }
+                }
+                .buttonStyle(.bordered)
+                #if os(iOS)
+                .frame(minHeight: 44)
+                #endif
+                Button("保存设置") {
+                    Task { await model.saveHostConfig() }
+                }
+                .buttonStyle(NexusProminentButtonStyle())
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .background(theme.chassisBackground)
     }
 
     private var localProxyAndLoginSection: some View {

@@ -159,7 +159,7 @@ public struct OverviewHeaderControls: View {
             Button(action: onRefresh) {
                 Label("刷新状态", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(NexusProminentButtonStyle())
             #if os(iOS)
             .frame(minHeight: 44)
             #endif

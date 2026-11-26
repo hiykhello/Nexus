@@ -31,6 +31,7 @@ public struct LogsPane: View {
     @State private var autoFollow: Bool = true
     @State private var jumpToBottomTrigger: Int = 0
     @FocusState private var isSearchFocused: Bool
+    @Environment(\.nexusTheme) private var theme
     @ScaledMetric(relativeTo: .body) private var pickerWidth: CGFloat = 104
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -137,7 +138,7 @@ public struct LogsPane: View {
                 Text("连接内核后将实时流式输出运行日志。")
             } actions: {
                 Button("刷新日志", action: onRefresh)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(NexusProminentButtonStyle())
             }
         } else if visibleLogs.isEmpty {
             let trimmed = logSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,7 +163,13 @@ public struct LogsPane: View {
             ScrollViewReader { proxy in
                 List(visibleLogs) { entry in
                     LogRowView(entry: entry)
+                        .contextMenu {
+                            Button("复制此条日志") {
+                                NexusByteFormat.copyToClipboard(formatLogsSnapshot([entry]))
+                            }
+                        }
                 }
+                .scrollContentBackground(.hidden)
                 .onAppear {
                     if autoFollow, let lastID = visibleLogs.last?.id {
                         proxy.scrollTo(lastID, anchor: .bottom)
@@ -320,6 +327,7 @@ public struct LogsPane: View {
                 HStack(spacing: 6) {
                     ForEach(levelFilters, id: \.self) { level in
                         let active = selectedLevelFilter == level
+                        let pillTint = level == "all" ? theme.accentText : theme.logLevelColor(level)
                         Button {
                             selectedLevelFilter = level
                         } label: {
@@ -328,10 +336,10 @@ public struct LogsPane: View {
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 4)
                                 .background(
-                                    active ? NexusPalette.logLevelColor(level).opacity(0.18) : NexusPalette.subtleSurface,
+                                    active ? pillTint.opacity(0.18) : theme.wellSurface,
                                     in: Capsule()
                                 )
-                                .foregroundStyle(active ? NexusPalette.logLevelColor(level) : .secondary)
+                                .foregroundStyle(active ? pillTint : .secondary)
                         }
                         .buttonStyle(NexusPillButtonStyle())
                         .accessibilityAddTraits(active ? .isSelected : [])
@@ -345,10 +353,10 @@ public struct LogsPane: View {
                             .padding(.horizontal, 9)
                             .padding(.vertical, 4)
                             .background(
-                                autoFollow ? Color.accentColor.opacity(0.16) : NexusPalette.subtleSurface,
+                                autoFollow ? theme.accentFill.opacity(0.16) : theme.wellSurface,
                                 in: Capsule()
                             )
-                            .foregroundStyle(autoFollow ? Color.accentColor : .secondary)
+                            .foregroundStyle(autoFollow ? theme.accentText : .secondary)
                     }
                     .buttonStyle(NexusPillButtonStyle())
                     .accessibilityAddTraits(autoFollow ? .isSelected : [])
@@ -360,7 +368,7 @@ public struct LogsPane: View {
                                 .font(.caption2.weight(.medium))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .background(NexusPalette.subtleSurface, in: Capsule())
+                                .background(theme.wellSurface, in: Capsule())
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(NexusPillButtonStyle())
@@ -377,12 +385,23 @@ public struct LogsPane: View {
 
 private struct LogRowView: View {
     let entry: LogRingEntry
+    @Environment(\.nexusTheme) private var theme
     @ScaledMetric(relativeTo: .caption2) private var seqWidth: CGFloat = 44
     @ScaledMetric(relativeTo: .caption2) private var levelWidth: CGFloat = 48
     @ScaledMetric(relativeTo: .caption) private var domainWidth: CGFloat = 56
 
+    private var railColor: Color {
+        switch entry.level.lowercased() {
+        case "error", "fatal": return theme.danger
+        case "warn", "warning": return theme.warning
+        case "info": return theme.rxLine
+        case "debug": return theme.txLine
+        default: return .clear
+        }
+    }
+
     var body: some View {
-        let tint = NexusPalette.logLevelColor(entry.level)
+        let tint = theme.logLevelColor(entry.level)
         HStack(alignment: .top, spacing: 8) {
             Text("#\(entry.seq)")
                 .font(.caption2.monospacedDigit())
@@ -399,6 +418,15 @@ private struct LogRowView: View {
             Text(entry.message)
                 .font(.caption.monospaced())
                 .textSelection(.enabled)
+        }
+        .padding(.leading, 8)
+        .overlay(alignment: .leading) {
+            if railColor != .clear {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(railColor)
+                    .frame(width: 2)
+                    .accessibilityHidden(true)
+            }
         }
     }
 }

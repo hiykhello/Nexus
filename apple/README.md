@@ -21,10 +21,10 @@
     - `NetworkPathWatcher`：基于 `Network.framework` `NWPathMonitor` 监控真实物理网口（过滤自身 `utunX`）、计费/受限状态并推送 `network-change`；
     - `TunnelSettingsBuilder`、`UtunPassthroughAdapter` & `NexusPacketTunnelProvider`：生成 `NEPacketTunnelNetworkSettings`（双栈地址、排除私网与 `224.0.0.251/32` mDNS/AirDrop 保护、`NEDNSSettings` `matchDomains = [""]`、可选 `NEProxySettings` HTTP/HTTPS 代理）并承载 `< 50 MiB` 内存纪律下的扩展生命周期；
     - `DaemonManager` & `LoginItemManager`：统一封装阶段 A（`SMAppService.daemon` 持久授权 / 按次提权，策略持久化于 SQLite `host_kv`，零 `UserDefaults`）与阶段 B（`NETunnelProviderManager`）生命周期。
-- `NexusSharedUI`（跨 macOS / iOS 共享 SwiftUI Matte Bento 组件）：
-  - `NexusThemeComponents`（Matte Bento 卡片修饰符、延迟胶囊、状态徽章、`Canvas` 实时吞吐折线图与字节格式化）、`OverviewMetricsCard`（KPI 网格 + 吞吐折线 + 物理网口诊断）、`ProxiesGroupsView`（策略组栏、延迟排序、单节点测速 + 整组测速）、`WorkspaceView`（应用容器自动托管的工作区节点/订阅/路由与 DNS 视图 + 分享链接导入，零目录路径暴露与零 KDL 界面文案）、`RulesDnsView`（可搜索实时规则表 + 交互式 DNS 探测 + FakeIP/DNS 缓存刷新）、`ConnectionsView`（搜索/路径过滤/详情检查/确认断开全部）与 `LogsPane`（实时日志流/级别胶囊/动态 `setLogLevel`/暂停继续/复制导出）。
+- `NexusSharedUI`（跨 macOS / iOS 共享 SwiftUI 哑光精密仪表组件）：
+  - `NexusThemeEnvironment` & `NexusThemeComponents`（四档仪器主题：跟随系统 / 曜石仪表 / 暖纸日光 / 精密琥珀，WCAG AA 双色通道、主题色卡预览、延迟胶囊、Signal Emerald 状态徽章与 `ActionErrorBanner`）、`RouteTransitStripView`（四段交互式实时链路拓扑仪与菜单栏 `MiniTransitStrip`）、`CommandPaletteView`（`⌘K` 全局命令与内联域名诊断面板）、`LatencySpectrumBar`（策略组 5 档延迟光谱条 + P50 + 相对延迟底纹、双轨带事件刻度吞吐折线与连接流量占比微条）、`OverviewHeaderControls` & `OverviewMetricsCard`、`ProxiesGroupsView`、`WorkspaceView`、`RulesDnsView`、`ConnectionsView` & `ConnectionDetailCard` 与 `LogsPane`。
 - `NexusMenuBarApp`（macOS 菜单栏常驻应用 + iOS/iPadOS 自适应主壳）：
-  - `NexusAppModel`（`@MainActor @Observable` 统一状态、应用容器静默目录管理与 SSE 生命周期）、`MenuBarPopoverView`（`.window` 风格快速面板）、`DashboardView`（`NavigationSplitView` + `Cmd+1..6` / `Cmd+R` / `Cmd+K` 快捷键）、`SettingsView`（系统代理/开机自启/TUN `NEProxySettings`/Keychain Bearer Token/诊断，不暴露内部配置与数据库路径）与 `NexusApp`（macOS `MenuBarExtra` + `Window` + `Settings` / iOS `AdaptiveMobileRootView`）。
+  - `NexusAppModel`、`NexusAppModelActions` & `NexusAppModelPalette`（`@MainActor @Observable` 统一状态、应用容器静默目录管理、主题偏好 `host_kv` 持久化与多路复用 WS/SSE 生命周期）、`MenuBarPopoverView`（`.window` 风格快速面板 + `MiniTransitStrip` + `⌘K` 入口）、`DashboardView`（`NavigationSplitView` + `⌘K` 命令面板 / `⌘F` 页内查找 / `⌘R` / `⌘1..6`）、`SettingsView`（四档外观主题色卡/系统代理/开机自启/虚拟网卡/钥匙串访问密钥/折叠诊断）与 `NexusApp`。
 
 ## 在 macOS 上运行单测与构建
 

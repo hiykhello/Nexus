@@ -10,10 +10,18 @@ import NexusSharedUI
 struct MenuBarPopoverView: View {
     @Bindable var model: NexusAppModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.nexusTheme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             headerSection
+            MiniTransitStrip(
+                isRunning: model.isRunning,
+                inboundLabel: model.miniTransitInboundLabel,
+                outboundMode: model.outboundMode,
+                activeExit: model.activeExitDisplayName,
+                activeRttMs: model.activeGroupRttMs
+            )
             if let err = model.actionErrorMessage, !err.isEmpty {
                 ActionErrorBanner(
                     message: err,
@@ -41,6 +49,7 @@ struct MenuBarPopoverView: View {
         }
         .padding(14)
         .frame(minWidth: 300, idealWidth: 320, maxWidth: 360)
+        .background(theme.canvasBackground)
         .task {
             await model.refreshStatus()
             await model.refreshGroupsAndMetrics()
@@ -158,12 +167,20 @@ struct MenuBarPopoverView: View {
                     Label("打开控制台", systemImage: "macwindow")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(NexusProminentButtonStyle())
             }
 
             HStack {
                 SettingsLink {
                     Label("设置…", systemImage: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                Button {
+                    model.openCommandPalette()
+                    openWindow(id: "dashboard")
+                    NSApp.activate()
+                } label: {
+                    Label("命令 / ⌘K", systemImage: "magnifyingglass")
                 }
                 .buttonStyle(.borderless)
                 Spacer()
@@ -180,11 +197,12 @@ struct MenuBarPopoverView: View {
 /// Isolated 1Hz leaf inside the menu bar popover preventing header/picker redraws on each tick.
 private struct PopoverThroughputStrip: View {
     var model: NexusAppModel
+    @Environment(\.nexusTheme) private var theme
 
     var body: some View {
         HStack(spacing: 8) {
-            LiveRateLabel(text: NexusByteFormat.rate(model.rxRateBytesPerSec), systemImage: "arrow.down", tint: .blue)
-            LiveRateLabel(text: NexusByteFormat.rate(model.txRateBytesPerSec), systemImage: "arrow.up", tint: .green)
+            LiveRateLabel(text: NexusByteFormat.rate(model.rxRateBytesPerSec), systemImage: "arrow.down", tint: theme.rxLine)
+            LiveRateLabel(text: NexusByteFormat.rate(model.txRateBytesPerSec), systemImage: "arrow.up", tint: theme.txLine)
             Spacer(minLength: 4)
             Text("\(model.metrics.activeSessions) 连接")
                 .font(.caption.monospacedDigit())

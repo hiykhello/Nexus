@@ -51,6 +51,9 @@ final class NexusAppModel {
     var selectedSection: AppSection = .overview
     var pendingSearchFocusSection: AppSection?
     var searchFocusTrigger: Int = 0
+    var themePreset: NexusThemePreset = .system
+    var showCommandPalette = false
+    var commandPaletteInitialQuery = ""
     var isRunning = false
     var outboundMode = "rule"
     var backend: AppleTunnelBackend = .launchDaemonUtun
@@ -62,6 +65,7 @@ final class NexusAppModel {
         }
         set {
             guard newValue != _storedTunElevationMode else { return }
+            elevationSaveGeneration &+= 1
             withMutation(keyPath: \.tunElevationMode) { _storedTunElevationMode = newValue }
             let db = clientDatabase
             let previous = elevationSaveTask
@@ -83,6 +87,7 @@ final class NexusAppModel {
     var txRateBytesPerSec: Double = 0
     var rxHistory: [Double] = Array(repeating: 0, count: 24)
     var txHistory: [Double] = Array(repeating: 0, count: 24)
+    var sparklineOnsetTracker = SparklineOnsetTracker(capacity: 24)
 
     var network = AppleNetworkSnapshot(
         interfaceName: nil,
@@ -141,6 +146,9 @@ final class NexusAppModel {
     var connectionsStreamTask: Task<Void, Never>?
     var logStreamTask: Task<Void, Never>?
     var elevationSaveTask: Task<Void, Never>?
+    var themeSaveTask: Task<Void, Never>?
+    var elevationSaveGeneration: UInt64 = 0
+    var themeSaveGeneration: UInt64 = 0
     var isWebSocketActive = false
     var liveStreamGeneration: UInt64 = 0
     var outboundModeTransition = OptimisticTransition(initial: "rule")
@@ -185,6 +193,50 @@ final class NexusAppModel {
 
     func clearActionError() {
         actionErrorMessage = nil
+    }
+
+    func openCommandPalette(initialQuery: String = "") {
+        commandPaletteInitialQuery = initialQuery
+        showCommandPalette = true
+    }
+
+    func closeCommandPalette() {
+        showCommandPalette = false
+    }
+
+    func recordSparklineOnset(_ label: String) {
+        sparklineOnsetTracker.record(label: label, at: max(0, rxHistory.count - 1))
+    }
+
+    var sparklineOnsets: [SparklineOnsetMarker] {
+        sparklineOnsetTracker.markers
+    }
+
+    private var mixedPortSuffix: String {
+        if let parsed = AppleTunnelHttpProxyConfig.parseHostPort(hostConfig.desktop.mixedListen) {
+            return ":\(parsed.port)"
+        }
+        return ":7890"
+    }
+
+    var transitInboundLabel: String {
+        hostConfig.desktop.enableMixed ? "混合代理 \(mixedPortSuffix)" : "系统隧道"
+    }
+
+    var transitInboundDetail: String {
+        guard isRunning else { return "待机" }
+        return hostConfig.desktop.tunHttpProxyEnabled
+            ? "隧道 + 系统代理"
+            : "\(statusSnapshot.listeners) 监听"
+    }
+
+    var miniTransitInboundLabel: String {
+        hostConfig.desktop.enableMixed ? mixedPortSuffix : "TUN"
+    }
+
+    var activeExitDisplayName: String {
+        if let active = primaryGroup?.active, !active.isEmpty { return active }
+        return activeProfileDisplayName
     }
 
     var showDaemonManagementControls: Bool {
@@ -402,6 +454,7 @@ final class NexusAppModel {
             rxHistory.append(dDown)
             if txHistory.count > 24 { txHistory.removeFirst(txHistory.count - 24) }
             if rxHistory.count > 24 { rxHistory.removeFirst(rxHistory.count - 24) }
+            sparklineOnsetTracker.shiftLeft()
         }
         lastSampleUp = up
         lastSampleDown = down
