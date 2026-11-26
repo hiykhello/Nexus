@@ -1,4 +1,5 @@
 #if os(macOS)
+import Foundation
 import SwiftUI
 import NexusCoreBridge
 import NexusSharedUI
@@ -22,15 +23,30 @@ struct DashboardView: View {
             }
             .navigationSplitViewColumnWidth(min: 175, ideal: 195, max: 230)
             .safeAreaInset(edge: .bottom) {
-                SidebarStatusFooter(
-                    isRunning: model.isRunning,
-                    mode: model.outboundMode,
-                    memoryMiB: model.residentMemoryMiB
-                )
+                SidebarStatusFooter(model: model)
             }
         } detail: {
-            detailContent(for: model.selectedSection)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                if model.selectedSection != .overview,
+                   model.selectedSection != .settings,
+                   let err = model.actionErrorMessage,
+                   !err.isEmpty {
+                    ActionErrorBanner(
+                        message: err,
+                        flush: false,
+                        onRetry: {
+                            Task {
+                                await model.refreshStatus()
+                                await model.refreshGroupsAndMetrics()
+                            }
+                        },
+                        onDismiss: { model.clearActionError() }
+                    )
+                    .padding([.horizontal, .top])
+                }
+                detailContent(for: model.selectedSection)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -42,7 +58,7 @@ struct DashboardView: View {
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
-                .accessibilityHint("刷新核心运行状态、策略组与遥测指标")
+                .help("刷新内核运行状态、策略组与遥测指标")
 
                 Button {
                     Task { await model.reloadConfig() }
@@ -50,6 +66,7 @@ struct DashboardView: View {
                     Label("热重载", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(!model.isRunning)
+                .help("热重载当前生效配置")
             }
         }
         .task {
@@ -68,6 +85,9 @@ struct DashboardView: View {
                 groups: model.groups,
                 probingOutbounds: model.probingOutbounds,
                 lastProbeBanner: model.lastProbeBanner,
+                focusSearchTrigger: model.searchFocusTrigger,
+                shouldAutoFocusSearch: model.pendingSearchFocusSection == .proxies,
+                onConsumeSearchFocus: { model.consumeSearchFocus(for: .proxies) },
                 onSelectMember: { g, m in Task { await model.selectMember(group: g, member: m) } },
                 onProbeGroup: { g in Task { await model.probeGroup(group: g) } },
                 onProbeOutbound: { tag in Task { await model.probeOutbound(tag: tag) } },
@@ -81,6 +101,9 @@ struct DashboardView: View {
                 syncConfig: model.syncConfig,
                 syncStatusSummary: model.syncStatusSummary,
                 syncConflictSummary: model.syncConflictSummary,
+                focusSearchTrigger: model.searchFocusTrigger,
+                shouldAutoFocusSearch: model.pendingSearchFocusSection == .workspace,
+                onConsumeSearchFocus: { model.consumeSearchFocus(for: .workspace) },
                 onSelectProfile: { id in Task { await model.selectWorkspaceProfile(id) } },
                 onDeleteProfile: { id in Task { await model.deleteWorkspaceProfile(id) } },
                 onImportShareLink: { uri in Task { await model.importShareLink(uri) } },
@@ -94,6 +117,9 @@ struct DashboardView: View {
                 dnsError: model.dnsError,
                 isQueryingDns: model.isQueryingDns,
                 cacheActionMessage: model.cacheActionMessage,
+                focusSearchTrigger: model.searchFocusTrigger,
+                shouldAutoFocusSearch: model.pendingSearchFocusSection == .rulesDns,
+                onConsumeSearchFocus: { model.consumeSearchFocus(for: .rulesDns) },
                 onRefreshRules: { Task { await model.refreshRules() } },
                 onQueryDns: { name, type, srv in Task { await model.runDnsQuery(name: name, type: type, server: srv) } },
                 onFlushFakeIp: { Task { await model.flushFakeIpCache() } },
@@ -104,8 +130,12 @@ struct DashboardView: View {
             ConnectionsView(
                 connections: model.connections,
                 selectedDetail: model.selectedConnectionDetail,
+                focusSearchTrigger: model.searchFocusTrigger,
+                shouldAutoFocusSearch: model.pendingSearchFocusSection == .connections,
+                onConsumeSearchFocus: { model.consumeSearchFocus(for: .connections) },
                 onRefresh: { Task { await model.refreshGroupsAndMetrics() } },
                 onInspect: { id in Task { await model.inspectConnection(id: id) } },
+                onDismissDetail: { model.selectedConnectionDetail = nil },
                 onClose: { id in Task { await model.closeConnection(id: id) } },
                 onCloseAll: { Task { await model.closeAllConnections() } }
             )
@@ -117,6 +147,9 @@ struct DashboardView: View {
                 logSearch: $model.logSearch,
                 isStreaming: model.isLogStreaming,
                 isPaused: model.isLogPaused,
+                focusSearchTrigger: model.searchFocusTrigger,
+                shouldAutoFocusSearch: model.pendingSearchFocusSection == .logs,
+                onConsumeSearchFocus: { model.consumeSearchFocus(for: .logs) },
                 onApplyLevel: { lvl in Task { await model.applyLogLevel(lvl) } },
                 onRefresh: { Task { await model.refreshLogs() } },
                 onClear: { model.clearLogs() },
@@ -128,21 +161,20 @@ struct DashboardView: View {
     }
 }
 
+/// Isolated sidebar footer leaf so 1Hz memory updates do not invalidate sidebar navigation rows.
 private struct SidebarStatusFooter: View {
-    let isRunning: Bool
-    let mode: String
-    let memoryMiB: Double
+    var model: NexusAppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                StatusBadgeView(isOnline: isRunning, label: isRunning ? "核心在线" : "离线")
+                StatusBadgeView(isOnline: model.isRunning, label: model.isRunning ? "内核在线" : "离线")
                 Spacer()
-                Text(mode.uppercased())
+                Text(NexusDisplayCopy.outboundModeTitle(model.outboundMode))
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            Text(String(format: "内存 %.1f MiB", memoryMiB))
+            Text(String(format: "应用内存 %.1f MiB", model.residentMemoryMiB))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
@@ -152,137 +184,66 @@ private struct SidebarStatusFooter: View {
 }
 
 struct OverviewPane: View {
-    @Bindable var model: NexusAppModel
+    var model: NexusAppModel
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                heroStatusCard
-                if let group = model.primaryGroup {
-                    quickGroupSwitcherCard(group)
-                }
-                OverviewMetricsSection(
-                    metrics: model.metrics,
-                    diagnostics: model.diagnostics,
-                    network: model.network,
-                    residentMemoryMiB: model.residentMemoryMiB,
-                    workers: max(model.statusSnapshot.workers, model.hostConfig.workers),
-                    rxHistory: model.rxHistory,
-                    txHistory: model.txHistory,
-                    rxRateBytesPerSec: model.rxRateBytesPerSec,
-                    txRateBytesPerSec: model.txRateBytesPerSec
+                OverviewHeaderControls(
+                    activeProfileName: model.activeProfileDisplayName,
+                    activeProfileKind: model.activeProfileKindBadge,
+                    isRunning: model.isRunning,
+                    statusSummary: model.statusSummary,
+                    workspaceSummary: model.workspaceSummaryText,
+                    outboundMode: model.outboundMode,
+                    cacheActionMessage: model.cacheActionMessage,
+                    actionErrorMessage: model.actionErrorMessage,
+                    showPrimaryRefreshActions: false,
+                    onSelectMode: { mode in Task { await model.setOutboundMode(mode) } },
+                    onFlushFakeIp: { Task { await model.flushFakeIpCache() } },
+                    onClearAllCache: { Task { await model.clearCache(scope: "all") } },
+                    onDismissError: { model.clearActionError() },
+                    onRetryError: {
+                        Task {
+                            await model.refreshStatus()
+                            await model.refreshGroupsAndMetrics()
+                        }
+                    }
                 )
+                if let group = model.primaryGroup {
+                    QuickGroupSwitcherCard(
+                        group: group,
+                        isRunning: model.isRunning,
+                        activeRttMs: model.activeGroupRttMs,
+                        onSelectMember: { member in Task { await model.selectMember(group: group.tag, member: member) } },
+                        onProbeGroup: { Task { await model.probeGroup(group: group.tag) } }
+                    )
+                }
+                OverviewLiveMetricsLeaf(model: model)
             }
             .padding()
         }
     }
+}
 
-    private var heroStatusCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(model.activeProfileDisplayName)
-                            .font(.title2.weight(.bold))
-                        Text(model.activeProfileKindBadge)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(NexusPalette.subtleSurface, in: Capsule())
-                        StatusBadgeView(isOnline: model.isRunning, label: model.isRunning ? "在线" : "离线")
-                    }
-                    Text("\(model.statusSummary) · \(model.workspaceSummaryText)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Picker("模式", selection: Binding(
-                    get: { model.outboundMode },
-                    set: { mode in Task { await model.setOutboundMode(mode) } }
-                )) {
-                    Text("Rule").tag("rule")
-                    Text("Global").tag("global")
-                    Text("Direct").tag("direct")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 210)
-            }
+/// Isolated 1Hz observation leaf so frequent metrics/throughput ticks only re-diff this subtree.
+private struct OverviewLiveMetricsLeaf: View {
+    var model: NexusAppModel
 
-            HStack(spacing: 8) {
-                Button {
-                    Task {
-                        await model.refreshStatus()
-                        await model.refreshGroupsAndMetrics()
-                    }
-                } label: {
-                    Label("刷新状态", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button {
-                    Task { await model.reloadConfig() }
-                } label: {
-                    Label("热重载", systemImage: "bolt.circle")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!model.isRunning)
-
-                Button {
-                    Task { await model.flushFakeIpCache() }
-                } label: {
-                    Label("刷新 FakeIP", systemImage: "sparkles")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!model.isRunning)
-
-                Button {
-                    Task { await model.clearCache(scope: "all") }
-                } label: {
-                    Label("清缓存", systemImage: "trash")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!model.isRunning)
-
-                Spacer()
-                if let msg = model.cacheActionMessage, !msg.isEmpty {
-                    Text(msg)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .bentoCard(padding: 16)
-    }
-
-    private func quickGroupSwitcherCard(_ group: OutboundGroupSnapshot) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("快速切换 · \(group.tag)")
-                    .font(.subheadline.weight(.semibold))
-                Text("模式 \(group.mode) · 当前 \(group.active)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            RttPillView(latencyMs: model.activeGroupRttMs, state: model.isRunning ? "up" : "idle")
-            Picker("出站成员", selection: Binding(
-                get: { group.active },
-                set: { member in Task { await model.selectMember(group: group.tag, member: member) } }
-            )) {
-                ForEach(group.members) { member in
-                    Text(member.name).tag(member.name)
-                }
-            }
-            .labelsHidden()
-            .frame(maxWidth: 220)
-            .disabled(!group.supportsManualSelection)
-            Button("测速") {
-                Task { await model.probeGroup(group: group.tag) }
-            }
-            .buttonStyle(.bordered)
-        }
-        .bentoCard(padding: 12)
+    var body: some View {
+        OverviewMetricsSection(
+            metrics: model.metrics,
+            diagnostics: model.diagnostics,
+            network: model.network,
+            isRunning: model.isRunning,
+            residentMemoryMiB: model.residentMemoryMiB,
+            coreMemoryMiB: model.coreMemoryMiB,
+            workers: max(model.statusSnapshot.workers, model.hostConfig.workers),
+            rxHistory: model.rxHistory,
+            txHistory: model.txHistory,
+            rxRateBytesPerSec: model.rxRateBytesPerSec,
+            txRateBytesPerSec: model.txRateBytesPerSec
+        )
     }
 }
 #endif

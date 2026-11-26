@@ -1,13 +1,17 @@
 #if canImport(SwiftUI)
+import Foundation
 import SwiftUI
 import NexusCoreBridge
 
 /// Matte Bento KPI telemetry section shared between macOS Dashboard and iOS/iPadOS views.
+/// Strictly separates Core runtime state/memory from UI host App memory (`gui-design-system.md` §2.2/§3.3).
 public struct OverviewMetricsSection: View {
     public let metrics: MetricsSnapshot
     public let diagnostics: DiagnosticsSnapshot
     public let network: AppleNetworkSnapshot
+    public let isRunning: Bool
     public let residentMemoryMiB: Double?
+    public let coreMemoryMiB: Double?
     public let memoryBudgetMiB: Int
     public let workers: Int
     public let rxHistory: [Double]
@@ -19,7 +23,9 @@ public struct OverviewMetricsSection: View {
         metrics: MetricsSnapshot,
         diagnostics: DiagnosticsSnapshot,
         network: AppleNetworkSnapshot,
+        isRunning: Bool = true,
         residentMemoryMiB: Double? = nil,
+        coreMemoryMiB: Double? = nil,
         memoryBudgetMiB: Int = 50,
         workers: Int = 1,
         rxHistory: [Double] = [],
@@ -30,7 +36,9 @@ public struct OverviewMetricsSection: View {
         self.metrics = metrics
         self.diagnostics = diagnostics
         self.network = network
+        self.isRunning = isRunning
         self.residentMemoryMiB = residentMemoryMiB
+        self.coreMemoryMiB = coreMemoryMiB
         self.memoryBudgetMiB = memoryBudgetMiB
         self.workers = max(1, workers)
         self.rxHistory = rxHistory
@@ -39,9 +47,13 @@ public struct OverviewMetricsSection: View {
         self.txRateBytesPerSec = txRateBytesPerSec
     }
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 155, maximum: 260), spacing: 12),
-    ]
+    private var columns: [GridItem] {
+        #if os(iOS)
+        [GridItem(.adaptive(minimum: 148, maximum: 280), spacing: 10)]
+        #else
+        [GridItem(.adaptive(minimum: 175, maximum: 280), spacing: 12)]
+        #endif
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -54,29 +66,22 @@ public struct OverviewMetricsSection: View {
                     tint: .blue
                 )
                 BentoKpiTile(
-                    title: "累计下行 / 上行",
-                    value: NexusByteFormat.bytes(metrics.downloadBytes),
+                    title: "累计流量",
+                    value: "↓ \(NexusByteFormat.bytes(metrics.downloadBytes))",
                     subtitle: "↑ \(NexusByteFormat.bytes(metrics.uploadBytes))",
                     systemImage: "arrow.up.arrow.down.circle",
                     tint: .teal
                 )
-                if let mem = residentMemoryMiB {
-                    let ok = mem < Double(memoryBudgetMiB)
-                    BentoKpiTile(
-                        title: "常驻内存",
-                        value: String(format: "%.1f MiB", mem),
-                        subtitle: ok ? "预算 < \(memoryBudgetMiB) MiB" : "超限预警 (\(memoryBudgetMiB) MiB)",
-                        systemImage: "memorychip",
-                        tint: ok ? .green : .red
-                    )
-                }
                 BentoKpiTile(
-                    title: "核心并发",
-                    value: "\(workers) 线程",
-                    subtitle: "控制代次 #\(metrics.controlGeneration)",
+                    title: "内核状态",
+                    value: isRunning ? "\(workers) 线程" : "未运行",
+                    subtitle: coreMemorySubtitle,
                     systemImage: "cpu",
-                    tint: .indigo
+                    tint: isRunning ? .indigo : .secondary
                 )
+                if let appMem = residentMemoryMiB {
+                    appMemoryTile(appMem)
+                }
             }
 
             ThroughputCard(
@@ -86,8 +91,36 @@ public struct OverviewMetricsSection: View {
                 txHistory: txHistory
             )
 
-            NetworkDiagnosticsStrip(network: network, diagnostics: diagnostics)
+            NetworkDiagnosticsStrip(network: network)
         }
+    }
+
+    private var coreMemorySubtitle: String {
+        if let coreMem = coreMemoryMiB {
+            return String(format: "内核内存 %.1f MiB", coreMem)
+        }
+        return isRunning ? "内核内存：未上报" : "等待启动"
+    }
+
+    private func appMemoryTile(_ mem: Double) -> some View {
+        #if os(iOS)
+        let ok = mem < Double(memoryBudgetMiB)
+        return BentoKpiTile(
+            title: "应用内存",
+            value: String(format: "%.1f MiB", mem),
+            subtitle: ok ? "扩展预算 < \(memoryBudgetMiB) MiB" : "接近扩展上限 (\(memoryBudgetMiB) MiB)",
+            systemImage: "memorychip",
+            tint: ok ? .green : .red
+        )
+        #else
+        return BentoKpiTile(
+            title: "应用内存",
+            value: String(format: "%.1f MiB", mem),
+            subtitle: "界面进程私有占用",
+            systemImage: "memorychip",
+            tint: .green
+        )
+        #endif
     }
 }
 
@@ -108,20 +141,22 @@ private struct BentoKpiTile: View {
                 Text(title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Text(value)
                 .font(.title3.weight(.semibold).monospacedDigit())
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                .minimumScaleFactor(0.8)
             Text(subtitle)
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .bentoCard(padding: 12)
+        .bentoCard(padding: 12, cornerRadius: 14)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title): \(value), \(subtitle)")
+        .accessibilityLabel("\(title)：\(value)，\(subtitle)")
     }
 }
 
@@ -133,55 +168,76 @@ private struct ThroughputCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("实时吞吐")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 12) {
-                    Label(NexusByteFormat.rate(rxRateBytesPerSec), systemImage: "arrow.down")
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .foregroundStyle(.blue)
-                    Label(NexusByteFormat.rate(txRateBytesPerSec), systemImage: "arrow.up")
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .foregroundStyle(.green)
+                    Text("实时吞吐")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 8)
+                    rateSlots
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("实时吞吐")
+                        .font(.subheadline.weight(.semibold))
+                    rateSlots
                 }
             }
             ThroughputSparklineView(rxSamples: rxHistory, txSamples: txHistory)
         }
-        .bentoCard(padding: 12)
+        .bentoCard(padding: 12, cornerRadius: 14)
+    }
+
+    private var rateSlots: some View {
+        HStack(spacing: 12) {
+            LiveRateLabel(text: NexusByteFormat.rate(rxRateBytesPerSec), systemImage: "arrow.down", tint: .blue)
+            LiveRateLabel(text: NexusByteFormat.rate(txRateBytesPerSec), systemImage: "arrow.up", tint: .green)
+        }
     }
 }
 
 private struct NetworkDiagnosticsStrip: View {
     let network: AppleNetworkSnapshot
-    let diagnostics: DiagnosticsSnapshot
+
+    private var connectivitySymbol: String {
+        guard network.hasConnectivity else { return "wifi.slash" }
+        if network.isExpensive { return "antenna.radiowaves.left.and.right" }
+        if let name = network.interfaceName?.lowercased(), name.hasPrefix("en") {
+            return "wifi"
+        }
+        return "network"
+    }
+
+    private var interfaceTitle: String {
+        guard network.hasConnectivity else { return "网络未连接" }
+        return network.interfaceName ?? "可用网络"
+    }
 
     var body: some View {
-        HStack(spacing: 14) {
-            Label(network.interfaceName ?? "无物理网口", systemImage: "wifi")
+        HStack(spacing: 10) {
+            Label(interfaceTitle, systemImage: connectivitySymbol)
                 .font(.caption.weight(.medium))
+                .foregroundStyle(network.hasConnectivity ? .primary : .secondary)
             if network.isExpensive {
-                Text("计费")
+                Label("计费网络", systemImage: "cellularbars")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
                     .background(Color.orange.opacity(0.12), in: Capsule())
             }
             if network.isConstrained {
-                Text("低数据")
+                Label("低数据模式", systemImage: "tortoise.fill")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.yellow)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.yellow.opacity(0.14), in: Capsule())
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.orange.opacity(0.12), in: Capsule())
             }
-            Spacer()
-            Text("鉴权 \(diagnostics.authorizedRequests) / 拒绝 \(diagnostics.unauthorizedRequests)")
-                .font(.caption2.monospacedDigit())
+            Spacer(minLength: 4)
+            Text(network.hasConnectivity ? "物理链路正常" : "等待网络恢复")
+                .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .bentoCard(padding: 10)
+        .bentoCard(padding: 10, cornerRadius: 14)
         .accessibilityElement(children: .combine)
     }
 }

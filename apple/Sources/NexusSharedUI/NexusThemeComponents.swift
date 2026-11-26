@@ -1,4 +1,5 @@
 #if canImport(SwiftUI)
+import Foundation
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -40,6 +41,7 @@ public enum NexusByteFormat {
     }
 }
 
+/// Adaptive semantic system palette honoring Light/Dark Mode and Increased Contrast.
 public enum NexusPalette {
     public static var cardSurface: Color {
         #if os(macOS)
@@ -52,11 +54,31 @@ public enum NexusPalette {
     }
 
     public static var subtleSurface: Color {
-        Color.primary.opacity(0.04)
+        #if os(macOS)
+        Color(nsColor: .quaternaryLabelColor).opacity(0.35)
+        #elseif canImport(UIKit)
+        Color(uiColor: .tertiarySystemFill)
+        #else
+        Color.primary.opacity(0.06)
+        #endif
     }
 
     public static var hairlineBorder: Color {
-        Color.primary.opacity(0.09)
+        hairlineBorder(increasedContrast: false)
+    }
+
+    public static func hairlineBorder(increasedContrast: Bool) -> Color {
+        #if os(macOS)
+        return increasedContrast
+            ? Color(nsColor: .secondaryLabelColor).opacity(0.65)
+            : Color(nsColor: .separatorColor)
+        #elseif canImport(UIKit)
+        return increasedContrast
+            ? Color(uiColor: .secondaryLabel).opacity(0.65)
+            : Color(uiColor: .separator)
+        #else
+        return Color.primary.opacity(increasedContrast ? 0.35 : 0.14)
+        #endif
     }
 
     public static func rttColor(latencyMs: Int64?, state: String) -> Color {
@@ -70,6 +92,17 @@ public enum NexusPalette {
         return .red
     }
 
+    public static func rttSymbol(latencyMs: Int64?, state: String) -> String {
+        let lower = state.lowercased()
+        if lower == "down" || lower == "failed" || lower == "error" || lower == "timeout" {
+            return "xmark.circle.fill"
+        }
+        guard let ms = latencyMs, ms >= 0 else { return "minus.circle" }
+        if ms < 120 { return "checkmark.circle.fill" }
+        if ms < 300 { return "exclamationmark.triangle.fill" }
+        return "xmark.octagon.fill"
+    }
+
     public static func logLevelColor(_ level: String) -> Color {
         switch level.lowercased() {
         case "error", "fatal": return .red
@@ -81,33 +114,139 @@ public enum NexusPalette {
     }
 }
 
+/// Matte flat card modifier with Increased Contrast border adaptation and zero `.compositingGroup()` overhead.
 public struct BentoCardModifier: ViewModifier {
     private let padding: CGFloat
     private let cornerRadius: CGFloat
+    @Environment(\.colorSchemeContrast) private var contrast
 
-    public init(padding: CGFloat = 14, cornerRadius: CGFloat = 12) {
+    public init(padding: CGFloat = 12, cornerRadius: CGFloat = 14) {
         self.padding = padding
         self.cornerRadius = cornerRadius
     }
 
     public func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let increased = contrast == .increased
         content
             .padding(padding)
-            .background(NexusPalette.cardSurface)
-            .overlay(shape.strokeBorder(NexusPalette.hairlineBorder, lineWidth: 1))
-            .compositingGroup()
-            .clipShape(shape)
+            .background(NexusPalette.cardSurface, in: shape)
+            .overlay(
+                shape.strokeBorder(
+                    NexusPalette.hairlineBorder(increasedContrast: increased),
+                    lineWidth: increased ? 1.25 : 1
+                )
+            )
     }
 }
 
 public extension View {
-    func bentoCard(padding: CGFloat = 14, cornerRadius: CGFloat = 12) -> some View {
+    func bentoCard(padding: CGFloat = 12, cornerRadius: CGFloat = 14) -> some View {
         modifier(BentoCardModifier(padding: padding, cornerRadius: cornerRadius))
+    }
+
+    @ViewBuilder
+    func nexusTooltip(_ text: String) -> some View {
+        #if os(macOS)
+        self.help(text)
+        #else
+        self
+        #endif
     }
 }
 
-/// Color-coded latency badge with monospaced digits and VoiceOver description.
+/// Tactile, Reduce-Motion-aware button style for filter & group pills with pointer-down press feedback,
+/// subtle macOS hover tint, and >= 44pt iOS touch targets.
+public struct NexusPillButtonStyle: ButtonStyle {
+    public init() {}
+
+    public func makeBody(configuration: Configuration) -> some View {
+        NexusPillButtonBody(configuration: configuration)
+    }
+}
+
+private struct NexusPillButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if os(macOS)
+    @State private var isHovered = false
+    #endif
+
+    var body: some View {
+        configuration.label
+            #if os(macOS)
+            .background(isHovered ? NexusPalette.subtleSurface : Color.clear, in: Capsule())
+            .onHover { isHovered = $0 }
+            #elseif os(iOS)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            #endif
+            .scaleEffect((!reduceMotion && configuration.isPressed) ? 0.97 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.11), value: configuration.isPressed)
+    }
+}
+
+/// Defers `ProgressView` display by ~250ms so sub-250ms local probes and DNS queries never flash a spinner.
+public struct DeferredSpinnerView: View {
+    public let isActive: Bool
+    public let delayMilliseconds: Int
+    @State private var visible = false
+
+    public init(isActive: Bool, delayMilliseconds: Int = 250) {
+        self.isActive = isActive
+        self.delayMilliseconds = delayMilliseconds
+    }
+
+    public var body: some View {
+        Group {
+            if visible {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .task(id: isActive) {
+            guard isActive else {
+                visible = false
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(delayMilliseconds))
+            guard !Task.isCancelled else { return }
+            visible = true
+        }
+    }
+}
+
+/// Fixed-minWidth, right-aligned live numeric label preventing 1Hz horizontal layout jitter.
+public struct LiveRateLabel: View {
+    public let text: String
+    public let systemImage: String
+    public let tint: Color
+    @ScaledMetric(relativeTo: .caption) private var minSlotWidth: CGFloat = 82
+
+    public init(text: String, systemImage: String, tint: Color) {
+        self.text = text
+        self.systemImage = systemImage
+        self.tint = tint
+    }
+
+    public var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .accessibilityHidden(true)
+            Text(text)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(minWidth: minSlotWidth, alignment: .trailing)
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(tint)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Latency badge combining semantic color, non-color SF Symbol, and monospaced digits for WCAG AA accessibility.
 public struct RttPillView: View {
     public let latencyMs: Int64?
     public let state: String
@@ -119,22 +258,89 @@ public struct RttPillView: View {
 
     private var labelText: String {
         if let ms = latencyMs, ms >= 0 { return "\(ms) ms" }
-        return state.isEmpty ? "—" : state
+        switch state.lowercased() {
+        case "down", "failed", "error", "timeout": return "超时"
+        case "idle", "": return "—"
+        default: return state
+        }
     }
 
     public var body: some View {
         let tint = NexusPalette.rttColor(latencyMs: latencyMs, state: state)
-        Text(labelText)
-            .font(.caption.weight(.semibold).monospacedDigit())
-            .foregroundStyle(tint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(tint.opacity(0.12), in: Capsule())
-            .accessibilityLabel("延迟 \(labelText)")
+        let symbol = NexusPalette.rttSymbol(latencyMs: latencyMs, state: state)
+        HStack(spacing: 4) {
+            Image(systemName: symbol)
+                .font(.caption2)
+                .accessibilityHidden(true)
+            Text(labelText)
+                .font(.caption.weight(.semibold).monospacedDigit())
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(tint.opacity(0.12), in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("延迟 \(labelText)")
     }
 }
 
-/// Live connection/core status capsule.
+/// Shared dismissible error banner with optional retry CTA, supporting both standalone
+/// shell placement and flush hairline-separated placement inside a parent card.
+public struct ActionErrorBanner: View {
+    public let message: String
+    public let flush: Bool
+    public let onRetry: (() -> Void)?
+    public let onDismiss: () -> Void
+
+    public init(
+        message: String,
+        flush: Bool = false,
+        onRetry: (() -> Void)? = nil,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.message = message
+        self.flush = flush
+        self.onRetry = onRetry
+        self.onDismiss = onDismiss
+    }
+
+    public var body: some View {
+        let row = HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+            Spacer(minLength: 4)
+            if let onRetry {
+                Button("重试", action: onRetry)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.semibold))
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("关闭错误提示")
+        }
+        if flush {
+            VStack(alignment: .leading, spacing: 8) {
+                Divider()
+                row
+            }
+        } else {
+            row
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+}
+
+/// Live connection/core status capsule with icon dot + label.
 public struct StatusBadgeView: View {
     public let isOnline: Bool
     public let label: String
@@ -161,7 +367,8 @@ public struct StatusBadgeView: View {
     }
 }
 
-/// Lightweight dual RX/TX throughput sparkline using native SwiftUI `Canvas`.
+/// Lightweight dual RX/TX throughput sparkline using native SwiftUI `Canvas` with
+/// peak scale caption, dashed TX vs solid+fill RX distinction, and full VoiceOver readout.
 public struct ThroughputSparklineView: View {
     public let rxSamples: [Double]
     public let txSamples: [Double]
@@ -171,15 +378,31 @@ public struct ThroughputSparklineView: View {
         self.txSamples = txSamples
     }
 
+    private var peakValue: Double {
+        max(1024.0, (rxSamples + txSamples).max() ?? 1024.0)
+    }
+
     public var body: some View {
-        Canvas { context, size in
-            let maxVal = max(1024.0, (rxSamples + txSamples).max() ?? 1024.0)
-            drawSeries(rxSamples, maxVal: maxVal, color: .blue, in: &context, size: size, fill: true)
-            drawSeries(txSamples, maxVal: maxVal, color: .green, in: &context, size: size, fill: false)
+        let maxVal = peakValue
+        ZStack(alignment: .topTrailing) {
+            Canvas { context, size in
+                drawSeries(rxSamples, maxVal: maxVal, color: .blue, in: &context, size: size, fill: true, dashed: false)
+                drawSeries(txSamples, maxVal: maxVal, color: .green, in: &context, size: size, fill: false, dashed: true)
+            }
+            .frame(height: 54)
+
+            Text("峰值 \(NexusByteFormat.rate(maxVal))")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .allowsHitTesting(false)
         }
-        .frame(height: 54)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("实时上下行速率折线图")
+        .accessibilityValue(
+            "下行 \(NexusByteFormat.rate(rxSamples.last ?? 0))，上行 \(NexusByteFormat.rate(txSamples.last ?? 0))，峰值 \(NexusByteFormat.rate(maxVal))"
+        )
     }
 
     private func drawSeries(
@@ -188,7 +411,8 @@ public struct ThroughputSparklineView: View {
         color: Color,
         in context: inout GraphicsContext,
         size: CGSize,
-        fill: Bool
+        fill: Bool,
+        dashed: Bool
     ) {
         guard samples.count >= 2, size.width > 4, size.height > 4 else { return }
         let stepX = size.width / CGFloat(samples.count - 1)
@@ -210,7 +434,13 @@ public struct ThroughputSparklineView: View {
             fillPath.closeSubpath()
             context.fill(fillPath, with: .color(color.opacity(0.12)))
         }
-        context.stroke(strokePath, with: .color(color), style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+        let style = StrokeStyle(
+            lineWidth: 1.8,
+            lineCap: .round,
+            lineJoin: .round,
+            dash: dashed ? [4, 3] : []
+        )
+        context.stroke(strokePath, with: .color(color), style: style)
     }
 }
 #endif

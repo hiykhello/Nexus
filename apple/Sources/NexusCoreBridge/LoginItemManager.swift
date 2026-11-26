@@ -16,7 +16,7 @@ public enum LoginItemStatus: String, Sendable, Equatable {
         case .requiresApproval: return "请在系统设置中批准后台运行"
         case .notRegistered: return "未注册后台启动项"
         case .notFound: return "未找到主应用签名项"
-        case .unsupported: return "当前平台不支持 SMAppService"
+        case .unsupported: return "当前系统不支持开机自启"
         }
     }
 }

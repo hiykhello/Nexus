@@ -25,12 +25,32 @@ enum AppSection: String, CaseIterable, Identifiable, Hashable {
         case .settings: "gearshape"
         }
     }
+
+    var supportsSearchFocus: Bool {
+        switch self {
+        case .proxies, .workspace, .rulesDns, .connections, .logs:
+            return true
+        case .overview, .settings:
+            return false
+        }
+    }
 }
 
 @MainActor
 @Observable
 final class NexusAppModel {
+    static let compactMobileTabs: [AppSection] = [.overview, .proxies, .rulesDns, .connections, .settings]
+
+    static var appVersionLabel: String {
+        if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String, !version.isEmpty {
+            return "v\(version)"
+        }
+        return "v1.0"
+    }
+
     var selectedSection: AppSection = .overview
+    var pendingSearchFocusSection: AppSection?
+    var searchFocusTrigger: Int = 0
     var isRunning = false
     var outboundMode = "rule"
     var backend: AppleTunnelBackend = .launchDaemonUtun
@@ -55,8 +75,10 @@ final class NexusAppModel {
     var daemonState: DaemonRegistrationState = .notRegistered
     var loginItemStatus: LoginItemStatus = .unsupported
     var statusSummary = "未连接"
+    var actionErrorMessage: String?
     var statusSnapshot = StatusSnapshot()
     var residentMemoryMiB: Double = TunnelMemoryMonitor.currentResidentMemoryMiB()
+    var coreMemoryMiB: Double?
     var rxRateBytesPerSec: Double = 0
     var txRateBytesPerSec: Double = 0
     var rxHistory: [Double] = Array(repeating: 0, count: 24)
@@ -96,7 +118,7 @@ final class NexusAppModel {
     var hostConfig = AppleHostConfig()
     var activeProfileID = ""
     var syncConfig = WebDavSyncConfig()
-    var syncStatusSummary = "未配置 WebDAV 同步"
+    var syncStatusSummary = "未配置同步"
     var syncConflictSummary: String?
     var controlEndpoint = "http://127.0.0.1:9090"
     var hasStoredBearerToken = false
@@ -121,6 +143,9 @@ final class NexusAppModel {
     var elevationSaveTask: Task<Void, Never>?
     var isWebSocketActive = false
     var liveStreamGeneration: UInt64 = 0
+    var outboundModeTransition = OptimisticTransition(initial: "rule")
+    var logLevelGeneration: UInt64 = 0
+    var groupSelectionGeneration: UInt64 = 0
 
     init() {
         let sockPath = "/var/run/org.nexus.apple/c.sock"
@@ -135,6 +160,31 @@ final class NexusAppModel {
         self.daemonState = daemonController.status()
         self.loginItemStatus = LoginItemManager.currentStatus()
         startNetworkMonitor()
+    }
+
+    func triggerSearchFocus() {
+        let target: AppSection = selectedSection.supportsSearchFocus ? selectedSection : .rulesDns
+        selectedSection = target
+        pendingSearchFocusSection = target
+        searchFocusTrigger &+= 1
+    }
+
+    func consumeSearchFocus(for section: AppSection) {
+        if pendingSearchFocusSection == section {
+            pendingSearchFocusSection = nil
+        }
+    }
+
+    func normalizeCompactSelection() {
+        selectedSection = CompactTabNormalizer.normalize(
+            selected: selectedSection,
+            compactTabs: Self.compactMobileTabs,
+            fallback: .overview
+        )
+    }
+
+    func clearActionError() {
+        actionErrorMessage = nil
     }
 
     var showDaemonManagementControls: Bool {
@@ -170,7 +220,7 @@ final class NexusAppModel {
     }
 
     var workspaceSummaryText: String {
-        "r\(workspace.revision) · \(workspace.profiles.count) 配置 · \(workspace.subscriptions.count) 订阅"
+        "\(workspace.profiles.count) 配置 · \(workspace.subscriptions.count) 订阅"
     }
 
     static func defaultWorkspaceDirectory() -> URL {
@@ -242,7 +292,7 @@ final class NexusAppModel {
         case .metrics(let snap):
             applyStatusSnapshot(snap)
         case .serverError(_, let message):
-            if !message.isEmpty { statusSummary = "控制流错误: \(message)" }
+            if !message.isEmpty { actionErrorMessage = "控制流异常：\(message)" }
         }
     }
 
@@ -328,7 +378,8 @@ final class NexusAppModel {
     func applyStatusSnapshot(_ snap: StatusSnapshot) {
         statusSnapshot = snap
         isRunning = snap.state.lowercased() == "running"
-        statusSummary = "\(snap.state) · \(snap.workers) 线程 · \(snap.listeners) 监听"
+        let stateTitle = NexusDisplayCopy.coreStateTitle(snap.state)
+        statusSummary = "\(stateTitle) · \(snap.workers) 线程 · \(snap.listeners) 监听"
         metrics = MetricsSnapshot(
             controlGeneration: snap.controlGeneration,
             activeSessions: snap.activeSessions,

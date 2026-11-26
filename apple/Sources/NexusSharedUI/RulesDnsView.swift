@@ -1,15 +1,18 @@
 #if canImport(SwiftUI)
+import Foundation
 import SwiftUI
 import NexusCoreBridge
 
-/// Live searchable Rules (`/v1/rules`) + interactive Live DNS Query (`/v1/dns/query`)
-/// + FakeIP/DNS cache flush controls shared across macOS and iOS.
+/// Live searchable Rules + interactive Live DNS Query + FakeIP/DNS cache controls shared across macOS and iOS.
 public struct RulesDnsView: View {
     public let rules: [RuleMetric]
     public let dnsResponse: DnsQueryResponse?
     public let dnsError: String?
     public let isQueryingDns: Bool
     public let cacheActionMessage: String?
+    public let focusSearchTrigger: Int
+    public let shouldAutoFocusSearch: Bool
+    public let onConsumeSearchFocus: () -> Void
     public let onRefreshRules: () -> Void
     public let onQueryDns: (String, String, String?) -> Void
     public let onFlushFakeIp: () -> Void
@@ -20,6 +23,13 @@ public struct RulesDnsView: View {
     @State private var domainInput: String = "example.com"
     @State private var recordType: String = "A"
     @State private var serverInput: String = ""
+    @State private var showClearAllConfirm: Bool = false
+    @FocusState private var isRuleSearchFocused: Bool
+    @ScaledMetric(relativeTo: .body) private var recordPickerWidth: CGFloat = 92
+    @ScaledMetric(relativeTo: .body) private var serverFieldWidth: CGFloat = 170
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
 
     private let recordTypes = ["A", "AAAA", "CNAME", "HTTPS", "SVCB", "TXT", "MX", "NS", "SRV"]
 
@@ -29,6 +39,9 @@ public struct RulesDnsView: View {
         dnsError: String?,
         isQueryingDns: Bool,
         cacheActionMessage: String?,
+        focusSearchTrigger: Int = 0,
+        shouldAutoFocusSearch: Bool = false,
+        onConsumeSearchFocus: @escaping () -> Void = {},
         onRefreshRules: @escaping () -> Void,
         onQueryDns: @escaping (String, String, String?) -> Void,
         onFlushFakeIp: @escaping () -> Void,
@@ -40,6 +53,9 @@ public struct RulesDnsView: View {
         self.dnsError = dnsError
         self.isQueryingDns = isQueryingDns
         self.cacheActionMessage = cacheActionMessage
+        self.focusSearchTrigger = focusSearchTrigger
+        self.shouldAutoFocusSearch = shouldAutoFocusSearch
+        self.onConsumeSearchFocus = onConsumeSearchFocus
         self.onRefreshRules = onRefreshRules
         self.onQueryDns = onQueryDns
         self.onFlushFakeIp = onFlushFakeIp
@@ -69,6 +85,37 @@ public struct RulesDnsView: View {
         .task {
             if rules.isEmpty { onRefreshRules() }
         }
+        .onAppear {
+            consumePendingSearchFocusIfNeeded()
+        }
+        .onChange(of: focusSearchTrigger) { _, _ in
+            consumePendingSearchFocusIfNeeded()
+        }
+        .confirmationDialog(
+            "确认清空全部缓存？",
+            isPresented: $showClearAllConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("清空全部缓存", role: .destructive, action: onClearAllCache)
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将清理 DNS 与路由运行时缓存，不会删除本地配置。")
+        }
+    }
+
+    private func consumePendingSearchFocusIfNeeded() {
+        if shouldAutoFocusSearch {
+            isRuleSearchFocused = true
+            onConsumeSearchFocus()
+        }
+    }
+
+    private var isCompactLayout: Bool {
+        #if os(iOS)
+        return sizeClass == .compact
+        #else
+        return false
+        #endif
     }
 
     private var dnsInspectorCard: some View {
@@ -77,105 +124,204 @@ public struct RulesDnsView: View {
                 Label("实时 DNS 探测", systemImage: "magnifyingglass.circle")
                     .font(.headline)
                 Spacer()
-                if isQueryingDns {
-                    ProgressView().controlSize(.small)
-                }
+                DeferredSpinnerView(isActive: isQueryingDns)
             }
 
-            HStack(spacing: 8) {
-                TextField("域名 (例如 example.com)", text: $domainInput)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { triggerDnsQuery() }
-                    .accessibilityLabel("DNS 查询域名")
-                Picker("记录类型", selection: $recordType) {
-                    ForEach(recordTypes, id: \.self) { t in
-                        Text(t).tag(t)
+            if isCompactLayout {
+                VStack(alignment: .leading, spacing: 8) {
+                    domainField
+                    HStack(spacing: 8) {
+                        recordTypePicker
+                        serverField
+                        queryButton
                     }
                 }
-                .labelsHidden()
-                .frame(width: 96)
-                TextField("上游服务器 (可选)", text: $serverInput)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 180)
-                    .onSubmit { triggerDnsQuery() }
-                Button("查询", action: triggerDnsQuery)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isQueryingDns || domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } else {
+                HStack(spacing: 8) {
+                    domainField
+                        .frame(minWidth: 140)
+                    recordTypePicker
+                        .frame(minWidth: recordPickerWidth, maxWidth: recordPickerWidth + 24)
+                    serverField
+                        .frame(minWidth: 120, idealWidth: serverFieldWidth, maxWidth: 220)
+                    queryButton
+                }
             }
 
             if let err = dnsError, !err.isEmpty {
-                Text("查询失败: \(err)")
+                Text("查询失败：\(err)")
                     .font(.caption)
                     .foregroundStyle(.red)
             }
 
             if let resp = dnsResponse {
-                DnsResponseSummaryCard(response: resp)
+                Divider()
+                DnsResponseSummarySection(response: resp)
             }
         }
-        .bentoCard(padding: 12)
+        .bentoCard(padding: 12, cornerRadius: 14)
+    }
+
+    private var domainField: some View {
+        TextField("域名（例如 example.com）", text: $domainInput)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit { triggerDnsQuery() }
+            .accessibilityLabel("DNS 查询域名")
+    }
+
+    private var recordTypePicker: some View {
+        Picker("记录类型", selection: $recordType) {
+            ForEach(recordTypes, id: \.self) { t in
+                Text(t).tag(t)
+            }
+        }
+        .labelsHidden()
+    }
+
+    private var serverField: some View {
+        TextField("上游服务器（可选）", text: $serverInput)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit { triggerDnsQuery() }
+            .accessibilityLabel("上游 DNS 服务器")
+    }
+
+    private var queryButton: some View {
+        Button("查询", action: triggerDnsQuery)
+            .buttonStyle(.borderedProminent)
+            .disabled(isQueryingDns || domainInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            #if os(iOS)
+            .frame(minHeight: 44)
+            #endif
     }
 
     private var cacheControlsBar: some View {
-        HStack(spacing: 8) {
-            Button(action: onFlushFakeIp) {
-                Label("刷新 FakeIP", systemImage: "sparkles")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                cacheButtons
+                Spacer(minLength: 4)
+                cacheStatusLabel
             }
-            .buttonStyle(.bordered)
-            .accessibilityHint("清理未固定的 FakeIP 映射缓存")
-
-            Button(action: onClearDnsCache) {
-                Label("清空 DNS 缓存", systemImage: "trash")
+            VStack(alignment: .leading, spacing: 6) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        cacheButtons
+                    }
+                }
+                cacheStatusLabel
             }
-            .buttonStyle(.bordered)
+        }
+    }
 
-            Button(action: onClearAllCache) {
-                Label("清空全部缓存", systemImage: "xmark.bin")
-            }
-            .buttonStyle(.bordered)
+    @ViewBuilder
+    private var cacheButtons: some View {
+        Button(action: onFlushFakeIp) {
+            Label("刷新 FakeIP", systemImage: "sparkles")
+        }
+        .buttonStyle(.bordered)
+        .accessibilityHint("清理未固定的 FakeIP 映射缓存")
+        #if os(iOS)
+        .frame(minHeight: 44)
+        #endif
 
-            Spacer()
+        Button(action: onClearDnsCache) {
+            Label("清空 DNS 缓存", systemImage: "trash")
+        }
+        .buttonStyle(.bordered)
+        #if os(iOS)
+        .frame(minHeight: 44)
+        #endif
 
-            if let msg = cacheActionMessage, !msg.isEmpty {
-                Text(msg)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+        Button {
+            showClearAllConfirm = true
+        } label: {
+            Label("清空全部缓存", systemImage: "xmark.bin")
+        }
+        .buttonStyle(.bordered)
+        #if os(iOS)
+        .frame(minHeight: 44)
+        #endif
+    }
+
+    @ViewBuilder
+    private var cacheStatusLabel: some View {
+        if let msg = cacheActionMessage, !msg.isEmpty {
+            Text(msg)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
     }
 
     private var rulesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("生效路由规则")
-                    .font(.headline)
-                Text("\(filteredRules.count) / \(rules.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(NexusPalette.subtleSurface, in: Capsule())
-                Spacer()
-                TextField("过滤类型 / 目标 / 条件...", text: $ruleSearch)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 260)
-                Button(action: onRefreshRules) {
-                    Label("刷新", systemImage: "arrow.clockwise")
+            if isCompactLayout {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        rulesHeading
+                        Spacer()
+                        refreshRulesButton
+                    }
+                    ruleSearchField
+                }
+            } else {
+                HStack(spacing: 8) {
+                    rulesHeading
+                    Spacer(minLength: 8)
+                    ruleSearchField
+                        .frame(minWidth: 160, idealWidth: 240, maxWidth: 280)
+                    refreshRulesButton
                 }
             }
 
-            if filteredRules.isEmpty {
-                ContentUnavailableView(
-                    "暂无匹配规则",
-                    systemImage: "list.bullet.rectangle",
-                    description: Text("连接核心控制面后点击刷新以加载当前已编译路由规则。")
-                )
+            if rules.isEmpty {
+                ContentUnavailableView {
+                    Label("暂无生效规则", systemImage: "list.bullet.rectangle")
+                } description: {
+                    Text("连接内核后点击刷新即可查看当前生效路由规则。")
+                } actions: {
+                    Button("刷新规则", action: onRefreshRules)
+                        .buttonStyle(.borderedProminent)
+                }
+            } else if filteredRules.isEmpty {
+                ContentUnavailableView {
+                    Label("未找到“\(ruleSearch)”", systemImage: "magnifyingglass")
+                } description: {
+                    Text("请尝试其他关键词或重置筛选条件。")
+                } actions: {
+                    Button("重置筛选") { ruleSearch = "" }
+                        .buttonStyle(.bordered)
+                }
             } else {
                 List(filteredRules) { rule in
                     RuleRowView(rule: rule)
                 }
             }
         }
+    }
+
+    private var rulesHeading: some View {
+        HStack(spacing: 8) {
+            Text("生效路由规则")
+                .font(.headline)
+            Text("\(filteredRules.count) / \(rules.count) 条")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var ruleSearchField: some View {
+        TextField("过滤类型 / 目标 / 条件…", text: $ruleSearch)
+            .textFieldStyle(.roundedBorder)
+            .focused($isRuleSearchFocused)
+            .accessibilityLabel("过滤路由规则")
+    }
+
+    private var refreshRulesButton: some View {
+        Button(action: onRefreshRules) {
+            Label("刷新", systemImage: "arrow.clockwise")
+        }
+        #if os(iOS)
+        .frame(minHeight: 44)
+        #endif
     }
 
     private func triggerDnsQuery() {
@@ -186,8 +332,9 @@ public struct RulesDnsView: View {
     }
 }
 
-private struct DnsResponseSummaryCard: View {
+private struct DnsResponseSummarySection: View {
     let response: DnsQueryResponse
+    @ScaledMetric(relativeTo: .caption2) private var recordTypeColWidth: CGFloat = 48
 
     private var rcodeTint: Color {
         response.rcode == 0 ? .green : (response.rcode == 3 ? .orange : .red)
@@ -199,11 +346,11 @@ private struct DnsResponseSummaryCard: View {
                 Text(response.rcodeName.isEmpty ? "RCODE \(response.rcode)" : response.rcodeName)
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(rcodeTint)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(rcodeTint.opacity(0.12), in: Capsule())
                 Text("\(response.name) · \(response.type)")
                     .font(.caption.weight(.semibold).monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .nexusTooltip("\(response.name) (\(response.type))")
                 Spacer()
                 Text("TTL \(response.ttl)s · \(response.elapsedMs) ms")
                     .font(.caption.monospacedDigit())
@@ -211,7 +358,7 @@ private struct DnsResponseSummaryCard: View {
             }
 
             if response.answers.isEmpty {
-                Text(response.state == "pending" ? "查询排队中..." : "无应答记录")
+                Text(response.state == "pending" ? "查询排队中…" : "无应答记录")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -220,11 +367,14 @@ private struct DnsResponseSummaryCard: View {
                         Text(ans.type)
                             .font(.caption2.weight(.semibold).monospaced())
                             .foregroundStyle(.blue)
-                            .frame(width: 48, alignment: .leading)
+                            .frame(minWidth: recordTypeColWidth, alignment: .leading)
                         Text(ans.data)
                             .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                             .textSelection(.enabled)
-                        Spacer()
+                            .nexusTooltip(ans.data)
+                        Spacer(minLength: 4)
                         Text("\(ans.ttl)s")
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(.secondary)
@@ -232,13 +382,13 @@ private struct DnsResponseSummaryCard: View {
                 }
             }
         }
-        .padding(10)
-        .background(NexusPalette.subtleSurface, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
 private struct RuleRowView: View {
     let rule: RuleMetric
+    @ScaledMetric(relativeTo: .caption) private var indexColWidth: CGFloat = 40
+    @ScaledMetric(relativeTo: .caption) private var typeColWidth: CGFloat = 104
 
     private var targetTint: Color {
         switch rule.target.lowercased() {
@@ -253,22 +403,22 @@ private struct RuleRowView: View {
             Text("#\(rule.index)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 42, alignment: .trailing)
+                .frame(minWidth: indexColWidth, alignment: .trailing)
             Text(rule.type)
                 .font(.caption.weight(.medium).monospaced())
-                .frame(width: 112, alignment: .leading)
+                .frame(minWidth: typeColWidth, alignment: .leading)
                 .lineLimit(1)
             Text(rule.summary)
                 .font(.caption.monospaced())
                 .lineLimit(1)
+                .truncationMode(.middle)
                 .textSelection(.enabled)
-            Spacer()
+                .nexusTooltip(rule.summary)
+            Spacer(minLength: 6)
             Text(rule.target.isEmpty ? rule.action : rule.target)
-                .font(.caption2.weight(.semibold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(targetTint)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(targetTint.opacity(0.12), in: Capsule())
+                .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
     }

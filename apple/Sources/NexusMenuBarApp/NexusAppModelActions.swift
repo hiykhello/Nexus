@@ -3,7 +3,8 @@ import Foundation
 import Observation
 import NexusCoreBridge
 
-/// Workspace, SQLite, Keychain, Daemon, and Wave 30–31 Control API action methods for `NexusAppModel`.
+/// Workspace, Keychain, Daemon, and Control API action methods for `NexusAppModel`
+/// with optimistic state rollback and user-facing error reporting.
 extension NexusAppModel {
     func loadWorkspaceState(rootDirectory: URL? = nil) async {
         if rootDirectory == nil, let pending = elevationSaveTask { await pending.value }
@@ -24,18 +25,25 @@ extension NexusAppModel {
         }
         let tel = await telStore.load()
         if !tel.activeProfileId.isEmpty { activeProfileID = tel.activeProfileId }
-        if !tel.outboundMode.isEmpty { outboundMode = tel.outboundMode }
+        if !tel.outboundMode.isEmpty, outboundModeTransition.pendingFrom == nil {
+            outboundModeTransition.syncConfirmed(tel.outboundMode)
+            outboundMode = outboundModeTransition.current
+        }
         if tel.unreadUnexpectedCrash && !tel.lastCrashReason.isEmpty {
-            statusSummary = "上次异常退出: \(tel.lastCrashReason)"
+            actionErrorMessage = "上次异常退出：\(tel.lastCrashReason)"
         }
     }
 
     func saveHostConfig() async {
         let store = HostConfigStore(rootDirectory: Self.defaultWorkspaceDirectory(), database: clientDatabase)
-        if let saved = try? await store.save(hostConfig) {
+        do {
+            let saved = try await store.save(hostConfig)
             hostConfig = saved
             rebuildControlClient(fromListen: saved.controlHttpListen)
-            statusSummary = "代理设置已保存"
+            actionErrorMessage = nil
+            statusSummary = "设置已保存"
+        } catch {
+            actionErrorMessage = "保存设置失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
@@ -45,7 +53,10 @@ extension NexusAppModel {
         if keychainStore.saveToken(trimmed) {
             hasStoredBearerToken = true
             rebuildControlClient(fromListen: hostConfig.controlHttpListen)
-            statusSummary = "控制面 Token 已写入 Keychain"
+            actionErrorMessage = nil
+            statusSummary = "访问密钥已安全保存至系统钥匙串"
+        } else {
+            actionErrorMessage = "保存访问密钥失败，请检查系统钥匙串访问权限"
         }
     }
 
@@ -53,7 +64,8 @@ extension NexusAppModel {
         keychainStore.deleteToken()
         hasStoredBearerToken = false
         rebuildControlClient(fromListen: hostConfig.controlHttpListen)
-        statusSummary = "已清除 Keychain 控制面 Token"
+        actionErrorMessage = nil
+        statusSummary = "已清除系统钥匙串中的访问密钥"
     }
 
     func rebuildControlClient(fromListen listen: String) {
@@ -79,8 +91,11 @@ extension NexusAppModel {
         await loadWorkspaceState()
         if let snap = try? await httpControl.statusSnapshot() {
             applyStatusSnapshot(snap)
-            if let modeSnap = try? await httpControl.fetchMode() {
-                outboundMode = modeSnap.mode
+            actionErrorMessage = nil
+            let modeGen = outboundModeTransition.generation
+            if let modeSnap = try? await httpControl.fetchMode(), modeGen == outboundModeTransition.generation {
+                outboundModeTransition.syncConfirmed(modeSnap.mode)
+                outboundMode = outboundModeTransition.current
             }
             startLiveStreams()
             return
@@ -88,48 +103,72 @@ extension NexusAppModel {
         do {
             let text = try await session.status()
             isRunning = true
-            statusSummary = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            actionErrorMessage = nil
+            statusSummary = NexusDisplayCopy.coreStateTitle(text.trimmingCharacters(in: .whitespacesAndNewlines))
         } catch {
             isRunning = false
             stopLiveStreams()
-            statusSummary = "未连接: \(error.localizedDescription)"
+            statusSummary = "未连接"
+            actionErrorMessage = NexusDisplayCopy.friendlyErrorMessage(error)
         }
     }
 
     func setOutboundMode(_ mode: String) async {
-        outboundMode = mode
+        let (_, gen) = outboundModeTransition.begin(to: mode)
+        outboundMode = outboundModeTransition.current
         let telStore = TelemetryStore(rootDirectory: Self.defaultWorkspaceDirectory(), database: clientDatabase)
-        _ = try? await telStore.setOutboundMode(mode)
         do {
             let updated = try await httpControl.setMode(mode)
-            outboundMode = updated.mode
-            statusSummary = "已切换为 \(updated.mode.uppercased()) 模式"
+            guard outboundModeTransition.commit(updated.mode, for: gen) else { return }
+            outboundMode = outboundModeTransition.current
+            _ = try? await telStore.setOutboundMode(updated.mode)
+            actionErrorMessage = nil
+            statusSummary = "已切换为\(NexusDisplayCopy.outboundModeTitle(updated.mode))模式"
         } catch {
-            statusSummary = "模式切换失败: \(error.localizedDescription)"
+            guard let reverted = outboundModeTransition.rollback(for: gen) else { return }
+            outboundMode = reverted
+            _ = try? await telStore.setOutboundMode(reverted)
+            actionErrorMessage = "切换出站模式失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
     func reloadConfig() async {
         do {
             try await httpControl.reload()
-            statusSummary = "热重载已触发"
+            actionErrorMessage = nil
+            statusSummary = "已触发热重载"
         } catch {
             do {
                 _ = try await session.reload()
+                actionErrorMessage = nil
                 statusSummary = "热重载成功"
             } catch {
-                statusSummary = "热重载失败: \(error.localizedDescription)"
+                actionErrorMessage = "热重载失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
             }
         }
     }
 
     func applyLogLevel(_ level: String, domain: String = "global") async {
+        let previous = logLevel
+        logLevelGeneration &+= 1
+        let gen = logLevelGeneration
         logLevel = level
         do {
             try await httpControl.setLogLevel(domain: domain, level: level)
+            guard gen == logLevelGeneration else { return }
+            actionErrorMessage = nil
         } catch {
-            _ = try? await session.setLogLevel(level)
+            do {
+                _ = try await session.setLogLevel(level)
+                guard gen == logLevelGeneration else { return }
+                actionErrorMessage = nil
+            } catch {
+                guard gen == logLevelGeneration else { return }
+                logLevel = previous
+                actionErrorMessage = "设置日志级别失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+            }
         }
+        guard gen == logLevelGeneration else { return }
         await refreshLogs()
     }
 
@@ -142,7 +181,11 @@ extension NexusAppModel {
     func clearLogs() { logs = [] }
 
     func inspectConnection(id: String) async {
-        selectedConnectionDetail = try? await httpControl.connectionDetail(id: id)
+        if let detail = try? await httpControl.connectionDetail(id: id) {
+            selectedConnectionDetail = detail
+        } else if let cached = connections.first(where: { $0.id == id }) {
+            selectedConnectionDetail = cached
+        }
     }
 
     func refreshGroupsAndMetrics() async {
@@ -157,20 +200,61 @@ extension NexusAppModel {
     }
 
     func selectMember(group: String, member: String) async {
-        do { try await httpControl.selectGroup(tag: group, member: member) }
-        catch { _ = try? await session.selectOutbound(group: group, member: member) }
+        let previousGroups = groups
+        groupSelectionGeneration &+= 1
+        let gen = groupSelectionGeneration
+        if let idx = groups.firstIndex(where: { $0.tag == group }) {
+            let current = groups[idx]
+            groups[idx] = OutboundGroupSnapshot(
+                tag: current.tag,
+                mode: current.mode,
+                active: member,
+                manualOverride: true,
+                members: current.members
+            )
+        }
+        do {
+            try await httpControl.selectGroup(tag: group, member: member)
+            guard gen == groupSelectionGeneration else { return }
+            actionErrorMessage = nil
+        } catch {
+            do {
+                _ = try await session.selectOutbound(group: group, member: member)
+                guard gen == groupSelectionGeneration else { return }
+                actionErrorMessage = nil
+            } catch {
+                guard gen == groupSelectionGeneration else { return }
+                groups = previousGroups
+                actionErrorMessage = "切换节点失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+            }
+        }
+        guard gen == groupSelectionGeneration else { return }
         await refreshGroupsAndMetrics()
     }
 
     func resetGroupAuto(group: String) async {
-        do { try await httpControl.resetGroupAuto(tag: group) }
-        catch { _ = try? await session.resetGroupAuto(group: group) }
+        do {
+            try await httpControl.resetGroupAuto(tag: group)
+            actionErrorMessage = nil
+        } catch {
+            do {
+                _ = try await session.resetGroupAuto(group: group)
+                actionErrorMessage = nil
+            } catch {
+                actionErrorMessage = "恢复自动选优失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+            }
+        }
         await refreshGroupsAndMetrics()
     }
 
     func probeGroup(group: String) async {
-        try? await httpControl.probeGroup(tag: group)
-        lastProbeBanner = "已触发策略组 \(group) 整组测速"
+        do {
+            try await httpControl.probeGroup(tag: group)
+            actionErrorMessage = nil
+            lastProbeBanner = "已触发策略组 \(group) 整组测速"
+        } catch {
+            lastProbeBanner = "策略组 \(group) 测速失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+        }
         await refreshGroupsAndMetrics()
     }
 
@@ -180,12 +264,12 @@ extension NexusAppModel {
         do {
             let res = try await httpControl.probeOutbound(tag: tag)
             if let ms = res.latencyMs {
-                lastProbeBanner = "\(res.outbound): \(res.state) · \(ms) ms"
+                lastProbeBanner = "\(res.outbound)：\(NexusDisplayCopy.coreStateTitle(res.state)) · \(ms) ms"
             } else {
-                lastProbeBanner = "\(res.outbound): \(res.state)"
+                lastProbeBanner = "\(res.outbound)：\(NexusDisplayCopy.coreStateTitle(res.state))"
             }
         } catch {
-            lastProbeBanner = "\(tag) 测速失败: \(error.localizedDescription)"
+            lastProbeBanner = "\(tag) 测速失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
         await refreshGroupsAndMetrics()
     }
@@ -201,38 +285,54 @@ extension NexusAppModel {
         do {
             dnsResponse = try await httpControl.queryDns(name: name, type: type, server: server)
         } catch {
-            dnsError = error.localizedDescription
+            dnsError = NexusDisplayCopy.friendlyErrorMessage(error)
         }
     }
 
     func flushFakeIpCache() async {
         do {
             let res = try await httpControl.flushFakeIpCache()
-            cacheActionMessage = "FakeIP 已刷新 (\(res.flushed) 条)"
-            statusSummary = cacheActionMessage ?? statusSummary
+            cacheActionMessage = "FakeIP 已刷新（\(res.flushed) 条）"
+            actionErrorMessage = nil
         } catch {
-            cacheActionMessage = "FakeIP 刷新失败: \(error.localizedDescription)"
+            let msg = "FakeIP 刷新失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+            cacheActionMessage = msg
+            actionErrorMessage = msg
         }
     }
 
     func clearCache(scope: String = "all") async {
+        let label = scope == "dns" ? "DNS 缓存" : "全部缓存"
         do {
             try await httpControl.clearCache(scope: scope)
-            cacheActionMessage = "缓存(\(scope))已清空"
-            statusSummary = cacheActionMessage ?? statusSummary
+            cacheActionMessage = "\(label)已清空"
+            actionErrorMessage = nil
         } catch {
-            cacheActionMessage = "清缓存失败: \(error.localizedDescription)"
+            let msg = "清空\(label)失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+            cacheActionMessage = msg
+            actionErrorMessage = msg
         }
     }
 
     func closeConnection(id: String) async {
-        try? await httpControl.closeConnection(id: id)
+        do {
+            try await httpControl.closeConnection(id: id)
+            if selectedConnectionDetail?.id == id { selectedConnectionDetail = nil }
+            actionErrorMessage = nil
+        } catch {
+            actionErrorMessage = "断开连接失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+        }
         await refreshGroupsAndMetrics()
     }
 
     func closeAllConnections() async {
-        try? await httpControl.closeAllConnections()
-        selectedConnectionDetail = nil
+        do {
+            try await httpControl.closeAllConnections()
+            selectedConnectionDetail = nil
+            actionErrorMessage = nil
+        } catch {
+            actionErrorMessage = "断开全部连接失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
+        }
         await refreshGroupsAndMetrics()
     }
 
@@ -279,9 +379,10 @@ extension NexusAppModel {
             next.profiles.append(item)
             let store = WorkspaceStore(rootDirectory: Self.defaultWorkspaceDirectory(), database: clientDatabase)
             workspace = try await store.save(next)
+            actionErrorMessage = nil
             statusSummary = "已导入节点 \(item.remarks)"
         } catch {
-            statusSummary = "分享链接解析失败: \(error.localizedDescription)"
+            actionErrorMessage = "分享链接解析失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
@@ -289,9 +390,13 @@ extension NexusAppModel {
         var next = workspace
         next.profiles.removeAll { $0.id == id }
         let store = WorkspaceStore(rootDirectory: Self.defaultWorkspaceDirectory(), database: clientDatabase)
-        if let saved = try? await store.save(next) {
+        do {
+            let saved = try await store.save(next)
             workspace = saved
             if activeProfileID == id { activeProfileID = saved.profiles.first?.id ?? "" }
+            actionErrorMessage = nil
+        } catch {
+            actionErrorMessage = "删除配置失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
@@ -299,9 +404,10 @@ extension NexusAppModel {
         do {
             try await clientDatabase.shrinkMemory()
             residentMemoryMiB = TunnelMemoryMonitor.currentResidentMemoryMiB()
+            actionErrorMessage = nil
             statusSummary = "本地存储内存已回收"
         } catch {
-            statusSummary = "本地存储内存回收失败: \(error.localizedDescription)"
+            actionErrorMessage = "本地存储内存回收失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
@@ -309,8 +415,9 @@ extension NexusAppModel {
         do {
             try daemonController.register()
             daemonState = daemonController.status()
+            actionErrorMessage = nil
         } catch {
-            statusSummary = "Daemon 注册失败: \(error.localizedDescription)"
+            actionErrorMessage = "启用后台权限服务失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
@@ -318,8 +425,9 @@ extension NexusAppModel {
         do {
             try await daemonController.unregister()
             daemonState = daemonController.status()
+            actionErrorMessage = nil
         } catch {
-            statusSummary = "Daemon 注销失败: \(error.localizedDescription)"
+            actionErrorMessage = "停用后台权限服务失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
@@ -327,8 +435,9 @@ extension NexusAppModel {
         do {
             try LoginItemManager.register()
             loginItemStatus = LoginItemManager.currentStatus()
+            actionErrorMessage = nil
         } catch {
-            statusSummary = "开机自启注册失败: \(error.localizedDescription)"
+            actionErrorMessage = "注册开机自启失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 
@@ -336,8 +445,9 @@ extension NexusAppModel {
         do {
             try await LoginItemManager.unregister()
             loginItemStatus = LoginItemManager.currentStatus()
+            actionErrorMessage = nil
         } catch {
-            statusSummary = "开机自启注销失败: \(error.localizedDescription)"
+            actionErrorMessage = "取消开机自启失败：\(NexusDisplayCopy.friendlyErrorMessage(error))"
         }
     }
 }

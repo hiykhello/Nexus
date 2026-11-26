@@ -1,108 +1,116 @@
 #if os(macOS)
 import AppKit
+import Foundation
 import SwiftUI
 import NexusCoreBridge
 import NexusSharedUI
 
-/// Native macOS `.window`-style MenuBarExtra popover for instant core switching,
-/// outbound mode control, active group selection, live throughput, and FakeIP flush.
+/// Native macOS `.window`-style MenuBarExtra popover with flattened hairline dividers,
+/// single primary CTA, fixed-width live rates, and honest offline feedback.
 struct MenuBarPopoverView: View {
     @Bindable var model: NexusAppModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            headerCard
+        VStack(alignment: .leading, spacing: 10) {
+            headerSection
+            if let err = model.actionErrorMessage, !err.isEmpty {
+                ActionErrorBanner(
+                    message: err,
+                    flush: false,
+                    onRetry: {
+                        Task {
+                            await model.refreshStatus()
+                            await model.refreshGroupsAndMetrics()
+                        }
+                    },
+                    onDismiss: { model.clearActionError() }
+                )
+            }
+            Divider()
             modePickerSection
-            throughputStrip
+            PopoverThroughputStrip(model: model)
+            Divider()
             if let group = model.primaryGroup {
                 quickGroupSection(group)
+            } else {
+                emptyGroupHint
             }
             Divider()
             quickActionsFooter
         }
         .padding(14)
-        .frame(width: 320)
+        .frame(minWidth: 300, idealWidth: 320, maxWidth: 360)
         .task {
             await model.refreshStatus()
             await model.refreshGroupsAndMetrics()
         }
     }
 
-    private var headerCard: some View {
-        HStack(spacing: 10) {
+    private var headerSection: some View {
+        let subtitle = "\(model.activeProfileDisplayName) · \(model.activeProfileKindBadge)"
+        return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text("Nexus")
                         .font(.headline)
                     StatusBadgeView(isOnline: model.isRunning, label: model.isRunning ? "运行中" : "未连接")
                 }
-                Text("\(model.activeProfileDisplayName) · \(model.activeProfileKindBadge)")
+                Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(subtitle)
             }
-            Spacer()
+            Spacer(minLength: 6)
             Button {
                 Task {
                     if model.isRunning {
                         await model.reloadConfig()
                     } else {
                         await model.refreshStatus()
+                        await model.refreshGroupsAndMetrics()
                     }
                 }
             } label: {
-                Image(systemName: model.isRunning ? "arrow.triangle.2.circlepath" : "play.fill")
+                Image(systemName: model.isRunning ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                     .font(.subheadline.weight(.semibold))
             }
-            .buttonStyle(.borderedProminent)
-            .accessibilityLabel(model.isRunning ? "热重载核心" : "连接核心状态")
+            .buttonStyle(.bordered)
+            .help(model.isRunning ? "热重载当前配置" : "刷新内核连接状态")
+            .accessibilityLabel(model.isRunning ? "热重载当前配置" : "刷新内核连接状态")
         }
     }
 
     private var modePickerSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("路由模式")
+            Text("出站模式")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Picker("路由模式", selection: Binding(
+            Picker("出站模式", selection: Binding(
                 get: { model.outboundMode },
                 set: { mode in Task { await model.setOutboundMode(mode) } }
             )) {
-                Text("Rule").tag("rule")
-                Text("Global").tag("global")
-                Text("Direct").tag("direct")
+                Text("规则").tag("rule")
+                Text("全局").tag("global")
+                Text("直连").tag("direct")
             }
             .pickerStyle(.segmented)
             .labelsHidden()
         }
     }
 
-    private var throughputStrip: some View {
-        HStack(spacing: 10) {
-            Label(NexusByteFormat.rate(model.rxRateBytesPerSec), systemImage: "arrow.down")
-                .font(.caption.weight(.medium).monospacedDigit())
-                .foregroundStyle(.blue)
-            Label(NexusByteFormat.rate(model.txRateBytesPerSec), systemImage: "arrow.up")
-                .font(.caption.weight(.medium).monospacedDigit())
-                .foregroundStyle(.green)
-            Spacer()
-            Text("\(model.metrics.activeSessions) 连接")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(NexusPalette.subtleSurface, in: RoundedRectangle(cornerRadius: 8))
-    }
-
     private func quickGroupSection(_ group: OutboundGroupSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("当前策略组: \(group.tag)")
+                Text("当前策略组：\(group.tag)")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
-                Spacer()
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(group.tag)
+                Spacer(minLength: 4)
                 RttPillView(latencyMs: model.activeGroupRttMs, state: model.isRunning ? "up" : "idle")
             }
             Picker("当前出站", selection: Binding(
@@ -117,11 +125,22 @@ struct MenuBarPopoverView: View {
             .labelsHidden()
             .disabled(!group.supportsManualSelection)
         }
-        .bentoCard(padding: 10, cornerRadius: 10)
+    }
+
+    private var emptyGroupHint: some View {
+        HStack(spacing: 8) {
+            Image(systemName: model.isRunning ? "arrow.triangle.branch" : "bolt.slash")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(model.isRunning ? "暂无可切换策略组" : "内核未连接，请启动或打开控制台查看")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
     }
 
     private var quickActionsFooter: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Button {
                     Task { await model.flushFakeIpCache() }
@@ -144,7 +163,7 @@ struct MenuBarPopoverView: View {
 
             HStack {
                 SettingsLink {
-                    Label("设置...", systemImage: "gearshape")
+                    Label("设置…", systemImage: "gearshape")
                 }
                 .buttonStyle(.borderless)
                 Spacer()
@@ -155,6 +174,24 @@ struct MenuBarPopoverView: View {
             }
             .font(.caption)
         }
+    }
+}
+
+/// Isolated 1Hz leaf inside the menu bar popover preventing header/picker redraws on each tick.
+private struct PopoverThroughputStrip: View {
+    var model: NexusAppModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            LiveRateLabel(text: NexusByteFormat.rate(model.rxRateBytesPerSec), systemImage: "arrow.down", tint: .blue)
+            LiveRateLabel(text: NexusByteFormat.rate(model.txRateBytesPerSec), systemImage: "arrow.up", tint: .green)
+            Spacer(minLength: 4)
+            Text("\(model.metrics.activeSessions) 连接")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 2)
     }
 }
 #endif

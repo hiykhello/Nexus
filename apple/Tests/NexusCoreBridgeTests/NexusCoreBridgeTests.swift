@@ -337,7 +337,7 @@ final class NexusCoreBridgeTests: XCTestCase {
             XCTAssertFalse(mode.displayName.isEmpty)
             XCTAssertFalse(mode.detailText.isEmpty)
         }
-        XCTAssertTrue(TunElevationMode.persistentDaemon.displayName.contains("LaunchDaemon"))
+        XCTAssertTrue(TunElevationMode.persistentDaemon.displayName.contains("持久授权"))
         XCTAssertTrue(TunElevationMode.sessionOnly.displayName.contains("仅本次会话"))
 
         let dbDir = FileManager.default.temporaryDirectory

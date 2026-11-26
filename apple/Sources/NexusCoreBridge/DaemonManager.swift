@@ -8,6 +8,13 @@ public enum AppleTunnelBackend: String, Sendable, CaseIterable {
     case launchDaemonUtun = "LaunchDaemon (utun)"
     /// Stage B: Signed NEPacketTunnelProvider System Extension (native macOS/iOS VPN settings).
     case networkExtension = "Network Extension"
+
+    public var displayName: String {
+        switch self {
+        case .launchDaemonUtun: return "后台权限服务（系统隧道）"
+        case .networkExtension: return "系统网络扩展"
+        }
+    }
 }
 
 public enum DaemonRegistrationState: String, Sendable, Equatable {
@@ -22,10 +29,10 @@ public enum DaemonRegistrationState: String, Sendable, Equatable {
 
     public var summaryText: String {
         switch self {
-        case .enabled: return "已启用 (LaunchDaemon 就绪)"
-        case .requiresApproval: return "请在系统设置 -> 登录项中批准"
+        case .enabled: return "已启用（后台权限服务就绪）"
+        case .requiresApproval: return "请在系统设置 → 登录项中批准"
         case .notRegistered: return "未注册"
-        case .unsupported: return "当前平台不支持 SMAppService"
+        case .unsupported: return "当前系统不支持后台权限服务"
         }
     }
 }
@@ -52,17 +59,17 @@ public enum TunElevationMode: String, Codable, Sendable, Equatable, Hashable, Ca
 
     public var displayName: String {
         switch self {
-        case .persistentDaemon: return "持久授权 (LaunchDaemon)"
-        case .sessionOnly: return "仅本次会话 (按次提权)"
+        case .persistentDaemon: return "持久授权（后台权限服务）"
+        case .sessionOnly: return "仅本次会话（按次授权）"
         }
     }
 
     public var detailText: String {
         switch self {
         case .persistentDaemon:
-            return "一次性注册特权 LaunchDaemon（SMAppService），后续开启 TUN 无需重复输入密码或 Touch ID。"
+            return "一次性注册后台权限服务，后续开启虚拟网卡无需重复输入密码或触控 ID。"
         case .sessionOnly:
-            return "不安装常驻后台守护进程，仅在本次需要 TUN 时按次请求管理员权限。"
+            return "不安装常驻后台服务，仅在本次开启虚拟网卡时按次请求管理员授权。"
         }
     }
 }
