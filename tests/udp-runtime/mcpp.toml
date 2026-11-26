@@ -7,17 +7,12 @@ ss-udp-runtime = { path = "../../src/udp-runtime" }
 policy = { path = "../../src/rules" }
 relay-runtime = { path = "../../src/relay" }
 protocols = { path = "../../src", features = ["ss2022"] }
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring"]
-io-uring = ["nexus.corosio-source/uring"]
+io-uring = ["protocols/io-uring"]
 test-udp-pending = { implies = ["ss-udp-runtime/test-udp-pending"], defines = ["NEXUS_TEST_UDP_PENDING"] }
 test-udp-send = { implies = ["ss-udp-runtime/test-udp-send"], defines = ["NEXUS_TEST_UDP_SEND_DELAY"] }
-
-[feature-deps.io-uring]
-uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 sources = ["hooks.cpp"]

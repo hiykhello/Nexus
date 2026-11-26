@@ -1,0 +1,27 @@
+[package]
+name = "capy-corosio"
+version = "0.1.0"
+
+[dependencies]
+# Single declaration of the patched Capy + Corosio pair for the entire repository.
+# Build both together with embed = true: Corosio consumes Capy's headers, and
+# separate source-only index packages have no sibling include edge.
+nexus.capy-source = { version = "=0.2.9", patches = ["../patches/capy/mcpp-exact.patch"], embed = true }
+nexus.corosio-source = { version = "=0.3.13", patches = ["../patches/corosio/mcpp-exact.patch"], embed = true }
+
+[features]
+io-uring = ["nexus.corosio-source/uring"]
+
+[feature-deps.io-uring]
+uring-system = { path = "../mcpp-uring" }
+
+[build]
+defines = [
+    "BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",
+    "BOOST_COROSIO_NO_LIB", "BOOST_COROSIO_STATIC_LINK",
+]
+ldflags = ["-lpthread"]
+sources = []
+
+[targets.capy-corosio]
+kind = "lib"

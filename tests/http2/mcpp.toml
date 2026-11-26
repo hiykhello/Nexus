@@ -5,17 +5,12 @@ version = "0.1.0"
 # Exercise the real HTTP/2 session independently of the proxy and TLS.
 [dependencies]
 protocols = { path = "../../src", features = ["http2"] }
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring"]
-io-uring = ["nexus.corosio-source/uring"]
+io-uring = ["protocols/io-uring"]
 tls = ["protocols/http2-tls"]
 test-allocator = { implies = ["protocols/test-http2-allocator"], sources = ["http2_allocator_probe.cpp"] }
-
-[feature-deps.io-uring]
-uring-system.workspace = true
 
 [build]
 sources = []

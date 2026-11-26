@@ -7,18 +7,13 @@ protocols = { path = "../../src", features = ["tls"] }
 containers = { path = "../../src/containers" }
 functional = { path = "../../src/functional" }
 platform = { path = "../../src/platform" }
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 quic-resumption = ["resumption", "protocols/quic-resumption"]
 resumption = ["protocols/tls-resumption"]
 quic-tls = ["protocols/quic-tls"]
 https = { sources = ["../../src/http/corosio_https.cppm"] }
-io-uring = ["nexus.corosio-source/uring"]
-
-[feature-deps.io-uring]
-uring-system = { path = "../../3rdparty/mcpp-uring" }
+io-uring = ["protocols/io-uring"]
 
 [build]
 sources = []

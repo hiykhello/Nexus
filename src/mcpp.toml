@@ -11,11 +11,11 @@ functional = { path = "functional" }
 utility = { path = "utility" }
 encoding = { path = "encoding" }
 platform = { path = "platform" }
+capy-corosio = { path = "../3rdparty/mcpp-corosio" }
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = { version = "=0.2.9", patches = ["../3rdparty/patches/capy/mcpp-exact.patch"], embed = true }
-nexus.corosio-source = { version = "=0.3.13", patches = ["../3rdparty/patches/corosio/mcpp-exact.patch"], embed = true }
 
 [features]
+io-uring = ["capy-corosio/io-uring"]
 ring-queue = ["containers/ring-queue"]
 logging = { implies = ["ring-queue"], sources = [
     "logging/core.cppm", "logging/core.cpp", "logging/fd_posix.cppm", "logging/fd_windows.cppm", "logging/logging.cppm", "logging/logging.cpp",

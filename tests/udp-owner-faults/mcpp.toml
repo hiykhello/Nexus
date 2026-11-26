@@ -9,15 +9,10 @@ ss-udp-runtime = { path = "../../src/udp-runtime" }
 dns = { path = "../../src/dns", features = ["test-dns-lifetime"] }
 protocols = { path = "../../src", features = ["ss2022"] }
 policy = { path = "../../src/rules" }
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring"]
-io-uring = ["nexus.corosio-source/uring"]
-
-[feature-deps.io-uring]
-uring-system = { path = "../../3rdparty/mcpp-uring" }
+io-uring = ["protocols/io-uring"]
 
 [build]
 sources = []

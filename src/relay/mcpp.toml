@@ -14,8 +14,6 @@ utility = { path = "../utility" }
 encoding = { path = "../encoding" }
 platform = { path = "../platform", features = ["network-state"] }
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = { version = "=0.2.9", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { version = "=0.3.13", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["dns-shared", "request-standard"]
@@ -51,7 +49,7 @@ fakeip = { implies = ["dns/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources 
 test-fakeip = { implies = ["fakeip", "dns/test-fakeip"], defines = ["NEXUS_TEST_FAKEIP"] }
 test-fakeip-lifetime = { implies = ["test-fakeip"], sources = ["../../tests/proxy_fakeip_lifetime_impl.cpp"] }
 test-fakeip-abandon = { implies = ["test-fakeip"], defines = ["NEXUS_TEST_FAKEIP_ABANDON"] }
-io-uring = { implies = ["nexus.corosio-source/uring", "platform/io-uring"], defines = ["NEXUS_ENABLE_IO_URING"] }
+io-uring = { implies = ["protocols/io-uring", "platform/io-uring"], defines = ["NEXUS_ENABLE_IO_URING"] }
 h2mux = { implies = ["protocols/h2mux"], defines = ["NEXUS_ENABLE_H2MUX"], sources = ["mux_h2_outbound.cpp"] }
 mux-inbound = { implies = ["protocols/stream-datagrams", "h2mux"], sources = ["mux_inbound.cppm"] }
 vless = { implies = ["quic-ech", "mux-inbound", "protocols/vless", "protocols/stream-datagrams"], defines = ["NEXUS_ENABLE_VLESS"], sources = ["reality_tcp_server.cppm", "vless.cpp", "vless_inbound.cpp", "vless_mux.cppm"] }
@@ -85,9 +83,6 @@ test-source-route = { defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
 sni-demux = { sources = ["sni_demux.cppm", "sni_demux.cpp"] }
 reverse-tunnel = { sources = ["reverse_tunnel.cppm", "reverse_tunnel.cpp"] }
 tor = { defines = ["NEXUS_ENABLE_TOR"], sources = ["tor_outbound.cppm", "tor_outbound.cpp", "tor_tunnel.cpp"] }
-
-[feature-deps.io-uring]
-uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [feature-deps.dns-shared]
 dns-group-core = { path = "../dns-shared" }

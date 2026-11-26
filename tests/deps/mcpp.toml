@@ -3,24 +3,18 @@ name = "deps-tests"
 version = "0.1.0"
 
 [dependencies]
-# Build the patched pair together, as protocols does. Corosio consumes
-# Capy's headers; separate source-only packages have no sibling include edge.
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"], embed = true }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"], embed = true }
+capy-corosio = { path = "../../3rdparty/mcpp-corosio" }
 
 [features]
 default = ["io-uring"]
-io-uring = ["nexus.corosio-source/uring"]
+io-uring = ["capy-corosio/io-uring"]
 cpo = { sources = ["../cpo_module.cppm", "../cpo_header.cpp"] }
 allocation = []
 alignment = []
 crypto = []
 
-[feature-deps.io-uring]
-uring-system.workspace = true
-
 [feature-deps.crypto]
-nexus.boringssl-crypto-source = { workspace = true, patches = ["../../3rdparty/patches/boringssl/mcpp-exact.patch"] }
+crypto = { path = "../../src/crypto" }
 
 [build]
 defines = ["BOOST_CAPY_NO_LIB", "BOOST_CAPY_STATIC_LINK",

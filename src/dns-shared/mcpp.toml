@@ -8,17 +8,12 @@ version = "0.1.0"
 dns = { path = "../dns" }
 functional = { path = "../functional" }
 protocols = { path = ".." }
-nexus.capy-source = { version = "=0.2.9", patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { version = "=0.3.13", patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
-io-uring = ["nexus.corosio-source/uring"]
+io-uring = ["protocols/io-uring"]
 dns-response = { defines = ["NEXUS_DNS_RESPONSE"], sources = ["response_coordinator.cpp"] }
 test-inspect = { defines = ["DNS_GROUP_INSPECT_EXPERIMENT"] }
 test-reverse-observation = { defines = ["NEXUS_TEST_DNS_REVERSE_OBSERVATION"], implies = ["dns/reverse"] }
-
-[feature-deps.io-uring]
-uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 sources = [

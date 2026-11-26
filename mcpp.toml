@@ -1,7 +1,7 @@
 # The workspace is being organized by responsibility; only declared features
 # and tests are available in the current build graph.
 [workspace]
-members = ["tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", "tests/wireguard-reverse-fault", "src", "src/rules", "src/dns", "src/relay", "src/crypto", "src/containers", "src/functional", "src/utility", "src/encoding", "src/platform", "src/tun", "src/udp-runtime", "tests/protocol", "tests/dns", "tests/fakeip", "tests/http2", "tests/http2-client", "tests/tls", "tests/platform", "tests/deps", "tests/proxy-faults", "tests/proxy-preload", "tests/shims/proxy-start", "tests/shims/slow-resolver", "tests/shims/clock-fault", "tests/shims/dns-system-guard", "tests/shims/ss-udp-observe", "tests/tun", "tests/tun-faults", "tests/udp-faults", "tests/udp-runtime", "tests/udp-owner-faults", "tests/uot-client", "tests/chain-client", "src/dns-shared", "src/udp-shared"]
+members = ["3rdparty/mcpp-corosio", "tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", "tests/wireguard-reverse-fault", "src", "src/rules", "src/dns", "src/relay", "src/crypto", "src/containers", "src/functional", "src/utility", "src/encoding", "src/platform", "src/tun", "src/udp-runtime", "tests/protocol", "tests/dns", "tests/fakeip", "tests/http2", "tests/http2-client", "tests/tls", "tests/platform", "tests/deps", "tests/proxy-faults", "tests/proxy-preload", "tests/shims/proxy-start", "tests/shims/slow-resolver", "tests/shims/clock-fault", "tests/shims/dns-system-guard", "tests/shims/ss-udp-observe", "tests/tun", "tests/tun-faults", "tests/udp-faults", "tests/udp-runtime", "tests/udp-owner-faults", "tests/uot-client", "tests/chain-client", "src/dns-shared", "src/udp-shared"]
 
 [workspace.package]
 standard = "c++26"
@@ -14,9 +14,6 @@ dialect_cxxflags = ["-fstack-protector-strong"]
 [workspace.dependencies]
 nexus.glaze-kdl = "=0.1.1"
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = "=0.2.9"
-nexus.corosio-source = "=0.3.13"
-nexus.boringssl-crypto-source = "=0.1.2"
 nexus.blake3-source = "=1.8.7"
 nexus.argon2-source = "=20190702-nexus.2"
 nexus.nghttp2-source = "=1.71.0"
@@ -50,8 +47,6 @@ encoding = { path = "src/encoding" }
 platform = { path = "src/platform", features = ["network-state"] }
 nexus.glaze-kdl = "=0.1.1"
 nexus.ngcpp-proxy = "=0.1.0"
-nexus.capy-source = { version = "=0.2.9", patches = ["3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { version = "=0.3.13", patches = ["3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring"]
@@ -95,7 +90,7 @@ metrics-openmetrics = { implies = ["control-http"], sources = ["src/control_api/
 srs = ["policy/srs"]
 tproxy-udp = ["relay-runtime/tproxy-udp"]
 http-connect-tls = ["tls", "relay-runtime/http-connect-tls"]
-io-uring = ["nexus.corosio-source/uring", "platform/io-uring"]
+io-uring = ["protocols/io-uring", "platform/io-uring"]
 # Crypto can also be selected without the VLESS transport.
 crypto = ["crypto-primitives"]
 crypto-primitives = []
@@ -206,9 +201,6 @@ wireguard-endpoint = { path = "src/endpoint" }
 
 [feature-deps.wireguard-host-dns]
 wireguard-endpoint = { path = "src/endpoint", features = ["host-dns-resolved"] }
-
-[feature-deps.io-uring]
-uring-system = { path = "3rdparty/mcpp-uring" }
 
 [feature-deps.crypto-primitives]
 crypto = { path = "src/crypto" }

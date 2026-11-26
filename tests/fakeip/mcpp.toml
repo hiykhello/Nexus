@@ -6,21 +6,17 @@ version = "0.1.0"
 # workspace graph keeps the ordinary request provider.
 [dependencies]
 dns = { path = "../../src/dns", features = ["fakeip"] }
+capy-corosio = { path = "../../3rdparty/mcpp-corosio" }
 
 [features]
 fakeip-base = ["dns/test-fakeip"]
 proxy = ["fakeip-base"]
 lifetime = ["fakeip-base", "relay-runtime/test-fakeip-lifetime"]
 owner = ["fakeip-base", "relay-runtime/test-fakeip-abandon"]
-io-uring = ["nexus.corosio-source/uring"]
+io-uring = ["capy-corosio/io-uring"]
 
 [feature-deps.fakeip-base]
 relay-runtime = { path = "../../src/relay", default-features = false, features = ["dns-standard", "test-fakeip"] }
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
-
-[feature-deps.io-uring]
-uring-system.workspace = true
 
 [targets.proxy-fakeip-fixture]
 kind = "bin"

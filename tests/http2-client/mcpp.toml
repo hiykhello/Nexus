@@ -4,18 +4,13 @@ version = "0.1.0"
 
 [dependencies]
 protocols = { path = "../../src", features = ["http2"] }
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
 
 [features]
 default = ["io-uring", "probe"]
-io-uring = ["nexus.corosio-source/uring"]
+io-uring = ["protocols/io-uring"]
 probe = { sources = ["client_probe.cpp"] }
 allocation = { sources = ["allocation_meter.cpp"] }
 grpc = ["protocols/grpc"]
-
-[feature-deps.io-uring]
-uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 sources = []

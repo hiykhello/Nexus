@@ -5,16 +5,12 @@ version = "0.1.0"
 [dependencies]
 wireguard-endpoint = { path = "../../src/endpoint" }
 containers = { path = "../../src/containers" }
-nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
-nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
+capy-corosio = { path = "../../3rdparty/mcpp-corosio" }
 
 [features]
 default = ["io-uring"]
-io-uring = ["nexus.corosio-source/uring"]
+io-uring = ["capy-corosio/io-uring"]
 host-dns-resolved = ["wireguard-endpoint/host-dns-resolved"]
-
-[feature-deps.io-uring]
-uring-system = { path = "../../3rdparty/mcpp-uring" }
 
 [build]
 sources = ["../lease_support.cppm"]
