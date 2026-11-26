@@ -24,6 +24,7 @@
 | [协议与出站策略组原则](design-principles/protocols-and-groups.md) | 协议线规边界、HTTP 连接池租约、EWMA/断路器/滞后选路状态机 |
 | [多平台集成与运维原则](design-principles/platform-and-operations.md) | Linux nftables/systemd、Android 免 Root VPN、macOS 验签、Windows 代理/防火墙与 OpenWrt |
 | [GUI 设计系统与交互原则](design-principles/gui-design-system.md) | CLI/GUI 产品边界、桌面零滚动 4 行 Bento 控制台、哑光视觉与 GPU/内存红线、四端统一基线 |
+| [GUI 旗舰设计与逐界面规范](design-principles/gui-flagship-spec.md) | 四档仪器主题与 WCAG AA 基准、实时链路拓扑仪、全局命令与内联域名诊断、遥测微可视化与四端逐界面验收 |
 
 ---
 
