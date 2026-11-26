@@ -12,21 +12,15 @@ import { onLocaleChange, t } from '../i18n.ts';
 import type { ManagedStream } from '../sse.ts';
 import { appStore } from '../store.ts';
 import { sharedStyles } from '../styles.ts';
+import {
+  LOG_DOMAINS,
+  LOG_LEVELS,
+  countLogSeverities,
+  formatLogPlainLines,
+  levelBadgeClass,
+  matchesLogFilters,
+} from './log-helpers.ts';
 
-const LEVELS = ['all', 'trace', 'debug', 'info', 'warn', 'error'] as const;
-const DOMAINS = [
-  'all',
-  'core',
-  'net',
-  'tls',
-  'quic',
-  'dns',
-  'route',
-  'tun',
-  'proxy',
-  'control',
-  'state',
-] as const;
 const MAX_ENTRIES = 600;
 
 @customElement('nexus-logs-page')
@@ -51,25 +45,31 @@ export class NexusLogsPage extends LitElement {
         grid-template-columns: 62px 68px 64px 72px 1fr;
         gap: 8px;
         align-items: baseline;
-        padding: 4px 6px;
-        border-radius: 6px;
+        padding: 4px 6px 4px 8px;
+        border-left: 2px solid var(--nx-border);
+        border-radius: 4px;
         line-height: 1.45;
       }
+      .log-line.lvl-error,
+      .log-line.lvl-fatal { border-left-color: var(--nx-err-fg); }
+      .log-line.lvl-warn { border-left-color: var(--nx-warn-fg); }
+      .log-line.lvl-info { border-left-color: var(--nx-accent-text); }
+      .log-line.lvl-debug { border-left-color: var(--nx-ok-fg); }
+      .sev-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 0 2px 8px;
+      }
       @media (hover: hover) and (pointer: fine) {
-        .log-line:hover {
-          background: var(--nx-row-hover);
-        }
+        .log-line:hover { background: var(--nx-row-hover); }
       }
-      .msg {
-        word-break: break-word;
-      }
+      .msg { word-break: break-word; }
       @media (max-width: 720px) {
-        .log-line {
-          grid-template-columns: 56px 56px 1fr;
-        }
-        .hide-sm {
-          display: none;
-        }
+        .log-line { grid-template-columns: 56px 56px 1fr; }
+        .hide-sm { display: none; }
       }
     `,
   ];
@@ -98,7 +98,11 @@ export class NexusLogsPage extends LitElement {
     super.connectedCallback();
     this.unsubs.push(
       appStore.onWsLog((entry) => {
-        if (!this.paused && entry.seq > this.latestSeq && this.matchesFilters(entry)) {
+        if (
+          !this.paused &&
+          entry.seq > this.latestSeq &&
+          matchesLogFilters(entry, this.level, this.domain, this.search)
+        ) {
           this.appendEntry(entry);
         }
       }),
@@ -136,19 +140,6 @@ export class NexusLogsPage extends LitElement {
       search: this.search.trim() || undefined,
       since: this.latestSeq > 0 ? this.latestSeq : undefined,
     };
-  }
-
-  private matchesFilters(entry: LogEntry): boolean {
-    if (this.domain !== 'all' && entry.domain !== this.domain) return false;
-    if (this.level !== 'all') {
-      const rank: Record<string, number> = { trace: 0, debug: 1, info: 2, warn: 3, error: 4, fatal: 5 };
-      const minRank = rank[this.level] ?? 0;
-      const itemRank = rank[entry.level] ?? 0;
-      if (itemRank < minRank) return false;
-    }
-    const q = this.search.trim().toLowerCase();
-    if (q && !`${entry.domain} ${entry.message}`.toLowerCase().includes(q)) return false;
-    return true;
   }
 
   private syncTransport(): void {
@@ -283,18 +274,9 @@ export class NexusLogsPage extends LitElement {
     }
   }
 
-  private formatPlainLines(): string {
-    return this.entries
-      .map(
-        (e) =>
-          `#${e.seq} ${formatTimestampNs(e.timestamp_ns)} [${e.level}] (${e.domain}) ev=${e.event} ${e.message}`,
-      )
-      .join('\n');
-  }
-
   private async copyLogs(): Promise<void> {
     try {
-      await navigator.clipboard.writeText(this.formatPlainLines());
+      await navigator.clipboard.writeText(formatLogPlainLines(this.entries));
       this.copied = true;
       setTimeout(() => (this.copied = false), 1400);
     } catch {
@@ -303,7 +285,9 @@ export class NexusLogsPage extends LitElement {
   }
 
   private exportSnapshot(): void {
-    const blob = new Blob([this.formatPlainLines() + '\n'], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([formatLogPlainLines(this.entries) + '\n'], {
+      type: 'text/plain;charset=utf-8',
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -312,12 +296,9 @@ export class NexusLogsPage extends LitElement {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  private levelBadge(lvl: string): string {
-    if (lvl === 'error') return 'err';
-    if (lvl === 'warn') return 'warn';
-    if (lvl === 'info') return 'accent';
-    if (lvl === 'debug') return 'ok';
-    return '';
+  private toggleQuickLevel(lvl: string): void {
+    this.level = this.level === lvl ? 'all' : lvl;
+    void this.reloadStream();
   }
 
   render() {
@@ -331,6 +312,7 @@ export class NexusLogsPage extends LitElement {
     const streamLabel =
       activeState === 'live' && appStore.wsLive ? t('stream.liveWs') : t(`stream.${activeState}`);
     const hasFilter = this.level !== 'all' || this.domain !== 'all' || this.search.trim().length > 0;
+    const sev = countLogSeverities(this.entries);
 
     return html`
       <div class="page">
@@ -358,18 +340,10 @@ export class NexusLogsPage extends LitElement {
             >
               ${t('logs.autoscroll')}
             </button>
-            <button
-              class="sm"
-              ?disabled=${this.entries.length === 0}
-              @click=${() => void this.copyLogs()}
-            >
+            <button class="sm" ?disabled=${this.entries.length === 0} @click=${() => void this.copyLogs()}>
               ${icons.copy()} ${this.copied ? t('common.copied') : t('common.copy')}
             </button>
-            <button
-              class="sm"
-              ?disabled=${this.entries.length === 0}
-              @click=${() => this.exportSnapshot()}
-            >
+            <button class="sm" ?disabled=${this.entries.length === 0} @click=${() => this.exportSnapshot()}>
               ${icons.download()} ${t('common.export')}
             </button>
             <button class="primary sm" @click=${() => void this.reloadStream()}>
@@ -382,11 +356,7 @@ export class NexusLogsPage extends LitElement {
           ? html`
               <div class="toast ${this.toastKind}" role="status" aria-live="polite">
                 <span>${this.toast}</span>
-                <button
-                  class="ghost sm"
-                  aria-label=${t('common.dismiss')}
-                  @click=${() => (this.toast = '')}
-                >
+                <button class="ghost sm" aria-label=${t('common.dismiss')} @click=${() => (this.toast = '')}>
                   ${icons.close()}
                 </button>
               </div>
@@ -419,7 +389,7 @@ export class NexusLogsPage extends LitElement {
                 void this.reloadStream();
               }}
             >
-              ${DOMAINS.map(
+              ${LOG_DOMAINS.map(
                 (d) =>
                   html`<option value=${d}>
                     ${t('logs.domainPrefix', { domain: d === 'all' ? t('common.all') : d })}
@@ -442,7 +412,7 @@ export class NexusLogsPage extends LitElement {
           </div>
 
           <div class="row">
-            ${LEVELS.map(
+            ${LOG_LEVELS.map(
               (lvl) => html`
                 <button
                   class="chip ${this.level === lvl ? 'active' : ''}"
@@ -459,7 +429,40 @@ export class NexusLogsPage extends LitElement {
         </div>
 
         <div class="card" style="padding:10px">
-          <div class="log-box mono">
+          <div class="sev-bar">
+            <div class="row" style="gap:6px">
+              <button class="chip ${this.level === 'info' ? 'active' : ''}" @click=${() => this.toggleQuickLevel('info')}>
+                INFO <span class="tabular">${sev.info}</span>
+              </button>
+              <button class="chip ${this.level === 'warn' ? 'active' : ''}" @click=${() => this.toggleQuickLevel('warn')}>
+                WARN <span class="tabular">${sev.warn}</span>
+              </button>
+              <button class="chip ${this.level === 'error' ? 'active' : ''}" @click=${() => this.toggleQuickLevel('error')}>
+                ERR <span class="tabular">${sev.error}</span>
+              </button>
+            </div>
+            ${!this.autoScroll
+              ? html`
+                  <button
+                    class="primary sm"
+                    @click=${() => {
+                      this.autoScroll = true;
+                      this.scrollToBottom();
+                    }}
+                  >
+                    ${t('logs.jumpLatest')}
+                  </button>
+                `
+              : ''}
+          </div>
+          <div
+            class="log-box mono"
+            @scroll=${(ev: Event) => {
+              const el = ev.currentTarget as HTMLElement;
+              const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 36;
+              if (!atBottom && this.autoScroll) this.autoScroll = false;
+            }}
+          >
             ${this.entries.length === 0
               ? html`
                   <div class="empty-state">
@@ -471,10 +474,10 @@ export class NexusLogsPage extends LitElement {
                 `
               : this.entries.map(
                   (e) => html`
-                    <div class="log-line">
+                    <div class="log-line lvl-${e.level}">
                       <span class="muted">#${e.seq}</span>
                       <span class="muted hide-sm">${formatTimestampNs(e.timestamp_ns)}</span>
-                      <span class="badge ${this.levelBadge(e.level)}">${e.level}</span>
+                      <span class="badge ${levelBadgeClass(e.level)}">${e.level}</span>
                       <span class="muted hide-sm">${e.domain}</span>
                       <span class="msg">${e.message}</span>
                     </div>

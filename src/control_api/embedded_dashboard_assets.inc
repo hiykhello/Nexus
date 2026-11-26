@@ -14,13 +14,13 @@ namespace control_api::embedded_dashboard_raw {
         bool immutable;
     };
     inline constexpr unsigned char kAsset_0[] = {
-#embed "embedded_assets/assets__index-IWXmHcHP.js.gz"
+#embed "embedded_assets/assets__index-DniLFYrq.js.gz"
     };
     inline constexpr unsigned char kAsset_1[] = {
 #embed "embedded_assets/index.html"
     };
     inline constexpr Entry kEntries[] = {
-        {"/assets/index-IWXmHcHP.js", "text/javascript; charset=utf-8", kAsset_0, sizeof(kAsset_0), true, true},
+        {"/assets/index-DniLFYrq.js", "text/javascript; charset=utf-8", kAsset_0, sizeof(kAsset_0), true, true},
         {"/index.html", "text/html; charset=utf-8", kAsset_1, sizeof(kAsset_1), false, false},
     };
     inline constexpr std::size_t kEntryCount = sizeof(kEntries) / sizeof(kEntries[0]);

@@ -132,13 +132,18 @@ export class NexusDiagnosticsPage extends LitElement {
   }
 
   private async copyJsonReport(): Promise<void> {
+    // Strictly redacted diagnostic snapshot — never includes bearer token or auth headers.
     const report = {
       captured_at: new Date().toISOString(),
+      theme: appStore.resolvedTheme,
+      transport: appStore.streamTransport,
+      stream_state: appStore.streamState,
       health: this.health,
       status: appStore.status,
       mode: appStore.mode,
       diagnostics: this.diag,
       recent_events: this.events,
+      metrics_sample: this.metricsEnabled ? this.parsedMetricLines() : [],
     };
     try {
       await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
@@ -153,7 +158,7 @@ export class NexusDiagnosticsPage extends LitElement {
     return this.metricsText
       .split('\n')
       .filter((l) => l && !l.startsWith('#'))
-      .slice(0, 12)
+      .slice(0, 24)
       .map((line) => {
         const sp = line.lastIndexOf(' ');
         return sp > 0
@@ -179,7 +184,7 @@ export class NexusDiagnosticsPage extends LitElement {
               ${icons.bolt()} ${t('diag.networkChange')}
             </button>
             <button class="sm" @click=${() => void this.copyJsonReport()}>
-              ${icons.copy()} ${this.copied ? t('common.copied') : t('diag.copyJson')}
+              ${icons.copy()} ${this.copied ? t('common.copied') : t('diag.copySnapshot')}
             </button>
             <button class="primary sm" ?disabled=${this.busy} @click=${() => void this.refresh()}>
               ${icons.refresh()} ${t('common.refresh')}
@@ -318,6 +323,12 @@ export class NexusDiagnosticsPage extends LitElement {
                 : html`
                     <div class="table-wrap">
                       <table>
+                        <thead>
+                          <tr>
+                            <th>${t('diag.col.metric')}</th>
+                            <th class="num-col">${t('diag.col.value')}</th>
+                          </tr>
+                        </thead>
                         <tbody>
                           ${metricLines.map(
                             (m) => html`

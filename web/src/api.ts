@@ -215,8 +215,8 @@ export const nexusApi = {
       body: JSON.stringify(opts),
     }),
   rules: () => requestJson<RulesResponse>('/v1/rules'),
-  dnsQuery: (params: { name: string; type?: string; server?: string }) =>
-    requestJson<DnsQueryResponse>(buildDnsQueryUrl(params)),
+  dnsQuery: (params: { name: string; type?: string; server?: string }, signal?: AbortSignal) =>
+    requestJson<DnsQueryResponse>(buildDnsQueryUrl(params), signal ? { signal } : {}),
   flushFakeIp: () =>
     requestJson<FakeIpFlushResponse>('/v1/cache/fakeip/flush', { method: 'POST', body: '{}' }),
   clearCache: (target: CacheClearTarget = 'all') =>

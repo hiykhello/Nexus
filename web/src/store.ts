@@ -1,10 +1,21 @@
 import { createStatusStream, getBearerToken, nexusApi, notifyUnauthorized, onAuthEvent } from './api.ts';
 import type { ManagedStream } from './sse.ts';
+import {
+  THEME_META_COLORS,
+  migrateThemePreference,
+  resolveTheme,
+  themeColorScheme,
+} from './theme.ts';
 import type {
   ConnectionItem,
   LogEntry,
   ModeResponse,
+  OnsetKind,
+  OnsetMarker,
+  OutboundGroup,
   RateSample,
+  ResolvedTheme,
+  RuleItem,
   StatusResponse,
   StreamState,
   ThemePreference,
@@ -13,6 +24,15 @@ import { ControlWsClient, type WsChannel } from './ws.ts';
 
 const THEME_KEY = 'nexus_web_theme';
 const MAX_HISTORY = 45;
+const MAX_ONSETS = 12;
+
+type StoreEvent =
+  | 'change'
+  | 'refresh'
+  | 'auth-required'
+  | 'transport-change'
+  | 'navigate'
+  | 'open-palette';
 
 export class AppStore extends EventTarget {
   status: StatusResponse | null = null;
@@ -24,9 +44,14 @@ export class AppStore extends EventTarget {
   upRate = 0;
   downRate = 0;
   history: RateSample[] = [];
+  onsetMarkers: OnsetMarker[] = [];
   themePref: ThemePreference = 'system';
-  resolvedTheme: 'dark' | 'light' = 'dark';
+  resolvedTheme: ResolvedTheme = 'obsidian';
   latestConnections: ConnectionItem[] = [];
+  latestGroups: OutboundGroup[] = [];
+  latestRules: RuleItem[] = [];
+  pendingDnsDomain = '';
+  pendingRuleFilter = '';
 
   private wsClient: ControlWsClient | null = null;
   private sseFallback: ManagedStream<StatusResponse> | null = null;
@@ -59,7 +84,7 @@ export class AppStore extends EventTarget {
     this.applyThemeDom();
 
     if (typeof window !== 'undefined' && window.matchMedia) {
-      this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      this.mediaQuery = window.matchMedia('(prefers-color-scheme: light)');
       this.mediaQuery.addEventListener('change', this.handleMediaChange);
     }
 
@@ -170,6 +195,64 @@ export class AppStore extends EventTarget {
     return () => this.removeEventListener('ws-log', handler);
   }
 
+  setGroupsCache(groups: OutboundGroup[]): void {
+    this.latestGroups = groups;
+    this.emit('change');
+  }
+
+  setRulesCache(rules: RuleItem[]): void {
+    this.latestRules = rules;
+    this.emit('change');
+  }
+
+  recordOnset(label: string, kind: OnsetKind, ts = Date.now()): void {
+    const clean = label.trim().slice(0, 18) || kind;
+    const minTs = this.history.length > 0 ? this.history[0].ts : 0;
+    const next = [...this.onsetMarkers, { ts, label: clean, kind }].filter(
+      (m) => minTs === 0 || m.ts >= minTs,
+    );
+    this.onsetMarkers = next.slice(-MAX_ONSETS);
+    this.emit('change');
+  }
+
+  pruneOnsets(): void {
+    if (this.onsetMarkers.length === 0 || this.history.length === 0) return;
+    const minTs = this.history[0].ts;
+    this.onsetMarkers = this.onsetMarkers.filter((m) => m.ts >= minTs).slice(-MAX_ONSETS);
+  }
+
+  requestNavigate(path: string): void {
+    this.dispatchEvent(new CustomEvent('navigate', { detail: path }));
+  }
+
+  requestOpenPalette(prefill = ''): void {
+    this.dispatchEvent(new CustomEvent('open-palette', { detail: prefill }));
+  }
+
+  requestDnsQuery(domain: string): void {
+    this.pendingDnsDomain = domain.trim();
+    this.emit('change');
+    this.requestNavigate('/services');
+  }
+
+  consumePendingDnsDomain(): string {
+    const val = this.pendingDnsDomain;
+    this.pendingDnsDomain = '';
+    return val;
+  }
+
+  requestRuleFilter(rule: string): void {
+    this.pendingRuleFilter = rule.trim();
+    this.emit('change');
+    this.requestNavigate('/services');
+  }
+
+  consumePendingRuleFilter(): string {
+    const val = this.pendingRuleFilter;
+    this.pendingRuleFilter = '';
+    return val;
+  }
+
   async refreshNow(): Promise<void> {
     try {
       const [s, m] = await Promise.all([nexusApi.status(), nexusApi.mode().catch(() => this.mode)]);
@@ -199,7 +282,7 @@ export class AppStore extends EventTarget {
   }
 
   cycleTheme(): ThemePreference {
-    const order: ThemePreference[] = ['dark', 'light', 'system'];
+    const order: ThemePreference[] = ['obsidian', 'daylight', 'amber', 'system'];
     const idx = order.indexOf(this.themePref);
     const next = order[(idx + 1) % order.length];
     this.setTheme(next);
@@ -220,12 +303,21 @@ export class AppStore extends EventTarget {
     this.emit('change');
   }
 
-  subscribe(
-    cb: () => void,
-    event: 'change' | 'refresh' | 'auth-required' | 'transport-change' = 'change',
-  ): () => void {
+  subscribe(cb: () => void, event: StoreEvent = 'change'): () => void {
     this.addEventListener(event, cb);
     return () => this.removeEventListener(event, cb);
+  }
+
+  onNavigate(cb: (path: string) => void): () => void {
+    const handler = (ev: Event) => cb((ev as CustomEvent<string>).detail);
+    this.addEventListener('navigate', handler);
+    return () => this.removeEventListener('navigate', handler);
+  }
+
+  onOpenPalette(cb: (prefill: string) => void): () => void {
+    const handler = (ev: Event) => cb((ev as CustomEvent<string>).detail);
+    this.addEventListener('open-palette', handler);
+    return () => this.removeEventListener('open-palette', handler);
   }
 
   private activeWsChannels(): WsChannel[] {
@@ -270,7 +362,7 @@ export class AppStore extends EventTarget {
     this.emit('change');
   }
 
-  private emit(name: 'change' | 'refresh' | 'auth-required' | 'transport-change'): void {
+  private emit(name: StoreEvent): void {
     this.dispatchEvent(new CustomEvent(name));
   }
 
@@ -284,10 +376,14 @@ export class AppStore extends EventTarget {
       const dDown = down >= this.lastDown ? down - this.lastDown : 0;
       this.upRate = Math.max(0, dUp / dt);
       this.downRate = Math.max(0, dDown / dt);
-      this.history = [...this.history.slice(-(MAX_HISTORY - 1)), { up: this.upRate, down: this.downRate, ts: now }];
+      this.history = [
+        ...this.history.slice(-(MAX_HISTORY - 1)),
+        { up: this.upRate, down: this.downRate, ts: now },
+      ];
     } else if (this.history.length === 0) {
       this.history = [{ up: 0, down: 0, ts: now }];
     }
+    this.pruneOnsets();
     this.lastUp = up;
     this.lastDown = down;
     this.lastTs = now;
@@ -298,22 +394,20 @@ export class AppStore extends EventTarget {
   }
 
   private loadThemePref(): ThemePreference {
-    if (typeof window === 'undefined') return 'dark';
+    if (typeof window === 'undefined') return 'obsidian';
     try {
-      const saved = window.localStorage.getItem(THEME_KEY);
-      if (saved === 'dark' || saved === 'light' || saved === 'system') return saved;
+      return migrateThemePreference(window.localStorage.getItem(THEME_KEY));
     } catch {
-      // ignore
+      return 'system';
     }
-    return 'system';
   }
 
-  private computeResolvedTheme(): 'dark' | 'light' {
-    if (this.themePref === 'dark' || this.themePref === 'light') return this.themePref;
-    if (typeof window !== 'undefined' && window.matchMedia) {
-      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-    }
-    return 'dark';
+  private computeResolvedTheme(): ResolvedTheme {
+    const prefersLight =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: light)').matches;
+    return resolveTheme(this.themePref, prefersLight);
   }
 
   private handleMediaChange = (): void => {
@@ -324,11 +418,11 @@ export class AppStore extends EventTarget {
     }
   };
 
-  private applyThemeDom(): void {
+  applyThemeDom(): void {
     if (typeof document === 'undefined') return;
     document.documentElement.dataset.theme = this.resolvedTheme;
-    document.documentElement.style.colorScheme = this.resolvedTheme;
-    const color = this.resolvedTheme === 'dark' ? '#111317' : '#f5f6f8';
+    document.documentElement.style.colorScheme = themeColorScheme(this.resolvedTheme);
+    const color = THEME_META_COLORS[this.resolvedTheme];
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (!meta && document.head) {
       meta = document.createElement('meta');

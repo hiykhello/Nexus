@@ -8,6 +8,7 @@ import {
 } from '../api.ts';
 import { icons } from '../icons.ts';
 import { onLocaleChange, t } from '../i18n.ts';
+import { appStore } from '../store.ts';
 import { sharedStyles } from '../styles.ts';
 
 const RECORD_TYPES: DnsRecordType[] = [
@@ -70,17 +71,34 @@ export class NexusDnsQueryCard extends LitElement {
   @state() private toast = '';
   @state() private toastKind: 'ok' | 'err' = 'ok';
 
-  private unsubLocale: (() => void) | null = null;
+  private unsubs: (() => void)[] = [];
 
   connectedCallback(): void {
     super.connectedCallback();
-    this.unsubLocale = onLocaleChange(() => this.requestUpdate());
+    this.unsubs.push(
+      onLocaleChange(() => this.requestUpdate()),
+      appStore.subscribe(() => this.consumePending(), 'change'),
+    );
+    this.consumePending();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    this.unsubLocale?.();
-    this.unsubLocale = null;
+    for (const u of this.unsubs) u();
+    this.unsubs = [];
+  }
+
+  public queryDomain(host: string): void {
+    const clean = host.trim();
+    if (!clean) return;
+    this.domain = clean;
+    this.qtype = 'A';
+    void this.runQuery();
+  }
+
+  private consumePending(): void {
+    const pending = appStore.consumePendingDnsDomain();
+    if (pending) this.queryDomain(pending);
   }
 
   private async runQuery(): Promise<void> {

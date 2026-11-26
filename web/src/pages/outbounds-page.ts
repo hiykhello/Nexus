@@ -1,17 +1,21 @@
 import { LitElement, html, css } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import {
-  getLatencyTier,
-  latencyBars,
   nexusApi,
   type OutboundGroup,
   type OutboundMember,
   type OutboundProbeResult,
 } from '../api.ts';
+import {
+  computeGroupSpectrum,
+  latencySpectrumStyles,
+  renderLatencySpectrum,
+} from '../components/latency-spectrum.ts';
 import { icons } from '../icons.ts';
 import { onLocaleChange, t } from '../i18n.ts';
 import { appStore } from '../store.ts';
 import { sharedStyles } from '../styles.ts';
+import { nodeCardStyles, renderOutboundNodeCard } from './outbound-node-card.ts';
 
 type SortOrder = 'default' | 'latency' | 'name';
 
@@ -19,6 +23,8 @@ type SortOrder = 'default' | 'latency' | 'name';
 export class NexusOutboundsPage extends LitElement {
   static styles = [
     sharedStyles,
+    latencySpectrumStyles,
+    nodeCardStyles,
     css`
       .split {
         display: grid;
@@ -52,6 +58,9 @@ export class NexusOutboundsPage extends LitElement {
           border-color 120ms ease-out,
           transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
       }
+      .rail-item:active {
+        transform: scale(0.98);
+      }
       .rail-item.active {
         background: var(--nx-accent-soft);
         border-color: var(--nx-accent-border);
@@ -62,73 +71,10 @@ export class NexusOutboundsPage extends LitElement {
         gap: 10px;
         margin-top: 12px;
       }
-      .node-card {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        padding: 12px;
-        border-radius: 8px;
-        background: var(--nx-well);
-        border: 1px solid transparent;
-        transition:
-          border-color 120ms ease-out,
-          background 120ms ease-out,
-          transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
-      }
-      .node-card.switchable {
-        cursor: pointer;
-      }
-      .node-card.switchable:active,
-      .rail-item:active {
-        transform: scale(0.98);
-      }
-      .node-card.selected {
-        border-color: var(--nx-accent);
-        background: var(--nx-accent-soft);
-      }
-      .node-select-btn {
-        flex: 1;
-        min-width: 0;
-        border: none;
-        background: transparent;
-        padding: 0;
-        color: var(--nx-text);
-        font-size: 13.5px;
-        font-weight: 700;
-        text-align: left;
-        justify-content: flex-start;
-      }
-      .node-select-btn:disabled {
-        opacity: 1;
-        cursor: default;
-      }
       @media (hover: hover) and (pointer: fine) {
         .rail-item:hover:not(.active) {
           background: var(--nx-row-hover);
         }
-        .node-card.switchable:hover {
-          border-color: var(--nx-accent-border);
-          background: var(--nx-row-hover);
-        }
-        .node-select-btn:hover:not(:disabled) {
-          background: transparent;
-          color: var(--nx-accent-text, var(--nx-accent));
-        }
-      }
-      .bars {
-        display: inline-flex;
-        align-items: flex-end;
-        gap: 2px;
-        height: 12px;
-      }
-      .bars span {
-        width: 3px;
-        border-radius: 1px;
-        background: currentColor;
-        opacity: 0.24;
-      }
-      .bars span.on {
-        opacity: 1;
       }
     `,
   ];
@@ -169,6 +115,7 @@ export class NexusOutboundsPage extends LitElement {
     try {
       const resp = await nexusApi.outbounds();
       this.groups = resp.groups ?? [];
+      appStore.setGroupsCache(this.groups);
       if (this.groups.length > 0 && !this.groups.some((g) => g.name === this.activeGroup)) {
         this.activeGroup = this.groups[0].name;
       }
@@ -188,6 +135,7 @@ export class NexusOutboundsPage extends LitElement {
     this.busy = true;
     try {
       await nexusApi.selectGroup(group, member);
+      appStore.recordOnset(member === '--auto' ? 'Auto' : member, 'node');
       await this.refresh();
     } catch (err) {
       this.groups = prev;
@@ -217,8 +165,7 @@ export class NexusOutboundsPage extends LitElement {
     }
   }
 
-  private async probeNode(tag: string, ev: Event): Promise<void> {
-    ev.stopPropagation();
+  private async probeNode(tag: string): Promise<void> {
     const nextSet = new Set(this.probingNodes);
     nextSet.add(tag);
     this.probingNodes = nextSet;
@@ -275,6 +222,9 @@ export class NexusOutboundsPage extends LitElement {
   render() {
     const group = this.groups.find((g) => g.name === this.activeGroup) ?? this.groups[0] ?? null;
     const members = group ? this.sortedMembers(group.members) : [];
+    const activeSpectrum = group
+      ? computeGroupSpectrum(group.members, (m) => this.effectiveLatency(m), (m) => this.effectiveState(m))
+      : null;
     const canProbeGroup =
       group !== null && group.mode !== 'select' && group.mode !== 'selector';
     const canSwitch =
@@ -323,6 +273,7 @@ export class NexusOutboundsPage extends LitElement {
                   </div>
                   ${this.groups.map((g) => {
                     const upCount = g.members.filter((m) => m.state === 'up').length;
+                    const gSpec = computeGroupSpectrum(g.members);
                     return html`
                       <button
                         class="rail-item ${g.name === group?.name ? 'active' : ''}"
@@ -336,6 +287,7 @@ export class NexusOutboundsPage extends LitElement {
                           <span class="truncate">${g.selected}</span>
                           <span class="tabular">${upCount}/${g.members.length}</span>
                         </div>
+                        ${renderLatencySpectrum(gSpec, { compact: true })}
                       </button>
                     `;
                   })}
@@ -379,6 +331,10 @@ export class NexusOutboundsPage extends LitElement {
                           </div>
                         </div>
 
+                        <div style="margin-top:8px">
+                          ${renderLatencySpectrum(activeSpectrum, { showP50: true })}
+                        </div>
+
                         <div class="row" style="margin-top:12px">
                           <input
                             data-search-input
@@ -415,72 +371,22 @@ export class NexusOutboundsPage extends LitElement {
                             `
                           : html`
                               <div class="node-grid">
-                                ${members.map((m) => {
-                                  const ms = this.effectiveLatency(m);
-                                  const st = this.effectiveState(m);
-                                  const tier = m.breaker_open ? 'down' : getLatencyTier(ms, st);
-                                  const bars = latencyBars(ms);
-                                  const probing = this.probingNodes.has(m.name);
-                                  const live = this.liveProbes.get(m.name);
-                                  const statusCode = live?.status_code ?? m.last_status;
-                                  const isSelected = m.name === group.selected;
-                                  return html`
-                                    <div
-                                      class="node-card ${isSelected ? 'selected' : ''} ${canSwitch ? 'switchable' : ''}"
-                                      @click=${() =>
-                                        canSwitch && !this.busy && void this.selectMember(group.name, m.name)}
-                                    >
-                                      <div class="row between">
-                                        <button
-                                          type="button"
-                                          class="node-select-btn truncate"
-                                          title=${m.name}
-                                          aria-pressed=${isSelected ? 'true' : 'false'}
-                                          ?disabled=${!canSwitch || this.busy}
-                                          @click=${(ev: Event) => {
-                                            ev.stopPropagation();
-                                            if (canSwitch) void this.selectMember(group.name, m.name);
-                                          }}
-                                        >
-                                          ${m.name}
-                                        </button>
-                                        <span class="badge lat-${tier}">
-                                          <span class="bars" aria-hidden="true">
-                                            ${[4, 7, 10, 12].map(
-                                              (h, idx) =>
-                                                html`<span
-                                                  class=${idx < bars ? 'on' : ''}
-                                                  style="height:${h}px"
-                                                ></span>`,
-                                            )}
-                                          </span>
-                                          ${m.breaker_open
-                                            ? t('outbounds.breaker')
-                                            : ms !== null
-                                              ? `${ms} ms`
-                                              : st === 'down'
-                                                ? t('outbounds.down')
-                                                : t('outbounds.unprobed')}
-                                        </span>
-                                      </div>
-
-                                      <div class="row between">
-                                        <div class="muted mono" style="font-size:11.5px">
-                                          ${m.ewma_ms !== undefined ? `EWMA ${m.ewma_ms}ms` : st}
-                                          ${statusCode !== undefined ? ` · HTTP ${statusCode}` : ''}
-                                        </div>
-                                        <button
-                                          class="sm"
-                                          ?disabled=${probing}
-                                          @click=${(ev: Event) => void this.probeNode(m.name, ev)}
-                                        >
-                                          ${icons.bolt()}
-                                          ${probing ? t('outbounds.probing') : t('outbounds.probeNode')}
-                                        </button>
-                                      </div>
-                                    </div>
-                                  `;
-                                })}
+                                ${members.map((m) =>
+                                  renderOutboundNodeCard({
+                                    member: m,
+                                    liveProbe: this.liveProbes.get(m.name),
+                                    maxHealthy: activeSpectrum?.maxHealthy ?? 0,
+                                    selected: m.name === group.selected,
+                                    canSwitch,
+                                    busy: this.busy,
+                                    probing: this.probingNodes.has(m.name),
+                                    onSelect: () => void this.selectMember(group.name, m.name),
+                                    onProbe: (ev: Event) => {
+                                      ev.stopPropagation();
+                                      void this.probeNode(m.name);
+                                    },
+                                  }),
+                                )}
                               </div>
                             `}
                       </div>

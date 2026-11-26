@@ -34,7 +34,17 @@ export type DnsRecordType =
 
 export type StreamState = 'connecting' | 'live' | 'polling' | 'unauthorized' | 'offline';
 
-export type ThemePreference = 'system' | 'dark' | 'light';
+export type ThemePreference = 'system' | 'obsidian' | 'daylight' | 'amber';
+
+export type ResolvedTheme = 'obsidian' | 'daylight' | 'amber';
+
+export type OnsetKind = 'mode' | 'node' | 'reload';
+
+export interface OnsetMarker {
+  ts: number;
+  label: string;
+  kind: OnsetKind;
+}
 
 export type LatencyTier = 'fast' | 'good' | 'mid' | 'slow' | 'down' | 'unprobed';
 

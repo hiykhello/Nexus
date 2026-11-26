@@ -1,10 +1,12 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { Router, routerLink } from '@elelcode/lit-router';
-import { formatRate } from './api.ts';
+import { formatRate, type ThemePreference } from './api.ts';
 import './auth-modal.ts';
+import './components/command-palette.ts';
 import { icons } from './icons.ts';
 import { getLocale, onLocaleChange, t, toggleLocale, type I18nKey } from './i18n.ts';
+import { shellStyles } from './shell-styles.ts';
 import { appStore } from './store.ts';
 import { sharedStyles, themeVarsCss } from './styles.ts';
 import './pages/overview-page.ts';
@@ -32,6 +34,12 @@ const NAV_ITEMS: NavSpec[] = [
   { path: '/diagnostics', key: '6', labelKey: 'nav.diagnostics', component: 'nexus-diagnostics-page', icon: icons.diagnostics },
 ];
 
+const SWATCHES: Array<{ pref: ThemePreference; bg: string; accent: string; signal: string }> = [
+  { pref: 'obsidian', bg: '#181b22', accent: '#2563eb', signal: '#34d399' },
+  { pref: 'daylight', bg: '#f6f5f2', accent: '#1d4ed8', signal: '#047857' },
+  { pref: 'amber', bg: '#1b1916', accent: '#e59a2e', signal: '#34d399' },
+];
+
 const routes = NAV_ITEMS.map((item) => ({
   path: item.path,
   title: () => `${t(item.labelKey)} · Nexus`,
@@ -40,186 +48,11 @@ const routes = NAV_ITEMS.map((item) => ({
 
 @customElement('nexus-app')
 export class NexusApp extends LitElement {
-  static styles = [
-    themeVarsCss,
-    sharedStyles,
-    css`
-      :host {
-        display: block;
-        min-height: 100dvh;
-        background: var(--nx-bg);
-        color: var(--nx-text);
-        font-family:
-          Inter,
-          system-ui,
-          -apple-system,
-          BlinkMacSystemFont,
-          'Segoe UI',
-          sans-serif;
-      }
-      .shell {
-        display: grid;
-        grid-template-columns: 224px 1fr;
-        min-height: 100dvh;
-      }
-      aside {
-        background: var(--nx-sidebar);
-        border-right: 1px solid var(--nx-border);
-        padding: 16px 12px 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        position: sticky;
-        top: 0;
-        height: 100dvh;
-      }
-      .brand-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 4px 6px 6px;
-        gap: 8px;
-      }
-      .brand {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-      }
-      .brand-mark {
-        width: 26px;
-        height: 26px;
-        border-radius: 7px;
-        background: var(--nx-accent);
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--nx-accent-fg);
-        font-weight: 700;
-        font-size: 13px;
-      }
-      .brand-text {
-        font-size: 15px;
-        font-weight: 700;
-        letter-spacing: 0.1em;
-      }
-      nav {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      nav a {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        text-decoration: none;
-        color: var(--nx-text-secondary);
-        padding: 8px 10px;
-        border-radius: 8px;
-        font-size: 13.5px;
-        font-weight: 600;
-      }
-      nav a.active {
-        background: var(--nx-accent-soft);
-        color: var(--nx-accent-text, var(--nx-accent));
-      }
-      @media (hover: hover) and (pointer: fine) {
-        nav a:hover:not(.active) {
-          background: var(--nx-well);
-          color: var(--nx-text);
-        }
-      }
-      .sidebar-foot {
-        margin-top: auto;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        padding-top: 10px;
-        border-top: 1px solid var(--nx-border);
-      }
-      .mini-rates {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 6px;
-        padding: 8px 10px;
-        border-radius: 8px;
-        background: var(--nx-well);
-        font-size: 11.5px;
-      }
-      .controls-row {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 5px;
-      }
-      .controls-row button {
-        padding: 6px 4px;
-        font-size: 11.5px;
-      }
-      main {
-        padding: 20px 24px max(24px, env(safe-area-inset-bottom));
-        max-width: 1280px;
-        width: 100%;
-        margin: 0 auto;
-        min-width: 0;
-      }
-      .auth-banner {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 14px;
-        padding: 10px 14px;
-        border-radius: 10px;
-        background: var(--nx-warn-bg);
-        border: 1px solid var(--nx-warn-border);
-        color: var(--nx-warn-fg);
-        font-size: 13px;
-        font-weight: 500;
-      }
-      @media (max-width: 860px) {
-        .shell {
-          grid-template-columns: 1fr;
-        }
-        aside {
-          position: sticky;
-          top: 0;
-          height: auto;
-          z-index: 30;
-          border-right: none;
-          border-bottom: 1px solid var(--nx-border);
-          padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px
-            max(12px, env(safe-area-inset-left));
-          gap: 8px;
-        }
-        nav {
-          flex-direction: row;
-          overflow-x: auto;
-          overscroll-behavior: contain;
-          padding-bottom: 2px;
-        }
-        nav a {
-          padding: 7px 10px;
-          white-space: nowrap;
-        }
-        .mini-rates,
-        .hint-line {
-          display: none;
-        }
-        .sidebar-foot {
-          margin-top: 0;
-          padding-top: 0;
-          border-top: none;
-        }
-        main {
-          padding: 14px max(14px, env(safe-area-inset-right))
-            max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
-        }
-      }
-    `,
-  ];
+  static styles = [themeVarsCss, sharedStyles, shellStyles];
 
   @state() private authModalOpen = false;
+  @state() private paletteOpen = false;
+  @state() private paletteQuery = '';
 
   private readonly router = new Router({ routes, autoStart: true });
   private unsubs: (() => void)[] = [];
@@ -234,6 +67,11 @@ export class NexusApp extends LitElement {
         this.requestUpdate();
       }, 'change'),
       appStore.subscribe(() => this.requestUpdate(), 'auth-required'),
+      appStore.onNavigate((path) => this.router.push(path)),
+      appStore.onOpenPalette((q) => {
+        this.paletteQuery = q;
+        this.paletteOpen = true;
+      }),
       onLocaleChange(() => {
         const cur = NAV_ITEMS.find((n) => n.path === window.location.pathname) ?? NAV_ITEMS[0];
         document.title = `${t(cur.labelKey)} · Nexus`;
@@ -280,6 +118,13 @@ export class NexusApp extends LitElement {
   }
 
   private handleKeydown = (ev: KeyboardEvent): void => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') {
+      ev.preventDefault();
+      this.paletteQuery = '';
+      this.paletteOpen = !this.paletteOpen;
+      return;
+    }
+    if (this.paletteOpen) return;
     if (ev.key === 'Escape' && this.authModalOpen) {
       this.authModalOpen = false;
       return;
@@ -318,10 +163,37 @@ export class NexusApp extends LitElement {
               <span class="brand-mark" aria-hidden="true">N</span>
               <span class="brand-text">NEXUS</span>
             </div>
-            <span class="badge ${badgeCls}" title=${appStore.streamError || streamLabel}>
-              <span class="dot"></span>${streamLabel}
-            </span>
+            <div class="row" style="gap:6px">
+              <button
+                type="button"
+                class="sm palette-btn-mob"
+                aria-label=${t('palette.trigger')}
+                @click=${() => {
+                  this.paletteQuery = '';
+                  this.paletteOpen = true;
+                }}
+              >
+                ${icons.search()}
+              </button>
+              <span class="badge ${badgeCls}" title=${appStore.streamError || streamLabel}>
+                <span class="dot" style=${st === 'live' ? 'background:var(--nx-signal)' : ''}></span>
+                ${streamLabel}
+              </span>
+            </div>
           </div>
+
+          <button
+            type="button"
+            class="palette-btn"
+            aria-label=${t('palette.trigger')}
+            @click=${() => {
+              this.paletteQuery = '';
+              this.paletteOpen = true;
+            }}
+          >
+            <span class="row" style="gap:6px">${icons.search()} ${t('palette.trigger')}</span>
+            <span class="mono" style="font-size:11px">⌘K</span>
+          </button>
 
           <nav aria-label=${t('nav.mainLabel')}>
             ${NAV_ITEMS.map(
@@ -342,19 +214,41 @@ export class NexusApp extends LitElement {
               <span class="rate-slot" style="color:var(--nx-up)">↑ ${formatRate(appStore.upRate)}</span>
             </div>
 
-            <div class="controls-row">
+            <div class="theme-swatches" role="group" aria-label=${t('theme.label')}>
               <button
-                class="sm"
-                title=${t(`theme.${appStore.themePref}`)}
-                @click=${() => appStore.cycleTheme()}
+                type="button"
+                class="swatch-btn ${appStore.themePref === 'system' ? 'active' : ''}"
+                aria-pressed=${appStore.themePref === 'system' ? 'true' : 'false'}
+                title=${t('theme.system')}
+                @click=${() => appStore.setTheme('system')}
               >
-                ${appStore.resolvedTheme === 'dark' ? icons.moon() : icons.sun()}
-                ${t(`theme.${appStore.themePref}`)}
+                ${t('theme.system')}
               </button>
-              <button class="sm" @click=${() => toggleLocale()}>
+              ${SWATCHES.map(
+                (sw) => html`
+                  <button
+                    type="button"
+                    class="swatch-btn ${appStore.themePref === sw.pref ? 'active' : ''}"
+                    aria-pressed=${appStore.themePref === sw.pref ? 'true' : 'false'}
+                    aria-label=${t(`theme.${sw.pref}` as I18nKey)}
+                    title=${t(`theme.${sw.pref}` as I18nKey)}
+                    @click=${() => appStore.setTheme(sw.pref)}
+                  >
+                    <span class="swatch-chip" style="background:${sw.bg}" aria-hidden="true">
+                      <span class="swatch-dot" style="background:${sw.accent}"></span>
+                      <span class="swatch-dot" style="background:${sw.signal}"></span>
+                    </span>
+                  </button>
+                `,
+              )}
+            </div>
+
+            <div class="controls-row">
+              <button type="button" class="sm" @click=${() => toggleLocale()}>
                 ${icons.globe()} ${locale === 'zh' ? '中文' : 'EN'}
               </button>
               <button
+                type="button"
                 class="sm ${appStore.authRequired ? 'danger' : ''}"
                 @click=${() => (this.authModalOpen = true)}
               >
@@ -387,6 +281,15 @@ export class NexusApp extends LitElement {
         .open=${this.authModalOpen}
         @close=${() => (this.authModalOpen = false)}
       ></nexus-auth-modal>
+
+      <nexus-command-palette
+        .open=${this.paletteOpen}
+        .initialQuery=${this.paletteQuery}
+        @close=${() => {
+          this.paletteOpen = false;
+          this.paletteQuery = '';
+        }}
+      ></nexus-command-palette>
     `;
   }
 }

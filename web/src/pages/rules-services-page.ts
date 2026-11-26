@@ -1,4 +1,4 @@
-import { LitElement, html, css } from 'lit';
+import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import {
   formatBytes,
@@ -11,7 +11,9 @@ import { icons } from '../icons.ts';
 import { onLocaleChange, t } from '../i18n.ts';
 import { appStore } from '../store.ts';
 import { sharedStyles } from '../styles.ts';
+import { extractDomainFromRule } from '../components/palette-logic.ts';
 import './dns-query-card.ts';
+import type { NexusDnsQueryCard } from './dns-query-card.ts';
 
 @customElement('nexus-rules-services-page')
 export class NexusRulesServicesPage extends LitElement {
@@ -31,12 +33,16 @@ export class NexusRulesServicesPage extends LitElement {
         border-radius: 8px;
         background: var(--nx-well);
       }
+      tbody tr.rule-hit td:first-child {
+        box-shadow: inset 2px 0 0 var(--nx-accent);
+      }
     `,
   ];
 
   @state() private rules: RuleItem[] = [];
   @state() private search = '';
   @state() private actionFilter = 'all';
+  @state() private selectedRuleIndex = -1;
   @state() private ssmUsers: SsmapiUserItem[] = [];
   @state() private ssmStats: SsmapiStatsResponse | null = null;
   @state() private ssmAvailable = false;
@@ -49,9 +55,19 @@ export class NexusRulesServicesPage extends LitElement {
     super.connectedCallback();
     this.unsubs.push(
       appStore.subscribe(() => void this.refresh(), 'refresh'),
+      appStore.subscribe(() => this.consumeRuleFilter(), 'change'),
       onLocaleChange(() => this.requestUpdate()),
     );
+    this.consumeRuleFilter();
     void this.refresh();
+  }
+
+  private consumeRuleFilter(): void {
+    const f = appStore.consumePendingRuleFilter();
+    if (f) {
+      this.search = f;
+      this.actionFilter = 'all';
+    }
   }
 
   disconnectedCallback(): void {
@@ -65,6 +81,7 @@ export class NexusRulesServicesPage extends LitElement {
     try {
       const rulesRes = await nexusApi.rules();
       this.rules = rulesRes.rules ?? [];
+      appStore.setRulesCache(this.rules);
       this.error = '';
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
@@ -104,10 +121,21 @@ export class NexusRulesServicesPage extends LitElement {
     });
   }
 
+  private handleRuleClick(rule: RuleItem): void {
+    const domain = extractDomainFromRule(rule);
+    if (!domain) return;
+    this.selectedRuleIndex = rule.index;
+    const dnsCard = this.shadowRoot?.querySelector<NexusDnsQueryCard>('nexus-dns-query-card');
+    dnsCard?.queryDomain(domain);
+  }
+
   render() {
     const list = this.filteredRules();
     const actions = Array.from(new Set(this.rules.map((r) => r.action.toLowerCase())));
     const hasFilter = this.search.trim().length > 0 || this.actionFilter !== 'all';
+    const routeCount = this.rules.filter((r) => r.action.toLowerCase() === 'route' && r.target.toLowerCase() !== 'direct').length;
+    const directCount = this.rules.filter((r) => r.target.toLowerCase() === 'direct' || r.action.toLowerCase() === 'direct').length;
+    const rejectCount = this.rules.filter((r) => ['reject', 'block'].includes(r.action.toLowerCase())).length;
 
     return html`
       <div class="page">
@@ -141,6 +169,11 @@ export class NexusRulesServicesPage extends LitElement {
               <h3>${t('rules.tableTitle')}</h3>
               <span class="muted tabular">${list.length} / ${this.rules.length}</span>
             </div>
+            <div class="row">
+              <span class="badge ok">${t('rules.dist.route', { count: routeCount })}</span>
+              <span class="badge accent">${t('rules.dist.direct', { count: directCount })}</span>
+              <span class="badge err">${t('rules.dist.reject', { count: rejectCount })}</span>
+            </div>
           </div>
 
           <div class="row">
@@ -156,6 +189,7 @@ export class NexusRulesServicesPage extends LitElement {
               .value=${this.search}
               @input=${(e: Event) => (this.search = (e.target as HTMLInputElement).value)}
             />
+            <span class="muted" style="font-size:11.5px">${t('rules.clickHint')}</span>
           </div>
 
           ${actions.length > 0
@@ -206,9 +240,21 @@ export class NexusRulesServicesPage extends LitElement {
                         </td>
                       </tr>
                     `
-                  : list.map(
-                      (r) => html`
-                        <tr>
+                  : list.map((r) => {
+                      const domain = extractDomainFromRule(r);
+                      return html`
+                        <tr
+                          class="${domain ? 'clickable' : ''} ${this.selectedRuleIndex === r.index ? 'rule-hit' : ''}"
+                          tabindex=${domain ? '0' : nothing}
+                          title=${domain ? `${t('dns.query')}: ${domain}` : ''}
+                          @click=${() => domain && this.handleRuleClick(r)}
+                          @keydown=${(e: KeyboardEvent) => {
+                            if (domain && e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                              e.preventDefault();
+                              this.handleRuleClick(r);
+                            }
+                          }}
+                        >
                           <td class="mono muted">#${r.index}</td>
                           <td><span class="badge">${r.type || '-'}</span></td>
                           <td><span class="badge ${this.actionBadge(r.action)}">${r.action}</span></td>
@@ -219,8 +265,8 @@ export class NexusRulesServicesPage extends LitElement {
                           </td>
                           <td class="mono summary-cell">${r.summary || '-'}</td>
                         </tr>
-                      `,
-                    )}
+                      `;
+                    })}
               </tbody>
             </table>
           </div>

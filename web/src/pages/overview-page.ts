@@ -8,6 +8,8 @@ import {
   type OutboundGroup,
   type RouteMode,
 } from '../api.ts';
+import { renderThroughputChart, throughputChartStyles } from '../components/throughput-chart.ts';
+import { renderTransitStrip, transitStripStyles } from '../components/transit-strip.ts';
 import { icons } from '../icons.ts';
 import { onLocaleChange, t } from '../i18n.ts';
 import { appStore } from '../store.ts';
@@ -17,6 +19,8 @@ import { sharedStyles } from '../styles.ts';
 export class NexusOverviewPage extends LitElement {
   static styles = [
     sharedStyles,
+    transitStripStyles,
+    throughputChartStyles,
     css`
       .hero {
         display: flex;
@@ -43,36 +47,6 @@ export class NexusOverviewPage extends LitElement {
       .kpi-up {
         color: var(--nx-up);
       }
-      .spark-wrap {
-        position: relative;
-        margin-top: 10px;
-        background: var(--nx-well);
-        border-radius: 8px;
-        padding: 10px 8px 4px;
-      }
-      .spark {
-        width: 100%;
-        height: 112px;
-        display: block;
-      }
-      .legend {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 14px;
-        font-size: 12px;
-        color: var(--nx-text-secondary);
-      }
-      .legend-item {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .swatch {
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-      }
       .group-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -95,6 +69,7 @@ export class NexusOverviewPage extends LitElement {
   ];
 
   @state() private groups: OutboundGroup[] = [];
+  @state() private ruleCount = 0;
   @state() private busy = false;
   @state() private toast = '';
   @state() private toastKind: 'ok' | 'err' = 'ok';
@@ -103,12 +78,18 @@ export class NexusOverviewPage extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    this.groups = appStore.latestGroups;
+    this.ruleCount = appStore.latestRules.length;
     this.unsubs.push(
-      appStore.subscribe(() => this.requestUpdate(), 'change'),
-      appStore.subscribe(() => void this.refreshGroups(), 'refresh'),
+      appStore.subscribe(() => {
+        if (appStore.latestGroups.length > 0) this.groups = appStore.latestGroups;
+        if (appStore.latestRules.length > 0) this.ruleCount = appStore.latestRules.length;
+        this.requestUpdate();
+      }, 'change'),
+      appStore.subscribe(() => void this.refreshMeta(), 'refresh'),
       onLocaleChange(() => this.requestUpdate()),
     );
-    void this.refreshGroups();
+    void this.refreshMeta();
   }
 
   disconnectedCallback(): void {
@@ -122,10 +103,18 @@ export class NexusOverviewPage extends LitElement {
     this.toastKind = kind;
   }
 
-  private async refreshGroups(): Promise<void> {
+  private async refreshMeta(): Promise<void> {
     try {
-      const resp = await nexusApi.outbounds();
-      this.groups = resp.groups ?? [];
+      const [gRes, rRes] = await Promise.all([
+        nexusApi.outbounds(),
+        nexusApi.rules().catch(() => null),
+      ]);
+      this.groups = gRes.groups ?? [];
+      appStore.setGroupsCache(this.groups);
+      if (rRes?.rules) {
+        this.ruleCount = rRes.rules.length;
+        appStore.setRulesCache(rRes.rules);
+      }
     } catch {
       // handled by store banner if unauthorized
     }
@@ -134,7 +123,7 @@ export class NexusOverviewPage extends LitElement {
   private async handleRefresh(): Promise<void> {
     this.busy = true;
     try {
-      await Promise.all([appStore.refreshNow(), this.refreshGroups()]);
+      await Promise.all([appStore.refreshNow(), this.refreshMeta()]);
     } finally {
       this.busy = false;
     }
@@ -147,6 +136,7 @@ export class NexusOverviewPage extends LitElement {
     try {
       const res = await nexusApi.setMode(mode);
       appStore.setModeLocal(res);
+      appStore.recordOnset(t(`overview.mode.${mode}`), 'mode');
       this.showToast(t('overview.modeUpdated', { mode: t(`overview.mode.${mode}`) }), 'ok');
     } catch (err) {
       if (prev) appStore.setModeLocal(prev);
@@ -160,6 +150,7 @@ export class NexusOverviewPage extends LitElement {
     this.busy = true;
     try {
       await nexusApi.reload();
+      appStore.recordOnset(t('chart.reloadLabel'), 'reload');
       this.showToast(t('overview.reloaded'), 'ok');
       await appStore.refreshNow();
     } catch (err) {
@@ -203,7 +194,8 @@ export class NexusOverviewPage extends LitElement {
     this.busy = true;
     try {
       await nexusApi.selectGroup(group, member);
-      await this.refreshGroups();
+      appStore.recordOnset(member, 'node');
+      await this.refreshMeta();
     } catch (err) {
       this.groups = prev;
       this.showToast(err instanceof Error ? err.message : String(err), 'err');
@@ -212,30 +204,10 @@ export class NexusOverviewPage extends LitElement {
     }
   }
 
-  private sparkPoints(key: 'up' | 'down', maxVal: number): string {
-    const pts = appStore.history;
-    if (pts.length < 2) return '';
-    return pts
-      .map((pt, idx) => {
-        const x = (idx / Math.max(1, pts.length - 1)) * 400;
-        const y = 98 - (pt[key] / maxVal) * 86;
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
-  }
-
-  private sparkArea(key: 'up' | 'down', maxVal: number): string {
-    const line = this.sparkPoints(key, maxVal);
-    if (!line) return '';
-    return `0,104 ${line} 400,104`;
-  }
-
   render() {
     const st = appStore.status;
     const mode = (appStore.mode?.mode ?? 'rule') as RouteMode;
     const maxVal = Math.max(1024, ...appStore.history.map((h) => Math.max(h.up, h.down)));
-    const downPts = this.sparkPoints('down', maxVal);
-    const upPts = this.sparkPoints('up', maxVal);
 
     return html`
       <div class="page">
@@ -267,7 +239,7 @@ export class NexusOverviewPage extends LitElement {
           <div class="col" style="gap:6px">
             <div class="hero-title">
               <span class="badge ${st ? 'ok' : 'err'}">
-                <span class="dot"></span>
+                <span class="dot" style=${st ? 'background:var(--nx-signal)' : ''}></span>
                 ${st ? t('overview.heroRunning') : t(`stream.${appStore.streamState}`)}
               </span>
               <span class="mono" style="font-size:15px">${st?.instance ?? 'nexus'}</span>
@@ -311,6 +283,16 @@ export class NexusOverviewPage extends LitElement {
           </div>
         </div>
 
+        ${renderTransitStrip({
+          status: st,
+          mode: appStore.mode,
+          groups: this.groups,
+          ruleCount: this.ruleCount,
+          downRate: appStore.downRate,
+          upRate: appStore.upRate,
+          streamState: appStore.streamState,
+        })}
+
         <div class="bento-grid">
           <div class="card kpi-card">
             <h3>${t('overview.download')}</h3>
@@ -336,52 +318,12 @@ export class NexusOverviewPage extends LitElement {
           </div>
         </div>
 
-        <div class="card">
-          <div class="row between">
-            <h3>${t('overview.throughput')}</h3>
-            <div class="legend tabular">
-              <span class="legend-item">
-                <span class="swatch" style="background:var(--nx-down)"></span>
-                ${t('overview.download')} <span class="rate-slot">${formatRate(appStore.downRate)}</span>
-              </span>
-              <span class="legend-item">
-                <span class="swatch" style="background:var(--nx-up)"></span>
-                ${t('overview.upload')} <span class="rate-slot">${formatRate(appStore.upRate)}</span>
-              </span>
-              <span class="muted">
-                ${t('overview.peak')} <span class="rate-slot">${formatRate(maxVal)}</span>
-              </span>
-            </div>
-          </div>
-          <div class="spark-wrap">
-            <svg class="spark" aria-hidden="true" viewBox="0 0 400 104" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="nx-down-grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="var(--nx-down)" stop-opacity="0.28" />
-                  <stop offset="100%" stop-color="var(--nx-down)" stop-opacity="0.01" />
-                </linearGradient>
-                <linearGradient id="nx-up-grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="var(--nx-up)" stop-opacity="0.22" />
-                  <stop offset="100%" stop-color="var(--nx-up)" stop-opacity="0.01" />
-                </linearGradient>
-              </defs>
-              <line x1="0" y1="34" x2="400" y2="34" stroke="var(--nx-border)" stroke-dasharray="3 4" />
-              <line x1="0" y1="68" x2="400" y2="68" stroke="var(--nx-border)" stroke-dasharray="3 4" />
-              ${downPts
-                ? html`
-                    <polygon fill="url(#nx-down-grad)" points=${this.sparkArea('down', maxVal)}></polygon>
-                    <polyline fill="none" stroke="var(--nx-down)" stroke-width="2" points=${downPts}></polyline>
-                  `
-                : ''}
-              ${upPts
-                ? html`
-                    <polygon fill="url(#nx-up-grad)" points=${this.sparkArea('up', maxVal)}></polygon>
-                    <polyline fill="none" stroke="var(--nx-up)" stroke-width="2" points=${upPts}></polyline>
-                  `
-                : ''}
-            </svg>
-          </div>
-        </div>
+        ${renderThroughputChart({
+          history: appStore.history,
+          onsetMarkers: appStore.onsetMarkers,
+          downRate: appStore.downRate,
+          upRate: appStore.upRate,
+        })}
 
         <div class="card">
           <div class="row between">

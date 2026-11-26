@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test tests/dashboard.test.ts"
+    "test": "node --test tests/dashboard.test.ts tests/wave35.test.ts"
   },
   "dependencies": {
     "@elelcode/lit-router": "^2.1.7",

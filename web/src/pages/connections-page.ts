@@ -13,6 +13,7 @@ import { onLocaleChange, t } from '../i18n.ts';
 import type { ManagedStream } from '../sse.ts';
 import { appStore } from '../store.ts';
 import { sharedStyles } from '../styles.ts';
+import { connectionDrawerStyles, renderConnectionDrawer } from './connection-drawer.ts';
 
 type ConnSort = 'bytes' | 'down' | 'up' | 'duration' | 'newest';
 
@@ -20,26 +21,23 @@ type ConnSort = 'bytes' | 'down' | 'up' | 'duration' | 'newest';
 export class NexusConnectionsPage extends LitElement {
   static styles = [
     sharedStyles,
+    connectionDrawerStyles,
     css`
-      .drawer {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 10px 16px;
-        margin-top: 10px;
-      }
-      .kv {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-      .kv-label {
-        font-size: 11px;
-        color: var(--nx-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-      }
       .target-cell {
         max-width: 260px;
+      }
+      .traffic-bar {
+        display: flex;
+        height: 2px;
+        width: 100%;
+        margin-top: 3px;
+        border-radius: 1px;
+        background: var(--nx-inset);
+        overflow: hidden;
+      }
+      .traffic-bar span {
+        height: 100%;
+        flex-shrink: 0;
       }
     `,
   ];
@@ -184,6 +182,13 @@ export class NexusConnectionsPage extends LitElement {
     await this.refreshOnce();
   }
 
+  private outboundBadgeClass(outbound: string): string {
+    const o = outbound.toLowerCase();
+    if (o === 'reject' || o === 'block') return 'err';
+    if (o === 'direct') return 'ok';
+    return 'accent';
+  }
+
   private filteredList(): ConnectionItem[] {
     const q = this.search.trim().toLowerCase();
     const list = this.connections.filter((c) => {
@@ -220,6 +225,10 @@ export class NexusConnectionsPage extends LitElement {
 
   render() {
     const list = this.filteredList();
+    const maxBytes = Math.max(
+      1,
+      ...list.map((c) => Number(c.upload_bytes || 0) + Number(c.download_bytes || 0)),
+    );
     const protos = Array.from(
       new Set(['tcp', 'udp', ...this.connections.map((c) => c.protocol.toLowerCase())]),
     );
@@ -350,69 +359,10 @@ export class NexusConnectionsPage extends LitElement {
           </div>
         </div>
 
-        ${this.detail
-          ? html`
-              <div class="card">
-                <div class="row between">
-                  <div class="row">
-                    <strong>${t('connections.detail')}</strong>
-                    <span class="badge accent mono">#${this.detail.id}</span>
-                  </div>
-                  <div class="row">
-                    ${this.detail.can_close
-                      ? html`
-                          <button
-                            class="danger sm"
-                            @click=${(e: Event) => void this.closeOne(this.detail!.id, e)}
-                          >
-                            ${t('connections.closeOne')}
-                          </button>
-                        `
-                      : ''}
-                    <button class="sm" @click=${() => (this.detail = null)}>
-                      ${icons.close()} ${t('common.close')}
-                    </button>
-                  </div>
-                </div>
-                <div class="drawer mono">
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.col.inbound')}</span>
-                    <span>${this.detail.inbound || '-'} (${this.detail.protocol})</span>
-                  </div>
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.col.outbound')}</span>
-                    <span>${this.detail.outbound || this.detail.path}</span>
-                  </div>
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.detail.source')}</span>
-                    <span>${this.detail.source || '-'}</span>
-                  </div>
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.col.target')}</span>
-                    <span>${this.detail.target || `:${this.detail.destination_port}`}</span>
-                  </div>
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.col.rule')}</span>
-                    <span>${this.detail.route_mode || '-'} · ${this.detail.route_rule || '-'}</span>
-                  </div>
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.col.traffic')}</span>
-                    <span>↑ ${formatBytes(this.detail.upload_bytes)} / ↓ ${formatBytes(this.detail.download_bytes)}</span>
-                  </div>
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.detail.process')}</span>
-                    <span class="truncate" title=${this.detail.process_path || '-'}>
-                      ${this.detail.process_path || '-'}
-                    </span>
-                  </div>
-                  <div class="kv">
-                    <span class="kv-label">${t('connections.detail.uidDuration')}</span>
-                    <span>${this.detail.source_uid ?? '-'} · ${formatDuration(this.detail.duration_ms)}</span>
-                  </div>
-                </div>
-              </div>
-            `
-          : ''}
+        ${renderConnectionDrawer(this.detail, {
+          onCloseConn: (id, ev) => void this.closeOne(id, ev),
+          onDismiss: () => (this.detail = null),
+        })}
 
         <div class="card table-wrap" style="padding:8px 12px">
           <table>
@@ -463,12 +413,24 @@ export class NexusConnectionsPage extends LitElement {
                         <td class="mono target-cell truncate" title=${c.target || `:${c.destination_port}`}>
                           ${c.target || `:${c.destination_port}`}
                         </td>
-                        <td><span class="badge ok">${c.outbound || c.path}</span></td>
+                        <td>
+                          <span class="badge ${this.outboundBadgeClass(c.outbound || c.path)}">
+                            ${c.outbound || c.path}
+                          </span>
+                        </td>
                         <td class="mono muted">${c.route_rule || '-'}</td>
                         <td class="mono num-col">
                           <span style="color:var(--nx-up)">↑<span class="rate-slot">${formatBytes(c.upload_bytes)}</span></span>
                           /
                           <span style="color:var(--nx-down)">↓<span class="rate-slot">${formatBytes(c.download_bytes)}</span></span>
+                          <div class="traffic-bar" aria-hidden="true">
+                            <span
+                              style="width:${((Number(c.upload_bytes || 0) / maxBytes) * 100).toFixed(1)}%;background:var(--nx-up)"
+                            ></span>
+                            <span
+                              style="width:${((Number(c.download_bytes || 0) / maxBytes) * 100).toFixed(1)}%;background:var(--nx-down)"
+                            ></span>
+                          </div>
                         </td>
                         <td class="mono muted num-col">${formatDuration(c.duration_ms)}</td>
                         <td>
