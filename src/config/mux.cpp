@@ -56,6 +56,7 @@ namespace config {
                 return error("unsupported multiplex field: " + child.name);
             }
         }
+        if (seen_min_streams && !seen_max_streams) cfg.max_streams = 0;
         if (cfg.max_streams > 0 && cfg.min_streams > cfg.max_streams)
             return error("multiplex min-streams cannot exceed max-streams");
         return cfg;

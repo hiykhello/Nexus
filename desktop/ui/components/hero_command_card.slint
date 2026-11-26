@@ -50,7 +50,6 @@ export component HeroCommandCard inherits Rectangle {
     property <int> bars: root.core-running ? Theme.latency-bars(root.active-node-latency-ms) : 0;
     property <color> lat-color: !root.core-running ? Theme.offline-fg : Theme.latency-fg(root.active-node-latency-ms, root.active-node-latency-ms == 0 ? "timeout" : "healthy");
     property <float> aura-phase: Motion.reduced ? 0.0 : mod(animation-tick(), 2600ms) / 2600ms;
-    property <float> aura-breath: Motion.reduced ? 0.72 : (0.62 + 0.34 * Math.abs(Math.sin(root.aura-phase * 180deg)));
     property <length> orb-size: root.compact ? 66px : root.wide ? 86px : 76px;
 
     property <string> inline-issue-text:

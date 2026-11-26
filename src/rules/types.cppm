@@ -143,6 +143,8 @@ export namespace rules {
         // Network-order destination IPv4 or IPv6 bytes, borrowed for the call.
         // Mutually exclusive with ip; avoids ASCII formatting/parsing roundtrips.
         std::optional<std::span<std::uint8_t const>> ip_bytes;
+        // Multi-holder candidate executable paths (borrowed); matched if any path matches.
+        std::optional<std::span<std::string const>> process_paths;
     };
 
     // Continued actions are returned to an I/O owner, which updates the input
@@ -229,6 +231,7 @@ export namespace rules {
         std::optional<std::string_view> source_user;
         std::optional<std::string_view> package_name;
         std::optional<std::string_view> client;
+        std::optional<std::span<std::string const>> process_paths;
     };
 
     struct ProgramRule {

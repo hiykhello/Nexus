@@ -164,8 +164,6 @@ internal class InMemorySqlExecutor(
         }
     }
 
-    override fun hasTrafficLedgerData(): Boolean = synchronized(lock) { trafficLedger.isNotEmpty() }
-
     override fun recordTrafficDelta(bucketHour: Long, profileId: String, uploadBytes: Long, downloadBytes: Long) = synchronized(lock) {
         val k = bucketHour to profileId
         val cur = trafficLedger[k]

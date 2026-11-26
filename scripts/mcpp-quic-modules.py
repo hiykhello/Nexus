@@ -169,8 +169,7 @@ export namespace {name}_abi {{
 {exports}
 }}
 '''
-    # Keep declarations and selected aliases in one BMI. GCC 16 fails to load
-    # some C struct clusters when their aliases cross a second module boundary.
+    # Keep declarations and selected aliases in one BMI so C struct clusters stay self-contained.
     return {ROOT / f"3rdparty/modules/{name}.cppm": abi + "\n" + wrapper}
 
 

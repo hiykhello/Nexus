@@ -170,69 +170,37 @@ namespace {
         std::filesystem::remove_all(dir, ec);
     }
 
-    auto test_host_kv_secret_isolation_and_legacy_json_import() -> void {
-        auto dir = make_temp_dir("migrate");
+    auto test_host_kv_secret_isolation_and_guards() -> void {
+        auto dir = make_temp_dir("host-kv");
         auto sec_dir = dir / "secrets";
 
-        // Seed legacy workspace.json, host.json (with secrets!), telemetry.json, and ui-prefs.conf.
-        auto legacy_ws = desktop::make_default_workspace();
-        legacy_ws.revision = 9;
-        legacy_ws.profiles.push_back({.id = "legacy-p1", .remarks = "Imported HK", .subscription_id = "manual", .kind = "node"});
-        expect(desktop::save_workspace_atomic(dir / "workspace.json", legacy_ws), "seed legacy workspace.json");
-
-        auto legacy_host = desktop::make_default_desktop_host_config(dir, "/run/nexus.sock");
-        expect(legacy_host.workers == 1, "default host workers == 1");
-        legacy_host.workers = 24;
-        legacy_host.workers_spec = "max-2";
-        legacy_host.workers_max = 12;
-        legacy_host.enable_mixed = true;
-        legacy_host.mixed_listen = "127.0.0.1:7895";
-        legacy_host.webdav_url = "https://dav.example.net/nexus/";
-        legacy_host.webdav_username = "alice";
-        legacy_host.webdav_password = "dav-super-secret-password";
-        legacy_host.sync_passphrase = "e2ee-ultra-secret-passphrase";
-        legacy_host.lan_password = "lan-secret-password";
-        expect(desktop::save_desktop_host_config(dir / "host.json", legacy_host), "seed legacy host.json");
-
-        desktop::TelemetryStoreData legacy_tel{.schema_version = 1, .active_profile_id = "legacy-p1"};
-        legacy_tel.entries.push_back({.profile_id = "legacy-p1", .delay_ms = 55, .last_tested_ms = 1764000000});
-        expect(desktop::save_telemetry_store(dir / "telemetry.json", legacy_tel), "seed legacy telemetry.json");
-
-        desktop::UiPrefs legacy_prefs{};
-        legacy_prefs.sidebar_collapsed = true;
-        legacy_prefs.dash_show_connectivity = false;
-        legacy_prefs.theme_preference = "dark";
-        expect(desktop::save_ui_prefs(dir / "ui-prefs.conf", legacy_prefs), "seed legacy ui-prefs.conf");
-
         auto db = desktop::ClientDatabase::open(dir / "nexus-client.db");
-        expect(db.has_value(), "open db for legacy import");
+        expect(db.has_value(), "open db for host_kv & secret isolation test");
 
-        auto rep1 = desktop::import_legacy_json_if_empty(*db, dir, sec_dir, "/run/nexus.sock");
-        expect(rep1.has_value() && rep1->imported_workspace && rep1->imported_host &&
-               rep1->imported_telemetry && rep1->imported_ui_prefs,
-            "first run imports legacy workspace/host/telemetry/ui-prefs once");
+        auto host = desktop::make_default_desktop_host_config(dir, "/run/nexus.sock");
+        expect(host.workers == 1, "default host workers == 1");
+        host.workers = 24;
+        host.workers_spec = "max-2";
+        host.workers_max = 12;
+        host.enable_mixed = true;
+        host.mixed_listen = "127.0.0.1:7895";
+        host.webdav_url = "https://dav.example.net/nexus/";
+        host.webdav_username = "alice";
+        host.webdav_password = "dav-super-secret-password";
+        host.sync_passphrase = "e2ee-ultra-secret-passphrase";
+        host.lan_password = "lan-secret-password";
+        expect(desktop::save_host_config_to_db(*db, sec_dir, host), "save_host_config_to_db succeeds");
 
-        // Second run MUST be a strict no-op (one-shot idempotent).
-        auto rep2 = desktop::import_legacy_json_if_empty(*db, dir, sec_dir, "/run/nexus.sock");
-        expect(rep2.has_value() && !rep2->imported_workspace && !rep2->imported_host &&
-               !rep2->imported_telemetry && !rep2->imported_ui_prefs,
-            "second run is strictly one-shot idempotent");
-
-        // Verify imported workspace, telemetry, UI prefs (including sidebar_collapsed in host_kv!).
-        auto ws_out = db->load_workspace();
-        expect(ws_out.has_value() && ws_out->revision == 9 && ws_out->profiles.size() == 1 &&
-               ws_out->profiles[0].id == "legacy-p1",
-            "legacy workspace imported into SQLite");
-
-        auto tel_out = db->load_telemetry();
-        expect(tel_out.has_value() && tel_out->active_profile_id == "legacy-p1" &&
-               tel_out->entries.size() == 1 && tel_out->entries[0].delay_ms == 55,
-            "legacy telemetry imported into SQLite");
+        desktop::UiPrefs prefs{};
+        prefs.sidebar_collapsed = true;
+        prefs.dash_show_connectivity = false;
+        prefs.theme_preference = "dark";
+        expect(desktop::save_ui_prefs_to_db(*db, prefs), "save_ui_prefs_to_db succeeds");
 
         auto prefs_out = desktop::load_ui_prefs_from_db(*db);
         expect(prefs_out.has_value() && prefs_out->sidebar_collapsed && !prefs_out->dash_show_connectivity &&
                prefs_out->theme_preference == "dark",
-            "legacy ui_prefs and sidebar_collapsed imported into host_kv");
+            "ui_prefs and sidebar_collapsed round-trip through SQLite host_kv");
         auto sc_kv = db->get_host_kv("sidebar_collapsed");
         expect(sc_kv.has_value() && sc_kv->has_value() && **sc_kv == "true", "sidebar_collapsed persisted directly in host_kv");
 
@@ -282,13 +250,6 @@ namespace {
                core_host_json.contains("127.0.0.1:7895"),
             "desktop_host_to_core_json excludes WebDAV/E2EE secrets");
 
-        // Legacy host.json secrets are scrubbed after migration into 0600 sync-creds.json.
-        auto legacy_host_after = read_raw(dir / "host.json");
-        expect(!legacy_host_after.contains("dav-super-secret-password") &&
-               !legacy_host_after.contains("e2ee-ultra-secret-passphrase") &&
-               !legacy_host_after.contains("lan-secret-password"),
-            "legacy host.json secrets scrubbed after migration");
-
         // Defense-in-depth: set_host_kv refuses direct secret keys AND deeply nested objects/arrays.
         auto rej1 = db->set_host_kv("bad_top", R"({"webdav_password":"leak"})");
         auto rej2 = db->set_host_kv("bad_nested", R"({"desktop":{"sync_passphrase":"leak"}})");
@@ -317,21 +278,6 @@ namespace {
             desktop::reclaim_process_memory(&*pdb);
             std::error_code pec;
             std::filesystem::remove_all(pdir, pec);
-        }
-
-        // Traffic-only DB MUST NOT re-import stale telemetry.json.
-        {
-            auto tdir = make_temp_dir("traffic-only");
-            desktop::TelemetryStoreData stale{.schema_version = 1, .active_profile_id = "stale-p"};
-            stale.entries.push_back({.profile_id = "stale-p", .delay_ms = 999, .last_tested_ms = 100});
-            expect(desktop::save_telemetry_store(tdir / "telemetry.json", stale), "seed stale telemetry.json");
-            auto tdb = desktop::ClientDatabase::open(tdir / "nexus-client.db");
-            expect(tdb.has_value(), "open traffic-only db");
-            expect(tdb->record_traffic_delta(490000, "live-p", 10, 20).has_value(), "seed traffic_ledger row");
-            auto trep = desktop::import_legacy_json_if_empty(*tdb, tdir, tdir / "secrets", "/run/nexus.sock");
-            expect(trep.has_value() && !trep->imported_telemetry, "traffic-only DB skips stale telemetry.json");
-            std::error_code tec;
-            std::filesystem::remove_all(tdir, tec);
         }
 
         // Forward schema guard: PRAGMA user_version > 1 fails closed on open().
@@ -365,7 +311,7 @@ auto main() -> int {
     try {
         test_schema_v1_workspace_vertical_split_and_cascade();
         test_telemetry_traffic_ledger_and_memory_reclaim();
-        test_host_kv_secret_isolation_and_legacy_json_import();
+        test_host_kv_secret_isolation_and_guards();
         std::println("nexus-desktop-client-db-tests: ALL PASSED");
         return 0;
     } catch (std::exception const& e) {

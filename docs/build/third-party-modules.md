@@ -4,7 +4,7 @@
 
 状态：当前工作区已将 `3rdparty/modules/` 下的第三方模块封装统一去前缀为裸模块名与命名空间：`glaze`（`namespace glaze`）、`capy`（`namespace capy`）、`corosio`（`namespace corosio`）、`boringssl`（`namespace boringssl`）、`blake3`（`namespace blake3`）、`nghttp2`（`namespace nghttp2`）、`ngtcp2`（`namespace ngtcp2`）与 `nghttp3`（`namespace nghttp3`）。`capy`、`corosio`、`ngtcp2` 与 `nghttp3` 同时覆盖 Linux / Apple Darwin / Windows 多平台 ABI。包的获取、固定与构建由[mcpp 工作区](mcpp-workspace.md)管理。
 
-历史实验记录（2026-10-27 至 2026-10-29）：早期 Linux x86_64 + GCC 16.2.1 阶段验证了在无头文件泄漏下通过模块封装导出 Glaze/Capy/Corosio/BoringSSL/nghttp2 能力；第 153 批起工作区全面切换为 Clang（`llvm@23.1.3`）+ C++26 + 静态 `libc++`，第 161–163 批完成去 `nexus.thirdparty.` / `thirdparty.` / `nex::` 前缀收拢。下文保留早期设计示意图与验收准则说明（历史示例代码中的旧名以当前源码为准）。
+历史实验记录：早期验证了在无头文件泄漏下通过模块封装导出 Glaze/Capy/Corosio/BoringSSL/nghttp2 能力；工作区现已全面统一为 Clang（`llvm@23.1.6`）+ C++26 + 静态 `libc++`，并完成去前缀收拢。下文保留核心设计示意图与验收准则说明（历史示例代码以当前源码为准）。
 
 ## 层次与依赖方向
 
@@ -99,7 +99,7 @@ int main() {
 
 它读取 `port 443`，写 BEVE、读回、再写并读 KDL，字段值一致。另一个实验直接导入 `glaze` 也通过。修改模块导出接口后，当时的构建重编了 Glaze 模块、重导出模块和 consumer，重新链接并运行成功。当前工作区的增量构建还应通过 `tests/mcpp_module_incremental.py` 验证。
 
-这个历史实验只覆盖单字段与指定提交/工具链。现在项目已固定同一提交，并在 Clang（`llvm@23.1.3`）C++26 模块中验证规则集子集的 KDL/BEVE 读写；复杂元数据、所有模板及其他编译器仍未全面验证。
+项目已固定同一提交，并在 Clang（`llvm@23.1.6`）C++26 模块（`GLZ_REFLECTION26 = 0`）中验证规则集与配置的 KDL/BEVE 读写。
 
 ## 上游模块、头文件与宏
 
@@ -156,4 +156,4 @@ nghttp2 可以采用同样的选择性导出方式；使用者和 `http2` 所需
 
 上述为持续验收要求；当前 Glaze、Capy、Corosio 和固定 nghttp2 的有限项目目标已通过对应测试，其余依赖仍需继续验证。依赖的来源、锁定、升级与分发要求仍以[工作区构建](mcpp-workspace.md)为准。
 
-2026-10-29（历史里程碑）：新增 BoringSSL libcrypto 封装模块（现已去前缀为 `boringssl`），导出当前使用的 libcrypto 类型与函数，项目代码通过模块导入。当前全仓统一使用 Clang（`llvm@23.1.3`）与静态 `libc++` 构建并共用 `std` BMI。
+BoringSSL `libcrypto` 封装模块为无前缀 `boringssl`，导出当前使用的 libcrypto 类型与函数，项目代码通过模块导入。当前全仓统一使用 Clang（`llvm@23.1.6`）与静态 `libc++` 构建并共用 `std` BMI。

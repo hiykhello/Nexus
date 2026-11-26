@@ -7,8 +7,6 @@ version = "0.1.0"
 [features]
 fakeip-base = []
 proxy = ["fakeip-base"]
-source-route = { implies = ["proxy", "relay-runtime/test-source-route"], defines = ["NEXUS_TEST_SOURCE_ROUTE"] }
-inbound-protocols = ["proxy", "relay-runtime/vless", "relay-runtime/ss2022"]
 lifetime = ["fakeip-base", "relay-runtime/test-fakeip-lifetime"]
 owner = ["fakeip-base", "relay-runtime/test-fakeip-abandon"]
 io-uring = ["nexus.corosio-source/uring"]
@@ -18,9 +16,6 @@ dns = { path = "../../src/dns", features = ["fakeip", "test-fakeip"] }
 relay-runtime = { path = "../../src/relay", default-features = false, features = ["dns-standard", "test-fakeip"] }
 nexus.capy-source = { workspace = true, patches = ["../../3rdparty/patches/capy/mcpp-exact.patch"] }
 nexus.corosio-source = { workspace = true, patches = ["../../3rdparty/patches/corosio/mcpp-exact.patch"] }
-
-[feature-deps.inbound-protocols]
-protocols = { path = "../../src", features = ["vless", "ss2022"] }
 
 [feature-deps.io-uring]
 uring-system.workspace = true

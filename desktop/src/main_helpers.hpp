@@ -195,12 +195,6 @@ namespace desktop_ui_helpers {
         return std::format("{:.1f} KB/s", kib_s);
     }
 
-    inline auto format_metrics_summary(desktop::MetricsSnapshot const& m, bool is_en) -> std::string {
-        return is_en
-            ? std::format("{} sessions · ↑ {} · ↓ {}", m.active_sessions, format_bytes_human(m.upload_bytes), format_bytes_human(m.download_bytes))
-            : std::format("活跃会话 {} · ↑ {} · ↓ {}", m.active_sessions, format_bytes_human(m.upload_bytes), format_bytes_human(m.download_bytes));
-    }
-
     inline auto format_uptime(std::chrono::seconds elapsed) -> std::string {
         auto total = std::max<long long>(0, elapsed.count());
         auto hrs = total / 3600;
@@ -219,15 +213,8 @@ namespace desktop_ui_helpers {
         std::vector<double> down_kib_s, up_kib_s;
 
         struct Update {
-            std::string summary;
             std::string up_rate;
             std::string down_rate;
-            std::string peak_rate;
-            std::vector<float> bars;
-            std::vector<float> down_bars;
-            std::vector<float> up_bars;
-            std::vector<std::string> down_labels;
-            std::vector<std::string> up_labels;
             std::string down_value, down_unit, down_peak, down_wave_area, down_wave_line;
             std::string up_value, up_unit, up_peak, up_wave_area, up_wave_line;
         };
@@ -259,26 +246,12 @@ namespace desktop_ui_helpers {
                 max_dl = std::max(max_dl, down_kib_s[vis_off + i]);
                 max_ul = std::max(max_ul, up_kib_s[vis_off + i]);
             }
-            double max_sample = std::max(max_dl, max_ul);
-            double scale = std::max(1.0, max_sample);
-            std::vector<float> dl_bars(kSlots, 0.0f), ul_bars(kSlots, 0.0f);
-            std::vector<std::string> dl_labels(kSlots, "0.0 KB/s"), ul_labels(kSlots, "0.0 KB/s");
-            std::size_t pad = kSlots - vis_n;
-            for (std::size_t i = 0; i < vis_n; ++i) {
-                dl_bars[pad + i] = static_cast<float>(std::clamp(down_kib_s[vis_off + i] / scale, 0.0, 1.0));
-                ul_bars[pad + i] = static_cast<float>(std::clamp(up_kib_s[vis_off + i] / scale, 0.0, 1.0));
-                dl_labels[pad + i] = format_rate_human(down_kib_s[vis_off + i]);
-                ul_labels[pad + i] = format_rate_human(up_kib_s[vis_off + i]);
-            }
             auto dl_parts = split_rate_parts(down_kib);
             auto ul_parts = split_rate_parts(up_kib);
             auto dl_wave = build_speed_wave_paths(down_kib_s, kSlots);
             auto ul_wave = build_speed_wave_paths(up_kib_s, kSlots);
-            auto up_s = format_rate_human(up_kib);
-            auto dl_s = format_rate_human(down_kib);
             return {
-                std::format("↑ {} · ↓ {}", up_s, dl_s), up_s, dl_s, format_rate_human(max_sample),
-                dl_bars, dl_bars, std::move(ul_bars), std::move(dl_labels), std::move(ul_labels),
+                format_rate_human(up_kib), format_rate_human(down_kib),
                 std::move(dl_parts.value), std::move(dl_parts.unit), format_rate_human(max_dl),
                 std::move(dl_wave.area_cmd), std::move(dl_wave.line_cmd),
                 std::move(ul_parts.value), std::move(ul_parts.unit), format_rate_human(max_ul),

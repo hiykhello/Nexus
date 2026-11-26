@@ -1,6 +1,6 @@
 # Linux 代理内核支持矩阵
 
-本表记录已接入的生产入口、构建特性和适用边界。双后端（`epoll` 与 `io_uring`）已通过第 87–110 批全量集成、压力、互通与弱网验收。[最新规划](next-batches-91-96.md) · [Linux 验收](proxy-kernel-linux-validation.md#第-8790-批--集成性能和发布验收)
+本表记录已接入的生产入口、构建特性和适用边界。双后端（`epoll` 与 `io_uring`）已通过全量集成、压力、互通与弱网验收。[协议与内核演进蓝图](protocol-and-kernel-roadmap.md) · [Linux 验收](proxy-kernel-linux-validation.md#第-8790-批--集成性能和发布验收)
 
 | 协议或入口 | 方向与承载 | 认证、解析和路由 | 构建和仍待验证的边界 |
 | --- | --- | --- | --- |
@@ -17,6 +17,6 @@
 | Snell / ShadowTLS | Snell 出站 v4、入站 v5，TCP/UDP、HTTP 混淆与既有顺序复用。ShadowTLS v3 提供 TCP 承载及内外层组合。 | Snell PSK 与已有重放约束。ShadowTLS 使用密码、外层 TLS 和合法 cover 服务，可承载内层协议。 | `snell`、`shadowtls-proxy`。v5 QUIC、后续 Snell 版本和额外混淆留在评审项。 |
 | Linux TUN / 透明入口 | routed TUN 双栈 TCP/UDP，外部 TUN FD，Linux REDIRECT/TPROXY TCP 和 TPROXY UDP。 | 系统策略路由、入口接口、原目标、DNS 劫持、FakeIP 和配置的出站。按入口支持相应有序动作。 | `tun-inbound`、`tun-host-dns`、`tproxy-udp`、`dns-fakeip`。验证 MTU/分片、异常清理、回滚和代次并存。 |
 
-DNS 包含系统 local、具名 UDP/TCP、DoT、DoH/1.1、DoH/2、DoQ 和 DoH/3。按选择开启 `dns-tls`、`dns-https`、`dns-quic`、`dns-https3`、`dns-response`。当前验证入口、消息响应条件和缓存证据见[配置规范](../configuration/spec.md#dnsfake-ip-与-tun)及[项目进度](../progress.md)。具名 HTTP 按 `http-client`、`http-client-h2`、`http-client-h3` 区分关闭图和只启用实际承载的组合。
+DNS 包含系统 local、具名 UDP/TCP、DoT、DoH/1.1、DoH/2、DoQ 和 DoH/3。按选择开启 `dns-tls`、`dns-https`、`dns-quic`、`dns-https3`、`dns-response`。当前验证入口、消息响应条件和缓存边界见 [配置规范](../configuration/spec.md#dnsfake-ip-与-tun)。具名 HTTP 按 `http-client`、`http-client-h2`、`http-client-h3` 区分关闭图和只启用实际承载的组合。
 
-最小关闭图在 epoll、io_uring 均确认 HTTPS CONNECT、DNS TLS 和 FakeIP 在启用前明确拒绝，普通 SOCKS TCP/UDP、认证与串联、HTTP CONNECT 和转发继续可用。证据在 `target/batch90/90-off-{epoll,uring}-release.log`。两份系统包要求 glibc ≥ 2.38。打包工具未自动收录许可证，十个固定上游源码包的通知及 pin 清单随独立附包交付。发布包、ELF、CLI 和附包的核验入口在 `target/batch90/`，源码行数审计保留 19 项既有例外。[运行时包要求](../build/runtime-package.md)
+最小关闭图在 epoll、io_uring 均确认 HTTPS CONNECT、DNS TLS 和 FakeIP 在启用前明确拒绝，普通 SOCKS TCP/UDP、认证与串联、HTTP CONNECT 和转发继续可用。构建配置与发行打包见 [mcpp 工作区](../build/mcpp-workspace.md) 与 [发行打包与运维](../../packaging/README.md)。

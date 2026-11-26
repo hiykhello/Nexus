@@ -181,29 +181,29 @@ class WorkspaceStoreTest {
     }
 
     @Test
-    fun storePersistsToSqliteAndOneShotMigratesLegacyWorkspaceJson() {
+    fun storeInitializesDefaultInSqliteAndWrites0600CoreInput() {
         val dir = Files.createTempDirectory("nexus-ws-test").toFile()
         try {
-            val legacyJson = WorkspaceJsonCodec.encode(
-                WorkspaceDocument(
-                    revision = 4L,
+            val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
+            val store = WorkspaceStore(dir, db)
+            val initial = store.loadOrInit()
+            assertEquals(1L, initial.revision)
+            assertTrue(initial.profiles.isEmpty())
+            assertTrue(initial.routingProfiles.isNotEmpty())
+
+            val withNodes = store.save(
+                initial.copy(
                     profiles = listOf(
                         ProfileItem(id = "n-tokyo", remarks = "Tokyo-Core", kind = ProfileKind.NODE, node = NodeConfig(protocol = "vless", server = "jp.example.com", port = 443)),
                         ProfileItem(id = "fk-hk", remarks = "HK-Gaming", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = "schema-version 1\nrole \"client\"\n"),
                     ),
                 ),
             )
-            File(dir, "workspace.json").writeText(legacyJson, Charsets.UTF_8)
+            assertEquals(2L, withNodes.revision)
+            assertEquals(2, store.loadOrInit().profiles.size)
 
-            val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
-            val store = WorkspaceStore(dir, db)
-            val migrated = store.loadOrInit()
-            assertEquals(4L, migrated.revision)
-            assertEquals(2, migrated.profiles.size)
-
-            // Subsequent saves go to SQLite without needing workspace.json rewrites
-            val saved = store.save(migrated.copy(profiles = migrated.profiles.take(1)))
-            assertEquals(5L, saved.revision)
+            val trimmed = store.save(withNodes.copy(profiles = withNodes.profiles.take(1)))
+            assertEquals(3L, trimmed.revision)
             assertEquals(1, store.loadOrInit().profiles.size)
 
             // On-demand Core input file is written 0600

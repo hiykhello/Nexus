@@ -1,5 +1,6 @@
 export module platform.process_owner;
 import std;
+export import containers.inplace_vector;
 import platform.ip_address;
 
 export namespace platform {
@@ -10,6 +11,7 @@ export namespace platform {
         std::optional<std::uint32_t> gid{};
         std::string user{};
         std::string package_name{};
+        containers::inplace_vector<std::string, 8> executables{};
     };
 
     struct SocketTuple {

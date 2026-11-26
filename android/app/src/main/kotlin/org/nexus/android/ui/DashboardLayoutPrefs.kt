@@ -149,9 +149,6 @@ data class DashboardCardVisibility(
                 showKpiGrid = KEY_SHOW_KPI_OPTIN in hidden,
                 cardOrder = parseOrder(rawOrder),
             )
-
-        fun fromHiddenKeySet(hidden: Set<String>): DashboardCardVisibility =
-            fromPersisted(hidden = hidden, rawOrder = null)
     }
 }
 

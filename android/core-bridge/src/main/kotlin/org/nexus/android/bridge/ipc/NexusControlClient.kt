@@ -35,7 +35,6 @@ class NexusControlClient(
 ) {
     suspend fun status(): ControlReply = sendUnix("status")
     suspend fun reload(): ControlReply = sendUnix("reload")
-    suspend fun setLogLevel(level: String): ControlReply = sendUnix("log-level", level)
     suspend fun selectOutbound(group: String, member: String): ControlReply =
         if (httpBaseUrl != null) {
             val encoded = encodePathSegment(group)
@@ -44,9 +43,6 @@ class NexusControlClient(
         } else {
             sendUnix("select", group, member)
         }
-
-    suspend fun getOutboundMode(): ControlReply =
-        if (httpBaseUrl != null) sendHttp("GET", "/v1/mode") else sendUnix("mode")
 
     suspend fun setOutboundMode(mode: String, outbound: String = "proxy"): ControlReply =
         if (httpBaseUrl != null) {
@@ -62,9 +58,6 @@ class NexusControlClient(
         } else {
             sendUnix("select", group, "--auto")
         }
-
-    suspend fun setHttpLogLevel(level: String): ControlReply =
-        sendHttp("POST", "/v1/log-level", JSONObject().put("level", level).toString())
 
     suspend fun fetchOutboundsJson(): ControlReply = sendHttp("GET", "/v1/outbounds")
     suspend fun fetchConnectionsJson(): ControlReply = sendHttp("GET", "/v1/connections")
@@ -85,8 +78,6 @@ class NexusControlClient(
         }.joinToString("&")
         return sendHttp("GET", "/v1/logs?$params")
     }
-    suspend fun fetchDiagnosticsJson(): ControlReply = sendHttp("GET", "/v1/diagnostics")
-    suspend fun fetchEventsJson(cursor: Long = 0): ControlReply = sendHttp("GET", "/v1/events?cursor=$cursor")
     suspend fun closeConnection(id: Long): ControlReply = sendHttp("DELETE", "/v1/connections/$id")
     suspend fun closeAllConnections(): ControlReply =
         if (httpBaseUrl != null) sendHttp("DELETE", "/v1/connections") else sendUnix("close-all")

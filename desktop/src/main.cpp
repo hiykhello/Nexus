@@ -89,9 +89,6 @@ auto main(int argc, char** argv) -> int {
     std::string db_open_error;
     if (auto opened = desktop::ClientDatabase::open(cfg_dir / "nexus-client.db"); opened) {
         client_db = std::make_unique<desktop::ClientDatabase>(std::move(*opened));
-        if (auto imp = desktop::import_legacy_json_if_empty(*client_db, cfg_dir, secrets_dir, fallback_sock); !imp) {
-            db_open_error = imp.error();
-        }
     } else {
         db_open_error = opened.error();
     }
@@ -122,12 +119,11 @@ auto main(int argc, char** argv) -> int {
     desktop::AsyncWorker worker;
     desktop::AsyncWorker probe_worker;
 
-    ui->set_control_endpoint(slint::SharedString(ipc.endpoint()));
     ui->set_config_path(slint::SharedString(config_path.string()));
     auto loaded_prefs = (client_db ? desktop::load_ui_prefs_from_db(*client_db) : std::nullopt)
                             .value_or(desktop::UiPrefs{});
     desktop_ui_helpers::apply_prefs_to_ui(*ui, loaded_prefs, desktop::detect_system_locale());
-    desktop_ui_helpers::clear_telemetry_ui(*ui, is_en_ui(*ui));
+    desktop_ui_helpers::clear_telemetry_ui(*ui);
     desktop_ui_helpers::apply_kdl_to_ui_state(*ui, initial_kdl);
     if (!db_open_error.empty()) {
         bool const en = is_en_ui(*ui);
@@ -192,7 +188,7 @@ auto main(int argc, char** argv) -> int {
     auto poll_telemetry = [&](bool refresh_groups_too) {
         desktop_ui_helpers::poll_telemetry_async(
             weak_ui, worker, http_ctrl, cached_groups, pinned_members, member_models, rate_tracker, metrics_in_flight,
-            is_en_ui(*ui), refresh_groups_too, sync_tray, record_traffic_totals);
+            refresh_groups_too, sync_tray, record_traffic_totals);
     };
 
     on_window_shown = [&] {
@@ -244,32 +240,15 @@ auto main(int argc, char** argv) -> int {
     ui->on_reload_config([&] {
         bool en = is_en_ui(*ui);
         if (!supervisor.running()) {
-            ui->set_status_summary(slint::SharedString(tr(en, "核心未运行", "Core is not running")));
+            desktop_ui_helpers::push_toast(*ui, tr(en, "核心未运行", "Core is not running"), "warn");
             return;
         }
-        ui->set_status_summary(slint::SharedString(tr(en, "正在热重载...", "Reloading...")));
         worker.post([&, weak_ui, en] {
             auto reply = ipc.reload();
             if (!reply.ok) { if (auto hr = http_ctrl.reload(); hr.ok) reply = {true, "OK"}; }
             auto msg = reply.ok ? tr(en, "热重载成功", "Reloaded") : (tr(en, "热重载失败: ", "Reload failed: ") + reply.body);
             on_ui_thread(weak_ui, [ok = reply.ok, msg = std::move(msg)](auto& s) {
-                s->set_status_summary(slint::SharedString(msg));
                 desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
-            });
-        });
-    });
-    ui->on_kdl_edited([&](slint::SharedString text) {
-        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(std::string_view(text)));
-    });
-    ui->on_validate_kdl([&](slint::SharedString text) {
-        bool en = is_en_ui(*ui);
-        std::string payload(text);
-        ui->set_kdl_line_count(desktop_ui_helpers::count_kdl_lines(payload));
-        ui->set_diagnostic_message(slint::SharedString(tr(en, "正在调用内核校验...", "Validating config...")));
-        worker.post([&, weak_ui, en, payload = std::move(payload)] {
-            auto res = desktop_ui_helpers::validate_draft_config(cfg_dir, supervisor, payload, en);
-            on_ui_thread(weak_ui, [ok = res.ok, msg = std::move(res.message)](auto& s) {
-                s->set_diagnostic_ok(ok); s->set_diagnostic_message(slint::SharedString(msg));
             });
         });
     });
@@ -291,7 +270,6 @@ auto main(int argc, char** argv) -> int {
             bool saved = write_file_atomic(config_path, payload);
             std::string disk_kdl = saved ? std::string{} : read_file_text(config_path);
             desktop::IpcReply reply{saved, saved ? tr(en, "已保存", "Saved") : tr(en, "写入失败", "Write failed")};
-            std::string synced_sock;
             if (saved) {
                 bool was_running = supervisor.running();
                 if (was_running) {
@@ -303,15 +281,13 @@ auto main(int argc, char** argv) -> int {
                     ipc.set_endpoint(next_ctl.socket);
                     http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
                     http_ctrl.set_bearer_token(next_ctl.bearer_token);
-                    synced_sock = next_ctl.socket;
                 }
             }
             std::string msg = !saved ? tr(en, "写入配置文件失败", "Failed to write config file")
                 : (reply.ok ? tr(en, "校验通过，已保存并热重载", "Saved & reloaded") : (tr(en, "已保存，但重载失败: ", "Saved; reload failed: ") + reply.body));
-            on_ui_thread(weak_ui, [&sync_tray, ok = saved && reply.ok, saved, payload, disk_kdl = std::move(disk_kdl), synced_sock = std::move(synced_sock), msg = std::move(msg)](auto& s) {
+            on_ui_thread(weak_ui, [&sync_tray, ok = saved && reply.ok, saved, payload, disk_kdl = std::move(disk_kdl), msg = std::move(msg)](auto& s) {
                 if (saved) {
                     desktop_ui_helpers::apply_kdl_to_ui_state(*s, payload);
-                    if (!synced_sock.empty()) s->set_control_endpoint(slint::SharedString(synced_sock));
                 } else {
                     s->set_tun_enabled(desktop_ui_helpers::kdl_has_tun_inbound(disk_kdl));
                 }
@@ -322,7 +298,6 @@ auto main(int argc, char** argv) -> int {
     });
 
     ui->on_open_external_editor([&] { open_with_system_editor(config_path); });
-    ui->on_refresh_metrics([&] { poll_telemetry(true); });
     ui->global<nexus_ui::ToastState>().set_has_endpoint_formatter(true);
     ui->global<nexus_ui::ToastState>().on_format_endpoint_cb([](slint::SharedString h, slint::SharedString p) {
         return slint::SharedString(desktop::format_host_port(std::string_view(h), std::string_view(p)));
@@ -347,7 +322,6 @@ auto main(int argc, char** argv) -> int {
             auto reply = http_ctrl.clear_cache();
             auto msg = reply.ok ? tr(en, "缓存已清空", "Cache cleared") : (tr(en, "清空缓存失败: ", "Clear cache failed: ") + reply.body);
             on_ui_thread(weak_ui, [ok = reply.ok, msg = std::move(msg)](auto& s) {
-                s->set_status_summary(slint::SharedString(msg));
                 desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
             });
         });
@@ -404,9 +378,8 @@ auto main(int argc, char** argv) -> int {
             auto err = supervisor.last_error();
             auto msg = err.empty() ? tr(en, "核心意外退出", "Core exited unexpectedly") : (tr(en, "核心已退出: ", "Core exited: ") + err);
             ui->set_diagnostic_ok(false); ui->set_diagnostic_message(slint::SharedString(msg));
-            ui->set_status_summary(slint::SharedString(msg));
             desktop_ui_helpers::push_toast(*ui, msg, "error");
-            desktop_ui_helpers::clear_telemetry_ui(*ui, en);
+            desktop_ui_helpers::clear_telemetry_ui(*ui);
             sync_tray();
             return;
         }

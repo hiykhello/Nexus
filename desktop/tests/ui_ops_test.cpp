@@ -203,16 +203,6 @@ namespace {
                !crystal_out.blur_enabled,
             "crystal low-opacity and blur_enabled roundtrip");
 
-        auto legacy_tmp = std::filesystem::temp_directory_path() / "nexus-desktop-legacy-prefs-test.conf";
-        {
-            std::ofstream out(legacy_tmp, std::ios::binary | std::ios::trunc);
-            out << "blur_radius=0.0\nwindow_opacity=0.80\n";
-        }
-        auto legacy_out = desktop::load_ui_prefs(legacy_tmp);
-        std::filesystem::remove(legacy_tmp, ec);
-        expect(!legacy_out.blur_enabled && std::abs(legacy_out.window_opacity - 0.80f) < 0.02f,
-            "legacy blur_radius=0.0 maps to blur_enabled=false");
-
         desktop::WindowBlurController blur;
         expect(!blur.active() && blur.backend_name().empty(), "blur initially detached");
         expect(!blur.attach_wayland(nullptr, nullptr), "null wayland pointers safely rejected");

@@ -67,6 +67,7 @@ export namespace policy {
         std::optional<std::string_view> package_name{};
         std::optional<rules::RouteMode> route_mode{};
         std::optional<std::string_view> client{};
+        std::optional<std::span<std::string const>> process_paths{};
     };
     struct DnsRule {
         std::string domain;

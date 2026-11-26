@@ -1,6 +1,6 @@
 # 实施路线
 
-当前以[功能完整度清单](feature-completion.md)保留完整范围：协议及全部拨号字段、detour、流量与 DNS 专用规则/动作、uTLS 和具名 HTTP client。先完成真实能力，再统一优化；当前执行点见[项目进度](../progress.md)。下文保留原阶段顺序，不把局部测试作为项目完成依据。
+当前以 [功能完整度清单](feature-completion.md) 保留完整范围：协议及全部拨号字段、detour、流量与 DNS 专用规则/动作、uTLS 和具名 HTTP client。先完成真实能力，再统一优化；当前生产支持范围见 [支持矩阵](proxy-kernel-support-matrix.md)。下文保留原阶段顺序，不把局部测试作为项目完成依据。
 
 状态：建议的后续验证顺序；已建立 mcpp/C++26 Modules 基线，实现有限规则集解析、转换、顺序匹配及 Linux 离线命令，以及受限的 SOCKS5 和 HTTP CONNECT 到直连 TCP 链路。有限主配置子集已接入，代理能力范围见 [SOCKS5 说明](../architecture/protocols/socks5-mixed.md)。
 
@@ -14,7 +14,7 @@
 4. **P0 安全与接管**：逐项验证 libcrypto、TLS、VLESS/Reality 与 SS-2022；并行条件成立后接入自研网络栈、TUN、防环回、DNS/Fake-IP 和原生控制面。先以内存和隔离环境验证状态与失败处理，再评估真实系统接管。
 5. **P1 扩展**：WireGuard/WARP、MASQUE、Tailscale、Hysteria 2/QUIC、AnyTLS、Trojan 与其他承载各按依赖和互操作证据推进。每完成一个纵向切片，更新支持矩阵和验证结果，不以草案或依赖编译冒充功能完成。
 
-这些阶段可以在依赖满足时交错，但不能跳过安全边界或把 P1 候选当成已验证依赖。具体未实现部分持续记录在[项目进度](../progress.md)。
+这些阶段可以在依赖满足时交错，但不能跳过安全边界或把 P1 候选当成已验证依赖。支持状态持续维护在 [支持矩阵](proxy-kernel-support-matrix.md)。
 
 | 阶段 | 工作 | 完成依据 |
 | --- | --- | --- |
@@ -54,7 +54,7 @@
 - libcrypto 的具体提交和密码原语覆盖、证书验证方案、TLS 协议子集与指纹 profile 清单。
 - 仅引入指定的 libcrypto，排除第三方 libssl 和独立 TLS 实现的构建及传递依赖核查方式。
 - C++23 标准库 `std::expected` 的 Modules 支持、公共错误类型及依赖/协程异常边界；编码规范已明确优先使用 expected 与 optional。
-- 优先使用 C++26：本机 GCC 16.2.1 已通过关键特性最小编译探测；仍需验证原生反射、现代函数包装与 Modules/依赖的组合，以及契约断言的运行检查策略。
+- 统一使用 C++26 Modules：全仓已收敛为 Clang（`llvm@23.1.6`）+ 静态 `libc++`，零 `-freflection`，基础容器与函数包装由独立 `containers` / `functional` / `utility` 叶子包提供。
 
 优先验证会影响模块边界和依赖关系的事项，完成实验后更新相关草案。后续扩展能力应附带对应配置与验收依据。
 

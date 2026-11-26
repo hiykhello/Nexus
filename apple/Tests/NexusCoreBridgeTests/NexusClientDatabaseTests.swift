@@ -205,29 +205,38 @@ final class NexusClientDatabaseTests: XCTestCase {
         try await db.shrinkMemory()
     }
 
-    func testOneShotLegacyJsonMigrationForWorkspaceHostAndTelemetry() async throws {
+    func testWorkspaceHostAndTelemetryStoresSQLitePersistence() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Seed legacy workspace.json, host.json, and telemetry.json before DB is created.
-        let legacyWS = WorkspaceDocument(
-            revision: 4,
-            updatedAtMs: 1_700_000_004_000,
-            profiles: [
-                WorkspaceProfileItem(
-                    id: "legacy-hk",
-                    remarks: "Legacy HK",
-                    kind: .node,
-                    node: WorkspaceNodeConfig(protocolName: "trojan", server: "hk.example.com", port: 443, password: "pw")
-                ),
-            ]
-        )
-        try WorkspaceStore.atomicWrite0600(
-            data: Data(try legacyWS.encodeCanonicalJSON(pretty: true).utf8),
-            to: dir.appendingPathComponent("workspace.json")
-        )
+        let db = NexusClientDatabase(rootDirectory: dir)
+        let wsStore = WorkspaceStore(rootDirectory: dir, database: db)
+        let hostStore = HostConfigStore(rootDirectory: dir, database: db)
+        let telStore = TelemetryStore(rootDirectory: dir, database: db)
 
-        let legacyHost = AppleHostConfig(
+        // Fresh first-launch default initialization via atomic SQLite helpers.
+        let initialWS = try await wsStore.loadOrInit()
+        XCTAssertEqual(initialWS.schemaVersion, 1)
+        XCTAssertEqual(initialWS.revision, 1)
+
+        let defaultHost = try await hostStore.loadOrInit(defaultPlatform: .desktopMacOS)
+        XCTAssertEqual(defaultHost.workers, 1)
+        XCTAssertEqual(defaultHost.workersSpec, "")
+        XCTAssertEqual(defaultHost.workersMax, 0)
+
+        var updatedWS = initialWS
+        updatedWS.profiles = [
+            WorkspaceProfileItem(
+                id: "hk-trojan",
+                remarks: "HK Trojan",
+                kind: .node,
+                node: WorkspaceNodeConfig(protocolName: "trojan", server: "hk.example.com", port: 443, password: "pw")
+            ),
+        ]
+        let savedWS = try await wsStore.save(updatedWS)
+        XCTAssertEqual(savedWS.revision, 2)
+
+        let customHost = AppleHostConfig(
             platform: .desktopMacOS,
             logLevel: "debug",
             workers: 20,
@@ -235,73 +244,50 @@ final class NexusClientDatabaseTests: XCTestCase {
             workersMax: 12,
             controlHttpListen: "127.0.0.1:9191"
         )
-        try WorkspaceStore.atomicWrite0600(
-            data: Data(try legacyHost.encodeCanonicalJSON(pretty: true).utf8),
-            to: dir.appendingPathComponent("host.json")
-        )
+        _ = try await hostStore.save(customHost)
 
-        let legacyTel = TelemetryDocument(
-            activeProfileId: "legacy-hk",
+        let customTel = TelemetryDocument(
+            activeProfileId: "hk-trojan",
             outboundMode: "global",
             unreadUnexpectedCrash: true,
             lastCrashTimestampMs: 9999,
             lastCrashReason: "oom",
-            profiles: ["legacy-hk": ProfileTelemetryEntry(latencyMs: 55, lastTestedMs: 8888, uploadBytes: 300, downloadBytes: 900)]
+            profiles: ["hk-trojan": ProfileTelemetryEntry(latencyMs: 55, lastTestedMs: 8888, uploadBytes: 300, downloadBytes: 900)]
         )
-        let telData = try JSONEncoder().encode(legacyTel)
-        try WorkspaceStore.atomicWrite0600(data: telData, to: dir.appendingPathComponent("telemetry.json"))
+        _ = try await telStore.save(customTel)
+        await db.close()
 
-        let db = NexusClientDatabase(rootDirectory: dir)
-        let wsStore = WorkspaceStore(rootDirectory: dir, database: db)
-        let hostStore = HostConfigStore(rootDirectory: dir, database: db)
-        let telStore = TelemetryStore(rootDirectory: dir, database: db)
-
-        let migratedWS = try await wsStore.loadOrInit()
-        XCTAssertEqual(migratedWS.revision, 4)
-        XCTAssertEqual(migratedWS.profiles.map(\.id), ["legacy-hk"])
-
-        let migratedHost = try await hostStore.loadOrInit()
-        XCTAssertEqual(migratedHost.logLevel, "debug")
-        XCTAssertEqual(migratedHost.workers, 20)
-        XCTAssertEqual(migratedHost.workersSpec, "max-2")
-        XCTAssertEqual(migratedHost.workersMax, 12)
-        XCTAssertEqual(migratedHost.controlHttpListen, "127.0.0.1:9191")
-
-        let migratedTel = await telStore.load()
-        XCTAssertEqual(migratedTel.activeProfileId, "legacy-hk")
-        XCTAssertEqual(migratedTel.outboundMode, "global")
-        XCTAssertTrue(migratedTel.unreadUnexpectedCrash)
-        XCTAssertEqual(migratedTel.profiles["legacy-hk"]?.latencyMs, 55)
-        XCTAssertEqual(migratedTel.profiles["legacy-hk"]?.uploadBytes, 300)
-        XCTAssertEqual(migratedTel.profiles["legacy-hk"]?.downloadBytes, 900)
-
-        // Subsequent mutations live in SQLite even if legacy JSON files are deleted.
-        try FileManager.default.removeItem(at: dir.appendingPathComponent("workspace.json"))
-        try FileManager.default.removeItem(at: dir.appendingPathComponent("host.json"))
-        try FileManager.default.removeItem(at: dir.appendingPathComponent("telemetry.json"))
-
+        // Reopen database cleanly from SQLite WAL store.
         let reopenedDB = NexusClientDatabase(rootDirectory: dir)
         let reopenedWSStore = WorkspaceStore(rootDirectory: dir, database: reopenedDB)
         let reloadedWS = try await reopenedWSStore.loadOrInit()
-        XCTAssertEqual(reloadedWS.profiles.map(\.id), ["legacy-hk"])
+        XCTAssertEqual(reloadedWS.revision, 2)
+        XCTAssertEqual(reloadedWS.profiles.map(\.id), ["hk-trojan"])
         let summaries = try await reopenedWSStore.listProfileSummaries()
-        XCTAssertEqual(summaries.map(\.id), ["legacy-hk"])
+        XCTAssertEqual(summaries.map(\.id), ["hk-trojan"])
         try await reopenedWSStore.shrinkMemory()
 
         let reloadedHost = try await HostConfigStore(rootDirectory: dir, database: reopenedDB).loadOrInit()
+        XCTAssertEqual(reloadedHost.logLevel, "debug")
         XCTAssertEqual(reloadedHost.workers, 20)
         XCTAssertEqual(reloadedHost.workersSpec, "max-2")
         XCTAssertEqual(reloadedHost.workersMax, 12)
+        XCTAssertEqual(reloadedHost.controlHttpListen, "127.0.0.1:9191")
 
         let reopenedTelStore = TelemetryStore(rootDirectory: dir, database: reopenedDB)
         let reloadedTel = await reopenedTelStore.load()
-        XCTAssertEqual(reloadedTel.activeProfileId, "legacy-hk")
-        try await reopenedTelStore.recordTrafficDelta(bucketHour: 500, profileId: "legacy-hk", uploadBytes: 120, downloadBytes: 480)
-        let ledger = try await reopenedTelStore.queryTrafficLedger(sinceHour: 500, profileId: "legacy-hk")
-        XCTAssertEqual(ledger, [TrafficLedgerRecord(bucketHour: 500, profileId: "legacy-hk", uploadBytes: 120, downloadBytes: 480)])
+        XCTAssertEqual(reloadedTel.activeProfileId, "hk-trojan")
+        XCTAssertEqual(reloadedTel.outboundMode, "global")
+        XCTAssertTrue(reloadedTel.unreadUnexpectedCrash)
+        XCTAssertEqual(reloadedTel.profiles["hk-trojan"]?.latencyMs, 55)
+        XCTAssertEqual(reloadedTel.profiles["hk-trojan"]?.uploadBytes, 300)
+        XCTAssertEqual(reloadedTel.profiles["hk-trojan"]?.downloadBytes, 900)
+        try await reopenedTelStore.recordTrafficDelta(bucketHour: 500, profileId: "hk-trojan", uploadBytes: 120, downloadBytes: 480)
+        let ledger = try await reopenedTelStore.queryTrafficLedger(sinceHour: 500, profileId: "hk-trojan")
+        XCTAssertEqual(ledger, [TrafficLedgerRecord(bucketHour: 500, profileId: "hk-trojan", uploadBytes: 120, downloadBytes: 480)])
     }
 
-    func testSyncRevisionActiveRoutingForwardSchemaGuardAndTrafficOnlyNoReimport() async throws {
+    func testSyncRevisionActiveRoutingForwardSchemaGuardAndHasTelemetryData() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -338,18 +324,19 @@ final class NexusClientDatabaseTests: XCTestCase {
             XCTAssertEqual(err, .unsupportedSchemaVersion(99))
         }
 
-        // Traffic-only DB must NOT re-import stale telemetry.json on disk.
+        // hasTelemetryData tracks traffic_ledger as well as host_kv & node_telemetry.
         let trafficDir = dir.appendingPathComponent("traffic-only", isDirectory: true)
         try FileManager.default.createDirectory(at: trafficDir, withIntermediateDirectories: true)
-        let staleTel = TelemetryDocument(activeProfileId: "stale-id", outboundMode: "direct")
-        try WorkspaceStore.atomicWrite0600(data: try JSONEncoder().encode(staleTel), to: trafficDir.appendingPathComponent("telemetry.json"))
         let trafficDB = NexusClientDatabase(rootDirectory: trafficDir)
+        let hasTelBefore = try await trafficDB.hasTelemetryData()
+        XCTAssertFalse(hasTelBefore)
         try await trafficDB.recordTrafficDelta(bucketHour: 700, profileId: "p-live", uploadBytes: 50, downloadBytes: 80)
-        let hasTel = try await trafficDB.hasTelemetryData()
-        XCTAssertTrue(hasTel)
-        let loadedTel = await TelemetryStore(rootDirectory: trafficDir, database: trafficDB).load()
+        let hasTelAfter = try await trafficDB.hasTelemetryData()
+        XCTAssertTrue(hasTelAfter)
+        let loadedTel = await TelemetryStore(database: trafficDB).load()
         XCTAssertEqual(loadedTel.activeProfileId, "")
         XCTAssertEqual(loadedTel.profiles["p-live"]?.uploadBytes, 50)
+        XCTAssertEqual(loadedTel.profiles["p-live"]?.downloadBytes, 80)
     }
 
     private static func readSyncRevisionAndSwitchActiveRouting(at url: URL, activeRoutingID: String) throws -> String {

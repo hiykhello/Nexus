@@ -19,7 +19,7 @@ Nexus 是一个通用代理平台，提供可组合的代理能力，同时支�
 
 - 项目自有 C++ 代码全面使用 C++26 Modules 组织，生产模块无统一前缀。
 - C++ 代码尽量无异常，优先以 `std::expected` 表达可失败操作，以 `std::optional` 表达正常缺失；见 [编码规范](../development/cpp-guidelines.md)。
-- 优先使用本机 GCC 的 C++26/C++23 能力；成员函数优先显式 `this`，模板优先 concept，函数优先后置返回类型，反射优先原生静态反射。
+- 统一采用 Clang（`llvm@23.1.6`）+ 静态 `libc++` 与 C++26 Modules；成员函数优先显式 `this`，模板优先 concept，函数优先后置返回类型，采用零 `-freflection` 静态表分发与独立 `containers` / `functional` / `utility` 叶子基础包。
 - 使用 `mcpp` 工作区作为项目构建入口，第三方依赖严格离线锁定。
 - 使用 KDL 2.0 编写配置，使用指定的 `hiykhello/glaze-kdl` 仓库解析。
 - 使用 `ngcpp/proxy` 表达抽象接口，使用 `cppalliance/corosio` 作为协程与 I/O 引擎。

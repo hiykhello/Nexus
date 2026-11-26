@@ -50,24 +50,10 @@ export namespace relay {
 #else
         std::unique_ptr<dns::AddressCache> cache_owner;
         dns::AddressCache& cache;
-#ifdef NEXUS_TEST_DNS_SNAPSHOT
-        std::optional<dns::AddressCache::Reader> reader;
-        inline explicit DnsState(DnsRouting value,dns::AddressCache* shared=nullptr,
-                                 std::size_t reader_count=1,std::optional<std::size_t> reader_index=0)
-            : routing(std::move(value)), cache_owner(shared ? nullptr : std::make_unique<dns::AddressCache>(256,0,true,reader_count)),
-              cache(shared ? *shared : *cache_owner) {
-            if (reader_index) reader.emplace(cache.reader(*reader_index));
-        }
-#else
         inline explicit DnsState(DnsRouting value, dns::AddressCache* shared=nullptr)
-            : routing(std::move(value)), cache_owner(shared ? nullptr : std::make_unique<dns::AddressCache>(256,0,
-#ifdef NEXUS_TEST_DNS_PER_WORKER
-                false
-#else
-                true
-#endif
-            )), cache(shared ? *shared : *cache_owner) {}
-#endif
+            : routing(std::move(value)),
+              cache_owner(shared ? nullptr : std::make_unique<dns::AddressCache>(256,0,true)),
+              cache(shared ? *shared : *cache_owner) {}
 #endif
 #ifdef NEXUS_TEST_DNS_OWNER
         ~DnsState() { nexus_test_dns_owner_destroy(); }

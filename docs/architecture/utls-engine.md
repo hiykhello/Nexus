@@ -8,7 +8,7 @@
 
 TCP、QUIC和Reality共用同一编排与密钥交换算法。单/双真实X25519与MLKEM share保存在原两个key owner中，按服务端选择取用；HRR保留随机/顺序并按新share重新计算padding。QUIC保持空session ID，替换真实local transport parameters后重新计算最终wire大小；QUIC 包保护支持 AES-128-GCM、AES-256-GCM 和 ChaCha20-Poly1305。生产 Hy2 出站使用 Firefox 形状，分别在 OpenSSL 4.1 强制这三种套件时完成认证握手。epoll 与 io_uring 均覆盖 IPv4 和 IPv6，记录在 `target/batch73/quic-suites`。Reality的新groups span overload与旧scalar factory共享同一首Hello认证，不改变证书/Finished校验；固定参考端的强制cover HRR仍为明确拒绝边界。
 
-独立冻结基础包 `/tmp/nexus-utls-engine-S6BV5P/frozen-v1` 已按21file SHA纳工作区：108个OpenSSL认证/错名/错CA场景逐次观察实际1600B ClientHello，48个真实Go UDP QUIC场景及校准wrapper下另48个均通过（TCP RecordLayer构造0）。另有2738逐次普通/array/aligned C++分配失败及恢复、24密钥调度、64随机shape和3旧TLS单元。共享 Reality addon 独立 auth 48 与实际对端 12（8 正向 + 4 强制 cover HRR 拒绝）通过。正式构建与运行状态见 [项目进度](../progress.md)，不把独立结果当当前正式图通过。
+独立验证覆盖 108 个 OpenSSL 认证/错名/错CA 场景（逐次观察实际 1600B ClientHello）、48 个真实 Go UDP QUIC 场景、2738 次分配失败与恢复、24 密钥调度、64 随机 shape 与共享 Reality 双向互通。正式支持范围见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。
 
 同编译参数下原/新对象尺寸均为Hello136、Exchange8232、Driver8432、Session9856、ClientProfile88、QUIC TlsClient9064字节。新增编排不含任务或协程、虚派发、额外heap owner或隐藏实现存储；算法产生的配置/编码/密钥分配是必要协议工作，不能据此声称指令等价、网络握手零分配或nativecrypto OOM全覆盖。具名浏览器原始样本、更广 TLS 版本和 PSK/0-RTT 验证仍在推进。
 
@@ -18,7 +18,7 @@ Trojan 和 AnyTLS TCP 出站的显式 `tls12` 形状使用完全握手、扩展�
 
 第 94C 批提供 `chrome-133`、`firefox-135` 和 `safari-18`，沿用家族短名。普通浏览器 TCP 握手由同一 ClientHello 的 ServerHello 选择 TLS 1.3 或 TLS 1.2。1.2 路径使用四个 ECDHE AES-GCM 和两个 ECDHE ChaCha20-Poly1305 套件。QUIC 浏览器形状只协商 TLS 1.3，使用实际 transport parameters。Chrome、Edge 和 Firefox 的 GREASE ECH 在显式 ECH 握手中让位。Chrome 和 Edge 的 TCP h2 ALPS 以 EncryptedExtensions 进入 Finished transcript。Firefox 委托凭据当前覆盖 ClientHello 声明，服务器选用委托凭据时仍缺验证实现。OCSP 与 SCT 的 TLS 报文解析沿用现有 PKI 认证策略。
 
-普通物理 TCP 出站的 TLS 1.3 恢复缓存容量为 32 张票据，按实际目的端点、验证身份、信任锚及 ALPN 隔离，取出即消费，按期清理。普通 VLESS 按配置目的绑定恢复。通用 Fast Open 和 layered 拨号未启用该共享缓存，Vision 与 REALITY 保留专用握手路径。TCP 应用数据在 Finished 后发送。实网和字节快照见 [第 94C 批](../planning/batch94-protocols-xhttp-utls-design.md#94c--utls-高保真现代浏览器指纹补强)。
+普通物理 TCP 出站的 TLS 1.3 恢复缓存容量为 32 张票据，按实际目的端点、验证身份、信任锚及 ALPN 隔离，取出即消费，按期清理。普通 VLESS 按配置目的绑定恢复。通用 Fast Open 和 layered 拨号未启用该共享缓存，Vision 与 REALITY 保留专用握手路径。TCP 应用数据在 Finished 后发送。恢复边界详见 [TLS 会话恢复](tls-resumption.md)。
 
 ## Profile 与握手语义
 

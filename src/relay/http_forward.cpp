@@ -193,6 +193,20 @@ namespace relay {
         auto write_text(io::tcp_socket& socket, std::string_view text, Session& session,std::optional<bool> payload_direction={}) -> capy::task<bool> {
             co_return co_await write(socket, {reinterpret_cast<std::uint8_t const*>(text.data()),text.size()},session,payload_direction);
         }
+        constexpr auto http_error_reply(std::uint16_t code, bool head) noexcept -> std::string_view {
+            switch (code) {
+            case 403: return head ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 10\r\n\r\nForbidden\n";
+            case 417: return head ? "HTTP/1.1 417 Expectation Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 417 Expectation Failed\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 19\r\n\r\nExpectation Failed\n";
+            case 501: return head ? "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 16\r\n\r\nNot Implemented\n";
+            case 502: return head ? "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Gateway\n";
+            default:  return head ? "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Request\n";
+            }
+        }
         auto write_target(Session& session, std::string_view text) -> capy::task<bool> {
             if (!session.tunnel) co_return co_await write_text(session.target,text,session,true);
             if (session.meters_principal_bytes())
@@ -282,7 +296,7 @@ namespace relay {
                 offset+=step.consumed;
                 if (step.event==http::ResponseEvent::malformed || step.event==http::ResponseEvent::truncated) {
                     if (!final_header) {
-                        if (co_await write_text(session.client,"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",session)) finish_response(session,&response_done);
+                        if (co_await write_text(session.client,http_error_reply(502,head),session)) finish_response(session,&response_done);
                         else finish(session);
                     } else finish_response(session,&response_done);
                     co_return;
@@ -322,7 +336,7 @@ namespace relay {
                 }
                 if (error && session.tunnel) {
                     if (!final_header) {
-                        if (co_await write_text(session.client,"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",session)) finish_response(session,&response_done);
+                        if (co_await write_text(session.client,http_error_reply(502,head),session)) finish_response(session,&response_done);
                         else finish(session);
                     } else finish_response(session,&response_done);
                     co_return;
@@ -331,7 +345,7 @@ namespace relay {
                     auto end=decoder.finish();
                     if (!end.wire.empty() && !co_await write_text(session.client,end.wire,session,false)) { finish(session); co_return; }
                     if (end.event!=http::ResponseEvent::complete && !final_header) {
-                        if (co_await write_text(session.client,"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",session)) finish_response(session,&response_done);
+                        if (co_await write_text(session.client,http_error_reply(502,head),session)) finish_response(session,&response_done);
                         else finish(session);
                     } else finish_response(session,&response_done);
                     co_return;
@@ -425,12 +439,9 @@ namespace relay {
         auto first=decoder.feed(input,output);
         auto const& request=decoder.request();
         if (first.event != http::RequestEvent::header) {
-            auto response = request.status == http::ConnectStatus::expectation_failed ?
-                "HTTP/1.1 417 Expectation Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
-                request.status == http::ConnectStatus::unsupported ?
-                "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
-                "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            if (co_await write_text(session.client, response, session)) {
+            auto const err = request.status == http::ConnectStatus::expectation_failed ? std::uint16_t{417} :
+                request.status == http::ConnectStatus::unsupported ? std::uint16_t{501} : std::uint16_t{400};
+            if (co_await write_text(session.client, http_error_reply(err, input.starts_with("HEAD ")), session)) {
                 finish_response(session);
                 co_await drain(session);
             } else finish(session);
@@ -455,9 +466,7 @@ namespace relay {
         auto code = session.ordered_tcp ? co_await ordered_forward_dial(session,context,destination,input.substr(0,first.consumed),first_wire,first_sent) :
             co_await dial(session,context,policy,destination,Clock::time_point::max(),first_wire,&first_sent);
         if (code != 0) {
-            auto response = code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
-                                        "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            if (co_await write_text(session.client, response, session)) {
+            if (co_await write_text(session.client, http_error_reply(code == 2 ? 403 : 502, request.head), session)) {
                 finish_response(session);
                 co_await drain(session);
             } else finish(session);

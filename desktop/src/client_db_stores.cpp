@@ -3,10 +3,7 @@ module desktop.client_db;
 import std;
 import desktop.desktop_host_config;
 import desktop.mini_json;
-import desktop.telemetry_store;
 import desktop.ui_prefs;
-import desktop.workspace_models;
-import desktop.workspace_store;
 
 namespace desktop {
     auto load_host_config_from_db(
@@ -63,66 +60,5 @@ namespace desktop {
         auto r1 = db.set_host_kv("ui_prefs", ui_prefs_to_json(prefs));
         auto r2 = db.set_host_kv("sidebar_collapsed", prefs.sidebar_collapsed ? "true" : "false");
         return r1.has_value() && r2.has_value();
-    }
-
-    auto import_legacy_json_if_empty(
-        ClientDatabase& db,
-        std::filesystem::path const& cfg_dir,
-        std::filesystem::path const& secrets_dir,
-        std::string_view control_socket) -> std::expected<LegacyImportReport, std::string> {
-        LegacyImportReport rep{};
-        if (auto flag = db.get_host_kv("legacy_json_imported"); flag && *flag && **flag == "true") {
-            return rep;
-        }
-
-        std::error_code ec;
-        auto has_ws = db.has_workspace_data();
-        if (!has_ws) return std::unexpected(has_ws.error());
-        auto const ws_path = cfg_dir / "workspace.json";
-        if (!*has_ws && std::filesystem::is_regular_file(ws_path, ec) && !ec) {
-            if (auto doc = load_workspace(ws_path); doc) {
-                if (auto sr = db.save_workspace(*doc); !sr) return std::unexpected(sr.error());
-                rep.imported_workspace = true;
-            }
-        }
-
-        auto const host_path = cfg_dir / "host.json";
-        auto existing_host = db.get_host_kv("desktop_host");
-        if (existing_host && !*existing_host && std::filesystem::is_regular_file(host_path, ec) && !ec) {
-            auto host = load_desktop_host_config(host_path, cfg_dir, control_socket);
-            if (!save_host_config_to_db(db, secrets_dir, host)) {
-                return std::unexpected("failed to import legacy host.json into sqlite");
-            }
-            if (!host.webdav_password.empty() || !host.sync_passphrase.empty() || !host.lan_password.empty()) {
-                DesktopHostConfig scrubbed = host;
-                scrubbed.webdav_password.clear();
-                scrubbed.sync_passphrase.clear();
-                scrubbed.lan_password.clear();
-                (void)save_desktop_host_config(host_path, scrubbed);
-            }
-            rep.imported_host = true;
-        }
-
-        auto const tel_path = cfg_dir / "telemetry.json";
-        auto has_tel = db.has_telemetry_data();
-        if (!has_tel) return std::unexpected(has_tel.error());
-        if (!*has_tel && std::filesystem::is_regular_file(tel_path, ec) && !ec) {
-            auto tel = load_telemetry_store(tel_path);
-            if (auto sr = db.save_telemetry(tel); !sr) return std::unexpected(sr.error());
-            rep.imported_telemetry = true;
-        }
-
-        auto const prefs_path = cfg_dir / "ui-prefs.conf";
-        auto existing_prefs = db.get_host_kv("ui_prefs");
-        if (existing_prefs && !*existing_prefs && std::filesystem::is_regular_file(prefs_path, ec) && !ec) {
-            auto prefs = load_ui_prefs(prefs_path);
-            if (!save_ui_prefs_to_db(db, prefs)) {
-                return std::unexpected("failed to import legacy ui-prefs.conf into sqlite");
-            }
-            rep.imported_ui_prefs = true;
-        }
-
-        if (auto mr = db.set_host_kv("legacy_json_imported", "true"); !mr) return std::unexpected(mr.error());
-        return rep;
     }
 }

@@ -7,7 +7,7 @@
 - **全栈统一 C++26 / MSVC C++23 + `import std;`**：桥接库 `nexus-desktop-bridge` 采用标准模块（`desktop.client_db`、`desktop.workspace_store`、`desktop.workspace_composer`、`desktop.workspace_sync`、`desktop.desktop_host_config`、`desktop.telemetry_store`、`desktop.ipc_client`、`desktop.http_control`、`desktop.share_link`、`desktop.single_instance`、`desktop.system_proxy`、`desktop.core_supervisor`、`desktop.async_worker`）并链接内置静态 C 库 `nexus-sqlite3`（`3rdparty/vendor/sqlite3/sqlite3.c`）；
 - **统一 SQLite 3 (WAL) 存储与零凭据落库**：工作区节点（`profiles` + `profile_payloads` 垂直分表）、订阅、路由预设、节点遥测、小时流量账本与本机宿主选项统一持久化在 `0600` 的 `nexus-client.db` 中；WebDAV 密码与 E2EE 同步口令仅存于 `0600` 密钥文件（`secrets/sync-creds.json`），绝不写入 SQLite 或便携 `workspace.json`；
 - **零 C#/.NET、零 Electron 常驻，托盘低内存回收**：窗口收进托盘后自动暂停高频连接/日志轮询，执行 `PRAGMA shrink_memory` / `wal_checkpoint(PASSIVE)` 与平台堆内存回收（Linux `malloc_trim(0)` / Windows `_heapmin` + `SetProcessWorkingSetSize` / macOS `malloc_zone_pressure_relief`），同时实时采样 Linux PSS、Windows WorkingSet 与 macOS `proc_pid_rusage` (`ri_phys_footprint`)；
-- **进程与构建解耦**：Linux、macOS 与 Windows 均可用 GCC 16 / Clang / MSVC + Ninja 编外壳并链接官方预编译 `Slint-cpp-1.19.0` SDK；
+- **进程与构建解耦**：Linux、macOS 与 Windows 均可用 GCC / Clang / MSVC + Ninja 编外壳并链接官方预编译 `Slint-cpp-1.19.0` SDK；
 - **许可合规**：界面“关于”页内置 `AboutSlint` 署名，桌面分发兼容 GPLv3 及 Slint 免费 **Royalty-Free Desktop License**；
 - **架构规范**：详见 [配置边界与统一 SQLite 存储](../docs/architecture/config-boundary.md) 与 [多平台集成与运维原则](../docs/design-principles/platform-and-operations.md)。
 

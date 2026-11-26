@@ -33,9 +33,14 @@ kind = "lib"
 
 [targets.shared-capacity-test]
 kind = "bin"
-main = "../../experiments/dns-shared-cache/group_shared_capacity_test.cpp"
+main = "../../tests/dns/group_shared_capacity_test.cpp"
+required_features = ["test-inspect"]
+
+[targets.shared-capacity-stress-test]
+kind = "bin"
+main = "../../tests/dns/group_shared_capacity_stress_test.cpp"
 required_features = ["test-inspect"]
 
 [targets.coordinator-module-test]
 kind = "bin"
-main = "../../experiments/dns-shared-cache/group_coordinator_module_test.cpp"
+main = "../../tests/dns/group_coordinator_module_test.cpp"

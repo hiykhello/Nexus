@@ -9,22 +9,22 @@
    - 改为统一走 `crypto::random_bytes`（底层 BoringSSL `RAND_bytes` 原生跨 Linux/Windows/macOS）或抽象 `platform.random`。
 2. **拆分 `src/platform/` 为跨平台通用与 Linux 专属**：
    - 通用：`ip_address`、`network_selection`、`network_state`（接口值类型）、`socket_options`（通用结构体，按 OS 分实现单元）。
-   - Linux 专属：`netlink_*`、`ipv4_reverse_path`、`routing_rule`、`socket_namespace`、`resolved_*`、`sd_bus_abi`。
+   - Linux 专属：`netlink_*`、`ipv4_reverse_path`、`routing_rule`、`socket_namespace_linux`、`resolved_*`。
 3. **清理散落在可跨平台目录中的零散 POSIX 头文件**：
    - 仅用 `<arpa/inet.h>` 做 IP 文本/字节转换的文件（`src/http/connect.cpp`、`src/config/{dependencies,dns}.cpp`、`src/rules/{validate,matcher,srs_payload}.cpp*`、`src/masque/{target,connect_ip}.cpp*`）统一改用 `platform.ip_address`（纯标准 C++，零 OS 头文件）。
-   - `src/tls/certificate_trust.cpp`、`src/dns/local_config.cpp`、`src/dns/fakeip_history_store.cpp`、`src/rulefile/posix.cpp` 统一收口到 `platform.fs` / `state` 原子文件边界。
+   - `src/tls/certificate_trust.cpp`、`src/dns/local_config.cpp`、`src/dns/fakeip_history_store.cpp`、`src/rulefile/posix.cpp` 统一收口到 `platform.os_fs` / `state` 原子文件边界。
 4. **消除协议目录反向依赖**：
    - 梳理 `src/masque/listener.cppm` 对 `relay` / `session_quota` 的反向依赖，改由 `relay` 适配层注入窄回调/facade；
-   - 评估将 `src/relay/relay.cppm`（原 `src/proxy/proxy.cppm` 1,046 行、129 处 `#ifdef NEXUS_ENABLE_*`）按协议注册表拆细，降低跨平台裁剪维护成本。
+   - 将 `src/relay/` 按协议适配与运行时职责拆分（均符合 `<= 500` 行上限），降低跨平台裁剪维护成本。
 
-## 2. 跨平台移植路线（第 98 批后启动，Android 优先）
+## 2. 跨平台移植路线（Android 优先，三端同步收敛）
 
 ### 阶段 1（首站）：Android（`aarch64-linux-musl` 静态 Sidecar + 最新 Kotlin / Gradle 外壳）
 - **为何优先 Android**：底层仍是 Linux 内核，Corosio `epoll` 后端、自研 TUN 协议栈、`state` 原子持久化与 `logging` 95%+ 原生复用；且 Nexus 已提前具备免 Root `VpnService` 最关键的两个钩子：`LinuxTun::attach(fd, borrow/adopt)`（`device-fd`）与 `platform::protect_socket(fd, protect_path, deadline)`（Unix Socket `SCM_RIGHTS`）。
-- **内核编译形态（避开 NDK Clang 与 C++26 `-freflection` 冲突）**：
-  - 首期采用 **GCC 16 交叉编译 `aarch64-linux-musl` 静态可执行文件**（顺带产出 Linux ARM64 静态单文件发行版），按 Android 10+ SELinux `W^X` 规范命名为 `libnexus.so` 打包进 APK `jniLibs/arm64-v8a/`，由独立 `:bg` VPN 进程中的 `VpnService` 通过 `ProcessBuilder` 拉起，以 `device-fd` + `protect_path` + 本地控制面协作；
-  - 100% 保留 GCC 16 + `-freflection` + `import std;` + `libstdc++`（`musl` 同样提供 `__errno_location()`），且天然进程隔离；
-  - 远期在 Clang/NDK 原生支持 C++26 `-freflection` + `import std;` 后，再评估进程内 JNI `.so` 嵌入式第二形态。
+- **内核编译形态（Clang `llvm@23.1.6` + 静态 `libc++` + 零 `-freflection`）**：
+  - 采用 **Clang（`llvm@23.1.6`）交叉编译 `aarch64-linux-musl` 静态可执行文件**（顺带产出 Linux ARM64 静态单文件发行版），按 Android 10+ SELinux `W^X` 规范命名为 `libnexus.so` 打包进 APK `jniLibs/arm64-v8a/`，由独立 `:bg` VPN 进程中的 `VpnService` 通过 `ProcessBuilder` 拉起，以 `device-fd` + `protect_path` + 本地控制面协作；
+  - 全仓已统一 Clang（`llvm@23.1.6`）+ C++26 Modules + `import std;` + 静态 `libc++`（零 `-freflection`，零 `libstdc++` 动态依赖），天然进程隔离；
+  - 后续如需进程内 JNI `.so` 嵌入式形态，可直接复用同一 Clang + 静态 `libc++` 工具链。
 - **内核侧最小改动项**：
   1. 将 `src/platform/` 与 `src/packet/fd.cppm` 中的 `__x86_64__` 宏守卫放宽至 `__aarch64__`，逐项核验 `aarch64` Linux 常量（尤其 `<fcntl.h>` 中 `O_DIRECTORY`/`O_NOFOLLOW` 等架构差异值）与结构体 ABI `static_assert`；
   2. 新增 Android 沙箱构建 Profile：强制 `epoll` 后端（规避 Android 12–15 `untrusted_app` seccomp 拦截 `io_uring_setup`），关闭 `tun-host-dns`、`log-journald`、`tproxy` 与 `tun_network_owner`（同步避开 glibc 专属 `posix_spawn_file_actions_addclosefrom_np`）；
@@ -40,7 +40,7 @@
 
 #### 第 0 关：工具链与 C++26 Modules 最小可行探测（最高风险前置）
 - 在目标平台（Windows x86-64/arm64、macOS arm64）先验证单文件到最小代理目标的编译链路：
-  - C++26 `-fmodules` + `-freflection` 编译器支持（Windows: MinGW-GCC 16 / Clang / MSVC；macOS: Homebrew GCC 16 / Clang）；
+  - Clang（`llvm@23.1.6`）C++26 Modules + `import std;` + 静态 `libc++` 跨平台支持（零 `-freflection`）；
   - `mcpp` 离线锁定构建与 BoringSSL / ngtcp2 / nghttp3 / nghttp2 / Glaze 跨平台打包；
   - Corosio 对应平台后端（Windows IOCP / macOS kqueue）基础连接、取消、超时与 DNS 回归。
 

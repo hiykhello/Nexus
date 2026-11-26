@@ -192,7 +192,8 @@ routing {{ rule-set "blocked" path="blocked.kdl" format="kdl"; rules {{ - kind="
             exchange(port, request, interim + final, forwarded, expected_final, fragmented=fragmented)
         exchange(port, request, b'HTTP/1.1 100 Continue\r\n\r\n' + interim + final,
                  b'HTTP/1.1 100 Continue\r\n\r\n', forwarded + expected_final)
-        bad_gateway = b'HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'
+        bad_gateway_body = b'Bad Gateway\n'
+        bad_gateway = b'HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\n' + bad_gateway_body
         streaming_interim(port)
         exchange(port, request, b'HTTP/1.1 100 Continue\r\n\r\n' * 8 + final,
                  b'HTTP/1.1 100 Continue\r\n\r\n', b'HTTP/1.1 100 Continue\r\n\r\n' * 7 + expected_final)
@@ -203,11 +204,14 @@ routing {{ rule-set "blocked" path="blocked.kdl" format="kdl"; rules {{ - kind="
         exchange(port, request, b'HTTP/1.1 205 Reset Content\r\nContent-Length: 0\r\n\r\n',
                  b'HTTP/1.1 205 ', b'')
         exchange(port, request, b'HTTP/1.1 205 Reset Content\r\nContent-Length: 1\r\n\r\nx',
-                 b'HTTP/1.1 502 ', b'')
+                 b'HTTP/1.1 502 ', bad_gateway_body)
+        exchange(port, b'HEAD http://127.0.0.1:$PORT/ HTTP/1.1\r\nHost: example.test\r\n\r\n',
+                 b'HTTP/1.1 205 Reset Content\r\nContent-Length: 1\r\n\r\nx',
+                 b'HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', b'')
         for invalid in (b'HTTP/1.1 100 Continue\r\nContent-Length: 0\r\n\r\n',
                         b'HTTP/1.1 103 Early Hints\r\nTransfer-Encoding: chunked\r\n\r\n',
                         b'HTTP/1.1 101 Switching Protocols\r\n\r\n'):
-            exchange(port, request, invalid, b'HTTP/1.1 502 ', b'')
+            exchange(port, request, invalid, b'HTTP/1.1 502 ', bad_gateway_body)
         if shutil.which('curl'):
             with listener() as target:
                 target_port = target.getsockname()[1]
@@ -247,7 +251,7 @@ routing {{ rule-set "blocked" path="blocked.kdl" format="kdl"; rules {{ - kind="
         for response in (b'HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nx',
                          b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n'):
             exchange(port, b'GET http://127.0.0.1:$PORT/ HTTP/1.1\r\nHost: example.test\r\n\r\n', response,
-                     b'HTTP/1.1 502 ', b'')
+                     b'HTTP/1.1 502 ', bad_gateway_body)
         for request, code in ((b'GET http://blocked.test/ HTTP/1.1\r\nHost: blocked.test\r\n\r\n', b'403'),
                               (b'GET http://blocked.test/ HTTP/1.1\r\nHost: blocked.test\r\nContent-Length: 1\r\n\r\nx', b'403'),
                               (b'GET http://blocked.test/ HTTP/1.1\r\nHost: blocked.test\r\nTransfer-Encoding: chunked\r\n\r\n', b'403'),

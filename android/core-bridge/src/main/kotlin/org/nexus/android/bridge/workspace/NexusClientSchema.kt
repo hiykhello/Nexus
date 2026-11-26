@@ -182,7 +182,6 @@ internal interface SqlExecutor : AutoCloseable {
     fun replaceNodeTelemetry(rows: List<NodeTelemetryRecord>)
     fun upsertNodeTelemetry(row: NodeTelemetryRecord)
     fun updateNodeLatency(profileId: String, latencyMs: Long, testedAtMs: Long)
-    fun hasTrafficLedgerData(): Boolean
     fun recordTrafficDelta(bucketHour: Long, profileId: String, uploadBytes: Long, downloadBytes: Long)
     fun queryTrafficLedger(sinceHour: Long): List<TrafficLedgerEntry>
     fun getHostKv(key: String): String?

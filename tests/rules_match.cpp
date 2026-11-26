@@ -150,6 +150,68 @@ rule type="ip-cidr" value="::/0"
     check(!RouteMatcher::compile(routes,0,3),"invalid rule action rejected");
     routes[1].outbound=2; routes[1].predicates.rules.clear();
     check(!RouteMatcher::compile(routes,0,3),"empty predicate set rejected");
+
+    // Multi-holder socket sharing: process-name, process-path, process-path-regex match if ANY candidate matches.
+    {
+        RuleSet proc_rules{{
+            {"process-name", "curl"},
+            {"process-path", "/opt/browser/helper"},
+            {"process-path-regex", "^/usr/local/bin/worker-[0-9]+$"},
+        }};
+        auto pm = Matcher::compile(proc_rules);
+        check(bool(pm), "compile multi-holder process matcher");
+        if (pm) {
+            std::array<std::string, 2> shared_curl{"/usr/bin/wrapper", "/usr/bin/curl"};
+            MatchInput m_curl{};
+            m_curl.process_path = shared_curl[0];
+            m_curl.process_paths = std::span<std::string const>(shared_curl);
+            auto r_curl = pm->match(m_curl);
+            check(r_curl && *r_curl == std::optional<std::size_t>(0), "process-name matches second holder");
+
+            std::array<std::string, 2> shared_path{"/usr/bin/wrapper", "/opt/browser/helper"};
+            MatchInput m_path{};
+            m_path.process_paths = std::span<std::string const>(shared_path);
+            auto r_path = pm->match(m_path);
+            check(r_path && *r_path == std::optional<std::size_t>(1), "process-path matches second holder without single process_path");
+
+            std::array<std::string, 2> shared_rx{"/usr/bin/wrapper", "/usr/local/bin/worker-42"};
+            MatchInput m_rx{};
+            m_rx.process_paths = std::span<std::string const>(shared_rx);
+            auto r_rx = pm->match(m_rx);
+            check(r_rx && *r_rx == std::optional<std::size_t>(2), "process-path-regex matches second holder");
+
+            std::array<std::string, 2> miss{"/usr/bin/wrapper", "/usr/bin/other"};
+            MatchInput m_miss{};
+            m_miss.process_paths = std::span<std::string const>(miss);
+            auto r_miss = pm->match(m_miss);
+            check(r_miss && !*r_miss, "unmatched multi-holder candidates return no match");
+
+            MatchInput single_compat{};
+            single_compat.process_path = "/usr/bin/curl";
+            auto r_single = pm->match(single_compat);
+            check(r_single && *r_single == std::optional<std::size_t>(0), "legacy single process_path remains backwards compatible");
+
+            std::vector<std::string> too_many(65, "/usr/bin/a");
+            MatchInput m_over{};
+            m_over.process_paths = std::span<std::string const>(too_many);
+            check(!pm->match(m_over), "more than 64 process_paths rejected");
+        }
+
+        std::vector<ProgramRule> prog_rules{
+            {RuleSet{{{"process-name", "worker"}}}, {ProgramActionKind::route, 1}},
+            {RuleSet{{{"process-path-regex", "^/opt/app/bin/.*"}}}, {ProgramActionKind::route, 2}},
+        };
+        auto prog = RouteProgram::compile(prog_rules, 3);
+        check(bool(prog), "compile RouteProgram with process predicates");
+        if (prog) {
+            std::array<std::string, 2> holders{"/usr/bin/launcher", "/opt/app/bin/agent"};
+            ProgramInput pin{.port = 443, .network = Network::tcp, .process_path = holders[0],
+                .process_paths = std::span<std::string const>(holders)};
+            auto step = prog->next(pin);
+            check(step && *step && (*step)->action.outbound == 2, "RouteProgram propagates process_paths to matcher");
+        }
+    }
+
     if (!failures) std::cout << "Rule matcher tests passed\n";
     return failures ? 1 : 0;
 }

@@ -192,23 +192,18 @@ class AndroidHostConfigAndComposerTest {
 
     @Test
     fun telemetryStoreTracksCrashSentinelAndActiveProfile() {
-        val dir = Files.createTempDirectory("nexus-tel-test").toFile()
-        try {
-            val store = TelemetryStore(File(dir, "telemetry.json"))
-            assertFalse(store.hasUnreadUnexpectedCrash())
-            store.setActiveProfileId("hk-01")
-            store.setOutboundMode("global")
-            store.recordUnexpectedCrash("exit=139")
-            val loaded = store.load()
-            assertEquals("hk-01", loaded.activeProfileId)
-            assertEquals("global", loaded.outboundMode)
-            assertTrue(loaded.unreadUnexpectedCrash)
-            assertEquals("exit=139", loaded.lastCrashReason)
+        val store = TelemetryStore(NexusClientDatabase.inMemory())
+        assertFalse(store.hasUnreadUnexpectedCrash())
+        store.setActiveProfileId("hk-01")
+        store.setOutboundMode("global")
+        store.recordUnexpectedCrash("exit=139")
+        val loaded = store.load()
+        assertEquals("hk-01", loaded.activeProfileId)
+        assertEquals("global", loaded.outboundMode)
+        assertTrue(loaded.unreadUnexpectedCrash)
+        assertEquals("exit=139", loaded.lastCrashReason)
 
-            store.clearUnexpectedCrash()
-            assertFalse(store.hasUnreadUnexpectedCrash())
-        } finally {
-            dir.deleteRecursively()
-        }
+        store.clearUnexpectedCrash()
+        assertFalse(store.hasUnreadUnexpectedCrash())
     }
 }

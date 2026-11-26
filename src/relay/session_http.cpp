@@ -23,6 +23,25 @@ namespace relay::session_detail {
             co_return co_await write_all(session.client, bytes, session);
         }
 
+        constexpr auto http_error_reply(std::uint16_t code, bool head) noexcept -> std::string_view {
+            switch (code) {
+            case 403: return head ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 10\r\n\r\nForbidden\n";
+            case 407: return head ? "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 30\r\n\r\nProxy Authentication Required\n";
+            case 429: return head ? "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 18\r\n\r\nToo Many Requests\n";
+            case 431: return head ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 32\r\n\r\nRequest Header Fields Too Large\n";
+            case 501: return head ? "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 16\r\n\r\nNot Implemented\n";
+            case 502: return head ? "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Gateway\n";
+            default:  return head ? "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Request\n";
+            }
+        }
+
         auto validate_basic(std::string_view value, Credentials const& credentials) noexcept -> bool {
             auto equal_ci = [](char a, char b) { return a == b || (a >= 'A' && a <= 'Z' && a - 'A' + 'a' == b); };
             if (value.size() < 6 || !std::ranges::equal(value.substr(0, 5), std::string_view("basic"), equal_ci) ||
@@ -121,17 +140,16 @@ namespace relay::session_detail {
                 session.touched = Clock::now();
                 size += n;
             }
+            bool const is_head = std::string_view(reinterpret_cast<char const*>(buffer.data()), size).starts_with("HEAD ");
             if (credentials && status == http::HeaderBoundaryStatus::complete) {
                 if (!consume_http_auth(buffer, size, *credentials)) {
                     utility::secure_zero(buffer.data(), size);
-                    (void)co_await http_response(session, "HTTP/1.1 407 Proxy Authentication Required\r\n"
-                        "Proxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    (void)co_await http_response(session, http_error_reply(407, is_head));
                     fail(); co_return false;
                 }
                 auto user = std::string_view(reinterpret_cast<char const*>(credentials->username.data()), credentials->username_size);
                 if (!session.admit_principal(user)) {
-                    (void)co_await http_response(session, "HTTP/1.1 429 Too Many Requests\r\n"
-                        "Connection: close\r\nContent-Length: 0\r\n\r\n");
+                    (void)co_await http_response(session, http_error_reply(429, is_head));
                     fail(); co_return false;
                 }
             }
@@ -144,12 +162,9 @@ namespace relay::session_detail {
                 }
             }
             if (parsed.status != http::ConnectStatus::accepted) {
-                auto response = parsed.status == http::ConnectStatus::too_large ?
-                    "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
-                    parsed.status == http::ConnectStatus::unsupported ?
-                    "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
-                    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                (void)co_await http_response(session, response);
+                auto const code = parsed.status == http::ConnectStatus::too_large ? std::uint16_t{431}
+                    : parsed.status == http::ConnectStatus::unsupported ? std::uint16_t{501} : std::uint16_t{400};
+                (void)co_await http_response(session, http_error_reply(code, is_head));
                 fail(); co_return false;
             }
             socks5::Request request;
@@ -174,9 +189,7 @@ namespace relay::session_detail {
             bool first_sent = false;
             auto code = co_await dial(session, context, policy, request, Clock::time_point::max(), tail, &first_sent);
             if (code != 0) {
-                auto response = code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
-                                            "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                (void)co_await http_response(session, response);
+                (void)co_await http_response(session, http_error_reply(code == 2 ? 403 : 502, false));
                 fail(); co_return false;
             }
             if (!co_await http_response(session, "HTTP/1.1 200 Connection Established\r\n\r\n")) {

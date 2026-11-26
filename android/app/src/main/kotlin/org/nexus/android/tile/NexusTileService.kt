@@ -104,7 +104,7 @@ class NexusTileService : TileService() {
         val runMode = runCatching {
             AndroidHostConfigStore(File(filesDir, "host.json"), db).load().android.runMode
         }.getOrDefault(AndroidRunMode.VPN)
-        val activeId = runCatching { TelemetryStore(paths.telemetryFile, db).load().activeProfileId }.getOrDefault("")
+        val activeId = runCatching { TelemetryStore(db).load().activeProfileId }.getOrDefault("")
         val profile = runCatching {
             val summaries = WorkspaceStore(filesDir, db).listProfileSummaries()
             val matched = summaries.firstOrNull { it.id == activeId } ?: summaries.firstOrNull()

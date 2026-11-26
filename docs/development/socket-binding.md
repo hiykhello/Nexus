@@ -1,6 +1,6 @@
 # 通用物理 socket 绑定
 
-更新：2026-11-01。绑定21100图的正式io CLI111场景及根68项已通过；UDP分片字段现已接入99715正式组合图，生产io CLI32场景、双后端TCP绑定与UDP组件均通过。完整epoll/关闭图仍继续。唯一执行点见[项目进度](../progress.md)，完整拨号字段不因本切片缩减。
+状态：物理 socket 绑定与 UDP 分片字段已接入生产双后端；字段覆盖与支持范围见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [拨号字段覆盖](../planning/dial-field-coverage.md)。
 
 ## 参数与归属
 

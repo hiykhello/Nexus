@@ -51,7 +51,7 @@ log {
 | `outbound ... type="direct"` / `"block"` | 前者经平台保护的连接器直接连接目标，后者拒绝流与数据报；server 示例用 `destination-policy` 限制可连接 IP |
 | `outbound ... type="selector"` | 多个 `member` 和初始 `selected`；成员存在、能力适配且不形成依赖环。控制面修改仅影响之后的路由决策；选择 direct 会直接发送业务流量 |
 
-HTTPUpgrade 承载使用 VLESS 节点内的 `transport "httpupgrade" { host "cover.example"; path "/nexus-upgrade"; header "X-Test" "value"; }`。配置及 API 已接线，单/双worker双端固定对端互通、Trojan detour、XUDP、身份/头拒绝和原期限已验证；完整故障/关闭图进度见[项目进度](../progress.md)。本实现要求经过身份校验的普通 TLS，协商 `http/1.1`；与 Reality 或 Vision 的复合配置当前拒绝。它在 HTTP 101 后直接传输 VLESS 字节，不使用 WebSocket 掩码或数据帧。
+HTTPUpgrade 承载使用 VLESS 节点内的 `transport "httpupgrade" { host "cover.example"; path "/nexus-upgrade"; header "X-Test" "value"; }`。配置及 API 已接线，单/双 worker 双端固定对端互通、Trojan detour、XUDP、身份/头拒绝和原期限已验证；支持边界见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。本实现要求经过身份校验的普通 TLS，协商 `http/1.1`；与 Reality 或 Vision 的复合配置当前拒绝。它在 HTTP 101 后直接传输 VLESS 字节，不使用 WebSocket 掩码或数据帧。
 
 普通 VLESS TLS 也可使用 `transport "websocket" { host "cover.example"; path "/nexus-upgrade"; }`。两端在 HTTP/1.1 升级时验证 WebSocket 握手，再用二进制帧承载 VLESS TCP 和 XUDP。客户端发送带掩码的帧。服务端支持分片及交错 Ping/Pong。Close 结束整个传输，TCP 半关闭语义限于可保留该行为的承载。该配置与 Reality、Vision 和 gRPC 互斥。
 
@@ -112,7 +112,7 @@ SOCKS5 UDP 的 FakeIP 回复保留请求中的合成地址和端口。经 Trojan
 
 状态目录要求当前进程用户拥有且权限为 `0700`，预置权限为 `0600` 的二进制 `instance.id`（16 字节）和 `history.key`（32 字节）。首次启动加 `initialize=#true`，成功后移除此项再重启。重启后的隔离期覆盖历史 TTL、租约宽限和在途缓冲。已记录的 IPv4 范围继续保留，已经写入历史的 IPv6 池须沿用原配置。
 
-内部 A/AAAA 解析的有序 DNS 规则可使用 `rule domain-suffix="example.test" query-type="AAAA" server="remote"`；`domain` 与 `domain-suffix` 二选一，query type 可单独使用。query type 支持 `"A"`、`"AAAA"` 或 1..65535 的整数，当前地址解析只产生 A/AAAA。省略 query type 的旧规则继续作用于两种问题，同一条的条件同时满足后首命中选择服务器。不同服务器的结果须通过规范名、正负答复和地址数量检查后才合并；local 的 hosts、搜索域及在途快照继续保留。DNS 还支持 `domain-keyword` 和 `domain-wildcard`（`*.example.test` 只匹配一层标签），四种域名条件同条最多一个。`action="route"` 选择 server，省略 action 兼容旧行为；`action="reject"` 不带 server，令内部地址解析直接失败。显式 action 可无条件首命中。实际查询的一族被拒绝时整次解析不读缓存、不发上游问题，SOCKS 报规则拒绝、HTTP 报 403；单族策略不会检查未查询的另一族。显式 bootstrap 不应用业务拒绝规则，上游 REFUSED 保持 DNS 错误。执行边界与当前验收见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [项目进度](../progress.md)。
+内部 A/AAAA 解析的有序 DNS 规则可使用 `rule domain-suffix="example.test" query-type="AAAA" server="remote"`；`domain` 与 `domain-suffix` 二选一，query type 可单独使用。query type 支持 `"A"`、`"AAAA"` 或 1..65535 的整数，当前地址解析只产生 A/AAAA。省略 query type 的旧规则继续作用于两种问题，同一条的条件同时满足后首命中选择服务器。不同服务器的结果须通过规范名、正负答复和地址数量检查后才合并；local 的 hosts、搜索域及在途快照继续保留。DNS 还支持 `domain-keyword` 和 `domain-wildcard`（`*.example.test` 只匹配一层标签），四种域名条件同条最多一个。`action="route"` 选择 server，省略 action 兼容旧行为；`action="reject"` 不带 server，令内部地址解析直接失败。显式 action 可无条件首命中。实际查询的一族被拒绝时整次解析不读缓存、不发上游问题，SOCKS 报规则拒绝、HTTP 报 403；单族策略不会检查未查询的另一族。显式 bootstrap 不应用业务拒绝规则，上游 REFUSED 保持 DNS 错误。执行边界见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。
 
 DNS 问题规则可声明并引用独立规则集，例如 `rule-set "q" path="q.srs" format="srs"` 与 `rule rule-set="q" server="remote"`；也支持 KDL 和 BEVE。规则集与同条规则的其他条件按 AND 组合，适用于消息监听及内部地址解析；SRS 依赖 `srs` 构建功能。支持的条件、来源选项及上下文限制见[规则集](rule-sets.md)。
 
@@ -676,7 +676,7 @@ outbound "direct" type="direct"
 routing { default-outbound "direct"; }
 ```
 
-监听地址须为不带 zone 的数字地址，`authority` 必须与请求匹配。Bearer 文件使用绝对路径和现有私有文件检查，去掉最多一个末尾换行后须为 1..255 字节的 Bearer token。token 须至少包含一个 ASCII 字母、数字或 `-._~+/` 字符，`=` 只能出现在末尾；证书及私钥也使用绝对路径。CONNECT-UDP 需要至少一项 `allow`，以 CIDR 和闭区间端口授权。CIDR 不能有 host bits，域名解析后的数值地址也须通过此策略。最多 256 项。可选 `dns-timeout-ms` 为 1..60000，默认 5000；`native-bytes` 为 65536..1073741824，默认 8388608。这里的 CIDR 示例只允许回环目标，实际授权应按所需目标配置。当前验证范围与未完成互通见[项目进度](../progress.md)。
+监听地址须为不带 zone 的数字地址，`authority` 必须与请求匹配。Bearer 文件使用绝对路径和现有私有文件检查，去掉最多一个末尾换行后须为 1..255 字节的 Bearer token。token 须至少包含一个 ASCII 字母、数字或 `-._~+/` 字符，`=` 只能出现在末尾；证书及私钥也使用绝对路径。CONNECT-UDP 需要至少一项 `allow`，以 CIDR 和闭区间端口授权。CIDR 不能有 host bits，域名解析后的数值地址也须通过此策略。最多 256 项。可选 `dns-timeout-ms` 为 1..60000，默认 5000；`native-bytes` 为 65536..1073741824，默认 8388608。这里的 CIDR 示例只允许回环目标，实际授权应按所需目标配置。支持边界见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。
 
 普通 VLESS 入站支持固定目的地 UDP（命令 2）。认证后的流使用两字节长度前缀保留数据报边界，可承载空包，并按 UDP 使用现有 DNS、路由和限额。普通 TLS 入站也识别 packetaddr，在每帧内读取 IPv4 或 IPv6 目标。有序路由需要 `tcp-program udp=#true`。Vision UDP 继续使用现有 XUDP 路径。VLESS 出站可配置 `packet-encoding "packetaddr"`，经普通 VLESS TLS 或 HTTPUpgrade 发送 IPv4/IPv6 数据报。默认及显式 `packet-encoding "xudp"` 使用 XUDP。`packet-encoding "fixed"` 在普通 VLESS TLS 或 HTTPUpgrade 上按目标 IP 与端口使用独立命令 2 流，数据报前缀为两字节长度。域名按现有 UDP 路由策略解析后使用数值目标。SOCKS 和共用流式 UDP 关联最多为该编码并行保留 16 个目标流。
 

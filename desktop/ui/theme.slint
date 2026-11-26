@@ -12,9 +12,7 @@ export global Theme {
     in-out property <float> surface-opacity: 0.90;
     in-out property <bool> blur-enabled: true;
     in-out property <bool> ambient-glow: true;
-    in-out property <bool> native-blur-active: false;
     out property <length> blur-radius: blur-enabled ? (material-preset == MaterialPreset.crystal ? 24px : 18px) : 0px;
-    out property <bool> native-blur-enabled: blur-enabled && window-opacity < 0.995;
 
     public function apply-preference(pref: ThemePreference) {
         preference = pref;
@@ -109,7 +107,6 @@ export global Theme {
 
     // Decoupled Telemetry Channel Colors (fixed across ALL brand accents; colorblind-safe, WCAG AA >= 4.5:1)
     out property <color> telemetry-down: dark ? #38bdf8 : #0369a1;
-    out property <color> telemetry-down-soft: telemetry-down.with-alpha(dark ? 0.22 : 0.14);
     out property <color> telemetry-up: dark ? #c084fc : #7c3aed;
     out property <color> telemetry-up-soft: telemetry-up.with-alpha(dark ? 0.22 : 0.14);
 
@@ -133,7 +130,6 @@ export global Theme {
 
     // Calm Matte Charcoal Dark & Crisp Alabaster Light surfaces
     out property <color> surface-bg: (dark ? #111318 : #f0f2f6).with-alpha(window-opacity);
-    out property <brush> sidebar-bg: (dark ? #171920 : #f7f8fb).with-alpha(min(1.0, surface-opacity + 0.04));
     out property <color> sidebar-card-bg: (dark ? #171920 : #f7f8fb).with-alpha(min(1.0, surface-opacity + 0.04));
     out property <color> sidebar-border: glass-active
         ? (dark ? #ffffff18 : #0f172a14)
@@ -161,18 +157,11 @@ export global Theme {
     out property <color> card-shadow: dark ? #00000044 : #0f172a0a;
     out property <color> card-hover-shadow: dark ? #00000064 : #0f172a14;
 
-    out property <brush> pill-surface: @linear-gradient(
-        180deg,
-        accent.with-alpha(dark ? 0.24 : 0.15) 0%,
-        accent.with-alpha(dark ? 0.14 : 0.08) 100%
-    );
-    out property <color> pill-border: accent.with-alpha(dark ? 0.56 : 0.44);
     out property <color> input-focus-ring: accent.with-alpha(dark ? 0.46 : 0.30);
     out property <string> mono-font: "monospace";
     out property <color> card-border: glass-active
         ? (dark ? #ffffff16 : #0f172a14)
         : (dark ? #303440 : #d5dce8);
-    out property <color> glass-highlight: dark ? #ffffff10 : #ffffff99;
     out property <color> row-bg: (dark ? #22252d : #ffffff).with-alpha(min(1.0, surface-opacity + 0.08));
     out property <color> row-alt-bg: (dark ? #282b34 : #f4f6fa).with-alpha(min(1.0, surface-opacity + 0.06));
     out property <color> row-hover-bg: (dark ? #313540 : #eaeff7).with-alpha(min(1.0, surface-opacity + 0.10));
@@ -232,6 +221,4 @@ export global Theme {
     out property <length> radius-xs: 5px;
     out property <length> radius-sm: 6px;
     out property <length> radius-md: 8px;
-    out property <length> radius-lg: 12px;
-    out property <length> radius-xl: 16px;
 }

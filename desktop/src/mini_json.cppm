@@ -23,7 +23,6 @@ export namespace desktop {
         JsonValue(JsonArray v) : data(std::move(v)) {}
         JsonValue(JsonObject v) : data(std::move(v)) {}
 
-        [[nodiscard]] auto is_null() const noexcept -> bool { return std::holds_alternative<std::monostate>(data); }
         [[nodiscard]] auto is_bool() const noexcept -> bool { return std::holds_alternative<bool>(data); }
         [[nodiscard]] auto is_i64() const noexcept -> bool { return std::holds_alternative<std::int64_t>(data); }
         [[nodiscard]] auto is_double() const noexcept -> bool { return std::holds_alternative<double>(data); }

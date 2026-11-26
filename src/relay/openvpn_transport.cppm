@@ -215,9 +215,18 @@ export namespace relay::ovpn_detail {
             if (wire.empty()) return;
             auto op = static_cast<std::uint8_t>((wire[0] >> 3) & 0x1f);
             if (op == static_cast<std::uint8_t>(openvpn::Opcode::data_v2)) {
-                last_rx_ms = ms;
                 auto plain = data.open_data_v2(wire);
                 if (!plain) return;
+                constexpr std::array<std::uint8_t, 16> occ_magic{
+                    0x28, 0x7f, 0x34, 0x6b, 0xd4, 0xef, 0x7a, 0x81,
+                    0x2d, 0x56, 0xb8, 0xd3, 0xaf, 0xc5, 0x45, 0x9c};
+                if (plain->size() >= occ_magic.size() &&
+                    std::ranges::equal(std::span(*plain).first<16>(), occ_magic)) {
+                    if (plain->size() >= 17 && (*plain)[16] == 5) { stop(); return; }
+                    last_rx_ms = ms;
+                    return;
+                }
+                last_rx_ms = ms;
                 if (plain->size() == openvpn::ping_magic.size() && std::ranges::equal(*plain, openvpn::ping_magic)) return;
                 mux.on_ip_packet(*plain, ms);
             } else if (auto cp = openvpn::decode_control_packet(wire); cp && cp->packet_id && cp->session_id != 0) {
@@ -239,8 +248,10 @@ export namespace relay::ovpn_detail {
                 bool moved = false;
                 while (auto r = h->udp.receive(buf)) {
                     if (!*r) break;
-                    if ((*r)->valid && (*r)->source == h->udp_target)
+                    if ((*r)->valid && (*r)->source == h->udp_target) {
                         h->handle_wire_data(std::span(buf).first((*r)->size), now_ms());
+                        if (h->stopped) co_return capy::results<>{};
+                    }
                     moved = true;
                 }
                 while (!h->tx_queue.empty()) {
@@ -276,6 +287,7 @@ export namespace relay::ovpn_detail {
                     auto pkt = std::move((*dec)->first);
                     h->consume_tcp_rx((*dec)->second);
                     h->handle_wire_data(pkt, now_ms());
+                    if (h->stopped) co_return capy::results<>{};
                 }
                 if (h->detour_tunnel) {
                     auto r = co_await h->detour_tunnel->read(tmp);

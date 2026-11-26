@@ -331,8 +331,6 @@ internal class AndroidSqliteExecutor(
         }
     }
 
-    override fun hasTrafficLedgerData(): Boolean = tableHasRow(readableDb(), "traffic_ledger")
-
     override fun recordTrafficDelta(bucketHour: Long, profileId: String, uploadBytes: Long, downloadBytes: Long) {
         inTransaction {
             val db = writableDb()

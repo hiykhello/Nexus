@@ -316,22 +316,19 @@ public struct TelemetryDocument: Codable, Sendable, Equatable {
     }
 }
 
-/// Swift 6 actor managing Layer 3 host adapter persistence backed by `NexusClientDatabase.host_kv`
-/// with one-shot legacy `host.json` import. Keychain remains the sole store for credentials/passphrases.
+/// Swift 6 actor managing Layer 3 host adapter persistence backed by `NexusClientDatabase.host_kv`.
+/// Keychain remains the sole store for credentials and passphrases.
 public actor HostConfigStore {
     public static let hostKVKey = "host_config"
 
     public nonisolated let database: NexusClientDatabase
-    public nonisolated let legacyHostFileURL: URL
     private var loadTask: Task<AppleHostConfig, Error>?
 
     public init(
         rootDirectory: URL,
-        database: NexusClientDatabase? = nil,
-        legacyFileName: String = "host.json"
+        database: NexusClientDatabase? = nil
     ) {
         self.database = database ?? NexusClientDatabase(rootDirectory: rootDirectory)
-        self.legacyHostFileURL = rootDirectory.appendingPathComponent(legacyFileName)
     }
 
     public func loadOrInit(defaultPlatform: AppleHostPlatform = .desktopMacOS) async throws -> AppleHostConfig {
@@ -339,21 +336,14 @@ public actor HostConfigStore {
             return try await inflight.value
         }
         let db = database
-        let legacyURL = legacyHostFileURL
         let task = Task<AppleHostConfig, Error> {
             if let raw = try await db.getHostKV(Self.hostKVKey),
                let data = raw.data(using: .utf8)
             {
                 return try JSONDecoder().decode(AppleHostConfig.self, from: data)
             }
-            let candidate: AppleHostConfig
-            if FileManager.default.fileExists(atPath: legacyURL.path) {
-                let data = try Data(contentsOf: legacyURL)
-                candidate = try JSONDecoder().decode(AppleHostConfig.self, from: data)
-            } else {
-                candidate = AppleHostConfig(platform: defaultPlatform)
-            }
-            let json = try candidate.encodeCanonicalJSON(pretty: false)
+            let initial = AppleHostConfig(platform: defaultPlatform)
+            let json = try initial.encodeCanonicalJSON(pretty: false)
             let stored = try await db.setHostKVIfAbsent(Self.hostKVKey, value: json)
             guard let storedData = stored.data(using: .utf8) else { throw WorkspaceSchemaError.invalidJSON }
             return try JSONDecoder().decode(AppleHostConfig.self, from: storedData)
@@ -373,35 +363,27 @@ public actor HostConfigStore {
 }
 
 /// Swift 6 actor managing Layer 4 ephemeral local telemetry backed by `NexusClientDatabase`
-/// (`node_telemetry`, `traffic_ledger`, `host_kv["telemetry_state"]`) with one-shot legacy `telemetry.json` import.
+/// (`node_telemetry`, `traffic_ledger`, `host_kv["telemetry_state"]`).
 public actor TelemetryStore {
-    public nonisolated let fileURL: URL
     public nonisolated let database: NexusClientDatabase
-    private var legacyChecked = false
-    private var legacyImportTask: Task<Void, Never>?
 
     public init(
         rootDirectory: URL,
-        database: NexusClientDatabase? = nil,
-        legacyFileName: String = "telemetry.json"
+        database: NexusClientDatabase? = nil
     ) {
-        self.fileURL = rootDirectory.appendingPathComponent(legacyFileName)
         self.database = database ?? NexusClientDatabase(rootDirectory: rootDirectory)
     }
 
-    public init(fileURL: URL, database: NexusClientDatabase? = nil) {
-        self.fileURL = fileURL
-        self.database = database ?? NexusClientDatabase(rootDirectory: fileURL.deletingLastPathComponent())
+    public init(database: NexusClientDatabase) {
+        self.database = database
     }
 
     public func load() async -> TelemetryDocument {
-        await importLegacyIfNeeded()
-        return (try? await database.loadTelemetry()) ?? TelemetryDocument()
+        (try? await database.loadTelemetry()) ?? TelemetryDocument()
     }
 
     @discardableResult
     public func save(_ doc: TelemetryDocument) async throws -> TelemetryDocument {
-        legacyChecked = true
         try await database.saveTelemetry(doc)
         return doc
     }
@@ -447,13 +429,11 @@ public actor TelemetryStore {
         latencyMs: Int64,
         nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
     ) async throws -> TelemetryDocument {
-        await importLegacyIfNeeded()
         try await database.updateNodeLatency(profileId: profileId, latencyMs: latencyMs, testedAt: nowMs)
         return await load()
     }
 
     public func recordTrafficDelta(bucketHour: Int64, profileId: String, uploadBytes: Int64, downloadBytes: Int64) async throws {
-        await importLegacyIfNeeded()
         try await database.recordTrafficDelta(
             bucketHour: bucketHour,
             profileId: profileId,
@@ -463,29 +443,6 @@ public actor TelemetryStore {
     }
 
     public func queryTrafficLedger(sinceHour: Int64 = 0, profileId: String? = nil) async throws -> [TrafficLedgerRecord] {
-        await importLegacyIfNeeded()
-        return try await database.queryTrafficLedger(sinceHour: sinceHour, profileId: profileId)
-    }
-
-    private func importLegacyIfNeeded() async {
-        if legacyChecked { return }
-        if let inflight = legacyImportTask {
-            await inflight.value
-            return
-        }
-        let db = database
-        let legacyURL = fileURL
-        let task = Task {
-            guard (try? await db.hasTelemetryData()) == false,
-                  FileManager.default.fileExists(atPath: legacyURL.path),
-                  let data = try? Data(contentsOf: legacyURL),
-                  let legacy = try? JSONDecoder().decode(TelemetryDocument.self, from: data)
-            else { return }
-            _ = try? await db.importLegacyTelemetryIfEmpty(legacy)
-        }
-        legacyImportTask = task
-        await task.value
-        legacyChecked = true
-        legacyImportTask = nil
+        try await database.queryTrafficLedger(sinceHour: sinceHour, profileId: profileId)
     }
 }

@@ -52,7 +52,7 @@ vless = { implies = ["tls", "websocket", "xhttp"], sources = [
     "vision/random.cpp", "vision/random.cppm",
     "vision/corosio_reader.cppm", "vision/corosio_writer.cppm",
     "vless/client_profile.cppm", "vless/corosio_client.cppm",
-    "vless/corosio_server.cppm", "vless/server_profile.cppm",
+    "vless/server_profile.cppm",
     "vless/tls_server.cppm", "vless/vision_client.cppm", "vless/vision_server.cppm",
     "xudp/server_sessions.cppm", "xudp/server_direct.cppm", "xudp/server_io.cppm",
 ] }

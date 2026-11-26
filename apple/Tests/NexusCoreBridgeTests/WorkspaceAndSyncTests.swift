@@ -196,10 +196,10 @@ final class WorkspaceAndSyncTests: XCTestCase {
         XCTAssertEqual(clampedHost.workersSpec, "")
         XCTAssertEqual(clampedHost.workersMax, 0)
 
-        // Layer 4 TelemetryStore isolated from workspace.json.
+        // Layer 4 TelemetryStore isolated from Workspace tables in SQLite.
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let telemetry = TelemetryStore(fileURL: dir.appendingPathComponent("telemetry.json"))
+        let telemetry = TelemetryStore(rootDirectory: dir)
         _ = try await telemetry.setActiveProfileId("p-node")
         _ = try await telemetry.setOutboundMode("global")
         _ = try await telemetry.recordUnexpectedCrash(reason: "signal 11", nowMs: 12345)

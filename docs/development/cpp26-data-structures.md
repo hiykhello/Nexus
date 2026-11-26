@@ -8,7 +8,7 @@
 
 在高性能网络代理平台（如 Nexus）中，**内存分配（Heap Allocation）与缓存未命中（Cache Miss）是吞吐量与长尾延迟的两大首要杀手**。
 
-C++26 标准（依托本机 GCC 16.2+）引入和完善了一批革命性的轻量级数据结构与词汇类型（Vocabulary Types）。它们的核心特征是：
+C++26 标准与项目基础叶子包（依托 Clang `llvm@23.1.6` + 静态 `libc++` + C++26 Modules）提供了一批轻量级数据结构与词汇类型（Vocabulary Types）。它们的核心特征是：
 1. **栈上就地分配 / 零堆开销（Zero Heap Allocation）**；
 2. **极高的缓存局部性（Cache Locality）**；
 3. **针对高频增删场景的指针与迭代器绝对稳定性（Iterator Stability）**；
@@ -145,10 +145,11 @@ auto inspect_and_forward(std::span<std::byte const> raw_frame, PacketHandler han
 
 ---
 
-## 四、工程接入建议与回退原则
+## 四、工程接入建议与工作区模块对应
 
-1. **GCC 16 支持度**：
-   * `std::inplace_vector`、`std::flat_map`、`std::move_only_function`、`std::span` 在本机 GCC 16.2 已完全原生支持；
-   * `std::hive` 和 `std::function_ref` 在部分标准库尚未完全合入前，Nexus 提供内联单头文件作为过渡抽象（命名空间保持 `nexus::`，对齐标准提案签名），待标准库稳定后一键替换。
-2. **零异常防御原则**：
-   * 使用 `std::inplace_vector` 时，严格避免调用可能抛出 `std::bad_alloc` 的 `push_back`，统一使用其不抛异常的 `try_push_back()`。
+1. **Clang `llvm@23.1.6` + 静态 `libc++` 与基础叶子包**：
+   * `std::span`、`std::expected`、`std::optional` 等标准词汇类型直接经 `import std;` 使用；
+   * 固定容量就地容器与缓存索引统一由独立叶子包 `containers`（`src/containers/inplace_vector.cppm` 的 `containers::inplace_vector<T, N>` 与 `src/containers/cache_index.cppm`）提供；
+   * 函数包装统一由独立叶子包 `functional`（`src/functional/functional.cppm`，基于 `proxy.v4` 提供 `functional::function_ref` 与 32B SBO 的 `functional::move_only_function` / `functional::copyable_function`）提供，跨平台通用工具位于 `utility`（`src/utility/`）。
+2. **显式容量边界原则**：
+   * 使用 `containers::inplace_vector` 时，优先调用不抛异常的 `try_push_back()` / `try_emplace_back()` 显式处理容量上限。

@@ -27,7 +27,10 @@ export namespace net {
         if(Clock::now()>=deadline)co_return FastOpenResult{std::make_error_code(std::errc::timed_out)};
         if(socket.is_open())co_return FastOpenResult{std::make_error_code(std::errc::already_connected)};
         if(auto error=prepare_tcp_socket(socket,endpoint,options,deadline))co_return FastOpenResult{error,0,false,true};
-        if(!socket.is_open())if(auto error=socket.open(endpoint.address().family()))co_return FastOpenResult{error,0,false,true};
+        if(!socket.is_open()) {
+            if(auto error=socket.open(endpoint.address().family()))co_return FastOpenResult{error,0,false,true};
+            platform::tune_tcp_low_latency(socket.native_handle());
+        }
         if(payload.empty()) {
             auto [error]=co_await corosio::timeout(socket.connect(endpoint),deadline);
             if(!error && Clock::now()>=deadline)error=std::make_error_code(std::errc::timed_out);

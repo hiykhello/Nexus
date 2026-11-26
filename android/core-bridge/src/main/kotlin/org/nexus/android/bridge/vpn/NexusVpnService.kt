@@ -95,7 +95,7 @@ class NexusVpnService : VpnService() {
         db = NexusClientDatabase.open(this)
         workspaceStore = WorkspaceStore(filesDir, db)
         hostStore = AndroidHostConfigStore(File(filesDir, "host.json"), db)
-        telemetryStore = TelemetryStore(paths.telemetryFile, db)
+        telemetryStore = TelemetryStore(db)
         lifecycleExecutor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "nexus-vpn-lifecycle").apply { isDaemon = true }
         }

@@ -53,6 +53,7 @@ namespace rules {
                 .source_user = input.source_user,
                 .package_name = input.package_name,
                 .client = input.client,
+                .process_paths = input.process_paths,
             };
         }
 
@@ -376,7 +377,8 @@ namespace rules {
             .network_is_constrained = input.network_is_constrained, .wifi_ssid = input.wifi_ssid,
             .wifi_bssid = input.wifi_bssid, .default_interface_addresses = input.default_interface_addresses,
             .source_gid = input.source_gid, .source_user = input.source_user,
-            .package_name = input.package_name, .client = input.client
+            .package_name = input.package_name, .client = input.client,
+            .process_paths = input.process_paths
         };
         auto step = next(pin);
         if (!step) return std::unexpected(std::move(step.error()));

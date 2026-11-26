@@ -169,8 +169,9 @@ namespace config {
                 if (!*parsed) return std::unexpected("unsupported direct node: " + child.name);
             }
         }
-        if (result.direct_network && (!options.binding.interface_name().empty() || !options.binding.network_namespace.empty()))
-            return std::unexpected("direct network policy conflicts with bind-interface or netns");
+        if (result.direct_network && (!options.binding.interface_name().empty() || !options.binding.network_namespace.empty() ||
+            options.binding.inet4_bind_address || options.binding.inet6_bind_address))
+            return std::unexpected("direct network policy conflicts with bind-interface, netns, or bind-address");
         return {};
     }
 }

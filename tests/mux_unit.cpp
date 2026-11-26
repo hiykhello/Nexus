@@ -451,7 +451,13 @@ outbounds { direct; vless "v" { server "edge.test:443"; authentication { uuid-fi
                 + std::string(body) + R"kdl( }; }; }
 routing { default "v"; })kdl";
         };
-        for (std::string_view bad : {R"(protocol "yamux";)", R"(min-streams 8; max-streams 4;)", R"(max-connections 0;)", R"(unknown-key #true;)"})
+        auto min_only = config::parse_kdl(wrap_out(R"(min-streams 32;)"));
+        require(min_only.has_value() && min_only->vless_outbounds.size() == 1 &&
+                min_only->vless_outbounds[0].config.multiplex &&
+                min_only->vless_outbounds[0].config.multiplex->min_streams == 32 &&
+                min_only->vless_outbounds[0].config.multiplex->max_streams == 0,
+                "min-streams without max-streams leaves max-streams unbounded");
+        for (std::string_view bad : {R"(protocol "yamux";)", R"(min-streams 8; max-streams 4;)", R"(min-streams 32; max-streams 16;)", R"(max-connections 0;)", R"(unknown-key #true;)"})
             require(!config::parse_kdl(wrap_out(bad)).has_value(), "invalid outbound mux rejected");
         constexpr std::string_view bad_in = R"kdl(schema-version 1
 role "server"

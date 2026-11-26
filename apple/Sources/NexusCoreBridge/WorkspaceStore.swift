@@ -14,20 +14,17 @@ public enum WorkspaceStoreError: Error, LocalizedError, Equatable, Sendable {
 }
 
 /// Swift 6 actor managing Layer 1 canonical Workspace persistence backed by `NexusClientDatabase`
-/// (`nexus-client.db`, SQLite 3 WAL) with one-shot legacy `workspace.json` import.
+/// (`nexus-client.db`, SQLite 3 WAL).
 public actor WorkspaceStore {
     public nonisolated let rootDirectory: URL
-    public nonisolated let workspaceFileURL: URL
     public nonisolated let database: NexusClientDatabase
     private var loadTask: Task<WorkspaceDocument, Error>?
 
     public init(
         rootDirectory: URL,
-        database: NexusClientDatabase? = nil,
-        fileName: String = "workspace.json"
+        database: NexusClientDatabase? = nil
     ) {
         self.rootDirectory = rootDirectory
-        self.workspaceFileURL = rootDirectory.appendingPathComponent(fileName)
         self.database = database ?? NexusClientDatabase(rootDirectory: rootDirectory)
     }
 
@@ -36,15 +33,9 @@ public actor WorkspaceStore {
             return try await inflight.value
         }
         let db = database
-        let legacyURL = workspaceFileURL
         let task = Task<WorkspaceDocument, Error> {
             if let stored = try await db.loadWorkspace() {
                 return stored
-            }
-            if FileManager.default.fileExists(atPath: legacyURL.path) {
-                let text = try String(contentsOf: legacyURL, encoding: .utf8)
-                let migrated = try WorkspaceDocument.decodeCanonicalJSON(text)
-                return try await db.saveWorkspaceIfEmpty(migrated)
             }
             let initial = WorkspaceDocument(
                 schemaVersion: WorkspaceDocument.currentSchemaVersion,
@@ -75,22 +66,6 @@ public actor WorkspaceStore {
         kind: WorkspaceProfileKind? = nil
     ) async throws -> [ProfileSummaryRecord] {
         try await database.listProfileSummaries(subscriptionId: subscriptionId, kind: kind)
-    }
-
-    public func exportPortableJSON(_ doc: WorkspaceDocument? = nil) async throws -> String {
-        let target: WorkspaceDocument
-        if let doc {
-            target = doc
-        } else {
-            target = try await loadOrInit()
-        }
-        return try target.encodeCanonicalJSON(pretty: true)
-    }
-
-    @discardableResult
-    public func importPortableJSON(_ rawJSON: String, bumpRevision: Bool = true) async throws -> WorkspaceDocument {
-        let decoded = try WorkspaceDocument.decodeCanonicalJSON(rawJSON)
-        return try await save(decoded, bumpRevision: bumpRevision)
     }
 
     public func shrinkMemory() async throws {

@@ -218,26 +218,6 @@ namespace desktop {
         return std::nullopt;
     }
 
-    auto escape_kdl_string(std::string_view text) -> std::string {
-        std::string out;
-        out.reserve(text.size() + 2);
-        out.push_back('"');
-        for (std::size_t i = 0; i < text.size(); ++i) {
-            unsigned char c = static_cast<unsigned char>(text[i]);
-            if (c == 0xC2 && i + 1 < text.size() && static_cast<unsigned char>(text[i + 1]) == 0x85) { ++i; continue; }
-            if (c == 0xE2 && i + 2 < text.size() && static_cast<unsigned char>(text[i + 1]) == 0x80 &&
-                (static_cast<unsigned char>(text[i + 2]) == 0xA8 || static_cast<unsigned char>(text[i + 2]) == 0xA9)) {
-                i += 2;
-                continue;
-            }
-            if (c < 0x20 || c == 0x7F) continue;
-            if (c == '\\' || c == '"') out.push_back('\\');
-            out.push_back(static_cast<char>(c));
-        }
-        out.push_back('"');
-        return out;
-    }
-
     auto merge_raw_kdl_snippet(std::string_view kdl, std::string_view snippet) -> std::string {
         auto clean = trim_ws(snippet);
         std::string out(kdl);

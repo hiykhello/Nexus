@@ -9,6 +9,7 @@ module;
 
 module relay;
 import std;
+import containers.inplace_vector;
 import platform.platform_defaults;
 import platform.unique_fd;
 
@@ -123,42 +124,49 @@ namespace relay {
     }
 
     auto local_process_details(std::uint32_t inode, std::uint32_t uid,
-        std::optional<std::uint32_t>& gid_out, std::string& package_out) -> std::string {
+        std::optional<std::uint32_t>& gid_out, std::string& package_out,
+        containers::inplace_vector<std::string, 8>& paths_out) -> void {
         // Restrict the observation to same-UID process leaders visible in
         // the proxy's procfs. A TCP socket does not carry a peer PID.
-        if (uid!=::geteuid()) return {};
+        if (uid!=::geteuid()) return;
         auto proc=open_directory(AT_FDCWD,"/proc");
-        if (!proc) return {};
+        if (!proc) return;
         auto proc_fd=::dirfd(proc.get());
         struct statfs filesystem{};
         struct stat mount_namespace{};
         std::array<char,32> self;
         if (::fstatfs(proc_fd,&filesystem)<0 || filesystem.f_type!=PROC_SUPER_MAGIC ||
             read_link(proc_fd,"self",self)!=std::to_string(::getpid()) ||
-            ::fstatat(proc_fd,"self/ns/mnt",&mount_namespace,0)<0) return {};
+            ::fstatat(proc_fd,"self/ns/mnt",&mount_namespace,0)<0) return;
 
         auto deadline=Clock::now()+std::chrono::milliseconds(20);
         unsigned processes=4096,descriptors=32768;
         auto socket=std::format("socket:[{}]",inode);
-        Directory holder, holder_fds;
-        std::string matching_fd, path;
+        struct Holder {
+            Directory process, fds;
+            std::string fd_name, path;
+        };
+        containers::inplace_vector<Holder, 8> holders;
         for (;;) {
             errno=0;
             auto* entry=::readdir(proc.get());
             if (!entry) {
-                if (errno || !holder || Clock::now()>=deadline ||
-                    executable(::dirfd(holder.get()),::dirfd(holder_fds.get()),matching_fd.c_str(),socket,mount_namespace)!=path)
-                    return {};
-                gid_out = status_gid(::dirfd(holder.get()));
-                package_out = cmdline_package(::dirfd(holder.get()));
-                return path;
+                if (errno || Clock::now()>=deadline) return;
+                for (auto& h : holders) {
+                    if (executable(::dirfd(h.process.get()),::dirfd(h.fds.get()),h.fd_name.c_str(),socket,mount_namespace)!=h.path)
+                        continue;
+                    if (!gid_out) gid_out = status_gid(::dirfd(h.process.get()));
+                    if (package_out.empty()) package_out = cmdline_package(::dirfd(h.process.get()));
+                    if (paths_out.size() < paths_out.capacity()) paths_out.push_back(std::move(h.path));
+                }
+                return;
             }
             if (!decimal_name(entry->d_name)) continue;
-            if (!processes-- || Clock::now()>=deadline) return {};
+            if (!processes-- || Clock::now()>=deadline) return;
             auto process=open_directory(proc_fd,entry->d_name);
             if (!process) {
                 if (errno==ENOENT || errno==ESRCH) continue;
-                return {};
+                return;
             }
             auto process_fd=::dirfd(process.get());
             auto owner=effective_uid(process_fd);
@@ -166,35 +174,35 @@ namespace relay {
                 struct stat info{};
                 if (::fstatat(process_fd,"status",&info,AT_SYMLINK_NOFOLLOW)<0 && errno==ENOENT) continue;
                 // Missing credentials may hide a second same-UID holder.
-                return {};
+                return;
             }
             if (*owner!=uid) continue;
             auto fds=open_directory(process_fd,"fd");
             if (!fds) {
                 if (errno==ENOENT || errno==ESRCH) continue;
-                return {};
+                return;
             }
             auto fds_fd=::dirfd(fds.get());
             for (;;) {
                 errno=0;
                 auto* fd=::readdir(fds.get());
                 if (!fd) {
-                    if (errno) return {};
+                    if (errno) return;
                     break;
                 }
                 if (!decimal_name(fd->d_name)) continue;
-                if (!descriptors-- || Clock::now()>=deadline) return {};
+                if (!descriptors-- || Clock::now()>=deadline) return;
                 std::array<char,64> link;
                 if (read_link(fds_fd,fd->d_name,link)!=socket) {
-                    if (errno==EACCES || errno==EPERM) return {};
+                    if (errno==EACCES || errno==EPERM) return;
                     continue;
                 }
-                if (holder) return {};
-                path=executable(process_fd,fds_fd,fd->d_name,socket,mount_namespace);
-                if (path.empty()) return {};
-                matching_fd=fd->d_name;
-                holder=std::move(process);
-                holder_fds=std::move(fds);
+                auto candidate=executable(process_fd,fds_fd,fd->d_name,socket,mount_namespace);
+                if (!candidate.empty() &&
+                    !std::ranges::any_of(holders, [&](auto const& h) { return h.path == candidate; }) &&
+                    holders.size() < holders.capacity()) {
+                    holders.push_back(Holder{std::move(process),std::move(fds),fd->d_name,std::move(candidate)});
+                }
                 break;
             }
         }
@@ -203,6 +211,8 @@ namespace relay {
     auto local_process_path(std::uint32_t inode, std::uint32_t uid) -> std::string {
         std::optional<std::uint32_t> gid;
         std::string pkg;
-        return local_process_details(inode, uid, gid, pkg);
+        containers::inplace_vector<std::string, 8> paths;
+        local_process_details(inode, uid, gid, pkg, paths);
+        return paths.empty() ? std::string{} : std::move(paths.front());
     }
 }

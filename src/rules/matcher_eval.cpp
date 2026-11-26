@@ -129,6 +129,8 @@ namespace rules {
                 if (addr.size != 4 && addr.size != 16)
                     return std::unexpected(Error{ErrorCode::invalid_query, "invalid default interface address"});
         }
+        if (input.process_paths && input.process_paths->size() > 64)
+            return std::unexpected(Error{ErrorCode::invalid_query, "too many process paths"});
         if (input.source_port && !*input.source_port)
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid source port"});
         if (input.port && !*input.port)
@@ -178,18 +180,40 @@ namespace rules {
         switch (entry.kind) {
         case Kind::process_name:
         case Kind::process_path: {
-            if (!input.input.process_path) return Truth::unknown;
-            auto path = *input.input.process_path;
-            auto sep = path.find_last_of("/\\");
-            auto value = entry.kind == Kind::process_path ? path : (sep == std::string_view::npos ? path : path.substr(sep + 1));
-            return value == entry.text ? Truth::yes : Truth::no;
+            auto matches_one = [&](std::string_view path) noexcept {
+                auto sep = path.find_last_of("/\\");
+                auto value = entry.kind == Kind::process_path ? path : (sep == std::string_view::npos ? path : path.substr(sep + 1));
+                return value == entry.text;
+            };
+            bool has_any = false;
+            if (input.input.process_paths && !input.input.process_paths->empty()) {
+                has_any = true;
+                for (std::string const& candidate : *input.input.process_paths)
+                    if (matches_one(candidate)) return Truth::yes;
+            }
+            if (input.input.process_path) {
+                has_any = true;
+                if (matches_one(*input.input.process_path)) return Truth::yes;
+            }
+            return has_any ? Truth::no : Truth::unknown;
         }
         case Kind::domain_regex:
             if (!input.input.domain) return input.domain_absent ? Truth::no : Truth::unknown;
             return regexes_[entry.regex].search(*input.input.domain, true) ? Truth::yes : Truth::no;
-        case Kind::process_path_regex:
-            if (!input.input.process_path || input.input.process_path->size() > 4095) return Truth::unknown;
-            return regexes_[entry.regex].search(*input.input.process_path) ? Truth::yes : Truth::no;
+        case Kind::process_path_regex: {
+            bool has_valid = false, saw_oversized = false;
+            auto check_one = [&](std::string_view path) noexcept -> bool {
+                if (path.size() > 4095) { saw_oversized = true; return false; }
+                has_valid = true;
+                return regexes_[entry.regex].search(path);
+            };
+            if (input.input.process_paths && !input.input.process_paths->empty()) {
+                for (std::string const& candidate : *input.input.process_paths)
+                    if (check_one(candidate)) return Truth::yes;
+            }
+            if (input.input.process_path && check_one(*input.input.process_path)) return Truth::yes;
+            return (has_valid && !saw_oversized) ? Truth::no : Truth::unknown;
+        }
         case Kind::source_interface:
             if (!input.input.source_interface) return Truth::unknown;
             return *input.input.source_interface == entry.text ? Truth::yes : Truth::no;

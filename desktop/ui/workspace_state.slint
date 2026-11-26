@@ -41,7 +41,6 @@ export struct WorkspaceRuleRow {
 export global WorkspaceState {
     in-out property <int> active-subtab: 0; // 0: Profiles, 1: Subscriptions, 2: Routing & DNS, 3: Host & Portable
     in-out property <string> active-profile-id: "";
-    in-out property <string> active-profile-kind: "node";
 
     in property <[WorkspaceProfileRow]> profiles: [];
     in property <[WorkspaceSubRow]> subscriptions: [];
@@ -59,12 +58,10 @@ export global WorkspaceState {
     in property <bool> host-is-linux: true;
     in-out property <bool> host-enable-mixed: true;
     in-out property <string> host-mixed-listen: "127.0.0.1:7890";
-    in-out property <string> host-lan-listen: "";
     in-out property <bool> host-enable-tun: false;
     in-out property <string> host-tun-mtu: "1400";
     in-out property <bool> host-tun-strict-route: false;
     in property <string> host-strict-route-notice: "";
-    in-out property <string> host-sys-proxy-mode: "off"; // "off" | "manual" | "pac"
     in property <string> portable-status: "";
     in property <bool> portable-status-ok: true;
 

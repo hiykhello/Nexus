@@ -318,9 +318,9 @@ namespace {
     auto test_tray_lifecycle_and_move() -> void {
         int show_cnt = 0;
         desktop::TrayController a({.on_show = [&] { ++show_cnt; }});
-        a.set_status(desktop::TrayState::tun_active, "ready");
+        a.update_snapshot({.state = desktop::TrayState::tun_active, .core_running = true, .tun_enabled = true});
         expect(a.state() == desktop::TrayState::tun_active && a.tooltip().contains("TUN"),
-            "legacy set_status preserves backward compatibility");
+            "update_snapshot sets state and tooltip cleanly");
 
         desktop::TrayController b = std::move(a);
         expect(b.state() == desktop::TrayState::tun_active && a.state() == desktop::TrayState::offline,

@@ -18,7 +18,6 @@ data class RuntimeSocketPaths(
     val composedConfigFile: File = File(rootDir, "composed.kdl")
     val composeWorkspaceFile: File = File(rootDir, "compose-workspace.json")
     val composeHostFile: File = File(rootDir, "compose-host.json")
-    val telemetryFile: File = File(rootDir, "telemetry.json")
     val secretsDir: File = File(rootDir, "secrets")
     val stateDir: File = File(rootDir, "state")
     val cacheDir: File = File(rootDir, "cache")

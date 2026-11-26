@@ -453,24 +453,3 @@ fun EmptyStateCard(
         }
     }
 }
-
-@Composable
-fun SectionStatusDot(
-    active: Boolean,
-    degraded: Boolean = false,
-    neutral: Boolean = false,
-    modifier: Modifier = Modifier,
-) {
-    val ext = NexusTheme.colors
-    val color = when {
-        neutral -> ext.muted
-        !active -> ext.danger
-        degraded -> ext.warning
-        else -> ext.success
-    }
-    Box(
-        modifier = modifier
-            .size(8.dp)
-            .background(color, CircleShape),
-    )
-}

@@ -1,6 +1,6 @@
 # 性能优化验证计划
 
-状态：性能验收计划，与 [网络正确性验证](network-validation.md) 配合，正确性失败的运行不进入性能比较；最新同机实测结果见 [项目进度](../progress.md)。
+状态：性能验收计划，与 [网络正确性验证](network-validation.md) 配合，正确性失败的运行不进入性能比较；最新同机实测结果见 [Linux 内核验收](proxy-kernel-linux-validation.md)。
 
 ## 证据要求
 

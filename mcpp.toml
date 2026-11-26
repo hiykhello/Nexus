@@ -1,7 +1,7 @@
 # The workspace is being organized by responsibility; only declared features
 # and tests are available in the current build graph.
 [workspace]
-members = ["tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", "tests/wireguard-reverse-fault", "src", "src/rules", "src/dns", "src/relay", "src/crypto", "src/containers", "src/functional", "src/utility", "src/encoding", "src/platform", "src/tun", "src/udp-runtime", "tests/protocol", "tests/dns", "tests/fakeip", "tests/http2", "tests/http2-client", "tests/tls", "tests/platform", "tests/deps", "tests/proxy-faults", "tests/proxy-preload", "tests/shims/proxy-start", "tests/shims/slow-resolver", "tests/shims/clock-fault", "tests/shims/dns-system-guard", "tests/shims/ss-udp-observe", "tests/tun", "tests/tun-faults", "tests/udp-faults", "tests/udp-runtime", "tests/udp-owner-faults", "tests/uot-client", "tests/chain-client", "src/dns-shared", "src/udp-shared", "experiments/dns-shared-cache/integration", "experiments/dns-shared-cache"]
+members = ["tests/dns-flight-copy", "src/endpoint", "tests/wireguard-endpoint", "tests/wireguard-reverse-fault", "src", "src/rules", "src/dns", "src/relay", "src/crypto", "src/containers", "src/functional", "src/utility", "src/encoding", "src/platform", "src/tun", "src/udp-runtime", "tests/protocol", "tests/dns", "tests/fakeip", "tests/http2", "tests/http2-client", "tests/tls", "tests/platform", "tests/deps", "tests/proxy-faults", "tests/proxy-preload", "tests/shims/proxy-start", "tests/shims/slow-resolver", "tests/shims/clock-fault", "tests/shims/dns-system-guard", "tests/shims/ss-udp-observe", "tests/tun", "tests/tun-faults", "tests/udp-faults", "tests/udp-runtime", "tests/udp-owner-faults", "tests/uot-client", "tests/chain-client", "src/dns-shared", "src/udp-shared"]
 
 [workspace.package]
 standard = "c++26"
@@ -1172,26 +1172,6 @@ required_features = ["test-dns-reverse"]
 kind = "bin"
 main = "tests/dns_reverse_allocation.cpp"
 required_features = ["test-dns-reverse"]
-
-[targets.dns-reverse-bench]
-kind = "bin"
-main = "experiments/dns-shared-cache/reverse_bench.cpp"
-required_features = ["test-dns-reverse"]
-
-[targets.rules-index-bench]
-kind = "bin"
-main = "experiments/rules/index_bench.cpp"
-required_features = ["test-rules-bench"]
-
-[targets.rules-program-bench]
-kind = "bin"
-main = "experiments/rules/program_bench.cpp"
-required_features = ["test-rules-bench"]
-
-[targets.rules-memory-bench]
-kind = "bin"
-main = "experiments/rules/memory_bench.cpp"
-required_features = ["test-rules-bench"]
 
 [targets.rules-private-fixture]
 kind = "bin"

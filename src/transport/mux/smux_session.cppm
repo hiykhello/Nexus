@@ -252,9 +252,11 @@ export namespace mux::smux {
 
         auto open_stream() -> capy::task<std::expected<std::uint32_t, StreamError>> {
             if (closed_) co_return std::unexpected(StreamError::closed);
+            auto [err, guard] = co_await write_mutex_.scoped_lock();
+            if (err || closed_) co_return std::unexpected(StreamError::closed);
             auto sid = streams_.open();
             if (!sid) co_return std::unexpected(sid.error());
-            if (!co_await write_frame(Command::syn, *sid)) {
+            if (!co_await send_locked(Command::syn, *sid)) {
                 (void)streams_.release(*sid);
                 cancel();
                 co_return std::unexpected(StreamError::closed);

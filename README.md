@@ -36,7 +36,7 @@ Nexus 是采用 **C++26 Modules** 从零打造的现代通用代理平台（同�
 NEXUS_CORE_BIN=./nexus ./scripts/build-desktop.sh
 ```
 
-完整构建与运行包说明见 [mcpp 工作区构建](docs/build/mcpp-workspace.md) 与 [Linux 运行包说明](docs/build/runtime-package.md)。
+完整构建与发行打包说明见 [mcpp 工作区构建](docs/build/mcpp-workspace.md) 与 [发行打包与运维](packaging/README.md)。
 
 ---
 
@@ -47,4 +47,4 @@ NEXUS_CORE_BIN=./nexus ./scripts/build-desktop.sh
 - **项目与原则**：[项目定位](docs/project/overview.md) · [核心架构原则](docs/design-principles/core-architecture.md) · [性能与数据面原则](docs/design-principles/performance-and-datapath.md) · [路由/DNS/状态原则](docs/design-principles/routing-dns-and-state.md) · [协议与策略组原则](docs/design-principles/protocols-and-groups.md) · [多平台运维原则](docs/design-principles/platform-and-operations.md)
 - **核心架构**：[总体架构](docs/architecture/overview.md) · [协议解耦](docs/architecture/protocols.md) · [自研 TUN](docs/architecture/tun.md) · [自研 TLS 与指纹](docs/architecture/tls.md) · [路由引擎](docs/architecture/routing-engine.md) · [DNS 与乐观缓存](docs/architecture/dns.md) · [状态与缓存](docs/architecture/state-and-cache.md) · [控制面与 IPC](docs/architecture/control-api.md)
 - **多端客户端**：[Android 外壳](android/README.md) · [Desktop (Slint + C++26)](desktop/README.md) · [Apple (Swift 6 + SwiftUI)](apple/README.md) · [发行打包与运维](packaging/README.md) · [跨平台 OS 边界矩阵](docs/platform/cross-platform-os-boundaries.md)
-- **配置与开发**：[KDL 配置规范](docs/configuration/spec.md) · [规则集格式](docs/configuration/rule-sets.md) · [配置示例](docs/configuration/examples/README.md) · [C++ 编码规范](docs/development/cpp-guidelines.md) · [项目进度](docs/progress.md)
+- **配置与开发**：[KDL 配置规范](docs/configuration/spec.md) · [配置边界](docs/architecture/config-boundary.md) · [规则集格式](docs/configuration/rule-sets.md) · [配置示例](docs/configuration/examples/README.md) · [C++ 编码规范](docs/development/cpp-guidelines.md) · [支持矩阵](docs/planning/proxy-kernel-support-matrix.md)

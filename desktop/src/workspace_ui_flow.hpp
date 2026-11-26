@@ -96,7 +96,6 @@ namespace desktop_ui_helpers {
                     auto msg = ok ? tr(en, "已热切换 TUN 节点（免重启提权）", "Switched TUN node live (zero restart)")
                                   : tr(en, "热切换节点失败", "Live node switch failed");
                     on_ui_thread(ctx.weak_ui, [&ctx, ok, msg = std::move(msg)](auto& s) {
-                        s->set_status_summary(slint::SharedString(msg));
                         push_toast(*s, msg, ok ? "success" : "error");
                         if (ctx.sync_tray) ctx.sync_tray();
                     });
@@ -243,10 +242,8 @@ namespace desktop_ui_helpers {
             auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             ctx.host.enable_mixed = g.get_host_enable_mixed();
             ctx.host.mixed_listen = std::string(g.get_host_mixed_listen());
-            ctx.host.lan_listen = std::string(g.get_host_lan_listen());
             ctx.host.enable_tun = g.get_host_enable_tun();
             ctx.host.tun_strict_route = g.get_host_tun_strict_route();
-            ctx.host.system_proxy_mode = std::string(g.get_host_sys_proxy_mode());
             std::string mtu_s(g.get_host_tun_mtu());
             std::int64_t mtu = 1400;
             if (auto [p, ec] = std::from_chars(mtu_s.data(), mtu_s.data() + mtu_s.size(), mtu); ec == std::errc{}) ctx.host.tun_mtu = mtu;

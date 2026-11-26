@@ -4,14 +4,6 @@ import std;
 
 namespace desktop {
     namespace {
-        auto format_legacy_tooltip(TrayState st, std::string_view detail) -> std::string {
-            std::string_view base = "Nexus - 已停止";
-            if (st == TrayState::running) base = "Nexus - 运行中";
-            else if (st == TrayState::tun_active) base = "Nexus - TUN 已接管";
-            else if (st == TrayState::degraded) base = "Nexus - 连接波动";
-            return detail.empty() ? std::string(base) : std::format("{} ({})", base, detail);
-        }
-
         auto format_primary_header(TraySnapshot const& snap) -> std::string {
             std::string_view status = snap.is_en ? "Disconnected" : "未连接";
             if (snap.state == TrayState::running) status = snap.is_en ? "Connected" : "已连接";
@@ -329,20 +321,6 @@ namespace desktop {
     TrayController::~TrayController() = default;
     TrayController::TrayController(TrayController&&) noexcept = default;
     auto TrayController::operator=(TrayController&&) noexcept -> TrayController& = default;
-
-    auto TrayController::set_status(this TrayController& self, TrayState state, std::string_view summary) -> void {
-        if (!self.impl_ || self.impl_->stopped.load(std::memory_order_acquire)) return;
-        self.impl_->state.store(state, std::memory_order_release);
-        auto tip = format_legacy_tooltip(state, summary);
-        {
-            std::lock_guard lock(self.impl_->mutex);
-            self.impl_->snap.state = state;
-            self.impl_->snap.core_running = (state != TrayState::offline);
-            self.impl_->snap.tun_enabled = (state == TrayState::tun_active);
-            self.impl_->tooltip_text = std::move(tip);
-        }
-        if (self.impl_->backend) self.impl_->backend->notify_snapshot_changed();
-    }
 
     auto TrayController::state(this TrayController const& self) noexcept -> TrayState {
         return self.impl_ ? self.impl_->state.load(std::memory_order_acquire) : TrayState::offline;

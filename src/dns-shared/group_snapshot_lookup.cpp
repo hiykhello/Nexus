@@ -129,11 +129,7 @@ namespace dns_hp_experiment {
     }
 
     auto GroupSnapshot::fresh(Binding const* binding, std::uint64_t now) noexcept -> bool {
-#ifdef DNS_GROUP_ALLOW_SUBSECOND_EXPERIMENT
-        return binding && now < binding->node->expires;
-#else
         return binding && now < binding->node->expires && (binding->node->expires - now) / 1000;
-#endif
     }
 
     auto GroupSnapshot::stale(Binding const* binding, std::uint64_t now) const noexcept -> bool {
@@ -416,7 +412,8 @@ namespace dns_hp_experiment {
             bool peer_hit = stale(binding, effective);
             for (std::size_t i = 0; !peer_hit && i < group_count_; ++i)
                 if (i != group && stale(find_sv(root->groups[i]), effective)) peer_hit = true;
-            if (!peer_hit && current_.load(std::memory_order_acquire) == root && gate_.load(std::memory_order_acquire) == epoch)
+            if (!peer_hit && root->initialized && now <= root->now &&
+                current_.load(std::memory_order_acquire) == root && gate_.load(std::memory_order_acquire) == epoch)
                 return std::optional<Stale>{};
         }
         if (std::string_view(key.name) != *norm) key.name.assign(*norm);

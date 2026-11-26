@@ -36,13 +36,6 @@ export namespace desktop {
         std::int64_t download_bytes = 0;
     };
 
-    struct LegacyImportReport {
-        bool imported_workspace = false;
-        bool imported_host = false;
-        bool imported_telemetry = false;
-        bool imported_ui_prefs = false;
-    };
-
     // Unified cross-platform SQLite 3 (WAL) Client Database (Schema v1, nexus-client.db).
     class ClientDatabase {
         struct Impl;
@@ -133,13 +126,6 @@ export namespace desktop {
 
     [[nodiscard]] auto load_ui_prefs_from_db(ClientDatabase& db) -> std::optional<UiPrefs>;
     [[nodiscard]] auto save_ui_prefs_to_db(ClientDatabase& db, UiPrefs const& prefs) -> bool;
-
-    // One-shot idempotent import of legacy workspace.json / host.json / telemetry.json / ui-prefs.conf when DB is empty.
-    [[nodiscard]] auto import_legacy_json_if_empty(
-        ClientDatabase& db,
-        std::filesystem::path const& cfg_dir,
-        std::filesystem::path const& secrets_dir,
-        std::string_view control_socket) -> std::expected<LegacyImportReport, std::string>;
 
     // Shrinks SQLite caches + OS heap/working-set when hiding to tray.
     auto reclaim_process_memory(ClientDatabase* db) noexcept -> void;

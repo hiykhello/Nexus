@@ -121,7 +121,6 @@ namespace desktop {
             else if (key == "window_opacity") prefs.window_opacity = parse_float_val(val, prefs.window_opacity, 0.15f, 1.0f);
             else if (key == "surface_opacity") prefs.surface_opacity = parse_float_val(val, prefs.surface_opacity, 0.15f, 1.0f);
             else if (key == "blur_enabled") prefs.blur_enabled = (val == "1" || val == "true");
-            else if (key == "blur_radius") prefs.blur_enabled = parse_float_val(val, 20.0f, 0.0f, 40.0f) > 0.5f;
             else if (key == "ambient_glow") prefs.ambient_glow = (val == "1" || val == "true");
             else if (key == "reduced_motion") prefs.reduced_motion = (val == "1" || val == "true");
             else if (key == "language" && (val == "system" || val == "zh-cn" || val == "en-us")) prefs.language = val;

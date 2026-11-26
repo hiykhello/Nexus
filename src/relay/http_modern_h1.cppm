@@ -178,6 +178,19 @@ namespace relay::http_modern_detail {
         return dst;
     }
 
+    constexpr auto h1_error_reply(std::uint16_t code, bool head) noexcept -> std::string_view {
+        switch (code) {
+        case 403: return head ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                              : "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 10\r\n\r\nForbidden\n";
+        case 407: return head ? "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                              : "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 30\r\n\r\nProxy Authentication Required\n";
+        case 502: return head ? "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                              : "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Gateway\n";
+        default:  return head ? "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                              : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Request\n";
+        }
+    }
+
     inline auto serve_h1_tls(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
                              HttpModernProfile const& profile, tls::detail::ByteStream<corosio::tcp_socket>& tls_stream) -> capy::task<> {
         auto until = Clock::now() + std::chrono::seconds(10);
@@ -191,11 +204,17 @@ namespace relay::http_modern_detail {
             header_end = buf.find("\r\n\r\n");
             if (header_end != std::string::npos) break;
         }
-        auto send_txt = [&](std::string_view msg) -> capy::task<bool> {
-            co_return co_await tls_stream.send({reinterpret_cast<std::uint8_t const*>(msg.data()), msg.size()}, until);
+        bool const is_head = std::string_view(buf).starts_with("HEAD ");
+        auto send_txt = [&](std::string_view msg, Clock::time_point dl) -> capy::task<bool> {
+            co_return co_await tls_stream.send({reinterpret_cast<std::uint8_t const*>(msg.data()), msg.size()}, dl);
+        };
+        auto send_error = [&](std::uint16_t code, bool head) -> capy::task<> {
+            auto const dl = std::max(until, Clock::now() + std::chrono::seconds(2));
+            (void)co_await send_txt(h1_error_reply(code, head), dl);
+            (void)co_await tls_stream.close_output(dl);
         };
         if (header_end == std::string::npos) {
-            (void)co_await send_txt("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            co_await send_error(400, is_head);
             co_return;
         }
         if (profile.creds) {
@@ -211,12 +230,12 @@ namespace relay::http_modern_detail {
                 }
             }
             if (!naive_in_detail::match_basic_single(auth_val, *profile.creds)) {
-                (void)co_await send_txt("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                co_await send_error(407, is_head);
                 co_return;
             }
             session.auth_user = std::string_view(reinterpret_cast<char const*>(profile.creds->username.data()), profile.creds->username_size);
             if (!session.admit_principal(*session.auth_user)) {
-                (void)co_await send_txt("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                co_await send_error(403, is_head);
                 co_return;
             }
         }
@@ -228,11 +247,10 @@ namespace relay::http_modern_detail {
             H1StreamIncoming incoming{tls_stream, tail};
             auto code = co_await naive_in_detail::dial_naive_target(session, context, policy, dst, incoming);
             if (code != 0 || session.closed) {
-                (void)co_await send_txt(code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
-                                                  : "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                co_await send_error(code == 2 ? 403 : 502, false);
                 co_return;
             }
-            if (!co_await send_txt("HTTP/1.1 200 Connection Established\r\n\r\n")) co_return;
+            if (!co_await send_txt("HTTP/1.1 200 Connection Established\r\n\r\n", until)) co_return;
             session.relaying = true;
             (void)co_await capy::when_all(
                 stream_relay::direction(session, stream_relay::upload(session, incoming)),
@@ -241,7 +259,7 @@ namespace relay::http_modern_detail {
         }
         auto fwd = http::parse_forward_request(buf);
         if (fwd.status != http::ConnectStatus::accepted) {
-            (void)co_await send_txt("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            co_await send_error(400, is_head);
             co_return;
         }
         auto dst = make_dst_request(fwd.destination);
@@ -250,8 +268,7 @@ namespace relay::http_modern_detail {
         H1StreamIncoming incoming{tls_stream, pre_up};
         auto code = co_await naive_in_detail::dial_naive_target(session, context, policy, dst, incoming);
         if (code != 0 || session.closed) {
-            (void)co_await send_txt(code == 2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
-                                              : "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            co_await send_error(code == 2 ? 403 : 502, fwd.head);
             co_return;
         }
         session.relaying = true;

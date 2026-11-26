@@ -41,7 +41,7 @@ flowchart LR
 ### 为什么这套拓扑在 Android 免 Root 下既稳又快
 1. **数据面零跨进程/零 JNI 损耗**：TUN FD 只在启动时交接一次；`protect(fd)` 只在新建物理出站 socket 时经文件系统 UDS 走一次 `SCM_RIGHTS`（~20–50 µs；H2/XHTTP/QUIC/WG 多路复用下整条隧道仅调用 1 次）。所有收发包 100% 在原生进程与 Linux 内核间直通，不触发 ART 堆分配与 GC 抖动。
 2. **三层崩溃与内存隔离**：UI 进程随时可被系统回收；`:bg` 进程轻量守护 `VpnService` 与生命周期；`libnexus.so` 原生子进程独立受 `memory::Budget` 约束（移动端建议 32–64 MiB 上限），异常退出时 `:bg` 进程立即接管日志收集、安全退避重启或撤销 VPN，杜绝“假死断网”。
-3. **100% 兼容 C++26 `-freflection` + `import std;`**: 原生侧由 GCC 16 交叉编译 `aarch64-linux-musl` 静态可执行文件，绕开 NDK Clang 暂缺 P2996 反射的问题，同时白赚 Linux ARM64 静态单文件发行版。
+3. **100% 统一 Clang（`llvm@23.1.6`）+ C++26 Modules + 静态 `libc++`**：原生侧由 Clang 交叉编译 `aarch64-linux-musl` 静态可执行文件（零 `-freflection`、零 `libstdc++` 动态依赖），同时产出 Linux ARM64 静态单文件发行版。
 
 ---
 

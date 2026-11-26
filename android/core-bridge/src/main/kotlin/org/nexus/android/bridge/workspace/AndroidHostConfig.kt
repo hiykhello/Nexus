@@ -299,28 +299,7 @@ class AndroidHostConfigStore(
     val secretFile: File = File(file.parentFile ?: File("."), ".sync-secrets.json"),
 ) {
     fun load(paths: RuntimeSocketPaths? = null): AndroidHostConfig {
-        var rawKv = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG)
-        if (rawKv == null && file.isFile) {
-            val legacy = runCatching { AndroidHostConfig.fromJson(file.readText(Charsets.UTF_8)) }.getOrNull()
-            if (legacy != null) {
-                val inserted = db.setHostKvIfAbsent(
-                    NexusClientDatabase.KV_ANDROID_HOST_CONFIG,
-                    legacy.toJson(indentSpaces = 0, includeSecrets = false),
-                )
-                if (inserted) {
-                    val hasSecrets = legacy.android.webdavPassword.isNotEmpty() || legacy.android.syncPassphrase.isNotEmpty()
-                    if (hasSecrets && !secretFile.isFile) {
-                        writeSyncSecrets(legacy.android.webdavPassword, legacy.android.syncPassphrase)
-                    }
-                    if (hasSecrets) {
-                        runCatching {
-                            SecretFileIO.atomicWriteSecret0600(file, legacy.toJson(indentSpaces = 2, includeSecrets = false))
-                        }
-                    }
-                }
-                rawKv = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG)
-            }
-        }
+        val rawKv = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG)
         val base = rawKv?.let { runCatching { AndroidHostConfig.fromJson(it) }.getOrNull() } ?: AndroidHostConfig()
         val (davPw, syncPass) = readSyncSecrets()
         val merged = base.copy(

@@ -142,7 +142,7 @@ namespace relay {
             for (unsigned i = 0; i < count; ++i) {
                 dns::CacheKey key{v, std::string(name), types[i]};
                 auto pos =
-#if defined(NEXUS_TEST_DNS_SNAPSHOT) || defined(NEXUS_TEST_DNS_GROUP)
+#ifdef NEXUS_TEST_DNS_GROUP
                     session.dns->reader ? session.dns->cache.lookup(key, now_ms, *session.dns->reader) : session.dns->cache.lookup(key, now_ms);
 #else
                     session.dns->cache.lookup(key, now_ms);
@@ -151,7 +151,7 @@ namespace relay {
                 if (pos && *pos) step = std::move(**pos);
                 else {
                     auto neg =
-#if defined(NEXUS_TEST_DNS_SNAPSHOT) || defined(NEXUS_TEST_DNS_GROUP)
+#ifdef NEXUS_TEST_DNS_GROUP
                         session.dns->reader ? session.dns->cache.lookup_negative(key, now_ms, *session.dns->reader) : session.dns->cache.lookup_negative(key, now_ms);
 #else
                         session.dns->cache.lookup_negative(key, now_ms);
@@ -216,7 +216,7 @@ namespace relay {
 #else
                     nullptr
 #endif
-#if defined(NEXUS_TEST_DNS_SNAPSHOT) || defined(NEXUS_DNS_SHARED) || defined(NEXUS_TEST_DNS_GROUP)
+#if defined(NEXUS_DNS_SHARED) || defined(NEXUS_TEST_DNS_GROUP)
                     ,session.dns->reader ? &*session.dns->reader : nullptr
 #else
                     ,nullptr

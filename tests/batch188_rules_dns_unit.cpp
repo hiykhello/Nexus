@@ -362,6 +362,20 @@ routing { default-outbound "direct" }
 
         // 3b. ReverseCache records fresh upstream answers, NOT predefined synthetic or optimistic stale hits
         {
+            // Multi-holder process_paths matching through DnsContext -> Matcher
+            policy::DnsRule proc_rule{.domain = "shared-proc.test", .server = 1};
+            proc_rule.context.push_back(rules::Rule{.type = "process-name", .value = "worker-bin"});
+            require(policy::normalize_dns_rule(proc_rule, 2), "norm multi-holder dns rule");
+            std::array<std::string, 2> holders{"/usr/bin/launcher", "/opt/app/worker-bin"};
+            policy::DnsContext ctx{.process_path = std::string_view(holders[0]), .process_paths = std::span<std::string const>(holders)};
+            auto dec = policy::select_question_dns_action(std::span(&proc_rule, 1), "shared-proc.test", 1, 0, false, ctx);
+            require(dec.server == 1, "DnsContext multi-holder process_paths matches second holder");
+            std::array<std::string, 2> other_holders{"/usr/bin/launcher", "/usr/bin/other"};
+            policy::DnsContext miss_ctx{.process_path = std::string_view(other_holders[0]), .process_paths = std::span<std::string const>(other_holders)};
+            auto miss_dec = policy::select_question_dns_action(std::span(&proc_rule, 1), "shared-proc.test", 1, 0, false, miss_ctx);
+            require(miss_dec.server == 0, "DnsContext multi-holder process_paths falls back when none match");
+        }
+        {
             dns::ReverseCache reverse(64, 1, {0x123456789abcdef0ULL, 0xfedcba9876543210ULL});
             auto now_ms = [] {
                 return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(

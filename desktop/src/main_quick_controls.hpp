@@ -13,7 +13,7 @@ namespace desktop_ui_helpers {
             auto endpoint = on ? desktop::select_system_proxy_endpoint(read_inbounds_from_ui(u)) : std::nullopt;
             if (on && !endpoint) {
                 u.set_system_proxy_enabled(false);
-                u.set_status_summary(slint::SharedString(tr(is_en_ui(u), "请先启用本地入站端口", "Enable a local inbound port first")));
+                push_toast(u, tr(is_en_ui(u), "请先启用本地入站端口", "Enable a local inbound port first"), "warn");
                 if (ws_ctx.sync_tray) ws_ctx.sync_tray();
                 return;
             }
@@ -93,11 +93,9 @@ namespace desktop_ui_helpers {
             if (ws_ctx.supervisor.running()) {
                 bool posted = ws_ctx.worker.post([&ws_ctx, persist_prefs, en, m, grp, prev_mode] {
                     auto reply = ws_ctx.http_ctrl.set_mode(m, grp);
-                    on_ui_thread(ws_ctx.weak_ui, [&ws_ctx, persist_prefs, ok = reply.ok, en, m, prev_mode, msg = std::move(reply.body)](auto& s) {
+                    on_ui_thread(ws_ctx.weak_ui, [&ws_ctx, persist_prefs, ok = reply.ok, en, prev_mode, msg = std::move(reply.body)](auto& s) {
                         s->set_diagnostic_ok(ok);
-                        if (ok) {
-                            s->set_status_summary(slint::SharedString(tr(en, "运行模式已切换: ", "Mode switched: ") + m));
-                        } else {
+                        if (!ok) {
                             s->set_outbound_mode(prev_mode);
                             if (persist_prefs) persist_prefs();
                             auto err = tr(en, "切换模式失败: ", "Mode switch failed: ") + msg;
@@ -110,7 +108,6 @@ namespace desktop_ui_helpers {
                 if (!posted) ws_ctx.ui.set_outbound_mode(prev_mode);
                 return;
             }
-            ws_ctx.ui.set_status_summary(slint::SharedString(tr(en, "路由模式: ", "Mode: ") + m));
             if (ws_ctx.sync_tray) ws_ctx.sync_tray();
         });
     }

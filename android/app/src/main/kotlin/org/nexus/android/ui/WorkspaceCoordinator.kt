@@ -43,7 +43,7 @@ class WorkspaceCoordinator(
 ) {
     val workspaceStore = WorkspaceStore(filesDir, db)
     val hostStore = AndroidHostConfigStore(File(filesDir, "host.json"), db)
-    val telemetryStore = TelemetryStore(socketPaths.telemetryFile, db)
+    val telemetryStore = TelemetryStore(db)
     val composer = WorkspaceComposer(supervisor)
     private val hostMutex = Mutex()
     private val composeMutex = Mutex()
@@ -461,13 +461,5 @@ class WorkspaceCoordinator(
                     }
                 }
             }
-
-        fun kindDisplayName(kind: ProfileKind): String = when (kind) {
-            ProfileKind.NODE -> "节点"
-            ProfileKind.CUSTOM_OUTBOUND -> "自定义出站"
-            ProfileKind.POLICY_GROUP -> "策略组"
-            ProfileKind.PROXY_CHAIN -> "代理链"
-            ProfileKind.FULL_CUSTOM_KDL -> "完整档案"
-        }
     }
 }

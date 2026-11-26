@@ -1,9 +1,0 @@
-mode,threads,distribution,operations_per_second,p50_ns,p99_ns,p999_ns,checksum
-snapshot,8,collision-miss,3.65153e+07,160,243,1128,400000
-per-worker,8,collision-miss,1.58345e+07,309,674,4230,400000
-snapshot,8,collision,3.67338e+07,166,326,1402,11231132
-per-worker,8,collision,1.46193e+07,390,1016,2778,11231132
-snapshot,8,miss,1.08698e+08,87,112,816,400000
-per-worker,8,miss,2.38304e+07,213,527,2275,400000
-snapshot,8,uniform,5.95005e+07,130,197,1279,8228040
-per-worker,8,uniform,1.69323e+07,384,962,3218,8228040

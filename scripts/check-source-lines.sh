@@ -8,10 +8,6 @@ fi
 
 # Explicit, reviewed exceptions are listed here and in docs/development/file-sizes.md.
 declare -A exceptions=(
-    [experiments/dns-shared-cache/group_shared_capacity_test.cpp]="established baseline"
-    [experiments/dns-shared-cache/group_singleflight_test.cpp]="established baseline"
-    [experiments/dns-shared-cache/group_snapshot_test.cpp]="established baseline"
-    [experiments/dns-shared-cache/proxy_group_bench.py]="established baseline"
     [tests/config.cpp]="established baseline"
     [tests/dns_message.cpp]="established baseline"
     [tests/http2/http2_server.cpp]="established baseline"

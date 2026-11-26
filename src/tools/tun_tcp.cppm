@@ -205,6 +205,7 @@ export namespace cli::tun_enabled {
                 if (owner->uid) session.source_uid = owner->uid;
                 if (owner->gid) session.source_gid = owner->gid;
                 if (!owner->process_path.empty()) session.process_path = std::move(owner->process_path);
+                if (!owner->process_paths.empty()) session.process_paths = std::move(owner->process_paths);
                 if (!owner->user.empty()) session.source_user = std::move(owner->user);
                 if (!owner->package_name.empty()) session.package_name = std::move(owner->package_name);
             }

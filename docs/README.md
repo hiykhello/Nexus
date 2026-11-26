@@ -9,7 +9,6 @@
 | 文档 | 内容 |
 | --- | --- |
 | [项目定位](project/overview.md) | 平台目标、client/server 角色定义与技术约束 |
-| [项目进度与交付基线](progress.md) | 第 91–146 批最新交付基线、实机验证证据与待推进事项 |
 | [Linux 代理内核支持矩阵](planning/proxy-kernel-support-matrix.md) | 已接入协议、入口、特性开关与适用边界 |
 | [依赖与选型](technology/dependencies.md) | 核心依赖职责、BoringSSL `libcrypto` 底座与边界约束 |
 
@@ -44,10 +43,9 @@
 | 网络栈 | [自研 TUN 栈](architecture/tun.md) | 设备接入、用户态 TCP/IP/UDP 与资源配额 |
 | 路由/DNS | [路由匹配与热重载](architecture/routing-engine.md) · [路由元数据与嗅探](architecture/routing-metadata.md) | 有序规则、索引、借用周期、嗅探与反查 |
 | 路由/DNS | [DNS 与乐观缓存](architecture/dns.md) · [Fake-IP 与嗅探](architecture/dns-fakeip-engine.md) | 解析视图、TTL、负缓存、乐观刷新与双向映射 |
-| 存储/运维 | [缓存与持久状态](architecture/state-and-cache.md) · [持久状态清单](architecture/persistence-inventory.md) · [状态数据库](architecture/database.md) | 分层持久存储、WAL、提交语义与恢复 |
+| 存储/运维 | [缓存与持久状态](architecture/state-and-cache.md) · [持久状态清单](architecture/persistence-inventory.md) · [四支柱配置边界](architecture/config-boundary.md) | Core 无数据库持久化（KDL/BEVE/原子快照/WAL）与客户端配置边界 |
 | 存储/运维 | [规则集二进制格式](architecture/rule-set-format.md) · [BEVE 状态模型](architecture/beve-schemas.md) | BEVE 封装、索引边界与逻辑结构 |
 | 存储/运维 | [原生控制面与 IPC](architecture/control-api.md) · [日志系统](architecture/logging.md) | HTTP `/v1/*`、OpenMetrics `/metrics`、本地 UDS 与异步日志 |
-| 专项评估 | [容器评估](container-evaluation.md) · [共享 DNS 缓存评估](dns-shared-cache-evaluation.md) | 容器选型与多核 DNS 缓存架构评估 |
 
 ---
 
@@ -69,9 +67,9 @@
 | 分类 | 文档 | 内容 |
 | --- | --- | --- |
 | 配置 | [KDL 2.0 设计](configuration/kdl.md) · [配置规范](configuration/spec.md) · [规则集互转](configuration/rule-sets.md) · [配置示例](configuration/examples/README.md) | KDL 语法、完整配置字段、规则集与成对示例 |
-| 构建 | [mcpp 工作区](build/mcpp-workspace.md) · [mcpp 迁移记录](build/mcpp-migration.md) · [第三方模块封装](build/third-party-modules.md) · [QUIC 依赖](build/quic-dependencies.md) · [运行包说明](build/runtime-package.md) | 构建入口、离线锁与运行时打包 |
-| 开发 | [C++ 编码规范](development/cpp-guidelines.md) · [C++26 数据结构](development/cpp26-data-structures.md) · [文件行数规范](development/file-sizes.md) · [模块与特性策略](development/module-feature-policy.md) | 无异常约定、容器选型、300/500 行规范与模块边界 |
-| 开发 | [Socket 绑定](development/socket-binding.md) · [TCP Fast Open](development/tcp-fast-open.md) · [本机 GCC 能力](development/gcc-capabilities.md) · [上游问题跟踪](development/upstream-issues.md) | 底层网络细节与工具链边界 |
+| 构建 | [mcpp 工作区](build/mcpp-workspace.md) · [第三方模块封装](build/third-party-modules.md) · [QUIC 依赖](build/quic-dependencies.md) | 构建入口、离线锁与第三方模块边界 |
+| 开发 | [C++ 编码规范](development/cpp-guidelines.md) · [C++26 数据结构](development/cpp26-data-structures.md) · [文件行数规范](development/file-sizes.md) · [模块与特性策略](development/module-feature-policy.md) | 错误处理约定、基础容器选型、300/500 行规范与模块边界 |
+| 开发 | [Socket 绑定](development/socket-binding.md) · [TCP Fast Open](development/tcp-fast-open.md) · [上游问题跟踪](development/upstream-issues.md) | 底层网络细节与工具链/上游补丁边界 |
 
 ---
 
@@ -82,7 +80,7 @@
 | 0001 | [初始技术基线](decisions/0001-platform-baseline.md) | 平台定位、C++ Modules、KDL 2.0 与异步栈基线 |
 | 0002 | [自研网络栈与 TLS](decisions/0002-self-developed-network-stack.md) | 自研 TUN TCP/IP 栈与自研 TLS/指纹引擎 |
 | 0003 | [C++ 错误处理](decisions/0003-cpp-error-handling.md) | 尽量无异常，优先 `std::expected` / `std::optional` |
-| 0004 | [现代 C++ 能力](decisions/0004-modern-cpp.md) | 显式 `this`、concepts、尾置返回与静态反射 |
+| 0004 | [现代 C++ 能力](decisions/0004-modern-cpp.md) | Clang `llvm@23.1.6` + C++26 Modules、显式 `this`、concepts、尾置返回与零 `-freflection` |
 | 0005 | [HTTP 实现方向](decisions/0005-http-stack.md) | 自研 HTTP/1.1 + 无 I/O `nghttp2`/`nghttp3` |
 | 0006 | [规则集格式与互转](decisions/0006-rule-set-formats.md) | KDL 2.0 与 BEVE 可逆语义转换 |
 | 0007 | [BoringSSL 底座与 kTLS](decisions/0007-boringssl-libcrypto-and-ktls.md) | 静态 `libcrypto` 密码底座（无第三方 `libssl`）与 kTLS 卸载 |
@@ -90,11 +88,9 @@
 
 ---
 
-## 7. 路线图、批次蓝图与验证计划
+## 7. 路线图与验证计划
 
 | 文档 | 内容 |
 | --- | --- |
 | [实施路线](planning/roadmap.md) · [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) · [功能完整度清单](planning/feature-completion.md) · [拨号字段覆盖](planning/dial-field-coverage.md) | 总体演进路径、协议矩阵补齐顺序、内核增强与能力覆盖清单 |
-| [第 91–98 批规划](planning/next-batches-91-96.md)（[92](planning/batch92-state-design.md) / [93](planning/batch93-routing-dns-design.md) / [94](planning/batch94-protocols-xhttp-utls-design.md) / [95](planning/batch95-groups-observability-control-design.md) / [96](planning/batch96-nextgen-perf-design.md) / [97](planning/batch97-torture-interop-suite-design.md)） | Linux 双后端完整内核演进与压测收官蓝图 |
-| [第 99–104 批规划](planning/next-batches-99-104.md) · [第 105–110 批规划](planning/next-batches-105-110.md) · [第 111–116 批规划](planning/next-batches-111-116.md) · [第 117–122 批规划](planning/next-batches-117-122.md) · [第 123–128 批规划](planning/next-batches-123-128.md) · [第 129–134 批规划](planning/next-batches-129-134.md) · [第 135–140 批规划](planning/next-batches-135-140.md) · [第 141–146 批规划](planning/next-batches-141-146.md) · [第 147–152 批规划](planning/next-batches-147-152.md) | 跨平台内核硬化、全端客户端深化、控制面运维、数据面深度加固、多实现协议互通、生产边缘场景深挖、工作区现代化重构与下一阶段协议/内核补齐 |
-| [网络栈验证](planning/network-validation.md) · [性能验证](planning/performance-validation.md) · [Linux 集成验证](planning/linux-validation.md) · [Linux 内核验收](planning/proxy-kernel-linux-validation.md) · [DNS 与状态验证](planning/dns-state-validation.md) · [可恢复分配](planning/fallible-allocation.md) | 各子系统测试策略与实机验收基线 |
+| [网络栈验证](planning/network-validation.md) · [性能验证](planning/performance-validation.md) · [Linux 集成验证](planning/linux-validation.md) · [Linux 内核验收](planning/proxy-kernel-linux-validation.md) · [DNS 与状态验证](planning/dns-state-validation.md) | 各子系统测试策略与实机验收基线 |

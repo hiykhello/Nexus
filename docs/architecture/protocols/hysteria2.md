@@ -1,6 +1,6 @@
 # Hysteria 2 与 QUIC 承载设计
 
-状态：Hysteria 2 入站与出站已接入生产双后端，最新实测与边界见 [项目进度](../../progress.md) 与 [支持矩阵](../../planning/proxy-kernel-support-matrix.md)。协议依据为 [Hysteria 2 规范](https://v2.hysteria.network/docs/developers/Protocol/)、[QUIC RFC 9000](https://www.rfc-editor.org/rfc/rfc9000)、[QUIC TLS RFC 9001](https://www.rfc-editor.org/rfc/rfc9001) 和 [QUIC DATAGRAM RFC 9221](https://www.rfc-editor.org/rfc/rfc9221)。Hysteria 2 不是 Hysteria 1；不能只自写特定 UDP 包格式，就声称兼容 QUIC。
+状态：Hysteria 2 入站与出站已接入生产双后端，最新支持范围与边界见 [支持矩阵](../../planning/proxy-kernel-support-matrix.md)。协议依据为 [Hysteria 2 规范](https://v2.hysteria.network/docs/developers/Protocol/)、[QUIC RFC 9000](https://www.rfc-editor.org/rfc/rfc9000)、[QUIC TLS RFC 9001](https://www.rfc-editor.org/rfc/rfc9001) 和 [QUIC DATAGRAM RFC 9221](https://www.rfc-editor.org/rfc/rfc9221)。Hysteria 2 不是 Hysteria 1；不能只自写特定 UDP 包格式，就声称兼容 QUIC。
 
 ## QUIC 技术路线
 

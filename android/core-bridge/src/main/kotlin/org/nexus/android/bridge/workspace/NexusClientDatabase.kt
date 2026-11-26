@@ -166,13 +166,6 @@ class NexusClientDatabase internal constructor(
         executor.inTransaction { executor.setProfilePinned(profileId, pinned) }
     }
 
-    private fun hasTelemetryDataLocked(): Boolean =
-        executor.getHostKv(KV_TELEMETRY_STATE) != null ||
-            executor.listNodeTelemetry().isNotEmpty() ||
-            executor.hasTrafficLedgerData()
-
-    fun hasTelemetryState(): Boolean = executor.inReadTransaction { hasTelemetryDataLocked() }
-
     fun loadTelemetry(): TelemetryDocument = executor.inReadTransaction {
         val stateObj = executor.getHostKv(KV_TELEMETRY_STATE)
             ?.let { runCatching { JSONObject(it) }.getOrNull() }
@@ -209,12 +202,6 @@ class NexusClientDatabase internal constructor(
 
     fun saveTelemetry(doc: TelemetryDocument) {
         executor.inTransaction { saveTelemetryLocked(doc) }
-    }
-
-    fun importLegacyTelemetryIfEmpty(doc: TelemetryDocument): Boolean = executor.inTransaction {
-        if (hasTelemetryDataLocked()) return@inTransaction false
-        saveTelemetryLocked(doc)
-        true
     }
 
     private fun saveTelemetryLocked(doc: TelemetryDocument) {

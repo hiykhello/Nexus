@@ -12,7 +12,7 @@
 
 项目代码优先使用标准库命名模块 `import std;`。宏、平台 API 和需要以头文件接入的第三方库仍使用相应头文件；例如 `errno` 需要 `<cerrno>`。模块单元中这些头文件位于 global module fragment，模块声明后再导入 `std`；不把头文件单元当作命名模块替代品。
 
-优先使用本机 GCC 已提供并经验证的 C++26/C++23 能力，不为兼容尚未要求的旧工具链退回旧式写法。当前本机探测结果见[GCC 能力记录](gcc-capabilities.md)，项目默认语言方向为 C++26，依赖可按其接口要求单独适配。
+优先使用当前工具链（Clang `llvm@23.1.6` + 静态 `libc++`）已提供并经验证的 C++26/C++23 能力，不为兼容尚未要求的旧工具链退回旧式写法。项目默认语言方向为 C++26 Modules，基础词汇与容器收拢在独立叶子包 `containers`、`functional` 与 `utility`，依赖按其接口要求单独适配。
 
 函数优先使用后置返回类型：`auto function(...) -> Type { ... }`。公开接口显式写出返回类型，避免依赖实现体推导接口；构造、析构、转换函数等语法不适用处保留对应语言形式。
 
@@ -42,15 +42,13 @@ auto buffer_size(Sized auto const& value) -> std::size_t {
 
 示例依赖相应标准库声明；正式实现遵循项目 Modules 组织方式。
 
-## 多态与静态反射
+## 多态与静态分发
 
 项目自有的动态多态接口使用 ngcpp/proxy facade，明确所需能力、对象所有权、生命周期和异常保证。禁止在项目自有设计中以虚函数和继承实现动态多态，包括自定义虚接口及其覆写实现。对第三方已有虚接口进行必要适配时，遵循该接口要求；这不改变项目自有接口的规范。编译期可确定的能力优先用模板与 concept 表达，单签名回调按下文选择。
 
 建模类型关系时先考虑组合，以成员对象表达持有和协作；当继承能清晰表达关系且合适时，允许普通的非虚函数式继承。本规范不禁止普通继承，也不要求为了避免继承而引入不必要的类型擦除。
 
-需要编译期结构信息、成员枚举或由类型生成元数据时，优先使用 C++26 原生静态反射。不要因历史习惯优先引入额外反射库或重复登记成员的宏体系。本机 GCC 反射需启用 `-freflection`；具体反射操作及跨 Modules 行为仍须分别验证。
-
-原生反射可用于项目自有类型的元数据、校验与映射，但不改变已确定的 KDL 2.0 解析库选型。与指定 `hiykhello/glaze-kdl` 仓库如何配合仍待验证，不能宣称该分支已支持本机反射接口。
+项目不启用 `-freflection` / `<meta>`；配置/规则集的元数据映射与校验统一采用显式静态表分发与 `hiykhello/glaze-kdl` 的标准路径（`GLZ_REFLECTION26 = 0`），避免引入未稳定的实验反射编译开关或额外反射宏框架。
 
 ## 函数包装与回调
 
@@ -59,9 +57,9 @@ auto buffer_size(Sized auto const& value) -> std::size_t {
 | 需求 | 优先选择 | 生命周期约定 |
 | --- | --- | --- |
 | 调用对象类型可在编译期确定 | concept 约束的模板参数或直接保存具体类型 | 避免无必要的类型擦除 |
-| 同步借用可调用对象，无需取得所有权 | C++26 `std::function_ref<Signature>` | 不延长目标寿命，不能借用短命对象后留待异步调用 |
-| 拥有回调，允许仅移动 | C++23 `std::move_only_function<Signature>` | 适合持有唯一资源或异步任务回调 |
-| 确实需要复制拥有的回调 | C++26 `std::copyable_function<Signature>` | 目标应满足复制要求，明确复制的业务含义 |
+| 同步借用可调用对象，无需取得所有权 | `functional::function_ref<Signature>`（`src/functional/`） | 不延长目标寿命，不能借用短命对象后留待异步调用 |
+| 拥有回调，允许仅移动 | `functional::move_only_function<Signature>`（32B SBO，基于 `proxy.v4`） | 适合持有唯一资源或异步任务回调 |
+| 确实需要复制拥有的回调 | `functional::copyable_function<Signature>`（32B SBO，基于 `proxy.v4`） | 目标应满足复制要求，明确复制的业务含义 |
 
 需要多种操作组成的动态能力接口时使用 ngcpp/proxy；单个函数签名的回调按上表选择。`std::function` 仅在既有外部接口等实际约束下使用，不作为新接口默认类型。
 
@@ -97,9 +95,9 @@ auto buffer_size(Sized auto const& value) -> std::size_t {
 
 如第三方 API 只能通过异常报告错误，应在明确的适配边界处理可识别异常，转换为项目错误；记录尚未覆盖的异常及处理策略。不要吞掉异常后返回成功，也不要在每一层增加宽泛的 `catch (...)`。
 
-用户已放开异常限制；项目继续使用标准 C++ 库（`libc++` / `import std;`）与现有依赖，Capy 保留异常运行。内存分配失败导致进程退出是预期行为，无需将其转成可恢复错误或重试。`nexus` 不再替换全局分配函数，普通分配使用标准库行为；实际退出机制取决于异常边界与第三方实现。历史实验见[无异常与可恢复分配路线](../planning/fallible-allocation.md)。
+用户已放开异常限制；项目继续使用标准 C++ 库（`libc++` / `import std;`）与现有依赖，Capy 保留异常运行。内存分配失败导致进程退出是预期行为，无需将其转成可恢复错误或重试。`nexus` 不再替换全局分配函数，普通分配使用标准库行为；实际退出机制取决于异常边界与第三方实现。
 
-容器选择需分别考虑容量、分配和元素操作。标准动态容器没有通用的可恢复分配失败插入接口；预留空间也不能消除长度错误、元素构造或第三方分配器等其他异常路径。对于合理且编译期确定的上限，C++26 `std::inplace_vector` 的 `try_push_back` / `try_emplace_back` 可在容量满时返回空结果；本机 GCC 16 已用 `-fno-exceptions` 验证填满、拒绝和释放后复用。元素构造和移动仍需单独验证，普通 `push_back` 的满容量行为不同。Boost `static_vector` 也不能仅因有内嵌存储就断言插入绝不抛异常：元素操作可能抛异常，关闭溢出异常选项也要求调用方严格保证容量（[Boost 文档](https://www.boost.org/latest/doc/html/container/configurable_containers.html)）。
+容器选择需分别考虑容量、分配和元素操作。标准动态容器没有通用的可恢复分配失败插入接口；对于合理且编译期确定的上限，项目在独立叶子包 `containers`（`src/containers/inplace_vector.cppm`）中提供 `containers::inplace_vector<T, N>`，其 `try_push_back` / `try_emplace_back` 可在容量满时返回空结果而不分配堆内存。Boost `static_vector` 也不能仅因有内嵌存储就断言插入绝不抛异常：元素操作可能抛异常，关闭溢出异常选项也要求调用方严格保证容量（[Boost 文档](https://www.boost.org/latest/doc/html/container/configurable_containers.html)）。
 
 运行时配置上限的队列可评估预分配环形队列，以显式结果处理队满和背压；单 owner 结构无需为此引入无锁 SPSC。预分配槽位不会消除所持 `vector` 等元素的动态分配，也不能保证其他异常路径消失。替换流表时须保留既有对象地址稳定性、生命周期、删除和满容量语义；不能将队列直接当作链表的等价替代。采用可失败分配容器时，应分别评估第三方依赖和错误契约，内存耗尽、容量限制和 I/O 故障均作为可预期结果报告。
 
@@ -143,10 +141,8 @@ ngcpp/proxy facade 应保留实现操作的结果类型与异常保证。声明 
 
 ## 标准与构建
 
-`std::expected` 和 `std::move_only_function` 属于 C++23；`std::copyable_function`、`std::function_ref`、原生静态反射与契约断言按 C++26 能力采用。项目优先使用本机已提供的 C++26 能力，C++23 是 expected 等能力的基础要求，不是要求项目停留在 C++23。
+项目统一采用 **Clang（`llvm@23.1.6`）+ 静态链接 `libc++` + C++26 Modules**（`import std;`），零 `-freflection`。`std::expected`、`std::optional` 与 `std::span` 直接来自 `import std;`；固定容量就地容器与函数包装由工作区独立叶子包 `containers`（`containers::inplace_vector`、`CacheIndex`）、`functional`（`function_ref`、`move_only_function`、`copyable_function`）和 `utility` 提供。
 
-本机 GCC 16.2.1 的最小编译结果见[能力记录](gcc-capabilities.md)。当前 mcpp 工作区以 C++26 和反射选项构建规则集模块；契约检查语义及其他依赖的跨模块使用仍需验证。
-
-构建验证需覆盖：Modules 中导出结果类型、跨模块返回与使用、第三方错误适配、协程失败，以及启用和禁用异常时各依赖的实际限制。用户要求全项目无异常；目标是项目代码和依赖的可预期失败均以结果值表达，分配失败也应以结果值表达且不直接终止。当前尚有依赖抛异常及项目中的异常边界与回滚，不能声称已实现。先逐项改造并验证第三方契约和资源回收，再在隔离构建中启用 `-fno-exceptions`，通过完整构建和故障回归后推广；现阶段不得以全局编译开关掩盖未改造的错误路径。
+构建验证覆盖：Modules 中导出结果类型、跨模块返回与使用、第三方错误适配、协程失败与资源回收。业务路径和可预期失败继续优先以 `std::expected` / `std::optional` 表达；Capy 保留异常运行，内存分配失败导致进程退出为预期行为，不计划全项目 `-fno-exceptions` 或自建标准库。
 
 参见[决策 0003](../decisions/0003-cpp-error-handling.md)、[决策 0004](../decisions/0004-modern-cpp.md)、[Modules 组织](../architecture/modules.md)与[工作区构建](../build/mcpp-workspace.md)。

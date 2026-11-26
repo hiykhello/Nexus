@@ -21,7 +21,6 @@ export global LayoutMetrics {
 
     out property <LayoutTier> tier: tier-for(window-width);
     out property <bool> is-compact: is-compact-w(window-width);
-    out property <bool> is-standard: tier == LayoutTier.standard;
     out property <bool> is-wide: is-wide-w(window-width);
 
     public function toggle-sidebar(w: length) {

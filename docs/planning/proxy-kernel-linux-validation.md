@@ -1,6 +1,6 @@
 # Linux 代理内核第 68–70、87–90 批验收
 
-范围为 Linux x86-64、GCC 16.2.1。第 68–70 批与第 87–90 批的原始证据分别保存在 `target/proxy-kernel-parity-2026-11-19/` 与 `target/batch87/`–`target/batch90/`，第 91–110 批最新验收见 [项目进度](../progress.md)。
+历史基线验收记录（Linux x86-64，双后端 `epoll` / `io_uring`）。当前全仓已统一采用 Clang（`llvm@23.1.6`）+ 静态 `libc++` + C++26 Modules，协议覆盖与支持边界见 [支持矩阵](proxy-kernel-support-matrix.md)。
 
 ## 第 68 批 · 容量和受限资源
 

@@ -607,7 +607,12 @@ routing { default-outbound "lb"; })")) return 1;
         ordered_config->routes[0].file.path!="other.beve" || ordered_config->routes[0].file.format!=config::RuleFormat::beve ||
         ordered_config->routes[0].action!=config::RouteAction::direct ||
         ordered_config->routes[1].action!=config::RouteAction::block) return 1;
+    auto direct_net = replace(complete, "outbound \"direct\" type=\"direct\"",
+        "outbound \"direct\" type=\"direct\" {\n    network strategy=\"require\" type=\"wifi\" { interface \"wlan0\" type=\"wifi\"; }\n}");
+    if (!config::parse_kdl(direct_net)) return 1;
     std::vector<std::pair<std::string, std::string>> cases{
+        {replace(direct_net, "network strategy=", "inet4-bind-address \"127.0.0.1\"; network strategy="), "direct network with inet4-bind-address"},
+        {replace(direct_net, "network strategy=", "inet6-bind-address \"::1\"; network strategy="), "direct network with inet6-bind-address"},
         {replace(vless_config, "verify #true", "verify #false"), "disabled TLS verification"},
         {replace(vless_config, "verify #true", ""), "missing TLS verification"},
         {replace(vless_config, "verify #true", "verify #true; verify #true"), "duplicate TLS verification"},

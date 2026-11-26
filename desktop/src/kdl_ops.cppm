@@ -22,8 +22,6 @@ export namespace desktop {
     [[nodiscard]] auto select_system_proxy_endpoint(CoexistingInbounds const& inb)
         -> std::optional<std::pair<std::string, std::uint16_t>>;
 
-    [[nodiscard]] auto escape_kdl_string(std::string_view text) -> std::string;
-
     [[nodiscard]] auto merge_raw_kdl_snippet(std::string_view kdl, std::string_view snippet) -> std::string;
 
     // Inserts a KDL rule block into raw KDL routing { tcp-program { ... } } (raw KDL rule editor).

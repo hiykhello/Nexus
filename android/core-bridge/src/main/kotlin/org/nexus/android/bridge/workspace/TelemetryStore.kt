@@ -1,8 +1,5 @@
 package org.nexus.android.bridge.workspace
 
-import org.json.JSONObject
-import java.io.File
-
 data class ProfileTelemetryEntry(
     val latencyMs: Long = -1L,
     val lastTestedMs: Long = 0L,
@@ -20,23 +17,13 @@ data class TelemetryDocument(
 )
 
 /**
- * Layer 4 ephemeral local telemetry & crash-sentinel store backed by `NexusClientDatabase`
- * (`node_telemetry`, `traffic_ledger`, and `host_kv`), with one-shot migration from legacy
- * `telemetry.json` when the database has no telemetry rows yet.
+ * Layer 4 ephemeral local telemetry & crash-sentinel store backed exclusively by
+ * `NexusClientDatabase` (`node_telemetry`, `traffic_ledger`, and `host_kv`).
  */
 class TelemetryStore(
-    val file: File,
     val db: NexusClientDatabase = NexusClientDatabase.inMemory(),
 ) {
-    fun load(): TelemetryDocument {
-        if (!db.hasTelemetryState() && file.isFile) {
-            val migrated = runCatching { decode(file.readText(Charsets.UTF_8)) }.getOrNull()
-            if (migrated != null) {
-                db.importLegacyTelemetryIfEmpty(migrated)
-            }
-        }
-        return db.loadTelemetry()
-    }
+    fun load(): TelemetryDocument = db.loadTelemetry()
 
     fun save(doc: TelemetryDocument): TelemetryDocument {
         db.saveTelemetry(doc)
@@ -80,57 +67,4 @@ class TelemetryStore(
 
     fun queryTrafficLedger(sinceHour: Long = 0L): List<TrafficLedgerEntry> =
         db.queryTrafficLedger(sinceHour)
-
-    companion object {
-        fun encode(doc: TelemetryDocument): String {
-            val root = JSONObject().apply {
-                put("active_profile_id", doc.activeProfileId)
-                put("outbound_mode", doc.outboundMode)
-                put("unread_unexpected_crash", doc.unreadUnexpectedCrash)
-                put("last_crash_timestamp_ms", doc.lastCrashTimestampMs)
-                put("last_crash_reason", doc.lastCrashReason)
-                put("profiles", JSONObject().apply {
-                    doc.profiles.forEach { (id, e) ->
-                        put(
-                            id,
-                            JSONObject().apply {
-                                put("latency_ms", e.latencyMs)
-                                put("last_tested_ms", e.lastTestedMs)
-                                put("upload_bytes", e.uploadBytes)
-                                put("download_bytes", e.downloadBytes)
-                            },
-                        )
-                    }
-                })
-            }
-            return root.toString(2) + "\n"
-        }
-
-        fun decode(raw: String): TelemetryDocument {
-            val root = JSONObject(raw)
-            val profilesMap = linkedMapOf<String, ProfileTelemetryEntry>()
-            root.optJSONObject("profiles")?.let { pObj ->
-                val keys = pObj.keys()
-                while (keys.hasNext()) {
-                    val id = keys.next()
-                    pObj.optJSONObject(id)?.let { e ->
-                        profilesMap[id] = ProfileTelemetryEntry(
-                            latencyMs = e.optLong("latency_ms", -1L),
-                            lastTestedMs = e.optLong("last_tested_ms", 0L),
-                            uploadBytes = e.optLong("upload_bytes", 0L),
-                            downloadBytes = e.optLong("download_bytes", 0L),
-                        )
-                    }
-                }
-            }
-            return TelemetryDocument(
-                activeProfileId = root.optString("active_profile_id", ""),
-                outboundMode = root.optString("outbound_mode", "rule"),
-                unreadUnexpectedCrash = root.optBoolean("unread_unexpected_crash", false),
-                lastCrashTimestampMs = root.optLong("last_crash_timestamp_ms", 0L),
-                lastCrashReason = root.optString("last_crash_reason", ""),
-                profiles = profilesMap,
-            )
-        }
-    }
 }

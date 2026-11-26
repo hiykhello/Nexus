@@ -181,15 +181,6 @@ public actor NexusClientDatabase {
         }
     }
 
-    @discardableResult
-    public func importLegacyTelemetryIfEmpty(_ doc: TelemetryDocument) throws -> Bool {
-        try withTransaction { db in
-            guard try !SQLiteCore.hasTelemetryDataLocked(db) else { return false }
-            try SQLiteCore.saveTelemetryLocked(db, doc: doc)
-            return true
-        }
-    }
-
     public func upsertNodeTelemetry(_ record: NodeTelemetryRecord) throws {
         let db = try ensureOpen()
         let sql = """

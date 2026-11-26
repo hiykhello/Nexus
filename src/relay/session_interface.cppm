@@ -1,6 +1,7 @@
 // Session state, tunnel chaining, and ingress endpoint helper declarations.
 export module relay:session_interface;
 import std;
+import containers.inplace_vector;
 import capy;
 import corosio;
 import proxy.v4;
@@ -43,6 +44,7 @@ namespace relay {
         std::optional<std::uint32_t> source_uid;
         std::optional<std::uint32_t> source_gid;
         std::string process_path, source_user, package_name;
+        containers::inplace_vector<std::string, 8> process_paths;
         std::optional<std::string_view> source_interface;
         platform::network::Monitor const* network_monitor = nullptr;
         std::optional<rules::NetworkType> network_type;
@@ -77,6 +79,7 @@ namespace relay {
             if (!m.auth_user) m.auth_user = auth_user;
             if (!m.source_uid) m.source_uid = source_uid;
             if (!m.process_path && !process_path.empty()) m.process_path = process_path;
+            if (!m.process_paths && !process_paths.empty()) m.process_paths = std::span<std::string const>(process_paths);
             if (!m.source_interface) m.source_interface = source_interface;
             if (!m.route_mode) m.route_mode = active_route_mode();
             if (!m.network_type) m.network_type = network_type;
@@ -96,6 +99,7 @@ namespace relay {
             if (!p.auth_user) p.auth_user = auth_user;
             if (!p.source_uid) p.source_uid = source_uid;
             if (!p.process_path && !process_path.empty()) p.process_path = process_path;
+            if (!p.process_paths && !process_paths.empty()) p.process_paths = std::span<std::string const>(process_paths);
             if (!p.source_interface) p.source_interface = source_interface;
             if (!p.route_mode) p.route_mode = active_route_mode();
             if (!p.network_type) p.network_type = network_type;
@@ -125,6 +129,7 @@ namespace relay {
             if (!d.source_gid) d.source_gid = source_gid;
             if (!d.source_user && !source_user.empty()) d.source_user = source_user;
             if (!d.process_path && !process_path.empty()) d.process_path = process_path;
+            if (!d.process_paths && !process_paths.empty()) d.process_paths = std::span<std::string const>(process_paths);
             if (!d.package_name && !package_name.empty()) d.package_name = package_name;
             if (!d.route_mode) d.route_mode = active_route_mode();
             return d;
@@ -344,6 +349,7 @@ namespace relay {
         child.source_uid = parent.source_uid;
         child.source_gid = parent.source_gid;
         child.process_path = parent.process_path;
+        child.process_paths = parent.process_paths;
         child.source_user = parent.source_user;
         child.package_name = parent.package_name;
         child.source_interface = parent.source_interface;

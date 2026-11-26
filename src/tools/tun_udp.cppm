@@ -161,6 +161,7 @@ export namespace cli::tun_enabled {
                             if (owner_info->uid) target.source_uid = owner_info->uid;
                             if (owner_info->gid) target.source_gid = owner_info->gid;
                             if (!owner_info->process_path.empty()) target.process_path = owner_info->process_path;
+                            if (!owner_info->process_paths.empty()) target.process_paths = std::span<std::string const>(owner_info->process_paths);
                             if (!owner_info->user.empty()) target.source_user = owner_info->user;
                             if (!owner_info->package_name.empty()) target.package_name = owner_info->package_name;
                         };
@@ -199,6 +200,7 @@ export namespace cli::tun_enabled {
                                         if (owner_info->uid) session->source_uid = owner_info->uid;
                                         if (owner_info->gid) session->source_gid = owner_info->gid;
                                         if (!owner_info->process_path.empty()) session->process_path = owner_info->process_path;
+                                        if (!owner_info->process_paths.empty()) session->process_paths = owner_info->process_paths;
                                         if (!owner_info->user.empty()) session->source_user = owner_info->user;
                                         if (!owner_info->package_name.empty()) session->package_name = owner_info->package_name;
                                     }

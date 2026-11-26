@@ -53,10 +53,6 @@ export component AppWindow inherits Window {
     in-out property <string> http-proxy-port: "8080";
     in-out property <bool> tun-enabled: false;
     in-out property <string> active-profile: "";
-    in-out property <string> status-summary: I18n.t("内核待命中", "Core standby");
-    in-out property <string> control-endpoint: "";
-    in-out property <string> metrics-summary: I18n.t("活跃会话 0 · ↑ 0 B · ↓ 0 B", "0 sessions · ↑ 0 B · ↓ 0 B");
-    in-out property <string> rate-summary: "↑ 0.0 KB/s · ↓ 0.0 KB/s";
     in-out property <string> active-node: "";
     in-out property <int> active-node-latency-ms: -1;
     in-out property <int> active-sessions: 0;
@@ -65,11 +61,6 @@ export component AppWindow inherits Window {
     in-out property <string> upload-total: "0 B";
     in-out property <string> download-total: "0 B";
     in-out property <float> total-down-ratio: 0.85;
-    in-out property <string> rate-peak: "0.0 KB/s";
-    in-out property <[float]> rate-bars: [];
-    in-out property <[float]> upload-bars: [];
-    in-out property <[string]> rate-down-labels: [];
-    in-out property <[string]> rate-up-labels: [];
     in-out property <[OutboundGroupItem]> groups: [];
     in-out property <[OutboundMemberItem]> members: [];
     in-out property <[OutboundMemberItem]> quick-nodes: [];
@@ -145,7 +136,7 @@ export component AppWindow inherits Window {
     callback apply-inbound-proxy-config(string, bool, string, string); callback toggle-tun(bool);
     callback toggle-mixed-port(bool); callback toggle-lan-share(bool); callback probe-connectivity();
     callback grant-tun-privilege(); callback revoke-tun-privilege(); callback reload-config();
-    callback refresh-metrics(); callback clear-cache(); callback copy-text(string); callback copy-proxy-env();
+    callback clear-cache(); callback copy-text(string); callback copy-proxy-env();
     callback tray-prefs-changed(); callback dash-prefs-changed();
     callback reorder-dash-section(int, int); callback reorder-dash-info(int, int);
     callback swap-dash-deck(); callback reset-dash-layout();
@@ -154,8 +145,8 @@ export component AppWindow inherits Window {
     callback reset-group-auto(string); callback probe-group(string); callback refresh-groups();
     callback refresh-connections(); callback inspect-connection(string); callback close-connection(string);
     callback close-all-connections(); callback create-rule-from-connection(string, int, string, string, string);
-    callback activate-profile(string); callback refresh-profiles(); callback validate-kdl(string);
-    callback kdl-edited(string); callback save-and-reload(string); callback open-external-editor();
+    callback activate-profile(string); callback refresh-profiles();
+    callback save-and-reload(string); callback open-external-editor();
     callback reload-config-from-disk(); callback import-share-link(string); callback apply-log-level(string);
     callback refresh-logs(); callback export-logs(); callback clear-logs();
     callback run-rule-explain(string, string, string, string); callback append-route-rule-kdl(string);

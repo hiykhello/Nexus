@@ -177,7 +177,7 @@ class NexusClientDatabaseTest {
             assertEquals("healthy", rich.state)
 
             // Updating latency via TelemetryStore.updateLatency preserves rich ewmaMs/statusCode/state
-            val telStore = TelemetryStore(File(dir, "telemetry.json"), db)
+            val telStore = TelemetryStore(db)
             telStore.updateLatency("n1", 31L)
             val updatedRich = db.listNodeTelemetry().first { it.profileId == "n1" }
             assertEquals(31L, updatedRich.latencyMs)
@@ -218,86 +218,49 @@ class NexusClientDatabaseTest {
     }
 
     @Test
-    fun trafficOnlyDbSkipsStaleLegacyTelemetryReimport() {
-        val dir = Files.createTempDirectory("nexus-db-traffic-only").toFile()
-        try {
-            val db = NexusClientDatabase.inMemory()
-            db.recordTrafficDelta(bucketHour = 200L, profileId = "n-live", uploadBytes = 50L, downloadBytes = 90L)
-            assertTrue(db.hasTelemetryState())
-
-            val staleLegacy = File(dir, "telemetry.json")
-            staleLegacy.writeText(
-                TelemetryStore.encode(TelemetryDocument(activeProfileId = "stale-id", outboundMode = "direct")),
-                Charsets.UTF_8,
-            )
-            val telStore = TelemetryStore(staleLegacy, db)
-            val loaded = telStore.load()
-            assertEquals("", loaded.activeProfileId)
-            assertEquals("rule", loaded.outboundMode)
-            assertEquals(50L, loaded.profiles["n-live"]?.uploadBytes)
-            assertFalse(db.importLegacyTelemetryIfEmpty(TelemetryDocument(activeProfileId = "other")))
-        } finally {
-            dir.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun oneShotLegacyMigrationImportsHostSecretsOutOfHostJsonAndTelemetryJson() {
-        val dir = Files.createTempDirectory("nexus-db-mig").toFile()
+    fun hostStoreIsolatesSyncSecretsAndRoundTripsWorkersSpecInSqlite() {
+        val dir = Files.createTempDirectory("nexus-db-host").toFile()
         try {
             val db = NexusClientDatabase.inMemory(File(dir, NexusClientSchema.DEFAULT_DB_NAME))
-            val legacyHostFile = File(dir, "host.json")
-            val legacyCfg = AndroidHostConfig(
+            val hostStore = AndroidHostConfigStore(File(dir, "host.json"), db)
+            val cfg = AndroidHostConfig(
                 common = HostCommonConfig(workers = 24, workersSpec = "auto", workersMax = 16),
                 android = AndroidHostSection(
                     runMode = AndroidRunMode.PROXY_ONLY,
                     webdavUrl = "https://dav.example.com/nexus/",
-                    webdavPassword = "legacy-dav-password",
-                    syncPassphrase = "legacy-sync-passphrase",
+                    webdavPassword = "secret-dav-password",
+                    syncPassphrase = "secret-sync-passphrase",
                     autoStartOnBoot = true,
                 ),
             )
-            legacyHostFile.writeText(legacyCfg.toJson(indentSpaces = 2, includeSecrets = true), Charsets.UTF_8)
+            hostStore.save(cfg)
 
-            val hostStore = AndroidHostConfigStore(legacyHostFile, db)
-            val migratedHost = hostStore.load()
-            assertEquals(24, migratedHost.common.workers)
-            assertEquals("auto", migratedHost.common.workersSpec)
-            assertEquals(16, migratedHost.common.workersMax)
-            assertEquals(AndroidRunMode.PROXY_ONLY, migratedHost.android.runMode)
-            assertTrue(migratedHost.android.autoStartOnBoot)
-            assertEquals("legacy-dav-password", migratedHost.android.webdavPassword)
-            assertEquals("legacy-sync-passphrase", migratedHost.android.syncPassphrase)
+            val loadedHost = hostStore.load()
+            assertEquals(24, loadedHost.common.workers)
+            assertEquals("auto", loadedHost.common.workersSpec)
+            assertEquals(16, loadedHost.common.workersMax)
+            assertEquals(AndroidRunMode.PROXY_ONLY, loadedHost.android.runMode)
+            assertTrue(loadedHost.android.autoStartOnBoot)
+            assertEquals("secret-dav-password", loadedHost.android.webdavPassword)
+            assertEquals("secret-sync-passphrase", loadedHost.android.syncPassphrase)
 
-            // Migrated secrets are in 0600 secretFile, NOT in SQLite host_kv, and scrubbed from legacy host.json
+            // Secrets live strictly in 0600 secretFile, NEVER in SQLite host_kv
             val storedKv = db.getHostKv(NexusClientDatabase.KV_ANDROID_HOST_CONFIG).orEmpty()
-            assertFalse(storedKv.contains("legacy-dav-password"))
-            assertFalse(storedKv.contains("legacy-sync-passphrase"))
-            assertFalse(legacyHostFile.readText(Charsets.UTF_8).contains("legacy-dav-password"))
-            assertFalse(legacyHostFile.readText(Charsets.UTF_8).contains("legacy-sync-passphrase"))
+            assertFalse(storedKv.contains("secret-dav-password"))
+            assertFalse(storedKv.contains("secret-sync-passphrase"))
             assertTrue(hostStore.secretFile.isFile)
             assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(hostStore.secretFile.toPath()))
 
-            // Legacy telemetry.json one-shot migration
-            val legacyTelFile = File(dir, "telemetry.json")
-            legacyTelFile.writeText(
-                TelemetryStore.encode(
-                    TelemetryDocument(
-                        activeProfileId = "hk-01",
-                        outboundMode = "global",
-                        unreadUnexpectedCrash = true,
-                        lastCrashReason = "exit=139",
-                        profiles = mapOf("hk-01" to ProfileTelemetryEntry(latencyMs = 55L, lastTestedMs = 1000L, uploadBytes = 100L, downloadBytes = 200L)),
-                    ),
-                ),
-                Charsets.UTF_8,
-            )
-            val telStore = TelemetryStore(legacyTelFile, db)
-            val migratedTel = telStore.load()
-            assertEquals("hk-01", migratedTel.activeProfileId)
-            assertEquals("global", migratedTel.outboundMode)
-            assertTrue(migratedTel.unreadUnexpectedCrash)
-            assertEquals(55L, migratedTel.profiles["hk-01"]?.latencyMs)
+            val telStore = TelemetryStore(db)
+            telStore.setActiveProfileId("hk-01")
+            telStore.setOutboundMode("global")
+            telStore.recordUnexpectedCrash("exit=139")
+            telStore.updateLatency("hk-01", 55L)
+            val loadedTel = telStore.load()
+            assertEquals("hk-01", loadedTel.activeProfileId)
+            assertEquals("global", loadedTel.outboundMode)
+            assertTrue(loadedTel.unreadUnexpectedCrash)
+            assertEquals(55L, loadedTel.profiles["hk-01"]?.latencyMs)
             assertNotNull(db.getHostKv(NexusClientDatabase.KV_TELEMETRY_STATE))
         } finally {
             dir.deleteRecursively()

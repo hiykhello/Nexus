@@ -291,20 +291,17 @@ namespace desktop_ui_helpers {
                     reply = ctx.ipc.reload();
                     if (!reply.ok && ctx.http_ctrl.reload().ok) reply = {true, "OK"};
                 }
-                std::string synced_sock;
                 if (!was_running || reply.ok) {
                     auto next_ctl = parse_control_config(disk_kdl, ctx.fallback_sock, ctx.cfg_dir);
                     ctx.ipc.set_endpoint(next_ctl.socket);
                     ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
                     ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
-                    synced_sock = next_ctl.socket;
                 }
                 auto msg = reply.ok
                     ? tr(en, "已从磁盘校验并重载配置", "Reloaded config from disk")
                     : (tr(en, "磁盘配置已读取，但热重载失败: ", "Read disk config; reload failed: ") + reply.body);
-                on_ui_thread(ctx.weak_ui, [&ctx, ok = reply.ok, disk_kdl = std::move(disk_kdl), synced_sock = std::move(synced_sock), msg = std::move(msg)](auto& s) {
+                on_ui_thread(ctx.weak_ui, [&ctx, ok = reply.ok, disk_kdl = std::move(disk_kdl), msg = std::move(msg)](auto& s) {
                     apply_kdl_to_ui_state(*s, disk_kdl);
-                    if (!synced_sock.empty()) s->set_control_endpoint(slint::SharedString(synced_sock));
                     s->set_diagnostic_ok(ok);
                     s->set_diagnostic_message(slint::SharedString(msg));
                     if (ctx.sync_tray) ctx.sync_tray();
@@ -321,7 +318,7 @@ namespace desktop_ui_helpers {
                 bool ok = http_res.ok || ctx.ipc.set_log_level(lvl).ok;
                 auto msg = ok ? tr(en, "日志级别已更新", "Log level updated") : http_res.body;
                 on_ui_thread(ctx.weak_ui, [ok, msg = std::move(msg)](auto& s) {
-                    s->set_status_summary(slint::SharedString(msg));
+                    push_toast(*s, msg, ok ? "success" : "error");
                     if (ok) s->invoke_refresh_logs();
                 });
             });

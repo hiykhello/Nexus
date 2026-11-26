@@ -146,8 +146,7 @@ namespace desktop_ui_helpers {
         slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui,
         std::shared_ptr<desktop::WindowBlurController> blur) -> void {
         auto attempted = std::make_shared<bool>(false);
-        auto reported = std::make_shared<bool>(false);
-        auto try_attach = [weak_ui, blur, attempted, reported](nexus_ui::AppWindow& win_ui) mutable {
+        auto try_attach = [blur, attempted](nexus_ui::AppWindow& win_ui) mutable {
             if (!blur->active() && !*attempted) {
                 *attempted = true;
 #ifdef _WIN32
@@ -158,18 +157,11 @@ namespace desktop_ui_helpers {
                 (void)win_ui;
 #endif
             }
-            if (blur->active() && !*reported) {
-                *reported = true;
-                on_ui_thread(weak_ui, [](auto& s) {
-                    s->template global<nexus_ui::Theme>().set_native_blur_active(true);
-                });
-            }
         };
-        (void)ui.window().set_rendering_notifier([weak_ui, try_attach = std::move(try_attach), blur, attempted, reported](
+        (void)ui.window().set_rendering_notifier([weak_ui, try_attach = std::move(try_attach), blur, attempted](
             slint::RenderingState state, slint::GraphicsAPI) mutable {
             if (state == slint::RenderingState::RenderingSetup) {
                 *attempted = false;
-                *reported = false;
                 if (auto strong = weak_ui.lock()) try_attach(**strong);
             } else if (state == slint::RenderingState::BeforeRendering) {
                 auto strong = weak_ui.lock();
@@ -183,7 +175,6 @@ namespace desktop_ui_helpers {
                 blur->sync(en, sz.width, sz.height, theme.get_dark());
             } else if (state == slint::RenderingState::RenderingTeardown) {
                 *attempted = false;
-                *reported = false;
                 blur->detach();
             }
         });
@@ -227,10 +218,7 @@ namespace desktop_ui_helpers {
     inline auto apply_metrics_to_ui(
         nexus_ui::AppWindow& ui,
         desktop::MetricsSnapshot const& m,
-        RateTracker::Update const& rate,
-        bool en) -> void {
-        ui.set_metrics_summary(slint::SharedString(format_metrics_summary(m, en)));
-        ui.set_rate_summary(slint::SharedString(rate.summary));
+        RateTracker::Update const& rate) -> void {
         ui.set_active_sessions(static_cast<int>(m.active_sessions));
         ui.set_upload_rate(slint::SharedString(rate.up_rate));
         ui.set_download_rate(slint::SharedString(rate.down_rate));
@@ -238,35 +226,22 @@ namespace desktop_ui_helpers {
         ui.set_download_total(slint::SharedString(format_bytes_human(m.download_bytes)));
         double tot = static_cast<double>(m.upload_bytes) + static_cast<double>(m.download_bytes);
         ui.set_total_down_ratio(tot > 0.0 ? static_cast<float>(std::clamp(static_cast<double>(m.download_bytes) / tot, 0.0, 1.0)) : 0.5f);
-        ui.set_rate_peak(slint::SharedString(rate.peak_rate));
         ui.set_down_speed_value(slint::SharedString(rate.down_value)); ui.set_down_speed_unit(slint::SharedString(rate.down_unit));
         ui.set_down_speed_peak(slint::SharedString(rate.down_peak)); ui.set_down_wave_area(slint::SharedString(rate.down_wave_area)); ui.set_down_wave_line(slint::SharedString(rate.down_wave_line));
         ui.set_up_speed_value(slint::SharedString(rate.up_value)); ui.set_up_speed_unit(slint::SharedString(rate.up_unit));
         ui.set_up_speed_peak(slint::SharedString(rate.up_peak)); ui.set_up_wave_area(slint::SharedString(rate.up_wave_area)); ui.set_up_wave_line(slint::SharedString(rate.up_wave_line));
-        ui.set_rate_bars(std::make_shared<slint::VectorModel<float>>(rate.down_bars));
-        ui.set_upload_bars(std::make_shared<slint::VectorModel<float>>(rate.up_bars));
-        std::vector<slint::SharedString> dl_lbl, ul_lbl;
-        dl_lbl.reserve(rate.down_labels.size()); ul_lbl.reserve(rate.up_labels.size());
-        for (auto const& s : rate.down_labels) dl_lbl.emplace_back(s);
-        for (auto const& s : rate.up_labels) ul_lbl.emplace_back(s);
-        ui.set_rate_down_labels(std::make_shared<slint::VectorModel<slint::SharedString>>(std::move(dl_lbl)));
-        ui.set_rate_up_labels(std::make_shared<slint::VectorModel<slint::SharedString>>(std::move(ul_lbl)));
     }
 
-    inline auto clear_telemetry_ui(nexus_ui::AppWindow& ui, bool en) -> void {
+    inline auto clear_telemetry_ui(nexus_ui::AppWindow& ui) -> void {
         ui.set_core_uptime(slint::SharedString("")); ui.set_core_memory_text(slint::SharedString("--"));
         ui.set_active_sessions(0);
         ui.set_upload_rate(slint::SharedString("0.0 KB/s")); ui.set_download_rate(slint::SharedString("0.0 KB/s"));
         ui.set_upload_total(slint::SharedString("0 B")); ui.set_download_total(slint::SharedString("0 B"));
-        ui.set_total_down_ratio(0.5f); ui.set_rate_peak(slint::SharedString("0.0 KB/s"));
+        ui.set_total_down_ratio(0.5f);
         ui.set_down_speed_value(slint::SharedString("0.0")); ui.set_down_speed_unit(slint::SharedString("KB/s")); ui.set_down_speed_peak(slint::SharedString("0.0 KB/s"));
         ui.set_down_wave_area(slint::SharedString("")); ui.set_down_wave_line(slint::SharedString(""));
         ui.set_up_speed_value(slint::SharedString("0.0")); ui.set_up_speed_unit(slint::SharedString("KB/s")); ui.set_up_speed_peak(slint::SharedString("0.0 KB/s"));
         ui.set_up_wave_area(slint::SharedString("")); ui.set_up_wave_line(slint::SharedString(""));
-        ui.set_rate_summary(slint::SharedString("↑ 0.0 KB/s · ↓ 0.0 KB/s"));
-        ui.set_metrics_summary(slint::SharedString(tr(en, "活跃会话 0 · ↑ 0 B · ↓ 0 B", "0 sessions · ↑ 0 B · ↓ 0 B")));
-        ui.set_rate_bars(std::make_shared<slint::VectorModel<float>>()); ui.set_upload_bars(std::make_shared<slint::VectorModel<float>>());
-        ui.set_rate_down_labels(std::make_shared<slint::VectorModel<slint::SharedString>>()); ui.set_rate_up_labels(std::make_shared<slint::VectorModel<slint::SharedString>>());
     }
 
     inline auto push_toast(nexus_ui::AppWindow const& ui, std::string const& msg, std::string_view tone = "info") -> void {
@@ -387,12 +362,11 @@ namespace desktop_ui_helpers {
         MemberModelPipeline& member_models,
         RateTracker& rate_tracker,
         std::atomic<bool>& in_flight,
-        bool en,
         bool refresh_groups_too,
         std::function<void()> on_tray_sync = {},
         std::function<void(std::uint64_t, std::uint64_t)> on_traffic_totals = {}) -> void {
         if (in_flight.exchange(true, std::memory_order_acq_rel)) return;
-        bool posted = worker.post([&, weak_ui, en, refresh_groups_too,
+        bool posted = worker.post([&, weak_ui, refresh_groups_too,
                                    on_tray_sync = std::move(on_tray_sync),
                                    on_traffic_totals = std::move(on_traffic_totals)]() mutable {
             auto reply = http_ctrl.metrics();
@@ -405,10 +379,10 @@ namespace desktop_ui_helpers {
             std::optional<desktop::MetricsSnapshot> m;
             if (reply.ok) m = desktop::parse_openmetrics_summary(reply.body);
             on_ui_thread(weak_ui, [&cached_groups, &pinned_members, &member_models, &rate_tracker, m, grp_snap = std::move(grp_snap),
-                                   en, on_tray_sync = std::move(on_tray_sync),
+                                   on_tray_sync = std::move(on_tray_sync),
                                    on_traffic_totals = std::move(on_traffic_totals)](auto& s) mutable {
                 if (m) {
-                    apply_metrics_to_ui(*s, *m, rate_tracker.record(m->upload_bytes, m->download_bytes), en);
+                    apply_metrics_to_ui(*s, *m, rate_tracker.record(m->upload_bytes, m->download_bytes));
                     if (on_traffic_totals) on_traffic_totals(m->upload_bytes, m->download_bytes);
                 }
                 if (grp_snap) {

@@ -17,6 +17,7 @@ module;
 
 module relay;
 import std;
+import containers.inplace_vector;
 import platform.ip_address;
 import platform.unique_fd;
 import rules;
@@ -115,7 +116,8 @@ namespace relay {
     }
 
     auto local_process_details(std::uint32_t inode, std::uint32_t uid,
-        std::optional<std::uint32_t>& gid_out, std::string& package_out) -> std::string;
+        std::optional<std::uint32_t>& gid_out, std::string& package_out,
+        containers::inplace_vector<std::string, 8>& paths_out) -> void;
 
     struct SocketOwner {
         std::uint32_t uid, inode;
@@ -206,9 +208,13 @@ namespace relay {
         if (needs_process) {
             std::optional<std::uint32_t> gid;
             std::string pkg;
-            auto path=local_process_details(owner->inode,owner->uid,gid,pkg);
-            if (!path.empty() && local_socket_owner(peer,destination)==owner) {
-                process_path=std::move(path);
+            containers::inplace_vector<std::string, 8> paths;
+            local_process_details(owner->inode,owner->uid,gid,pkg,paths);
+            if ((!paths.empty() || !pkg.empty()) && local_socket_owner(peer,destination)==owner) {
+                if (!paths.empty()) {
+                    process_path=paths.front();
+                    process_paths=std::move(paths);
+                }
                 if (gid) source_gid=gid;
                 if (!pkg.empty()) package_name=std::move(pkg);
             }

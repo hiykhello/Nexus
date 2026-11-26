@@ -1,8 +1,6 @@
 # 功能完整度推进清单
 
-更新：2026-11-21。本文维护协议、拨号字段、detour、流量路由与 DNS 专用规则的完整度边界；实际执行基线见 [项目进度](../progress.md) 与 [支持矩阵](proxy-kernel-support-matrix.md)。
-
-第 91–110 批的实施顺序与验收结果见 [第 91–98 批](next-batches-91-96.md)、[第 99–104 批](next-batches-99-104.md) 与 [第 105–110 批](next-batches-105-110.md)。
+本文维护协议、拨号字段、detour、流量路由与 DNS 专用规则的完整度边界；当前生产支持范围见 [支持矩阵](proxy-kernel-support-matrix.md) 与 [协议与内核演进蓝图](protocol-and-kernel-roadmap.md)。
 
 ## 协议和承载
 
@@ -35,7 +33,7 @@
 
 DNS 要有独立问题与答复上下文：query type、ECS/DNSSEC、来源与网络，以及 rcode、answer/authority/additional、地址等响应条件。按真实 question 和答复阶段执行，不能在整次双栈解析前猜 qtype。保留 local search、hosts、bootstrap、TCP 回退、A/AAAA 规范名一致性、缓存剩余 TTL 和视图隔离。
 
-当前内部地址解析已接入独立的域名/后缀与 query-type 首命中选择，TCP、SOCKS UDP 和 SS UDP 的分流、共享缓存及 local/搜索/在途快照均有网络实测证据，详见 [项目进度](../progress.md)。
+当前内部地址解析已接入独立的域名/后缀与 query-type 首命中选择，TCP、SOCKS UDP 和 SS UDP 的分流、共享缓存及 local/搜索/在途快照均有网络实测证据，详见 [支持矩阵](proxy-kernel-support-matrix.md)。
 
 接通真实有序动作：流量 route/options/bypass/reject/hijack-dns/sniff/resolve，DNS route/evaluate/respond/options/reject/predefined。参数、继续/终止、取消、预算、响应评估及缓存/合并键一起实现；现有纯核心和域名后缀选择不等于完整执行器。反查/FakeIP/嗅探的代次、歧义与重放见[路由元数据](../architecture/routing-metadata.md)。
 

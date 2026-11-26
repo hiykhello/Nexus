@@ -33,7 +33,7 @@
 | [stream_peer.cppm](../../../src/platform/stream_peer.cppm#L1) | Linux peer 信息边界 | 放宽守卫至 `aarch64`，核验 `sockaddr_in`/`sockaddr_in6` 布局断言。 |
 | [linux_random.cppm](../../../src/platform/linux_random.cppm#L1) | 直接声明 `getrandom` | 优先将调用方统一迁到 `crypto::random_bytes`（BoringSSL `RAND_bytes` 原生跨平台），同时放宽该文件守卫至 `aarch64`。 |
 | [netlink_abi.cppm](../../../src/platform/netlink_abi.cppm#L3) | 硬编码 netlink 与 `O_NOFOLLOW` | 修复 `O_NOFOLLOW` 架构差异并加 `static_assert`；核验 `struct ifinfomsg` / `rtmsg` / `nlmsghdr` 对齐（均为定宽整型，LP64 一致）。 |
-| [sd_bus_abi.cppm](../../../src/platform/sd_bus_abi.cppm#L3) | 仅 Linux `systemd-resolved` | 放宽至 `aarch64`（供 ARM64 Linux 桌面/服务器），Android Profile 直接禁用 `tun-host-dns` 不编入。 |
+| [resolved_bus.cppm](../../../src/platform/resolved_bus.cppm) | 仅 Linux `systemd-resolved`（D-Bus） | 放宽至 `aarch64`（供 ARM64 Linux 桌面/服务器），Android Profile 直接禁用 `tun-host-dns` 不编入。 |
 | [fd.cppm](../../../src/packet/fd.cppm#L1) | 静态 `read`/`write`/`fcntl` 边界 | 放宽守卫至 `aarch64`，[fd.cpp](../../../src/packet/fd.cpp#L13) 既有 `static_assert` 自动兜底。 |
 
 ---

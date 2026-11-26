@@ -19,7 +19,7 @@ class BootLaunchPolicyTest {
         try {
             val db = NexusClientDatabase.inMemory()
             val hostStore = AndroidHostConfigStore(File(dir, "host.json"), db)
-            val telStore = TelemetryStore(File(dir, "telemetry.json"), db)
+            val telStore = TelemetryStore(db)
             hostStore.save(AndroidHostConfig(android = AndroidHostSection(autoStartOnBoot = true)))
 
             assertEquals(
@@ -55,7 +55,7 @@ class BootLaunchPolicyTest {
         try {
             val db = NexusClientDatabase.inMemory()
             val hostStore = AndroidHostConfigStore(File(dir, "host.json"), db)
-            val telStore = TelemetryStore(File(dir, "telemetry.json"), db)
+            val telStore = TelemetryStore(db)
             hostStore.save(AndroidHostConfig(android = AndroidHostSection(autoStartOnBoot = true)))
             telStore.recordUnexpectedCrash("exit=134")
 
@@ -80,7 +80,7 @@ class BootLaunchPolicyTest {
         try {
             val db = NexusClientDatabase.inMemory()
             val hostStore = AndroidHostConfigStore(File(dir, "host.json"), db)
-            val telStore = TelemetryStore(File(dir, "telemetry.json"), db)
+            val telStore = TelemetryStore(db)
 
             hostStore.save(AndroidHostConfig(android = AndroidHostSection(runMode = AndroidRunMode.VPN, autoStartOnBoot = true)))
             assertEquals(

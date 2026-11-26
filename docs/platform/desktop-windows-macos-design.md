@@ -10,7 +10,7 @@
 
 | 维度 | Android（第 1 站） | Windows + Linux 桌面（第 2 站） | macOS / iOS（第 3 站） |
 | --- | --- | --- | --- |
-| **C++26 编译器** | GCC 16 交叉 `aarch64-linux-musl` | Linux GCC 16 / Windows GCC 16 (`x86_64-w64-mingw32` UCRT64) | Homebrew GCC 16 (`arm64-apple-darwin`) |
+| **C++26 编译器** | Clang `llvm@23.1.6` 交叉 `aarch64-linux-musl` | Linux / Windows Clang `llvm@23.1.6`（`x86_64-linux-gnu` / `x86_64-windows-msvc`） | Clang `llvm@23.1.6`（`aarch64-macos` / `aarch64-ios`） |
 | **Corosio 异步后端** | `epoll` | Windows **IOCP** / Linux `epoll` / `io_uring` | **kqueue** |
 | **原生外壳技术栈** | Kotlin 2.4 + Jetpack Compose + Gradle 9.9 | **Slint v1.19+ C++26**（独立 CMake 4.5+ `import std;` 子工程，Skia 渲染 + 原生 `SystemTrayIcon` + Fluent/Material 主题，零 C#/.NET/Electron） | **Swift 6 + SwiftUI**（`MenuBarExtra` + 设置，原生零额外运行时，顺带覆盖 iOS） |
 | **内核托管形态** | `:bg` 进程 `VpnService` + `libnexus.so` | Windows：**Windows Service (`NexusService`, LocalSystem)**<br>Linux：`systemd` 服务 / 本机进程 | 阶段 A：`SMAppService.daemon` + `utun`<br>阶段 B：`NEPacketTunnelProvider` System Extension |
@@ -18,8 +18,8 @@
 | **持久化落盘原语** | `openat(O_NOFOLLOW)` + `fsync` + `rename` | Windows：`CreateFileW` + 私有 DACL + `FlushFileBuffers` + `MoveFileExW`<br>Linux：`openat` + `fsync` + `rename` | `openat(O_NOFOLLOW)` + **`fcntl(F_FULLFSYNC)`** + `rename` |
 
 > **关键共性**：
-> 1. 因为 Nexus 核心启用了 C++26 `-freflection` 与 `import std;`，核心进程在三端均走 **GCC 16 原生编译链路**；
-> 2. Windows + Linux 桌面 GUI 外壳作为独立 **CMake 4.5+ C++26（原生 `import std;`）** 子工程采用 **Slint v1.19+ 官方预编译 C++ SDK**（Ninja + GCC 16 / Clang / MSVC 均可），与 `nexus` 核心进程通过 Named Pipe / UDS 彻底进程隔离，既不引入 C#/.NET，也完全不污染主仓 `mcpp` 构建图。
+> 1. Nexus 核心统一采用 **Clang（`llvm@23.1.6`）+ C++26 Modules + `import std;` + 静态 `libc++`**（零 `-freflection`），三端共用同一套 `mcpp` 离线锁定构建图；
+> 2. Windows + Linux 桌面 GUI 外壳作为独立 **CMake 4.5+ C++26（原生 `import std;`）** 子工程采用 **Slint v1.19+ 官方预编译 C++ SDK**（Ninja + Clang / MSVC），与 `nexus` 核心进程通过 Named Pipe / UDS 彻底进程隔离，既不引入 C#/.NET，也完全不污染主仓 `mcpp` 构建图。
 > 3. Slint 桌面端遵循三许可制：开源分发可直接用 GPLv3；如需非 Copyleft 或商业分发桌面端，免费适用官方 **Royalty-Free Desktop License**（仅需在“关于”页展示 `AboutSlint` 署名）。
 
 ---

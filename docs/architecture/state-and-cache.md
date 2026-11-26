@@ -1,6 +1,11 @@
 # 缓存与持久状态
 
-Linux CLI 已接入四层持久化存储（selector、FakeIP 段预留 + WAL、多视图 DNS 缓存与规则集内容寻址缓存）。见 [配置规范](../configuration/spec.md)、[原生控制面](control-api.md) 与 [路由、DNS 与状态原则](../design-principles/routing-dns-and-state.md)。
+Nexus 核心（Core）已接入四层持久化存储（selector、FakeIP 段预留 + WAL、多视图 DNS 缓存与规则集内容寻址缓存），见 [配置规范](../configuration/spec.md)、[四支柱配置边界](config-boundary.md)、[原生控制面](control-api.md) 与 [路由、DNS 与状态原则](../design-principles/routing-dns-and-state.md)。
+
+## Core 与客户端存储边界
+
+- **Core（完全无数据库）**：Core 二进制不引入 SQLite 或任何嵌入式数据库依赖，仅消费声明式 KDL 2.0 配置、`0600` 独立凭据文件，并通过自研原子文件快照、BEVE 编码与 FakeIP WAL 落盘运行期状态，保持最小静态体积与零额外 C/SQL 攻击面。
+- **原生客户端（统一 SQLite 3 WAL Schema v1）**：Desktop、Android 与 Apple 三端原生客户端统一采用嵌入式 SQLite 3（WAL 模式、Schema v1）管理本地工作区档案、订阅元数据、宿主配置与遥测账本，凭据继续隔离在 `0600` 私有文件中；运行时由客户端按 [四支柱配置边界](config-boundary.md) 组合生成只读 KDL 片段交给 Core 执行。
 
 具体对象、丢失后果、当前实现状态和选型次序见[持久化对象清单](persistence-inventory.md)。SS-2022 跨重启防重放是额外安全承诺，不是通用缓存的代表性负载。
 
@@ -35,7 +40,7 @@ Linux CLI 已接入四层持久化存储（selector、FakeIP 段预留 + WAL、�
 - FakeIP 的持久模式先确定崩溃承诺：可选每映射提交，或先提交地址段预留再异步 checkpoint。两者对延迟、写放大和丢失映射的保证不同，不预先冻结方案。
 - 网络恢复清单与内核修改是跨系统步骤，需要操作阶段、意图与核对，不宣称文件事务可以原子提交 nftables、路由与 DNS。
 
-若选文件快照，候选流程为同目录排他创建私有临时文件、编码并同步、原子替换、同步父目录。rename 的原子可见性与断电持久性是不同保证；替换后同步失败应标记结果不确定。若选数据库，分别验证事务、同步选项、锁、损坏恢复、压缩及依赖成本。SQLite 是[状态数据库设计](database.md)中的待验证候选，尚未选择或接入存储依赖。
+Core 文件快照采用同目录排他创建私有临时文件、编码并同步、原子替换、同步父目录的流程。rename 的原子可见性与断电持久性是不同保证；替换后同步失败应标记结果不确定。Core 自身不接入 SQLite 或其他嵌入式数据库；SQLite 3（WAL）仅用于三端原生客户端外壳的本地工作区与遥测存储（见上文“Core 与客户端存储边界”）。
 
 ## 批写与资源预算
 

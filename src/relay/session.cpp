@@ -326,8 +326,8 @@ namespace relay {
             if(code) {
                 if (!result.reject_drop) {
                     if (response==ConnectReply::http) {
-                        auto text=code==2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" :
-                            "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                        auto text=code==2 ? "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 10\r\n\r\nForbidden\n" :
+                            "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Gateway\n";
                         auto bytes=std::span(reinterpret_cast<std::uint8_t const*>(text),std::strlen(text));
                         (void)co_await write_all(session.client,bytes,session);
                     } else if (response==ConnectReply::socks5) {

@@ -270,6 +270,7 @@ export namespace policy {
                 std::optional<std::span<rules::ProgramAddress const>>{context.default_interface_addresses},
             .source_gid=context.source_gid, .source_user=context.source_user,
             .package_name=context.package_name, .client=context.client,
+            .process_paths=context.process_paths,
         };
     }
 

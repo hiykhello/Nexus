@@ -396,14 +396,6 @@ namespace relay {
             state.dns=std::make_unique<DnsState>(routing,*state.dns_group,state.dns_group_index,
                 count==1 && !child_workers ? std::optional<std::size_t>{state.dns_reader_base} : std::nullopt);
         }
-#elif defined(NEXUS_TEST_DNS_SNAPSHOT)
-        if (state.dns_routing) {
-            state.dns.reset();
-            try {
-                state.dns=std::make_unique<DnsState>(*state.dns_routing,nullptr,count,
-                    count==1 && !child_workers ? std::optional<std::size_t>{0} : std::nullopt);
-            } catch (std::bad_alloc const&) { return std::unexpected(std::make_error_code(std::errc::not_enough_memory)); } catch (std::out_of_range const&) { return std::unexpected(std::make_error_code(std::errc::invalid_argument)); }
-        }
 #endif
         stopping=false;failed=false;return {};
     }
@@ -450,14 +442,7 @@ namespace relay {
                 this->dns_optimistic=parent.dns_optimistic;
 #endif
 #else
-                if (parent.dns) this->dns=std::make_unique<DnsState>(*parent.dns_routing
-#ifndef NEXUS_TEST_DNS_PER_WORKER
-                    ,&parent.dns->cache
-#ifdef NEXUS_TEST_DNS_SNAPSHOT
-                    ,count,index
-#endif
-#endif
-                );
+                if (parent.dns) this->dns=std::make_unique<DnsState>(*parent.dns_routing,&parent.dns->cache);
 #endif
 #ifdef NEXUS_ENABLE_FAKEIP
                 this->fakeip=parent.fakeip;

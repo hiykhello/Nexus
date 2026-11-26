@@ -6,20 +6,16 @@ import java.util.UUID
 
 /**
  * Unified SQLite 3 (WAL)-backed store for Layer 1 portable workspace documents,
- * with one-shot migration from legacy `workspace.json` when the database is empty
- * and on-demand `0600` JSON materialization for Core CLI invocations.
+ * with race-free first-launch default initialization and on-demand `0600` JSON
+ * materialization for Core CLI invocations and E2EE sync.
  */
 class WorkspaceStore(
     val rootDir: File,
     val db: NexusClientDatabase = NexusClientDatabase.inMemory(),
-    val workspaceFile: File = File(rootDir, "workspace.json"),
 ) {
     fun loadOrInit(): WorkspaceDocument {
         db.loadWorkspace()?.let { return it }
-        val candidate = if (workspaceFile.isFile) {
-            runCatching { WorkspaceJsonCodec.decode(workspaceFile.readText(Charsets.UTF_8)) }.getOrNull()
-        } else null
-        val initial = candidate ?: WorkspaceDocument(
+        val initial = WorkspaceDocument(
             schemaVersion = WorkspaceDocument.SCHEMA_VERSION,
             revision = 1L,
             updatedAtMs = System.currentTimeMillis(),

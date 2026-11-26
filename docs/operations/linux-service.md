@@ -20,7 +20,7 @@
 
 数据类别、稳定锁、损坏处理与提交语义见[缓存和持久状态](../architecture/state-and-cache.md)。若采用 `CacheDirectory`，需与真实缓存实现及权限一起验证；服务重启不应隐式重置用户选择和 FakeIP。DNS 状态应分别报告上游可用性、fresh/stale 命中与刷新/持久化故障，见[DNS 设计](../architecture/dns.md)。
 
-日志默认输出及文件 sink 的设计边界见[日志系统](../architecture/logging.md)，状态后端候选见[状态数据库](../architecture/database.md)；两者尚未实现。
+日志默认输出及文件 sink 的设计边界见 [日志系统](../architecture/logging.md)，Core 持久化状态存储边界见 [缓存与持久状态](../architecture/state-and-cache.md)。
 
 ## systemd 行为草案
 

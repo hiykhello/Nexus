@@ -67,7 +67,7 @@ class BootReceiver : BroadcastReceiver() {
                 val paths = RuntimeSocketPaths(appContext.noBackupFilesDir)
                 val db = NexusClientDatabase.open(appContext)
                 val hostStore = AndroidHostConfigStore(File(appContext.filesDir, "host.json"), db)
-                val telemetryStore = TelemetryStore(paths.telemetryFile, db)
+                val telemetryStore = TelemetryStore(db)
                 val configFile = paths.composedConfigFile.takeIf { it.isFile } ?: File(appContext.filesDir, "config.kdl")
 
                 val decision = BootLaunchPolicy.evaluate(

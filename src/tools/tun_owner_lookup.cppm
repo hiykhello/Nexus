@@ -1,6 +1,7 @@
 // Shared TUN clock & socket-owner metadata lookup helpers.
 export module cli.tun_owner_lookup;
 import std;
+import containers.inplace_vector;
 import platform.process_owner;
 import rules;
 
@@ -17,6 +18,7 @@ export namespace cli::tun_enabled {
         std::string process_path{};
         std::string user{};
         std::string package_name{};
+        containers::inplace_vector<std::string, 8> process_paths{};
     };
 
     inline auto lookup_tun_owner(bool is_udp, std::span<std::uint8_t const> local_ip, std::uint16_t local_port,
@@ -35,7 +37,12 @@ export namespace cli::tun_enabled {
             info.uid = owner->uid;
             info.gid = owner->gid;
 #endif
-            if (!owner->executable.empty()) info.process_path = std::move(owner->executable);
+            if (!owner->executables.empty()) {
+                info.process_path = owner->executables.front();
+                info.process_paths = std::move(owner->executables);
+            } else if (!owner->executable.empty()) {
+                info.process_path = std::move(owner->executable);
+            }
             if (!owner->user.empty()) info.user = std::move(owner->user);
             if (!owner->package_name.empty()) info.package_name = std::move(owner->package_name);
             return info;

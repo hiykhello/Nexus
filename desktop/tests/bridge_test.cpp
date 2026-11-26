@@ -230,7 +230,7 @@ namespace {
             .on_quit = [&] { quitted = true; },
         });
         expect(tray.state() == desktop::TrayState::offline, "initial tray offline");
-        tray.set_status(desktop::TrayState::tun_active, "ready");
+        tray.update_snapshot({.state = desktop::TrayState::tun_active, .core_running = true, .tun_enabled = true});
         expect(tray.state() == desktop::TrayState::tun_active && tray.tooltip().contains("TUN"), "tray tun status");
         tray.trigger_show();
         tray.trigger_reload();
@@ -238,7 +238,7 @@ namespace {
         expect(showed && reloaded && quitted && tray.quit_requested(), "tray callbacks & atomic quit");
         tray.stop();
         desktop::TrayController live_tray;
-        live_tray.set_status(desktop::TrayState::running, "ok");
+        live_tray.update_snapshot({.state = desktop::TrayState::running, .core_running = true});
         tray = std::move(live_tray);
         expect(tray.state() == desktop::TrayState::running && live_tray.state() == desktop::TrayState::offline,
             "move-assigned TrayController tears down old impl and transfers state");

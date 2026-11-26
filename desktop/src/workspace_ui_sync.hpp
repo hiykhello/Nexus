@@ -142,11 +142,9 @@ namespace desktop_ui_helpers {
 
         std::vector<nexus_ui::WorkspaceProfileRow> p_rows;
         p_rows.reserve(ctx.doc.profiles.size());
-        std::string active_kind = "node";
         for (auto const& p : ctx.doc.profiles) {
             ++sub_counts[p.subscription_id];
             bool const active = (p.id == ctx.telemetry.active_profile_id);
-            if (active) active_kind = p.kind;
             std::string subtitle;
             if (p.kind == "node") {
                 subtitle = p.node.protocol.empty() ? p.node.server : std::format("{} · {}:{}", p.node.protocol, p.node.server, p.node.port);
@@ -172,7 +170,6 @@ namespace desktop_ui_helpers {
             });
         }
         ws.set_active_profile_id(slint::SharedString(ctx.telemetry.active_profile_id));
-        ws.set_active_profile_kind(slint::SharedString(active_kind));
         ws.set_profiles(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceProfileRow>>(std::move(p_rows)));
 
         std::vector<nexus_ui::WorkspaceSubRow> s_rows;
@@ -230,11 +227,9 @@ namespace desktop_ui_helpers {
         ws.set_host_is_linux(ctx.host.platform == "desktop-linux");
         ws.set_host_enable_mixed(ctx.host.enable_mixed);
         ws.set_host_mixed_listen(slint::SharedString(ctx.host.mixed_listen));
-        ws.set_host_lan_listen(slint::SharedString(ctx.host.lan_listen));
         ws.set_host_enable_tun(ctx.host.enable_tun);
         ws.set_host_tun_mtu(slint::SharedString(std::to_string(ctx.host.tun_mtu)));
         ws.set_host_tun_strict_route(ctx.host.tun_strict_route);
-        ws.set_host_sys_proxy_mode(slint::SharedString(ctx.host.system_proxy_mode));
 
         // Sync overview quick-profiles deck + Quick-Settings tile bar directly from unified SQLite workspace/host state.
         sync_profiles_to_ui(ctx.ui, ctx.doc, ctx.telemetry.active_profile_id);
@@ -376,12 +371,11 @@ namespace desktop_ui_helpers {
                 ctx.lifecycle_busy.store(false, std::memory_order_release);
                 auto ok_msg = next_tun ? tr(en, "工作区已编译并启用 TUN 重启生效", "Workspace applied with TUN elevation")
                                        : tr(en, "工作区已编译并关闭 TUN 重启生效", "Workspace applied with TUN disabled");
-                on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed), sock = std::move(next_ctl.socket), ok_msg = std::move(ok_msg), next_tun](auto& s) mutable {
+                on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed), ok_msg = std::move(ok_msg), next_tun](auto& s) mutable {
                     ctx.running_selector_tag = composed.selector_tag;
                     ctx.running_selector_members = std::move(composed.selector_members);
                     ctx.last_secret_files = std::move(composed.secret_files);
                     apply_kdl_to_ui_state(*s, composed.kdl);
-                    s->set_control_endpoint(slint::SharedString(sock));
                     s->set_tun_enabled(next_tun);
                     s->set_core_running(true);
                     ctx.core_started_at = std::chrono::steady_clock::now();
@@ -409,7 +403,6 @@ namespace desktop_ui_helpers {
         bool const en = is_en_ui(ctx.ui);
         bool const prefer_persistent = ctx.ui.get_tun_elevate_persistent();
         ctx.ui.set_core_toggling(true);
-        ctx.ui.set_status_summary(slint::SharedString(tr(en, "正在切换连接状态...", "Switching connection...")));
         if (ctx.supervisor.running() || ctx.doc.profiles.empty()) {
             if (ctx.supervisor.running()) ctx.running_selector_members.clear();
             run_toggle(std::string(ctx.ui.get_kdl_text()), prefer_persistent, en);
@@ -432,7 +425,6 @@ namespace desktop_ui_helpers {
                     s->set_core_toggling(false);
                     s->set_diagnostic_ok(false);
                     s->set_diagnostic_message(slint::SharedString(err));
-                    s->set_status_summary(slint::SharedString(err));
                     push_toast(*s, err, "error");
                     if (ctx.sync_tray) ctx.sync_tray();
                     ctx.lifecycle_busy.store(false, std::memory_order_release);
@@ -449,7 +441,6 @@ namespace desktop_ui_helpers {
                     s->set_core_toggling(false);
                     s->set_diagnostic_ok(false);
                     s->set_diagnostic_message(slint::SharedString(err));
-                    s->set_status_summary(slint::SharedString(err));
                     push_toast(*s, err, "error");
                     if (ctx.sync_tray) ctx.sync_tray();
                     ctx.lifecycle_busy.store(false, std::memory_order_release);

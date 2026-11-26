@@ -37,6 +37,17 @@ namespace relay {
         using SmuxProto = mux::smux::Session<PaddedLower>;
         using SmuxStream = mux::smux::Stream<SmuxProto>;
 
+        auto timed_bool(capy::task<bool> op) -> capy::task<capy::results<bool>> {
+            bool const ok = co_await std::move(op);
+            auto const stop = co_await capy::this_coro::stop_token;
+            co_return capy::results<bool>{!ok && stop.stop_requested() ? std::make_error_code(std::errc::operation_canceled) : std::error_code{}, ok};
+        }
+        auto timed_open(SmuxProto& proto, std::optional<std::uint32_t>& sid) -> capy::task<capy::results<>> {
+            if (auto r = co_await proto.open_stream()) sid = *r;
+            auto const stop = co_await capy::this_coro::stop_token;
+            co_return capy::results<>{!sid && stop.stop_requested() ? std::make_error_code(std::errc::operation_canceled) : std::error_code{}};
+        }
+
         struct MuxCarrier {
             Session state;
             PaddedLower lower;
@@ -46,12 +57,7 @@ namespace relay {
 
             struct ReaderGuard {
                 std::shared_ptr<MuxCarrier> owner;
-                ~ReaderGuard() {
-                    if (owner) {
-                        owner->running = false;
-                        owner->cancel();
-                    }
-                }
+                ~ReaderGuard() { if (owner) { owner->running = false; owner->cancel(); } }
             };
 
             static auto reader(ReaderGuard guard) -> capy::task<> {
@@ -62,7 +68,8 @@ namespace relay {
                 : state(env.context), lower(cfg.padding),
                   proto(lower, true, cfg.protocol == config::MultiplexProtocol::smux_v1
                         ? mux::smux::version_1 : mux::smux::version_2,
-                        mux::smux::Limits{.max_streams = std::max<std::size_t>(cfg.max_streams > 0 ? cfg.max_streams : 64u, 64u)}) {
+                        mux::smux::Limits{.max_streams = std::max<std::size_t>(
+                            {cfg.max_streams > 0 ? cfg.max_streams : 64u, cfg.min_streams, 64u})}) {
                 state.dns = env.dns;
                 state.local_dns = env.local_dns;
                 if (env.owner) state.route_snapshot = env.owner->current_route_snapshot();
@@ -153,10 +160,7 @@ namespace relay {
                     auto n = c->proto.active_streams();
                     if (cfg.max_streams > 0 && n >= cfg.max_streams) continue;
                     if (below_min && n >= cfg.min_streams) continue;
-                    if (n < best_streams) {
-                        best_streams = n;
-                        best = c;
-                    }
+                    if (n < best_streams) { best_streams = n; best = c; }
                 }
                 return best;
             }
@@ -192,23 +196,22 @@ namespace relay {
                     ? inner.through(carrier->state, env.context, *detour, false)
                     : inner.create(carrier->state, env.context, false, direct ? env.direct_options : nullptr);
                 if (!carrier->lower.raw.lower) {
-                    carrier->starting = false;
-                    carrier->cancel();
+                    carrier->starting = false; carrier->cancel();
                     co_return std::unexpected(TunnelConnectResult::failed);
                 }
                 std::stop_callback cb(stop.get_token(), [carrier]() noexcept { carrier->cancel(); });
                 auto connected = co_await carrier->lower.raw.lower->connect_domain(
                     mux::sing::magic_domain, mux::sing::magic_port, deadline);
                 if (connected != TunnelConnectResult::connected || stopped || stop.stop_requested()) {
-                    carrier->starting = false;
-                    carrier->cancel();
+                    carrier->starting = false; carrier->cancel();
                     co_return std::unexpected(connected == TunnelConnectResult::connected ? TunnelConnectResult::failed : connected);
                 }
                 auto sreq = mux::sing::encode_session_request({mux::sing::version_1, mux::sing::proto_smux, cfg.padding});
-                if (!co_await carrier->lower.raw.send(sreq)) {
-                    carrier->starting = false;
-                    carrier->cancel();
-                    co_return std::unexpected(TunnelConnectResult::failed);
+                auto [ec, sent] = co_await corosio::timeout(timed_bool(carrier->lower.raw.send(sreq)), deadline);
+                if (ec || !sent || stopped || stop.stop_requested()) {
+                    carrier->starting = false; carrier->cancel();
+                    co_return std::unexpected(capy::is_timeout(ec) || Clock::now() >= deadline
+                        ? TunnelConnectResult::timeout : TunnelConnectResult::failed);
                 }
                 carrier->starting = false;
                 carrier->start_run(carrier, env.context);
@@ -272,16 +275,22 @@ namespace relay {
                 if (!acquired || session_.closed || stop_.stop_requested())
                     co_return !acquired ? acquired.error() : TunnelConnectResult::failed;
                 carrier_ = std::move(*acquired);
-                auto opened = co_await carrier_->proto.open_stream();
-                if (!opened) {
+                std::optional<std::uint32_t> sid;
+                auto [open_ec] = co_await corosio::timeout(timed_open(carrier_->proto, sid), deadline);
+                if (open_ec || !sid || session_.closed || stop_.stop_requested()) {
+                    if (sid) carrier_->proto.release_stream(*sid);
                     cancel();
-                    co_return TunnelConnectResult::failed;
+                    co_return capy::is_timeout(open_ec) || Clock::now() >= deadline
+                        ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
                 }
-                stream_ = SmuxStream(carrier_->proto, *opened);
+                stream_ = SmuxStream(carrier_->proto, *sid);
                 auto sreq = mux::sing::encode_stream_request({udp, paddr, dest});
-                if (!sreq || !co_await stream_.send(*sreq)) {
+                if (!sreq) { cancel(); co_return TunnelConnectResult::failed; }
+                auto [send_ec, sent] = co_await corosio::timeout(timed_bool(stream_.send(*sreq)), deadline);
+                if (send_ec || !sent || session_.closed || stop_.stop_requested()) {
                     cancel();
-                    co_return TunnelConnectResult::failed;
+                    co_return capy::is_timeout(send_ec) || Clock::now() >= deadline
+                        ? TunnelConnectResult::timeout : TunnelConnectResult::failed;
                 }
                 ready_ = true;
                 co_return TunnelConnectResult::connected;
@@ -359,16 +368,10 @@ namespace relay {
                 while (!resp_checked_) {
                     std::array<std::uint8_t, 512> tmp{};
                     auto r = co_await stream_.read(tmp);
-                    if (!r || *r == 0) {
-                        cancel();
-                        co_return std::unexpected(std::string("mux response EOF"));
-                    }
+                    if (!r || *r == 0) { cancel(); co_return std::unexpected(std::string("mux response EOF")); }
                     resp_accum_.insert(resp_accum_.end(), tmp.begin(), tmp.begin() + *r);
                     auto decoded = mux::sing::decode_stream_response(resp_accum_);
-                    if (!decoded) {
-                        cancel();
-                        co_return std::unexpected(decoded.error());
-                    }
+                    if (!decoded) { cancel(); co_return std::unexpected(decoded.error()); }
                     if (!*decoded) {
                         if (resp_accum_.size() > 4096) { cancel(); co_return std::unexpected(std::string("oversized mux response")); }
                         continue;

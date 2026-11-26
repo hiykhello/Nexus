@@ -104,7 +104,7 @@ namespace desktop_ui_helpers {
             bool running = false;
             bool cancelled = false;
             std::optional<desktop::TunPrivilegeProbe> refreshed_probe;
-            std::string summary, diag_err, new_kdl, synced_sock;
+            std::string summary, diag_err, new_kdl;
             if (supervisor.running()) {
                 (void)sys_proxy.restore();
                 supervisor.stop();
@@ -121,7 +121,6 @@ namespace desktop_ui_helpers {
                     ipc.set_endpoint(prep.control.socket);
                     http_ctrl.set_endpoint(prep.control.http_host, prep.control.http_port);
                     http_ctrl.set_bearer_token(prep.control.bearer_token);
-                    synced_sock = prep.control.socket;
 
                     desktop::CoreStartOptions start_opts{};
                     bool elev_ok = true;
@@ -160,13 +159,12 @@ namespace desktop_ui_helpers {
             slint::invoke_from_event_loop([&, weak_ui, running, cancelled, on_tray_sync = std::move(on_tray_sync),
                                            refreshed_probe = std::move(refreshed_probe),
                                            summary = std::move(summary), diag_err = std::move(diag_err),
-                                           new_kdl = std::move(new_kdl), synced_sock = std::move(synced_sock), en]() mutable {
+                                           new_kdl = std::move(new_kdl)]() mutable {
                 if (auto strong = weak_ui.lock()) {
                     auto& s = **strong;
                     if (refreshed_probe) apply_tun_probe_to_ui(s, *refreshed_probe);
                     s.set_core_running(running);
                     if (!new_kdl.empty()) apply_kdl_to_ui_state(s, new_kdl);
-                    if (!synced_sock.empty()) s.set_control_endpoint(slint::SharedString(synced_sock));
                     s.set_diagnostic_ok(diag_err.empty() || cancelled);
                     s.set_diagnostic_message(slint::SharedString(cancelled ? "" : diag_err));
                     if (running) {
@@ -174,14 +172,13 @@ namespace desktop_ui_helpers {
                         rate_tracker.reset();
                         s.set_core_uptime(slint::SharedString("00:00:00"));
                         poll_telemetry_async(weak_ui, worker, http_ctrl, cached_groups, pinned_members, member_models, rate_tracker,
-                                             metrics_in_flight, en, true, on_tray_sync);
+                                             metrics_in_flight, true, on_tray_sync);
                     } else {
                         core_started_at.reset();
                         rate_tracker.reset();
                         s.set_system_proxy_enabled(false);
-                        clear_telemetry_ui(s, en);
+                        clear_telemetry_ui(s);
                     }
-                    s.set_status_summary(slint::SharedString(summary));
                     s.set_core_toggling(false);
                     push_toast(s, summary, cancelled ? "warn" : !diag_err.empty() ? "error" : running ? "success" : "info");
                     if (on_tray_sync) on_tray_sync();
@@ -231,9 +228,6 @@ namespace desktop_ui_helpers {
             std::string prev_kdl(ctx.ui.get_kdl_text());
             ctx.ui.set_tun_privilege_busy(true);
             ctx.ui.set_core_toggling(true);
-            ctx.ui.set_status_summary(slint::SharedString(
-                on ? tr(en, "正在准备 TUN 权限与配置...", "Preparing TUN privileges & config...")
-                   : tr(en, "正在关闭 TUN 模式...", "Disabling TUN mode...")));
 
             bool posted = ctx.worker.post([&ctx, on, en, prefer_persistent, prev_kdl = std::move(prev_kdl)]() mutable {
                 auto finish_err = [&](std::string msg, std::string tone, std::optional<desktop::TunPrivilegeProbe> probe = std::nullopt,
@@ -256,7 +250,6 @@ namespace desktop_ui_helpers {
                         }
                         s->set_diagnostic_ok(tone == "warn" || tone == "info");
                         s->set_diagnostic_message(slint::SharedString(msg));
-                        s->set_status_summary(slint::SharedString(msg));
                         s->set_tun_privilege_busy(false);
                         s->set_core_toggling(false);
                         push_toast(*s, msg, tone);
@@ -288,7 +281,6 @@ namespace desktop_ui_helpers {
                         return;
                     }
                     bool const was_running = ctx.supervisor.running();
-                    std::string synced_sock;
                     if (was_running) {
                         ctx.supervisor.stop();
                         if (!ctx.supervisor.start(ctx.config_path, start_opts)) {
@@ -305,18 +297,16 @@ namespace desktop_ui_helpers {
                         ctx.ipc.set_endpoint(next_ctl.socket);
                         ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
                         ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
-                        synced_sock = std::move(next_ctl.socket);
                     }
                     auto ok_msg = was_running
                         ? (start_opts.elevate_session ? tr(en, "已按次提权并启用 TUN 模式", "TUN enabled (session elevation)")
                            : start_opts.use_persistent_helper ? tr(en, "已通过持久服务启用 TUN 模式", "TUN enabled (persistent helper)")
                                                               : tr(en, "已启用 TUN 模式并重启核心", "TUN enabled & core restarted"))
                         : tr(en, "已保存 TUN 配置，启动核心时生效", "TUN saved; activates when core starts");
-                    on_ui_thread(ctx.weak_ui, [&ctx, kdl = std::move(next_res.second), synced_sock = std::move(synced_sock),
+                    on_ui_thread(ctx.weak_ui, [&ctx, kdl = std::move(next_res.second),
                                                probe, was_running, ok_msg = std::move(ok_msg)](auto& s) {
                         apply_tun_probe_to_ui(*s, probe);
                         apply_kdl_to_ui_state(*s, kdl);
-                        if (!synced_sock.empty()) s->set_control_endpoint(slint::SharedString(synced_sock));
                         s->set_tun_enabled(true);
                         if (ctx.on_tun_state_changed) ctx.on_tun_state_changed(true);
                         if (was_running) {
@@ -327,7 +317,6 @@ namespace desktop_ui_helpers {
                         }
                         s->set_diagnostic_ok(true);
                         s->set_diagnostic_message(slint::SharedString(ok_msg));
-                        s->set_status_summary(slint::SharedString(ok_msg));
                         s->set_tun_privilege_busy(false);
                         s->set_core_toggling(false);
                         push_toast(*s, ok_msg, "success");
@@ -374,7 +363,7 @@ namespace desktop_ui_helpers {
                 }
                 auto probe = desktop::probe_tun_privilege(ctx.supervisor.binary_path());
                 on_ui_thread(ctx.weak_ui, [&ctx, kdl = std::move(next_res.second), probe, running_after,
-                                           op_ok, restarted, en, ok_msg = std::move(ok_msg)](auto& s) {
+                                           op_ok, restarted, ok_msg = std::move(ok_msg)](auto& s) {
                     apply_tun_probe_to_ui(*s, probe);
                     apply_kdl_to_ui_state(*s, kdl);
                     s->set_tun_enabled(false);
@@ -388,12 +377,11 @@ namespace desktop_ui_helpers {
                         } else {
                             ctx.core_started_at.reset();
                             ctx.rate_tracker.reset();
-                            clear_telemetry_ui(*s, en);
+                            clear_telemetry_ui(*s);
                         }
                     }
                     s->set_diagnostic_ok(op_ok);
                     s->set_diagnostic_message(slint::SharedString(ok_msg));
-                    s->set_status_summary(slint::SharedString(ok_msg));
                     s->set_tun_privilege_busy(false);
                     s->set_core_toggling(false);
                     push_toast(*s, ok_msg, op_ok ? "info" : "error");
@@ -449,14 +437,14 @@ namespace desktop_ui_helpers {
                     : (res.ok && core_up && tun_active)
                         ? tr(en, "已撤销持久授权，将在下次重启核心后生效", "Persistent grant revoked; takes effect on next core restart")
                         : res.message;
-                on_ui_thread(ctx.weak_ui, [&ctx, en, stopped_helper, ok = res.ok, cancelled = res.cancelled,
+                on_ui_thread(ctx.weak_ui, [&ctx, stopped_helper, ok = res.ok, cancelled = res.cancelled,
                                            msg = std::move(msg), probe = std::move(probe)](auto& s) {
                     apply_tun_probe_to_ui(*s, probe);
                     if (stopped_helper) {
                         s->set_core_running(false);
                         ctx.core_started_at.reset();
                         ctx.rate_tracker.reset();
-                        clear_telemetry_ui(*s, en);
+                        clear_telemetry_ui(*s);
                     }
                     s->set_tun_privilege_busy(false);
                     s->set_core_toggling(false);

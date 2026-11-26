@@ -211,7 +211,7 @@ namespace desktop {
 
         auto write_json_rec(std::string& out, JsonValue const& v, bool pretty, int indent) -> void {
             auto pad = [&](int n) { if (pretty) out.append(static_cast<std::size_t>(n) * 2, ' '); };
-            if (v.is_null()) { out += "null"; return; }
+            if (std::holds_alternative<std::monostate>(v.data)) { out += "null"; return; }
             if (v.is_bool()) { out += std::get<bool>(v.data) ? "true" : "false"; return; }
             if (v.is_i64()) { out += std::to_string(std::get<std::int64_t>(v.data)); return; }
             if (v.is_double()) {

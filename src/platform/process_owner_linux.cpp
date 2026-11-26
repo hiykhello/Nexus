@@ -15,6 +15,7 @@ module;
 
 module platform.process_owner;
 import std;
+import platform.platform_defaults;
 
 namespace platform {
     namespace {
@@ -178,6 +179,8 @@ namespace platform {
             auto close_dir = [](DIR* d) { ::closedir(d); };
             std::unique_ptr<DIR, decltype(close_dir)> proc_guard(proc_dir, close_dir);
 
+            std::optional<ProcessOwner> out;
+            containers::inplace_vector<std::string, 8> real_paths;
             std::size_t scanned_pids = 0;
             while (auto const* ent = ::readdir(proc_dir)) {
                 std::string_view pid_sv(ent->d_name);
@@ -207,14 +210,14 @@ namespace platform {
                 }
                 if (!found) continue;
 
-                ProcessOwner out{.pid = pid};
-                struct stat st{};
                 std::string proc_path = std::format("/proc/{}", pid);
-                if (::lstat(proc_path.c_str(), &st) == 0) {
-                    out.uid = static_cast<std::uint32_t>(st.st_uid);
-                    out.gid = static_cast<std::uint32_t>(st.st_gid);
-                    out.user = lookup_passwd_cached(st.st_uid);
-                }
+                char exe_buf[4096];
+                std::string exe_link = proc_path + "/exe";
+                ssize_t exe_n = readlink_eintr(exe_link.c_str(), exe_buf, sizeof(exe_buf));
+                std::string_view exe_sv = exe_n > 0 ? std::string_view(exe_buf, static_cast<std::size_t>(exe_n)) : std::string_view{};
+                bool const zygote = !exe_sv.empty() && platform::is_android_zygote_noise(exe_sv);
+
+                std::string pkg;
                 std::array<char, 256> cmd_buf{};
                 std::string cmd_path = proc_path + "/cmdline";
                 if (int cmd_fd = open_eintr(cmd_path.c_str(), O_RDONLY | O_CLOEXEC); cmd_fd >= 0) {
@@ -230,16 +233,35 @@ namespace platform {
                                 return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                                        (c >= '0' && c <= '9') || c == '.' || c == '_';
                             }))
-                            out.package_name.assign(arg0);
+                            pkg.assign(arg0);
                     }
                 }
-                char exe_buf[4096];
-                std::string exe_link = proc_path + "/exe";
-                ssize_t exe_n = readlink_eintr(exe_link.c_str(), exe_buf, sizeof(exe_buf));
-                if (exe_n > 0) out.executable.assign(exe_buf, static_cast<std::size_t>(exe_n));
-                return out;
+
+                if (!out) {
+                    out.emplace(ProcessOwner{.pid = pid});
+                    struct stat st{};
+                    if (::lstat(proc_path.c_str(), &st) == 0) {
+                        out->uid = static_cast<std::uint32_t>(st.st_uid);
+                        out->gid = static_cast<std::uint32_t>(st.st_gid);
+                        out->user = lookup_passwd_cached(st.st_uid);
+                    }
+                } else if (!zygote && real_paths.empty()) {
+                    out->pid = pid;
+                }
+                if (out->package_name.empty() && !pkg.empty()) out->package_name = std::move(pkg);
+                if (!exe_sv.empty() && !zygote &&
+                    !std::ranges::contains(real_paths, exe_sv) &&
+                    real_paths.size() < real_paths.capacity()) {
+                    real_paths.push_back(std::string(exe_sv));
+                }
+                if (real_paths.size() == real_paths.capacity() && !out->package_name.empty()) break;
             }
-            return std::nullopt;
+            if (!out) return std::nullopt;
+            if (!real_paths.empty()) {
+                out->executable = real_paths.front();
+                out->executables = std::move(real_paths);
+            }
+            return out;
         }
     }
 
