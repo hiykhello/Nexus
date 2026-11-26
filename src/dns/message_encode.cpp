@@ -66,7 +66,7 @@ namespace dns {
         auto decode_name_into(std::span<std::uint8_t const> data,std::size_t& position,
             NameBoundaries& boundaries,std::array<char,255>& buf) noexcept -> std::optional<std::string_view> {
             auto cursor=position; std::size_t wire_size=1, jumps=0, out_len=0; bool jumped=false;
-            std::array<std::size_t,128> local_boundaries{}; std::size_t count=0;
+            std::array<std::size_t,128> local_boundaries; std::size_t count=0;
             for (;;) {
                 if (cursor>=data.size()) return {};
                 if (!jumped) {
@@ -98,14 +98,14 @@ namespace dns {
             }
         }
 
-        auto hash_suffix(std::string_view suffix) noexcept -> std::uint32_t {
+        auto hash_lower_suffix(std::string_view suffix) noexcept -> std::uint32_t {
             std::uint32_t h=2166136261u;
-            for (unsigned char c:suffix) { h^=lower(c); h*=16777619u; }
+            for (unsigned char c:suffix) { h^=c; h*=16777619u; }
             h^=h>>16; h*=0x85ebca6bu; h^=h>>13;
             return h;
         }
 
-        auto wire_equals_suffix(std::span<std::uint8_t const> out,std::size_t off,std::string_view suffix) noexcept -> bool {
+        auto wire_equals_lower_suffix(std::span<std::uint8_t const> out,std::size_t off,std::string_view suffix) noexcept -> bool {
             std::size_t jumps=0;
             for (;;) {
                 if (off>=out.size()) return false;
@@ -123,7 +123,7 @@ namespace dns {
                 auto label=dot==suffix.npos ? suffix : suffix.substr(0,dot);
                 if (label.size()!=len) return false;
                 for (std::size_t i=0;i<len;++i)
-                    if (lower(out[off+i])!=lower(static_cast<std::uint8_t>(label[i]))) return false;
+                    if (lower(out[off+i])!=static_cast<std::uint8_t>(label[i])) return false;
                 off+=len;
                 if (dot==suffix.npos) suffix={};
                 else suffix.remove_prefix(dot+1);
@@ -131,13 +131,10 @@ namespace dns {
         }
 
         class Encoder {
-            struct SuffixSlot {
-                std::uint32_t hash=0;
-                std::uint16_t out_offset=0;
-            };
             static constexpr std::size_t suffix_table_size=128;
             static constexpr std::uint8_t suffix_load_limit=96;
-            std::array<SuffixSlot,suffix_table_size> suffixes_{};
+            std::array<std::uint16_t,suffix_table_size> suffix_offsets_{};
+            std::array<std::uint32_t,suffix_table_size> suffix_hashes_;
             std::uint8_t suffix_count_=0;
             NameBoundaries boundaries_;
             std::span<std::uint8_t const> wire_;
@@ -146,9 +143,9 @@ namespace dns {
                 if (!suffix_count_) return 0;
                 auto slot=h&(suffix_table_size-1);
                 for (;;) {
-                    auto const& entry=suffixes_[slot];
-                    if (!entry.out_offset) return 0;
-                    if (entry.hash==h && wire_equals_suffix(output,entry.out_offset,suffix)) return entry.out_offset;
+                    auto off=suffix_offsets_[slot];
+                    if (!off) return 0;
+                    if (suffix_hashes_[slot]==h && wire_equals_lower_suffix(output,off,suffix)) return off;
                     slot=(slot+1)&(suffix_table_size-1);
                 }
             }
@@ -156,20 +153,22 @@ namespace dns {
                 if (out_offset>=16384 || suffix_count_>=suffix_load_limit) return;
                 auto slot=h&(suffix_table_size-1);
                 for (;;) {
-                    auto& entry=suffixes_[slot];
-                    if (!entry.out_offset) {
-                        entry=SuffixSlot{h,static_cast<std::uint16_t>(out_offset)};
+                    auto off=suffix_offsets_[slot];
+                    if (!off) {
+                        suffix_hashes_[slot]=h;
+                        suffix_offsets_[slot]=static_cast<std::uint16_t>(out_offset);
                         ++suffix_count_;
                         return;
                     }
-                    if (entry.hash==h && wire_equals_suffix(output,entry.out_offset,suffix)) return;
+                    if (suffix_hashes_[slot]==h && wire_equals_lower_suffix(output,off,suffix)) return;
                     slot=(slot+1)&(suffix_table_size-1);
                 }
             }
         public:
             Bytes output;
-            explicit Encoder(std::span<std::uint8_t const> wire) : wire_(wire),output(wire.begin(),wire.begin()+12) {
+            explicit Encoder(std::span<std::uint8_t const> wire) : wire_(wire) {
                 output.reserve(wire.size());
+                output.insert(output.end(),wire.begin(),wire.begin()+12);
             }
             auto copy(std::size_t first,std::size_t last) -> void {
                 output.insert(output.end(),wire_.begin()+first,wire_.begin()+last);
@@ -193,7 +192,7 @@ namespace dns {
                         std::string_view suffix=*decoded;
                         for (auto p=start;p<cursor && wire_[p];p+=1+wire_[p]) {
                             auto out_off=offset+(p-start);
-                            if (out_off<16384) insert_suffix(suffix,hash_suffix(suffix),out_off);
+                            if (out_off<16384) insert_suffix(suffix,hash_lower_suffix(suffix),out_off);
                             auto dot=suffix.find('.');
                             if (dot==suffix.npos) break;
                             suffix.remove_prefix(dot+1);
@@ -202,23 +201,25 @@ namespace dns {
                     return true;
                 }
                 if (*decoded!=".") {
-                    struct PendingSuffix { std::string_view suffix; std::uint32_t hash; std::uint16_t offset; };
-                    std::array<PendingSuffix,128> pending{};
+                    struct PendingSuffix { std::uint32_t hash; std::uint16_t offset; std::uint8_t name_pos; };
+                    static_assert(std::is_trivially_default_constructible_v<PendingSuffix>);
+                    std::array<PendingSuffix,128> pending;
                     std::size_t pending_count=0;
                     auto commit_pending=[&]() noexcept {
                         for (std::size_t i=0;i<pending_count;++i)
-                            insert_suffix(pending[i].suffix,pending[i].hash,pending[i].offset);
+                            insert_suffix(decoded->substr(pending[i].name_pos),pending[i].hash,pending[i].offset);
                     };
                     std::string_view suffix=*decoded;
                     while (!suffix.empty()) {
-                        auto h=hash_suffix(suffix);
+                        auto h=hash_lower_suffix(suffix);
                         if (auto known=find_suffix(suffix,h)) {
                             put16(output,static_cast<std::uint16_t>(0xc000u|known));
                             commit_pending();
                             return true;
                         }
                         if (output.size()<16384 && pending_count<pending.size())
-                            pending[pending_count++]={suffix,h,static_cast<std::uint16_t>(output.size())};
+                            pending[pending_count++]={h,static_cast<std::uint16_t>(output.size()),
+                                static_cast<std::uint8_t>(suffix.data()-decoded->data())};
                         auto end=suffix.find('.');
                         auto label=suffix.substr(0,end);
                         output.push_back(static_cast<std::uint8_t>(label.size()));

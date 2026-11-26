@@ -53,7 +53,7 @@ export namespace dns::message_wire {
         std::string result;
         // A legal 255-byte name has at most 127 one-byte labels plus
         // the terminating root or pointer. Publish only after validation.
-        std::array<std::size_t,128> local_boundaries{};std::size_t count=0;
+        std::array<std::size_t,128> local_boundaries;std::size_t count=0;
         for (;;) {
             if (cursor >= data.size()) return std::unexpected(MessageError::malformed);
             if (!jumped) {
